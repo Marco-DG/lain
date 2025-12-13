@@ -1,0 +1,17 @@
+# Binaries
+compiler
+test_destruct
+
+# Generated files
+out.c
+lain.h
+out/
+
+# Backups
+_backups/
+
+# OS specific
+.DS_Store
+
+# Toolchains
+cosmocc/

@@ -1,0 +1,1 @@
+clear; sh ./build-compiler.sh; sh ./compile-and-run.sh

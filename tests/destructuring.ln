@@ -1,0 +1,19 @@
+extern func printf(fmt u8[:0], ...) int
+
+type Point {
+    x u8
+    y u8
+}
+
+func print_point({x, y} Point) u8 {
+    printf("Point: x=%d, y=%d\n", x, y)
+    return 0
+}
+
+func main() u8 {
+    var p Point
+    p.x = 10
+    p.y = 20
+    print_point(p)
+    return 0
+}

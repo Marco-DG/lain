@@ -1,0 +1,68 @@
+type Kind {
+    Eof
+    Plus
+    PlusPlus
+    Minus
+    MinusMinus
+}
+
+type Token {
+    kind   Kind
+    lexeme u8[]
+}
+
+type State {
+    Start
+    Plus
+    Minus
+}
+
+type Lexer {
+    text u8[]
+    //cursor u8 in text
+}
+
+func Lexer(text u8[]) Lexer {
+    return Lexer(text, 0)
+}
+
+iter next(self Lexer) Token {
+    use self.text as text
+    use self.cursor as cursor
+
+    var begin = cursor
+
+    while it, c in text[cursor..] {
+
+        case c {
+            '+':
+                advance
+                case c {
+                    '+':
+                        advance
+                        return Token(PlusPlus, text[begin..cursor])
+                    else:
+                        return Token(Plus, text[begin..cursor])
+                }
+            '-':
+                advance
+                case c {
+                    '-':
+                        advance
+                        return Token(MinusMinus, text[begin..cursor])
+                    else:
+                        return Token(Minus, text[begin..cursor])
+                }
+        }
+
+    }
+
+    return Token(Eof, text[begin..cursor])
+}
+
+func main() i32 {
+    lexer = Lexer("+-++--")
+
+
+
+}
