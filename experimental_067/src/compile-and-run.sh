@@ -1,1 +1,0 @@
-../cosmocc/bin/cosmocc ../out/main.c -o ../out/main.exe -std=c99 -Wall -Wextra -Wfloat-equal -Wpointer-arith -Wshadow -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings -Waggregate-return -Wcast-qual -Wold-style-definition -fsanitize=undefined -Wno-unused-function -Wno-aggregate-return -Wno-strict-prototypes -Wno-old-style-definition; ../out/main.exe;
