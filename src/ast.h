@@ -311,6 +311,8 @@ typedef struct Expr {
         ExprIndex       index_expr;
     } as;
     Type *type;
+    Decl *decl;      // The declaration this expression refers to (if any)
+    bool  is_global; // True if this refers to a global symbol
 } Expr;
 
 /*──────────────────────────────────────────────────────────────────╗

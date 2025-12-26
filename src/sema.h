@@ -7,6 +7,7 @@
 #include "sema/linearity.h"
 
 Type *current_return_type = NULL;
+Decl *current_function_decl = NULL; // New: track current function for purity checks
 const char *current_module_path = NULL;
 DeclList *sema_decls = NULL;
 Arena *sema_arena = NULL;
@@ -111,6 +112,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
 
         // 2.b) Name resolution
         current_return_type = d->as.function_decl.return_type;
+        current_function_decl = d; // Set current function
         current_module_path = module_path;
         for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next) {
             sema_resolve_stmt(sl->stmt);
@@ -160,6 +162,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             walk_stmt(sl->stmt);
 
         current_return_type = NULL;
+        current_function_decl = NULL;
         current_module_path = NULL;
 
         // 2.d) Linearity check: run function-level linearity checker

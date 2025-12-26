@@ -107,6 +107,11 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         return parse_proc_decl(arena, parser);
     }
 
+    if (parser_match(TOKEN_KEYWORD_VAR)) {
+        parser_advance();
+        return parse_var_decl(arena, parser);
+    }
+
     return NULL;
 }
 
@@ -348,7 +353,12 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
         parser_advance();
         ret_is_comptime = true;
     }
-    Type *ret_type = parse_type(arena, parser);
+    
+    Type *ret_type = NULL;
+    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV)) {
+        ret_type = parse_type(arena, parser);
+    }
+
     if (ret_is_comptime && ret_type) {
         ret_type = type_comptime(arena, ret_type);
     }
@@ -432,7 +442,12 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
         parser_advance();
         ret_is_comptime = true;
     }
-    Type *ret_type = parse_type(arena, parser);
+    
+    Type *ret_type = NULL;
+    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV)) {
+        ret_type = parse_type(arena, parser);
+    }
+
     if (ret_is_comptime && ret_type) {
         ret_type = type_comptime(arena, ret_type);
     }

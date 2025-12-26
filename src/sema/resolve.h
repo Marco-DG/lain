@@ -8,6 +8,7 @@
 
 
 extern Type *current_return_type;
+extern Decl *current_function_decl; // New
 extern const char *current_module_path;
 extern DeclList *sema_decls;
 extern Arena *sema_arena;
@@ -98,7 +99,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         char *cname = malloc(clen);
         snprintf(cname, clen, "%s_%s", safe_module_path, raw);
   
-        sema_insert_global(raw, cname, typ);
+        sema_insert_global(raw, cname, typ, d);
         free(raw);
         free(cname);
         break;
@@ -126,7 +127,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
             snprintf(cnamef, fclen, "%s_%s", safe_module_path, rawf);
         }
   
-        sema_insert_global(rawf, cnamef, rt);
+        sema_insert_global(rawf, cnamef, rt, d);
         free(rawf);
         free(cnamef);
   
@@ -147,7 +148,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         snprintf(cnames, sclen, "%s_%s", safe_module_path, raws);
   
         Type *sty = type_simple(sema_arena, id);
-        sema_insert_global(raws, cnames, sty);
+        sema_insert_global(raws, cnames, sty, d);
   
         free(raws);
         free(cnames);
@@ -179,7 +180,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         }
   
         Type *ety = type_simple(sema_arena, tid);
-        sema_insert_global(rawt, cnamet, ety);
+        sema_insert_global(rawt, cnamet, ety, d);
   
         // 2) Do not register the variants here → they get resolved via
         // current_return_type later.
@@ -370,6 +371,16 @@ void sema_resolve_stmt(Stmt *s) {
     sema_resolve_expr(rhs);
     sema_infer_expr(lhs);
     sema_infer_expr(rhs);
+
+    // Purity Check: func cannot modify global variable
+    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
+        if (lhs->is_global && lhs->decl && lhs->decl->kind == DECL_VARIABLE) {
+             fprintf(stderr, "Error: Pure function '%.*s' cannot modify global variable\n",
+                        (int)current_function_decl->as.function_decl.name->length,
+                        current_function_decl->as.function_decl.name->name);
+             exit(1);
+        }
+    }
     break;
   }
 
@@ -426,6 +437,8 @@ void sema_resolve_expr(Expr *e) {
       e->as.identifier_expr.id->name = copy;
       e->as.identifier_expr.id->length = (isize)mlen;
       e->type = sym->type;
+      e->decl = sym->decl;       // Populate decl
+      e->is_global = sym->is_global; // Populate is_global
       break;
     }
 
@@ -455,6 +468,8 @@ void sema_resolve_expr(Expr *e) {
             e->as.identifier_expr.id->name = copy;
             e->as.identifier_expr.id->length = (isize)strlen(copy);
             e->type = get_builtin_int_type();
+            e->decl = D; // Enum variant belongs to Enum Decl
+            e->is_global = true;
             return;
           }
         }
@@ -477,6 +492,20 @@ void sema_resolve_expr(Expr *e) {
     break;
   case EXPR_CALL:
     sema_resolve_expr(e->as.call_expr.callee);
+    
+    // Purity Check: func cannot call proc
+    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
+        Expr *callee = e->as.call_expr.callee;
+        if (callee->decl) {
+            if (callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE) {
+                fprintf(stderr, "Error: Pure function '%.*s' cannot call procedure\n",
+                        (int)current_function_decl->as.function_decl.name->length,
+                        current_function_decl->as.function_decl.name->name);
+                exit(1);
+            }
+        }
+    }
+
     for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
       sema_resolve_expr(a->expr);
     }

@@ -1,0 +1,20 @@
+var global_counter int
+
+proc impure_increment() {
+    global_counter = global_counter + 1
+}
+
+func pure_add(a int, b int) int {
+    // Violation 1: Calling a proc
+    // impure_increment()
+    
+    // Violation 2: Modifying global
+    global_counter = 100
+    
+    return a + b
+}
+
+proc main() int {
+    var x = pure_add(10, 20)
+    return 0
+}
