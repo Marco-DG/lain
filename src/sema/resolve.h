@@ -5,6 +5,7 @@
 
 
 #include "../ast.h"
+#include "exhaustiveness.h"  // Match exhaustiveness checking
 
 
 extern Type *current_return_type;
@@ -400,6 +401,11 @@ void sema_resolve_stmt(Stmt *s) {
       for (StmtList *b = c->body; b; b = b->next) {
         sema_resolve_stmt(b->stmt);
       }
+    }
+    // Check exhaustiveness after resolving all cases
+    if (!sema_check_match_exhaustive(s)) {
+      sema_report_nonexhaustive_match(s);
+      exit(1);
     }
     break;
 

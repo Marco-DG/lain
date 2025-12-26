@@ -246,9 +246,19 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
 static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
     if (!e) return;
     switch (e->kind) {
-    case EXPR_IDENTIFIER:
-        // bare identifiers are not consuming by themselves
+    case EXPR_IDENTIFIER: {
+        // Check if this is a use of an already-consumed linear variable
+        Id *id = e->as.identifier_expr.id;
+        if (id && tbl) {
+            LEntry *entry = ltable_find(tbl, id);
+            if (entry && entry->state == LSTATE_CONSUMED) {
+                fprintf(stderr, "sema error: use of linear variable '%.*s' after it was moved\n",
+                        (int)id->length, id->name ? id->name : "<unknown>");
+                exit(1);
+            }
+        }
         break;
+    }
 
     case EXPR_MEMBER:
         sema_check_expr_linearity(e->as.member_expr.target, tbl, loop_depth);
@@ -393,8 +403,8 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     ltable_consume(tbl, head->as.identifier_expr.id, loop_depth);
                 }
             }
-            // recurse just in case (though for IDENT/MEMBER it does nothing)
-            sema_check_expr_linearity(inner, tbl, loop_depth);
+            // NOTE: Don't recurse on inner here - we handle the consumption directly above
+            // Recursing would trigger false-positive "use after move" since we just consumed it
         }
         break;
     }

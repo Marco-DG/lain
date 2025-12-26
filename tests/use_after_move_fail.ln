@@ -1,0 +1,25 @@
+// Test for use-after-move: should FAIL compilation
+// Using a move-declared variable after it has been moved
+
+type Item {
+    id int
+}
+
+// This function properly consumes by returning via mov
+func transfer(mov item Item) Item {
+    return mov item
+}
+
+func main() int {
+    // Declare as mov to track linearity
+    mov myitem Item
+    myitem.id = 42
+    
+    // This consumes myitem (transfers ownership)
+    var transferred = transfer(mov myitem)
+    
+    // ERROR: myitem was already moved!
+    var bad_access = myitem.id
+    
+    return transferred.id + bad_access
+}
