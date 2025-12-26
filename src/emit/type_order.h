@@ -74,19 +74,13 @@ static void build_edges(TypeNode *nodes, int n) {
 
         for (DeclList *f = d->as.struct_decl.fields; f; f = f->next) {
             Type *ty = f->decl->as.variable_decl.type;
-            // strip off arrays / slices and wrapper kinds (move, comptime)
+            // strip off arrays / slices and comptime wrappers
+            // (with new OwnershipMode, we don't have TYPE_MOVE/TYPE_MUT as kinds)
             while (ty && (ty->kind == TYPE_ARRAY || ty->kind == TYPE_SLICE
-                          || ty->kind == TYPE_MOVE || ty->kind == TYPE_COMPTIME))
+                          || ty->kind == TYPE_COMPTIME))
             {
-                // prefer element_type for ARRAY/SLICE, and element_type for wrappers
-                if (ty->kind == TYPE_ARRAY || ty->kind == TYPE_SLICE) {
-                    ty = ty->element_type;
-                } else if (ty->kind == TYPE_MOVE) {
-                    if (ty->move.base) ty = ty->move.base;
-                    else ty = ty->element_type;
-                } else { // TYPE_COMPTIME
-                    ty = ty->element_type;
-                }
+                // prefer element_type for ARRAY/SLICE/COMPTIME
+                ty = ty->element_type;
             }
             if (ty && ty->kind == TYPE_SIMPLE) {
                 const char *ref = c_name_for_id(ty->base_type);

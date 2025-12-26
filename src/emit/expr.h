@@ -150,20 +150,31 @@ void emit_expr(Expr *expr, int depth) {
     bool is_ptr = false;
     Type *t = m->target->type;
     if (t) {
-        if (t->kind == TYPE_POINTER || t->kind == TYPE_MUT) {
+        // Check for explicit pointer type
+        if (t->kind == TYPE_POINTER) {
             is_ptr = true;
-        } else if (t->kind == TYPE_SIMPLE || t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
-             // Check if target is a parameter (Shared Reference)
-             if (m->target->kind == EXPR_IDENTIFIER) {
-                 Decl *d = m->target->decl;
-                 if (d) {
-                     if (d->kind == DECL_VARIABLE) {
-                         if (d->as.variable_decl.is_parameter) {
-                             if (!is_primitive_type(t)) is_ptr = true;
-                         }
-                     }
-                 }
-             }
+        }
+        // MODE_MUTABLE is always a pointer (T*)
+        else if (t->mode == MODE_MUTABLE) {
+            is_ptr = true;
+        }
+        // MODE_OWNED is always a value (T) - use .
+        else if (t->mode == MODE_OWNED) {
+            is_ptr = false;
+        }
+        // MODE_SHARED: check if it's a parameter (passed as const T*)
+        else if (t->mode == MODE_SHARED) {
+            if (t->kind == TYPE_SIMPLE || t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
+                // Check if target is a parameter (Shared Reference -> const T*)
+                if (m->target->kind == EXPR_IDENTIFIER) {
+                    Decl *d = m->target->decl;
+                    if (d && d->kind == DECL_VARIABLE) {
+                        if (d->as.variable_decl.is_parameter && !is_primitive_type(t)) {
+                            is_ptr = true;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -301,11 +312,11 @@ void emit_expr(Expr *expr, int depth) {
       if (param) {
            Type *pt = param->decl->as.variable_decl.type;
            // If parameter is Shared Reference (not mut, not mov) AND not primitive
-           if (pt->kind != TYPE_MUT && pt->kind != TYPE_MOVE && !is_primitive_type(pt)) {
+           if (pt->mode == MODE_SHARED && !is_primitive_type(pt)) {
                // Expects const T*
                Type *at = arg->expr->type;
                // If argument is passed by value (not mut, not pointer), emit &
-               if (at && at->kind != TYPE_MUT && at->kind != TYPE_POINTER) {
+               if (at && at->mode != MODE_MUTABLE && at->kind != TYPE_POINTER) {
                    EMIT("&(");
                    emit_expr(arg->expr, depth);
                    EMIT(")");

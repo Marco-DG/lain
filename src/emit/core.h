@@ -70,21 +70,13 @@ Id *get_root_base_type(Type *type) {
       type = type->element_type;
       continue;
     }
-    if (type->kind == TYPE_MOVE) {
-      // unwrap move wrapper and keep looking
-      // prefer move.base if present, otherwise fallback to element_type
-      if (type->move.base) {
-        type = type->move.base;
-      } else {
-        type = type->element_type;
-      }
-      continue;
-    }
     if (type->kind == TYPE_COMPTIME) {
       // comptime is a transparent wrapper: unwrap the inner element_type
       type = type->element_type;
       continue;
     }
+    // With new OwnershipMode system, mode is just a field, not a wrapper type
+    // So we don't need to unwrap TYPE_MOVE/TYPE_MUT anymore
     break;
   }
   return type ? type->base_type : NULL;
@@ -104,10 +96,8 @@ const char *c_name_for_id(Id *id) {
 
 static bool is_primitive_type(Type *t) {
     if (!t) return false;
-    // Unwrap wrappers
+    // Unwrap comptime wrapper only (mode is now just a field)
     while (t) {
-        if (t->kind == TYPE_MOVE) { t = t->move.base; continue; }
-        if (t->kind == TYPE_MUT) { t = t->mut.base; continue; }
         if (t->kind == TYPE_COMPTIME) { t = t->element_type; continue; }
         break;
     }
@@ -141,7 +131,7 @@ static bool is_primitive_type(Type *t) {
 }
 
 /*───────────────────────────────────────────────────────────────╗
-│ Helper: emit the C‐decl name for *any* semantic Type*        │
+│ Helper: emit the C-decl name for *any* semantic Type*        │
 ╚───────────────────────────────────────────────────────────────*/
 // Emit the C-decl name for *any* semantic Type*
 void c_name_for_type(Type *t, char *out, size_t cap) {
@@ -150,22 +140,27 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
     return;
   }
 
-  // --- Robust unwrapping of transparent wrappers ---
+  // --- Unwrap transparent wrappers (only TYPE_COMPTIME is a wrapper now) ---
   Type *u = t;
   while (u) {
-    if (u->kind == TYPE_MOVE) {
-      if (u->move.base) { u = u->move.base; continue; }
-      if (u->element_type) { u = u->element_type; continue; }
-      break;
-    }
     if (u->kind == TYPE_COMPTIME) {
       if (u->element_type) { u = u->element_type; continue; }
-      if (u->move.base) { u = u->move.base; continue; }
       break;
     }
     break;
   }
   t = u;
+
+  // Handle OwnershipMode for C code generation:
+  // MODE_SHARED (shared ref) -> const T* for structs, T for primitives
+  // MODE_MUTABLE (mut ref)   -> T* for all types
+  // MODE_OWNED (move)        -> T (value type)
+  
+  bool is_mutable_ref = (t->mode == MODE_MUTABLE);
+  bool is_shared_ref = (t->mode == MODE_SHARED);
+  bool is_owned = (t->mode == MODE_OWNED);
+  (void)is_shared_ref; // used in future for const T*
+  (void)is_owned;
 
   switch (t->kind) {
   case TYPE_SIMPLE: {
@@ -179,58 +174,51 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
     // u8,u16,u32,u64  -> uint8_t,uint16_t,uint32_t,uint64_t
     // i8,i16,i32,i64  -> int8_t,int16_t,int32_t,int64_t
     // isize, usize    -> intptr_t, uintptr_t (platform pointer-sized)
-    // Compare using exact lengths to avoid accidental prefix matches.
+    char base_name[128];
+    
     if (base->length == 2 && strncmp(base->name, "u8", 2) == 0) {
-      snprintf(out, cap, "uint8_t");
-      return;
+      snprintf(base_name, sizeof(base_name), "uint8_t");
+    } else if (base->length == 3 && strncmp(base->name, "u16", 3) == 0) {
+      snprintf(base_name, sizeof(base_name), "uint16_t");
+    } else if (base->length == 3 && strncmp(base->name, "u32", 3) == 0) {
+      snprintf(base_name, sizeof(base_name), "uint32_t");
+    } else if (base->length == 3 && strncmp(base->name, "u64", 3) == 0) {
+      snprintf(base_name, sizeof(base_name), "uint64_t");
+    } else if (base->length == 2 && strncmp(base->name, "i8", 2) == 0) {
+      snprintf(base_name, sizeof(base_name), "int8_t");
+    } else if (base->length == 3 && strncmp(base->name, "i16", 3) == 0) {
+      snprintf(base_name, sizeof(base_name), "int16_t");
+    } else if (base->length == 3 && strncmp(base->name, "i32", 3) == 0) {
+      snprintf(base_name, sizeof(base_name), "int32_t");
+    } else if (base->length == 3 && strncmp(base->name, "i64", 3) == 0) {
+      snprintf(base_name, sizeof(base_name), "int64_t");
+    } else if (base->length == 5 && strncmp(base->name, "isize", 5) == 0) {
+      snprintf(base_name, sizeof(base_name), "intptr_t");
+    } else if (base->length == 5 && strncmp(base->name, "usize", 5) == 0) {
+      snprintf(base_name, sizeof(base_name), "uintptr_t");
+    } else {
+      // fallback to symbol lookup (enums, structs, locals…)
+      const char *cname = c_name_for_id(base);
+      snprintf(base_name, sizeof(base_name), "%s", cname);
     }
-    if (base->length == 3 && strncmp(base->name, "u16", 3) == 0) {
-      snprintf(out, cap, "uint16_t");
-      return;
+    
+    // Add pointer for mutable references
+    if (is_mutable_ref) {
+      snprintf(out, cap, "%s *", base_name);
+    } else {
+      snprintf(out, cap, "%s", base_name);
     }
-    if (base->length == 3 && strncmp(base->name, "u32", 3) == 0) {
-      snprintf(out, cap, "uint32_t");
-      return;
-    }
-    if (base->length == 3 && strncmp(base->name, "u64", 3) == 0) {
-      snprintf(out, cap, "uint64_t");
-      return;
-    }
-    if (base->length == 2 && strncmp(base->name, "i8", 2) == 0) {
-      snprintf(out, cap, "int8_t");
-      return;
-    }
-    if (base->length == 3 && strncmp(base->name, "i16", 3) == 0) {
-      snprintf(out, cap, "int16_t");
-      return;
-    }
-    if (base->length == 3 && strncmp(base->name, "i32", 3) == 0) {
-      snprintf(out, cap, "int32_t");
-      return;
-    }
-    if (base->length == 3 && strncmp(base->name, "i64", 3) == 0) {
-      snprintf(out, cap, "int64_t");
-      return;
-    }
-    if (base->length == 5 && strncmp(base->name, "isize", 5) == 0) {
-      snprintf(out, cap, "intptr_t");
-      return;
-    }
-    if (base->length == 5 && strncmp(base->name, "usize", 5) == 0) {
-      snprintf(out, cap, "uintptr_t");
-      return;
-    }
-
-    // fallback to symbol lookup (enums, structs, locals…)
-    const char *cname = c_name_for_id(base);
-    snprintf(out, cap, "%s", cname);
     return;
   }
 
   case TYPE_ARRAY:
   case TYPE_SLICE: {
     const char *sliceName = emit_slice_type_definition(t);
-    snprintf(out, cap, "%s", sliceName);
+    if (is_mutable_ref) {
+      snprintf(out, cap, "%s *", sliceName);
+    } else {
+      snprintf(out, cap, "%s", sliceName);
+    }
     return;
   }
 
@@ -241,25 +229,13 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
     return;
   }
 
-  case TYPE_MUT: {
-    char tgt[128];
-    c_name_for_type(t->mut.base, tgt, sizeof tgt);
-    snprintf(out, cap, "%s *", tgt);
-    return;
-  }
-
-  // Defensive: wrappers already unwrapped; but handle gracefully if we see them
-  case TYPE_MOVE:
   case TYPE_COMPTIME: {
-    if (t->move.base) {
-      c_name_for_type(t->move.base, out, cap);
-      return;
-    }
+    // Should have been unwrapped above, but handle gracefully
     if (t->element_type) {
       c_name_for_type(t->element_type, out, cap);
       return;
     }
-    snprintf(out, cap, "/*<unknown-wrapper-type>*/");
+    snprintf(out, cap, "/*<unknown-comptime-type>*/");
     return;
   }
 

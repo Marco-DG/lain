@@ -11,19 +11,31 @@ void emit_decl_list(DeclList *decls, int depth);
 
 static void emit_param_type(Type *t) {
     if (!t) return;
-    if (t->kind == TYPE_MOVE) {
-            emit_type(t->move.base); // Unwrap move -> T
-    } else if (t->kind == TYPE_MUT) {
-            emit_type(t); // emit_type handles TYPE_MUT -> T*
+    
+    // Get the base type name without ownership decorations
+    // We need to temporarily set mode to MODE_SHARED to get plain type name
+    OwnershipMode original_mode = t->mode;
+    t->mode = MODE_SHARED;  // temporarily remove mode decoration
+    
+    char base_name[128];
+    c_name_for_type(t, base_name, sizeof(base_name));
+    
+    t->mode = original_mode;  // restore original mode
+    
+    // Now emit the correct C type based on ownership mode
+    if (original_mode == MODE_OWNED) {
+        // mov T -> pass by value (T)
+        EMIT("%s", base_name);
+    } else if (original_mode == MODE_MUTABLE) {
+        // mut T -> pass as mutable pointer (T*)
+        EMIT("%s *", base_name);
     } else {
-            // Shared Reference
-            if (is_primitive_type(t)) {
-                emit_type(t); // Pass by value
-            } else {
-                EMIT("const ");
-                emit_type(t);
-                EMIT("*");
-            }
+        // Shared Reference (MODE_SHARED)
+        if (is_primitive_type(t)) {
+            EMIT("%s", base_name);  // Pass by value for primitives
+        } else {
+            EMIT("const %s*", base_name);  // Pass as const pointer for structs
+        }
     }
 }
 
@@ -125,7 +137,8 @@ void emit_decl(Decl* decl, int depth) {
                             if (field_type) {
                                 emit_indent(depth + 1);
                                 emit_type(field_type);
-                                EMIT(" %.*s = _param_%d.%.*s;\n",
+                                // Struct params are passed as const T*, so use ->
+                                EMIT(" %.*s = _param_%d->%.*s;\n",
                                      (int)n->id->length, n->id->name,
                                      param_idx,
                                      (int)n->id->length, n->id->name);

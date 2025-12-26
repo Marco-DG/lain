@@ -33,9 +33,9 @@
 
 /* ---------- small helpers ---------- */
 
-static inline int is_type_move(Type *t) {
-    return t && t->kind == TYPE_MOVE;
-}
+// Use the type_is_linear helper from ast.h for checking linear types
+// This is just an alias for backward compatibility in this file
+#define is_type_move(t) type_is_linear(t)
 
 /* ---------- linear table (Id* keyed) ---------- */
 
@@ -266,7 +266,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
             ExprList *args = e->as.call_expr.args;
             for (; params && args; params = params->next, args = args->next) {
                 Type *pty = params->decl->as.variable_decl.type;
-                if (pty && pty->kind == TYPE_MOVE) {
+                if (is_type_move(pty)) {
                     Expr *arg = args->expr;
                     if (!arg) continue;
                     if (arg->kind == EXPR_IDENTIFIER) {

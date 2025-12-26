@@ -36,3 +36,24 @@ run_test tests/functions.ln
 run_test tests/structs.ln
 run_test tests/arrays.ln
 run_test tests/math.ln
+run_test tests/func_proc.ln
+run_test tests/mov_syntax.ln
+run_test tests/ownership.ln
+run_test tests/destructuring.ln
+
+# Negative tests (should fail to compile)
+run_negative_test() {
+    FILE=$1
+    echo "---------------------------------------------------"
+    echo "Negative Test: $FILE (should fail)"
+    ./src/compiler.exe $FILE 2>&1
+    if [ $? -eq 0 ]; then
+        echo "FAIL: $FILE should have failed compilation but succeeded"
+        return 1
+    else
+        echo "PASS: $FILE correctly failed compilation"
+        return 0
+    fi
+}
+
+run_negative_test tests/purity_fail.ln

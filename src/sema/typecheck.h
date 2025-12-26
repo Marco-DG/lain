@@ -102,12 +102,12 @@ static Type *lookup_struct_field_type(Id *struct_name, Id *field) {
     type inference/checking logic
 */
 
-/* Unwrap wrappers to get the underlying type (struct/array/slice) */
+/* Unwrap wrapper types to get the underlying type (struct/array/slice) */
 static Type *sema_unwrap_type(Type *t) {
     while (t) {
-        if (t->kind == TYPE_MUT) t = t->mut.base;
-        else if (t->kind == TYPE_MOVE) t = t->move.base;
-        else if (t->kind == TYPE_POINTER) t = t->element_type;
+        // With the new OwnershipMode system, we only unwrap pointer/comptime
+        // The mode is just a field on the type, not a wrapper
+        if (t->kind == TYPE_POINTER) t = t->element_type;
         else if (t->kind == TYPE_COMPTIME) t = t->element_type;
         else break;
     }
@@ -199,15 +199,16 @@ void sema_infer_expr(Expr *e) {
     break;
 
   case EXPR_STRING: {
-    // A compile‐time fixed‐length slice (string literal)
+    // A compile-time fixed-length slice (string literal)
     size_t L = (size_t)e->as.string_expr.length;
 
     // element type = u8
     Type *elem = get_builtin_u8_type();
 
-    // carve out the slice‐type in the arena
+    // carve out the slice-type in the arena
     Type *slice_ty = arena_push_aligned(sema_arena, Type);
     slice_ty->kind = TYPE_SLICE;
+    slice_ty->mode = MODE_SHARED;  // string literals are shared by default
     slice_ty->element_type = elem;
 
     // FIXED-LENGTH: no sentinel data, just record the length

@@ -32,24 +32,27 @@ typedef struct Id {
 │ TYPE NODE                                                   │
 ╚──────────────────────────────────────────────────────────────────*/
 
+// Ownership mode for linear type system
+typedef enum {
+    MODE_OWNED,    // mov T - linear, must consume exactly once
+    MODE_SHARED,   // T     - immutable borrow (default)
+    MODE_MUTABLE,  // mut T - mutable borrow
+} OwnershipMode;
+
 typedef enum {
     TYPE_SIMPLE,    // e.g. "u8", "Kind"
     TYPE_ARRAY,     // e.g. "u8[]"
-    TYPE_SLICE,      // e.g. "u8[:0]"
-    TYPE_POINTER,    // pointer to element type, e.g. "u8 *"
-    TYPE_MOVE,
-    TYPE_MUT, // New
+    TYPE_SLICE,     // e.g. "u8[:0]"
+    TYPE_POINTER,   // pointer to element type, e.g. "u8 *"
     TYPE_COMPTIME,  // comptime modifier
 } TypeKind;
 
 typedef struct Type {
     TypeKind kind;
+    OwnershipMode mode;         // Ownership semantics (owned/shared/mutable)
     Id* base_type;              // The base type, e.g., "u8"
     struct Type* element_type;  // Used for nested arrays, e.g., "SomeType[][]"
-    struct { struct Type *base; } move;   // for TYPE_MOVE
-    struct { struct Type *base; } mut;    // for TYPE_MUT
 
-    
     /* For fixed-length arrays (TYPE_ARRAY), or -1 for dynamic-length arrays:
        - array_len >= 0 : a compile-time fixed length (u8[5])
        - array_len == -1 : dynamic-length array / runtime slice (u8[])
@@ -351,7 +354,8 @@ Id *id(Arena *arena, isize length, const char* name) {
 // Simple names: no element_type, no sentinel
 Type *type_simple(Arena *arena, Id *base) {
     Type *t = arena_push_aligned(arena, Type);
-    t->kind              = TYPE_SIMPLE;
+    t->kind      = TYPE_SIMPLE;
+    t->mode      = MODE_SHARED;  // default ownership
     t->base_type = base;
     return t;
 }
@@ -361,37 +365,41 @@ Type *type_simple(Arena *arena, Id *base) {
    array_len == -1 -> dynamic-length array (slice-like) */
 Type *type_array(Arena *arena, Type *element_type, isize array_len) {
     Type *t = arena_push_aligned(arena, Type);
-    t->kind              = TYPE_ARRAY;
+    t->kind         = TYPE_ARRAY;
+    t->mode         = MODE_SHARED;  // default ownership
     t->element_type = element_type;
-    t->array_len = array_len;
+    t->array_len    = array_len;
     return t;
 }
 
 // Slices with a compile-time sentinel
-Type *type_slice(Arena *arena, Type *element_type, const char *sentinel_str, isize       sentinel_len, bool        sentinel_is_string)
-{
+Type *type_slice(Arena *arena, Type *element_type, const char *sentinel_str, 
+                 isize sentinel_len, bool sentinel_is_string) {
     Type *t = arena_push_aligned(arena, Type);
     t->kind              = TYPE_SLICE;
-    t->element_type = element_type;
-    t->sentinel_str = sentinel_str;
-    t->sentinel_len = sentinel_len;
+    t->mode              = MODE_SHARED;  // default ownership
+    t->element_type      = element_type;
+    t->sentinel_str      = sentinel_str;
+    t->sentinel_len      = sentinel_len;
     t->sentinel_is_string = sentinel_is_string;
     return t;
 }
 
+// Create a copy of a type with MODE_OWNED (linear/move semantics)
 Type *type_move(Arena *arena, Type *inner) {
-    assert(inner != NULL);   // catch mistakes early
+    assert(inner != NULL);
     Type *t = arena_push_aligned(arena, Type);
-    t->kind               = TYPE_MOVE;
-    t->move.base = inner;
+    *t = *inner;           // Copy all fields from inner type
+    t->mode = MODE_OWNED;  // Override mode to owned
     return t;
 }
 
+// Create a copy of a type with MODE_MUTABLE (mutable borrow)
 Type *type_mut(Arena *arena, Type *inner) {
     assert(inner != NULL);
     Type *t = arena_push_aligned(arena, Type);
-    t->kind               = TYPE_MUT;
-    t->mut.base           = inner;
+    *t = *inner;            // Copy all fields from inner type
+    t->mode = MODE_MUTABLE; // Override mode to mutable
     return t;
 }
 
@@ -401,7 +409,8 @@ Type *type_mut(Arena *arena, Type *inner) {
 Type *type_comptime(Arena *arena, Type *base) {
     assert(base != NULL);
     Type *t = arena_push_aligned(arena, Type);
-    t->kind               = TYPE_COMPTIME;
+    t->kind         = TYPE_COMPTIME;
+    t->mode         = base->mode;  // preserve ownership
     t->element_type = base;
     return t;
 }
@@ -409,9 +418,27 @@ Type *type_comptime(Arena *arena, Type *base) {
 Type *type_pointer(Arena *arena, Type *element_type) {
     assert(element_type != NULL);
     Type *t = arena_push_aligned(arena, Type);
-    t->kind               = TYPE_POINTER;
+    t->kind         = TYPE_POINTER;
+    t->mode         = MODE_SHARED;  // pointers default to shared
     t->element_type = element_type;
     return t;
+}
+
+// Helper: get underlying type without ownership wrapper
+static inline Type *type_unwrap(Type *t) {
+    // With the new system, mode is a field, not a wrapper type
+    // So "unwrapping" just returns the same type pointer
+    return t;
+}
+
+// Helper: check if type has linear/owned semantics
+static inline bool type_is_linear(Type *t) {
+    return t && t->mode == MODE_OWNED;
+}
+
+// Helper: check if type is a mutable borrow
+static inline bool type_is_mutable(Type *t) {
+    return t && t->mode == MODE_MUTABLE;
 }
 
 /*──────────────────────────────────────────────────────────────────╗

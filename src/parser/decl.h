@@ -309,13 +309,28 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 tail  = &(*tail)->next;
 
             } else {
-                // Normal parameter: name Type
+                // Normal parameter: [mov|mut] name Type
+                // Check for ownership mode prefix
+                OwnershipMode param_mode = MODE_SHARED;  // default
+                if (parser_match(TOKEN_KEYWORD_MOV)) {
+                    parser_advance();
+                    param_mode = MODE_OWNED;
+                } else if (parser_match(TOKEN_KEYWORD_MUT)) {
+                    parser_advance();
+                    param_mode = MODE_MUTABLE;
+                }
+
                 parser_expect(TOKEN_IDENTIFIER, "Expected parameter name");
                 Id *pname = id(arena, parser->token.length, parser->token.start);
                 parser_advance();
 
                 // parameter type
                 Type *ptype = parse_type(arena, parser);
+                
+                // Apply ownership mode to the type
+                if (ptype) {
+                    ptype->mode = param_mode;
+                }
 
                 // wrap in TYPE_COMPTIME safely
                 if (is_comptime) {

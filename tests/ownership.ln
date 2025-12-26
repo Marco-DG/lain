@@ -9,21 +9,21 @@ func print_point(p Point) {
     printf("Point(%d, %d)\n", p.x, p.y);
 }
 
-func move_point(p mov Point) Point {
+func move_point(mov p Point) Point {
     // Owned: p is Point (value)
     // Access fields via . (handled by emitter)
     printf("Moved Point(%d, %d)\n", p.x, p.y);
     return mov p;
 }
 
-func mutate_point(p mut Point) {
+func mutate_point(mut p Point) {
     // Mutable reference: p is Point*
     // Access fields via -> (handled by emitter)
     p.x = p.x + 1;
     p.y = p.y + 1;
 }
 
-func main() {
+func main() int {
     var p1 Point;
     p1.x = 10;
     p1.y = 20;
@@ -40,4 +40,5 @@ func main() {
     
     // p1 is consumed here (linearity check should catch use-after-move if implemented)
     // For now, we just verify C code generation correctness.
+    return 0
 }
