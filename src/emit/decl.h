@@ -21,6 +21,7 @@ void emit_decl(Decl* decl, int depth) {
             break;
 
 
+        case DECL_PROCEDURE:
         case DECL_FUNCTION: {
             emit_indent(depth);
             // Print return type and function name.

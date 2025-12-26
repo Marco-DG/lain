@@ -12,7 +12,9 @@ DeclList* parse_decl_list(Arena *arena, Parser *parser);
 Decl *   parse_decl(Arena *arena, Parser *parser);
 Decl *   parse_var_decl(Arena *arena, Parser *parser);
 Decl *   parse_func_decl(Arena *arena, Parser *parser);
+Decl *   parse_proc_decl(Arena *arena, Parser *parser); // New
 Decl *   parse_extern_func_decl(Arena *arena, Parser *parser);
+Decl *   parse_extern_proc_decl(Arena *arena, Parser *parser); // New
 Decl *   parse_type_decl(Arena *arena, Parser *parser);
 Decl *   parse_import_decl(Arena *arena, Parser *parser);
 
@@ -83,14 +85,26 @@ Decl *parse_decl(Arena* arena, Parser* parser)
     // extern func …
     if (parser_match(TOKEN_KEYWORD_EXTERN)) {
         parser_advance();  // consume 'extern'
-        parser_expect(TOKEN_KEYWORD_FUNC, "Expected 'func' after 'extern'");
-        parser_advance();  // consume 'func'
-        return parse_extern_func_decl(arena, parser);
+        if (parser_match(TOKEN_KEYWORD_FUNC)) {
+            parser_advance();  // consume 'func'
+            return parse_extern_func_decl(arena, parser);
+        }
+        if (parser_match(TOKEN_KEYWORD_PROC)) {
+            parser_advance();  // consume 'proc'
+            return parse_extern_proc_decl(arena, parser);
+        }
+        parser_expect(TOKEN_KEYWORD_FUNC, "Expected 'func' or 'proc' after 'extern'");
+        return NULL;
     }
 
     if (parser_match(TOKEN_KEYWORD_FUNC)) {
         parser_advance();
         return parse_func_decl(arena, parser);
+    }
+
+    if (parser_match(TOKEN_KEYWORD_PROC)) {
+        parser_advance();
+        return parse_proc_decl(arena, parser);
     }
 
     return NULL;
@@ -232,14 +246,14 @@ Decl *parse_var_decl(Arena* arena, Parser* parser)
 }
 
 // func <name>(<params>) <return_type> { <body> }
-Decl *parse_func_decl(Arena* arena, Parser* parser) {
+Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     // function name
-    parser_expect(TOKEN_IDENTIFIER, "Expected function name");
+    parser_expect(TOKEN_IDENTIFIER, "Expected function/procedure name");
     Id *func_name = id(arena, parser->token.length, parser->token.start);
     parser_advance();
 
     // parameter list
-    parser_expect(TOKEN_L_PAREN, "Expected '(' after function name");
+    parser_expect(TOKEN_L_PAREN, "Expected '(' after name");
     parser_advance();
 
     DeclList *params = NULL;
@@ -247,8 +261,6 @@ Decl *parse_func_decl(Arena* arena, Parser* parser) {
 
     if (!parser_match(TOKEN_R_PAREN)) {
         do {
-            // fprintf(stderr, "DEBUG: parsing param, token: %s\n", token_kind_name(parser->token.kind));
-            // Decl *param_decl = NULL;
             bool is_move = false;
             bool is_comptime = false;
             if (parser_match(TOKEN_KEYWORD_MOV)) {
@@ -342,28 +354,40 @@ Decl *parse_func_decl(Arena* arena, Parser* parser) {
     }
 
     // function body
-    parser_expect(TOKEN_L_BRACE, "Expected '{' after function signature");
+    parser_expect(TOKEN_L_BRACE, "Expected '{' after signature");
     parser_advance();
 
     StmtList *body = parse_stmt_list(arena, parser);
 
-    parser_expect(TOKEN_R_BRACE, "Expected '}' at end of function");
+    parser_expect(TOKEN_R_BRACE, "Expected '}' at end of body");
     parser_advance();
 
-    return decl_function(arena, func_name, params, ret_type, body, false);
+    if (is_proc) {
+        return decl_procedure(arena, func_name, params, ret_type, body, false);
+    } else {
+        return decl_function(arena, func_name, params, ret_type, body, false);
+    }
+}
+
+Decl *parse_func_decl(Arena* arena, Parser* parser) {
+    return parse_func_proc_decl_impl(arena, parser, false);
+}
+
+Decl *parse_proc_decl(Arena* arena, Parser* parser) {
+    return parse_func_proc_decl_impl(arena, parser, true);
 }
 
 
 
 // extern func <name>(<params>) <return> ;
-Decl *parse_extern_func_decl(Arena *arena, Parser *parser) {
+Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_proc) {
     // name
-    parser_expect(TOKEN_IDENTIFIER, "Expected function name");
+    parser_expect(TOKEN_IDENTIFIER, "Expected function/procedure name");
     Id *func_name = id(arena, parser->token.length, parser->token.start);
     parser_advance();
 
     // parameters
-    parser_expect(TOKEN_L_PAREN, "Expected '(' after function name");
+    parser_expect(TOKEN_L_PAREN, "Expected '(' after name");
     parser_advance();
 
     DeclList *params = NULL;
@@ -376,16 +400,6 @@ Decl *parse_extern_func_decl(Arena *arena, Parser *parser) {
                  // consume ".." then "."
                  parser_advance(); 
                  parser_advance();
-                 // We don't really store varargs in the AST yet, or we can use a special type/flag.
-                 // For now, let's just break and assume it's the last thing.
-                 // But wait, we need to consume it.
-                 // And maybe store it?
-                 // The current AST doesn't seem to support varargs explicitly in DeclFunction?
-                 // Let's just skip it for now and hope the backend handles it or we don't need it for this test.
-                 // Actually, the test uses printf with varargs.
-                 // Let's just parse it as a parameter named "varargs" of type "void"?
-                 // Or just ignore it if the backend supports it.
-                 // Given the crash, let's just try to parse normal parameters first.
                  break;
             }
 
@@ -424,11 +438,23 @@ Decl *parse_extern_func_decl(Arena *arena, Parser *parser) {
     }
 
     // require end-of-decl (newline or semicolon)
-    parser_expect_eol("Expected ';' or newline after extern func decl");
+    parser_expect_eol("Expected ';' or newline after extern decl");
     parser_advance();
 
     // NULL body signals extern
-    return decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true);
+    if (is_proc) {
+        return decl_procedure(arena, func_name, params, ret_type, /*body=*/NULL, true);
+    } else {
+        return decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true);
+    }
+}
+
+Decl *parse_extern_func_decl(Arena *arena, Parser *parser) {
+    return parse_extern_func_proc_decl_impl(arena, parser, false);
+}
+
+Decl *parse_extern_proc_decl(Arena *arena, Parser *parser) {
+    return parse_extern_func_proc_decl_impl(arena, parser, true);
 }
 
 

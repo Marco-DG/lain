@@ -91,7 +91,9 @@ typedef struct DeclList{
 typedef enum {
     DECL_VARIABLE,
     DECL_FUNCTION,
+    DECL_PROCEDURE,
     DECL_EXTERN_FUNCTION,
+    DECL_EXTERN_PROCEDURE,
     DECL_STRUCT,
     DECL_ENUM,
     DECL_IMPORT,
@@ -454,6 +456,17 @@ Decl *decl_variable(Arena *arena, Id *name, Type *type) {
 Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type, StmtList *body, bool is_extern) {
     Decl *d = arena_push_aligned(arena, Decl);
     d->kind = is_extern ? DECL_EXTERN_FUNCTION : DECL_FUNCTION;
+    d->as.function_decl.name = name;
+    d->as.function_decl.params = params;
+    d->as.function_decl.return_type = return_type;
+    d->as.function_decl.body = body;
+    d->as.function_decl.is_extern   = is_extern;
+    return d;
+}
+
+Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type, StmtList *body, bool is_extern) {
+    Decl *d = arena_push_aligned(arena, Decl);
+    d->kind = is_extern ? DECL_EXTERN_PROCEDURE : DECL_PROCEDURE;
     d->as.function_decl.name = name;
     d->as.function_decl.params = params;
     d->as.function_decl.return_type = return_type;

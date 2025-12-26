@@ -105,7 +105,9 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
       }
   
       case DECL_EXTERN_FUNCTION:
-      case DECL_FUNCTION: {
+      case DECL_EXTERN_PROCEDURE:
+      case DECL_FUNCTION:
+      case DECL_PROCEDURE: {
         // function name + return type → insert into sema_globals
         Id *id = d->as.function_decl.name;
         Type *rt = d->as.function_decl.return_type;
@@ -115,7 +117,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         rawf[id->length] = '\0';
   
         char *cnamef;
-        if (d->kind == DECL_EXTERN_FUNCTION) {
+        if (d->kind == DECL_EXTERN_FUNCTION || d->kind == DECL_EXTERN_PROCEDURE) {
             // Extern functions use their raw name
             cnamef = strdup(rawf);
         } else {

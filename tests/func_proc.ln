@@ -1,0 +1,11 @@
+extern proc printf(fmt u8[:0], ...) int
+
+func add(a int, b int) int {
+    return a + b
+}
+
+proc main() int {
+    var x = add(10, 20)
+    printf("Result: %d\n", x)
+    return 0
+}

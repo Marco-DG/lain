@@ -191,7 +191,7 @@ static void emit_decl_list_topo(DeclList *decls, int depth) {
 
     // 4) emit all functions in original order
     for (DeclList *dl = decls; dl; dl = dl->next) {
-        if (dl->decl->kind == DECL_FUNCTION)
+        if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE)
             emit_decl(dl->decl, depth);
     }
 
