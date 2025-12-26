@@ -1,0 +1,23 @@
+// Test for enum exhaustiveness WITHOUT else
+// All variants covered, so should compile
+
+extern func printf(fmt u8[:0], ...) int
+
+type Status {
+    Ready,
+    Running,
+    Done
+}
+
+func main() int {
+    var s Status = Running
+    
+    // All 3 variants covered, no else needed!
+    match s {
+        Ready: printf("Ready\n")
+        Running: printf("Running\n")
+        Done: printf("Done\n")
+    }
+    
+    return 0
+}

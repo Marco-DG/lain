@@ -42,6 +42,8 @@ run_test tests/ownership.ln
 run_test tests/destructuring.ln
 run_test tests/borrow_pass.ln
 run_test tests/bounds_pass.ln
+run_test tests/enums.ln
+run_test tests/enum_exhaustive.ln
 
 # Negative tests (should fail to compile)
 run_negative_test() {

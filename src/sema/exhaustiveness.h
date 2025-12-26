@@ -5,14 +5,16 @@
  * Exhaustiveness Checking for Lain Match Statements
  * 
  * Ensures that match statements cover all possible cases.
- * For now, requires either:
- * - An `else:` case (catch-all)
- * - OR explicit coverage of all enum variants (when matching on enum)
+ * Supports:
+ * - Enum types: all variants must be covered (or have else:)
+ * - Bool types: true and false must be covered (or have else:)
+ * - Integer types: must have else: (infinite domain)
  */
 
 #include "../ast.h"
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 
 // Debug flag
 #ifndef SEMA_EXHAUSTIVENESS_DEBUG
@@ -25,8 +27,11 @@
 #define EXHAUST_DBG(fmt, ...) do {} while(0)
 #endif
 
+// Forward declaration for symbol lookup (from resolve.h)
+extern DeclList *sema_decls;
+
 /*───────────────────────────────────────────────────────────────────╗
-│ Match Exhaustiveness Check                                         │
+│ Helper Functions                                                    │
 ╚───────────────────────────────────────────────────────────────────*/
 
 // Check if a match statement has an else case (catch-all)
@@ -40,25 +45,93 @@ static bool match_has_else_case(StmtMatchCase *cases) {
     return false;
 }
 
-// Count the number of cases (excluding else)
-static int match_count_cases(StmtMatchCase *cases) {
-    int count = 0;
-    for (StmtMatchCase *c = cases; c; c = c->next) {
-        if (c->pattern != NULL) {
-            count++;
+// Find enum declaration by type name
+static Decl *find_enum_decl(Type *vtype) {
+    if (!vtype || vtype->kind != TYPE_SIMPLE || !vtype->base_type) {
+        return NULL;
+    }
+    
+    const char *type_name = vtype->base_type->name;
+    int type_len = vtype->base_type->length;
+    
+    for (DeclList *dl = sema_decls; dl; dl = dl->next) {
+        if (!dl->decl || dl->decl->kind != DECL_ENUM) continue;
+        
+        Id *enum_name = dl->decl->as.enum_decl.type_name;
+        if (enum_name && enum_name->length == type_len &&
+            strncmp(enum_name->name, type_name, type_len) == 0) {
+            return dl->decl;
         }
     }
-    return count;
+    return NULL;
 }
 
-// Check if a match on integer literals covers common patterns
-// Returns true if the match appears exhaustive for integer type
-static bool match_check_int_exhaustiveness(Type *value_type, StmtMatchCase *cases) {
-    (void)value_type;
-    (void)cases;
-    // For integer types, we can't prove exhaustiveness without else
-    // (infinite domain)
-    return match_has_else_case(cases);
+// Check if a pattern matches an enum variant by name
+// Handles mangled names like "module_Type_Variant" matching variant "Variant"
+static bool pattern_matches_variant(Expr *pattern, Id *variant) {
+    if (!pattern || !variant) return false;
+    
+    // Pattern should be an identifier
+    if (pattern->kind != EXPR_IDENTIFIER) return false;
+    
+    Id *pat_id = pattern->as.identifier_expr.id;
+    if (!pat_id || !pat_id->name || !variant->name) return false;
+    
+    // First try exact match
+    if (pat_id->length == variant->length &&
+        strncmp(pat_id->name, variant->name, variant->length) == 0) {
+        return true;
+    }
+    
+    // Try suffix match: pattern ends with "_Variant"
+    // e.g., "tests_enums_Color_Red" ends with "_Red"
+    if (pat_id->length > variant->length + 1) {
+        const char *suffix_start = pat_id->name + (pat_id->length - variant->length);
+        // Check if character before suffix is '_'
+        if (*(suffix_start - 1) == '_' &&
+            strncmp(suffix_start, variant->name, variant->length) == 0) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Check if all enum variants are covered
+static bool match_check_enum_exhaustiveness(Decl *enum_decl, StmtMatchCase *cases) {
+    if (!enum_decl) return false;
+    
+    IdList *variants = enum_decl->as.enum_decl.variants;
+    
+    // For each variant, check if there's a matching case
+    for (IdList *v = variants; v; v = v->next) {
+        if (!v->id) continue;
+        
+        EXHAUST_DBG("checking variant '%.*s'", (int)v->id->length, v->id->name);
+        
+        bool variant_covered = false;
+        for (StmtMatchCase *c = cases; c; c = c->next) {
+            if (c->pattern == NULL) {
+                // else case covers everything
+                variant_covered = true;
+                break;
+            }
+            
+            if (pattern_matches_variant(c->pattern, v->id)) {
+                variant_covered = true;
+                break;
+            }
+        }
+        
+        if (!variant_covered) {
+            EXHAUST_DBG("enum variant '%.*s' not covered", 
+                       (int)v->id->length, v->id->name);
+            return false;
+        }
+    }
+    
+    EXHAUST_DBG("all enum variants covered");
+    return true;
 }
 
 // Check if a match on a boolean covers both true and false
@@ -82,6 +155,10 @@ static bool match_check_bool_exhaustiveness(StmtMatchCase *cases) {
     
     return has_true && has_false;
 }
+
+/*───────────────────────────────────────────────────────────────────╗
+│ Main Exhaustiveness Check                                          │
+╚───────────────────────────────────────────────────────────────────*/
 
 // Main exhaustiveness check function
 // Returns true if the match is exhaustive, false otherwise
@@ -107,26 +184,30 @@ static bool sema_check_match_exhaustive(Stmt *match_stmt) {
     // Check based on the type of the matched value
     Type *vtype = value ? value->type : NULL;
     
-    if (vtype) {
-        // For bool type, check if both true and false are covered
-        if (vtype->kind == TYPE_SIMPLE && vtype->base_type) {
-            const char *type_name = vtype->base_type->name;
-            int type_len = vtype->base_type->length;
-            
-            if (type_len == 4 && strncmp(type_name, "bool", 4) == 0) {
-                if (match_check_bool_exhaustiveness(cases)) {
-                    EXHAUST_DBG("match on bool is exhaustive");
-                    return true;
-                }
+    if (vtype && vtype->kind == TYPE_SIMPLE && vtype->base_type) {
+        const char *type_name = vtype->base_type->name;
+        int type_len = vtype->base_type->length;
+        
+        // Check for bool
+        if (type_len == 4 && strncmp(type_name, "bool", 4) == 0) {
+            if (match_check_bool_exhaustiveness(cases)) {
+                EXHAUST_DBG("match on bool is exhaustive");
+                return true;
             }
         }
         
-        // TODO: For enum types, check all variants are covered
-        // For now, require else for non-bool types
+        // Check for enum type
+        Decl *enum_decl = find_enum_decl(vtype);
+        if (enum_decl) {
+            if (match_check_enum_exhaustiveness(enum_decl, cases)) {
+                return true;
+            }
+            // Fall through to error - enum not fully covered
+        }
     }
     
     // For integer/other types without else, not exhaustive
-    EXHAUST_DBG("match is NOT exhaustive (no else, not complete enum)");
+    EXHAUST_DBG("match is NOT exhaustive (no else, not complete coverage)");
     return false;
 }
 
@@ -137,3 +218,4 @@ static void sema_report_nonexhaustive_match(Stmt *match_stmt) {
 }
 
 #endif /* SEMA_EXHAUSTIVENESS_H */
+

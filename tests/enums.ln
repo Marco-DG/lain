@@ -1,0 +1,22 @@
+// Simpler enum test - enum value directly without function
+
+extern func printf(fmt u8[:0], ...) int
+
+type Color {
+    Red,
+    Green,
+    Blue
+}
+
+func main() int {
+    var c Color = Red
+    
+    match c {
+        Red: printf("Color is Red\n")
+        Green: printf("Color is Green\n")
+        Blue: printf("Color is Blue\n")
+        else: printf("Unknown\n")
+    }
+    
+    return 0
+}
