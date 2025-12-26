@@ -68,6 +68,11 @@ StmtList* parse_stmt_list(Arena* arena, Parser* parser) {
         *tail = stmt_list(arena, stmt);
         tail  = &(*tail)->next;
 
+        // Check for '}' before expecting EOL
+        if (parser_match(TOKEN_R_BRACE)) {
+             break;
+        }
+
         // Deve esserci un terminatore (newline o semicolon)
         parser_expect_eol("Expected ';' or newline after statement");
         parser_advance();
@@ -399,6 +404,17 @@ Stmt *parse_for_stmt(Arena* arena, Parser* parser) {
 
     // 4) the iterable expression
     Expr *iterable = parse_expr(arena, parser);
+    
+    // Handle range syntax: start..end or start..=end
+    if (parser_match(TOKEN_DOT_DOT)) {
+        parser_advance(); // consume '..'
+        Expr *end = parse_expr(arena, parser);
+        iterable = expr_range(arena, iterable, end, false);
+    } else if (parser_match(TOKEN_DOT_DOT_EQUAL)) {
+        parser_advance(); // consume '..='
+        Expr *end = parse_expr(arena, parser);
+        iterable = expr_range(arena, iterable, end, true);
+    }
 
     // 5) the body
     parser_expect(TOKEN_L_BRACE,

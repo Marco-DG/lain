@@ -114,9 +114,15 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         memcpy(rawf, id->name, id->length);
         rawf[id->length] = '\0';
   
-        size_t fclen = strlen(safe_module_path) + 1 + id->length + 1;
-        char *cnamef = malloc(fclen);
-        snprintf(cnamef, fclen, "%s_%s", safe_module_path, rawf);
+        char *cnamef;
+        if (d->kind == DECL_EXTERN_FUNCTION) {
+            // Extern functions use their raw name
+            cnamef = strdup(rawf);
+        } else {
+            size_t fclen = strlen(safe_module_path) + 1 + id->length + 1;
+            cnamef = malloc(fclen);
+            snprintf(cnamef, fclen, "%s_%s", safe_module_path, rawf);
+        }
   
         sema_insert_global(rawf, cnamef, rt);
         free(rawf);
@@ -285,10 +291,16 @@ void sema_resolve_stmt(Stmt *s) {
     sema_infer_expr(it);
 
     Type *iter_ty = it->type;
-    assert(iter_ty &&
-           (iter_ty->kind == TYPE_ARRAY || iter_ty->kind == TYPE_SLICE));
     Type *idx_ty = get_builtin_int_type();
-    Type *val_ty = iter_ty->element_type;
+    Type *val_ty = NULL;
+
+    if (it->kind == EXPR_RANGE) {
+        val_ty = get_builtin_int_type();
+    } else {
+        assert(iter_ty &&
+               (iter_ty->kind == TYPE_ARRAY || iter_ty->kind == TYPE_SLICE));
+        val_ty = iter_ty->element_type;
+    }
 
     // index variable (e.g. “i”)
     if (s->as.for_stmt.index_name) {

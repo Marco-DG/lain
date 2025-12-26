@@ -69,7 +69,10 @@ void emit_stmt(Stmt *stmt, int depth) {
     bool is_range = false;
     ExprIndex *ix = NULL;
     ExprRange *r = NULL;
-    if (it->kind == EXPR_INDEX) {
+    if (it->kind == EXPR_RANGE) {
+        is_range = true;
+        r = &it->as.range_expr;
+    } else if (it->kind == EXPR_INDEX) {
       ix = &it->as.index_expr;
       if (ix->index->kind == EXPR_RANGE) {
         is_range = true;
@@ -77,8 +80,8 @@ void emit_stmt(Stmt *stmt, int depth) {
       }
     }
 
-    // 3) hoist into __sliceN
-    if (is_range) {
+    // 3) hoist into __sliceN (ONLY if it's a slice iteration)
+    if (is_range && ix) {
       const char *sliceName;
       if (r->end) {
         // bounded [a..b] → length‐based slice
@@ -106,30 +109,44 @@ void emit_stmt(Stmt *stmt, int depth) {
 
     // 4) emit for‐loop header
     emit_indent(depth);
-    EMIT("for (size_t %s = 0; ", __i_var);
 
-    if (is_range) {
-      if (r->end) {
-        // bounded → iterate by length
-        EMIT("%s < %s.len; ++%s) {\n", __i_var, __slice_var, __i_var);
-      } else {
-        // open → sentinel test on zero‐sentinel slice
-        Type *orig_slice_ty = (Type*)ix->target->type;
-        const char *origName = emit_slice_type_definition(orig_slice_ty);
-        
-        EMIT("%s.data[%s] != %s_SENTINEL; ++%s) {\n", __slice_var, __i_var,
-             origName, __i_var);
-      }
-    } else if (it->type && it->type->kind == TYPE_SLICE) {
-      // plain sentinel slice
-      const char *plainName = emit_slice_type_definition(it->type);
-      EMIT("%s.data[%s] != %s_SENTINEL; ++%s) {\n", __slice_var, __i_var,
-           plainName, __i_var);
+    if (is_range && !ix) {
+        // Direct range loop: for (int i = start; i < end; ++i)
+        EMIT("for (int %s = ", __i_var);
+        emit_expr(r->start, 0);
+        EMIT("; %s < ", __i_var);
+        emit_expr(r->end, 0);
+        if (r->inclusive) {
+             EMIT(" + 1");
+        }
+        EMIT("; ++%s) {\n", __i_var);
     } else {
-      // fixed‐length array
-      EMIT("%s < ", __i_var);
-      emit_expr(it, 0);
-      EMIT(".len; ++%s) {\n", __i_var);
+        // Standard 0-based index loop
+        EMIT("for (size_t %s = 0; ", __i_var);
+
+        if (is_range) {
+          if (r->end) {
+            // bounded slice → iterate by length
+            EMIT("%s < %s.len; ++%s) {\n", __i_var, __slice_var, __i_var);
+          } else {
+            // open → sentinel test on zero‐sentinel slice
+            Type *orig_slice_ty = (Type*)ix->target->type;
+            const char *origName = emit_slice_type_definition(orig_slice_ty);
+            
+            EMIT("%s.data[%s] != %s_SENTINEL; ++%s) {\n", __slice_var, __i_var,
+                 origName, __i_var);
+          }
+        } else if (it->type && it->type->kind == TYPE_SLICE) {
+          // plain sentinel slice
+          const char *plainName = emit_slice_type_definition(it->type);
+          EMIT("%s.data[%s] != %s_SENTINEL; ++%s) {\n", __slice_var, __i_var,
+               plainName, __i_var);
+        } else {
+          // fixed‐length array
+          EMIT("%s < ", __i_var);
+          emit_expr(it, 0);
+          EMIT(".len; ++%s) {\n", __i_var);
+        }
     }
 
     // 5) bind index var if present
@@ -141,8 +158,14 @@ void emit_stmt(Stmt *stmt, int depth) {
 
     // 6) bind value var
     emit_indent(depth + 1);
-    EMIT("int %.*s = %s.data[%s];\n", (int)stmt->as.for_stmt.value_name->length,
-         stmt->as.for_stmt.value_name->name, __slice_var, __i_var);
+    if (is_range && !ix) {
+        // For range loop, value is the index itself (cast to int if needed)
+        EMIT("int %.*s = (int)%s;\n", (int)stmt->as.for_stmt.value_name->length,
+             stmt->as.for_stmt.value_name->name, __i_var);
+    } else {
+        EMIT("int %.*s = %s.data[%s];\n", (int)stmt->as.for_stmt.value_name->length,
+             stmt->as.for_stmt.value_name->name, __slice_var, __i_var);
+    }
 
     // 7) loop body
     emit_stmt_list(stmt->as.for_stmt.body, depth + 1);

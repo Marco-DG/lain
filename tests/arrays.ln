@@ -1,0 +1,13 @@
+extern func printf(fmt u8[:0], ...) int
+
+func main() int {
+    var arr u8[5]
+    arr[0] = 10
+    arr[1] = 20
+    printf("arr[0]=%d, arr[1]=%d\n", arr[0], arr[1])
+    
+    // var slice u8[] = arr // Commented out as implicit cast might not be supported yet
+    // printf("slice[0]=%d\n", slice[0])
+    
+    return 0
+}

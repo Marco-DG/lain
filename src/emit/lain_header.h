@@ -156,7 +156,7 @@ static void emit_needed_slice_types(FILE *out) {
         }
         else /* fixed-length: has_len && sentinel_len > 0 */ {
             fprintf(out, "typedef struct {\n");
-            fprintf(out, "  %s *data;\n", n->c_type);
+            fprintf(out, "  %s data[%zu];\n", n->c_type, n->sentinel_len);
             fprintf(out, "} %s;\n", n->sliceName);
             // length macro
             fprintf(out,

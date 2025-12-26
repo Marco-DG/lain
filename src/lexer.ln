@@ -54,7 +54,7 @@ type Kind {
     KeywordElse
     KeywordCase
     KeywordMacro
-    KeywordMatch
+    Keywordswitch
     KeywordImport
     KeywordExport
 }
@@ -92,8 +92,8 @@ type State {
     DotDot
 }
 
-func match_keyword(lexeme u8[]) Kind {
-    match lexeme {
+func switch_keyword(lexeme u8[]) Kind {
+    switch lexeme {
         "if"    :   return KeywordIf
         "end"   :   return KeywordEnd
         "for"   :   return KeywordFor
@@ -106,7 +106,7 @@ func match_keyword(lexeme u8[]) Kind {
         "else"  :   return KeywordElse
         "case"  :   return KeywordCase
         "macro" :   return KeywordMacro
-        "match" :   return KeywordMatch
+        "switch" :   return Keywordswitch
         "import":   return KeywordImport
         "export":   return KeywordExport
         else    :   return Identifier
@@ -122,10 +122,10 @@ func next(lexer Lexer) Token {
     var nesting = 0
 
     for i, c in text[cursor..] {
-        match state {
+        switch state {
             Start:
                 start = cursor + i
-                match c {
+                switch c {
                     'a'..'z':
                     'A'..'Z':
                     '_':
@@ -193,7 +193,7 @@ func next(lexer Lexer) Token {
                 }
 
             Identifier:
-                match c {
+                switch c {
                     'a'..'z':
                     'A'..'Z':
                     '0'..'9':
@@ -202,11 +202,11 @@ func next(lexer Lexer) Token {
                     else:
                         cursor = cursor + i
                         lexeme = text[start .. cursor]
-                        return Token(match_keyword(lexeme), lexeme)
+                        return Token(switch_keyword(lexeme), lexeme)
                 }
 
             Number:
-                match c {
+                switch c {
                     '0'..'9': continue
                     else:
                         cursor = cursor + i
@@ -214,7 +214,7 @@ func next(lexer Lexer) Token {
                 }
 
             SingleQuote:
-                match c {
+                switch c {
                     '\\':
                         continue
                     '\'':
@@ -225,7 +225,7 @@ func next(lexer Lexer) Token {
                 }
 
             DoubleQuote:
-                match c {
+                switch c {
                     '"':
                         cursor = cursor + i + 1
                         return Token(StringLiteral, text[start + 1 .. cursor - 1])
@@ -234,7 +234,7 @@ func next(lexer Lexer) Token {
                 }
 
             Equal:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(EqualEqual, text[start .. cursor])
@@ -244,7 +244,7 @@ func next(lexer Lexer) Token {
                 }
 
             AngleBracketLeft:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(AngleBracketLeftEqual, text[start .. cursor])
@@ -254,7 +254,7 @@ func next(lexer Lexer) Token {
                 }
 
             AngleBracketRight:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(AngleBracketRightEqual, text[start .. cursor])
@@ -264,7 +264,7 @@ func next(lexer Lexer) Token {
                 }
 
             Asterisk:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(AsteriskEqual, text[start .. cursor])
@@ -274,7 +274,7 @@ func next(lexer Lexer) Token {
                 }
 
             Percent:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(PercentEqual, text[start .. cursor])
@@ -284,7 +284,7 @@ func next(lexer Lexer) Token {
                 }
 
             Plus:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(PlusEqual, text[start .. cursor])
@@ -294,7 +294,7 @@ func next(lexer Lexer) Token {
                 }
 
             Minus:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(MinusEqual, text[start .. cursor])
@@ -304,7 +304,7 @@ func next(lexer Lexer) Token {
                 }
 
             Ampersand:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(AmpersandEqual, text[start .. cursor])
@@ -314,7 +314,7 @@ func next(lexer Lexer) Token {
                 }
 
             Pipe:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(PipeEqual, text[start .. cursor])
@@ -324,7 +324,7 @@ func next(lexer Lexer) Token {
                 }
 
             Caret:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(CaretEqual, text[start .. cursor])
@@ -334,7 +334,7 @@ func next(lexer Lexer) Token {
                 }
 
             Dot:
-                match c {
+                switch c {
                     '.': state = DotDot
                     else:
                         cursor = cursor + i
@@ -342,7 +342,7 @@ func next(lexer Lexer) Token {
                 }
 
             DotDot:
-                match c {
+                switch c {
                     '=':
                         cursor = cursor + i + 1
                         return Token(DotDotEqual, text[start .. cursor])
@@ -352,7 +352,7 @@ func next(lexer Lexer) Token {
                 }
 
             Slash:
-                match c {
+                switch c {
                     '/':
                         state = LineComment
                     '*':
@@ -367,7 +367,7 @@ func next(lexer Lexer) Token {
                 }
 
             LineComment:
-                match c {
+                switch c {
                     '\n':
                     '\r':
                     0:

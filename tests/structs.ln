@@ -1,0 +1,18 @@
+extern func printf(fmt u8[:0], ...) int
+
+type Vec2 {
+    x int
+    y int
+}
+
+func main() int {
+    var v Vec2
+    v.x = 10
+    v.y = 20
+    printf("v = {%d, %d}\n", v.x, v.y)
+    
+    var v2 = v
+    v2.x = 30
+    printf("v2.x = %d, v.x = %d\n", v2.x, v.x)
+    return 0
+}

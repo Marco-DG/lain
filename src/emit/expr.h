@@ -298,7 +298,9 @@ void emit_expr(Expr *expr, int depth) {
     } else {
       // Plain indexing: T = data[i]
       emit_expr(ix->target, 0);
-      EMIT(".data[%s]", "__i0");
+      EMIT(".data[");
+      emit_expr(ix->index, 0);
+      EMIT("]");
     }
     break;
   }
