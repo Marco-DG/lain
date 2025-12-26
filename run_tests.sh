@@ -41,6 +41,7 @@ run_test tests/mov_syntax.ln
 run_test tests/ownership.ln
 run_test tests/destructuring.ln
 run_test tests/borrow_pass.ln
+run_test tests/bounds_pass.ln
 
 # Negative tests (should fail to compile)
 run_negative_test() {
@@ -59,3 +60,4 @@ run_negative_test() {
 
 run_negative_test tests/purity_fail.ln
 run_negative_test tests/borrow_conflict.ln
+run_negative_test tests/bounds_fail.ln

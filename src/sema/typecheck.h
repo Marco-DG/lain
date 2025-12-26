@@ -3,6 +3,7 @@
 
 #include "../ast.h"
 #include "resolve.h"
+#include "bounds.h"  // Static bounds checking
 #include <assert.h>
 #include <string.h>
 
@@ -172,6 +173,15 @@ void sema_infer_expr(Expr *e) {
     } else {
       // Plain indexing: element := array[i] or slice[i]
       e->type = t->element_type;
+      
+      // Static bounds check for compile-time constant indices
+      BoundsCheckResult bounds = sema_check_bounds(e->as.index_expr.index, t);
+      if (bounds == BOUNDS_ERROR) {
+        sema_report_bounds_error(e->as.index_expr.index, t);
+        exit(1);
+      }
+      // BOUNDS_UNKNOWN: could emit runtime check in future
+      // BOUNDS_OK: provably safe, no check needed
     }
     break;
   }

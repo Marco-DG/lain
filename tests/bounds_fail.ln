@@ -1,0 +1,12 @@
+// Test for static bounds checking: should FAIL compilation
+// Index 5 is out of bounds for array of size 5 (valid: 0-4)
+
+func main() int {
+    var arr int[5]
+    arr[0] = 10
+    
+    // This should fail: index 5 is out of bounds!
+    var x = arr[5]
+    
+    return x
+}
