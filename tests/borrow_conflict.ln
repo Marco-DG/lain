@@ -1,0 +1,25 @@
+// Test for borrow checking: should FAIL compilation
+// Attempting mutable borrow while shared borrow still active (same statement)
+
+type Data {
+    value int
+}
+
+func read_data(d Data) int {
+    return d.value
+}
+
+func modify_both(d1 Data, mut d2 Data) int {
+    d2.value = d2.value + 1
+    return d1.value
+}
+
+func main() int {
+    var data Data
+    data.value = 42
+    
+    // This should fail: same variable borrowed as shared AND mutable in same call
+    var result = modify_both(data, mut data)
+    
+    return result
+}

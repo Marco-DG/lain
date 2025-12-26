@@ -15,6 +15,7 @@
 #include "scope.h"
 #include "resolve.h"
 #include "typecheck.h"
+#include "region.h"  // Region-based borrowing
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,17 +50,22 @@ typedef enum {
 typedef struct LEntry {
     Id *id;            // Id pointer for the variable (identifies it)
     int defined_loop_depth; // loop depth where var was declared
+    Region *region;    // region where var is defined (for borrow checking)
     LState state;
     struct LEntry *next;
 } LEntry;
 
 typedef struct {
     LEntry *head;
+    BorrowTable *borrows;  // track active borrows
+    Arena *arena;          // arena for allocations
 } LTable;
 
-static LTable *ltable_new(void) {
+static LTable *ltable_new(Arena *arena) {
     LTable *t = (LTable*)malloc(sizeof *t);
     t->head = NULL;
+    t->arena = arena;
+    t->borrows = arena ? borrow_table_new(arena) : NULL;
     return t;
 }
 
@@ -90,19 +96,29 @@ static void ltable_add(LTable *t, Id *id, int loop_depth) {
     LEntry *e = (LEntry*)malloc(sizeof *e);
     e->id = id;
     e->defined_loop_depth = loop_depth;
+    e->region = t->borrows ? t->borrows->current_region : NULL;
     e->state = LSTATE_UNCONSUMED;
     e->next = t->head;
     t->head = e;
-    DBG("ltable_add: added '%.*s' loop_depth=%d", (int)id->length, id->name ? id->name : "<null>", loop_depth);
+    DBG("ltable_add: added '%.*s' loop_depth=%d region=%d", 
+        (int)id->length, id->name ? id->name : "<null>", loop_depth,
+        e->region ? e->region->id : -1);
 }
 
 static LTable *ltable_clone(LTable *src) {
-    LTable *dst = ltable_new();
+    LTable *dst = ltable_new(src->arena);
+    // Copy current region state from source
+    if (dst->borrows && src->borrows) {
+        dst->borrows->current_region = src->borrows->current_region;
+    }
     // shallow-copy entries (Id* pointers are fine)
     for (LEntry *s = src->head; s; s = s->next) {
         ltable_add(dst, s->id, s->defined_loop_depth);
         LEntry *d = ltable_find(dst, s->id);
-        if (d) d->state = s->state;
+        if (d) {
+            d->state = s->state;
+            d->region = s->region;
+        }
     }
     return dst;
 }
@@ -266,20 +282,63 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
             ExprList *args = e->as.call_expr.args;
             for (; params && args; params = params->next, args = args->next) {
                 Type *pty = params->decl->as.variable_decl.type;
-                if (is_type_move(pty)) {
-                    Expr *arg = args->expr;
-                    if (!arg) continue;
-                    if (arg->kind == EXPR_IDENTIFIER) {
-                        Id *idptr = arg->as.identifier_expr.id;
-                        DBG("EXPR_CALL: will attempt consume identifier arg '%.*s'", (int)idptr->length, idptr->name ? idptr->name : "<null>");
-                        ltable_consume(tbl, idptr, loop_depth);
-                    } else if (arg->kind == EXPR_MEMBER) {
-                        Expr *head = arg->as.member_expr.target;
-                        while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
-                        if (head && head->kind == EXPR_IDENTIFIER) {
-                            DBG("EXPR_CALL: will attempt consume member-head identifier '%.*s'", (int)head->as.identifier_expr.id->length, head->as.identifier_expr.id->name ? head->as.identifier_expr.id->name : "<null>");
-                            ltable_consume(tbl, head->as.identifier_expr.id, loop_depth);
-                        }
+                Expr *arg = args->expr;
+                if (!arg) continue;
+                
+                // Get the owner variable ID from the argument
+                Id *owner_id = NULL;
+                if (arg->kind == EXPR_IDENTIFIER) {
+                    owner_id = arg->as.identifier_expr.id;
+                } else if (arg->kind == EXPR_MEMBER) {
+                    Expr *head = arg->as.member_expr.target;
+                    while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
+                    if (head && head->kind == EXPR_IDENTIFIER) {
+                        owner_id = head->as.identifier_expr.id;
+                    }
+                } else if (arg->kind == EXPR_MUT || arg->kind == EXPR_MOVE) {
+                    // Unwrap mut/mov expression
+                    Expr *inner = (arg->kind == EXPR_MUT) ? arg->as.mut_expr.expr : arg->as.move_expr.expr;
+                    if (inner && inner->kind == EXPR_IDENTIFIER) {
+                        owner_id = inner->as.identifier_expr.id;
+                    }
+                }
+                
+                if (!owner_id) continue;
+                
+                // Handle based on ownership mode
+                if (pty && pty->mode == MODE_OWNED) {
+                    // Move: check if borrowed, then consume
+                    if (tbl->borrows && borrow_is_borrowed(tbl->borrows, owner_id)) {
+                        fprintf(stderr, "borrow error: cannot move '%.*s' because it is currently borrowed\n",
+                                (int)owner_id->length, owner_id->name);
+                        exit(1);
+                    }
+                    DBG("EXPR_CALL: consuming '%.*s' (MODE_OWNED)", (int)owner_id->length, owner_id->name);
+                    ltable_consume(tbl, owner_id, loop_depth);
+                    // Invalidate any previous borrows of this owner
+                    if (tbl->borrows) {
+                        borrow_invalidate_owner(tbl->borrows, owner_id);
+                    }
+                } else if (pty && pty->mode == MODE_MUTABLE) {
+                    // Mutable borrow: check for conflicts
+                    LEntry *entry = ltable_find(tbl, owner_id);
+                    Region *owner_region = entry ? entry->region : (tbl->borrows ? tbl->borrows->current_region : NULL);
+                    
+                    if (tbl->borrows && tbl->arena) {
+                        // This will error if conflict detected
+                        Id *borrow_id = params->decl->as.variable_decl.name;
+                        borrow_register(tbl->arena, tbl->borrows, borrow_id, owner_id, MODE_MUTABLE, owner_region);
+                        DBG("EXPR_CALL: registered mutable borrow of '%.*s'", (int)owner_id->length, owner_id->name);
+                    }
+                } else if (pty && pty->mode == MODE_SHARED) {
+                    // Shared borrow: check for mutable conflicts only  
+                    LEntry *entry = ltable_find(tbl, owner_id);
+                    Region *owner_region = entry ? entry->region : (tbl->borrows ? tbl->borrows->current_region : NULL);
+                    
+                    if (tbl->borrows && tbl->arena) {
+                        Id *borrow_id = params->decl->as.variable_decl.name;
+                        borrow_register(tbl->arena, tbl->borrows, borrow_id, owner_id, MODE_SHARED, owner_region);
+                        DBG("EXPR_CALL: registered shared borrow of '%.*s'", (int)owner_id->length, owner_id->name);
                     }
                 }
             }
@@ -466,7 +525,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
 static void sema_check_function_linearity(Decl *d) {
     if (!d || d->kind != DECL_FUNCTION) return;
 
-    LTable *tbl = ltable_new();
+    LTable *tbl = ltable_new(sema_arena);
 
     // add parameters that are move-typed
     for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
@@ -479,6 +538,10 @@ static void sema_check_function_linearity(Decl *d) {
 
     for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next) {
         sema_check_stmt_linearity_with_table(sl->stmt, tbl, /*loop_depth=*/0);
+        // Clear borrows after each statement (NLL-like: borrows don't persist across statements)
+        if (tbl->borrows) {
+            borrow_clear_all(tbl->borrows);
+        }
     }
 
     // final check (if function falls off end)
