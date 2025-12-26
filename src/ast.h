@@ -38,6 +38,7 @@ typedef enum {
     TYPE_SLICE,      // e.g. "u8[:0]"
     TYPE_POINTER,    // pointer to element type, e.g. "u8 *"
     TYPE_MOVE,
+    TYPE_MUT, // New
     TYPE_COMPTIME,  // comptime modifier
 } TypeKind;
 
@@ -46,6 +47,8 @@ typedef struct Type {
     Id* base_type;              // The base type, e.g., "u8"
     struct Type* element_type;  // Used for nested arrays, e.g., "SomeType[][]"
     struct { struct Type *base; } move;   // for TYPE_MOVE
+    struct { struct Type *base; } mut;    // for TYPE_MUT
+
     
     /* For fixed-length arrays (TYPE_ARRAY), or -1 for dynamic-length arrays:
        - array_len >= 0 : a compile-time fixed length (u8[5])
@@ -112,6 +115,8 @@ typedef struct {
     // OPTIONAL "in <identifier>" annotation used in struct field
     // definitions like: `cursor u8 in text`
     Id*   in_field;
+    
+    bool  is_parameter; // New: true if this is a function parameter
 } DeclVariable;
 
 
@@ -245,6 +250,8 @@ typedef enum {
     EXPR_CHAR,
     EXPR_RANGE,
     EXPR_INDEX,
+    EXPR_MOVE,
+    EXPR_MUT, // New
 } ExprKind;
 
 typedef struct {
@@ -257,6 +264,15 @@ typedef struct {
     TokenKind   op;     // Unary operator
     Expr*       right;  // Right operand
 } ExprUnary;
+
+typedef struct {
+    Expr*       expr;   // The expression being moved
+} ExprMove;
+
+typedef struct {
+    Expr*       expr;
+} ExprMut; // New
+
 
 typedef struct {
     Id*         id;   // Identifier name
@@ -305,10 +321,12 @@ typedef struct Expr {
         ExprLiteral     literal_expr;
         ExprMember      member_expr;
         ExprCall        call_expr;
-        ExprString      string_expr; 
+        ExprString      string_expr;
         ExprChar        char_expr;
         ExprRange       range_expr;
         ExprIndex       index_expr;
+        ExprMove        move_expr;
+        ExprMut         mut_expr; // New
     } as;
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
@@ -334,11 +352,7 @@ Id *id(Arena *arena, isize length, const char* name) {
 Type *type_simple(Arena *arena, Id *base) {
     Type *t = arena_push_aligned(arena, Type);
     t->kind              = TYPE_SIMPLE;
-    t->base_type         = base;
-    t->element_type      = NULL;
-    t->sentinel_str      = NULL;
-    t->sentinel_len      = 0;
-    t->sentinel_is_string= false;
+    t->base_type = base;
     return t;
 }
 
@@ -348,12 +362,8 @@ Type *type_simple(Arena *arena, Id *base) {
 Type *type_array(Arena *arena, Type *element_type, isize array_len) {
     Type *t = arena_push_aligned(arena, Type);
     t->kind              = TYPE_ARRAY;
-    t->base_type         = NULL;
-    t->element_type      = element_type;
-    t->array_len         = array_len;
-    t->sentinel_str      = NULL;
-    t->sentinel_len      = 0;
-    t->sentinel_is_string= false;
+    t->element_type = element_type;
+    t->array_len = array_len;
     return t;
 }
 
@@ -362,39 +372,37 @@ Type *type_slice(Arena *arena, Type *element_type, const char *sentinel_str, isi
 {
     Type *t = arena_push_aligned(arena, Type);
     t->kind              = TYPE_SLICE;
-    t->base_type         = NULL;
-    t->element_type      = element_type;
-    t->sentinel_str      = sentinel_str;
-    t->sentinel_len      = sentinel_len;
-    t->sentinel_is_string= sentinel_is_string;
+    t->element_type = element_type;
+    t->sentinel_str = sentinel_str;
+    t->sentinel_len = sentinel_len;
+    t->sentinel_is_string = sentinel_is_string;
     return t;
 }
 
-Type *type_move(Arena *arena, Type *base) {
-    assert(base != NULL);   // catch mistakes early
+Type *type_move(Arena *arena, Type *inner) {
+    assert(inner != NULL);   // catch mistakes early
     Type *t = arena_push_aligned(arena, Type);
     t->kind               = TYPE_MOVE;
-    t->element_type       = base;    // keep as fallback
-    t->move.base          = base;    // primary unwrap target
-    t->base_type          = base->base_type; // inherit base_type
-    t->array_len          = base->array_len;
-    t->sentinel_str       = base->sentinel_str;
-    t->sentinel_len       = base->sentinel_len;
-    t->sentinel_is_string = base->sentinel_is_string;
+    t->move.base = inner;
     return t;
 }
+
+Type *type_mut(Arena *arena, Type *inner) {
+    assert(inner != NULL);
+    Type *t = arena_push_aligned(arena, Type);
+    t->kind               = TYPE_MUT;
+    t->mut.base           = inner;
+    return t;
+}
+
+
 
 
 Type *type_comptime(Arena *arena, Type *base) {
     assert(base != NULL);
     Type *t = arena_push_aligned(arena, Type);
     t->kind               = TYPE_COMPTIME;
-    t->element_type       = base;               // inner/wrapped type
-    t->base_type          = base->base_type;    // preserve base name if any
-    t->array_len          = base->array_len;
-    t->sentinel_str       = base->sentinel_str;
-    t->sentinel_len       = base->sentinel_len;
-    t->sentinel_is_string = base->sentinel_is_string;
+    t->element_type = base;
     return t;
 }
 
@@ -402,11 +410,7 @@ Type *type_pointer(Arena *arena, Type *element_type) {
     assert(element_type != NULL);
     Type *t = arena_push_aligned(arena, Type);
     t->kind               = TYPE_POINTER;
-    t->base_type          = NULL;
-    t->element_type       = element_type;
-    t->sentinel_str       = NULL;
-    t->sentinel_len       = 0;
-    t->sentinel_is_string = false;
+    t->element_type = element_type;
     return t;
 }
 
@@ -452,6 +456,7 @@ Decl *decl_variable(Arena *arena, Id *name, Type *type) {
     d->as.variable_decl.name = name;
     d->as.variable_decl.type = type;
     d->as.variable_decl.in_field = NULL; // default: no "in" annotation
+    d->as.variable_decl.is_parameter = false;
     return d;
 }
 
@@ -677,5 +682,20 @@ Expr *expr_index(Arena *arena, Expr *target, Expr *index) {
     e->as.index_expr.index  = index;
     return e;
 }
+
+Expr *expr_move(Arena *arena, Expr *expr) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_MOVE;
+    e->as.move_expr.expr = expr;
+    return e;
+}
+
+Expr *expr_mut(Arena *arena, Expr *expr) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_MUT;
+    e->as.mut_expr.expr = expr;
+    return e;
+}
+
 
 #endif /* AST_H */

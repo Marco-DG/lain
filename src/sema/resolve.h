@@ -225,7 +225,7 @@ void sema_resolve_stmt(Stmt *s) {
       exit(1);
     }
 
-    sema_insert_local(raw, cname, target->type);
+    sema_insert_local(raw, cname, target->type, NULL);
     break;
   }
 
@@ -268,7 +268,7 @@ void sema_resolve_stmt(Stmt *s) {
     raw[L] = '\0';
 
     const char *cname = raw;
-    sema_insert_local(raw, cname, ty);
+    sema_insert_local(raw, cname, ty, NULL);
     break;
   }
 
@@ -314,7 +314,7 @@ void sema_resolve_stmt(Stmt *s) {
       size_t li = len_i < cap_i ? len_i : cap_i;
       memcpy(raw_i, id_i->name, li);
       raw_i[li] = '\0';
-      sema_insert_local(raw_i, raw_i, idx_ty);
+      sema_insert_local(raw_i, raw_i, idx_ty, NULL);
     }
 
     // value variable (e.g. “c”)
@@ -326,7 +326,7 @@ void sema_resolve_stmt(Stmt *s) {
       size_t lc = len_c < cap_c ? len_c : cap_c;
       memcpy(raw_c, id_c->name, lc);
       raw_c[lc] = '\0';
-      sema_insert_local(raw_c, raw_c, val_ty);
+      sema_insert_local(raw_c, raw_c, val_ty, NULL);
     }
 
     // recurse into the loop body
@@ -358,7 +358,7 @@ void sema_resolve_stmt(Stmt *s) {
         Type *inferred = rhs->type ? rhs->type : get_builtin_int_type();
 
         // 3) register it as a *new* local
-        sema_insert_local(raw, raw, inferred);
+        sema_insert_local(raw, raw, inferred, NULL);
 
         // 4) mark this stmt as an implicit declaration
         s->as.assign_stmt.is_const = true;
@@ -517,6 +517,13 @@ void sema_resolve_expr(Expr *e) {
   case EXPR_INDEX:
     sema_resolve_expr(e->as.index_expr.target);
     sema_resolve_expr(e->as.index_expr.index);
+    break;
+  case EXPR_MOVE:
+    sema_resolve_expr(e->as.move_expr.expr);
+    break;
+
+  case EXPR_MUT:
+    sema_resolve_expr(e->as.mut_expr.expr);
     break;
   default:
     break;

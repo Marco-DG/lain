@@ -56,13 +56,13 @@ static void sema_insert_global(const char *raw, const char *cname, Type *ty, Dec
 }
 
 // ── insert into the local symbol‐table ───────────────────────────────────────
-static void sema_insert_local(const char *raw, const char *cname, Type *ty) {
+static void sema_insert_local(const char *raw, const char *cname, Type *ty, Decl *decl) {
     unsigned idx = sema_hash(raw);
     Symbol *sym = malloc(sizeof *sym);
     sym->name   = strdup(raw);
     sym->c_name = strdup(cname);
     sym->type   = ty;
-    sym->decl   = NULL; // Locals don't have a top-level Decl
+    sym->decl   = decl; 
     sym->is_global = false;
     sym->next   = sema_locals[idx];
     sema_locals[idx] = sym;

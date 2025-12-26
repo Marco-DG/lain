@@ -102,6 +102,44 @@ const char *c_name_for_id(Id *id) {
   return sym ? sym->c_name : buf;
 }
 
+static bool is_primitive_type(Type *t) {
+    if (!t) return false;
+    // Unwrap wrappers
+    while (t) {
+        if (t->kind == TYPE_MOVE) { t = t->move.base; continue; }
+        if (t->kind == TYPE_MUT) { t = t->mut.base; continue; }
+        if (t->kind == TYPE_COMPTIME) { t = t->element_type; continue; }
+        break;
+    }
+    
+    if (t->kind == TYPE_POINTER) return true;
+    if (t->kind == TYPE_SLICE) return true; // Slices are small {ptr, len}
+    if (t->kind == TYPE_SIMPLE) {
+        Id *base = t->base_type;
+        if (!base) return false;
+        // Check for known primitives
+        if (base->length == 3 && strncmp(base->name, "int", 3) == 0) return true;
+        if (base->length == 2 && strncmp(base->name, "u8", 2) == 0) return true;
+        if (base->length == 3 && strncmp(base->name, "u16", 3) == 0) return true;
+        if (base->length == 3 && strncmp(base->name, "u32", 3) == 0) return true;
+        if (base->length == 3 && strncmp(base->name, "u64", 3) == 0) return true;
+        if (base->length == 2 && strncmp(base->name, "i8", 2) == 0) return true;
+        if (base->length == 3 && strncmp(base->name, "i16", 3) == 0) return true;
+        if (base->length == 3 && strncmp(base->name, "i32", 3) == 0) return true;
+        if (base->length == 3 && strncmp(base->name, "i64", 3) == 0) return true;
+        if (base->length == 5 && strncmp(base->name, "isize", 5) == 0) return true;
+        if (base->length == 5 && strncmp(base->name, "usize", 5) == 0) return true;
+        if (base->length == 4 && strncmp(base->name, "bool", 4) == 0) return true;
+        if (base->length == 4 && strncmp(base->name, "char", 4) == 0) return true;
+        if (base->length == 5 && strncmp(base->name, "float", 5) == 0) return true;
+        
+        // Enums are primitives (integers)
+        Symbol *sym = sema_lookup(c_name_for_id(base));
+        if (sym && sym->decl && sym->decl->kind == DECL_ENUM) return true;
+    }
+    return false;
+}
+
 /*───────────────────────────────────────────────────────────────╗
 │ Helper: emit the C‐decl name for *any* semantic Type*        │
 ╚───────────────────────────────────────────────────────────────*/
@@ -199,6 +237,13 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
   case TYPE_POINTER: {
     char tgt[128];
     c_name_for_type(t->element_type, tgt, sizeof tgt);
+    snprintf(out, cap, "%s *", tgt);
+    return;
+  }
+
+  case TYPE_MUT: {
+    char tgt[128];
+    c_name_for_type(t->mut.base, tgt, sizeof tgt);
     snprintf(out, cap, "%s *", tgt);
     return;
   }

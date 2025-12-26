@@ -266,12 +266,8 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
 
     if (!parser_match(TOKEN_R_PAREN)) {
         do {
-            bool is_move = false;
             bool is_comptime = false;
-            if (parser_match(TOKEN_KEYWORD_MOV)) {
-                parser_advance(); // consume 'mov'
-                is_move = true;
-            } else if (parser_match(TOKEN_KEYWORD_COMPTIME)) {
+            if (parser_match(TOKEN_KEYWORD_COMPTIME)) {
                 parser_advance(); // consume 'comptime'
                 is_comptime = true;
             }
@@ -321,16 +317,13 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 // parameter type
                 Type *ptype = parse_type(arena, parser);
 
-                // wrap in TYPE_MOVE safely
-                if (is_move) {
-                    ptype = type_move(arena, ptype);
-                }
                 // wrap in TYPE_COMPTIME safely
                 if (is_comptime) {
                     ptype = type_comptime(arena, ptype);
                 }
 
                 Decl *pdecl = decl_variable(arena, pname, ptype);
+                pdecl->as.variable_decl.is_parameter = true;
 
                 *tail = decl_list(arena, pdecl);
                 tail  = &(*tail)->next;
@@ -422,6 +415,7 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
             Type *ptype = parse_type(arena, parser);
 
             Decl *pdecl = decl_variable(arena, pname, ptype);
+            pdecl->as.variable_decl.is_parameter = true;
             *tail = decl_list(arena, pdecl);
             tail = &(*tail)->next;
 

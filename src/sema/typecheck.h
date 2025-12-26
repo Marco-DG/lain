@@ -102,6 +102,18 @@ static Type *lookup_struct_field_type(Id *struct_name, Id *field) {
     type inference/checking logic
 */
 
+/* Unwrap wrappers to get the underlying type (struct/array/slice) */
+static Type *sema_unwrap_type(Type *t) {
+    while (t) {
+        if (t->kind == TYPE_MUT) t = t->mut.base;
+        else if (t->kind == TYPE_MOVE) t = t->move.base;
+        else if (t->kind == TYPE_POINTER) t = t->element_type;
+        else if (t->kind == TYPE_COMPTIME) t = t->element_type;
+        else break;
+    }
+    return t;
+}
+
 void sema_infer_expr(Expr *e) {
   if (!e)
     return;
@@ -114,6 +126,9 @@ void sema_infer_expr(Expr *e) {
     sema_infer_expr(e->as.member_expr.target);
     Type *t = e->as.member_expr.target->type;
     assert(t && "member on untyped target");
+    
+    // Unwrap wrappers (mut, mov, ptr)
+    t = sema_unwrap_type(t);
 
     // If target is a slice or array, handle the common fields: .len and .data
     if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
@@ -212,6 +227,16 @@ void sema_infer_expr(Expr *e) {
     sema_infer_expr(e->as.range_expr.start);
     sema_infer_expr(e->as.range_expr.end);
     // leave e->type NULL if never used
+    break;
+
+  case EXPR_MOVE:
+    sema_infer_expr(e->as.move_expr.expr);
+    e->type = type_move(sema_arena, e->as.move_expr.expr->type);
+    break;
+
+  case EXPR_MUT:
+    sema_infer_expr(e->as.mut_expr.expr);
+    e->type = type_mut(sema_arena, e->as.mut_expr.expr->type);
     break;
 
   default:

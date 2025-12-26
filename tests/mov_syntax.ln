@@ -1,0 +1,16 @@
+type Foo {
+    x int
+}
+
+func take_ownership(mov f Foo) Foo {
+    return mov f
+}
+
+func main() int {
+    var f Foo
+    f.x = 42
+    // We don't track 'f' as linear in main because it's not declared as 'mov' or 'linear'
+    // But we test the syntax 'mov f' in the call
+    take_ownership(mov f)
+    return 0
+}

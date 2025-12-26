@@ -9,6 +9,24 @@ static void emit_forward_decl(Decl *decl, int depth);
 // Emit a list of declarations (the whole program)
 void emit_decl_list(DeclList *decls, int depth);
 
+static void emit_param_type(Type *t) {
+    if (!t) return;
+    if (t->kind == TYPE_MOVE) {
+            emit_type(t->move.base); // Unwrap move -> T
+    } else if (t->kind == TYPE_MUT) {
+            emit_type(t); // emit_type handles TYPE_MUT -> T*
+    } else {
+            // Shared Reference
+            if (is_primitive_type(t)) {
+                emit_type(t); // Pass by value
+            } else {
+                EMIT("const ");
+                emit_type(t);
+                EMIT("*");
+            }
+    }
+}
+
 void emit_decl(Decl* decl, int depth) {
     if (!decl) return;
     switch (decl->kind) {
@@ -25,7 +43,11 @@ void emit_decl(Decl* decl, int depth) {
         case DECL_FUNCTION: {
             emit_indent(depth);
             // Print return type and function name.
-            emit_type(decl->as.function_decl.return_type);
+            if (decl->as.function_decl.return_type) {
+                emit_type(decl->as.function_decl.return_type);
+            } else {
+                EMIT("void");
+            }
 
             // special case if the function is named "main"
             const char *id_name = decl->as.function_decl.name->name;
@@ -47,11 +69,11 @@ void emit_decl(Decl* decl, int depth) {
                     
                     if (param->decl->kind == DECL_DESTRUCT) {
                         // Emit: Type _param_N
-                        emit_type(param->decl->as.destruct_decl.type);
+                        emit_param_type(param->decl->as.destruct_decl.type);
                         EMIT(" _param_%d", param_idx);
                     } else {
-                        // Use emit_type to print parameter type.
-                        emit_type(param->decl->as.variable_decl.type);
+                        // Use emit_param_type to print parameter type.
+                        emit_param_type(param->decl->as.variable_decl.type);
                         EMIT(" %.*s",
                                 (int)param->decl->as.variable_decl.name->length,
                                 param->decl->as.variable_decl.name->name);

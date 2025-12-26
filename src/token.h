@@ -60,6 +60,7 @@ typedef enum {
     TOKEN_KEYWORD_FOR,
     TOKEN_KEYWORD_VAR,
     TOKEN_KEYWORD_MOV,
+    TOKEN_KEYWORD_MUT,
     TOKEN_KEYWORD_AND,
     TOKEN_KEYWORD_TYPE,
     TOKEN_KEYWORD_FUNC,
@@ -98,6 +99,7 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             if (strncmp(lexeme, "for", 3) == 0)         return TOKEN_KEYWORD_FOR;
             if (strncmp(lexeme, "var", 3) == 0)         return TOKEN_KEYWORD_VAR;
             if (strncmp(lexeme, "mov", 3) == 0)         return TOKEN_KEYWORD_MOV;
+            if (strncmp(lexeme, "mut", 3) == 0)         return TOKEN_KEYWORD_MUT;
             if (strncmp(lexeme, "use", 3) == 0)         return TOKEN_KEYWORD_USE;
             if (strncmp(lexeme, "and", 3) == 0)         return TOKEN_KEYWORD_AND;
             if (strncmp(lexeme, "fun", 3) == 0)         return TOKEN_KEYWORD_FUNC; /* FIXME */
@@ -266,6 +268,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_KEYWORD_FOR:                 return "for";
         case TOKEN_KEYWORD_VAR:                 return "var";
         case TOKEN_KEYWORD_MOV:                 return "mov";
+        case TOKEN_KEYWORD_MUT:                 return "mut";
         case TOKEN_KEYWORD_USE:                 return "use";
         case TOKEN_KEYWORD_AND:                 return "and";
         case TOKEN_KEYWORD_TYPE:                return "type";

@@ -47,6 +47,20 @@ Expr *parse_unary_expr(Arena* arena, Parser* parser)
         Expr *right = parse_unary_expr(arena, parser);
         return expr_unary(arena, op, right);
     }
+
+    // mov <expr>
+    if (parser_match(TOKEN_KEYWORD_MOV)) {
+        parser_advance();
+        Expr *right = parse_unary_expr(arena, parser);
+        return expr_move(arena, right);
+    }
+
+    // mut <expr>
+    if (parser_match(TOKEN_KEYWORD_MUT)) {
+        parser_advance();
+        Expr *right = parse_unary_expr(arena, parser);
+        return expr_mut(arena, right);
+    }
     
     return parse_primary_expr(arena, parser);
 }

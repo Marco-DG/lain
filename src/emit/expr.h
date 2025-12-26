@@ -17,12 +17,21 @@ static DeclFunction *lookup_function_decl(Expr *callee);
 static DeclFunction *lookup_function_decl(Expr *callee) {
   if (callee->kind != EXPR_IDENTIFIER)
     return NULL;
-  const char *cname = c_name_for_id(callee->as.identifier_expr.id);
+  
+  // Copy cname to avoid static buffer overwrite in c_name_for_id
+  char search_name[256];
+  const char *raw_cname = c_name_for_id(callee->as.identifier_expr.id);
+  strncpy(search_name, raw_cname, sizeof(search_name));
+  search_name[sizeof(search_name)-1] = '\0';
+
   for (DeclList *dl = emitted_decls; dl; dl = dl->next) {
     Decl *d = dl->decl;
-    if (d->kind == DECL_FUNCTION &&
-        strcmp(c_name_for_id(d->as.function_decl.name), cname) == 0) {
-      return &d->as.function_decl;
+    if (d->kind == DECL_FUNCTION) {
+        const char *dname = c_name_for_id(d->as.function_decl.name);
+        // fprintf(stderr, "[DEBUG]   checking against '%s'\n", dname);
+        if (strcmp(dname, search_name) == 0) {
+            return &d->as.function_decl;
+        }
     }
   }
   return NULL;
@@ -137,9 +146,29 @@ void emit_expr(Expr *expr, int depth) {
 
   case EXPR_MEMBER: {
     ExprMember *m = &expr->as.member_expr;
+    
+    bool is_ptr = false;
+    Type *t = m->target->type;
+    if (t) {
+        if (t->kind == TYPE_POINTER || t->kind == TYPE_MUT) {
+            is_ptr = true;
+        } else if (t->kind == TYPE_SIMPLE || t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
+             // Check if target is a parameter (Shared Reference)
+             if (m->target->kind == EXPR_IDENTIFIER) {
+                 Decl *d = m->target->decl;
+                 if (d) {
+                     if (d->kind == DECL_VARIABLE) {
+                         if (d->as.variable_decl.is_parameter) {
+                             if (!is_primitive_type(t)) is_ptr = true;
+                         }
+                     }
+                 }
+             }
+        }
+    }
+
     emit_expr(m->target, depth);
-    EMIT(".");
-    EMIT("%.*s", (int)m->member->length, m->member->name);
+    EMIT(is_ptr ? "->%.*s" : ".%.*s", (int)m->member->length, m->member->name);
     break;
   }
 
@@ -190,6 +219,16 @@ void emit_expr(Expr *expr, int depth) {
     EMIT("(");
     bool first = true;
     DeclList *fld = sd ? sd->fields : NULL;
+    
+    // Lookup function parameters if it's a regular function call
+    DeclList *param = NULL;
+    if (!is_ctor && cname) {
+         DeclFunction *fd = lookup_function_decl(expr->as.call_expr.callee);
+         if (fd) {
+             param = fd->params;
+         }
+    }
+
     for (ExprList *arg = expr->as.call_expr.args; arg; arg = arg->next) {
       if (!first) EMIT(", ");
       first = false;
@@ -213,24 +252,28 @@ void emit_expr(Expr *expr, int depth) {
         if ((ft->kind == TYPE_ARRAY && ft->array_len >= 0)
             || (ft->kind == TYPE_SLICE && ft->sentinel_str == NULL && ft->sentinel_len > 0)) {
           Expr *lit = arg->expr;
-          size_t fixed_len = (ft->kind == TYPE_ARRAY) ? (size_t)ft->array_len : (size_t)ft->sentinel_len;
-          int L = (int)lit->as.string_expr.length;
-          const unsigned char *S = (const unsigned char*)lit->as.string_expr.value;
+          // Check if it's actually a string literal before accessing as.string_expr
+          if (lit->kind == EXPR_STRING) {
+              size_t fixed_len = (ft->kind == TYPE_ARRAY) ? (size_t)ft->array_len : (size_t)ft->sentinel_len;
+              int L = (int)lit->as.string_expr.length;
+              const unsigned char *S = (const unsigned char*)lit->as.string_expr.value;
 
-          char sliceBuf[64];
-          c_name_for_type(ft, sliceBuf, sizeof sliceBuf);
+              char sliceBuf[64];
+              c_name_for_type(ft, sliceBuf, sizeof sliceBuf);
 
-          // emit inline array literal with EXACT fixed_len bytes (no trailing NUL)
-          EMIT("(%s){ .data = (uint8_t[]){ ", sliceBuf);
-          for (size_t i = 0; i < fixed_len; i++) {
-            unsigned v = (i < (size_t)L) ? (unsigned)S[i] : 0u;
-            EMIT("0x%02X", v);
-            if (i + 1 < fixed_len) EMIT(", ");
+              // emit inline array literal with EXACT fixed_len bytes (no trailing NUL)
+              EMIT("(%s){ .data = (uint8_t[]){ ", sliceBuf);
+              for (size_t i = 0; i < fixed_len; i++) {
+                unsigned v = (i < (size_t)L) ? (unsigned)S[i] : 0u;
+                EMIT("0x%02X", v);
+                if (i + 1 < fixed_len) EMIT(", ");
+              }
+              EMIT(" } }");
+
+              fld = fld->next;
+              if (param) param = param->next; // Advance param too if it exists
+              continue;
           }
-          EMIT(" } }");
-
-          fld = fld->next;
-          continue;
         }
 
         // ORIGINAL: sentinel-terminated slice literal (keep existing behavior)
@@ -248,14 +291,35 @@ void emit_expr(Expr *expr, int depth) {
            }
            EMIT("0 } }"); // explicit sentinel byte appended
            fld = fld->next;
+           if (param) param = param->next; // Advance param too if it exists
            continue;
         }
 
       }
+      
+      // Handle implicit address-of for shared reference parameters
+      if (param) {
+           Type *pt = param->decl->as.variable_decl.type;
+           // If parameter is Shared Reference (not mut, not mov) AND not primitive
+           if (pt->kind != TYPE_MUT && pt->kind != TYPE_MOVE && !is_primitive_type(pt)) {
+               // Expects const T*
+               Type *at = arg->expr->type;
+               // If argument is passed by value (not mut, not pointer), emit &
+               if (at && at->kind != TYPE_MUT && at->kind != TYPE_POINTER) {
+                   EMIT("&(");
+                   emit_expr(arg->expr, depth);
+                   EMIT(")");
+                   goto next_arg;
+               }
+           }
+      }
   
       // fallback for everything else
       emit_expr(arg->expr, depth);
+      
+      next_arg:
       if (fld) fld = fld->next;
+      if (param) param = param->next;
     }
     EMIT(")");
     break;
@@ -304,6 +368,16 @@ void emit_expr(Expr *expr, int depth) {
     }
     break;
   }
+
+  case EXPR_MOVE:
+    emit_expr(expr->as.move_expr.expr, depth);
+    break;
+
+  case EXPR_MUT:
+    EMIT("&(");
+    emit_expr(expr->as.mut_expr.expr, depth);
+    EMIT(")");
+    break;
 
   default:
     EMIT("/* unhandled expression type */");

@@ -76,7 +76,10 @@ static void ltable_free(LTable *t) {
 
 static LEntry *ltable_find(LTable *t, Id *id) {
     for (LEntry *e = t->head; e; e = e->next) {
-        if (e->id == id) return e;
+        if (e->id->length == id->length &&
+            strncmp(e->id->name, id->name, id->length) == 0) {
+            return e;
+        }
     }
     return NULL;
 }
@@ -315,6 +318,27 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         sema_check_expr_linearity(e->as.binary_expr.left, tbl, loop_depth);
         sema_check_expr_linearity(e->as.binary_expr.right, tbl, loop_depth);
         break;
+
+    case EXPR_MOVE: {
+        Expr *inner = e->as.move_expr.expr;
+        if (inner) {
+            if (inner->kind == EXPR_IDENTIFIER) {
+                Id *idptr = inner->as.identifier_expr.id;
+                DBG("EXPR_MOVE: consume IDENT '%.*s'", (int)idptr->length, idptr->name ? idptr->name : "<null>");
+                ltable_consume(tbl, idptr, loop_depth);
+            } else if (inner->kind == EXPR_MEMBER) {
+                Expr *head = inner->as.member_expr.target;
+                while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
+                if (head && head->kind == EXPR_IDENTIFIER) {
+                    DBG("EXPR_MOVE: consume MEMBER->IDENT head '%.*s'", (int)head->as.identifier_expr.id->length, head->as.identifier_expr.id->name ? head->as.identifier_expr.id->name : "<null>");
+                    ltable_consume(tbl, head->as.identifier_expr.id, loop_depth);
+                }
+            }
+            // recurse just in case (though for IDENT/MEMBER it does nothing)
+            sema_check_expr_linearity(inner, tbl, loop_depth);
+        }
+        break;
+    }
 
     default:
         // other expression kinds either contain no linear events or are handled above
