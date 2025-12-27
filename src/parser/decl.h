@@ -546,30 +546,9 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
         } while (is_comparison_op(parser->token.kind));
     }
 
-    // --- contracts (pre/post) ---
-    ExprList *pre_contracts = NULL;
-    ExprList **pre_tail = &pre_contracts;
-    ExprList *post_contracts = NULL;
-    ExprList **post_tail = &post_contracts;
-
-    while (true) {
-        parser_skip_eol(); // Skip newlines before checking for contracts
-        if (parser_match(TOKEN_KEYWORD_PRE)) {
-            parser_advance();
-            Expr *e = parse_expr(arena, parser);
-            *pre_tail = expr_list(arena, e);
-            pre_tail = &(*pre_tail)->next;
-            parser_skip_eol();
-        } else if (parser_match(TOKEN_KEYWORD_POST)) {
-            parser_advance();
-            Expr *e = parse_expr(arena, parser);
-            *post_tail = expr_list(arena, e);
-            post_tail = &(*post_tail)->next;
-            parser_skip_eol();
-        } else {
-            break;
-        }
-    }
+    // NOTE: pre/post keywords removed - use equation-style constraints instead:
+    // - Parameters: func div(a int, b int != 0) int
+    // - Return: func abs(x int) int >= 0
 
     // function body
     parser_expect(TOKEN_L_BRACE, "Expected '{' after signature");
@@ -586,8 +565,6 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     } else {
         d = decl_function(arena, func_name, params, ret_type, body, false);
     }
-    d->as.function_decl.pre_contracts = pre_contracts;
-    d->as.function_decl.post_contracts = post_contracts;
     d->as.function_decl.return_constraints = return_constraints;
     return d;
 }

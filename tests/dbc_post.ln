@@ -1,6 +1,8 @@
-func abs(x int) int
-    post result >= 0
-{
+// Test: abs with new equation-style return constraint
+// OLD SYNTAX: post result >= 0 (REMOVED)
+// NEW SYNTAX: int >= 0 (on return type)
+
+func abs(x int) int >= 0 {
     if x < 0 {
         return 0 - x
     }

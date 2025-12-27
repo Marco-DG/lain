@@ -256,36 +256,58 @@ gcc out.c -o my_program
 
 ---
 
-## 10. Design by Contract (DbC)
+## 10. Type Constraints
 
-Lain supports **Design by Contract** to statically verify function requirements and guarantees. This eliminates the need for runtime assertions and ensures correctness at compile time.
+Lain uses **equation-style type constraints** to statically verify function requirements and guarantees. All checks are performed at compile time with **zero runtime overhead**.
 
-### 10.1 Pre-conditions (`pre`)
-Requirements that the **caller** must satisfy.
+### 10.1 Parameter Constraints
+
+Constraints on parameters are written directly after the type:
 ```lain
-func safe_div(a int, b int) int
-    pre b != 0
-{
+func safe_div(a int, b int != 0) int {
     return a / b
 }
 ```
+The compiler verifies at each call site that `b` cannot be zero.
 
-### 10.2 Post-conditions (`post`)
-Guarantees that the **callee** must satisfy upon return. The special keyword `result` refers to the return value.
+### 10.2 Return Type Constraints
+
+Constraints on the return value are written after the return type:
 ```lain
-func abs(x int) int
-    post result >= 0
-{
-    if x < 0 { return -x }
+func abs(x int) int >= 0 {
+    if x < 0 { return 0 - x }
+    return x
+}
+```
+The compiler verifies that all return statements satisfy `result >= 0`.
+
+### 10.3 Index Bounds (`in` keyword)
+
+The `in` keyword declares that a value is a valid index into an array:
+```lain
+func get(arr int[10], i int in arr) int {
+    return arr[i]  // Always safe!
+}
+```
+This desugars to `i >= 0 and i < arr.len` and is verified at call sites.
+
+### 10.4 Multiple Constraints
+
+Chain constraints with `and`:
+```lain
+func clamp(x int, lo int, hi int >= lo) int >= lo and <= hi {
+    if x < lo { return lo }
+    if x > hi { return hi }
     return x
 }
 ```
 
-### 10.3 Static Verification (Enhanced Range Analysis)
-The compiler uses advanced static analysis to verify these contracts:
-- **Relational Constraints**: Checks like `pre a < b` are verified by tracking relationships between variables (Difference Bound Matrix).
-- **Linear Arithmetic**: Assignments like `x = y + 1` are tracked to verify `x > y`.
-- **Control Flow**: Constraints are propagated through `if` branches and negated in `else` branches.
+### 10.5 Static Verification
 
-**Note on Loops**: To ensure safety, the compiler is conservative about loops. Variables modified within a loop are treated as having unknown values. This prevents the compiler from making unsafe assumptions but may require you to add explicit assertions or invariants (future feature) for complex loop logic. If the compiler cannot prove a contract is satisfied, it will report an error.
+The compiler uses decidable static analysis (Range Analysis + Difference Bound Matrix) to verify constraints:
+- **Linear Comparisons**: `x > 0`, `x >= y`, `x != 0`
+- **Control Flow**: Constraints are propagated through `if`/`else` branches
+- **No SMT Solver**: All verification is polynomial-time, fast and predictable
+
+**Note on Loops**: Variables modified within loops are conservatively widened to unknown. For complex loop contracts, explicit verification may be needed in future versions.
 

@@ -1,7 +1,8 @@
-func safe_div(a int, b int) int
-    pre b != 0
-    post result == a / b
-{
+// Test: safe division with new equation-style constraint
+// OLD SYNTAX: pre b != 0 (REMOVED)
+// NEW SYNTAX: b int != 0
+
+func safe_div(a int, b int != 0) int {
     return a / b
 }
 

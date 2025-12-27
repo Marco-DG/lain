@@ -1,6 +1,7 @@
-func safe_div(a int, b int) int
-    pre b != 0
-{
+// Test: constraint violation - should FAIL to compile
+// Calling safe_div with 0 should violate b != 0 constraint
+
+func safe_div(a int, b int != 0) int {
     return a / b
 }
 
