@@ -1,0 +1,14 @@
+// Test: in keyword violation - should FAIL to compile
+// Passing an out-of-bounds index to a function with 'in' constraint
+
+func get(arr int[10], i int in arr) int {
+    return arr[i]
+}
+
+func main() int {
+    var arr int[10]
+    
+    var x = get(arr, 15)  // ERROR: 15 is not in [0, 10)
+    
+    return 0
+}

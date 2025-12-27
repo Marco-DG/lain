@@ -137,6 +137,38 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 rawp[L] = '\0';
 
                 sema_insert_local(rawp, rawp, pty, p->decl, false);
+                
+                // Handle 'in' constraint: param int in arr
+                // Desugars to: param >= 0 and param < arr.len
+                if (p->decl->as.variable_decl.in_field && sema_ranges) {
+                    Id *arr_id = p->decl->as.variable_decl.in_field;
+                    Id *param_id = pid;
+                    
+                    // Find the array parameter to get its length
+                    Type *arr_type = NULL;
+                    for (DeclList *arr_p = d->as.function_decl.params; arr_p; arr_p = arr_p->next) {
+                        if (arr_p->decl->kind == DECL_VARIABLE) {
+                            Id *aname = arr_p->decl->as.variable_decl.name;
+                            if (aname->length == arr_id->length &&
+                                strncmp(aname->name, arr_id->name, aname->length) == 0) {
+                                arr_type = arr_p->decl->as.variable_decl.type;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (arr_type) {
+                        // Apply range: param >= 0
+                        Range r = range_make(0, INT64_MAX);
+                        
+                        // If array has known length (fixed-size), tighten upper bound
+                        if (arr_type->kind == TYPE_ARRAY && arr_type->array_len >= 0) {
+                            r = range_make(0, arr_type->array_len - 1);
+                        }
+                        
+                        range_set(sema_ranges, param_id, r);
+                    }
+                }
             }
             param_idx++;
         }

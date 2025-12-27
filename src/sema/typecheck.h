@@ -391,6 +391,73 @@ void sema_infer_expr(Expr *e) {
                 }
             }
         }
+        
+        // Verify 'in' constraints at call site
+        // e.g. func get(arr int[], i int in arr) - verify i is in bounds of arr
+        int param_idx = 0;
+        for (DeclList *p = callee_decl->as.function_decl.params; p; p = p->next) {
+            if (p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.in_field) {
+                Id *arr_name = p->decl->as.variable_decl.in_field;
+                
+                // Find the argument for this parameter
+                Expr *idx_arg = NULL;
+                int a_idx = 0;
+                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
+                    if (a_idx == param_idx) { idx_arg = a->expr; break; }
+                    a_idx++;
+                }
+                
+                // Find the array argument by name
+                int arr_param_idx = 0;
+                Type *arr_type = NULL;
+                Expr *arr_arg = NULL;
+                for (DeclList *arr_p = callee_decl->as.function_decl.params; arr_p; arr_p = arr_p->next) {
+                    if (arr_p->decl->kind == DECL_VARIABLE) {
+                        Id *an = arr_p->decl->as.variable_decl.name;
+                        if (an->length == arr_name->length &&
+                            strncmp(an->name, arr_name->name, an->length) == 0) {
+                            arr_type = arr_p->decl->as.variable_decl.type;
+                            // Get corresponding arg
+                            int aa_idx = 0;
+                            for (ExprList *aa = e->as.call_expr.args; aa; aa = aa->next) {
+                                if (aa_idx == arr_param_idx) { arr_arg = aa->expr; break; }
+                                aa_idx++;
+                            }
+                            break;
+                        }
+                    }
+                    arr_param_idx++;
+                }
+                
+                if (idx_arg && arr_arg) {
+                    // Get the range of the index argument
+                    Range idx_range = sema_eval_range(idx_arg, sema_ranges);
+                    
+                    // Get the array length (from type or expression)
+                    int64_t arr_len = -1;
+                    if (arr_arg->type && arr_arg->type->kind == TYPE_ARRAY && arr_arg->type->array_len >= 0) {
+                        arr_len = arr_arg->type->array_len;
+                    } else if (arr_type && arr_type->kind == TYPE_ARRAY && arr_type->array_len >= 0) {
+                        arr_len = arr_type->array_len;
+                    }
+                    
+                    if (arr_len > 0 && idx_range.known) {
+                        // Verify: idx >= 0 and idx < arr_len
+                        if (idx_range.min < 0 || idx_range.max >= arr_len) {
+                            fprintf(stderr, "Error: Index out of bounds. Index range [%ld, %ld] not in [0, %ld).\n",
+                                    (long)idx_range.min, (long)idx_range.max, (long)arr_len);
+                            exit(1);
+                        }
+                    } else if (idx_range.known && idx_range.min < 0) {
+                        // At least verify non-negative
+                        fprintf(stderr, "Error: Index may be negative. Index range [%ld, %ld].\n",
+                                (long)idx_range.min, (long)idx_range.max);
+                        exit(1);
+                    }
+                }
+            }
+            param_idx++;
+        }
     }
     // function-call expression type is the callee's type (return type)
     e->type = e->as.call_expr.callee->type;

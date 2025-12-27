@@ -1,0 +1,17 @@
+// Test: in keyword for index bounds - should compile successfully
+// func get(arr int[], i int in arr) means i is always a valid index
+
+func get(arr int[10], i int in arr) int {
+    return arr[i]  // Always safe - compiler knows i ∈ [0, 9]
+}
+
+func main() int {
+    var arr int[10]
+    arr[0] = 42
+    arr[5] = 100
+    
+    var x = get(arr, 5)  // OK: 5 is in [0, 10)
+    var y = get(arr, 0)  // OK: 0 is in [0, 10)
+    
+    return 0
+}

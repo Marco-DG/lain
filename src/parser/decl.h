@@ -403,6 +403,14 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 Decl *pdecl = decl_variable(arena, pname, ptype);
                 pdecl->as.variable_decl.is_parameter = true;
 
+                // Check for 'in' keyword: param int in arr
+                if (parser_match(TOKEN_KEYWORD_IN)) {
+                    parser_advance();
+                    parser_expect(TOKEN_IDENTIFIER, "Expected array name after 'in'");
+                    pdecl->as.variable_decl.in_field = id(arena, parser->token.length, parser->token.start);
+                    parser_advance();
+                }
+
                 *tail = decl_list(arena, pdecl);
                 tail  = &(*tail)->next;
             }
