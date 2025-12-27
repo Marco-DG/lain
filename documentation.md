@@ -78,12 +78,16 @@ func main() int {
 
 Lain enforces a strict boundary between pure logic and side effects.
 
-- **`func`**: Pure and deterministic. Cannot modify global state or call procedures.
-- **`proc`**: Can have side effects, modify state, and perform I/O.
+- **`func`**: Pure, deterministic, and **guaranteed to terminate**.
+    - Cannot modify global state.
+    - Cannot call procedures.
+    - **Cannot recurse** (direct recursion is banned).
+    - Can only use `for` loops (over finite ranges).
+- **`proc`**: Can have side effects, modify state, perform I/O, and recurse.
 
 ```lain
 func add(a int, b int) int {
-    return a + b // Pure
+    return a + b // Pure & Total
 }
 
 proc log(msg u8[:0]) {

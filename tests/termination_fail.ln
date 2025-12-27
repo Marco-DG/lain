@@ -1,0 +1,10 @@
+// Test: Recursion in pure functions should be banned
+
+func factorial(n int) int {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1) // ERROR: Recursion not allowed in pure function
+}
+
+func main() int {
+    return factorial(5)
+}

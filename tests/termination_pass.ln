@@ -1,0 +1,20 @@
+// Test: Recursion allowed in proc, loops allowed in func
+
+proc recursive_proc(n int) {
+    if n > 0 {
+        recursive_proc(n - 1) // OK: proc can recurse
+    }
+}
+
+func loop_func(n int) int {
+    var sum = 0
+    for i in 0..n {
+        sum = sum + i // OK: for loop allowed
+    }
+    return sum
+}
+
+func main() int {
+    recursive_proc(5)
+    return loop_func(10)
+}

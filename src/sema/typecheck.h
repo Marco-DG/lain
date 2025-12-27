@@ -231,6 +231,13 @@ void sema_infer_expr(Expr *e) {
                         (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
                 exit(1);
             }
+            
+            // Termination Analysis: Ban recursion in func
+            if (callee->decl == current_function_decl) {
+                fprintf(stderr, "sema error: recursion is not allowed in pure function '%.*s' (to guarantee termination)\n",
+                        (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
+                exit(1);
+            }
         }
     }
 
