@@ -112,6 +112,21 @@ static LTable *ltable_clone(LTable *src) {
     // Copy current region state from source
     if (dst->borrows && src->borrows) {
         dst->borrows->current_region = src->borrows->current_region;
+        
+        // Deep copy borrow entries
+        BorrowEntry *last = NULL;
+        for (BorrowEntry *s_entry = src->borrows->head; s_entry; s_entry = s_entry->next) {
+            BorrowEntry *d_entry = arena_push_aligned(dst->arena, BorrowEntry);
+            *d_entry = *s_entry; // Copy data
+            d_entry->next = NULL;
+            
+            if (last) {
+                last->next = d_entry;
+            } else {
+                dst->borrows->head = d_entry;
+            }
+            last = d_entry;
+        }
     }
     // shallow-copy entries (Id* pointers are fine)
     for (LEntry *s = src->head; s; s = s->next) {
@@ -482,11 +497,13 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         LTable *parent_snapshot = ltable_clone(tbl);
 
         LTable *then_tbl = ltable_clone(parent_snapshot);
+        if (then_tbl->borrows) borrow_enter_scope(then_tbl->arena, then_tbl->borrows);
         for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next) {
             sema_check_stmt_linearity_with_table(b->stmt, then_tbl, loop_depth);
         }
 
         LTable *else_tbl = ltable_clone(parent_snapshot);
+        if (else_tbl->borrows) borrow_enter_scope(else_tbl->arena, else_tbl->borrows);
         for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next) {
             sema_check_stmt_linearity_with_table(b->stmt, else_tbl, loop_depth);
         }
@@ -503,9 +520,12 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     case STMT_FOR: {
         if (s->as.for_stmt.iterable) sema_check_expr_linearity(s->as.for_stmt.iterable, tbl, loop_depth);
         int new_depth = loop_depth + 1;
+        
+        if (tbl->borrows) borrow_enter_scope(tbl->arena, tbl->borrows);
         for (StmtList *b = s->as.for_stmt.body; b; b = b->next) {
             sema_check_stmt_linearity_with_table(b->stmt, tbl, new_depth);
         }
+        if (tbl->borrows) borrow_exit_scope(tbl->borrows);
         break;
     }
 
@@ -522,6 +542,8 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         LTable *first_branch = NULL;
         for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
             LTable *branch_tbl = ltable_clone(parent_snapshot);
+            if (branch_tbl->borrows) borrow_enter_scope(branch_tbl->arena, branch_tbl->borrows);
+            
             if (c->pattern) sema_check_expr_linearity(c->pattern, branch_tbl, loop_depth);
             for (StmtList *b = c->body; b; b = b->next) {
                 sema_check_stmt_linearity_with_table(b->stmt, branch_tbl, loop_depth);
@@ -561,11 +583,9 @@ static void sema_check_function_linearity(Decl *d) {
     }
 
     for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next) {
+        // sema_check_stmt_linearity_with_table(sl->stmt, tbl, /*loop_depth=*/0);
+        // Borrows now persist until end of scope (handled by borrow_enter_scope/exit_scope in stmt check)
         sema_check_stmt_linearity_with_table(sl->stmt, tbl, /*loop_depth=*/0);
-        // Clear borrows after each statement (NLL-like: borrows don't persist across statements)
-        if (tbl->borrows) {
-            borrow_clear_all(tbl->borrows);
-        }
     }
 
     // final check (if function falls off end)

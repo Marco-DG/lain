@@ -1,0 +1,18 @@
+// This should FAIL compilation if purity is enforced
+// Currently it likely passes
+
+extern proc printf(fmt u8[:0], ...) int
+
+proc impure_action() {
+    printf("Side effect!\n")
+}
+
+func pure_function() int {
+    // ERROR: Pure function calling impure procedure
+    impure_action()
+    return 0
+}
+
+func main() int {
+    return pure_function()
+}

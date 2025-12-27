@@ -13,7 +13,33 @@ Lain is a **critical-safe** programming language designed for embedded systems. 
 
 ---
 
-## 2. Ownership & Type System
+## 2. Variables & Mutability
+
+Lain enforces a clear distinction between immutable and mutable variables.
+
+### Immutable Declarations (Implicit)
+By default, variables are immutable. You declare them by simply assigning a value.
+```lain
+x = 10         // 'x' is immutable
+// x = 20      // ERROR: Cannot assign to immutable variable
+```
+
+### Mutable Declarations (Explicit)
+To create a mutable variable, use the `var` keyword.
+```lain
+var y = 10     // 'y' is mutable
+y = 20         // OK
+```
+
+### Type Annotations
+You can optionally specify the type.
+```lain
+var z int = 30
+```
+
+---
+
+## 3. Ownership & Type System
 
 Lain uses an ownership model inspired by linear logic to manage memory safely.
 
@@ -34,9 +60,13 @@ func take(mov r Resource) int {
 }
 
 func main() int {
-    mov res Resource
+    // Mutable declaration
+    var res Resource
     res.data = 42
-    var val = take(mov res) // ownership moved to 'take'
+    
+    // Move ownership to 'take'
+    var val = take(mov res) 
+    
     // res.data = 10 // ERROR: use after move
     return 0
 }
@@ -44,7 +74,7 @@ func main() int {
 
 ---
 
-## 3. Functions vs. Procedures
+## 4. Functions vs. Procedures
 
 Lain enforces a strict boundary between pure logic and side effects.
 
@@ -63,7 +93,7 @@ proc log(msg u8[:0]) {
 
 ---
 
-## 4. Data Structures
+## 5. Data Structures
 
 ### Structs
 ```lain
@@ -72,7 +102,12 @@ type Point {
     y int
 }
 
-var p = Point{ x: 10, y: 20 }
+func main() int {
+    var p Point
+    p.x = 10
+    p.y = 20
+    return 0
+}
 ```
 
 ### Enums (ADTs)
@@ -92,13 +127,16 @@ var c = Color.Red
 - **Slices**: Dynamic views into arrays.
 
 ```lain
-var arr int[5] = [1, 2, 3, 4, 5]
-var s int[] = arr[1..3] // Slice of elements 1 and 2
+var arr int[5]
+arr[0] = 1
+arr[1] = 2
+
+var s int[] = arr[0..2] // Slice of elements 0 and 1
 ```
 
 ---
 
-## 5. Control Flow
+## 6. Control Flow
 
 ### If / Else
 ```lain
@@ -130,14 +168,14 @@ match color {
 
 ---
 
-## 6. Safety Features
+## 7. Safety Features
 
 ### Static Bounds Checking
 Lain verifies array accesses at compile time when the index is a constant expression.
 ```lain
 var arr int[3]
 var x = arr[0] // OK
-var y = arr[5] // COMPILE ERROR: index out of bounds
+// var y = arr[5] // COMPILE ERROR: index out of bounds
 ```
 
 ### Linear Type Enforcement
@@ -150,7 +188,7 @@ The compiler ensures that:
 
 ---
 
-## 7. C Interoperability
+## 8. C Interoperability
 
 Use `extern` to link with C functions.
 
@@ -164,7 +202,7 @@ proc main() {
 
 ---
 
-## 8. Compilation
+## 9. Compilation
 
 Lain compiles to C code.
 ```bash

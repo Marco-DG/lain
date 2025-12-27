@@ -16,6 +16,7 @@ void sema_resolve_expr(Expr *e); // forward
 extern Arena *sema_arena;
 extern DeclList *sema_decls;
 extern Type *current_return_type;
+extern Decl *current_function_decl; // Defined in sema.h
 
 /*
     helpers
@@ -121,6 +122,14 @@ void sema_infer_expr(Expr *e) {
   switch (e->kind) {
   case EXPR_IDENTIFIER:
     // already set in resolve
+    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
+        if (e->is_global && e->decl && e->decl->kind == DECL_VARIABLE && e->decl->as.variable_decl.is_mutable) {
+            fprintf(stderr, "sema error: pure function '%.*s' cannot read mutable global variable '%.*s'\n",
+                    (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name,
+                    (int)e->as.identifier_expr.id->length, e->as.identifier_expr.id->name);
+            exit(1);
+        }
+    }
     break;
 
   case EXPR_MEMBER: {
@@ -189,6 +198,19 @@ void sema_infer_expr(Expr *e) {
   case EXPR_CALL: {
     // ensure callee resolved & infer args
     sema_resolve_expr(e->as.call_expr.callee);
+    
+    // Purity check: func cannot call proc
+    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
+        Expr *callee = e->as.call_expr.callee;
+        if (callee->decl) {
+            if (callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE) {
+                fprintf(stderr, "sema error: pure function '%.*s' cannot call procedure\n",
+                        (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
+                exit(1);
+            }
+        }
+    }
+
     for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
       sema_infer_expr(a->expr);
     }

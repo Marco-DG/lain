@@ -9,8 +9,8 @@ func use_resource(r Resource) int {
     return r.data
 }
 
-func consume_resource(mov r Resource) int {
-    return r.data
+func consume_resource(mov r Resource) Resource {
+    return mov r
 }
 
 func main() int {
@@ -20,7 +20,7 @@ func main() int {
     // This should fail: borrowing while still borrowed
     // (Currently the checker may not catch this yet)
     var x = use_resource(res)    // shared borrow
-    var y = consume_resource(mov res)  // move while borrowed (ERROR)
+    consume_resource(mov res)  // move while borrowed (ERROR)
     
-    return x + y
+    return x
 }
