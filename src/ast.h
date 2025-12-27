@@ -119,6 +119,9 @@ typedef struct {
     // definitions like: `cursor u8 in text`
     Id*   in_field;
     
+    // Equation-style constraints: b int != 0, x int >= 0 and <= 100
+    ExprList* constraints;
+    
     bool  is_parameter; // New: true if this is a function parameter
     bool  is_mutable;   // New: true if declared with 'var' (mutable binding)
 } DeclVariable;
@@ -493,6 +496,7 @@ Decl *decl_variable(Arena *arena, Id *name, Type *type) {
     d->as.variable_decl.name = name;
     d->as.variable_decl.type = type;
     d->as.variable_decl.in_field = NULL; // default: no "in" annotation
+    d->as.variable_decl.constraints = NULL; // default: no constraints
     d->as.variable_decl.is_parameter = false;
     d->as.variable_decl.is_mutable = false; // default
     return d;

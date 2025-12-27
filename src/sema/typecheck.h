@@ -458,6 +458,47 @@ void sema_infer_expr(Expr *e) {
             }
             param_idx++;
         }
+        
+        // Verify equation-style constraints at call site
+        // e.g. func div(a int, b int != 0) - verify argument for b != 0
+        param_idx = 0;
+        for (DeclList *p = callee_decl->as.function_decl.params; p; p = p->next) {
+            if (p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.constraints) {
+                // Find the argument for this parameter
+                Expr *arg = NULL;
+                int a_idx = 0;
+                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
+                    if (a_idx == param_idx) { arg = a->expr; break; }
+                    a_idx++;
+                }
+                
+                if (arg) {
+                    // For each constraint on this parameter
+                    for (ExprList *c = p->decl->as.variable_decl.constraints; c; c = c->next) {
+                        if (c->expr->kind == EXPR_BINARY) {
+                            // Substitute param with arg in the constraint
+                            Expr temp;
+                            temp.kind = EXPR_BINARY;
+                            temp.as.binary_expr.op = c->expr->as.binary_expr.op;
+                            temp.as.binary_expr.left = arg;  // Substitute param with arg
+                            temp.as.binary_expr.right = c->expr->as.binary_expr.right;
+                            
+                            int result = sema_check_condition(&temp, sema_ranges);
+                            if (result == 0) {
+                                fprintf(stderr, "Error: Constraint violation. Argument does not satisfy '%s' constraint.\n",
+                                        token_kind_to_str(c->expr->as.binary_expr.op));
+                                exit(1);
+                            } else if (result == -1) {
+                                // Cannot prove - could warn or error depending on strictness
+                                fprintf(stderr, "Warning: Cannot statically verify constraint '%s'.\n",
+                                        token_kind_to_str(c->expr->as.binary_expr.op));
+                            }
+                        }
+                    }
+                }
+            }
+            param_idx++;
+        }
     }
     // function-call expression type is the callee's type (return type)
     e->type = e->as.call_expr.callee->type;

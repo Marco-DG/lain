@@ -169,6 +169,13 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                         range_set(sema_ranges, param_id, r);
                     }
                 }
+                
+                // Apply equation-style constraints: b int != 0, x int >= 0 and <= 100
+                if (p->decl->as.variable_decl.constraints && sema_ranges) {
+                    for (ExprList *c = p->decl->as.variable_decl.constraints; c; c = c->next) {
+                        sema_apply_constraint(c->expr, sema_ranges);
+                    }
+                }
             }
             param_idx++;
         }

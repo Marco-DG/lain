@@ -4,6 +4,21 @@
 
 #include "../parser.h"
 
+// Helper: Check if token is a comparison operator (for equation-style constraints)
+static bool is_comparison_op(TokenKind kind) {
+    switch (kind) {
+        case TOKEN_ANGLE_BRACKET_LEFT:
+        case TOKEN_ANGLE_BRACKET_RIGHT:
+        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:
+        case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:
+        case TOKEN_EQUAL_EQUAL:
+        case TOKEN_BANG_EQUAL:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // entry‑point for a module
 DeclList* parse_module(Arena *arena, Parser *parser);
 
@@ -409,6 +424,51 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                     parser_expect(TOKEN_IDENTIFIER, "Expected array name after 'in'");
                     pdecl->as.variable_decl.in_field = id(arena, parser->token.length, parser->token.start);
                     parser_advance();
+                }
+                
+                // Parse equation-style constraints: param int != 0, param int >= 0 and <= 100
+                if (is_comparison_op(parser->token.kind)) {
+                    ExprList *constraints = NULL;
+                    ExprList **ctail = &constraints;
+                    
+                    // Create expression for the parameter name (LHS of constraint)
+                    Expr *param_expr = expr_identifier(arena, pname);
+                    
+                    do {
+                        TokenKind op = parser->token.kind;
+                        parser_advance();  // consume operator
+                        
+                        // Parse the RHS (literal or identifier)
+                        Expr *rhs = NULL;
+                        if (parser_match(TOKEN_NUMBER)) {
+                            int value = atoi(parser->token.start);
+                            parser_advance();
+                            rhs = expr_literal(arena, value);
+                        } else if (parser_match(TOKEN_IDENTIFIER)) {
+                            Id *rhs_id = id(arena, parser->token.length, parser->token.start);
+                            parser_advance();
+                            rhs = expr_identifier(arena, rhs_id);
+                        } else {
+                            parser_error("Expected number or identifier after comparison operator");
+                        }
+                        
+                        // Create binary constraint expression
+                        Expr *constraint = expr_binary(arena, op, param_expr, rhs);
+                        *ctail = expr_list(arena, constraint);
+                        ctail = &(*ctail)->next;
+                        
+                        // Check for 'and' to chain more constraints
+                        if (parser_match(TOKEN_KEYWORD_AND)) {
+                            parser_advance();
+                            if (!is_comparison_op(parser->token.kind)) {
+                                parser_error("Expected comparison operator after 'and'");
+                            }
+                        } else {
+                            break;
+                        }
+                    } while (is_comparison_op(parser->token.kind));
+                    
+                    pdecl->as.variable_decl.constraints = constraints;
                 }
 
                 *tail = decl_list(arena, pdecl);

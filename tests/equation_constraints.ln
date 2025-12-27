@@ -1,0 +1,12 @@
+// Test: equation-style constraints - should compile successfully
+// func div(a int, b int != 0) means b must not be zero
+
+func div(a int, b int != 0) int {
+    return a / b
+}
+
+func main() int {
+    var x = div(10, 2)   // OK: 2 != 0
+    var y = div(100, 5)  // OK: 5 != 0
+    return 0
+}
