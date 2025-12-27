@@ -19,7 +19,7 @@ Decl *   parse_type_decl(Arena *arena, Parser *parser);
 Decl *   parse_import_decl(Arena *arena, Parser *parser);
 
 // helper for type fields (struct vs enum)
-DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, IdList **enum_values);
+DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant **adt_variants);
 
 DeclList *parse_module(Arena* arena, Parser* parser) {
     //parser_skip_whitespace();
@@ -116,12 +116,13 @@ Decl *parse_decl(Arena* arena, Parser* parser)
 }
 
 
-DeclList *parse_type_fields(Arena* arena, Parser* parser, bool *is_enum, IdList **enum_values) {
+// helper for type fields (struct vs enum/ADT)
+DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant **adt_variants) {
     DeclList* struct_fields = NULL;
     DeclList** struct_tail = &struct_fields;
-    *enum_values = NULL;
-    IdList** enum_tail = enum_values;
-    *is_enum = true;
+    *adt_variants = NULL;
+    Variant** variant_tail = adt_variants;
+    *is_enum = false; // Default to struct, switch to enum if we see variants
 
     /* Skip any leading blank lines before the first field/value */
     parser_skip_eol();
@@ -141,19 +142,40 @@ DeclList *parse_type_fields(Arena* arena, Parser* parser, bool *is_enum, IdList 
 
         /* Must start with an identifier (field name or enum value) */
         parser_expect(TOKEN_IDENTIFIER, "Expected field name or enum value");
-        Id *field_name = id(arena, parser->token.length, parser->token.start);
+        Id *name = id(arena, parser->token.length, parser->token.start);
         parser_advance();
 
-        if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_COMPTIME)) {
+        // Lookahead to distinguish:
+        // 1. Name Type -> Struct Field
+        // 2. Name { ... } -> ADT Variant
+        // 3. Name -> Enum Variant (if followed by separator or '}')
+        
+        bool is_struct_field = false;
+
+        if (parser_match(TOKEN_L_BRACE)) {
+            // Case 2: ADT Variant with fields
+            // is_adt_variant = true;
+        } else if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_MUT) || parser_match(TOKEN_KEYWORD_COMPTIME) || parser_match(TOKEN_L_BRACKET) || parser_match(TOKEN_ASTERISK)) {
+            // Case 1: Struct Field (followed by Type start tokens)
+            is_struct_field = true;
+        } else {
+            // Case 3: Simple Enum Variant
+            // is_adt_variant = true;
+        }
+
+        if (is_struct_field) {
+            if (*is_enum) {
+                parser_error("Cannot mix struct fields and enum variants in the same type");
+            }
+            
             /* Struct field: parse its type */
-            *is_enum = false;
             Type *field_type = parse_type(arena, parser);
             if (field_is_comptime && field_type) {
                 field_type = type_comptime(arena, field_type);
             }
 
             /* Create the Decl for this field */
-            Decl *var_decl = decl_variable(arena, field_name, field_type);
+            Decl *var_decl = decl_variable(arena, name, field_type);
 
             /* --- NEW: optional `in <identifier>` annotation --- */
             if (parser_match(TOKEN_KEYWORD_IN)) {
@@ -161,8 +183,6 @@ DeclList *parse_type_fields(Arena* arena, Parser* parser, bool *is_enum, IdList 
                 parser_expect(TOKEN_IDENTIFIER, "Expected identifier after 'in'");
                 Id *container_name = id(arena, parser->token.length, parser->token.start);
                 parser_advance(); // consume the identifier
-                /* Attach the container identifier to the variable decl.
-                   This requires `Decl->as.variable_decl.in_field` (see instructions). */
                 var_decl->as.variable_decl.in_field = container_name;
             }
 
@@ -170,12 +190,55 @@ DeclList *parse_type_fields(Arena* arena, Parser* parser, bool *is_enum, IdList 
             *struct_tail = decl_list(arena, var_decl);
             struct_tail = &(*struct_tail)->next;
         } else {
-            /* Enum value: we don't accept 'comptime' here */
-            if (field_is_comptime) {
-                parser_error("Enum value cannot be marked 'comptime'");
+            // ADT/Enum Variant
+            *is_enum = true;
+            if (struct_fields != NULL) {
+                 parser_error("Cannot mix struct fields and enum variants in the same type");
             }
-            *enum_tail = id_list(arena, field_name);
-            enum_tail = &(*enum_tail)->next;
+            
+            DeclList *variant_fields = NULL;
+            
+            if (parser_match(TOKEN_L_BRACE)) {
+                parser_advance(); // consume '{'
+                
+                // Parse variant fields: Name Type, ...
+                DeclList** vfields_tail = &variant_fields;
+                
+                while (!parser_match(TOKEN_R_BRACE) && !parser_match(TOKEN_EOF)) {
+                    parser_skip_eol();
+                    if (parser_match(TOKEN_R_BRACE)) break;
+                    
+                    parser_expect(TOKEN_IDENTIFIER, "Expected variant field name");
+                    Id *fname = id(arena, parser->token.length, parser->token.start);
+                    parser_advance();
+                    
+                    Type *ftype = parse_type(arena, parser);
+                    Decl *fdecl = decl_variable(arena, fname, ftype);
+                    
+                    *vfields_tail = decl_list(arena, fdecl);
+                    vfields_tail = &(*vfields_tail)->next;
+                    
+                    if (parser_match(TOKEN_COMMA)) {
+                        parser_advance();
+                    } else if (parser_match(TOKEN_R_BRACE)) {
+                        break;
+                    } else {
+                        // Optional newline separator?
+                        if (parser_match(TOKEN_EOL)) {
+                             parser_skip_eol();
+                        } else {
+                             parser_expect(TOKEN_COMMA, "Expected ',' after variant field");
+                        }
+                    }
+                }
+                
+                parser_expect(TOKEN_R_BRACE, "Expected '}' after variant fields");
+                parser_advance();
+            }
+            
+            Variant *v = variant(arena, name, variant_fields);
+            *variant_tail = v;
+            variant_tail = &(*variant_tail)->next;
         }
 
         /* --- Separator handling (robust ordering) --- */
@@ -226,14 +289,14 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
     parser_advance();
 
     bool is_enum;
-    IdList* enum_values;
-    DeclList* struct_fields = parse_type_fields(arena, parser, &is_enum, &enum_values);
+    Variant* adt_variants;
+    DeclList* struct_fields = parse_type_fields(arena, parser, &is_enum, &adt_variants);
 
     parser_expect(TOKEN_R_BRACE, "Expected '}' at end of type definition");
     parser_advance();
 
     if (is_enum) {
-        return decl_enum(arena, name, enum_values);
+        return decl_enum(arena, name, adt_variants);
     } else {
         return decl_struct(arena, name, struct_fields);
     }

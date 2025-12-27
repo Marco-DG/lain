@@ -124,9 +124,15 @@ typedef struct {
 } DeclVariable;
 
 
+typedef struct Variant {
+    Id*       name;
+    DeclList* fields; // NULL if no fields (like a simple enum variant)
+    struct Variant* next;
+} Variant;
+
 typedef struct EnumDecl {
     Id* type_name;          // Enum name
-    IdList* variants;       // List of enum values (should be IdList, not DeclList)
+    Variant* variants;      // Linked list of variants
 } DeclEnum;
 
 typedef struct StructDecl {
@@ -520,12 +526,20 @@ Decl* decl_struct(Arena* arena, Id* name, DeclList* fields) {
     return d;
 }
 
-Decl *decl_enum(Arena *arena, Id *type_name, IdList *variants) {
+Decl *decl_enum(Arena *arena, Id *type_name, Variant *variants) {
     Decl *d = arena_push_aligned(arena, Decl);
     d->kind = DECL_ENUM;
     d->as.enum_decl.type_name = type_name;
     d->as.enum_decl.variants = variants;
     return d;
+}
+
+Variant *variant(Arena *arena, Id *name, DeclList *fields) {
+    Variant *v = arena_push_aligned(arena, Variant);
+    v->name = name;
+    v->fields = fields;
+    v->next = NULL;
+    return v;
 }
 
 Decl* decl_import(Arena* arena, Id* module_name) {

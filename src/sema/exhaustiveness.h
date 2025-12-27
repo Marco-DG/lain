@@ -58,9 +58,21 @@ static Decl *find_enum_decl(Type *vtype) {
         if (!dl->decl || dl->decl->kind != DECL_ENUM) continue;
         
         Id *enum_name = dl->decl->as.enum_decl.type_name;
-        if (enum_name && enum_name->length == type_len &&
+        if (!enum_name) continue;
+
+        // 1. Exact match
+        if (enum_name->length == type_len &&
             strncmp(enum_name->name, type_name, type_len) == 0) {
             return dl->decl;
+        }
+
+        // 2. Suffix match (handle mangled names like module_Enum)
+        if (type_len > enum_name->length + 1) {
+            const char *suffix_start = type_name + (type_len - enum_name->length);
+            if (*(suffix_start - 1) == '_' &&
+                strncmp(suffix_start, enum_name->name, enum_name->length) == 0) {
+                return dl->decl;
+            }
         }
     }
     return NULL;
@@ -71,10 +83,23 @@ static Decl *find_enum_decl(Type *vtype) {
 static bool pattern_matches_variant(Expr *pattern, Id *variant) {
     if (!pattern || !variant) return false;
     
-    // Pattern should be an identifier
-    if (pattern->kind != EXPR_IDENTIFIER) return false;
+    // Pattern should be an identifier or a call (constructor)
+    Id *pat_id = NULL;
     
-    Id *pat_id = pattern->as.identifier_expr.id;
+    if (pattern->kind == EXPR_IDENTIFIER) {
+        pat_id = pattern->as.identifier_expr.id;
+    } else if (pattern->kind == EXPR_CALL) {
+        // Constructor pattern: Variant(...)
+        // The callee should be the variant name
+        Expr *callee = pattern->as.call_expr.callee;
+        if (callee->kind == EXPR_IDENTIFIER) {
+            pat_id = callee->as.identifier_expr.id;
+        } else if (callee->kind == EXPR_MEMBER) {
+             // Handle Shape.Circle(...)
+             pat_id = callee->as.member_expr.member;
+        }
+    }
+    
     if (!pat_id || !pat_id->name || !variant->name) return false;
     
     // First try exact match
@@ -101,13 +126,13 @@ static bool pattern_matches_variant(Expr *pattern, Id *variant) {
 static bool match_check_enum_exhaustiveness(Decl *enum_decl, StmtMatchCase *cases) {
     if (!enum_decl) return false;
     
-    IdList *variants = enum_decl->as.enum_decl.variants;
+    Variant *variants = enum_decl->as.enum_decl.variants;
     
     // For each variant, check if there's a matching case
-    for (IdList *v = variants; v; v = v->next) {
-        if (!v->id) continue;
+    for (Variant *v = variants; v; v = v->next) {
+        if (!v->name) continue;
         
-        EXHAUST_DBG("checking variant '%.*s'", (int)v->id->length, v->id->name);
+        EXHAUST_DBG("checking variant '%.*s'", (int)v->name->length, v->name->name);
         
         bool variant_covered = false;
         for (StmtMatchCase *c = cases; c; c = c->next) {
@@ -117,7 +142,7 @@ static bool match_check_enum_exhaustiveness(Decl *enum_decl, StmtMatchCase *case
                 break;
             }
             
-            if (pattern_matches_variant(c->pattern, v->id)) {
+            if (pattern_matches_variant(c->pattern, v->name)) {
                 variant_covered = true;
                 break;
             }
@@ -125,7 +150,7 @@ static bool match_check_enum_exhaustiveness(Decl *enum_decl, StmtMatchCase *case
         
         if (!variant_covered) {
             EXHAUST_DBG("enum variant '%.*s' not covered", 
-                       (int)v->id->length, v->id->name);
+                       (int)v->name->length, v->name->name);
             return false;
         }
     }

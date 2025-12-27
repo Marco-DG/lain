@@ -483,8 +483,8 @@ void sema_resolve_expr(Expr *e) {
       Decl *D = dl->decl;
       if (D && D->kind == DECL_ENUM) {
         Id *enum_id = D->as.enum_decl.type_name;
-        for (IdList *vl = D->as.enum_decl.variants; vl; vl = vl->next) {
-          Id *vid = vl->id;
+        for (Variant *vl = D->as.enum_decl.variants; vl; vl = vl->next) {
+          Id *vid = vl->name;
           if ((size_t)vid->length == strlen(raw) &&
               strncmp(vid->name, raw, vid->length) == 0) {
             // build "<module>_<Enum>_<Variant>"

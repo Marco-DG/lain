@@ -233,6 +233,45 @@ void emit_stmt(Stmt *stmt, int depth) {
     char c_ty[128];
     c_name_for_type(scrut->type, c_ty, sizeof c_ty);
 
+    // Check if it is an ADT
+    bool is_adt = false;
+    Decl *adt_decl = NULL;
+    char adt_cname[256];
+    if (scrut->type && scrut->type->kind == TYPE_SIMPLE) {
+        // We need the resolved name of the type for C code generation
+        const char *tname = c_name_for_id(scrut->type->base_type);
+        strncpy(adt_cname, tname, sizeof(adt_cname));
+        adt_cname[sizeof(adt_cname)-1] = '\0';
+        
+        // Find the Decl by iterating sema_decls and checking for suffix match
+        // tname is likely mangled (tests_adt_Shape). Decl name is raw (Shape).
+        size_t tlen = strlen(tname);
+        
+        for (DeclList *dl = sema_decls; dl; dl = dl->next) {
+            if (!dl->decl || dl->decl->kind != DECL_ENUM) continue;
+            Id *enum_name = dl->decl->as.enum_decl.type_name;
+            if (!enum_name) continue;
+            
+            // 1. Exact match
+            if ((size_t)enum_name->length == tlen &&
+                strncmp(enum_name->name, tname, tlen) == 0) {
+                is_adt = true;
+                adt_decl = dl->decl;
+                break;
+            }
+            
+            // 2. Suffix match
+            if (tlen > (size_t)enum_name->length + 1) {
+                const char *suffix = tname + (tlen - enum_name->length);
+                if (*(suffix-1) == '_' && strncmp(suffix, enum_name->name, enum_name->length) == 0) {
+                    is_adt = true;
+                    adt_decl = dl->decl;
+                    break;
+                }
+            }
+        }
+    }
+
     // 2) bind to __matchN with the real C type
     emit_indent(depth);
     static int __match_cnt = 0;
@@ -253,47 +292,101 @@ void emit_stmt(Stmt *stmt, int depth) {
       // start if / else if / else
       if (group->pattern) {
         EMIT(first_clause ? "if (" : "else if (");
-        // emit each sub‐pattern in this group
-        for (StmtMatchCase *p = c;; p = p->next) {
-          switch (p->pattern->kind) {
-          case EXPR_STRING: {
-            // if it's a 1-byte literal on a simple (char/int) scrutinee, emit a char match;
-            // otherwise do the normal slice+memcmp
-            int L = (int)p->pattern->as.string_expr.length;
-            const unsigned char *S = (const unsigned char*)p->pattern->as.string_expr.value;
-            if (L == 1 && scrut->type && scrut->type->kind == TYPE_SIMPLE) {
-              // single‐char string → char literal match
-              EMIT("__match%d == '%c'", __match_id, S[0]);
-            } else {
-              // generic slice/string literal → len + memcmp
-              EMIT("__match%d.len == %d && "
-                   "memcmp(__match%d.data, \"%.*s\", %d) == 0",
-                   __match_id, L, __match_id, L, S, L);
+        
+        if (is_adt) {
+            // ADT Pattern Matching
+            // Check tag: __matchN.tag == ADT_Tag_Variant
+            for (StmtMatchCase *p = c;; p = p->next) {
+                Id *variant_id = NULL;
+                if (p->pattern->kind == EXPR_CALL) {
+                    // Variant(...)
+                    Expr *callee = p->pattern->as.call_expr.callee;
+                    if (callee->kind == EXPR_IDENTIFIER) variant_id = callee->as.identifier_expr.id;
+                    else if (callee->kind == EXPR_MEMBER) variant_id = callee->as.member_expr.member;
+                } else if (p->pattern->kind == EXPR_IDENTIFIER) {
+                    // Variant
+                    variant_id = p->pattern->as.identifier_expr.id;
+                }
+                
+                if (variant_id) {
+                    // We need the raw variant name to construct the Tag name
+                    // The variant_id might be mangled or not.
+                    // But we know the ADT C name.
+                    // The tag is ADT_Tag_VariantRawName.
+                    // We need to find the Variant in the ADT Decl to get the raw name.
+                    // Or we can try to extract it from variant_id?
+                    // Better to lookup in ADT Decl.
+                    
+                    // const char *search_name = variant_id->name; // Unused
+                    // If mangled (tests_adt_Shape_Circle), extract suffix?
+                    // Or just iterate ADT variants and match?
+                    
+                    Variant *matched_v = NULL;
+                    for (Variant *v = adt_decl->as.enum_decl.variants; v; v = v->next) {
+                        // Check exact or suffix match
+                        if (v->name->length == variant_id->length &&
+                            strncmp(v->name->name, variant_id->name, v->name->length) == 0) {
+                            matched_v = v; break;
+                        }
+                        // Suffix match
+                        if (variant_id->length > v->name->length + 1) {
+                             const char *suffix = variant_id->name + (variant_id->length - v->name->length);
+                             if (*(suffix-1) == '_' && strncmp(suffix, v->name->name, v->name->length) == 0) {
+                                 matched_v = v; break;
+                             }
+                        }
+                    }
+                    
+                    if (matched_v) {
+                        EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_cname, (int)matched_v->name->length, matched_v->name->name);
+                    } else {
+                        EMIT("0 /* unknown variant */");
+                    }
+                } else {
+                    EMIT("0 /* invalid pattern */");
+                }
+
+                if (p == group) break;
+                EMIT(" || ");
             }
-            break;
-           }
-          case EXPR_CHAR: {
-            EMIT("__match%d == ", __match_id);
-            emit_expr(p->pattern, depth);
-            break;
-          }
-          case EXPR_RANGE: {
-            char lo = p->pattern->as.range_expr.start->as.char_expr.value;
-            char hi = p->pattern->as.range_expr.end->as.char_expr.value;
-            EMIT("(__match%d >= '%c' && __match%d <= '%c')", __match_id, lo,
-                 __match_id, hi);
-            break;
-          }
-          default: {
-            // identifier or numeric literal
-            EMIT("__match%d == ", __match_id);
-            emit_expr(p->pattern, depth);
-            break;
-          }
-          }
-          if (p == group)
-            break;
-          EMIT(" || ");
+        } else {
+            // Existing logic for non-ADT
+            for (StmtMatchCase *p = c;; p = p->next) {
+              switch (p->pattern->kind) {
+              case EXPR_STRING: {
+                int L = (int)p->pattern->as.string_expr.length;
+                const unsigned char *S = (const unsigned char*)p->pattern->as.string_expr.value;
+                if (L == 1 && scrut->type && scrut->type->kind == TYPE_SIMPLE) {
+                  EMIT("__match%d == '%c'", __match_id, S[0]);
+                } else {
+                  EMIT("__match%d.len == %d && "
+                       "memcmp(__match%d.data, \"%.*s\", %d) == 0",
+                       __match_id, L, __match_id, L, S, L);
+                }
+                break;
+               }
+              case EXPR_CHAR: {
+                EMIT("__match%d == ", __match_id);
+                emit_expr(p->pattern, depth);
+                break;
+              }
+              case EXPR_RANGE: {
+                char lo = p->pattern->as.range_expr.start->as.char_expr.value;
+                char hi = p->pattern->as.range_expr.end->as.char_expr.value;
+                EMIT("(__match%d >= '%c' && __match%d <= '%c')", __match_id, lo,
+                     __match_id, hi);
+                break;
+              }
+              default: {
+                EMIT("__match%d == ", __match_id);
+                emit_expr(p->pattern, depth);
+                break;
+              }
+              }
+              if (p == group)
+                break;
+              EMIT(" || ");
+            }
         }
         EMIT(") ");
       } else {
@@ -303,6 +396,60 @@ void emit_stmt(Stmt *stmt, int depth) {
 
       // 4) body
       EMIT("{\n");
+      
+      // Emit bindings for ADT patterns
+      if (is_adt && group->pattern && group->pattern->kind == EXPR_CALL) {
+          // Destructuring: Variant(a, b)
+          // We need to match arguments to fields.
+          // We need the Variant Decl again.
+          // (Repeating lookup - could be optimized)
+          Id *variant_id = NULL;
+          Expr *callee = group->pattern->as.call_expr.callee;
+          if (callee->kind == EXPR_IDENTIFIER) variant_id = callee->as.identifier_expr.id;
+          else if (callee->kind == EXPR_MEMBER) variant_id = callee->as.member_expr.member;
+          
+          Variant *matched_v = NULL;
+          if (variant_id) {
+              for (Variant *v = adt_decl->as.enum_decl.variants; v; v = v->next) {
+                    if (v->name->length == variant_id->length &&
+                        strncmp(v->name->name, variant_id->name, v->name->length) == 0) {
+                        matched_v = v; break;
+                    }
+                    if (variant_id->length > v->name->length + 1) {
+                         const char *suffix = variant_id->name + (variant_id->length - v->name->length);
+                         if (*(suffix-1) == '_' && strncmp(suffix, v->name->name, v->name->length) == 0) {
+                             matched_v = v; break;
+                         }
+                    }
+              }
+          }
+          
+          if (matched_v) {
+              ExprList *arg = group->pattern->as.call_expr.args;
+              DeclList *field = matched_v->fields;
+              while (arg && field) {
+                  if (arg->expr->kind == EXPR_IDENTIFIER) {
+                      Id *var_name = arg->expr->as.identifier_expr.id;
+                      // Emit: Type var = __matchN.data.Variant.field;
+                      // We need the field type.
+                      Type *ft = field->decl->as.variable_decl.type;
+                      char fty[128];
+                      c_name_for_type(ft, fty, sizeof fty);
+                      
+                      emit_indent(depth + 1);
+                      EMIT("%s %.*s = __match%d.data.%.*s.%.*s;\n",
+                           fty,
+                           (int)var_name->length, var_name->name,
+                           __match_id,
+                           (int)matched_v->name->length, matched_v->name->name,
+                           (int)field->decl->as.variable_decl.name->length, field->decl->as.variable_decl.name->name);
+                  }
+                  arg = arg->next;
+                  field = field->next;
+              }
+          }
+      }
+
       if (group->body) {
         emit_stmt_list(group->body, depth + 1);
       }

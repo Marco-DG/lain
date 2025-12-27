@@ -123,6 +123,33 @@ static Type *sema_unwrap_type(Type *t) {
     return t;
 }
 
+
+
+/* lookup an ADT Decl node by its name Id */
+static DeclEnum *find_adt_decl(Id *adt_name) {
+  if (!adt_name) return NULL;
+  for (DeclList *dl = sema_decls; dl; dl = dl->next) {
+    Decl *d = dl->decl;
+    if (d && d->kind == DECL_ENUM &&
+        d->as.enum_decl.type_name->length == adt_name->length &&
+        strncmp(d->as.enum_decl.type_name->name, adt_name->name, adt_name->length) == 0) {
+      return &d->as.enum_decl;
+    }
+  }
+  return NULL;
+}
+
+/* lookup a variant in an ADT */
+static Variant *lookup_adt_variant(DeclEnum *adt, Id *variant_name) {
+    for (Variant *v = adt->variants; v; v = v->next) {
+        if (v->name->length == variant_name->length &&
+            strncmp(v->name->name, variant_name->name, variant_name->length) == 0) {
+            return v;
+        }
+    }
+    return NULL;
+}
+
 void sema_infer_expr(Expr *e) {
   if (!e)
     return;
@@ -139,9 +166,53 @@ void sema_infer_expr(Expr *e) {
     }
     break;
 
+// ...
+
   case EXPR_MEMBER: {
     sema_infer_expr(e->as.member_expr.target);
     Type *t = e->as.member_expr.target->type;
+    
+    // Case 1: Accessing ADT Variant Constructor (e.g. Shape.Circle)
+    // Case 1: Accessing ADT Variant Constructor (e.g. Shape.Circle)
+    if (e->as.member_expr.target->kind == EXPR_IDENTIFIER) {
+        Id *base_name = e->as.member_expr.target->as.identifier_expr.id;
+        DeclEnum *adt = NULL;
+        
+        // Try to use resolved decl first
+        if (e->as.member_expr.target->decl && e->as.member_expr.target->decl->kind == DECL_ENUM) {
+            adt = &e->as.member_expr.target->decl->as.enum_decl;
+        } else {
+            // Fallback to name lookup (though resolve should have handled it)
+            adt = find_adt_decl(base_name);
+        }
+
+        if (adt) {
+            // It is an ADT type name!
+            Variant *v = lookup_adt_variant(adt, e->as.member_expr.member);
+            if (!v) {
+                fprintf(stderr, "sema error: ADT '%.*s' has no variant '%.*s'\n",
+                        (int)base_name->length, base_name->name,
+                        (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+                exit(1);
+            }
+            // The type of "Shape.Circle" is the ADT type itself (conceptually)
+            // But we need to know it's a constructor.
+            // For now, let's just set the type to the ADT type.
+            // We need to construct a Type for the ADT.
+            // Since we don't have a "TypeDecl" pointer in Type, we reconstruct it.
+            // TODO: Cache this or store Decl in Type.
+            Type *adt_type = type_simple(sema_arena, base_name);
+            e->type = adt_type;
+            
+            // Tag the expression as a variant constructor for code gen
+            // We can reuse `decl` field to point to the ADT decl? No, that's for variables.
+            // We might need a new ExprKind or just rely on context.
+            // Let's rely on EXPR_CALL handling this if it's a call.
+            // If it's just `Shape.Point` (no args), it's a value.
+            return;
+        }
+    }
+
     assert(t && "member on untyped target");
     
     // Unwrap wrappers (mut, mov, ptr)
@@ -167,59 +238,54 @@ void sema_infer_expr(Expr *e) {
     break;
   }
 
-  case EXPR_INDEX: {
-    // First infer the target and the index expression
-    sema_infer_expr(e->as.index_expr.target);
-    sema_infer_expr(e->as.index_expr.index);
-
-    // Now check that the target really is an array or slice:
-    Type *t = e->as.index_expr.target->type;
-    if (!t || (t->kind != TYPE_ARRAY && t->kind != TYPE_SLICE)) {
-      fprintf(stderr,
-              "sema error: cannot index expression of non‐array/slice type\n");
-      exit(1);
-    }
-
-    // If the index is a `..` or `..=` range, produce a new length‐based slice.
-    if (e->as.index_expr.index->kind == EXPR_RANGE) {
-      // Build a TYPE_ARRAY over the element_type so that we get a .len field
-      // new:
-        e->type = type_array(sema_arena, t->element_type, /*array_len=*/ -1);
-
-    } else {
-      // Plain indexing: element := array[i] or slice[i]
-      e->type = t->element_type;
-      
-      // Static bounds check using Range Analysis
-      Range idx_range = sema_eval_range(e->as.index_expr.index, sema_ranges);
-      
-      // Get array length
-      isize array_len = -1;
-      if (t->kind == TYPE_ARRAY && t->array_len >= 0) array_len = t->array_len;
-      else if (t->kind == TYPE_SLICE && t->sentinel_len > 0) array_len = t->sentinel_len;
-
-      if (idx_range.known) {
-          if (idx_range.min < 0) {
-              fprintf(stderr, "bounds error: index can be negative (%lld)\n", (long long)idx_range.min);
-              exit(1);
-          }
-          if (array_len >= 0) {
-              if (idx_range.max >= array_len) {
-                  fprintf(stderr, "bounds error: index max (%lld) >= array length (%ld)\n", 
-                          (long long)idx_range.max, (long)array_len);
-                  exit(1);
-              }
-          }
-      } else {
-          fprintf(stderr, "bounds error: cannot prove index is safe (range unknown)\n");
-          exit(1);
-      }
-    }
-    break;
-  }
+// ...
 
   case EXPR_CALL: {
     // ensure callee resolved & infer args
+    sema_infer_expr(e->as.call_expr.callee); // Changed from resolve to infer to handle Shape.Circle
+    
+    // Check if this is an ADT constructor call
+    if (e->as.call_expr.callee->kind == EXPR_MEMBER) {
+        Expr *target = e->as.call_expr.callee->as.member_expr.target;
+        if (target->kind == EXPR_IDENTIFIER) {
+             DeclEnum *adt = NULL;
+             if (target->decl && target->decl->kind == DECL_ENUM) {
+                 adt = &target->decl->as.enum_decl;
+             } else {
+                 adt = find_adt_decl(target->as.identifier_expr.id);
+             }
+             
+             if (adt) {
+                 // It IS an ADT constructor call: Shape.Circle(...)
+                 // Verify arguments match fields
+                 Variant *v = lookup_adt_variant(adt, e->as.call_expr.callee->as.member_expr.member);
+                 assert(v && "Variant should have been found in EXPR_MEMBER");
+                 
+                 ExprList *arg = e->as.call_expr.args;
+                 DeclList *field = v->fields;
+                 
+                 int arg_idx = 0;
+                 while (arg && field) {
+                     sema_infer_expr(arg->expr);
+                     // TODO: Check type compatibility between arg->expr->type and field->decl->type
+                     arg = arg->next;
+                     field = field->next;
+                     arg_idx++;
+                 }
+                 
+                 if (arg || field) {
+                     fprintf(stderr, "sema error: wrong number of arguments for variant constructor '%.*s'\n",
+                             (int)v->name->length, v->name->name);
+                     exit(1);
+                 }
+                 
+                 e->type = e->as.call_expr.callee->type; // The ADT type
+                 break;
+             }
+        }
+    }
+    
+    // Normal function call logic...
     sema_resolve_expr(e->as.call_expr.callee);
     
     // Purity check: func cannot call proc

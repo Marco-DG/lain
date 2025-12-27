@@ -229,31 +229,105 @@ void emit_decl(Decl* decl, int depth) {
 
 
         case DECL_ENUM: {
-            // 1) lookup the C‐enum tag, e.g. "main_Kind" or "main_State"
-            const char *enum_tag = c_name_for_id(
-                decl->as.enum_decl.type_name);
+            // 1) lookup the C‐enum tag, e.g. "main_Shape"
+            const char *adt_name = c_name_for_id(decl->as.enum_decl.type_name);
 
-            // 2) print the typedef header
+            // 2) Generate the Tag Enum: typedef enum { Shape_Tag_Circle, Shape_Tag_Rectangle } Shape_Tag;
             emit_indent(depth);
-            EMIT("typedef enum %s {\n", enum_tag);
-
-            // 3) each variant: print "%s_%variant"
-            for (IdList *vl = decl->as.enum_decl.variants;
-                    vl; vl = vl->next)
-            {
-                if (!vl->id) continue;
+            EMIT("typedef enum {\n");
+            
+            for (Variant *v = decl->as.enum_decl.variants; v; v = v->next) {
                 emit_indent(depth + 1);
-                EMIT("%s_%.*s",
-                    enum_tag,
-                    (int)vl->id->length,
-                    vl->id->name);
-                if (vl->next) EMIT(",");
-                EMIT("\n");
+                EMIT("%s_Tag_%.*s,\n", adt_name, (int)v->name->length, v->name->name);
             }
-
-            // 4) close the typedef
+            
             emit_indent(depth);
-            EMIT("} %s;\n\n", enum_tag);
+            EMIT("} %s_Tag;\n\n", adt_name);
+
+            // 3) Generate the ADT Struct: typedef struct { Shape_Tag tag; union { ... } data; } Shape;
+            emit_indent(depth);
+            EMIT("typedef struct {\n");
+            emit_indent(depth + 1);
+            EMIT("%s_Tag tag;\n", adt_name);
+            
+            // Only generate union if there are variants with fields
+            bool has_fields = false;
+            for (Variant *v = decl->as.enum_decl.variants; v; v = v->next) {
+                if (v->fields) {
+                    has_fields = true;
+                    break;
+                }
+            }
+            
+            if (has_fields) {
+                emit_indent(depth + 1);
+                EMIT("union {\n");
+                
+                for (Variant *v = decl->as.enum_decl.variants; v; v = v->next) {
+                    if (v->fields) {
+                        emit_indent(depth + 2);
+                        EMIT("struct {\n");
+                        for (DeclList *f = v->fields; f; f = f->next) {
+                            emit_indent(depth + 3);
+                            emit_type(f->decl->as.variable_decl.type);
+                            EMIT(" %.*s;\n", 
+                                 (int)f->decl->as.variable_decl.name->length,
+                                 f->decl->as.variable_decl.name->name);
+                        }
+                        emit_indent(depth + 2);
+                        EMIT("} %.*s;\n", (int)v->name->length, v->name->name);
+                    }
+                }
+                
+                emit_indent(depth + 1);
+                EMIT("} data;\n");
+            }
+            
+            emit_indent(depth);
+            EMIT("} %s;\n\n", adt_name);
+            
+            register_struct_type(adt_name); // Register as a type so it can be used
+
+            // 4) Generate Constructors
+            // static inline Shape Shape_Circle(int radius) { return (Shape){ .tag = Shape_Tag_Circle, .data.Circle = { radius } }; }
+            for (Variant *v = decl->as.enum_decl.variants; v; v = v->next) {
+                emit_indent(depth);
+                EMIT("static inline %s %s_%.*s(", adt_name, adt_name, (int)v->name->length, v->name->name);
+                
+                // Params
+                if (v->fields) {
+                    int first = 1;
+                    for (DeclList *f = v->fields; f; f = f->next) {
+                        if (!first) EMIT(", ");
+                        emit_type(f->decl->as.variable_decl.type);
+                        EMIT(" %.*s", 
+                             (int)f->decl->as.variable_decl.name->length,
+                             f->decl->as.variable_decl.name->name);
+                        first = 0;
+                    }
+                }
+                
+                EMIT(") {\n");
+                emit_indent(depth + 1);
+                EMIT("return (%s){ .tag = %s_Tag_%.*s", adt_name, adt_name, (int)v->name->length, v->name->name);
+                
+                if (v->fields) {
+                    EMIT(", .data.%.*s = { ", (int)v->name->length, v->name->name);
+                    int first = 1;
+                    for (DeclList *f = v->fields; f; f = f->next) {
+                        if (!first) EMIT(", ");
+                        EMIT(".%.*s = %.*s", 
+                             (int)f->decl->as.variable_decl.name->length, f->decl->as.variable_decl.name->name,
+                             (int)f->decl->as.variable_decl.name->length, f->decl->as.variable_decl.name->name);
+                        first = 0;
+                    }
+                    EMIT(" }");
+                }
+                
+                EMIT(" };\n");
+                emit_indent(depth);
+                EMIT("}\n\n");
+            }
         }
         break;
 

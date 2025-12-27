@@ -1,0 +1,23 @@
+// Test: Algebraic Data Types (Unified Syntax)
+
+extern func printf(fmt u8[:0], ...) int
+
+type Shape {
+    Circle { radius int }
+    Rectangle { width int, height int }
+    Point
+}
+
+func main() int {
+    var c = Shape.Circle(10)
+    var r = Shape.Rectangle(10, 20)
+    var p = Shape.Point
+    
+    match c {
+        Circle(rad): printf("Circle radius: %d\n", rad)
+        Rectangle(w, h): printf("Rect: %d x %d\n", w, h)
+        Point: printf("Point\n")
+    }
+    
+    return 0
+}

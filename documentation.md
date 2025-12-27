@@ -114,17 +114,51 @@ func main() int {
 }
 ```
 
-### Enums (ADTs)
-Lain supports simple enums and is expanding towards full algebraic data types.
-```lain
-type Color {
-    Red
-    Green
-    Blue
-}
+### Algebraic Data Types (ADTs)
+Lain supports full Algebraic Data Types, allowing you to define types that can be one of several variants, each potentially holding different data.
 
-var c = Color.Red
+#### Definition
+Use the `type` keyword. Variants can be simple (like enums) or hold fields (like structs).
+
+```lain
+type Shape {
+    Circle {
+        rad int
+    }
+    Rectangle {
+        w int
+        h int
+    }
+    Point // Simple variant (unit)
+}
 ```
+
+#### Construction
+Construct variants using the `Type.Variant` syntax.
+
+```lain
+var c = Shape.Circle(10)
+var r = Shape.Rectangle(5, 8)
+var p = Shape.Point
+```
+
+#### Pattern Matching
+Use `match` to handle different variants and destructure their data.
+
+```lain
+match s {
+    Circle(r): {
+        printf("Circle radius: %d\n", r)
+    }
+    Rectangle(w, h): {
+        printf("Rect: %d x %d\n", w, h)
+    }
+    Point: {
+        printf("Just a point\n")
+    }
+}
+```
+Note: `match` must be exhaustive. You must cover all variants or provide an `else` case.
 
 ### Arrays & Slices
 - **Arrays**: Fixed-size, stored on stack or within structs.

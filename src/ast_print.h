@@ -405,17 +405,29 @@ void decl_print_ast(Decl *decl, int depth) {
                    (int)decl->as.enum_decl.type_name->length,
                    decl->as.enum_decl.type_name->name);
 
-            IdList* value = decl->as.enum_decl.variants;  // FIX: Use IdList*
+            Variant* value = decl->as.enum_decl.variants;
             if (!value) {
                 indent(depth + 1);
                 printf("// Empty enum\n");
             } else {
                 while (value) {
-                    if (value->id) {
+                    if (value->name) {
                         indent(depth + 1);
                         printf("Enum Value: %.*s\n",
-                               (int)value->id->length,
-                               value->id->name);
+                               (int)value->name->length,
+                               value->name->name);
+                        if (value->fields) {
+                            indent(depth + 2);
+                            printf("Fields:\n");
+                            for (DeclList *f = value->fields; f; f = f->next) {
+                                indent(depth + 3);
+                                printf("%.*s : ", 
+                                    (int)f->decl->as.variable_decl.name->length,
+                                    f->decl->as.variable_decl.name->name);
+                                print_type(f->decl->as.variable_decl.type);
+                                printf("\n");
+                            }
+                        }
                     } else {
                         indent(depth + 1);
                         printf("/* Warning: NULL enum value */\n");

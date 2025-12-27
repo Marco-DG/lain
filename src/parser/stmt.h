@@ -503,6 +503,24 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
                         }
                     }
                 }
+                else if (t1.kind == TOKEN_L_PAREN) {
+                    // Constructor pattern: Variant(...) :
+                    // We need to skip balanced parens
+                    int depth = 1;
+                    while (depth > 0) {
+                        Token t = lexer_next(&fork);
+                        if (t.kind == TOKEN_EOF) break;
+                        if (t.kind == TOKEN_L_PAREN) depth++;
+                        else if (t.kind == TOKEN_R_PAREN) depth--;
+                    }
+                    
+                    if (depth == 0) {
+                        Token t_after = lexer_next(&fork);
+                        if (t_after.kind == TOKEN_COLON) {
+                            stop_for_header = true;
+                        }
+                    }
+                }
             }
 
             if (stop_for_header) {

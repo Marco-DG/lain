@@ -147,25 +147,40 @@ void emit_expr(Expr *expr, int depth) {
   case EXPR_MEMBER: {
     ExprMember *m = &expr->as.member_expr;
     
+    // Check if this is an ADT variant access (e.g. Shape.Point) used as a value
+    if (m->target->kind == EXPR_IDENTIFIER) {
+        // We rely on the fact that sema_infer_expr sets the type to the ADT type
+        // But we need to know if it's a type name.
+        // Let's check if the resolved decl is an Enum.
+        Decl *d = m->target->decl;
+        if (d && d->kind == DECL_ENUM) {
+             const char *raw_adt_name = c_name_for_id(m->target->as.identifier_expr.id);
+             char adt_name[256];
+             strncpy(adt_name, raw_adt_name, sizeof(adt_name));
+             adt_name[sizeof(adt_name)-1] = '\0';
+             
+             const char *variant_name = c_name_for_id(m->member);
+             // Emit as a constructor call: Shape_Point()
+             EMIT("%s_%s()", adt_name, variant_name);
+             break;
+        }
+    }
+
     bool is_ptr = false;
     Type *t = m->target->type;
     if (t) {
-        // Check for explicit pointer type
+        // ... (existing logic) ...
         if (t->kind == TYPE_POINTER) {
             is_ptr = true;
         }
-        // MODE_MUTABLE is always a pointer (T*)
         else if (t->mode == MODE_MUTABLE) {
             is_ptr = true;
         }
-        // MODE_OWNED is always a value (T) - use .
         else if (t->mode == MODE_OWNED) {
             is_ptr = false;
         }
-        // MODE_SHARED: check if it's a parameter (passed as const T*)
         else if (t->mode == MODE_SHARED) {
             if (t->kind == TYPE_SIMPLE || t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
-                // Check if target is a parameter (Shared Reference -> const T*)
                 if (m->target->kind == EXPR_IDENTIFIER) {
                     Decl *d = m->target->decl;
                     if (d && d->kind == DECL_VARIABLE) {
@@ -190,18 +205,15 @@ void emit_expr(Expr *expr, int depth) {
       Id *id = expr->as.call_expr.callee->as.identifier_expr.id;
       cname = c_name_for_id(id);
     }
-    //fprintf(stderr, "[debug] EXPR_CALL: cname='%s'\n", cname ?: "<anon>");
   
     // 2) detect struct‐ctor
     bool is_ctor = cname && is_struct_type(cname);
-    //fprintf(stderr, "[debug]   is_ctor? %s\n", is_ctor ? "yes":"no");
   
     // 3) find the matching DeclStruct
     DeclStruct *sd = NULL;
     if (is_ctor) {
       const char *unders = strchr(cname, '_');
       const char *struct_name = unders ? unders + 1 : cname;
-      //fprintf(stderr, "[debug]   struct_name='%s'\n", struct_name);
       for (DeclList *dl = emitted_decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
         if (d->kind == DECL_STRUCT &&
@@ -212,18 +224,29 @@ void emit_expr(Expr *expr, int depth) {
         }
       }
     }
-    //fprintf(stderr, "[debug]   found DeclStruct? %s\n", sd ? "yes":"no");
   
     // 4) emit the function/ctor name
     if (is_ctor) {
       EMIT("%s_ctor", cname);
-      //fprintf(stderr, "[debug]   using ctor '%s_ctor'\n", cname);
     } else if (cname) {
       EMIT("%s", cname);
-      //fprintf(stderr, "[debug]   plain call '%s'\n", cname);
+    } else if (expr->as.call_expr.callee->kind == EXPR_MEMBER) {
+        // Check for ADT constructor: Shape.Circle(...)
+        Expr *target = expr->as.call_expr.callee->as.member_expr.target;
+        if (target->kind == EXPR_IDENTIFIER) {
+            const char *raw_adt_name = c_name_for_id(target->as.identifier_expr.id);
+            char adt_name[256];
+            strncpy(adt_name, raw_adt_name, sizeof(adt_name));
+            adt_name[sizeof(adt_name)-1] = '\0';
+            
+            const char *variant_name = c_name_for_id(expr->as.call_expr.callee->as.member_expr.member);
+            // fprintf(stderr, "DEBUG: EXPR_CALL ADT: adt='%s', var='%s'\n", adt_name, variant_name);
+            EMIT("%s_%s", adt_name, variant_name);
+        } else {
+            emit_expr(expr->as.call_expr.callee, depth);
+        }
     } else {
       emit_expr(expr->as.call_expr.callee, depth);
-      //fprintf(stderr, "[debug]   anon callee fallback\n");
     }
   
     // 5) emit the argument list

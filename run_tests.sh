@@ -45,6 +45,7 @@ run_test tests/bounds_pass.ln
 run_test tests/enums.ln
 run_test tests/enum_exhaustive.ln
 run_test tests/borrow_valid.ln
+run_test tests/adt.ln
 
 # Negative tests (should fail to compile)
 run_negative_test() {
