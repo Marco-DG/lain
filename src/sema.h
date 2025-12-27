@@ -11,6 +11,7 @@ Decl *current_function_decl = NULL; // New: track current function for purity ch
 const char *current_module_path = NULL;
 DeclList *sema_decls = NULL;
 Arena *sema_arena = NULL;
+RangeTable *sema_ranges = NULL;
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Public entry: call this before emit                             │
@@ -19,6 +20,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                                 Arena *arena) {
     sema_arena = arena;
     sema_decls = decls;
+    sema_ranges = range_table_new(arena);
 
     // 1) Clear old globals + insert top-level decls
     sema_clear_globals();

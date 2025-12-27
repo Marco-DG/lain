@@ -13,14 +13,21 @@ Type *get_builtin_u8_type(void);
 void sema_infer_expr(Expr *e);
 void sema_resolve_expr(Expr *e); // forward
 
+#include "ranges.h" // Range analysis
+
 extern Arena *sema_arena;
 extern DeclList *sema_decls;
 extern Type *current_return_type;
 extern Decl *current_function_decl; // Defined in sema.h
+extern RangeTable *sema_ranges;     // Defined in sema.h
 
-/*
-    helpers
-*/
+// ...
+
+
+
+// ...
+
+
 
 /*─────────────────────────────────────────────────────────────────╗
 │ 1) Helpers to get a builtin “int” Type* only once               │
@@ -183,14 +190,30 @@ void sema_infer_expr(Expr *e) {
       // Plain indexing: element := array[i] or slice[i]
       e->type = t->element_type;
       
-      // Static bounds check for compile-time constant indices
-      BoundsCheckResult bounds = sema_check_bounds(e->as.index_expr.index, t);
-      if (bounds == BOUNDS_ERROR) {
-        sema_report_bounds_error(e->as.index_expr.index, t);
-        exit(1);
+      // Static bounds check using Range Analysis
+      Range idx_range = sema_eval_range(e->as.index_expr.index, sema_ranges);
+      
+      // Get array length
+      isize array_len = -1;
+      if (t->kind == TYPE_ARRAY && t->array_len >= 0) array_len = t->array_len;
+      else if (t->kind == TYPE_SLICE && t->sentinel_len > 0) array_len = t->sentinel_len;
+
+      if (idx_range.known) {
+          if (idx_range.min < 0) {
+              fprintf(stderr, "bounds error: index can be negative (%lld)\n", (long long)idx_range.min);
+              exit(1);
+          }
+          if (array_len >= 0) {
+              if (idx_range.max >= array_len) {
+                  fprintf(stderr, "bounds error: index max (%lld) >= array length (%ld)\n", 
+                          (long long)idx_range.max, (long)array_len);
+                  exit(1);
+              }
+          }
+      } else {
+          fprintf(stderr, "bounds error: cannot prove index is safe (range unknown)\n");
+          exit(1);
       }
-      // BOUNDS_UNKNOWN: could emit runtime check in future
-      // BOUNDS_OK: provably safe, no check needed
     }
     break;
   }

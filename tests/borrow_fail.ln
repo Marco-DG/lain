@@ -13,14 +13,16 @@ func consume_resource(mov r Resource) Resource {
     return mov r
 }
 
+func conflict(r Resource, mov r2 Resource) Resource {
+    return mov r2
+}
+
 func main() int {
     var res Resource
     res.data = 42
     
-    // This should fail: borrowing while still borrowed
-    // (Currently the checker may not catch this yet)
-    var x = use_resource(res)    // shared borrow
-    consume_resource(mov res)  // move while borrowed (ERROR)
+    // This should fail: borrowing and moving in the same call
+    conflict(res, mov res)
     
-    return x
+    return 0
 }

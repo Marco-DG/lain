@@ -354,7 +354,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     if (tbl->borrows && tbl->arena) {
                         // This will error if conflict detected
                         Id *borrow_id = params->decl->as.variable_decl.name;
-                        borrow_register(tbl->arena, tbl->borrows, borrow_id, owner_id, MODE_MUTABLE, owner_region);
+                        borrow_register(tbl->arena, tbl->borrows, borrow_id, owner_id, MODE_MUTABLE, owner_region, true);
                         DBG("EXPR_CALL: registered mutable borrow of '%.*s'", (int)owner_id->length, owner_id->name);
                     }
                 } else if (pty && pty->mode == MODE_SHARED) {
@@ -364,7 +364,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     
                     if (tbl->borrows && tbl->arena) {
                         Id *borrow_id = params->decl->as.variable_decl.name;
-                        borrow_register(tbl->arena, tbl->borrows, borrow_id, owner_id, MODE_SHARED, owner_region);
+                        borrow_register(tbl->arena, tbl->borrows, borrow_id, owner_id, MODE_SHARED, owner_region, true);
                         DBG("EXPR_CALL: registered shared borrow of '%.*s'", (int)owner_id->length, owner_id->name);
                     }
                 }
@@ -563,6 +563,11 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     default:
         // other statements: do nothing
         break;
+    }
+
+    // Clear temporary borrows created in this statement
+    if (tbl->borrows) {
+        borrow_clear_temporaries(tbl->borrows);
     }
 }
 

@@ -78,46 +78,27 @@ typedef struct BorrowEntry {
     OwnershipMode mode;        // MODE_SHARED or MODE_MUTABLE
     Region *borrow_region;     // scope where the borrow is used
     Region *owner_region;      // scope where the owner is defined
+    bool is_temporary;         // true if borrow expires at end of statement
     struct BorrowEntry *next;
 } BorrowEntry;
 
-/*───────────────────────────────────────────────────────────────────╗
-│ BorrowTable: tracks all active borrows in current function        │
-╚───────────────────────────────────────────────────────────────────*/
-
 typedef struct BorrowTable {
     BorrowEntry *head;
-    Region *current_region;    // current scope
-    Region *function_region;   // root scope for this function
+    Region *current_region;
+    Arena *arena;
 } BorrowTable;
 
-// Create new borrow table for a function
 static BorrowTable *borrow_table_new(Arena *arena) {
     BorrowTable *t = arena_push_aligned(arena, BorrowTable);
     t->head = NULL;
-    t->function_region = region_new(arena, NULL);
-    t->current_region = t->function_region;
+    t->current_region = region_new(arena, NULL); // Root region
+    t->arena = arena;
     return t;
 }
 
-// Enter a new scope (e.g., if body, for body, block)
-static Region *borrow_enter_scope(Arena *arena, BorrowTable *t) {
-    Region *r = region_new(arena, t->current_region);
-    t->current_region = r;
-    return r;
-}
-
-// Exit current scope - invalidates borrows in this scope
-static void borrow_exit_scope(BorrowTable *t) {
-    if (t->current_region && t->current_region->parent) {
-        REGION_DBG("borrow_exit_scope: leaving region %d, back to %d",
-                   t->current_region->id, t->current_region->parent->id);
-        t->current_region = t->current_region->parent;
-    }
-}
-
-// Find existing borrow for a variable
+// Implementations
 static BorrowEntry *borrow_find(BorrowTable *t, Id *var) {
+    if (!t) return NULL;
     for (BorrowEntry *e = t->head; e; e = e->next) {
         if (e->var->length == var->length &&
             strncmp(e->var->name, var->name, var->length) == 0) {
@@ -127,49 +108,41 @@ static BorrowEntry *borrow_find(BorrowTable *t, Id *var) {
     return NULL;
 }
 
-// Count borrows for a specific owner
-static int borrow_count_for_owner(BorrowTable *t, Id *owner, OwnershipMode mode) {
-    int count = 0;
+static bool borrow_check_conflict(BorrowTable *t, Id *owner, OwnershipMode mode) {
+    if (!t) return false;
     for (BorrowEntry *e = t->head; e; e = e->next) {
         if (e->owner_var && 
             e->owner_var->length == owner->length &&
             strncmp(e->owner_var->name, owner->name, owner->length) == 0) {
-            if (mode == MODE_MUTABLE || e->mode == mode) {
-                count++;
+            
+            if (e->mode == MODE_MUTABLE) {
+                fprintf(stderr, "borrow error: cannot borrow '%.*s' because it is already mutably borrowed\n",
+                        (int)owner->length, owner->name);
+                return true;
+            }
+            if (mode == MODE_MUTABLE) {
+                fprintf(stderr, "borrow error: cannot borrow '%.*s' as mutable because it is already borrowed\n",
+                        (int)owner->length, owner->name);
+                return true;
             }
         }
-    }
-    return count;
-}
-
-// Check if a borrow would conflict with existing borrows (aliasing rules)
-// Returns true if conflict detected
-static bool borrow_check_conflict(BorrowTable *t, Id *owner, OwnershipMode requested) {
-    for (BorrowEntry *e = t->head; e; e = e->next) {
-        if (!e->owner_var) continue;
-        if (e->owner_var->length != owner->length) continue;
-        if (strncmp(e->owner_var->name, owner->name, owner->length) != 0) continue;
-        
-        // Found existing borrow of the same owner
-        if (requested == MODE_MUTABLE) {
-            // Requesting mutable: conflicts with ANY existing borrow
-            fprintf(stderr, "borrow error: cannot borrow '%.*s' as mutable because it is already borrowed\n",
-                    (int)owner->length, owner->name);
-            return true;
-        } else if (e->mode == MODE_MUTABLE) {
-            // Requesting shared: conflicts with existing MUTABLE borrow
-            fprintf(stderr, "borrow error: cannot borrow '%.*s' as shared because it is borrowed as mutable\n",
-                    (int)owner->length, owner->name);
-            return true;
-        }
-        // Multiple shared borrows are OK
     }
     return false;
 }
 
+static void borrow_enter_scope(Arena *arena, BorrowTable *t) {
+    if (!t) return;
+    t->current_region = region_new(arena, t->current_region);
+}
+
+static void borrow_exit_scope(BorrowTable *t) {
+    if (!t || !t->current_region->parent) return;
+    t->current_region = t->current_region->parent;
+}
+
 // Register a new borrow
 static void borrow_register(Arena *arena, BorrowTable *t, Id *var, Id *owner, 
-                           OwnershipMode mode, Region *owner_region) {
+                           OwnershipMode mode, Region *owner_region, bool is_temporary) {
     // Check for conflicts first
     if (borrow_check_conflict(t, owner, mode)) {
         exit(1);  // Fatal error on conflict
@@ -189,14 +162,29 @@ static void borrow_register(Arena *arena, BorrowTable *t, Id *var, Id *owner,
     e->mode = mode;
     e->borrow_region = t->current_region;
     e->owner_region = owner_region;
+    e->is_temporary = is_temporary;
     e->next = t->head;
     t->head = e;
     
-    REGION_DBG("borrow_register: '%.*s' borrows '%.*s' as %s in region %d",
+    REGION_DBG("borrow_register: '%.*s' borrows '%.*s' as %s in region %d (temp=%d)",
                (int)var->length, var->name,
                (int)owner->length, owner->name,
                mode == MODE_MUTABLE ? "mut" : "shared",
-               t->current_region->id);
+               t->current_region->id, is_temporary);
+}
+
+// Clear temporary borrows (called after each statement)
+static void borrow_clear_temporaries(BorrowTable *t) {
+    if (!t) return;
+    BorrowEntry **curr = &t->head;
+    while (*curr) {
+        if ((*curr)->is_temporary) {
+            REGION_DBG("borrow_clear_temporaries: removing '%.*s'", (int)(*curr)->var->length, (*curr)->var->name);
+            *curr = (*curr)->next; // Remove
+        } else {
+            curr = &(*curr)->next;
+        }
+    }
 }
 
 // Invalidate all borrows of a specific owner (called when owner is moved)

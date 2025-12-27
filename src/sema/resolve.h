@@ -6,6 +6,7 @@
 
 #include "../ast.h"
 #include "exhaustiveness.h"  // Match exhaustiveness checking
+#include "ranges.h"          // Range analysis
 
 
 extern Type *current_return_type;
@@ -13,6 +14,7 @@ extern Decl *current_function_decl; // New
 extern const char *current_module_path;
 extern DeclList *sema_decls;
 extern Arena *sema_arena;
+extern RangeTable *sema_ranges;
 
 Type *get_builtin_int_type(void);
 Type *get_builtin_u8_type(void);
@@ -252,6 +254,10 @@ void sema_resolve_stmt(Stmt *s) {
     if (rhs) {
       sema_resolve_expr(rhs);
       sema_infer_expr(rhs);
+      if (sema_ranges) {
+          Range r = sema_eval_range(rhs, sema_ranges);
+          range_set(sema_ranges, s->as.var_stmt.name, r);
+      }
       if (!ty) {
           ty = rhs->type;           // infer from initializer
           s->as.var_stmt.type = ty;
@@ -316,6 +322,16 @@ void sema_resolve_stmt(Stmt *s) {
       memcpy(raw_i, id_i->name, li);
       raw_i[li] = '\0';
       sema_insert_local(raw_i, raw_i, idx_ty, NULL, false);
+      // Range Analysis: Set range for loop index
+      if (sema_ranges && it->kind == EXPR_RANGE) {
+          Range start = sema_eval_range(it->as.range_expr.start, sema_ranges);
+          Range end = sema_eval_range(it->as.range_expr.end, sema_ranges);
+          if (start.known && end.known) {
+              // Assuming exclusive range for now
+              Range r = range_make(start.min, end.max - 1);
+              range_set(sema_ranges, id_i, r);
+          }
+      }
     }
 
     // value variable (e.g. “c”)
@@ -380,6 +396,12 @@ void sema_resolve_stmt(Stmt *s) {
     sema_resolve_expr(rhs);
     sema_infer_expr(lhs);
     sema_infer_expr(rhs);
+
+    // Range Analysis: Update range
+    if (sema_ranges && lhs->kind == EXPR_IDENTIFIER) {
+        Range r = sema_eval_range(rhs, sema_ranges);
+        range_set(sema_ranges, lhs->as.identifier_expr.id, r);
+    }
 
     // Purity Check: func cannot modify global variable
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {

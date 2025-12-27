@@ -170,21 +170,26 @@ match color {
 
 ## 7. Safety Features
 
-### Static Bounds Checking
-Lain verifies array accesses at compile time when the index is a constant expression.
+### Static Bounds Checking (Zero Overhead)
+Lain verifies array accesses at compile time using **Static Range Analysis**. It tracks the possible range of values for every integer variable to ensure indices are always within bounds. If the compiler cannot prove safety, it rejects the code. There are **no runtime checks**.
+
 ```lain
 var arr int[3]
-var x = arr[0] // OK
+for i in 0..3 {
+    var x = arr[i] // OK: i is known to be in [0, 2]
+}
 // var y = arr[5] // COMPILE ERROR: index out of bounds
 ```
 
 ### Linear Type Enforcement
 Variables marked with `mov` or parameters of type `mov T` must be used exactly once. The compiler tracks the "consumed" state to prevent leaks or double-frees.
 
-### Borrow Checking
-The compiler ensures that:
-1. You cannot move an object while it is borrowed.
-2. You cannot have a mutable borrow while shared borrows exist.
+### Borrow Checking (with NLL-lite)
+Lain implements a strict borrow checker with **Non-Lexical Lifetimes (NLL-lite)** for temporary borrows.
+1. **Lexical Scopes**: Explicit borrows last until the end of their scope.
+2. **Temporary Borrows**: Implicit borrows (e.g., function arguments) expire immediately after the statement, allowing more flexible patterns without sacrificing safety.
+3. **Aliasing Rules**: You cannot have a mutable borrow while other borrows (shared or mutable) exist.
+4. **No Use-After-Move**: You cannot move an object while it is borrowed.
 
 ---
 
