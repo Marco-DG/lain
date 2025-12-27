@@ -226,7 +226,7 @@ void sema_resolve_stmt(Stmt *s) {
       exit(1);
     }
 
-    sema_insert_local(raw, cname, target->type, NULL);
+    sema_insert_local(raw, cname, target->type, NULL, false);
     break;
   }
 
@@ -269,7 +269,7 @@ void sema_resolve_stmt(Stmt *s) {
     raw[L] = '\0';
 
     const char *cname = raw;
-    sema_insert_local(raw, cname, ty, NULL);
+    sema_insert_local(raw, cname, ty, NULL, s->as.var_stmt.is_mutable);
     break;
   }
 
@@ -315,7 +315,7 @@ void sema_resolve_stmt(Stmt *s) {
       size_t li = len_i < cap_i ? len_i : cap_i;
       memcpy(raw_i, id_i->name, li);
       raw_i[li] = '\0';
-      sema_insert_local(raw_i, raw_i, idx_ty, NULL);
+      sema_insert_local(raw_i, raw_i, idx_ty, NULL, false);
     }
 
     // value variable (e.g. “c”)
@@ -327,7 +327,7 @@ void sema_resolve_stmt(Stmt *s) {
       size_t lc = len_c < cap_c ? len_c : cap_c;
       memcpy(raw_c, id_c->name, lc);
       raw_c[lc] = '\0';
-      sema_insert_local(raw_c, raw_c, val_ty, NULL);
+      sema_insert_local(raw_c, raw_c, val_ty, NULL, false);
     }
 
     // recurse into the loop body
@@ -352,18 +352,26 @@ void sema_resolve_stmt(Stmt *s) {
       raw[L] = '\0';
 
       // 2) if it's not yet declared in either locals or globals:
-      if (!sema_lookup(raw)) {
+      Symbol *sym = sema_lookup(raw);
+      if (!sym) {
         // resolve + infer the RHS so we know its type
         sema_resolve_expr(rhs);
         sema_infer_expr(rhs);
         Type *inferred = rhs->type ? rhs->type : get_builtin_int_type();
 
-        // 3) register it as a *new* local
-        sema_insert_local(raw, raw, inferred, NULL);
+        // 3) register it as a *new* local (implicit = immutable)
+        sema_insert_local(raw, raw, inferred, NULL, false);
 
         // 4) mark this stmt as an implicit declaration
         s->as.assign_stmt.is_const = true;
         return; // done: we don't need to mangle LHS/RHS further
+      } else {
+        // Identifier FOUND -> Assignment
+        // Check mutability
+        if (!sym->is_mutable) {
+             fprintf(stderr, "Error: Cannot assign to immutable variable '%s'\n", raw);
+             exit(1);
+        }
       }
     }
 

@@ -65,3 +65,4 @@ run_negative_test tests/borrow_conflict.ln
 run_negative_test tests/bounds_fail.ln
 run_negative_test tests/exhaustive_fail.ln
 run_negative_test tests/use_after_move_fail.ln
+run_negative_test tests/immutable_fail.ln

@@ -42,7 +42,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 DeclDestruct *dd = &p->decl->as.destruct_decl;
 
                 // 2) Insert hidden parameter
-                sema_insert_local(hidden_name, hidden_name, dd->type, p->decl);
+                sema_insert_local(hidden_name, hidden_name, dd->type, p->decl, false);
 
                 // 3) Resolve struct type to find fields
                 Decl *struct_decl = NULL;
@@ -92,7 +92,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     memcpy(raw_field, n->id->name, L);
                     raw_field[L] = '\0';
                     
-                    sema_insert_local(raw_field, raw_field, field_type, NULL); // Destructured fields don't have a Decl
+                    sema_insert_local(raw_field, raw_field, field_type, NULL, false); // Destructured fields don't have a Decl
                 }
 
             } else {
@@ -105,7 +105,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 memcpy(rawp, pid->name, L);
                 rawp[L] = '\0';
 
-                sema_insert_local(rawp, rawp, pty, p->decl);
+                sema_insert_local(rawp, rawp, pty, p->decl, false);
             }
             param_idx++;
         }

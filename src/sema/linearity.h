@@ -51,6 +51,7 @@ typedef struct LEntry {
     Id *id;            // Id pointer for the variable (identifies it)
     int defined_loop_depth; // loop depth where var was declared
     Region *region;    // region where var is defined (for borrow checking)
+    bool is_mutable;   // true if variable is mutable (declared with var)
     LState state;
     struct LEntry *next;
 } LEntry;
@@ -90,13 +91,14 @@ static LEntry *ltable_find(LTable *t, Id *id) {
     return NULL;
 }
 
-static void ltable_add(LTable *t, Id *id, int loop_depth) {
+static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable) {
     if (!id) return;
     if (ltable_find(t, id)) return; // already present — ignore
     LEntry *e = (LEntry*)malloc(sizeof *e);
     e->id = id;
     e->defined_loop_depth = loop_depth;
     e->region = t->borrows ? t->borrows->current_region : NULL;
+    e->is_mutable = is_mutable;
     e->state = LSTATE_UNCONSUMED;
     e->next = t->head;
     t->head = e;
@@ -113,7 +115,7 @@ static LTable *ltable_clone(LTable *src) {
     }
     // shallow-copy entries (Id* pointers are fine)
     for (LEntry *s = src->head; s; s = s->next) {
-        ltable_add(dst, s->id, s->defined_loop_depth);
+        ltable_add(dst, s->id, s->defined_loop_depth, s->is_mutable);
         LEntry *d = ltable_find(dst, s->id);
         if (d) {
             d->state = s->state;
@@ -428,7 +430,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         Type *ty = s->as.var_stmt.type;
         if (is_type_move(ty)) {
             Id *id = s->as.var_stmt.name;
-            ltable_add(tbl, id, loop_depth);
+            ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable);
         }
         break;
     }
@@ -444,7 +446,19 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 Id *id = lhs->as.identifier_expr.id;
                 Type *decl_ty = rhs ? rhs->type : NULL;
                 if (is_type_move(decl_ty)) {
-                    ltable_add(tbl, id, loop_depth);
+                    // If we are assigning to a variable, it must be mutable.
+                    // But ltable_add here is likely for tracking the NEW value's linearity.
+                    // Wait, ltable_add adds a NEW entry. 
+                    // If this is a re-assignment, we should probably update the existing entry?
+                    // Actually, for linearity check of 'mov' types, we track the variable.
+                    // If we assign to it, we are resetting its state to UNCONSUMED.
+                    // But ltable_add checks if it exists and returns if so.
+                    // So this logic seems to be for "first time seen" or something?
+                    // Ah, this block handles "declaration-like assignment" or just tracking?
+                    // If it's STMT_ASSIGN, the var should already be in the table if it was declared.
+                    // If it wasn't declared (e.g. global?), we might add it.
+                    // Let's pass true for now as assignments imply mutability of the target.
+                    ltable_add(tbl, id, loop_depth, true);
                 }
             }
         }
@@ -542,7 +556,7 @@ static void sema_check_function_linearity(Decl *d) {
         Id *pid = p->decl->as.variable_decl.name;
         Type *pty = p->decl->as.variable_decl.type;
         if (is_type_move(pty)) {
-            ltable_add(tbl, pid, /*loop_depth=*/0);
+            ltable_add(tbl, pid, /*loop_depth=*/0, true);
         }
     }
 

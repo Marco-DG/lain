@@ -9,7 +9,6 @@ Stmt *    parse_stmt(Arena *arena, Parser *parser);
 
 // specific statement forms
 Stmt *parse_var_stmt(Arena *arena, Parser *parser);
-Stmt *parse_mov_stmt(Arena *arena, Parser *parser);
 Stmt *parse_assign_stmt(Arena *arena, Parser *parser);
 Stmt *parse_expr_stmt(Arena *arena, Parser *parser);
 Stmt *parse_if_stmt(Arena *arena, Parser *parser);
@@ -101,10 +100,6 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         parser_advance();
         return parse_var_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_MOV)) {
-        parser_advance();
-        return parse_mov_stmt(arena, parser);
-    }
     if (parser_match(TOKEN_KEYWORD_IF)) {
         return parse_if_stmt(arena, parser);
     }
@@ -125,6 +120,9 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
     }
 
     // ——— handle bare identifier starting lines ———
+    // REMOVED: We no longer support bare declarations like `x int`.
+    // All declarations must be `var x ...` or implicit `x = ...`.
+    /*
     if (parser_match(TOKEN_IDENTIFIER)) {
         Token next = lexer_peek(parser->lexer);
 
@@ -133,6 +131,7 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
             return parse_decl_stmt(arena, parser);
         }
     }
+    */
 
     // Parse as expression first (LHS of potential assignment)
     Expr *lhs = parse_expr(arena, parser);
@@ -232,7 +231,7 @@ Stmt *parse_var_stmt(Arena* arena, Parser* parser)
 
     // optional type annotation
     Type *type_annotation = NULL;
-    if (parser_match(TOKEN_IDENTIFIER)) {
+    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV)) {
         type_annotation = parse_type(arena, parser);
     }
 
@@ -243,32 +242,10 @@ Stmt *parse_var_stmt(Arena* arena, Parser* parser)
         assigned_expr = parse_expr(arena, parser);
     }
 
-    return stmt_var(arena, var_name, type_annotation, assigned_expr);
-}
-
-Stmt *parse_mov_stmt(Arena* arena, Parser* parser)
-{
-    parser_expect(TOKEN_IDENTIFIER, "Expected variable name after 'mov'");
-    Id* var_name = id(arena, parser->token.length, parser->token.start);
-    parser_advance();
-
-    Type *type_annotation = NULL;
-    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_COMPTIME)) {
-        type_annotation = parse_type(arena, parser);
-    }
-
-    // Always wrap in move type
-    if (type_annotation) {
-        type_annotation = type_move(arena, type_annotation);
-    }
-
-    Expr *assigned_expr = NULL;
-    if (parser_match(TOKEN_EQUAL)) {
-        parser_advance();
-        assigned_expr = parse_expr(arena, parser);
-    }
-
-    return stmt_var(arena, var_name, type_annotation, assigned_expr);
+    // var creates a MUTABLE variable
+    Stmt *s = stmt_var(arena, var_name, type_annotation, assigned_expr);
+    s->as.var_stmt.is_mutable = true; 
+    return s;
 }
 
 

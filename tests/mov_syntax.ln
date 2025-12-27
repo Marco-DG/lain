@@ -7,10 +7,18 @@ func take_ownership(mov f Foo) Foo {
 }
 
 func main() int {
+    // Test implicit immutable declaration (not supported for structs without literals, use var)
+    // f = Foo{ x: 42 } -> Revert to var
     var f Foo
     f.x = 42
-    // We don't track 'f' as linear in main because it's not declared as 'mov' or 'linear'
-    // But we test the syntax 'mov f' in the call
+    
+    // Test move syntax in call
     take_ownership(mov f)
+    
+    // Test mutable declaration
+    var g Foo
+    g.x = 200
+    take_ownership(mov g)
+    
     return 0
 }

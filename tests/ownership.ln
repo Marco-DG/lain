@@ -24,9 +24,9 @@ func mutate_point(mut p Point) {
 }
 
 func main() int {
-    var p1 Point;
-    p1.x = 10;
-    p1.y = 20;
+    var p1 Point
+    p1.x = 10
+    p1.y = 20
     
     // Test Shared Reference (implicit borrow)
     print_point(p1);
