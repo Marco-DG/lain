@@ -342,6 +342,20 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                             // Let's stick to "error if definitely false".
                         }
                     }
+                    
+                    // Check equation-style return constraints: func f() int >= 0
+                    if (current_function_decl && current_function_decl->as.function_decl.return_constraints) {
+                        Range ret_range = sema_eval_range(s->as.return_stmt.value, sema_ranges);
+                        
+                        for (ExprList *rc = current_function_decl->as.function_decl.return_constraints; rc; rc = rc->next) {
+                            int result = sema_check_post_condition(rc->expr, ret_range, sema_ranges);
+                            
+                            if (result == 0) {
+                                fprintf(stderr, "Error: Return constraint violation. Return value does not satisfy type constraint.\n");
+                                exit(1);
+                            }
+                        }
+                    }
                     break;
                 case STMT_MATCH:
                     sema_infer_expr(s->as.match_stmt.value);

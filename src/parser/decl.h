@@ -501,6 +501,50 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     if (ret_is_comptime && ret_type) {
         ret_type = type_comptime(arena, ret_type);
     }
+    
+    // --- return type constraints (equation-style): int >= 0, int >= lo and <= hi ---
+    ExprList *return_constraints = NULL;
+    if (ret_type && is_comparison_op(parser->token.kind)) {
+        ExprList **rc_tail = &return_constraints;
+        
+        // Create 'result' identifier for LHS of constraint
+        Id *result_id = id(arena, 6, "result");
+        Expr *result_expr = expr_identifier(arena, result_id);
+        
+        do {
+            TokenKind op = parser->token.kind;
+            parser_advance();  // consume operator
+            
+            // Parse the RHS (literal or identifier)
+            Expr *rhs = NULL;
+            if (parser_match(TOKEN_NUMBER)) {
+                int value = atoi(parser->token.start);
+                parser_advance();
+                rhs = expr_literal(arena, value);
+            } else if (parser_match(TOKEN_IDENTIFIER)) {
+                Id *rhs_id = id(arena, parser->token.length, parser->token.start);
+                parser_advance();
+                rhs = expr_identifier(arena, rhs_id);
+            } else {
+                parser_error("Expected number or identifier after comparison operator in return constraint");
+            }
+            
+            // Create binary constraint expression: result op rhs
+            Expr *constraint = expr_binary(arena, op, result_expr, rhs);
+            *rc_tail = expr_list(arena, constraint);
+            rc_tail = &(*rc_tail)->next;
+            
+            // Check for 'and' to chain more constraints
+            if (parser_match(TOKEN_KEYWORD_AND)) {
+                parser_advance();
+                if (!is_comparison_op(parser->token.kind)) {
+                    parser_error("Expected comparison operator after 'and' in return constraint");
+                }
+            } else {
+                break;
+            }
+        } while (is_comparison_op(parser->token.kind));
+    }
 
     // --- contracts (pre/post) ---
     ExprList *pre_contracts = NULL;
@@ -544,6 +588,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     }
     d->as.function_decl.pre_contracts = pre_contracts;
     d->as.function_decl.post_contracts = post_contracts;
+    d->as.function_decl.return_constraints = return_constraints;
     return d;
 }
 

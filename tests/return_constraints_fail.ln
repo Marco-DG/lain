@@ -1,0 +1,11 @@
+// Test: return type constraints - should FAIL to compile
+// The function claims to return int >= 0 but returns -1
+
+func bad_abs(x int) int >= 0 {
+    return -1  // ERROR: -1 does not satisfy >= 0
+}
+
+func main() int {
+    var a = bad_abs(5)
+    return 0
+}

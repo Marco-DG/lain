@@ -1,0 +1,15 @@
+// Test: return type constraints - should compile successfully
+// func abs(x int) int >= 0 means return value must be non-negative
+
+func abs(x int) int >= 0 {
+    if x < 0 {
+        return 0 - x  // Result is positive
+    }
+    return x  // Result is non-negative when x >= 0
+}
+
+func main() int {
+    var a = abs(5)
+    var b = abs(-3)
+    return 0
+}
