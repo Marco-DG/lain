@@ -1,0 +1,12 @@
+func safe_div(a int, b int) int
+    pre b != 0
+{
+    return a / b
+}
+
+func main() int {
+    var x = 10
+    var y = 0
+    var z = safe_div(x, y) // Should fail: y is 0, violating b != 0
+    return 0
+}

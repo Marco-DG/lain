@@ -78,6 +78,8 @@ typedef enum {
     TOKEN_KEYWORD_RETURN,
     TOKEN_KEYWORD_CONTINUE,
     TOKEN_KEYWORD_COMPTIME,
+    TOKEN_KEYWORD_PRE,
+    TOKEN_KEYWORD_POST,
 } TokenKind;
 
 typedef struct {
@@ -103,6 +105,7 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             if (strncmp(lexeme, "use", 3) == 0)         return TOKEN_KEYWORD_USE;
             if (strncmp(lexeme, "and", 3) == 0)         return TOKEN_KEYWORD_AND;
             if (strncmp(lexeme, "fun", 3) == 0)         return TOKEN_KEYWORD_FUNC; /* FIXME */
+            if (strncmp(lexeme, "pre", 3) == 0)         return TOKEN_KEYWORD_PRE;
             break;
         case 4:
             if (strncmp(lexeme, "type", 4) == 0)        return TOKEN_KEYWORD_TYPE;
@@ -112,6 +115,7 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             if (strncmp(lexeme, "elif", 4) == 0)        return TOKEN_KEYWORD_ELIF;
             if (strncmp(lexeme, "else", 4) == 0)        return TOKEN_KEYWORD_ELSE;
             if (strncmp(lexeme, "case", 4) == 0)        return TOKEN_KEYWORD_CASE;
+            if (strncmp(lexeme, "post", 4) == 0)        return TOKEN_KEYWORD_POST;
             break;
         case 5:
             if (strncmp(lexeme, "macro", 5) == 0)       return TOKEN_KEYWORD_MACRO;
@@ -287,6 +291,8 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_KEYWORD_RETURN:              return "return";
         case TOKEN_KEYWORD_CONTINUE:            return "continue";
         case TOKEN_KEYWORD_COMPTIME:            return "comptime";
+        case TOKEN_KEYWORD_PRE:                 return "pre";
+        case TOKEN_KEYWORD_POST:                return "post";
         default:                                return 0;
     }
 }

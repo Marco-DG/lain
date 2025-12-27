@@ -1,0 +1,10 @@
+func bad_abs(x int) int
+    post result >= 0
+{
+    return -1 // Violation!
+}
+
+func main() int {
+    var a = bad_abs(10)
+    return 0
+}

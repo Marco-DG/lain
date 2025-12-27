@@ -363,6 +363,22 @@ void decl_print_ast(Decl *decl, int depth) {
                 printf("Parameters: (none)\n");
             }
 
+            if (decl->as.function_decl.pre_contracts) {
+                indent(depth + 1);
+                printf("Pre-Contracts:\n");
+                for (ExprList *c = decl->as.function_decl.pre_contracts; c; c = c->next) {
+                    expr_print_ast(c->expr, depth + 2);
+                }
+            }
+
+            if (decl->as.function_decl.post_contracts) {
+                indent(depth + 1);
+                printf("Post-Contracts:\n");
+                for (ExprList *c = decl->as.function_decl.post_contracts; c; c = c->next) {
+                    expr_print_ast(c->expr, depth + 2);
+                }
+            }
+
             indent(depth + 1);
             printf("Body:\n");
             StmtList *stmt_list = decl->as.function_decl.body;

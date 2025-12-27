@@ -145,6 +145,8 @@ typedef struct {
     DeclList*   params;         // Parameters (linked list or array)
     Type*       return_type;    // Changed to Type* to support array types
     StmtList*   body;           // Function body
+    ExprList*   pre_contracts;  // New: pre-conditions (requires/pre)
+    ExprList*   post_contracts; // New: post-conditions (ensures/post)
     bool        is_extern;      // rue for “extern func”
 } DeclFunction;
 
@@ -503,6 +505,8 @@ Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type,
     d->as.function_decl.params = params;
     d->as.function_decl.return_type = return_type;
     d->as.function_decl.body = body;
+    d->as.function_decl.pre_contracts = NULL;
+    d->as.function_decl.post_contracts = NULL;
     d->as.function_decl.is_extern   = is_extern;
     return d;
 }
@@ -514,6 +518,8 @@ Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type
     d->as.function_decl.params = params;
     d->as.function_decl.return_type = return_type;
     d->as.function_decl.body = body;
+    d->as.function_decl.pre_contracts = NULL;
+    d->as.function_decl.post_contracts = NULL;
     d->as.function_decl.is_extern   = is_extern;
     return d;
 }

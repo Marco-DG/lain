@@ -1,0 +1,15 @@
+func require_gt(a int, b int) int
+    pre a > b
+{
+    return 0
+}
+
+func test_linear(y int) int {
+    var x = y + 1
+    // x = y + 1 => x - y = 1 => x > y
+    return require_gt(x, y)
+}
+
+func main() int {
+    return 0
+}

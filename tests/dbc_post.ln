@@ -1,0 +1,14 @@
+func abs(x int) int
+    post result >= 0
+{
+    if x < 0 {
+        return 0 - x
+    }
+    return x
+}
+
+func main() int {
+    var a = abs(10)
+    var b = abs(0-10)
+    return 0
+}

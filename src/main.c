@@ -69,8 +69,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    //printf("\n\n#### AST ####\n");
-    //print_ast(program, 0); // Start printing the AST from the root, with depth 0
+    if (args.dump_ast) {
+        printf("\n\n#### AST ####\n");
+        print_ast(program, 0);
+        return 0;
+    }
 
     // sema = resolve identifiers → you’d call:
     sema_resolve_module(program, modname, &_sema_arena);

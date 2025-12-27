@@ -1,0 +1,16 @@
+func require_lt(a int, b int) int
+    pre a < b
+{
+    return 0
+}
+
+func test(x int, y int) int
+    pre x < y
+{
+    // x < y is known from pre-condition
+    return require_lt(x, y)
+}
+
+func main() int {
+    return 0
+}

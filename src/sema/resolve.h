@@ -255,8 +255,7 @@ void sema_resolve_stmt(Stmt *s) {
       sema_resolve_expr(rhs);
       sema_infer_expr(rhs);
       if (sema_ranges) {
-          Range r = sema_eval_range(rhs, sema_ranges);
-          range_set(sema_ranges, s->as.var_stmt.name, r);
+          // Range analysis moved to typecheck phase
       }
       if (!ty) {
           ty = rhs->type;           // infer from initializer
@@ -324,13 +323,7 @@ void sema_resolve_stmt(Stmt *s) {
       sema_insert_local(raw_i, raw_i, idx_ty, NULL, false);
       // Range Analysis: Set range for loop index
       if (sema_ranges && it->kind == EXPR_RANGE) {
-          Range start = sema_eval_range(it->as.range_expr.start, sema_ranges);
-          Range end = sema_eval_range(it->as.range_expr.end, sema_ranges);
-          if (start.known && end.known) {
-              // Assuming exclusive range for now
-              Range r = range_make(start.min, end.max - 1);
-              range_set(sema_ranges, id_i, r);
-          }
+          // Range analysis moved to typecheck phase
       }
     }
 
@@ -399,8 +392,7 @@ void sema_resolve_stmt(Stmt *s) {
 
     // Range Analysis: Update range
     if (sema_ranges && lhs->kind == EXPR_IDENTIFIER) {
-        Range r = sema_eval_range(rhs, sema_ranges);
-        range_set(sema_ranges, lhs->as.identifier_expr.id, r);
+        // Range analysis moved to typecheck phase
     }
 
     // Purity Check: func cannot modify global variable

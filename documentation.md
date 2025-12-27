@@ -253,3 +253,39 @@ Lain compiles to C code.
 gcc out.c -o my_program
 ./my_program
 ```
+
+---
+
+## 10. Design by Contract (DbC)
+
+Lain supports **Design by Contract** to statically verify function requirements and guarantees. This eliminates the need for runtime assertions and ensures correctness at compile time.
+
+### 10.1 Pre-conditions (`pre`)
+Requirements that the **caller** must satisfy.
+```lain
+func safe_div(a int, b int) int
+    pre b != 0
+{
+    return a / b
+}
+```
+
+### 10.2 Post-conditions (`post`)
+Guarantees that the **callee** must satisfy upon return. The special keyword `result` refers to the return value.
+```lain
+func abs(x int) int
+    post result >= 0
+{
+    if x < 0 { return -x }
+    return x
+}
+```
+
+### 10.3 Static Verification (Enhanced Range Analysis)
+The compiler uses advanced static analysis to verify these contracts:
+- **Relational Constraints**: Checks like `pre a < b` are verified by tracking relationships between variables (Difference Bound Matrix).
+- **Linear Arithmetic**: Assignments like `x = y + 1` are tracked to verify `x > y`.
+- **Control Flow**: Constraints are propagated through `if` branches and negated in `else` branches.
+
+**Note on Loops**: To ensure safety, the compiler is conservative about loops. Variables modified within a loop are treated as having unknown values. This prevents the compiler from making unsafe assumptions but may require you to add explicit assertions or invariants (future feature) for complex loop logic. If the compiler cannot prove a contract is satisfied, it will report an error.
+

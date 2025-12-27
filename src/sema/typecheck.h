@@ -151,8 +151,8 @@ static Variant *lookup_adt_variant(DeclEnum *adt, Id *variant_name) {
 }
 
 void sema_infer_expr(Expr *e) {
-  if (!e)
-    return;
+  if (!e) return;
+  // fprintf(stderr, "DEBUG: sema_infer_expr called for kind %d\n", e->kind);
   switch (e->kind) {
   case EXPR_IDENTIFIER:
     // already set in resolve
@@ -309,6 +309,88 @@ void sema_infer_expr(Expr *e) {
 
     for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
       sema_infer_expr(a->expr);
+    }
+    
+    // Verify Pre-Contracts
+    if (e->as.call_expr.callee->decl && e->as.call_expr.callee->decl->kind == DECL_FUNCTION) {
+        Decl *callee_decl = e->as.call_expr.callee->decl;
+        if (callee_decl->as.function_decl.pre_contracts) {
+            for (ExprList *pre = callee_decl->as.function_decl.pre_contracts; pre; pre = pre->next) {
+                if (pre->expr->kind == EXPR_BINARY) {
+                    Expr *lhs = pre->expr->as.binary_expr.left;
+                    Expr *rhs = pre->expr->as.binary_expr.right;
+                    TokenKind op = pre->expr->as.binary_expr.op;
+                    
+                    if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_LITERAL) {
+                        // ... existing literal logic ...
+                        // (Keep existing logic for literal, or replace it all? Let's keep it for now but maybe clean up later)
+                        // Actually, let's use the generic approach for everything if possible.
+                    }
+                    
+                    // Generic approach: Substitute params with args and check
+                    // Find param indices for lhs and rhs (if they are identifiers)
+                    Expr *arg_lhs = NULL;
+                    Expr *arg_rhs = NULL;
+                    
+                    if (lhs->kind == EXPR_IDENTIFIER) {
+                        int p_idx = 0;
+                        for (DeclList *p = callee_decl->as.function_decl.params; p; p = p->next) {
+                            if (p->decl->as.variable_decl.name->length == lhs->as.identifier_expr.id->length &&
+                                strncmp(p->decl->as.variable_decl.name->name, lhs->as.identifier_expr.id->name, lhs->as.identifier_expr.id->length) == 0) {
+                                // Found param, get arg
+                                int a_idx = 0;
+                                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
+                                    if (a_idx == p_idx) { arg_lhs = a->expr; break; }
+                                    a_idx++;
+                                }
+                                break;
+                            }
+                            p_idx++;
+                        }
+                    } else {
+                        arg_lhs = lhs; // Literal or other
+                    }
+                    
+                    if (rhs->kind == EXPR_IDENTIFIER) {
+                        int p_idx = 0;
+                        for (DeclList *p = callee_decl->as.function_decl.params; p; p = p->next) {
+                            if (p->decl->as.variable_decl.name->length == rhs->as.identifier_expr.id->length &&
+                                strncmp(p->decl->as.variable_decl.name->name, rhs->as.identifier_expr.id->name, rhs->as.identifier_expr.id->length) == 0) {
+                                // Found param, get arg
+                                int a_idx = 0;
+                                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
+                                    if (a_idx == p_idx) { arg_rhs = a->expr; break; }
+                                    a_idx++;
+                                }
+                                break;
+                            }
+                            p_idx++;
+                        }
+                    } else {
+                        arg_rhs = rhs; // Literal or other
+                    }
+                    
+                    if (arg_lhs && arg_rhs) {
+                        // Construct temp binary expr
+                        Expr temp;
+                        temp.kind = EXPR_BINARY;
+                        temp.as.binary_expr.op = op;
+                        temp.as.binary_expr.left = arg_lhs;
+                        temp.as.binary_expr.right = arg_rhs;
+                        
+                        int result = sema_check_condition(&temp, sema_ranges);
+                        if (result != 1) {
+                             if (result == 0) {
+                                 fprintf(stderr, "Error: Pre-condition violation. Arguments cannot satisfy contract.\n");
+                             } else {
+                                 fprintf(stderr, "Error: Pre-condition violation. Cannot prove contract is satisfied.\n");
+                             }
+                             exit(1);
+                        }
+                    }
+                }
+            }
+        }
     }
     // function-call expression type is the callee's type (return type)
     e->type = e->as.call_expr.callee->type;

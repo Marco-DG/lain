@@ -1,0 +1,12 @@
+func require_pos(x int) int
+    pre x > 0
+{
+    return 0
+}
+
+func main() int {
+    var x = 10
+    x = 0
+    // x is now 0. This should fail.
+    return require_pos(x)
+}

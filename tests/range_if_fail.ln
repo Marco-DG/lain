@@ -1,0 +1,21 @@
+func require_lt(a int, b int) int
+    pre a < b
+{
+    return 0
+}
+
+func test_leak(x int, y int) int {
+    if x < y {
+        // x < y is true here
+        require_lt(x, y)
+    } else {
+        // x < y is FALSE here (x >= y)
+        // This should fail
+        require_lt(x, y)
+    }
+    return 0
+}
+
+func main() int {
+    return 0
+}

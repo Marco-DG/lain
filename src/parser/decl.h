@@ -434,6 +434,31 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
         ret_type = type_comptime(arena, ret_type);
     }
 
+    // --- contracts (pre/post) ---
+    ExprList *pre_contracts = NULL;
+    ExprList **pre_tail = &pre_contracts;
+    ExprList *post_contracts = NULL;
+    ExprList **post_tail = &post_contracts;
+
+    while (true) {
+        parser_skip_eol(); // Skip newlines before checking for contracts
+        if (parser_match(TOKEN_KEYWORD_PRE)) {
+            parser_advance();
+            Expr *e = parse_expr(arena, parser);
+            *pre_tail = expr_list(arena, e);
+            pre_tail = &(*pre_tail)->next;
+            parser_skip_eol();
+        } else if (parser_match(TOKEN_KEYWORD_POST)) {
+            parser_advance();
+            Expr *e = parse_expr(arena, parser);
+            *post_tail = expr_list(arena, e);
+            post_tail = &(*post_tail)->next;
+            parser_skip_eol();
+        } else {
+            break;
+        }
+    }
+
     // function body
     parser_expect(TOKEN_L_BRACE, "Expected '{' after signature");
     parser_advance();
@@ -443,11 +468,15 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     parser_expect(TOKEN_R_BRACE, "Expected '}' at end of body");
     parser_advance();
 
+    Decl *d;
     if (is_proc) {
-        return decl_procedure(arena, func_name, params, ret_type, body, false);
+        d = decl_procedure(arena, func_name, params, ret_type, body, false);
     } else {
-        return decl_function(arena, func_name, params, ret_type, body, false);
+        d = decl_function(arena, func_name, params, ret_type, body, false);
     }
+    d->as.function_decl.pre_contracts = pre_contracts;
+    d->as.function_decl.post_contracts = post_contracts;
+    return d;
 }
 
 Decl *parse_func_decl(Arena* arena, Parser* parser) {
