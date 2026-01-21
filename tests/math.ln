@@ -1,8 +1,8 @@
 extern func printf(fmt u8[:0], ...) int
 
 func main() int {
-    var a = 10
-    var b = 3
+    mut a = 10
+    mut b = 3
     printf("10 + 3 = %d\n", a + b)
     printf("10 - 3 = %d\n", a - b)
     printf("10 * 3 = %d\n", a * b)

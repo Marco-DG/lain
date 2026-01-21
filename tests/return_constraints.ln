@@ -9,7 +9,7 @@ func abs(x int) int >= 0 {
 }
 
 func main() int {
-    var a = abs(5)
-    var b = abs(-3)
+    mut a = abs(5)
+    mut b = abs(-3)
     return 0
 }

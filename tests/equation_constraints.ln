@@ -6,7 +6,7 @@ func div(a int, b int != 0) int {
 }
 
 func main() int {
-    var x = div(10, 2)   // OK: 2 != 0
-    var y = div(100, 5)  // OK: 5 != 0
+    mut x = div(10, 2)   // OK: 2 != 0
+    mut y = div(100, 5)  // OK: 5 != 0
     return 0
 }

@@ -5,7 +5,7 @@ func add(a int, b int) int {
 }
 
 proc main() int {
-    var x = add(10, 20)
+    mut x = add(10, 20)
     printf("Result: %d\n", x)
     return 0
 }

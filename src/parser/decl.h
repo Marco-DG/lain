@@ -122,9 +122,14 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         return parse_proc_decl(arena, parser);
     }
 
-    if (parser_match(TOKEN_KEYWORD_VAR)) {
+    if (parser_match(TOKEN_KEYWORD_MUT)) {
         parser_advance();
         return parse_var_decl(arena, parser);
+    }
+
+    // Implicit Immutable Declaration: x = value
+    if (parser_match(TOKEN_IDENTIFIER)) {
+         return parse_var_decl(arena, parser);
     }
 
     return NULL;
@@ -387,32 +392,15 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 tail  = &(*tail)->next;
 
             } else {
-                // Normal parameter: [mov|mut] name Type
-                // Check for ownership mode prefix
-                // Check for ownership mode prefix
-                OwnershipMode param_mode = MODE_SHARED;
-                bool explicit_mode = false;
-                if (parser_match(TOKEN_KEYWORD_MOV)) {
-                    parser_advance();
-                    param_mode = MODE_OWNED;
-                    explicit_mode = true;
-                } else if (parser_match(TOKEN_KEYWORD_MUT)) {
-                    parser_advance();
-                    param_mode = MODE_MUTABLE;
-                    explicit_mode = true;
-                }
-
+                // Normal parameter: name [mut|mov] Type
+                
                 parser_expect(TOKEN_IDENTIFIER, "Expected parameter name");
                 Id *pname = id(arena, parser->token.length, parser->token.start);
                 parser_advance();
 
                 // parameter type
+                // parse_type handles 'mut T' and 'mov T' prefixes on types
                 Type *ptype = parse_type(arena, parser);
-                
-                // Apply ownership mode to the type ONLY if explicit prefix was used
-                if (ptype && explicit_mode) {
-                    ptype->mode = param_mode;
-                }
 
                 // wrap in TYPE_COMPTIME safely
                 if (is_comptime) {

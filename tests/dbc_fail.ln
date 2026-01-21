@@ -6,8 +6,8 @@ func safe_div(a int, b int != 0) int {
 }
 
 func main() int {
-    var x = 10
-    var y = 0
-    var z = safe_div(x, y) // Should fail: y is 0, violating b != 0
+    mut x = 10
+    mut y = 0
+    mut z = safe_div(x, y) // Should fail: y is 0, violating b != 0
     return 0
 }

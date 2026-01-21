@@ -6,9 +6,9 @@ func get(arr int[10], i int in arr) int {
 }
 
 func main() int {
-    var arr int[10]
+    mut arr int[10]
     
-    var x = get(arr, 15)  // ERROR: 15 is not in [0, 10)
+    mut x = get(arr, 15)  // ERROR: 15 is not in [0, 10)
     
     return 0
 }

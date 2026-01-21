@@ -15,13 +15,13 @@ func update(p mut Point) {
 }
 
 func main() int {
-    var p Point
+    mut p Point
     p.x = 10
     p.y = 20
     
     // Shared borrow
-    var r1 = read(p)
-    var r2 = read(p)
+    r1 = read(p)
+    r2 = read(p)
     
     // Mutable borrow
     update(mut p)

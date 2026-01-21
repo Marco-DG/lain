@@ -96,17 +96,9 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         parser_advance(); // consume 'comptime'
         return parse_comptime_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_VAR)) {
+    if (parser_match(TOKEN_KEYWORD_MUT)) {
         parser_advance();
         return parse_var_stmt(arena, parser);
-    }
-    if (parser_match(TOKEN_KEYWORD_MOV)) {
-        parser_advance();
-        Stmt *s = parse_var_stmt(arena, parser);
-        if (s && s->as.var_stmt.type) {
-            s->as.var_stmt.type->mode = MODE_OWNED;
-        }
-        return s;
     }
     if (parser_match(TOKEN_KEYWORD_IF)) {
         return parse_if_stmt(arena, parser);
@@ -233,7 +225,7 @@ Stmt *parse_comptime_stmt(Arena* arena, Parser* parser)
 
 Stmt *parse_var_stmt(Arena* arena, Parser* parser)
 {
-    parser_expect(TOKEN_IDENTIFIER, "Expected variable name after 'var'");
+    parser_expect(TOKEN_IDENTIFIER, "Expected variable name after 'mut'");
     Id* var_name = id(arena, parser->token.length, parser->token.start);
     parser_advance();
 

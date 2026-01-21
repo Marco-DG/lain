@@ -6,20 +6,20 @@ type Item {
 }
 
 // This function properly consumes by returning via mov
-func transfer(mov item Item) Item {
+func transfer(item mov Item) Item {
     return mov item
 }
 
 func main() int {
-    // Declare as mov to track linearity
-    mov myitem Item
+    // Declare as mutable to allow init (and move tracks consumption)
+    mut myitem Item
     myitem.id = 42
     
     // This consumes myitem (transfers ownership)
-    var transferred = transfer(mov myitem)
+    transferred = transfer(mov myitem)
     
     // ERROR: myitem was already moved!
-    var bad_access = myitem.id
+    bad_access = myitem.id
     
     return transferred.id + bad_access
 }

@@ -6,16 +6,16 @@ func use_resource(r Resource) int {
     return r.data
 }
 
-func consume_resource(mov r Resource) Resource {
+func consume_resource(r mov Resource) Resource {
     return mov r
 }
 
 func main() int {
-    var res Resource
+    mut res Resource
     res.data = 42
     
     if 1 < 2 {
-        var x = use_resource(res) // borrows res
+        x = use_resource(res) // borrows res
         // borrow ends here
     }
     

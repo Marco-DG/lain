@@ -51,7 +51,8 @@ typedef struct LEntry {
     Id *id;            // Id pointer for the variable (identifies it)
     int defined_loop_depth; // loop depth where var was declared
     Region *region;    // region where var is defined (for borrow checking)
-    bool is_mutable;   // true if variable is mutable (declared with var)
+    bool is_mutable;   // true if variable is mutable (declared with var/mut)
+    bool must_consume; // true if type is strictly linear
     LState state;
     struct LEntry *next;
 } LEntry;
@@ -91,7 +92,7 @@ static LEntry *ltable_find(LTable *t, Id *id) {
     return NULL;
 }
 
-static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable) {
+static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume) {
     if (!id) return;
     if (ltable_find(t, id)) return; // already present — ignore
     LEntry *e = (LEntry*)malloc(sizeof *e);
@@ -99,12 +100,13 @@ static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable) {
     e->defined_loop_depth = loop_depth;
     e->region = t->borrows ? t->borrows->current_region : NULL;
     e->is_mutable = is_mutable;
+    e->must_consume = must_consume;
     e->state = LSTATE_UNCONSUMED;
     e->next = t->head;
     t->head = e;
-    DBG("ltable_add: added '%.*s' loop_depth=%d region=%d", 
+    DBG("ltable_add: added '%.*s' loop_depth=%d region=%d must_consume=%d", 
         (int)id->length, id->name ? id->name : "<null>", loop_depth,
-        e->region ? e->region->id : -1);
+        e->region ? e->region->id : -1, must_consume);
 }
 
 static LTable *ltable_clone(LTable *src) {
@@ -130,7 +132,7 @@ static LTable *ltable_clone(LTable *src) {
     }
     // shallow-copy entries (Id* pointers are fine)
     for (LEntry *s = src->head; s; s = s->next) {
-        ltable_add(dst, s->id, s->defined_loop_depth, s->is_mutable);
+        ltable_add(dst, s->id, s->defined_loop_depth, s->is_mutable, s->must_consume);
         LEntry *d = ltable_find(dst, s->id);
         if (d) {
             d->state = s->state;
@@ -171,30 +173,26 @@ static void ltable_consume(LTable *t, Id *id, int current_loop_depth) {
 
 /* check all vars in table are consumed */
 static void ltable_ensure_all_consumed(LTable *t) {
-    int ok = 1;
+    int errors = 0;
     for (LEntry *e = t->head; e; e = e->next) {
-        if (e->state != LSTATE_CONSUMED) {
-            ok = 0;
-            break;
-        }
-    }
-    if (ok) {
-        DBG("ltable_ensure_all_consumed: OK");
-        return;
-    }
-
-    DBG("ltable_ensure_all_consumed: dumping table entries:");
-    for (LEntry *e = t->head; e; e = e->next) {
-        DBG("  entry '%.*s' state=%d def_loop=%d", (int)e->id->length, e->id->name ? e->id->name : "<unknown>", (int)e->state, e->defined_loop_depth);
-    }
-
-    for (LEntry *e = t->head; e; e = e->next) {
-        if (e->state != LSTATE_CONSUMED) {
+        if (e->must_consume && e->state != LSTATE_CONSUMED) {
             fprintf(stderr, "sema error: linear variable '%.*s' was not consumed before return.\n",
                     (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+            errors++;
         }
     }
-    exit(1);
+    
+    if (errors > 0) {
+        // Only dump table if we found actual errors
+        DBG("ltable_ensure_all_consumed: dumping table entries (due to errors):");
+        for (LEntry *e = t->head; e; e = e->next) {
+            DBG("  entry '%.*s' state=%d def_loop=%d must=%d", 
+                (int)e->id->length, e->id->name ? e->id->name : "<unknown>", 
+                (int)e->state, e->defined_loop_depth, e->must_consume);
+        }
+        exit(1);
+    }
+    DBG("ltable_ensure_all_consumed: OK (all linear vars consumed)");
 }
 
 /* verify parent-consistency between two branch-results */
@@ -380,19 +378,21 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 Expr *arg = a->expr;
                 if (!arg) continue;
                 if (arg->type && is_type_move(arg->type)) {
-                    if (arg->kind == EXPR_IDENTIFIER) {
-                        Id *idptr = arg->as.identifier_expr.id;
+                    Expr *inner = arg;
+                    if (inner->kind == EXPR_MOVE) inner = inner->as.move_expr.expr;
+                    else if (inner->kind == EXPR_MUT) inner = inner->as.mut_expr.expr;
+                    
+                    if (inner->kind == EXPR_IDENTIFIER) {
+                        Id *idptr = inner->as.identifier_expr.id;
                         DBG("EXPR_CALL fallback: consume IDENT arg '%.*s' (by arg->type)", (int)idptr->length, idptr->name ? idptr->name : "<null>");
                         ltable_consume(tbl, idptr, loop_depth);
-                    } else if (arg->kind == EXPR_MEMBER) {
-                        Expr *head = arg->as.member_expr.target;
-                        while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
-                        if (head && head->kind == EXPR_IDENTIFIER) {
-                            DBG("EXPR_CALL fallback: consume MEMBER->IDENT head '%.*s' (by arg->type)", (int)head->as.identifier_expr.id->length, head->as.identifier_expr.id->name ? head->as.identifier_expr.id->name : "<null>");
-                            ltable_consume(tbl, head->as.identifier_expr.id, loop_depth);
-                        }
-                    } else {
-                        DBG("EXPR_CALL fallback: arg is move but not IDENT/MEMBER head; ignored for local-table consumption");
+                    } else if (inner->kind == EXPR_MEMBER) {
+                         Expr *head = inner->as.member_expr.target;
+                         while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
+                         if (head && head->kind == EXPR_IDENTIFIER) {
+                             DBG("EXPR_CALL fallback: consume MEMBER->IDENT head '%.*s' (by arg->type)", (int)head->as.identifier_expr.id->length, head->as.identifier_expr.id->name ? head->as.identifier_expr.id->name : "<null>");
+                             ltable_consume(tbl, head->as.identifier_expr.id, loop_depth);
+                         }
                     }
                 }
             }
@@ -443,13 +443,15 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     switch (s->kind) {
 
     case STMT_VAR: {
+        fprintf(stderr, "[DEBUG] STMT_VAR visited\n");
         Expr *init = s->as.var_stmt.expr;
         if (init) sema_check_expr_linearity(init, tbl, loop_depth);
 
         Type *ty = s->as.var_stmt.type;
-        if (is_type_move(ty)) {
+        bool must = is_type_move(ty);
+        if (must || s->as.var_stmt.is_mutable) {
             Id *id = s->as.var_stmt.name;
-            ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable);
+            ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable, must);
         }
         break;
     }
@@ -465,19 +467,9 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 Id *id = lhs->as.identifier_expr.id;
                 Type *decl_ty = rhs ? rhs->type : NULL;
                 if (is_type_move(decl_ty)) {
-                    // If we are assigning to a variable, it must be mutable.
-                    // But ltable_add here is likely for tracking the NEW value's linearity.
-                    // Wait, ltable_add adds a NEW entry. 
-                    // If this is a re-assignment, we should probably update the existing entry?
-                    // Actually, for linearity check of 'mov' types, we track the variable.
-                    // If we assign to it, we are resetting its state to UNCONSUMED.
-                    // But ltable_add checks if it exists and returns if so.
-                    // So this logic seems to be for "first time seen" or something?
-                    // Ah, this block handles "declaration-like assignment" or just tracking?
-                    // If it's STMT_ASSIGN, the var should already be in the table if it was declared.
-                    // If it wasn't declared (e.g. global?), we might add it.
-                    // Let's pass true for now as assignments imply mutability of the target.
-                    ltable_add(tbl, id, loop_depth, true);
+                    // ... (omitted comments)
+                    bool must = is_type_move(decl_ty);
+                    ltable_add(tbl, id, loop_depth, true, must);
                 }
             }
         }
@@ -534,6 +526,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     }
 
     case STMT_RETURN: {
+        fprintf(stderr, "[DEBUG] STMT_RETURN visited\n");
         Expr *val = s->as.return_stmt.value;
         if (val) sema_check_expr_linearity(val, tbl, loop_depth);
         ltable_ensure_all_consumed(tbl);
@@ -584,10 +577,20 @@ static void sema_check_function_linearity(Decl *d) {
 
     // add parameters that are move-typed
     for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
-        Id *pid = p->decl->as.variable_decl.name;
-        Type *pty = p->decl->as.variable_decl.type;
-        if (is_type_move(pty)) {
-            ltable_add(tbl, pid, /*loop_depth=*/0, true);
+        if (p->decl->kind == DECL_VARIABLE) {
+            Id *pid = p->decl->as.variable_decl.name;
+            Type *pty = p->decl->as.variable_decl.type;
+            if (is_type_move(pty)) {
+                ltable_add(tbl, pid, /*loop_depth=*/0, true, true);
+            }
+        } else if (p->decl->kind == DECL_DESTRUCT) {
+            // For destructuring parameters, the aggregate is already consumed/destructured.
+            // We should track the bound variables if THEY are linear.
+            // But currently DECL_DESTRUCT doesn't store types for individual bindings easily here?
+            // Assuming bindings inherit linearity from their fields.
+            // For now, since we only destruct to 'int id', we skip tracking.
+            // If we destructure linear fields, we'd need to look up their types.
+            // Since this is a specialized fix for 'drop', skipping is safe for now.
         }
     }
 

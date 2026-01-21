@@ -2,21 +2,21 @@ type Foo {
     x int
 }
 
-func take_ownership(mov f Foo) Foo {
+func take_ownership(f mov Foo) Foo {
     return mov f
 }
 
 func main() int {
     // Test implicit immutable declaration (not supported for structs without literals, use var)
     // f = Foo{ x: 42 } -> Revert to var
-    var f Foo
+    mut f Foo
     f.x = 42
     
     // Test move syntax in call
     take_ownership(mov f)
     
     // Test mutable declaration
-    var g Foo
+    mut g Foo
     g.x = 200
     take_ownership(mov g)
     

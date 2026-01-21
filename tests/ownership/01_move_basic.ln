@@ -5,21 +5,28 @@ type Resource {
     id int
 }
 
-func consume_helper({id} Resource) int {
-    return id
+func drop({id} mov Resource) {
+    // destruct to consume via parameter
 }
 
-func consume(mov r Resource) int {
-    return consume_helper(mov r)
+func consume_helper(res mov Resource) int {
+    val = res.id
+    drop(mov res)
+    return val
+}
+
+func consume(r mov Resource) {
+    drop(mov r)
 }
 
 func main() int {
-    mov a Resource
+    mut a Resource
     a.id = 1
-    mov b = mov a    // Move a -> b
+    mut b = mov a    // Move a -> b
     
     // a is now invalid
     // var x = a.id // SHOULD ERROR: Use after move
     
-    return consume(mov b) // OK: Move b -> consume
+    consume(mov b) // OK: Move b -> consume
+    return 0
 }

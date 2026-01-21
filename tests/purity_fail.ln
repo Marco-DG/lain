@@ -1,4 +1,4 @@
-var global_counter int
+mut global_counter int
 
 proc impure_increment() {
     global_counter = global_counter + 1
@@ -15,6 +15,6 @@ func pure_add(a int, b int) int {
 }
 
 proc main() int {
-    var x = pure_add(10, 20)
+    mut x = pure_add(10, 20)
     return 0
 }

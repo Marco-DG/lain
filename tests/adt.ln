@@ -9,9 +9,9 @@ type Shape {
 }
 
 func main() int {
-    var c = Shape.Circle(10)
-    var r = Shape.Rectangle(10, 20)
-    var p = Shape.Point
+    mut c = Shape.Circle(10)
+    mut r = Shape.Rectangle(10, 20)
+    mut p = Shape.Point
     
     match c {
         Circle(rad): printf("Circle radius: %d\n", rad)

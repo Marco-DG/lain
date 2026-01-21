@@ -6,6 +6,6 @@ func div(a int, b int) int
 }
 
 func main() int {
-    var x = div(10, 2)
+    mut x = div(10, 2)
     return 0
 }

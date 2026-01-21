@@ -10,32 +10,32 @@ func read_counter(c Counter) int {
     return c.value
 }
 
-func increment_counter(mut c Counter) {
+func increment_counter(c mut Counter) {
     // Mutable borrow: c is Counter*
     c.value = c.value + 1
 }
 
-func take_counter(mov c Counter) Counter {
+func take_counter(c mov Counter) Counter {
     // Ownership transfer: c is Counter (value), return it to consume
     return mov c
 }
 
 func main() int {
-    var cnt Counter
+    mut cnt Counter
     cnt.value = 10
     
     // Test 1: Multiple shared borrows OK
-    var x = read_counter(cnt)
-    var y = read_counter(cnt)  // OK: multiple shared borrows
+    x = read_counter(cnt)
+    y = read_counter(cnt)  // OK: multiple shared borrows
     
     // Test 2: Mutable borrow
     increment_counter(mut cnt)
     
     // Test 3: Shared borrow after mutable borrow ends
-    var z = read_counter(cnt)  // OK: mutable borrow ended
+    z = read_counter(cnt)  // OK: mutable borrow ended
     
     // Test 4: Move consumes ownership
-    var final_counter = take_counter(mov cnt)
+    final_counter = take_counter(mov cnt)
     
     // Note: using cnt after move would be caught by linearity checker
     return final_counter.value

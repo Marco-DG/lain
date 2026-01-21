@@ -137,10 +137,17 @@ void emit_decl(Decl* decl, int depth) {
                             if (field_type) {
                                 emit_indent(depth + 1);
                                 emit_type(field_type);
-                                // Struct params are passed as const T*, so use ->
-                                EMIT(" %.*s = _param_%d->%.*s;\n",
+                                
+                                // Check if passed by value (OWNED) or pointer (SHARED/MUTABLE)
+                                const char *op = "->";
+                                if (dd->type->mode == MODE_OWNED) {
+                                    op = ".";
+                                }
+
+                                EMIT(" %.*s = _param_%d%s%.*s;\n",
                                      (int)n->id->length, n->id->name,
                                      param_idx,
+                                     op,
                                      (int)n->id->length, n->id->name);
                             }
                         }
