@@ -47,9 +47,9 @@ Lain uses an ownership model inspired by linear logic to manage memory safely.
 
 | Mode | Syntax | Description |
 | :--- | :--- | :--- |
-| **Shared** | `T` | Immutable borrow. Multiple shared references can exist. |
-| **Mutable** | `mut T` | Mutable borrow. Only one exclusive mutable reference allowed. |
-| **Owned** | `mov T` | Ownership transfer. The value must be consumed exactly once. |
+| **Shared** | `p T` | Immutable borrow. Multiple shared references can exist. |
+| **Mutable** | `var p T` | Mutable borrow. Only one exclusive mutable reference allowed. |
+| **Owned** | `mov p T` | Ownership transfer. The value must be consumed exactly once. |
 
 ### Example: Ownership Transfer
 ```lain
@@ -220,7 +220,7 @@ for i in 0..3 {
 ```
 
 ### Linear Type Enforcement
-Variables marked with `mov` or parameters of type `mov T` must be used exactly once. The compiler tracks the "consumed" state to prevent leaks or double-frees.
+Variables marked with `mov` or parameters of type `mov p T` must be used exactly once. The compiler tracks the "consumed" state to prevent leaks or double-frees.
 
 ### Borrow Checking (with NLL-lite)
 Lain implements a strict borrow checker with **Non-Lexical Lifetimes (NLL-lite)** for temporary borrows.
@@ -310,4 +310,3 @@ The compiler uses decidable static analysis (Range Analysis + Difference Bound M
 - **No SMT Solver**: All verification is polynomial-time, fast and predictable
 
 **Note on Loops**: Variables modified within loops are conservatively widened to unknown. For complex loop contracts, explicit verification may be needed in future versions.
-
