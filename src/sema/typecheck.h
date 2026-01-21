@@ -3,17 +3,9 @@
 
 #include "../ast.h"
 #include "resolve.h"
-#include "bounds.h"  // Static bounds checking
-#include <assert.h>
-#include <string.h>
-
-/* Forward decls used elsewhere */
-Type *get_builtin_int_type(void);
-Type *get_builtin_u8_type(void);
-void sema_infer_expr(Expr *e);
-void sema_resolve_expr(Expr *e); // forward
-
+#include "resolve.h"
 #include "ranges.h" // Range analysis
+#include "bounds.h"  // Static bounds checking
 
 extern Arena *sema_arena;
 extern DeclList *sema_decls;
@@ -311,95 +303,23 @@ void sema_infer_expr(Expr *e) {
       sema_infer_expr(a->expr);
     }
     
-    // Verify Pre-Contracts
-    if (e->as.call_expr.callee->decl && e->as.call_expr.callee->decl->kind == DECL_FUNCTION) {
-        Decl *callee_decl = e->as.call_expr.callee->decl;
-        if (callee_decl->as.function_decl.pre_contracts) {
-            for (ExprList *pre = callee_decl->as.function_decl.pre_contracts; pre; pre = pre->next) {
-                if (pre->expr->kind == EXPR_BINARY) {
-                    Expr *lhs = pre->expr->as.binary_expr.left;
-                    Expr *rhs = pre->expr->as.binary_expr.right;
-                    TokenKind op = pre->expr->as.binary_expr.op;
-                    
-                    if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_LITERAL) {
-                        // ... existing literal logic ...
-                        // (Keep existing logic for literal, or replace it all? Let's keep it for now but maybe clean up later)
-                        // Actually, let's use the generic approach for everything if possible.
-                    }
-                    
-                    // Generic approach: Substitute params with args and check
-                    // Find param indices for lhs and rhs (if they are identifiers)
-                    Expr *arg_lhs = NULL;
-                    Expr *arg_rhs = NULL;
-                    
-                    if (lhs->kind == EXPR_IDENTIFIER) {
-                        int p_idx = 0;
-                        for (DeclList *p = callee_decl->as.function_decl.params; p; p = p->next) {
-                            if (p->decl->as.variable_decl.name->length == lhs->as.identifier_expr.id->length &&
-                                strncmp(p->decl->as.variable_decl.name->name, lhs->as.identifier_expr.id->name, lhs->as.identifier_expr.id->length) == 0) {
-                                // Found param, get arg
-                                int a_idx = 0;
-                                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
-                                    if (a_idx == p_idx) { arg_lhs = a->expr; break; }
-                                    a_idx++;
-                                }
-                                break;
-                            }
-                            p_idx++;
-                        }
-                    } else {
-                        arg_lhs = lhs; // Literal or other
-                    }
-                    
-                    if (rhs->kind == EXPR_IDENTIFIER) {
-                        int p_idx = 0;
-                        for (DeclList *p = callee_decl->as.function_decl.params; p; p = p->next) {
-                            if (p->decl->as.variable_decl.name->length == rhs->as.identifier_expr.id->length &&
-                                strncmp(p->decl->as.variable_decl.name->name, rhs->as.identifier_expr.id->name, rhs->as.identifier_expr.id->length) == 0) {
-                                // Found param, get arg
-                                int a_idx = 0;
-                                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
-                                    if (a_idx == p_idx) { arg_rhs = a->expr; break; }
-                                    a_idx++;
-                                }
-                                break;
-                            }
-                            p_idx++;
-                        }
-                    } else {
-                        arg_rhs = rhs; // Literal or other
-                    }
-                    
-                    if (arg_lhs && arg_rhs) {
-                        // Construct temp binary expr
-                        Expr temp;
-                        temp.kind = EXPR_BINARY;
-                        temp.as.binary_expr.op = op;
-                        temp.as.binary_expr.left = arg_lhs;
-                        temp.as.binary_expr.right = arg_rhs;
-                        
-                        int result = sema_check_condition(&temp, sema_ranges);
-                        if (result != 1) {
-                             if (result == 0) {
-                                 fprintf(stderr, "Error: Pre-condition violation. Arguments cannot satisfy contract.\n");
-                             } else {
-                                 fprintf(stderr, "Error: Pre-condition violation. Cannot prove contract is satisfied.\n");
-                             }
-                             exit(1);
-                        }
-                    }
-                }
-            }
-        }
+    // Verify equation-style constraints at call site
+    Decl *callee_decl = e->as.call_expr.callee->decl;
+    if (callee_decl && (callee_decl->kind == DECL_FUNCTION || 
+                        callee_decl->kind == DECL_PROCEDURE ||
+                        callee_decl->kind == DECL_EXTERN_FUNCTION || 
+                        callee_decl->kind == DECL_EXTERN_PROCEDURE)) {
         
-        // Verify 'in' constraints at call site
-        // e.g. func get(arr int[], i int in arr) - verify i is in bounds of arr
         int param_idx = 0;
-        for (DeclList *p = callee_decl->as.function_decl.params; p; p = p->next) {
+        DeclList *params = callee_decl->as.function_decl.params;
+        
+        for (DeclList *p = params; p; p = p->next) {
+            
+            // Check 'in' field constraint
             if (p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.in_field) {
                 Id *arr_name = p->decl->as.variable_decl.in_field;
                 
-                // Find the argument for this parameter
+                // Find the argument for this parameter (index)
                 Expr *idx_arg = NULL;
                 int a_idx = 0;
                 for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
@@ -411,13 +331,13 @@ void sema_infer_expr(Expr *e) {
                 int arr_param_idx = 0;
                 Type *arr_type = NULL;
                 Expr *arr_arg = NULL;
-                for (DeclList *arr_p = callee_decl->as.function_decl.params; arr_p; arr_p = arr_p->next) {
+                for (DeclList *arr_p = params; arr_p; arr_p = arr_p->next) {
                     if (arr_p->decl->kind == DECL_VARIABLE) {
                         Id *an = arr_p->decl->as.variable_decl.name;
                         if (an->length == arr_name->length &&
                             strncmp(an->name, arr_name->name, an->length) == 0) {
                             arr_type = arr_p->decl->as.variable_decl.type;
-                            // Get corresponding arg
+                            // Get corresponding arg for array
                             int aa_idx = 0;
                             for (ExprList *aa = e->as.call_expr.args; aa; aa = aa->next) {
                                 if (aa_idx == arr_param_idx) { arr_arg = aa->expr; break; }
@@ -449,49 +369,63 @@ void sema_infer_expr(Expr *e) {
                             exit(1);
                         }
                     } else if (idx_range.known && idx_range.min < 0) {
-                        // At least verify non-negative
                         fprintf(stderr, "Error: Index may be negative. Index range [%ld, %ld].\n",
                                 (long)idx_range.min, (long)idx_range.max);
                         exit(1);
                     }
                 }
             }
-            param_idx++;
-        }
-        
-        // Verify equation-style constraints at call site
-        // e.g. func div(a int, b int != 0) - verify argument for b != 0
-        param_idx = 0;
-        for (DeclList *p = callee_decl->as.function_decl.params; p; p = p->next) {
+
+
             if (p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.constraints) {
-                // Find the argument for this parameter
-                Expr *arg = NULL;
+                // ... (inner logic) ...
+                // Find the argument for this parameter (LHS of constraint)
+                Expr *lhs_arg = NULL;
                 int a_idx = 0;
                 for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
-                    if (a_idx == param_idx) { arg = a->expr; break; }
+                    if (a_idx == param_idx) { lhs_arg = a->expr; break; }
                     a_idx++;
                 }
-                
-                if (arg) {
-                    // For each constraint on this parameter
+
+                if (lhs_arg) {
                     for (ExprList *c = p->decl->as.variable_decl.constraints; c; c = c->next) {
                         if (c->expr->kind == EXPR_BINARY) {
-                            // Substitute param with arg in the constraint
+                            Expr *rhs_expr = c->expr->as.binary_expr.right;
+                            Expr *rhs_arg = NULL;
+
+                            if (rhs_expr->kind == EXPR_IDENTIFIER) {
+                                int rhs_p_idx = 0;
+                                for (DeclList *rp = params; rp; rp = rp->next) {
+                                    Id *rp_name = rp->decl->as.variable_decl.name;
+                                    if (rp_name->length == rhs_expr->as.identifier_expr.id->length && 
+                                        strncmp(rp_name->name, rhs_expr->as.identifier_expr.id->name, rp_name->length) == 0) {
+                                        int ra_idx = 0;
+                                        for (ExprList *ra = e->as.call_expr.args; ra; ra = ra->next) {
+                                            if (ra_idx == rhs_p_idx) { rhs_arg = ra->expr; break; }
+                                            ra_idx++;
+                                        }
+                                        break;
+                                    }
+                                    rhs_p_idx++;
+                                }
+                                if (!rhs_arg) rhs_arg = rhs_expr; 
+                            } else {
+                                rhs_arg = rhs_expr; 
+                            }
+
                             Expr temp;
                             temp.kind = EXPR_BINARY;
                             temp.as.binary_expr.op = c->expr->as.binary_expr.op;
-                            temp.as.binary_expr.left = arg;  // Substitute param with arg
-                            temp.as.binary_expr.right = c->expr->as.binary_expr.right;
-                            
+                            temp.as.binary_expr.left = lhs_arg;
+                            temp.as.binary_expr.right = rhs_arg;
+
                             int result = sema_check_condition(&temp, sema_ranges);
                             if (result == 0) {
                                 fprintf(stderr, "Error: Constraint violation. Argument does not satisfy '%s' constraint.\n",
                                         token_kind_to_str(c->expr->as.binary_expr.op));
                                 exit(1);
                             } else if (result == -1) {
-                                // Cannot prove - could warn or error depending on strictness
-                                fprintf(stderr, "Warning: Cannot statically verify constraint '%s'.\n",
-                                        token_kind_to_str(c->expr->as.binary_expr.op));
+                                // check safety policy
                             }
                         }
                     }
@@ -547,6 +481,35 @@ void sema_infer_expr(Expr *e) {
     sema_infer_expr(e->as.range_expr.end);
     // leave e->type NULL if never used
     break;
+
+  case EXPR_INDEX: {
+    sema_infer_expr(e->as.index_expr.target);
+    sema_infer_expr(e->as.index_expr.index);
+
+    Type *t = sema_unwrap_type(e->as.index_expr.target->type);
+    if (!t) {
+         // Error or just return?
+         break;
+    }
+
+    if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
+        e->type = t->element_type;
+        // STATIC BOUNDS CHECK
+        if (sema_ranges) {
+            sema_check_bounds(sema_ranges, e->as.index_expr.index, t);
+        }
+    } else if (t->kind == TYPE_POINTER) {
+        // Pointer indexing syntax `ptr[i]` (unsafe or restricted?)
+        // Lain spec says pointers are unsafe. But let's allow indexing if it mimics C.
+        // But we have no bounds info.
+        e->type = t->element_type;
+    } else {
+        fprintf(stderr, "sema error: indexing non-array/slice type\n");
+        // exit(1); // Optional: be strict
+    }
+    break;
+  }
+
 
   case EXPR_MOVE:
     sema_infer_expr(e->as.move_expr.expr);

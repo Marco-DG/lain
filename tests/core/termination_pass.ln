@@ -14,7 +14,7 @@ func loop_func(n int) int {
     return sum
 }
 
-func main() int {
+proc main() int {
     recursive_proc(5)
     return loop_func(10)
 }

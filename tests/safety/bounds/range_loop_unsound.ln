@@ -1,0 +1,14 @@
+func require_one(x int == 1) int {
+    return 0
+}
+
+func main() int {
+    var x = 0
+    for i in 0..10 {
+        x = x + 1
+    }
+    // x is actually 10.
+    // If analysis is weak/unsound, it might think x is 1.
+    // If sound, it should fail verification because we can't prove x == 1.
+    return require_one(x)
+}

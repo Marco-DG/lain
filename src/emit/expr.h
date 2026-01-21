@@ -395,8 +395,27 @@ void emit_expr(Expr *expr, int depth) {
       EMIT(" }");
     } else {
       // Plain indexing: T = data[i]
+      
+      // Check if target is a pointer (e.g. shared param)
+      bool is_ptr = false;
+      if (ix->target->decl && ix->target->decl->kind == DECL_VARIABLE) {
+          Type *t = ix->target->decl->as.variable_decl.type;
+          // Logic matching emit_decl.h: shared structs/arrays are const pointers
+          // mutable are pointers
+          // owned are value
+          if (t && !is_primitive_type(t)) {
+               if (t->mode == MODE_SHARED || t->mode == MODE_MUTABLE) {
+                   is_ptr = true;
+               }
+          }
+      }
+      // Also check explicit pointer types
+      if (ix->target->type && (ix->target->type->kind == TYPE_POINTER)) {
+          is_ptr = true;
+      }
+    
       emit_expr(ix->target, 0);
-      EMIT(".data[");
+      EMIT(is_ptr ? "->data[" : ".data[");
       emit_expr(ix->index, 0);
       EMIT("]");
     }

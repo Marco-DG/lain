@@ -1,0 +1,13 @@
+func require_lt(a int, b int > a) int {
+    return 0
+}
+
+func test(x int, y int > x) int {
+    // x < y is known from parameter constraint (y > x)
+    // require_lt expects arg2 > arg1
+    return require_lt(x, y)
+}
+
+func main() int {
+    return 0
+}

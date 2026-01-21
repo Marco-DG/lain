@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Build compiler
+echo "Building Compiler..."
 gcc src/main.c -o src/compiler.exe -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-parameter -DARENA_DEBUG=1
 if [ $? -ne 0 ]; then
     echo "Failed to build compiler"
@@ -15,7 +16,7 @@ run_test() {
     ./src/compiler.exe $FILE
     if [ $? -ne 0 ]; then
         echo "Compiler failed for $FILE"
-        return
+        exit 1
     fi
     
     # Compile generated C code
@@ -23,7 +24,7 @@ run_test() {
     ./cosmocc/bin/cosmocc out.c -o out/test.exe -w
     if [ $? -ne 0 ]; then
         echo "C compilation failed for $FILE"
-        return
+        exit 1
     fi
     
     # Run executable
@@ -31,26 +32,7 @@ run_test() {
     echo ""
 }
 
-run_test tests/control_flow.ln
-run_test tests/functions.ln
-run_test tests/structs.ln
-run_test tests/arrays.ln
-run_test tests/math.ln
-run_test tests/func_proc.ln
-run_test tests/ownership/mov_syntax.ln
-run_test tests/ownership/ownership.ln
-run_test tests/destructuring.ln
-run_test tests/ownership/borrow_pass.ln
-run_test tests/bounds_pass.ln
-run_test tests/enums.ln
-run_test tests/enum_exhaustive.ln
-run_test tests/ownership/borrow_valid.ln
-run_test tests/adt.ln
-run_test tests/ownership/00_immutability.ln
-run_test tests/ownership/01_move_basic.ln
-run_test tests/ownership/02_borrow_basic.ln
-
-# Negative tests (should fail to compile)
+# Function to run a negative test
 run_negative_test() {
     FILE=$1
     echo "---------------------------------------------------"
@@ -58,18 +40,38 @@ run_negative_test() {
     ./src/compiler.exe $FILE 2>&1
     if [ $? -eq 0 ]; then
         echo "FAIL: $FILE should have failed compilation but succeeded"
-        return 1
+        exit 1
     else
         echo "PASS: $FILE correctly failed compilation"
         return 0
     fi
 }
 
-run_negative_test tests/purity_fail.ln
-run_negative_test tests/ownership/borrow_conflict.ln
-run_negative_test tests/bounds_fail.ln
-run_negative_test tests/exhaustive_fail.ln
-run_negative_test tests/ownership/use_after_move_fail.ln
-run_negative_test tests/immutable_fail.ln
-run_negative_test tests/repro_purity.ln
-run_negative_test tests/ownership/borrow_fail.ln
+if [ "$1" != "" ]; then
+    if [[ "$1" == *"_fail.ln" ]]; then
+        run_negative_test "$1"
+    else
+        run_test "$1"
+    fi
+    echo "---------------------------------------------------"
+    echo "Single test execution complete."
+    exit 0
+fi
+
+echo "=== Running Positive Tests ==="
+# Find all .ln files that do NOT contain "_fail" in their name
+# Sort them for consistency
+# Using process substitution or simply listing files to avoid subshell exit issue
+for test_file in $(find tests -name "*.ln" ! -name "*_fail*" ! -name "syntax_check.ln" | sort); do
+    run_test "$test_file"
+done
+
+echo ""
+echo "=== Running Negative Tests ==="
+# Find all .ln files that DO contain "_fail" in their name
+for test_file in $(find tests -name "*_fail.ln" | sort); do
+    run_negative_test "$test_file"
+done
+
+echo "---------------------------------------------------"
+echo "All tests passed!"
