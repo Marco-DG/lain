@@ -206,28 +206,18 @@ match color {
 
 ---
 
-## 7. Safety Features
+## 7. Safety Guarantees
 
-### Static Bounds Checking (Zero Overhead)
-Lain verifies array accesses at compile time using **Static Range Analysis**. It tracks the possible range of values for every integer variable to ensure indices are always within bounds. If the compiler cannot prove safety, it rejects the code. There are **no runtime checks**.
+Lain eliminates entire classes of bugs at compile time without runtime overhead.
 
-```lain
-var arr int[3]
-for i in 0..3 {
-    var x = arr[i] // OK: i is known to be in [0, 2]
-}
-// var y = arr[5] // COMPILE ERROR: index out of bounds
-```
-
-### Linear Type Enforcement
-Variables marked with `mov` or parameters of type `mov p T` must be used exactly once. The compiler tracks the "consumed" state to prevent leaks or double-frees.
-
-### Borrow Checking (with NLL-lite)
-Lain implements a strict borrow checker with **Non-Lexical Lifetimes (NLL-lite)** for temporary borrows.
-1. **Lexical Scopes**: Explicit borrows last until the end of their scope.
-2. **Temporary Borrows**: Implicit borrows (e.g., function arguments) expire immediately after the statement, allowing more flexible patterns without sacrificing safety.
-3. **Aliasing Rules**: You cannot have a mutable borrow while other borrows (shared or mutable) exist.
-4. **No Use-After-Move**: You cannot move an object while it is borrowed.
+| Safety Concern | Lain's Guarantee | Mechanism |
+| :--- | :--- | :--- |
+| **Buffer Overflows** | **Impossible** | **Static Range Analysis** verifies every array access at compile time. No runtime checks are needed. |
+| **Use-After-Free** | **Impossible** | **Linear Types** (`mov`) ensure resources are consumed exactly once. Accessing a moved variable is a compile error. |
+| **Double Free** | **Impossible** | Since ownership is linear and must be consumed exactly once, resources cannot be destroyed twice. |
+| **Data Races** | **Impossible** | The **Borrow Checker** enforces Exclusive Mutability. You cannot write to data while others are reading it. |
+| **Null Dereference** | **Impossible** | Lain has no `null` value. References are valid by construction. |
+| **Memory Leaks** | **Prevented** | Linear variables *must* be consumed. Forgetting to use or destroy a resource is a compile error. |
 
 ---
 
