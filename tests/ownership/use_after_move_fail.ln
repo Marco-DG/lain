@@ -6,7 +6,7 @@ type Item {
 }
 
 // This function properly consumes by returning via mov
-func transfer(item mov Item) Item {
+func transfer(mov item Item) Item {
     return mov item
 }
 

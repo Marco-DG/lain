@@ -1,0 +1,8 @@
+
+func ret_var() var int {
+    var x = 10
+    return var x
+}
+
+func main() {
+}

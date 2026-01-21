@@ -10,7 +10,7 @@ func read(p Point) int {
     return p.x + p.y
 }
 
-func update(p var Point) {
+func update(var p Point) {
     p.x = p.x + 1
 }
 

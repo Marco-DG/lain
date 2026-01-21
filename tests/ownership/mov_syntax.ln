@@ -2,7 +2,7 @@ type Foo {
     x int
 }
 
-func take_ownership(f mov Foo) Foo {
+func take_ownership(mov f Foo) Foo {
     return mov f
 }
 

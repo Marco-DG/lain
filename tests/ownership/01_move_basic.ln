@@ -5,17 +5,17 @@ type Resource {
     id int
 }
 
-func drop({id} mov Resource) {
+func drop(mov {id} Resource) {
     // destruct to consume via parameter
 }
 
-func consume_helper(res mov Resource) int {
+func consume_helper(mov res Resource) int {
     val = res.id
     drop(mov res)
     return val
 }
 
-func consume(r mov Resource) {
+func consume(mov r Resource) {
     drop(mov r)
 }
 

@@ -7,20 +7,7 @@
 Type *parse_type(Arena *arena, Parser *parser) {
   Type *base_type = NULL;
 
-  // 1) allow 'mov' as a prefix
-  if (parser_match(TOKEN_KEYWORD_MOV)) {
-    parser_advance(); // consume 'mov'
-    // recursively parse the inner type and wrap it
-    Type *inner = parse_type(arena, parser);
-    return type_move(arena, inner);
-  }
 
-  // 2) allow 'mut' as a prefix
-  if (parser_match(TOKEN_KEYWORD_VAR)) {
-    parser_advance(); // consume 'var'
-    Type *inner = parse_type(arena, parser);
-    return type_mut(arena, inner);
-  }
 
   // 2) parse a simple identifier type (e.g. "Foo", "int")
   parser_expect(TOKEN_IDENTIFIER, "Expected type name");

@@ -6,7 +6,7 @@ func use_resource(r Resource) int {
     return r.data
 }
 
-func consume_resource(r mov Resource) Resource {
+func consume_resource(mov r Resource) Resource {
     return mov r
 }
 

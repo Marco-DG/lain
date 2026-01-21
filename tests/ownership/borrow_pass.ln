@@ -10,12 +10,12 @@ func read_counter(c Counter) int {
     return c.value
 }
 
-func increment_counter(c var Counter) {
+func increment_counter(var c Counter) {
     // Mutable borrow: c is Counter*
     c.value = c.value + 1
 }
 
-func take_counter(c mov Counter) Counter {
+func take_counter(mov c Counter) Counter {
     // Ownership transfer: c is Counter (value), return it to consume
     return mov c
 }

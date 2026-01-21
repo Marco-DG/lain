@@ -9,11 +9,11 @@ func use_resource(r Resource) int {
     return r.data
 }
 
-func consume(r mov Resource) Resource {
+func consume(mov r Resource) Resource {
     return mov r
 }
 
-func conflict(r Resource, r2 mov Resource) Resource {
+func conflict(r Resource, mov r2 Resource) Resource {
     return mov r2
 }
 

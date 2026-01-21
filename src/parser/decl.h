@@ -355,15 +355,28 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 is_comptime = true;
             }
 
-            // parameter name
-            // Check for destructuring: {a, b} Type
+            // Check for modifiers first (Prefix syntax)
+            bool is_mut = false;
+            bool is_move = false;
+            
+            if (parser_match(TOKEN_KEYWORD_VAR)) {
+                parser_advance();
+                is_mut = true;
+            } else if (parser_match(TOKEN_KEYWORD_MOV)) {
+                parser_advance();
+                is_move = true;
+            }
+
+            // check for parameter name OR destructuring
+            Decl *pdecl = NULL;
+            
             if (parser_match(TOKEN_L_BRACE)) {
+                // Destructuring: {a, b} Type
                 parser_advance(); // consume '{'
                 
                 IdList* names = NULL;
                 IdList** names_tail = &names;
 
-                // Parse identifiers inside {}
                 do {
                     parser_expect(TOKEN_IDENTIFIER, "Expected field name in destructuring");
                     Id* field_name = id(arena, parser->token.length, parser->token.start);
@@ -385,30 +398,31 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 // parameter type
                 Type *ptype = parse_type(arena, parser);
                 
-                // Create DECL_DESTRUCT
-                Decl *pdecl = decl_destruct(arena, names, ptype);
+                if (is_mut) ptype = type_mut(arena, ptype);
+                if (is_move) ptype = type_move(arena, ptype);
+                
+                pdecl = decl_destruct(arena, names, ptype);
                 
                 *tail = decl_list(arena, pdecl);
                 tail  = &(*tail)->next;
-
-            } else {
-                // Normal parameter: name [mut|mov] Type
                 
+            } else {
+                // Normal parameter: [var|mov] name Type
                 parser_expect(TOKEN_IDENTIFIER, "Expected parameter name");
                 Id *pname = id(arena, parser->token.length, parser->token.start);
                 parser_advance();
 
                 // parameter type
-                // parse_type handles 'mut T' and 'mov T' prefixes on types
                 Type *ptype = parse_type(arena, parser);
+                
+                if (is_mut) ptype = type_mut(arena, ptype);
+                if (is_move) ptype = type_move(arena, ptype);
 
-                // wrap in TYPE_COMPTIME safely
-                if (is_comptime) {
-                    ptype = type_comptime(arena, ptype);
-                }
+                if (is_comptime) ptype = type_comptime(arena, ptype);
 
-                Decl *pdecl = decl_variable(arena, pname, ptype);
+                pdecl = decl_variable(arena, pname, ptype);
                 pdecl->as.variable_decl.is_parameter = true;
+            // ... (constraints check continues below) ...
 
                 // Check for 'in' keyword: param int in arr
                 if (parser_match(TOKEN_KEYWORD_IN)) {
@@ -486,8 +500,22 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     }
     
     Type *ret_type = NULL;
-    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV)) {
+    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR)) {
+        bool ret_is_mut = false;
+        bool ret_is_move = false;
+        
+        if (parser_match(TOKEN_KEYWORD_VAR)) {
+            parser_advance();
+            ret_is_mut = true;
+        } else if (parser_match(TOKEN_KEYWORD_MOV)) {
+            parser_advance();
+            ret_is_move = true;
+        }
+        
         ret_type = parse_type(arena, parser);
+        
+        if (ret_is_mut) ret_type = type_mut(arena, ret_type);
+        if (ret_is_move) ret_type = type_move(arena, ret_type);
     }
 
     if (ret_is_comptime && ret_type) {
@@ -596,12 +624,27 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
             }
 
             // parameter name
+            
+            // Modifier support (prefix)
+            bool is_mut = false;
+            bool is_move = false;
+            if (parser_match(TOKEN_KEYWORD_VAR)) {
+                parser_advance();
+                is_mut = true;
+            } else if (parser_match(TOKEN_KEYWORD_MOV)) {
+                parser_advance();
+                is_move = true;
+            }
+
             parser_expect(TOKEN_IDENTIFIER, "Expected parameter name");
             Id *pname = id(arena, parser->token.length, parser->token.start);
             parser_advance();
 
             // parameter type
             Type *ptype = parse_type(arena, parser);
+            
+            if (is_mut) ptype = type_mut(arena, ptype);
+            if (is_move) ptype = type_move(arena, ptype);
 
             Decl *pdecl = decl_variable(arena, pname, ptype);
             pdecl->as.variable_decl.is_parameter = true;

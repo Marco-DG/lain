@@ -9,14 +9,14 @@ func print_point(p Point) {
     printf("Point(%d, %d)\n", p.x, p.y);
 }
 
-func move_point(p mov Point) Point {
+func move_point(mov p Point) Point {
     // Owned: p is Point (value)
     // Access fields via . (handled by emitter)
     printf("Moved Point(%d, %d)\n", p.x, p.y);
     return mov p;
 }
 
-func mutate_point(p var Point) {
+func mutate_point(var p Point) {
     // Mutable reference: p is Point*
     // Access fields via -> (handled by emitter)
     p.x = p.x + 1;
