@@ -96,7 +96,7 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         parser_advance(); // consume 'comptime'
         return parse_comptime_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_MUT)) {
+    if (parser_match(TOKEN_KEYWORD_VAR)) {
         parser_advance();
         return parse_var_stmt(arena, parser);
     }
@@ -225,7 +225,7 @@ Stmt *parse_comptime_stmt(Arena* arena, Parser* parser)
 
 Stmt *parse_var_stmt(Arena* arena, Parser* parser)
 {
-    parser_expect(TOKEN_IDENTIFIER, "Expected variable name after 'mut'");
+    parser_expect(TOKEN_IDENTIFIER, "Expected variable name after 'var'");
     Id* var_name = id(arena, parser->token.length, parser->token.start);
     parser_advance();
 

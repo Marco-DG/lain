@@ -56,7 +56,7 @@ Expr *parse_unary_expr(Arena* arena, Parser* parser)
     }
 
     // mut <expr>
-    if (parser_match(TOKEN_KEYWORD_MUT)) {
+    if (parser_match(TOKEN_KEYWORD_VAR)) {
         parser_advance();
         Expr *right = parse_unary_expr(arena, parser);
         return expr_mut(arena, right);

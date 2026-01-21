@@ -12,7 +12,7 @@ func transfer(item mov Item) Item {
 
 func main() int {
     // Declare as mutable to allow init (and move tracks consumption)
-    mut myitem Item
+    var myitem Item
     myitem.id = 42
     
     // This consumes myitem (transfers ownership)

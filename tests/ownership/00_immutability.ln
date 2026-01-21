@@ -5,7 +5,7 @@ func main() int {
     x = 10
     // x = 20      // ERROR: Cannot assign to immutable variable
     
-    mut y = 10
+    var y = 10
     y = 20         // OK
     
     return y

@@ -3,7 +3,7 @@
 
 func main() int {
     // Fixed-size array
-    mut arr int[5]
+    var arr int[5]
     arr[0] = 10
     arr[1] = 20
     arr[2] = 30
@@ -11,9 +11,9 @@ func main() int {
     arr[4] = 50  // Max valid index is 4 for array of 5
     
     // Valid index access with compile-time constant
-    mut a = arr[0]
-    mut b = arr[4]
-    mut c = arr[2 + 1]  // 3 - compile-time evaluated to 3
+    var a = arr[0]
+    var b = arr[4]
+    var c = arr[2 + 1]  // 3 - compile-time evaluated to 3
     
     printf("arr[0]=%d, arr[4]=%d, arr[3]=%d\n", a, b, c)
     

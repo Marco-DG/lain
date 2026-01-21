@@ -2,7 +2,7 @@
 // Match without else case on integer (not exhaustive)
 
 func main() int {
-    mut x = 5
+    var x = 5
     
     match x {
         1: return 1

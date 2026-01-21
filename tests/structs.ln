@@ -6,12 +6,12 @@ type Vec2 {
 }
 
 func main() int {
-    mut v Vec2
+    var v Vec2
     v.x = 10
     v.y = 20
     printf("v = {%d, %d}\n", v.x, v.y)
     
-    mut v2 = v
+    var v2 = v
     v2.x = 30
     printf("v2.x = %d, v.x = %d\n", v2.x, v.x)
     return 0

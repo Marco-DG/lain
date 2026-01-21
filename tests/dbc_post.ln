@@ -10,7 +10,7 @@ func abs(x int) int >= 0 {
 }
 
 func main() int {
-    mut a = abs(10)
-    mut b = abs(0-10)
+    var a = abs(10)
+    var b = abs(0-10)
     return 0
 }

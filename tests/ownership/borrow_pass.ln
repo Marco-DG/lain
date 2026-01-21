@@ -10,7 +10,7 @@ func read_counter(c Counter) int {
     return c.value
 }
 
-func increment_counter(c mut Counter) {
+func increment_counter(c var Counter) {
     // Mutable borrow: c is Counter*
     c.value = c.value + 1
 }
@@ -21,7 +21,7 @@ func take_counter(c mov Counter) Counter {
 }
 
 func main() int {
-    mut cnt Counter
+    var cnt Counter
     cnt.value = 10
     
     // Test 1: Multiple shared borrows OK
@@ -29,7 +29,7 @@ func main() int {
     y = read_counter(cnt)  // OK: multiple shared borrows
     
     // Test 2: Mutable borrow
-    increment_counter(mut cnt)
+    increment_counter(var cnt)
     
     // Test 3: Shared borrow after mutable borrow ends
     z = read_counter(cnt)  // OK: mutable borrow ended

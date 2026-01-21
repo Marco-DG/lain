@@ -10,12 +10,12 @@ func read(p Point) int {
     return p.x + p.y
 }
 
-func update(p mut Point) {
+func update(p var Point) {
     p.x = p.x + 1
 }
 
 func main() int {
-    mut p Point
+    var p Point
     p.x = 10
     p.y = 20
     
@@ -24,7 +24,7 @@ func main() int {
     r2 = read(p)
     
     // Mutable borrow
-    update(mut p)
+    update(var p)
     
     return p.x // Should be 11
 }

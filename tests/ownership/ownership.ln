@@ -16,7 +16,7 @@ func move_point(p mov Point) Point {
     return mov p;
 }
 
-func mutate_point(p mut Point) {
+func mutate_point(p var Point) {
     // Mutable reference: p is Point*
     // Access fields via -> (handled by emitter)
     p.x = p.x + 1;
@@ -24,15 +24,15 @@ func mutate_point(p mut Point) {
 }
 
 func main() int {
-    mut p1 Point
+    var p1 Point
     p1.x = 10
     p1.y = 20
     
     // Test Shared Reference (implicit borrow)
     print_point(p1);
     
-    // Test Mutable Reference (explicit mut)
-    mutate_point(mut p1);
+    // Test Mutable Reference (explicit var)
+    mutate_point(var p1);
     print_point(p1); // Should be 11, 21
     
     // Test Move (explicit mov)

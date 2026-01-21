@@ -11,7 +11,7 @@ func consume_resource(r mov Resource) Resource {
 }
 
 func main() int {
-    mut res Resource
+    var res Resource
     res.data = 42
     
     if 1 < 2 {

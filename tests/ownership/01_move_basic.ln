@@ -20,9 +20,9 @@ func consume(r mov Resource) {
 }
 
 func main() int {
-    mut a Resource
+    var a Resource
     a.id = 1
-    mut b = mov a    // Move a -> b
+    var b = mov a    // Move a -> b
     
     // a is now invalid
     // var x = a.id // SHOULD ERROR: Use after move

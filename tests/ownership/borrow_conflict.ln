@@ -9,7 +9,7 @@ func read_data(d Data) int {
     return d.value
 }
 
-func modify_both(d1 Data, mut d2 Data) int {
+func modify_both(d1 Data, var d2 Data) int {
     d2.value = d2.value + 1
     return d1.value
 }
@@ -19,7 +19,7 @@ func main() int {
     data.value = 42
     
     // This should fail: same variable borrowed as shared AND mutable in same call
-    var result = modify_both(data, mut data)
+    var result = modify_both(data, var data)
     
     return result
 }

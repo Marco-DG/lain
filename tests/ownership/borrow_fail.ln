@@ -18,7 +18,7 @@ func conflict(r Resource, r2 mov Resource) Resource {
 }
 
 func main() int {
-    mut res Resource
+    var res Resource
     res.data = 42
     
     // This should fail: borrowing and moving in the same call

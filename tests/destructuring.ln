@@ -11,7 +11,7 @@ func print_point({x, y} Point) u8 {
 }
 
 func main() u8 {
-    mut p Point
+    var p Point
     p.x = 10
     p.y = 20
     print_point(p)

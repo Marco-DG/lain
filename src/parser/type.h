@@ -16,8 +16,8 @@ Type *parse_type(Arena *arena, Parser *parser) {
   }
 
   // 2) allow 'mut' as a prefix
-  if (parser_match(TOKEN_KEYWORD_MUT)) {
-    parser_advance(); // consume 'mut'
+  if (parser_match(TOKEN_KEYWORD_VAR)) {
+    parser_advance(); // consume 'var'
     Type *inner = parse_type(arena, parser);
     return type_mut(arena, inner);
   }

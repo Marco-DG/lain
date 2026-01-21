@@ -122,7 +122,7 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         return parse_proc_decl(arena, parser);
     }
 
-    if (parser_match(TOKEN_KEYWORD_MUT)) {
+    if (parser_match(TOKEN_KEYWORD_VAR)) {
         parser_advance();
         return parse_var_decl(arena, parser);
     }
@@ -175,7 +175,7 @@ DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant
         if (parser_match(TOKEN_L_BRACE)) {
             // Case 2: ADT Variant with fields
             // is_adt_variant = true;
-        } else if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_MUT) || parser_match(TOKEN_KEYWORD_COMPTIME) || parser_match(TOKEN_L_BRACKET) || parser_match(TOKEN_ASTERISK)) {
+        } else if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_KEYWORD_COMPTIME) || parser_match(TOKEN_L_BRACKET) || parser_match(TOKEN_ASTERISK)) {
             // Case 1: Struct Field (followed by Type start tokens)
             is_struct_field = true;
         } else {

@@ -6,6 +6,6 @@ func bad_abs(x int) int >= 0 {
 }
 
 func main() int {
-    mut a = bad_abs(10)
+    var a = bad_abs(10)
     return 0
 }

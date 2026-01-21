@@ -1,6 +1,6 @@
 extern func printf(fmt u8[:0], ...) int
 
 func main() int {
-    mut x = 10
+    var x = 10
     return 0
 }

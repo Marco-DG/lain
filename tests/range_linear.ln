@@ -5,7 +5,7 @@ func require_gt(a int, b int) int
 }
 
 func test_linear(y int) int {
-    mut x = y + 1
+    var x = y + 1
     // x = y + 1 => x - y = 1 => x > y
     return require_gt(x, y)
 }
