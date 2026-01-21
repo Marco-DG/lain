@@ -1,0 +1,9 @@
+
+import tests.stdlib.dummy
+
+func main() int {
+    if dummy_val() == 42 {
+        return 0
+    }
+    return 1
+}

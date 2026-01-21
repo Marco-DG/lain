@@ -558,6 +558,7 @@ Variant *variant(Arena *arena, Id *name, DeclList *fields) {
 Decl* decl_import(Arena* arena, Id* module_name) {
     Decl* d = arena_push_aligned(arena, Decl);
     d->kind = DECL_IMPORT;
+    d->as.import_decl.module_name = module_name;
     return d;
 }
 

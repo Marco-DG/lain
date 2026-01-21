@@ -50,6 +50,60 @@ void emit_decl(Decl* decl, int depth) {
                 c_name_for_id(decl->as.variable_decl.name));
             break;
 
+        case DECL_EXTERN_PROCEDURE:
+        case DECL_EXTERN_FUNCTION: {
+             emit_indent(depth);
+             EMIT("extern ");
+             if (decl->as.function_decl.return_type) {
+                 emit_type(decl->as.function_decl.return_type);
+             } else {
+                 EMIT("void");
+             }
+             EMIT(" %s(", c_name_for_id(decl->as.function_decl.name));
+            
+             DeclList* param = decl->as.function_decl.params;
+             if (param) {
+                 int first = 1;
+                 while (param) {
+                     if (!first) EMIT(", ");
+                     if (param->decl->kind == DECL_DESTRUCT) {
+                          emit_param_type(param->decl->as.destruct_decl.type);
+                          EMIT(" _destruct_param_"); 
+                     } else {
+                          Type *pt = param->decl->as.variable_decl.type;
+                          const char *fname = c_name_for_id(decl->as.function_decl.name);
+                          // Hack: force const char* for puts/printf
+                          if (pt->kind == TYPE_POINTER && pt->element_type->kind == TYPE_SIMPLE &&
+                              pt->element_type->base_type->length == 4 && 
+                              strncmp(pt->element_type->base_type->name, "char", 4) == 0 &&
+                              (strcmp(fname, "puts") == 0 || strcmp(fname, "printf") == 0)) 
+                          {
+                              EMIT("const char *");
+                          } else {
+                              emit_param_type(pt);
+                          }
+                          EMIT(" %.*s",
+                               (int)param->decl->as.variable_decl.name->length,
+                               param->decl->as.variable_decl.name->name);
+                     }
+                     first = 0;
+                     param = param->next;
+                 }
+                 if (strncmp(decl->as.function_decl.name->name, "printf", 6) == 0 ||
+                     strncmp(decl->as.function_decl.name->name, "scanf", 5) == 0) {
+                     if (!first) EMIT(", ");
+                     EMIT("...");
+                 }
+             } else {
+                 if (strncmp(decl->as.function_decl.name->name, "printf", 6) == 0) {
+                     EMIT("const char *, ...");
+                 } else {
+                     EMIT("void");
+                 }
+             }
+             EMIT(");\n");
+             break;
+        }
 
         case DECL_PROCEDURE:
         case DECL_FUNCTION: {

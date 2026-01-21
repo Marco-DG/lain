@@ -81,19 +81,17 @@ static DeclList* load_module(Arena *file_arena,
     Lexer   lex    = lexer_new(f.contents);
     Parser  parser = {
       .lexer  = &lex,
-      .token  = lexer_next(&lex),
       .line   = 1,
       .column = 1
     };
+    _parser_advance(&parser); // Fetch first token (and normalize NEWLINE -> EOL)
     DeclList *decls = parse_module(ast_arena, &parser);
-
     // 4) splice any imports in this module
     DeclList *prev = NULL, *cur = decls;
     while (cur) {
         if (cur->decl->kind == DECL_IMPORT) {
             Id *imp       = cur->decl->as.import_decl.module_name;
             size_t len    = imp->length;
-            // build a small temporary cname: "foo.bar"
             char buf[256];
             if (len >= sizeof buf) len = sizeof buf - 1;
             memcpy(buf, imp->name, len);
