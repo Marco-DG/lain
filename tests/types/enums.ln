@@ -9,7 +9,7 @@ type Color {
 }
 
 func main() int {
-    var c Color = Red
+    var c = Color.Red
     
     match c {
         Red: printf("Color is Red\n")

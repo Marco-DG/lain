@@ -1,6 +1,4 @@
-func require_lt(a int, b int) int
-    pre a < b
-{
+func require_lt(a int, b int > a) int {
     return 0
 }
 
@@ -10,7 +8,7 @@ func test_leak(x int, y int) int {
         require_lt(x, y)
     } else {
         // x < y is FALSE here (x >= y)
-        // This should fail
+        // This should fail: requires y > x, but we have x >= y
         require_lt(x, y)
     }
     return 0

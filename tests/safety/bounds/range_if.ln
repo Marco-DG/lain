@@ -1,6 +1,4 @@
-func require_lt(a int, b int) int
-    pre a < b
-{
+func require_lt(a int, b int > a) int {
     return 0
 }
 

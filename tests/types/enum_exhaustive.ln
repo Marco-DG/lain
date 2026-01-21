@@ -10,7 +10,7 @@ type Status {
 }
 
 func main() int {
-    var s Status = Running
+    var s = Status.Running
     
     // All 3 variants covered, no else needed!
     match s {
