@@ -95,6 +95,12 @@ proc log(msg u8[:0]) {
 }
 ```
 
+### 4.1 Parameter Modes
+Functions and procedures support three parameter modes (see [Ownership](#3-ownership--type-system)):
+- **Shared** (default): `p T`. Read-only access.
+- **Mutable**: `var p T`. Exclusive read-write access.
+- **Owned**: `mov p T`. Transfer of ownership (value is consumed).
+
 ---
 
 ## 5. Data Structures
