@@ -1,0 +1,32 @@
+extern func abs(n int) int;
+extern func malloc(size usize) *void;
+extern func free(ptr *void);
+extern func exit(status int);
+
+// Also test stdlib which uses extern
+import std.io
+
+func main() int {
+    println("Testing extern keyword...");
+
+    // Test abs
+    var n int = -42;
+    var res int = abs(n);
+    if (res != 42) {
+        println("Error: abs(-42) failed");
+        return 1;
+    }
+    println("abs(-42) = 42 (OK)");
+
+    // Test malloc/free
+    var ptr *void = malloc(10);
+    // We can't easily check for NULL without == 0 or cast, 
+    // but assuming it succeeds for small allocation.
+    // Let's just free it.
+    free(ptr);
+    println("malloc and free (OK)");
+
+    println("All extern tests passed.");
+    exit(0);
+    return 0; // Unreachable
+}

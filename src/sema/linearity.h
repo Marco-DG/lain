@@ -526,7 +526,6 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     }
 
     case STMT_RETURN: {
-        fprintf(stderr, "[DEBUG] STMT_RETURN visited\n");
         Expr *val = s->as.return_stmt.value;
         if (val) sema_check_expr_linearity(val, tbl, loop_depth);
         ltable_ensure_all_consumed(tbl);

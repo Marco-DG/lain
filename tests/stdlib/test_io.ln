@@ -1,0 +1,8 @@
+import std.io
+
+func main() int {
+    println("Hello World!");
+    print("Partial line... ");
+    println("Done.");
+    return 0;
+}

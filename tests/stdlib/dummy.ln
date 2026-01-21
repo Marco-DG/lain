@@ -1,0 +1,3 @@
+func dummy_val() int {
+    return 42
+}

@@ -9,6 +9,19 @@ Type *parse_type(Arena *arena, Parser *parser) {
 
 
 
+  // 1) prefixes: pointers, etc.
+  if (parser_match(TOKEN_ASTERISK)) {
+    parser_advance();
+    Type *inner = parse_type(arena, parser);
+    return type_pointer(arena, inner);
+  }
+  
+  if (parser_match(TOKEN_KEYWORD_MOV)) {
+    parser_advance();
+    Type *inner = parse_type(arena, parser);
+    return type_move(arena, inner);
+  }
+
   // 2) parse a simple identifier type (e.g. "Foo", "int")
   parser_expect(TOKEN_IDENTIFIER, "Expected type name");
   Id *type_name = id(arena, parser->token.length, parser->token.start);

@@ -1,0 +1,10 @@
+extern func puts(s *char) int;
+extern func printf(fmt *char, ...) int;
+
+func print(s *char) {
+    printf("%s", s);
+}
+
+func println(s *char) {
+    puts(s);
+}
