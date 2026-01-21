@@ -37,15 +37,18 @@ run_test tests/structs.ln
 run_test tests/arrays.ln
 run_test tests/math.ln
 run_test tests/func_proc.ln
-run_test tests/mov_syntax.ln
-run_test tests/ownership.ln
+run_test tests/ownership/mov_syntax.ln
+run_test tests/ownership/ownership.ln
 run_test tests/destructuring.ln
-run_test tests/borrow_pass.ln
+run_test tests/ownership/borrow_pass.ln
 run_test tests/bounds_pass.ln
 run_test tests/enums.ln
 run_test tests/enum_exhaustive.ln
-run_test tests/borrow_valid.ln
+run_test tests/ownership/borrow_valid.ln
 run_test tests/adt.ln
+run_test tests/ownership/00_immutability.ln
+run_test tests/ownership/01_move_basic.ln
+run_test tests/ownership/02_borrow_basic.ln
 
 # Negative tests (should fail to compile)
 run_negative_test() {
@@ -63,10 +66,10 @@ run_negative_test() {
 }
 
 run_negative_test tests/purity_fail.ln
-run_negative_test tests/borrow_conflict.ln
+run_negative_test tests/ownership/borrow_conflict.ln
 run_negative_test tests/bounds_fail.ln
 run_negative_test tests/exhaustive_fail.ln
-run_negative_test tests/use_after_move_fail.ln
+run_negative_test tests/ownership/use_after_move_fail.ln
 run_negative_test tests/immutable_fail.ln
 run_negative_test tests/repro_purity.ln
-run_negative_test tests/borrow_fail.ln
+run_negative_test tests/ownership/borrow_fail.ln

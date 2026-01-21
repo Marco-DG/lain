@@ -340,8 +340,12 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                                 (int)owner_id->length, owner_id->name);
                         exit(1);
                     }
-                    DBG("EXPR_CALL: consuming '%.*s' (MODE_OWNED)", (int)owner_id->length, owner_id->name);
-                    ltable_consume(tbl, owner_id, loop_depth);
+                    if (arg->kind == EXPR_MOVE) {
+                        DBG("EXPR_CALL: '%.*s' already consumed by EXPR_MOVE", (int)owner_id->length, owner_id->name);
+                    } else {
+                        DBG("EXPR_CALL: consuming '%.*s' (MODE_OWNED)", (int)owner_id->length, owner_id->name);
+                        ltable_consume(tbl, owner_id, loop_depth);
+                    }
                     // Invalidate any previous borrows of this owner
                     if (tbl->borrows) {
                         borrow_invalidate_owner(tbl->borrows, owner_id);

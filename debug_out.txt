@@ -1,0 +1,9 @@
+#include "lain.h"
+
+int main(void) {
+    Fixed_int_5 arr;
+    arr.data[0] = 10;
+    int x = arr.data[5];
+    return x;
+}
+

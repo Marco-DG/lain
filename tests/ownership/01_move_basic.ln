@@ -1,0 +1,25 @@
+// 01_move_basic.ln
+// Tests basic move semantics with 'mov' keyword.
+
+type Resource {
+    id int
+}
+
+func consume_helper({id} Resource) int {
+    return id
+}
+
+func consume(mov r Resource) int {
+    return consume_helper(mov r)
+}
+
+func main() int {
+    mov a Resource
+    a.id = 1
+    mov b = mov a    // Move a -> b
+    
+    // a is now invalid
+    // var x = a.id // SHOULD ERROR: Use after move
+    
+    return consume(mov b) // OK: Move b -> consume
+}

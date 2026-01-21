@@ -1,0 +1,30 @@
+// 02_borrow_basic.ln
+// Tests borrowing rules.
+
+type Point {
+    x int
+    y int
+}
+
+func read(p Point) int {
+    return p.x + p.y
+}
+
+func update(p mut Point) {
+    p.x = p.x + 1
+}
+
+func main() int {
+    var p Point
+    p.x = 10
+    p.y = 20
+    
+    // Shared borrow
+    var r1 = read(p)
+    var r2 = read(p)
+    
+    // Mutable borrow
+    update(mut p)
+    
+    return p.x // Should be 11
+}

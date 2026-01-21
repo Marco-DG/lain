@@ -100,6 +100,14 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         parser_advance();
         return parse_var_stmt(arena, parser);
     }
+    if (parser_match(TOKEN_KEYWORD_MOV)) {
+        parser_advance();
+        Stmt *s = parse_var_stmt(arena, parser);
+        if (s && s->as.var_stmt.type) {
+            s->as.var_stmt.type->mode = MODE_OWNED;
+        }
+        return s;
+    }
     if (parser_match(TOKEN_KEYWORD_IF)) {
         return parse_if_stmt(arena, parser);
     }

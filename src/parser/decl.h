@@ -389,13 +389,17 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
             } else {
                 // Normal parameter: [mov|mut] name Type
                 // Check for ownership mode prefix
-                OwnershipMode param_mode = MODE_SHARED;  // default
+                // Check for ownership mode prefix
+                OwnershipMode param_mode = MODE_SHARED;
+                bool explicit_mode = false;
                 if (parser_match(TOKEN_KEYWORD_MOV)) {
                     parser_advance();
                     param_mode = MODE_OWNED;
+                    explicit_mode = true;
                 } else if (parser_match(TOKEN_KEYWORD_MUT)) {
                     parser_advance();
                     param_mode = MODE_MUTABLE;
+                    explicit_mode = true;
                 }
 
                 parser_expect(TOKEN_IDENTIFIER, "Expected parameter name");
@@ -405,8 +409,8 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 // parameter type
                 Type *ptype = parse_type(arena, parser);
                 
-                // Apply ownership mode to the type
-                if (ptype) {
+                // Apply ownership mode to the type ONLY if explicit prefix was used
+                if (ptype && explicit_mode) {
                     ptype->mode = param_mode;
                 }
 
