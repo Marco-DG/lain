@@ -12,10 +12,13 @@ void emit_decl_list(DeclList *decls, int depth);
 static void emit_param_type(Type *t) {
     if (!t) return;
     
-    // Get the base type name without ownership decorations
-    // We need to temporarily set mode to MODE_SHARED to get plain type name
+    // Get the base type name without ownership decorations,
+    // BUT for Pointers, the mode dictates the C type (const vs non-const),
+    // so we must preserve it to generate the correct base "value type".
     OwnershipMode original_mode = t->mode;
-    t->mode = MODE_SHARED;  // temporarily remove mode decoration
+    if (t->kind != TYPE_POINTER) {
+        t->mode = MODE_SHARED;
+    }
     
     char base_name[128];
     c_name_for_type(t, base_name, sizeof(base_name));
@@ -54,12 +57,15 @@ void emit_decl(Decl* decl, int depth) {
         case DECL_EXTERN_FUNCTION: {
              emit_indent(depth);
              EMIT("extern ");
-             if (decl->as.function_decl.return_type) {
+             const char *fname = c_name_for_id(decl->as.function_decl.name);
+             if (strcmp(fname, "fgets") == 0) {
+                 EMIT("char *");
+             } else if (decl->as.function_decl.return_type) {
                  emit_type(decl->as.function_decl.return_type);
              } else {
                  EMIT("void");
              }
-             EMIT(" %s(", c_name_for_id(decl->as.function_decl.name));
+             EMIT(" %s(", fname);
             
              DeclList* param = decl->as.function_decl.params;
              if (param) {
@@ -74,12 +80,31 @@ void emit_decl(Decl* decl, int depth) {
                           const char *fname = c_name_for_id(decl->as.function_decl.name);
                           // Hack: force const char* for puts/printf
                           if (pt->kind == TYPE_POINTER && pt->element_type->kind == TYPE_SIMPLE &&
-                              ((pt->element_type->base_type->length == 4 && strncmp(pt->element_type->base_type->name, "char", 4) == 0) ||
-                               (pt->element_type->base_type->length == 2 && strncmp(pt->element_type->base_type->name, "u8", 2) == 0)) &&
+                              (
+                                // Strings: *char, *u8
+                                ((pt->element_type->base_type->length == 4 && strncmp(pt->element_type->base_type->name, "char", 4) == 0) ||
+                                 (pt->element_type->base_type->length == 2 && strncmp(pt->element_type->base_type->name, "u8", 2) == 0)) 
+                                ||
+                                // FILE handles: *FILE (Shared) -> FILE *
+                                (pt->element_type->base_type->length == 4 && strncmp(pt->element_type->base_type->name, "FILE", 4) == 0)
+                              ) &&
                               (strcmp(fname, "puts") == 0 || strcmp(fname, "printf") == 0 ||
-                               strcmp(fname, "libc_puts") == 0 || strcmp(fname, "libc_printf") == 0)) 
+                               strcmp(fname, "libc_puts") == 0 || strcmp(fname, "libc_printf") == 0 ||
+                               strcmp(fname, "fopen") == 0 || strcmp(fname, "fputs") == 0 ||
+                               strcmp(fname, "fgets") == 0)) 
                           {
-                              EMIT("const char *");
+                              // C-Interop: Map u8* to char* and FILE* to FILE* (mut)
+                              Id *base = pt->element_type->base_type;
+                              if (base->length == 4 && strncmp(base->name, "FILE", 4) == 0) {
+                                  EMIT("FILE *"); // Always mutable FILE* for libc
+                              } else {
+                                  // Strings (u8*)
+                                  if (pt->mode == MODE_MUTABLE || pt->mode == MODE_OWNED) {
+                                      EMIT("char *");
+                                  } else {
+                                      EMIT("const char *");
+                                  }
+                              }
                           } else {
                               emit_param_type(pt);
                           }
@@ -90,16 +115,13 @@ void emit_decl(Decl* decl, int depth) {
                      first = 0;
                      param = param->next;
                  }
-                  if (strncmp(decl->as.function_decl.name->name, "printf", 6) == 0 ||
-                      strncmp(decl->as.function_decl.name->name, "libc_printf", 11) == 0 ||
-                      strncmp(decl->as.function_decl.name->name, "scanf", 5) == 0) {
+                  if (decl->as.function_decl.is_variadic) {
                       if (!first) EMIT(", ");
                       EMIT("...");
                   }
               } else {
-                  if (strncmp(decl->as.function_decl.name->name, "printf", 6) == 0 ||
-                      strncmp(decl->as.function_decl.name->name, "libc_printf", 11) == 0) {
-                      EMIT("const char *, ...");
+                  if (decl->as.function_decl.is_variadic) {
+                      EMIT("...");
                  } else {
                      EMIT("void");
                  }
@@ -396,9 +418,37 @@ void emit_decl(Decl* decl, int depth) {
         break;
 
 
+        case DECL_C_INCLUDE: {
+            const char* path = decl->as.c_include_decl.path;
+            emit_indent(depth);
+            if (path[0] == '<') {
+                EMIT("#include %s\n", path);
+            } else {
+                EMIT("#include \"%s\"\n", path);
+            }
+            break;
+        }
+
+        case DECL_EXTERN_TYPE: {
+            const char* name = c_name_for_id(decl->as.extern_type_decl.name);
+            emit_indent(depth);
+            // In C, "typedef struct Name Name;" allows using "Name" as an opaque type
+            EMIT("typedef struct %s %s;\n", name, name);
+            register_struct_type(name); 
+            break;
+        }
+
+        case DECL_IMPORT: 
+            // Imports are handled by frontend resolution, nothing to emit directly in C 
+            // (unless we decide to emit #include "module.h" later, but for now single file/unity build assumed or managed externally)
+            break;
+            
+        case DECL_DESTRUCT:
+            break; // handled in function params
+
         default:
             emit_indent(depth);
-            EMIT("/* Unhandled declaration type */\n");
+            EMIT("/* Unhandled declaration type %d */\n", decl->kind);
             break;
     }
 }

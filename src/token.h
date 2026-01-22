@@ -21,6 +21,7 @@ typedef enum {
     TOKEN_DOT,
     TOKEN_DOT_DOT,
     TOKEN_DOT_DOT_EQUAL,
+    TOKEN_ELLIPSIS,
     TOKEN_COMMA,
     TOKEN_COLON,
     TOKEN_SEMICOLON,
@@ -79,6 +80,7 @@ typedef enum {
     TOKEN_KEYWORD_CONTINUE,
     TOKEN_KEYWORD_COMPTIME,
     TOKEN_KEYWORD_UNSAFE,
+    TOKEN_KEYWORD_C_INCLUDE,
     TOKEN_KEYWORD_PRE,
     TOKEN_KEYWORD_POST,
 } TokenKind;
@@ -133,6 +135,9 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
         case 8:
             if (strncmp(lexeme, "continue", 8) == 0)    return TOKEN_KEYWORD_CONTINUE;
             if (strncmp(lexeme, "comptime", 8) == 0)    return TOKEN_KEYWORD_COMPTIME;
+            break;
+        case 9:
+            if (strncmp(lexeme, "c_include", 9) == 0)   return TOKEN_KEYWORD_C_INCLUDE;
             break;
     }
     return TOKEN_IDENTIFIER;
@@ -213,6 +218,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_KEYWORD_RETURN:              return "TOKEN_KEYWORD_RETURN";
         case TOKEN_KEYWORD_CONTINUE:            return "TOKEN_KEYWORD_CONTINUE";
         case TOKEN_KEYWORD_COMPTIME:            return "TOKEN_KEYWORD_COMPTIME";
+        case TOKEN_KEYWORD_C_INCLUDE:           return "TOKEN_KEYWORD_C_INCLUDE";
         default:                                return 0;
     }
 }
@@ -236,6 +242,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_DOT:                         return ".";
         case TOKEN_DOT_DOT:                     return "..";
         case TOKEN_DOT_DOT_EQUAL:               return "..=";
+        case TOKEN_ELLIPSIS:                    return "...";
         case TOKEN_COMMA:                       return ",";
         case TOKEN_COLON:                       return ":";
         case TOKEN_SEMICOLON:                   return ";";
@@ -296,6 +303,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_KEYWORD_UNSAFE:              return "unsafe";
         case TOKEN_KEYWORD_PRE:                 return "pre";
         case TOKEN_KEYWORD_POST:                return "post";
+        case TOKEN_KEYWORD_C_INCLUDE:           return "c_include";
         default:                                return 0;
     }
 }

@@ -1,5 +1,4 @@
-extern func libc_puts(s *u8) int;
-extern func libc_printf(fmt *u8, ...) int;
+import std.c
 
 func print(s *u8) {
     libc_printf("%s", s);

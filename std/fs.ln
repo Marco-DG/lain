@@ -1,0 +1,21 @@
+import std.c
+
+type File {
+    mov handle *FILE
+}
+
+func open_file(path *u8, mode *u8) mov File {
+    var raw = fopen(path, mode)
+    // TODO: Handle NULL return
+    return File(raw)
+}
+
+proc close_file(mov f File) {
+    if f.handle != 0 {
+        fclose(f.handle)
+    }
+}
+
+proc write_file(var f File, s *u8) {
+    fputs(s, f.handle)
+}

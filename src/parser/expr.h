@@ -39,8 +39,8 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
 // <op> <expr>
 Expr *parse_unary_expr(Arena* arena, Parser* parser)
 {
-    // -, !
-    if (parser_match(TOKEN_MINUS) || parser_match(TOKEN_BANG)) {
+    // -, !, &
+    if (parser_match(TOKEN_MINUS) || parser_match(TOKEN_BANG) || parser_match(TOKEN_AMPERSAND)) {
         TokenKind op = parser->token.kind;
         parser_advance();
         
@@ -217,7 +217,8 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         return expr;
     }
 
-    fprintf(stderr, "Error Ln %li, Col %li: Unexpected token in expression.\n", parser->line, parser->column);
+    fprintf(stderr, "Error Ln %li, Col %li: Unexpected token in expression: %s (%d)\n", 
+            parser->line, parser->column, token_kind_name(parser->token.kind), parser->token.kind);
     abort();
     return NULL;
 }

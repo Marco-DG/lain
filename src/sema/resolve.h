@@ -86,6 +86,9 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
       Decl *d = dl->decl;
       if (!d)
         continue;
+      
+      // DEBUG: print every decl kind
+      fprintf(stderr, "DEBUG scope: Decl Kind %d\n", d->kind);
   
       switch (d->kind) {
       case DECL_VARIABLE: {
@@ -125,6 +128,9 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         if (d->kind == DECL_EXTERN_FUNCTION || d->kind == DECL_EXTERN_PROCEDURE) {
             // Extern functions use their raw name
             cnamef = strdup(rawf);
+            if (strcmp(rawf, "fopen") == 0) {
+                 fprintf(stderr, "DEBUG register fopen: cname=%s, rt=%p\n", cnamef, (void*)rt);
+            }
         } else {
             size_t fclen = strlen(safe_module_path) + 1 + id->length + 1;
             cnamef = malloc(fclen);
@@ -158,7 +164,20 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         free(cnames);
         break;
       }
-  
+
+      case DECL_EXTERN_TYPE: {
+        Id *id = d->as.extern_type_decl.name;
+        char *raw = malloc(id->length + 1);
+        memcpy(raw, id->name, id->length);
+        raw[id->length] = '\0';
+        char *cname = strdup(raw);
+        Type *t = type_simple(sema_arena, id);
+        sema_insert_global(raw, cname, t, d);
+        free(raw);
+        free(cname);
+        break;
+      }
+
       case DECL_ENUM: {
         // 1) Register the enum *type* itself (raw → c_name → Type*)
         Id *tid = d->as.enum_decl.type_name;
@@ -191,6 +210,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         break;
       }
   
+      case DECL_C_INCLUDE:
       case DECL_IMPORT:
       case DECL_DESTRUCT:
         // already inlined earlier or not top-level
@@ -465,6 +485,21 @@ void sema_resolve_expr(Expr *e) {
     // 2) lookup in the two‐table (locals first, then globals)
     Symbol *sym = sema_lookup(raw);
     if (sym) {
+      if (strcmp(raw, "fopen") == 0) {
+          fprintf(stderr, "DEBUG resolve fopen: sym found. Type=%p\n", (void*)sym->type);
+          if (sym->type) {
+              fprintf(stderr, "DEBUG resolve fopen: TypeKind=%d\n", sym->type->kind);
+              if (sym->type->kind == TYPE_POINTER) {
+                   if (sym->type->element_type->kind == TYPE_SIMPLE) {
+                       fprintf(stderr, "DEBUG resolve fopen: *SIMPLE(%.*s)\n", 
+                           (int)sym->type->element_type->base_type->length, 
+                           sym->type->element_type->base_type->name);
+                   }
+              }
+          } else {
+              fprintf(stderr, "DEBUG resolve fopen: Type is NULL!\n");
+          }
+      }
       // Instead of pointing at sym->c_name (which may get freed),
       // copy the string into the permanent arena:
       const char *mangled = sym->c_name;

@@ -49,8 +49,9 @@ static bool emit_fixed_string_init(Type *ty, Expr *rhs, int depth) {
   char sliceBuf[128];
   c_name_for_type(ty, sliceBuf, sizeof sliceBuf);
 
-  // Emit compound literal: (Fixed_T_N){ .data = (uint8_t[]){ ... } }
-  EMIT("(%s){ .data = (uint8_t[]){ ", sliceBuf);
+  // Emit initializer:
+  // Use direct brace initialization to support array fields in struct
+  EMIT("(%s){ .data = { ", sliceBuf);
   for (size_t i = 0; i < fixed_len; i++) {
       unsigned v = (i < bytes_len) ? (unsigned)bytes[i] : 0u;
       EMIT("0x%02X", v);
@@ -225,7 +226,14 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
   case TYPE_POINTER: {
     char tgt[128];
     c_name_for_type(t->element_type, tgt, sizeof tgt);
-    snprintf(out, cap, "%s *", tgt);
+    
+    // Check mode for const correctness
+    if (t->mode == MODE_MUTABLE || t->mode == MODE_OWNED) {
+        snprintf(out, cap, "%s *", tgt);
+    } else {
+        // Shared pointer -> const T *
+        snprintf(out, cap, "const %s *", tgt);
+    }
     return;
   }
 

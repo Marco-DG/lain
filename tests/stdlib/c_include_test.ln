@@ -1,0 +1,8 @@
+
+c_include "<stdio.h>"
+
+extern func libc_printf(fmt *u8) int;
+
+func main() {
+    libc_printf("Hello from c_include!\\n");
+}
