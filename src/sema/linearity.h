@@ -443,7 +443,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     switch (s->kind) {
 
     case STMT_VAR: {
-        fprintf(stderr, "[DEBUG] STMT_VAR visited\n");
+// (removed debug print)
         Expr *init = s->as.var_stmt.expr;
         if (init) sema_check_expr_linearity(init, tbl, loop_depth);
 
@@ -553,6 +553,13 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             ltable_free(first_branch);
         }
         ltable_free(parent_snapshot);
+        break;
+    }
+
+    case STMT_UNSAFE: {
+        for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
+            sema_check_stmt_linearity_with_table(b->stmt, tbl, loop_depth);
+        }
         break;
     }
 

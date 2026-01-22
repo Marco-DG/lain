@@ -232,7 +232,7 @@ Lain eliminates entire classes of bugs at compile time without runtime overhead.
 Use `extern` to link with C functions.
 
 ```lain
-extern func printf(fmt u8[:0], ...) int
+extern func printf(fmt *char, ...) int
 
 proc main() {
     printf("Hello, Lain!\n")
@@ -306,3 +306,38 @@ The compiler uses decidable static analysis (Range Analysis + Difference Bound M
 - **No SMT Solver**: All verification is polynomial-time, fast and predictable
 
 **Note on Loops**: Variables modified within loops are conservatively widened to unknown. For complex loop contracts, explicit verification may be needed in future versions.
+
+---
+
+## 11. Unsafe Code
+
+While Lain prioritizes safety, low-level systems programming sometimes requires bypassing these checks (e.g., interacting with hardware, C libraries, or manual memory management). Lain provides the `unsafe` keyword for this purpose.
+
+### 11.1 Unsafe Blocks
+
+Operations that are potentially unsafe must be enclosed in an `unsafe` block.
+
+```lain
+unsafe {
+    // Potentially unsafe operations here
+}
+```
+
+### 11.2 Raw Pointers
+
+Lain supports raw pointers (e.g., `*int`, `*void`) primarily for C interoperability. 
+**Dereferencing a raw pointer is only allowed inside an `unsafe` block.**
+
+```lain
+func main() {
+    var p *int = 0
+    
+    // var x = *p // Error: Dereference of raw pointer outside 'unsafe' block
+    
+    unsafe {
+        // var y = *p // OK (compiles, though unsafe at runtime if p is invalid)
+    }
+}
+```
+
+The compiler does not enforce memory safety or linear types for raw pointers; the programmer assumes full responsibility for their validity.

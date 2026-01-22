@@ -1,0 +1,35 @@
+// tests/safety/unsafe_valid.ln
+// Test that pointer dereferencing is allowed inside unsafe blocks
+
+
+
+func main() {
+    var ptr *int = 0; // null pointer representation, or use malloc
+
+    unsafe {
+        // This is just a compilation test. We won't actually run invalid code.
+        // But we can check if the compiler accepts the syntax.
+        
+        // We need a valid pointer to test dereference at runtime,
+        // but for static analysis test, even this is enough if we don't crash.
+        // Let's rely on malloc to be safe-ish.
+        
+        // Actually, we can cast u8 to *int if we had casts.
+        // For now, let's just do a pointer dereference that is valid C but maybe unsafe.
+        // Actually, let's use a newly allocated int.
+        
+        var x int = 42;
+        // We don't have address-of operator '&' for local sets yet?
+        // We do have reference semantics. 
+        // If we have a *int, we can deref it.
+        
+        // Let's assume we can get a pointer from somewhere.
+        // For the sake of this test, we just want to verify the block parses and compiles.
+        var p *int = 0; 
+        if 0 {
+             var y int = *p; // Should compile inside unsafe
+        }
+    }
+    
+    // print("Unsafe block compiled successfully.\n");
+}

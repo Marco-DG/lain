@@ -469,6 +469,25 @@ void emit_stmt(Stmt *stmt, int depth) {
     EMIT(";\n");
     break;
 
+  case STMT_UNSAFE: {
+    emit_indent(depth);
+    EMIT("/* unsafe block */\n");
+    emit_indent(depth);
+    EMIT("{\n");
+    
+    // Set unsafe context so lazy-inference in emit_expr knows we are safe
+    bool old_unsafe = sema_in_unsafe_block;
+    sema_in_unsafe_block = true;
+    
+    emit_stmt_list(stmt->as.unsafe_stmt.body, depth + 1);
+    
+    sema_in_unsafe_block = old_unsafe;
+    
+    emit_indent(depth);
+    EMIT("}\n");
+    break;
+  }
+  
     case STMT_ASSIGN: {
       Expr *lhs = stmt->as.assign_stmt.target;
       Expr *rhs = stmt->as.assign_stmt.expr;

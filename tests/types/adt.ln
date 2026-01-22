@@ -1,6 +1,6 @@
 // Test: Algebraic Data Types (Unified Syntax)
 
-extern func printf(fmt u8[:0], ...) int
+extern func printf(fmt *char, ...) int
 
 type Shape {
     Circle { radius int }

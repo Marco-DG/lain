@@ -78,6 +78,7 @@ typedef enum {
     TOKEN_KEYWORD_RETURN,
     TOKEN_KEYWORD_CONTINUE,
     TOKEN_KEYWORD_COMPTIME,
+    TOKEN_KEYWORD_UNSAFE,
     TOKEN_KEYWORD_PRE,
     TOKEN_KEYWORD_POST,
 } TokenKind;
@@ -127,6 +128,7 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             if (strncmp(lexeme, "export", 6) == 0)      return TOKEN_KEYWORD_EXPORT;
             if (strncmp(lexeme, "extern", 6) == 0)      return TOKEN_KEYWORD_EXTERN;
             if (strncmp(lexeme, "return", 6) == 0)      return TOKEN_KEYWORD_RETURN;
+            if (strncmp(lexeme, "unsafe", 6) == 0)      return TOKEN_KEYWORD_UNSAFE;
             break;
         case 8:
             if (strncmp(lexeme, "continue", 8) == 0)    return TOKEN_KEYWORD_CONTINUE;
@@ -291,6 +293,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_KEYWORD_RETURN:              return "return";
         case TOKEN_KEYWORD_CONTINUE:            return "continue";
         case TOKEN_KEYWORD_COMPTIME:            return "comptime";
+        case TOKEN_KEYWORD_UNSAFE:              return "unsafe";
         case TOKEN_KEYWORD_PRE:                 return "pre";
         case TOKEN_KEYWORD_POST:                return "post";
         default:                                return 0;

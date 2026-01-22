@@ -12,6 +12,7 @@ const char *current_module_path = NULL;
 DeclList *sema_decls = NULL;
 Arena *sema_arena = NULL;
 RangeTable *sema_ranges = NULL;
+bool sema_in_unsafe_block = false;
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Public entry: call this before emit                             │
@@ -365,6 +366,17 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                             walk_stmt(b->stmt);
                     }
                     break;
+                case STMT_UNSAFE: {
+                    // (removed debug print)
+                    bool old_unsafe = sema_in_unsafe_block;
+                    sema_in_unsafe_block = true;
+                    for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
+                        walk_stmt(b->stmt);
+                    }
+                    sema_in_unsafe_block = old_unsafe;
+                    // (removed debug print)
+                    break;
+                }
                 default: break;
             }
         }
