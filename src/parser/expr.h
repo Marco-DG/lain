@@ -56,6 +56,16 @@ Expr *parse_unary_expr(Arena* arena, Parser* parser)
     }
 
     // mut <expr>
+    // but what about just `*` (dereference)? 
+    
+    // dereference *<expr>
+    if (parser_match(TOKEN_ASTERISK)) {
+        TokenKind op = parser->token.kind;
+        parser_advance();
+        Expr *right = parse_unary_expr(arena, parser);
+        return expr_unary(arena, op, right);
+    }
+
     if (parser_match(TOKEN_KEYWORD_VAR)) {
         parser_advance();
         Expr *right = parse_unary_expr(arena, parser);

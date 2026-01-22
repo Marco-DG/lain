@@ -17,6 +17,7 @@ Stmt *parse_continue_stmt(Arena *arena, Parser *parser);
 Stmt *parse_match_stmt(Arena *arena, Parser *parser);
 Stmt *parse_use_stmt(Arena *arena, Parser *parser);
 Stmt *parse_comptime_stmt(Arena *arena, Parser *parser);
+Stmt *parse_unsafe_stmt(Arena *arena, Parser *parser);
 
 Stmt *parse_decl_stmt(Arena *arena, Parser *parser);
 
@@ -117,6 +118,10 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
     if (parser_match(TOKEN_KEYWORD_USE)) {
         parser_advance();
         return parse_use_stmt(arena, parser);
+    }
+    if (parser_match(TOKEN_KEYWORD_UNSAFE)) {
+        parser_advance();
+        return parse_unsafe_stmt(arena, parser);
     }
 
     // ——— handle bare identifier starting lines ———
@@ -585,6 +590,20 @@ Stmt *parse_use_stmt(Arena* arena, Parser* parser) {
     parser_advance();  // consume the alias
 
     return stmt_use(arena, target, alias);
+}
+
+// unsafe { stmts... }
+Stmt *parse_unsafe_stmt(Arena *arena, Parser *parser) {
+    // 'unsafe' keyword already consumed
+    parser_expect(TOKEN_L_BRACE, "Expected '{' after unsafe");
+    parser_advance(); // consume '{'
+    
+    StmtList *body = parse_stmt_list(arena, parser);
+    
+    parser_expect(TOKEN_R_BRACE, "Expected '}' after unsafe block");
+    parser_advance(); // consume '}'
+    
+    return stmt_unsafe(arena, body);
 }
 
 

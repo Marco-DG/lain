@@ -1,6 +1,6 @@
 // Simpler enum test - enum value directly without function
 
-extern func printf(fmt u8[:0], ...) int
+extern func printf(fmt *char, ...) int
 
 type Color {
     Red,

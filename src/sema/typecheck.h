@@ -12,6 +12,7 @@ extern DeclList *sema_decls;
 extern Type *current_return_type;
 extern Decl *current_function_decl; // Defined in sema.h
 extern RangeTable *sema_ranges;     // Defined in sema.h
+extern bool sema_in_unsafe_block;   // Defined in sema.h
 
 // ...
 
@@ -144,7 +145,7 @@ static Variant *lookup_adt_variant(DeclEnum *adt, Id *variant_name) {
 
 void sema_infer_expr(Expr *e) {
   if (!e) return;
-  // fprintf(stderr, "DEBUG: sema_infer_expr called for kind %d\n", e->kind);
+// (removed debug print)
   switch (e->kind) {
   case EXPR_IDENTIFIER:
     // already set in resolve
@@ -447,7 +448,39 @@ void sema_infer_expr(Expr *e) {
 
   case EXPR_UNARY:
     sema_infer_expr(e->as.unary_expr.right);
-    e->type = get_builtin_int_type();
+    if (e->as.unary_expr.op == TOKEN_ASTERISK) {
+        // Dereference
+        if (!e->as.unary_expr.right || !e->as.unary_expr.right->type) {
+             // If operands are broken, we can't check
+             // sema_resolve should have caught typical errors, but to be safe:
+             // e->type = get_builtin_int_type(); // fallback
+             // return;
+             // Actually let's exit to be consistent with previous panic
+             fprintf(stderr, "sema error: internal: deref operand untyped\n");
+             exit(1);
+        }
+        
+        Type *t = e->as.unary_expr.right->type;
+        while (t && t->kind == TYPE_COMPTIME) {
+            t = t->element_type;
+        }
+        
+        if (t->kind == TYPE_POINTER) {
+            e->type = t->element_type;
+            if (!sema_in_unsafe_block) {
+                fprintf(stderr, "sema error: Dereference of raw pointer outside 'unsafe' block.\n");
+                exit(1);
+            }
+        } else {
+             // Non-pointer deref??
+             // Likely a parsing error or a reference deref if supported.
+             // For now, assume it results in element type if we can determine it, 
+             // or just int if unknown.
+             e->type = get_builtin_int_type();
+        }
+    } else {
+        e->type = get_builtin_int_type();
+    }
     break;
 
   case EXPR_STRING: {

@@ -185,6 +185,7 @@ typedef enum {
     STMT_MATCH,
     STMT_USE,
     STMT_RETURN,
+    STMT_UNSAFE,
 } StmtKind;
 
 typedef struct {
@@ -238,6 +239,10 @@ typedef struct {
     Expr *value;    // the expression to return
 } StmtReturn;
 
+typedef struct {
+    StmtList *body;
+} StmtUnsafe;
+
 typedef struct Stmt {
     StmtKind kind;
     union {
@@ -249,6 +254,7 @@ typedef struct Stmt {
         StmtUse         use_stmt;
         StmtMatch       match_stmt;
         StmtReturn      return_stmt;
+        StmtUnsafe      unsafe_stmt;
     } as;
 } Stmt;
 
@@ -581,6 +587,13 @@ Stmt *stmt_var(Arena *arena, Id *name, Type* type, Expr *expr) {
     s->as.var_stmt.expr = expr;
     s->as.var_stmt.type = type;
     s->as.var_stmt.is_mutable = false; // default
+    return s;
+}
+
+Stmt *stmt_unsafe(Arena *arena, StmtList *body) {
+    Stmt *s = arena_push_aligned(arena, Stmt);
+    s->kind = STMT_UNSAFE;
+    s->as.unsafe_stmt.body = body;
     return s;
 }
 

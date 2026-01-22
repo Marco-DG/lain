@@ -15,6 +15,7 @@ extern const char *current_module_path;
 extern DeclList *sema_decls;
 extern Arena *sema_arena;
 extern RangeTable *sema_ranges;
+extern bool sema_in_unsafe_block;
 
 Type *get_builtin_int_type(void);
 Type *get_builtin_u8_type(void);
@@ -425,11 +426,23 @@ void sema_resolve_stmt(Stmt *s) {
       }
     }
     // Check exhaustiveness after resolving all cases
+    // Check exhaustiveness after resolving all cases
     if (!sema_check_match_exhaustive(s)) {
       sema_report_nonexhaustive_match(s);
       exit(1);
     }
     break;
+  
+ case STMT_UNSAFE: {
+    // (removed debug print)
+    bool old = sema_in_unsafe_block;
+    sema_in_unsafe_block = true;
+    for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
+        sema_resolve_stmt(b->stmt);
+    }
+    sema_in_unsafe_block = old;
+    break;
+ }
 
   default:
     break;

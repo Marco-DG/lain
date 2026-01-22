@@ -1,4 +1,4 @@
-extern func printf(fmt u8[:0], ...) int
+extern func printf(fmt *char, ...) int
 
 func add(a int, b int) int {
     return a + b
