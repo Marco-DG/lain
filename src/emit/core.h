@@ -35,9 +35,37 @@ static bool emit_fixed_string_init(Type *ty, Expr *rhs, int depth) {
       is_fixed_like = true;
       fixed_len = (size_t)ty->array_len;
   } else if (ty->kind == TYPE_SLICE && ty->sentinel_str == NULL && ty->sentinel_len > 0) {
-      // Some of your code-paths encode compile-time fixed length in TYPE_SLICE.sentinel_len
+      // Fixed-length slice encoded in sentinel_len
       is_fixed_like = true;
       fixed_len = (size_t)ty->sentinel_len;
+  } else if (ty->kind == TYPE_SLICE && (ty->sentinel_str != NULL || ty->sentinel_is_string)) {
+      // Sentinel-terminated slice (e.g. u8[:0]) initialized by string literal
+      // Coerce fixed string into sentinel slice struct
+      const unsigned char *bytes = (const unsigned char*)rhs->as.string_expr.value;
+      size_t bytes_len = (size_t)rhs->as.string_expr.length;
+      
+      char sliceBuf[128];
+      c_name_for_type(ty, sliceBuf, sizeof sliceBuf);
+      
+      // Emit compound literal: (Slice_u8_0){ .len = N, .data = (uint8_t[]){ ... } }
+      // Note: we need to cast the array literal to pointer
+      if (ty->mode == MODE_MUTABLE) {
+           // Mutable slice? "var s u8[:0] = ...".
+           // String literals are usually const data. C allows warning but valid.
+      }
+
+      EMIT("(%s){ .len = %zu, .data = (uint8_t[]){ ", sliceBuf, bytes_len);
+      for (size_t i = 0; i < bytes_len; i++) {
+          EMIT("0x%02X, ", bytes[i]);
+      }
+      // Emit the sentinel if it's numeric 0 (common case)
+      // If sentinel is string, we should append it.
+      // But string literal in code already has null terminator?
+      // Wait, rhs->length includes valid chars.
+      // We should append the sentinel value explicitly to be safe.
+      // If Sentinel is 0:
+      EMIT("0 } }"); 
+      return true;
   }
 
   if (!is_fixed_like) return false;
@@ -59,6 +87,54 @@ static bool emit_fixed_string_init(Type *ty, Expr *rhs, int depth) {
   }
   EMIT(" } }");
   return true;
+}
+
+// Helper to coerce Fixed Array/Slice variables to Sentinel/Dynamic Slices
+// e.g. var x = "foo"; f(x); -> f( (Slice_u8_0){ .len=3, .data=x.data } )
+// Forward declare emit_expr
+struct Expr;
+void emit_expr(struct Expr *expr, int depth);
+
+static bool emit_slice_coercion(Type *target, Expr *source, int depth) {
+    if (!target || !source) return false;
+    
+    // Forward to string init if it is a string literal
+    if (source->kind == EXPR_STRING) {
+        return emit_fixed_string_init(target, source, depth);
+    }
+
+    // Only coerce if Target is Sentinel Slice or Dynamic Slice
+    bool target_is_sentinel = (target->kind == TYPE_SLICE && (target->sentinel_str || target->sentinel_is_string));
+    bool target_is_dynamic = (target->kind == TYPE_ARRAY && target->array_len == -1) ||
+                             (target->kind == TYPE_SLICE && !target_is_sentinel && !target->sentinel_len); // Basic slice
+
+    if (!target_is_sentinel && !target_is_dynamic) return false;
+
+    // Check Source Type (Must be Fixed Array/Slice)
+    Type *st = source->type;
+    size_t src_len = 0;
+    bool src_is_fixed = false;
+    
+    // Unwrap if needed?
+    if (st && st->kind == TYPE_ARRAY && st->array_len >= 0) {
+        src_is_fixed = true;
+        src_len = (size_t)st->array_len;
+    } else if (st && st->kind == TYPE_SLICE && st->sentinel_str == NULL && st->sentinel_len > 0) {
+        src_is_fixed = true;
+        src_len = (size_t)st->sentinel_len;
+    }
+
+    if (src_is_fixed) {
+        // Emit Coercion
+        char targetBuf[128];
+        c_name_for_type(target, targetBuf, sizeof targetBuf);
+        
+        EMIT("(%s){ .len = %zu, .data = ", targetBuf, src_len);
+        emit_expr(source, depth);
+        EMIT(".data }"); 
+        return true;
+    }
+    return false;
 }
 
 

@@ -1,0 +1,25 @@
+//import std.c
+//import lexer
+
+func main() int {
+    source = "var x = 10 + 20"
+
+    return 0
+}
+
+    //l = new_lexer(source)
+    
+    //libc_printf("Lexing source: %s\n", source.data)
+    /*
+    for {
+        var tok = next_token(l)
+        libc_printf("Token: Kind=%d, Start=%d, Len=%d\n", tok.kind, tok.start, tok.length)
+        
+        if tok.kind == TokenKind.EOF {
+            break
+        }
+        if tok.kind == TokenKind.ERROR {
+            // Avoid infinite loop if stub returns ERROR without advancing (my stub advances)
+            if tok.length == 0 { break }
+        }
+    }*/

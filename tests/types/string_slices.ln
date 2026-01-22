@@ -1,0 +1,22 @@
+
+import std.c
+
+func takes_sentinel_string(s u8[:0]) {
+    // Should have .len and .data
+    var fmt1 = "Length: %d\n"
+    libc_printf(fmt1.data, s.len)
+    
+    var fmt2 = "Content: %s\n"
+    libc_printf(fmt2.data, s.data)
+}
+
+func main() int {
+    var literal = "Hello Sentinel"
+    takes_sentinel_string(literal)
+    
+    // Explicit type check
+    var explicit_type u8[:0] = "Explicit"
+    takes_sentinel_string(explicit_type)
+    
+    return 0
+}

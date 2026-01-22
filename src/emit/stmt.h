@@ -43,7 +43,7 @@ void emit_stmt(Stmt *stmt, int depth) {
         Type *ty = stmt->as.var_stmt.type;
         Expr *rhs = stmt->as.var_stmt.expr;
   
-        if (!emit_fixed_string_init(ty, rhs, depth)) {
+        if (!emit_slice_coercion(ty, rhs, depth)) {
           // fallback to general expression emission
           emit_expr(rhs, depth);
         }
@@ -512,7 +512,7 @@ void emit_stmt(Stmt *stmt, int depth) {
         EMIT("const %s %s = ", tybuf, c_name_for_id(id));
   
         // 4) centralized helper for fixed-length string init (or fallback)
-        if (!emit_fixed_string_init(ty, rhs, depth)) {
+        if (!emit_slice_coercion(ty, rhs, depth)) {
             // fallback to whatever the expression prints
             emit_expr(rhs, depth);
         }

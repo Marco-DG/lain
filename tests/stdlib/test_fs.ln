@@ -7,17 +7,17 @@ proc main() int {
     
     var path = "test_output.txt"
     var mode = "w"
-    var f = open_file(path.data, mode.data)
+    var f = open_file(path, mode)
     
     var msg_write = "Writing to file...\n"
     libc_printf(msg_write.data)
     
     var content = "Hello from Lain std/fs!\n"
-    write_file(f, content.data)
+    write_file(f, content)
     
     libc_printf("Closing file...\n")
     close_file(mov f)
-    
+        
     libc_printf("Done.\n")
     return 0
 }
