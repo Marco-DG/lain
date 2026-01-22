@@ -30,8 +30,10 @@ Decl *   parse_func_decl(Arena *arena, Parser *parser);
 Decl *   parse_proc_decl(Arena *arena, Parser *parser); // New
 Decl *   parse_extern_func_decl(Arena *arena, Parser *parser);
 Decl *   parse_extern_proc_decl(Arena *arena, Parser *parser); // New
+Decl *   parse_extern_type_decl(Arena *arena, Parser *parser); // New
 Decl *   parse_type_decl(Arena *arena, Parser *parser);
 Decl *   parse_import_decl(Arena *arena, Parser *parser);
+Decl *   parse_c_include_decl(Arena *arena, Parser *parser);
 
 // helper for type fields (struct vs enum)
 DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant **adt_variants);
@@ -91,6 +93,12 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         return parse_import_decl(arena, parser);
     }
 
+    if (parser_match(TOKEN_KEYWORD_C_INCLUDE))
+    {
+        parser_advance();
+        return parse_c_include_decl(arena, parser);
+    }
+
     if (parser_match(TOKEN_KEYWORD_TYPE))
     {
         parser_advance();
@@ -108,7 +116,11 @@ Decl *parse_decl(Arena* arena, Parser* parser)
             parser_advance();  // consume 'proc'
             return parse_extern_proc_decl(arena, parser);
         }
-        parser_expect(TOKEN_KEYWORD_FUNC, "Expected 'func' or 'proc' after 'extern'");
+        if (parser_match(TOKEN_KEYWORD_TYPE)) {
+            parser_advance(); // consume 'type'
+            return parse_extern_type_decl(arena, parser);
+        }
+        parser_expect(TOKEN_KEYWORD_FUNC, "Expected 'func', 'proc', or 'type' after 'extern'");
         return NULL;
     }
 
@@ -160,6 +172,17 @@ DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant
             parser_advance(); // consume 'comptime'
         }
 
+        /* Check for modifiers (Prefix syntax): mov name Type, var name Type */
+        bool is_move = false;
+        bool is_mut = false;
+        if (parser_match(TOKEN_KEYWORD_MOV)) {
+            parser_advance();
+            is_move = true;
+        } else if (parser_match(TOKEN_KEYWORD_VAR)) {
+            parser_advance();
+            is_mut = true;
+        }
+
         /* Must start with an identifier (field name or enum value) */
         parser_expect(TOKEN_IDENTIFIER, "Expected field name or enum value");
         Id *name = id(arena, parser->token.length, parser->token.start);
@@ -172,7 +195,10 @@ DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant
         
         bool is_struct_field = false;
 
-        if (parser_match(TOKEN_L_BRACE)) {
+        if (is_move || is_mut) {
+             // Modifiers imply struct field
+             is_struct_field = true;
+        } else if (parser_match(TOKEN_L_BRACE)) {
             // Case 2: ADT Variant with fields
             // is_adt_variant = true;
         } else if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_KEYWORD_COMPTIME) || parser_match(TOKEN_L_BRACKET) || parser_match(TOKEN_ASTERISK)) {
@@ -193,6 +219,9 @@ DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant
             if (field_is_comptime && field_type) {
                 field_type = type_comptime(arena, field_type);
             }
+            
+            if (is_mut) field_type = type_mut(arena, field_type);
+            if (is_move) field_type = type_move(arena, field_type);
 
             /* Create the Decl for this field */
             Decl *var_decl = decl_variable(arena, name, field_type);
@@ -501,21 +530,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     
     Type *ret_type = NULL;
     if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK)) {
-        bool ret_is_mut = false;
-        bool ret_is_move = false;
-        
-        if (parser_match(TOKEN_KEYWORD_VAR)) {
-            parser_advance();
-            ret_is_mut = true;
-        } else if (parser_match(TOKEN_KEYWORD_MOV)) {
-            parser_advance();
-            ret_is_move = true;
-        }
-        
         ret_type = parse_type(arena, parser);
-        
-        if (ret_is_mut) ret_type = type_mut(arena, ret_type);
-        if (ret_is_move) ret_type = type_move(arena, ret_type);
     }
 
     if (ret_is_comptime && ret_type) {
@@ -581,9 +596,9 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
 
     Decl *d;
     if (is_proc) {
-        d = decl_procedure(arena, func_name, params, ret_type, body, false);
+        d = decl_procedure(arena, func_name, params, ret_type, body, false, false);
     } else {
-        d = decl_function(arena, func_name, params, ret_type, body, false);
+        d = decl_function(arena, func_name, params, ret_type, body, false, false);
     }
     d->as.function_decl.return_constraints = return_constraints;
     return d;
@@ -613,38 +628,32 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
     DeclList *params = NULL;
     DeclList **tail = &params;
 
+    bool is_variadic = false;
+
     if (!parser_match(TOKEN_R_PAREN)) {
         do {
             // Check for varargs "..."
+            if (parser_match(TOKEN_ELLIPSIS)) {
+                 parser_advance();
+                 is_variadic = true;
+                 break;
+            }
+            // Backward compatibility: "..." manually written as ".. ."
             if (parser_match(TOKEN_DOT_DOT) && lexer_peek(parser->lexer).kind == TOKEN_DOT) {
                  // consume ".." then "."
                  parser_advance(); 
                  parser_advance();
+                 is_variadic = true;
                  break;
             }
 
             // parameter name
-            
-            // Modifier support (prefix)
-            bool is_mut = false;
-            bool is_move = false;
-            if (parser_match(TOKEN_KEYWORD_VAR)) {
-                parser_advance();
-                is_mut = true;
-            } else if (parser_match(TOKEN_KEYWORD_MOV)) {
-                parser_advance();
-                is_move = true;
-            }
-
             parser_expect(TOKEN_IDENTIFIER, "Expected parameter name");
             Id *pname = id(arena, parser->token.length, parser->token.start);
             parser_advance();
 
             // parameter type
             Type *ptype = parse_type(arena, parser);
-            
-            if (is_mut) ptype = type_mut(arena, ptype);
-            if (is_move) ptype = type_move(arena, ptype);
 
             Decl *pdecl = decl_variable(arena, pname, ptype);
             pdecl->as.variable_decl.is_parameter = true;
@@ -670,7 +679,7 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
     }
     
     Type *ret_type = NULL;
-    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_ASTERISK)) {
+    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK)) {
         ret_type = parse_type(arena, parser);
     }
 
@@ -684,9 +693,9 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
 
     // NULL body signals extern
     if (is_proc) {
-        return decl_procedure(arena, func_name, params, ret_type, /*body=*/NULL, true);
+        return decl_procedure(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
     } else {
-        return decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true);
+        return decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
     }
 }
 
@@ -696,6 +705,18 @@ Decl *parse_extern_func_decl(Arena *arena, Parser *parser) {
 
 Decl *parse_extern_proc_decl(Arena *arena, Parser *parser) {
     return parse_extern_func_proc_decl_impl(arena, parser, true);
+}
+
+Decl *parse_extern_type_decl(Arena *arena, Parser *parser) {
+    // extern type Name;
+    parser_expect(TOKEN_IDENTIFIER, "Expected type name after 'extern type'");
+    Id *name = id(arena, parser->token.length, parser->token.start);
+    parser_advance();
+
+    parser_expect_eol("Expected ';' or newline after extern type decl");
+    parser_advance();
+
+    return decl_extern_type(arena, name);
 }
 
 
@@ -720,6 +741,30 @@ Decl *parse_import_decl(Arena* arena, Parser* parser) {
     Id* mod = id(arena, len, start.start);
 
     return decl_import(arena, mod);
+}
+
+Decl *parse_c_include_decl(Arena *arena, Parser *parser) {
+    parser_expect(TOKEN_STRING_LITERAL, "Expected string literal after c_include");
+    
+    // Strip quotes to get the content
+    // e.g. "stdio.h" -> stdio.h
+    //      "<stdio.h>" -> <stdio.h>
+    
+    isize len = parser->token.length;
+    const char* raw = parser->token.start;
+    
+    char* path = arena_push_many(arena, char, len - 1); // len-2 chars + 1 null terminator
+    // Skip first quote, copy len-2 chars
+    if (len >= 2) {
+        memcpy(path, raw + 1, len - 2);
+        path[len - 2] = '\0';
+    } else {
+        path[0] = '\0'; // Should not happen for valid string literal
+    }
+
+    parser_advance(); // consume string literal
+    
+    return decl_c_include(arena, path); 
 }
 
 #endif // PARSER_DECL_H

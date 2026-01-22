@@ -1,0 +1,22 @@
+type Handle {
+    mov ptr *int
+}
+
+type Wrapper {
+    h Handle
+}
+
+func main() int {
+    var p *int = 0
+    // Test 1: Direct linear struct
+    var h1 = Handle(p)
+    var h2 = h1 // Move
+    // var h3 = h1 // Should fail: use of linear variable h1
+    
+    // Test 2: Nested linear struct
+    var w1 = Wrapper(h2)
+    var w2 = w1 // Move (because Wrapper contains Handle which contains mov ptr)
+    var w3 = w1 // Should fail: use of linear variable w1
+    
+    return 0
+}

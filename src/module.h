@@ -109,6 +109,7 @@ static DeclList* load_module(Arena *file_arena,
 
                 end->next = cur->next;
                 cur = end->next;
+                prev = end; // Successive imports must be appended to this new tail
                 continue;
             }
         }

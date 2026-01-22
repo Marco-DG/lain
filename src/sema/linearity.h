@@ -34,9 +34,60 @@
 
 /* ---------- small helpers ---------- */
 
-// Use the type_is_linear helper from ast.h for checking linear types
-// This is just an alias for backward compatibility in this file
-#define is_type_move(t) type_is_linear(t)
+// Helper forward declaration
+static bool sema_type_is_linear(Type *t);
+
+// Use the robust recursive check
+#define is_type_move(t) sema_type_is_linear(t)
+
+static bool sema_type_is_linear(Type *t) {
+    if (!t) return false;
+    // 1. Explicit ownership override
+    if (t->mode == MODE_OWNED) return true;
+
+    // 2. Aggregate types: recursive check
+    if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE || t->kind == TYPE_POINTER) {
+        // Pointers/Slices/Arrays: only linear if mode is OWNED (checked above) 
+        // OR if element type is linear?
+        // - Array[T] where T is linear -> Array is linear (must consume)
+        // - Pointer[T] -> Pointer is copyable unless mode=OWNED. T's linearity doesn't affect pointer linearity.
+        // - Slice[T] -> Slice is struct {ptr, len}. If T is linear? 
+        //   Lain slices are views. They don't own T.
+        //   Arrays [N]T OWN the elements. So matching Rust: [T; N] is linear if T is linear.
+        if (t->kind == TYPE_ARRAY) {
+            return sema_type_is_linear(t->element_type);
+        }
+        return false;
+    }
+
+    // 3. Simple ID (Structs/Enums)
+    if (t->kind == TYPE_SIMPLE) {
+        // Resolve underlying declaration
+        extern Symbol *sema_lookup(const char *name); // Forward decl from sema.h
+        
+        char buf[256];
+        if (t->base_type->length >= sizeof(buf)) return false;
+        memcpy(buf, t->base_type->name, t->base_type->length);
+        buf[t->base_type->length] = '\0';
+        
+        Symbol *sym = sema_lookup(buf);
+        if (!sym || !sym->decl) return false;
+
+        if (sym->decl->kind == DECL_STRUCT) {
+            // Check all fields
+            for (DeclList *f = sym->decl->as.struct_decl.fields; f; f = f->next) {
+                if (f->decl->kind == DECL_VARIABLE) {
+                    if (sema_type_is_linear(f->decl->as.variable_decl.type)) {
+                        return true; // Found a linear field -> Struct is linear
+                    }
+                }
+            }
+        }
+        // TODO: Enums (variants with fields)
+    }
+
+    return false;
+}
 
 /* ---------- linear table (Id* keyed) ---------- */
 

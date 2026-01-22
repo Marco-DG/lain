@@ -256,32 +256,55 @@ void emit_expr(Expr *expr, int depth) {
     
     // Lookup function parameters if it's a regular function call
     DeclList *param = NULL;
-    if (!is_ctor && cname) {
-         DeclFunction *fd = lookup_function_decl(expr->as.call_expr.callee);
-         if (fd) {
-             param = fd->params;
+    if (!is_ctor) {
+    if (!is_ctor) {
+         // Attempt 1: Use sema-resolved declaration if available (Robust)
+         Expr *callee = expr->as.call_expr.callee;
+         if (callee->kind == EXPR_IDENTIFIER) {
+             if (callee->decl) {
+                 // fprintf(stderr, "DEBUG: callee->decl found! Kind=%d\n", callee->decl->kind);
+                 if (callee->decl->kind == DECL_FUNCTION) {
+                     param = callee->decl->as.function_decl.params;
+                 } else if (callee->decl->kind == DECL_PROCEDURE) {
+                     // Procedure shares mostly same layout, but let's be safe
+                     param = callee->decl->as.function_decl.params;
+                 }
+             } else {
+                 fprintf(stderr, "DEBUG: callee->decl is NULL for %.*s\n", (int)callee->as.identifier_expr.id->length, callee->as.identifier_expr.id->name);
+             }
          }
+         
+         // Attempt 3: Fallback to global symbol table lookup (sema_lookup)
+         // This handles cross-module lookups where callee->decl might reference a Symbol?
+         if (!param && cname) {
+             extern Symbol *sema_lookup(const char *name); // Forward declare
+             Symbol *sym = sema_lookup(cname);
+             if (sym && sym->decl && sym->decl->kind == DECL_FUNCTION) {
+                 param = sym->decl->as.function_decl.params;
+             } else if (sym && sym->decl && sym->decl->kind == DECL_PROCEDURE) {
+                 param = sym->decl->as.function_decl.params;
+             } else {
+                 // sema_lookup failed or not function (normal for c interop calls often not in symbol table)
+             }
+         }
+         
+         // Attempt 4: Fallback to string lookup in emitted_decls (Legacy)
+         if (!param && cname) {
+             DeclFunction *fd = lookup_function_decl(expr->as.call_expr.callee);
+             if (fd) param = fd->params;
+         }
+    }
     }
 
     for (ExprList *arg = expr->as.call_expr.args; arg; arg = arg->next) {
       if (!first) EMIT(", ");
       first = false;
   
-      //fprintf(stderr,
-      //        "[debug]   arg kind=%d  have-next-field? %s\n",
-      //        arg->expr->kind,
-      //        fld ? "yes":"no");
-  
+
+
       if (is_ctor && fld) {
-        // what is this field’s type?
+        // ... (existing ctor code) ...
         Type *ft = fld->decl->as.variable_decl.type;
-        //fprintf(stderr,
-        //        "[debug]     field '%.*s' type kind=%d\n",
-        //        (int)fld->decl->as.variable_decl.name->length,
-        //        fld->decl->as.variable_decl.name->name,
-        //        ft->kind);
-  
-        
         // SPECIAL-CASE: string literal into fixed-length field (array or slice-with-fixed-len)
         if ((ft->kind == TYPE_ARRAY && ft->array_len >= 0)
             || (ft->kind == TYPE_SLICE && ft->sentinel_str == NULL && ft->sentinel_len > 0)) {
@@ -328,17 +351,24 @@ void emit_expr(Expr *expr, int depth) {
            if (param) param = param->next; // Advance param too if it exists
            continue;
         }
-
       }
       
-      // Handle implicit address-of for shared reference parameters
+      // Handle implicit address-of for shared/mutable reference parameters
       if (param) {
            Type *pt = param->decl->as.variable_decl.type;
-           // If parameter is Shared Reference (not mut, not mov) AND not primitive
-           if (pt->mode == MODE_SHARED && !is_primitive_type(pt)) {
-               // Expects const T*
+           
+           // Check if we need to pass by pointer (implicit reference)
+           bool needs_ptr = false;
+           
+           if (pt->mode == MODE_MUTABLE) {
+               needs_ptr = true;
+           } else if (pt->mode == MODE_SHARED && !is_primitive_type(pt)) {
+               needs_ptr = true;
+           }
+
+           if (needs_ptr) {
                Type *at = arg->expr->type;
-               // If argument is passed by value (not mut, not pointer), emit &
+               // fprintf(stderr, "DEBUG: needs_ptr! at_mode=%d at_kind=%d\n", at ? at->mode:-1, at ? at->kind:-1);
                if (at && at->mode != MODE_MUTABLE && at->kind != TYPE_POINTER) {
                    EMIT("&(");
                    emit_expr(arg->expr, depth);

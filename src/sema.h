@@ -59,7 +59,8 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // 2) For each function: resolve → infer → linearity → clear locals
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
-        if (!d || d->kind != DECL_FUNCTION) continue;
+        if (!d) continue;
+        if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE) continue;
 
         sema_clear_locals();
 
@@ -220,6 +221,18 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             switch (s->kind) {
                 case STMT_VAR:
                     sema_infer_expr(s->as.var_stmt.expr);
+                    // Infer variable type from initializer if missing (critical for STMT_VAR in emit)
+                    if (!s->as.var_stmt.type && s->as.var_stmt.expr) {
+                        s->as.var_stmt.type = s->as.var_stmt.expr->type;
+                    }
+                    // DEBUG 'raw' type
+                    if (s->as.var_stmt.name->length == 3 && strncmp(s->as.var_stmt.name->name, "raw", 3) == 0) {
+                        Expr *rhs = s->as.var_stmt.expr;
+                        Type *ty = s->as.var_stmt.type;
+                        fprintf(stderr, "DEBUG raw: RHS-type=%p, Var-type=%p\n", (void*)(rhs ? rhs->type : NULL), (void*)ty);
+                        if (rhs && rhs->type) fprintf(stderr, "DEBUG raw: RHS-type kind=%d\n", rhs->type->kind);
+                    }
+
                     if (sema_ranges && s->as.var_stmt.expr) {
                         Range r = sema_eval_range(s->as.var_stmt.expr, sema_ranges);
                         range_set(sema_ranges, s->as.var_stmt.name, r);

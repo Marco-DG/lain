@@ -1,0 +1,14 @@
+
+c_include "<stdio.h>"
+c_include "<stdlib.h>"
+
+// Opaque type for C's FILE struct
+extern type FILE;
+
+extern func printf(fmt *u8, ...) int;
+extern func fopen(filename *u8, mode *u8) mov *FILE;
+extern func fclose(stream mov *FILE) int;
+extern func fputs(s *u8, stream *FILE) int;
+extern func fgets(s var *u8, n int, stream *FILE) var *u8;
+
+extern func libc_printf(fmt *u8, ...) int;

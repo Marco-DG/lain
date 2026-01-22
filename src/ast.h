@@ -103,8 +103,14 @@ typedef enum {
     DECL_STRUCT,
     DECL_ENUM,
     DECL_IMPORT,
+    DECL_C_INCLUDE,
     DECL_DESTRUCT,
+    DECL_EXTERN_TYPE,
 } DeclKind;
+
+typedef struct {
+    Id *name;
+} DeclExternType;
 
 typedef struct {
     IdList* names;  // The fields to extract
@@ -152,11 +158,16 @@ typedef struct {
     ExprList*   post_contracts; // New: post-conditions (ensures/post)
     ExprList*   return_constraints; // Equation-style: func f() int >= 0
     bool        is_extern;      // rue for “extern func”
+    bool        is_variadic;    // new: true for "..."
 } DeclFunction;
 
 typedef struct {
     Id *module_name;   // contains "foo.bar"
 } DeclImport;
+
+typedef struct {
+    const char *path;
+} DeclCInclude;
 
 typedef struct Decl {
     DeclKind kind;
@@ -166,7 +177,9 @@ typedef struct Decl {
         DeclEnum        enum_decl;
         DeclFunction    function_decl;
         DeclImport      import_decl;
+        DeclCInclude    c_include_decl;
         DeclDestruct    destruct_decl;
+        DeclExternType  extern_type_decl;
     } as;
 } Decl;
 
@@ -509,7 +522,7 @@ Decl *decl_variable(Arena *arena, Id *name, Type *type) {
     return d;
 }
 
-Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type, StmtList *body, bool is_extern) {
+Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type, StmtList *body, bool is_extern, bool is_variadic) {
     Decl *d = arena_push_aligned(arena, Decl);
     d->kind = is_extern ? DECL_EXTERN_FUNCTION : DECL_FUNCTION;
     d->as.function_decl.name = name;
@@ -520,10 +533,11 @@ Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type,
     d->as.function_decl.post_contracts = NULL;
     d->as.function_decl.return_constraints = NULL;
     d->as.function_decl.is_extern   = is_extern;
+    d->as.function_decl.is_variadic = is_variadic;
     return d;
 }
 
-Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type, StmtList *body, bool is_extern) {
+Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type, StmtList *body, bool is_extern, bool is_variadic) {
     Decl *d = arena_push_aligned(arena, Decl);
     d->kind = is_extern ? DECL_EXTERN_PROCEDURE : DECL_PROCEDURE;
     d->as.function_decl.name = name;
@@ -534,6 +548,7 @@ Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type
     d->as.function_decl.post_contracts = NULL;
     d->as.function_decl.return_constraints = NULL;
     d->as.function_decl.is_extern   = is_extern;
+    d->as.function_decl.is_variadic = is_variadic;
     return d;
 }
 
@@ -573,6 +588,20 @@ Decl* decl_destruct(Arena* arena, IdList* names, Type* type) {
     d->kind = DECL_DESTRUCT;
     d->as.destruct_decl.names = names;
     d->as.destruct_decl.type = type;
+    return d;
+}
+
+Decl* decl_c_include(Arena* arena, const char* path) {
+    Decl* d = arena_push_aligned(arena, Decl);
+    d->kind = DECL_C_INCLUDE;
+    d->as.c_include_decl.path = path;
+    return d;
+}
+
+Decl *decl_extern_type(Arena *arena, Id *name) {
+    Decl *d = arena_push_aligned(arena, Decl);
+    d->kind = DECL_EXTERN_TYPE;
+    d->as.extern_type_decl.name = name;
     return d;
 }
 
