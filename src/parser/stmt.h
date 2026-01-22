@@ -488,6 +488,17 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
                 // first look at the very next token
                 Token t1 = lexer_next(&fork);
 
+                // Handle qualified names: Enum.Variant :
+                while (t1.kind == TOKEN_DOT) {
+                     // Check if next is ident
+                     Token t2 = lexer_next(&fork);
+                     if (t2.kind == TOKEN_IDENTIFIER) {
+                         t1 = lexer_next(&fork);
+                     } else {
+                         break;
+                     }
+                }
+
                 if (t1.kind == TOKEN_COLON) {
                     // single‐value header: X :
                     stop_for_header = true;

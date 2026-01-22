@@ -1,0 +1,69 @@
+import std.c
+import std.fs // for u8[:0] usage patterns if needed
+
+type TokenKind enum {
+    EOF,
+    ERROR,
+    IDENTIFIER,
+    NUMBER,
+    STRING,
+    PLUS,
+    MINUS,
+    // ... add more
+}
+
+type Token {
+    kind   TokenKind,
+    start  int,     // Start index in source
+    length int,     // Length of token
+    // Optionally: value u8[:0] (slice into source)
+}
+
+type Lexer {
+    source u8[:0],  // The full source code
+    cursor int,     // Current position
+    line   int,
+    col    int,
+}
+
+func new_lexer(source u8[:0]) Lexer {
+    return Lexer {
+        source: source,
+        cursor: 0,
+        line: 1,
+        col: 1
+    }
+}
+
+// Advances the lexer and returns the next token
+proc next_token(var l Lexer) Token {
+    // 1. Skip whitespace
+    skip_whitespace(l)
+    
+    // 2. Check EOF
+    if l.cursor >= l.source.len {
+        return Token { kind: TokenKind.EOF, start: l.cursor, length: 0 }
+    }
+    
+    var start = l.cursor
+    var char = l.source.data[start] // Unsafe access if not bounds checked? 
+                                    // Slices are safe, assuming index < len.
+                                    // We checked cursor >= len.
+    
+    // 3. Match characters
+    // Example: Identifier
+    /*
+    if is_alpha(char) {
+        ...
+        return Token { ... }
+    }
+    */
+    
+    // STUB: Consume 1 char
+    l.cursor += 1
+    return Token { kind: TokenKind.ERROR, start: start, length: 1 }
+}
+
+proc skip_whitespace(var l Lexer) {
+    // TODO: Implement skipping space, tab, newline
+}

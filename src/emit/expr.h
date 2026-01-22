@@ -357,6 +357,11 @@ void emit_expr(Expr *expr, int depth) {
       if (param) {
            Type *pt = param->decl->as.variable_decl.type;
            
+           // Attempt coercion for sentinel slices (e.g. "foo" -> u8[:0] or fixed var)
+           if (emit_slice_coercion(pt, arg->expr, depth)) {
+               goto next_arg;
+           }
+
            // Check if we need to pass by pointer (implicit reference)
            bool needs_ptr = false;
            

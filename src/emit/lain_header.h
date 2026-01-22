@@ -136,8 +136,9 @@ static void emit_needed_slice_types(FILE *out) {
             fprintf(out, "} %s;\n\n", n->sliceName);
         }
         else if (n->has_sentinel) {
-            // 2) sentinel-terminated slice (no length)
+            // 2) sentinel-terminated slice (HAS length + sentinel guarantee)
             fprintf(out, "typedef struct {\n");
+            fprintf(out, "  size_t len;\n");
             fprintf(out, "  %s *data;\n", n->c_type);
             fprintf(out, "} %s;\n", n->sliceName);
             // sentinel macro: numeric or string
@@ -284,7 +285,7 @@ const char *emit_slice_type_definition(Type *type) {
             uint32_t h = fnv1a_hash(orig->sentinel_str ? orig->sentinel_str : "", orig->sentinel_len);
             snprintf(sliceNameBuf, sizeof sliceNameBuf, "Slice_%s_str%08X", rawname, h);
             record_slice_type(sliceNameBuf, c_type,
-                              /*has_len=*/false,
+                              /*has_len=*/true,
                               /*has_sentinel=*/true,
                               /*sentinel_is_string=*/true,
                               orig->sentinel_str,
@@ -299,7 +300,7 @@ const char *emit_slice_type_definition(Type *type) {
             }
             snprintf(sliceNameBuf, sizeof sliceNameBuf, "Slice_%s_%d", rawname, val);
             record_slice_type(sliceNameBuf, c_type,
-                              /*has_len=*/false,
+                              /*has_len=*/true,
                               /*has_sentinel=*/true,
                               /*sentinel_is_string=*/false,
                               NULL,
