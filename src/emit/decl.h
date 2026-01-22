@@ -74,9 +74,10 @@ void emit_decl(Decl* decl, int depth) {
                           const char *fname = c_name_for_id(decl->as.function_decl.name);
                           // Hack: force const char* for puts/printf
                           if (pt->kind == TYPE_POINTER && pt->element_type->kind == TYPE_SIMPLE &&
-                              pt->element_type->base_type->length == 4 && 
-                              strncmp(pt->element_type->base_type->name, "char", 4) == 0 &&
-                              (strcmp(fname, "puts") == 0 || strcmp(fname, "printf") == 0)) 
+                              ((pt->element_type->base_type->length == 4 && strncmp(pt->element_type->base_type->name, "char", 4) == 0) ||
+                               (pt->element_type->base_type->length == 2 && strncmp(pt->element_type->base_type->name, "u8", 2) == 0)) &&
+                              (strcmp(fname, "puts") == 0 || strcmp(fname, "printf") == 0 ||
+                               strcmp(fname, "libc_puts") == 0 || strcmp(fname, "libc_printf") == 0)) 
                           {
                               EMIT("const char *");
                           } else {
@@ -89,14 +90,16 @@ void emit_decl(Decl* decl, int depth) {
                      first = 0;
                      param = param->next;
                  }
-                 if (strncmp(decl->as.function_decl.name->name, "printf", 6) == 0 ||
-                     strncmp(decl->as.function_decl.name->name, "scanf", 5) == 0) {
-                     if (!first) EMIT(", ");
-                     EMIT("...");
-                 }
-             } else {
-                 if (strncmp(decl->as.function_decl.name->name, "printf", 6) == 0) {
-                     EMIT("const char *, ...");
+                  if (strncmp(decl->as.function_decl.name->name, "printf", 6) == 0 ||
+                      strncmp(decl->as.function_decl.name->name, "libc_printf", 11) == 0 ||
+                      strncmp(decl->as.function_decl.name->name, "scanf", 5) == 0) {
+                      if (!first) EMIT(", ");
+                      EMIT("...");
+                  }
+              } else {
+                  if (strncmp(decl->as.function_decl.name->name, "printf", 6) == 0 ||
+                      strncmp(decl->as.function_decl.name->name, "libc_printf", 11) == 0) {
+                      EMIT("const char *, ...");
                  } else {
                      EMIT("void");
                  }

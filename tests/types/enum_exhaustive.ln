@@ -1,7 +1,7 @@
 // Test for enum exhaustiveness WITHOUT else
 // All variants covered, so should compile
 
-extern func printf(fmt *char, ...) int
+extern func libc_printf(fmt *u8, ...) int
 
 type Status {
     Ready,
@@ -14,9 +14,9 @@ func main() int {
     
     // All 3 variants covered, no else needed!
     match s {
-        Ready: printf("Ready\n")
-        Running: printf("Running\n")
-        Done: printf("Done\n")
+        Ready: libc_printf("Ready\n")
+        Running: libc_printf("Running\n")
+        Done: libc_printf("Done\n")
     }
     
     return 0

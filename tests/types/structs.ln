@@ -1,4 +1,4 @@
-extern func printf(fmt *char, ...) int
+extern func libc_printf(fmt *u8, ...) int
 
 type Vec2 {
     x int
@@ -9,10 +9,10 @@ func main() int {
     var v Vec2
     v.x = 10
     v.y = 20
-    printf("v = {%d, %d}\n", v.x, v.y)
+    libc_printf("v = {%d, %d}\n", v.x, v.y)
     
     var v2 = v
     v2.x = 30
-    printf("v2.x = %d, v.x = %d\n", v2.x, v.x)
+    libc_printf("v2.x = %d, v.x = %d\n", v2.x, v.x)
     return 0
 }

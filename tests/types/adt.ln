@@ -1,6 +1,6 @@
 // Test: Algebraic Data Types (Unified Syntax)
 
-extern func printf(fmt *char, ...) int
+extern func libc_printf(fmt *u8, ...) int
 
 type Shape {
     Circle { radius int }
@@ -14,9 +14,9 @@ func main() int {
     var p = Shape.Point
     
     match c {
-        Circle(rad): printf("Circle radius: %d\n", rad)
-        Rectangle(w, h): printf("Rect: %d x %d\n", w, h)
-        Point: printf("Point\n")
+        Circle(rad): libc_printf("Circle radius: %d\n", rad)
+        Rectangle(w, h): libc_printf("Rect: %d x %d\n", w, h)
+        Point: libc_printf("Point\n")
     }
     
     return 0
