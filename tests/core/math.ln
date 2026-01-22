@@ -1,12 +1,12 @@
-extern func printf(fmt *char, ...) int
+extern func libc_printf(fmt *u8, ...) int
 
 func main() int {
     var a = 10
     var b = 3
-    printf("10 + 3 = %d\n", a + b)
-    printf("10 - 3 = %d\n", a - b)
-    printf("10 * 3 = %d\n", a * b)
-    printf("10 / 3 = %d\n", a / b)
-    printf("10 %% 3 = %d\n", a % b)
+    libc_printf("10 + 3 = %d\n", a + b)
+    libc_printf("10 - 3 = %d\n", a - b)
+    libc_printf("10 * 3 = %d\n", a * b)
+    libc_printf("10 / 3 = %d\n", a / b)
+    libc_printf("10 %% 3 = %d\n", a % b)
     return 0
 }

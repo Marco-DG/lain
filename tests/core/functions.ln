@@ -1,4 +1,4 @@
-extern func printf(fmt *char, ...) int
+extern func libc_printf(fmt *u8, ...) int
 
 func add(a int, b int) int {
     return a + b
@@ -10,7 +10,7 @@ proc fib(n int) int {
 }
 
 proc main() int {
-    printf("add(10, 20) = %d\n", add(10, 20))
-    printf("fib(10) = %d\n", fib(10))
+    libc_printf("add(10, 20) = %d\n", add(10, 20))
+    libc_printf("fib(10) = %d\n", fib(10))
     return 0
 }

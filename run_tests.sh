@@ -21,7 +21,7 @@ run_test() {
     
     # Compile generated C code
     # Assuming cosmocc is at cosmocc/bin/cosmocc
-    ./cosmocc/bin/cosmocc out.c -o out/test.exe -w
+    ./cosmocc/bin/cosmocc out.c -o out/test.exe -w -Wno-pointer-sign -Dlibc_printf=printf -Dlibc_puts=puts
     if [ $? -ne 0 ]; then
         echo "C compilation failed for $FILE"
         exit 1

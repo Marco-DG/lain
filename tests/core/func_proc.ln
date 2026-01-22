@@ -1,4 +1,4 @@
-extern proc printf(fmt *char, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
 func add(a int, b int) int {
     return a + b
@@ -6,6 +6,6 @@ func add(a int, b int) int {
 
 proc main() int {
     var x = add(10, 20)
-    printf("Result: %d\n", x)
+    libc_printf("Result: %d\n", x)
     return 0
 }

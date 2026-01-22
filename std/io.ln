@@ -1,10 +1,10 @@
-extern func puts(s *char) int;
-extern func printf(fmt *char, ...) int;
+extern func libc_puts(s *u8) int;
+extern func libc_printf(fmt *u8, ...) int;
 
-func print(s *char) {
-    printf("%s", s);
+func print(s *u8) {
+    libc_printf("%s", s);
 }
 
-func println(s *char) {
-    puts(s);
+func println(s *u8) {
+    libc_puts(s);
 }

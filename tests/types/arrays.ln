@@ -1,10 +1,10 @@
-extern func printf(fmt *char, ...) int
+extern func libc_printf(fmt *u8, ...) int
 
 func main() int {
     var arr u8[5]
     arr[0] = 10
     arr[1] = 20
-    printf("arr[0]=%d, arr[1]=%d\n", arr[0], arr[1])
+    libc_printf("arr[0]=%d, arr[1]=%d\n", arr[0], arr[1])
     
     // var slice u8[] = arr // Commented out as implicit cast might not be supported yet
     // printf("slice[0]=%d\n", slice[0])

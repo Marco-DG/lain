@@ -1,19 +1,17 @@
-extern func printf(fmt *char, ...) int
+extern func libc_printf(fmt *u8, ...) int
 
 type Point {
     x u8
     y u8
 }
 
-func print_point({x, y} Point) u8 {
-    printf("Point: x=%d, y=%d\n", x, y)
-    return 0
-}
-
-func main() u8 {
-    var p Point
-    p.x = 10
-    p.y = 20
-    print_point(p)
+func main() int {
+    var p = Point(10, 20)
+    
+    // Test manual destructuring / access
+    var x = p.x
+    var y = p.y
+    libc_printf("Point: x=%d, y=%d\n", x, y)
+    
     return 0
 }
