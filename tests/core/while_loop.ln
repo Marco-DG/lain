@@ -1,0 +1,34 @@
+
+extern func libc_printf(fmt *u8, ...) int
+
+func main() int {
+    var i = 0
+    libc_printf("Testing while loop (0 to 9):\n")
+    while i < 10 {
+        libc_printf("%d ", i)
+        i = i + 1
+    }
+    libc_printf("\nDone.\n")
+    
+    // Test break
+    libc_printf("Testing break:\n")
+    i = 0
+    while 1 {
+        if i >= 3 { break }
+        libc_printf("%d ", i)
+        i = i + 1
+    }
+    libc_printf("\nDone break.\n")
+    
+    // Test continue
+    libc_printf("Testing continue (skip 2):\n")
+    var j = 0
+    while j < 5 {
+        j = j + 1
+        if j == 2 { continue }
+        libc_printf("%d ", j)
+    }
+    libc_printf("\nDone continue.\n")
+    
+    return 0
+}
