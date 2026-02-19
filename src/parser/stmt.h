@@ -18,6 +18,7 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser);
 Stmt *parse_use_stmt(Arena *arena, Parser *parser);
 Stmt *parse_comptime_stmt(Arena *arena, Parser *parser);
 Stmt *parse_unsafe_stmt(Arena *arena, Parser *parser);
+Stmt *parse_while_stmt(Arena *arena, Parser *parser);
 
 Stmt *parse_decl_stmt(Arena *arena, Parser *parser);
 
@@ -107,6 +108,12 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
     if (parser_match(TOKEN_KEYWORD_FOR)) {
         parser_advance();                  // consume 'for'
         return parse_for_stmt(arena, parser);
+    }
+    if (parser_match(TOKEN_KEYWORD_WHILE)) {
+        // 'while' keyword consumption handled in parse_while_stmt or here?
+        // Other functions consume the keyword before calling. Let's consume it here.
+        parser_advance();
+        return parse_while_stmt(arena, parser);
     }
     if (parser_match(TOKEN_KEYWORD_CONTINUE)) {
         return parse_continue_stmt(arena, parser);
@@ -413,6 +420,23 @@ Stmt *parse_for_stmt(Arena* arena, Parser* parser) {
                     value_name,
                     iterable,
                     body);
+}
+
+// while <expr> { <body> }
+Stmt *parse_while_stmt(Arena *arena, Parser *parser) {
+    // 'while' keyword already consumed
+    
+    // 1) condition
+    Expr *cond = parse_expr(arena, parser);
+    
+    // 2) body
+    parser_expect(TOKEN_L_BRACE, "Expected '{' to start while-body");
+    parser_advance();
+    StmtList *body = parse_stmt_list(arena, parser);
+    parser_expect(TOKEN_R_BRACE, "Expected '}' after while-body");
+    parser_advance();
+    
+    return stmt_while(arena, cond, body);
 }
 
 // parse a standalone `continue` statement

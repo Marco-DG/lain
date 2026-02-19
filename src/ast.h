@@ -199,6 +199,7 @@ typedef enum {
     STMT_USE,
     STMT_RETURN,
     STMT_UNSAFE,
+    STMT_WHILE,
 } StmtKind;
 
 typedef struct {
@@ -237,6 +238,11 @@ typedef struct {
     StmtList *body;
 } StmtFor;
 
+typedef struct {
+    Expr     *cond;
+    StmtList *body;
+} StmtWhile;
+
 typedef struct StmtMatchCase {
     Expr            *pattern;         // NULL for `else`
     StmtList        *body;
@@ -268,6 +274,7 @@ typedef struct Stmt {
         StmtMatch       match_stmt;
         StmtReturn      return_stmt;
         StmtUnsafe      unsafe_stmt;
+        StmtWhile       while_stmt;
     } as;
 } Stmt;
 
@@ -660,6 +667,14 @@ Stmt *stmt_for(Arena *arena, Id *index_name, Id *value_name, Expr *iterable, Stm
     s->as.for_stmt.value_name = value_name;
     s->as.for_stmt.iterable   = iterable;
     s->as.for_stmt.body       = body;
+    return s;
+}
+
+Stmt *stmt_while(Arena *arena, Expr *cond, StmtList *body) {
+    Stmt *s = arena_push(arena, Stmt);
+    s->kind = STMT_WHILE;
+    s->as.while_stmt.cond = cond;
+    s->as.while_stmt.body = body;
     return s;
 }
 

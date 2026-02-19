@@ -225,6 +225,22 @@ void emit_stmt(Stmt *stmt, int depth) {
     EMIT("continue;\n");
     break;
 
+  case STMT_WHILE: {
+    // 1) emit "while (<cond>) {"
+    emit_indent(depth);
+    EMIT("while (");
+    emit_expr(stmt->as.while_stmt.cond, depth);
+    EMIT(") {\n");
+
+    // 2) emit body
+    emit_stmt_list(stmt->as.while_stmt.body, depth + 1);
+
+    // 3) close
+    emit_indent(depth);
+    EMIT("}\n");
+    break;
+  }
+
   case STMT_MATCH: {
     // 1) figure out the scrutinee’s C type (handles simple, array, slice,…)
     Expr *scrut = stmt->as.match_stmt.value;
