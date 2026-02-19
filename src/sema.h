@@ -287,6 +287,26 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     // Widen modified variables AFTER body (conservative approximation for loop exit/non-execution)
                     if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
                     break;
+                case STMT_WHILE:
+                    sema_infer_expr(s->as.while_stmt.cond);
+                    
+                    // Widen modified variables BEFORE body
+                    if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
+                    
+                    // Apply condition constraints (optional but helpful)
+                    if (sema_ranges) {
+                        // Save state (optional if we want scoped constraints inside loop)
+                        // For now, just apply them? No, loop body might invalidate them immediately.
+                        // Ideally we should intersect with widening.
+                        // Let's just walk the body.
+                    }
+
+                    for (StmtList *b = s->as.while_stmt.body; b; b = b->next)
+                        walk_stmt(b->stmt);
+                        
+                    // Widen modified variables AFTER body
+                    if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
+                    break;
                 case STMT_ASSIGN:
                     sema_infer_expr(s->as.assign_stmt.expr);
                     if (sema_ranges && s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {

@@ -83,6 +83,7 @@ typedef enum {
     TOKEN_KEYWORD_C_INCLUDE,
     TOKEN_KEYWORD_PRE,
     TOKEN_KEYWORD_POST,
+    TOKEN_KEYWORD_WHILE,
 } TokenKind;
 
 typedef struct {
@@ -123,6 +124,7 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
         case 5:
             if (strncmp(lexeme, "macro", 5) == 0)       return TOKEN_KEYWORD_MACRO;
             if (strncmp(lexeme, "match", 5) == 0)       return TOKEN_KEYWORD_CASE;  // TODO: to remove now it is called "case"
+            if (strncmp(lexeme, "while", 5) == 0)       return TOKEN_KEYWORD_WHILE;
             break;
         case 6:
             if (strncmp(lexeme, "switch", 6) == 0)      return TOKEN_KEYWORD_CASE;  /* FIXME */  // TODO: to remove now it is called "case"
