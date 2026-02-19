@@ -1,6 +1,6 @@
 extern func abs(n int) int;
-extern func malloc(size usize) *void;
-extern func free(ptr *void);
+extern func malloc(size usize) mov *void;
+extern func free(ptr mov *void);
 extern func exit(status int);
 
 // Also test stdlib which uses extern
