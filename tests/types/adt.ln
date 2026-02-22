@@ -13,7 +13,7 @@ func main() int {
     var r = Shape.Rectangle(10, 20)
     var p = Shape.Point
     
-    match c {
+    case c {
         Circle(rad): libc_printf("Circle radius: %d\n", rad)
         Rectangle(w, h): libc_printf("Rect: %d x %d\n", w, h)
         Point: libc_printf("Point\n")

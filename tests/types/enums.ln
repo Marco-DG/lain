@@ -11,7 +11,7 @@ type Color {
 func main() int {
     var c = Color.Red
     
-    match c {
+    case c {
         Red: libc_printf("Color is Red\n")
         Green: libc_printf("Color is Green\n")
         Blue: libc_printf("Color is Blue\n")

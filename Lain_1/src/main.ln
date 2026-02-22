@@ -16,19 +16,15 @@ type Token {
 type Lexer {
     source u8[:0]
     cursor u8
-    line, col int
+    line   int
+    col    int
 }
 
 func new_lexer(source u8[:0]) Lexer {
-    return Lexer {
-        source: source,
-        cursor: 0,
-        line: 1,
-        col: 1
-    }
+    return Lexer { source, 0, 1, 1 }
 }
 
 func main() int {
-    source = "var x = 10 + 20"
+
     return 0
 }

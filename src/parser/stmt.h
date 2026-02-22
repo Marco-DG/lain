@@ -14,6 +14,7 @@ Stmt *parse_expr_stmt(Arena *arena, Parser *parser);
 Stmt *parse_if_stmt(Arena *arena, Parser *parser);
 Stmt *parse_for_stmt(Arena *arena, Parser *parser);
 Stmt *parse_continue_stmt(Arena *arena, Parser *parser);
+Stmt *parse_break_stmt(Arena *arena, Parser *parser);
 Stmt *parse_match_stmt(Arena *arena, Parser *parser);
 Stmt *parse_use_stmt(Arena *arena, Parser *parser);
 Stmt *parse_comptime_stmt(Arena *arena, Parser *parser);
@@ -117,6 +118,9 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
     }
     if (parser_match(TOKEN_KEYWORD_CONTINUE)) {
         return parse_continue_stmt(arena, parser);
+    }
+    if (parser_match(TOKEN_KEYWORD_BREAK)) {
+        return parse_break_stmt(arena, parser);
     }
     if (parser_match(TOKEN_KEYWORD_CASE)) {
         parser_advance();
@@ -444,6 +448,13 @@ Stmt *parse_continue_stmt(Arena *arena, Parser *parser) {
     // we know parser->token.kind == TOKEN_KEYWORD_CONTINUE
     parser_advance();  
     return stmt_continue(arena);
+}
+
+// parse a standalone `break` statement
+Stmt *parse_break_stmt(Arena *arena, Parser *parser) {
+    // we know parser->token.kind == TOKEN_KEYWORD_BREAK
+    parser_advance();  
+    return stmt_break(arena);
 }
 
 

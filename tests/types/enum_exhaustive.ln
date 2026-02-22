@@ -13,7 +13,7 @@ func main() int {
     var s = Status.Running
     
     // All 3 variants covered, no else needed!
-    match s {
+    case s {
         Ready: libc_printf("Ready\n")
         Running: libc_printf("Running\n")
         Done: libc_printf("Done\n")

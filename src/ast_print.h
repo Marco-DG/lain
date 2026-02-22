@@ -256,6 +256,11 @@ void stmt_print_ast(Stmt *stmt, int depth) {
         printf("Continue Statement\n");
         break;
 
+    case STMT_BREAK:
+        indent(depth);
+        printf("Break Statement\n");
+        break;
+
     case STMT_MATCH: {
         // Print the match statement itself
         printf("Match Statement:\n");

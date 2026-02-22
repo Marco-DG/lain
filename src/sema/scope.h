@@ -44,7 +44,7 @@ static unsigned sema_hash(const char *s) {
 }
 
 // ── insert into the global symbol‐table ──────────────────────────────────────
-static void sema_insert_global(const char *raw, const char *cname, Type *ty, Decl *decl) {
+static void sema_insert_global(const char *raw, const char *cname, Type *ty, Decl *decl, bool is_mutable) {
     unsigned idx = sema_hash(raw);
     Symbol *sym = malloc(sizeof *sym);
     sym->name   = strdup(raw);
@@ -52,11 +52,7 @@ static void sema_insert_global(const char *raw, const char *cname, Type *ty, Dec
     sym->type   = ty;
     sym->decl   = decl;
     sym->is_global = true;
-    // Globals are mutable by default? Or immutable?
-    // In Lain, globals are usually 'var' or 'const'. 
-    // If decl is DECL_VARIABLE, we can check.
-    // But for now let's assume globals are mutable if they are variables.
-    sym->is_mutable = true; 
+    sym->is_mutable = is_mutable;
     sym->next   = sema_globals[idx];
     sema_globals[idx] = sym;
 }

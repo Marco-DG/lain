@@ -1,10 +1,10 @@
-// Test for match exhaustiveness: should FAIL compilation
-// Match without else case on integer (not exhaustive)
+// Test for case exhaustiveness: should FAIL compilation
+// Case without else clause on integer (not exhaustive)
 
 func main() int {
     var x = 5
     
-    match x {
+    case x {
         1: return 1
         2: return 2
         3: return 3

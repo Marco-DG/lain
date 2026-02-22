@@ -71,13 +71,12 @@ typedef enum {
     TOKEN_KEYWORD_ELSE,
     TOKEN_KEYWORD_CASE,
     TOKEN_KEYWORD_MACRO,
-    TOKEN_KEYWORD_MATCH,  // TODO: to remove now it is called "case"
-    TOKEN_KEYWORD_SWITCH,  // TODO: to remove now it is called "case"
     TOKEN_KEYWORD_IMPORT,
     TOKEN_KEYWORD_EXPORT,
     TOKEN_KEYWORD_EXTERN,
     TOKEN_KEYWORD_RETURN,
     TOKEN_KEYWORD_CONTINUE,
+    TOKEN_KEYWORD_BREAK,
     TOKEN_KEYWORD_COMPTIME,
     TOKEN_KEYWORD_UNSAFE,
     TOKEN_KEYWORD_C_INCLUDE,
@@ -122,12 +121,11 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             if (strncmp(lexeme, "post", 4) == 0)        return TOKEN_KEYWORD_POST;
             break;
         case 5:
+            if (strncmp(lexeme, "break", 5) == 0)       return TOKEN_KEYWORD_BREAK;
             if (strncmp(lexeme, "macro", 5) == 0)       return TOKEN_KEYWORD_MACRO;
-            if (strncmp(lexeme, "match", 5) == 0)       return TOKEN_KEYWORD_CASE;  // TODO: to remove now it is called "case"
             if (strncmp(lexeme, "while", 5) == 0)       return TOKEN_KEYWORD_WHILE;
             break;
         case 6:
-            if (strncmp(lexeme, "switch", 6) == 0)      return TOKEN_KEYWORD_CASE;  /* FIXME */  // TODO: to remove now it is called "case"
             if (strncmp(lexeme, "import", 6) == 0)      return TOKEN_KEYWORD_IMPORT;
             if (strncmp(lexeme, "export", 6) == 0)      return TOKEN_KEYWORD_EXPORT;
             if (strncmp(lexeme, "extern", 6) == 0)      return TOKEN_KEYWORD_EXTERN;
@@ -212,8 +210,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_KEYWORD_ELSE:                return "TOKEN_KEYWORD_ELSE";
         case TOKEN_KEYWORD_CASE:                return "TOKEN_KEYWORD_CASE";
         case TOKEN_KEYWORD_MACRO:               return "TOKEN_KEYWORD_MACRO";
-        case TOKEN_KEYWORD_MATCH:               return "TOKEN_KEYWORD_MATCH";
-        case TOKEN_KEYWORD_SWITCH:              return "TOKEN_KEYWORD_SWITCH";
+        case TOKEN_KEYWORD_BREAK:               return "TOKEN_KEYWORD_BREAK";
         case TOKEN_KEYWORD_IMPORT:              return "TOKEN_KEYWORD_IMPORT";
         case TOKEN_KEYWORD_EXPORT:              return "TOKEN_KEYWORD_EXPORT";
         case TOKEN_KEYWORD_EXTERN:              return "TOKEN_KEYWORD_EXTERN";
@@ -294,8 +291,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_KEYWORD_ELSE:                return "else";
         case TOKEN_KEYWORD_CASE:                return "case";
         case TOKEN_KEYWORD_MACRO:               return "macro";
-        case TOKEN_KEYWORD_MATCH:               return "match";  // TODO: to remove now it is called "case"
-        case TOKEN_KEYWORD_SWITCH:              return "switch"; // TODO: to remove now it is called "case"
+        case TOKEN_KEYWORD_BREAK:               return "break";
         case TOKEN_KEYWORD_IMPORT:              return "import";
         case TOKEN_KEYWORD_EXPORT:              return "export";
         case TOKEN_KEYWORD_EXTERN:              return "extern";
