@@ -77,6 +77,8 @@ typedef enum {
     TOKEN_KEYWORD_RETURN,
     TOKEN_KEYWORD_CONTINUE,
     TOKEN_KEYWORD_BREAK,
+    TOKEN_KEYWORD_TRUE,
+    TOKEN_KEYWORD_FALSE,
     TOKEN_KEYWORD_COMPTIME,
     TOKEN_KEYWORD_UNSAFE,
     TOKEN_KEYWORD_C_INCLUDE,
@@ -119,9 +121,11 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             if (strncmp(lexeme, "else", 4) == 0)        return TOKEN_KEYWORD_ELSE;
             if (strncmp(lexeme, "case", 4) == 0)        return TOKEN_KEYWORD_CASE;
             if (strncmp(lexeme, "post", 4) == 0)        return TOKEN_KEYWORD_POST;
+            if (strncmp(lexeme, "true", 4) == 0)        return TOKEN_KEYWORD_TRUE;
             break;
         case 5:
             if (strncmp(lexeme, "break", 5) == 0)       return TOKEN_KEYWORD_BREAK;
+            if (strncmp(lexeme, "false", 5) == 0)       return TOKEN_KEYWORD_FALSE;
             if (strncmp(lexeme, "macro", 5) == 0)       return TOKEN_KEYWORD_MACRO;
             if (strncmp(lexeme, "while", 5) == 0)       return TOKEN_KEYWORD_WHILE;
             break;
@@ -218,6 +222,8 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_KEYWORD_CONTINUE:            return "TOKEN_KEYWORD_CONTINUE";
         case TOKEN_KEYWORD_COMPTIME:            return "TOKEN_KEYWORD_COMPTIME";
         case TOKEN_KEYWORD_C_INCLUDE:           return "TOKEN_KEYWORD_C_INCLUDE";
+        case TOKEN_KEYWORD_TRUE:                return "TOKEN_KEYWORD_TRUE";
+        case TOKEN_KEYWORD_FALSE:               return "TOKEN_KEYWORD_FALSE";
         default:                                return 0;
     }
 }
@@ -302,6 +308,8 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_KEYWORD_PRE:                 return "pre";
         case TOKEN_KEYWORD_POST:                return "post";
         case TOKEN_KEYWORD_C_INCLUDE:           return "c_include";
+        case TOKEN_KEYWORD_TRUE:                return "true";
+        case TOKEN_KEYWORD_FALSE:               return "false";
         default:                                return 0;
     }
 }

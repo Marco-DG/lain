@@ -1,0 +1,18 @@
+// Test: Integer types (i8, i16, i32, i64, u8, u16, u32, u64, isize, usize)
+// These should all map to their C99 stdint.h equivalents
+
+extern func libc_printf(fmt *u8, ...) int
+
+func main() int {
+    var a i32 = 42
+    var b u8 = 255
+    var c i64 = 1000000
+    var d u32 = 12345
+    
+    libc_printf("i32: %d\n", a)
+    libc_printf("u8: %d\n", b)
+    libc_printf("i64: %ld\n", c)
+    libc_printf("u32: %u\n", d)
+    
+    return 0
+}

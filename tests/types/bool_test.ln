@@ -1,0 +1,23 @@
+// Test: bool type with true/false literals
+
+extern func libc_printf(fmt *u8, ...) int
+
+func main() int {
+    var x bool = true
+    var y bool = false
+    
+    if x {
+        libc_printf("x is true\n")
+    }
+    
+    if y {
+        libc_printf("y is true (BUG!)\n")
+    } else {
+        libc_printf("y is false\n")
+    }
+    
+    // true/false as expressions
+    libc_printf("true = %d, false = %d\n", true, false)
+    
+    return 0
+}
