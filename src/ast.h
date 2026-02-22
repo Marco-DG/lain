@@ -194,6 +194,7 @@ typedef enum {
     STMT_IF,
     STMT_FOR,
     STMT_CONTINUE, // continue has no payload
+    STMT_BREAK,     // break has no payload
     STMT_MATCH_CASE,
     STMT_MATCH,
     STMT_USE,
@@ -681,6 +682,12 @@ Stmt *stmt_while(Arena *arena, Expr *cond, StmtList *body) {
 Stmt *stmt_continue(Arena *arena) {
     Stmt *s = arena_push_aligned(arena, Stmt);
     s->kind = STMT_CONTINUE;
+    return s;
+}
+
+Stmt *stmt_break(Arena *arena) {
+    Stmt *s = arena_push_aligned(arena, Stmt);
+    s->kind = STMT_BREAK;
     return s;
 }
 

@@ -83,7 +83,18 @@ static bool sema_type_is_linear(Type *t) {
                 }
             }
         }
-        // TODO: Enums (variants with fields)
+        if (sym->decl->kind == DECL_ENUM) {
+            // Check all variants: if ANY variant has a linear field, the enum is linear
+            for (Variant *v = sym->decl->as.enum_decl.variants; v; v = v->next) {
+                for (DeclList *f = v->fields; f; f = f->next) {
+                    if (f->decl->kind == DECL_VARIABLE) {
+                        if (sema_type_is_linear(f->decl->as.variable_decl.type)) {
+                            return true; // Found a linear field in a variant -> Enum is linear
+                        }
+                    }
+                }
+            }
+        }
     }
 
     return false;

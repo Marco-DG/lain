@@ -225,6 +225,11 @@ void emit_stmt(Stmt *stmt, int depth) {
     EMIT("continue;\n");
     break;
 
+  case STMT_BREAK:
+    emit_indent(depth);
+    EMIT("break;\n");
+    break;
+
   case STMT_WHILE: {
     // 1) emit "while (<cond>) {"
     emit_indent(depth);

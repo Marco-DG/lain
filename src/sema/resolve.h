@@ -106,7 +106,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         char *cname = malloc(clen);
         snprintf(cname, clen, "%s_%s", safe_module_path, raw);
   
-        sema_insert_global(raw, cname, typ, d);
+        sema_insert_global(raw, cname, typ, d, d->as.variable_decl.is_mutable);
         free(raw);
         free(cname);
         break;
@@ -137,7 +137,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
             snprintf(cnamef, fclen, "%s_%s", safe_module_path, rawf);
         }
   
-        sema_insert_global(rawf, cnamef, rt, d);
+        sema_insert_global(rawf, cnamef, rt, d, false);
         free(rawf);
         free(cnamef);
   
@@ -158,7 +158,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         snprintf(cnames, sclen, "%s_%s", safe_module_path, raws);
   
         Type *sty = type_simple(sema_arena, id);
-        sema_insert_global(raws, cnames, sty, d);
+        sema_insert_global(raws, cnames, sty, d, false);
   
         free(raws);
         free(cnames);
@@ -172,7 +172,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         raw[id->length] = '\0';
         char *cname = strdup(raw);
         Type *t = type_simple(sema_arena, id);
-        sema_insert_global(raw, cname, t, d);
+        sema_insert_global(raw, cname, t, d, false);
         free(raw);
         free(cname);
         break;
@@ -203,7 +203,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         }
   
         Type *ety = type_simple(sema_arena, tid);
-        sema_insert_global(rawt, cnamet, ety, d);
+        sema_insert_global(rawt, cnamet, ety, d, false);
   
         // 2) Do not register the variants here → they get resolved via
         // current_return_type later.
