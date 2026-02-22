@@ -1,15 +1,14 @@
 import std.c
 import std.fs // for u8[:0] usage patterns if needed
 
-type TokenKind enum {
-    EOF,
-    ERROR,
-    IDENTIFIER,
-    NUMBER,
-    STRING,
-    PLUS,
-    MINUS,
-    // ... add more
+type TokenKind {
+    EOF
+    ERROR
+    IDENTIFIER
+    NUMBER
+    STRING
+    PLUS
+    MINUS
 }
 
 type Token {
