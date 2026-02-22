@@ -467,6 +467,15 @@ void emit_expr(Expr *expr, int depth) {
     EMIT(")");
     break;
 
+  case EXPR_CAST: {
+    char tybuf[128];
+    c_name_for_type(expr->as.cast_expr.target_type, tybuf, sizeof tybuf);
+    EMIT("((%s)(", tybuf);
+    emit_expr(expr->as.cast_expr.expr, depth);
+    EMIT("))");
+    break;
+  }
+
   default:
     EMIT("/* unhandled expression type */");
     break;

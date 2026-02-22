@@ -32,6 +32,13 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
         left = expr_binary(arena, op, left, right);
     }
 
+    // Handle postfix `as` cast: expr as Type
+    if (parser_match(TOKEN_KEYWORD_AS)) {
+        parser_advance(); // consume 'as'
+        Type *target = parse_type(arena, parser);
+        left = expr_cast(arena, left, target);
+    }
+
     return left;
 }
 
@@ -78,6 +85,16 @@ Expr *parse_unary_expr(Arena* arena, Parser* parser)
 // literals, identifiers, and parenthesized expressions
 Expr *parse_primary_expr(Arena* arena, Parser* parser)
 {
+    // Boolean literals
+    if (parser_match(TOKEN_KEYWORD_TRUE)) {
+        parser_advance();
+        return expr_literal(arena, 1);
+    }
+    if (parser_match(TOKEN_KEYWORD_FALSE)) {
+        parser_advance();
+        return expr_literal(arena, 0);
+    }
+
     if (parser_match(TOKEN_NUMBER)) {
         int value = atoi(parser->token.start);
         parser_advance();

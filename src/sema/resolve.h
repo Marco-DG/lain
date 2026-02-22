@@ -601,6 +601,11 @@ void sema_resolve_expr(Expr *e) {
   case EXPR_MUT:
     sema_resolve_expr(e->as.mut_expr.expr);
     break;
+
+  case EXPR_CAST:
+    sema_resolve_expr(e->as.cast_expr.expr);
+    break;
+
   default:
     break;
   }

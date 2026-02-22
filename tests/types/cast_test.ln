@@ -1,0 +1,16 @@
+// Test: cast operator (as)
+
+extern func libc_printf(fmt *u8, ...) int
+
+func main() int {
+    var x i32 = 1000
+    var y = x as u8
+    
+    libc_printf("x = %d, y (as u8) = %d\n", x, y)
+    
+    // Cast int to i64
+    var big = 42 as i64
+    libc_printf("big = %ld\n", big)
+    
+    return 0
+}

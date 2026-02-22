@@ -163,6 +163,17 @@ void expr_print_ast(Expr *expr, int depth) {
                 break;
             }
     
+        case EXPR_CAST:
+            printf("Cast:\n");
+            indent(depth+1);
+            printf("Target Type: ");
+            print_type(expr->as.cast_expr.target_type);
+            printf("\n");
+            indent(depth+1);
+            printf("Expression:\n");
+            expr_print_ast(expr->as.cast_expr.expr, depth+2);
+            break;
+
         default:
             printf("/* Unhandled expression type %d */\n", expr->kind);
             break;

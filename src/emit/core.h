@@ -199,6 +199,8 @@ static bool is_primitive_type(Type *t) {
         if (base->length == 4 && strncmp(base->name, "bool", 4) == 0) return true;
         if (base->length == 4 && strncmp(base->name, "char", 4) == 0) return true;
         if (base->length == 5 && strncmp(base->name, "float", 5) == 0) return true;
+        if (base->length == 3 && strncmp(base->name, "f32", 3) == 0) return true;
+        if (base->length == 3 && strncmp(base->name, "f64", 3) == 0) return true;
         
         // Enums are primitives (integers)
         Symbol *sym = sema_lookup(c_name_for_id(base));
@@ -273,6 +275,12 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
       snprintf(base_name, sizeof(base_name), "intptr_t");
     } else if (base->length == 5 && strncmp(base->name, "usize", 5) == 0) {
       snprintf(base_name, sizeof(base_name), "uintptr_t");
+    } else if (base->length == 4 && strncmp(base->name, "bool", 4) == 0) {
+      snprintf(base_name, sizeof(base_name), "_Bool");
+    } else if (base->length == 3 && strncmp(base->name, "f32", 3) == 0) {
+      snprintf(base_name, sizeof(base_name), "float");
+    } else if (base->length == 3 && strncmp(base->name, "f64", 3) == 0) {
+      snprintf(base_name, sizeof(base_name), "double");
     } else {
       // fallback to symbol lookup (enums, structs, locals…)
       const char *cname = c_name_for_id(base);

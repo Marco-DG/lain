@@ -296,6 +296,7 @@ typedef enum {
     EXPR_INDEX,
     EXPR_MOVE,
     EXPR_MUT, // New
+    EXPR_CAST, // x as Type
 } ExprKind;
 
 typedef struct {
@@ -316,6 +317,11 @@ typedef struct {
 typedef struct {
     Expr*       expr;
 } ExprMut; // New
+
+typedef struct {
+    Expr*       expr;        // expression being cast
+    Type*       target_type; // target type
+} ExprCast;
 
 
 typedef struct {
@@ -371,6 +377,7 @@ typedef struct Expr {
         ExprIndex       index_expr;
         ExprMove        move_expr;
         ExprMut         mut_expr; // New
+        ExprCast        cast_expr;
     } as;
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
@@ -817,6 +824,15 @@ Expr *expr_mut(Arena *arena, Expr *expr) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_MUT;
     e->as.mut_expr.expr = expr;
+    return e;
+}
+
+Expr *expr_cast(Arena *arena, Expr *expr, Type *target_type) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_CAST;
+    e->as.cast_expr.expr = expr;
+    e->as.cast_expr.target_type = target_type;
+    e->type = target_type;
     return e;
 }
 
