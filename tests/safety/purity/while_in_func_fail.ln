@@ -1,0 +1,16 @@
+// Test: while loops are banned in pure functions (func)
+// Expected: compilation should FAIL
+
+extern func libc_printf(fmt *u8, ...) int
+
+func loop_forever() int {
+    var i = 0
+    while i < 10 {       // ERROR: while not allowed in func
+        i = i + 1
+    }
+    return i
+}
+
+func main() int {
+    return loop_forever()
+}

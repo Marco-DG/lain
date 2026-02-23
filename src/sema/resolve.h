@@ -304,14 +304,18 @@ void sema_resolve_stmt(Stmt *s) {
     Expr *cond = s->as.if_stmt.cond;
     sema_resolve_expr(cond);
     sema_infer_expr(cond);
-    // 2) Recurse into the “then” branch
+    // 2) Recurse into the "then" branch (block-scoped)
+    sema_push_scope();
     for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next) {
       sema_resolve_stmt(b->stmt);
     }
-    // 3) If there’s an “else” branch, recurse into it as well
+    sema_pop_scope();
+    // 3) If there's an "else" branch, recurse into it as well (block-scoped)
+    sema_push_scope();
     for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next) {
       sema_resolve_stmt(b->stmt);
     }
+    sema_pop_scope();
     break;
   }
 
@@ -360,10 +364,12 @@ void sema_resolve_stmt(Stmt *s) {
       sema_insert_local(raw_c, raw_c, val_ty, NULL, false);
     }
 
-    // recurse into the loop body
+    // recurse into the loop body (block-scoped)
+    sema_push_scope();
     for (StmtList *b = s->as.for_stmt.body; b; b = b->next) {
       sema_resolve_stmt(b->stmt);
     }
+    sema_pop_scope();
     break;
   }
 
@@ -440,13 +446,14 @@ void sema_resolve_stmt(Stmt *s) {
   case STMT_MATCH:
     sema_resolve_expr(s->as.match_stmt.value);
     for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
+      sema_push_scope();
       if (c->pattern)
         sema_resolve_expr(c->pattern);
       for (StmtList *b = c->body; b; b = b->next) {
         sema_resolve_stmt(b->stmt);
       }
+      sema_pop_scope();
     }
-    // Check exhaustiveness after resolving all cases
     // Check exhaustiveness after resolving all cases
     if (!sema_check_match_exhaustive(s)) {
       sema_report_nonexhaustive_match(s);
@@ -454,13 +461,33 @@ void sema_resolve_stmt(Stmt *s) {
     }
     break;
   
+  case STMT_WHILE: {
+    // Purity: while loops are banned in pure functions (func)
+    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
+        fprintf(stderr, "Error Ln %li, Col %li: 'while' loops are not allowed in pure function '%.*s'. Use 'proc' instead.\n",
+                s->line, s->col,
+                (int)current_function_decl->as.function_decl.name->length,
+                current_function_decl->as.function_decl.name->name);
+        exit(1);
+    }
+    // Resolve condition and body normally (block-scoped)
+    sema_resolve_expr(s->as.while_stmt.cond);
+    sema_push_scope();
+    for (StmtList *b = s->as.while_stmt.body; b; b = b->next) {
+        sema_resolve_stmt(b->stmt);
+    }
+    sema_pop_scope();
+    break;
+  }
+
  case STMT_UNSAFE: {
-    // (removed debug print)
     bool old = sema_in_unsafe_block;
     sema_in_unsafe_block = true;
+    sema_push_scope();
     for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
         sema_resolve_stmt(b->stmt);
     }
+    sema_pop_scope();
     sema_in_unsafe_block = old;
     break;
  }

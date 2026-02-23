@@ -248,8 +248,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     // Apply condition for THEN branch
                     sema_apply_constraint(s->as.if_stmt.cond, sema_ranges);
                     
+                    sema_push_scope();
                     for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next)
                         walk_stmt(b->stmt);
+                    sema_pop_scope();
                         
                     // Restore state (pop constraints from THEN)
                     sema_ranges->head = old_head;
@@ -258,8 +260,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     // Apply negated condition for ELSE branch
                     sema_apply_negated_constraint(s->as.if_stmt.cond, sema_ranges);
                     
+                    sema_push_scope();
                     for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next)
                         walk_stmt(b->stmt);
+                    sema_pop_scope();
                         
                     // Restore state again
                     sema_ranges->head = old_head;
@@ -281,8 +285,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     // Widen modified variables BEFORE body (conservative approximation for loop entry)
                     if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
                     
+                    sema_push_scope();
                     for (StmtList *b = s->as.for_stmt.body; b; b = b->next)
                         walk_stmt(b->stmt);
+                    sema_pop_scope();
                         
                     // Widen modified variables AFTER body (conservative approximation for loop exit/non-execution)
                     if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
@@ -301,8 +307,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                         // Let's just walk the body.
                     }
 
+                    sema_push_scope();
                     for (StmtList *b = s->as.while_stmt.body; b; b = b->next)
                         walk_stmt(b->stmt);
+                    sema_pop_scope();
                         
                     // Widen modified variables AFTER body
                     if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
@@ -394,20 +402,22 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 case STMT_MATCH:
                     sema_infer_expr(s->as.match_stmt.value);
                     for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
+                        sema_push_scope();
                         if (c->pattern) sema_infer_expr(c->pattern);
                         for (StmtList *b = c->body; b; b = b->next)
                             walk_stmt(b->stmt);
+                        sema_pop_scope();
                     }
                     break;
                 case STMT_UNSAFE: {
-                    // (removed debug print)
                     bool old_unsafe = sema_in_unsafe_block;
                     sema_in_unsafe_block = true;
+                    sema_push_scope();
                     for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
                         walk_stmt(b->stmt);
                     }
+                    sema_pop_scope();
                     sema_in_unsafe_block = old_unsafe;
-                    // (removed debug print)
                     break;
                 }
                 default: break;

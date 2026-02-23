@@ -429,25 +429,42 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 }
             }
         } else {
-            // Fallback: if argument expression types are known, consume any arg whose expr->type is move.
-            DBG("EXPR_CALL: no fn_decl found for callee; checking arg types");
+            // Fallback: if we can't find the function declaration (e.g. imported module),
+            // determine if this is a struct constructor call.
+            // Struct constructors consume their linear arguments (implicit move).
+            // For regular function calls, only consume explicit 'mov' arguments.
+            bool is_struct_constructor = false;
+            if (callee && callee->kind == EXPR_IDENTIFIER && callee->decl) {
+                is_struct_constructor = (callee->decl->kind == DECL_STRUCT);
+            }
+            
+            DBG("EXPR_CALL: no fn_decl found for callee; struct_ctor=%d", is_struct_constructor);
             for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
                 Expr *arg = a->expr;
                 if (!arg) continue;
-                if (arg->type && is_type_move(arg->type)) {
+                
+                bool should_consume = false;
+                if (arg->kind == EXPR_MOVE) {
+                    // Explicit 'mov' always consumes
+                    should_consume = true;
+                } else if (is_struct_constructor && arg->type && is_type_move(arg->type)) {
+                    // Struct constructors implicitly consume linear fields
+                    should_consume = true;
+                }
+                
+                if (should_consume) {
                     Expr *inner = arg;
                     if (inner->kind == EXPR_MOVE) inner = inner->as.move_expr.expr;
                     else if (inner->kind == EXPR_MUT) inner = inner->as.mut_expr.expr;
                     
-                    if (inner->kind == EXPR_IDENTIFIER) {
+                    if (inner && inner->kind == EXPR_IDENTIFIER) {
                         Id *idptr = inner->as.identifier_expr.id;
-                        DBG("EXPR_CALL fallback: consume IDENT arg '%.*s' (by arg->type)", (int)idptr->length, idptr->name ? idptr->name : "<null>");
+                        DBG("EXPR_CALL fallback: consume '%.*s' (%s)", (int)idptr->length, idptr->name, is_struct_constructor ? "struct ctor" : "explicit mov");
                         ltable_consume(tbl, idptr, loop_depth);
-                    } else if (inner->kind == EXPR_MEMBER) {
+                    } else if (inner && inner->kind == EXPR_MEMBER) {
                          Expr *head = inner->as.member_expr.target;
                          while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
                          if (head && head->kind == EXPR_IDENTIFIER) {
-                             DBG("EXPR_CALL fallback: consume MEMBER->IDENT head '%.*s' (by arg->type)", (int)head->as.identifier_expr.id->length, head->as.identifier_expr.id->name ? head->as.identifier_expr.id->name : "<null>");
                              ltable_consume(tbl, head->as.identifier_expr.id, loop_depth);
                          }
                     }

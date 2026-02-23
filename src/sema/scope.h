@@ -115,4 +115,31 @@ static void sema_clear_locals(void) {
     }
 }
 
+// ── block scoping via push/pop ──────────────────────────────────────────────
+// ScopeFrame saves the head pointers of every bucket in sema_locals.
+// When popped, all symbols added since the push are effectively removed.
+
+typedef struct ScopeFrame {
+    Symbol *saved_locals[SEMA_BUCKET_COUNT];
+    struct ScopeFrame *parent;
+} ScopeFrame;
+
+static ScopeFrame *scope_stack = NULL;
+
+static void sema_push_scope(void) {
+    // Allocate on the arena so we don't need to free manually
+    ScopeFrame *frame = (ScopeFrame *)malloc(sizeof(ScopeFrame));
+    memcpy(frame->saved_locals, sema_locals, sizeof(sema_locals));
+    frame->parent = scope_stack;
+    scope_stack = frame;
+}
+
+static void sema_pop_scope(void) {
+    if (!scope_stack) return;
+    ScopeFrame *frame = scope_stack;
+    memcpy(sema_locals, frame->saved_locals, sizeof(sema_locals));
+    scope_stack = frame->parent;
+    free(frame);
+}
+
 #endif // SEMA_SCOPE_H
