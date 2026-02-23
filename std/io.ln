@@ -1,9 +1,9 @@
 import std.c
 
 func print(s *u8) {
-    libc_printf("%s", s);
+    libc_printf("%s", s)
 }
 
 func println(s *u8) {
-    libc_puts(s);
+    libc_puts(s)
 }

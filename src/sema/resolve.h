@@ -399,7 +399,7 @@ void sema_resolve_stmt(Stmt *s) {
         // Identifier FOUND -> Assignment
         // Check mutability
         if (!sym->is_mutable) {
-             fprintf(stderr, "Error: Cannot assign to immutable variable '%s'\n", raw);
+             fprintf(stderr, "Error Ln %li, Col %li: Cannot assign to immutable variable '%s'\n", s->line, s->col, raw);
              exit(1);
         }
       }
@@ -419,7 +419,8 @@ void sema_resolve_stmt(Stmt *s) {
     // Purity Check: func cannot modify global variable
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         if (lhs->is_global && lhs->decl && lhs->decl->kind == DECL_VARIABLE) {
-             fprintf(stderr, "Error: Pure function '%.*s' cannot modify global variable\n",
+             fprintf(stderr, "Error Ln %li, Col %li: Pure function '%.*s' cannot modify global variable\n",
+                     s->line, s->col,
                         (int)current_function_decl->as.function_decl.name->length,
                         current_function_decl->as.function_decl.name->name);
              exit(1);

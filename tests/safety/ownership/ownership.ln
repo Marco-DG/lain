@@ -1,26 +1,26 @@
 type Point {
-    x int;
-    y int;
+    x int
+    y int
 }
 
 func print_point(p Point) {
     // Shared reference: p is const Point*
     // Access fields via -> (handled by emitter)
-    printf("Point(%d, %d)\n", p.x, p.y);
+    printf("Point(%d, %d)\n", p.x, p.y)
 }
 
 func move_point(mov p Point) Point {
     // Owned: p is Point (value)
     // Access fields via . (handled by emitter)
-    printf("Moved Point(%d, %d)\n", p.x, p.y);
-    return mov p;
+    printf("Moved Point(%d, %d)\n", p.x, p.y)
+    return mov p
 }
 
 func mutate_point(var p Point) {
     // Mutable reference: p is Point*
     // Access fields via -> (handled by emitter)
-    p.x = p.x + 1;
-    p.y = p.y + 1;
+    p.x = p.x + 1
+    p.y = p.y + 1
 }
 
 func main() int {
@@ -29,14 +29,14 @@ func main() int {
     p1.y = 20
     
     // Test Shared Reference (implicit borrow)
-    print_point(p1);
+    print_point(p1)
     
     // Test Mutable Reference (explicit var)
-    mutate_point(var p1);
-    print_point(p1); // Should be 11, 21
+    mutate_point(var p1)
+    print_point(p1) // Should be 11, 21
     
     // Test Move (explicit mov)
-    move_point(mov p1);
+    move_point(mov p1)
     
     // p1 is consumed here (linearity check should catch use-after-move if implemented)
     // For now, we just verify C code generation correctness.

@@ -13,7 +13,14 @@ Expr *parse_primary_expr(Arena *arena, Parser *parser);
 
 Expr *parse_expr(Arena* arena, Parser* parser)
 {
-    return parse_binary_expr(arena, parser, 0);
+    isize expr_line = parser->line;
+    isize expr_col  = parser->column;
+    Expr *result = parse_binary_expr(arena, parser, 0);
+    if (result) {
+        result->line = expr_line;
+        result->col  = expr_col;
+    }
+    return result;
 }
 
 // <expr> <op> <expr>
