@@ -33,15 +33,18 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `return` | Return a value from a function/procedure |
 | `if` | Conditional branch |
 | `elif` | Else-if branch |
-| `else` | Default branch in conditional/match |
+| `else` | Default branch in conditional/case |
 | `for` | Range-based for loop |
 | `while` | While loop |
 | `break` | Exit the innermost loop |
 | `continue` | Skip to the next iteration |
-| `match` | Pattern matching |
+| `case` | Pattern matching |
 | `in` | Range iteration / index bound constraint |
 | `and` | Logical AND |
 | `or` | Logical OR |
+| `true` | Boolean true literal |
+| `false` | Boolean false literal |
+| `as` | Type cast operator |
 | `import` | Module import |
 | `extern` | External (C) declaration |
 | `unsafe` | Unsafe block |
@@ -49,7 +52,7 @@ The following identifiers are reserved keywords and cannot be used as variable o
 
 > [!NOTE]
 > **Reserved for future use**: The following keywords are recognized by the lexer but not yet fully implemented:
-> `comptime`, `macro`, `expr`, `pre`, `post`, `use`, `end`, `as`, `export`, `case`, `switch`.
+> `comptime`, `macro`, `expr`, `pre`, `post`, `use`, `end`, `export`.
 > The keyword `fun` is accepted as an alias for `func`.
 
 ### 2.2 Operators & Punctuation
@@ -172,15 +175,45 @@ var y = 20     // Without semicolon
 
 ### 3.1 Primitive Types
 
+**Integers:**
+
 | Type | Description | C Equivalent |
 |:-----|:------------|:-------------|
 | `int` | Signed integer (platform-dependent, typically 32-bit) | `int` |
-| `u8` | Unsigned 8-bit integer | `unsigned char` |
+| `i8` | Signed 8-bit integer | `int8_t` |
+| `i16` | Signed 16-bit integer | `int16_t` |
+| `i32` | Signed 32-bit integer | `int32_t` |
+| `i64` | Signed 64-bit integer | `int64_t` |
+| `u8` | Unsigned 8-bit integer | `uint8_t` |
+| `u16` | Unsigned 16-bit integer | `uint16_t` |
+| `u32` | Unsigned 32-bit integer | `uint32_t` |
+| `u64` | Unsigned 64-bit integer | `uint64_t` |
+| `isize` | Signed pointer-sized integer | `ptrdiff_t` |
 | `usize` | Unsigned pointer-sized integer | `size_t` |
-| `bool` | Boolean value | `_Bool` / `int` |
 
-> [!WARNING]
-> The exact bit-widths of `int` depend on the target platform via C compilation. Additional integer types (`i8`, `i16`, `i32`, `i64`, `u16`, `u32`, `u64`) are not yet defined in the language but may be added in the future.
+> [!NOTE]
+> Fixed-width integer types require `<stdint.h>` in the generated C code (included automatically).
+> The type `int` is platform-dependent (typically 32-bit). Prefer `i32` for portable fixed-width semantics.
+
+**Boolean:**
+
+| Type | Description | C Equivalent |
+|:-----|:------------|:-------------|
+| `bool` | Boolean type with values `true` and `false` | `_Bool` |
+
+`bool` is a distinct type. The literals `true` and `false` are keywords:
+
+```lain
+var x bool = true
+var y bool = false
+
+if x {
+    libc_printf("x is true\n")
+}
+```
+
+> [!NOTE]
+> In the generated C code, `true` maps to `1` and `false` maps to `0`. Boolean values can be used directly in conditions without comparison.
 
 ### 3.2 Pointer Types
 
@@ -327,7 +360,7 @@ var p = Shape.Point
 ```
 
 **Pattern matching:**
-See §7.5 for `match` expressions.
+See §7.5 for `case` expressions.
 
 ### 3.8 Opaque Types (`extern type`)
 
@@ -395,7 +428,23 @@ var global_counter int    // Mutable global variable
 > [!WARNING]
 > Global mutable state is restricted in Lain's purity model. Pure functions (`func`) **cannot** read or write global variables. Only procedures (`proc`) may access global mutable state.
 
----
+### 4.5 Binding vs. Assignment Disambiguation
+
+Since `x = 10` can look like both a "new immutable variable" and an "assignment to an existing mutable variable", the compiler uses the following rule:
+
+- If `x` is **not** already in scope → `x = 10` creates a **new immutable binding**.
+- If `x` **is** already in scope and was declared `var` → `x = 10` is an **assignment**.
+- If `x` **is** already in scope and is immutable → `x = 10` is a **compile error** (cannot assign to immutable).
+
+```lain
+x = 10           // New immutable binding (x not in scope before)
+var y = 20       // New mutable binding
+y = 30           // Assignment (y was declared var)
+// x = 40        // ERROR: x is immutable
+```
+
+> [!NOTE]
+> The `var` keyword is never ambiguous: `var x = ...` is always a new mutable variable declaration.
 
 ## 5. Ownership & Borrowing
 
@@ -512,15 +561,31 @@ This consumes the linear resource by destructuring it into its component fields.
 
 ### 5.7 Return Ownership
 
-Functions can return owned values with `return mov`:
+The `return` statement supports ownership annotations to control how values are returned:
 
+**`return mov` — Transfer ownership:**
 ```lain
 func transfer(mov item Item) Item {
     return mov item       // Transfer ownership to the caller
 }
 ```
 
-The return type can also be annotated with `mov` to signal the function produces an owned resource:
+**`return var` — Return a mutable reference:**
+```lain
+func get_ref() var int {
+    var x = 10
+    return var x          // Return a mutable reference
+}
+```
+
+**`return` (default) — Return by value (copy):**
+```lain
+func compute(a int, b int) int {
+    return a + b          // Return a copy
+}
+```
+
+The return type can also be annotated with `mov` or `var` to signal the ownership mode of the return value:
 ```lain
 func open_file(path u8[:0], mode u8[:0]) mov File {
     // Returns an owned File
@@ -596,14 +661,17 @@ func add(a int, b int) int {    // Returns int
     return a + b
 }
 
-func greet(msg u8[:0]) {        // Void (no return type)
+proc greet(msg u8[:0]) {        // Void (no return type) — must be proc because of I/O
     libc_printf("%s\n", msg.data)
 }
 
-proc main() int {               // proc can also return values
+proc main() int {               // main must always be 'proc'
     return 0
 }
 ```
+
+> [!IMPORTANT]
+> The `main` function **must** be declared as `proc main()`. Since `main` is the program entry point and typically performs I/O, it cannot be a pure `func`. Declaring `main` as `func` is a compile error.
 
 ### 6.5 Termination Guarantees
 
@@ -616,6 +684,14 @@ proc main() int {               // proc can also return values
 | Global state access | ❌ Banned | ✅ Allowed |
 | Calling `proc` | ❌ Banned | ✅ Allowed |
 | Calling `func` | ✅ Allowed | ✅ Allowed |
+| Calling `extern func` | ✅ Allowed | ✅ Allowed |
+| Calling `extern proc` | ❌ Banned | ✅ Allowed |
+
+> [!NOTE]
+> **`extern func` vs `extern proc`**: External C functions declared as `extern func` are trusted to be pure (no side effects). External C functions declared as `extern proc` may have side effects. A pure `func` can call `extern func` but **not** `extern proc`.
+>  
+> Example: `extern func abs(n int) int` — pure, callable from `func`.  
+> Example: `extern proc printf(fmt *u8, ...) int` — impure, callable only from `proc`.
 
 ---
 
@@ -700,13 +776,13 @@ proc example() {
 }
 ```
 
-### 7.5 Match (Pattern Matching)
+### 7.5 Case (Pattern Matching)
 
-`match` is used for pattern matching on enums, ADTs, and integer values.
+`case` is used for pattern matching on enums, ADTs, and integer values.
 
 **Matching on an enum:**
 ```lain
-match color {
+case color {
     Red:   libc_printf("Red\n")
     Green: libc_printf("Green\n")
     Blue:  libc_printf("Blue\n")
@@ -715,7 +791,7 @@ match color {
 
 **Matching on an ADT with destructuring:**
 ```lain
-match shape {
+case shape {
     Circle(r):        libc_printf("Circle radius: %d\n", r)
     Rectangle(w, h):  libc_printf("Rect: %d x %d\n", w, h)
     Point:            libc_printf("Just a point\n")
@@ -724,7 +800,7 @@ match shape {
 
 **Matching on integers** (requires `else` for exhaustiveness):
 ```lain
-match x {
+case x {
     1: return 1
     2: return 2
     3: return 3
@@ -732,13 +808,13 @@ match x {
 }
 ```
 
-**Match arms** can be:
+**Case arms** can be:
 - A single expression: `Red: return 1`
 - A block: `Red: { libc_printf("red\n"); return 1 }`
 
 ### 7.6 Exhaustiveness Checking
 
-`match` statements must be **exhaustive**. The compiler verifies:
+`case` statements must be **exhaustive**. The compiler verifies:
 
 1. **Enums**: All variants must be covered, OR an `else` arm must be present.
 2. **ADTs**: All variants must be covered, OR an `else` arm must be present.
@@ -747,17 +823,17 @@ match x {
 ```lain
 // OK: All 3 variants covered, no 'else' needed
 type Status { Ready, Running, Done }
-match s {
+case s {
     Ready:   /* ... */
     Running: /* ... */
     Done:    /* ... */
 }
 
 // ERROR: Missing 'Done' variant and no 'else'
-match s {
+case s {
     Ready:   /* ... */
     Running: /* ... */
-    // Compile error: non-exhaustive match
+    // Compile error: non-exhaustive case
 }
 ```
 
@@ -819,6 +895,44 @@ x &= mask  // Equivalent to: x = x & mask
 x |= flag  // Equivalent to: x = x | flag
 x ^= bits  // Equivalent to: x = x ^ bits
 ```
+
+### 8.6 Type Cast (`as`)
+
+The `as` operator performs explicit type conversions between numeric types:
+
+```lain
+var x i32 = 1000
+var y = x as u8           // Truncate i32 to u8 (wrapping)
+var big = 42 as i64       // Widen int to i64
+var small = 300 as u8     // Truncate to u8 (300 → 44)
+```
+
+**Rules:**
+- Conversions between integer types are always allowed (truncation may occur).
+- Pointer casts (`*int as *void`) require an `unsafe` block.
+- Non-numeric casts (e.g., struct to int) are not allowed.
+
+### 8.7 Operator Precedence
+
+Operators are evaluated according to the following precedence table (highest to lowest):
+
+| Precedence | Operators | Associativity | Description |
+|:-----------|:----------|:-------------|:------------|
+| 1 (highest) | `()` `[]` `.` | Left | Grouping, indexing, field access |
+| 2 | `!` `~` `-` `*` | Right | Unary NOT, complement, negation, deref |
+| 3 | `as` | Left | Type cast |
+| 4 | `*` `/` `%` | Left | Multiplicative |
+| 5 | `+` `-` | Left | Additive |
+| 6 | `&` | Left | Bitwise AND |
+| 7 | `^` | Left | Bitwise XOR |
+| 8 | `\|` | Left | Bitwise OR |
+| 9 | `<` `>` `<=` `>=` | Left | Comparison |
+| 10 | `==` `!=` | Left | Equality |
+| 11 | `and` | Left | Logical AND |
+| 12 (lowest) | `or` | Left | Logical OR |
+
+> [!NOTE]
+> Use parentheses to override precedence when intent is unclear: `(a + b) * c`.
 
 ---
 
@@ -1250,12 +1364,33 @@ Tests are organized under `tests/` and run via `run_tests.sh`:
 | Directory | Tests | Purpose |
 |:----------|:------|:--------|
 | `tests/core/` | 8 | Basic language features (functions, loops, math) |
-| `tests/types/` | 7 | Type system (ADTs, enums, arrays, structs, strings) |
+| `tests/types/` | 10 | Type system (ADTs, enums, arrays, structs, strings, bool, casts, integers) |
 | `tests/safety/bounds/` | 14 | Static bounds checking & type constraints |
 | `tests/safety/ownership/` | 11 | Ownership, borrowing, move semantics |
 | `tests/safety/purity/` | 2 | Purity enforcement |
 | `tests/safety/` (root) | 4 | Unsafe blocks, linear struct fields |
 | `tests/stdlib/` | 6 | Module system, extern, stdlib |
+
+### 14.5 C Compilation Flags
+
+When compiling the generated `out.c`, certain C preprocessor flags are needed to bridge naming differences between Lain's standard library and the underlying C library:
+
+```bash
+# Standard compilation with cosmocc:
+./cosmocc/bin/cosmocc out.c -o program.exe -w \
+    -Dlibc_printf=printf \
+    -Dlibc_puts=puts
+```
+
+**Required flags:**
+| Flag | Purpose |
+|:-----|:--------|
+| `-Dlibc_printf=printf` | Maps Lain's `libc_printf` to C's `printf` |
+| `-Dlibc_puts=puts` | Maps Lain's `libc_puts` to C's `puts` |
+| `-w` | Suppress C compiler warnings from generated code |
+
+> [!IMPORTANT]
+> The `libc_` prefix convention exists to avoid name collisions between Lain's extern declarations and C's standard library during compilation. The `-D` flags perform the final mapping. Without these flags, the linker will report undefined symbol errors.
 
 ---
 
@@ -1264,10 +1399,10 @@ Tests are organized under `tests/` and run via `run_tests.sh`:
 | Keyword | Status | First Defined |
 |:--------|:-------|:--------------|
 | `and` | ✅ Implemented | Logical AND operator |
-| `as` | 🔮 Reserved | — |
+| `as` | ✅ Implemented | Type cast operator (§8.6) |
 | `break` | ✅ Implemented | Loop exit |
 | `c_include` | ✅ Implemented | C header inclusion |
-| `case` | ⚠️ Alias | Alias for `match` (prefer `match`) |
+| `case` | ✅ Implemented | Pattern matching (§7.5) |
 | `comptime` | 🔮 Reserved | Compile-time execution |
 | `continue` | ✅ Implemented | Loop iteration skip |
 | `elif` | ✅ Implemented | Else-if branch |
@@ -1276,6 +1411,7 @@ Tests are organized under `tests/` and run via `run_tests.sh`:
 | `export` | 🔮 Reserved | Module export |
 | `expr` | 🔮 Reserved | — |
 | `extern` | ✅ Implemented | C interop declarations |
+| `false` | ✅ Implemented | Boolean false literal |
 | `for` | ✅ Implemented | Range-based loop |
 | `func` | ✅ Implemented | Pure function |
 | `fun` | ⚠️ Alias | Alias for `func` |
@@ -1283,19 +1419,18 @@ Tests are organized under `tests/` and run via `run_tests.sh`:
 | `import` | ✅ Implemented | Module import |
 | `in` | ✅ Implemented | Range iteration / index bounds |
 | `macro` | 🔮 Reserved | — |
-| `match` | ✅ Implemented | Pattern matching |
 | `mov` | ✅ Implemented | Ownership transfer |
 | `or` | ✅ Implemented | Logical OR operator |
 | `post` | 🔮 Reserved | Postcondition |
 | `pre` | 🔮 Reserved | Precondition |
 | `proc` | ✅ Implemented | Procedure (side effects) |
 | `return` | ✅ Implemented | Return value |
-| `switch` | ⚠️ Alias | Alias for `match` (prefer `match`) |
+| `true` | ✅ Implemented | Boolean true literal |
 | `type` | ✅ Implemented | Type definition |
 | `unsafe` | ✅ Implemented | Unsafe block |
 | `use` | 🔮 Reserved | — |
 | `var` | ✅ Implemented | Mutable binding |
-| `while` | ✅ Implemented | While loop |
+| `while` | ✅ Implemented | While loop (only in `proc`) |
 
 ---
 
@@ -1322,10 +1457,6 @@ type OptionInt = Option(int)
 ### `pre` / `post` — Contract Annotations
 
 Reserved for explicit precondition and postcondition contract blocks. Currently, constraints are expressed inline on parameter and return types (§9).
-
-### `as` — Type Casting
-
-Reserved for explicit type cast operations.
 
 ### `..=` — Inclusive Range
 
@@ -1373,7 +1504,7 @@ type_expr       = IDENT                    (* named type *)
 block           = "{" { statement } "}" ;
 
 statement       = var_decl | assignment | return_stmt | if_stmt
-                | for_stmt | while_stmt | match_stmt | break_stmt
+                | for_stmt | while_stmt | case_stmt | break_stmt
                 | continue_stmt | unsafe_block | expr_stmt ;
 
 var_decl        = ["var"] IDENT [type_expr] "=" expr ;
@@ -1381,16 +1512,16 @@ assignment      = lvalue assign_op expr ;
 assign_op       = "=" | "+=" | "-=" | "*=" | "/=" | "%="
                 | "&=" | "|=" | "^=" ;
 
-return_stmt     = "return" ["mov"] [expr] ;
+return_stmt     = "return" ["mov" | "var"] [expr] ;
 break_stmt      = "break" ;
 continue_stmt   = "continue" ;
 
 if_stmt         = "if" expr block { "elif" expr block } [ "else" block ] ;
 for_stmt        = "for" IDENT ["," IDENT] "in" expr ".." expr block ;
-while_stmt      = "while" expr block ;
+while_stmt      = "while" expr block ;           (* only valid inside proc *)
 
-match_stmt      = "match" expr "{" { match_arm } "}" ;
-match_arm       = pattern ":" (expr | block) ;
+case_stmt       = "case" expr "{" { case_arm } "}" ;
+case_arm        = pattern ":" (expr | block) ;
 pattern         = IDENT [ "(" pattern_list ")" ]
                 | "else" ;
 
