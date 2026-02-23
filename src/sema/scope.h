@@ -7,6 +7,16 @@
 
 #include "../ast.h"
 
+extern Arena *sema_arena;
+
+// Helper: strdup using arena (no free needed)
+static char *arena_strdup(Arena *a, const char *s) {
+    size_t len = strlen(s) + 1;
+    char *copy = arena_push_many_aligned(a, char, len);
+    memcpy(copy, s, len);
+    return copy;
+}
+
 /*
   A two‐table symbol‐scope implementation:
 
@@ -46,9 +56,9 @@ static unsigned sema_hash(const char *s) {
 // ── insert into the global symbol‐table ──────────────────────────────────────
 static void sema_insert_global(const char *raw, const char *cname, Type *ty, Decl *decl, bool is_mutable) {
     unsigned idx = sema_hash(raw);
-    Symbol *sym = malloc(sizeof *sym);
-    sym->name   = strdup(raw);
-    sym->c_name = strdup(cname);
+    Symbol *sym = arena_push_aligned(sema_arena, Symbol);
+    sym->name   = arena_strdup(sema_arena, raw);
+    sym->c_name = arena_strdup(sema_arena, cname);
     sym->type   = ty;
     sym->decl   = decl;
     sym->is_global = true;
@@ -60,9 +70,9 @@ static void sema_insert_global(const char *raw, const char *cname, Type *ty, Dec
 // ── insert into the local symbol‐table ───────────────────────────────────────
 static void sema_insert_local(const char *raw, const char *cname, Type *ty, Decl *decl, bool is_mutable) {
     unsigned idx = sema_hash(raw);
-    Symbol *sym = malloc(sizeof *sym);
-    sym->name   = strdup(raw);
-    sym->c_name = strdup(cname);
+    Symbol *sym = arena_push_aligned(sema_arena, Symbol);
+    sym->name   = arena_strdup(sema_arena, raw);
+    sym->c_name = arena_strdup(sema_arena, cname);
     sym->type   = ty;
     sym->decl   = decl; 
     sym->is_global = false;
@@ -91,30 +101,16 @@ static Symbol *sema_lookup(const char *raw) {
 
 // ── clear out only the global table (call this once at program start) ───────
 static void sema_clear_globals(void) {
+    // Arena handles deallocation — just reset bucket pointers
     for (int i = 0; i < SEMA_BUCKET_COUNT; i++) {
-        Symbol *sym = sema_globals[i];
-        while (sym) {
-            Symbol *next = sym->next;
-            free(sym->name);
-            free(sym->c_name);
-            free(sym);
-            sym = next;
-        }
         sema_globals[i] = NULL;
     }
 }
 
 // ── clear out only the local table (call this at function‐entry/function‐exit) ─
 static void sema_clear_locals(void) {
+    // Arena handles deallocation — just reset bucket pointers
     for (int i = 0; i < SEMA_BUCKET_COUNT; i++) {
-        Symbol *sym = sema_locals[i];
-        while (sym) {
-            Symbol *next = sym->next;
-            free(sym->name);
-            free(sym->c_name);
-            free(sym);
-            sym = next;
-        }
         sema_locals[i] = NULL;
     }
 }

@@ -126,7 +126,7 @@ typedef struct {
 } LTable;
 
 static LTable *ltable_new(Arena *arena) {
-    LTable *t = (LTable*)malloc(sizeof *t);
+    LTable *t = arena_push_aligned(arena, LTable);
     t->head = NULL;
     t->arena = arena;
     t->borrows = arena ? borrow_table_new(arena) : NULL;
@@ -135,13 +135,8 @@ static LTable *ltable_new(Arena *arena) {
 
 static void ltable_free(LTable *t) {
     if (!t) return;
-    LEntry *e = t->head;
-    while (e) {
-        LEntry *n = e->next;
-        free(e);
-        e = n;
-    }
-    free(t);
+    // Arena handles deallocation — just detach the list
+    t->head = NULL;
 }
 
 static LEntry *ltable_find(LTable *t, Id *id) {
@@ -157,7 +152,7 @@ static LEntry *ltable_find(LTable *t, Id *id) {
 static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume) {
     if (!id) return;
     if (ltable_find(t, id)) return; // already present — ignore
-    LEntry *e = (LEntry*)malloc(sizeof *e);
+    LEntry *e = arena_push_aligned(t->arena, LEntry);
     e->id = id;
     e->defined_loop_depth = loop_depth;
     e->region = t->borrows ? t->borrows->current_region : NULL;

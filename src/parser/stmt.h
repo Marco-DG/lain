@@ -89,67 +89,56 @@ StmtList* parse_stmt_list(Arena* arena, Parser* parser) {
 
 Stmt *parse_stmt(Arena* arena, Parser* parser)
 {
+    // Capture source location for error reporting
+    isize stmt_line = parser->line;
+    isize stmt_col  = parser->column;
+
+    Stmt *result = NULL;
+
     if (parser_match(TOKEN_KEYWORD_RETURN)) {
         parser_advance();                 // consume `return`
         Expr *value = parse_expr(arena, parser);
-        return stmt_return(arena, value);
+        result = stmt_return(arena, value);
     }
-    if (parser_match(TOKEN_KEYWORD_COMPTIME)) {
+    else if (parser_match(TOKEN_KEYWORD_COMPTIME)) {
         // keep consistent with other keywords (we consume keyword in caller)
         parser_advance(); // consume 'comptime'
-        return parse_comptime_stmt(arena, parser);
+        result = parse_comptime_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_VAR)) {
+    else if (parser_match(TOKEN_KEYWORD_VAR)) {
         parser_advance();
-        return parse_var_stmt(arena, parser);
+        result = parse_var_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_IF)) {
-        return parse_if_stmt(arena, parser);
+    else if (parser_match(TOKEN_KEYWORD_IF)) {
+        result = parse_if_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_FOR)) {
+    else if (parser_match(TOKEN_KEYWORD_FOR)) {
         parser_advance();                  // consume 'for'
-        return parse_for_stmt(arena, parser);
+        result = parse_for_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_WHILE)) {
-        // 'while' keyword consumption handled in parse_while_stmt or here?
-        // Other functions consume the keyword before calling. Let's consume it here.
+    else if (parser_match(TOKEN_KEYWORD_WHILE)) {
         parser_advance();
-        return parse_while_stmt(arena, parser);
+        result = parse_while_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_CONTINUE)) {
-        return parse_continue_stmt(arena, parser);
+    else if (parser_match(TOKEN_KEYWORD_CONTINUE)) {
+        result = parse_continue_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_BREAK)) {
-        return parse_break_stmt(arena, parser);
+    else if (parser_match(TOKEN_KEYWORD_BREAK)) {
+        result = parse_break_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_CASE)) {
+    else if (parser_match(TOKEN_KEYWORD_CASE)) {
         parser_advance();
-        return parse_match_stmt(arena, parser);
+        result = parse_match_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_USE)) {
+    else if (parser_match(TOKEN_KEYWORD_USE)) {
         parser_advance();
-        return parse_use_stmt(arena, parser);
+        result = parse_use_stmt(arena, parser);
     }
-    if (parser_match(TOKEN_KEYWORD_UNSAFE)) {
+    else if (parser_match(TOKEN_KEYWORD_UNSAFE)) {
         parser_advance();
-        return parse_unsafe_stmt(arena, parser);
+        result = parse_unsafe_stmt(arena, parser);
     }
-
-    // ——— handle bare identifier starting lines ———
-    // REMOVED: We no longer support bare declarations like `x int`.
-    // All declarations must be `var x ...` or implicit `x = ...`.
-    /*
-    if (parser_match(TOKEN_IDENTIFIER)) {
-        Token next = lexer_peek(parser->lexer);
-
-        // If next token is an identifier or 'mov', we consider this a declaration
-        if (next.kind == TOKEN_IDENTIFIER || next.kind == TOKEN_KEYWORD_MOV) {
-            return parse_decl_stmt(arena, parser);
-        }
-    }
-    */
-
-    // Parse as expression first (LHS of potential assignment)
+    else {
     Expr *lhs = parse_expr(arena, parser);
 
     // Check for assignment operator
@@ -191,11 +180,20 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
             }
             rhs = expr_binary(arena, binop, lhs, rhs);
         }
-        return stmt_assign(arena, lhs, rhs);
-    }
+        result = stmt_assign(arena, lhs, rhs);
+    } else {
 
     // Otherwise it's an expression statement
-    return stmt_expr(arena, lhs);
+        result = stmt_expr(arena, lhs);
+    }
+    } // close else from parse_stmt
+
+    // Set source location on the result
+    if (result) {
+        result->line = stmt_line;
+        result->col  = stmt_col;
+    }
+    return result;
 }
 
 /* ---------- implement parse_comptime_stmt ----------

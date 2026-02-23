@@ -265,6 +265,8 @@ typedef struct {
 
 typedef struct Stmt {
     StmtKind kind;
+    isize line;  // source line number
+    isize col;   // source column number
     union {
         StmtVar         var_stmt;
         StmtAssign      assign_stmt;
@@ -364,6 +366,8 @@ typedef struct {
 
 typedef struct Expr {
     ExprKind kind;
+    isize line;  // source line number
+    isize col;   // source column number
     union {
         ExprBinary      binary_expr;
         ExprUnary       unary_expr;

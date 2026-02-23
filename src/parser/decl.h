@@ -299,15 +299,7 @@ DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant
             continue;
         }
 
-        /* 2) explicit semicolon -> eat it, skip EOLs, allow immediate '}' after that */
-        if (parser_match(TOKEN_SEMICOLON)) {
-            parser_advance();
-            parser_skip_eol();
-            if (parser_match(TOKEN_R_BRACE) || parser_match(TOKEN_EOF)) break;
-            continue;
-        }
-
-        /* 3) explicit newline / comment separators -> consume them and continue */
+        /* 2) explicit newline / comment separators -> consume them and continue */
         if (parser_match(TOKEN_EOL) ||
             parser_match(TOKEN_LINE_COMMENT) ||
             parser_match(TOKEN_MULTILINE_COMMENT))
@@ -317,8 +309,8 @@ DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant
             continue;
         }
 
-        /* 4) some token remains that is not a valid separator */
-        parser_error("Expected ',', newline, or ';' after field or enum value");
+        /* 3) some token remains that is not a valid separator */
+        parser_error("Expected ',' or newline after field or enum value");
         return struct_fields;
     }
 

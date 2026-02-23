@@ -52,9 +52,14 @@ Token _parser_advance(Parser* parser) {
         parser->column += token.length;
     }
 
-    // normalize newline / semicolon into a single canonical EOL token
-    if (token.kind == TOKEN_NEWLINE || token.kind == TOKEN_SEMICOLON) {
+    // normalize newline into a single canonical EOL token
+    // Semicolons are FORBIDDEN in Lain — newlines are the only statement terminator
+    if (token.kind == TOKEN_NEWLINE) {
         token.kind = TOKEN_EOL;
+    } else if (token.kind == TOKEN_SEMICOLON) {
+        fprintf(stderr, "Error Ln %li, Col %li: Semicolons are not allowed in Lain. Use newlines to separate statements.\n",
+                parser->line, parser->column);
+        abort();
     }
 
     // write the (possibly normalized) token back into parser->token so

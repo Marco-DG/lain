@@ -2,6 +2,6 @@
 // Test that pointer dereferencing fails outside unsafe blocks
 
 func main() {
-    var p *int = 0;
-    var x int = *p; // Should fail here
+    var p *int = 0
+    var x int = *p// Should fail here
 }
