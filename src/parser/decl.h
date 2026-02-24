@@ -320,8 +320,19 @@ DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant
 
 Decl* parse_type_decl(Arena* arena, Parser* parser) {
     parser_expect(TOKEN_IDENTIFIER, "Expected type name");
-    Id* name = id(arena, parser->token.length, parser->token.start);
+    Token start = parser->token;
     parser_advance();
+
+    Token end = start;
+    while (parser_match(TOKEN_DOT)) {
+        parser_advance(); // .
+        parser_expect(TOKEN_IDENTIFIER, "Expected identifier after dot");
+        end = parser->token;
+        parser_advance();
+    }
+
+    isize len = (end.start + end.length) - start.start;
+    Id* name = id(arena, len, start.start);
 
     // allow the '{' to be on the next line
     parser_skip_eol();
