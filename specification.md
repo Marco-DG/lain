@@ -236,6 +236,15 @@ var arr int[5]        // Array of 5 ints
 var bytes u8[256]     // Array of 256 bytes
 ```
 
+**Initialization:**
+Arrays are currently initialized element-by-element after declaration. Array literal syntax (`[1, 2, 3]`) is a planned future feature.
+```lain
+var arr int[3]
+arr[0] = 10
+arr[1] = 20
+arr[2] = 30
+```
+
 **Indexing:**
 ```lain
 arr[0] = 10
@@ -383,6 +392,11 @@ extern func fopen(filename *u8, mode *u8) mov *FILE
 extern func fclose(stream mov *FILE) int
 ```
 
+### 3.9 The `void` Type
+
+The `void` keyword represents the absence of a value. It is exclusively used for declaring opaque pointers (`*void`, analogous to C's `void*`).
+Variables cannot be declared of type `void` (`var x void` is a compile error).
+
 ---
 
 ## 4. Variables & Mutability
@@ -445,6 +459,13 @@ y = 30           // Assignment (y was declared var)
 
 > [!NOTE]
 > The `var` keyword is never ambiguous: `var x = ...` is always a new mutable variable declaration.
+
+### 4.6 Lexical Block Scoping
+
+Lain enforces strict lexical block scoping. Variables declared within a block (e.g., inside `{...}` of an `if`, `for`, or `while` statement) are only visible within that block.
+When the block exits, the local environment is destroyed.
+
+- **Shadowing**: Shadowing variables from an outer scope within an inner scope is strictly **forbidden**. Attempting to declare a variable with a name that already exists in any enclosing active scope results in a compile error.
 
 ## 5. Ownership & Borrowing
 
@@ -572,11 +593,13 @@ func transfer(mov item Item) Item {
 
 **`return var` — Return a mutable reference:**
 ```lain
-func get_ref() var int {
-    var x = 10
-    return var x          // Return a mutable reference
+func get_ref(var ctx Context) var int {
+    return var ctx.counter    // Return a mutable reference to a field
 }
 ```
+
+> [!WARNING]
+> Returning a mutable reference to a local variable (e.g., `var x = 10; return var x`) is a compile error, as it creates a dangling pointer. `return var` is restricted to returning references to data that outlives the function (such as fields of `var` parameters).
 
 **`return` (default) — Return by value (copy):**
 ```lain
@@ -667,6 +690,14 @@ proc greet(msg u8[:0]) {        // Void (no return type) — must be proc becaus
 
 proc main() int {               // main must always be 'proc'
     return 0
+}
+```
+
+In void functions, the `return` statement at the end of the block is optional. Using `return` without an expression is allowed for early exit:
+```lain
+func check(valid bool) {
+    if !valid { return }   // Early exit from void function
+    // ...
 }
 ```
 
@@ -934,6 +965,23 @@ Operators are evaluated according to the following precedence table (highest to 
 > [!NOTE]
 > Use parentheses to override precedence when intent is unclear: `(a + b) * c`.
 
+### 8.8 Structural Equality
+
+The equality operators (`==` and `!=`) are only supported for:
+- Primitive numeric types (integers, `bool`)
+- Pointers
+
+Using `==` or `!=` directly on `struct`, `array`, or `ADT` instances is a **compile error**. Structural equality must be performed manually by comparing individual fields.
+
+### 8.9 Implicit Conversions
+
+Lain strictly forbids implicit type conversions. There is no implicit widening or truncation between numeric types (e.g., passing a `u8` to an `int` parameter). Every integer conversion must be explicitly annotated using the `as` operator.
+
+### 8.10 Evaluation Order
+
+The evaluation of expressions, function arguments, and operands is strictly defined as **Left-to-Right**. 
+For `foo(a(), b())`, `a()` is guaranteed to execute and return before `b()` is executed.
+
 ---
 
 ## 9. Type Constraints
@@ -1156,6 +1204,14 @@ proc write_file(var f File, s u8[:0]) {
 > [!NOTE]
 > The `File` type is a safe wrapper around C's `FILE*`. Because `handle` is declared `mov`, the `File` struct is **linear**: it must be explicitly consumed via `close_file(mov f)`. Forgetting to close a file is a compile error.
 
+### 10.3 Name Resolution & Forward Declarations
+
+Lain uses a multi-pass compiler. Functions, procedures, and types can be referenced before they are declared in the source file. There is no need for forward declarations or header files.
+```lain
+func main() int { return helper() }
+proc helper() int { return 42 }      // OK: defined after use
+```
+
 ---
 
 ## 11. C Interoperability
@@ -1289,6 +1345,23 @@ unsafe {
 > [!IMPORTANT]
 > The compiler does **not** enforce memory safety or linear types for raw pointers inside unsafe blocks. The programmer assumes full responsibility for pointer validity, aliasing, and lifetime correctness.
 
+### 12.4 The Address-Of Operator (`&`)
+
+The unary address-of operator `&` creates a raw pointer to a local variable. To preserve Lain's safety guarantees, taking the address of a local variable is strictly **only allowed inside an `unsafe` block**.
+
+```lain
+proc main() int {
+    var x = 42
+    // var p = &x       // ERROR: Cannot take address outside unsafe
+    
+    unsafe {
+        var p = &x      // OK: p is of type *int
+        *p = 100        // Mutates x
+    }
+    return x            // Returns 100
+}
+```
+
 ---
 
 ## 13. Safety Guarantees
@@ -1317,6 +1390,10 @@ Lain compiles to C99 code, which is then compiled with a C compiler.
 ```
  .ln source → [Lain Compiler] → out.c → [C Compiler] → executable
 ```
+
+**C Name Mangling:**
+To prevent naming collisions with C standard libraries, Lain applies a mangling strategy to generated C code.
+Currently, this is mainly handled by prefixing library calls (e.g., `libc_printf`) and relying on user-provided macros (`-Dlibc_printf=printf`) or manual name spacing. A formalized internal mangling scheme (like `lain_module_funcName`) is planned for Phase 2.
 
 ### 14.2 Building the Compiler
 
