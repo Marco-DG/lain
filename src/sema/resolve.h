@@ -105,6 +105,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         size_t clen = strlen(safe_module_path) + 1 /* '_' */ + id->length + 1;
         char *cname = malloc(clen);
         snprintf(cname, clen, "%s_%s", safe_module_path, raw);
+        for (char *p = cname; *p; p++) if (*p == '.') *p = '_';
   
         sema_insert_global(raw, cname, typ, d, d->as.variable_decl.is_mutable);
         free(raw);
@@ -135,6 +136,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
             size_t fclen = strlen(safe_module_path) + 1 + id->length + 1;
             cnamef = malloc(fclen);
             snprintf(cnamef, fclen, "%s_%s", safe_module_path, rawf);
+            for (char *p = cnamef; *p; p++) if (*p == '.') *p = '_';
         }
   
         sema_insert_global(rawf, cnamef, rt, d, false);
@@ -156,6 +158,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         size_t sclen = strlen(safe_module_path) + 1 + id->length + 1;
         char *cnames = malloc(sclen);
         snprintf(cnames, sclen, "%s_%s", safe_module_path, raws);
+        for (char *p = cnames; *p; p++) if (*p == '.') *p = '_';
   
         Type *sty = type_simple(sema_arena, id);
         sema_insert_global(raws, cnames, sty, d, false);
@@ -196,6 +199,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         if (max_rawt > 0) {
           snprintf(cnamet, sizeof(cnamet), "%s_%.*s", safe_module_path, (int)max_rawt,
                    rawt);
+          for (char *p = cnamet; *p; p++) if (*p == '.') *p = '_';
         } else {
           // module_path is too long; just truncate
           memcpy(cnamet, safe_module_path, sizeof(cnamet) - 1);
@@ -243,6 +247,7 @@ void sema_resolve_stmt(Stmt *s) {
     // fully qualified C name:
     char cname[256];
     sema_build_path(target, cname, sizeof(cname));
+    for (char *p = cname; *p; p++) if (*p == '.') *p = '_';
 
     if (!target->type) {
       fprintf(stderr, "sema error: use-target `%s` has no type\n", cname);

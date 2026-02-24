@@ -168,7 +168,14 @@ const char *c_name_for_id(Id *id) {
   buf[len] = '\0';
 
   Symbol *sym = sema_lookup(buf);
-  return sym ? sym->c_name : buf;
+  if (sym) {
+      return sym->c_name;
+  }
+  
+  for (int i = 0; i < len; i++) {
+      if (buf[i] == '.') buf[i] = '_';
+  }
+  return buf;
 }
 
 static bool is_primitive_type(Type *t) {
