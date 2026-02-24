@@ -448,34 +448,132 @@ La specifica non definisce la precedenza degli operatori. Qual è la precedenza 
 
 ## 📋 5. Roadmap Prioritizzata
 
-### Fase 0: Correzione Documentazione (URGENTE) ⚡
+### Fase 0: Correzione Documentazione ✅ COMPLETATA
 
 Allineare la specifica alla realtà del compilatore. **Non aggiungere feature, non fixare bug — solo documentare quello che c'è.**
 
-| # | Task | Tipo |
-|---|------|------|
-| 0.1 | Cambiare `match` → `case` in tutta la specifica (o aggiungere `match` al lexer) | Spec/Codice |
-| 0.2 | Documentare `bool` con `true`/`false` come tipo e keyword implementati | Spec |
-| 0.3 | Documentare `as` come operatore di cast implementato | Spec |
-| 0.4 | Documentare tipi `i32`, `i64`, `u32` come implementati in §3.1 | Spec |
-| 0.5 | Chiarire `func main()` vs `proc main()` — quale è corretto? | Spec/Design |
-| 0.6 | Chiarire `extern func` vs `extern proc` — semantica di purity | Spec/Design |
-| 0.7 | Documentare il meccanismo `-Dlibc_printf=printf` | Spec |
-| 0.8 | Documentare `return var` e la sua semantica | Spec |
-| 0.9 | Aggiungere sezione sull'operator precedence | Spec |
-| 0.10 | Documentare come `x = 10` si disambigua da assegnamento | Spec |
+| # | Task | Tipo | Stato |
+|---|------|------|-------|
+| 0.1 | Cambiare `match` → `case` in tutta la specifica | Spec | ✅ |
+| 0.2 | Documentare `bool` con `true`/`false` come tipo e keyword implementati | Spec | ✅ |
+| 0.3 | Documentare `as` come operatore di cast implementato (§8.6) | Spec | ✅ |
+| 0.4 | Documentare tipi `i8`–`i64`, `u8`–`u64`, `isize` in §3.1 | Spec | ✅ |
+| 0.5 | Chiarire `main` deve essere `proc` + nota IMPORTANT in §6.4 | Spec | ✅ |
+| 0.6 | Chiarire `extern func` vs `extern proc` — semantica in §6.5 | Spec | ✅ |
+| 0.7 | Documentare il meccanismo `-Dlibc_printf=printf` (§14.5) | Spec | ✅ |
+| 0.8 | Documentare `return var` / `return mov` in §5.7 | Spec | ✅ |
+| 0.9 | Aggiungere sezione operator precedence (§8.7, 12 livelli) | Spec | ✅ |
+| 0.10 | Documentare come `x = 10` si disambigua da assegnamento (§4.5) | Spec | ✅ |
 
-### Fase 1: Fix Critici (dalla precedente analisi, confermati)
+### Fase 1: Fix Critici ✅ COMPLETATA (parziale)
 
-| # | Task | Severità | Effort |
-|---|------|----------|--------|
-| 1.1 | Implementare block scoping (scope stack) | 🔴 | Medio |
-| 1.2 | Completare bounds check su accessi dinamici | 🔴 | Medio |
-| 1.3 | Completare linearity check su varianti ADT con dati `mov` | 🔴 | Medio |
-| 1.4 | Fix: globali immutabili trattati come mutabili | 🟠 | Basso |
-| 1.5 | Aggiungere line + file number in tutti gli error messages | 🟡 | Medio |
-| 1.6 | Enforce purity check: `func` non deve chiamare `proc` | 🟠 | Basso |
-| 1.7 | Enforce purity check: `while` vietato in `func` | 🟠 | Basso |
+| # | Task | Severità | Stato |
+|---|------|----------|-------|
+| 1.1 | Implementare block scoping (scope stack) | 🔴 | ✅ `scope.h` + `resolve.h` + `sema.h` |
+| 1.2 | Completare bounds check su accessi dinamici | 🔴 | ⏳ Deferito |
+| 1.3 | Completare linearity check su varianti ADT con dati `mov` | 🔴 | ✅ Già implementato (confermato `linearity.h:86-97`) |
+| 1.4 | Fix: globali immutabili trattati come mutabili | 🟠 | ✅ Già implementato (`resolve.h:419-428`) |
+| 1.5 | Aggiungere line + file in error messages | 🟡 | ⚠️ Parziale: purity/immutability OK, linearity no |
+| 1.6 | Enforce purity check: `func` non deve chiamare `proc` | 🟠 | ✅ Già implementato (`resolve.h:573-583`) |
+| 1.7 | Enforce purity check: `while` vietato in `func` | 🟠 | ✅ Implementato in `resolve.h` |
+
+### Pre-Fase 2: Fix Scoperti Durante Fase 1 ⚠️ NUOVA
+
+Durante l'implementazione della Fase 1 sono emersi **5 nuovi problemi** che devono essere affrontati prima di procedere con la Fase 2.
+
+---
+
+#### PF2.1 — Import System Non Preserva le Annotazioni `mov` (CRITICO)
+
+**Scoperta**: Il sistema di import (moduli inlining) **non preserva** le annotazioni di ownership ai call-site. Quando una funzione importata viene "inlinata", il corpo della funzione sostituisce la chiamata, ma le annotazioni `mov` degli argomenti al call-site vengono perse.
+
+**Esempio concreto**:
+```lain
+// In main():
+close_file(mov f)     // ← mov annotato dal programmatore
+
+// Dopo inlining, il linearity checker vede:
+fclose(f.handle)      // ← il 'mov' è perso; f.handle è un accesso a member, non un consumo
+```
+
+**Impatto**: È **impossibile** estendere il linearity checker a `proc` finché il sistema di import non preserva le annotazioni. Qualsiasi `proc` che chiama funzioni importate con parametri `mov` genererà false positive.
+
+**Fix necessario**: Modificare il sistema di import/inlining per:
+- Preservare i `DECL_FUNCTION`/`DECL_PROCEDURE` delle funzioni importate nella decl list, oppure
+- Non inlinare il corpo delle funzioni importate, ma risolvere solo i nomi, oppure
+- Aggiungere un pass che propaga le informazioni di ownership dai siti di chiamata ai parametri.
+
+**Severità**: 🔴 Bloccante per linearity su `proc`.
+
+---
+
+#### PF2.2 — Linearity Fallback Fragile per Funzioni Importate
+
+**Scoperta**: Quando il linearity checker non trova la dichiarazione di una funzione chiamata (perché proviene da un modulo importato), usa un **fallback euristico** per decidere se consumare gli argomenti.
+
+**Stato precedente**: Il fallback consumava QUALSIASI argomento con tipo `mov` → false positive su `write_file(f, content)` dove `f` è `mov File` ma il parametro è `var f File` (mutable borrow, non move).
+
+**Fix applicato**: Il fallback ora consuma solo:
+1. Argomenti esplicitamente wrappati in `EXPR_MOVE` (`mov x`)
+2. Argomenti a struct constructor calls con tipo lineare (`File(raw)`)
+
+**Rischio residuo**: Funzioni importate con parametri `mov` che vengono chiamate SENZA `mov` esplicito non saranno verificate. Il fix corretto è PF2.1 (preservare le decl importate).
+
+**Severità**: 🟠 Mitigato ma non risolto completamente.
+
+---
+
+#### PF2.3 — `close_file` in `std/fs.ln` Ha un Bug di Linearità
+
+**Scoperta**: La funzione `close_file` consuma il parametro `mov f File` solo in un branch:
+```lain
+proc close_file(mov f File) {
+    if f.handle != 0 {    // ← f consumato solo nel branch true
+        fclose(f.handle)
+    }                     // ← branch false: f non consumato → LEAK
+}
+```
+
+**Impatto**: Questo è un **bug reale di linearità** che il checker attuale non rileva (perché non gira su `proc`). Quando PF2.1 sarà risolto e il linearity checker esteso a `proc`, questo errore emergerà.
+
+**Fix**: Rimuovere il guard `if f.handle != 0` oppure aggiungere un `else` branch che consuma `f`. La versione corretta sarebbe: `fclose(f.handle)` direttamente, oppure un pattern safe con `else { drop(f) }` quando `drop` sarà implementato.
+
+**Severità**: 🟡 Non bloccante ora, ma emergerà in futuro.
+
+---
+
+#### PF2.4 — Test Files Usano `func main()` con I/O
+
+**Scoperta**: ~40 test files dichiarano `func main()` ma chiamano `libc_printf` (dichiarato come `extern func`, quindi non viola il purity check). Se `libc_printf` venisse correttamente dichiarato come `extern proc`, **tutti questi test fallirebbero** perché `func main()` non potrebbe chiamare un `proc`.
+
+**Stato attuale**: I test funzionano perché `libc_printf` è dichiarato `extern func` (trusted as pure), il che è **semanticamente falso** (printf ha side effects).
+
+**Fix necessario**: Decidere la policy:
+1. Mantenere `extern func libc_printf` come "trusted pure" (pragmatico, ignora la realtà)
+2. Cambiare tutti i test a `proc main()` e `extern proc libc_printf` (corretto ma massiccio)
+3. Rendere `main` implicitamente `proc` nel compilatore (suggerito)
+
+**Severità**: 🟡 Non bloccante, ma incoerente.
+
+---
+
+#### PF2.5 — Linearity Errors Senza Line/Col
+
+**Scoperta**: Gli errori emessi dal linearity checker (in `linearity.h`) non includono informazioni di riga e colonna:
+```
+sema error: linear variable 'w1' was not consumed before return.
+sema error: use of linear variable 'myitem' after it was moved
+```
+
+Questo perché `LEntry` non memorizza la posizione sorgente della variabile. Gli errori di purity e immutabilità invece includono già `Ln`/`Col`:
+```
+Error Ln 8, Col 6: 'while' loops are not allowed in pure function 'loop_forever'.
+Error Ln 3, Col 2: Cannot assign to immutable variable 'x'
+```
+
+**Fix necessario**: Aggiungere campi `isize line, col;` a `LEntry` in `linearity.h`, popolarli da `Stmt->line`/`Stmt->col` quando si registra la variabile, e usarli nei messaggi di errore.
+
+**Severità**: 🟡 Quality-of-life, non bloccante.
 
 ### Fase 2: Test Coverage
 
