@@ -24,7 +24,11 @@ func new_lexer(source u8[:0]) Lexer {
     return Lexer(source, 0, 1, 1)
 }
 
-func main() int {
+func lex(lexer Lexer) Token {
+    
+}
+
+proc main() int {
 
     return 0
 }
