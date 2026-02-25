@@ -128,23 +128,16 @@ _Bool Lain_1_src_main_is_alnum(int c) {
     return (Lain_1_src_main_is_alpha(c) || Lain_1_src_main_is_digit(c));
 }
 
-void Lain_1_src_main_advance(Lain_1_src_main_Lexer * l) {
-    if ((l->pos < l->src.len)) {
-        int c = ((int)(l->src.data[l->pos]));
-        l->pos = (l->pos + 1);
-        l->col = (l->col + 1);
-        if ((c == '\n')) {
-            l->row = (l->row + 1);
-            l->col = 1;
-        }
-    }
-}
-
 void Lain_1_src_main_skip_space(Lain_1_src_main_Lexer * l) {
     while ((l->pos < l->src.len)) {
         int c = ((int)(l->src.data[l->pos]));
         if (((((c == ' ') || (c == '\t')) || (c == '\r')) || (c == '\n'))) {
-            Lain_1_src_main_advance(l);
+            l->pos = (l->pos + 1);
+            l->col = (l->col + 1);
+            if ((c == '\n')) {
+                l->row = (l->row + 1);
+                l->col = 1;
+            }
         } else {
             break;
         }
@@ -158,7 +151,8 @@ Lain_1_src_main_Token Lain_1_src_main_next_token(Lain_1_src_main_Lexer * l) {
     }
     int start = l->pos;
     int c = ((int)(l->src.data[l->pos]));
-    Lain_1_src_main_advance(l);
+    l->pos = (l->pos + 1);
+    l->col = (l->col + 1);
     Lain_1_src_main_TokenKind kind = Lain_1_src_main_TokenKind_Error();
     int __match0 = c;
     if (__match0 == '+') {
@@ -200,7 +194,8 @@ Lain_1_src_main_Token Lain_1_src_main_next_token(Lain_1_src_main_Lexer * l) {
     else if (__match0 == '"') {
         while ((l->pos < l->src.len)) {
             int nc = ((int)(l->src.data[l->pos]));
-            Lain_1_src_main_advance(l);
+            l->pos = (l->pos + 1);
+            l->col = (l->col + 1);
             if ((nc == '"')) {
                 break;
             }
@@ -209,21 +204,15 @@ Lain_1_src_main_Token Lain_1_src_main_next_token(Lain_1_src_main_Lexer * l) {
     }
     else {
         if (Lain_1_src_main_is_alpha(c)) {
-            while ((l->pos < l->src.len)) {
-                if (Lain_1_src_main_is_alnum(((int)(l->src.data[l->pos])))) {
-                    Lain_1_src_main_advance(l);
-                } else {
-                    break;
-                }
+            while (((l->pos < l->src.len) && Lain_1_src_main_is_alnum(((int)(l->src.data[l->pos]))))) {
+                l->pos = (l->pos + 1);
+                l->col = (l->col + 1);
             }
             kind = Lain_1_src_main_TokenKind_Id();
         } else         if (Lain_1_src_main_is_digit(c)) {
-            while ((l->pos < l->src.len)) {
-                if (Lain_1_src_main_is_digit(((int)(l->src.data[l->pos])))) {
-                    Lain_1_src_main_advance(l);
-                } else {
-                    break;
-                }
+            while (((l->pos < l->src.len) && Lain_1_src_main_is_digit(((int)(l->src.data[l->pos]))))) {
+                l->pos = (l->pos + 1);
+                l->col = (l->col + 1);
             }
             kind = Lain_1_src_main_TokenKind_Num();
         }
