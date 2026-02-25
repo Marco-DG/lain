@@ -403,7 +403,9 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     sema_infer_expr(s->as.match_stmt.value);
                     for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
                         sema_push_scope();
-                        if (c->pattern) sema_infer_expr(c->pattern);
+                        for (ExprList *p = c->patterns; p; p = p->next) {
+                            sema_infer_expr(p->expr);
+                        }
                         for (StmtList *b = c->body; b; b = b->next)
                             walk_stmt(b->stmt);
                         sema_pop_scope();

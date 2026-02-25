@@ -517,6 +517,33 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         sema_check_expr_linearity(e->as.unary_expr.right, tbl, loop_depth);
         break;
 
+    case EXPR_MATCH: {
+        if (e->as.match_expr.value) {
+            sema_check_expr_linearity(e->as.match_expr.value, tbl, loop_depth);
+            if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
+        }
+        LTable *parent_snapshot = ltable_clone(tbl);
+        LTable *first_branch = NULL;
+        for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
+            LTable *branch_tbl = ltable_clone(parent_snapshot);
+            
+            for (ExprList *p = c->patterns; p; p = p->next) {
+                sema_check_expr_linearity(p->expr, branch_tbl, loop_depth);
+            }
+            sema_check_expr_linearity(c->body, branch_tbl, loop_depth);
+            
+            if (!first_branch) first_branch = ltable_clone(branch_tbl);
+            else ltable_check_branch_consistency(parent_snapshot, first_branch, branch_tbl, "match expr");
+            ltable_free(branch_tbl);
+        }
+        if (first_branch) {
+            ltable_merge_from_branch(tbl, first_branch);
+            ltable_free(first_branch);
+        }
+        ltable_free(parent_snapshot);
+        break;
+    }
+
     case EXPR_BINARY:
         sema_check_expr_linearity(e->as.binary_expr.left, tbl, loop_depth);
         sema_check_expr_linearity(e->as.binary_expr.right, tbl, loop_depth);
@@ -673,7 +700,9 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             LEntry *saved_head = branch_tbl->head;
             if (branch_tbl->borrows) borrow_enter_scope(branch_tbl->arena, branch_tbl->borrows);
             
-            if (c->pattern) sema_check_expr_linearity(c->pattern, branch_tbl, loop_depth);
+            for (ExprList *p = c->patterns; p; p = p->next) {
+                sema_check_expr_linearity(p->expr, branch_tbl, loop_depth);
+            }
             for (StmtList *b = c->body; b; b = b->next) {
                 sema_check_stmt_linearity_with_table(b->stmt, branch_tbl, loop_depth);
             }

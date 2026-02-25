@@ -472,8 +472,9 @@ void sema_resolve_stmt(Stmt *s) {
     sema_resolve_expr(s->as.match_stmt.value);
     for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
       sema_push_scope();
-      if (c->pattern)
-        sema_resolve_expr(c->pattern);
+      for (ExprList *p = c->patterns; p; p = p->next) {
+        sema_resolve_expr(p->expr);
+      }
       for (StmtList *b = c->body; b; b = b->next) {
         sema_resolve_stmt(b->stmt);
       }
@@ -657,6 +658,16 @@ void sema_resolve_expr(Expr *e) {
 
   case EXPR_CAST:
     sema_resolve_expr(e->as.cast_expr.expr);
+    break;
+
+  case EXPR_MATCH:
+    sema_resolve_expr(e->as.match_expr.value);
+    for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
+        for (ExprList *p = c->patterns; p; p = p->next) {
+            sema_resolve_expr(p->expr);
+        }
+        sema_resolve_expr(c->body);
+    }
     break;
 
   default:

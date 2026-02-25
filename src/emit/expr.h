@@ -480,6 +480,107 @@ void emit_expr(Expr *expr, int depth) {
     break;
   }
 
+  case EXPR_MATCH: {
+    char scrut_c_ty[128];
+    c_name_for_type(expr->as.match_expr.value->type, scrut_c_ty, sizeof(scrut_c_ty));
+
+    char res_c_ty[128];
+    c_name_for_type(expr->type, res_c_ty, sizeof(res_c_ty));
+    
+    static int __expr_match_cnt = 0;
+    int __match_id = __expr_match_cnt++;
+    
+    EMIT("({\n");
+    emit_indent(depth + 1);
+    EMIT("%s __match%d = ", scrut_c_ty, __match_id);
+    emit_expr(expr->as.match_expr.value, depth + 1);
+    EMIT(";\n");
+    
+    emit_indent(depth + 1);
+    EMIT("%s __result%d;\n", res_c_ty, __match_id);
+
+    Type *scrut_type = sema_unwrap_type(expr->as.match_expr.value->type);
+    
+    bool first_clause = true;
+    for (ExprMatchCase *c = expr->as.match_expr.cases; c; c = c->next) {
+        emit_indent(depth + 1);
+        if (c->patterns) {
+            EMIT(first_clause ? "if (" : "else if (");
+            bool first_cond = true;
+            for (ExprList *p = c->patterns; p; p = p->next) {
+                if (!first_cond) EMIT(" || ");
+                first_cond = false;
+
+                switch (p->expr->kind) {
+                  case EXPR_STRING: {
+                    int L = (int)p->expr->as.string_expr.length;
+                    const unsigned char *S = (const unsigned char*)p->expr->as.string_expr.value;
+                    if (L == 1 && scrut_type && scrut_type->kind == TYPE_SIMPLE) {
+                      EMIT("__match%d == '%c'", __match_id, S[0]);
+                    } else {
+                      EMIT("__match%d.len == %d && "
+                           "memcmp(__match%d.data, \"%.*s\", %d) == 0",
+                           __match_id, L, __match_id, L, S, L);
+                    }
+                    break;
+                   }
+                  case EXPR_CHAR: {
+                    EMIT("__match%d == ", __match_id);
+                    emit_expr(p->expr, depth);
+                    break;
+                  }
+                  case EXPR_RANGE: {
+                    char lo = p->expr->as.range_expr.start->as.char_expr.value;
+                    char hi = p->expr->as.range_expr.end->as.char_expr.value;
+                    EMIT("(__match%d >= '%c' && __match%d <= '%c')", __match_id, lo,
+                         __match_id, hi);
+                    break;
+                  }
+                  case EXPR_CALL: {
+                      EMIT("(__match%d.tag == ", __match_id);
+                      emit_expr(p->expr->as.call_expr.callee, depth + 1);
+                      EMIT(")");
+                      break;
+                  }
+                  case EXPR_IDENTIFIER: {
+                      if (p->expr->is_global && p->expr->decl && p->expr->decl->kind == DECL_ENUM) {
+                          EMIT("__match%d.tag == ", __match_id);
+                          emit_expr(p->expr, depth);
+                          break;
+                      }
+                      EMIT("__match%d == ", __match_id);
+                      emit_expr(p->expr, depth);
+                      break;
+                  }
+                  default: {
+                    EMIT("__match%d == ", __match_id);
+                    emit_expr(p->expr, depth);
+                    break;
+                  }
+                }
+            }
+            EMIT(") {\n");
+        } else {
+            EMIT(first_clause ? "if (1) {\n" : "else {\n");
+        }
+        
+        emit_indent(depth + 2);
+        EMIT("__result%d = ", __match_id);
+        emit_expr(c->body, depth + 2);
+        EMIT(";\n");
+        
+        emit_indent(depth + 1);
+        EMIT("}\n");
+        first_clause = false;
+    }
+    
+    emit_indent(depth + 1);
+    EMIT("__result%d;\n", __match_id);
+    emit_indent(depth);
+    EMIT("})");
+    break;
+  }
+
   default:
     EMIT("/* unhandled expression type */");
     break;

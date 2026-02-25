@@ -177,6 +177,31 @@ void expr_print_ast(Expr *expr, int depth) {
             expr_print_ast(expr->as.cast_expr.expr, depth+2);
             break;
 
+        case EXPR_MATCH:
+            printf("Match Expression:\n");
+            indent(depth+1);
+            printf("Scrutinee:\n");
+            expr_print_ast(expr->as.match_expr.value, depth+2);
+            
+            ExprMatchCase *mc = expr->as.match_expr.cases;
+            int mcase_idx = 0;
+            while (mc) {
+                indent(depth+1);
+                if (mc->patterns) {
+                    printf("Case %d Patterns:\n", mcase_idx++);
+                    for (ExprList *p = mc->patterns; p; p = p->next) {
+                        expr_print_ast(p->expr, depth+2);
+                    }
+                } else {
+                    printf("Case %d Else:\n", mcase_idx++);
+                }
+                indent(depth+1);
+                printf("Body:\n");
+                expr_print_ast(mc->body, depth+2);
+                mc = mc->next;
+            }
+            break;
+
         default:
             printf("/* Unhandled expression type %d */\n", expr->kind);
             break;
@@ -290,9 +315,11 @@ void stmt_print_ast(Stmt *stmt, int depth) {
         while (c) {
             // Header for this case
             indent(depth+1);
-            if (c->pattern) {
-                printf("Case %d Pattern:\n", case_idx++);
-                expr_print_ast(c->pattern, depth+2);
+            if (c->patterns) {
+                printf("Case %d Patterns:\n", case_idx++);
+                for (ExprList *p = c->patterns; p; p = p->next) {
+                    expr_print_ast(p->expr, depth+2);
+                }
             } else {
                 printf("Case %d Else:\n", case_idx++);
             }

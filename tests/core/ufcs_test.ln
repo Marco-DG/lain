@@ -1,0 +1,26 @@
+// Tests Universal Function Call Syntax (UFCS)
+
+type Counter {
+    val int
+}
+
+proc increment(var c Counter, amount int) {
+    c.val = c.val + amount
+}
+
+func get_val(c Counter) int {
+    return c.val
+}
+
+proc main() int {
+    var my_counter = Counter(10)
+    
+    // Test UFCS passing var implictly
+    my_counter.increment(5)
+    
+    // Test UFCS passing shared implicitly
+    var final_val = my_counter.get_val()
+    
+    // Should be 15
+    return final_val
+}
