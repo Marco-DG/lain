@@ -62,7 +62,7 @@ echo "=== Running Positive Tests ==="
 # Find all .ln files that do NOT contain "_fail" in their name
 # Sort them for consistency
 # Using process substitution or simply listing files to avoid subshell exit issue
-for test_file in $(find tests -name "*.ln" ! -name "*_fail*" ! -name "syntax_check.ln" | sort); do
+for test_file in $(find tests -name "*.ln" ! -name "*_fail*" | sort); do
     run_test "$test_file"
 done
 

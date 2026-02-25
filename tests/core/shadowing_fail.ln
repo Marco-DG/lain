@@ -1,0 +1,7 @@
+// Test: Shadowing in the *same* scope should fail
+
+proc main() int {
+    var x = 10
+    var x = 20  // error: redeclaration
+    return 0
+}

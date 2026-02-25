@@ -306,6 +306,11 @@ void sema_resolve_stmt(Stmt *s) {
     memcpy(raw, id->name, L);
     raw[L] = '\0';
 
+    if (sema_lookup(raw)) {
+        fprintf(stderr, "Error Ln %li, Col %li: Redeclaration or shadowing of variable '%s' is forbidden\n", s->line, s->col, raw);
+        exit(1);
+    }
+
     const char *cname = raw;
     sema_insert_local(raw, cname, ty, NULL, s->as.var_stmt.is_mutable);
     break;
@@ -453,6 +458,14 @@ void sema_resolve_stmt(Stmt *s) {
 
   case STMT_RETURN:
     sema_resolve_expr(s->as.return_stmt.value);
+    // Ban returning mutable reference to local variables
+    if (s->as.return_stmt.value && s->as.return_stmt.value->kind == EXPR_MUT) {
+        Expr *inner = s->as.return_stmt.value->as.mut_expr.expr;
+        if (inner->kind == EXPR_IDENTIFIER && !inner->is_global) {
+            fprintf(stderr, "Error Ln %li, Col %li: Returning a mutable reference ('var') to a local variable is forbidden (dangling pointer)\n", s->line, s->col);
+            exit(1);
+        }
+    }
     break;
 
   case STMT_MATCH:
