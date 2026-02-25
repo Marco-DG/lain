@@ -1,3 +1,39 @@
+type Token.Kind {
+    EOF, Error, Identifier, Number, String,
+    Plus, Minus, Star, Slash, Equal,
+    LParen, RParen, LBrace, RBrace,
+    Comma, Colon, Semicolon
+}
+
+type Token {
+    kind   Token.Kind
+    lexeme u8[]
+}
+
+type Lexer {
+    source u8[:0]
+    cursor u8
+    line   int
+    col    int
+}
+
+func new_lexer(source u8[:0]) Lexer {
+    return Lexer(source, 0, 1, 1)
+}
+
+func lex(lexer Lexer) Token {
+    
+}
+
+proc main() int {
+
+    return 0
+}
+
+
+
+
+
 type Kind {
     Plus
     Minus

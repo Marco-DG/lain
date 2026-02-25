@@ -1,34 +1,28 @@
-type Token.Kind {
-    EOF
-    Error
-    Identifier
-    Number
-    String
-    Plus
-    Minus
-}
+// Main testing file for Lexer
 
-type Token {
-    kind   Token.Kind
-    lexeme u8[]
-}
-
-type Lexer {
-    source u8[:0]
-    cursor u8
-    line   int
-    col    int
-}
-
-func new_lexer(source u8[:0]) Lexer {
-    return Lexer(source, 0, 1, 1)
-}
-
-func lex(lexer Lexer) Token {
-    
-}
+import Lain_1.src.lexer
+import std.c
 
 proc main() int {
-
+    var source u8[:0] = "var count = 100; if count { print(count) }"
+    var lex = init_lexer(source)
+    
+    libc_printf("---- Lexer Bootstrap Test ----\n")
+    libc_printf("Source:\n%s\n\n", source.data)
+    
+    while true {
+        var t = next_token(lex)
+        
+        libc_printf("Token[%2d] | Lexeme: '%.*s'\n", t.kind, t.lexeme.len, t.lexeme.data)
+        
+        case t.kind {
+            EOF: break
+            Error: 
+                libc_printf("Lexer error encountered.\n")
+                break
+            else: 0
+        }
+    }
+    
     return 0
 }

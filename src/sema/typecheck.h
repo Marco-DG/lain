@@ -573,7 +573,11 @@ void sema_infer_expr(Expr *e) {
     }
 
     if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
-        e->type = t->element_type;
+        if (e->as.index_expr.index->kind == EXPR_RANGE) {
+            e->type = type_array(sema_arena, t->element_type, -1);
+        } else {
+            e->type = t->element_type;
+        }
         // STATIC BOUNDS CHECK
         if (sema_ranges) {
             sema_check_bounds(sema_ranges, e->as.index_expr.index, t);
