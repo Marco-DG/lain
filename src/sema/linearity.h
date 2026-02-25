@@ -437,8 +437,9 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     if (arg->kind == EXPR_MOVE) {
                         DBG("EXPR_CALL: '%.*s' already consumed by EXPR_MOVE", (int)owner_id->length, owner_id->name);
                     } else {
-                        DBG("EXPR_CALL: consuming '%.*s' (MODE_OWNED)", (int)owner_id->length, owner_id->name);
-                        ltable_consume(tbl, owner_id, loop_depth);
+                        fprintf(stderr, "Error Ln %li, Col %li: moving linear variable '%.*s' requires explicit 'mov' at the call site.\n",
+                                (long)(e->line), (long)(e->col), (int)owner_id->length, owner_id->name);
+                        exit(1);
                     }
                     // Invalidate any previous borrows of this owner
                     if (tbl->borrows) {

@@ -10,6 +10,7 @@ typedef enum {
     TOKEN_NEWLINE,
     TOKEN_IDENTIFIER,
     TOKEN_NUMBER,
+    TOKEN_FLOAT_LITERAL,
     TOKEN_CHAR_LITERAL,
     TOKEN_STRING_LITERAL,
     TOKEN_L_PAREN,
@@ -155,6 +156,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_NEWLINE:                     return "TOKEN_NEWLINE";
         case TOKEN_IDENTIFIER:                  return "TOKEN_IDENTIFIER";
         case TOKEN_NUMBER:                      return "TOKEN_NUMBER";
+        case TOKEN_FLOAT_LITERAL:               return "TOKEN_FLOAT_LITERAL";
         case TOKEN_STRING_LITERAL:              return "TOKEN_STRING_LITERAL";
         case TOKEN_CHAR_LITERAL:                return "TOKEN_CHAR_LITERAL";
         case TOKEN_L_PAREN:                     return "TOKEN_L_PAREN";
@@ -236,6 +238,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_NEWLINE:                     return "TOKEN_NEWLINE";
         case TOKEN_IDENTIFIER:                  return "TOKEN_IDENTIFIER";
         case TOKEN_NUMBER:                      return "TOKEN_NUMBER";
+        case TOKEN_FLOAT_LITERAL:               return "TOKEN_FLOAT_LITERAL";
         case TOKEN_CHAR_LITERAL:                return "TOKEN_CHAR_LITERAL";
         case TOKEN_STRING_LITERAL:              return "TOKEN_STRING_LITERAL";
         case TOKEN_L_PAREN:                     return "(";

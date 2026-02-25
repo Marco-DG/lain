@@ -18,6 +18,10 @@ proc main() int {
     var xor_result = a ^ b    // 0b0110 = 6
     libc_printf("12 ^ 10 = %d\n", xor_result)
     
+    // Bitwise NOT
+    var not_result = ~a       // bitwise invert
+    libc_printf("~12 = %d\n", not_result)
+    
     return 0
 }
 

@@ -80,6 +80,9 @@ void expr_print_ast(Expr *expr, int depth) {
         case EXPR_LITERAL:
             printf("Literal: %d\n", expr->as.literal_expr.value);
             break;
+        case EXPR_FLOAT_LITERAL:
+            printf("Float Literal: %.17g\n", expr->as.float_expr.value);
+            break;
         case EXPR_CHAR:
             printf("Char Literal: '%c'\n", expr->as.char_expr.value);
             break;

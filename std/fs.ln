@@ -10,7 +10,7 @@ proc open_file(path u8[:0], mode u8[:0]) mov File {
 }
 
 proc close_file(mov {handle} File) {
-    fclose(handle)
+    fclose(mov handle)
 }
 
 proc write_file(f File, s u8[:0]) {

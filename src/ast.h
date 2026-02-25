@@ -301,6 +301,7 @@ typedef enum {
     EXPR_MOVE,
     EXPR_MUT, // New
     EXPR_CAST, // x as Type
+    EXPR_FLOAT_LITERAL,
 } ExprKind;
 
 typedef struct {
@@ -362,6 +363,10 @@ typedef struct {
 } ExprChar;
 
 typedef struct {
+    double value;
+} ExprFloat;
+
+typedef struct {
     Expr *target;   // e.g. the `text`
     Expr *index;    // e.g. the `start..cursor` (an ExprRange)
 } ExprIndex;
@@ -384,6 +389,7 @@ typedef struct Expr {
         ExprMove        move_expr;
         ExprMut         mut_expr; // New
         ExprCast        cast_expr;
+        ExprFloat       float_expr;
     } as;
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
@@ -768,6 +774,13 @@ Expr *expr_literal(Arena *arena, int value) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_LITERAL;
     e->as.literal_expr.value = value;
+    return e;
+}
+
+Expr *expr_float_literal(Arena *arena, double value) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_FLOAT_LITERAL;
+    e->as.float_expr.value = value;
     return e;
 }
 

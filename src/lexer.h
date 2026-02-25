@@ -114,6 +114,19 @@ Token lexer_next(Lexer* lexer) {
             case STATE_NUMBER:
                 switch (c) {
                     case '0' ... '9':   break;
+                    case '.': {
+                        // Check if this is a range operator (..) or a float decimal point
+                        if (*lexer->current == '.') {
+                            // It's '..' (range), backtrack the dot
+                            lexer->current--;
+                            RETURN_TOKEN(TOKEN_NUMBER);
+                        }
+                        // It's a decimal point, scan fractional digits
+                        while (*lexer->current >= '0' && *lexer->current <= '9') {
+                            lexer->current++;
+                        }
+                        RETURN_TOKEN(TOKEN_FLOAT_LITERAL);
+                    }
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_NUMBER);
                 }

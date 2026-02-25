@@ -1,0 +1,14 @@
+// Test: forgot_close_fail.ln
+// Description: Tests that a linear variable triggers an error if not consumed before scope exit.
+
+import std.fs
+
+proc main() int {
+    var path = "test.txt"
+    var mode = "w"
+    var f = open_file(path, mode)
+    
+    // Forgot to call close_file(mov f)
+    
+    return 0
+}

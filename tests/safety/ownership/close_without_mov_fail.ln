@@ -1,0 +1,16 @@
+// Test: close_without_mov_fail.ln
+// Description: Should fail because variable 'f' is not declared linearly, 
+// so you cannot invoke functions that consume it (if close_file expects mut/mov).
+
+import std.fs
+
+proc main() int {
+    var path = "test.txt"
+    var mode = "w"
+    var f = open_file(path, mode)
+    
+    // Missing mov
+    close_file(f) 
+    
+    return 0
+}
