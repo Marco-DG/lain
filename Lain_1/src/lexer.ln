@@ -1,7 +1,5 @@
-// Self-hosted Lexer for Lain
-
 type TokenKind {
-    EOF, Error, Id, Num, Str, Plus, Minus, Star, Slash, Eq, 
+    EOFError, Id, Num, Str, Plus, Minus, Star, Slash, Eq, 
     LParen, RParen, LBrace, RBrace, Comma, Colon, Semi
 }
 
