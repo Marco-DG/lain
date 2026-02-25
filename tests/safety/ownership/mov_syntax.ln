@@ -6,7 +6,7 @@ func take_ownership(mov f Foo) Foo {
     return mov f
 }
 
-func main() int {
+proc main() int {
     // Test implicit immutable declaration (not supported for structs without literals, use var)
     // f = Foo{ x: 42 } -> Revert to var
     var f Foo

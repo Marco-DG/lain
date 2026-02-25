@@ -5,7 +5,7 @@ func get(arr int[10], i int in arr) int {
     return arr[i]
 }
 
-func main() int {
+proc main() int {
     var arr int[10]
     
     var x = get(arr, 15)  // ERROR: 15 is not in [0, 10)

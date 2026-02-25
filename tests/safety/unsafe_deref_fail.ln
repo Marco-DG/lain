@@ -1,7 +1,7 @@
 // tests/safety/unsafe_fail_deref.ln
 // Test that pointer dereferencing fails outside unsafe blocks
 
-func main() {
+proc main() {
     var p *int = 0
     var x int = *p// Should fail here
 }

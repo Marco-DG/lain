@@ -6,7 +6,7 @@ extern func exit(status int)
 // Also test stdlib which uses extern
 import std.io
 
-func main() int {
+proc main() int {
     println("Testing extern keyword...")
 
     // Test abs

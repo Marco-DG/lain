@@ -1,7 +1,7 @@
 // 00_immutability.ln
 // Tests that default bindings are immutable.
 
-func main() int {
+proc main() int {
     x = 10
     // x = 20      // ERROR: Cannot assign to immutable variable
     

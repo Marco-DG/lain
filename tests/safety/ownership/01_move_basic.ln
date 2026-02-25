@@ -19,7 +19,7 @@ func consume(mov r Resource) {
     drop(mov r)
 }
 
-func main() int {
+proc main() int {
     var a Resource
     a.id = 1
     var b = mov a    // Move a -> b

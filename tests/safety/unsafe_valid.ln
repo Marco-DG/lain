@@ -3,7 +3,7 @@
 
 
 
-func main() {
+proc main() {
     var ptr *int = 0// null pointer representation, or use malloc
 
     unsafe {

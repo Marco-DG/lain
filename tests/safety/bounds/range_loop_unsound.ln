@@ -2,7 +2,7 @@ func require_one(x int == 1) int {
     return 0
 }
 
-func main() int {
+proc main() int {
     var x = 0
     for i in 0..10 {
         x = x + 1

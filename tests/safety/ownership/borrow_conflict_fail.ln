@@ -14,7 +14,7 @@ func modify_both(d1 Data, var d2 Data) int {
     return d1.value
 }
 
-func main() int {
+proc main() int {
     var data Data
     data.value = 42
     

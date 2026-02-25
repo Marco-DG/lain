@@ -5,7 +5,7 @@ func bad_abs(x int) int >= 0 {
     return -1  // ERROR: -1 does not satisfy >= 0
 }
 
-func main() int {
+proc main() int {
     var a = bad_abs(5)
     return 0
 }

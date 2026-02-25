@@ -225,6 +225,8 @@ DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant
 
             /* Create the Decl for this field */
             Decl *var_decl = decl_variable(arena, name, field_type);
+            var_decl->line = parser->line;
+            var_decl->col = parser->column;
 
             /* --- NEW: optional `in <identifier>` annotation --- */
             if (parser_match(TOKEN_KEYWORD_IN)) {
@@ -263,6 +265,8 @@ DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant
                     
                     Type *ftype = parse_type(arena, parser);
                     Decl *fdecl = decl_variable(arena, fname, ftype);
+                    fdecl->line = parser->line;
+                    fdecl->col = parser->column;
                     
                     *vfields_tail = decl_list(arena, fdecl);
                     vfields_tail = &(*vfields_tail)->next;
@@ -354,15 +358,21 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
     }
 }
 
-// var <name> <type>
+    // var <name> <type>
 Decl *parse_var_decl(Arena* arena, Parser* parser)
 {
+    isize line = parser->line;
+    isize col = parser->column;
+    
     parser_expect(TOKEN_IDENTIFIER, "Expected variable name");
     Id *var_name = id(arena, parser->token.length, parser->token.start);
     parser_advance();
 
     Type *var_type = parse_type(arena, parser);
-    return decl_variable(arena, var_name, var_type);
+    Decl *d = decl_variable(arena, var_name, var_type);
+    d->line = line;
+    d->col = col;
+    return d;
 }
 
 // func <name>(<params>) <return_type> { <body> }
@@ -437,9 +447,11 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 
                 *tail = decl_list(arena, pdecl);
                 tail  = &(*tail)->next;
-                
             } else {
                 // Normal parameter: [var|mov] name Type
+                isize param_line = parser->line;
+                isize param_col = parser->column;
+                
                 parser_expect(TOKEN_IDENTIFIER, "Expected parameter name");
                 Id *pname = id(arena, parser->token.length, parser->token.start);
                 parser_advance();
@@ -453,6 +465,8 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 if (is_comptime) ptype = type_comptime(arena, ptype);
 
                 pdecl = decl_variable(arena, pname, ptype);
+                pdecl->line = param_line;
+                pdecl->col = param_col;
                 pdecl->as.variable_decl.is_parameter = true;
             // ... (constraints check continues below) ...
 
@@ -651,6 +665,8 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
             }
 
             // parameter name
+            isize param_line = parser->line;
+            isize param_col = parser->column;
             parser_expect(TOKEN_IDENTIFIER, "Expected parameter name");
             Id *pname = id(arena, parser->token.length, parser->token.start);
             parser_advance();
@@ -659,6 +675,8 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
             Type *ptype = parse_type(arena, parser);
 
             Decl *pdecl = decl_variable(arena, pname, ptype);
+            pdecl->line = param_line;
+            pdecl->col = param_col;
             pdecl->as.variable_decl.is_parameter = true;
             *tail = decl_list(arena, pdecl);
             tail = &(*tail)->next;

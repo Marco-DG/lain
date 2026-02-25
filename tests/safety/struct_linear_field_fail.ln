@@ -6,7 +6,7 @@ type Wrapper {
     h Handle
 }
 
-func main() int {
+proc main() int {
     var p *int = 0
     // Test 1: Direct linear struct
     var h1 = Handle(p)

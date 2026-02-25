@@ -66,6 +66,9 @@ src_main_Lexer src_main_new_lexer(Slice_u8_0 source) {
     return src_main_Lexer_ctor(source, 0, 1, 1);
 }
 
+src_main_Token src_main_lex(const src_main_Lexer* lexer) {
+}
+
 int main(void) {
     return 0;
 }

@@ -5,6 +5,6 @@ func factorial(n int) int {
     return n * factorial(n - 1) // ERROR: Recursion not allowed in pure function
 }
 
-func main() int {
+proc main() int {
     return factorial(5)
 }

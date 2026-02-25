@@ -23,7 +23,7 @@ func mutate_point(var p Point) {
     p.y = p.y + 1
 }
 
-func main() int {
+proc main() int {
     var p1 Point
     p1.x = 10
     p1.y = 20

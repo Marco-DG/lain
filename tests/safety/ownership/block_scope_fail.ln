@@ -1,0 +1,9 @@
+// Block Scoping Test
+// Verifies that linear variables inside blocks are tracked correctly and reported if they leak
+
+func test_block() {
+    if 1 == 1 {
+        mov x File = open_file("test.txt")
+        // No close_file(x) -> Should trigger linearity error at the end of the block
+    }
+}

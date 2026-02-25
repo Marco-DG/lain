@@ -13,6 +13,6 @@ func pure_function() int {
     return 0
 }
 
-func main() int {
+proc main() int {
     return pure_function()
 }

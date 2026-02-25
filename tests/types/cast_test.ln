@@ -1,8 +1,8 @@
 // Test: cast operator (as)
 
-extern func libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
-func main() int {
+proc main() int {
     var x i32 = 1000
     var y = x as u8
     

@@ -10,7 +10,7 @@ func takes_sentinel_string(s u8[:0]) {
     libc_printf(fmt2.data, s.data)
 }
 
-func main() int {
+proc main() int {
     var literal = "Hello Sentinel"
     takes_sentinel_string(literal)
     

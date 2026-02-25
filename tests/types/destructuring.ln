@@ -1,11 +1,11 @@
-extern func libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
 type Point {
     x u8
     y u8
 }
 
-func main() int {
+proc main() int {
     var p = Point(10, 20)
     
     // Test manual destructuring / access

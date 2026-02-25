@@ -1,6 +1,6 @@
 import std.io
 
-func main() int {
+proc main() int {
     println("Hello World!")
     print("Partial line... ")
     println("Done.")

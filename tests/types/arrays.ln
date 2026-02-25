@@ -1,6 +1,6 @@
-extern func libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
-func main() int {
+proc main() int {
     var arr u8[5]
     arr[0] = 10
     arr[1] = 20

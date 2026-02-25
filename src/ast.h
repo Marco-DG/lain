@@ -181,6 +181,8 @@ typedef struct Decl {
         DeclDestruct    destruct_decl;
         DeclExternType  extern_type_decl;
     } as;
+    isize line;  // NEW
+    isize col;   // NEW
 } Decl;
 
 /*──────────────────────────────────────────────────────────────────╗

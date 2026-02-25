@@ -1,6 +1,6 @@
-extern func libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
-func main() int {
+proc main() int {
     var a = 10
     var b = 3
     libc_printf("10 + 3 = %d\n", a + b)

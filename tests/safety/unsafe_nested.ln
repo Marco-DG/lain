@@ -1,7 +1,7 @@
 // tests/safety/unsafe_nested.ln
 // Test that unsafe blocks can be nested and work inside other structures.
 
-func main() {
+proc main() {
     var p *int = 0
     
     // 1. Nested unsafe
