@@ -210,7 +210,7 @@ var radius f32 = 5
 ```
 
 > [!NOTE]
-> Floating-point literal syntax (e.g., `3.14`) is planned but not yet implemented. Currently, integer literals are implicitly converted when assigned to `f32`/`f64` variables.
+> Floating-point literals (e.g., `3.14`) are fully supported. When assigning numeric literals to `f32` or `f64` variables, explicit type annotations are recommended, although implicit conversion between integers and floating numbers happens natively.
 
 **Boolean:**
 
