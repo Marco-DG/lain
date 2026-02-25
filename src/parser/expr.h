@@ -92,6 +92,69 @@ Expr *parse_unary_expr(Arena* arena, Parser* parser)
 // literals, identifiers, and parenthesized expressions
 Expr *parse_primary_expr(Arena* arena, Parser* parser)
 {
+    // EXPR_MATCH (case expression)
+    if (parser_match(TOKEN_KEYWORD_CASE)) {
+        parser_advance();
+        Expr *value = parse_expr(arena, parser);
+        
+        parser_expect(TOKEN_L_BRACE, "Expected '{' after case expression");
+        parser_advance();
+        parser_skip_eol();
+
+        ExprMatchCase *first = NULL, **tail = &first;
+        ExprList *current_patterns = NULL, **pat_tail = &current_patterns;
+        int pending_count = 0;
+
+        while (!parser_match(TOKEN_R_BRACE) && !parser_match(TOKEN_EOF)) {
+            if (parser_match(TOKEN_KEYWORD_ELSE)) {
+                parser_advance();
+                pending_count++;
+            } else {
+                do {
+                    Expr *pattern = NULL;
+                    Expr *left = parse_expr(arena, parser);
+                    if (parser_match(TOKEN_DOT_DOT) || parser_match(TOKEN_DOT_DOT_EQUAL)) {
+                        bool inclusive = parser->token.kind == TOKEN_DOT_DOT_EQUAL;
+                        parser_advance();
+                        Expr *right = parse_expr(arena, parser);
+                        pattern = expr_range(arena, left, right, inclusive);
+                    } else {
+                        pattern = left;
+                    }
+                    *pat_tail = expr_list(arena, pattern);
+                    pat_tail = &(*pat_tail)->next;
+                    pending_count++;
+                    if (parser_match(TOKEN_COMMA)) parser_advance();
+                    else break;
+                } while (true);
+            }
+            parser_expect(TOKEN_COLON, "Expected ':' after match pattern");
+            parser_advance();
+            
+            Expr *body = parse_expr(arena, parser);
+            
+            *tail = expr_match_case(arena, current_patterns, body);
+            tail = &(*tail)->next;
+            
+            current_patterns = NULL;
+            pat_tail = &current_patterns;
+            pending_count = 0;
+            
+            if (parser_match(TOKEN_COMMA)) parser_advance();
+            parser_skip_eol();
+        }
+        
+        if (pending_count > 0) {
+            fprintf(stderr, "Error Ln %li, Col %li: match patterns with no body at end of block\n", parser->line, parser->column);
+            exit(1);
+        }
+        
+        parser_expect(TOKEN_R_BRACE, "Expected '}' after case expression block");
+        parser_advance();
+        
+        return expr_match(arena, value, first);
+    }
+
     // Boolean literals
     if (parser_match(TOKEN_KEYWORD_TRUE)) {
         parser_advance();

@@ -37,7 +37,7 @@ extern DeclList *sema_decls;
 // Check if a match statement has an else case (catch-all)
 static bool match_has_else_case(StmtMatchCase *cases) {
     for (StmtMatchCase *c = cases; c; c = c->next) {
-        if (c->pattern == NULL) {
+        if (c->patterns == NULL) {
             EXHAUST_DBG("found else case");
             return true;
         }
@@ -136,16 +136,19 @@ static bool match_check_enum_exhaustiveness(Decl *enum_decl, StmtMatchCase *case
         
         bool variant_covered = false;
         for (StmtMatchCase *c = cases; c; c = c->next) {
-            if (c->pattern == NULL) {
+            if (c->patterns == NULL) {
                 // else case covers everything
                 variant_covered = true;
                 break;
             }
             
-            if (pattern_matches_variant(c->pattern, v->name)) {
-                variant_covered = true;
-                break;
+            for (ExprList *p = c->patterns; p; p = p->next) {
+                if (pattern_matches_variant(p->expr, v->name)) {
+                    variant_covered = true;
+                    break;
+                }
             }
+            if (variant_covered) break;
         }
         
         if (!variant_covered) {
@@ -165,15 +168,16 @@ static bool match_check_bool_exhaustiveness(StmtMatchCase *cases) {
     bool has_false = false;
     
     for (StmtMatchCase *c = cases; c; c = c->next) {
-        if (c->pattern == NULL) {
+        if (c->patterns == NULL) {
             return true;  // else covers everything
         }
-        // Check if pattern is a literal true/false
-        if (c->pattern->kind == EXPR_LITERAL) {
-            if (c->pattern->as.literal_expr.value != 0) {
-                has_true = true;
-            } else {
-                has_false = true;
+        for (ExprList *p = c->patterns; p; p = p->next) {
+            if (p->expr->kind == EXPR_LITERAL) {
+                if (p->expr->as.literal_expr.value != 0) {
+                    has_true = true;
+                } else {
+                    has_false = true;
+                }
             }
         }
     }
@@ -240,6 +244,71 @@ static bool sema_check_match_exhaustive(Stmt *match_stmt) {
 static void sema_report_nonexhaustive_match(Stmt *match_stmt) {
     (void)match_stmt;
     fprintf(stderr, "sema error: non-exhaustive match - add an 'else:' case or cover all variants\n");
+}
+
+/*───────────────────────────────────────────────────────────────────╗
+│ Expression Match Exhaustiveness Check                              │
+╚───────────────────────────────────────────────────────────────────*/
+
+static bool match_has_else_case_expr(ExprMatchCase *cases) {
+    for (ExprMatchCase *c = cases; c; c = c->next) {
+        if (c->patterns == NULL) return true;
+    }
+    return false;
+}
+
+static bool match_check_bool_exhaustiveness_expr(ExprMatchCase *cases) {
+    bool has_true = false, has_false = false;
+    for (ExprMatchCase *c = cases; c; c = c->next) {
+        if (c->patterns == NULL) return true;
+        for (ExprList *p = c->patterns; p; p = p->next) {
+            if (p->expr->kind == EXPR_LITERAL) {
+                if (p->expr->as.literal_expr.value != 0) has_true = true;
+                else has_false = true;
+            }
+        }
+    }
+    return has_true && has_false;
+}
+
+static bool match_check_enum_exhaustiveness_expr(Decl *enum_decl, ExprMatchCase *cases) {
+    if (!enum_decl || enum_decl->kind != DECL_ENUM) return false;
+    for (Variant *v = enum_decl->as.enum_decl.variants; v; v = v->next) {
+        bool variant_covered = false;
+        for (ExprMatchCase *c = cases; c; c = c->next) {
+            if (c->patterns == NULL) {
+                variant_covered = true; break;
+            }
+            for (ExprList *p = c->patterns; p; p = p->next) {
+                if (pattern_matches_variant(p->expr, v->name)) {
+                    variant_covered = true; break;
+                }
+            }
+            if (variant_covered) break;
+        }
+        if (!variant_covered) return false;
+    }
+    return true;
+}
+
+static bool sema_check_expr_match_exhaustive(Expr *match_expr) {
+    if (!match_expr || match_expr->kind != EXPR_MATCH) return true;
+    ExprMatchCase *cases = match_expr->as.match_expr.cases;
+    if (!cases) return false;
+    if (match_has_else_case_expr(cases)) return true;
+    Type *vtype = match_expr->as.match_expr.value ? match_expr->as.match_expr.value->type : NULL;
+    if (vtype && vtype->kind == TYPE_SIMPLE && vtype->base_type) {
+        const char *tname = vtype->base_type->name;
+        int tlen = vtype->base_type->length;
+        if (tlen == 4 && strncmp(tname, "bool", 4) == 0) {
+            if (match_check_bool_exhaustiveness_expr(cases)) return true;
+        }
+        Decl *enum_decl = find_enum_decl(vtype);
+        if (enum_decl) {
+            if (match_check_enum_exhaustiveness_expr(enum_decl, cases)) return true;
+        }
+    }
+    return false;
 }
 
 #endif /* SEMA_EXHAUSTIVENESS_H */

@@ -786,6 +786,25 @@ func check(valid bool) {
 > Example: `extern func abs(n int) int` — pure, callable from `func`.  
 > Example: `extern proc printf(fmt *u8, ...) int` — impure, callable only from `proc`.
 
+### 6.6 Universal Function Call Syntax (UFCS)
+
+Lain supports **Universal Function Call Syntax (UFCS)** for all types. Any function call of the form `target.method(arg)` is automatically translated by the compiler into `method(target, arg)`.
+
+This enables fluent, chainable APIs for built-in and user-defined types without requiring object-oriented classes or explicit method dispatch:
+
+```lain
+func is_even(n int) bool {
+    return n % 2 == 0
+}
+
+proc main() {
+    var x = 10
+    var even = x.is_even()  // Equivalent to: is_even(x)
+}
+```
+
+This works for all types, including slices, pointers, and structs, drastically improving the ergonomics of the standard library (e.g., `my_file.close()` translates naturally to `close(my_file)`).
+
 ---
 
 ## 7. Control Flow
@@ -871,7 +890,7 @@ proc example() {
 
 ### 7.5 Case (Pattern Matching)
 
-`case` is used for pattern matching on enums, ADTs, and integer values.
+`case` is used for pattern matching on enums, ADTs, characters, and integer values. It can act as either a **statement** or an **expression**.
 
 **Matching on an enum:**
 ```lain
@@ -891,19 +910,41 @@ case shape {
 }
 ```
 
+**Matching with multiple patterns and ranges:**
+Cases support comma-separated pattern lists and ranges (`start..end`), which are inclusive bounds:
+```lain
+case character {
+    'a'..'z', 'A'..'Z': libc_printf("Alphabetical\n")
+    '0'..'9':           libc_printf("Digit\n")
+    '_', '-':           libc_printf("Symbol\n")
+    else:               libc_printf("Other\n")
+}
+```
+
+**Case Expressions:**
+A `case` block can be evaluated as an expression that returns a value. All branches must yield the same type, and the block evaluates to the matched branch's value:
+```lain
+var size = case width {
+    1..10: "Small"
+    11..50: "Medium"
+    else: "Large"
+}
+```
+
 **Matching on integers** (requires `else` for exhaustiveness):
 ```lain
 case x {
     1: return 1
     2: return 2
     3: return 3
-    else: return 0    // Required: integers are not exhaustive
+    else: return 0    // Required: integers are not finite
 }
 ```
 
 **Case arms** can be:
 - A single expression: `Red: return 1`
 - A block: `Red: { libc_printf("red\n"); return 1 }`
+- Multiple patterns/ranges: `1, 2, 5..10: return 2`
 
 ### 7.6 Exhaustiveness Checking
 

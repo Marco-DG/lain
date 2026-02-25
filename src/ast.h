@@ -247,7 +247,7 @@ typedef struct {
 } StmtWhile;
 
 typedef struct StmtMatchCase {
-    Expr            *pattern;         // NULL for `else`
+    ExprList        *patterns;        // NULL for `else`
     StmtList        *body;
     struct StmtMatchCase   *next;
 } StmtMatchCase;
@@ -302,6 +302,7 @@ typedef enum {
     EXPR_MUT, // New
     EXPR_CAST, // x as Type
     EXPR_FLOAT_LITERAL,
+    EXPR_MATCH,
 } ExprKind;
 
 typedef struct {
@@ -371,6 +372,17 @@ typedef struct {
     Expr *index;    // e.g. the `start..cursor` (an ExprRange)
 } ExprIndex;
 
+typedef struct ExprMatchCase {
+    ExprList        *patterns;        // NULL for `else`
+    struct Expr     *body;
+    struct ExprMatchCase   *next;
+} ExprMatchCase;
+
+typedef struct {
+    struct Expr *value;
+    ExprMatchCase *cases;
+} ExprMatch;
+
 typedef struct Expr {
     ExprKind kind;
     isize line;  // source line number
@@ -390,6 +402,7 @@ typedef struct Expr {
         ExprMut         mut_expr; // New
         ExprCast        cast_expr;
         ExprFloat       float_expr;
+        ExprMatch       match_expr;
     } as;
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
@@ -710,12 +723,12 @@ Stmt *stmt_break(Arena *arena) {
     return s;
 }
 
-StmtMatchCase *stmt_match_case(Arena *arena, Expr *pattern, StmtList *body) {
-    StmtMatchCase *s = arena_push(arena, StmtMatchCase);
-    s->pattern = pattern;    // NULL means `else`
-    s->body    = body;
-    s->next    = NULL;
-    return s;
+StmtMatchCase *stmt_match_case(Arena *arena, ExprList *patterns, StmtList *body) {
+    StmtMatchCase *node = arena_push_aligned(arena, StmtMatchCase);
+    node->patterns = patterns; // NULL means `else`
+    node->body    = body;
+    node->next    = NULL;
+    return node;
 }
 
 
@@ -852,6 +865,22 @@ Expr *expr_cast(Arena *arena, Expr *expr, Type *target_type) {
     e->as.cast_expr.expr = expr;
     e->as.cast_expr.target_type = target_type;
     e->type = target_type;
+    return e;
+}
+
+ExprMatchCase *expr_match_case(Arena *arena, ExprList *patterns, Expr *body) {
+    ExprMatchCase *node = arena_push_aligned(arena, ExprMatchCase);
+    node->patterns = patterns;
+    node->body = body;
+    node->next = NULL;
+    return node;
+}
+
+Expr *expr_match(Arena *arena, Expr *value, ExprMatchCase *cases) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_MATCH;
+    e->as.match_expr.value = value;
+    e->as.match_expr.cases = cases;
     return e;
 }
 

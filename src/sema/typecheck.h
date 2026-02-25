@@ -94,10 +94,7 @@ static Type *lookup_struct_field_type(Id *struct_name, Id *field) {
       }
     }
   }
-  fprintf(stderr, "sema error: struct ‘%.*s’ has no field ‘%.*s’\n",
-          (int)struct_name->length, struct_name->name, (int)field->length,
-          field->name);
-  exit(1);
+  return NULL;
 }
 
 /*
@@ -228,6 +225,25 @@ void sema_infer_expr(Expr *e) {
 
     // fall back to struct field lookup (existing behavior)
     e->type = lookup_struct_field_type(t->base_type, e->as.member_expr.member);
+    
+    if (!e->type) {
+        // UFCS Fallback check: does a function exist?
+        char mbuf[256];
+        int mlen = e->as.member_expr.member->length < 255 ? e->as.member_expr.member->length : 255;
+        memcpy(mbuf, e->as.member_expr.member->name, mlen);
+        mbuf[mlen] = '\0';
+        Symbol *sym = sema_lookup(mbuf);
+        if (sym && sym->decl && (sym->decl->kind == DECL_FUNCTION || sym->decl->kind == DECL_PROCEDURE || sym->decl->kind == DECL_EXTERN_FUNCTION || sym->decl->kind == DECL_EXTERN_PROCEDURE)) {
+            // It might be a UFCS method call (e.g., `l.consume()`).
+            // We leave `e->type = NULL`. The parent `EXPR_CALL` will detect this
+            // and rewrite the AST to `consume(l)`.
+        } else {
+            fprintf(stderr, "sema error: struct '%.*s' has no field '%.*s'\n",
+                (int)t->base_type->length, t->base_type->name, 
+                (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+            exit(1);
+        }
+    }
     break;
   }
 
@@ -275,6 +291,68 @@ void sema_infer_expr(Expr *e) {
                  e->type = e->as.call_expr.callee->type; // The ADT type
                  break;
              }
+        }
+    }
+    
+    // Check for UFCS: `a.method(b)` -> `method(a, b)`
+    // If the callee is EXPR_MEMBER and it failed to find a field (type is NULL),
+    // we assume it's a UFCS call.
+    if (e->as.call_expr.callee->kind == EXPR_MEMBER && !e->as.call_expr.callee->type) {
+        Expr *target = e->as.call_expr.callee->as.member_expr.target;
+        Id *method_name = e->as.call_expr.callee->as.member_expr.member;
+        
+        char mbuf[256];
+        int mlen = method_name->length < 255 ? method_name->length : 255;
+        memcpy(mbuf, method_name->name, mlen);
+        mbuf[mlen] = '\0';
+        
+        Symbol *sym = sema_lookup(mbuf);
+        if (sym && sym->decl && (sym->decl->kind == DECL_FUNCTION || sym->decl->kind == DECL_PROCEDURE || sym->decl->kind == DECL_EXTERN_FUNCTION || sym->decl->kind == DECL_EXTERN_PROCEDURE)) {
+            // It is a valid function! We convert the AST node to represent a UFCS call.
+            // 1. Change the callee to simply be the function identifier
+            Expr *new_callee = arena_push(sema_arena, Expr);
+            new_callee->kind = EXPR_IDENTIFIER;
+            new_callee->as.identifier_expr.id = method_name;
+            new_callee->line = e->as.call_expr.callee->line;
+            new_callee->col = e->as.call_expr.callee->col;
+            
+            // 2. Prepend the target as the first argument
+            ExprList *new_arg = arena_push(sema_arena, ExprList);
+            
+            // If the method expects a mutable reference (var), we must implicitly wrap it or 
+            // the user must have already typed `(var a).method(b)`? UFCS normally does it automatically.
+            // For now, let's just push the target. If it needs `var`, we might auto-wrap it if the param requires it.
+            // Let's check the first parameter of the function to see what mode it expects.
+            DeclList *params = sym->decl->as.function_decl.params;
+            if (params && params->decl->kind == DECL_VARIABLE && params->decl->as.variable_decl.type->mode == MODE_MUTABLE) {
+                // Auto-wrap with EXPR_MUT if it's not already
+                if (target->kind != EXPR_MUT) {
+                    Expr *mut_target = arena_push(sema_arena, Expr);
+                    mut_target->kind = EXPR_MUT;
+                    mut_target->as.mut_expr.expr = target;
+                    mut_target->line = target->line;
+                    mut_target->col = target->col;
+                    new_arg->expr = mut_target;
+                } else {
+                    new_arg->expr = target;
+                }
+            } else {
+                 new_arg->expr = target;
+            }
+            
+            new_arg->next = e->as.call_expr.args;
+            
+            // 3. Update the call expression
+            e->as.call_expr.callee = new_callee;
+            e->as.call_expr.args = new_arg;
+            
+            // Now proceed with normal call logic
+            sema_infer_expr(e->as.call_expr.callee);
+        } else {
+            fprintf(stderr, "sema error: struct field or UFCS method '%.*s' not found on type '%.*s'\n",
+                    (int)method_name->length, method_name->name,
+                    (int)target->type->base_type->length, target->type->base_type->name);
+            exit(1);
         }
     }
     
@@ -543,6 +621,10 @@ void sema_infer_expr(Expr *e) {
     e->type = get_builtin_int_type();
     break;
 
+  case EXPR_CHAR:
+    e->type = get_builtin_u8_type();
+    break;
+
   case EXPR_FLOAT_LITERAL: {
     // Float literals infer to f64
     static Type *f64_ty = NULL;
@@ -594,6 +676,31 @@ void sema_infer_expr(Expr *e) {
     break;
   }
 
+
+  case EXPR_MATCH: {
+    sema_infer_expr(e->as.match_expr.value);
+    Type *inferred_type = NULL;
+    for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
+        sema_push_scope();
+        for (ExprList *p = c->patterns; p; p = p->next) {
+            sema_infer_expr(p->expr);
+        }
+        sema_infer_expr(c->body);
+        sema_pop_scope();
+        
+        if (!inferred_type && c->body->type) {
+            inferred_type = c->body->type;
+        }
+    }
+    
+    if (!sema_check_expr_match_exhaustive(e)) {
+        fprintf(stderr, "Error Ln %li, Col %li: non-exhaustive match expression\n", e->line, e->col);
+        exit(1);
+    }
+    
+    e->type = inferred_type ? inferred_type : get_builtin_int_type();
+    break;
+  }
 
   case EXPR_MOVE:
     sema_infer_expr(e->as.move_expr.expr);

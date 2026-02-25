@@ -467,27 +467,45 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
     parser_skip_eol();
 
     StmtMatchCase *first = NULL, **tail = &first;
-    Expr *pending_patterns[16]; // for fall-through buffering
+    ExprList *current_patterns = NULL, **pat_tail = &current_patterns;
     int pending_count = 0;
 
     while (!parser_match(TOKEN_R_BRACE) && !parser_match(TOKEN_EOF)) {
         // —— parse the pattern header ——
-        Expr *pattern = NULL;
         if (parser_match(TOKEN_KEYWORD_ELSE)) {
             parser_advance();
+            pending_count++;
+            // For else, we leave current_patterns as NULL if it's uniquely `else`.
+            // But if there's fall-through like `case 1: \n else:`, it's messy.
+            // Lain treats `else` as the default catch-all, so having patterns for it doesn't make sense.
+            // Let's assume `else` is standalone.
         } else {
-            // parse a sub‑expression, then see if it's followed by '..' for a range
-            Expr *left = parse_expr(arena, parser);
-            if (parser_match(TOKEN_DOT_DOT) || parser_match(TOKEN_DOT_DOT_EQUAL)) {
-                bool inclusive = parser->token.kind == TOKEN_DOT_DOT_EQUAL;
-                parser_advance(); // consume '..' or '..='
-            
-                // RHS of the range must be a literal or identifier in patterns
-                Expr *right = parse_expr(arena, parser);
-                pattern = expr_range(arena, left, right, inclusive);
-            } else {
-                pattern = left;
-            }
+            // Parse comma-separated patterns
+            do {
+                Expr *pattern = NULL;
+                // parse a sub‑expression, then see if it's followed by '..' for a range
+                Expr *left = parse_expr(arena, parser);
+                if (parser_match(TOKEN_DOT_DOT) || parser_match(TOKEN_DOT_DOT_EQUAL)) {
+                    bool inclusive = parser->token.kind == TOKEN_DOT_DOT_EQUAL;
+                    parser_advance(); // consume '..' or '..='
+                
+                    // RHS of the range must be a literal or identifier in patterns
+                    Expr *right = parse_expr(arena, parser);
+                    pattern = expr_range(arena, left, right, inclusive);
+                } else {
+                    pattern = left;
+                }
+                
+                *pat_tail = expr_list(arena, pattern);
+                pat_tail = &(*pat_tail)->next;
+                pending_count++;
+                
+                if (parser_match(TOKEN_COMMA)) {
+                    parser_advance();
+                } else {
+                    break;
+                }
+            } while (true);
         }
         parser_expect(TOKEN_COLON, "Expected ':' after match pattern");
         parser_advance();
@@ -500,11 +518,6 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
             if (parser_match(TOKEN_R_BRACE) || parser_match(TOKEN_EOF))
                 break;
 
-            // peek ahead to see if the next tokens form a *new* case header:
-            //    1) single‐value:    X :
-            //    2) range‐value:     X .. Y :
-            
-            // peek ahead to see if the next tokens form a *new* case header:
             bool stop_for_header = false;
             TokenKind cur = parser->token.kind;
 
@@ -517,13 +530,10 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
             {
                 // fork the lexer so we don't consume anything
                 Lexer fork = *parser->lexer;
-
-                // first look at the very next token
                 Token t1 = lexer_next(&fork);
 
                 // Handle qualified names: Enum.Variant :
                 while (t1.kind == TOKEN_DOT) {
-                     // Check if next is ident
                      Token t2 = lexer_next(&fork);
                      if (t2.kind == TOKEN_IDENTIFIER) {
                          t1 = lexer_next(&fork);
@@ -532,8 +542,8 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
                      }
                 }
 
-                if (t1.kind == TOKEN_COLON) {
-                    // single‐value header: X :
+                if (t1.kind == TOKEN_COLON || t1.kind == TOKEN_COMMA) {
+                    // single‐value header: X : or X , Y :
                     stop_for_header = true;
                 }
                 else if (t1.kind == TOKEN_DOT_DOT
@@ -547,7 +557,7 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
                     || t2.kind == TOKEN_NUMBER)
                     {
                         Token t3 = lexer_next(&fork);
-                        if (t3.kind == TOKEN_COLON) {
+                        if (t3.kind == TOKEN_COLON || t3.kind == TOKEN_COMMA) {
                             stop_for_header = true;
                         }
                     }
@@ -565,7 +575,7 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
                     
                     if (depth == 0) {
                         Token t_after = lexer_next(&fork);
-                        if (t_after.kind == TOKEN_COLON) {
+                        if (t_after.kind == TOKEN_COLON || t_after.kind == TOKEN_COMMA) {
                             stop_for_header = true;
                         }
                     }
@@ -575,7 +585,6 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
             if (stop_for_header) {
                 break;
             }
-
 
             // otherwise it's a real statement inside this case
             Stmt *st = parse_stmt(arena, parser);
@@ -587,15 +596,14 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
             parser_skip_eol();
         }
 
-        // buffer this pattern
-        pending_patterns[pending_count++] = pattern;
-
         // if we actually saw any statements, flush all buffered patterns with that body
         if (body) {
-            for (int i = 0; i < pending_count; i++) {
-                *tail = stmt_match_case(arena, pending_patterns[i], body);
-                tail = &(*tail)->next;
-            }
+            *tail = stmt_match_case(arena, current_patterns, body);
+            tail = &(*tail)->next;
+            
+            // reset for the next block
+            current_patterns = NULL;
+            pat_tail = &current_patterns;
             pending_count = 0;
         }
 

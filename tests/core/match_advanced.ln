@@ -1,0 +1,28 @@
+c_include "stdio.h"
+c_include "stdlib.h"
+extern func printf(fmt *u8, ...) int
+extern proc exit(status int)
+
+proc main() {
+    var c = 'A'
+    
+    // Test multi-value and range patterns using expressions
+    var kind = case c {
+        'a'..'z', 'A'..'Z': 1
+        '0'..'9': 2
+        '_': 3
+        else: 4
+    }
+    
+    printf("Kind is: %d\n", kind)
+    
+    // Combine multi-value with fall-through using expression
+    var desc = case kind {
+        1, 2: 10
+        3: 20
+        else: 30
+    }
+    
+    printf("Desc is: %d\n", desc)
+    exit(0)
+}
