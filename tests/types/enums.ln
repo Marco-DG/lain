@@ -1,6 +1,6 @@
 // Simpler enum test - enum value directly without function
 
-extern func libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
 type Color {
     Red,
@@ -8,7 +8,7 @@ type Color {
     Blue
 }
 
-func main() int {
+proc main() int {
     var c = Color.Red
     
     case c {

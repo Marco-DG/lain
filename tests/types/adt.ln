@@ -1,6 +1,6 @@
 // Test: Algebraic Data Types (Unified Syntax)
 
-extern func libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
 type Shape {
     Circle { radius int }
@@ -8,7 +8,7 @@ type Shape {
     Point
 }
 
-func main() int {
+proc main() int {
     var c = Shape.Circle(10)
     var r = Shape.Rectangle(10, 20)
     var p = Shape.Point

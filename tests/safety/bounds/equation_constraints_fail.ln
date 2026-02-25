@@ -5,7 +5,7 @@ func div(a int, b int != 0) int {
     return a / b
 }
 
-func main() int {
+proc main() int {
     var x = div(10, 0)  // ERROR: 0 violates b != 0
     return 0
 }

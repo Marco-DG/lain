@@ -17,7 +17,7 @@ func conflict(r Resource, mov r2 Resource) Resource {
     return mov r2
 }
 
-func main() int {
+proc main() int {
     var res Resource
     res.data = 42
     

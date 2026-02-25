@@ -20,7 +20,7 @@ func take_counter(mov c Counter) Counter {
     return mov c
 }
 
-func main() int {
+proc main() int {
     var cnt Counter
     cnt.value = 10
     

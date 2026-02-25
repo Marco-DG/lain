@@ -2,7 +2,7 @@ func require_pos(x int > 0) int {
     return 0
 }
 
-func main() int {
+proc main() int {
     var x = 10
     x = 0
     // x is now 0. This should fail (0 > 0 is false).

@@ -1,7 +1,7 @@
 // Test for enum exhaustiveness WITHOUT else
 // All variants covered, so should compile
 
-extern func libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
 type Status {
     Ready,
@@ -9,7 +9,7 @@ type Status {
     Done
 }
 
-func main() int {
+proc main() int {
     var s = Status.Running
     
     // All 3 variants covered, no else needed!

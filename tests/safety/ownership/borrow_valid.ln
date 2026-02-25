@@ -10,7 +10,7 @@ func consume_resource(mov r Resource) Resource {
     return mov r
 }
 
-func main() int {
+proc main() int {
     var res Resource
     res.data = 42
     

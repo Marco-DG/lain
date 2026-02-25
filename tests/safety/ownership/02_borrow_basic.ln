@@ -14,7 +14,7 @@ func update(var p Point) {
     p.x = p.x + 1
 }
 
-func main() int {
+proc main() int {
     var p Point
     p.x = 10
     p.y = 20

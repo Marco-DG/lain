@@ -1,11 +1,11 @@
-extern func libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
 type Vec2 {
     x int
     y int
 }
 
-func main() int {
+proc main() int {
     var v Vec2
     v.x = 10
     v.y = 20

@@ -4,5 +4,5 @@ func ret_var() var int {
     return var x
 }
 
-func main() {
+proc main() {
 }

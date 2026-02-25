@@ -10,7 +10,7 @@ func transfer(mov item Item) Item {
     return mov item
 }
 
-func main() int {
+proc main() int {
     // Declare as mutable to allow init (and move tracks consumption)
     var myitem Item
     myitem.id = 42

@@ -8,6 +8,6 @@ func test(x int, y int > x) int {
     return require_lt(x, y)
 }
 
-func main() int {
+proc main() int {
     return 0
 }

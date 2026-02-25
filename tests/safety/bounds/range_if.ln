@@ -10,6 +10,6 @@ func test_if(x int, y int) int {
     return 0
 }
 
-func main() int {
+proc main() int {
     return 0
 }

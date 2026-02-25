@@ -3,6 +3,6 @@ c_include "<stdio.h>"
 
 extern func libc_puts(s *u8) int
 
-func main() {
+proc main() {
     libc_puts("Hello from c_include!")
 }

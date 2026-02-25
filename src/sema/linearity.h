@@ -115,6 +115,8 @@ typedef struct LEntry {
     Region *region;    // region where var is defined (for borrow checking)
     bool is_mutable;   // true if variable is mutable (declared with var/mut)
     bool must_consume; // true if type is strictly linear
+    isize line;        // NEW: line where var is defined
+    isize col;         // NEW: col where var is defined
     LState state;
     struct LEntry *next;
 } LEntry;
@@ -149,7 +151,7 @@ static LEntry *ltable_find(LTable *t, Id *id) {
     return NULL;
 }
 
-static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume) {
+static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume, isize line, isize col) {
     if (!id) return;
     if (ltable_find(t, id)) return; // already present — ignore
     LEntry *e = arena_push_aligned(t->arena, LEntry);
@@ -158,6 +160,8 @@ static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool 
     e->region = t->borrows ? t->borrows->current_region : NULL;
     e->is_mutable = is_mutable;
     e->must_consume = must_consume;
+    e->line = line;
+    e->col = col;
     e->state = LSTATE_UNCONSUMED;
     e->next = t->head;
     t->head = e;
@@ -189,7 +193,7 @@ static LTable *ltable_clone(LTable *src) {
     }
     // shallow-copy entries (Id* pointers are fine)
     for (LEntry *s = src->head; s; s = s->next) {
-        ltable_add(dst, s->id, s->defined_loop_depth, s->is_mutable, s->must_consume);
+        ltable_add(dst, s->id, s->defined_loop_depth, s->is_mutable, s->must_consume, s->line, s->col);
         LEntry *d = ltable_find(dst, s->id);
         if (d) {
             d->state = s->state;
@@ -215,13 +219,13 @@ static void ltable_consume(LTable *t, Id *id, int current_loop_depth) {
         return;
     }
     if (e->state != LSTATE_UNCONSUMED) {
-        fprintf(stderr, "sema error: linear variable '%.*s' was already used/consumed.\n",
-                (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+        fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was already used/consumed.\n",
+                (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
         exit(1);
     }
     if (e->defined_loop_depth != current_loop_depth) {
-        fprintf(stderr, "sema error: attempting to consume linear variable '%.*s' defined outside a loop from inside a loop.\n",
-                (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+        fprintf(stderr, "Error Ln %li, Col %li: attempting to consume linear variable '%.*s' defined outside a loop from inside a loop.\n",
+                (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
         exit(1);
     }
     e->state = LSTATE_CONSUMED;
@@ -233,8 +237,8 @@ static void ltable_ensure_all_consumed(LTable *t) {
     int errors = 0;
     for (LEntry *e = t->head; e; e = e->next) {
         if (e->must_consume && e->state != LSTATE_CONSUMED) {
-            fprintf(stderr, "sema error: linear variable '%.*s' was not consumed before return.\n",
-                    (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+            fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before return.\n",
+                    (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
             errors++;
         }
     }
@@ -250,6 +254,20 @@ static void ltable_ensure_all_consumed(LTable *t) {
         exit(1);
     }
     DBG("ltable_ensure_all_consumed: OK (all linear vars consumed)");
+}
+
+/* helper to pop a block scope and check consumed locals */
+static void ltable_pop_scope(LTable *tbl, LEntry *saved_head) {
+    int errors = 0;
+    for (LEntry *e = tbl->head; e && e != saved_head; e = e->next) {
+        if (e->must_consume && e->state != LSTATE_CONSUMED) {
+            fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before end of scope.\n",
+                    (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+            errors++;
+        }
+    }
+    if (errors > 0) exit(1);
+    tbl->head = saved_head;
 }
 
 /* verify parent-consistency between two branch-results */
@@ -280,30 +298,48 @@ static void ltable_merge_from_branch(LTable *parent, LTable *branch) {
 /* Try to find a function Decl by a mangled-or-raw name.
    Accepts either "module_fn" or "fn" and matches Decl->as.function_decl.name (raw name). */
 static Decl *find_function_decl_by_mangled_or_raw(const char *mangled) {
-    if (!mangled || !sema_decls) return NULL;
-
+    if (!mangled) return NULL;
+    
     // Quick pass: if the string exactly equals a raw name, use it.
+    for (ModuleNode *mn = loaded_modules; mn; mn = mn->next) {
+        for (DeclList *dl = mn->decls; dl; dl = dl->next) {
+            Decl *d = dl->decl;
+            if (!d) continue;
+            // Also check procedures and externs since they can take linear args
+            if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE && 
+                d->kind != DECL_EXTERN_FUNCTION && d->kind != DECL_EXTERN_PROCEDURE) continue;
+            
+            Id *fid = d->as.function_decl.name;
+            if (!fid) continue;
+            if (strncmp(mangled, fid->name, fid->length) == 0 && mangled[fid->length] == '\0') return d;
+        }
+    }
     for (DeclList *dl = sema_decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
         if (!d || d->kind != DECL_FUNCTION) continue;
         Id *fid = d->as.function_decl.name;
         if (!fid) continue;
-        if (strcmp(mangled, fid->name) == 0) return d;
+        if (strncmp(mangled, fid->name, fid->length) == 0 && mangled[fid->length] == '\0') return d;
     }
 
     // Otherwise, try to match "<module>_<raw>" by suffix:
     size_t mlen = strlen(mangled);
-    for (DeclList *dl = sema_decls; dl; dl = dl->next) {
-        Decl *d = dl->decl;
-        if (!d || d->kind != DECL_FUNCTION) continue;
-        Id *fid = d->as.function_decl.name;
-        if (!fid) continue;
-        size_t rlen = (size_t)fid->length;
-        if (rlen + 1 <= mlen && mangled[mlen - rlen - 1] == '_') {
-            // compare suffix
-            if (strncmp(mangled + (mlen - rlen), fid->name, rlen) == 0) {
-                DBG("find_function_decl_by_mangled_or_raw: matched mangled='%s' -> raw='%s'", mangled, fid->name);
-                return d;
+    for (ModuleNode *mn = loaded_modules; mn; mn = mn->next) {
+        for (DeclList *dl = mn->decls; dl; dl = dl->next) {
+            Decl *d = dl->decl;
+            if (!d) continue;
+            if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE && 
+                d->kind != DECL_EXTERN_FUNCTION && d->kind != DECL_EXTERN_PROCEDURE) continue;
+            
+            Id *fid = d->as.function_decl.name;
+            if (!fid) continue;
+            size_t rlen = (size_t)fid->length;
+            if (rlen + 1 <= mlen && mangled[mlen - rlen - 1] == '_') {
+                // compare suffix
+                if (strncmp(mangled + (mlen - rlen), fid->name, rlen) == 0) {
+                    DBG("find_function_decl_by_mangled_or_raw: matched mangled='%s' -> raw='%s'", mangled, fid->name);
+                    return d;
+                }
             }
         }
     }
@@ -324,8 +360,8 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         if (id && tbl) {
             LEntry *entry = ltable_find(tbl, id);
             if (entry && entry->state == LSTATE_CONSUMED) {
-                fprintf(stderr, "sema error: use of linear variable '%.*s' after it was moved\n",
-                        (int)id->length, id->name ? id->name : "<unknown>");
+                fprintf(stderr, "Error Ln %li, Col %li: use of linear variable '%.*s' after it was moved.\n",
+                        (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
                 exit(1);
             }
         }
@@ -352,10 +388,13 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         Decl *fn_decl = NULL;
         Expr *callee = e->as.call_expr.callee;
         if (callee && callee->kind == EXPR_IDENTIFIER) {
-            const char *mangled = callee->as.identifier_expr.id->name;
-            DBG("EXPR_CALL: callee mangled='%s'", mangled ? mangled : "<null>");
-            // try existing fast-finder if present, else fallback to robust search:
-            fn_decl = find_function_decl_by_mangled_or_raw(mangled);
+            Id *callee_id = callee->as.identifier_expr.id;
+            char mangled_buf[256];
+            int len = callee_id->length < 255 ? callee_id->length : 255;
+            memcpy(mangled_buf, callee_id->name, len);
+            mangled_buf[len] = '\0';
+            DBG("EXPR_CALL: callee mangled='%s'", mangled_buf);
+            fn_decl = find_function_decl_by_mangled_or_raw(mangled_buf);
         }
 
         if (fn_decl) {
@@ -391,8 +430,8 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 if (pty && pty->mode == MODE_OWNED) {
                     // Move: check if borrowed, then consume
                     if (tbl->borrows && borrow_is_borrowed(tbl->borrows, owner_id)) {
-                        fprintf(stderr, "borrow error: cannot move '%.*s' because it is currently borrowed\n",
-                                (int)owner_id->length, owner_id->name);
+                        fprintf(stderr, "Error Ln %li, Col %li: cannot move '%.*s' because it is currently borrowed.\n",
+                                (long)(e->line), (long)(e->col), (int)owner_id->length, owner_id->name);
                         exit(1);
                     }
                     if (arg->kind == EXPR_MOVE) {
@@ -424,51 +463,50 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     if (tbl->borrows && tbl->arena) {
                         Id *borrow_id = params->decl->as.variable_decl.name;
                         borrow_register(tbl->arena, tbl->borrows, borrow_id, owner_id, MODE_SHARED, owner_region, true);
-                        DBG("EXPR_CALL: registered shared borrow of '%.*s'", (int)owner_id->length, owner_id->name);
+            DBG("EXPR_CALL: registered shared borrow of '%.*s'", (int)owner_id->length, owner_id->name);
                     }
                 }
             }
         } else {
-            // Fallback: if we can't find the function declaration (e.g. imported module),
-            // determine if this is a struct constructor call.
-            // Struct constructors consume their linear arguments (implicit move).
-            // For regular function calls, only consume explicit 'mov' arguments.
+            // Function declaration not found.
+            // If this is a struct constructor, we still need to consume linear arguments
+            // because strict constructors act as implicit moves for linear types.
             bool is_struct_constructor = false;
             if (callee && callee->kind == EXPR_IDENTIFIER && callee->decl) {
                 is_struct_constructor = (callee->decl->kind == DECL_STRUCT);
             }
             
-            DBG("EXPR_CALL: no fn_decl found for callee; struct_ctor=%d", is_struct_constructor);
-            for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
-                Expr *arg = a->expr;
-                if (!arg) continue;
-                
-                bool should_consume = false;
-                if (arg->kind == EXPR_MOVE) {
-                    // Explicit 'mov' always consumes
-                    should_consume = true;
-                } else if (is_struct_constructor && arg->type && is_type_move(arg->type)) {
-                    // Struct constructors implicitly consume linear fields
-                    should_consume = true;
-                }
-                
-                if (should_consume) {
-                    Expr *inner = arg;
-                    if (inner->kind == EXPR_MOVE) inner = inner->as.move_expr.expr;
-                    else if (inner->kind == EXPR_MUT) inner = inner->as.mut_expr.expr;
+            if (is_struct_constructor) {
+                DBG("EXPR_CALL: struct constructor found, consuming arguments");
+                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
+                    Expr *arg = a->expr;
+                    if (!arg) continue;
                     
-                    if (inner && inner->kind == EXPR_IDENTIFIER) {
-                        Id *idptr = inner->as.identifier_expr.id;
-                        DBG("EXPR_CALL fallback: consume '%.*s' (%s)", (int)idptr->length, idptr->name, is_struct_constructor ? "struct ctor" : "explicit mov");
-                        ltable_consume(tbl, idptr, loop_depth);
-                    } else if (inner && inner->kind == EXPR_MEMBER) {
-                         Expr *head = inner->as.member_expr.target;
-                         while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
-                         if (head && head->kind == EXPR_IDENTIFIER) {
-                             ltable_consume(tbl, head->as.identifier_expr.id, loop_depth);
-                         }
+                    bool should_consume = false;
+                    if (arg->kind == EXPR_MOVE) {
+                        should_consume = true;
+                    } else if (arg->type && is_type_move(arg->type)) {
+                        should_consume = true;
+                    }
+                    
+                    if (should_consume) {
+                        Expr *inner = arg;
+                        if (inner->kind == EXPR_MOVE) inner = inner->as.move_expr.expr;
+                        else if (inner->kind == EXPR_MUT) inner = inner->as.mut_expr.expr;
+                        
+                        if (inner && inner->kind == EXPR_IDENTIFIER) {
+                            ltable_consume(tbl, inner->as.identifier_expr.id, loop_depth);
+                        } else if (inner && inner->kind == EXPR_MEMBER) {
+                             Expr *head = inner->as.member_expr.target;
+                             while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
+                             if (head && head->kind == EXPR_IDENTIFIER) {
+                                 ltable_consume(tbl, head->as.identifier_expr.id, loop_depth);
+                             }
+                        }
                     }
                 }
+            } else {
+                DBG("EXPR_CALL: no fn_decl found for callee - no heuristic assumption made.");
             }
         }
         break;
@@ -481,6 +519,10 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
     case EXPR_BINARY:
         sema_check_expr_linearity(e->as.binary_expr.left, tbl, loop_depth);
         sema_check_expr_linearity(e->as.binary_expr.right, tbl, loop_depth);
+        break;
+
+    case EXPR_MUT:
+        sema_check_expr_linearity(e->as.mut_expr.expr, tbl, loop_depth);
         break;
 
     case EXPR_MOVE: {
@@ -525,7 +567,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         bool must = is_type_move(ty);
         if (must || s->as.var_stmt.is_mutable) {
             Id *id = s->as.var_stmt.name;
-            ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable, must);
+            ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable, must, s->line, s->col);
         }
         break;
     }
@@ -543,7 +585,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 if (is_type_move(decl_ty)) {
                     // ... (omitted comments)
                     bool must = is_type_move(decl_ty);
-                    ltable_add(tbl, id, loop_depth, true, must);
+                    ltable_add(tbl, id, loop_depth, true, must, s->line, s->col);
                 }
             }
         }
@@ -553,7 +595,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     case STMT_EXPR: {
         Expr *e = s->as.expr_stmt.expr;
         if (e && e->type && is_type_move(e->type)) {
-            fprintf(stderr, "sema error: discarding value of linear type (move) is not allowed.\n");
+            fprintf(stderr, "Error Ln %li, Col %li: discarding value of linear type (move) is not allowed.\n", (long)s->line, (long)s->col);
             exit(1);
         }
         if (e) sema_check_expr_linearity(e, tbl, loop_depth);
@@ -567,16 +609,20 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         LTable *parent_snapshot = ltable_clone(tbl);
 
         LTable *then_tbl = ltable_clone(parent_snapshot);
+        LEntry *then_saved = then_tbl->head;
         if (then_tbl->borrows) borrow_enter_scope(then_tbl->arena, then_tbl->borrows);
         for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next) {
             sema_check_stmt_linearity_with_table(b->stmt, then_tbl, loop_depth);
         }
+        ltable_pop_scope(then_tbl, then_saved);
 
         LTable *else_tbl = ltable_clone(parent_snapshot);
+        LEntry *else_saved = else_tbl->head;
         if (else_tbl->borrows) borrow_enter_scope(else_tbl->arena, else_tbl->borrows);
         for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next) {
             sema_check_stmt_linearity_with_table(b->stmt, else_tbl, loop_depth);
         }
+        ltable_pop_scope(else_tbl, else_saved);
 
         ltable_check_branch_consistency(parent_snapshot, then_tbl, else_tbl, "if");
         ltable_merge_from_branch(tbl, then_tbl);
@@ -591,10 +637,12 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         if (s->as.for_stmt.iterable) sema_check_expr_linearity(s->as.for_stmt.iterable, tbl, loop_depth);
         int new_depth = loop_depth + 1;
         
+        LEntry *saved_head = tbl->head;
         if (tbl->borrows) borrow_enter_scope(tbl->arena, tbl->borrows);
         for (StmtList *b = s->as.for_stmt.body; b; b = b->next) {
             sema_check_stmt_linearity_with_table(b->stmt, tbl, new_depth);
         }
+        ltable_pop_scope(tbl, saved_head);
         if (tbl->borrows) borrow_exit_scope(tbl->borrows);
         break;
     }
@@ -612,12 +660,15 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         LTable *first_branch = NULL;
         for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
             LTable *branch_tbl = ltable_clone(parent_snapshot);
+            LEntry *saved_head = branch_tbl->head;
             if (branch_tbl->borrows) borrow_enter_scope(branch_tbl->arena, branch_tbl->borrows);
             
             if (c->pattern) sema_check_expr_linearity(c->pattern, branch_tbl, loop_depth);
             for (StmtList *b = c->body; b; b = b->next) {
                 sema_check_stmt_linearity_with_table(b->stmt, branch_tbl, loop_depth);
             }
+            ltable_pop_scope(branch_tbl, saved_head);
+
             if (!first_branch) first_branch = ltable_clone(branch_tbl);
             else ltable_check_branch_consistency(parent_snapshot, first_branch, branch_tbl, "match");
             ltable_free(branch_tbl);
@@ -630,10 +681,26 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         break;
     }
 
+    case STMT_WHILE: {
+        if (s->as.while_stmt.cond) sema_check_expr_linearity(s->as.while_stmt.cond, tbl, loop_depth);
+        int new_depth = loop_depth + 1;
+        
+        LEntry *saved_head = tbl->head;
+        if (tbl->borrows) borrow_enter_scope(tbl->arena, tbl->borrows);
+        for (StmtList *b = s->as.while_stmt.body; b; b = b->next) {
+            sema_check_stmt_linearity_with_table(b->stmt, tbl, new_depth);
+        }
+        ltable_pop_scope(tbl, saved_head);
+        if (tbl->borrows) borrow_exit_scope(tbl->borrows);
+        break;
+    }
+
     case STMT_UNSAFE: {
+        LEntry *saved_head = tbl->head;
         for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
             sema_check_stmt_linearity_with_table(b->stmt, tbl, loop_depth);
         }
+        ltable_pop_scope(tbl, saved_head);
         break;
     }
 
@@ -651,7 +718,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
 /* ---------- public entry: check one function ---------- */
 
 static void sema_check_function_linearity(Decl *d) {
-    if (!d || d->kind != DECL_FUNCTION) return;
+    if (!d || (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE)) return;
 
     LTable *tbl = ltable_new(sema_arena);
 
@@ -660,8 +727,8 @@ static void sema_check_function_linearity(Decl *d) {
         if (p->decl->kind == DECL_VARIABLE) {
             Id *pid = p->decl->as.variable_decl.name;
             Type *pty = p->decl->as.variable_decl.type;
-            if (is_type_move(pty)) {
-                ltable_add(tbl, pid, /*loop_depth=*/0, true, true);
+            if (is_type_move(pty) && pty->mode == MODE_OWNED) {
+                ltable_add(tbl, pid, /*loop_depth=*/0, true, true, p->decl->line, p->decl->col);
             }
         } else if (p->decl->kind == DECL_DESTRUCT) {
             // For destructuring parameters, the aggregate is already consumed/destructured.
@@ -693,7 +760,7 @@ static void sema_check_module_linearity(DeclList *decls) {
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
         if (!d) continue;
-        if (d->kind == DECL_FUNCTION) {
+        if (d->kind == DECL_FUNCTION || d->kind == DECL_PROCEDURE) {
             sema_check_function_linearity(d);
         }
     }

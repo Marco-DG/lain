@@ -1,7 +1,7 @@
 // Test: while loops are banned in pure functions (func)
 // Expected: compilation should FAIL
 
-extern func libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
 func loop_forever() int {
     var i = 0
@@ -11,6 +11,6 @@ func loop_forever() int {
     return i
 }
 
-func main() int {
+proc main() int {
     return loop_forever()
 }

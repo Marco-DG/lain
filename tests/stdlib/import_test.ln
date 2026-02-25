@@ -1,7 +1,7 @@
 
 import tests.stdlib.dummy
 
-func main() int {
+proc main() int {
     if dummy_val() == 42 {
         return 0
     }

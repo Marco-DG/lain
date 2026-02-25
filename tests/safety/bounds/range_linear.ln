@@ -8,6 +8,6 @@ func test_linear(y int) int {
     return require_gt(x, y)
 }
 
-func main() int {
+proc main() int {
     return 0
 }

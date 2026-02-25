@@ -5,7 +5,7 @@ func get(arr int[10], i int in arr) int {
     return arr[i]  // Always safe - compiler knows i ∈ [0, 9]
 }
 
-func main() int {
+proc main() int {
     var arr int[10]
     arr[0] = 42
     arr[5] = 100

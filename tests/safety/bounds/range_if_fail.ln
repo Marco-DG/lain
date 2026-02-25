@@ -14,6 +14,6 @@ func test_leak(x int, y int) int {
     return 0
 }
 
-func main() int {
+proc main() int {
     return 0
 }

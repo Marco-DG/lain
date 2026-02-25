@@ -120,6 +120,13 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         // function name + return type → insert into sema_globals
         Id *id = d->as.function_decl.name;
         Type *rt = d->as.function_decl.return_type;
+
+        // Phase 3: Purity & Test Refactoring
+        // Reject `func main` and enforce `proc main`
+        if (d->kind == DECL_FUNCTION && id->length == 4 && strncmp(id->name, "main", 4) == 0) {
+            fprintf(stderr, "Error Ln %li, Col %li: 'main' must be a procedure ('proc'), not a pure function ('func').\n", d->line, d->col);
+            exit(1);
+        }
   
         char *rawf = malloc(id->length + 1);
         memcpy(rawf, id->name, id->length);

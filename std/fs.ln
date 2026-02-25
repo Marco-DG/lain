@@ -10,10 +10,8 @@ func open_file(path u8[:0], mode u8[:0]) mov File {
     return File(raw)
 }
 
-proc close_file(mov f File) {
-    if f.handle != 0 {
-        fclose(f.handle)
-    }
+proc close_file(mov {handle} File) {
+    fclose(handle)
 }
 
 proc write_file(var f File, s u8[:0]) {
