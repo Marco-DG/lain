@@ -10,16 +10,18 @@ proc main() int {
     libc_printf("---- Lexer Bootstrap Test ----\n")
     libc_printf("Source:\n%s\n\n", source.data)
     
-    while true {
+    var done = false
+    while done == false {
         var t = next_token(lex)
         
         libc_printf("Token[%2d] | Lexeme: '%.*s'\n", t.kind, t.lexeme.len, t.lexeme.data)
         
         case t.kind {
-            EOF: break
+            EOF: 
+                done = true
             Error: 
                 libc_printf("Lexer error encountered.\n")
-                break
+                done = true
             else: 0
         }
     }
