@@ -23,29 +23,42 @@ func is_alpha(c int) bool { return (c >= 'a' and c <= 'z') or (c >= 'A' and c <=
 func is_digit(c int) bool { return c >= '0' and c <= '9' }
 func is_alnum(c int) bool { return is_alpha(c) or is_digit(c) }
 
+func peek(l Lexer) int {
+    if l.pos >= l.src.len { return 0 }
+    return l.src[l.pos] as int
+}
+
+proc consume(var l Lexer) int {
+    var c = peek(l)
+    if c != 0 {
+        l.pos += 1
+        l.col += 1
+        if c == '\n' { 
+            l.row += 1
+            l.col = 1 
+        }
+    }
+    return c
+}
+
 proc skip_space(var l Lexer) {
-    while l.pos < l.src.len {
-        var c = l.src[l.pos] as int
+    while true {
+        var c = peek(l)
         if c == ' ' or c == '\t' or c == '\r' or c == '\n' { 
-            l.pos += 1
-            l.col += 1
-            if c == '\n' {
-                l.row += 1
-                l.col = 1
-            }
-        } else { break }
+            consume(l) 
+        } else { 
+            break 
+        }
     }
 }
 
 proc next_token(var l Lexer) Token {
     skip_space(l)
     
-    if l.pos >= l.src.len { return Token(TokenKind.EOF, l.src[l.pos..l.pos]) }
-    
     var start = l.pos
-    var c = l.src[l.pos] as int
-    l.pos += 1
-    l.col += 1
+    var c = consume(l)
+    
+    if c == 0 { return Token(TokenKind.EOF, l.src[start..start]) }
     
     var kind = TokenKind.Error
     case c {
@@ -62,25 +75,15 @@ proc next_token(var l Lexer) Token {
         ':': kind = TokenKind.Colon
         ';': kind = TokenKind.Semi
         '"':
-            while l.pos < l.src.len {
-                var nc = l.src[l.pos] as int
-                l.pos += 1
-                l.col += 1
-                if nc == '"' { break }
-            }
+            while peek(l) != 0 and peek(l) != '"' { consume(l) }
+            if peek(l) == '"' { consume(l) }
             kind = TokenKind.Str
         else:
             if is_alpha(c) {
-                while l.pos < l.src.len and is_alnum(l.src[l.pos] as int) { 
-                    l.pos += 1
-                    l.col += 1
-                }
+                while is_alnum(peek(l)) { consume(l) }
                 kind = TokenKind.Id
             } else if is_digit(c) {
-                while l.pos < l.src.len and is_digit(l.src[l.pos] as int) { 
-                    l.pos += 1
-                    l.col += 1
-                }
+                while is_digit(peek(l)) { consume(l) }
                 kind = TokenKind.Num
             }
     }

@@ -583,6 +583,20 @@ z = read(data)
 modify_both(data, var data)
 ```
 
+### 5.3.1 Non-Lexical Lifetimes (NLL) and Control Flow
+
+Lain employs an expression-level borrow checker for control-flow conditions. Temporary borrows within `if`, `while`, `for`, and `match` conditions do not span the entire block. They are released immediately after the condition is evaluated.
+
+```lain
+var data = Buffer(0)
+
+// OK: The shared borrow `read(data)` expires after evaluation.
+// It does not conflict with the mutable borrow `mutate(var data)` inside the loop body.
+while read(data) < 10 {
+    mutate(var data)
+}
+```
+
 ### 5.4 Linear Fields in Structs
 
 Struct fields annotated with `mov` make the containing struct **linear** (move-only):

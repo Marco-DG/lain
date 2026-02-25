@@ -605,7 +605,10 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
 
     case STMT_IF: {
         Expr *cond = s->as.if_stmt.cond;
-        if (cond) sema_check_expr_linearity(cond, tbl, loop_depth);
+        if (cond) {
+            sema_check_expr_linearity(cond, tbl, loop_depth);
+            if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
+        }
 
         LTable *parent_snapshot = ltable_clone(tbl);
 
@@ -635,7 +638,10 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     }
 
     case STMT_FOR: {
-        if (s->as.for_stmt.iterable) sema_check_expr_linearity(s->as.for_stmt.iterable, tbl, loop_depth);
+        if (s->as.for_stmt.iterable) {
+            sema_check_expr_linearity(s->as.for_stmt.iterable, tbl, loop_depth);
+            if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
+        }
         int new_depth = loop_depth + 1;
         
         LEntry *saved_head = tbl->head;
@@ -656,7 +662,10 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     }
 
     case STMT_MATCH: {
-        if (s->as.match_stmt.value) sema_check_expr_linearity(s->as.match_stmt.value, tbl, loop_depth);
+        if (s->as.match_stmt.value) {
+            sema_check_expr_linearity(s->as.match_stmt.value, tbl, loop_depth);
+            if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
+        }
         LTable *parent_snapshot = ltable_clone(tbl);
         LTable *first_branch = NULL;
         for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
@@ -683,7 +692,10 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     }
 
     case STMT_WHILE: {
-        if (s->as.while_stmt.cond) sema_check_expr_linearity(s->as.while_stmt.cond, tbl, loop_depth);
+        if (s->as.while_stmt.cond) {
+            sema_check_expr_linearity(s->as.while_stmt.cond, tbl, loop_depth);
+            if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
+        }
         int new_depth = loop_depth + 1;
         
         LEntry *saved_head = tbl->head;
