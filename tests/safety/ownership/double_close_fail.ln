@@ -1,0 +1,18 @@
+// Test: double_close_fail.ln
+// Description: Tests that closing a linear variable twice results in a use-after-move error.
+
+import std.fs
+
+proc main() int {
+    var path = "test.txt"
+    var mode = "w"
+    var f = open_file(path, mode) // returns a linear value
+    
+    // First close (consumes f)
+    close_file(mov f)
+    
+    // Second close (should fail because f is already consumed)
+    close_file(mov f)
+    
+    return 0
+}

@@ -54,7 +54,7 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
 Expr *parse_unary_expr(Arena* arena, Parser* parser)
 {
     // -, !, &
-    if (parser_match(TOKEN_MINUS) || parser_match(TOKEN_BANG) || parser_match(TOKEN_AMPERSAND)) {
+    if (parser_match(TOKEN_MINUS) || parser_match(TOKEN_BANG) || parser_match(TOKEN_AMPERSAND) || parser_match(TOKEN_TILDE)) {
         TokenKind op = parser->token.kind;
         parser_advance();
         
@@ -106,6 +106,11 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         int value = atoi(parser->token.start);
         parser_advance();
         return expr_literal(arena, value);
+    }
+    else if (parser_match(TOKEN_FLOAT_LITERAL)) {
+        double value = strtod(parser->token.start, NULL);
+        parser_advance();
+        return expr_float_literal(arena, value);
     }   
     else if (parser_match(TOKEN_STRING_LITERAL)) {  // New branch for strings
         const char* str = parser->token.start;

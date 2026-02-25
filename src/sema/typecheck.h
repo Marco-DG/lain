@@ -509,6 +509,19 @@ void sema_infer_expr(Expr *e) {
     e->type = get_builtin_int_type();
     break;
 
+  case EXPR_FLOAT_LITERAL: {
+    // Float literals infer to f64
+    static Type *f64_ty = NULL;
+    if (!f64_ty) {
+      Id *id = arena_push_aligned(sema_arena, Id);
+      id->name = "f64";
+      id->length = 3;
+      f64_ty = type_simple(sema_arena, id);
+    }
+    e->type = f64_ty;
+    break;
+  }
+
   case EXPR_RANGE:
     sema_infer_expr(e->as.range_expr.start);
     sema_infer_expr(e->as.range_expr.end);

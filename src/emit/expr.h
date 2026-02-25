@@ -58,6 +58,10 @@ void emit_expr(Expr *expr, int depth) {
     EMIT("%d", expr->as.literal_expr.value);
     break;
 
+  case EXPR_FLOAT_LITERAL:
+    EMIT("%.17g", expr->as.float_expr.value);
+    break;
+
   case EXPR_STRING:
     EMIT("\"%.*s\"", (int)expr->as.string_expr.length,
          expr->as.string_expr.value);
