@@ -1,27 +1,27 @@
 #!/bin/bash
 set -e
+set -x
 
-# Run the Lain Compiler (from parent dir)
-# Assumes we are in Lain_1.0 directory
-if [ ! -f "../src/compiler.exe" ]; then
-    echo "Error: ../src/compiler.exe not found. Build it first."
+# Run the Lain Compiler from the parent directory
+echo "--- Compiling Lain 1.0 Lexer ---"
+
+cd ..
+if [ ! -f "compiler.exe" ]; then
+    echo "Error: compiler.exe not found in parent directory. Build it first."
     exit 1
 fi
 
-echo "--- Compiling Lain 1.0 ---"
-../src/compiler.exe src/main.ln
+./compiler.exe Lain_1/src/main.ln
 
-if [ -f "out.c" ]; then
-    echo "--- Generated C Code (saved to generated.c) ---"
-    cp out.c generated.c
-    # Optional: cat generated.c | head -n 20
-else
-    echo "Error: out.c not produced."
-    exit 1
-fi
+echo "--- Generated C Code (saved to generated.c) ---"
+cp -f out.c Lain_1/generated.c
+mv -f out.c Lain_1/out.c
+cp -f lain.h Lain_1/lain.h
 
-echo "--- Compiling with GCC ---"
-gcc -g -o lain_app out.c
+cd Lain_1
+
+echo "--- Compiling with Cosmocc ---"
+../cosmocc/bin/cosmocc out.c -o lain_app -w -Wno-pointer-sign -Dlibc_printf=printf -Dlibc_puts=puts
 
 echo "--- Running ---"
 ./lain_app
