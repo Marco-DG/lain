@@ -434,6 +434,40 @@ void sema_infer_expr(Expr *e) {
             }
             param_idx++;
         }
+    } else if (callee_decl && callee_decl->kind == DECL_STRUCT) {
+        // Validate struct constructor arguments
+        DeclList *fields = callee_decl->as.struct_decl.fields;
+        ExprList *args = e->as.call_expr.args;
+        int field_count = 0;
+        int arg_count = 0;
+        
+        DeclList *f = fields;
+        ExprList *a = args;
+        
+        while (f && a) {
+            // TODO: Type compatibility check between a->expr->type and f->decl->as.variable_decl.type
+            f = f->next;
+            a = a->next;
+            field_count++;
+            arg_count++;
+        }
+        
+        while (f) { field_count++; f = f->next; }
+        while (a) { arg_count++; a = a->next; }
+        
+        if (arg_count < field_count) {
+            fprintf(stderr, "Error Ln %li, Col %li: Partial initialization of struct '%.*s'. Expected %d arguments, got %d.\n",
+                    e->line, e->col,
+                    (int)callee_decl->as.struct_decl.name->length, callee_decl->as.struct_decl.name->name,
+                    field_count, arg_count);
+            exit(1);
+        } else if (arg_count > field_count) {
+            fprintf(stderr, "Error Ln %li, Col %li: Too many arguments for struct '%.*s'. Expected %d, got %d.\n",
+                    e->line, e->col,
+                    (int)callee_decl->as.struct_decl.name->length, callee_decl->as.struct_decl.name->name,
+                    field_count, arg_count);
+            exit(1);
+        }
     }
     // function-call expression type is the callee's type (return type)
     e->type = e->as.call_expr.callee->type;

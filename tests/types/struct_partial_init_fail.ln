@@ -1,0 +1,12 @@
+// Test: Partially initialized struct via constructor should fail
+
+type Point {
+    x int
+    y int
+    z int
+}
+
+proc main() int {
+    var p = Point(10, 20) // Missing z
+    return 0
+}

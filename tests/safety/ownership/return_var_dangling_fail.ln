@@ -1,3 +1,4 @@
+// Test: Returning a mutable reference to a local variable should fail.
 
 func ret_var() var int {
     var x = 10
