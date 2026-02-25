@@ -1,0 +1,92 @@
+// Self-hosted Lexer for Lain
+
+type TokenKind {
+    EOF, Error, Id, Num, Str, Plus, Minus, Star, Slash, Eq, 
+    LParen, RParen, LBrace, RBrace, Comma, Colon, Semi
+}
+
+type Token {
+    kind   TokenKind
+    lexeme u8[]
+}
+
+type Lexer {
+    src u8[:0]
+    pos int
+    row int
+    col int
+}
+
+func init_lexer(s u8[:0]) Lexer {
+    return Lexer(s, 0, 1, 1)
+}
+
+func is_alpha(c int) bool { return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' }
+func is_digit(c int) bool { return c >= '0' and c <= '9' }
+func is_alnum(c int) bool { return is_alpha(c) or is_digit(c) }
+
+proc advance(var l Lexer) {
+    if l.pos < l.src.len {
+        var c = l.src[l.pos] as int
+        l.pos = l.pos + 1
+        l.col = l.col + 1
+        if c == '\n' { 
+            l.row = l.row + 1
+            l.col = 1 
+        }
+    }
+}
+
+proc skip_space(var l Lexer) {
+    while l.pos < l.src.len {
+        var c = l.src[l.pos] as int
+        if c == ' ' or c == '\t' or c == '\r' or c == '\n' { advance(l) } else { break }
+    }
+}
+
+proc next_token(var l Lexer) Token {
+    skip_space(l)
+    
+    if l.pos >= l.src.len { return Token(TokenKind.EOF, l.src[l.pos..l.pos]) }
+    
+    var start = l.pos
+    var c = l.src[l.pos] as int
+    advance(l)
+    
+    var kind = TokenKind.Error
+    case c {
+        '+': kind = TokenKind.Plus
+        '-': kind = TokenKind.Minus
+        '*': kind = TokenKind.Star
+        '/': kind = TokenKind.Slash
+        '=': kind = TokenKind.Eq
+        '(': kind = TokenKind.LParen
+        ')': kind = TokenKind.RParen
+        '{': kind = TokenKind.LBrace
+        '}': kind = TokenKind.RBrace
+        ',': kind = TokenKind.Comma
+        ':': kind = TokenKind.Colon
+        ';': kind = TokenKind.Semi
+        '"':
+            while l.pos < l.src.len {
+                var nc = l.src[l.pos] as int
+                advance(l)
+                if nc == '"' { break }
+            }
+            kind = TokenKind.Str
+        else:
+            if is_alpha(c) {
+                while l.pos < l.src.len {
+                    if is_alnum(l.src[l.pos] as int) { advance(l) } else { break }
+                }
+                kind = TokenKind.Id
+            } else if is_digit(c) {
+                while l.pos < l.src.len {
+                    if is_digit(l.src[l.pos] as int) { advance(l) } else { break }
+                }
+                kind = TokenKind.Num
+            }
+    }
+    
+    return Token(kind, l.src[start..l.pos])
+}
