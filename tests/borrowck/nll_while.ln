@@ -1,0 +1,31 @@
+// Tests that Non-Lexical Lifetimes (NLL) work for temporary borrows in conditions.
+
+type Lexer {
+    pos int
+}
+
+func peek(l Lexer) int {
+    return l.pos
+}
+
+proc consume(var l Lexer) int {
+    l.pos = l.pos + 1
+    return l.pos
+}
+
+proc test_nll_while() {
+    var l = Lexer(0)
+    
+    // The peek(l) creates a shared borrow of `l`.
+    // In a purely lexical scope, this borrow would live until the end of the while loop,
+    // conflicting with the mutable borrow consume(var l) inside the loop body.
+    // With NLL, the temporary borrow from peek(l) expires immediately after the condition is evaluated.
+    while peek(l) < 10 {
+        consume(var l)
+    }
+}
+
+proc main() int {
+    test_nll_while()
+    return 0
+}
