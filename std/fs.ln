@@ -4,9 +4,8 @@ type File {
     mov handle *FILE
 }
 
-func open_file(path u8[:0], mode u8[:0]) mov File {
+proc open_file(path u8[:0], mode u8[:0]) mov File {
     var raw = fopen(path.data, mode.data)
-    // TODO: Handle NULL return
     return File(raw)
 }
 
@@ -14,6 +13,6 @@ proc close_file(mov {handle} File) {
     fclose(handle)
 }
 
-proc write_file(var f File, s u8[:0]) {
+proc write_file(f File, s u8[:0]) {
     fputs(s.data, f.handle)
 }

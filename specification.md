@@ -195,6 +195,23 @@ var y = 20     // Without semicolon
 > Fixed-width integer types require `<stdint.h>` in the generated C code (included automatically).
 > The type `int` is platform-dependent (typically 32-bit). Prefer `i32` for portable fixed-width semantics.
 
+**Floating-point:**
+
+| Type | Description | C Equivalent |
+|:-----|:------------|:-------------|
+| `f32` | 32-bit IEEE 754 floating-point | `float` |
+| `f64` | 64-bit IEEE 754 floating-point | `double` |
+
+Floating-point types support the standard arithmetic operators (`+`, `-`, `*`, `/`) and comparison operators. The modulo operator `%` is **not** available for floating-point types.
+
+```lain
+var pi f64 = 3
+var radius f32 = 5
+```
+
+> [!NOTE]
+> Floating-point literal syntax (e.g., `3.14`) is planned but not yet implemented. Currently, integer literals are implicitly converted when assigned to `f32`/`f64` variables.
+
 **Boolean:**
 
 | Type | Description | C Equivalent |
@@ -484,7 +501,19 @@ y = 30           // Assignment (y was declared var)
 Lain enforces strict lexical block scoping. Variables declared within a block (e.g., inside `{...}` of an `if`, `for`, or `while` statement) are only visible within that block.
 When the block exits, the local environment is destroyed.
 
-- **Shadowing**: Shadowing variables from an outer scope within an inner scope is strictly **forbidden**. Attempting to declare a variable with a name that already exists in any enclosing active scope results in a compile error.
+- **Shadowing**: Declaring a variable with the same name as a variable in an enclosing scope is **allowed**. The inner declaration shadows the outer one for the duration of the inner block. When the inner block exits, the outer variable becomes visible again.
+
+```lain
+var x = 10
+if true {
+    var x = 20       // Shadows outer x
+    // x is 20 here
+}
+// x is 10 here again
+```
+
+> [!NOTE]
+> Shadowing creates a new, independent variable — it does not modify the original. This is useful for rebinding values in narrower scopes without affecting the enclosing context.
 
 ## 5. Ownership & Borrowing
 
@@ -1175,24 +1204,28 @@ c_include "<stdlib.h>"
 
 extern type FILE
 
-extern func printf(fmt *u8, ...) int
-extern func fopen(filename *u8, mode *u8) mov *FILE
-extern func fclose(stream mov *FILE) int
-extern func fputs(s *u8, stream *FILE) int
-extern func fgets(s var *u8, n int, stream *FILE) var *u8
-extern func libc_printf(fmt *u8, ...) int
+extern proc printf(fmt *u8, ...) int
+extern proc fopen(filename *u8, mode *u8) mov *FILE
+extern proc fclose(stream mov *FILE) int
+extern proc fputs(s *u8, stream *FILE) int
+extern proc fgets(s var *u8, n int, stream *FILE) var *u8
+extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_puts(s *u8) int
 ```
+
+> [!IMPORTANT]
+> All C standard library functions that perform I/O are declared as `extern proc` because they have side effects. A pure `func` cannot call these functions. This is fundamental to Lain's purity guarantee.
 
 **`std/io.ln`** — Basic I/O:
 ```lain
 import std.c
 
-func print(s *u8) {
-    libc_printf("%s", s)
+proc print(s u8[:0]) {
+    libc_printf(s.data)
 }
 
-func println(s *u8) {
-    libc_puts(s)
+proc println(s u8[:0]) {
+    libc_puts(s.data)
 }
 ```
 
@@ -1204,18 +1237,16 @@ type File {
     mov handle *FILE       // Owned file handle
 }
 
-func open_file(path u8[:0], mode u8[:0]) mov File {
+proc open_file(path u8[:0], mode u8[:0]) mov File {
     var raw = fopen(path.data, mode.data)
     return File(raw)
 }
 
-proc close_file(mov f File) {
-    if f.handle != 0 {
-        fclose(f.handle)
-    }
+proc close_file(mov {handle} File) {
+    fclose(handle)
 }
 
-proc write_file(var f File, s u8[:0]) {
+proc write_file(f File, s u8[:0]) {
     fputs(s.data, f.handle)
 }
 ```
@@ -1396,7 +1427,7 @@ Lain eliminates entire classes of bugs at compile time without runtime overhead.
 | **Null Dereference** | **Prevented** | References are valid by construction. Raw pointer dereference requires `unsafe`. |
 | **Memory Leaks** | **Prevented** | Linear variables (`mov`) **must** be consumed. Forgetting to use or destroy a resource is a compile error. |
 | **Division by Zero** | **Prevented** | Type constraints (`b int != 0`) can enforce non-zero divisors at compile time. |
-| **Integer Overflow** | *Not yet addressed* | Future versions may add overflow detection. |
+| **Integer Overflow** | **Documented** | Signed overflow is undefined behavior (inherited from C99). Unsigned overflow wraps (modular arithmetic). See §18. |
 
 ---
 
@@ -1459,11 +1490,11 @@ Tests are organized under `tests/` and run via `run_tests.sh`:
 **Test categories:**
 | Directory | Tests | Purpose |
 |:----------|:------|:--------|
-| `tests/core/` | 8 | Basic language features (functions, loops, math) |
-| `tests/types/` | 10 | Type system (ADTs, enums, arrays, structs, strings, bool, casts, integers) |
+| `tests/core/` | 12 | Basic language features (functions, loops, math, bitwise, compound assignments, shadowing) |
+| `tests/types/` | 14 | Type system (ADTs, enums, arrays, structs, strings, bool, casts, integers, chars, floats) |
 | `tests/safety/bounds/` | 14 | Static bounds checking & type constraints |
-| `tests/safety/ownership/` | 11 | Ownership, borrowing, move semantics |
-| `tests/safety/purity/` | 2 | Purity enforcement |
+| `tests/safety/ownership/` | 13 | Ownership, borrowing, move semantics, block scoping |
+| `tests/safety/purity/` | 3 | Purity enforcement |
 | `tests/safety/` (root) | 4 | Unsafe blocks, linear struct fields |
 | `tests/stdlib/` | 6 | Module system, extern, stdlib |
 
@@ -1528,6 +1559,18 @@ When compiling the generated `out.c`, certain C preprocessor flags are needed to
 | `var` | ✅ Implemented | Mutable binding |
 | `while` | ✅ Implemented | While loop (only in `proc`) |
 
+**Primitive types:**
+| Type | Status | Category |
+|:-----|:-------|:---------|
+| `int` | ✅ Implemented | Platform-dependent signed integer |
+| `i8`, `i16`, `i32`, `i64` | ✅ Implemented | Signed fixed-width integers |
+| `u8`, `u16`, `u32`, `u64` | ✅ Implemented | Unsigned fixed-width integers |
+| `isize` | ✅ Implemented | Signed pointer-sized integer |
+| `usize` | ✅ Implemented | Unsigned pointer-sized integer |
+| `f32` | ✅ Implemented | 32-bit floating-point |
+| `f64` | ✅ Implemented | 64-bit floating-point |
+| `bool` | ✅ Implemented | Boolean type |
+
 ---
 
 ## Appendix B: Reserved Keywords & Future Plans
@@ -1557,6 +1600,193 @@ Reserved for explicit precondition and postcondition contract blocks. Currently,
 ### `..=` — Inclusive Range
 
 Reserved for inclusive range syntax. Currently only `..` (exclusive end) is supported.
+
+---
+
+## 15. Error Model
+
+Lain does **not** have exceptions. Error handling follows a return-value-based approach:
+
+### 15.1 Current Approach
+
+Functions signal errors through return values:
+
+```lain
+proc open_file(path u8[:0], mode u8[:0]) mov File {
+    var raw = fopen(path.data, mode.data)
+    // TODO: raw could be NULL — no way to signal failure yet
+    return File(raw)
+}
+```
+
+The caller is responsible for checking return values. For `int`-returning functions, error codes (e.g., `-1` for failure, `0` for success) are the standard pattern.
+
+### 15.2 Future: `Option` and `Result` Types
+
+A planned extension is to introduce algebraic types for explicit error handling:
+
+```lain
+// Future vision
+type Option {
+    Some { value int }
+    None
+}
+
+type Result {
+    Ok { value int }
+    Err { code int }
+}
+```
+
+Combined with `case` pattern matching, this provides type-safe error handling without exceptions:
+
+```lain
+var result = try_open("file.txt")
+case result {
+    Ok(f): write_file(f, "hello")
+    Err(code): libc_printf("Error: %d\n", code)
+}
+```
+
+> [!NOTE]
+> The current compiler does not have generic types. `Option` and `Result` would need to be defined per-type until `comptime` generics are implemented.
+
+---
+
+## 16. Memory Model
+
+### 16.1 Stack Allocation
+
+All local variables, structs, and arrays in Lain are **stack-allocated**. There is no implicit heap allocation.
+
+```lain
+var x int = 42           // Stack-allocated integer
+var arr int[100]         // Stack-allocated array of 100 ints
+var p Point              // Stack-allocated struct
+```
+
+### 16.2 Heap Allocation
+
+Heap allocation is performed through C interop, using `malloc` and `free`:
+
+```lain
+extern proc malloc(size usize) mov *void
+extern proc free(ptr mov *void)
+
+proc main() int {
+    var ptr = malloc(1024)    // Heap allocation
+    // ... use ptr ...
+    free(mov ptr)             // Explicit deallocation
+    return 0
+}
+```
+
+Lain's ownership system tracks heap-allocated resources through `mov` annotations, preventing leaks and double-frees.
+
+### 16.3 No Garbage Collector
+
+Lain never performs automatic memory management. All resource lifetimes are statically determined at compile time via the ownership system. This guarantees:
+- **Deterministic deallocation**: Resources are freed at known, predictable points.
+- **Zero runtime overhead**: No GC pauses, no reference counting, no tracing.
+- **Embedded-friendly**: No runtime allocator needed beyond what the programmer explicitly uses.
+
+> [!NOTE]
+> Future versions may include an optional arena/pool allocator in the standard library, but this will always be explicit — never implicit.
+
+---
+
+## 17. Initialization & Zero Values
+
+### 17.1 Uninitialized Variables
+
+Variables declared without initialization contain **undefined values** (garbage). Lain inherits this behavior from C.
+
+```lain
+var x int              // x has an undefined value
+var arr int[5]         // array contents are undefined
+var p Point            // p.x and p.y are undefined
+```
+
+> [!WARNING]
+> Using an uninitialized variable is **not** a compile error in the current compiler. The programmer is responsible for initialization. Future versions may add definite-initialization analysis.
+
+### 17.2 Struct Initialization
+
+Structs can be initialized via positional construction (which initializes all fields) or field-by-field assignment:
+
+```lain
+// All fields initialized at once (safe)
+var p = Point(10, 20)
+
+// Field-by-field (programmer must initialize all fields)
+var q Point
+q.x = 10
+q.y = 20
+```
+
+> [!CAUTION]
+> Partial initialization (initializing some fields but not others) is **not** detected by the compiler. It is the programmer's responsibility to initialize all fields before use.
+
+---
+
+## 18. Arithmetic Overflow
+
+Lain's arithmetic follows C99 semantics:
+
+| Type Category | Overflow Behavior |
+|:-------------|:------------------|
+| **Signed integers** (`int`, `i8`–`i64`, `isize`) | **Undefined behavior** (inherited from C99) |
+| **Unsigned integers** (`u8`–`u64`, `usize`) | **Wrapping** (modular arithmetic, e.g., `u8(255) + 1 → 0`) |
+| **Floating-point** (`f32`, `f64`) | IEEE 754 rules: overflow → ±infinity, underflow → 0 or denormal |
+
+> [!WARNING]
+> Signed integer overflow is undefined behavior in C99, which Lain inherits. This means the C compiler may optimize assuming signed overflow never occurs, leading to unexpected behavior. Use unsigned types or explicit range checking for critical arithmetic.
+
+---
+
+## 19. Visibility & Modules
+
+### 19.1 All-Public by Default
+
+Currently, **all** top-level declarations (functions, procedures, types, global variables) are public and visible to any module that imports them. There is no `private` or module-scoped visibility.
+
+### 19.2 Future: `export` Keyword
+
+The `export` keyword is reserved for a future visibility system:
+
+```lain
+// Future vision
+export func public_api() int { return 42 }
+func internal_helper() int { return 0 }  // Not exported
+```
+
+Until `export` is implemented, all declarations are implicitly exported.
+
+---
+
+## 20. String & Text Handling
+
+### 20.1 Byte-Oriented Strings
+
+Lain strings are **byte arrays**, not character arrays. The type `u8[:0]` is a null-terminated byte slice.
+
+- `.len` returns the number of **bytes** (not Unicode codepoints)
+- `.data` returns a pointer to the raw bytes
+
+```lain
+var s = "Hello"      // Type: u8[:0], .len = 5
+```
+
+### 20.2 Encoding
+
+Lain does not enforce any particular text encoding. String literals are stored as raw bytes in the source file's encoding (typically UTF-8). Multi-byte characters are represented as multiple `u8` values.
+
+```lain
+var s = "café"       // .len = 5 (4 ASCII bytes + 1 two-byte UTF-8 char)
+```
+
+> [!NOTE]
+> Lain provides no built-in Unicode processing. String manipulation operates on raw bytes. Libraries for UTF-8 handling could be built using `extern` bindings to C libraries.
 
 ---
 

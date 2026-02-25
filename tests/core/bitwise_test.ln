@@ -1,0 +1,23 @@
+// Test: Bitwise operators
+
+extern proc libc_printf(fmt *u8, ...) int
+
+proc main() int {
+    var a = 12    // 0b1100
+    var b = 10    // 0b1010
+    
+    // Bitwise AND
+    var and_result = a & b    // 0b1000 = 8
+    libc_printf("12 & 10 = %d\n", and_result)
+    
+    // Bitwise OR
+    var or_result = a | b     // 0b1110 = 14
+    libc_printf("12 | 10 = %d\n", or_result)
+    
+    // Bitwise XOR
+    var xor_result = a ^ b    // 0b0110 = 6
+    libc_printf("12 ^ 10 = %d\n", xor_result)
+    
+    return 0
+}
+

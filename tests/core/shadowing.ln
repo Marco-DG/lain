@@ -1,0 +1,18 @@
+// Test: Shadowing is allowed in inner scopes
+
+extern proc libc_printf(fmt *u8, ...) int
+
+proc main() int {
+    var x = 10
+    libc_printf("outer x = %d\n", x)
+    
+    if 1 {
+        var x = 20   // Shadowing outer x — allowed
+        libc_printf("inner x = %d\n", x)
+    }
+    
+    // Outer x is still 10
+    libc_printf("outer x after block = %d\n", x)
+    
+    return 0
+}

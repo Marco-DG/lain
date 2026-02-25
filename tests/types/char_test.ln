@@ -1,0 +1,17 @@
+// Test: Character literals
+
+extern proc libc_printf(fmt *u8, ...) int
+
+proc main() int {
+    var ch = 'A'
+    libc_printf("char: %c\n", ch)
+    libc_printf("char as int: %d\n", ch)
+    
+    var newline = '\n'
+    libc_printf("newline as int: %d\n", newline)  // 10
+    
+    var tab = '\t'
+    libc_printf("tab as int: %d\n", tab)          // 9
+    
+    return 0
+}

@@ -1,7 +1,7 @@
 
 import std.c
 
-func takes_sentinel_string(s u8[:0]) {
+proc takes_sentinel_string(s u8[:0]) {
     // Should have .len and .data
     var fmt1 = "Length: %d\n"
     libc_printf(fmt1.data, s.len)

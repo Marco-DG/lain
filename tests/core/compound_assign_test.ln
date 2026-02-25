@@ -1,0 +1,35 @@
+// Test: Compound assignment operators
+
+extern proc libc_printf(fmt *u8, ...) int
+
+proc main() int {
+    var x = 10
+    
+    x += 5
+    libc_printf("10 += 5 = %d\n", x)    // 15
+    
+    x -= 3
+    libc_printf("15 -= 3 = %d\n", x)    // 12
+    
+    x *= 2
+    libc_printf("12 *= 2 = %d\n", x)    // 24
+    
+    x /= 4
+    libc_printf("24 /= 4 = %d\n", x)    // 6
+    
+    x %= 4
+    libc_printf("6 %%= 4 = %d\n", x)    // 2
+    
+    // Bitwise compound assignments
+    var y = 255
+    y &= 15
+    libc_printf("255 &= 15 = %d\n", y)  // 15
+    
+    y |= 48
+    libc_printf("15 |= 48 = %d\n", y)   // 63
+    
+    y ^= 33
+    libc_printf("63 ^= 33 = %d\n", y)   // 30
+    
+    return 0
+}

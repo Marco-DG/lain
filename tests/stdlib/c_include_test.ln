@@ -1,7 +1,7 @@
 
 c_include "<stdio.h>"
 
-extern func libc_puts(s *u8) int
+extern proc libc_puts(s *u8) int
 
 proc main() {
     libc_puts("Hello from c_include!")

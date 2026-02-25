@@ -5,8 +5,8 @@ proc impure_increment() {
 }
 
 func pure_add(a int, b int) int {
-    // Violation 1: Calling a proc
-    // impure_increment()
+    // Violation 1: Calling a proc from func
+    impure_increment()
     
     // Violation 2: Modifying global
     global_counter = 100
