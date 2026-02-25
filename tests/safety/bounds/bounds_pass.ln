@@ -1,6 +1,8 @@
 // Test for static bounds checking: should COMPILE and RUN successfully
 // All array accesses are provably within bounds
 
+extern proc libc_printf(fmt *u8, ...) int
+
 proc main() int {
     // Fixed-size array
     var arr int[5]
@@ -15,7 +17,7 @@ proc main() int {
     var b = arr[4]
     var c = arr[2 + 1]  // 3 - compile-time evaluated to 3
     
-    printf("arr[0]=%d, arr[4]=%d, arr[3]=%d\n", a, b, c)
+    libc_printf("arr[0]=%d, arr[4]=%d, arr[3]=%d\n", a, b, c)
     
     return 0
 }

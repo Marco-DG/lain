@@ -1,24 +1,23 @@
+extern proc libc_printf(fmt *u8, ...) int
+
 type Point {
     x int
     y int
 }
 
-func print_point(p Point) {
+proc print_point(p Point) {
     // Shared reference: p is const Point*
-    // Access fields via -> (handled by emitter)
-    printf("Point(%d, %d)\n", p.x, p.y)
+    libc_printf("Point(%d, %d)\n", p.x, p.y)
 }
 
-func move_point(mov p Point) Point {
+proc move_point(mov p Point) Point {
     // Owned: p is Point (value)
-    // Access fields via . (handled by emitter)
-    printf("Moved Point(%d, %d)\n", p.x, p.y)
+    libc_printf("Moved Point(%d, %d)\n", p.x, p.y)
     return mov p
 }
 
 func mutate_point(var p Point) {
     // Mutable reference: p is Point*
-    // Access fields via -> (handled by emitter)
     p.x = p.x + 1
     p.y = p.y + 1
 }
@@ -38,7 +37,5 @@ proc main() int {
     // Test Move (explicit mov)
     move_point(mov p1)
     
-    // p1 is consumed here (linearity check should catch use-after-move if implemented)
-    // For now, we just verify C code generation correctness.
     return 0
 }

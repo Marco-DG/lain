@@ -1,0 +1,12 @@
+// Test: for loop with two variables (index, value)
+
+extern proc libc_printf(fmt *u8, ...) int
+
+proc main() int {
+    libc_printf("for i, val in 0..5:\n")
+    for i, val in 0..5 {
+        libc_printf("  i=%d, val=%d\n", i, val)
+    }
+    
+    return 0
+}

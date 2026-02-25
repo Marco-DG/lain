@@ -1,0 +1,19 @@
+// Test: Float types (f32, f64)
+
+extern proc libc_printf(fmt *u8, ...) int
+
+proc main() int {
+    var a f32 = 3
+    var b f64 = 2
+    
+    libc_printf("f32: %f\n", a)
+    libc_printf("f64: %f\n", b)
+    
+    // Basic arithmetic
+    var sum f64 = 10
+    var diff f64 = 5
+    libc_printf("sum: %f\n", sum)
+    libc_printf("diff: %f\n", diff)
+    
+    return 0
+}

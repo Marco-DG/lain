@@ -1,7 +1,7 @@
-extern func abs(n int) int
-extern func malloc(size usize) mov *void
-extern func free(ptr mov *void)
-extern func exit(status int)
+extern proc abs(n int) int
+extern proc malloc(size usize) mov *void
+extern proc free(ptr mov *void)
+extern proc exit(status int)
 
 // Also test stdlib which uses extern
 import std.io
@@ -18,15 +18,13 @@ proc main() int {
     }
     println("abs(-42) = 42 (OK)")
 
-    // Test malloc/free
-    var ptr *void = malloc(10)
-    // We can't easily check for NULL without == 0 or cast, 
-    // but assuming it succeeds for small allocation.
-    // Let's just free it.
-    free(ptr)
+    // Test malloc/free with proper ownership
+    var ptr = malloc(10)
+    // Free with explicit mov (ownership transfer)
+    free(mov ptr)
     println("malloc and free (OK)")
 
     println("All extern tests passed.")
     exit(0)
-    return 0// Unreachable
+    return 0
 }

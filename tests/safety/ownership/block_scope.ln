@@ -1,0 +1,26 @@
+// Test: Block scoping for normal (non-linear) variables
+// Variables declared inside a block should not be visible outside
+
+extern proc libc_printf(fmt *u8, ...) int
+
+proc main() int {
+    var outer = 100
+    
+    if 1 {
+        var inner = 42
+        libc_printf("inner = %d\n", inner)    // OK: inner is in scope
+        libc_printf("outer = %d\n", outer)    // OK: outer is visible
+    }
+    
+    // 'inner' is no longer in scope here
+    // Using inner here should be a compile error (tested in block_scope_access_fail)
+    libc_printf("outer = %d\n", outer)        // OK: outer still in scope
+    
+    // Test for loop scoping
+    for i in 0..3 {
+        libc_printf("i = %d\n", i)
+    }
+    // 'i' is no longer in scope here
+    
+    return 0
+}

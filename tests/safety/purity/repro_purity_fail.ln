@@ -1,10 +1,10 @@
 // This should FAIL compilation if purity is enforced
-// Currently it likely passes
+// A pure function calling an impure procedure
 
-extern proc printf(fmt u8[:0], ...) int
+extern proc libc_printf(fmt *u8, ...) int
 
 proc impure_action() {
-    printf("Side effect!\n")
+    libc_printf("Side effect!\n")
 }
 
 func pure_function() int {
