@@ -1,0 +1,8 @@
+extern func printf(fmt *u8, ...) int
+
+proc main() {
+    var x int = undefined
+    var y int = 10
+    
+    printf("Passed.\n")
+}

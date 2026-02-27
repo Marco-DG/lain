@@ -5,7 +5,7 @@ extern proc libc_printf(fmt *u8, ...) int
 
 proc main() int {
     // Fixed-size array
-    var arr int[5]
+    var arr int[5] = undefined
     arr[0] = 10
     arr[1] = 20
     arr[2] = 30

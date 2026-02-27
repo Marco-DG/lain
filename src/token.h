@@ -86,6 +86,7 @@ typedef enum {
     TOKEN_KEYWORD_PRE,
     TOKEN_KEYWORD_POST,
     TOKEN_KEYWORD_WHILE,
+    TOKEN_KEYWORD_UNDEFINED,
 } TokenKind;
 
 typedef struct {
@@ -143,6 +144,7 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             break;
         case 9:
             if (strncmp(lexeme, "c_include", 9) == 0)   return TOKEN_KEYWORD_C_INCLUDE;
+            if (strncmp(lexeme, "undefined", 9) == 0)   return TOKEN_KEYWORD_UNDEFINED;
             break;
     }
     return TOKEN_IDENTIFIER;
@@ -226,6 +228,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_KEYWORD_C_INCLUDE:           return "TOKEN_KEYWORD_C_INCLUDE";
         case TOKEN_KEYWORD_TRUE:                return "TOKEN_KEYWORD_TRUE";
         case TOKEN_KEYWORD_FALSE:               return "TOKEN_KEYWORD_FALSE";
+        case TOKEN_KEYWORD_UNDEFINED:           return "TOKEN_KEYWORD_UNDEFINED";
         default:                                return 0;
     }
 }
@@ -313,6 +316,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_KEYWORD_C_INCLUDE:           return "c_include";
         case TOKEN_KEYWORD_TRUE:                return "true";
         case TOKEN_KEYWORD_FALSE:               return "false";
+        case TOKEN_KEYWORD_UNDEFINED:           return "undefined";
         default:                                return 0;
     }
 }

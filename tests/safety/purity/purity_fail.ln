@@ -1,5 +1,4 @@
-var global_counter int
-
+var global_counter int = undefined
 proc impure_increment() {
     global_counter = global_counter + 1
 }

@@ -1,7 +1,7 @@
 extern proc libc_printf(fmt *u8, ...) int
 
 proc main() int {
-    var arr u8[5]
+    var arr u8[5] = undefined
     arr[0] = 10
     arr[1] = 20
     libc_printf("arr[0]=%d, arr[1]=%d\n", arr[0], arr[1])

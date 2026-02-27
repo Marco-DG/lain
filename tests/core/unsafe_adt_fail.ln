@@ -1,0 +1,18 @@
+type Shape {
+    Circle {
+        radius int
+    }
+    Rectangle {
+        w int
+        h int
+    }
+}
+
+proc main() int {
+    var s = Shape.Circle(10)
+    
+    // Access directly outside unsafe block (should FAIL)
+    var r = s.Circle.radius
+    
+    return 0
+}

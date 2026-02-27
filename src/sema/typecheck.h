@@ -120,10 +120,12 @@ static DeclEnum *find_adt_decl(Id *adt_name) {
   if (!adt_name) return NULL;
   for (DeclList *dl = sema_decls; dl; dl = dl->next) {
     Decl *d = dl->decl;
-    if (d && d->kind == DECL_ENUM &&
-        d->as.enum_decl.type_name->length == adt_name->length &&
-        strncmp(d->as.enum_decl.type_name->name, adt_name->name, adt_name->length) == 0) {
-      return &d->as.enum_decl;
+    if (d) {
+        if (d->kind == DECL_ENUM &&
+            d->as.enum_decl.type_name->length == adt_name->length &&
+            strncmp(d->as.enum_decl.type_name->name, adt_name->name, adt_name->length) == 0) {
+          return &d->as.enum_decl;
+        }
     }
   }
   return NULL;
@@ -163,50 +165,67 @@ void sema_infer_expr(Expr *e) {
     Type *t = e->as.member_expr.target->type;
     
     // Case 1: Accessing ADT Variant Constructor (e.g. Shape.Circle)
-    // Case 1: Accessing ADT Variant Constructor (e.g. Shape.Circle)
+    // ONLY valid if the target resolves to the Enum declaration itself!
     if (e->as.member_expr.target->kind == EXPR_IDENTIFIER) {
-        Id *base_name = e->as.member_expr.target->as.identifier_expr.id;
-        DeclEnum *adt = NULL;
-        
-        // Try to use resolved decl first
         if (e->as.member_expr.target->decl && e->as.member_expr.target->decl->kind == DECL_ENUM) {
-            adt = &e->as.member_expr.target->decl->as.enum_decl;
-        } else {
-            // Fallback to name lookup (though resolve should have handled it)
-            adt = find_adt_decl(base_name);
-        }
-
-        if (adt) {
-            // It is an ADT type name!
+            DeclEnum *adt = &e->as.member_expr.target->decl->as.enum_decl;
             Variant *v = lookup_adt_variant(adt, e->as.member_expr.member);
             if (!v) {
-                fprintf(stderr, "sema error: ADT '%.*s' has no variant '%.*s'\n",
-                        (int)base_name->length, base_name->name,
+                Id *base_name = e->as.member_expr.target->as.identifier_expr.id;
+                fprintf(stderr, "sema error Ln %li, Col %li: ADT has no variant '%.*s'\n",
+                        e->line, e->col,
                         (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
                 exit(1);
             }
-            // The type of "Shape.Circle" is the ADT type itself (conceptually)
-            // But we need to know it's a constructor.
-            // For now, let's just set the type to the ADT type.
-            // We need to construct a Type for the ADT.
-            // Since we don't have a "TypeDecl" pointer in Type, we reconstruct it.
-            // TODO: Cache this or store Decl in Type.
-            Type *adt_type = type_simple(sema_arena, base_name);
-            e->type = adt_type;
-            
-            // Tag the expression as a variant constructor for code gen
-            // We can reuse `decl` field to point to the ADT decl? No, that's for variables.
-            // We might need a new ExprKind or just rely on context.
-            // Let's rely on EXPR_CALL handling this if it's a call.
-            // If it's just `Shape.Point` (no args), it's a value.
+            e->type = e->as.member_expr.target->type; // Returns the TYPE (Constructor behavior)
             return;
         }
+        // If it's EXPR_IDENTIFIER but NOT an enum, it's a variable instance (e.g. `s.Circle`). Falls down.
     }
 
     assert(t && "member on untyped target");
     
     // Unwrap wrappers (mut, mov, ptr)
     t = sema_unwrap_type(t);
+
+    if (t->kind == TYPE_VARIANT) {
+        // We are accessing a field of an ADT variant payload (e.g. radius in shape.Circle.radius)
+        Variant *v = t->variant;
+        for (DeclList *f = v->fields; f; f = f->next) {
+            Id *fname = f->decl->as.variable_decl.name;
+            if (fname->length == e->as.member_expr.member->length &&
+                strncmp(fname->name, e->as.member_expr.member->name, fname->length) == 0) {
+                e->type = f->decl->as.variable_decl.type;
+                return;
+            }
+        }
+        fprintf(stderr, "sema error Ln %li, Col %li: variant '%.*s' has no field '%.*s'\n",
+                e->line, e->col,
+                (int)v->name->length, v->name->name,
+                (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+        exit(1);
+    }
+    
+    // ADT Direct Unsafe Unpacking
+    DeclEnum *adt_decl = NULL;
+    if (t->kind == TYPE_SIMPLE && (adt_decl = find_adt_decl(t->base_type)) != NULL) {
+        Variant *v = lookup_adt_variant(adt_decl, e->as.member_expr.member);
+        if (v) {
+            if (!sema_in_unsafe_block) {
+                fprintf(stderr, "sema error Ln %li, Col %li: Direct ADT field access ('%.*s.%.*s') is only allowed inside an 'unsafe' block.\n",
+                        e->line, e->col,
+                        (int)t->base_type->length, t->base_type->name,
+                        (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+                exit(1);
+            }
+            
+            Type *var_type = arena_push_aligned(sema_arena, Type);
+            var_type->kind = TYPE_VARIANT;
+            var_type->variant = v;
+            e->type = var_type;
+            return;
+        }
+    }
 
     // If target is a slice or array, handle the common fields: .len and .data
     if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {

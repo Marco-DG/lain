@@ -243,10 +243,11 @@ proc main() {
 
 ## 9. Compilation
 
-Lain compiles to C code.
+Lain compiles to C code. To guarantee correct runtime semantics, you must compile the output C code with the `-fwrapv` flag, which enforces Two's Complement wrap-around for signed integer overflow, eliminating Undefined Behavior.
+
 ```bash
 ./compiler my_program.ln
-gcc out.c -o my_program
+gcc out.c -o my_program -fwrapv
 ./my_program
 ```
 

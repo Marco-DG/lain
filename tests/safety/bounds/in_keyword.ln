@@ -6,7 +6,7 @@ func get(arr int[10], i int in arr) int {
 }
 
 proc main() int {
-    var arr int[10]
+    var arr int[10] = undefined
     arr[0] = 42
     arr[5] = 100
     

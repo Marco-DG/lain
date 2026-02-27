@@ -223,6 +223,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     sema_infer_expr(s->as.var_stmt.expr);
                     // Infer variable type from initializer if missing (critical for STMT_VAR in emit)
                     if (!s->as.var_stmt.type && s->as.var_stmt.expr) {
+                        if (s->as.var_stmt.expr->kind == EXPR_UNDEFINED) {
+                            fprintf(stderr, "Error: Cannot infer type for variable initialized with 'undefined'. Explicit type annotation required.\n");
+                            exit(1);
+                        }
                         s->as.var_stmt.type = s->as.var_stmt.expr->type;
                     }
                     // DEBUG 'raw' type

@@ -6,7 +6,7 @@ type Vec2 {
 }
 
 proc main() int {
-    var v Vec2
+    var v Vec2 = undefined
     v.x = 10
     v.y = 20
     libc_printf("v = {%d, %d}\n", v.x, v.y)

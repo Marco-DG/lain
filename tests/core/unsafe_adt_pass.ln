@@ -1,0 +1,23 @@
+extern func printf(fmt *u8, ...) int
+
+type Shape {
+    Circle {
+        radius int
+    }
+    Rectangle {
+        w int
+        h int
+    }
+}
+
+proc main() int {
+    var s = Shape.Circle(10)
+    
+    // Access directly inside unsafe block
+    unsafe {
+        var r = s.Circle.radius
+        printf("Radius is %d\n", r)
+    }
+    
+    return 0
+}

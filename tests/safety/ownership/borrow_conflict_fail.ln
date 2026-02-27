@@ -15,7 +15,7 @@ func modify_both(d1 Data, var d2 Data) int {
 }
 
 proc main() int {
-    var data Data
+    var data Data = undefined
     data.value = 42
     
     // This should fail: same variable borrowed as shared AND mutable in same call
