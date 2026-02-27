@@ -278,7 +278,11 @@ Slices are dynamic views into arrays. They consist of a pointer and a length.
 var s int[] = arr[0..3]   // Slice of elements [0, 1, 2]
 ```
 
-**Sentinel-terminated slices** are slices that end with a known sentinel value (typically `0`):
+All slice types (`T[]`) expose two fields:
+- `.data` — pointer to the underlying data (`*T`)
+- `.len` — number of elements in the slice (`usize` or `int`)
+
+**Sentinel-terminated slices** are a special case that end with a known sentinel value (typically `0`):
 
 ```lain
 u8[:0]     // Null-terminated byte slice (C string compatible)
@@ -385,8 +389,11 @@ var rect = Shape.Rectangle(5, 8)
 var p = Shape.Point
 ```
 
-**Pattern matching:**
+**Pattern matching & Data Extraction:**
 See §7.5 for `case` expressions.
+
+> [!IMPORTANT]
+> The `case` expression is the **exclusive** mechanism to extract data from an ADT variant. Lain does not permit direct property access (e.g., `shape.radius`) on an ADT, because the compiler cannot statically guarantee that the ADT currently holds that specific variant. This design decision enforces memory safety at the cost of slight verbosity.
 
 ### 3.8 Opaque Types (`extern type`)
 
@@ -1244,9 +1251,10 @@ import std.c            // Loads std/c.ln
 import std.io           // Loads std/io.ln
 import std.fs           // Loads std/fs.ln
 import tests.stdlib.dummy   // Loads tests/stdlib/dummy.ln
+import std.fs as fs         // Namespace aliasing
 ```
 
-All public declarations from the imported module become available in the current scope.
+If imported without `as`, all public declarations from the imported module are injected into the current global scope. If imported with `as`, they are accessed via the namespace prefix (e.g., `fs.open_file()`).
 
 ### 10.2 Standard Library
 
@@ -1465,6 +1473,12 @@ proc main() int {
     }
     return x            // Returns 100
 }
+
+### 12.5 Null Pointers & C Interop
+
+Lain does not have a native `null` concept for its safe reference types. However, when interfacing with C, pointers returned by `extern` functions (like `*void` from `malloc` or `*FILE` from `fopen`) can natively be null.
+
+To safely handle C-interop pointers, they must be validated against `0` before being wrapped in safe Lain abstraction types. Dereferencing a null pointer inside an `unsafe` block leads to immediate undefined behavior.
 ```
 
 ---
@@ -1676,24 +1690,23 @@ proc open_file(path u8[:0], mode u8[:0]) mov File {
 
 The caller is responsible for checking return values. For `int`-returning functions, error codes (e.g., `-1` for failure, `0` for success) are the standard pattern.
 
-### 15.2 Future: `Option` and `Result` Types
+### 15.2 The `Option` and `Result` Pattern
 
-A planned extension is to introduce algebraic types for explicit error handling:
+Lain formalizes error handling through algebraic data types. While generic types are not yet fully implemented, the standard pattern for any fallible operation is to return a `Result` or `Option` ADT:
 
 ```lain
-// Future vision
-type Option {
+type OptionInt {
     Some { value int }
     None
 }
 
-type Result {
-    Ok { value int }
+type ResultFile {
+    Ok { f File }
     Err { code int }
 }
 ```
 
-Combined with `case` pattern matching, this provides type-safe error handling without exceptions:
+Combined with `case` pattern matching, this provides type-safe error handling without exceptions and forces the caller to acknowledge the failure path:
 
 ```lain
 var result = try_open("file.txt")
@@ -1754,33 +1767,30 @@ Lain never performs automatic memory management. All resource lifetimes are stat
 
 ### 17.1 Uninitialized Variables
 
-Variables declared without initialization contain **undefined values** (garbage). Lain inherits this behavior from C.
+By specification, Lain requires all variables to be explicitly initialized. To deliberately leave a variable uninitialized (for performance reasons), the programmer must assign the explicit `undefined` keyword.
 
 ```lain
-var x int              // x has an undefined value
-var arr int[5]         // array contents are undefined
-var p Point            // p.x and p.y are undefined
+var x int = 0          // Safely initialized to 0
+var y int = undefined  // Explicitly uninitialized (contains garbage)
+var p = Point(10, undefined) // Explicitly uninitialized field 
 ```
 
 > [!WARNING]
-> Using an uninitialized variable is **not** a compile error in the current compiler. The programmer is responsible for initialization. Future versions may add definite-initialization analysis.
+> The current version of the compiler does not yet strictly enforce the definite-initialization analysis, but the specification mandates that relying on implicit uninitialized memory without `undefined` is invalid Lain code. Default garbage memory is forbidden by design.
 
 ### 17.2 Struct Initialization
 
-Structs can be initialized via positional construction (which initializes all fields) or field-by-field assignment:
+Structs can be initialized via positional construction (which initializes all fields) or explicit field-by-field assignment:
 
 ```lain
 // All fields initialized at once (safe)
 var p = Point(10, 20)
 
-// Field-by-field (programmer must initialize all fields)
-var q Point
-q.x = 10
-q.y = 20
+// Explicit placeholder for Uninitialized
+var q = Point(10, undefined) 
 ```
 
-> [!CAUTION]
-> Partial initialization (initializing some fields but not others) is **not** detected by the compiler. It is the programmer's responsibility to initialize all fields before use.
+Partial initialization without explicitly acknowledging uninitialized fields via `undefined` violates the language specification and will be a hard compilation error in Phase 2.
 
 ---
 
