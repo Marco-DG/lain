@@ -15,7 +15,7 @@ func update(var p Point) {
 }
 
 proc main() int {
-    var p Point
+    var p Point = undefined
     p.x = 10
     p.y = 20
     

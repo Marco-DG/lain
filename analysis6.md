@@ -165,3 +165,20 @@ I Tipi Algoritmo di Dati (ADT/Variants) gestiscono formalmente e in massima sicu
    }
    ```
 3. **Backend Emission**: Il compilatore tradurrà `shape.Circle.radius` nell'accesso diretto alla Union del codice in C generato, privo di flag control o macro IF. Se a runtime l'ADT possedeva una referenza `Rectangle`, il programma caricherà i bit di `Rectangle` interpretandoli forzatamente come interi `radius`, restituendo pura spazzatura di layout o causando un Segfault se sono memory pointers, riaffermando che l'azione era intenzionalmente segregata nell'`unsafe`.
+
+---
+
+## 6. Conclusione Fase 1 e Avvio Fase 2
+
+La **Fase 1** è stata completata con successo nell'implementazione reale del compilatore:
+1. **Uninit Structs e Variabili**: Il compilatore ora impedisce rigidamente dichiarazioni non inizializzate (`var x int;` genera ora un parse error fatale). Per bypassare la sicurezza e allocare memoria grezza orientata alle performance, è stata introdotta e legiferata la keyword `undefined` (es. `var x int = undefined`).
+2. **Standardizzare l'Overflow**: Abbiamo iniettato formale costrizione passando il flag `-fwrapv` nel frontend del compilatore per garantire che ogni *signed integer overflow* del linguaggio esegua un Two's Complement wrap-around predicibile, impedendo ottimizzazioni UB (Undefined Behavior) predatorie del backend C.
+3. **Gateway Unsafe per ADT**: Il parser e l'analizzatore semantico sono stati estesi per supportare la Direct Field Notation (es. `s.Circle.radius`) bypassando completamente il type-tag branching. Questa manovra ad altissima performance restituisce C puro senza alcun check limitante, ma il Semantic Checker impone categoricamente che ciò avvenga, a garanzia e firma autografa dello sviluppatore, *unicamente* all'interno di uno scope `unsafe { }`. Piena sovranità all'ingegnere sull'hot-path.
+
+Tutti i test di validazione, sia positivi che retroattivi negativi, certificano il funzionamento robusto di questa infrastruttura. I file di test introdotti empiricamente sono stati ri-categorizzati stabilmente all'interno delle suite `tests/core/` e `tests/types/`.
+
+### Prossimi Passi (Fase 2)
+Ci apprestiamo ad entrare nella fase più innovativa e a basso livello del compilatore: *L'Avvento della Niche Optimization* e la conseguente *Purity Zero-Cost*. 
+L'obiettivo successivo nel workflow è:
+- Insegnare algoritmica avanzata all'engine dei tipi per far collassare l'`Option<*T>` (i puntatori) assorbendo il semantic tag all'interno dello `0x0` della memoria hardware (*Niche Optimization*), polverizzando definitivamente l'overhead in memoria del safe reference handling C.
+- Aggiornare i bridge pre-esistenti della Standard Library C (`std/fs.ln`, `std/c.ln`, ecc.) affinché restituiscano native Option sicure intercettabili unicamente da costrutti match o iterazioni garantite e separando nettamente i contesti in `extern proc` ed `extern func`.

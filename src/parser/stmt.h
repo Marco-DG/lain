@@ -49,6 +49,8 @@ Stmt *parse_decl_stmt(Arena *arena, Parser *parser) {
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance();
         assigned_expr = parse_expr(arena, parser);
+    } else {
+        parser_error("Uninitialized Declaration: variables must be initialized. Use '= undefined' to bypass.");
     }
 
     return stmt_var(arena, var_name, type_annotation, assigned_expr);
@@ -226,6 +228,8 @@ Stmt *parse_comptime_stmt(Arena* arena, Parser* parser)
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance();
         assigned_expr = parse_expr(arena, parser);
+    } else {
+        parser_error("Uninitialized Declaration: variables must be initialized. Use '= undefined' to bypass.");
     }
 
     // NOTE: reuse stmt_var node (semantic passes should look for TYPE_COMPTIME
@@ -254,6 +258,8 @@ Stmt *parse_var_stmt(Arena* arena, Parser* parser)
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance();
         assigned_expr = parse_expr(arena, parser);
+    } else {
+        parser_error("Uninitialized Declaration: variables must be initialized. Use '= undefined' to bypass.");
     }
 
     // var creates a MUTABLE variable

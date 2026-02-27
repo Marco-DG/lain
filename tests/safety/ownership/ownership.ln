@@ -23,7 +23,7 @@ func mutate_point(var p Point) {
 }
 
 proc main() int {
-    var p1 Point
+    var p1 Point = undefined
     p1.x = 10
     p1.y = 20
     

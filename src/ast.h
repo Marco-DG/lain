@@ -45,6 +45,7 @@ typedef enum {
     TYPE_SLICE,     // e.g. "u8[:0]"
     TYPE_POINTER,   // pointer to element type, e.g. "u8 *"
     TYPE_COMPTIME,  // comptime modifier
+    TYPE_VARIANT,   // inner payload of an ADT variant
 } TypeKind;
 
 typedef struct Type {
@@ -59,10 +60,11 @@ typedef struct Type {
     */
     isize array_len;
 
-    // for TYPE_SLICE:
     const char* sentinel_str;
     isize       sentinel_len;
     bool        sentinel_is_string;
+
+    struct Variant* variant; // For TYPE_VARIANT
 } Type;
 
 
@@ -303,6 +305,7 @@ typedef enum {
     EXPR_CAST, // x as Type
     EXPR_FLOAT_LITERAL,
     EXPR_MATCH,
+    EXPR_UNDEFINED, // New
 } ExprKind;
 
 typedef struct {
@@ -802,6 +805,12 @@ Expr *expr_member(Arena *arena, Expr *target, Id *member) {
     e->kind = EXPR_MEMBER;
     e->as.member_expr.target = target;
     e->as.member_expr.member = member;
+    return e;
+}
+
+Expr *expr_undefined(Arena *arena) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_UNDEFINED;
     return e;
 }
 

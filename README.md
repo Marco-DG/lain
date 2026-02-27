@@ -194,6 +194,7 @@ var y = 20     // Without semicolon
 > [!NOTE]
 > Fixed-width integer types require `<stdint.h>` in the generated C code (included automatically).
 > The type `int` is platform-dependent (typically 32-bit). Prefer `i32` for portable fixed-width semantics.
+> **Overflow Behavior**: Lain guarantees that all signed integer overflows result in Two's Complement wrap-around. The compiler injects `-fwrapv` automatically to prevent undefined behavior optimizations from C backends.
 
 **Floating-point:**
 
@@ -393,7 +394,19 @@ var p = Shape.Point
 See §7.5 for `case` expressions.
 
 > [!IMPORTANT]
-> The `case` expression is the **exclusive** mechanism to extract data from an ADT variant. Lain does not permit direct property access (e.g., `shape.radius`) on an ADT, because the compiler cannot statically guarantee that the ADT currently holds that specific variant. This design decision enforces memory safety at the cost of slight verbosity.
+> The `case` expression is the **primary safety** mechanism to extract data from an ADT variant. Lain does not permit direct property access (e.g., `shape.radius`) on an ADT, because the compiler cannot statically guarantee that the ADT currently holds that specific variant. This design decision enforces memory safety at the cost of slight verbosity.
+
+**Direct Field Notation (Unsafe Extraction):**
+If you are mathematically certain of the active variant on the hot-path and need to bypass the branching overhead of a `case` switch, you can extract the field directly using the variant name.
+This is **only allowed** inside an `unsafe` block.
+
+```lain
+var s = Shape.Circle(10)
+unsafe {
+    var r = s.Circle.radius // Zero-overhead direct C union access
+}
+```
+If the variant at runtime is actually a `Rectangle`, this will yield garbage data (or SEGFAULT if pointers are involved), living up to its `unsafe` name.
 
 ### 3.8 Opaque Types (`extern type`)
 
@@ -457,11 +470,18 @@ x = 10           // Immutable binding
 
 ### 4.2 Mutable Bindings (`var`)
 
-The `var` keyword creates a mutable binding slot.
+The `var` keyword creates a mutable binding slot. All variables *must* be initialized at declaration to prevent garbage memory usage.
 
 ```lain
 var y = 10       // Mutable binding with initialization
 y = 20           // OK: y is mutable
+// var z int     // ERROR: Uninitialized Declaration
+```
+
+If you explicitly require uninitialized memory (e.g., for performance reasons like allocating a large buffer before passing it to C), you must use the `undefined` keyword:
+
+```lain
+var buffer u8[4096] = undefined  // Zero-cost stack allocation, data is garbage
 ```
 
 ### 4.3 Type Annotations

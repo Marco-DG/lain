@@ -197,6 +197,12 @@ void emit_expr(Expr *expr, int depth) {
         }
     }
 
+    if (expr->type && expr->type->kind == TYPE_VARIANT) {
+        emit_expr(m->target, depth);
+        EMIT(is_ptr ? "->data.%.*s" : ".data.%.*s", (int)m->member->length, m->member->name);
+        break;
+    }
+
     emit_expr(m->target, depth);
     EMIT(is_ptr ? "->%.*s" : ".%.*s", (int)m->member->length, m->member->name);
     break;
