@@ -9,6 +9,63 @@ static void emit_forward_decl(Decl *decl, int depth);
 // Emit a list of declarations (the whole program)
 void emit_decl_list(DeclList *decls, int depth);
 
+static void emit_param_type(Type *t); // Forward for use in forward decl
+
+static bool is_generic_function(Decl *decl) {
+    if (!decl || (decl->kind != DECL_FUNCTION && decl->kind != DECL_PROCEDURE)) return false;
+    for (DeclList *p = decl->as.function_decl.params; p; p = p->next) {
+        if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type && p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void emit_forward_decl(Decl *decl, int depth) {
+    if (!decl) return;
+    if (is_generic_function(decl)) return;
+    if (decl->kind == DECL_FUNCTION || decl->kind == DECL_PROCEDURE) {
+        emit_indent(depth);
+        if (decl->as.function_decl.return_type) {
+            emit_type(decl->as.function_decl.return_type);
+        } else {
+            EMIT("void");
+        }
+        
+        const char *id_name = decl->as.function_decl.name->name;
+        size_t id_len = decl->as.function_decl.name->length;
+        if (id_len == 4 && strncmp(id_name, "main", 4) == 0) {
+            EMIT(" main(");
+        } else {
+            EMIT(" %s(", c_name_for_id(decl->as.function_decl.name));
+        }
+
+        DeclList* param = decl->as.function_decl.params;
+        if (param) {
+            int first = 1;
+            while (param) {
+                if (param->decl->kind == DECL_VARIABLE && param->decl->as.variable_decl.type && (param->decl->as.variable_decl.type->kind == TYPE_META_TYPE || param->decl->as.variable_decl.type->kind == TYPE_COMPTIME)) {
+                    param = param->next;
+                    continue;
+                }
+                if (!first) {
+                    EMIT(", ");
+                }
+                if (param->decl->kind == DECL_DESTRUCT) {
+                    emit_param_type(param->decl->as.destruct_decl.type);
+                } else {
+                    emit_param_type(param->decl->as.variable_decl.type);
+                }
+                first = 0;
+                param = param->next;
+            }
+        } else {
+            EMIT("void");
+        }
+        EMIT(");\n");
+    }
+}
+
 static void emit_param_type(Type *t) {
     if (!t) return;
     
@@ -132,6 +189,7 @@ void emit_decl(Decl* decl, int depth) {
 
         case DECL_PROCEDURE:
         case DECL_FUNCTION: {
+            if (is_generic_function(decl)) return;
             emit_indent(depth);
             // Print return type and function name.
             if (decl->as.function_decl.return_type) {
@@ -154,6 +212,11 @@ void emit_decl(Decl* decl, int depth) {
                 int first = 1;
                 int param_idx = 0;
                 while (param) {
+                    if (param->decl->kind == DECL_VARIABLE && param->decl->as.variable_decl.type && (param->decl->as.variable_decl.type->kind == TYPE_META_TYPE || param->decl->as.variable_decl.type->kind == TYPE_COMPTIME)) {
+                        param = param->next;
+                        param_idx++;
+                        continue;
+                    }
                     if (!first) {
                         EMIT(", ");
                     }

@@ -5,6 +5,8 @@
 
 
 #include "../ast.h"
+#include "../ast_clone.h"
+#include "generic.h"
 #include "exhaustiveness.h"  // Match exhaustiveness checking
 #include "ranges.h"          // Range analysis
 
@@ -554,6 +556,16 @@ void sema_resolve_expr(Expr *e) {
               fprintf(stderr, "DEBUG resolve fopen: Type is NULL!\n");
           }
       }
+      if (sym->decl && (sym->decl->kind == DECL_STRUCT || sym->decl->kind == DECL_ENUM || sym->decl->kind == DECL_EXTERN_TYPE)) {
+          // It's a user-defined type!
+          e->kind = EXPR_TYPE;
+          e->as.type_expr.type_value = sym->type;
+          e->type = type_meta_type(sema_arena);
+          e->decl = sym->decl;
+          e->is_global = true;
+          break;
+      }
+
       // Instead of pointing at sym->c_name (which may get freed),
       // copy the string into the permanent arena:
       const char *mangled = sym->c_name;
@@ -572,7 +584,27 @@ void sema_resolve_expr(Expr *e) {
       break;
     }
 
-    // 3) fallback: maybe it’s an enum‐variant …
+    // 3) fallback: maybe it’s a builtin type name?
+    if (strcmp(raw, "int") == 0) {
+        e->kind = EXPR_TYPE;
+        e->as.type_expr.type_value = get_builtin_int_type();
+        e->type = type_meta_type(sema_arena);
+        break;
+    } else if (strcmp(raw, "u8") == 0) {
+        e->kind = EXPR_TYPE;
+        e->as.type_expr.type_value = get_builtin_u8_type();
+        e->type = type_meta_type(sema_arena);
+        break;
+    } else if (strcmp(raw, "f32") == 0 || strcmp(raw, "f64") == 0 || strcmp(raw, "bool") == 0 || strcmp(raw, "string") == 0) {
+        e->kind = EXPR_TYPE;
+        Id *type_id = id(sema_arena, strlen(raw), arena_push_many_aligned(sema_arena, char, strlen(raw) + 1));
+        strcpy((char*)type_id->name, raw);
+        e->as.type_expr.type_value = type_simple(sema_arena, type_id);
+        e->type = type_meta_type(sema_arena);
+        break;
+    }
+
+    // 4) fallback: maybe it’s an enum‐variant …
     for (DeclList *dl = sema_decls; dl; dl = dl->next) {
       Decl *D = dl->decl;
       if (D && D->kind == DECL_ENUM) {
@@ -623,12 +655,110 @@ void sema_resolve_expr(Expr *e) {
   case EXPR_CALL:
     sema_resolve_expr(e->as.call_expr.callee);
     
+    // Check if the callee resolved to a generic func
+    if (e->as.call_expr.callee->decl) {
+        Decl *df = e->as.call_expr.callee->decl;
+        if (df->kind == DECL_FUNCTION || df->kind == DECL_PROCEDURE) {
+            // Check for comptime parameters
+            bool is_generic = false;
+            for (DeclList *p = df->as.function_decl.params; p; p = p->next) {
+                if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type && p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
+                    is_generic = true;
+                    break;
+                }
+            }
+
+            if (is_generic) {
+                // 1. Resolve arguments first to get types
+                for (ExprList *a = e->as.call_expr.args; a; a = a->next) sema_resolve_expr(a->expr);
+
+                // 2. Build mangled name, e.g., max_int
+                char mangled_name[512];
+                snprintf(mangled_name, sizeof(mangled_name), "%.*s", (int)df->as.function_decl.name->length, df->as.function_decl.name->name);
+                
+                DeclList *p = df->as.function_decl.params;
+                ExprList *a = e->as.call_expr.args;
+                while (p && a) {
+                    if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type && p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
+                        if (a->expr->kind == EXPR_TYPE) {
+                            Type *arg_ty = a->expr->as.type_expr.type_value;
+                            if (arg_ty->kind == TYPE_SIMPLE && arg_ty->base_type) {
+                                snprintf(mangled_name + strlen(mangled_name), sizeof(mangled_name) - strlen(mangled_name), "_%.*s", 
+                                    (int)arg_ty->base_type->length, arg_ty->base_type->name);
+                            } else {
+                                snprintf(mangled_name + strlen(mangled_name), sizeof(mangled_name) - strlen(mangled_name), "_complexT");
+                            }
+                        } else {
+                             fprintf(stderr, "Error Ln %li: call to generic function '%.*s' missing type argument\n", 
+                                 e->line, (int)df->as.function_decl.name->length, df->as.function_decl.name->name);
+                             exit(1);
+                        }
+                    }
+                    p = p->next;
+                    a = a->next;
+                }
+
+                char *cname_mangled = malloc(strlen(current_module_path) + 1 + strlen(mangled_name) + 1);
+                snprintf(cname_mangled, 512, "%s_%s", current_module_path, mangled_name);
+                for (char *ptr = cname_mangled; *ptr; ptr++) if (*ptr == '.') *ptr = '_';
+
+                // 3. Instantiate if needed
+                Symbol *existing = sema_lookup(mangled_name);
+                if (!existing) {
+                    Decl *inst = clone_decl(sema_arena, df);
+                    
+                    // Replace the name
+                    inst->as.function_decl.name = id(sema_arena, strlen(mangled_name), arena_push_many_aligned(sema_arena, char, strlen(mangled_name) + 1));
+                    strcpy((char*)inst->as.function_decl.name->name, mangled_name);
+
+                    // Substitute type parameters
+                    p = inst->as.function_decl.params;
+                    a = e->as.call_expr.args;
+                    while (p && a) {
+                        if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type && p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
+                            Id *param_name = p->decl->as.variable_decl.name;
+                            Type *arg_ty = a->expr->as.type_expr.type_value;
+                            p->decl->as.variable_decl.type = type_meta_type(sema_arena);
+                            
+                            char param_str[256];
+                            snprintf(param_str, 256, "%.*s", (int)param_name->length, param_name->name);
+                            generic_substitute_decl(inst, param_str, arg_ty);
+                        }
+                        p = p->next;
+                        a = a->next;
+                    }
+
+                    sema_insert_global(mangled_name, cname_mangled, inst->as.function_decl.return_type, inst, false);
+                    
+                    // Append to sema_decls so it will be typechecked and emitted
+                    DeclList *new_node = decl_list(sema_arena, inst);
+                    DeclList *tail = sema_decls;
+                    while (tail && tail->next) tail = tail->next;
+                    if (tail) tail->next = new_node;
+                    else sema_decls = new_node;
+                }
+                
+                // 4. Update the callee identifier to point to `mangled_name`
+                e->as.call_expr.callee->as.identifier_expr.id = id(sema_arena, strlen(mangled_name), arena_push_many_aligned(sema_arena, char, strlen(mangled_name) + 1));
+                strcpy((char*)e->as.call_expr.callee->as.identifier_expr.id->name, mangled_name);
+                
+                // Re-resolve callee
+                e->as.call_expr.callee->decl = NULL;
+                sema_resolve_expr(e->as.call_expr.callee);
+                
+                free(cname_mangled);
+                break; // Skip normal arg resolution, we already did it
+            }
+        }
+    }
+
     // Purity Check: func cannot call proc
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         Expr *callee = e->as.call_expr.callee;
         if (callee->decl) {
             if (callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE) {
-                fprintf(stderr, "Error: Pure function '%.*s' cannot call procedure\n",
+                fprintf(stderr, "Error Ln %li, Col %li: Pure function '%.*s' cannot call procedure\n",
+                        e->line, e->col,
                         (int)current_function_decl->as.function_decl.name->length,
                         current_function_decl->as.function_decl.name->name);
                 exit(1);
@@ -636,6 +766,7 @@ void sema_resolve_expr(Expr *e) {
         }
     }
 
+    // Normal argument resolution for non-generic
     for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
       sema_resolve_expr(a->expr);
     }

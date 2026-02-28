@@ -1,0 +1,26 @@
+proc print_int(val int) {
+    libc_printf("%d\n", val)
+}
+
+proc print_f32(val f32) {
+    libc_printf("%f\n", val)
+}
+
+proc max(comptime T type, a T, b T) T {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+func identity(comptime T type, val T) T {
+    return val
+}
+
+proc main() {
+    print_int(max(int, 10, 20))
+    print_f32(max(f32, 3.14, 2.71))
+    
+    var x = identity(int, 42)
+    print_int(x)
+}
