@@ -46,6 +46,7 @@ typedef enum {
     TYPE_POINTER,   // pointer to element type, e.g. "u8 *"
     TYPE_COMPTIME,  // comptime modifier
     TYPE_VARIANT,   // inner payload of an ADT variant
+    TYPE_META_TYPE, // e.g. "type" as a value
 } TypeKind;
 
 typedef struct Type {
@@ -306,6 +307,7 @@ typedef enum {
     EXPR_FLOAT_LITERAL,
     EXPR_MATCH,
     EXPR_UNDEFINED, // New
+    EXPR_TYPE,      // a resolved Type* used as a parameter value
 } ExprKind;
 
 typedef struct {
@@ -386,6 +388,10 @@ typedef struct {
     ExprMatchCase *cases;
 } ExprMatch;
 
+typedef struct {
+    Type *type_value; // The resolved type
+} ExprType;
+
 typedef struct Expr {
     ExprKind kind;
     isize line;  // source line number
@@ -406,6 +412,7 @@ typedef struct Expr {
         ExprCast        cast_expr;
         ExprFloat       float_expr;
         ExprMatch       match_expr;
+        ExprType        type_expr;
     } as;
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
@@ -497,6 +504,14 @@ Type *type_pointer(Arena *arena, Type *element_type) {
     t->kind         = TYPE_POINTER;
     t->mode         = MODE_SHARED;  // pointers default to shared
     t->element_type = element_type;
+    return t;
+}
+
+Type *type_meta_type(Arena *arena) {
+    Type *t = arena_push_aligned(arena, Type);
+    t->kind = TYPE_META_TYPE;
+    t->mode = MODE_SHARED;
+    t->element_type = NULL;
     return t;
 }
 
@@ -811,6 +826,14 @@ Expr *expr_member(Arena *arena, Expr *target, Id *member) {
 Expr *expr_undefined(Arena *arena) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_UNDEFINED;
+    return e;
+}
+
+Expr *expr_type(Arena *arena, Type *type_value) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_TYPE;
+    e->as.type_expr.type_value = type_value;
+    e->type = type_meta_type(arena); // A type expression has type `type`
     return e;
 }
 

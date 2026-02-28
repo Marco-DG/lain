@@ -307,11 +307,13 @@ void emit_expr(Expr *expr, int depth) {
     }
 
     for (ExprList *arg = expr->as.call_expr.args; arg; arg = arg->next) {
+      if (arg->expr->kind == EXPR_TYPE) {
+          if (fld) fld = fld->next;
+          if (param) param = param->next;
+          continue;
+      }
       if (!first) EMIT(", ");
       first = false;
-  
-
-
       if (is_ctor && fld) {
         // ... (existing ctor code) ...
         Type *ft = fld->decl->as.variable_decl.type;

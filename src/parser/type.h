@@ -29,24 +29,29 @@ Type *parse_type(Arena *arena, Parser *parser) {
   }
 
   // 2) parse a simple identifier type (e.g. "Foo", "int")
-  // 2) parse a simple identifier type (e.g. "Foo", "int", "std.sub.Type")
-  parser_expect(TOKEN_IDENTIFIER, "Expected type name");
-  Token start = parser->token;
-  parser_advance();
-
-  Token end = start;
-  while (parser_match(TOKEN_DOT)) {
-      parser_advance(); // .
-      parser_expect(TOKEN_IDENTIFIER, "Expected identifier after dot");
-      end = parser->token;
+  // 2) parse a simple identifier type (e.g. "Foo", "int", "std.sub.Type") or "type"
+  if (parser_match(TOKEN_KEYWORD_TYPE)) {
       parser_advance();
+      base_type = type_meta_type(arena);
+  } else {
+      parser_expect(TOKEN_IDENTIFIER, "Expected type name");
+      Token start = parser->token;
+      parser_advance();
+
+      Token end = start;
+      while (parser_match(TOKEN_DOT)) {
+          parser_advance(); // .
+          parser_expect(TOKEN_IDENTIFIER, "Expected identifier after dot");
+          end = parser->token;
+          parser_advance();
+      }
+
+      // Combine into one Id based on source range
+      isize len = (end.start + end.length) - start.start;
+      Id *type_name = id(arena, len, start.start);
+
+      base_type = type_simple(arena, type_name);
   }
-
-  // Combine into one Id based on source range
-  isize len = (end.start + end.length) - start.start;
-  Id *type_name = id(arena, len, start.start);
-
-  base_type = type_simple(arena, type_name);
 
   // 3) allow array/slice suffixes
   while (parser_match(TOKEN_L_BRACKET)) {

@@ -21,6 +21,14 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     }
     EMIT("#include \"lain.h\"\n\n");
     emitted_decls = decls; // so that lookup_function_decl can see all the functions we’re about to emit.
+
+    // Emit forward declarations for all functions and procedures
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
+            emit_forward_decl(dl->decl, 0);
+        }
+    }
+    EMIT("\n");
     emit_decl_list_topo(decls, depth);
     fclose(output_file);
     generate_lain_header("lain.h");
