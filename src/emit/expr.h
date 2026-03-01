@@ -221,6 +221,10 @@ void emit_expr(Expr *expr, int depth) {
     if (expr->as.call_expr.callee->kind == EXPR_IDENTIFIER) {
       Id *id = expr->as.call_expr.callee->as.identifier_expr.id;
       cname = c_name_for_id(id);
+    } else if (expr->as.call_expr.callee->kind == EXPR_TYPE) {
+      if (expr->as.call_expr.callee->decl && expr->as.call_expr.callee->decl->kind == DECL_STRUCT) {
+          cname = c_name_for_id(expr->as.call_expr.callee->decl->as.struct_decl.name);
+      }
     }
   
     // 2) detect struct‐ctor

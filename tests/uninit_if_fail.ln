@@ -1,0 +1,7 @@
+proc main() {
+    var x int = undefined
+    if true {
+        x = 10
+    }
+    var y = x
+}

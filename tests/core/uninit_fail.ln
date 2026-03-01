@@ -1,3 +1,4 @@
-proc main() {
+proc main() int {
     var x int = undefined
+    return x
 }

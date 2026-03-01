@@ -593,7 +593,7 @@ Il codice C generato non include direttive `#line`, rendendo il debugging con gd
 | 8 | Loop widening distrugge tutto | 🟡 **PARZIALE** — STMT_WHILE aggiunto, indice for preservato; accumuli generici ancora widened |
 | 9 | `!=` constraint non implementato | ✅ **RISOLTO** — narrowing ai bordi |
 | 10 | Ambiguità `x = 10` | 🟠 **APERTO** — design decision, non bug |
-| 11 | Nessun drop/defer | 🟠 **APERTO** — feature futura |
+| 11 | Nessun drop/defer | ✅ **RISOLTO** — `defer` aggiunto for RAII scopes |
 | 12 | Zero test negativi per types | ✅ **RISOLTO** — aggiunto check arg count + 2 test negativi |
 | 13 | Struct passate by-value per `mov` | 🟡 **APERTO** — ottimizzazione emitter |
 | 14 | Mancanza shift operators | ✅ **RISOLTO** — `<<`/`>>` completi |
@@ -635,7 +635,7 @@ Il codice C generato non include direttive `#line`, rendendo il debugging con gd
 
 | Obiettivo | Complessità | Descrizione |
 |-----------|-------------|-------------|
-| **`defer` statement** | 🟠 Media | Meccanismo RAII-like per cleanup automatico a fine scope. Riduce drasticamente l'ergonomia negativa del sistema lineare |
+| **`defer` statement** | ✅ Risolto | ~~Meccanismo RAII-like per cleanup automatico a fine scope.~~ |
 | **Generics Phase C** | 🔴 Alta | `Result(T, E)`, `Option(T)`, interfaces/shapes. Prerequisito per error propagation ergonomico |
 | **Operatore `?`** | 🟡 Bassa | Sugar per `case result { Ok(v): v, Err(e): return Err(e) }`. Richiede generics |
 
@@ -774,7 +774,7 @@ gantt
 |---|-----------|---------|----------------|
 | 1 | **Lifetime tracking NLL** | Elimina aliasing intra-statement | `region.h`, `linearity.h` |
 | 2 | **Definite initialization** | Elimina uso di `= undefined` non intenzionale | `sema.h`, parser |
-| 3 | **`defer` statement** | RAII-like cleanup automatico | parser, AST, emitter |
+| 3 | ~~**`defer` statement**~~ | ✅ Risolto | parser, AST, emitter |
 
 #### Fase 2 — Language Maturity (Q3 2026)
 

@@ -50,6 +50,11 @@ Stmt *parse_decl_stmt(Arena *arena, Parser *parser) {
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance();
         assigned_expr = parse_expr(arena, parser);
+        
+        // Immutable declarations cannot be explicitly left uninitialized
+        if (assigned_expr && assigned_expr->kind == EXPR_UNDEFINED) {
+            parser_error("Immutable declarations cannot be initialized with '= undefined'");
+        }
     } else {
         parser_error("Uninitialized Declaration: variables must be initialized. Use '= undefined' to bypass.");
     }
