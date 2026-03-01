@@ -177,7 +177,9 @@ void sema_infer_expr(Expr *e) {
                         (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
                 exit(1);
             }
-            e->type = e->as.member_expr.target->type; // Returns the TYPE (Constructor behavior)
+            // ADT variant evaluates to the ADT instance type
+            e->type = e->as.member_expr.target->as.type_expr.type_value;
+            e->decl = e->as.member_expr.target->decl;
             return;
         }
         // If it's EXPR_IDENTIFIER but NOT an enum, it's a variable instance (e.g. `s.Circle`). Falls down.
@@ -585,7 +587,17 @@ void sema_infer_expr(Expr *e) {
         }
     }
     // function-call expression type is the callee's type (return type)
-    e->type = e->as.call_expr.callee->type;
+    if (callee_decl && callee_decl->kind == DECL_STRUCT) {
+        e->type = e->as.call_expr.callee->as.type_expr.type_value;
+    } else if (callee_decl && callee_decl->kind == DECL_ENUM) {
+        if (e->as.call_expr.callee->kind == EXPR_MEMBER) {
+            e->type = e->as.call_expr.callee->as.member_expr.target->as.type_expr.type_value;
+        } else {
+            e->type = e->as.call_expr.callee->type;
+        }
+    } else {
+        e->type = e->as.call_expr.callee->type;
+    }
     break;
   }
 

@@ -115,8 +115,9 @@ typedef struct LEntry {
     Region *region;    // region where var is defined (for borrow checking)
     bool is_mutable;   // true if variable is mutable (declared with var/mut)
     bool must_consume; // true if type is strictly linear
-    isize line;        // NEW: line where var is defined
-    isize col;         // NEW: col where var is defined
+    bool is_initialized; // true if the variable has been definitely initialized
+    isize line;        // line where var is defined
+    isize col;         // col where var is defined
     LState state;
     struct LEntry *next;
 } LEntry;
@@ -151,7 +152,7 @@ static LEntry *ltable_find(LTable *t, Id *id) {
     return NULL;
 }
 
-static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume, isize line, isize col) {
+static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume, bool is_initialized, isize line, isize col) {
     if (!id) return;
     if (ltable_find(t, id)) return; // already present — ignore
     LEntry *e = arena_push_aligned(t->arena, LEntry);
@@ -160,6 +161,7 @@ static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool 
     e->region = t->borrows ? t->borrows->current_region : NULL;
     e->is_mutable = is_mutable;
     e->must_consume = must_consume;
+    e->is_initialized = is_initialized;
     e->line = line;
     e->col = col;
     e->state = LSTATE_UNCONSUMED;
@@ -193,11 +195,12 @@ static LTable *ltable_clone(LTable *src) {
     }
     // shallow-copy entries (Id* pointers are fine)
     for (LEntry *s = src->head; s; s = s->next) {
-        ltable_add(dst, s->id, s->defined_loop_depth, s->is_mutable, s->must_consume, s->line, s->col);
+        ltable_add(dst, s->id, s->defined_loop_depth, s->is_mutable, s->must_consume, s->is_initialized, s->line, s->col);
         LEntry *d = ltable_find(dst, s->id);
         if (d) {
             d->state = s->state;
             d->region = s->region;
+            d->is_initialized = s->is_initialized;
         }
     }
     return dst;
@@ -289,7 +292,28 @@ static void ltable_check_branch_consistency(LTable *parent, LTable *a, LTable *b
 static void ltable_merge_from_branch(LTable *parent, LTable *branch) {
     for (LEntry *p = parent->head; p; p = p->next) {
         LEntry *b = ltable_find(branch, p->id);
-        if (b) p->state = b->state;
+        if (b) {
+            p->state = b->state;
+        }
+    }
+}
+
+/* intersect initialized state from two branches (for IF) */
+static void ltable_intersect_initialization(LTable *parent, LTable *a, LTable *b) {
+    for (LEntry *p = parent->head; p; p = p->next) {
+        LEntry *ea = ltable_find(a, p->id);
+        LEntry *eb = ltable_find(b, p->id);
+        bool init_a = ea ? ea->is_initialized : false;
+        bool init_b = eb ? eb->is_initialized : false;
+        p->is_initialized = p->is_initialized || (init_a && init_b);
+    }
+}
+
+/* apply initialization from a branch back to parent */
+static void ltable_apply_initialization(LTable *parent, LTable *branch) {
+    for (LEntry *p = parent->head; p; p = p->next) {
+        LEntry *b = ltable_find(branch, p->id);
+        if (b) p->is_initialized = p->is_initialized || b->is_initialized;
     }
 }
 
@@ -357,12 +381,20 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
     case EXPR_IDENTIFIER: {
         // Check if this is a use of an already-consumed linear variable
         Id *id = e->as.identifier_expr.id;
+        
         if (id && tbl) {
             LEntry *entry = ltable_find(tbl, id);
-            if (entry && entry->state == LSTATE_CONSUMED) {
-                fprintf(stderr, "Error Ln %li, Col %li: use of linear variable '%.*s' after it was moved.\n",
-                        (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
-                exit(1);
+            if (entry) {
+                if (entry->state == LSTATE_CONSUMED) {
+                    fprintf(stderr, "Error Ln %li, Col %li: use of linear variable '%.*s' after it was moved.\n",
+                            (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
+                    exit(1);
+                }
+                if (!entry->is_initialized) {
+                    fprintf(stderr, "Error Ln %li, Col %li: use of uninitialized variable '%.*s'.\n",
+                            (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
+                    exit(1);
+                }
             }
         }
         break;
@@ -473,8 +505,8 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
             // If this is a struct constructor, we still need to consume linear arguments
             // because strict constructors act as implicit moves for linear types.
             bool is_struct_constructor = false;
-            if (callee && callee->kind == EXPR_IDENTIFIER && callee->decl) {
-                is_struct_constructor = (callee->decl->kind == DECL_STRUCT);
+            if (callee && callee->decl) {
+                is_struct_constructor = (callee->decl->kind == DECL_STRUCT || callee->decl->kind == DECL_ENUM);
             }
             
             if (is_struct_constructor) {
@@ -532,12 +564,17 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
             }
             sema_check_expr_linearity(c->body, branch_tbl, loop_depth);
             
-            if (!first_branch) first_branch = ltable_clone(branch_tbl);
-            else ltable_check_branch_consistency(parent_snapshot, first_branch, branch_tbl, "match expr");
+            if (!first_branch) {
+                first_branch = ltable_clone(branch_tbl);
+            } else {
+                ltable_check_branch_consistency(parent_snapshot, first_branch, branch_tbl, "match expr");
+                ltable_intersect_initialization(first_branch, first_branch, branch_tbl);
+            }
             ltable_free(branch_tbl);
         }
         if (first_branch) {
             ltable_merge_from_branch(tbl, first_branch);
+            ltable_apply_initialization(tbl, first_branch);
             ltable_free(first_branch);
         }
         ltable_free(parent_snapshot);
@@ -587,7 +624,6 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     switch (s->kind) {
 
     case STMT_VAR: {
-// (removed debug print)
         Expr *init = s->as.var_stmt.expr;
         if (init) sema_check_expr_linearity(init, tbl, loop_depth);
 
@@ -595,7 +631,8 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         bool must = is_type_move(ty);
         if (must || s->as.var_stmt.is_mutable) {
             Id *id = s->as.var_stmt.name;
-            ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable, must, s->line, s->col);
+            bool is_init = (init != NULL && init->kind != EXPR_UNDEFINED);
+            ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable, must, is_init, s->line, s->col);
         }
         break;
     }
@@ -613,7 +650,20 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 if (is_type_move(decl_ty)) {
                     // ... (omitted comments)
                     bool must = is_type_move(decl_ty);
-                    ltable_add(tbl, id, loop_depth, true, must, s->line, s->col);
+                    ltable_add(tbl, id, loop_depth, true, must, true, s->line, s->col);
+                }
+            }
+        } else {
+            Expr *base = lhs;
+            while (base && (base->kind == EXPR_INDEX || base->kind == EXPR_MEMBER)) {
+                if (base->kind == EXPR_INDEX) base = base->as.index_expr.target;
+                else if (base->kind == EXPR_MEMBER) base = base->as.member_expr.target;
+            }
+            if (base && base->kind == EXPR_IDENTIFIER) {
+                Id *id = base->as.identifier_expr.id;
+                LEntry *entry = ltable_find(tbl, id);
+                if (entry) {
+                    entry->is_initialized = true;
                 }
             }
         }
@@ -657,6 +707,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
 
         ltable_check_branch_consistency(parent_snapshot, then_tbl, else_tbl, "if");
         ltable_merge_from_branch(tbl, then_tbl);
+        ltable_intersect_initialization(tbl, then_tbl, else_tbl);
 
         ltable_free(parent_snapshot);
         ltable_free(then_tbl);
@@ -671,6 +722,8 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         }
         int new_depth = loop_depth + 1;
         
+        LTable *pre_loop = ltable_clone(tbl);
+        
         LEntry *saved_head = tbl->head;
         if (tbl->borrows) borrow_enter_scope(tbl->arena, tbl->borrows);
         for (StmtList *b = s->as.for_stmt.body; b; b = b->next) {
@@ -678,6 +731,14 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         }
         ltable_pop_scope(tbl, saved_head);
         if (tbl->borrows) borrow_exit_scope(tbl->borrows);
+        
+        // Loop might run zero times, so restore initialization state from before the loop
+        for (LEntry *p = tbl->head; p; p = p->next) {
+            LEntry *pre = ltable_find(pre_loop, p->id);
+            if (pre) p->is_initialized = pre->is_initialized;
+        }
+        ltable_free(pre_loop);
+        
         break;
     }
 
@@ -727,12 +788,17 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             }
             ltable_pop_scope(branch_tbl, saved_head);
 
-            if (!first_branch) first_branch = ltable_clone(branch_tbl);
-            else ltable_check_branch_consistency(parent_snapshot, first_branch, branch_tbl, "match");
+            if (!first_branch) {
+                first_branch = ltable_clone(branch_tbl);
+            } else {
+                ltable_check_branch_consistency(parent_snapshot, first_branch, branch_tbl, "match");
+                ltable_intersect_initialization(first_branch, first_branch, branch_tbl);
+            }
             ltable_free(branch_tbl);
         }
         if (first_branch) {
             ltable_merge_from_branch(tbl, first_branch);
+            ltable_apply_initialization(tbl, first_branch);
             ltable_free(first_branch);
         }
         ltable_free(parent_snapshot);
@@ -746,6 +812,8 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         }
         int new_depth = loop_depth + 1;
         
+        LTable *pre_loop = ltable_clone(tbl);
+        
         LEntry *saved_head = tbl->head;
         if (tbl->borrows) borrow_enter_scope(tbl->arena, tbl->borrows);
         for (StmtList *b = s->as.while_stmt.body; b; b = b->next) {
@@ -753,6 +821,14 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         }
         ltable_pop_scope(tbl, saved_head);
         if (tbl->borrows) borrow_exit_scope(tbl->borrows);
+        
+        // Loop might run zero times, so restore initialization state from before the loop
+        for (LEntry *p = tbl->head; p; p = p->next) {
+            LEntry *pre = ltable_find(pre_loop, p->id);
+            if (pre) p->is_initialized = pre->is_initialized;
+        }
+        ltable_free(pre_loop);
+        
         break;
     }
 
@@ -794,7 +870,8 @@ static void sema_check_function_linearity(Decl *d) {
             Id *pid = p->decl->as.variable_decl.name;
             Type *pty = p->decl->as.variable_decl.type;
             if (is_type_move(pty) && pty->mode == MODE_OWNED) {
-                ltable_add(tbl, pid, /*loop_depth=*/0, true, true, p->decl->line, p->decl->col);
+                // parameters are assumed definitely initialized
+                ltable_add(tbl, pid, /*loop_depth=*/0, true, true, true, p->decl->line, p->decl->col);
             }
         } else if (p->decl->kind == DECL_DESTRUCT) {
             // For destructuring parameters, the aggregate is already consumed/destructured.
