@@ -1,0 +1,19 @@
+extern proc printf(fmt *u8, ...) int
+
+proc test_ret() int {
+    defer printf("2")
+    return 42
+}
+
+proc test_void() {
+    defer printf("4")
+    return
+}
+
+proc main() {
+    printf("1")
+    var x = test_ret()
+    printf("3")
+    test_void()
+    printf("-")
+}

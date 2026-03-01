@@ -249,6 +249,9 @@ Stmt *clone_stmt(Arena *arena, Stmt *s) {
         case STMT_UNSAFE:
             new_s->as.unsafe_stmt.body = clone_stmt_list(arena, s->as.unsafe_stmt.body);
             break;
+        case STMT_DEFER:
+            new_s->as.defer_stmt.stmt = clone_stmt(arena, s->as.defer_stmt.stmt);
+            break;
         case STMT_CONTINUE:
         case STMT_BREAK:
             break;

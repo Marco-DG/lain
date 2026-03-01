@@ -598,6 +598,10 @@ void sema_resolve_stmt(Stmt *s) {
     break;
  }
 
+ case STMT_DEFER:
+    sema_resolve_stmt(s->as.defer_stmt.stmt);
+    break;
+
   default:
     break;
   }

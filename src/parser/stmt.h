@@ -20,6 +20,7 @@ Stmt *parse_use_stmt(Arena *arena, Parser *parser);
 Stmt *parse_comptime_stmt(Arena *arena, Parser *parser);
 Stmt *parse_unsafe_stmt(Arena *arena, Parser *parser);
 Stmt *parse_while_stmt(Arena *arena, Parser *parser);
+Stmt *parse_defer_stmt(Arena *arena, Parser *parser);
 
 Stmt *parse_decl_stmt(Arena *arena, Parser *parser);
 
@@ -54,6 +55,13 @@ Stmt *parse_decl_stmt(Arena *arena, Parser *parser) {
     }
 
     return stmt_var(arena, var_name, type_annotation, assigned_expr);
+}
+
+Stmt *parse_defer_stmt(Arena *arena, Parser *parser) {
+    // Parse the inner statement that should be executed later
+    // The 'defer' keyword has already been consumed by parse_stmt
+    Stmt *inner_stmt = parse_stmt(arena, parser);
+    return stmt_defer(arena, inner_stmt);
 }
 
 StmtList* parse_stmt_list(Arena* arena, Parser* parser) {
@@ -99,7 +107,10 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
 
     if (parser_match(TOKEN_KEYWORD_RETURN)) {
         parser_advance();                 // consume `return`
-        Expr *value = parse_expr(arena, parser);
+        Expr *value = NULL;
+        if (!parser_match(TOKEN_EOL) && !parser_match(TOKEN_EOF) && !parser_match(TOKEN_R_BRACE)) {
+            value = parse_expr(arena, parser);
+        }
         result = stmt_return(arena, value);
     }
     else if (parser_match(TOKEN_KEYWORD_COMPTIME)) {
@@ -139,6 +150,10 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
     else if (parser_match(TOKEN_KEYWORD_UNSAFE)) {
         parser_advance();
         result = parse_unsafe_stmt(arena, parser);
+    }
+    else if (parser_match(TOKEN_KEYWORD_DEFER)) {
+        parser_advance(); // consume 'defer'
+        result = parse_defer_stmt(arena, parser);
     }
     else {
     Expr *lhs = parse_expr(arena, parser);

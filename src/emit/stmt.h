@@ -59,6 +59,15 @@ void emit_stmt(Stmt *stmt, int depth) {
     }
   
 
+  case STMT_DEFER:
+    if (emit_defer_count < MAX_DEFERS) {
+        emit_defer_stack[emit_defer_count++] = stmt->as.defer_stmt.stmt;
+    } else {
+        fprintf(stderr, "Fatal error: defer stack overflow\n");
+        exit(1);
+    }
+    break;
+
   case STMT_FOR: {
     // 1) pick unique names
     emit_indent(depth);
@@ -172,7 +181,11 @@ void emit_stmt(Stmt *stmt, int depth) {
     }
 
     // 7) loop body
+    if (loop_depth < MAX_LOOPS) {
+        loop_defer_base[loop_depth++] = emit_defer_count;
+    }
     emit_stmt_list(stmt->as.for_stmt.body, depth + 1);
+    if (loop_depth > 0) loop_depth--;
 
     // 8) close
     emit_indent(depth);
@@ -225,11 +238,23 @@ void emit_stmt(Stmt *stmt, int depth) {
   }
 
   case STMT_CONTINUE:
+    if (loop_depth > 0) {
+        int target = loop_defer_base[loop_depth - 1];
+        for (int i = emit_defer_count - 1; i >= target; i--) {
+            emit_stmt(emit_defer_stack[i], depth);
+        }
+    }
     emit_indent(depth);
     EMIT("continue;\n");
     break;
 
   case STMT_BREAK:
+    if (loop_depth > 0) {
+        int target = loop_defer_base[loop_depth - 1];
+        for (int i = emit_defer_count - 1; i >= target; i--) {
+            emit_stmt(emit_defer_stack[i], depth);
+        }
+    }
     emit_indent(depth);
     EMIT("break;\n");
     break;
@@ -242,7 +267,11 @@ void emit_stmt(Stmt *stmt, int depth) {
     EMIT(") {\n");
 
     // 2) emit body
+    if (loop_depth < MAX_LOOPS) {
+        loop_defer_base[loop_depth++] = emit_defer_count;
+    }
     emit_stmt_list(stmt->as.while_stmt.body, depth + 1);
+    if (loop_depth > 0) loop_depth--;
 
     // 3) close
     emit_indent(depth);
@@ -475,9 +504,15 @@ void emit_stmt(Stmt *stmt, int depth) {
   }
 
   case STMT_RETURN:
+    // Pop ALL defers before returning from the function
+    for (int i = emit_defer_count - 1; i >= 0; i--) {
+        emit_stmt(emit_defer_stack[i], depth);
+    }
     emit_indent(depth);
     EMIT("return ");
-    emit_expr(stmt->as.return_stmt.value, depth);
+    if (stmt->as.return_stmt.value) {
+        emit_expr(stmt->as.return_stmt.value, depth);
+    }
     EMIT(";\n");
     break;
 
@@ -557,9 +592,15 @@ void emit_stmt(Stmt *stmt, int depth) {
 }
 
 void emit_stmt_list(StmtList *stmt_list, int depth) {
+  int saved_defer_count = emit_defer_count;
   while (stmt_list) {
     emit_stmt(stmt_list->stmt, depth);
     stmt_list = stmt_list->next;
+  }
+  // Pop any defers pushed during this block
+  while (emit_defer_count > saved_defer_count) {
+    emit_defer_count--;
+    emit_stmt(emit_defer_stack[emit_defer_count], depth);
   }
 }
 

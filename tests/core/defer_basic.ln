@@ -1,0 +1,10 @@
+extern proc printf(fmt *u8, ...) int
+
+proc main() {
+    printf("1")
+    defer printf("3")
+    if true {
+        defer printf("2")
+    }
+    printf("-")
+}

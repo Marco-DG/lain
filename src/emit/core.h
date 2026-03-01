@@ -16,6 +16,15 @@ static FILE *output_file;
 static const char *emit_source_filename = NULL;
 #define EMIT(...) fprintf(output_file, __VA_ARGS__)
 
+/*— defer mechanics —*/
+#define MAX_DEFERS 256
+#define MAX_LOOPS 64
+static Stmt *emit_defer_stack[MAX_DEFERS];
+static int emit_defer_count = 0;
+
+static int loop_defer_base[MAX_LOOPS];
+static int loop_depth = 0;
+
 /*— indentation —*/
 static inline void emit_indent(int depth) {
   for (int i = 0; i < depth; i++)

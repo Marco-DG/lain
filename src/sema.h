@@ -245,6 +245,9 @@ static void walk_stmt(Stmt *s) {
             sema_in_unsafe_block = old_unsafe;
             break;
         }
+        case STMT_DEFER:
+            walk_stmt(s->as.defer_stmt.stmt);
+            break;
         default: break;
     }
 }
