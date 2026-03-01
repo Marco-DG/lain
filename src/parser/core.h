@@ -86,15 +86,20 @@ void _parser_expect(Parser* parser, bool expr, const char *error_message) {
 // Returns operator precedence (higher number = higher precedence)
 int get_precedence(TokenKind op) {
     switch (op) {
-        // * / %  → precedence 7
+        // * / %  → precedence 8
         case TOKEN_ASTERISK:
         case TOKEN_SLASH:
         case TOKEN_PERCENT:
-            return 7;
+            return 8;
 
-        // + -   → precedence 6
+        // + -   → precedence 7
         case TOKEN_PLUS:
         case TOKEN_MINUS:
+            return 7;
+
+        // << >>  → precedence 6 (bitwise shift)
+        case TOKEN_SHIFT_LEFT:
+        case TOKEN_SHIFT_RIGHT:
             return 6;
 
         // <  <=  >  >=   → precedence 5

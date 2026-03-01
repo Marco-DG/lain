@@ -36,6 +36,9 @@ static void sema_widen_loop(StmtList *body, RangeTable *t) {
             case STMT_FOR:
                 sema_widen_loop(s->as.for_stmt.body, t);
                 break;
+            case STMT_WHILE:
+                sema_widen_loop(s->as.while_stmt.body, t);
+                break;
             case STMT_MATCH:
                  for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
                      sema_widen_loop(c->body, t);
@@ -43,6 +46,206 @@ static void sema_widen_loop(StmtList *body, RangeTable *t) {
                  break;
             default: break;
         }
+    }
+}
+
+/* walk_stmt: type inference + range analysis walk over a single statement.
+   Formerly a GCC nested function inside sema_resolve_module; refactored to
+   file-level static for C99/Clang/MSVC portability. */
+static void walk_stmt(Stmt *s) {
+    if (!s) return;
+    switch (s->kind) {
+        case STMT_VAR:
+            sema_infer_expr(s->as.var_stmt.expr);
+            // Infer variable type from initializer if missing
+            if (!s->as.var_stmt.type && s->as.var_stmt.expr) {
+                if (s->as.var_stmt.expr->kind == EXPR_UNDEFINED) {
+                    fprintf(stderr, "Error: Cannot infer type for variable initialized with 'undefined'. Explicit type annotation required.\n");
+                    exit(1);
+                }
+                s->as.var_stmt.type = s->as.var_stmt.expr->type;
+            }
+
+            if (sema_ranges && s->as.var_stmt.expr) {
+                Range r = sema_eval_range(s->as.var_stmt.expr, sema_ranges);
+                range_set(sema_ranges, s->as.var_stmt.name, r);
+            }
+            break;
+        case STMT_IF: {
+            sema_infer_expr(s->as.if_stmt.cond);
+            
+            // Save state
+            RangeEntry *old_head = sema_ranges->head;
+            ConstraintEntry *old_constraints = sema_ranges->constraints;
+            
+            // Apply condition for THEN branch
+            sema_apply_constraint(s->as.if_stmt.cond, sema_ranges);
+            
+            sema_push_scope();
+            for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next)
+                walk_stmt(b->stmt);
+            sema_pop_scope();
+                
+            // Restore state (pop constraints from THEN)
+            sema_ranges->head = old_head;
+            sema_ranges->constraints = old_constraints;
+            
+            // Apply negated condition for ELSE branch
+            sema_apply_negated_constraint(s->as.if_stmt.cond, sema_ranges);
+            
+            sema_push_scope();
+            for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next)
+                walk_stmt(b->stmt);
+            sema_pop_scope();
+                
+            // Restore state again
+            sema_ranges->head = old_head;
+            sema_ranges->constraints = old_constraints;
+            break;
+        }
+        case STMT_FOR: {
+            sema_infer_expr(s->as.for_stmt.iterable);
+            // Range Analysis: Loop index
+            Range end_range = range_unknown();
+            if (sema_ranges && s->as.for_stmt.iterable->kind == EXPR_RANGE && s->as.for_stmt.index_name) {
+                Range start = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.start, sema_ranges);
+                end_range = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.end, sema_ranges);
+                if (start.known && end_range.known) {
+                    Range r = range_make(start.min, end_range.max - 1);
+                    range_set(sema_ranges, s->as.for_stmt.index_name, r);
+                }
+            }
+            
+            // Widen modified variables BEFORE body
+            if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
+            
+            sema_push_scope();
+            for (StmtList *b = s->as.for_stmt.body; b; b = b->next)
+                walk_stmt(b->stmt);
+            sema_pop_scope();
+                
+            // Widen modified variables AFTER body
+            if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
+            
+            // Preserve loop index value at exit: for i in start..end → i == end after loop
+            if (sema_ranges && s->as.for_stmt.index_name && end_range.known) {
+                range_set(sema_ranges, s->as.for_stmt.index_name, end_range);
+            }
+            break;
+        }
+        case STMT_WHILE:
+            sema_infer_expr(s->as.while_stmt.cond);
+            
+            // Widen modified variables BEFORE body
+            if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
+
+            sema_push_scope();
+            for (StmtList *b = s->as.while_stmt.body; b; b = b->next)
+                walk_stmt(b->stmt);
+            sema_pop_scope();
+                
+            // Widen modified variables AFTER body
+            if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
+            break;
+        case STMT_ASSIGN:
+            sema_infer_expr(s->as.assign_stmt.expr);
+            if (sema_ranges && s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
+                Expr *rhs = s->as.assign_stmt.expr;
+                Id *lhs_id = s->as.assign_stmt.target->as.identifier_expr.id;
+                
+                // 1. Update Range
+                Range r = sema_eval_range(rhs, sema_ranges);
+                range_set(sema_ranges, lhs_id, r);
+                
+                // 2. Linear Constraints: x = y + c
+                if (rhs->kind == EXPR_BINARY) {
+                    TokenKind op = rhs->as.binary_expr.op;
+                    Expr *rl = rhs->as.binary_expr.left;
+                    Expr *rr = rhs->as.binary_expr.right;
+                    
+                    // x = y + c
+                    if (op == TOKEN_PLUS && rl->kind == EXPR_IDENTIFIER && rr->kind == EXPR_LITERAL) {
+                        int64_t c = rr->as.literal_expr.value;
+                        constraint_add(sema_ranges, lhs_id, rl->as.identifier_expr.id, c);
+                        constraint_add(sema_ranges, rl->as.identifier_expr.id, lhs_id, -c);
+                    }
+                    // x = c + y
+                    else if (op == TOKEN_PLUS && rl->kind == EXPR_LITERAL && rr->kind == EXPR_IDENTIFIER) {
+                        int64_t c = rl->as.literal_expr.value;
+                        constraint_add(sema_ranges, lhs_id, rr->as.identifier_expr.id, c);
+                        constraint_add(sema_ranges, rr->as.identifier_expr.id, lhs_id, -c);
+                    }
+                    // x = y - c
+                    else if (op == TOKEN_MINUS && rl->kind == EXPR_IDENTIFIER && rr->kind == EXPR_LITERAL) {
+                        int64_t c = rr->as.literal_expr.value;
+                        constraint_add(sema_ranges, lhs_id, rl->as.identifier_expr.id, -c);
+                        constraint_add(sema_ranges, rl->as.identifier_expr.id, lhs_id, c);
+                    }
+                }
+                // x = y
+                else if (rhs->kind == EXPR_IDENTIFIER) {
+                    constraint_add(sema_ranges, lhs_id, rhs->as.identifier_expr.id, 0);
+                    constraint_add(sema_ranges, rhs->as.identifier_expr.id, lhs_id, 0);
+                }
+            }
+            break;
+        case STMT_EXPR:
+            sema_infer_expr(s->as.expr_stmt.expr);
+            break;
+        case STMT_RETURN:
+            sema_infer_expr(s->as.return_stmt.value);
+            // Check Post-Contracts
+            if (current_function_decl && current_function_decl->as.function_decl.post_contracts) {
+                Range ret_range = sema_eval_range(s->as.return_stmt.value, sema_ranges);
+                
+                for (ExprList *post = current_function_decl->as.function_decl.post_contracts; post; post = post->next) {
+                    int result = sema_check_post_condition(post->expr, ret_range, sema_ranges);
+                    
+                    if (result == 0) {
+                        fprintf(stderr, "Error: Post-condition violation. Return value cannot satisfy contract.\n");
+                        exit(1);
+                    }
+                }
+            }
+            
+            // Check equation-style return constraints: func f() int >= 0
+            if (current_function_decl && current_function_decl->as.function_decl.return_constraints) {
+                Range ret_range = sema_eval_range(s->as.return_stmt.value, sema_ranges);
+                
+                for (ExprList *rc = current_function_decl->as.function_decl.return_constraints; rc; rc = rc->next) {
+                    int result = sema_check_post_condition(rc->expr, ret_range, sema_ranges);
+                    
+                    if (result == 0) {
+                        fprintf(stderr, "Error: Return constraint violation. Return value does not satisfy type constraint.\n");
+                        exit(1);
+                    }
+                }
+            }
+            break;
+        case STMT_MATCH:
+            sema_infer_expr(s->as.match_stmt.value);
+            for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
+                sema_push_scope();
+                for (ExprList *p = c->patterns; p; p = p->next) {
+                    sema_infer_expr(p->expr);
+                }
+                for (StmtList *b = c->body; b; b = b->next)
+                    walk_stmt(b->stmt);
+                sema_pop_scope();
+            }
+            break;
+        case STMT_UNSAFE: {
+            bool old_unsafe = sema_in_unsafe_block;
+            sema_in_unsafe_block = true;
+            sema_push_scope();
+            for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
+                walk_stmt(b->stmt);
+            }
+            sema_pop_scope();
+            sema_in_unsafe_block = old_unsafe;
+            break;
+        }
+        default: break;
     }
 }
 
@@ -216,219 +419,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         }
 
         // 2.c) Type inference
-        void walk_stmt(Stmt *s) {
-            if (!s) return;
-            switch (s->kind) {
-                case STMT_VAR:
-                    sema_infer_expr(s->as.var_stmt.expr);
-                    // Infer variable type from initializer if missing (critical for STMT_VAR in emit)
-                    if (!s->as.var_stmt.type && s->as.var_stmt.expr) {
-                        if (s->as.var_stmt.expr->kind == EXPR_UNDEFINED) {
-                            fprintf(stderr, "Error: Cannot infer type for variable initialized with 'undefined'. Explicit type annotation required.\n");
-                            exit(1);
-                        }
-                        s->as.var_stmt.type = s->as.var_stmt.expr->type;
-                    }
-                    // DEBUG 'raw' type
-                    if (s->as.var_stmt.name->length == 3 && strncmp(s->as.var_stmt.name->name, "raw", 3) == 0) {
-                        Expr *rhs = s->as.var_stmt.expr;
-                        Type *ty = s->as.var_stmt.type;
-                        fprintf(stderr, "DEBUG raw: RHS-type=%p, Var-type=%p\n", (void*)(rhs ? rhs->type : NULL), (void*)ty);
-                        if (rhs && rhs->type) fprintf(stderr, "DEBUG raw: RHS-type kind=%d\n", rhs->type->kind);
-                    }
-
-                    if (sema_ranges && s->as.var_stmt.expr) {
-                        Range r = sema_eval_range(s->as.var_stmt.expr, sema_ranges);
-                        range_set(sema_ranges, s->as.var_stmt.name, r);
-                    }
-                    break;
-                case STMT_IF: {
-                    sema_infer_expr(s->as.if_stmt.cond);
-                    
-                    // Save state
-                    RangeEntry *old_head = sema_ranges->head;
-                    ConstraintEntry *old_constraints = sema_ranges->constraints;
-                    
-                    // Apply condition for THEN branch
-                    sema_apply_constraint(s->as.if_stmt.cond, sema_ranges);
-                    
-                    sema_push_scope();
-                    for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next)
-                        walk_stmt(b->stmt);
-                    sema_pop_scope();
-                        
-                    // Restore state (pop constraints from THEN)
-                    sema_ranges->head = old_head;
-                    sema_ranges->constraints = old_constraints;
-                    
-                    // Apply negated condition for ELSE branch
-                    sema_apply_negated_constraint(s->as.if_stmt.cond, sema_ranges);
-                    
-                    sema_push_scope();
-                    for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next)
-                        walk_stmt(b->stmt);
-                    sema_pop_scope();
-                        
-                    // Restore state again
-                    sema_ranges->head = old_head;
-                    sema_ranges->constraints = old_constraints;
-                    break;
-                }
-                case STMT_FOR:
-                    sema_infer_expr(s->as.for_stmt.iterable);
-                    // Range Analysis: Loop index
-                    if (sema_ranges && s->as.for_stmt.iterable->kind == EXPR_RANGE && s->as.for_stmt.index_name) {
-                        Range start = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.start, sema_ranges);
-                        Range end = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.end, sema_ranges);
-                        if (start.known && end.known) {
-                            Range r = range_make(start.min, end.max - 1);
-                            range_set(sema_ranges, s->as.for_stmt.index_name, r);
-                        }
-                    }
-                    
-                    // Widen modified variables BEFORE body (conservative approximation for loop entry)
-                    if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
-                    
-                    sema_push_scope();
-                    for (StmtList *b = s->as.for_stmt.body; b; b = b->next)
-                        walk_stmt(b->stmt);
-                    sema_pop_scope();
-                        
-                    // Widen modified variables AFTER body (conservative approximation for loop exit/non-execution)
-                    if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
-                    break;
-                case STMT_WHILE:
-                    sema_infer_expr(s->as.while_stmt.cond);
-                    
-                    // Widen modified variables BEFORE body
-                    if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
-                    
-                    // Apply condition constraints (optional but helpful)
-                    if (sema_ranges) {
-                        // Save state (optional if we want scoped constraints inside loop)
-                        // For now, just apply them? No, loop body might invalidate them immediately.
-                        // Ideally we should intersect with widening.
-                        // Let's just walk the body.
-                    }
-
-                    sema_push_scope();
-                    for (StmtList *b = s->as.while_stmt.body; b; b = b->next)
-                        walk_stmt(b->stmt);
-                    sema_pop_scope();
-                        
-                    // Widen modified variables AFTER body
-                    if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
-                    break;
-                case STMT_ASSIGN:
-                    sema_infer_expr(s->as.assign_stmt.expr);
-                    if (sema_ranges && s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
-                        Expr *rhs = s->as.assign_stmt.expr;
-                        Id *lhs_id = s->as.assign_stmt.target->as.identifier_expr.id;
-                        
-                        // 1. Update Range
-                        Range r = sema_eval_range(rhs, sema_ranges);
-                        range_set(sema_ranges, lhs_id, r);
-                        
-                        // 2. Linear Constraints: x = y + c
-                        if (rhs->kind == EXPR_BINARY) {
-                            TokenKind op = rhs->as.binary_expr.op;
-                            Expr *rl = rhs->as.binary_expr.left;
-                            Expr *rr = rhs->as.binary_expr.right;
-                            
-                            // x = y + c
-                            if (op == TOKEN_PLUS && rl->kind == EXPR_IDENTIFIER && rr->kind == EXPR_LITERAL) {
-                                // x - y <= c  AND  y - x <= -c
-                                int64_t c = rr->as.literal_expr.value;
-                                constraint_add(sema_ranges, lhs_id, rl->as.identifier_expr.id, c);
-                                constraint_add(sema_ranges, rl->as.identifier_expr.id, lhs_id, -c);
-                            }
-                            // x = c + y
-                            else if (op == TOKEN_PLUS && rl->kind == EXPR_LITERAL && rr->kind == EXPR_IDENTIFIER) {
-                                int64_t c = rl->as.literal_expr.value;
-                                constraint_add(sema_ranges, lhs_id, rr->as.identifier_expr.id, c);
-                                constraint_add(sema_ranges, rr->as.identifier_expr.id, lhs_id, -c);
-                            }
-                            // x = y - c
-                            else if (op == TOKEN_MINUS && rl->kind == EXPR_IDENTIFIER && rr->kind == EXPR_LITERAL) {
-                                // x = y - c <=> x - y = -c
-                                int64_t c = rr->as.literal_expr.value;
-                                constraint_add(sema_ranges, lhs_id, rl->as.identifier_expr.id, -c);
-                                constraint_add(sema_ranges, rl->as.identifier_expr.id, lhs_id, c);
-                            }
-                        }
-                        // x = y
-                        else if (rhs->kind == EXPR_IDENTIFIER) {
-                            // x - y <= 0 AND y - x <= 0
-                            constraint_add(sema_ranges, lhs_id, rhs->as.identifier_expr.id, 0);
-                            constraint_add(sema_ranges, rhs->as.identifier_expr.id, lhs_id, 0);
-                        }
-                    }
-                    break;
-                case STMT_EXPR:
-                    sema_infer_expr(s->as.expr_stmt.expr);
-                    break;
-                case STMT_RETURN:
-                    sema_infer_expr(s->as.return_stmt.value);
-                    // Check Post-Contracts
-                    if (current_function_decl && current_function_decl->as.function_decl.post_contracts) {
-                        Range ret_range = sema_eval_range(s->as.return_stmt.value, sema_ranges);
-                        
-                        for (ExprList *post = current_function_decl->as.function_decl.post_contracts; post; post = post->next) {
-                            // Verify the contract
-                            int result = sema_check_post_condition(post->expr, ret_range, sema_ranges);
-                            
-                            if (result == 0) {
-                                // Definitely false -> Error
-                                fprintf(stderr, "Error: Post-condition violation. Return value cannot satisfy contract.\n");
-                                exit(1);
-                            }
-                            // If result == -1 (unknown), we assume it's okay for now (or warn?)
-                            // For strict DbC, we might want to error if we can't prove it.
-                            // But given our limited range analysis, that might be too strict.
-                            // Let's stick to "error if definitely false".
-                        }
-                    }
-                    
-                    // Check equation-style return constraints: func f() int >= 0
-                    if (current_function_decl && current_function_decl->as.function_decl.return_constraints) {
-                        Range ret_range = sema_eval_range(s->as.return_stmt.value, sema_ranges);
-                        
-                        for (ExprList *rc = current_function_decl->as.function_decl.return_constraints; rc; rc = rc->next) {
-                            int result = sema_check_post_condition(rc->expr, ret_range, sema_ranges);
-                            
-                            if (result == 0) {
-                                fprintf(stderr, "Error: Return constraint violation. Return value does not satisfy type constraint.\n");
-                                exit(1);
-                            }
-                        }
-                    }
-                    break;
-                case STMT_MATCH:
-                    sema_infer_expr(s->as.match_stmt.value);
-                    for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
-                        sema_push_scope();
-                        for (ExprList *p = c->patterns; p; p = p->next) {
-                            sema_infer_expr(p->expr);
-                        }
-                        for (StmtList *b = c->body; b; b = b->next)
-                            walk_stmt(b->stmt);
-                        sema_pop_scope();
-                    }
-                    break;
-                case STMT_UNSAFE: {
-                    bool old_unsafe = sema_in_unsafe_block;
-                    sema_in_unsafe_block = true;
-                    sema_push_scope();
-                    for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
-                        walk_stmt(b->stmt);
-                    }
-                    sema_pop_scope();
-                    sema_in_unsafe_block = old_unsafe;
-                    break;
-                }
-                default: break;
-            }
-        }
+        // (walk_stmt is defined as a static function above sema_resolve_module)
         for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next)
             walk_stmt(sl->stmt);
 

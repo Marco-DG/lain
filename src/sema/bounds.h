@@ -75,13 +75,17 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
              }
              BOUNDS_DBG("OK: Index [%ld, %ld] < Length %ld", (long)idx.min, (long)idx.max, (long)len_range.min);
         } else {
-            // Index unknown -> potentially unsafe
-            fprintf(stderr, "bounds warning: index range unknown, cannot verify against length %ld\n", (long)len_range.min);
+            // Index unknown -> cannot prove safe. Reject per zero-overhead safety guarantee.
+            fprintf(stderr, "bounds error: index range unknown, cannot statically verify against length %ld. "
+                    "Use a 'for i in 0..arr.len' loop or an 'if' guard to narrow the index range.\n", (long)len_range.min);
+            exit(1);
         }
     } else {
-        // Array length unknown (dynamic slice)
+        // Array length unknown (dynamic slice) — cannot verify statically
         if (!idx.known) {
-            BOUNDS_DBG("warning: both index and array length unknown, cannot verify bounds statically");
+            fprintf(stderr, "bounds error: both index and array length unknown, cannot verify bounds statically. "
+                    "Use range constraints or 'in' keyword to prove safety.\n");
+            exit(1);
         }
     }
 }

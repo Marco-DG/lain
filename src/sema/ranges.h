@@ -4,6 +4,19 @@
 #include "../ast.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
+
+// Saturating arithmetic to prevent int64_t overflow in range calculations
+static inline int64_t sat_add_i64(int64_t a, int64_t b) {
+    if (b > 0 && a > INT64_MAX - b) return INT64_MAX;
+    if (b < 0 && a < INT64_MIN - b) return INT64_MIN;
+    return a + b;
+}
+static inline int64_t sat_sub_i64(int64_t a, int64_t b) {
+    if (b < 0 && a > INT64_MAX + b) return INT64_MAX;
+    if (b > 0 && a < INT64_MIN + b) return INT64_MIN;
+    return a - b;
+}
 
 // Simple range: [min, max] inclusive
 typedef struct {
@@ -24,15 +37,55 @@ static Range range_make(int64_t min, int64_t max) {
     return (Range){min, max, true};
 }
 
-// Range arithmetic
+// Range arithmetic (saturating to prevent int64_t overflow)
 static Range range_add(Range a, Range b) {
     if (!a.known || !b.known) return range_unknown();
-    return range_make(a.min + b.min, a.max + b.max);
+    return range_make(sat_add_i64(a.min, b.min), sat_add_i64(a.max, b.max));
 }
 
 static Range range_sub(Range a, Range b) {
     if (!a.known || !b.known) return range_unknown();
-    return range_make(a.min - b.max, a.max - b.min);
+    return range_make(sat_sub_i64(a.min, b.max), sat_sub_i64(a.max, b.min));
+}
+
+static Range range_mul(Range a, Range b) {
+    if (!a.known || !b.known) return range_unknown();
+    // Compute all 4 products and take min/max (handles negative values)
+    int64_t p1 = a.min * b.min, p2 = a.min * b.max;
+    int64_t p3 = a.max * b.min, p4 = a.max * b.max;
+    int64_t lo = p1, hi = p1;
+    if (p2 < lo) lo = p2;
+    if (p2 > hi) hi = p2;
+    if (p3 < lo) lo = p3;
+    if (p3 > hi) hi = p3;
+    if (p4 < lo) lo = p4;
+    if (p4 > hi) hi = p4;
+    return range_make(lo, hi);
+}
+
+static Range range_div(Range a, Range b) {
+    if (!a.known || !b.known) return range_unknown();
+    // Division by range containing zero is undefined
+    if (b.min <= 0 && b.max >= 0) return range_unknown();
+    int64_t p1 = a.min / b.min, p2 = a.min / b.max;
+    int64_t p3 = a.max / b.min, p4 = a.max / b.max;
+    int64_t lo = p1, hi = p1;
+    if (p2 < lo) lo = p2;
+    if (p2 > hi) hi = p2;
+    if (p3 < lo) lo = p3;
+    if (p3 > hi) hi = p3;
+    if (p4 < lo) lo = p4;
+    if (p4 > hi) hi = p4;
+    return range_make(lo, hi);
+}
+
+static Range range_mod(Range a, Range b) {
+    if (!a.known || !b.known) return range_unknown();
+    if (b.min <= 0 && b.max >= 0) return range_unknown();
+    // Result of a % b is in [0, |b|-1] for non-negative a, broader otherwise
+    int64_t abs_b_max = b.max > -b.min ? b.max : -b.min;
+    if (a.min >= 0) return range_make(0, abs_b_max - 1);
+    return range_make(-(abs_b_max - 1), abs_b_max - 1);
 }
 
 // Map from Variable Id* to Range
@@ -93,18 +146,27 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
         case EXPR_BINARY: {
             Range l = sema_eval_range(e->as.binary_expr.left, t);
             Range r = sema_eval_range(e->as.binary_expr.right, t);
-            if (e->as.binary_expr.op == TOKEN_PLUS) return range_add(l, r);
-            if (e->as.binary_expr.op == TOKEN_MINUS) return range_sub(l, r);
-            return range_unknown();
+            switch (e->as.binary_expr.op) {
+                case TOKEN_PLUS:     return range_add(l, r);
+                case TOKEN_MINUS:    return range_sub(l, r);
+                case TOKEN_ASTERISK: return range_mul(l, r);
+                case TOKEN_SLASH:    return range_div(l, r);
+                case TOKEN_PERCENT:  return range_mod(l, r);
+                default:             return range_unknown();
+            }
         }
         case EXPR_UNARY: {
             if (e->as.unary_expr.op == TOKEN_MINUS) {
                 Range r = sema_eval_range(e->as.unary_expr.right, t);
                 if (r.known) {
-                    return range_make(-r.max, -r.min);
+                    return range_make(sat_sub_i64(0, r.max), sat_sub_i64(0, r.min));
                 }
             }
             return range_unknown();
+        }
+        case EXPR_CAST: {
+            // Preserve range through cast — the underlying value range is still valid
+            return sema_eval_range(e->as.cast_expr.expr, t);
         }
         default: return range_unknown();
     }
@@ -198,10 +260,19 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
                     r.min = val;
                     r.max = val;
                     break;
-                case TOKEN_BANG_EQUAL:
-                    // != is harder to represent in a single interval if it splits the range.
-                    // For now, ignore.
+                case TOKEN_BANG_EQUAL: {
+                    // != can tighten range at the boundaries
+                    if (val == r.min && val == r.max) {
+                        // Range is exactly [val, val] and we require != val → contradiction
+                        r.min = 1; r.max = 0; // empty range (will fail checks)
+                    } else if (val == r.min) {
+                        r.min = val + 1; // exclude the lower bound
+                    } else if (val == r.max) {
+                        r.max = val - 1; // exclude the upper bound
+                    }
+                    // Interior != cannot be represented as a single interval — conservative
                     break;
+                }
                 default: break;
             }
             range_set(t, var, r);

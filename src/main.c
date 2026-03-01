@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
     sema_resolve_module(program, modname, &_sema_arena);
 
     // then code‑gen:
-    emit(program, 0, "out.c");
+    emit(program, 0, args.output_file);
 
     sema_destroy();
 

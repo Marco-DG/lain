@@ -51,6 +51,8 @@ typedef enum {
     TOKEN_CARET_EQUAL,
     TOKEN_PERCENT,
     TOKEN_PERCENT_EQUAL,
+    TOKEN_SHIFT_LEFT,      // <<
+    TOKEN_SHIFT_RIGHT,     // >>
     TOKEN_LINE_COMMENT,
     TOKEN_MULTILINE_COMMENT,
     TOKEN_KEYWORD_IF,
@@ -198,6 +200,8 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_CARET_EQUAL:                 return "TOKEN_CARET_EQUAL";
         case TOKEN_PERCENT:                     return "TOKEN_PERCENT";
         case TOKEN_PERCENT_EQUAL:               return "TOKEN_PERCENT_EQUAL";
+        case TOKEN_SHIFT_LEFT:                  return "TOKEN_SHIFT_LEFT";
+        case TOKEN_SHIFT_RIGHT:                 return "TOKEN_SHIFT_RIGHT";
         case TOKEN_LINE_COMMENT:                return "TOKEN_LINE_COMMENT";
         case TOKEN_MULTILINE_COMMENT:           return "TOKEN_MULTILINE_COMMENT";
         case TOKEN_KEYWORD_IF:                  return "TOKEN_KEYWORD_IF";
@@ -282,6 +286,8 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_CARET_EQUAL:                 return "^=";
         case TOKEN_PERCENT:                     return "%";
         case TOKEN_PERCENT_EQUAL:               return "%=";
+        case TOKEN_SHIFT_LEFT:                  return "<<";
+        case TOKEN_SHIFT_RIGHT:                 return ">>";
         case TOKEN_LINE_COMMENT:                return "TOKEN_LINE_COMMENT";
         case TOKEN_MULTILINE_COMMENT:           return "TOKEN_MULTILINE_COMMENT";
         case TOKEN_KEYWORD_IF:                  return "if";
