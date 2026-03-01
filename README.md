@@ -90,6 +90,8 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `\|` | Bitwise OR |
 | `^` | Bitwise XOR |
 | `~` | Bitwise NOT (complement) |
+| `<<` | Left shift |
+| `>>` | Right shift |
 
 **Assignment operators:**
 | Operator | Description |
@@ -211,7 +213,7 @@ var radius f32 = 5
 ```
 
 > [!NOTE]
-> Floating-point literals (e.g., `3.14`) are fully supported. When assigning numeric literals to `f32` or `f64` variables, explicit type annotations are recommended, although implicit conversion between integers and floating numbers happens natively.
+> Floating-point literals (e.g., `3.14`) are fully supported. When assigning numeric literals to `f32` or `f64` variables, explicit type annotations are recommended. Note: implicit conversion between integer and floating-point types is the **only** implicit conversion permitted in Lain — all other conversions between numeric types (e.g., `u8` to `int`) require an explicit `as` cast.
 
 **Boolean:**
 
@@ -1509,7 +1511,7 @@ Lain eliminates entire classes of bugs at compile time without runtime overhead.
 
 | Safety Concern | Lain's Guarantee | Mechanism |
 |:---------------|:-----------------|:----------|
-| **Buffer Overflows** | **Impossible** | **Static Range Analysis** (§9) verifies every array access at compile time. No runtime bounds checks. |
+| **Buffer Overflows** | **Impossible** | **Static Range Analysis** (§9) verifies every array access at compile time. Accesses that cannot be statically proven safe are rejected as compilation errors. No runtime bounds checks needed. |
 | **Use-After-Free** | **Impossible** | **Linear Types** (`mov`) ensure resources are consumed exactly once. Accessing a moved variable is a compile error. |
 | **Double Free** | **Impossible** | Ownership is linear — a resource must be consumed exactly once, preventing double destruction. |
 | **Data Races** | **Impossible** | The **Borrow Checker** enforces exclusive mutability. Simultaneous shared + mutable borrows are rejected. |
@@ -1827,7 +1829,7 @@ Lain's arithmetic follows C99 semantics:
 | **Floating-point** (`f32`, `f64`) | IEEE 754 rules: overflow → ±infinity, underflow → 0 or denormal |
 
 > [!WARNING]
-> Signed integer overflow is undefined behavior in C99, which Lain inherits. This means the C compiler may optimize assuming signed overflow never occurs, leading to unexpected behavior. Use unsigned types or explicit range checking for critical arithmetic.
+> Signed integer overflow in Lain results in Two's Complement wrap-around. The C backend is always compiled with `-fwrapv` to guarantee this behavior. This is consistent with §3.1.
 
 ---
 

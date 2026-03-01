@@ -684,6 +684,25 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     case STMT_RETURN: {
         Expr *val = s->as.return_stmt.value;
         if (val) sema_check_expr_linearity(val, tbl, loop_depth);
+        
+        // Check for dangling `return var local` — returning a mutable
+        // reference to a local variable is always a dangling pointer.
+        if (val && val->kind == EXPR_MUT) {
+            Expr *inner = val->as.mut_expr.expr;
+            if (inner && inner->kind == EXPR_IDENTIFIER) {
+                // Check: is this a local variable (not a parameter)?
+                Decl *d = inner->decl;
+                if (d && d->kind == DECL_VARIABLE && !d->as.variable_decl.is_parameter) {
+                    fprintf(stderr, "Error Ln %li, Col %li: cannot return mutable reference to local variable '%.*s'. "
+                            "Local variables are deallocated when the function returns.\n",
+                            (long)s->line, (long)s->col,
+                            (int)inner->as.identifier_expr.id->length,
+                            inner->as.identifier_expr.id->name);
+                    exit(1);
+                }
+            }
+        }
+        
         ltable_ensure_all_consumed(tbl);
         break;
     }

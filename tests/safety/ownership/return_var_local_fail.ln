@@ -1,0 +1,10 @@
+// Test: return var of a local variable should fail compilation (dangling reference)
+// Expected: Compiler error — cannot return mutable reference to local variable
+proc main() {
+    dangerous()
+}
+
+func dangerous() var int {
+    var local = 42
+    return var local
+}
