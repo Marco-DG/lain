@@ -78,7 +78,8 @@ int main(int argc, char **argv) {
     // sema = resolve identifiers → you’d call:
     sema_resolve_module(program, modname, &_sema_arena);
 
-    // then code‑gen:
+    // then code-gen:
+    emit_source_filename = args.filename;
     emit(program, 0, args.output_file);
 
     sema_destroy();

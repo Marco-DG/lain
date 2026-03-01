@@ -1,0 +1,6 @@
+// Test: shift operators << and >>
+proc main() {
+    var x = 1 << 3    // 8
+    var y = 16 >> 2   // 4
+    var z = x | y     // 12
+}
