@@ -213,6 +213,7 @@ typedef enum {
     STMT_RETURN,
     STMT_UNSAFE,
     STMT_WHILE,
+    STMT_DEFER,
 } StmtKind;
 
 typedef struct {
@@ -275,6 +276,10 @@ typedef struct {
     StmtList *body;
 } StmtUnsafe;
 
+typedef struct {
+    struct Stmt *stmt; // The statement to be executed later (usually a block or an expression)
+} StmtDefer;
+
 typedef struct Stmt {
     StmtKind kind;
     isize line;  // source line number
@@ -290,6 +295,7 @@ typedef struct Stmt {
         StmtReturn      return_stmt;
         StmtUnsafe      unsafe_stmt;
         StmtWhile       while_stmt;
+        StmtDefer       defer_stmt;
     } as;
 } Stmt;
 
@@ -789,6 +795,13 @@ Stmt *stmt_return(Arena *arena, Expr *value) {
     Stmt *s = arena_push(arena, Stmt);
     s->kind = STMT_RETURN;
     s->as.return_stmt.value = value;
+    return s;
+}
+
+Stmt *stmt_defer(Arena *arena, Stmt *deferred_stmt) {
+    Stmt *s = arena_push(arena, Stmt);
+    s->kind = STMT_DEFER;
+    s->as.defer_stmt.stmt = deferred_stmt;
     return s;
 }
 

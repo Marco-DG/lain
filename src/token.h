@@ -89,6 +89,7 @@ typedef enum {
     TOKEN_KEYWORD_POST,
     TOKEN_KEYWORD_WHILE,
     TOKEN_KEYWORD_UNDEFINED,
+    TOKEN_KEYWORD_DEFER,
 } TokenKind;
 
 typedef struct {
@@ -132,6 +133,7 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             if (strncmp(lexeme, "false", 5) == 0)       return TOKEN_KEYWORD_FALSE;
             if (strncmp(lexeme, "macro", 5) == 0)       return TOKEN_KEYWORD_MACRO;
             if (strncmp(lexeme, "while", 5) == 0)       return TOKEN_KEYWORD_WHILE;
+            if (strncmp(lexeme, "defer", 5) == 0)       return TOKEN_KEYWORD_DEFER;
             break;
         case 6:
             if (strncmp(lexeme, "import", 6) == 0)      return TOKEN_KEYWORD_IMPORT;

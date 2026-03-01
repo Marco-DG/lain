@@ -143,6 +143,9 @@ void generic_substitute_stmt(Stmt *s, const char *param_name, Type *actual_type)
         case STMT_UNSAFE:
             for (StmtList *l = s->as.unsafe_stmt.body; l; l = l->next) generic_substitute_stmt(l->stmt, param_name, actual_type);
             break;
+        case STMT_DEFER:
+            generic_substitute_stmt(s->as.defer_stmt.stmt, param_name, actual_type);
+            break;
         case STMT_CONTINUE:
         case STMT_BREAK:
         case STMT_MATCH_CASE:

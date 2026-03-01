@@ -1,0 +1,17 @@
+extern proc printf(fmt *u8, ...) int
+
+proc main() {
+    var i = 0
+    while i < 3 {
+        defer printf("-%d-", i)
+        i = i + 1
+        if i == 2 {
+            continue
+        }
+        defer printf("A%d", i)
+        if i == 3 {
+            break
+        }
+    }
+    printf("END")
+}

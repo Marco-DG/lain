@@ -765,6 +765,11 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         break;
     }
 
+    case STMT_DEFER: {
+        sema_check_stmt_linearity_with_table(s->as.defer_stmt.stmt, tbl, loop_depth);
+        break;
+    }
+
     default:
         // other statements: do nothing
         break;
