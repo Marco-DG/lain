@@ -15,6 +15,9 @@ include/
 #include "lexer.h"
 #include "ast.h"
 
+struct Parser;  // Forward declaration
+DeclList* parse_type_fields(Arena* arena, struct Parser* parser, bool* is_enum, Variant** adt_variants);
+
 /* keep this import order */
 #include "parser/core.h"
 #include "parser/type.h"

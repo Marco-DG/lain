@@ -168,6 +168,29 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         parser_advance();
         return expr_undefined(arena);
     }
+    
+    // Anonymous types: type { ... }
+    if (parser_match(TOKEN_KEYWORD_TYPE)) {
+        parser_advance(); // consume 'type'
+        parser_expect(TOKEN_L_BRACE, "Expected '{' after 'type' expression");
+        parser_advance();
+        
+        // We'll borrow parse_type_fields logic, we just need to declare it extern or include it
+        // Wait, parser/expr.h is included after parser/decl.h normally? Not necessarily.
+        // Actually, parse_type_fields is in decl.h. We need to call it.
+        bool is_enum;
+        Variant* adt_variants;
+        DeclList* struct_fields = parse_type_fields(arena, parser, &is_enum, &adt_variants);
+        
+        parser_expect(TOKEN_R_BRACE, "Expected '}' at end of anonymous type definition");
+        parser_advance();
+
+        if (is_enum) {
+            return expr_anon_enum(arena, adt_variants);
+        } else {
+            return expr_anon_struct(arena, struct_fields);
+        }
+    }
 
     if (parser_match(TOKEN_NUMBER)) {
         int value = atoi(parser->token.start);

@@ -89,6 +89,14 @@ void generic_substitute_expr(Expr *e, const char *param_name, Type *actual_type)
         case EXPR_TYPE:
             generic_substitute_type(&e->as.type_expr.type_value, param_name, actual_type);
             break;
+        case EXPR_ANON_STRUCT:
+            for (DeclList *l = e->as.anon_struct_expr.fields; l; l = l->next) generic_substitute_decl(l->decl, param_name, actual_type);
+            break;
+        case EXPR_ANON_ENUM:
+            for (Variant *v = e->as.anon_enum_expr.variants; v; v = v->next) {
+                for (DeclList *l = v->fields; l; l = l->next) generic_substitute_decl(l->decl, param_name, actual_type);
+            }
+            break;
     }
 }
 
@@ -172,8 +180,12 @@ void generic_substitute_decl(Decl *d, const char *param_name, Type *actual_type)
             generic_substitute_type(&d->as.destruct_decl.type, param_name, actual_type);
             break;
         case DECL_IMPORT:
+        case DECL_EVAL_IMPORT:
         case DECL_C_INCLUDE:
         case DECL_EXTERN_TYPE:
+            break;
+        case DECL_TYPE_ALIAS:
+            generic_substitute_expr(d->as.type_alias_decl.expr, param_name, actual_type);
             break;
     }
 }

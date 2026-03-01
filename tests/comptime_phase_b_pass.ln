@@ -1,0 +1,13 @@
+func Option(comptime T type) type {
+    return type {
+        Some { value T }
+        None
+    }
+}
+
+type OptionInt = Option(int)
+
+proc main() {
+    var a OptionInt = OptionInt.Some(42)
+    var b OptionInt = OptionInt.None
+}
