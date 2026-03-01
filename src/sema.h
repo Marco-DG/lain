@@ -397,6 +397,32 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 sema_infer_expr(pre->expr);
                 sema_apply_constraint(pre->expr, sema_ranges);
             }
+            
+            // Also apply inline parameter constraints (e.g., `b int != 0`)
+            // to the function body's range table, so VRA can see them.
+            for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
+                if (p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.constraints) {
+                    Id *param_name = p->decl->as.variable_decl.name;
+                    for (ExprList *c = p->decl->as.variable_decl.constraints; c; c = c->next) {
+                        if (c->expr->kind == EXPR_BINARY) {
+                            // Build a synthetic constraint expr: param_name <op> rhs
+                            // The constraint's LHS is the parameter itself — apply
+                            // it by evaluating against the current range table.
+                            Expr synth;
+                            synth.kind = EXPR_BINARY;
+                            synth.as.binary_expr.op = c->expr->as.binary_expr.op;
+                            // LHS: create an identifier expr for the parameter
+                            Expr lhs_id;
+                            lhs_id.kind = EXPR_IDENTIFIER;
+                            lhs_id.as.identifier_expr.id = param_name;
+                            lhs_id.type = NULL;
+                            synth.as.binary_expr.left = &lhs_id;
+                            synth.as.binary_expr.right = c->expr->as.binary_expr.right;
+                            sema_apply_constraint(&synth, sema_ranges);
+                        }
+                    }
+                }
+            }
         }
 
         // Resolve Post-Contracts

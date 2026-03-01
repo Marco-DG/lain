@@ -12,10 +12,14 @@ void emit_stmt_list(StmtList *stmts, int depth);
 void emit_stmt(Stmt *stmt, int depth) {
   if (!stmt)
     return;
-  // Skip pure‐compile‐time `use` statements (they don't emit any code),
+  // Skip pure compile-time `use` statements (they don't emit any code),
   // and avoid eating an indent with no newline.
   if (stmt->kind == STMT_USE) {
     return;
+  }
+  // Emit #line directive for source-level debugging
+  if (stmt->line > 0 && emit_source_filename) {
+    EMIT("#line %ld \"%s\"\n", (long)stmt->line, emit_source_filename);
   }
   switch (stmt->kind) {
     case STMT_VAR: {

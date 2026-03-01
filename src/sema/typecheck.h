@@ -401,6 +401,24 @@ void sema_infer_expr(Expr *e) {
       sema_infer_expr(a->expr);
     }
     
+    // Argument count check — skip extern functions (may be variadic like printf)
+    {
+        Decl *cd = e->as.call_expr.callee->decl;
+        if (cd && (cd->kind == DECL_FUNCTION || cd->kind == DECL_PROCEDURE)) {
+            int n_params = 0, n_args = 0;
+            for (DeclList *p = cd->as.function_decl.params; p; p = p->next) n_params++;
+            for (ExprList *a = e->as.call_expr.args; a; a = a->next) n_args++;
+            if (n_args != n_params) {
+                Id *fn_name = cd->as.function_decl.name;
+                fprintf(stderr, "Error Ln %li, Col %li: function '%.*s' expects %d argument(s), got %d.\n",
+                        (long)e->line, (long)e->col,
+                        (int)fn_name->length, fn_name->name,
+                        n_params, n_args);
+                exit(1);
+            }
+        }
+    }
+    
     // Verify equation-style constraints at call site
     Decl *callee_decl = e->as.call_expr.callee->decl;
     if (callee_decl && (callee_decl->kind == DECL_FUNCTION || 
@@ -574,6 +592,58 @@ void sema_infer_expr(Expr *e) {
   case EXPR_BINARY:
     sema_infer_expr(e->as.binary_expr.left);
     sema_infer_expr(e->as.binary_expr.right);
+    
+    // Division/modulo by zero check in pure func (must be total).
+    // Parameter constraints (e.g., `b int != 0`) guarantee safety.
+    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
+        TokenKind op = e->as.binary_expr.op;
+        if (op == TOKEN_SLASH || op == TOKEN_PERCENT) {
+            Range rhs_range = sema_eval_range(e->as.binary_expr.right, sema_ranges);
+            
+            // Check if divisor is provably non-zero
+            bool proven_nonzero = false;
+            
+            // Case 1: VRA proves range excludes zero
+            if (rhs_range.known && (rhs_range.min > 0 || rhs_range.max < 0)) {
+                proven_nonzero = true;
+            }
+            
+            // Case 2: Divisor is a parameter with `!= 0` constraint
+            if (!proven_nonzero && e->as.binary_expr.right->kind == EXPR_IDENTIFIER) {
+                Decl *rhs_decl = e->as.binary_expr.right->decl;
+                if (rhs_decl && rhs_decl->kind == DECL_VARIABLE && rhs_decl->as.variable_decl.constraints) {
+                    for (ExprList *c = rhs_decl->as.variable_decl.constraints; c; c = c->next) {
+                        if (c->expr->kind == EXPR_BINARY && 
+                            c->expr->as.binary_expr.op == TOKEN_BANG_EQUAL &&
+                            c->expr->as.binary_expr.right->kind == EXPR_LITERAL &&
+                            c->expr->as.binary_expr.right->as.literal_expr.value == 0) {
+                            proven_nonzero = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (!proven_nonzero) {
+                if (!rhs_range.known) {
+                    fprintf(stderr, "Error Ln %li, Col %li: potential division by zero in pure function '%.*s'. "
+                            "The divisor's range is unknown. Use a constraint (e.g., `b int != 0`) to prove safety.\n",
+                            (long)e->line, (long)e->col,
+                            (int)current_function_decl->as.function_decl.name->length,
+                            current_function_decl->as.function_decl.name->name);
+                } else {
+                    fprintf(stderr, "Error Ln %li, Col %li: potential division by zero in pure function '%.*s'. "
+                            "Divisor range [%ld, %ld] includes zero. Use a constraint (e.g., `b int != 0`) to prove safety.\n",
+                            (long)e->line, (long)e->col,
+                            (int)current_function_decl->as.function_decl.name->length,
+                            current_function_decl->as.function_decl.name->name,
+                            (long)rhs_range.min, (long)rhs_range.max);
+                }
+                exit(1);
+            }
+        }
+    }
+    
     e->type = get_builtin_int_type();
     break;
 

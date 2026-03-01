@@ -1,0 +1,9 @@
+// Test: division by zero in pure function should fail
+// Expected: Compiler error — potential division by zero, divisor range includes zero
+func unsafe_div(a int, b int) int {
+    return a / b
+}
+
+proc main() {
+    unsafe_div(10, 5)
+}

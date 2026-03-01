@@ -13,6 +13,7 @@ void c_name_for_type(Type *t, char *out, size_t cap);
 
 /*— where all output goes —*/
 static FILE *output_file;
+static const char *emit_source_filename = NULL;
 #define EMIT(...) fprintf(output_file, __VA_ARGS__)
 
 /*— indentation —*/
