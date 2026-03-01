@@ -106,9 +106,11 @@ typedef enum {
     DECL_STRUCT,
     DECL_ENUM,
     DECL_IMPORT,
+    DECL_EVAL_IMPORT,
     DECL_C_INCLUDE,
     DECL_DESTRUCT,
     DECL_EXTERN_TYPE,
+    DECL_TYPE_ALIAS, // New: type Name = Expr
 } DeclKind;
 
 typedef struct {
@@ -135,6 +137,10 @@ typedef struct {
     bool  is_mutable;   // New: true if declared with 'var' (mutable binding)
 } DeclVariable;
 
+typedef struct {
+    Id* name;
+    Expr* expr; // The right-hand side of type Alias = Expr
+} DeclTypeAlias;
 
 typedef struct Variant {
     Id*       name;
@@ -183,6 +189,7 @@ typedef struct Decl {
         DeclCInclude    c_include_decl;
         DeclDestruct    destruct_decl;
         DeclExternType  extern_type_decl;
+        DeclTypeAlias   type_alias_decl;
     } as;
     isize line;  // NEW
     isize col;   // NEW
@@ -308,7 +315,17 @@ typedef enum {
     EXPR_MATCH,
     EXPR_UNDEFINED, // New
     EXPR_TYPE,      // a resolved Type* used as a parameter value
+    EXPR_ANON_STRUCT,
+    EXPR_ANON_ENUM,
 } ExprKind;
+
+typedef struct {
+    DeclList* fields;
+} ExprAnonStruct;
+
+typedef struct {
+    Variant* variants;
+} ExprAnonEnum;
 
 typedef struct {
     Expr*       left;   // Left operand
@@ -413,6 +430,8 @@ typedef struct Expr {
         ExprFloat       float_expr;
         ExprMatch       match_expr;
         ExprType        type_expr;
+        ExprAnonStruct  anon_struct_expr;
+        ExprAnonEnum    anon_enum_expr;
     } as;
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
@@ -916,5 +935,28 @@ Expr *expr_match(Arena *arena, Expr *value, ExprMatchCase *cases) {
     return e;
 }
 
+Expr *expr_anon_struct(Arena *arena, DeclList *fields) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_ANON_STRUCT;
+    e->as.anon_struct_expr.fields = fields;
+    e->type = type_meta_type(arena);
+    return e;
+}
+
+Expr *expr_anon_enum(Arena *arena, Variant *variants) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_ANON_ENUM;
+    e->as.anon_enum_expr.variants = variants;
+    e->type = type_meta_type(arena);
+    return e;
+}
+
+Decl *decl_type_alias(Arena *arena, Id *name, Expr *expr) {
+    Decl *d = arena_push_aligned(arena, Decl);
+    d->kind = DECL_TYPE_ALIAS;
+    d->as.type_alias_decl.name = name;
+    d->as.type_alias_decl.expr = expr;
+    return d;
+}
 
 #endif /* AST_H */

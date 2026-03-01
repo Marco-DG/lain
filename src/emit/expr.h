@@ -152,21 +152,28 @@ void emit_expr(Expr *expr, int depth) {
     ExprMember *m = &expr->as.member_expr;
     
     // Check if this is an ADT variant access (e.g. Shape.Point) used as a value
-    if (m->target->kind == EXPR_IDENTIFIER) {
+    if (m->target->kind == EXPR_IDENTIFIER || m->target->kind == EXPR_TYPE) {
         // We rely on the fact that sema_infer_expr sets the type to the ADT type
         // But we need to know if it's a type name.
         // Let's check if the resolved decl is an Enum.
         Decl *d = m->target->decl;
-        if (d && d->kind == DECL_ENUM) {
-             const char *raw_adt_name = c_name_for_id(m->target->as.identifier_expr.id);
-             char adt_name[256];
-             strncpy(adt_name, raw_adt_name, sizeof(adt_name));
-             adt_name[sizeof(adt_name)-1] = '\0';
-             
-             const char *variant_name = c_name_for_id(m->member);
-             // Emit as a constructor call: Shape_Point()
-             EMIT("%s_%s()", adt_name, variant_name);
-             break;
+        if (d && (d->kind == DECL_ENUM || d->kind == DECL_STRUCT)) {
+             const char *raw_adt_name = NULL;
+             if (m->target->kind == EXPR_IDENTIFIER) {
+                 raw_adt_name = c_name_for_id(m->target->as.identifier_expr.id);
+             } else if (m->target->kind == EXPR_TYPE && m->target->as.type_expr.type_value && m->target->as.type_expr.type_value->kind == TYPE_SIMPLE) {
+                 raw_adt_name = c_name_for_id(m->target->as.type_expr.type_value->base_type);
+             }
+             if (raw_adt_name) {
+                 char adt_name[256];
+                 strncpy(adt_name, raw_adt_name, sizeof(adt_name));
+                 adt_name[sizeof(adt_name)-1] = '\0';
+                 
+                 const char *variant_name = c_name_for_id(m->member);
+                 // Emit as a constructor call: Shape_Point()
+                 EMIT("%s_%s()", adt_name, variant_name);
+                 break;
+             }
         }
     }
 
@@ -243,15 +250,24 @@ void emit_expr(Expr *expr, int depth) {
     } else if (expr->as.call_expr.callee->kind == EXPR_MEMBER) {
         // Check for ADT constructor: Shape.Circle(...)
         Expr *target = expr->as.call_expr.callee->as.member_expr.target;
-        if (target->kind == EXPR_IDENTIFIER) {
-            const char *raw_adt_name = c_name_for_id(target->as.identifier_expr.id);
-            char adt_name[256];
-            strncpy(adt_name, raw_adt_name, sizeof(adt_name));
-            adt_name[sizeof(adt_name)-1] = '\0';
-            
-            const char *variant_name = c_name_for_id(expr->as.call_expr.callee->as.member_expr.member);
-            // fprintf(stderr, "DEBUG: EXPR_CALL ADT: adt='%s', var='%s'\n", adt_name, variant_name);
-            EMIT("%s_%s", adt_name, variant_name);
+        if (target->kind == EXPR_IDENTIFIER || target->kind == EXPR_TYPE) {
+            const char *raw_adt_name = NULL;
+            if (target->kind == EXPR_IDENTIFIER) {
+                raw_adt_name = c_name_for_id(target->as.identifier_expr.id);
+            } else if (target->kind == EXPR_TYPE && target->as.type_expr.type_value && target->as.type_expr.type_value->kind == TYPE_SIMPLE) {
+                raw_adt_name = c_name_for_id(target->as.type_expr.type_value->base_type);
+            }
+            if (raw_adt_name) {
+                char adt_name[256];
+                strncpy(adt_name, raw_adt_name, sizeof(adt_name));
+                adt_name[sizeof(adt_name)-1] = '\0';
+                
+                const char *variant_name = c_name_for_id(expr->as.call_expr.callee->as.member_expr.member);
+                // fprintf(stderr, "DEBUG: EXPR_CALL ADT: adt='%s', var='%s'\n", adt_name, variant_name);
+                EMIT("%s_%s", adt_name, variant_name);
+            } else {
+                emit_expr(expr->as.call_expr.callee, depth);
+            }
         } else {
             emit_expr(expr->as.call_expr.callee, depth);
         }

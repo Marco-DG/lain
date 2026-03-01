@@ -7,6 +7,7 @@
 #include "../ast.h"
 #include "../ast_clone.h"
 #include "generic.h"
+#include "comptime.h" // CTFE engine
 #include "exhaustiveness.h"  // Match exhaustiveness checking
 #include "ranges.h"          // Range analysis
 
@@ -89,9 +90,6 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
       if (!d)
         continue;
       
-      // DEBUG: print every decl kind
-      fprintf(stderr, "DEBUG scope: Decl Kind %d\n", d->kind);
-  
       switch (d->kind) {
       case DECL_VARIABLE: {
         // top‑level variable → insert into sema_globals
@@ -228,6 +226,86 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
       case DECL_DESTRUCT:
         // already inlined earlier or not top-level
         break;
+        
+      case DECL_TYPE_ALIAS: {
+        // Evaluate the right-hand side using the comptime interpreter
+        Id *id = d->as.type_alias_decl.name;
+        char raw[256];
+        int lt = id->length < (int)sizeof(raw) - 1 ? id->length : (int)sizeof(raw) - 1;
+        memcpy(raw, id->name, lt);
+        raw[lt] = '\0';
+        
+        char cname[256];
+        size_t modlen = strlen(safe_module_path);
+        size_t max_raw = sizeof(cname) - modlen - 2;
+        if (max_raw > 0) {
+          snprintf(cname, sizeof(cname), "%s_%.*s", safe_module_path, (int)max_raw, raw);
+          for (char *p = cname; *p; p++) if (*p == '.') *p = '_';
+        } else {
+          memcpy(cname, safe_module_path, sizeof(cname) - 1);
+          cname[sizeof(cname) - 1] = '\0';
+        }
+        
+        // For Phase B, we evaluate the RHS right now. This requires parsing the AST.
+        // If it's a direct type, we get EXPR_TYPE. If it's a function call returning a type,
+        // we execute the CTFE engine.
+        // NOTE: we need to link in comptime.h, which we will do shortly.
+        const char *old_path = current_module_path;
+        current_module_path = safe_module_path;
+        
+        sema_resolve_expr(d->as.type_alias_decl.expr);
+        Expr* eval_rhs = comptime_evaluate_expr(sema_arena, d->as.type_alias_decl.expr, NULL);
+        
+        current_module_path = old_path;
+        
+        if (eval_rhs) {
+             if (eval_rhs->kind == EXPR_ANON_STRUCT) {
+                  // Register as a struct!
+                  Type *sty = type_simple(sema_arena, id);
+                  
+                  Decl* struct_d = arena_push_aligned(sema_arena, Decl);
+                  struct_d->kind = DECL_STRUCT;
+                  struct_d->as.struct_decl.name = id;
+                  struct_d->as.struct_decl.fields = eval_rhs->as.anon_struct_expr.fields;
+                  
+                  sema_insert_global(raw, cname, sty, struct_d, false);
+                  
+                  DeclList *new_node = decl_list(sema_arena, struct_d);
+                  DeclList *tail = sema_decls;
+                  while (tail && tail->next) tail = tail->next;
+                  if (tail) tail->next = new_node;
+                  else sema_decls = new_node;
+                  
+             } else if (eval_rhs->kind == EXPR_ANON_ENUM) {
+                  // Register as an enum!
+                  Type *ety = type_simple(sema_arena, id);
+                  
+                  Decl* enum_d = arena_push_aligned(sema_arena, Decl);
+                  enum_d->kind = DECL_ENUM;
+                  enum_d->as.enum_decl.type_name = id;
+                  enum_d->as.enum_decl.variants = eval_rhs->as.anon_enum_expr.variants;
+                  
+                  sema_insert_global(raw, cname, ety, enum_d, false);
+                  
+                  DeclList *new_node = decl_list(sema_arena, enum_d);
+                  DeclList *tail = sema_decls;
+                  while (tail && tail->next) tail = tail->next;
+                  if (tail) tail->next = new_node;
+                  else sema_decls = new_node;
+                  
+             } else if (eval_rhs->kind == EXPR_TYPE) {
+                  // It's just an alias to an existing type (e.g., type MyInt = int)
+                  sema_insert_global(raw, cname, eval_rhs->as.type_expr.type_value, d, false);
+             } else {
+                  fprintf(stderr, "Error Ln %li, Col %li: Type alias must evaluate to a type at compile-time (got kind=%d)\n", d->line, d->col, eval_rhs->kind);
+                  exit(1);
+             }
+        } else {
+             fprintf(stderr, "Error Ln %li, Col %li: Type alias RHS could not be evaluated\n", d->line, d->col);
+             exit(1);
+        }
+        break;
+      }
       }
     }
     free(safe_module_path);

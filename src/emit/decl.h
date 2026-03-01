@@ -25,6 +25,8 @@ static void emit_forward_decl(Decl *decl, int depth) {
     if (!decl) return;
     if (is_generic_function(decl)) return;
     if (decl->kind == DECL_FUNCTION || decl->kind == DECL_PROCEDURE) {
+        if (decl->as.function_decl.return_type && decl->as.function_decl.return_type->kind == TYPE_META_TYPE) return; // Pure CTFE function
+        
         emit_indent(depth);
         if (decl->as.function_decl.return_type) {
             emit_type(decl->as.function_decl.return_type);
@@ -190,6 +192,8 @@ void emit_decl(Decl* decl, int depth) {
         case DECL_PROCEDURE:
         case DECL_FUNCTION: {
             if (is_generic_function(decl)) return;
+            if (decl->as.function_decl.return_type && decl->as.function_decl.return_type->kind == TYPE_META_TYPE) return; // Pure CTFE function
+
             emit_indent(depth);
             // Print return type and function name.
             if (decl->as.function_decl.return_type) {

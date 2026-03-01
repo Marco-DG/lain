@@ -189,6 +189,12 @@ Expr *clone_expr(Arena *arena, Expr *e) {
         case EXPR_TYPE:
             new_e->as.type_expr.type_value = clone_type(arena, e->as.type_expr.type_value);
             break;
+        case EXPR_ANON_STRUCT:
+            new_e->as.anon_struct_expr.fields = clone_decl_list(arena, e->as.anon_struct_expr.fields);
+            break;
+        case EXPR_ANON_ENUM:
+            new_e->as.anon_enum_expr.variants = clone_variant(arena, e->as.anon_enum_expr.variants);
+            break;
     }
     return new_e;
 }
@@ -283,6 +289,7 @@ Decl *clone_decl(Arena *arena, Decl *d) {
             new_d->as.enum_decl.variants = clone_variant(arena, d->as.enum_decl.variants);
             break;
         case DECL_IMPORT:
+        case DECL_EVAL_IMPORT:
             new_d->as.import_decl.module_name = clone_id(arena, d->as.import_decl.module_name);
             break;
         case DECL_C_INCLUDE:
@@ -294,6 +301,10 @@ Decl *clone_decl(Arena *arena, Decl *d) {
             break;
         case DECL_EXTERN_TYPE:
             new_d->as.extern_type_decl.name = clone_id(arena, d->as.extern_type_decl.name);
+            break;
+        case DECL_TYPE_ALIAS:
+            new_d->as.type_alias_decl.name = clone_id(arena, d->as.type_alias_decl.name);
+            new_d->as.type_alias_decl.expr = clone_expr(arena, d->as.type_alias_decl.expr);
             break;
     }
     return new_d;

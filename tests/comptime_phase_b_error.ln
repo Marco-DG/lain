@@ -1,0 +1,11 @@
+func AssertTypeInt(comptime T type) type {
+    if T != int {
+        compileError("Type must be int!")
+    }
+    return T
+}
+
+type MyInt = AssertTypeInt(bool)
+
+proc main() {
+}

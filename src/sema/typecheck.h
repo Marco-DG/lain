@@ -166,7 +166,7 @@ void sema_infer_expr(Expr *e) {
     
     // Case 1: Accessing ADT Variant Constructor (e.g. Shape.Circle)
     // ONLY valid if the target resolves to the Enum declaration itself!
-    if (e->as.member_expr.target->kind == EXPR_IDENTIFIER) {
+    if (e->as.member_expr.target->kind == EXPR_IDENTIFIER || e->as.member_expr.target->kind == EXPR_TYPE) {
         if (e->as.member_expr.target->decl && e->as.member_expr.target->decl->kind == DECL_ENUM) {
             DeclEnum *adt = &e->as.member_expr.target->decl->as.enum_decl;
             Variant *v = lookup_adt_variant(adt, e->as.member_expr.member);

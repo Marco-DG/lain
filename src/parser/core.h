@@ -3,7 +3,7 @@
 
 #include "../parser.h"
 
-typedef struct {
+typedef struct Parser {
     Lexer *lexer;
     Token  token;
     isize  line;

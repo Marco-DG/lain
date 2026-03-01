@@ -149,7 +149,7 @@ Decl *parse_decl(Arena* arena, Parser* parser)
 
 
 // helper for type fields (struct vs enum/ADT)
-DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant **adt_variants) {
+DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, Variant **adt_variants) {
     DeclList* struct_fields = NULL;
     DeclList** struct_tail = &struct_fields;
     *adt_variants = NULL;
@@ -337,6 +337,14 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
 
     isize len = (end.start + end.length) - start.start;
     Id* name = id(arena, len, start.start);
+
+    // If it's a type alias: type Name = Expr
+    if (parser_match(TOKEN_EQUAL)) {
+        parser_advance(); // consume '='
+        Expr *expr = parse_expr(arena, parser);
+        // Optional semicolon or newline usually separates statements, but at declaration level it's handled by parse_decl
+        return decl_type_alias(arena, name, expr);
+    }
 
     // allow the '{' to be on the next line
     parser_skip_eol();
@@ -546,7 +554,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     }
     
     Type *ret_type = NULL;
-    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK)) {
+    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_TYPE) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK)) {
         ret_type = parse_type(arena, parser);
     }
 
@@ -700,7 +708,7 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
     }
     
     Type *ret_type = NULL;
-    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK)) {
+    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_TYPE) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK)) {
         ret_type = parse_type(arena, parser);
     }
 
