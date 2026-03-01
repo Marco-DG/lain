@@ -1610,6 +1610,26 @@ When compiling the generated `out.c`, certain C preprocessor flags are needed to
 
 ---
 
+## 21. Compile-Time Generics (Phase B)
+
+Lain sidesteps traditional generic syntax (`<T>`) in favor of parameterized functions where types are passed as compile-time values.
+
+```lain
+func Option(comptime T type) type {
+    return struct {
+        has_value bool,
+        payload   T
+    }
+}
+
+// Compile-time evaluation creates an alias
+type OptionInt = Option(int)
+```
+
+**Monomorphization**: When a generic function is called, the compiler evaluates the type parameter at compile-time and generates a specialized version of the function (e.g. `Option_int`).
+
+---
+
 ## Appendix A: Complete Keyword List
 
 | Keyword | Status | First Defined |
@@ -1663,24 +1683,6 @@ When compiling the generated `out.c`, certain C preprocessor flags are needed to
 ---
 
 ## Appendix B: Reserved Keywords & Future Plans
-
-### `comptime` — Compile-Time Function Execution
-
-A planned alternative to traditional generics (`<T>`). Instead of template syntax, types would be first-class values manipulated at compile time:
-
-```lain
-// Future vision
-func Option(comptime T type) type {
-    return struct {
-        has_value bool,
-        payload   T
-    }
-}
-
-type OptionInt = Option(int)
-```
-
-**Requirement**: The compiler would need a built-in interpreter (CTFE engine).
 
 ### `pre` / `post` — Contract Annotations
 
