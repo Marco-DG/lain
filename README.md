@@ -49,6 +49,8 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `extern` | External (C) declaration |
 | `unsafe` | Unsafe block |
 | `c_include` | Include a C header file |
+| `defer` | Defer execution until end of scope |
+| `undefined` | Uninitialized explicit escape hatch |
 
 > [!NOTE]
 > **Reserved for future use**: The following keywords are recognized by the lexer but not yet fully implemented:
@@ -1000,6 +1002,28 @@ case s {
 }
 ```
 
+### 7.7 Defer Statement
+
+The `defer` statement defers the execution of a block of code until the end of the current lexical scope. It is the primary mechanism for Resource Acquisition Is Initialization (RAII) and resource cleanup.
+
+```lain
+proc process_file() {
+    var f = open_file("data.txt", "r")
+    defer {
+        close_file(mov f)
+    }
+    
+    // ... use f ...
+    // f is automatically closed when the function returns or exits the block
+}
+```
+
+**Rules for defer:**
+1. Deferred blocks execute in reverse order (LIFO - Last In, First Out).
+2. They execute when control flow exits the scope (via reaching the end of the block, `return`, `break`, or `continue`).
+3. If control flow exits multiple scopes (e.g. `return` inside an `if` inside a `while`), all `defer` statements from the exited scopes are executed in the correct order.
+4. `defer` blocks cannot themselves contain `return`, `break`, or `continue` statements that escape the block.
+
 ---
 
 ## 8. Expressions & Operators
@@ -1665,6 +1689,7 @@ type OptionInt = Option(int)
 | `return` | ✅ Implemented | Return value |
 | `true` | ✅ Implemented | Boolean true literal |
 | `type` | ✅ Implemented | Type definition |
+| `undefined` | ✅ Implemented | Uninitialized variable marker |
 | `unsafe` | ✅ Implemented | Unsafe block |
 | `use` | 🔮 Reserved | — |
 | `var` | ✅ Implemented | Mutable binding |
@@ -1800,7 +1825,7 @@ var p = Point(10, undefined) // Explicitly uninitialized field
 ```
 
 > [!WARNING]
-> The current version of the compiler does not yet strictly enforce the definite-initialization analysis, but the specification mandates that relying on implicit uninitialized memory without `undefined` is invalid Lain code. Default garbage memory is forbidden by design.
+> The compiler strictly enforces **Definite Initialization Analysis**. If a variable is declared with `= undefined`, the compiler flow-sensitively tracks whether it is assigned a value before it is read. Any attempt to read an uninitialized variable on any code path results in a hard compilation error. Immutable bindings cannot be initialized with `undefined`.
 
 ### 17.2 Struct Initialization
 
@@ -1920,7 +1945,9 @@ block           = "{" { statement } "}" ;
 
 statement       = var_decl | assignment | return_stmt | if_stmt
                 | for_stmt | while_stmt | case_stmt | break_stmt
-                | continue_stmt | unsafe_block | expr_stmt ;
+                | continue_stmt | defer_stmt | unsafe_block | expr_stmt ;
+
+defer_stmt      = "defer" block ;
 
 var_decl        = ["var"] IDENT [type_expr] "=" expr ;
 assignment      = lvalue assign_op expr ;
@@ -1954,7 +1981,7 @@ binop           = "+" | "-" | "*" | "/" | "%" | "==" | "!="
 
 unop            = "-" | "!" | "~" | "*" ;
 
-literal         = NUMBER | CHAR_LITERAL | STRING_LITERAL ;
+literal         = NUMBER | CHAR_LITERAL | STRING_LITERAL | "undefined" ;
 ```
 
 > [!WARNING]
