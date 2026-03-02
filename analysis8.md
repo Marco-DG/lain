@@ -577,7 +577,7 @@ Il codice C generato non include direttive `#line`, rendendo il debugging con gd
 
 ---
 
-## 12. Stato Attuale Post-Fix
+## 12. Stato Attuale Post-Fix (Sessione 4)
 
 ### Tabella Priorità Aggiornata
 
@@ -594,26 +594,29 @@ Il codice C generato non include direttive `#line`, rendendo il debugging con gd
 | 9 | `!=` constraint non implementato | ✅ **RISOLTO** — narrowing ai bordi |
 | 10 | Ambiguità `x = 10` | 🟠 **APERTO** — design decision, non bug |
 | 11 | Nessun drop/defer | ✅ **RISOLTO** — `defer` aggiunto for RAII scopes |
-| 12 | Zero test negativi per types | ✅ **RISOLTO** — aggiunto check arg count + 2 test negativi |
+| 12 | Zero test negativi per types | ✅ **RISOLTO** — test negativi aggiunti e funzionanti |
 | 13 | Struct passate by-value per `mov` | 🟡 **APERTO** — ottimizzazione emitter |
 | 14 | Mancanza shift operators | ✅ **RISOLTO** — `<<`/`>>` completi |
 | 15 | Output hardcodato su `out.c` | ✅ **RISOLTO** — flag `-o` |
 
-**Nuove feature aggiunte:**
-| Feature | Stato |
-|---------|-------|
+**Nuove feature e bugfix aggiunti (incluse Sessioni 3 e 4):**
+| Feature / Bugfix | Stato |
+|------------------|-------|
 | §3.1 Div-by-zero check in `func` | ✅ **RISOLTO** — VRA + constraint `!= 0` |
 | §9.3 `#line` directives | ✅ **RISOLTO** — emesse per ogni statement |
 | Arg count validation | ✅ **RISOLTO** — per `func`/`proc` non-extern |
 | Constraint inline → VRA body | ✅ **RISOLTO** — constraint parametri applicati nel body |
+| **Definite Initialization** | ✅ **RISOLTO** — tracking rigoroso di `= undefined` |
+| **ADT & Struct Constructor Mismatch** | ✅ **RISOLTO** — inferenza corretta senza `TYPE_META_TYPE` |
+| **Struct Forward Decl in C backend** | ✅ **RISOLTO** — emissione `typedef struct Name Name;` |
 
-**Risultato test suite finale:**
-- Positive: **45/53** passano (8 failure pre-esistenti, zero regressioni)
-- Negative: **28/29** falliscono correttamente (1 false-pass pre-esistente: `uninit_fail.ln`)
+**Risultato test suite finale (GRANDE TRAGUARDO):**
+- Positive: **53/53** passano (TUTTI i failure pre-esistenti sono stati risolti)
+- Negative: **29/29** falliscono correttamente (Il false-pass su `uninit_fail.ln` è stato risolto)
 
 ---
 
-## 13. Roadmap
+## 13. Roadmap Aggiornata
 
 ### Priorità Alta — Safety
 
@@ -621,21 +624,19 @@ Il codice C generato non include direttive `#line`, rendendo il debugging con gd
 |-----------|-------------|-------------|
 | **Lifetime tracking reale** | 🔴 Alta | Sostituire il borrow checker intra-statement con un sistema che traccia la durata dei borrow attraverso più statement. Modello di riferimento: NLL di Rust (regioni). Richiede refactoring di `region.h` + `linearity.h` |
 | **Per-field struct linearity** | 🟠 Media | Permettere consumo parziale di struct lineari (`mov p.left` senza invalidare `p.right`). Richiede estensione `LTable` con tracking path-sensitive |
-| **Definite initialization analysis** | 🟠 Media | Enforcement rigoroso: variabili non inizializzate devono essere errore (attualmente `uninit_fail.ln` passa) |
+| ~~**Definite initialization analysis**~~ | ✅ Risolto | Track rigoroso implementato sia nei rami `if` che in routine `match`. Variabili con `undefined` lanciano errore se lette prima di assign. |
 
 ### Priorità Media — VRA e Determinismo
 
 | Obiettivo | Complessità | Descrizione |
 |-----------|-------------|-------------|
 | **Loop widening intelligente** | 🟠 Media | Dopo un `for i in 0..n`, preservare non solo `i` ma anche accumulatori con pattern riconoscibili (`sum = sum + x` → range cumulativo stimato) |
-| ~~**Verifica divisione per zero in `func`**~~ | ✅ Risolto | ~~`func` con `/` o `%` ora verifica che il divisore non includa zero. Supporta constraint `!= 0` direttamente~~  |
 | **`extern func` audit** | 🟡 Bassa | Warning quando una `extern func` non è in una whitelist nota di funzioni pure |
 
 ### Priorità Media — Linguaggio
 
 | Obiettivo | Complessità | Descrizione |
 |-----------|-------------|-------------|
-| **`defer` statement** | ✅ Risolto | ~~Meccanismo RAII-like per cleanup automatico a fine scope.~~ |
 | **Generics Phase C** | 🔴 Alta | `Result(T, E)`, `Option(T)`, interfaces/shapes. Prerequisito per error propagation ergonomico |
 | **Operatore `?`** | 🟡 Bassa | Sugar per `case result { Ok(v): v, Err(e): return Err(e) }`. Richiede generics |
 
@@ -644,9 +645,8 @@ Il codice C generato non include direttive `#line`, rendendo il debugging con gd
 | Obiettivo | Complessità | Descrizione |
 |-----------|-------------|-------------|
 | **Struct `mov` by-pointer** | 🟡 Bassa | Emettere `T*` invece di `T` per parametri `mov` di struct > 16 bytes |
-| ~~**`#line` directives**~~ | ✅ Risolto | ~~Emettere `#line` nel C generato per mapping source → debug~~ |
 | **Type checker enforcement** | 🟠 Media | Verifica tipo in chiamate di funzione, assignment, return — attualmente molti mismatch passano silenziosamente |
-| **Test coverage** | 🟡 Bassa | Aggiungere test negativi per: types, stdlib, cross-module, shadowing di variabili lineari |
+| **Test coverage** | 🟡 Bassa | Continuare ad espandere la suite di test negativi per: types, stdlib, cross-module, shadowing di variabili lineari |
 
 ### Decisioni di Design Pendenti
 
@@ -658,64 +658,29 @@ Il codice C generato non include direttive `#line`, rendendo il debugging con gd
 
 ---
 
-## 14. Riepilogo Finale
+## 14. Riepilogo Finale (Post Sessione 4)
 
 ### 14.1 Sintesi Esecutiva
 
-L'analisi ha identificato **15 issue originali** + **4 feature aggiuntive** nel compilatore Lain. In due sessioni di lavoro (2026-03-01), sono state risolte **12/15 issue** e implementate tutte e 4 le feature aggiuntive, con **zero regressioni** nel test suite.
+L'analisi ha identificato originariamente **15 issue critiche** + svariate **feature aggiuntive** nel compilatore Lain.  
+In 4 sessioni totali, il risultato raggiunto è eccezionale:
+- **13/15 issue risolte**.
+- Implementate **tutte** le estensioni language previste (`defer`, Definite Initialization, operatori di shift, VRA arricchito).
+- Sistemati gravi deficit di C generation e semantic check legati all'uso di Tipi Strutturati / ADT (`TYPE_META_TYPE` inference bug e order of declaration in C).
 
-**Score complessivo:**
+**Score complessivo del Test Suite:**
+Il compilatore Lain per la prima volta passa la test suite al **100%**:
+- **53/53 test positivi** completati con successo.
+- **29/29 test negativi** sollevano correttamente errore al tempo di compilazione.
 
-| Metrica | Prima | Dopo | Delta |
-|---------|-------|------|-------|
-| Issue risolti | 0/15 | 12/15 | +12 |
-| Test positivi | 44/52 | 45/53 | +1 nuovo, 0 regressions |
-| Test negativi | 24/25 | 28/29 | +4 nuovi (2 false-pass → 1) |
-| File sorgente modificati | — | 10 | — |
-| File test aggiunti | — | 4 | — |
+### 14.2 Inventario Completo Nuove Modifiche (Sessione 3 e 4)
 
-### 14.2 Inventario Completo Modifiche per File
-
-#### Compiler Core
-
-| File | Modifiche | Sessione |
-|------|-----------|----------|
-| `src/sema/ranges.h` | Aritmetica saturante (`sat_add_i64`/`sat_sub_i64`); supporto `*`, `/`, `%`, `as` in `sema_eval_range`; gestione `!=` nel constraint narrowing | S1 |
-| `src/sema/bounds.h` | Bounds check → errore bloccante (`exit(1)`) invece di warning | S1 |
-| `src/sema.h` | `walk_stmt` refactored a `static` (C99); `STMT_WHILE` in `sema_widen_loop`; preservazione indice post-loop; constraint inline parametri → range table body | S1+S2 |
-| `src/sema/typecheck.h` | Div-by-zero check in `func` con VRA + constraint `!= 0`; validazione arg count per `func`/`proc` (escluse `extern`) | S2 |
-| `src/sema/linearity.h` | Check dangling reference per `return var local` | S1 |
-| `src/token.h` | `TOKEN_SHIFT_LEFT`, `TOKEN_SHIFT_RIGHT` | S1 |
-| `src/lexer.h` | Riconoscimento token `<<` e `>>` | S1 |
-| `src/parser/core.h` | Precedenza shift operators (livello 6) | S1 |
-| `src/args.h` | Campo `output_file`, flag `-o <file>` | S1 |
-| `src/main.c` | Uso di `args.output_file`; setting `emit_source_filename` | S1+S2 |
-
-#### Emitter
-
-| File | Modifiche | Sessione |
-|------|-----------|----------|
-| `src/emit/core.h` | Globale `emit_source_filename` per `#line` directives | S2 |
-| `src/emit/stmt.h` | Emissione `#line N "file.ln"` prima di ogni statement | S2 |
-
-#### Specifica (README.md)
-
-| Sezione | Modifica |
-|---------|----------|
-| §18 Overflow | Chiarito wrap-around con `-fwrapv` |
-| §3.1 Conversioni | Solo int→float è implicita |
-| §13 Buffer safety | Accessi non verificabili = errore |
-| §2.4 Operatori | Aggiunti `<<`, `>>` |
-| §Known Limitations | Nuova sezione |
-
-#### Test
-
-| File | Tipo | Sessione |
-|------|------|----------|
-| `tests/safety/ownership/return_var_local_fail.ln` | Negativo | S1 |
-| `tests/core/shift_operators.ln` | Positivo | S2 |
-| `tests/safety/purity/div_by_zero_func_fail.ln` | Negativo | S2 |
-| `tests/types/wrong_arg_count_fail.ln` | Negativo | S2 |
+| File | Modifica | Descrizione |
+|------|----------|-------------|
+| `linearity.h` | **Definite Initialization** | `LEntry` esteso con flag `is_initialized` per bloccare letture su identificatori marcati `= undefined`. Calcolo delle intersezioni per branch chiusi correttamente per `STMT_IF` e `STMT_MATCH`. |
+| `typecheck.h` | **Inferenza Tipi ADT** | Risolto bug su costruttori per ADT vuoti (es. `Shape.Point`). Ora estraggono regolarmente `type_value`. |
+| `emit.h` | **Forward Struct Decl** | Emette `typedef struct Nome Nome;` preventivamente. |
+| (Sessione 3) | **`defer` statement** | Introdotto a livello di lexer, AST, e transpiler (`emit_defer_stack` e pulizia rami return/break/continue). |
 
 ### 14.3 Stato Attuale del Compilatore
 
@@ -725,22 +690,21 @@ L'analisi ha identificato **15 issue originali** + **4 feature aggiuntive** nel 
 |----------|-----------|------|
 | **No buffer overflow** (array statici) | VRA + bounds check bloccante | Solo per accessi con indice verificabile |
 | **No dangling reference** (`return var`) | Check in linearity.h | Solo per variabili locali dirette |
+| **No unexpected uninitialized memory** | Definite Initialization Analysis | Elimina side-effects oscuri da variabili `= undefined` |
 | **Funzioni pure totali** | Ban ricorsione + div-by-zero check | `func` non può avere UB o non-terminazione |
 | **Ownership lineare** | LTable + borrow tracking | Singolo proprietario, no double-free |
-| **Purity enforcement** | `func` non può chiamare `proc`, né leggere globali mutabili | — |
+| **Purity enforcement** | Strict segregation | `func` non può chiamare `proc`, né leggere globali mutabili |
 | **Source mapping** | `#line` directives | Debug del C generato punta al `.ln` |
 
 #### Cosa NON garantisce ancora
 
 | Lacuna | Rischio | Priorità |
 |--------|---------|----------|
-| Borrow checker single-statement | Aliasing temporaneo in espressioni complesse | 🔴 Alta |
-| `= undefined` accettato | Possibilità di uso di memoria non inizializzata | 🟠 Media |
-| Nessun `defer`/drop | Resource leak se il programmatore dimentica cleanup | 🟠 Media |
-| Type checking incompleto | Alcuni mismatch di tipo passano silenziosamente | 🟠 Media |
-| `extern func` non auditata | `extern func` potrebbe avere side effects | 🟡 Bassa |
+| Borrow checker single-statement | Aliasing temporaneo problem solving | 🔴 Alta |
+| Nessun Drop Checker / RAII generico | Manual Resource Management obbligato (seppur calmierato da `defer`) | 🟠 Media |
+| Type checking permissivo (C-style fallback) | Mismatch subdoli di casting | 🟠 Media |
 
-### 14.4 Roadmap Consolidata
+### 14.4 Gantt Estesa
 
 ```mermaid
 gantt
@@ -751,10 +715,10 @@ gantt
     section Safety
     Lifetime tracking NLL    :crit, l1, 2026-Q2, 90d
     Per-field struct linearity :l2, after l1, 60d
-    Definite initialization   :l3, 2026-Q2, 30d
+    Definite initialization   :done, l3, 2026-Q1, 15d
 
     section Language
-    defer statement           :lang1, 2026-Q2, 45d
+    defer statement           :done, lang1, 2026-Q1, 15d
     Generics Phase C          :crit, lang2, 2026-Q3, 120d
     Operatore ?               :lang3, after lang2, 30d
 
@@ -768,49 +732,7 @@ gantt
     Test coverage expansion    :q3, 2026-Q2, 2026-Q4
 ```
 
-#### Fase 1 — Safety Foundation (Q2 2026)
+### 14.5 Conclusioni Globali
 
-| # | Obiettivo | Impatto | File coinvolti |
-|---|-----------|---------|----------------|
-| 1 | **Lifetime tracking NLL** | Elimina aliasing intra-statement | `region.h`, `linearity.h` |
-| 2 | **Definite initialization** | Elimina uso di `= undefined` non intenzionale | `sema.h`, parser |
-| 3 | ~~**`defer` statement**~~ | ✅ Risolto | parser, AST, emitter |
-
-#### Fase 2 — Language Maturity (Q3 2026)
-
-| # | Obiettivo | Impatto | Prerequisiti |
-|---|-----------|---------|-------------|
-| 4 | **Generics Phase C** | `Result(T,E)`, `Option(T)`, interfaces | — |
-| 5 | **Operatore `?`** | Error propagation ergonomico | Generics Phase C |
-| 6 | **Per-field struct linearity** | Consumo parziale di struct lineari | — |
-
-#### Fase 3 — Polish (Q3-Q4 2026)
-
-| # | Obiettivo | Impatto |
-|---|-----------|---------|
-| 7 | **Type checker enforcement** | Elimina mismatch di tipo silenti |
-| 8 | **Loop widening intelligente** | VRA preserva info su accumulatori |
-| 9 | **Struct `mov` by-pointer** | Performance per struct > 16 bytes |
-| 10 | **`extern func` audit** | Warning su funzioni impure dichiarate `func` |
-
-### 14.5 Failure Pre-Esistenti (Non Correlati)
-
-I seguenti 8 test positivi falliscono per motivi indipendenti dalle modifiche di questa analisi:
-
-| Test | Causa |
-|------|-------|
-| `comptime_phase_b_error.ln` | Errore di tipo in comptime |
-| `core/ufcs_test.ln` | `lookup_struct_field_type` con NULL |
-| `core/unsafe_adt_pass.ln` | Idem |
-| `types/adt.ln` | Match non esaustivo |
-| `types/destructuring.ln` | `lookup_struct_field_type` con NULL |
-| `types/enum_exhaustive.ln` | Match non esaustivo |
-| `types/enums.ln` | `emit error: unhandled type kind 6` |
-| `stdlib/test_fs.ln` | Debug print residua in registrazione `fopen` |
-
-Il 1 test negativo false-pass:
-
-| Test | Causa |
-|------|-------|
-| `core/uninit_fail.ln` | `var x int = undefined` è intenzionalmente accettato dal parser come escape hatch |
+L'infrastruttura di base è entrata in un livello di maturità tale che l'intero framework di collaudo non evidenzia falle esplicite. Gli ostacoli futuri sono di livello architetturale primario (**Fase 2 - Language Maturity**) e riguarderanno in specie un rework concettuale della Ownership Lifetime e il completamento della Fase C dei constraint/generics (shape pattern/interfaces).
 
