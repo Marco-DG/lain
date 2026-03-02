@@ -83,53 +83,58 @@ void _parser_expect(Parser* parser, bool expr, const char *error_message) {
 }
 
 // Returns operator precedence (higher number = higher precedence)
-// Returns operator precedence (higher number = higher precedence)
+// Aligned with Lain Spec §8.7:
+//   1. * / %    2. + -    3. << >>    4. < > <= >=
+//   5. == !=    6. &      7. ^        8. |      9. and    10. or
 int get_precedence(TokenKind op) {
     switch (op) {
-        // * / %  → precedence 8
+        // * / %  → precedence 10
         case TOKEN_ASTERISK:
         case TOKEN_SLASH:
         case TOKEN_PERCENT:
-            return 8;
+            return 10;
 
-        // + -   → precedence 7
+        // + -   → precedence 9
         case TOKEN_PLUS:
         case TOKEN_MINUS:
-            return 7;
+            return 9;
 
-        // << >>  → precedence 6 (bitwise shift)
+        // << >>  → precedence 8 (bitwise shift)
         case TOKEN_SHIFT_LEFT:
         case TOKEN_SHIFT_RIGHT:
-            return 6;
+            return 8;
 
-        // <  <=  >  >=   → precedence 5
+        // <  <=  >  >=   → precedence 7
         case TOKEN_ANGLE_BRACKET_LEFT:
         case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:
         case TOKEN_ANGLE_BRACKET_RIGHT:
         case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:
-            return 5;
+            return 7;
 
-        // ==  !=   → precedence 4
+        // ==  !=   → precedence 6
         case TOKEN_EQUAL_EQUAL:
         case TOKEN_BANG_EQUAL:
+            return 6;
+
+        // &  (bitwise‐and)  → precedence 5
+        case TOKEN_AMPERSAND:
+            return 5;
+
+        // ^  (bitwise‐xor)  → precedence 4
+        case TOKEN_CARET:
             return 4;
 
-        // &  (bitwise‐and)  → precedence 3
-        case TOKEN_AMPERSAND:
+        // |  (bitwise‐or)   → precedence 3
+        case TOKEN_PIPE:
             return 3;
 
-        // |  ^  (bitwise‐or, bitwise‐xor)  → precedence 2
-        case TOKEN_PIPE:
-        case TOKEN_CARET:
+        // and  (logical‐and)  → precedence 2
+        case TOKEN_KEYWORD_AND:
             return 2;
 
-        // and  (logical‐and)  → precedence 1
-        case TOKEN_KEYWORD_AND:
-            return 1;
-
-        // or  (logical‐or)  → precedence 0
+        // or  (logical‐or)  → precedence 1
         case TOKEN_KEYWORD_OR:
-            return 0;
+            return 1;
 
         default:
             return -1;  // everything else (no binary precedence)

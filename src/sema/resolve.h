@@ -539,9 +539,15 @@ void sema_resolve_stmt(Stmt *s) {
   case STMT_RETURN:
     sema_resolve_expr(s->as.return_stmt.value);
     // Ban returning mutable reference to local variables
+    // Recursively unwrap EXPR_MEMBER and EXPR_INDEX to find the root identifier.
     if (s->as.return_stmt.value && s->as.return_stmt.value->kind == EXPR_MUT) {
-        Expr *inner = s->as.return_stmt.value->as.mut_expr.expr;
-        if (inner->kind == EXPR_IDENTIFIER && !inner->is_global) {
+        Expr *root = s->as.return_stmt.value->as.mut_expr.expr;
+        while (root) {
+            if (root->kind == EXPR_MEMBER) root = root->as.member_expr.target;
+            else if (root->kind == EXPR_INDEX) root = root->as.index_expr.target;
+            else break;
+        }
+        if (root && root->kind == EXPR_IDENTIFIER && !root->is_global) {
             fprintf(stderr, "Error Ln %li, Col %li: Returning a mutable reference ('var') to a local variable is forbidden (dangling pointer)\n", s->line, s->col);
             exit(1);
         }
