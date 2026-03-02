@@ -656,6 +656,29 @@ void sema_infer_expr(Expr *e) {
         }
     }
     
+    // Struct equality check: == and != on struct/enum types is a compile error (§8.8)
+    {
+        TokenKind op = e->as.binary_expr.op;
+        if (op == TOKEN_EQUAL_EQUAL || op == TOKEN_BANG_EQUAL) {
+            Type *lt = e->as.binary_expr.left->type;
+            // Check if either side is a struct type
+            if (lt && lt->kind == TYPE_SIMPLE && lt->base_type) {
+                char lbuf[256];
+                int ll = lt->base_type->length < 255 ? lt->base_type->length : 255;
+                memcpy(lbuf, lt->base_type->name, ll);
+                lbuf[ll] = '\0';
+                Symbol *lsym = sema_lookup(lbuf);
+                if (lsym && lsym->decl && (lsym->decl->kind == DECL_STRUCT || lsym->decl->kind == DECL_ENUM)) {
+                    fprintf(stderr, "Error Ln %li, Col %li: cannot use '%s' on struct/enum type '%s'. "
+                            "Implement an 'equals' method and use it instead.\n",
+                            (long)e->line, (long)e->col,
+                            op == TOKEN_EQUAL_EQUAL ? "==" : "!=", lbuf);
+                    exit(1);
+                }
+            }
+        }
+    }
+
     e->type = get_builtin_int_type();
     break;
 

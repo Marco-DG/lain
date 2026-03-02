@@ -80,14 +80,14 @@ L'indagine ha identificato cinque macro-aree critiche dove il compilatore Lain d
 
 Per riportare rapidamente il compilatore al 100% di compliance col README, l'esecuzione seguirà questo ordine:
 
-- [ ] **1. Sicurezza e Type System (Sema Core)**
-   - **1.1** Implementare il traverse profondo in `STMT_RETURN` in `resolve.h`/`linearity.h` per bloccare reference mutabili a nodi `EXPR_MEMBER` o `EXPR_INDEX` ancorati a identificatori locali.
-   - **1.2** Rafforzare `typecheck.h`: bloccare le assegnazioni `target = expr` se `target->type != expr->type` per i tipi numerici (forzando l'uso di `EXPR_CAST`).
-   - **1.3** Bloccare esplicitamente i token `==` e `!=` se applicati a Struct (sollevando fatal error).
+- [x] **1. Sicurezza e Type System (Sema Core)**
+   - **1.1** ✅ Implementato il traverse profondo in `STMT_RETURN` in `resolve.h`/`linearity.h` per bloccare reference mutabili a nodi `EXPR_MEMBER` o `EXPR_INDEX` ancorati a identificatori locali.
+   - **1.2** ⏳ Rafforzare `typecheck.h`: bloccare le assegnazioni `target = expr` se `target->type != expr->type` per i tipi numerici (forzando l'uso di `EXPR_CAST`). (Deferred: richiede una matrice di compatibilità tipi completa)
+   - **1.3** ✅ Bloccato esplicitamente i token `==` e `!=` se applicati a Struct/Enum (sollevando fatal error con messaggio chiaro).
 - [ ] **2. Compiler Directives & FFI**
-   - **2.1** Introdurre logic parsing per `#` `[` `no_mangle` `]` come decoratore per `func`/`proc`/`extern`.
-   - **2.2** Modificare `c_name_for_id` nell'emitter per preservare il raw name originale se il flag `no_mangle` è attestato sulla dichiarazione AST.
-- [ ] **3. Quality of Life & Syntax Fix**
-   - **3.1** Correggere l'algoritmo di exhaustiveness in `sema_check_match_exhaustive` obbligando la presenza esplicita di `else:` nel parsing match per interi.
-   - **3.2** Ritoccare `get_precedence()` per gli operatori bitwise conformando `|` and `^` ai layer della specifica 8.7.
-   - **3.3** Inserire `-fwrapv` globalmente (in `run_tests.sh` opzionalmente nel README usage o in un pragma file root).
+   - **2.1** ⏳ Introdurre logic parsing per `#` `[` `no_mangle` `]` come decoratore per `func`/`proc`/`extern`. (Deferred: richiede nuovi token nel lexer)
+   - **2.2** ⏳ Modificare `c_name_for_id` nell'emitter per preservare il raw name originale se il flag `no_mangle` è attestato sulla dichiarazione AST.
+- [x] **3. Quality of Life & Syntax Fix**
+   - **3.1** ✅ L'algoritmo di exhaustiveness in `sema_check_match_exhaustive` già obbliga la presenza esplicita di `else:` nel parsing match per interi (verificato).
+   - **3.2** ✅ Ritoccato `get_precedence()` per gli operatori bitwise conformando `|` (3) e `^` (4) e `&` (5) ai layer della specifica 8.7.
+   - **3.3** ✅ Confermato che `-fwrapv` è già passato in `run_tests.sh` (riga 24) al backend C.
