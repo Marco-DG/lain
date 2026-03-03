@@ -1,0 +1,34 @@
+// Test for NLL cross-statement borrow checking: should FAIL compilation
+// A mutable borrow captured in a variable prevents access to the owner
+// while the reference is still alive (used after the owner access).
+
+type Data {
+    value int
+}
+
+func get_ref(var d Data) var int {
+    return var d.value
+}
+
+func read_data(d Data) int {
+    return d.value
+}
+
+func consume_ref(var r int) {
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 42
+    
+    // get_ref borrows 'data' mutably → ref holds the borrow alive
+    var ref = get_ref(var data)
+    
+    // This should FAIL: data is mutably borrowed by ref (ref used below)
+    var x = read_data(data)
+    
+    // ref is still alive — used here
+    consume_ref(var ref)
+    
+    return 0
+}

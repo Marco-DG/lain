@@ -16,6 +16,7 @@
 #include "resolve.h"
 #include "typecheck.h"
 #include "region.h"  // Region-based borrowing
+#include "use_analysis.h"  // NLL last-use pre-pass
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -268,6 +269,10 @@ static void ltable_pop_scope(LTable *tbl, LEntry *saved_head) {
                     (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
             errors++;
         }
+        // Release persistent borrows held by variables leaving scope (NLL)
+        if (tbl->borrows && e->id) {
+            borrow_release_by_binding(tbl->borrows, e->id);
+        }
     }
     if (errors > 0) exit(1);
     tbl->head = saved_head;
@@ -373,7 +378,7 @@ static Decl *find_function_decl_by_mangled_or_raw(const char *mangled) {
 
 /* ---------- expression traversal for linearity events ---------- */
 
-static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_depth);
+static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_depth, UseTable *use_tbl);
 
 static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
     if (!e) return;
@@ -393,6 +398,12 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 if (!entry->is_initialized) {
                     fprintf(stderr, "Error Ln %li, Col %li: use of uninitialized variable '%.*s'.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
+                    exit(1);
+                }
+            }
+            // NLL: Check if this variable is persistently borrowed (read access)
+            if (tbl->borrows) {
+                if (borrow_check_owner_access(tbl->borrows, id, MODE_SHARED, e->line, e->col)) {
                     exit(1);
                 }
             }
@@ -619,7 +630,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
 
 /* ---------- statement traversal ---------- */
 
-static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_depth) {
+static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_depth, UseTable *use_tbl) {
     if (!s) return;
     switch (s->kind) {
 
@@ -633,6 +644,68 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             Id *id = s->as.var_stmt.name;
             bool is_init = (init != NULL && init->kind != EXPR_UNDEFINED);
             ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable, must, is_init, s->line, s->col);
+        }
+        
+        // NLL Phase 2: Register persistent borrow when init is a call
+        // returning a reference (MODE_MUTABLE return type).
+        // Pattern: var ref = func(var data)  where func returns var T
+        // Clear temporary borrows first — the call already registered them,
+        // and we're upgrading the relevant one to a persistent borrow.
+        if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
+        if (init && init->kind == EXPR_CALL && tbl->borrows && tbl->arena) {
+            Id *binding_id = s->as.var_stmt.name;
+            Expr *callee = init->as.call_expr.callee;
+            Decl *fn_decl = NULL;
+            
+            if (callee && callee->kind == EXPR_IDENTIFIER) {
+                char mangled_buf[256];
+                Id *callee_id = callee->as.identifier_expr.id;
+                int len = callee_id->length < 255 ? callee_id->length : 255;
+                memcpy(mangled_buf, callee_id->name, len);
+                mangled_buf[len] = '\0';
+                fn_decl = find_function_decl_by_mangled_or_raw(mangled_buf);
+            }
+            
+            // Check if function returns a reference (var T = MODE_MUTABLE on return type)
+            if (fn_decl) {
+                Type *ret_type = fn_decl->as.function_decl.return_type;
+                if (ret_type && ret_type->mode == MODE_MUTABLE) {
+                    // Find the borrowed owner: look for var-parameter args
+                    DeclList *params = fn_decl->as.function_decl.params;
+                    ExprList *args = init->as.call_expr.args;
+                    for (; params && args; params = params->next, args = args->next) {
+                        Type *pty = params->decl->as.variable_decl.type;
+                        Expr *arg = args->expr;
+                        if (!arg || !pty) continue;
+                        
+                        // Look for mutable (var) parameters — the borrow source
+                        if (pty->mode == MODE_MUTABLE) {
+                            Id *owner_id = NULL;
+                            Expr *inner = arg;
+                            if (inner->kind == EXPR_MUT) inner = inner->as.mut_expr.expr;
+                            if (inner && inner->kind == EXPR_IDENTIFIER) {
+                                owner_id = inner->as.identifier_expr.id;
+                            } else if (inner && inner->kind == EXPR_MEMBER) {
+                                Expr *head = inner->as.member_expr.target;
+                                while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
+                                if (head && head->kind == EXPR_IDENTIFIER) owner_id = head->as.identifier_expr.id;
+                            }
+                            
+                            if (owner_id) {
+                                LEntry *owner_entry = ltable_find(tbl, owner_id);
+                                Region *owner_region = owner_entry ? owner_entry->region 
+                                    : tbl->borrows->current_region;
+                                int lu = use_tbl ? use_table_get_last_use(use_tbl, binding_id) : -1;
+                                borrow_register_persistent(tbl->arena, tbl->borrows, 
+                                    binding_id, owner_id, MODE_MUTABLE, owner_region, lu);
+                                DBG("STMT_VAR NLL: registered persistent mutable borrow of '%.*s' by '%.*s' (last_use=%d)",
+                                    (int)owner_id->length, owner_id->name,
+                                    (int)binding_id->length, binding_id->name, lu);
+                            }
+                        }
+                    }
+                }
+            }
         }
         break;
     }
@@ -648,12 +721,12 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 Id *id = lhs->as.identifier_expr.id;
                 Type *decl_ty = rhs ? rhs->type : NULL;
                 if (is_type_move(decl_ty)) {
-                    // ... (omitted comments)
                     bool must = is_type_move(decl_ty);
                     ltable_add(tbl, id, loop_depth, true, must, true, s->line, s->col);
                 }
             }
         } else {
+            // NLL Phase 3: Check if writing to a persistently-borrowed owner
             Expr *base = lhs;
             while (base && (base->kind == EXPR_INDEX || base->kind == EXPR_MEMBER)) {
                 if (base->kind == EXPR_INDEX) base = base->as.index_expr.target;
@@ -661,6 +734,14 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             }
             if (base && base->kind == EXPR_IDENTIFIER) {
                 Id *id = base->as.identifier_expr.id;
+                
+                // Check for write conflict with persistent borrows
+                if (tbl->borrows) {
+                    if (borrow_check_owner_access(tbl->borrows, id, MODE_MUTABLE, s->line, s->col)) {
+                        exit(1);
+                    }
+                }
+                
                 LEntry *entry = ltable_find(tbl, id);
                 if (entry) {
                     entry->is_initialized = true;
@@ -693,7 +774,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         LEntry *then_saved = then_tbl->head;
         if (then_tbl->borrows) borrow_enter_scope(then_tbl->arena, then_tbl->borrows);
         for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next) {
-            sema_check_stmt_linearity_with_table(b->stmt, then_tbl, loop_depth);
+            sema_check_stmt_linearity_with_table(b->stmt, then_tbl, loop_depth, use_tbl);
         }
         ltable_pop_scope(then_tbl, then_saved);
 
@@ -701,7 +782,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         LEntry *else_saved = else_tbl->head;
         if (else_tbl->borrows) borrow_enter_scope(else_tbl->arena, else_tbl->borrows);
         for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next) {
-            sema_check_stmt_linearity_with_table(b->stmt, else_tbl, loop_depth);
+            sema_check_stmt_linearity_with_table(b->stmt, else_tbl, loop_depth, use_tbl);
         }
         ltable_pop_scope(else_tbl, else_saved);
 
@@ -727,7 +808,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         LEntry *saved_head = tbl->head;
         if (tbl->borrows) borrow_enter_scope(tbl->arena, tbl->borrows);
         for (StmtList *b = s->as.for_stmt.body; b; b = b->next) {
-            sema_check_stmt_linearity_with_table(b->stmt, tbl, new_depth);
+            sema_check_stmt_linearity_with_table(b->stmt, tbl, new_depth, use_tbl);
         }
         ltable_pop_scope(tbl, saved_head);
         if (tbl->borrows) borrow_exit_scope(tbl->borrows);
@@ -791,7 +872,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 sema_check_expr_linearity(p->expr, branch_tbl, loop_depth);
             }
             for (StmtList *b = c->body; b; b = b->next) {
-                sema_check_stmt_linearity_with_table(b->stmt, branch_tbl, loop_depth);
+                sema_check_stmt_linearity_with_table(b->stmt, branch_tbl, loop_depth, use_tbl);
             }
             ltable_pop_scope(branch_tbl, saved_head);
 
@@ -824,7 +905,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         LEntry *saved_head = tbl->head;
         if (tbl->borrows) borrow_enter_scope(tbl->arena, tbl->borrows);
         for (StmtList *b = s->as.while_stmt.body; b; b = b->next) {
-            sema_check_stmt_linearity_with_table(b->stmt, tbl, new_depth);
+            sema_check_stmt_linearity_with_table(b->stmt, tbl, new_depth, use_tbl);
         }
         ltable_pop_scope(tbl, saved_head);
         if (tbl->borrows) borrow_exit_scope(tbl->borrows);
@@ -842,14 +923,14 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     case STMT_UNSAFE: {
         LEntry *saved_head = tbl->head;
         for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
-            sema_check_stmt_linearity_with_table(b->stmt, tbl, loop_depth);
+            sema_check_stmt_linearity_with_table(b->stmt, tbl, loop_depth, use_tbl);
         }
         ltable_pop_scope(tbl, saved_head);
         break;
     }
 
     case STMT_DEFER: {
-        sema_check_stmt_linearity_with_table(s->as.defer_stmt.stmt, tbl, loop_depth);
+        sema_check_stmt_linearity_with_table(s->as.defer_stmt.stmt, tbl, loop_depth, use_tbl);
         break;
     }
 
@@ -871,6 +952,9 @@ static void sema_check_function_linearity(Decl *d) {
 
     LTable *tbl = ltable_new(sema_arena);
 
+    // NLL: Compute last-use statement indices for all identifiers in the function body
+    UseTable *use_tbl = use_compute_last_uses(d->as.function_decl.body, sema_arena);
+
     // add parameters that are move-typed
     for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
         if (p->decl->kind == DECL_VARIABLE) {
@@ -891,10 +975,16 @@ static void sema_check_function_linearity(Decl *d) {
         }
     }
 
+    int stmt_counter = 0;
     for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next) {
-        // sema_check_stmt_linearity_with_table(sl->stmt, tbl, /*loop_depth=*/0);
-        // Borrows now persist until end of scope (handled by borrow_enter_scope/exit_scope in stmt check)
-        sema_check_stmt_linearity_with_table(sl->stmt, tbl, /*loop_depth=*/0);
+        sema_check_stmt_linearity_with_table(sl->stmt, tbl, /*loop_depth=*/0, use_tbl);
+        
+        // NLL: After each top-level statement, release persistent borrows
+        // whose binding has no more uses beyond this statement index.
+        if (tbl->borrows) {
+            borrow_release_expired(tbl->borrows, stmt_counter);
+        }
+        stmt_counter++;
     }
 
     // final check (if function falls off end)

@@ -1,0 +1,27 @@
+// Test for NLL: sequential temporary borrows should still PASS
+// This is backward-compatibility: borrows that are not captured in variables
+// are temporary and expire at end of statement.
+
+type Counter {
+    value int
+}
+
+func read_counter(c Counter) int {
+    return c.value
+}
+
+func increment_counter(var c Counter) {
+    c.value = c.value + 1
+}
+
+proc main() int {
+    var cnt Counter = undefined
+    cnt.value = 10
+    
+    // Sequential temporary borrows: each borrow expires at end of statement
+    var x = read_counter(cnt)
+    increment_counter(var cnt)
+    var y = read_counter(cnt)
+    
+    return x + y
+}

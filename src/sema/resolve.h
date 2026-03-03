@@ -548,8 +548,15 @@ void sema_resolve_stmt(Stmt *s) {
             else break;
         }
         if (root && root->kind == EXPR_IDENTIFIER && !root->is_global) {
-            fprintf(stderr, "Error Ln %li, Col %li: Returning a mutable reference ('var') to a local variable is forbidden (dangling pointer)\n", s->line, s->col);
-            exit(1);
+            // Allow return var for parameters (their data outlives the function)
+            bool is_param = false;
+            if (root->decl && root->decl->kind == DECL_VARIABLE) {
+                is_param = root->decl->as.variable_decl.is_parameter;
+            }
+            if (!is_param) {
+                fprintf(stderr, "Error Ln %li, Col %li: Returning a mutable reference ('var') to a local variable is forbidden (dangling pointer)\n", s->line, s->col);
+                exit(1);
+            }
         }
     }
     break;

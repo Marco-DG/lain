@@ -75,10 +75,12 @@ static bool region_related(Region *a, Region *b) {
 typedef struct BorrowEntry {
     Id *var;                   // the variable being borrowed
     Id *owner_var;             // the original owner (for tracking moves)
+    Id *binding_id;            // variable that holds the borrow alive (NULL for temporaries)
     OwnershipMode mode;        // MODE_SHARED or MODE_MUTABLE
     Region *borrow_region;     // scope where the borrow is used
     Region *owner_region;      // scope where the owner is defined
     bool is_temporary;         // true if borrow expires at end of statement
+    int last_use_stmt_idx;     // NLL: last top-level stmt index where binding is used (-1 = unknown)
     struct BorrowEntry *next;
 } BorrowEntry;
 
@@ -159,6 +161,7 @@ static void borrow_register(Arena *arena, BorrowTable *t, Id *var, Id *owner,
     BorrowEntry *e = arena_push_aligned(arena, BorrowEntry);
     e->var = var;
     e->owner_var = owner;
+    e->binding_id = NULL;
     e->mode = mode;
     e->borrow_region = t->current_region;
     e->owner_region = owner_region;
@@ -171,6 +174,89 @@ static void borrow_register(Arena *arena, BorrowTable *t, Id *var, Id *owner,
                (int)owner->length, owner->name,
                mode == MODE_MUTABLE ? "mut" : "shared",
                t->current_region->id, is_temporary);
+}
+
+// Register a persistent borrow bound to a variable (NLL cross-statement)
+// The borrow lives until the last use of binding_id (NLL) or scope exit.
+static void borrow_register_persistent(Arena *arena, BorrowTable *t, Id *binding_id, 
+                                        Id *owner, OwnershipMode mode, Region *owner_region,
+                                        int last_use_stmt_idx) {
+    // Check for conflicts with existing borrows
+    if (borrow_check_conflict(t, owner, mode)) {
+        exit(1);
+    }
+    
+    // Create entry — NOT temporary
+    BorrowEntry *e = arena_push_aligned(arena, BorrowEntry);
+    e->var = binding_id;  // the reference variable IS the borrow
+    e->owner_var = owner;
+    e->binding_id = binding_id;
+    e->mode = mode;
+    e->borrow_region = t->current_region;
+    e->owner_region = owner_region;
+    e->is_temporary = false;
+    e->last_use_stmt_idx = last_use_stmt_idx;
+    e->next = t->head;
+    t->head = e;
+    
+    REGION_DBG("borrow_register_persistent: '%.*s' borrows '%.*s' as %s (binding='%.*s', last_use=%d)",
+               (int)binding_id->length, binding_id->name,
+               (int)owner->length, owner->name,
+               mode == MODE_MUTABLE ? "mut" : "shared",
+               (int)binding_id->length, binding_id->name,
+               last_use_stmt_idx);
+}
+
+// Release all borrows held by a specific binding (called when binding exits scope)
+static void borrow_release_by_binding(BorrowTable *t, Id *binding_id) {
+    if (!t || !binding_id) return;
+    BorrowEntry **curr = &t->head;
+    while (*curr) {
+        if ((*curr)->binding_id &&
+            (*curr)->binding_id->length == binding_id->length &&
+            strncmp((*curr)->binding_id->name, binding_id->name, binding_id->length) == 0) {
+            REGION_DBG("borrow_release_by_binding: releasing borrow of '%.*s' held by '%.*s'",
+                       (*curr)->owner_var ? (int)(*curr)->owner_var->length : 0,
+                       (*curr)->owner_var ? (*curr)->owner_var->name : "<null>",
+                       (int)binding_id->length, binding_id->name);
+            *curr = (*curr)->next; // Remove
+        } else {
+            curr = &(*curr)->next;
+        }
+    }
+}
+
+// Check if accessing an owner conflicts with active persistent borrows.
+// access_mode: MODE_SHARED = read, MODE_MUTABLE = write/mutate
+// Returns true and prints error if conflict detected.
+static bool borrow_check_owner_access(BorrowTable *t, Id *owner, OwnershipMode access_mode,
+                                       isize line, isize col) {
+    if (!t || !owner) return false;
+    for (BorrowEntry *e = t->head; e; e = e->next) {
+        if (!e->owner_var) continue;  // invalidated borrow
+        if (!e->binding_id) continue; // only check persistent borrows
+        if (e->owner_var->length != owner->length) continue;
+        if (strncmp(e->owner_var->name, owner->name, owner->length) != 0) continue;
+        
+        // Conflict rules:
+        // 1. If owner is mutably borrowed: cannot read OR write
+        // 2. If owner is shared-borrowed: cannot write (read is OK)
+        if (e->mode == MODE_MUTABLE) {
+            fprintf(stderr, "Error Ln %li, Col %li: cannot access '%.*s' because it is mutably borrowed by '%.*s'.\n",
+                    (long)line, (long)col,
+                    (int)owner->length, owner->name,
+                    (int)e->binding_id->length, e->binding_id->name);
+            return true;
+        }
+        if (access_mode == MODE_MUTABLE && e->mode == MODE_SHARED) {
+            fprintf(stderr, "Error Ln %li, Col %li: cannot mutate '%.*s' because it is borrowed by '%.*s'.\n",
+                    (long)line, (long)col,
+                    (int)owner->length, owner->name,
+                    (int)e->binding_id->length, e->binding_id->name);
+            return true;
+        }
+    }
+    return false;
 }
 
 // Clear temporary borrows (called after each statement)
@@ -229,6 +315,34 @@ static void borrow_clear_all(BorrowTable *t) {
     if (!t) return;
     REGION_DBG("borrow_clear_all: clearing all active borrows");
     t->head = NULL;  // Simply reset the list (arena allocations will be freed later)
+}
+
+// NLL: Release persistent borrows whose binding has no more uses after current_stmt_idx.
+// Called after each top-level statement during the linearity walk.
+static void borrow_release_expired(BorrowTable *t, int current_stmt_idx) {
+    if (!t) return;
+    BorrowEntry **curr = &t->head;
+    while (*curr) {
+        BorrowEntry *e = *curr;
+        // Consider persistent borrows:
+        // - last_use >= 0: release when current_stmt_idx >= last_use (no more uses)
+        // - last_use == -1: binding was never used → release immediately
+        if (!e->is_temporary && e->binding_id) {
+            bool should_release = (e->last_use_stmt_idx < 0) ||
+                                  (current_stmt_idx >= e->last_use_stmt_idx);
+            if (should_release) {
+                REGION_DBG("borrow_release_expired: releasing borrow of '%.*s' held by '%.*s' "
+                           "(last_use=%d, current=%d)",
+                           e->owner_var ? (int)e->owner_var->length : 0,
+                           e->owner_var ? e->owner_var->name : "<null>",
+                           (int)e->binding_id->length, e->binding_id->name,
+                           e->last_use_stmt_idx, current_stmt_idx);
+                *curr = e->next;  // Remove from list
+                continue;
+            }
+        }
+        curr = &(*curr)->next;
+    }
 }
 
 #endif /* SEMA_REGION_H */

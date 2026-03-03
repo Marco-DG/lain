@@ -1,0 +1,29 @@
+// Test for true NLL: borrow released after last use of reference binding.
+// This should PASS compilation — ref's last use is the declaration itself,
+// so the borrow is released before read_data(data).
+
+type Data {
+    value int
+}
+
+func get_ref(var d Data) var int {
+    return var d.value
+}
+
+func read_data(d Data) int {
+    return d.value
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 42
+    
+    // get_ref borrows 'data' mutably → ref holds the borrow alive
+    // But ref is never used again → NLL releases borrow after this statement
+    var ref = get_ref(var data)
+    
+    // This should PASS: borrow has been released (ref never used after declaration)
+    var x = read_data(data)
+    
+    return x
+}
