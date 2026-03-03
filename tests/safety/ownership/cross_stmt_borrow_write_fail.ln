@@ -1,0 +1,29 @@
+// Test for NLL cross-statement borrow checking: should FAIL compilation  
+// Writing to owner while it is mutably borrowed by another variable
+
+type Data {
+    value int
+}
+
+func get_ref(var d Data) var int {
+    return var d.value
+}
+
+func consume_ref(var r int) {
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 42
+    
+    // get_ref borrows 'data' mutably → ref holds the borrow alive
+    var ref = get_ref(var data)
+    
+    // This should FAIL: cannot write to data while mutably borrowed by ref (ref used below)
+    data.value = 99
+    
+    // ref is still alive — used here
+    consume_ref(var ref)
+    
+    return 0
+}

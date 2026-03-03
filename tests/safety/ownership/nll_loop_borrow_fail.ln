@@ -1,0 +1,34 @@
+// Test for NLL: borrow used after owner access keeps it alive.
+// This should FAIL compilation.
+
+type Data {
+    value int
+}
+
+func get_ref(var d Data) var int {
+    return var d.value
+}
+
+func consume_ref(var r int) {
+    // nothing needed — just keeps ref alive
+}
+
+func read_data(d Data) int {
+    return d.value
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 42
+    
+    // get_ref borrows 'data' mutably → ref holds the borrow alive
+    var ref = get_ref(var data)
+    
+    // This should FAIL: ref is used AFTER this line, so borrow is still active
+    var x = read_data(data)
+    
+    // ref used here — extends the borrow past the read_data call
+    consume_ref(var ref)
+    
+    return x
+}
