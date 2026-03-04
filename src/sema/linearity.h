@@ -308,6 +308,23 @@ static LTable *ltable_clone(LTable *src) {
             d->state = s->state;
             d->region = s->region;
             d->is_initialized = s->is_initialized;
+            d->is_defer_consumed = s->is_defer_consumed;
+            d->var_type = s->var_type;
+            
+            // Deep copy field_states
+            if (s->field_states) {
+                FieldState *last_fs = NULL;
+                d->field_states = NULL;
+                for (FieldState *sf = s->field_states; sf; sf = sf->next) {
+                    FieldState *df = arena_push_aligned(dst->arena, FieldState);
+                    df->field_name = sf->field_name;
+                    df->is_consumed = sf->is_consumed;
+                    df->next = NULL;
+                    if (last_fs) last_fs->next = df;
+                    else d->field_states = df;
+                    last_fs = df;
+                }
+            }
         }
     }
     return dst;
@@ -424,6 +441,18 @@ static void ltable_check_branch_consistency(LTable *parent, LTable *a, LTable *b
                     (int)p->id->length, p->id->name ? p->id->name : "<unknown>", stmt_name ? stmt_name : "if", (int)sa, (int)sb);
             exit(1);
         }
+        // Phase 5: check field-level consistency
+        if (ea && eb && ea->field_states && eb->field_states) {
+            for (FieldState *fa = ea->field_states, *fb = eb->field_states; fa && fb; fa = fa->next, fb = fb->next) {
+                if (fa->is_consumed != fb->is_consumed) {
+                    fprintf(stderr, "sema error: linear field '%.*s' of '%.*s' is consumed inconsistently in the branches of %s\n",
+                            (int)fa->field_name->length, fa->field_name->name,
+                            (int)p->id->length, p->id->name ? p->id->name : "<unknown>",
+                            stmt_name ? stmt_name : "if");
+                    exit(1);
+                }
+            }
+        }
     }
 }
 
@@ -433,6 +462,13 @@ static void ltable_merge_from_branch(LTable *parent, LTable *branch) {
         LEntry *b = ltable_find(branch, p->id);
         if (b) {
             p->state = b->state;
+            p->is_defer_consumed = b->is_defer_consumed;
+            // Phase 5: merge field states
+            if (b->field_states && p->field_states) {
+                for (FieldState *pf = p->field_states, *bf = b->field_states; pf && bf; pf = pf->next, bf = bf->next) {
+                    pf->is_consumed = bf->is_consumed;
+                }
+            }
         }
     }
 }
