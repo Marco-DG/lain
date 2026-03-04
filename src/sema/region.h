@@ -74,7 +74,8 @@ static bool region_related(Region *a, Region *b) {
 
 typedef struct BorrowEntry {
     Id *var;                   // the variable being borrowed
-    Id *owner_var;             // the original owner (for tracking moves)
+    Id *owner_var;             // the direct owner (for tracking moves)
+    Id *root_owner;            // Phase 3: ultimate non-reference owner for transitive re-borrow chains
     Id *binding_id;            // variable that holds the borrow alive (NULL for temporaries)
     OwnershipMode mode;        // MODE_SHARED or MODE_MUTABLE
     Region *borrow_region;     // scope where the borrow is used
@@ -161,11 +162,13 @@ static void borrow_register(Arena *arena, BorrowTable *t, Id *var, Id *owner,
     BorrowEntry *e = arena_push_aligned(arena, BorrowEntry);
     e->var = var;
     e->owner_var = owner;
+    e->root_owner = owner;  // Phase 3: for temporaries, root_owner == owner
     e->binding_id = NULL;
     e->mode = mode;
     e->borrow_region = t->current_region;
     e->owner_region = owner_region;
     e->is_temporary = is_temporary;
+    e->last_use_stmt_idx = -1;
     e->next = t->head;
     t->head = e;
     
@@ -176,20 +179,61 @@ static void borrow_register(Arena *arena, BorrowTable *t, Id *var, Id *owner,
                t->current_region->id, is_temporary);
 }
 
+// Phase 3: Find the BorrowEntry where binding_id matches a given id.
+// Used to detect re-borrow chains: if owner_id is itself a borrow binding,
+// we can look up its root_owner.
+static BorrowEntry *borrow_find_by_binding(BorrowTable *t, Id *binding_id) {
+    if (!t || !binding_id) return NULL;
+    for (BorrowEntry *e = t->head; e; e = e->next) {
+        if (!e->binding_id) continue;
+        if (e->binding_id->length == binding_id->length &&
+            strncmp(e->binding_id->name, binding_id->name, binding_id->length) == 0) {
+            return e;
+        }
+    }
+    return NULL;
+}
+
 // Register a persistent borrow bound to a variable (NLL cross-statement)
 // The borrow lives until the last use of binding_id (NLL) or scope exit.
+// root_owner: the ultimate original owner (for transitive re-borrow chains).
+//   If NULL, defaults to owner.
 static void borrow_register_persistent(Arena *arena, BorrowTable *t, Id *binding_id, 
                                         Id *owner, OwnershipMode mode, Region *owner_region,
-                                        int last_use_stmt_idx) {
-    // Check for conflicts with existing borrows
-    if (borrow_check_conflict(t, owner, mode)) {
+                                        int last_use_stmt_idx, Id *root_owner) {
+    // Phase 3: determine the effective root owner.
+    // If root_owner is explicitly provided (transitive re-borrow), use it.
+    // Otherwise, check if 'owner' is itself a persistent borrow binding
+    // and inherit its root_owner.
+    Id *effective_root = root_owner;
+    bool is_reborrow = false;
+    if (!effective_root) {
+        BorrowEntry *owner_borrow = borrow_find_by_binding(t, owner);
+        if (owner_borrow && owner_borrow->root_owner) {
+            effective_root = owner_borrow->root_owner;
+            is_reborrow = true;
+            REGION_DBG("borrow_register_persistent: transitive re-borrow detected! "
+                       "'%.*s' -> '%.*s' -> root '%.*s'",
+                       (int)binding_id->length, binding_id->name,
+                       (int)owner->length, owner->name,
+                       (int)effective_root->length, effective_root->name);
+        } else {
+            effective_root = owner;
+        }
+    }
+
+    // Check for conflicts with the ROOT owner (not just direct owner).
+    // Skip conflict check for re-borrows: they extend an existing borrow chain
+    // (e.g., ref2 = transform(var ref) where ref already borrows data).
+    if (!is_reborrow && borrow_check_conflict(t, effective_root, mode)) {
         exit(1);
     }
     
     // Create entry — NOT temporary
     BorrowEntry *e = arena_push_aligned(arena, BorrowEntry);
     e->var = binding_id;  // the reference variable IS the borrow
-    e->owner_var = owner;
+    e->owner_var = effective_root;  // Phase 3: always track against root owner
+    e->root_owner = effective_root;
     e->binding_id = binding_id;
     e->mode = mode;
     e->borrow_region = t->current_region;
@@ -199,11 +243,11 @@ static void borrow_register_persistent(Arena *arena, BorrowTable *t, Id *binding
     e->next = t->head;
     t->head = e;
     
-    REGION_DBG("borrow_register_persistent: '%.*s' borrows '%.*s' as %s (binding='%.*s', last_use=%d)",
+    REGION_DBG("borrow_register_persistent: '%.*s' borrows '%.*s' (root='%.*s') as %s (last_use=%d)",
                (int)binding_id->length, binding_id->name,
                (int)owner->length, owner->name,
+               (int)effective_root->length, effective_root->name,
                mode == MODE_MUTABLE ? "mut" : "shared",
-               (int)binding_id->length, binding_id->name,
                last_use_stmt_idx);
 }
 
@@ -317,31 +361,69 @@ static void borrow_clear_all(BorrowTable *t) {
     t->head = NULL;  // Simply reset the list (arena allocations will be freed later)
 }
 
-// NLL: Release persistent borrows whose binding has no more uses after current_stmt_idx.
-// Called after each top-level statement during the linearity walk.
-static void borrow_release_expired(BorrowTable *t, int current_stmt_idx) {
-    if (!t) return;
-    BorrowEntry **curr = &t->head;
-    while (*curr) {
-        BorrowEntry *e = *curr;
-        // Consider persistent borrows:
-        // - last_use >= 0: release when current_stmt_idx >= last_use (no more uses)
-        // - last_use == -1: binding was never used → release immediately
-        if (!e->is_temporary && e->binding_id) {
-            bool should_release = (e->last_use_stmt_idx < 0) ||
-                                  (current_stmt_idx >= e->last_use_stmt_idx);
-            if (should_release) {
-                REGION_DBG("borrow_release_expired: releasing borrow of '%.*s' held by '%.*s' "
-                           "(last_use=%d, current=%d)",
-                           e->owner_var ? (int)e->owner_var->length : 0,
-                           e->owner_var ? e->owner_var->name : "<null>",
-                           (int)e->binding_id->length, e->binding_id->name,
-                           e->last_use_stmt_idx, current_stmt_idx);
-                *curr = e->next;  // Remove from list
-                continue;
+// Phase 3: Check if any other active persistent borrow shares the same root_owner
+// and is still alive at current_stmt_idx.
+// Used by borrow_release_expired to prevent releasing a root borrow while
+// transitive dependents are still alive.
+static bool borrow_has_transitive_dependent(BorrowTable *t, BorrowEntry *candidate, int current_stmt_idx) {
+    if (!t || !candidate || !candidate->root_owner) return false;
+    for (BorrowEntry *e = t->head; e; e = e->next) {
+        if (e == candidate) continue;  // skip self
+        if (!e->binding_id || e->is_temporary) continue;
+        if (!e->root_owner) continue;
+        // Same root owner?
+        if (e->root_owner->length == candidate->root_owner->length &&
+            strncmp(e->root_owner->name, candidate->root_owner->name, candidate->root_owner->length) == 0) {
+            // This other borrow shares the same root — check if it's still alive
+            bool other_expired = (e->last_use_stmt_idx < 0) ||
+                                 (current_stmt_idx >= e->last_use_stmt_idx);
+            if (!other_expired) {
+                return true;  // There's a transitive dependent still alive
             }
         }
-        curr = &(*curr)->next;
+    }
+    return false;
+}
+
+// NLL: Release persistent borrows whose binding has no more uses after current_stmt_idx.
+// Called after each top-level statement during the linearity walk.
+// Phase 3: Also checks for transitive re-borrow dependents before releasing.
+// Uses a fixpoint loop so cascading releases work (ref3 → ref2 → ref).
+static void borrow_release_expired(BorrowTable *t, int current_stmt_idx) {
+    if (!t) return;
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        BorrowEntry **curr = &t->head;
+        while (*curr) {
+            BorrowEntry *e = *curr;
+            if (!e->is_temporary && e->binding_id) {
+                bool should_release = (e->last_use_stmt_idx < 0) ||
+                                      (current_stmt_idx >= e->last_use_stmt_idx);
+                if (should_release) {
+                    // Phase 3: Don't release if transitive dependents are still alive
+                    if (borrow_has_transitive_dependent(t, e, current_stmt_idx)) {
+                        REGION_DBG("borrow_release_expired: keeping borrow of '%.*s' by '%.*s' "
+                                   "(transitive dependent still alive)",
+                                   e->owner_var ? (int)e->owner_var->length : 0,
+                                   e->owner_var ? e->owner_var->name : "<null>",
+                                   (int)e->binding_id->length, e->binding_id->name);
+                        curr = &(*curr)->next;
+                        continue;
+                    }
+                    REGION_DBG("borrow_release_expired: releasing borrow of '%.*s' held by '%.*s' "
+                               "(last_use=%d, current=%d)",
+                               e->owner_var ? (int)e->owner_var->length : 0,
+                               e->owner_var ? e->owner_var->name : "<null>",
+                               (int)e->binding_id->length, e->binding_id->name,
+                               e->last_use_stmt_idx, current_stmt_idx);
+                    *curr = e->next;  // Remove from list
+                    changed = true;   // Something changed, iterate again
+                    continue;
+                }
+            }
+            curr = &(*curr)->next;
+        }
     }
 }
 

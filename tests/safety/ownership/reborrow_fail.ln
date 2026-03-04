@@ -1,0 +1,37 @@
+// Phase 3 Test: Re-borrow transitivity — FAIL
+// Two borrows of same owner: ref borrows data, ref2 borrows data.
+// ref is used AFTER accessing owner while ref2 keeps the borrow alive.
+
+type Data {
+    value int
+    extra int
+}
+
+func get_value_ref(var d Data) var int {
+    return var d.value
+}
+
+func consume_ref(var r int) {
+    // keeps ref alive
+}
+
+func read_data(d Data) int {
+    return d.value
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 42
+    data.extra = 10
+    
+    // get_value_ref borrows 'data' mutably
+    var ref = get_value_ref(var data)
+    
+    // ERROR: ref is used later, so borrow of data is still active
+    var x = read_data(data)
+    
+    // ref is used here → borrow of data must still be alive at line above
+    consume_ref(var ref)
+    
+    return x
+}

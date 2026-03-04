@@ -1,0 +1,23 @@
+// Phase 3 Test: Full owner reassignment AFTER borrow released — PASS
+// ref is never used → borrow released via NLL → data can be reassigned
+
+type Data {
+    value int
+}
+
+func get_ref(var d Data) var int {
+    return var d.value
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 42
+    
+    // ref borrows data but is never used → NLL releases immediately
+    var ref = get_ref(var data)
+    
+    // OK: borrow has been released
+    data = Data(99)
+    
+    return data.value
+}

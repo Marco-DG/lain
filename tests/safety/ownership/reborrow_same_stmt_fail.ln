@@ -1,0 +1,39 @@
+// Phase 3 Test: Re-borrow — FAIL
+// Two borrows: first borrow (ref) expires but second (ref2) is still alive.
+// Owner access while ref2 is alive should fail.
+
+type Data {
+    value int
+    extra int
+}
+
+func get_value_ref(var d Data) var int {
+    return var d.value
+}
+
+func consume_ref(var r int) {
+    // keeps ref alive  
+}
+
+func read_data(d Data) int {
+    return d.value
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 100
+    data.extra = 50
+    
+    // First borrow — ref never used after this → NLL releases immediately
+    var ref = get_value_ref(var data)
+    
+    // Second borrow — ref2 is used later
+    var ref2 = get_value_ref(var data)
+    
+    // ERROR: ref2 is still alive → data's borrow is active
+    var x = read_data(data)
+    
+    consume_ref(var ref2)  // last use of ref2
+    
+    return x
+}

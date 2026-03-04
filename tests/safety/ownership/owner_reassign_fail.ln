@@ -1,0 +1,28 @@
+// Phase 3 Test: Full owner reassignment while borrowed — FAIL
+// data is mutably borrowed by ref, then data is reassigned entirely.
+
+type Data {
+    value int
+}
+
+func get_ref(var d Data) var int {
+    return var d.value
+}
+
+func consume_ref(var r int) {
+    // keeps ref alive
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 42
+    
+    var ref = get_ref(var data)
+    
+    // ERROR: full reassignment of borrowed owner
+    data = Data(99)
+    
+    consume_ref(var ref)
+    
+    return 0
+}
