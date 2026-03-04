@@ -348,12 +348,21 @@ static void ltable_consume(LTable *t, Id *id, int current_loop_depth) {
     if (e->state != LSTATE_UNCONSUMED) {
         fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was already used/consumed.\n",
                 (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+        fprintf(stderr, "  --> declared at Ln %li, Col %li\n", (long)e->line, (long)e->col);
         exit(1);
     }
     if (e->defined_loop_depth != current_loop_depth) {
         fprintf(stderr, "Error Ln %li, Col %li: attempting to consume linear variable '%.*s' defined outside a loop from inside a loop.\n",
                 (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+        fprintf(stderr, "  --> declared at Ln %li, Col %li (loop depth %d, current %d)\n",
+                (long)e->line, (long)e->col, e->defined_loop_depth, current_loop_depth);
         exit(1);
+    }
+    // Phase 5: whole-var consume should also mark all fields consumed
+    if (e->field_states) {
+        for (FieldState *fs = e->field_states; fs; fs = fs->next) {
+            fs->is_consumed = true;
+        }
     }
     e->state = LSTATE_CONSUMED;
     DBG("ltable_consume: consumed '%.*s' at loop_depth=%d", (int)e->id->length, e->id->name ? e->id->name : "<unknown>", current_loop_depth);
@@ -373,19 +382,28 @@ static void ltable_ensure_all_consumed(LTable *t) {
                                 (long)e->line, (long)e->col,
                                 (int)fs->field_name->length, fs->field_name->name,
                                 (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+                        fprintf(stderr, "  --> '%.*s' declared at Ln %li, Col %li\n",
+                                (int)e->id->length, e->id->name ? e->id->name : "<unknown>",
+                                (long)e->line, (long)e->col);
+                        fprintf(stderr, "  help: consume with `mov %.*s.%.*s` or add `defer { drop(mov %.*s) }`\n",
+                                (int)e->id->length, e->id->name,
+                                (int)fs->field_name->length, fs->field_name->name,
+                                (int)e->id->length, e->id->name);
                         errors++;
                     }
                 }
             } else {
                 fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before return.\n",
                         (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+                fprintf(stderr, "  --> declared at Ln %li, Col %li\n", (long)e->line, (long)e->col);
+                fprintf(stderr, "  help: consume with `mov %.*s` or add `defer { drop(mov %.*s) }`\n",
+                        (int)e->id->length, e->id->name, (int)e->id->length, e->id->name);
                 errors++;
             }
         }
     }
     
     if (errors > 0) {
-        // Only dump table if we found actual errors
         DBG("ltable_ensure_all_consumed: dumping table entries (due to errors):");
         for (LEntry *e = t->head; e; e = e->next) {
             DBG("  entry '%.*s' state=%d def_loop=%d must=%d", 
@@ -786,15 +804,22 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 DBG("EXPR_MOVE: consume IDENT '%.*s'", (int)idptr->length, idptr->name ? idptr->name : "<null>");
                 ltable_consume(tbl, idptr, loop_depth);
             } else if (inner->kind == EXPR_MEMBER) {
-                // Phase 5: try field-level consumption first
-                Expr *target = inner->as.member_expr.target;
-                Id *field_id = inner->as.member_expr.member;
-                if (target && target->kind == EXPR_IDENTIFIER && field_id) {
-                    Id *var_id = target->as.identifier_expr.id;
-                    if (ltable_consume_field(tbl, var_id, field_id, loop_depth)) {
-                        DBG("EXPR_MOVE: consumed field '%.*s.%.*s'",
+                // Phase 5/9.2: try field-level consumption — supports multi-level paths
+                // Walk up the member chain to find the root identifier and leaf field
+                Id *leaf_field = inner->as.member_expr.member;
+                
+                // Walk to find root identifier
+                Expr *root = inner->as.member_expr.target;
+                while (root && root->kind == EXPR_MEMBER) {
+                    root = root->as.member_expr.target;
+                }
+                
+                if (root && root->kind == EXPR_IDENTIFIER && leaf_field) {
+                    Id *var_id = root->as.identifier_expr.id;
+                    if (ltable_consume_field(tbl, var_id, leaf_field, loop_depth)) {
+                        DBG("EXPR_MOVE: consumed field '%.*s...%.*s'",
                             (int)var_id->length, var_id->name,
-                            (int)field_id->length, field_id->name);
+                            (int)leaf_field->length, leaf_field->name);
                         break; // handled at field level
                     }
                 }

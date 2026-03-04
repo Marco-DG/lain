@@ -1,0 +1,18 @@
+// Test: Rich diagnostics — error messages should show declaration location and help
+// This test should FAIL with enhanced error messages showing:
+//   Error Ln X, Col Y: linear variable 'r' was not consumed before return.
+//   --> declared at Ln X, Col Y
+//   help: consume with `mov r` or add `defer { drop(mov r) }`
+
+type Resource {
+    id int
+}
+
+func drop(mov r Resource) {
+}
+
+proc main() int {
+    var r = Resource(42)
+    // Intentionally not consuming r — should get rich diagnostic
+    return 0
+}
