@@ -1,0 +1,23 @@
+// Test: Block-level NLL — borrows inside if/else should be released on block exit
+// This tests that a borrow created inside an if-block doesn't persist after the block.
+
+type Resource {
+    id int
+}
+
+func get_id(var r Resource) int {
+    return r.id
+}
+
+proc main() int {
+    var r = Resource(42)
+    
+    if r.id > 0 {
+        var ref = get_id(var r)
+    }
+    
+    // After the if-block, the borrow should be released (block-level NLL).
+    // This should pass because the borrow is scoped to the if-block.
+    var val = r.id
+    return 0
+}

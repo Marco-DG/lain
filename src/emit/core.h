@@ -172,8 +172,8 @@ Id *get_root_base_type(Type *type) {
 
 
 const char *c_name_for_id(Id *id) {
-  static char buf[256];
-  int len = id->length < sizeof(buf) - 1 ? id->length : sizeof(buf) - 1;
+  static char buf[1024];
+  int len = id->length < (int)sizeof(buf) - 1 ? id->length : (int)sizeof(buf) - 1;
   memcpy(buf, id->name, len);
   buf[len] = '\0';
 

@@ -1,0 +1,16 @@
+// Test: Defer consumption — defer drop(mov r) should count as consuming r
+// This is a PASS test: the defer statement consumes the linear variable.
+
+type Resource {
+    id int
+}
+
+func drop(mov {id} Resource) {
+}
+
+proc main() int {
+    var r = Resource(42)
+    defer drop(mov r)
+    // r is defer-consumed, so no error at return
+    return 0
+}

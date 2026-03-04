@@ -77,6 +77,7 @@ typedef struct BorrowEntry {
     Id *owner_var;             // the direct owner (for tracking moves)
     Id *root_owner;            // Phase 3: ultimate non-reference owner for transitive re-borrow chains
     Id *binding_id;            // variable that holds the borrow alive (NULL for temporaries)
+    Id *borrowed_field;        // Phase 7: specific field being borrowed (NULL = whole variable)
     OwnershipMode mode;        // MODE_SHARED or MODE_MUTABLE
     Region *borrow_region;     // scope where the borrow is used
     Region *owner_region;      // scope where the owner is defined
@@ -111,21 +112,50 @@ static BorrowEntry *borrow_find(BorrowTable *t, Id *var) {
     return NULL;
 }
 
+// Phase 7: helper to check if two field IDs overlap.
+// NULL field means "whole variable" — overlaps with everything.
+// Two non-NULL fields overlap only if they name the same field.
+static bool fields_overlap(Id *f1, Id *f2) {
+    if (!f1 || !f2) return true; // whole-var overlaps with any field
+    return f1->length == f2->length && strncmp(f1->name, f2->name, f1->length) == 0;
+}
+
+static bool borrow_check_conflict_field(BorrowTable *t, Id *owner, OwnershipMode mode, Id *field);
+
 static bool borrow_check_conflict(BorrowTable *t, Id *owner, OwnershipMode mode) {
+    return borrow_check_conflict_field(t, owner, mode, NULL);
+}
+
+static bool borrow_check_conflict_field(BorrowTable *t, Id *owner, OwnershipMode mode, Id *field) {
     if (!t) return false;
     for (BorrowEntry *e = t->head; e; e = e->next) {
         if (e->owner_var && 
             e->owner_var->length == owner->length &&
             strncmp(e->owner_var->name, owner->name, owner->length) == 0) {
             
+            // Phase 7: check field overlap
+            if (!fields_overlap(e->borrowed_field, field)) continue; // different fields → no conflict
+            
             if (e->mode == MODE_MUTABLE) {
-                fprintf(stderr, "borrow error: cannot borrow '%.*s' because it is already mutably borrowed\n",
-                        (int)owner->length, owner->name);
+                if (field && e->borrowed_field) {
+                    fprintf(stderr, "borrow error: cannot borrow '%.*s.%.*s' because '%.*s.%.*s' is already mutably borrowed\n",
+                            (int)owner->length, owner->name, (int)field->length, field->name,
+                            (int)owner->length, owner->name, (int)e->borrowed_field->length, e->borrowed_field->name);
+                } else {
+                    fprintf(stderr, "borrow error: cannot borrow '%.*s' because it is already mutably borrowed\n",
+                            (int)owner->length, owner->name);
+                }
                 return true;
             }
             if (mode == MODE_MUTABLE) {
-                fprintf(stderr, "borrow error: cannot borrow '%.*s' as mutable because it is already borrowed\n",
-                        (int)owner->length, owner->name);
+                if (field && e->borrowed_field) {
+                    fprintf(stderr, "borrow error: cannot borrow '%.*s.%.*s' as mutable because '%.*s.%.*s' is already borrowed\n",
+                            (int)owner->length, owner->name, (int)field->length, field->name,
+                            (int)owner->length, owner->name, (int)e->borrowed_field->length, e->borrowed_field->name);
+                } else {
+                    fprintf(stderr, "borrow error: cannot borrow '%.*s' as mutable because it is already borrowed\n",
+                            (int)owner->length, owner->name);
+                }
                 return true;
             }
         }
@@ -140,7 +170,27 @@ static void borrow_enter_scope(Arena *arena, BorrowTable *t) {
 
 static void borrow_exit_scope(BorrowTable *t) {
     if (!t || !t->current_region->parent) return;
+    
+    Region *exiting = t->current_region;
     t->current_region = t->current_region->parent;
+    
+    // Phase 7.1: Block-level NLL — release borrows created in the exiting scope
+    // (or deeper). This prevents borrows from leaking out of if/while/block scopes.
+    BorrowEntry **curr = &t->head;
+    while (*curr) {
+        BorrowEntry *e = *curr;
+        // Release if borrow_region is the exiting scope or deeper
+        if (e->borrow_region && region_contains(exiting, e->borrow_region)) {
+            REGION_DBG("borrow_exit_scope: releasing scope-local borrow of '%.*s' by '%.*s'",
+                       e->owner_var ? (int)e->owner_var->length : 0,
+                       e->owner_var ? e->owner_var->name : "<null>",
+                       e->binding_id ? (int)e->binding_id->length : 0,
+                       e->binding_id ? e->binding_id->name : "<temp>");
+            *curr = e->next; // Remove
+        } else {
+            curr = &(*curr)->next;
+        }
+    }
 }
 
 // Register a new borrow
@@ -164,6 +214,7 @@ static void borrow_register(Arena *arena, BorrowTable *t, Id *var, Id *owner,
     e->owner_var = owner;
     e->root_owner = owner;  // Phase 3: for temporaries, root_owner == owner
     e->binding_id = NULL;
+    e->borrowed_field = NULL; // Phase 7: temporaries don't have field tracking
     e->mode = mode;
     e->borrow_region = t->current_region;
     e->owner_region = owner_region;
@@ -235,6 +286,7 @@ static void borrow_register_persistent(Arena *arena, BorrowTable *t, Id *binding
     e->owner_var = effective_root;  // Phase 3: always track against root owner
     e->root_owner = effective_root;
     e->binding_id = binding_id;
+    e->borrowed_field = NULL; // Phase 7: will be set by caller if needed
     e->mode = mode;
     e->borrow_region = t->current_region;
     e->owner_region = owner_region;
@@ -273,14 +325,26 @@ static void borrow_release_by_binding(BorrowTable *t, Id *binding_id) {
 // Check if accessing an owner conflicts with active persistent borrows.
 // access_mode: MODE_SHARED = read, MODE_MUTABLE = write/mutate
 // Returns true and prints error if conflict detected.
+static bool borrow_check_owner_access_field(BorrowTable *t, Id *owner, OwnershipMode access_mode,
+                                             Id *field, isize line, isize col);
+
 static bool borrow_check_owner_access(BorrowTable *t, Id *owner, OwnershipMode access_mode,
                                        isize line, isize col) {
+    return borrow_check_owner_access_field(t, owner, access_mode, NULL, line, col);
+}
+
+// Phase 7: field-aware owner access check
+static bool borrow_check_owner_access_field(BorrowTable *t, Id *owner, OwnershipMode access_mode,
+                                             Id *field, isize line, isize col) {
     if (!t || !owner) return false;
     for (BorrowEntry *e = t->head; e; e = e->next) {
         if (!e->owner_var) continue;  // invalidated borrow
         if (!e->binding_id) continue; // only check persistent borrows
         if (e->owner_var->length != owner->length) continue;
         if (strncmp(e->owner_var->name, owner->name, owner->length) != 0) continue;
+        
+        // Phase 7: check field overlap
+        if (!fields_overlap(e->borrowed_field, field)) continue;
         
         // Conflict rules:
         // 1. If owner is mutably borrowed: cannot read OR write
