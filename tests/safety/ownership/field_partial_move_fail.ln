@@ -1,0 +1,24 @@
+// Phase 5 Test: Partial move then whole move — FAIL
+// After consuming one field, cannot whole-move the struct.
+
+type Pair {
+    mov left *int
+    mov right *int
+}
+
+func consume_pair(mov {left, right} Pair) {
+    // destruct to consume
+}
+
+proc main() int {
+    var p *int = 0
+    var q *int = 0
+    var pair = Pair(p, q)
+    
+    var a = mov pair.left
+    
+    // ERROR: cannot move 'pair' because some fields have already been consumed
+    consume_pair(mov pair)
+    
+    return 0
+}
