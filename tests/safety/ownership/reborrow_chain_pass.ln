@@ -1,0 +1,33 @@
+// Phase 3 Test: Re-borrow chain — PASS
+// Two sequential borrows of data. First expires, second expires,
+// then owner is accessible.
+
+type Data {
+    value int
+    extra int
+}
+
+func get_value_ref(var d Data) var int {
+    return var d.value
+}
+
+func read_data(d Data) int {
+    return d.value
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 100
+    data.extra = 50
+    
+    // First borrow — ref never used after declaration → NLL releases immediately
+    var ref = get_value_ref(var data)
+    
+    // Second borrow — ref2 also never used → released immediately
+    // NOTE: This requires that ref's borrow was already released!
+    var ref2 = get_value_ref(var data)
+    
+    // This should PASS: all borrows expired
+    var x = read_data(data)
+    return x
+}

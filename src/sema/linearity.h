@@ -697,7 +697,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                                     : tbl->borrows->current_region;
                                 int lu = use_tbl ? use_table_get_last_use(use_tbl, binding_id) : -1;
                                 borrow_register_persistent(tbl->arena, tbl->borrows, 
-                                    binding_id, owner_id, MODE_MUTABLE, owner_region, lu);
+                                    binding_id, owner_id, MODE_MUTABLE, owner_region, lu, NULL);
                                 DBG("STMT_VAR NLL: registered persistent mutable borrow of '%.*s' by '%.*s' (last_use=%d)",
                                     (int)owner_id->length, owner_id->name,
                                     (int)binding_id->length, binding_id->name, lu);
@@ -726,23 +726,32 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 }
             }
         } else {
-            // NLL Phase 3: Check if writing to a persistently-borrowed owner
-            Expr *base = lhs;
-            while (base && (base->kind == EXPR_INDEX || base->kind == EXPR_MEMBER)) {
-                if (base->kind == EXPR_INDEX) base = base->as.index_expr.target;
-                else if (base->kind == EXPR_MEMBER) base = base->as.member_expr.target;
+            // Phase 3: Check if writing to a persistently-borrowed owner
+            // This covers both member/index paths AND direct identifier assignment
+            Id *base_id = NULL;
+            if (lhs && lhs->kind == EXPR_IDENTIFIER) {
+                // Direct assignment: data = new_data
+                base_id = lhs->as.identifier_expr.id;
+            } else {
+                // Member/Index path: data.value = 99 or data[i] = 99
+                Expr *base = lhs;
+                while (base && (base->kind == EXPR_INDEX || base->kind == EXPR_MEMBER)) {
+                    if (base->kind == EXPR_INDEX) base = base->as.index_expr.target;
+                    else if (base->kind == EXPR_MEMBER) base = base->as.member_expr.target;
+                }
+                if (base && base->kind == EXPR_IDENTIFIER) {
+                    base_id = base->as.identifier_expr.id;
+                }
             }
-            if (base && base->kind == EXPR_IDENTIFIER) {
-                Id *id = base->as.identifier_expr.id;
-                
+            if (base_id) {
                 // Check for write conflict with persistent borrows
                 if (tbl->borrows) {
-                    if (borrow_check_owner_access(tbl->borrows, id, MODE_MUTABLE, s->line, s->col)) {
+                    if (borrow_check_owner_access(tbl->borrows, base_id, MODE_MUTABLE, s->line, s->col)) {
                         exit(1);
                     }
                 }
                 
-                LEntry *entry = ltable_find(tbl, id);
+                LEntry *entry = ltable_find(tbl, base_id);
                 if (entry) {
                     entry->is_initialized = true;
                 }
