@@ -1,0 +1,20 @@
+// Phase 5 Test: Per-field linearity — FAIL
+// Only consume one linear field, leave the other unconsumed.
+// Should fail: unconsumed linear field at scope exit.
+
+type Pair {
+    mov left *int
+    mov right *int
+}
+
+proc main() int {
+    var p *int = 0
+    var q *int = 0
+    var pair = Pair(p, q)
+    
+    // Consume only left — right is still alive
+    var a = mov pair.left
+    
+    // ERROR: linear field 'right' of 'pair' was not consumed
+    return 0
+}

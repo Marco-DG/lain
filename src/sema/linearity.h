@@ -110,6 +110,13 @@ typedef enum {
     LSTATE_BORROWED_WRITE   // reserved for future
 } LState;
 
+// Phase 5: per-field linearity tracking
+typedef struct FieldState {
+    Id *field_name;      // name of the struct field
+    bool is_consumed;    // true if this specific field was consumed via mov
+    struct FieldState *next;
+} FieldState;
+
 typedef struct LEntry {
     Id *id;            // Id pointer for the variable (identifies it)
     int defined_loop_depth; // loop depth where var was declared
@@ -118,6 +125,8 @@ typedef struct LEntry {
     bool must_consume; // true if type is strictly linear
     bool is_initialized; // true if the variable has been definitely initialized
     bool is_defer_consumed; // Phase 4: true if consumed inside a defer block
+    Type *var_type;    // Phase 5: the type of the variable (for field resolution)
+    FieldState *field_states; // Phase 5: per-field consumption (NULL = whole-var tracking)
     isize line;        // line where var is defined
     isize col;         // col where var is defined
     LState state;
@@ -165,6 +174,8 @@ static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool 
     e->must_consume = must_consume;
     e->is_initialized = is_initialized;
     e->is_defer_consumed = false;
+    e->var_type = NULL;
+    e->field_states = NULL;
     e->line = line;
     e->col = col;
     e->state = LSTATE_UNCONSUMED;
@@ -173,6 +184,99 @@ static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool 
     DBG("ltable_add: added '%.*s' loop_depth=%d region=%d must_consume=%d", 
         (int)id->length, id->name ? id->name : "<null>", loop_depth,
         e->region ? e->region->id : -1, must_consume);
+}
+
+// Phase 5: Initialize field-level tracking for a struct variable with linear fields
+static void ltable_init_field_states(LEntry *e, Type *ty, Arena *arena) {
+    if (!e || !ty || !arena) return;
+    if (ty->kind != TYPE_SIMPLE || !ty->base_type) return;
+    e->var_type = ty;
+    
+    extern Symbol *sema_lookup(const char *name);
+    char buf[256];
+    if (ty->base_type->length >= sizeof(buf)) return;
+    memcpy(buf, ty->base_type->name, ty->base_type->length);
+    buf[ty->base_type->length] = '\0';
+    
+    Symbol *sym = sema_lookup(buf);
+    if (!sym || !sym->decl || sym->decl->kind != DECL_STRUCT) return;
+    
+    // Count linear fields; only enable field tracking if there are any
+    int linear_count = 0;
+    for (DeclList *f = sym->decl->as.struct_decl.fields; f; f = f->next) {
+        if (f->decl->kind == DECL_VARIABLE && sema_type_is_linear(f->decl->as.variable_decl.type))
+            linear_count++;
+    }
+    if (linear_count == 0) return;
+    
+    // Create FieldState entries for each linear field
+    for (DeclList *f = sym->decl->as.struct_decl.fields; f; f = f->next) {
+        if (f->decl->kind != DECL_VARIABLE) continue;
+        if (!sema_type_is_linear(f->decl->as.variable_decl.type)) continue;
+        FieldState *fs = arena_push_aligned(arena, FieldState);
+        fs->field_name = f->decl->as.variable_decl.name;
+        fs->is_consumed = false;
+        fs->next = e->field_states;
+        e->field_states = fs;
+    }
+    DBG("ltable_init_field_states: '%.*s' has %d linear fields",
+        (int)e->id->length, e->id->name, linear_count);
+}
+
+// Phase 5: Try to consume a specific field of a variable. Returns true if handled.
+static bool ltable_consume_field(LTable *t, Id *var_id, Id *field_id, int current_loop_depth) {
+    LEntry *e = ltable_find(t, var_id);
+    if (!e || !e->field_states) return false; // no field tracking → fall through to whole-var
+    
+    // Find the field
+    for (FieldState *fs = e->field_states; fs; fs = fs->next) {
+        if (fs->field_name->length == field_id->length &&
+            strncmp(fs->field_name->name, field_id->name, field_id->length) == 0) {
+            if (fs->is_consumed) {
+                fprintf(stderr, "Error Ln %li, Col %li: field '%.*s' of '%.*s' was already consumed.\n",
+                        (long)e->line, (long)e->col,
+                        (int)field_id->length, field_id->name,
+                        (int)var_id->length, var_id->name);
+                exit(1);
+            }
+            if (e->defined_loop_depth != current_loop_depth) {
+                fprintf(stderr, "Error Ln %li, Col %li: attempting to consume field '%.*s' of '%.*s' inside a loop.\n",
+                        (long)e->line, (long)e->col,
+                        (int)field_id->length, field_id->name,
+                        (int)var_id->length, var_id->name);
+                exit(1);
+            }
+            fs->is_consumed = true;
+            DBG("ltable_consume_field: consumed '%.*s.%.*s'",
+                (int)var_id->length, var_id->name,
+                (int)field_id->length, field_id->name);
+            
+            // Check if ALL linear fields are now consumed → auto-complete whole var
+            bool all_consumed = true;
+            for (FieldState *check = e->field_states; check; check = check->next) {
+                if (!check->is_consumed) { all_consumed = false; break; }
+            }
+            if (all_consumed) {
+                e->state = LSTATE_CONSUMED;
+                DBG("ltable_consume_field: all fields of '%.*s' consumed → whole var consumed",
+                    (int)var_id->length, var_id->name);
+            }
+            return true;
+        }
+    }
+    // Field not tracked (non-linear field) → fall through
+    return false;
+}
+
+// Phase 5: Check if a variable is partially consumed (some fields consumed, not all)
+static bool ltable_is_partially_consumed(LEntry *e) {
+    if (!e || !e->field_states) return false;
+    bool has_consumed = false, has_unconsumed = false;
+    for (FieldState *fs = e->field_states; fs; fs = fs->next) {
+        if (fs->is_consumed) has_consumed = true;
+        else has_unconsumed = true;
+    }
+    return has_consumed && has_unconsumed;
 }
 
 static LTable *ltable_clone(LTable *src) {
@@ -244,9 +348,22 @@ static void ltable_ensure_all_consumed(LTable *t) {
     for (LEntry *e = t->head; e; e = e->next) {
         // Phase 4: defer-consumed counts as consumed
         if (e->must_consume && e->state != LSTATE_CONSUMED && !e->is_defer_consumed) {
-            fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before return.\n",
-                    (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
-            errors++;
+            // Phase 5: check field-level consumption
+            if (e->field_states) {
+                for (FieldState *fs = e->field_states; fs; fs = fs->next) {
+                    if (!fs->is_consumed) {
+                        fprintf(stderr, "Error Ln %li, Col %li: linear field '%.*s' of '%.*s' was not consumed before return.\n",
+                                (long)e->line, (long)e->col,
+                                (int)fs->field_name->length, fs->field_name->name,
+                                (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+                        errors++;
+                    }
+                }
+            } else {
+                fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before return.\n",
+                        (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+                errors++;
+            }
         }
     }
     
@@ -269,9 +386,22 @@ static void ltable_pop_scope(LTable *tbl, LEntry *saved_head) {
     for (LEntry *e = tbl->head; e && e != saved_head; e = e->next) {
         // Phase 4: defer-consumed counts as consumed
         if (e->must_consume && e->state != LSTATE_CONSUMED && !e->is_defer_consumed) {
-            fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before end of scope.\n",
-                    (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
-            errors++;
+            // Phase 5: check field-level consumption
+            if (e->field_states) {
+                for (FieldState *fs = e->field_states; fs; fs = fs->next) {
+                    if (!fs->is_consumed) {
+                        fprintf(stderr, "Error Ln %li, Col %li: linear field '%.*s' of '%.*s' was not consumed before end of scope.\n",
+                                (long)e->line, (long)e->col,
+                                (int)fs->field_name->length, fs->field_name->name,
+                                (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+                        errors++;
+                    }
+                }
+            } else {
+                fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before end of scope.\n",
+                        (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+                errors++;
+            }
         }
         // Release persistent borrows held by variables leaving scope (NLL)
         if (tbl->borrows && e->id) {
@@ -610,9 +740,29 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         if (inner) {
             if (inner->kind == EXPR_IDENTIFIER) {
                 Id *idptr = inner->as.identifier_expr.id;
+                // Phase 5: check if trying to whole-move a partially consumed var
+                LEntry *entry = ltable_find(tbl, idptr);
+                if (entry && ltable_is_partially_consumed(entry)) {
+                    fprintf(stderr, "Error Ln %li, Col %li: cannot move '%.*s' because some fields have already been consumed.\n",
+                            (long)e->line, (long)e->col, (int)idptr->length, idptr->name);
+                    exit(1);
+                }
                 DBG("EXPR_MOVE: consume IDENT '%.*s'", (int)idptr->length, idptr->name ? idptr->name : "<null>");
                 ltable_consume(tbl, idptr, loop_depth);
             } else if (inner->kind == EXPR_MEMBER) {
+                // Phase 5: try field-level consumption first
+                Expr *target = inner->as.member_expr.target;
+                Id *field_id = inner->as.member_expr.member;
+                if (target && target->kind == EXPR_IDENTIFIER && field_id) {
+                    Id *var_id = target->as.identifier_expr.id;
+                    if (ltable_consume_field(tbl, var_id, field_id, loop_depth)) {
+                        DBG("EXPR_MOVE: consumed field '%.*s.%.*s'",
+                            (int)var_id->length, var_id->name,
+                            (int)field_id->length, field_id->name);
+                        break; // handled at field level
+                    }
+                }
+                // Fall through: consume whole variable (no field tracking or non-linear field)
                 Expr *head = inner->as.member_expr.target;
                 while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
                 if (head && head->kind == EXPR_IDENTIFIER) {
@@ -648,6 +798,11 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             Id *id = s->as.var_stmt.name;
             bool is_init = (init != NULL && init->kind != EXPR_UNDEFINED);
             ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable, must, is_init, s->line, s->col);
+            // Phase 5: init field-level tracking if struct with linear fields
+            if (must && ty) {
+                LEntry *entry = ltable_find(tbl, id);
+                if (entry) ltable_init_field_states(entry, ty, tbl->arena);
+            }
         }
         
         // NLL Phase 2: Register persistent borrow when init is a call
