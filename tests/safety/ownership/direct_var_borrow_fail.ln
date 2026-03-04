@@ -1,0 +1,26 @@
+// Phase 4 Test: Direct var-expression persistent borrow — FAIL
+// var ref = var data.value creates a persistent borrow.
+// ref is used after owner mutation → should FAIL.
+
+type Data {
+    value int
+}
+
+func use_ref(var r int) int {
+    return r
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 42
+    
+    // Direct var-expression borrow — ref borrows data
+    var ref = var data.value
+    
+    // ERROR: data is still borrowed by ref (ref used below)
+    data.value = 99
+    
+    // ref still alive here
+    var x = use_ref(var ref)
+    return x
+}

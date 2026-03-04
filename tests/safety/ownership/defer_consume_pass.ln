@@ -1,0 +1,27 @@
+// Phase 4 Test: Defer consumption — PASS
+// defer drop(mov r) defers r's consumption to scope exit.
+// Without Phase 4 fix, this would error: "use after move" at line 20
+// because the walker would consume r immediately at the defer statement.
+
+type Resource {
+    id int
+}
+
+func drop(mov {id} Resource) {
+    // destruct to consume the linear type
+}
+
+func read_resource(r Resource) int {
+    return r.id
+}
+
+proc main() int {
+    var r Resource = undefined
+    r.id = 42
+    defer drop(mov r)
+    
+    // r should still be usable (defer hasn't executed yet)
+    var x = read_resource(r)
+    
+    return x
+}

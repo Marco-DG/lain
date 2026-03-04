@@ -117,6 +117,7 @@ typedef struct LEntry {
     bool is_mutable;   // true if variable is mutable (declared with var/mut)
     bool must_consume; // true if type is strictly linear
     bool is_initialized; // true if the variable has been definitely initialized
+    bool is_defer_consumed; // Phase 4: true if consumed inside a defer block
     isize line;        // line where var is defined
     isize col;         // col where var is defined
     LState state;
@@ -163,6 +164,7 @@ static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool 
     e->is_mutable = is_mutable;
     e->must_consume = must_consume;
     e->is_initialized = is_initialized;
+    e->is_defer_consumed = false;
     e->line = line;
     e->col = col;
     e->state = LSTATE_UNCONSUMED;
@@ -240,7 +242,8 @@ static void ltable_consume(LTable *t, Id *id, int current_loop_depth) {
 static void ltable_ensure_all_consumed(LTable *t) {
     int errors = 0;
     for (LEntry *e = t->head; e; e = e->next) {
-        if (e->must_consume && e->state != LSTATE_CONSUMED) {
+        // Phase 4: defer-consumed counts as consumed
+        if (e->must_consume && e->state != LSTATE_CONSUMED && !e->is_defer_consumed) {
             fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before return.\n",
                     (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
             errors++;
@@ -264,7 +267,8 @@ static void ltable_ensure_all_consumed(LTable *t) {
 static void ltable_pop_scope(LTable *tbl, LEntry *saved_head) {
     int errors = 0;
     for (LEntry *e = tbl->head; e && e != saved_head; e = e->next) {
-        if (e->must_consume && e->state != LSTATE_CONSUMED) {
+        // Phase 4: defer-consumed counts as consumed
+        if (e->must_consume && e->state != LSTATE_CONSUMED && !e->is_defer_consumed) {
             fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before end of scope.\n",
                     (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
             errors++;
@@ -707,6 +711,36 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 }
             }
         }
+        
+        // Phase 4 Feature 1: Direct var-expression persistent borrow.
+        // Pattern: var ref = var data.field  (EXPR_MUT initializer)
+        // This creates a persistent borrow of the owner without going through a function call.
+        if (init && init->kind == EXPR_MUT && tbl->borrows && tbl->arena) {
+            Id *binding_id = s->as.var_stmt.name;
+            Expr *inner = init->as.mut_expr.expr;
+            Id *owner_id = NULL;
+            
+            // Extract owner from inner expression
+            if (inner && inner->kind == EXPR_IDENTIFIER) {
+                owner_id = inner->as.identifier_expr.id;
+            } else if (inner && inner->kind == EXPR_MEMBER) {
+                Expr *head = inner->as.member_expr.target;
+                while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
+                if (head && head->kind == EXPR_IDENTIFIER) owner_id = head->as.identifier_expr.id;
+            }
+            
+            if (owner_id) {
+                LEntry *owner_entry = ltable_find(tbl, owner_id);
+                Region *owner_region = owner_entry ? owner_entry->region
+                    : tbl->borrows->current_region;
+                int lu = use_tbl ? use_table_get_last_use(use_tbl, binding_id) : -1;
+                borrow_register_persistent(tbl->arena, tbl->borrows,
+                    binding_id, owner_id, MODE_MUTABLE, owner_region, lu, NULL);
+                DBG("STMT_VAR Phase 4: registered persistent mutable borrow of '%.*s' by '%.*s' via direct var-expr (last_use=%d)",
+                    (int)owner_id->length, owner_id->name,
+                    (int)binding_id->length, binding_id->name, lu);
+            }
+        }
         break;
     }
 
@@ -939,7 +973,43 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     }
 
     case STMT_DEFER: {
+        // Phase 4 Feature 3: Defer consumption tracking.
+        // Walk the defer body to detect mov of linear variables.
+        // Instead of actually consuming them now (which would cause false
+        // "use after move" errors for uses after the defer declaration),
+        // mark them as is_defer_consumed.
+        // 
+        // Strategy: save states, run the walker (which will consume vars),
+        // then detect which vars changed state and mark them as defer-consumed
+        // while restoring the original state.
+        
+        // Save state of all tracked variables before walking defer body
+        typedef struct DeferSave { Id *id; LState state; bool must_consume; struct DeferSave *next; } DeferSave;
+        DeferSave *saves = NULL;
+        for (LEntry *e = tbl->head; e; e = e->next) {
+            DeferSave *sv = arena_push_aligned(tbl->arena, DeferSave);
+            sv->id = e->id;
+            sv->state = e->state;
+            sv->must_consume = e->must_consume;
+            sv->next = saves;
+            saves = sv;
+        }
+        
+        // Walk the defer body — this will consume variables via EXPR_MOVE
         sema_check_stmt_linearity_with_table(s->as.defer_stmt.stmt, tbl, loop_depth, use_tbl);
+        
+        // Detect state changes: any variable that was UNCONSUMED before and
+        // is now CONSUMED was consumed inside the defer → mark as defer-consumed
+        // and restore to UNCONSUMED so it can still be used after defer declaration.
+        for (DeferSave *sv = saves; sv; sv = sv->next) {
+            LEntry *e = ltable_find(tbl, sv->id);
+            if (e && sv->state == LSTATE_UNCONSUMED && e->state == LSTATE_CONSUMED) {
+                e->is_defer_consumed = true;
+                e->state = LSTATE_UNCONSUMED; // Restore: var is still usable
+                DBG("STMT_DEFER Phase 4: marked '%.*s' as defer-consumed (restored to UNCONSUMED)",
+                    (int)e->id->length, e->id->name);
+            }
+        }
         break;
     }
 

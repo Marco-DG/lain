@@ -1,0 +1,32 @@
+// Phase 4 Test: Multi-var-param — PASS
+// Function takes two var params, returns var T.
+// Both borrows released before owner access → OK.
+
+type Data {
+    x int
+    y int
+}
+
+func pick_x(var a Data, var b Data) var int {
+    return var a.x
+}
+
+func read_data(d Data) int {
+    return d.x
+}
+
+proc main() int {
+    var da Data = undefined
+    var db Data = undefined
+    da.x = 10
+    db.x = 20
+    
+    // pick_x borrows both da and db (both are var params).
+    // ref is never used → NLL releases immediately.
+    var ref = pick_x(var da, var db)
+    
+    // OK: borrows released
+    var x = read_data(da)
+    var y = read_data(db)
+    return x + y
+}

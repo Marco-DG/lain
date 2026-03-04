@@ -1,0 +1,17 @@
+// Phase 4 Test: No defer, no consume — FAIL
+// Linear variable (mov field) without any consumption should fail.
+
+type Resource {
+    mov ptr *int
+}
+
+func drop(mov {ptr} Resource) {
+    // destruct to consume
+}
+
+proc main() int {
+    var r = Resource(0)
+    // r is linear (has mov field) but never consumed
+    // ERROR: linear variable not consumed before return
+    return 0
+}
