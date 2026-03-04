@@ -1,0 +1,24 @@
+// Phase 4 Test: Direct var-expression persistent borrow — PASS
+// var ref = var data.value creates a persistent borrow.
+// ref is never used after declaration → NLL releases → owner accessible.
+
+type Data {
+    value int
+}
+
+func read_data(d Data) int {
+    return d.value
+}
+
+proc main() int {
+    var data Data = undefined
+    data.value = 42
+    
+    // Direct var-expression borrow — ref borrows data
+    // ref is never used → NLL releases immediately
+    var ref = var data.value
+    
+    // OK: borrow released
+    var x = read_data(data)
+    return x
+}

@@ -1,0 +1,36 @@
+// Phase 4 Test: Multi-var-param — FAIL
+// Function takes two var params, returns var T.
+// Second var param accessed while ref still alive → should FAIL.
+
+type Data {
+    x int
+    y int
+}
+
+func pick_x(var a Data, var b Data) var int {
+    return var a.x
+}
+
+func use_ref(var r int) int {
+    return r
+}
+
+func read_data(d Data) int {
+    return d.x
+}
+
+proc main() int {
+    var da Data = undefined
+    var db Data = undefined
+    da.x = 10
+    db.x = 20
+    
+    // pick_x borrows both da and db
+    var ref = pick_x(var da, var db)
+    
+    // ERROR: db is still borrowed by ref (ref used below)
+    var y = read_data(db)
+    
+    var x = use_ref(var ref)
+    return x + y
+}
