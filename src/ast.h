@@ -323,6 +323,7 @@ typedef enum {
     EXPR_TYPE,      // a resolved Type* used as a parameter value
     EXPR_ANON_STRUCT,
     EXPR_ANON_ENUM,
+    EXPR_ARRAY_LITERAL,
 } ExprKind;
 
 typedef struct {
@@ -415,6 +416,10 @@ typedef struct {
     Type *type_value; // The resolved type
 } ExprType;
 
+typedef struct {
+    ExprList *elements;
+} ExprArrayLiteral;
+
 typedef struct Expr {
     ExprKind kind;
     isize line;  // source line number
@@ -438,6 +443,7 @@ typedef struct Expr {
         ExprType        type_expr;
         ExprAnonStruct  anon_struct_expr;
         ExprAnonEnum    anon_enum_expr;
+        ExprArrayLiteral array_literal_expr;
     } as;
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
@@ -882,6 +888,13 @@ Expr *expr_string(Arena *arena, const char* value, isize length) {
     e->kind = EXPR_STRING;
     e->as.string_expr.value = value;
     e->as.string_expr.length = length;
+    return e;
+}
+
+Expr *expr_array_literal(Arena *arena, ExprList *elements) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_ARRAY_LITERAL;
+    e->as.array_literal_expr.elements = elements;
     return e;
 }
 

@@ -95,6 +95,11 @@ void generic_substitute_expr(Expr *e, const char *param_name, Type *actual_type)
                 for (DeclList *l = v->fields; l; l = l->next) generic_substitute_decl(l->decl, param_name, actual_type);
             }
             break;
+        case EXPR_ARRAY_LITERAL:
+            for (ExprList *l = e->as.array_literal_expr.elements; l; l = l->next) {
+                generic_substitute_expr(l->expr, param_name, actual_type);
+            }
+            break;
     }
 }
 

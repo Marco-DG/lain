@@ -740,6 +740,25 @@ void sema_infer_expr(Expr *e) {
     break;
   }
 
+  case EXPR_ARRAY_LITERAL: {
+    ExprList *elems = e->as.array_literal_expr.elements;
+    if (!elems) {
+        fprintf(stderr, "sema error Ln %li, Col %li: empty array literal\n", e->line, e->col);
+        exit(1);
+    }
+    Type *elem_type = NULL;
+    isize count = 0;
+    for (ExprList *el = elems; el; el = el->next) {
+        sema_infer_expr(el->expr);
+        if (!elem_type) {
+            elem_type = el->expr->type;
+        }
+        count++;
+    }
+    e->type = type_array(sema_arena, elem_type, count);
+    break;
+  }
+
   case EXPR_LITERAL:
     e->type = get_builtin_int_type();
     break;

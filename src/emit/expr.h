@@ -67,6 +67,20 @@ void emit_expr(Expr *expr, int depth) {
          expr->as.string_expr.value);
     break;
 
+  case EXPR_ARRAY_LITERAL: {
+    char typeName[256];
+    c_name_for_type(expr->type, typeName, sizeof typeName);
+    EMIT("(%s){ .data = { ", typeName);
+    bool first = true;
+    for (ExprList *el = expr->as.array_literal_expr.elements; el; el = el->next) {
+        if (!first) EMIT(", ");
+        first = false;
+        emit_expr(el->expr, depth);
+    }
+    EMIT(" } }");
+    break;
+  }
+
   case EXPR_CHAR: {
     unsigned char v = expr->as.char_expr.value;
     switch (v) {

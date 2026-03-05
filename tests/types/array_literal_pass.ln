@@ -1,0 +1,9 @@
+// Test: array literal syntax [1, 2, 3]
+
+extern proc printf(fmt *u8, ...) int
+
+proc main() int {
+    var arr = [10, 20, 30, 40, 50]
+    printf("arr[0]=%d, arr[2]=%d, arr[4]=%d\n", arr[0], arr[2], arr[4])
+    return 0
+}

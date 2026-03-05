@@ -195,6 +195,9 @@ Expr *clone_expr(Arena *arena, Expr *e) {
         case EXPR_ANON_ENUM:
             new_e->as.anon_enum_expr.variants = clone_variant(arena, e->as.anon_enum_expr.variants);
             break;
+        case EXPR_ARRAY_LITERAL:
+            new_e->as.array_literal_expr.elements = clone_expr_list(arena, e->as.array_literal_expr.elements);
+            break;
     }
     return new_e;
 }
