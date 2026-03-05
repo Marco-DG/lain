@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain\\\\ Compiler/lain/tests -type f -name \"*\" 2>/dev/null | sort)",
+      "Bash(find /home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain\\\\ Compiler/lain -maxdepth 1 -name \"analysis*.md\" -type f 2>/dev/null | sort)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc src/main.c -o src/compiler.exe -std=c99 -Wall -Wextra -Wno-unused-function -Wno-unused-parameter 2>&1 | tail -20)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1 | tail -30)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1 | grep -c \"^PASS:\")",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && make clean 2>&1 && make 2>&1)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ls src/main.c && gcc -std=c99 -Wall -Wextra -o lain src/main.c -I src 2>&1)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc -std=c99 -Wall -Wextra -o lain src/main.c -I src 2>&1)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/safety/ownership/elif_borrow_pass.ln 2>&1)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc -o /tmp/elif_test src/compiler.exe.c 2>&1 && /tmp/elif_test 2>&1)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc -o /tmp/elif_test out.c 2>&1 && /tmp/elif_test 2>&1)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/safety/ownership/elif_borrow_pass.ln 2>&1 && gcc -o /tmp/elif_test out.c 2>&1 && /tmp/elif_test 2>&1 && echo \"SUCCESS\")",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/safety/ownership/elif_borrow_pass.ln 2>&1 && gcc -o /tmp/elif_test out.c 2>&1 && echo \"COMPILE OK\")",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/safety/ownership/elif_borrow_pass.ln 2>&1 && gcc -o /tmp/elif_test out.c 2>&1 && /tmp/elif_test 2>&1; echo \"EXIT: $?\")",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/safety/ownership/elif_borrow_fail.ln 2>&1; echo \"EXIT: $?\")",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc -std=c99 -Wall -Wextra -o lain src/main.c -I src 2>&1 | grep -v \"src/utils/common\")",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1 | tail -20)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/safety/ownership/elif_borrow_pass.ln 2>&1 && gcc -o /tmp/elif_test out.c 2>&1 && echo \"SUCCESS\")",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1 | grep -E \"\\(FAIL|PASS:|All tests|failed|Error\\)\" | tail -20)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && for f in src/emit/core.h src/emit/stmt.h src/emit/decl.h src/emit/expr.h src/emit/lain_header.h; do sed -i 's/\\\\[128\\\\]/[256]/g' \"$f\"; done && echo \"Done\")",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1 | tail -5)",
+      "Bash(grep -r \"array literal\" \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain/\" --include=\"*.md\" 2>/dev/null | head -20)",
+      "Bash(find \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain/tests\" -name \"*.ln\" -exec grep -l \"array\\\\|\\\\\\\\[.*\\\\\\\\]\" {} \\\\; 2>/dev/null | head -10)",
+      "Bash(grep -n \"emit_slice_type_definition\" \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain/src/emit/\"* | head -30)",
+      "Bash(find \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain/src/emit\" -name \"*.h\" -exec grep -l \"emit_slice_type_definition\" {} \\\\;)"
+    ]
+  }
+}

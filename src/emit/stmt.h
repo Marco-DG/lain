@@ -28,7 +28,7 @@ void emit_stmt(Stmt *stmt, int depth) {
   
       // 2) emit the C type (or default to int)
       if (stmt->as.var_stmt.type) {
-        char tybuf[128];
+        char tybuf[256];
         c_name_for_type(stmt->as.var_stmt.type, tybuf, sizeof tybuf);
         EMIT("%s", tybuf);
       } else {
@@ -284,7 +284,7 @@ void emit_stmt(Stmt *stmt, int depth) {
     Expr *scrut = stmt->as.match_stmt.value;
     sema_resolve_expr(scrut);
     sema_infer_expr(scrut);
-    char c_ty[128];
+    char c_ty[256];
     c_name_for_type(scrut->type, c_ty, sizeof c_ty);
 
     // Check if it is an ADT
@@ -474,7 +474,7 @@ void emit_stmt(Stmt *stmt, int depth) {
                   if (arg->expr->kind == EXPR_IDENTIFIER) {
                       Id *var_name = arg->expr->as.identifier_expr.id;
                       Type *ft = field->decl->as.variable_decl.type;
-                      char fty[128];
+                      char fty[256];
                       c_name_for_type(ft, fty, sizeof fty);
                       
                       emit_indent(depth + 1);
@@ -551,7 +551,7 @@ void emit_stmt(Stmt *stmt, int depth) {
   
         // 2) pick up the type
         Type *ty = rhs->type ? rhs->type : get_builtin_int_type();
-        char tybuf[128];
+        char tybuf[256];
         c_name_for_type(ty, tybuf, sizeof tybuf);
   
         // 3) name

@@ -171,7 +171,6 @@ void sema_infer_expr(Expr *e) {
             DeclEnum *adt = &e->as.member_expr.target->decl->as.enum_decl;
             Variant *v = lookup_adt_variant(adt, e->as.member_expr.member);
             if (!v) {
-                Id *base_name = e->as.member_expr.target->as.identifier_expr.id;
                 fprintf(stderr, "sema error Ln %li, Col %li: ADT has no variant '%.*s'\n",
                         e->line, e->col,
                         (int)e->as.member_expr.member->length, e->as.member_expr.member->name);

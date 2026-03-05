@@ -58,7 +58,7 @@ static uint32_t fnv1a_hash(const char *data, size_t len) {
 }
 
 // safe strdup+format (small helper)
-static char *strdup_fmt(const char *fmt, ...) {
+static char __attribute__((unused)) *strdup_fmt(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     char tmp[256];
@@ -233,10 +233,10 @@ const char *emit_slice_type_definition(Type *type) {
     canonical_base_name(base_id, rawname, sizeof rawname);
 
     // compute C element type
-    char c_type[128];
+    char c_type[256];
     c_name_for_type(elem, c_type, sizeof c_type);
 
-    static char sliceNameBuf[128];
+    static char sliceNameBuf[256];
     // Clear buf
     sliceNameBuf[0] = '\0';
 

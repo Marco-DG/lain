@@ -136,9 +136,6 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         if (d->kind == DECL_EXTERN_FUNCTION || d->kind == DECL_EXTERN_PROCEDURE) {
             // Extern functions use their raw name
             cnamef = strdup(rawf);
-            if (strcmp(rawf, "fopen") == 0) {
-                 fprintf(stderr, "DEBUG register fopen: cname=%s, rt=%p\n", cnamef, (void*)rt);
-            }
         } else {
             size_t fclen = strlen(safe_module_path) + 1 + id->length + 1;
             cnamef = malloc(fclen);
@@ -223,6 +220,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
   
       case DECL_C_INCLUDE:
       case DECL_IMPORT:
+      case DECL_EVAL_IMPORT:
       case DECL_DESTRUCT:
         // already inlined earlier or not top-level
         break;
@@ -636,21 +634,6 @@ void sema_resolve_expr(Expr *e) {
     // 2) lookup in the two‐table (locals first, then globals)
     Symbol *sym = sema_lookup(raw);
     if (sym) {
-      if (strcmp(raw, "fopen") == 0) {
-          fprintf(stderr, "DEBUG resolve fopen: sym found. Type=%p\n", (void*)sym->type);
-          if (sym->type) {
-              fprintf(stderr, "DEBUG resolve fopen: TypeKind=%d\n", sym->type->kind);
-              if (sym->type->kind == TYPE_POINTER) {
-                   if (sym->type->element_type->kind == TYPE_SIMPLE) {
-                       fprintf(stderr, "DEBUG resolve fopen: *SIMPLE(%.*s)\n", 
-                           (int)sym->type->element_type->base_type->length, 
-                           sym->type->element_type->base_type->name);
-                   }
-              }
-          } else {
-              fprintf(stderr, "DEBUG resolve fopen: Type is NULL!\n");
-          }
-      }
       if (sym->decl && (sym->decl->kind == DECL_STRUCT || sym->decl->kind == DECL_ENUM || sym->decl->kind == DECL_EXTERN_TYPE)) {
           // It's a user-defined type!
           e->kind = EXPR_TYPE;
@@ -709,7 +692,7 @@ void sema_resolve_expr(Expr *e) {
           if ((size_t)vid->length == strlen(raw) &&
               strncmp(vid->name, raw, vid->length) == 0) {
             // build "<module>_<Enum>_<Variant>"
-            static char buf[256];
+            static char buf[512];
              snprintf(buf, sizeof(buf), "%s_%.*s_%.*s", current_module_path,
                       (int)enum_id->length, enum_id->name, (int)vid->length,
                       vid->name);
@@ -793,8 +776,9 @@ void sema_resolve_expr(Expr *e) {
                     a = a->next;
                 }
 
-                char *cname_mangled = malloc(strlen(current_module_path) + 1 + strlen(mangled_name) + 1);
-                snprintf(cname_mangled, 512, "%s_%s", current_module_path, mangled_name);
+                size_t cname_mangled_len = strlen(current_module_path) + 1 + strlen(mangled_name) + 1;
+                char *cname_mangled = malloc(cname_mangled_len);
+                snprintf(cname_mangled, cname_mangled_len, "%s_%s", current_module_path, mangled_name);
                 for (char *ptr = cname_mangled; *ptr; ptr++) if (*ptr == '.') *ptr = '_';
 
                 // 3. Instantiate if needed
