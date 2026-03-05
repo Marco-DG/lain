@@ -241,6 +241,29 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         parser_advance();
         return expr_char_literal(arena, c);
     }
+    else if (parser_match(TOKEN_L_BRACKET)) {
+        // Array literal: [expr, expr, ...]
+        isize arr_line = parser->line;
+        isize arr_col  = parser->column;
+        parser_advance();  // consume '['
+        ExprList *elements = NULL;
+        ExprList **tail = &elements;
+        if (!parser_match(TOKEN_R_BRACKET)) {
+            do {
+                Expr *elem = parse_expr(arena, parser);
+                *tail = expr_list(arena, elem);
+                tail = &(*tail)->next;
+                if (parser_match(TOKEN_COMMA)) parser_advance();
+                else break;
+            } while (!parser_match(TOKEN_R_BRACKET));
+        }
+        parser_expect(TOKEN_R_BRACKET, "Expected ']' after array literal");
+        parser_advance();
+        Expr *arr = expr_array_literal(arena, elements);
+        arr->line = arr_line;
+        arr->col  = arr_col;
+        return arr;
+    }
     else if (parser_match(TOKEN_IDENTIFIER)) {
         // 1) get the base identifier
         Id *identifier = id(arena, parser->token.length, parser->token.start);

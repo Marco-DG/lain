@@ -26,7 +26,19 @@
       "Bash(grep -r \"array literal\" \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain/\" --include=\"*.md\" 2>/dev/null | head -20)",
       "Bash(find \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain/tests\" -name \"*.ln\" -exec grep -l \"array\\\\|\\\\\\\\[.*\\\\\\\\]\" {} \\\\; 2>/dev/null | head -10)",
       "Bash(grep -n \"emit_slice_type_definition\" \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain/src/emit/\"* | head -30)",
-      "Bash(find \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain/src/emit\" -name \"*.h\" -exec grep -l \"emit_slice_type_definition\" {} \\\\;)"
+      "Bash(find \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain/src/emit\" -name \"*.h\" -exec grep -l \"emit_slice_type_definition\" {} \\\\;)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/types/array_literal_pass.ln 2>&1)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc -o /tmp/arr_test out.c 2>&1 && /tmp/arr_test; echo \"EXIT: $?\")",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/stdlib/test_io.ln 2>&1 | head -3)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc -std=c99 -g -fsanitize=address -o lain_debug src/main.c -I src 2>&1 | grep -v \"src/utils/common\" | head -5)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain_debug tests/types/array_literal_pass.ln 2>&1 | head -40)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain_debug tests/types/array_literal_pass.ln 2>&1 | tail -40)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && cp lain_debug lain && ./lain tests/types/array_literal_pass.ln 2>&1 && cat out.c)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc -std=c99 -g -O0 -o lain_debug src/main.c -I src 2>&1 | grep error; echo \"---\" && gdb -batch -ex run -ex bt ./lain_debug --args tests/types/array_literal_pass.ln 2>&1 | tail -30)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gdb -batch -ex \"run tests/types/array_literal_pass.ln\" -ex bt ./lain_debug 2>&1 | tail -30)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/types/array_literal_pass.ln 2>&1 && cat out.c)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc -o /tmp/arr_test out.c -Dlibc_printf=printf 2>&1 && /tmp/arr_test 2>&1)",
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1 | grep -E \"\\(FAIL|failed|Error|PASS:|All tests\\)\" | tail -20)"
     ]
   }
 }

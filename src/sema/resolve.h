@@ -880,6 +880,12 @@ void sema_resolve_expr(Expr *e) {
     }
     break;
 
+  case EXPR_ARRAY_LITERAL:
+    for (ExprList *el = e->as.array_literal_expr.elements; el; el = el->next) {
+        sema_resolve_expr(el->expr);
+    }
+    break;
+
   default:
     break;
   }

@@ -837,6 +837,13 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         break;
     }
 
+    case EXPR_ARRAY_LITERAL: {
+        for (ExprList *el = e->as.array_literal_expr.elements; el; el = el->next) {
+            sema_check_expr_linearity(el->expr, tbl, loop_depth);
+        }
+        break;
+    }
+
     default:
         // other expression kinds either contain no linear events or are handled above
         break;
