@@ -79,7 +79,7 @@ static void emit_param_type(Type *t) {
         t->mode = MODE_SHARED;
     }
     
-    char base_name[128];
+    char base_name[256];
     c_name_for_type(t, base_name, sizeof(base_name));
     
     t->mode = original_mode;  // restore original mode

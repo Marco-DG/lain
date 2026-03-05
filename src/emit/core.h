@@ -54,7 +54,7 @@ static bool emit_fixed_string_init(Type *ty, Expr *rhs, int depth) {
       const unsigned char *bytes = (const unsigned char*)rhs->as.string_expr.value;
       size_t bytes_len = (size_t)rhs->as.string_expr.length;
       
-      char sliceBuf[128];
+      char sliceBuf[256];
       c_name_for_type(ty, sliceBuf, sizeof sliceBuf);
       
       // Emit compound literal: (Slice_u8_0){ .len = N, .data = (uint8_t[]){ ... } }
@@ -84,7 +84,7 @@ static bool emit_fixed_string_init(Type *ty, Expr *rhs, int depth) {
   size_t bytes_len = (size_t)rhs->as.string_expr.length;
 
   // typedef name for this fixed type, e.g. "Fixed_u8_5"
-  char sliceBuf[128];
+  char sliceBuf[256];
   c_name_for_type(ty, sliceBuf, sizeof sliceBuf);
 
   // Emit initializer:
@@ -136,7 +136,7 @@ static bool emit_slice_coercion(Type *target, Expr *source, int depth) {
 
     if (src_is_fixed) {
         // Emit Coercion
-        char targetBuf[128];
+        char targetBuf[256];
         c_name_for_type(target, targetBuf, sizeof targetBuf);
         
         EMIT("(%s){ .len = %zu, .data = ", targetBuf, src_len);
@@ -270,7 +270,7 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
     // u8,u16,u32,u64  -> uint8_t,uint16_t,uint32_t,uint64_t
     // i8,i16,i32,i64  -> int8_t,int16_t,int32_t,int64_t
     // isize, usize    -> intptr_t, uintptr_t (platform pointer-sized)
-    char base_name[128];
+    char base_name[256];
     
     if (base->length == 2 && strncmp(base->name, "u8", 2) == 0) {
       snprintf(base_name, sizeof(base_name), "uint8_t");
@@ -325,7 +325,7 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
   }
 
   case TYPE_POINTER: {
-    char tgt[128];
+    char tgt[256];
     c_name_for_type(t->element_type, tgt, sizeof tgt);
     
     // Check mode for const correctness
@@ -360,7 +360,7 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
 // Emit a C type (simple, array, slice, pointer, etc.)
 static void emit_type(Type *type) {
   if (!type) return;
-  char buf[128];
+  char buf[256];
   c_name_for_type(type, buf, sizeof buf);
   EMIT("%s", buf);
 }

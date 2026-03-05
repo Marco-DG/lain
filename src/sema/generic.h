@@ -20,11 +20,9 @@ void generic_substitute_type(Type **t_ptr, const char *param_name, Type *actual_
             // Replace this type with actual_type!
             // But keep the mode (ownership) if the parametric type has it?
             // Usually, `mov T` means T is the actual type and mode=MODE_OWNED.
-            OwnershipMode original_mode = t->mode;
-            *t_ptr = actual_type; // Since we cloned the AST, we could just replace the pointer, BUT other places might share actual_type. We should probably clone actual_type if we change its mode? Let's just point to it for now (Phase A).
-            // Actually, if we had `mov T`, `t->mode` is `MODE_OWNED`. If `actual_type` is just `int`, we need an owned `int`.
-            // Because types are shared pointers, modifying actual_type directly is BAD.
-            // But we don't have an arena here. For Phase A, let's assume `T` has MODE_SHARED if it's just `T`.
+            // Keep original mode for future use (Phase B: owned generic params)
+            // OwnershipMode original_mode = t->mode;
+            *t_ptr = actual_type;
         }
     } else if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE || t->kind == TYPE_POINTER || t->kind == TYPE_COMPTIME) {
         generic_substitute_type(&t->element_type, param_name, actual_type);

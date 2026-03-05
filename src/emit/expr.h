@@ -300,7 +300,7 @@ void emit_expr(Expr *expr, int depth) {
                      param = callee->decl->as.function_decl.params;
                  }
              } else {
-                 fprintf(stderr, "DEBUG: callee->decl is NULL for %.*s\n", (int)callee->as.identifier_expr.id->length, callee->as.identifier_expr.id->name);
+                 // callee->decl is NULL (e.g. libc functions) — fall through to other lookups
              }
          }
          
@@ -347,7 +347,7 @@ void emit_expr(Expr *expr, int depth) {
               int L = (int)lit->as.string_expr.length;
               const unsigned char *S = (const unsigned char*)lit->as.string_expr.value;
 
-              char sliceBuf[64];
+              char sliceBuf[256];
               c_name_for_type(ft, sliceBuf, sizeof sliceBuf);
 
               // emit inline array literal with EXACT fixed_len bytes (no trailing NUL)
@@ -371,7 +371,7 @@ void emit_expr(Expr *expr, int depth) {
            Expr *lit = arg->expr;
            int L = (int)lit->as.string_expr.length;
            const unsigned char *S = (const unsigned char*)lit->as.string_expr.value;
-           char sliceBuf[64];
+           char sliceBuf[256];
            c_name_for_type(ft, sliceBuf, sizeof sliceBuf);
 
            EMIT("(%s){ .data = (uint8_t[]){ ", sliceBuf);
@@ -439,7 +439,7 @@ void emit_expr(Expr *expr, int depth) {
 
       // We know sema has set expr->type to the correct slice type
       // (including sentinel variant if any), so emit that.
-      char sliceBuf[64];
+      char sliceBuf[256];
       c_name_for_type(expr->type, sliceBuf, sizeof sliceBuf);
 
       // Open the struct literal with the real slice type
@@ -500,7 +500,7 @@ void emit_expr(Expr *expr, int depth) {
     break;
 
   case EXPR_CAST: {
-    char tybuf[128];
+    char tybuf[256];
     c_name_for_type(expr->as.cast_expr.target_type, tybuf, sizeof tybuf);
     EMIT("((%s)(", tybuf);
     emit_expr(expr->as.cast_expr.expr, depth);
@@ -509,10 +509,10 @@ void emit_expr(Expr *expr, int depth) {
   }
 
   case EXPR_MATCH: {
-    char scrut_c_ty[128];
+    char scrut_c_ty[256];
     c_name_for_type(expr->as.match_expr.value->type, scrut_c_ty, sizeof(scrut_c_ty));
 
-    char res_c_ty[128];
+    char res_c_ty[256];
     c_name_for_type(expr->type, res_c_ty, sizeof(res_c_ty));
     
     static int __expr_match_cnt = 0;

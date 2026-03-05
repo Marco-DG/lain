@@ -64,7 +64,7 @@ static bool region_contains(Region *outer, Region *inner) {
 }
 
 // Check if two regions are the same or one is ancestor of other
-static bool region_related(Region *a, Region *b) {
+static bool __attribute__((unused)) region_related(Region *a, Region *b) {
     return region_contains(a, b) || region_contains(b, a);
 }
 
@@ -407,7 +407,7 @@ static bool borrow_is_borrowed(BorrowTable *t, Id *owner) {
 }
 
 // Check if using a borrowed reference after owner was moved
-static bool borrow_check_use_after_move(BorrowTable *t, Id *var) {
+static bool __attribute__((unused)) borrow_check_use_after_move(BorrowTable *t, Id *var) {
     BorrowEntry *e = borrow_find(t, var);
     if (e && e->owner_var == NULL) {
         fprintf(stderr, "borrow error: use of reference '%.*s' after owner was moved\n",
@@ -419,7 +419,7 @@ static bool borrow_check_use_after_move(BorrowTable *t, Id *var) {
 
 // Clear all borrows (called after each statement to implement NLL-like behavior)
 // This allows sequential borrows of the same variable across statements
-static void borrow_clear_all(BorrowTable *t) {
+static void __attribute__((unused)) borrow_clear_all(BorrowTable *t) {
     if (!t) return;
     REGION_DBG("borrow_clear_all: clearing all active borrows");
     t->head = NULL;  // Simply reset the list (arena allocations will be freed later)

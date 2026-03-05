@@ -1,0 +1,25 @@
+// Test: elif chains with linearity tracking
+// Verifies that move consumption is properly tracked across elif branches
+
+type Resource {
+    mov handle int
+}
+
+proc consume(r mov Resource) int {
+    return mov r.handle
+}
+
+proc main() {
+    // Test: consume mov variable in all branches of if/elif/else
+    var r = Resource(42)
+    var x = 0
+    var result = 0
+    if x == 1 {
+        result = consume(mov r)
+    } else if x == 2 {
+        result = consume(mov r)
+    } else {
+        result = consume(mov r)
+    }
+    // r consumed in all branches — no error expected
+}

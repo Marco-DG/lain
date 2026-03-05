@@ -1,0 +1,23 @@
+// Test: elif chains — FAIL case
+// Consuming a linear variable in only some branches must fail
+
+type Resource {
+    mov handle int
+}
+
+proc consume(r mov Resource) int {
+    return mov r.handle
+}
+
+proc main() {
+    var r = Resource(42)
+    var x = 0
+    var result = 0
+    if x == 1 {
+        result = consume(mov r)
+    } else if x == 2 {
+        // missing consume — not consumed in this branch
+    } else {
+        result = consume(mov r)
+    }
+}

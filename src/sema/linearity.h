@@ -331,7 +331,7 @@ static LTable *ltable_clone(LTable *src) {
 }
 
 /* update state strictly */
-static void ltable_set_state(LTable *t, Id *id, LState st) {
+static void __attribute__((unused)) ltable_set_state(LTable *t, Id *id, LState st) {
     LEntry *e = ltable_find(t, id);
     if (!e) return;
     e->state = st;
@@ -1290,7 +1290,7 @@ static void sema_check_function_linearity(Decl *d) {
 
 /* ---------- module-level entry: run linearity check over all functions ---------- */
 
-static void sema_check_module_linearity(DeclList *decls) {
+static void __attribute__((unused)) sema_check_module_linearity(DeclList *decls) {
     if (!decls) return;
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
