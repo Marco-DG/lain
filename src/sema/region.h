@@ -72,6 +72,9 @@ static bool __attribute__((unused)) region_related(Region *a, Region *b) {
 │ BorrowEntry: tracks an active borrow                              │
 ╚───────────────────────────────────────────────────────────────────*/
 
+// Two-phase borrow: RESERVED allows shared reads, ACTIVE blocks everything
+typedef enum { BORROW_RESERVED, BORROW_ACTIVE } BorrowPhase;
+
 typedef struct BorrowEntry {
     Id *var;                   // the variable being borrowed
     Id *owner_var;             // the direct owner (for tracking moves)
@@ -79,6 +82,7 @@ typedef struct BorrowEntry {
     Id *binding_id;            // variable that holds the borrow alive (NULL for temporaries)
     Id *borrowed_field;        // Phase 7: specific field being borrowed (NULL = whole variable)
     OwnershipMode mode;        // MODE_SHARED or MODE_MUTABLE
+    BorrowPhase phase;         // Two-phase: RESERVED during arg eval, ACTIVE after
     Region *borrow_region;     // scope where the borrow is used
     Region *owner_region;      // scope where the owner is defined
     bool is_temporary;         // true if borrow expires at end of statement
@@ -137,6 +141,10 @@ static bool borrow_check_conflict_field(BorrowTable *t, Id *owner, OwnershipMode
             if (!fields_overlap(e->borrowed_field, field)) continue; // different fields → no conflict
             
             if (e->mode == MODE_MUTABLE) {
+                // Two-phase borrows: RESERVED mutable borrows allow shared reads
+                if (e->phase == BORROW_RESERVED && mode == MODE_SHARED) {
+                    continue; // allow shared read during reservation
+                }
                 if (field && e->borrowed_field) {
                     fprintf(stderr, "borrow error: cannot borrow '%.*s.%.*s' because '%.*s.%.*s' is already mutably borrowed\n",
                             (int)owner->length, owner->name, (int)field->length, field->name,
@@ -216,6 +224,7 @@ static void borrow_register(Arena *arena, BorrowTable *t, Id *var, Id *owner,
     e->binding_id = NULL;
     e->borrowed_field = NULL; // Phase 7: temporaries don't have field tracking
     e->mode = mode;
+    e->phase = BORROW_ACTIVE;
     e->borrow_region = t->current_region;
     e->owner_region = owner_region;
     e->is_temporary = is_temporary;
@@ -288,6 +297,7 @@ static void borrow_register_persistent(Arena *arena, BorrowTable *t, Id *binding
     e->binding_id = binding_id;
     e->borrowed_field = NULL; // Phase 7: will be set by caller if needed
     e->mode = mode;
+    e->phase = BORROW_ACTIVE;
     e->borrow_region = t->current_region;
     e->owner_region = owner_region;
     e->is_temporary = false;
@@ -348,12 +358,17 @@ static bool borrow_check_owner_access_field(BorrowTable *t, Id *owner, Ownership
         
         // Conflict rules:
         // 1. If owner is mutably borrowed: cannot read OR write
+        //    EXCEPT: two-phase RESERVED borrows allow shared reads
         // 2. If owner is shared-borrowed: cannot write (read is OK)
         if (e->mode == MODE_MUTABLE) {
+            if (e->phase == BORROW_RESERVED && access_mode == MODE_SHARED) {
+                continue; // two-phase: allow shared reads during reservation
+            }
             fprintf(stderr, "Error Ln %li, Col %li: cannot access '%.*s' because it is mutably borrowed by '%.*s'.\n",
                     (long)line, (long)col,
                     (int)owner->length, owner->name,
                     (int)e->binding_id->length, e->binding_id->name);
+            diagnostic_show_line(line, col);
             return true;
         }
         if (access_mode == MODE_MUTABLE && e->mode == MODE_SHARED) {
@@ -361,6 +376,7 @@ static bool borrow_check_owner_access_field(BorrowTable *t, Id *owner, Ownership
                     (long)line, (long)col,
                     (int)owner->length, owner->name,
                     (int)e->binding_id->length, e->binding_id->name);
+            diagnostic_show_line(line, col);
             return true;
         }
     }
@@ -377,6 +393,21 @@ static void borrow_clear_temporaries(BorrowTable *t) {
             *curr = (*curr)->next; // Remove
         } else {
             curr = &(*curr)->next;
+        }
+    }
+}
+
+// Two-phase borrows: promote all RESERVED borrows to ACTIVE
+// Called after all function arguments have been evaluated
+static void borrow_promote_to_active(BorrowTable *t) {
+    if (!t) return;
+    for (BorrowEntry *e = t->head; e; e = e->next) {
+        if (e->phase == BORROW_RESERVED) {
+            e->phase = BORROW_ACTIVE;
+            REGION_DBG("borrow_promote_to_active: promoted '%.*s' borrow of '%.*s'",
+                       (int)e->var->length, e->var->name,
+                       e->owner_var ? (int)e->owner_var->length : 0,
+                       e->owner_var ? e->owner_var->name : "<null>");
         }
     }
 }

@@ -1,0 +1,22 @@
+// Standard math utilities
+
+func min(a int, b int) int {
+    if a < b { return a }
+    return b
+}
+
+func max(a int, b int) int {
+    if a > b { return a }
+    return b
+}
+
+func abs(x int) int {
+    if x < 0 { return 0 - x }
+    return x
+}
+
+func clamp(x int, lo int, hi int) int {
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
+}

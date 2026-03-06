@@ -1,0 +1,29 @@
+// Tests two-phase borrows: x.method(x.field) should work
+// The mutable borrow of x for method() starts as RESERVED,
+// allowing the shared read of x.field during argument evaluation.
+
+type Vec {
+    len int
+    cap int
+}
+
+proc push_n(var v Vec, n int) {
+    v.len = v.len + n
+}
+
+func get_cap(v Vec) int {
+    return v.cap
+}
+
+proc main() int {
+    var v = Vec(0, 10)
+
+    // Two-phase borrow via UFCS: v is mutably borrowed for push_n,
+    // but v.cap is read (shared) during argument evaluation
+    v.push_n(v.cap)
+
+    // Also test with explicit function call syntax
+    push_n(var v, v.cap)
+
+    return v.len
+}

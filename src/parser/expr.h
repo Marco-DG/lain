@@ -95,6 +95,12 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
     // EXPR_MATCH (case expression)
     if (parser_match(TOKEN_KEYWORD_CASE)) {
         parser_advance();
+        // Check for `case &expr` — non-consuming (borrowed) match
+        bool is_borrowed = false;
+        if (parser_match(TOKEN_AMPERSAND)) {
+            is_borrowed = true;
+            parser_advance();
+        }
         Expr *value = parse_expr(arena, parser);
         
         parser_expect(TOKEN_L_BRACE, "Expected '{' after case expression");
@@ -152,7 +158,7 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         parser_expect(TOKEN_R_BRACE, "Expected '}' after case expression block");
         parser_advance();
         
-        return expr_match(arena, value, first);
+        return expr_match(arena, value, first, is_borrowed);
     }
 
     // Boolean literals

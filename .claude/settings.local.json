@@ -38,7 +38,10 @@
       "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gdb -batch -ex \"run tests/types/array_literal_pass.ln\" -ex bt ./lain_debug 2>&1 | tail -30)",
       "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && ./lain tests/types/array_literal_pass.ln 2>&1 && cat out.c)",
       "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && gcc -o /tmp/arr_test out.c -Dlibc_printf=printf 2>&1 && /tmp/arr_test 2>&1)",
-      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1 | grep -E \"\\(FAIL|failed|Error|PASS:|All tests\\)\" | tail -20)"
+      "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1 | grep -E \"\\(FAIL|failed|Error|PASS:|All tests\\)\" | tail -20)",
+      "Bash(./lain:*)",
+      "Bash(gcc:*)",
+      "Bash(./lain_debug:*)"
     ]
   }
 }

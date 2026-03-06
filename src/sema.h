@@ -1,13 +1,51 @@
 #ifndef SEMA_H
 #define SEMA_H
 
+// Diagnostic globals (defined before sub-header includes so they can call diagnostic_show_line)
+const char *sema_source_text = NULL;
+const char *sema_source_file = NULL;
+
+static void diagnostic_show_line(isize line, isize col) {
+    if (!sema_source_text || !sema_source_file) return;
+    if (line <= 0) return;
+
+    const char *p = sema_source_text;
+    isize cur_line = 1;
+    while (*p && cur_line < line) {
+        if (*p == '\n') cur_line++;
+        p++;
+    }
+    if (!*p && cur_line < line) return;
+
+    const char *line_start = p;
+    const char *line_end = line_start;
+    while (*line_end && *line_end != '\n') line_end++;
+
+    int line_len = (int)(line_end - line_start);
+    int line_num_width = 1;
+    { isize tmp = line; while (tmp >= 10) { line_num_width++; tmp /= 10; } }
+
+    fprintf(stderr, "  --> %s:%li:%li\n", sema_source_file, (long)line, (long)col);
+    fprintf(stderr, " %*s |\n", line_num_width, "");
+    fprintf(stderr, " %li | %.*s\n", (long)line, line_len, line_start);
+    fprintf(stderr, " %*s | ", line_num_width, "");
+    isize caret_pos = (col > 0) ? col - 1 : 0;
+    for (isize i = 0; i < caret_pos; i++) {
+        if (i < line_len && line_start[i] == '\t')
+            fputc('\t', stderr);
+        else
+            fputc(' ', stderr);
+    }
+    fprintf(stderr, "^\n");
+}
+
 #include "sema/scope.h"
 #include "sema/resolve.h"
 #include "sema/typecheck.h"
 #include "sema/linearity.h"
 
 Type *current_return_type = NULL;
-Decl *current_function_decl = NULL; // New: track current function for purity checks
+Decl *current_function_decl = NULL;
 const char *current_module_path = NULL;
 DeclList *sema_decls = NULL;
 Arena *sema_arena = NULL;
@@ -257,6 +295,13 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     sema_arena = arena;
     sema_decls = decls;
     sema_ranges = range_table_new(arena);
+
+    // Set source text for diagnostics
+    ModuleNode *mod = find_module(module_path);
+    if (mod) {
+        sema_source_text = mod->source_text;
+        sema_source_file = mod->source_file;
+    }
 
     // 1) Clear old globals + insert top-level decls
     sema_clear_globals();

@@ -1,0 +1,9 @@
+import std.math
+
+proc main() int {
+    var a = min(3, 7)
+    var b = max(3, 7)
+    var c = abs(0 - 5)
+    var d = clamp(15, 0, 10)
+    return a + b + c + d
+}

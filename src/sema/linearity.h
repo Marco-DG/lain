@@ -237,6 +237,7 @@ static bool ltable_consume_field(LTable *t, Id *var_id, Id *field_id, int curren
                         (long)e->line, (long)e->col,
                         (int)field_id->length, field_id->name,
                         (int)var_id->length, var_id->name);
+                diagnostic_show_line(e->line, e->col);
                 exit(1);
             }
             if (e->defined_loop_depth != current_loop_depth) {
@@ -244,6 +245,7 @@ static bool ltable_consume_field(LTable *t, Id *var_id, Id *field_id, int curren
                         (long)e->line, (long)e->col,
                         (int)field_id->length, field_id->name,
                         (int)var_id->length, var_id->name);
+                diagnostic_show_line(e->line, e->col);
                 exit(1);
             }
             fs->is_consumed = true;
@@ -349,6 +351,7 @@ static void ltable_consume(LTable *t, Id *id, int current_loop_depth) {
         fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was already used/consumed.\n",
                 (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
         fprintf(stderr, "  --> declared at Ln %li, Col %li\n", (long)e->line, (long)e->col);
+        diagnostic_show_line(e->line, e->col);
         exit(1);
     }
     if (e->defined_loop_depth != current_loop_depth) {
@@ -356,6 +359,7 @@ static void ltable_consume(LTable *t, Id *id, int current_loop_depth) {
                 (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
         fprintf(stderr, "  --> declared at Ln %li, Col %li (loop depth %d, current %d)\n",
                 (long)e->line, (long)e->col, e->defined_loop_depth, current_loop_depth);
+        diagnostic_show_line(e->line, e->col);
         exit(1);
     }
     // Phase 5: whole-var consume should also mark all fields consumed
@@ -581,11 +585,13 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 if (entry->state == LSTATE_CONSUMED) {
                     fprintf(stderr, "Error Ln %li, Col %li: use of linear variable '%.*s' after it was moved.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
+                    diagnostic_show_line((e->line), (e->col));
                     exit(1);
                 }
                 if (!entry->is_initialized) {
                     fprintf(stderr, "Error Ln %li, Col %li: use of uninitialized variable '%.*s'.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
+                    diagnostic_show_line((e->line), (e->col));
                     exit(1);
                 }
             }
@@ -660,9 +666,12 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 // Handle based on ownership mode
                 if (pty && pty->mode == MODE_OWNED) {
                     // Move: check if borrowed, then consume
-                    if (tbl->borrows && borrow_is_borrowed(tbl->borrows, owner_id)) {
+                    // Only check for member-expression args if the borrow is ACTIVE (not RESERVED)
+                    bool is_direct_move = (arg->kind == EXPR_IDENTIFIER || arg->kind == EXPR_MOVE);
+                    if (is_direct_move && tbl->borrows && borrow_is_borrowed(tbl->borrows, owner_id)) {
                         fprintf(stderr, "Error Ln %li, Col %li: cannot move '%.*s' because it is currently borrowed.\n",
                                 (long)(e->line), (long)(e->col), (int)owner_id->length, owner_id->name);
+                        diagnostic_show_line((e->line), (e->col));
                         exit(1);
                     }
                     if (arg->kind == EXPR_MOVE) {
@@ -670,6 +679,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     } else {
                         fprintf(stderr, "Error Ln %li, Col %li: moving linear variable '%.*s' requires explicit 'mov' at the call site.\n",
                                 (long)(e->line), (long)(e->col), (int)owner_id->length, owner_id->name);
+                        diagnostic_show_line((e->line), (e->col));
                         exit(1);
                     }
                     // Invalidate any previous borrows of this owner
@@ -685,17 +695,21 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                         // This will error if conflict detected
                         Id *borrow_id = params->decl->as.variable_decl.name;
                         borrow_register(tbl->arena, tbl->borrows, borrow_id, owner_id, MODE_MUTABLE, owner_region, true);
-                        DBG("EXPR_CALL: registered mutable borrow of '%.*s'", (int)owner_id->length, owner_id->name);
+                        // Two-phase: start as RESERVED during argument evaluation
+                        tbl->borrows->head->phase = BORROW_RESERVED;
+                        DBG("EXPR_CALL: registered RESERVED mutable borrow of '%.*s'", (int)owner_id->length, owner_id->name);
                     }
                 } else if (pty && pty->mode == MODE_SHARED) {
-                    // Shared borrow: check for mutable conflicts only  
+                    // Shared borrow: check for mutable conflicts only
                     LEntry *entry = ltable_find(tbl, owner_id);
                     Region *owner_region = entry ? entry->region : (tbl->borrows ? tbl->borrows->current_region : NULL);
-                    
+
                     if (tbl->borrows && tbl->arena) {
                         Id *borrow_id = params->decl->as.variable_decl.name;
                         borrow_register(tbl->arena, tbl->borrows, borrow_id, owner_id, MODE_SHARED, owner_region, true);
-            DBG("EXPR_CALL: registered shared borrow of '%.*s'", (int)owner_id->length, owner_id->name);
+                        // Two-phase: start as RESERVED during argument evaluation
+                        tbl->borrows->head->phase = BORROW_RESERVED;
+                        DBG("EXPR_CALL: registered RESERVED shared borrow of '%.*s'", (int)owner_id->length, owner_id->name);
                     }
                 }
             }
@@ -741,6 +755,10 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 DBG("EXPR_CALL: no fn_decl found for callee - no heuristic assumption made.");
             }
         }
+        // Two-phase borrows: promote all RESERVED borrows to ACTIVE now that args are evaluated
+        if (tbl->borrows) {
+            borrow_promote_to_active(tbl->borrows);
+        }
         break;
     }
 
@@ -750,7 +768,18 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
 
     case EXPR_MATCH: {
         if (e->as.match_expr.value) {
-            sema_check_expr_linearity(e->as.match_expr.value, tbl, loop_depth);
+            if (e->as.match_expr.is_borrowed) {
+                // Non-consuming match: register a temporary shared borrow instead of consuming
+                Expr *val = e->as.match_expr.value;
+                if (val->kind == EXPR_IDENTIFIER && tbl->borrows && tbl->arena) {
+                    Id *owner_id = val->as.identifier_expr.id;
+                    LEntry *entry = ltable_find(tbl, owner_id);
+                    Region *owner_region = entry ? entry->region : (tbl->borrows ? tbl->borrows->current_region : NULL);
+                    borrow_register(tbl->arena, tbl->borrows, owner_id, owner_id, MODE_SHARED, owner_region, true);
+                }
+            } else {
+                sema_check_expr_linearity(e->as.match_expr.value, tbl, loop_depth);
+            }
             if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
         }
         LTable *parent_snapshot = ltable_clone(tbl);
@@ -799,6 +828,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 if (entry && ltable_is_partially_consumed(entry)) {
                     fprintf(stderr, "Error Ln %li, Col %li: cannot move '%.*s' because some fields have already been consumed.\n",
                             (long)e->line, (long)e->col, (int)idptr->length, idptr->name);
+                    diagnostic_show_line(e->line, e->col);
                     exit(1);
                 }
                 DBG("EXPR_MOVE: consume IDENT '%.*s'", (int)idptr->length, idptr->name ? idptr->name : "<null>");
@@ -1021,6 +1051,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         Expr *e = s->as.expr_stmt.expr;
         if (e && e->type && is_type_move(e->type)) {
             fprintf(stderr, "Error Ln %li, Col %li: discarding value of linear type (move) is not allowed.\n", (long)s->line, (long)s->col);
+            diagnostic_show_line(s->line, s->col);
             exit(1);
         }
         if (e) sema_check_expr_linearity(e, tbl, loop_depth);
@@ -1113,6 +1144,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                             (long)s->line, (long)s->col,
                             (int)root->as.identifier_expr.id->length,
                             root->as.identifier_expr.id->name);
+                    diagnostic_show_line(s->line, s->col);
                     exit(1);
                 }
             }
@@ -1124,7 +1156,18 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
 
     case STMT_MATCH: {
         if (s->as.match_stmt.value) {
-            sema_check_expr_linearity(s->as.match_stmt.value, tbl, loop_depth);
+            if (s->as.match_stmt.is_borrowed) {
+                // Non-consuming match: register a temporary shared borrow instead of consuming
+                Expr *val = s->as.match_stmt.value;
+                if (val->kind == EXPR_IDENTIFIER && tbl->borrows && tbl->arena) {
+                    Id *owner_id = val->as.identifier_expr.id;
+                    LEntry *entry = ltable_find(tbl, owner_id);
+                    Region *owner_region = entry ? entry->region : (tbl->borrows ? tbl->borrows->current_region : NULL);
+                    borrow_register(tbl->arena, tbl->borrows, owner_id, owner_id, MODE_SHARED, owner_region, true);
+                }
+            } else {
+                sema_check_expr_linearity(s->as.match_stmt.value, tbl, loop_depth);
+            }
             if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
         }
         LTable *parent_snapshot = ltable_clone(tbl);
