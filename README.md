@@ -614,6 +614,25 @@ z = read(data)
 modify_both(data, var data)
 ```
 
+#### Two-Phase Borrows
+
+When calling a method via UFCS (e.g., `x.method(x.field)`), the compiler desugars it to `method(var x, x.field)`. Without special handling, the mutable borrow of `x` for the first parameter would block reading `x.field` for the second.
+
+Lain solves this with **two-phase borrows** (inspired by Rust RFC 2025). During argument evaluation, mutable borrows are registered in a **RESERVED** phase that permits shared reads of the same owner. After all arguments are evaluated, reserved borrows are promoted to **ACTIVE** (fully exclusive).
+
+```lain
+type Vec { data int, cap int }
+proc push_n(var v Vec, n int) { v.data = v.data + n }
+
+proc main() int {
+    var v = Vec(0, 10)
+    v.push_n(v.cap)      // OK: v.cap is a shared read during RESERVED phase
+    return v.data         // 10
+}
+```
+
+Two-phase borrows do **not** permit moves or mutable writes during the reserved phase — only shared reads.
+
 ### 5.3.1 Non-Lexical Lifetimes (NLL) and Control Flow
 
 Lain employs an expression-level borrow checker for control-flow conditions. Temporary borrows within `if`, `while`, `for`, and `match` conditions do not span the entire block. They are released immediately after the condition is evaluated.
@@ -976,6 +995,40 @@ case x {
 - A single expression: `Red: return 1`
 - A block: `Red: { libc_printf("red\n"); return 1 }`
 - Multiple patterns/ranges: `1, 2, 5..10: return 2`
+
+#### Non-Consuming Match (`case &expr`)
+
+By default, `case expr` consumes the scrutinee (for linear types, this means ownership is transferred). To inspect a value **without consuming it**, prefix the scrutinee with `&`:
+
+```lain
+var x = 42
+var result = 0
+case &x {            // Borrowed match: x is NOT consumed
+    42: result = 1
+    else: result = 0
+}
+return x + result    // x is still usable: returns 43
+```
+
+The `&` registers a shared borrow on the scrutinee for the duration of the match body. This prevents mutation of the scrutinee inside the match arms:
+
+```lain
+var x = 42
+case &x {
+    42: x = 99       // ERROR [E004]: cannot mutate 'x' because it is borrowed
+    else: x = 0
+}
+```
+
+This is particularly useful with ADTs where you want to inspect a variant without consuming the value:
+
+```lain
+case &shape {
+    Circle(r):   libc_printf("radius: %d\n", r)
+    Rectangle(w, h): libc_printf("area: %d\n", w * h)
+}
+// shape is still available here
+```
 
 ### 7.6 Exhaustiveness Checking
 
@@ -1363,6 +1416,70 @@ proc write_file(f File, s u8[:0]) {
 > [!NOTE]
 > The `File` type is a safe wrapper around C's `FILE*`. Because `handle` is declared `mov`, the `File` struct is **linear**: it must be explicitly consumed via `close_file(mov f)`. Forgetting to close a file is a compile error.
 
+**`std/math.ln`** — Pure math utilities:
+```lain
+import std.math
+
+var a = min(3, 7)        // 3
+var b = max(3, 7)        // 7
+var c = abs(0 - 5)       // 5
+var d = clamp(15, 0, 10) // 10
+```
+
+All functions in `std/math` are pure (`func`), with no side effects or external dependencies.
+
+| Function | Signature | Description |
+|:---------|:----------|:------------|
+| `min` | `func min(a int, b int) int` | Returns the smaller of two values |
+| `max` | `func max(a int, b int) int` | Returns the larger of two values |
+| `abs` | `func abs(x int) int` | Returns the absolute value |
+| `clamp` | `func clamp(x int, lo int, hi int) int` | Clamps x to [lo, hi] |
+
+**`std/option.ln`** — Generic Option type:
+```lain
+import std.option
+
+type OptInt = Option(int)
+
+proc main() int {
+    var a = OptInt.Some(42)
+    var b = OptInt.None
+
+    var x = 0
+    case a {
+        Some(v): x = v
+        None: x = 0
+    }
+    return x  // 42
+}
+```
+
+`Option(T)` is a compile-time generic ADT with two variants: `Some { value T }` and `None`. Use `type MyOpt = Option(int)` to create a concrete type alias.
+
+**`std/result.ln`** — Generic Result type:
+```lain
+import std.result
+
+type MyResult = Result(int, int)
+
+proc main() int {
+    var r = MyResult.Ok(15)
+    var x = 0
+    case r {
+        Ok(v): x = v
+        Err(e): x = e
+    }
+    return x  // 15
+}
+```
+
+`Result(T, E)` is a compile-time generic ADT with variants `Ok { value T }` and `Err { error E }`. Combined with pattern matching, it provides type-safe error handling.
+
+**`std/string.ln`** — String utilities (placeholder):
+
+> [!WARNING]
+> `std/string.ln` is currently a placeholder. Lain emits `*u8` as `uint8_t*`, but C string functions (`strlen`, `strcmp`) expect `char*`. A type-mapping solution for `char` interop is planned.
+
 ### 10.3 Name Resolution & Forward Declarations
 
 Lain uses a multi-pass compiler. Functions, procedures, and types can be referenced before they are declared in the source file. There is no need for forward declarations or header files.
@@ -1546,6 +1663,40 @@ Lain eliminates entire classes of bugs at compile time without runtime overhead.
 
 ---
 
+## 13.1 Error Codes
+
+Compiler errors are prefixed with error codes for easy reference and searchability:
+
+| Code | Category | Example |
+|:-----|:---------|:--------|
+| `[E001]` | Use after move | `cannot use 'x': value was moved` |
+| `[E002]` | Unconsumed linear value | `linear variable 'handle' must be consumed` |
+| `[E003]` | Double move | `cannot move 'x': already moved` |
+| `[E004]` | Borrow conflict | `cannot mutate 'x' because it is borrowed` |
+| `[E005]` | Move of borrowed value | `cannot move 'x' while it is borrowed` |
+| `[E006]` | Move in loop | `cannot move 'x' inside a loop` |
+| `[E007]` | Branch inconsistency | `variable 'x' moved in one branch but not the other` |
+| `[E008]` | Linear field error | `struct field must be consumed` |
+| `[E009]` | Immutability violation | `cannot assign to immutable variable 'x'` |
+| `[E010]` | Dangling reference | `reference outlives its owner` |
+| `[E011]` | Purity violation | `pure function cannot call procedure` |
+| `[E012]` | Type error | `expected 'int', got 'bool'` |
+| `[E013]` | Redeclaration | `variable 'x' already declared in this scope` |
+| `[E014]` | Exhaustiveness | `non-exhaustive case: missing variant 'None'` |
+| `[E015]` | Division by zero | `division by zero detected at compile time` |
+
+Each error also includes source-line context with a caret pointing to the exact location:
+
+```
+[E004] Error Ln 5, Col 12: cannot mutate 'x' because it is borrowed by 'x'
+  --> main.ln:5:12
+   |
+ 5 |     x = 99
+   |            ^
+```
+
+---
+
 ## 14. Compilation Pipeline
 
 ### 14.1 Lain → C Code Generation
@@ -1605,11 +1756,11 @@ Tests are organized under `tests/` and run via `run_tests.sh`:
 **Test categories:**
 | Directory | Tests | Purpose |
 |:----------|:------|:--------|
-| `tests/core/` | 12 | Basic language features (functions, loops, math, bitwise, compound assignments, shadowing) |
-| `tests/types/` | 14 | Type system (ADTs, enums, arrays, structs, strings, bool, casts, integers, chars, floats) |
+| `tests/core/` | 26 | Basic language features (functions, loops, math, bitwise, compound assignments, shadowing, two-phase borrows, match borrow, option, result) |
+| `tests/types/` | 17 | Type system (ADTs, enums, arrays, structs, strings, bool, casts, integers, chars, floats, match borrow) |
 | `tests/safety/bounds/` | 14 | Static bounds checking & type constraints |
-| `tests/safety/ownership/` | 13 | Ownership, borrowing, move semantics, block scoping |
-| `tests/safety/purity/` | 3 | Purity enforcement |
+| `tests/safety/ownership/` | 42 | Ownership, borrowing, move semantics, block scoping, two-phase borrows |
+| `tests/safety/purity/` | 4 | Purity enforcement |
 | `tests/safety/` (root) | 4 | Unsafe blocks, linear struct fields |
 | `tests/stdlib/` | 6 | Module system, extern, stdlib |
 
@@ -1636,23 +1787,40 @@ When compiling the generated `out.c`, certain C preprocessor flags are needed to
 
 ---
 
-## 21. Compile-Time Generics (Phase B)
+## 21. Compile-Time Generics
 
 Lain sidesteps traditional generic syntax (`<T>`) in favor of parameterized functions where types are passed as compile-time values.
 
 ```lain
 func Option(comptime T type) type {
-    return struct {
-        has_value bool,
-        payload   T
+    return type {
+        Some { value T }
+        None
     }
 }
 
-// Compile-time evaluation creates an alias
-type OptionInt = Option(int)
+// Compile-time evaluation creates a concrete type alias
+type OptInt = Option(int)
+
+var a = OptInt.Some(42)
+var b = OptInt.None
 ```
 
-**Monomorphization**: When a generic function is called, the compiler evaluates the type parameter at compile-time and generates a specialized version of the function (e.g. `Option_int`).
+**Monomorphization**: When a generic function is called, the compiler evaluates the type parameter at compile-time and generates a specialized version of the type (e.g. `Option_int`). Multiple instantiations with different types each produce independent concrete types.
+
+**Multiple type parameters** are supported:
+```lain
+func Result(comptime T type, comptime E type) type {
+    return type {
+        Ok { value T }
+        Err { error E }
+    }
+}
+
+type FileResult = Result(File, int)
+```
+
+The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` (`Result(T, E)`) built on this mechanism. See §10.2.
 
 ---
 
@@ -1665,7 +1833,7 @@ type OptionInt = Option(int)
 | `break` | ✅ Implemented | Loop exit |
 | `c_include` | ✅ Implemented | C header inclusion |
 | `case` | ✅ Implemented | Pattern matching (§7.5) |
-| `comptime` | 🔮 Reserved | Compile-time execution |
+| `comptime` | ✅ Implemented | Compile-time type parameters (§21) |
 | `continue` | ✅ Implemented | Loop iteration skip |
 | `elif` | ✅ Implemented | Else-if branch |
 | `else` | ✅ Implemented | Default branch |
@@ -1741,32 +1909,27 @@ The caller is responsible for checking return values. For `int`-returning functi
 
 ### 15.2 The `Option` and `Result` Pattern
 
-Lain formalizes error handling through algebraic data types. While generic types are not yet fully implemented, the standard pattern for any fallible operation is to return a `Result` or `Option` ADT:
+Lain formalizes error handling through algebraic data types using compile-time generics:
 
 ```lain
-type OptionInt {
-    Some { value int }
-    None
-}
+import std.option
+import std.result
 
-type ResultFile {
-    Ok { f File }
-    Err { code int }
-}
+type OptFile = Option(File)
+type FileResult = Result(File, int)
 ```
 
 Combined with `case` pattern matching, this provides type-safe error handling without exceptions and forces the caller to acknowledge the failure path:
 
 ```lain
-var result = try_open("file.txt")
+var result = FileResult.Ok(my_file)
 case result {
     Ok(f): write_file(f, "hello")
     Err(code): libc_printf("Error: %d\n", code)
 }
 ```
 
-> [!NOTE]
-> The current compiler does not have generic types. `Option` and `Result` would need to be defined per-type until `comptime` generics are implemented.
+See `std/option.ln` and `std/result.ln` in §10.2 for full usage examples.
 
 ---
 
@@ -1962,7 +2125,7 @@ if_stmt         = "if" expr block { "elif" expr block } [ "else" block ] ;
 for_stmt        = "for" IDENT ["," IDENT] "in" expr ".." expr block ;
 while_stmt      = "while" expr block ;           (* only valid inside proc *)
 
-case_stmt       = "case" expr "{" { case_arm } "}" ;
+case_stmt       = "case" ["&"] expr "{" { case_arm } "}" ;
 case_arm        = pattern ":" (expr | block) ;
 pattern         = IDENT [ "(" pattern_list ")" ]
                 | "else" ;
