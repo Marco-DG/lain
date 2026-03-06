@@ -233,7 +233,7 @@ static bool ltable_consume_field(LTable *t, Id *var_id, Id *field_id, int curren
         if (fs->field_name->length == field_id->length &&
             strncmp(fs->field_name->name, field_id->name, field_id->length) == 0) {
             if (fs->is_consumed) {
-                fprintf(stderr, "Error Ln %li, Col %li: field '%.*s' of '%.*s' was already consumed.\n",
+                fprintf(stderr, "[E002] Error Ln %li, Col %li: field '%.*s' of '%.*s' was already consumed.\n",
                         (long)e->line, (long)e->col,
                         (int)field_id->length, field_id->name,
                         (int)var_id->length, var_id->name);
@@ -241,7 +241,7 @@ static bool ltable_consume_field(LTable *t, Id *var_id, Id *field_id, int curren
                 exit(1);
             }
             if (e->defined_loop_depth != current_loop_depth) {
-                fprintf(stderr, "Error Ln %li, Col %li: attempting to consume field '%.*s' of '%.*s' inside a loop.\n",
+                fprintf(stderr, "[E006] Error Ln %li, Col %li: attempting to consume field '%.*s' of '%.*s' inside a loop.\n",
                         (long)e->line, (long)e->col,
                         (int)field_id->length, field_id->name,
                         (int)var_id->length, var_id->name);
@@ -348,14 +348,14 @@ static void ltable_consume(LTable *t, Id *id, int current_loop_depth) {
         return;
     }
     if (e->state != LSTATE_UNCONSUMED) {
-        fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was already used/consumed.\n",
+        fprintf(stderr, "[E002] Error Ln %li, Col %li: linear variable '%.*s' was already used/consumed.\n",
                 (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
         fprintf(stderr, "  --> declared at Ln %li, Col %li\n", (long)e->line, (long)e->col);
         diagnostic_show_line(e->line, e->col);
         exit(1);
     }
     if (e->defined_loop_depth != current_loop_depth) {
-        fprintf(stderr, "Error Ln %li, Col %li: attempting to consume linear variable '%.*s' defined outside a loop from inside a loop.\n",
+        fprintf(stderr, "[E006] Error Ln %li, Col %li: attempting to consume linear variable '%.*s' defined outside a loop from inside a loop.\n",
                 (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
         fprintf(stderr, "  --> declared at Ln %li, Col %li (loop depth %d, current %d)\n",
                 (long)e->line, (long)e->col, e->defined_loop_depth, current_loop_depth);
@@ -382,7 +382,7 @@ static void ltable_ensure_all_consumed(LTable *t) {
             if (e->field_states) {
                 for (FieldState *fs = e->field_states; fs; fs = fs->next) {
                     if (!fs->is_consumed) {
-                        fprintf(stderr, "Error Ln %li, Col %li: linear field '%.*s' of '%.*s' was not consumed before return.\n",
+                        fprintf(stderr, "[E003] Error Ln %li, Col %li: linear field '%.*s' of '%.*s' was not consumed before return.\n",
                                 (long)e->line, (long)e->col,
                                 (int)fs->field_name->length, fs->field_name->name,
                                 (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
@@ -397,7 +397,7 @@ static void ltable_ensure_all_consumed(LTable *t) {
                     }
                 }
             } else {
-                fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before return.\n",
+                fprintf(stderr, "[E003] Error Ln %li, Col %li: linear variable '%.*s' was not consumed before return.\n",
                         (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
                 fprintf(stderr, "  --> declared at Ln %li, Col %li\n", (long)e->line, (long)e->col);
                 fprintf(stderr, "  help: consume with `mov %.*s` or add `defer { drop(mov %.*s) }`\n",
@@ -429,7 +429,7 @@ static void ltable_pop_scope(LTable *tbl, LEntry *saved_head) {
             if (e->field_states) {
                 for (FieldState *fs = e->field_states; fs; fs = fs->next) {
                     if (!fs->is_consumed) {
-                        fprintf(stderr, "Error Ln %li, Col %li: linear field '%.*s' of '%.*s' was not consumed before end of scope.\n",
+                        fprintf(stderr, "[E003] Error Ln %li, Col %li: linear field '%.*s' of '%.*s' was not consumed before end of scope.\n",
                                 (long)e->line, (long)e->col,
                                 (int)fs->field_name->length, fs->field_name->name,
                                 (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
@@ -437,7 +437,7 @@ static void ltable_pop_scope(LTable *tbl, LEntry *saved_head) {
                     }
                 }
             } else {
-                fprintf(stderr, "Error Ln %li, Col %li: linear variable '%.*s' was not consumed before end of scope.\n",
+                fprintf(stderr, "[E003] Error Ln %li, Col %li: linear variable '%.*s' was not consumed before end of scope.\n",
                         (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
                 errors++;
             }
@@ -583,13 +583,13 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
             LEntry *entry = ltable_find(tbl, id);
             if (entry) {
                 if (entry->state == LSTATE_CONSUMED) {
-                    fprintf(stderr, "Error Ln %li, Col %li: use of linear variable '%.*s' after it was moved.\n",
+                    fprintf(stderr, "[E001] Error Ln %li, Col %li: use of linear variable '%.*s' after it was moved.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
                     diagnostic_show_line((e->line), (e->col));
                     exit(1);
                 }
                 if (!entry->is_initialized) {
-                    fprintf(stderr, "Error Ln %li, Col %li: use of uninitialized variable '%.*s'.\n",
+                    fprintf(stderr, "[E005] Error Ln %li, Col %li: use of uninitialized variable '%.*s'.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
                     diagnostic_show_line((e->line), (e->col));
                     exit(1);
@@ -669,7 +669,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     // Only check for member-expression args if the borrow is ACTIVE (not RESERVED)
                     bool is_direct_move = (arg->kind == EXPR_IDENTIFIER || arg->kind == EXPR_MOVE);
                     if (is_direct_move && tbl->borrows && borrow_is_borrowed(tbl->borrows, owner_id)) {
-                        fprintf(stderr, "Error Ln %li, Col %li: cannot move '%.*s' because it is currently borrowed.\n",
+                        fprintf(stderr, "[E008] Error Ln %li, Col %li: cannot move '%.*s' because it is currently borrowed.\n",
                                 (long)(e->line), (long)(e->col), (int)owner_id->length, owner_id->name);
                         diagnostic_show_line((e->line), (e->col));
                         exit(1);
@@ -677,7 +677,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     if (arg->kind == EXPR_MOVE) {
                         DBG("EXPR_CALL: '%.*s' already consumed by EXPR_MOVE", (int)owner_id->length, owner_id->name);
                     } else {
-                        fprintf(stderr, "Error Ln %li, Col %li: moving linear variable '%.*s' requires explicit 'mov' at the call site.\n",
+                        fprintf(stderr, "[E007] Error Ln %li, Col %li: moving linear variable '%.*s' requires explicit 'mov' at the call site.\n",
                                 (long)(e->line), (long)(e->col), (int)owner_id->length, owner_id->name);
                         diagnostic_show_line((e->line), (e->col));
                         exit(1);
@@ -767,15 +767,18 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         break;
 
     case EXPR_MATCH: {
+        BorrowEntry *borrowed_match_entry_e = NULL;
         if (e->as.match_expr.value) {
             if (e->as.match_expr.is_borrowed) {
-                // Non-consuming match: register a temporary shared borrow instead of consuming
+                // Non-consuming match: register a persistent shared borrow for the match body
                 Expr *val = e->as.match_expr.value;
                 if (val->kind == EXPR_IDENTIFIER && tbl->borrows && tbl->arena) {
                     Id *owner_id = val->as.identifier_expr.id;
                     LEntry *entry = ltable_find(tbl, owner_id);
                     Region *owner_region = entry ? entry->region : (tbl->borrows ? tbl->borrows->current_region : NULL);
-                    borrow_register(tbl->arena, tbl->borrows, owner_id, owner_id, MODE_SHARED, owner_region, true);
+                    borrow_register(tbl->arena, tbl->borrows, owner_id, owner_id, MODE_SHARED, owner_region, false);
+                    borrowed_match_entry_e = tbl->borrows->head;
+                    borrowed_match_entry_e->binding_id = owner_id;
                 }
             } else {
                 sema_check_expr_linearity(e->as.match_expr.value, tbl, loop_depth);
@@ -806,6 +809,9 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
             ltable_free(first_branch);
         }
         ltable_free(parent_snapshot);
+        if (borrowed_match_entry_e && tbl->borrows) {
+            borrow_remove_entry(tbl->borrows, borrowed_match_entry_e);
+        }
         break;
     }
 
@@ -826,7 +832,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 // Phase 5: check if trying to whole-move a partially consumed var
                 LEntry *entry = ltable_find(tbl, idptr);
                 if (entry && ltable_is_partially_consumed(entry)) {
-                    fprintf(stderr, "Error Ln %li, Col %li: cannot move '%.*s' because some fields have already been consumed.\n",
+                    fprintf(stderr, "[E008] Error Ln %li, Col %li: cannot move '%.*s' because some fields have already been consumed.\n",
                             (long)e->line, (long)e->col, (int)idptr->length, idptr->name);
                     diagnostic_show_line(e->line, e->col);
                     exit(1);
@@ -1050,7 +1056,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     case STMT_EXPR: {
         Expr *e = s->as.expr_stmt.expr;
         if (e && e->type && is_type_move(e->type)) {
-            fprintf(stderr, "Error Ln %li, Col %li: discarding value of linear type (move) is not allowed.\n", (long)s->line, (long)s->col);
+            fprintf(stderr, "[E003] Error Ln %li, Col %li: discarding value of linear type (move) is not allowed.\n", (long)s->line, (long)s->col);
             diagnostic_show_line(s->line, s->col);
             exit(1);
         }
@@ -1139,7 +1145,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             if (root && root->kind == EXPR_IDENTIFIER) {
                 Decl *d = root->decl;
                 if (d && d->kind == DECL_VARIABLE && !d->as.variable_decl.is_parameter) {
-                    fprintf(stderr, "Error Ln %li, Col %li: cannot return mutable reference to local variable '%.*s'. "
+                    fprintf(stderr, "[E010] Error Ln %li, Col %li: cannot return mutable reference to local variable '%.*s'. "
                             "Local variables are deallocated when the function returns.\n",
                             (long)s->line, (long)s->col,
                             (int)root->as.identifier_expr.id->length,
@@ -1155,15 +1161,18 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     }
 
     case STMT_MATCH: {
+        BorrowEntry *borrowed_match_entry = NULL;
         if (s->as.match_stmt.value) {
             if (s->as.match_stmt.is_borrowed) {
-                // Non-consuming match: register a temporary shared borrow instead of consuming
+                // Non-consuming match: register a persistent shared borrow for the match body
                 Expr *val = s->as.match_stmt.value;
                 if (val->kind == EXPR_IDENTIFIER && tbl->borrows && tbl->arena) {
                     Id *owner_id = val->as.identifier_expr.id;
                     LEntry *entry = ltable_find(tbl, owner_id);
                     Region *owner_region = entry ? entry->region : (tbl->borrows ? tbl->borrows->current_region : NULL);
-                    borrow_register(tbl->arena, tbl->borrows, owner_id, owner_id, MODE_SHARED, owner_region, true);
+                    borrow_register(tbl->arena, tbl->borrows, owner_id, owner_id, MODE_SHARED, owner_region, false);
+                    borrowed_match_entry = tbl->borrows->head;
+                    borrowed_match_entry->binding_id = owner_id;
                 }
             } else {
                 sema_check_expr_linearity(s->as.match_stmt.value, tbl, loop_depth);
@@ -1199,6 +1208,10 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             ltable_free(first_branch);
         }
         ltable_free(parent_snapshot);
+        // Remove the borrowed match borrow now that the match body is done
+        if (borrowed_match_entry && tbl->borrows) {
+            borrow_remove_entry(tbl->borrows, borrowed_match_entry);
+        }
         break;
     }
 

@@ -1,0 +1,8 @@
+// Generic Result type: represents success or failure
+
+func Result(comptime T type, comptime E type) type {
+    return type {
+        Ok { value T }
+        Err { error E }
+    }
+}

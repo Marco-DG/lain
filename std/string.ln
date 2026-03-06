@@ -1,0 +1,6 @@
+// Standard string utilities
+// TODO: requires emitter support for char* interop (u8 vs char mismatch)
+// Currently, extern declarations of strlen/strcmp conflict with C headers
+// because Lain emits *u8 as uint8_t* but C expects char*.
+
+import std.c
