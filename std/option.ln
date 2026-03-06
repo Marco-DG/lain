@@ -1,0 +1,8 @@
+// Generic Option type: represents an optional value
+
+func Option(comptime T type) type {
+    return type {
+        Some { value T }
+        None
+    }
+}

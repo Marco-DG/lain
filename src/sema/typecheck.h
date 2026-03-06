@@ -414,7 +414,7 @@ void sema_infer_expr(Expr *e) {
             for (ExprList *a = e->as.call_expr.args; a; a = a->next) n_args++;
             if (n_args != n_params) {
                 Id *fn_name = cd->as.function_decl.name;
-                fprintf(stderr, "Error Ln %li, Col %li: function '%.*s' expects %d argument(s), got %d.\n",
+                fprintf(stderr, "[E012] Error Ln %li, Col %li: function '%.*s' expects %d argument(s), got %d.\n",
                         (long)e->line, (long)e->col,
                         (int)fn_name->length, fn_name->name,
                         n_params, n_args);
@@ -576,14 +576,14 @@ void sema_infer_expr(Expr *e) {
         while (a) { arg_count++; a = a->next; }
         
         if (arg_count < field_count) {
-            fprintf(stderr, "Error Ln %li, Col %li: Partial initialization of struct '%.*s'. Expected %d arguments, got %d.\n",
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: Partial initialization of struct '%.*s'. Expected %d arguments, got %d.\n",
                     e->line, e->col,
                     (int)callee_decl->as.struct_decl.name->length, callee_decl->as.struct_decl.name->name,
                     field_count, arg_count);
             diagnostic_show_line(e->line, e->col);
             exit(1);
         } else if (arg_count > field_count) {
-            fprintf(stderr, "Error Ln %li, Col %li: Too many arguments for struct '%.*s'. Expected %d, got %d.\n",
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: Too many arguments for struct '%.*s'. Expected %d, got %d.\n",
                     e->line, e->col,
                     (int)callee_decl->as.struct_decl.name->length, callee_decl->as.struct_decl.name->name,
                     field_count, arg_count);
@@ -643,13 +643,13 @@ void sema_infer_expr(Expr *e) {
             
             if (!proven_nonzero) {
                 if (!rhs_range.known) {
-                    fprintf(stderr, "Error Ln %li, Col %li: potential division by zero in pure function '%.*s'. "
+                    fprintf(stderr, "[E015] Error Ln %li, Col %li: potential division by zero in pure function '%.*s'. "
                             "The divisor's range is unknown. Use a constraint (e.g., `b int != 0`) to prove safety.\n",
                             (long)e->line, (long)e->col,
                             (int)current_function_decl->as.function_decl.name->length,
                             current_function_decl->as.function_decl.name->name);
                 } else {
-                    fprintf(stderr, "Error Ln %li, Col %li: potential division by zero in pure function '%.*s'. "
+                    fprintf(stderr, "[E015] Error Ln %li, Col %li: potential division by zero in pure function '%.*s'. "
                             "Divisor range [%ld, %ld] includes zero. Use a constraint (e.g., `b int != 0`) to prove safety.\n",
                             (long)e->line, (long)e->col,
                             (int)current_function_decl->as.function_decl.name->length,
@@ -675,7 +675,7 @@ void sema_infer_expr(Expr *e) {
                 lbuf[ll] = '\0';
                 Symbol *lsym = sema_lookup(lbuf);
                 if (lsym && lsym->decl && (lsym->decl->kind == DECL_STRUCT || lsym->decl->kind == DECL_ENUM)) {
-                    fprintf(stderr, "Error Ln %li, Col %li: cannot use '%s' on struct/enum type '%s'. "
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot use '%s' on struct/enum type '%s'. "
                             "Implement an 'equals' method and use it instead.\n",
                             (long)e->line, (long)e->col,
                             op == TOKEN_EQUAL_EQUAL ? "==" : "!=", lbuf);
@@ -845,7 +845,7 @@ void sema_infer_expr(Expr *e) {
     }
     
     if (!sema_check_expr_match_exhaustive(e)) {
-        fprintf(stderr, "Error Ln %li, Col %li: non-exhaustive match expression\n", e->line, e->col);
+        fprintf(stderr, "[E014] Error Ln %li, Col %li: non-exhaustive match expression\n", e->line, e->col);
         diagnostic_show_line(e->line, e->col);
         exit(1);
     }

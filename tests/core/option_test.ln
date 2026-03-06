@@ -1,0 +1,23 @@
+import std.option
+
+type OptInt = Option(int)
+
+proc main() int {
+    var a = OptInt.Some(42)
+    var b = OptInt.None
+
+    // Use statement match instead of expression match for reliability
+    var x = 0
+    case a {
+        Some(v): x = v
+        None: x = 0
+    }
+
+    var y = 0
+    case b {
+        Some(v): y = v
+        None: y = 99
+    }
+
+    return x + y
+}

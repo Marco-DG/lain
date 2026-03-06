@@ -146,22 +146,22 @@ static bool borrow_check_conflict_field(BorrowTable *t, Id *owner, OwnershipMode
                     continue; // allow shared read during reservation
                 }
                 if (field && e->borrowed_field) {
-                    fprintf(stderr, "borrow error: cannot borrow '%.*s.%.*s' because '%.*s.%.*s' is already mutably borrowed\n",
+                    fprintf(stderr, "[E004] borrow error: cannot borrow '%.*s.%.*s' because '%.*s.%.*s' is already mutably borrowed\n",
                             (int)owner->length, owner->name, (int)field->length, field->name,
                             (int)owner->length, owner->name, (int)e->borrowed_field->length, e->borrowed_field->name);
                 } else {
-                    fprintf(stderr, "borrow error: cannot borrow '%.*s' because it is already mutably borrowed\n",
+                    fprintf(stderr, "[E004] borrow error: cannot borrow '%.*s' because it is already mutably borrowed\n",
                             (int)owner->length, owner->name);
                 }
                 return true;
             }
             if (mode == MODE_MUTABLE) {
                 if (field && e->borrowed_field) {
-                    fprintf(stderr, "borrow error: cannot borrow '%.*s.%.*s' as mutable because '%.*s.%.*s' is already borrowed\n",
+                    fprintf(stderr, "[E004] borrow error: cannot borrow '%.*s.%.*s' as mutable because '%.*s.%.*s' is already borrowed\n",
                             (int)owner->length, owner->name, (int)field->length, field->name,
                             (int)owner->length, owner->name, (int)e->borrowed_field->length, e->borrowed_field->name);
                 } else {
-                    fprintf(stderr, "borrow error: cannot borrow '%.*s' as mutable because it is already borrowed\n",
+                    fprintf(stderr, "[E004] borrow error: cannot borrow '%.*s' as mutable because it is already borrowed\n",
                             (int)owner->length, owner->name);
                 }
                 return true;
@@ -211,7 +211,7 @@ static void borrow_register(Arena *arena, BorrowTable *t, Id *var, Id *owner,
     
     // Check that borrow doesn't outlive owner
     if (!region_contains(owner_region, t->current_region)) {
-        fprintf(stderr, "borrow error: reference '%.*s' would outlive its owner\n",
+        fprintf(stderr, "[E010] borrow error: reference '%.*s' would outlive its owner\n",
                 (int)var->length, var->name);
         exit(1);
     }
@@ -364,7 +364,7 @@ static bool borrow_check_owner_access_field(BorrowTable *t, Id *owner, Ownership
             if (e->phase == BORROW_RESERVED && access_mode == MODE_SHARED) {
                 continue; // two-phase: allow shared reads during reservation
             }
-            fprintf(stderr, "Error Ln %li, Col %li: cannot access '%.*s' because it is mutably borrowed by '%.*s'.\n",
+            fprintf(stderr, "[E004] Error Ln %li, Col %li: cannot access '%.*s' because it is mutably borrowed by '%.*s'.\n",
                     (long)line, (long)col,
                     (int)owner->length, owner->name,
                     (int)e->binding_id->length, e->binding_id->name);
@@ -372,7 +372,7 @@ static bool borrow_check_owner_access_field(BorrowTable *t, Id *owner, Ownership
             return true;
         }
         if (access_mode == MODE_MUTABLE && e->mode == MODE_SHARED) {
-            fprintf(stderr, "Error Ln %li, Col %li: cannot mutate '%.*s' because it is borrowed by '%.*s'.\n",
+            fprintf(stderr, "[E004] Error Ln %li, Col %li: cannot mutate '%.*s' because it is borrowed by '%.*s'.\n",
                     (long)line, (long)col,
                     (int)owner->length, owner->name,
                     (int)e->binding_id->length, e->binding_id->name);
@@ -394,6 +394,19 @@ static void borrow_clear_temporaries(BorrowTable *t) {
         } else {
             curr = &(*curr)->next;
         }
+    }
+}
+
+// Remove a specific borrow entry from the table
+static void borrow_remove_entry(BorrowTable *t, BorrowEntry *target) {
+    if (!t || !target) return;
+    BorrowEntry **curr = &t->head;
+    while (*curr) {
+        if (*curr == target) {
+            *curr = (*curr)->next;
+            return;
+        }
+        curr = &(*curr)->next;
     }
 }
 
@@ -441,7 +454,7 @@ static bool borrow_is_borrowed(BorrowTable *t, Id *owner) {
 static bool __attribute__((unused)) borrow_check_use_after_move(BorrowTable *t, Id *var) {
     BorrowEntry *e = borrow_find(t, var);
     if (e && e->owner_var == NULL) {
-        fprintf(stderr, "borrow error: use of reference '%.*s' after owner was moved\n",
+        fprintf(stderr, "[E001] borrow error: use of reference '%.*s' after owner was moved\n",
                 (int)var->length, var->name);
         return true;
     }

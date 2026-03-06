@@ -41,7 +41,9 @@
       "Bash(cd \"/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain\" && bash run_tests.sh 2>&1 | grep -E \"\\(FAIL|failed|Error|PASS:|All tests\\)\" | tail -20)",
       "Bash(./lain:*)",
       "Bash(gcc:*)",
-      "Bash(./lain_debug:*)"
+      "Bash(./lain_debug:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)"
     ]
   }
 }

@@ -1,0 +1,12 @@
+// Tests that mutating the scrutinee inside case & is rejected
+
+proc main() int {
+    var x = 42
+
+    case &x {
+        42: x = 99
+        else: x = 0
+    }
+
+    return x
+}

@@ -3,13 +3,14 @@
 
 proc main() int {
     var x = 42
+    var result = 0
 
     // Borrowed match: inspect x without consuming it
     case &x {
-        42: x = x + 1
-        else: x = 0
+        42: result = 1
+        else: result = 0
     }
 
     // x is still usable after borrowed match
-    return x
+    return x + result
 }

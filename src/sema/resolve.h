@@ -124,7 +124,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         // Phase 3: Purity & Test Refactoring
         // Reject `func main` and enforce `proc main`
         if (d->kind == DECL_FUNCTION && id->length == 4 && strncmp(id->name, "main", 4) == 0) {
-            fprintf(stderr, "Error Ln %li, Col %li: 'main' must be a procedure ('proc'), not a pure function ('func').\n", d->line, d->col);
+            fprintf(stderr, "[E013] Error Ln %li, Col %li: 'main' must be a procedure ('proc'), not a pure function ('func').\n", d->line, d->col);
             diagnostic_show_line(d->line, d->col);
             exit(1);
         }
@@ -296,12 +296,12 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                   // It's just an alias to an existing type (e.g., type MyInt = int)
                   sema_insert_global(raw, cname, eval_rhs->as.type_expr.type_value, d, false);
              } else {
-                  fprintf(stderr, "Error Ln %li, Col %li: Type alias must evaluate to a type at compile-time (got kind=%d)\n", d->line, d->col, eval_rhs->kind);
+                  fprintf(stderr, "[E012] Error Ln %li, Col %li: Type alias must evaluate to a type at compile-time (got kind=%d)\n", d->line, d->col, eval_rhs->kind);
                   diagnostic_show_line(d->line, d->col);
                   exit(1);
              }
         } else {
-             fprintf(stderr, "Error Ln %li, Col %li: Type alias RHS could not be evaluated\n", d->line, d->col);
+             fprintf(stderr, "[E012] Error Ln %li, Col %li: Type alias RHS could not be evaluated\n", d->line, d->col);
              diagnostic_show_line(d->line, d->col);
              exit(1);
         }
@@ -388,7 +388,7 @@ void sema_resolve_stmt(Stmt *s) {
     raw[L] = '\0';
 
     if (sema_lookup(raw)) {
-        fprintf(stderr, "Error Ln %li, Col %li: Redeclaration or shadowing of variable '%s' is forbidden\n", s->line, s->col, raw);
+        fprintf(stderr, "[E013] Error Ln %li, Col %li: Redeclaration or shadowing of variable '%s' is forbidden\n", s->line, s->col, raw);
         diagnostic_show_line(s->line, s->col);
         exit(1);
     }
@@ -504,7 +504,7 @@ void sema_resolve_stmt(Stmt *s) {
         // Identifier FOUND -> Assignment
         // Check mutability
         if (!sym->is_mutable) {
-             fprintf(stderr, "Error Ln %li, Col %li: Cannot assign to immutable variable '%s'\n", s->line, s->col, raw);
+             fprintf(stderr, "[E009] Error Ln %li, Col %li: Cannot assign to immutable variable '%s'\n", s->line, s->col, raw);
              diagnostic_show_line(s->line, s->col);
              exit(1);
         }
@@ -525,7 +525,7 @@ void sema_resolve_stmt(Stmt *s) {
     // Purity Check: func cannot modify global variable
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         if (lhs->is_global && lhs->decl && lhs->decl->kind == DECL_VARIABLE) {
-             fprintf(stderr, "Error Ln %li, Col %li: Pure function '%.*s' cannot modify global variable\n",
+             fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot modify global variable\n",
                      s->line, s->col,
                         (int)current_function_decl->as.function_decl.name->length,
                         current_function_decl->as.function_decl.name->name);
@@ -558,7 +558,7 @@ void sema_resolve_stmt(Stmt *s) {
                 is_param = root->decl->as.variable_decl.is_parameter;
             }
             if (!is_param) {
-                fprintf(stderr, "Error Ln %li, Col %li: Returning a mutable reference ('var') to a local variable is forbidden (dangling pointer)\n", s->line, s->col);
+                fprintf(stderr, "[E010] Error Ln %li, Col %li: Returning a mutable reference ('var') to a local variable is forbidden (dangling pointer)\n", s->line, s->col);
                 diagnostic_show_line(s->line, s->col);
                 exit(1);
             }
@@ -588,7 +588,7 @@ void sema_resolve_stmt(Stmt *s) {
   case STMT_WHILE: {
     // Purity: while loops are banned in pure functions (func)
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
-        fprintf(stderr, "Error Ln %li, Col %li: 'while' loops are not allowed in pure function '%.*s'. Use 'proc' instead.\n",
+        fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops are not allowed in pure function '%.*s'. Use 'proc' instead.\n",
                 s->line, s->col,
                 (int)current_function_decl->as.function_decl.name->length,
                 current_function_decl->as.function_decl.name->name);
@@ -775,7 +775,7 @@ void sema_resolve_expr(Expr *e) {
                                 snprintf(mangled_name + strlen(mangled_name), sizeof(mangled_name) - strlen(mangled_name), "_complexT");
                             }
                         } else {
-                             fprintf(stderr, "Error Ln %li: call to generic function '%.*s' missing type argument\n", 
+                             fprintf(stderr, "[E012] Error Ln %li: call to generic function '%.*s' missing type argument\n",
                                  e->line, (int)df->as.function_decl.name->length, df->as.function_decl.name->name);
                              diagnostic_show_line(e->line, e->col);
                              exit(1);
@@ -845,7 +845,7 @@ void sema_resolve_expr(Expr *e) {
         Expr *callee = e->as.call_expr.callee;
         if (callee->decl) {
             if (callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE) {
-                fprintf(stderr, "Error Ln %li, Col %li: Pure function '%.*s' cannot call procedure\n",
+                fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot call procedure\n",
                         e->line, e->col,
                         (int)current_function_decl->as.function_decl.name->length,
                         current_function_decl->as.function_decl.name->name);
