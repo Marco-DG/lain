@@ -22,6 +22,8 @@ extern char* strdup(const char*);
 typedef struct ModuleNode {
     char             *name;    // e.g. "foo.bar"
     DeclList         *decls;   // AST of that module
+    const char       *source_text; // raw source for diagnostics
+    const char       *source_file; // file path for diagnostics
     struct ModuleNode *next;
 } ModuleNode;
 
@@ -34,12 +36,22 @@ static bool module_already_loaded(const char *name) {
     return false;
 }
 
-static void record_module(const char *name, DeclList *decls) {
+static void record_module(const char *name, DeclList *decls, const char *source_text, const char *source_file) {
     ModuleNode *n = malloc(sizeof *n);
     n->name  = strdup(name);
     n->decls = decls;
+    n->source_text = source_text;
+    n->source_file = source_file;
     n->next  = loaded_modules;
     loaded_modules = n;
+}
+
+// Lookup a module record by name
+static ModuleNode *find_module(const char *name) {
+    for (ModuleNode *n = loaded_modules; n; n = n->next)
+        if (strcmp(n->name, name) == 0)
+            return n;
+    return NULL;
 }
 
 /// “foo.bar.baz” → “foo/bar/baz.ln”
@@ -118,7 +130,7 @@ static DeclList* load_module(Arena *file_arena,
     }
 
     // 5) record & return
-    record_module(modname, decls);
+    record_module(modname, decls, f.contents, path);
     return decls;
 }
 

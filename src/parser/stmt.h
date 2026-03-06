@@ -484,6 +484,12 @@ Stmt *parse_break_stmt(Arena *arena, Parser *parser) {
 
 Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
     // 'match' keyword already consumed
+    // Check for `case &expr` — non-consuming (borrowed) match
+    bool is_borrowed = false;
+    if (parser_match(TOKEN_AMPERSAND)) {
+        is_borrowed = true;
+        parser_advance();
+    }
     Expr *value = parse_expr(arena, parser);
 
     // expect and consume '{'
@@ -646,7 +652,7 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
     parser_expect(TOKEN_R_BRACE, "Expected '}' after match block");
     parser_advance();
 
-    return stmt_match(arena, value, first);
+    return stmt_match(arena, value, first, is_borrowed);
 }
 
 

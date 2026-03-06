@@ -266,6 +266,7 @@ typedef struct StmtMatchCase {
 typedef struct {
     Expr *value;
     StmtMatchCase *cases;
+    bool is_borrowed;  // true for `case &expr { ... }` — non-consuming match
 } StmtMatch;
 
 typedef struct {
@@ -410,6 +411,7 @@ typedef struct ExprMatchCase {
 typedef struct {
     struct Expr *value;
     ExprMatchCase *cases;
+    bool is_borrowed;  // true for `case &expr { ... }` — non-consuming match
 } ExprMatch;
 
 typedef struct {
@@ -781,11 +783,12 @@ StmtMatchCase *stmt_match_case(Arena *arena, ExprList *patterns, StmtList *body)
 }
 
 
-Stmt *stmt_match(Arena *arena, Expr *value, StmtMatchCase *cases) {
+Stmt *stmt_match(Arena *arena, Expr *value, StmtMatchCase *cases, bool is_borrowed) {
     Stmt *s = arena_push(arena, Stmt);
     s->kind = STMT_MATCH;
     s->as.match_stmt.value = value;
     s->as.match_stmt.cases = cases;
+    s->as.match_stmt.is_borrowed = is_borrowed;
     return s;
 }
 
@@ -953,11 +956,12 @@ ExprMatchCase *expr_match_case(Arena *arena, ExprList *patterns, Expr *body) {
     return node;
 }
 
-Expr *expr_match(Arena *arena, Expr *value, ExprMatchCase *cases) {
+Expr *expr_match(Arena *arena, Expr *value, ExprMatchCase *cases, bool is_borrowed) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_MATCH;
     e->as.match_expr.value = value;
     e->as.match_expr.cases = cases;
+    e->as.match_expr.is_borrowed = is_borrowed;
     return e;
 }
 

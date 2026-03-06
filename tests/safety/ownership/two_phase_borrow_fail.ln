@@ -1,0 +1,21 @@
+// Tests that two-phase borrows still reject moves during reservation
+// Moving x while x is mutably borrowed should still fail
+
+type Data {
+    value int
+}
+
+proc consume_data(var d Data, mov other Data) {
+    d.value = other.value
+    drop(mov other)
+}
+
+proc main() int {
+    var d = Data(42)
+    var e = Data(99)
+
+    // Should fail: moving d while d is mutably borrowed
+    consume_data(var d, mov d)
+
+    return 0
+}

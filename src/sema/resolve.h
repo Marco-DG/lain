@@ -125,6 +125,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         // Reject `func main` and enforce `proc main`
         if (d->kind == DECL_FUNCTION && id->length == 4 && strncmp(id->name, "main", 4) == 0) {
             fprintf(stderr, "Error Ln %li, Col %li: 'main' must be a procedure ('proc'), not a pure function ('func').\n", d->line, d->col);
+            diagnostic_show_line(d->line, d->col);
             exit(1);
         }
   
@@ -296,10 +297,12 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                   sema_insert_global(raw, cname, eval_rhs->as.type_expr.type_value, d, false);
              } else {
                   fprintf(stderr, "Error Ln %li, Col %li: Type alias must evaluate to a type at compile-time (got kind=%d)\n", d->line, d->col, eval_rhs->kind);
+                  diagnostic_show_line(d->line, d->col);
                   exit(1);
              }
         } else {
              fprintf(stderr, "Error Ln %li, Col %li: Type alias RHS could not be evaluated\n", d->line, d->col);
+             diagnostic_show_line(d->line, d->col);
              exit(1);
         }
         break;
@@ -386,6 +389,7 @@ void sema_resolve_stmt(Stmt *s) {
 
     if (sema_lookup(raw)) {
         fprintf(stderr, "Error Ln %li, Col %li: Redeclaration or shadowing of variable '%s' is forbidden\n", s->line, s->col, raw);
+        diagnostic_show_line(s->line, s->col);
         exit(1);
     }
 
@@ -501,6 +505,7 @@ void sema_resolve_stmt(Stmt *s) {
         // Check mutability
         if (!sym->is_mutable) {
              fprintf(stderr, "Error Ln %li, Col %li: Cannot assign to immutable variable '%s'\n", s->line, s->col, raw);
+             diagnostic_show_line(s->line, s->col);
              exit(1);
         }
       }
@@ -524,6 +529,7 @@ void sema_resolve_stmt(Stmt *s) {
                      s->line, s->col,
                         (int)current_function_decl->as.function_decl.name->length,
                         current_function_decl->as.function_decl.name->name);
+             diagnostic_show_line(s->line, s->col);
              exit(1);
         }
     }
@@ -553,6 +559,7 @@ void sema_resolve_stmt(Stmt *s) {
             }
             if (!is_param) {
                 fprintf(stderr, "Error Ln %li, Col %li: Returning a mutable reference ('var') to a local variable is forbidden (dangling pointer)\n", s->line, s->col);
+                diagnostic_show_line(s->line, s->col);
                 exit(1);
             }
         }
@@ -585,6 +592,7 @@ void sema_resolve_stmt(Stmt *s) {
                 s->line, s->col,
                 (int)current_function_decl->as.function_decl.name->length,
                 current_function_decl->as.function_decl.name->name);
+        diagnostic_show_line(s->line, s->col);
         exit(1);
     }
     // Resolve condition and body normally (block-scoped)
@@ -769,6 +777,7 @@ void sema_resolve_expr(Expr *e) {
                         } else {
                              fprintf(stderr, "Error Ln %li: call to generic function '%.*s' missing type argument\n", 
                                  e->line, (int)df->as.function_decl.name->length, df->as.function_decl.name->name);
+                             diagnostic_show_line(e->line, e->col);
                              exit(1);
                         }
                     }
@@ -840,6 +849,7 @@ void sema_resolve_expr(Expr *e) {
                         e->line, e->col,
                         (int)current_function_decl->as.function_decl.name->length,
                         current_function_decl->as.function_decl.name->name);
+                diagnostic_show_line(e->line, e->col);
                 exit(1);
             }
         }

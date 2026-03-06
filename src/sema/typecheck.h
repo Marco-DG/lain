@@ -174,6 +174,7 @@ void sema_infer_expr(Expr *e) {
                 fprintf(stderr, "sema error Ln %li, Col %li: ADT has no variant '%.*s'\n",
                         e->line, e->col,
                         (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+                diagnostic_show_line(e->line, e->col);
                 exit(1);
             }
             // ADT variant evaluates to the ADT instance type
@@ -204,6 +205,7 @@ void sema_infer_expr(Expr *e) {
                 e->line, e->col,
                 (int)v->name->length, v->name->name,
                 (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+        diagnostic_show_line(e->line, e->col);
         exit(1);
     }
     
@@ -217,6 +219,7 @@ void sema_infer_expr(Expr *e) {
                         e->line, e->col,
                         (int)t->base_type->length, t->base_type->name,
                         (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+                diagnostic_show_line(e->line, e->col);
                 exit(1);
             }
             
@@ -415,6 +418,7 @@ void sema_infer_expr(Expr *e) {
                         (long)e->line, (long)e->col,
                         (int)fn_name->length, fn_name->name,
                         n_params, n_args);
+                diagnostic_show_line(e->line, e->col);
                 exit(1);
             }
         }
@@ -576,12 +580,14 @@ void sema_infer_expr(Expr *e) {
                     e->line, e->col,
                     (int)callee_decl->as.struct_decl.name->length, callee_decl->as.struct_decl.name->name,
                     field_count, arg_count);
+            diagnostic_show_line(e->line, e->col);
             exit(1);
         } else if (arg_count > field_count) {
             fprintf(stderr, "Error Ln %li, Col %li: Too many arguments for struct '%.*s'. Expected %d, got %d.\n",
                     e->line, e->col,
                     (int)callee_decl->as.struct_decl.name->length, callee_decl->as.struct_decl.name->name,
                     field_count, arg_count);
+            diagnostic_show_line(e->line, e->col);
             exit(1);
         }
     }
@@ -650,11 +656,12 @@ void sema_infer_expr(Expr *e) {
                             current_function_decl->as.function_decl.name->name,
                             (long)rhs_range.min, (long)rhs_range.max);
                 }
+                diagnostic_show_line(e->line, e->col);
                 exit(1);
             }
         }
     }
-    
+
     // Struct equality check: == and != on struct/enum types is a compile error (§8.8)
     {
         TokenKind op = e->as.binary_expr.op;
@@ -672,6 +679,7 @@ void sema_infer_expr(Expr *e) {
                             "Implement an 'equals' method and use it instead.\n",
                             (long)e->line, (long)e->col,
                             op == TOKEN_EQUAL_EQUAL ? "==" : "!=", lbuf);
+                    diagnostic_show_line(e->line, e->col);
                     exit(1);
                 }
             }
@@ -744,6 +752,7 @@ void sema_infer_expr(Expr *e) {
     ExprList *elems = e->as.array_literal_expr.elements;
     if (!elems) {
         fprintf(stderr, "sema error Ln %li, Col %li: empty array literal\n", e->line, e->col);
+        diagnostic_show_line(e->line, e->col);
         exit(1);
     }
     Type *elem_type = NULL;
@@ -837,6 +846,7 @@ void sema_infer_expr(Expr *e) {
     
     if (!sema_check_expr_match_exhaustive(e)) {
         fprintf(stderr, "Error Ln %li, Col %li: non-exhaustive match expression\n", e->line, e->col);
+        diagnostic_show_line(e->line, e->col);
         exit(1);
     }
     
