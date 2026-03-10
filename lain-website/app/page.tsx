@@ -13,21 +13,40 @@ export default function Home() {
           {/* LEFT PANEL: NAVIGATION & STATUS */}
           <aside className={styles.sidebar}>
             <div className={styles.sidebarTop}>
-              <h1 className={styles.logo}>[ sys.lain ]</h1>
+              <div className={styles.logoContainer}>
+                <h1 className={styles.logo}>[ sys.lain ]</h1>
+                <div className={styles.logoMetadata}>
+                  <span>PROTOCOL: v3.3</span>
+                  <span>SIG: 0xLAIN</span>
+                </div>
+              </div>
+
               <nav className={styles.navLinks}>
-                <Link href="/docs" className={styles.navLink}>{">"} DOCUMENTATION</Link>
-                <Link href="/spec" className={styles.navLink}>{">"} SPECIFICATIONS</Link>
-                <a className={styles.navLink} href="https://github.com/Marco-DG/lain" target="_blank" rel="noopener noreferrer">{">"} SOURCE_CODE</a>
-                <div style={{ height: '1rem' }}></div>
-                <Link href="/install" className={styles.navLink} style={{ color: 'var(--border-active)' }}>{">"} INSTALL_LAIN</Link>
+                <div className={styles.navGroup}>
+                  <span className={styles.navLabel}>SEC_01 . DOCS</span>
+                  <Link href="/docs" className={styles.navLink}>DOCUMENTATION</Link>
+                </div>
+
+                <div className={styles.navGroup}>
+                  <span className={styles.navLabel}>SEC_02 . SPEC</span>
+                  <Link href="/spec" className={styles.navLink}>SPECIFICATIONS</Link>
+                </div>
+
+                <div className={styles.navGroup}>
+                  <span className={styles.navLabel}>SEC_03 . REPO</span>
+                  <a className={styles.navLink} href="https://github.com/Marco-DG/lain" target="_blank" rel="noopener noreferrer">SOURCE_CODE</a>
+                </div>
+
+                <div className={styles.navGroup} style={{ marginTop: '2rem' }}>
+                  <span className={styles.navLabel} style={{ color: 'var(--accent-red)' }}>SYS_EXEC . INSTALL</span>
+                  <Link href="/install" className={styles.navLink} style={{ color: 'var(--accent-red)' }}>INSTALL_LAIN</Link>
+                </div>
               </nav>
             </div>
 
-            <div className={styles.sysStatus}>
-              LAYER 33 ACTIVE<br />
-              MEM: [ALLOCATED_ZERO]<br />
-              ZERO RUNTIME OVERHEAD<br />
-              [ VRA_ENGINE: ONLINE ]
+            <div className={styles.sidebarBottom}>
+              <div className={styles.dataLine}></div>
+              <span className={styles.buildInfo}>BUILD: 2026.03.10 // WIRED</span>
             </div>
           </aside>
 
