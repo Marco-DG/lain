@@ -59,23 +59,58 @@
   justify-content: space-between;
 }
 
+.logoContainer {
+  margin-bottom: 3.5rem;
+  border-bottom: 1px solid var(--border-active);
+  padding-bottom: 1.5rem;
+}
+
 .logo {
   font-family: var(--font-logo);
   font-size: 2.2rem;
   color: var(--text-main);
   letter-spacing: -2px;
-  border-bottom: 2px solid var(--border-active);
-  padding-bottom: 1rem;
-  margin-bottom: 2.5rem;
   text-transform: lowercase;
+  margin-bottom: 0.25rem;
+}
+
+.logoMetadata {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
 
 .navLinks {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 2rem;
   font-family: var(--font-mono);
-  font-size: 1.1rem;
+}
+
+.navGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  position: relative;
+  padding-left: 1rem;
+  border-left: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.navGroup:hover {
+  border-left-color: var(--border-active);
+  background: rgba(139, 30, 30, 0.03);
+}
+
+.navLabel {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
 }
 
 .navLink {
@@ -83,21 +118,33 @@
   text-decoration: none;
   cursor: pointer;
   letter-spacing: 0.05em;
-  transition: all 0.1s;
+  font-size: 1.1rem;
+  transition: all 0.2s;
 }
 
 .navLink:hover {
   color: var(--text-main);
-  text-shadow: 0 0 5px var(--border-active);
+  text-shadow: 0 0 8px var(--border-active);
+  transform: translateX(4px);
 }
 
-.sysStatus {
+.sidebarBottom {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.dataLine {
+  height: 1px;
+  background: linear-gradient(90deg, var(--border-active), transparent);
+  opacity: 0.5;
+}
+
+.buildInfo {
   font-family: var(--font-mono);
-  font-size: 0.85rem;
-  color: var(--accent-sepia);
-  border-top: 1px solid var(--border-main);
-  padding-top: 1.5rem;
-  line-height: 1.6;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 1px;
 }
 
 /* --- CENTER PANEL --- */
