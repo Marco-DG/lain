@@ -1,0 +1,149 @@
+.section {
+    padding: 8rem 4rem;
+    max-width: 1400px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 5;
+}
+
+.sectionTitle {
+    font-size: 3rem;
+    color: var(--text-main);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-family: var(--font-logo);
+    margin-bottom: 6rem;
+    text-align: center;
+}
+
+.showcaseList {
+    display: flex;
+    flex-direction: column;
+    gap: 8rem;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 4rem;
+}
+
+.row:nth-child(even) {
+    flex-direction: row-reverse;
+}
+
+.textColumn {
+    flex: 1;
+    max-width: 500px;
+}
+
+.index {
+    font-family: var(--font-mono);
+    font-size: 1.5rem;
+    color: var(--accent-red);
+    margin-bottom: 1rem;
+    letter-spacing: 0.2em;
+}
+
+.title {
+    font-size: 2.5rem;
+    color: var(--text-main);
+    font-family: var(--font-main);
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+    line-height: 1.1;
+}
+
+.description {
+    font-size: 1.2rem;
+    line-height: 1.7;
+    color: var(--text-dim);
+    border-left: 2px solid var(--accent-purple);
+    padding-left: 1.5rem;
+}
+
+.codeColumn {
+    flex: 1.5;
+    min-width: 0;
+}
+
+.editorShell {
+    background-color: #0b0a0c;
+    border: 1px solid #222;
+    box-shadow: 20px 20px 0px rgba(0, 0, 0, 0.4);
+}
+
+.editorTop {
+    background-color: #141115;
+    padding: 0.75rem 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid #222;
+}
+
+.dots {
+    width: 12px;
+    height: 12px;
+    background-color: #333;
+    border-radius: 50%;
+}
+
+.dots:nth-child(1) {
+    background-color: var(--accent-red);
+    opacity: 0.7;
+}
+
+.filename {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    font-size: 0.9rem;
+}
+
+.editorBody {
+    padding: 2rem;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    line-height: 1.6;
+    color: #c9c9c9;
+    overflow-x: auto;
+    white-space: pre;
+}
+
+/* Hardcoded highlighter colors based on text content via CSS for simplicity, or just simple mono text for authentic brutalism */
+.editorBody code {
+    color: #c0b5c1;
+    /* Distressed grayish purple */
+}
+
+@media (max-width: 1024px) {
+
+    .row,
+    .row:nth-child(even) {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2rem;
+    }
+
+    .codeColumn {
+        width: 100%;
+    }
+}
+
+@media (max-width: 768px) {
+    .section {
+        padding: 4rem 2rem;
+    }
+
+    .sectionTitle {
+        font-size: 2rem;
+        margin-bottom: 3rem;
+        text-align: left;
+    }
+
+    .title {
+        font-size: 1.8rem;
+    }
+}
