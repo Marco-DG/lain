@@ -1,0 +1,149 @@
+.hero {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    position: relative;
+    overflow: hidden;
+    padding: 0 4rem;
+    background: radial-gradient(circle at 70% 50%, var(--bg-secondary) 0%, var(--bg-color) 100%);
+}
+
+.hexDump {
+    position: absolute;
+    top: 0;
+    left: -20px;
+    width: 35vw;
+    height: 100%;
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.1;
+    color: var(--text-dim);
+    opacity: 0.15;
+    pointer-events: none;
+    z-index: 0;
+    white-space: pre;
+}
+
+.verticalKanji {
+    position: absolute;
+    right: 4rem;
+    top: 15vh;
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+    font-family: var(--font-main);
+    font-size: 1.5rem;
+    letter-spacing: 0.5em;
+    color: var(--text-main);
+    opacity: 0.8;
+    z-index: 1;
+    border-left: 1px solid var(--accent-red);
+    padding-left: 1rem;
+}
+
+.content {
+    position: relative;
+    z-index: 10;
+    max-width: 600px;
+    margin-left: 10vw;
+}
+
+.titleWrapper {
+    margin-bottom: 2rem;
+    border-bottom: 2px solid var(--accent-purple);
+    padding-bottom: 1rem;
+    display: inline-block;
+}
+
+.title {
+    font-size: 10rem;
+    font-family: var(--font-logo);
+    color: var(--text-main);
+    line-height: 1;
+    margin: 0;
+    letter-spacing: -0.05em;
+    text-transform: lowercase;
+}
+
+.subtitle {
+    display: block;
+    font-family: var(--font-main);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.3em;
+    color: var(--accent-red);
+    margin-top: -0.5rem;
+}
+
+.description {
+    font-size: 1.2rem;
+    line-height: 1.6;
+    color: var(--text-dim);
+    margin-bottom: 3rem;
+    font-family: var(--font-mono);
+    max-width: 400px;
+    border-left: 4px solid var(--accent-sepia);
+    padding-left: 1rem;
+}
+
+.actions {
+    display: flex;
+    gap: 2rem;
+}
+
+.buttonMain,
+.buttonWire {
+    display: inline-block;
+    padding: 1rem 2rem;
+    font-family: var(--font-logo);
+    font-size: 1.1rem;
+    text-decoration: none;
+    text-transform: uppercase;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.buttonMain {
+    background-color: var(--text-main);
+    color: var(--bg-color);
+    font-weight: bold;
+}
+
+.buttonMain:hover {
+    background-color: var(--accent-red);
+    color: white;
+}
+
+.buttonWire {
+    background-color: transparent;
+    color: var(--text-main);
+    border: 1px solid var(--text-dim);
+}
+
+.buttonWire:hover {
+    border-color: var(--accent-purple);
+    background-color: rgba(93, 64, 114, 0.2);
+}
+
+@media (max-width: 768px) {
+    .hero {
+        padding: 0 2rem;
+    }
+
+    .content {
+        margin-left: 0;
+    }
+
+    .title {
+        font-size: 5rem;
+    }
+
+    .verticalKanji {
+        display: none;
+    }
+
+    .actions {
+        flex-direction: column;
+        gap: 1rem;
+    }
+}
