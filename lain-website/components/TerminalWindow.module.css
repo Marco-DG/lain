@@ -1,0 +1,133 @@
+.section {
+    padding: 4rem;
+    display: flex;
+    justify-content: center;
+    position: relative;
+    z-index: 5;
+}
+
+.terminal {
+    width: 100%;
+    max-width: 900px;
+    background-color: var(--bg-color);
+    border: 2px solid var(--text-dim);
+    box-shadow: 20px 20px 0px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    background-color: var(--bg-secondary);
+    padding: 0.5rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid var(--text-dim);
+    font-family: var(--font-mono);
+    color: var(--text-main);
+    text-transform: uppercase;
+}
+
+.controls {
+    display: flex;
+    gap: 0.5rem;
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+.body {
+    padding: 2rem;
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    line-height: 1.6;
+    color: #c9c9c9;
+    min-height: 400px;
+    background-image: repeating-linear-gradient(0deg, transparent, transparent 1.5rem, rgba(255, 255, 255, 0.02) 1.5rem, rgba(255, 255, 255, 0.02) 3rem);
+}
+
+.line {
+    display: flex;
+    gap: 1rem;
+}
+
+.prompt {
+    color: var(--accent-red);
+}
+
+.command {
+    color: var(--text-main);
+}
+
+.output {
+    margin-top: 0.5rem;
+    color: var(--text-dim);
+    margin-bottom: 1rem;
+}
+
+.keyword {
+    color: var(--accent-purple);
+    font-weight: bold;
+}
+
+.type {
+    color: var(--accent-sepia);
+}
+
+.string {
+    color: #a9a9a9;
+    font-style: italic;
+}
+
+.number {
+    color: var(--text-main);
+}
+
+.success {
+    color: var(--text-main);
+}
+
+.cursor {
+    display: inline-block;
+    width: 10px;
+    height: 1.2rem;
+    background-color: var(--text-main);
+    animation: blink 1s step-end infinite;
+}
+
+.footer {
+    background-color: var(--text-dim);
+    color: var(--bg-color);
+    padding: 0.25rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0;
+    }
+}
+
+@media (max-width: 768px) {
+    .section {
+        padding: 2rem;
+    }
+
+    .terminal {
+        box-shadow: 10px 10px 0px rgba(0, 0, 0, 0.5);
+    }
+
+    .body {
+        font-size: 0.9rem;
+        padding: 1rem;
+    }
+}
