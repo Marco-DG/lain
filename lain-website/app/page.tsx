@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import styles from "./page.module.css";
 
 export default function Home() {
@@ -14,11 +15,11 @@ export default function Home() {
             <div className={styles.sidebarTop}>
               <h1 className={styles.logo}>[ sys.lain ]</h1>
               <nav className={styles.navLinks}>
-                <a className={styles.navLink}>{">"} DOCUMENTATION</a>
-                <a className={styles.navLink}>{">"} SPECIFICATIONS</a>
+                <Link href="/docs" className={styles.navLink}>{">"} DOCUMENTATION</Link>
+                <Link href="/spec" className={styles.navLink}>{">"} SPECIFICATIONS</Link>
                 <a className={styles.navLink} href="https://github.com/Marco-DG/lain" target="_blank" rel="noopener noreferrer">{">"} SOURCE_CODE</a>
                 <div style={{ height: '1rem' }}></div>
-                <a className={styles.navLink} style={{ color: 'var(--border-active)' }}>{">"} INSTALL_LAIN</a>
+                <Link href="/install" className={styles.navLink} style={{ color: 'var(--border-active)' }}>{">"} INSTALL_LAIN</Link>
               </nav>
             </div>
 

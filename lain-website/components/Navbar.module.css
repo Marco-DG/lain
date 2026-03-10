@@ -1,24 +1,15 @@
 .nav {
-    position: relative;
+    position: sticky;
+    top: 0;
     width: 100%;
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 1.5rem 4rem;
-    background-color: var(--bg-color);
+    background-color: rgba(9, 9, 11, 0.9);
+    backdrop-filter: blur(8px);
     z-index: 1000;
-    border-bottom: 1px solid var(--accent-red);
-}
-
-.nav::after {
-    content: "";
-    position: absolute;
-    bottom: -4px;
-    left: 0;
-    width: 100%;
-    height: 1px;
-    background-color: var(--text-dim);
-    opacity: 0.3;
+    border-bottom: 1px solid var(--border-main);
 }
 
 .logo {
@@ -29,7 +20,7 @@
 }
 
 .logoPrefix {
-    color: var(--accent-red);
+    color: var(--accent-sepia);
     font-size: 1.2rem;
     vertical-align: middle;
     margin-right: 0.2rem;
@@ -45,12 +36,12 @@
     color: var(--text-dim);
     text-decoration: none;
     font-size: 1.1rem;
-    transition: all 0.2s ease;
+    transition: color 0.2s ease;
 }
 
 .link:hover {
     color: var(--text-main);
-    background-color: var(--accent-red);
+    text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
 }
 
 @media (max-width: 768px) {
@@ -62,7 +53,9 @@
     }
 
     .links {
-        flex-direction: column;
-        gap: 0.5rem;
+        width: 100%;
+        justify-content: flex-start;
+        gap: 1rem;
+        overflow-x: auto;
     }
 }
