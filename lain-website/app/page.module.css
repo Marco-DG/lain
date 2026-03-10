@@ -1,5 +1,310 @@
+/* Authentic NAVI Effects */
+.noise {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.05;
+  /* Slightly visible but not overwhelming */
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+.scanlines {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 49;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 0, 0, 0.2) 2px, rgba(0, 0, 0, 0.2) 4px);
+}
+
+/* Overall Shell */
 .container {
   display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 2rem;
+  background-color: #000;
+}
+
+/* The Grid UI Window */
+.naviShell {
+  display: grid;
+  grid-template-columns: 280px 1fr 500px;
+  grid-template-rows: 1fr;
+  width: 100%;
+  max-width: 1800px;
+  height: 90vh;
+  /* Fixed viewport height, inner scrolling */
+  border: 1px solid var(--border-active);
+  background-color: var(--bg-color);
+  position: relative;
+  z-index: 10;
+  box-shadow: 0 0 40px rgba(139, 30, 30, 0.2);
+}
+
+/* --- LEFT PANEL --- */
+.sidebar {
+  border-right: 1px solid var(--border-main);
+  background-color: var(--bg-panel);
+  padding: 2.5rem 2rem;
+  display: flex;
   flex-direction: column;
-  gap: 4rem;
+  justify-content: space-between;
+}
+
+.logo {
+  font-family: var(--font-logo);
+  font-size: 2.2rem;
+  color: var(--text-main);
+  letter-spacing: -2px;
+  border-bottom: 2px solid var(--border-active);
+  padding-bottom: 1rem;
+  margin-bottom: 2.5rem;
+  text-transform: lowercase;
+}
+
+.navLinks {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+}
+
+.navLink {
+  color: var(--text-dim);
+  text-decoration: none;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  transition: all 0.1s;
+}
+
+.navLink:hover {
+  color: var(--text-main);
+  text-shadow: 0 0 5px var(--border-active);
+}
+
+.sysStatus {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--accent-sepia);
+  border-top: 1px solid var(--border-main);
+  padding-top: 1.5rem;
+  line-height: 1.6;
+}
+
+/* --- CENTER PANEL --- */
+.mainContent {
+  padding: 4rem 5rem;
+  overflow-y: auto;
+  background: url('data:image/svg+xml;utf8,<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg"><path d="M 0 0 L 0 40 L 40 40 L 40 0 Z" fill="none" stroke="rgba(139,30,30,0.03)" stroke-width="1"/></svg>');
+}
+
+/* Inner scrollbars */
+.mainContent::-webkit-scrollbar,
+.codeScroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.mainContent::-webkit-scrollbar-track,
+.codeScroll::-webkit-scrollbar-track {
+  background: var(--bg-color);
+  border-left: 1px solid var(--border-main);
+}
+
+.mainContent::-webkit-scrollbar-thumb,
+.codeScroll::-webkit-scrollbar-thumb {
+  background: var(--border-main);
+}
+
+.mainContent::-webkit-scrollbar-thumb:hover,
+.codeScroll::-webkit-scrollbar-thumb:hover {
+  background: var(--border-active);
+}
+
+.title {
+  font-family: var(--font-logo);
+  font-size: 8rem;
+  color: var(--text-main);
+  line-height: 0.8;
+  margin-bottom: 0.5rem;
+  letter-spacing: -0.05em;
+  text-shadow: 3px 0 var(--border-active);
+}
+
+.subtitle {
+  font-family: var(--font-mono);
+  color: var(--border-active);
+  font-size: 1.1rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  margin-bottom: 4rem;
+  display: block;
+}
+
+.pitch {
+  font-family: var(--font-main);
+  font-size: 1.4rem;
+  line-height: 1.6;
+  color: var(--text-main);
+  border-left: 4px solid var(--accent-purple);
+  padding-left: 2rem;
+  margin-bottom: 5rem;
+  max-width: 800px;
+}
+
+.pitch strong {
+  color: var(--accent-sepia);
+  font-weight: 600;
+}
+
+.directive {
+  margin-bottom: 4rem;
+}
+
+.directiveHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border-main);
+  padding-bottom: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.directiveNum {
+  font-family: var(--font-mono);
+  color: var(--border-active);
+  font-size: 1.3rem;
+}
+
+.directiveTitle {
+  font-family: var(--font-main);
+  font-weight: 700;
+  font-size: 1.8rem;
+  color: var(--text-main);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.directiveBody {
+  font-family: var(--font-mono);
+  font-size: 1.15rem;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+
+.directiveBody code {
+  color: var(--accent-sepia);
+}
+
+/* --- RIGHT PANEL --- */
+.codePanel {
+  background-color: #030204;
+  border-left: 1px solid var(--border-active);
+  display: flex;
+  flex-direction: column;
+}
+
+.panelHeader {
+  background-color: var(--border-active);
+  color: #fff;
+  padding: 0.6rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  font-weight: bold;
+}
+
+.codeScroll {
+  overflow-y: auto;
+  padding: 2.5rem 2rem;
+  flex: 1;
+}
+
+.codeBlock {
+  margin-bottom: 3.5rem;
+}
+
+.codeComment {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+  text-transform: uppercase;
+  border-bottom: 1px dashed var(--border-main);
+  padding-bottom: 0.25rem;
+}
+
+.codeBlock pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  line-height: 1.6;
+  color: #dcdcdc;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-main);
+  padding: 1.5rem;
+  white-space: pre-wrap;
+}
+
+/* Harsh, hardware-style syntax colors */
+.kw {
+  color: var(--accent-purple);
+  font-weight: bold;
+}
+
+.type {
+  color: var(--accent-sepia);
+}
+
+.str {
+  color: #888888;
+  font-style: italic;
+}
+
+.err {
+  color: var(--border-active);
+}
+
+/* Responsive */
+@media (max-width: 1400px) {
+  .naviShell {
+    grid-template-columns: 250px 1fr 400px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .naviShell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr 1fr;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .sidebar,
+  .mainContent,
+  .codePanel {
+    border-right: none;
+    border-bottom: 1px solid var(--border-main);
+    overflow: visible;
+  }
+
+  .codeScroll {
+    overflow: visible;
+  }
+
+  .noise,
+  .scanlines {
+    position: absolute;
+  }
 }

@@ -4,25 +4,12 @@ import styles from './Hero.module.css';
 export default function Hero() {
     return (
         <section className={styles.hero}>
-            {/* Background elements */}
-            <div className={styles.hexDump} aria-hidden="true">
-                {Array.from({ length: 40 }).map((_, i) => (
-                    <div key={i}>
-                        [ffffffff810020d0] do_one_initcall+0x80/0x280
-                        <br />
-                        [ffffffff810c8481] sys_init_module+0xe1/0x250
-                        <br />
-                        Code: 20 7d 3d a0 74 1d 48 8d 3c 52 49 89 f8 49
-                    </div>
-                ))}
-            </div>
-
             <div className={styles.container}>
                 {/* Left Column: Pitch */}
                 <div className={styles.pitch}>
                     <div className={styles.titleWrapper}>
                         <h1 className={`${styles.title} lain-glitch`} data-text="lain">lain</h1>
-                        <span className={styles.subtitle}>systems programming language</span>
+                        <span className={styles.subtitle}>systems language</span>
                     </div>
 
                     <p className={styles.description}>
@@ -31,15 +18,20 @@ export default function Hero() {
 
                     <div className={styles.actions}>
                         <a href="#install" className={styles.buttonMain}>Install Lain</a>
-                        <a href="#docs" className={styles.buttonWire}>Read the Docs</a>
+                        <a href="#docs" className={styles.buttonWire}>Documentation</a>
                     </div>
                 </div>
 
                 {/* Right Column: Code Showcase */}
                 <div className={styles.codeWindow}>
                     <div className={styles.codeHeader}>
+                        <div className={styles.dots}>
+                            <span className={`${styles.dot} ${styles.dotRed}`}></span>
+                            <span className={`${styles.dot} ${styles.dotYellow}`}></span>
+                            <span className={`${styles.dot} ${styles.dotGreen}`}></span>
+                        </div>
                         <span className={styles.fileName}>main.ln</span>
-                        <div className={styles.status}>[SAFE]</div>
+                        <div className={styles.status}>SAFE</div>
                     </div>
                     <pre className={styles.codeBlock}>
                         <code>
