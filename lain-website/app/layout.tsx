@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Special_Elite, VT323, Inter } from "next/font/google";
 import "./globals.css";
+import Navbar from "../components/Navbar";
+import Footer from "../components/Footer";
 
 const specialElite = Special_Elite({
   weight: "400",
@@ -32,7 +34,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} ${specialElite.variable} ${vt323.variable}`}>
-        {children}
+        <div className="page-wrapper">
+          <Navbar />
+          <main className="main-content">
+            {children}
+          </main>
+          <Footer />
+        </div>
       </body>
     </html>
   );
