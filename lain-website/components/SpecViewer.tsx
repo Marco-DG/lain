@@ -17,10 +17,16 @@ export default function SpecViewer() {
     };
 
     const highlightLain = (code: string) => {
-        // Single pass substitution to avoid recursion (like matching 'as' in 'class')
-        const regex = /\b(func|proc|var|mov|return|type|let|if|else|while|for|match|case|extern|comptime|undefined|as)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void|string|File|Data|Buffer|Result|Option)\b|("[^"]*")|(\/\/.*)/g;
+        // 1. Escape HTML entities first to prevent <stdio.h> from being treated as a tag
+        let escaped = code
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
 
-        return code.replace(regex, (match, kw, type, str, com) => {
+        // 2. Single pass substitution to avoid recursion
+        const regex = /\b(func|proc|var|mov|return|type|let|if|else|while|for|match|case|extern|comptime|undefined|as|import|c_include)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void|string|File|Data|Buffer|Result|Option)\b|("[^"]*")|(\/\*[\s\S]*?\*\/|\/\/.*)/g;
+
+        return escaped.replace(regex, (match, kw, type, str, com) => {
             if (kw) return `<span class="${styles.kw}">${kw}</span>`;
             if (type) return `<span class="${styles.type}">${type}</span>`;
             if (str) return `<span class="${styles.str}">${str}</span>`;
