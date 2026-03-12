@@ -7,7 +7,7 @@
     padding: 1.5rem 4rem;
     background-color: var(--bg-color);
     z-index: 1000;
-    border-bottom: 1px solid var(--accent-red);
+    border-bottom: 1px solid var(--accent-teal);
 }
 
 .nav::after {
@@ -29,7 +29,7 @@
 }
 
 .logoPrefix {
-    color: var(--accent-red);
+    color: var(--accent-teal);
     font-size: 1.2rem;
     vertical-align: middle;
     margin-right: 0.2rem;
@@ -50,7 +50,7 @@
 
 .link:hover {
     color: var(--text-main);
-    background-color: var(--accent-red);
+    background-color: var(--accent-teal);
 }
 
 @media (max-width: 768px) {

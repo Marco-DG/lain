@@ -85,11 +85,11 @@
     width: 100%;
     max-width: 1800px;
     min-height: 90vh;
-    border: 1px solid var(--border-active);
+    border: 1px solid var(--text-muted);
     background-color: var(--bg-color);
     position: relative;
     z-index: 10;
-    box-shadow: 0 0 40px rgba(139, 30, 30, 0.2);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
 }
 
 /* --- SIDEBAR --- */
@@ -152,14 +152,15 @@
 .navGroup:hover,
 .navGroupActive {
     border-left-color: var(--border-active);
-    background: rgba(139, 30, 30, 0.03);
+    background: rgba(13, 148, 136, 0.03);
 }
 
 .navLabel {
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
-    letter-spacing: 1px;
+    letter-spacing: 0.15em;
     text-transform: uppercase;
+    font-weight: 600;
 }
 
 .navLink {
@@ -174,7 +175,7 @@
 .navLink:hover,
 .navLinkActive {
     color: var(--text-main);
-    text-shadow: 0 0 8px var(--border-active);
+    text-shadow: 0 0 8px var(--accent-teal);
     transform: translateX(4px);
 }
 
@@ -186,7 +187,7 @@
     line-height: 1.6;
     padding: 1rem;
     border: 1px solid var(--border-main);
-    background: rgba(139, 30, 30, 0.02);
+    background: rgba(13, 148, 136, 0.02);
 }
 
 .sidebarBottom {
@@ -197,7 +198,7 @@
 
 .dataLine {
     height: 1px;
-    background: linear-gradient(90deg, var(--border-active), transparent);
+    background: linear-gradient(90deg, var(--accent-teal), transparent);
     opacity: 0.5;
 }
 

@@ -53,8 +53,8 @@ export default function Sidebar({ statusLines }: SidebarProps) {
                     </div>
 
                     <div className={`${styles.navGroup} ${isLinkActive('/install') ? styles.navGroupActive : ''}`} style={{ marginTop: '2rem' }}>
-                        <span className={styles.navLabel} style={{ color: 'var(--accent-red)' }}>SYS_EXEC . INSTALL</span>
-                        <Link href="/install" className={`${styles.navLink} ${isLinkActive('/install') ? styles.navLinkActive : ''}`} style={{ color: 'var(--accent-red)' }}>
+                        <span className={styles.navLabel} style={{ color: 'var(--accent-teal)' }}>SYS_EXEC . INSTALL</span>
+                        <Link href="/install" className={`${styles.navLink} ${isLinkActive('/install') ? styles.navLinkActive : ''}`} style={{ color: 'var(--accent-teal)' }}>
                             INSTALL_LAIN
                         </Link>
                     </div>

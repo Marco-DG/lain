@@ -10,7 +10,7 @@ export default function Home() {
         <span className={styles.subtitle}>systems programming language</span>
 
         <p className={styles.pitch}>
-          A statically typed, compiled systems language engineered for an unpredictable world. Lain strips away runtime illusions, offering the raw power of assembly bounded only by absolute, mathematically proven <strong>zero-cost memory safety</strong> and <strong>unyielding determinism</strong>.
+          A statically-typed, compiled systems language engineered for an unpredictable world. Lain strips away runtime illusions, offering the raw power of memory-mapped reality bounded by mathematically-proven <strong>linearity</strong> and <strong>determinism</strong>.
         </p>
 
         <div className={styles.directives}>

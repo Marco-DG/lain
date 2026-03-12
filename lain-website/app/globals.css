@@ -1,27 +1,24 @@
 :root {
-  /* Modern Dark Theme - Zinc inspired */
-  --bg-color: #09090b;
-  /* zinc-950 */
-  --bg-secondary: #0f0f12;
-  /* slightly lighter for panels */
-  --bg-tertiary: #18181b;
-  /* zinc-900 for code blocks */
+  /* Elegant Engineering Dark Theme */
+  --bg-color: #0c0c0e;
+  --bg-secondary: #0f1115;
+  --bg-tertiary: #16181d;
 
-  --text-main: #f9fafb;
-  /* gray-50 - Bright white for headers */
-  --text-dim: #9ca3af;
-  /* gray-400 - Readable muted text */
-  --text-muted: #52525b;
-  /* gray-600 - For borders and dividers */
+  --text-main: #ececec;
+  --text-dim: #acb1ba;
+  --text-muted: #4b525d;
 
-  /* Lain Accents but cleaner */
-  --accent-red: #ef4444;
-  /* red-500 */
-  --accent-purple: #a855f7;
-  /* purple-500 */
-  --accent-sepia: #d9b89b;
+  /* Refinement Accents */
+  --accent-teal: #0d9488;
+  --accent-purple: #8b5cf6;
+  --accent-sepia: #c5a68a;
+
+  --border-main: #27272a;
+  --border-active: #134e4a;
+  /* Teal-900 */
 
   --font-main: var(--font-inter), sans-serif;
+  --font-serif: var(--font-serif), "Times New Roman", serif;
   --font-logo: var(--font-elite), "Courier New", monospace;
   --font-mono: var(--font-vt), monospace;
 }
@@ -106,7 +103,7 @@ a {
 
 .lain-glitch::before {
   left: 2px;
-  text-shadow: -1px 0 var(--accent-red);
+  text-shadow: -1px 0 var(--accent-teal);
   clip-path: polygon(0 0, 100% 0, 100% 45%, 0 45%);
   animation: glitch-anim 3s infinite linear alternate-reverse;
 }

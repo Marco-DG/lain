@@ -2,7 +2,7 @@
 .mainContent {
   padding: 4rem 5rem;
   overflow-y: auto;
-  background: url('data:image/svg+xml;utf8,<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg"><path d="M 0 0 L 0 40 L 40 40 L 40 0 Z" fill="none" stroke="rgba(139,30,30,0.03)" stroke-width="1"/></svg>');
+  background: url('data:image/svg+xml;utf8,<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg"><path d="M 0 0 L 0 40 L 40 40 L 40 0 Z" fill="none" stroke="rgba(13,148,136,0.03)" stroke-width="1"/></svg>');
 }
 
 /* Inner scrollbars */
@@ -27,35 +27,38 @@
   background: var(--border-active);
 }
 
+
 .title {
   font-family: var(--font-logo);
-  font-size: 8rem;
+  font-size: 9rem;
   color: var(--text-main);
   line-height: 0.8;
   margin-bottom: 0.5rem;
   letter-spacing: -0.05em;
-  text-shadow: 3px 0 var(--border-active);
+  text-shadow: 4px 0 var(--accent-teal);
 }
 
 .subtitle {
   font-family: var(--font-mono);
-  color: var(--border-active);
-  font-size: 1.1rem;
-  letter-spacing: 0.3em;
+  color: var(--accent-teal);
+  font-size: 1rem;
+  letter-spacing: 0.4em;
   text-transform: uppercase;
-  margin-bottom: 4rem;
+  margin-bottom: 6rem;
   display: block;
+  opacity: 0.8;
 }
 
 .pitch {
-  font-family: var(--font-main);
-  font-size: 1.4rem;
+  font-family: var(--font-serif);
+  font-size: 1.6rem;
   line-height: 1.6;
   color: var(--text-main);
-  border-left: 4px solid var(--accent-purple);
-  padding-left: 2rem;
-  margin-bottom: 5rem;
-  max-width: 800px;
+  border-left: 2px solid var(--accent-teal);
+  padding-left: 3rem;
+  margin-bottom: 6rem;
+  max-width: 850px;
+  text-align: justify;
 }
 
 .pitch strong {
@@ -169,8 +172,40 @@
   font-style: italic;
 }
 
+.ctaContainer {
+  margin-top: 4rem;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.primaryButton {
+  font-family: var(--font-mono);
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #fff;
+  background-color: var(--accent-purple);
+  padding: 1rem 2rem;
+  text-decoration: none;
+  border: 1px solid var(--border-active);
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  box-shadow: 4px 4px 0 var(--border-active);
+}
+
+.primaryButton:hover {
+  background-color: var(--border-active);
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--accent-purple);
+}
+
+.primaryButton:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--accent-purple);
+}
+
 .err {
-  color: var(--border-active);
+  color: var(--accent-teal);
 }
 
 /* Responsive */
