@@ -568,6 +568,44 @@ A type is **linear** if any of the following conditions holds:
 
 Linearity is **transitive**: a struct containing a linear field is itself linear. An array of linear elements is linear.
 
+### 7.1.1 Mixed-Linearity Structs
+
+A struct may contain both linear (`mov`) and non-linear fields. The struct as a whole is linear — it cannot be silently dropped — but only the `mov` fields participate in consumption tracking. Non-linear fields remain freely readable and borrowable throughout the struct's lifetime, including after some linear fields have been consumed.
+
+```lain
+type Connection {
+    mov handle *FILE      // linear — must be consumed exactly once
+    name u8[:0]           // copyable — no consumption requirement
+    port int              // copyable — no consumption requirement
+}
+```
+
+**Rules for mixed-linearity structs**:
+
+1. **The struct is linear**: Because `handle` is `mov`, `Connection` must be consumed before scope exit. It cannot be silently dropped.
+2. **Only `mov` fields are tracked**: The `FieldState` entries in the `LTable` are created only for linear fields. Non-linear fields have no consumption state.
+3. **Non-linear fields survive partial consumption**: After `mov c.handle` is consumed, `c.name` and `c.port` are still accessible for reading and borrowing.
+4. **"Fully consumed" = all `mov` fields consumed**: When every linear field has been individually consumed, the struct is considered fully consumed. The non-linear fields are implicitly discarded (they are copyable, so this is safe).
+5. **Whole-struct `mov` still works**: `consume(mov c)` consumes everything at once — all linear fields in one shot. But once any field has been individually consumed, whole-struct `mov` is no longer allowed (the struct is PARTIALLY_CONSUMED).
+
+**Motivating pattern — resource + metadata**:
+
+```lain
+type File {
+    mov fd int            // OS file descriptor — must be closed
+    path u8[:0]           // path string — copyable metadata
+}
+
+proc cleanup(var f File) {
+    log("closing: ", f.path)      // ✅ read non-linear field
+    close(mov f.fd)               // ✅ consume the linear field
+    log("closed: ", f.path)       // ✅ path still accessible
+    // f is now fully consumed (fd was the only mov field)
+}
+```
+
+Without per-field tracking, the programmer would be forced to destructure or wrap the struct just to access `path` after closing `fd`. Mixed-linearity gives fine-grained control: the type system enforces that the resource is cleaned up, while metadata remains freely usable.
+
 **Implementation**: 🟢 `sema_type_is_linear()` in `linearity.h` performs this recursive check.
 
 ### 7.2 The Linear Consumption Rule
@@ -938,7 +976,54 @@ use(ref_x)
 
 **Implementation**: 🟢 Implemented. `BorrowEntry` stores a `borrowed_field` name. `borrow_check_conflict_field()` and `borrow_check_owner_access_field()` use `fields_overlap()` to allow non-overlapping field borrows of the same struct.
 
-### 11.5 Design Considerations
+### 11.5 Non-Linear Fields in Partially-Consumed Structs 🟢
+
+When a struct has both linear and non-linear fields, consuming a linear field does not invalidate the non-linear siblings. The non-linear fields remain accessible because they are copyable and have no ownership constraint:
+
+```lain
+type Session {
+    mov conn *Connection    // linear — must be consumed
+    user u8[:0]             // copyable
+    retries int             // copyable
+}
+
+proc end_session(var s Session) {
+    log(s.user, " disconnecting")     // ✅ read non-linear field
+    disconnect(mov s.conn)            // consume the linear field
+    log(s.user, " retries: ", s.retries)  // ✅ still accessible
+    // s is fully consumed (conn was the only mov field)
+}
+```
+
+**State transitions for mixed-linearity structs**:
+
+```
+         ┌─────────────────┐
+         │   UNCONSUMED     │  All mov fields alive
+         │   s.conn: alive  │  Non-linear fields: accessible
+         │   s.user: free   │
+         └────────┬────────┘
+                  │ mov s.conn
+                  ▼
+         ┌─────────────────┐
+         │   CONSUMED       │  All mov fields consumed
+         │   s.conn: dead   │  Non-linear fields: still accessible
+         │   s.user: free   │  (implicitly discarded at scope exit)
+         └─────────────────┘
+```
+
+For structs with multiple linear fields, there is an intermediate PARTIALLY_CONSUMED state:
+
+```
+  UNCONSUMED → (mov field₁) → PARTIALLY_CONSUMED → (mov field₂) → CONSUMED
+                                   │
+                                   │ Non-linear fields remain
+                                   │ accessible throughout
+```
+
+**Key invariant**: Non-linear fields never gate consumption and never become inaccessible due to linear field operations. They are orthogonal to the ownership protocol.
+
+### 11.6 Design Considerations
 
 | Approach | Precision | Complexity | Recommendation |
 |----------|-----------|------------|----------------|
