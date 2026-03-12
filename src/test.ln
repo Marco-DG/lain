@@ -1,0 +1,178 @@
+import std.c
+
+type File {
+    own handle *FILE
+}
+
+func open_file(path u8[:0], mode u8[:0]) own File {
+    var raw = fopen(path.data, mode.data)
+    return File(raw)
+}
+
+func close_file({handle} File) {
+    fclose(handle)
+}
+
+func write_file(f File, s u8[:0]) File {
+    fputs(s.data, f.handle)
+}
+
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+}
+
+
+type Option(T) {
+    Some { value T }
+    None
+}
+
+type Ptr(T) own { *T }
+
+func main() int {
+    handle *FILE = read_file_syscall() // return ptr to FILE struct in memory
+
+    f = open_file("test.txt", "w")
+    content = "Hello from Lain std/fs!\n"
+
+    f1 = write_file(f, content)
+    
+    close_file(f1)
+        
+}
+
+
+
+
+
+
+
+
+type File
+func openFile(path String) File
+func writeString(file File, content String) File
+func closeFile(file File)
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+}
+
+//!!! Non è l' errore corretto
+func main() {
+    f = open_file("test.txt", "w") // OK
+    f = open_file("test.txt", "w") // ERROR 'f' is not mutable
+}
+
+//!!! Non è l' errore corretto
+func main() {
+    mut f = open_file("test.txt", "w") // OK
+    f = open_file("test.txt", "w") // ERROR 'f' even if mutable, still has not been consumed | makes no sense
+}
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+    f = open_file("test.txt", "w") // ERROR 'f' has not been consumed
+}
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+    f = undefined // ERROR linear 'f' has not been consumed
+}
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+    f = undefined // ERROR 'f' has not been consumed
+}
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+    // ERROR 'f' has not been consumed
+}
+
+func main() {
+    open_file("test.txt", "w") // OK
+    // ERROR silent discard so not been consumed
+}
+
+// Three ways to do the same thing SSA | mutable borrow | implicit mutable borrow
+func main() {
+    f = open_file("test.txt", "w") // OK
+    f1 = write_string(mov f, "ciao mondo") // OK
+    // Error 'f1' of linear type File has not been consumed
+}
+
+// is this really ok ?
+func main() {
+    f = open_file("test.txt", "w") // OK
+    write_string(mut f, "ciao mondo") // OK
+    // Error 'f' of linear type File has not been consumed
+}
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+    f.write_string("ciao mondo") // OK
+    // Error 'f' of linear type File has not been consumed
+}
+
+//
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+    f1 = write_string(mov f, "ciao mondo") // OK
+    close_file(mov f1) // OK
+}
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+    write_string(mut f, "ciao mondo") // OK
+    close_file(mov f) // OK
+}
+
+
+func main() {
+    f = open_file("test.txt", "w") // OK
+    f.write_string("ciao mondo") // OK
+    f.close_file() // OK
+}
+
+
+
+var f = openFile("test.txt")
+var f1 = writeString(mov f, "First line")
+var f2 = writeString(mov f1, "Another line")
+// ...
+var f15 = writeString(mov f14, "Last line")
+closeFile(mov f15)
+
+
+
+// PERFECTION 1
+
+
+type File own {
+    handle *FILE
+}
+func open(path string) File
+func write(file File, content string) File
+func close(file File)
+
+f = open("hello.txt")
+f.write("hello world")
+f.close()
+
+
+//
+
+type IntPointer own {
+    ptr * int
+}
+
+func alloc_int() IntPointer
+func load_int(ptr IntPointer) int
+func store_int(ptr IntPointer, value int)
+func free_int(ptr IntPointer)
+
+i = alloc_int()
+i.store_int(42)
+i.free_int()

@@ -7,7 +7,8 @@
     height: 100vh;
     pointer-events: none;
     z-index: 50;
-    opacity: 0.05;
+    opacity: 0.03;
+    /* Lower opacity for subtle noise */
     background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
 }
 
@@ -19,7 +20,53 @@
     height: 100vh;
     pointer-events: none;
     z-index: 49;
-    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 0, 0, 0.2) 2px, rgba(0, 0, 0, 0.2) 4px);
+    /* Stable scanlines using background-size to prevent moiré */
+    background: linear-gradient(to bottom,
+            rgba(18, 16, 16, 0) 50%,
+            rgba(0, 0, 0, 0.1) 50%);
+    background-size: 100% 4px;
+}
+
+/* New: Vignette to simulate CRT tube edges */
+.vignette {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 51;
+    background: radial-gradient(circle,
+            transparent 40%,
+            rgba(0, 0, 0, 0.4) 150%);
+}
+
+/* Suble "flicker" effect */
+.flicker {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 52;
+    background: rgba(18, 16, 16, 0.01);
+    opacity: 0;
+    animation: crtFlicker 0.1s infinite;
+}
+
+@keyframes crtFlicker {
+    0% {
+        opacity: 0;
+    }
+
+    50% {
+        opacity: 0.02;
+    }
+
+    100% {
+        opacity: 0;
+    }
 }
 
 .container {
@@ -37,7 +84,7 @@
     grid-template-rows: 1fr;
     width: 100%;
     max-width: 1800px;
-    height: 90vh;
+    min-height: 90vh;
     border: 1px solid var(--border-active);
     background-color: var(--bg-color);
     position: relative;
