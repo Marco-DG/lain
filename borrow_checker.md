@@ -69,7 +69,7 @@ Lain's ownership model is inspired by Rust but differs in several key ways:
 | Call-site annotations | None (compiler infers) | Required: `var x`, `mov x` |
 | Trait system (Send/Sync) | Required for concurrency | Not yet applicable (no concurrency) |
 | Interior mutability | `Cell`, `RefCell`, `UnsafeCell` | Not yet defined |
-| Two-phase borrows | Yes | 🔴 Not yet |
+| Two-phase borrows | Yes | 🟢 Implemented (RESERVED/ACTIVE phases) |
 | NLL granularity | MIR instruction-level | Statement-level (top-level) |
 
 ### 1.4 Scope of This Document
@@ -334,7 +334,7 @@ while read(data) < 10 {
 
 **Implementation**: 🟢 Implemented. Condition expressions are checked, then `borrow_clear_temporaries()` is called before the body is traversed.
 
-### 4.6 Owner Reassignment While Borrowed 🟢 (partial)
+### 4.6 Owner Reassignment While Borrowed 🟢
 
 Reassigning or mutating the owner while a borrow is active is an error:
 
@@ -345,7 +345,7 @@ data.value = 99                 // ❌ ERROR: writing to borrowed data
 use(ref)
 ```
 
-**Implementation**: 🟢 Partially implemented. `borrow_check_owner_access()` in `linearity.h` checks STMT_ASSIGN targets against active persistent borrows. Field writes (`data.value = ...`) are caught. Full reassignment (`data = new_data`) should also be caught but may have edge cases.
+**Implementation**: 🟢 Implemented. `borrow_check_owner_access()` and `borrow_check_owner_access_field()` in `region.h` check STMT_ASSIGN targets against active persistent borrows. Both field writes (`data.value = ...`) and full reassignment (`data = new_data`) are caught. Field-granular checks allow non-overlapping field writes when only a specific field is borrowed.
 
 ---
 
@@ -814,7 +814,7 @@ var ref = get_ref(var data)
 
 ## 10. Re-Borrowing & Transitivity
 
-### 10.1 The Re-Borrow Problem 🔴
+### 10.1 The Re-Borrow Problem 🟢
 
 When a reference variable is itself passed as a borrow to another function, a chain of dependencies forms:
 
@@ -822,14 +822,14 @@ When a reference variable is itself passed as a borrow to another function, a ch
 var data = Data(42)
 var ref = get_ref(var data)        // ref borrows data
 var ref2 = transform(var ref)      // ref2 borrows ref, which borrows data
-// Is the borrow on 'data' still tracked?
+// The borrow on 'data' is tracked transitively through ref → ref2
 ```
 
-In this example, `ref2` depends on `ref`, which depends on `data`. If the borrow of `data` is released when `ref` is no longer used, but `ref2` (which transitively depends on `data`) is still alive, we have a **soundness hole**: `ref2` could be a dangling pointer.
+**Implementation**: 🟢 Implemented. `borrow_register_persistent()` detects when the owner is itself a persistent borrow binding and registers a `root_owner` on the new entry, creating a transitive chain.
 
-### 10.2 Transitive Borrow Chain
+### 10.2 Transitive Borrow Chain 🟢
 
-The target system must maintain a **borrow dependency graph**:
+The system maintains a **borrow dependency graph** via `root_owner` pointers:
 
 ```
 data ←(borrows)— ref ←(borrows)— ref2
@@ -837,13 +837,13 @@ data ←(borrows)— ref ←(borrows)— ref2
 
 The borrow on `data` is alive as long as **any transitive dependent** (`ref` or `ref2`) is alive. Release happens only when the entire chain's last use is past.
 
-### 10.3 Target Algorithm 🔴
+### 10.3 Algorithm 🟢
 
 ```
 WHEN registering persistent borrow (binding_id borrows owner_id):
     1. Check if owner_id is itself a persistent borrow binding
     2. IF yes: also register binding_id as transitively borrowing
-       owner_id's transitive owner
+       owner_id's transitive owner (root_owner)
     3. When computing borrow release: a borrow of X is releasable only when
        ALL bindings transitively depending on X have expired
 
@@ -855,7 +855,9 @@ DATA STRUCTURE:
     }
 ```
 
-### 10.4 Example — Correct Behavior Under Transitive Borrows 🔴
+**Implementation**: 🟢 Implemented in `borrow_register_persistent()` (region.h). The `borrow_release_expired()` function uses a fixpoint loop that checks for transitive dependents before releasing a root borrow.
+
+### 10.4 Example — Correct Behavior Under Transitive Borrows 🟢
 
 ```lain
 var data = Data(42)
@@ -870,26 +872,15 @@ read_data(data)                   // ✅ OK: all transitive borrows expired
 
 ### 10.5 Complexity Considerations
 
-Transitive borrow tracking adds complexity to the NLL release algorithm. The `UseTable` pre-pass must compute the **effective last use** of an owner as `max(last_use(ref), last_use(ref2), ...)` for all variables in the transitive chain. This requires a second pass after the `UseTable` is computed:
-
-```
-FUNCTION extend_transitive_uses(borrows, use_table):
-    FOR EACH persistent borrow B:
-        root_last_use = use_table[B.root_owner]
-        binding_last_use = use_table[B.binding_id]
-        effective_last_use = max(root_last_use, binding_last_use)
-        update use_table[B.root_owner] = effective_last_use
-```
-
-**Estimated implementation cost**: ~100-150 additional lines in `region.h` and `linearity.h`.
+Transitive borrow tracking is handled by the fixpoint loop in `borrow_release_expired()` which scans for dependent borrows before releasing a root borrow. The `UseTable` pre-pass computes the **effective last use** and the release algorithm extends it transitively at release time.
 
 ---
 
 ## 11. Struct Field Granularity
 
-### 11.1 Current Limitation: Whole-Variable Tracking 🟢
+### 11.1 One-Level Field Tracking 🟢
 
-The current linearity checker tracks variables as **whole units**. Consuming any part of a struct consumes the entire struct:
+The linearity checker tracks per-field consumption for structs with linear fields via `FieldState` entries in the `LTable`:
 
 ```lain
 type Pair {
@@ -898,15 +889,16 @@ type Pair {
 }
 
 var p = Pair(ptr1, ptr2)
-consume(mov p.left)         // Consumes ALL of p
-use(p.right)                // ❌ ERROR: p was already consumed
+consume(mov p.left)         // Consumes p.left only
+use(p.right)                // ✅ OK: p.right is still alive
+consume(mov p.right)        // Now all fields consumed → p is consumed
 ```
 
-This is **sound** (no false negatives) but **overly conservative** (false positives). A more precise system would track individual fields.
+**Implementation**: 🟢 Implemented. `ltable_init_field_states()` initializes per-field tracking when a struct with linear fields is declared. `ltable_consume_field()` marks individual fields consumed. `ltable_is_partially_consumed()` detects partial consumption. Branch consistency also checks field-level states.
 
-### 11.2 Target: Path-Sensitive Tracking 🔴
+### 11.2 Path-Sensitive Tracking Rules 🟢
 
-The target system should track linearity at the **path level** (variable + field chain):
+Linearity is tracked at the **path level** (variable + one-level field):
 
 | Place | State |
 |-------|-------|
@@ -932,9 +924,9 @@ PlacePath ::= Id                      // root variable
 
 The `LTable` would be extended from `Map<Id, LState>` to `Map<PlacePath, LState>`.
 
-### 11.4 Borrowing at Field Granularity 🔴
+### 11.4 Borrowing at Field Granularity 🟢
 
-The borrow checker should also support field-granular borrows:
+The borrow checker supports field-granular borrows via the `borrowed_field` entry in `BorrowEntry` and the `fields_overlap()` helper:
 
 ```lain
 type Pair { x int, y int }
@@ -944,17 +936,15 @@ p.y = 30                        // ✅ OK: p.y is not borrowed
 use(ref_x)
 ```
 
-This requires the `BorrowEntry` to store the **borrowed path** rather than just the root variable name.
+**Implementation**: 🟢 Implemented. `BorrowEntry` stores a `borrowed_field` name. `borrow_check_conflict_field()` and `borrow_check_owner_access_field()` use `fields_overlap()` to allow non-overlapping field borrows of the same struct.
 
 ### 11.5 Design Considerations
 
 | Approach | Precision | Complexity | Recommendation |
 |----------|-----------|------------|----------------|
-| Whole-variable tracking (current) | Low (conservative) | Low | ✅ Keep as fallback |
-| One-level field tracking | Medium | Medium | 🔴 Target Phase 2 |
+| Whole-variable tracking | Low (conservative) | Low | ✅ Available as fallback |
+| One-level field tracking | Medium | Medium | 🟢 Implemented |
 | Full path tracking (arbitrary depth) | High | High | 🟡 Long-term goal |
-
-**Recommendation**: Implement one-level field tracking first (`p.x`, `p.y`) without handling array elements. This covers the most common patterns (struct fields) without the complexity of full path sensitivity.
 
 ---
 
@@ -1041,12 +1031,12 @@ case resource {
 }
 ```
 
-### 13.4 Non-Consuming Match 🔴
+### 13.4 Non-Consuming Match 🟢
 
-A match that borrows the scrutinee (shared or mutable) without consuming it is a target feature:
+A match that borrows the scrutinee (shared) without consuming it uses the `case &expr` syntax:
 
 ```lain
-// 🔴 Target: shared match (non-consuming)
+// ✅ Implemented: shared match (non-consuming)
 case &shape {
     Circle(r):    print_radius(r)    // r is a shared borrow of shape.radius
     Rectangle(w, h): print_dims(w, h)
@@ -1054,7 +1044,7 @@ case &shape {
 // shape is still alive (not consumed)
 ```
 
-This requires the `case` statement to understand borrowing modes for the scrutinee. Currently, all `case` statements implicitly copy or move the value.
+**Implementation**: 🟢 Implemented. The parser recognizes `case &expr` syntax (both statement and expression forms). The `is_borrowed` flag on `StmtMatch`/`ExprMatch` AST nodes signals the linearity checker to skip consumption of the scrutinee and instead register a temporary shared borrow. The borrow is removed when the match completes.
 
 ---
 
@@ -1117,9 +1107,9 @@ proc process_file() {
 
 The borrow checker treats the `defer` block's consumption as happening at scope exit. The variable `f` is not marked as consumed immediately; instead, the `defer` ensures it will be consumed before the scope ends.
 
-### 15.2 Defer Ordering and Borrow Conflicts 🔴
+### 15.2 Defer Ordering and Borrow Conflicts 🟢
 
-Multiple `defer` blocks execute in LIFO order. The borrow checker must ensure no conflicts arise from deferred operations:
+Multiple `defer` blocks execute in LIFO order. The borrow checker tracks deferred consumption via `is_defer_consumed`:
 
 ```lain
 var a = Resource(1)
@@ -1130,7 +1120,7 @@ defer { consume(mov b) }      // defer 2 — executes first
 // Both resources are consumed exactly once ✅
 ```
 
-**Target rule**: The compiler should verify that deferred blocks do not create borrow conflicts with each other or with the main function body at the point of execution.
+**Implementation**: 🟢 Implemented. The `STMT_DEFER` handler in `linearity.h` walks the defer body, detects any consumption inside it, marks the consumed variable with `is_defer_consumed = true`, then restores the variable to UNCONSUMED state so it remains usable in the main body. At scope exit, `ltable_ensure_all_consumed()` accepts variables that are defer-consumed.
 
 ### 15.3 Defer and Early Return 🟢
 
@@ -1400,11 +1390,11 @@ Each rule in this specification should have at least one **positive test** (acce
 | NLL loop borrow | — | `nll_loop_borrow_fail.ln` | 🟢 |
 | Return var dangling | — | `return_var_local_fail.ln` | 🟢 |
 | Immutable reassignment | — | `immutable_fail.ln` | 🟢 |
-| Re-borrow transitivity | `reborrow_pass.ln` | `reborrow_fail.ln` | 🔴 |
-| Per-field linearity | `field_consume_pass.ln` | `field_consume_fail.ln` | 🔴 |
+| Re-borrow transitivity | `reborrow_pass.ln` | `reborrow_fail.ln` | 🟢 |
+| Per-field linearity | `field_consume_pass.ln` | `field_consume_fail.ln` | 🟢 |
 | Slice borrow tracking | `slice_borrow_pass.ln` | `slice_borrow_fail.ln` | 🔴 |
-| Defer + linearity | `defer_linear_pass.ln` | `defer_linear_fail.ln` | 🔴 |
-| Non-consuming match | `match_borrow_pass.ln` | — | 🔴 |
+| Defer + linearity | `defer_linear_pass.ln` | `defer_linear_fail.ln` | 🟢 |
+| Non-consuming match | `match_borrow_pass.ln` | — | 🟢 |
 
 ### 20.2 Stress Tests 🔴
 
@@ -1441,34 +1431,35 @@ Beyond unit tests, the borrow checker needs stress tests for:
 | Borrow release at last-use | ✅ | `region.h` |
 | Owner access conflict with persistent borrows | ✅ | `region.h` |
 
-### Phase 3 — Soundness Completion (🔴 Next)
+### Phase 3 — Soundness Completion (✅ Complete)
+
+| Feature | Status | Files |
+|---------|--------|-------|
+| Re-borrow transitivity (§10) | ✅ | `region.h` |
+| Per-field linearity (§11.2, one-level) | ✅ | `linearity.h` |
+| Per-field borrow tracking (§11.4) | ✅ | `region.h` |
+| Two-phase borrows (RESERVED/ACTIVE) | ✅ | `region.h`, `linearity.h` |
+| Non-consuming match `case &expr` (§13.4) | ✅ | `linearity.h`, `ast.h`, `parser/stmt.h`, `parser/expr.h` |
+| Defer + linearity interaction (§15) | ✅ | `linearity.h` |
+| Owner reassignment check (§4.6, full) | ✅ | `region.h` |
+
+### Phase 4 — Precision & Ergonomics (🔴 Next)
 
 | Feature | Priority | Estimated Lines | Dependencies |
 |---------|----------|----------------|--------------|
-| Re-borrow transitivity (§10) | 🔴 Critical | ~150 | None |
-| Per-field linearity (§11.2, one-level) | 🟠 High | ~200 | None |
+| Block-level NLL (§6.5) | 🟡 Medium | ~300 | None |
+| Reference dereference semantics (§9.5) | 🟡 Medium | ~200 | Design decision |
 | Shared persistent borrows (§9.4) | 🟠 High | ~50 | None |
 | Lifetime inference for multi-var-param (§5.5) | 🟠 High | ~100 | None |
-| Owner reassignment check (§4.6, full) | 🟡 Medium | ~30 | None |
-
-### Phase 4 — Precision & Ergonomics (🔴 Future)
-
-| Feature | Priority | Estimated Lines | Dependencies |
-|---------|----------|----------------|--------------|
-| Block-level NLL (§6.5) | 🟡 Medium | ~300 | Phase 3 |
-| Reference dereference semantics (§9.5) | 🟡 Medium | ~200 | Design decision |
-| Two-phase borrows | 🟡 Medium | ~200 | Phase 3 |
-| Non-consuming match (§13.4) | 🟡 Medium | ~150 | Phase 3 |
 | Rich diagnostics (§17) | 🟡 Medium | ~200 | None |
-| Slice borrow tracking (§12.2) | 🟡 Low | ~100 | Phase 3 |
-| Defer borrow verification (§15.2) | 🟡 Low | ~50 | None |
+| Slice borrow tracking (§12.2) | 🟡 Low | ~100 | None |
 
 ### Phase 5 — Advanced (🟡 Long-term)
 
 | Feature | Priority | Dependencies |
 |---------|----------|--------------|
 | CFG-based NLL (point-level) | Low | Phase 4 |
-| Full path tracking (arbitrary depth) | Low | Phase 3 |
+| Full path tracking (arbitrary depth) | Low | None |
 | Concurrency model (Send/Sync) | Low | Language design |
 
 ---
@@ -1503,8 +1494,8 @@ Beyond unit tests, the borrow checker needs stress tests for:
 | Closures capturing borrows | Full support | Not yet | Requires closures feature |
 | `Pin` | For self-referential types | Not needed | No async, no self-referential types |
 | `Send`/`Sync` | Thread safety traits | Not needed yet | No concurrency |
-| Borrow-through-match | `match &x` | 🔴 Target | §13.4 |
-| Two-phase borrows | `v.push(v.len())` | 🔴 Target | Phase 4 |
+| Borrow-through-match | `match &x` | 🟢 `case &expr` | §13.4 |
+| Two-phase borrows | `v.push(v.len())` | 🟢 RESERVED/ACTIVE | Phase 3 |
 
 ---
 

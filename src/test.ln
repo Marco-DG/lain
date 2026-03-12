@@ -4,6 +4,10 @@ type File {
     own handle *FILE
 }
 
+type File {
+    handle *FILE
+}
+
 func open_file(path u8[:0], mode u8[:0]) own File {
     var raw = fopen(path.data, mode.data)
     return File(raw)
@@ -49,7 +53,7 @@ func main() int {
 
 
 
-type File
+linear type File
 func openFile(path String) File
 func writeString(file File, content String) File
 func closeFile(file File)
@@ -149,10 +153,15 @@ closeFile(mov f15)
 
 // PERFECTION 1
 
-
-type File own {
+linear type File {
     handle *FILE
 }
+
+type String {
+    data *u8
+    len int
+}
+
 func open(path string) File
 func write(file File, content string) File
 func close(file File)
@@ -176,3 +185,38 @@ func free_int(ptr IntPointer)
 i = alloc_int()
 i.store_int(42)
 i.free_int()
+
+
+/*
+Memory safety and concurrency safety do NOT depend on linear types
+They are completely separate guarantees:
+
+Guarantee	What provides it	Linear types needed?
+No use-after-free	Move checker (mov)	No
+No double-free	Move checker (mov)	No
+No data races	Borrow checker (var exclusivity)	No
+No buffer overflows	VRA + bounds checking	No
+No dangling pointers	Borrow checker + unsafe gate	No
+No resource leaks	Linear types	Yes
+Linear types solve one specific problem: you cannot forget to clean up a resource. A leaked File handle is bad (you waste OS resources), but it doesn't cause a segfault or a data race. It's a correctness issue, not a safety issue.
+
+So:
+
+A user who never uses own/linear still writes memory-safe, concurrency-safe code
+They might leak file handles or database connections — but the borrow checker and move semantics still protect them from UB
+The standard library uses linear types to wrap system resources and prevent leaks
+Users opt in when they have their own resource types
+This is a strong argument for opt-in linearity. Making Point {x int, y int} linear by default adds friction without improving safety — a "leaked" Point is just a value on the stack that gets cleaned up automatically.
+
+The safety layers are:
+
+
+1. Type system          → no implicit conversions, no NULL
+2. Borrow checker       → no aliased mutation (memory + concurrency safety)
+3. Move semantics       → no use-after-free, no double-free
+4. VRA / bounds check   → no buffer overflows
+5. unsafe gate          → raw pointer ops quarantined
+─── everything above: ALWAYS ON ───
+6. Linear types (opt-in) → no resource leaks
+
+*/
