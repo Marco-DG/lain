@@ -14,6 +14,8 @@ export default function NaviShell({ children, statusLines }: NaviShellProps) {
         <>
             <div className={styles.noise}></div>
             <div className={styles.scanlines}></div>
+            <div className={styles.vignette}></div>
+            <div className={styles.flicker}></div>
 
             <main className={styles.container}>
                 <div className={styles.naviShell}>
