@@ -62,7 +62,7 @@
 
 .id {
     font-family: var(--font-mono);
-    color: var(--accent-red);
+    color: var(--accent-teal);
     font-size: 1rem;
     letter-spacing: 0.1em;
     font-weight: bold;

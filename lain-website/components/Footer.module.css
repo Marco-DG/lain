@@ -29,8 +29,8 @@
 
 .warning {
     font-family: var(--font-mono);
-    color: var(--accent-red);
-    border: 1px solid var(--accent-red);
+    color: var(--accent-teal);
+    border: 1px solid var(--accent-teal);
     padding: 1rem 2rem;
     display: inline-block;
     font-size: 1.1rem;
