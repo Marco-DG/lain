@@ -21,8 +21,8 @@ export const specData: SpecChapter[] = [
     {
         id: "types",
         title: "02 — Type System",
-        content: "Lain is strictly typed and forbids all implicit type conversions. The system comprises primitive types (int, i8-i64, u8-u64, f32, f64), composite types (structs, enums, ADTs, arrays, slices, pointers), and opaque types for C interop. Nominal type equivalence is used: two types are the same only if they share the same name.",
-        code: `type Point { x int, y int }\ntype Vec2 { x int, y int }\n\n// Point != Vec2 (nominal equivalence)\nvar p = Point(10, 20)\nvar v Vec2 = p // ERROR: Type mismatch`
+        content: "Lain is strictly typed and forbids all implicit conversions. Primitives follow C99 binary representation: i32 is 4-byte two's complement, f64 is IEEE 754. Structs are packed with natural alignment, ensuring zero padding between fields where possible. Nominal type equivalence is used: two types are identical only if they share the same name.",
+        code: `type Point { x i32, y i32 } // size: 8, align: 4\ntype Data  { b u8, i i32 }  // size: 8, align: 4 (3 bytes padding)\n\nvar p = Point(10, 20)\nvar d = Data(1, 10)`
     },
     {
         id: "declarations",
@@ -51,26 +51,50 @@ export const specData: SpecChapter[] = [
     {
         id: "ownership",
         title: "07 — Ownership & Borrowing",
-        content: "Lain's safety is built on ownership modes: Shared (read-only borrow), Mutable (exclusive borrow), and Owned (transfer). The borrow checker enforces the Read-Write Lock invariant: either many shared borrows or exactly one mutable borrow may exist for any variable at a given point.",
-        code: `var data = Data(42)\nvar ref = get_ref(var data) // mutable borrow\n\n// ERROR: cannot use data while mutably borrowed\n// print(data.value)\n\nuse(var ref) // last use of ref\nprint(data.value) // OK now: borrow expired`
+        content: "Lain ensures memory safety through a strict ownership model. Every value has a single owner. When the owner goes out of scope, the value is destroyed. Shared borrows (default) allow multi-reader access, while mutable borrows (var) provide exclusive read-write access. This zero-cost system eliminates data races and use-after-free bugs at compile time.",
+        code: `var x = Data(10)\nread(x)       // Shared borrow\nmove_data(mov x) // Ownership transfer\n// read(x) // ERROR: x is dead`
     },
     {
-        id: "linearity",
-        title: "07.6 — Linear Types",
-        content: "A type is linear if it contains an owned field (mov). Linear values must be consumed exactly once. This prevents memory leaks and ensures resource lifecycle integrity (e.g., file handles must be closed). Branch consistency ensures they are consumed regardless of the code path.",
-        code: `type File { mov handle *FILE }\n\nproc process(mov f File) {\n    // f is consumed here\n}\n\nproc main() {\n    var f = open_file("data.txt")\n    process(mov f)\n    // read_file(f) // ERROR: f already moved\n}`
+        id: "nll",
+        title: "07.1 — Non-Lexical Lifetimes",
+        content: "Unlike early safety models, Lain uses Non-Lexical Lifetimes (NLL). A borrow's lifetime is determined by its last use, not by lexical scope. This allows the compiler to accept complex but safe patterns where a borrow and a subsequent move of the same data appear in the same block, provided their usage spans do not overlap.",
+        code: `var data = Data(42)\nvar ref = get_ref(var data)\nuse(ref) // last use of ref\n\n// Borrow expires here\nconsume(mov data) // ✅ OK under NLL`
+    },
+    {
+        id: "linearity-deep",
+        title: "07.2 — Linear Integrity",
+        content: "Linearity in Lain is transitive and fine-grained. Structs with 'mov' fields are linear and must be consumed exactly once. The compiler tracks individual field consumption, allowing you to move one part of a struct (e.g., a file handle) while still accessing non-linear metadata in other fields.",
+        code: `type File { mov fd int, path string }\n\nproc close(mov f File) {\n    os.close(mov f.fd) // consume resource\n    log("Closed: ", f.path) // still accessible!\n}`
+    },
+    {
+        id: "safety-advanced",
+        title: "07.3 — Advanced Safety: Persistence",
+        content: "Lain supports 'persistent borrows' through function return values (return var). When a function returns a reference to its parameter's interior, the compiler registers a transitive borrow in the caller's scope. This borrow persists until its last use, effectively locking the source object from conflicting access or moves across statement boundaries.",
+        code: `func get_val(var d Data) var int {\n    return var d.value\n}\n\nproc main() {\n    var d = Data(10)\n    var r = get_val(var d)\n    // d.value = 20 // ERROR: d is borrowed\n    use(r)\n}`
+    },
+    {
+        id: "transitivity",
+        title: "07.4 — Transitive Borrowing",
+        content: "Borrowing is reflexive and transitive. If 'refB' borrows 'refA', and 'refA' borrows 'Root', the borrow checker maintains a dependency chain. The 'Root' object remains locked until the entire chain of dependents has expired. This prevents dangling pointers in complex data transformations.",
+        code: `var a = Data(10)\nvar r1 = &a\nvar r2 = &r1 // transitively borrows a\n\n// a is locked by r2\nuse(r2)\n// a is unlocked`
+    },
+    {
+        id: "formalisms",
+        title: "07.5 — Safety Formalisms",
+        content: "Lain's safety is defined by the judgment 'Γ; Σ; B ⊢ e : τ ⊣ Γ'; Σ'; B'', where Γ is the environment, Σ the linear state, and B the active borrow set. This formal model ensures that every valid program preserves the RW-Lock invariant and Linear Integrity. The system is verified to be sound: no safe program can trigger a data race or use-after-free.",
+        code: `/* Typing Judgment */\nΓ; Σ; B ⊢ e : τ\n- Γ: Env (Types)\n- Σ: Linear State (Owned)\n- B: Borrow Set (RW-Lock)`
     },
     {
         id: "constraints",
         title: "08 — Verification & VRA",
-        content: "Value Range Analysis (VRA) enables static verification of program properties like array bounds and division-by-zero without a runtime cost. Equation-style constraints can be applied to parameters and return types, ensuring that invalid arguments are caught at compile time. It tracks integer intervals through control flow and arithmetic.",
-        code: `func safe_div(a int, b int != 0) int {\n    return a / b\n}\n\nfunc get(arr int[10], i int in arr) int {\n    return arr[i] // guaranteed safe\n}`
+        content: "Value Range Analysis (VRA) enables compile-time verification of constraints like 'x != 0' or 'i in 0..len'. It tracks absolute integer intervals through arithmetic and control flow. Unlike SMT-based systems, VRA is polynomial-time and decidable. Constraints can be combined using 'and'/'or' to express complex invariants for buffer safety and mathematical correctness.",
+        code: `func safe_div(a int, b int != 0) int {\n    return a / b\n}\n\nfunc get(arr int[10], i int in 0..10) int {\n    return arr[i] // verified safe\n}\n\n// Compound: i int in 0..10 and i != 5`
     },
     {
         id: "generics",
         title: "09 — Generics & CTFE",
-        content: "Lain uses Compile-Time Function Evaluation (CTFE) for generics. Instead of specialized syntax, it uses ordinary 'func' declarations with 'comptime' parameters. At call sites, the compiler monomorphizes the function, creating a concrete specialization for each unique set of type arguments. This unifies generics, type constructors, and static assertions into one powerful mechanism.",
-        code: `func Option(comptime T type) type {\n    return type { Some { value T }, None }\n}\n\ntype OptionInt = Option(int)\nvar x = OptionInt.Some(42)`
+        content: "Generics utilize monomorphization: the compiler generates a unique C function for every distinct type argument set. This preserves 'Assembly-Speed' performance as no runtime dispatch or type erasure occurs. Comptime evaluation is restricted to pure, terminating 'func' blocks, ensuring the compiler remains polynomial-time and decidable.",
+        code: `func Box(comptime T type) type {\n    return type { value T }\n}\n\n// Specializations generated in C:\n// Box_int { int value; };\n// Box_f32 { float value; };`
     },
     {
         id: "modules",
@@ -93,8 +117,8 @@ export const specData: SpecChapter[] = [
     {
         id: "memory",
         title: "13 — Memory Model",
-        content: "Lain's memory model is designed for zero runtime overhead and deterministic allocation. It defaults to stack allocation for all variables, with explicit heap management via C interop (malloc/free). The ownership system integrates directly with heap pointers, turning memory leaks and double-frees into compile-time errors without a garbage collector.",
-        code: `extern proc malloc(size usize) mov *void\nextern proc free(ptr mov *void)\n\nproc main() {\n    var ptr = malloc(1024)\n    // ... use ptr ...\n    free(mov ptr) // explicit deallocation\n}`
+        content: "Lain uses a deterministic, stack-first memory model. Variables are destroyed in the exact reverse order of their declaration (LIFO). For heap memory, the ownership system turns manual management into a verified protocol: 'malloc' returns an owned value, and 'free' must consume it exactly once, eliminating leaks and double-frees at compile time.",
+        code: `var a = malloc(10)\nvar b = malloc(20)\n\ndefer { free(mov a) } // executed 2nd\ndefer { free(mov b) } // executed 1st`
     },
     {
         id: "errors",
@@ -107,6 +131,18 @@ export const specData: SpecChapter[] = [
         title: "15 — Standard Library",
         content: "The Lain standard library provides essential, composable building blocks under the 'std' namespace. It includes low-level C bindings (std.c), IO operations (std.io), resource-safe file system access (std.fs), and core mathematical utilities (std.math). All modules are built using Lain's ownership and purity rules.",
         code: `import std.io\nimport std.fs\n\nproc main() {\n    var f = open_file("data.txt", "w")\n    defer { close_file(mov f) }\n    write_file(f, "Lain Standard Lib")\n}`
+    },
+    {
+        id: "architecture",
+        title: "16 — Compiler Architecture",
+        content: "The compiler follows a strict multi-pass pipeline: 1. Parser (AST generation), 2. Resolver (scoping), 3. Typechecker (VRA & Constraints), 4. NLL Pre-pass (liveness), 5. Linearity (borrow check & move tracking), 6. Emitter (C99 generation). This linear pipeline ensures predictable build times and facilitates modular verification of each safety invariant.",
+        code: `/* Pipeline Flow */\nsource -> [Parser]\n       -> [Resolver]\n       -> [NLL Analysis]\n       -> [Sema/BorrowCheck]\n       -> [C99 Emitter]`
+    },
+    {
+        id: "appendix-a",
+        title: "App. A — Keyword Reference",
+        content: "Lain's keyword system is designed for clarity and ease of parsing. Key active keywords include 'mov' (ownership transfer), 'var' (mutable binding/borrow), 'proc' (procedures), and 'func' (pure functions). A strict set of 'Reserved' keywords (macro, pre, post, expr) are set aside for planned extensions like contracts and meta-programming.",
+        code: `/* Selection of Keywords */\nmov x      // Ownership transfer\nvar y = 10 // Mutable variable\nfunc f()   // Pure function\nproc p()   // Side-effecting procedure\ncomptime T // Generic parameter`
     },
     {
         id: "rationale",
@@ -127,9 +163,15 @@ export const specData: SpecChapter[] = [
         code: `// Planned: Error Propagation\nvar val = try_op()? \n\n// Planned: Traits\ntrait Printable { func print(self) }`
     },
     {
-        id: "borrowchecker",
-        title: "Deep Dive — Borrow Checker",
-        content: "The borrow checker enforces the Read-Write Lock invariant: multiple shared borrows or exactly one mutable borrow—never both. It uses Non-Lexical Lifetimes (NLL) to track borrow expiration at the last use, and ensures linear types are consumed exactly once. This eliminates data races and use-after-free bugs at source.",
-        code: `var x = Data(10)\nvar ref = get_ref(var x) // Exclusive\n\n// print(x.val) // ERROR: x is borrowed\nuse(ref)        // Last use\nprint(x.val)  // OK: borrow released`
+        id: "appendix-e",
+        title: "App. E — Technical Status",
+        content: "The Lain compiler is actively evolving through a 5-phase plan. Ph 1 (Core) and Ph 2 (Semantic System) are largely implemented, including the borrow checker and monomorphized generics. Current work (Ph 3) focuses on formalizing the memory model and error handling. Open design questions include the exact semantics of inclusive ranges (..=) and the implementation of native 'char' for C interop.",
+        code: `// Current Task Queue:\n- [x] VRA Constraints\n- [x] Monomorphization\n- [/] Ph 3: Memory Model\n- [/] Ph 4: Stdlib Reference\n- [ ] Ph 5: Grammar Formalization`
+    },
+    {
+        id: "diagnostics",
+        title: "App. F — Diagnostic System",
+        content: "Lain's diagnostic system provides precise feedback on safety violations. It identifies where a borrow was created, why it conflicts with a current operation, and where it is expected to expire. This helps developers resolve spatial and temporal safety errors without needing explicit lifetime markers in their code.",
+        code: `/* Example Error Reporting */\nE0502: cannot borrow 'data' as shared\nbecause it is mutably borrowed.\n\n3 | var r = get(var data) // mutable here\n5 | read(data)             // shared ERROR`
     }
 ];

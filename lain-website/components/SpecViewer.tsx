@@ -24,7 +24,7 @@ export default function SpecViewer() {
             .replace(/>/g, '&gt;');
 
         // 2. Single pass substitution to avoid recursion
-        const regex = /\b(func|proc|var|mov|return|type|let|if|else|while|for|match|case|extern|comptime|undefined|as|import|c_include)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void|string|File|Data|Buffer|Result|Option)\b|("[^"]*")|(\/\*[\s\S]*?\*\/|\/\/.*)/g;
+        const regex = /\b(func|proc|fun|var|mov|return|type|let|if|elif|else|while|for|match|case|extern|comptime|undefined|as|import|c_include|defer|unsafe|and|or|break|continue|in|true|false)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void|string|File|Data|Buffer|Result|Option)\b|("[^"]*")|(\/\*[\s\S]*?\*\/|\/\/.*)/g;
 
         return escaped.replace(regex, (match, kw, type, str, com) => {
             if (kw) return `<span class="${styles.kw}">${kw}</span>`;

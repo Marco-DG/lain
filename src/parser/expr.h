@@ -27,9 +27,15 @@ Expr *parse_expr(Arena* arena, Parser* parser)
 Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
     Expr *left = parse_unary_expr(arena, parser);
 
+    // Handle postfix `as` cast immediately after the initial operand
+    if (parser_match(TOKEN_KEYWORD_AS)) {
+        parser_advance();
+        Type *target = parse_type(arena, parser);
+        left = expr_cast(arena, left, target);
+    }
+
     while (true) {
         TokenKind op = parser->token.kind;
-
 
         int prec = get_precedence(op);
         if (prec < precedence) break;
@@ -37,13 +43,13 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
         parser_advance();  // consume this operator
         Expr *right = parse_binary_expr(arena, parser, prec + 1);
         left = expr_binary(arena, op, left, right);
-    }
 
-    // Handle postfix `as` cast: expr as Type
-    if (parser_match(TOKEN_KEYWORD_AS)) {
-        parser_advance(); // consume 'as'
-        Type *target = parse_type(arena, parser);
-        left = expr_cast(arena, left, target);
+        // Handle postfix `as` cast after each binary sub-expression
+        if (parser_match(TOKEN_KEYWORD_AS)) {
+            parser_advance();
+            Type *target = parse_type(arena, parser);
+            left = expr_cast(arena, left, target);
+        }
     }
 
     return left;

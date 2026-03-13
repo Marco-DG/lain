@@ -535,7 +535,26 @@ void emit_expr(Expr *expr, int depth) {
     EMIT("({\n");
     emit_indent(depth + 1);
     EMIT("%s __match%d = ", scrut_c_ty, __match_id);
-    emit_expr(expr->as.match_expr.value, depth + 1);
+    // Dereference by-pointer parameters (const T* or T*)
+    {
+        Expr *scrut_expr = expr->as.match_expr.value;
+        bool needs_deref = false;
+        if (scrut_expr->kind == EXPR_IDENTIFIER) {
+            Decl *d = scrut_expr->decl;
+            if (d && d->kind == DECL_VARIABLE && d->as.variable_decl.is_parameter) {
+                Type *t = d->as.variable_decl.type;
+                if (t) {
+                    if (t->mode == MODE_MUTABLE) {
+                        needs_deref = true;
+                    } else if (!is_primitive_type(t)) {
+                        needs_deref = true;
+                    }
+                }
+            }
+        }
+        if (needs_deref) EMIT("*");
+        emit_expr(scrut_expr, depth + 1);
+    }
     EMIT(";\n");
     
     emit_indent(depth + 1);
@@ -586,8 +605,24 @@ void emit_expr(Expr *expr, int depth) {
                   }
                   case EXPR_IDENTIFIER: {
                       if (p->expr->is_global && p->expr->decl && p->expr->decl->kind == DECL_ENUM) {
-                          EMIT("__match%d.tag == ", __match_id);
-                          emit_expr(p->expr, depth);
+                          // Emit tag enum constant (e.g. TK_Tag_EOF), not constructor function.
+                          // The variant id is fully-qualified (e.g. "Lain_1_src_main_TK_EOF"),
+                          // so strip the ADT prefix to get just the raw variant name ("EOF").
+                          char adt_buf[256];
+                          strncpy(adt_buf, c_name_for_id(p->expr->decl->as.enum_decl.type_name), sizeof(adt_buf));
+                          adt_buf[sizeof(adt_buf)-1] = '\0';
+                          size_t adt_len = strlen(adt_buf);
+                          Id *vid = p->expr->as.identifier_expr.id;
+                          const char *raw_variant = vid->name;
+                          int raw_len = (int)vid->length;
+                          if (raw_len > (int)adt_len + 1 &&
+                              strncmp(vid->name, adt_buf, adt_len) == 0 &&
+                              vid->name[adt_len] == '_') {
+                              raw_variant = vid->name + adt_len + 1;
+                              raw_len = raw_len - (int)adt_len - 1;
+                          }
+                          EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_buf,
+                               raw_len, raw_variant);
                           break;
                       }
                       EMIT("__match%d == ", __match_id);
@@ -608,7 +643,17 @@ void emit_expr(Expr *expr, int depth) {
         
         emit_indent(depth + 2);
         EMIT("__result%d = ", __match_id);
-        emit_expr(c->body, depth + 2);
+        // Coerce string literal to slice type in case expression arms.
+        // Use (uint8_t*)"str" instead of compound literal to avoid
+        // dangling pointer from block-scoped compound literals in ({...}).
+        if (c->body->kind == EXPR_STRING && expr->type &&
+            expr->type->kind == TYPE_SLICE) {
+            int L = (int)c->body->as.string_expr.length;
+            const char *S = c->body->as.string_expr.value;
+            EMIT("(%s){ .len = %d, .data = (uint8_t*)\"%.*s\" }", res_c_ty, L, L, S);
+        } else {
+            emit_expr(c->body, depth + 2);
+        }
         EMIT(";\n");
         
         emit_indent(depth + 1);

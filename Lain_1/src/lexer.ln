@@ -1,92 +1,322 @@
-type TokenKind {
-    EOF, Error, Id, Num, Str, Plus, Minus, Star, Slash, Eq, 
-    LParen, RParen, LBrace, RBrace, Comma, Colon, Semi
+// ---------------------------------------------------------------------------
+//  Lain Self-Hosted Lexer — Data-Oriented FSM
+//  Zero-copy, table-driven, single-pass, no allocations.
+// ---------------------------------------------------------------------------
+
+// -- Token kinds (flat enum — compiles to C int enum) -----------------------
+// Adding a token: add one variant here + one case arm in next().
+
+type TK {
+    // Control
+    EOF, Err,
+    // Literals
+    Ident, Int, Str, Char,
+    // Delimiters
+    LParen, RParen, LBrace, RBrace, LBrack, RBrack,
+    Comma, Semi, Colon,
+    // Single-char operators
+    Plus, Minus, Star, Slash, Percent,
+    Eq, Bang, Lt, Gt,
+    Amp, Pipe, Caret, Tilde, Dot, At,
+    // Compound operators
+    EqEq, BangEq, LtEq, GtEq,
+    PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
+    AmpEq, PipeEq, CaretEq,
+    Arrow, DotDot, DotDotEq, Shl, Shr,
+    // Keywords
+    KwVar, KwFunc, KwProc, KwReturn,
+    KwIf, KwElse, KwWhile, KwFor,
+    KwCase, KwType, KwImport,
+    KwTrue, KwFalse,
+    KwMov, KwComptime,
+    KwBreak, KwContinue,
+    KwAnd, KwOr, KwNot,
+    KwExtern, KwUnsafe,
+    KwIn, KwAs, KwDefer, KwMod, KwBool
 }
 
+// -- Data types -------------------------------------------------------------
+
 type Token {
-    kind   TokenKind
-    lexeme u8[]
+    kind  TK
+    start int
+    stop  int
 }
 
 type Lexer {
-    src u8[:0]
-    pos int
-    row int
-    col int
+    src  u8[:0]
+    pos  int
+    size int
 }
 
-func init_lexer(s u8[:0]) Lexer {
-    return Lexer(s, 0, 1, 1)
+// -- Construction -----------------------------------------------------------
+
+func make_lexer(source u8[:0]) Lexer {
+    return Lexer(source, 0, source.len)
 }
 
-func is_alpha(c int) bool { return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' }
-func is_digit(c int) bool { return c >= '0' and c <= '9' }
-func is_alnum(c int) bool { return is_alpha(c) or is_digit(c) }
+// -- Character classification -----------------------------------------------
 
-func peek(l Lexer) int {
-    if l.pos >= l.src.len { return 0 }
+func is_alpha(c int) bool {
+    return case c {
+        'a'..'z', 'A'..'Z', '_': true
+        else: false
+    }
+}
+
+func is_digit(c int) bool {
+    return case c {
+        '0'..'9': true
+        else: false
+    }
+}
+
+func is_alnum(c int) bool {
+    return case c {
+        'a'..'z', 'A'..'Z', '_', '0'..'9': true
+        else: false
+    }
+}
+
+// -- Byte access ------------------------------------------------------------
+
+proc peek(l Lexer) int { unsafe {
+    if l.pos >= l.size { return 0 }
     return l.src[l.pos] as int
-}
+}}
 
-proc consume(var l Lexer) int {
-    var c = peek(l)
-    if c != 0 {
-        l.pos += 1
-        l.col += 1
-        if c == '\n' { 
-            l.row += 1
-            l.col = 1 
-        }
-    }
+proc peek_at(l Lexer, offset int) int { unsafe {
+    var i = l.pos + offset
+    if i >= l.size { return 0 }
+    return l.src[i] as int
+}}
+
+proc eat(var l Lexer) int { unsafe {
+    if l.pos >= l.size { return 0 }
+    var c = l.src[l.pos] as int
+    l.pos += 1
     return c
-}
+}}
 
-proc skip_space(var l Lexer) {
-    while true {
-        var c = peek(l)
-        if c == ' ' or c == '\t' or c == '\r' or c == '\n' { 
-            consume(l) 
-        } else { 
-            break 
+proc try_eat(var l Lexer, expected int) bool { unsafe {
+    if l.pos >= l.size { return false }
+    if (l.src[l.pos] as int) != expected { return false }
+    l.pos += 1
+    return true
+}}
+
+// -- Whitespace + line comments ---------------------------------------------
+
+proc skip(var l Lexer) { unsafe {
+    while l.pos < l.size {
+        var c = l.src[l.pos] as int
+        if c == ' ' or c == '\t' or c == '\r' or c == '\n' {
+            l.pos += 1
+        } else if c == '/' and peek_at(l, 1) == '/' {
+            l.pos += 2
+            while l.pos < l.size and (l.src[l.pos] as int) != '\n' {
+                l.pos += 1
+            }
+        } else {
+            break
         }
     }
+}}
+
+// -- Keyword lookup (flattened trie) ----------------------------------------
+// Separate procs per length avoid if-in-case parsing issues.
+
+proc kw2(src u8[:0], s int) TK { unsafe {
+    if src[s] as int == 'i' and src[s+1] as int == 'f' { return TK.KwIf }
+    if src[s] as int == 'i' and src[s+1] as int == 'n' { return TK.KwIn }
+    if src[s] as int == 'a' and src[s+1] as int == 's' { return TK.KwAs }
+    if src[s] as int == 'o' and src[s+1] as int == 'r' { return TK.KwOr }
+    return TK.Ident
+}}
+
+proc kw3(src u8[:0], s int) TK { unsafe {
+    if src[s] as int == 'v' and src[s+1] as int == 'a' and src[s+2] as int == 'r' { return TK.KwVar }
+    if src[s] as int == 'f' and src[s+1] as int == 'o' and src[s+2] as int == 'r' { return TK.KwFor }
+    if src[s] as int == 'm' and src[s+1] as int == 'o' and src[s+2] as int == 'v' { return TK.KwMov }
+    if src[s] as int == 'a' and src[s+1] as int == 'n' and src[s+2] as int == 'd' { return TK.KwAnd }
+    if src[s] as int == 'n' and src[s+1] as int == 'o' and src[s+2] as int == 't' { return TK.KwNot }
+    if src[s] as int == 'm' and src[s+1] as int == 'o' and src[s+2] as int == 'd' { return TK.KwMod }
+    return TK.Ident
+}}
+
+proc kw4(src u8[:0], s int) TK { unsafe {
+    if src[s] as int == 'f' and src[s+1] as int == 'u' and src[s+2] as int == 'n' and src[s+3] as int == 'c' { return TK.KwFunc }
+    if src[s] as int == 'p' and src[s+1] as int == 'r' and src[s+2] as int == 'o' and src[s+3] as int == 'c' { return TK.KwProc }
+    if src[s] as int == 'c' and src[s+1] as int == 'a' and src[s+2] as int == 's' and src[s+3] as int == 'e' { return TK.KwCase }
+    if src[s] as int == 'e' and src[s+1] as int == 'l' and src[s+2] as int == 's' and src[s+3] as int == 'e' { return TK.KwElse }
+    if src[s] as int == 't' and src[s+1] as int == 'r' and src[s+2] as int == 'u' and src[s+3] as int == 'e' { return TK.KwTrue }
+    if src[s] as int == 't' and src[s+1] as int == 'y' and src[s+2] as int == 'p' and src[s+3] as int == 'e' { return TK.KwType }
+    if src[s] as int == 'b' and src[s+1] as int == 'o' and src[s+2] as int == 'o' and src[s+3] as int == 'l' { return TK.KwBool }
+    return TK.Ident
+}}
+
+proc kw5(src u8[:0], s int) TK { unsafe {
+    if src[s] as int == 'w' and src[s+1] as int == 'h' and src[s+2] as int == 'i' and src[s+3] as int == 'l' and src[s+4] as int == 'e' { return TK.KwWhile }
+    if src[s] as int == 'b' and src[s+1] as int == 'r' and src[s+2] as int == 'e' and src[s+3] as int == 'a' and src[s+4] as int == 'k' { return TK.KwBreak }
+    if src[s] as int == 'f' and src[s+1] as int == 'a' and src[s+2] as int == 'l' and src[s+3] as int == 's' and src[s+4] as int == 'e' { return TK.KwFalse }
+    if src[s] as int == 'd' and src[s+1] as int == 'e' and src[s+2] as int == 'f' and src[s+3] as int == 'e' and src[s+4] as int == 'r' { return TK.KwDefer }
+    return TK.Ident
+}}
+
+proc kw6(src u8[:0], s int) TK { unsafe {
+    if src[s] as int == 'r' and src[s+1] as int == 'e' and src[s+2] as int == 't' and src[s+3] as int == 'u' and src[s+4] as int == 'r' and src[s+5] as int == 'n' { return TK.KwReturn }
+    if src[s] as int == 'i' and src[s+1] as int == 'm' and src[s+2] as int == 'p' and src[s+3] as int == 'o' and src[s+4] as int == 'r' and src[s+5] as int == 't' { return TK.KwImport }
+    if src[s] as int == 'e' and src[s+1] as int == 'x' and src[s+2] as int == 't' and src[s+3] as int == 'e' and src[s+4] as int == 'r' and src[s+5] as int == 'n' { return TK.KwExtern }
+    if src[s] as int == 'u' and src[s+1] as int == 'n' and src[s+2] as int == 's' and src[s+3] as int == 'a' and src[s+4] as int == 'f' and src[s+5] as int == 'e' { return TK.KwUnsafe }
+    return TK.Ident
+}}
+
+proc kw8(src u8[:0], s int) TK { unsafe {
+    if src[s] as int == 'c' and src[s+1] as int == 'o' and src[s+2] as int == 'n' and src[s+3] as int == 't' and src[s+4] as int == 'i' and src[s+5] as int == 'n' and src[s+6] as int == 'u' and src[s+7] as int == 'e' { return TK.KwContinue }
+    if src[s] as int == 'c' and src[s+1] as int == 'o' and src[s+2] as int == 'm' and src[s+3] as int == 'p' and src[s+4] as int == 't' and src[s+5] as int == 'i' and src[s+6] as int == 'm' and src[s+7] as int == 'e' { return TK.KwComptime }
+    return TK.Ident
+}}
+
+proc keyword(src u8[:0], s int, e int) TK {
+    var n = e - s
+    if n == 2 { return kw2(src, s) }
+    if n == 3 { return kw3(src, s) }
+    if n == 4 { return kw4(src, s) }
+    if n == 5 { return kw5(src, s) }
+    if n == 6 { return kw6(src, s) }
+    if n == 8 { return kw8(src, s) }
+    return TK.Ident
 }
 
-proc next_token(var l Lexer) Token {
-    skip_space(l)
-    
-    var start = l.pos
-    var c = consume(l)
-    
-    if c == 0 { return Token(TokenKind.EOF, l.src[start..start]) }
-    
-    var kind = TokenKind.Error
-    case c {
-        '+': kind = TokenKind.Plus
-        '-': kind = TokenKind.Minus
-        '*': kind = TokenKind.Star
-        '/': kind = TokenKind.Slash
-        '=': kind = TokenKind.Eq
-        '(': kind = TokenKind.LParen
-        ')': kind = TokenKind.RParen
-        '{': kind = TokenKind.LBrace
-        '}': kind = TokenKind.RBrace
-        ',': kind = TokenKind.Comma
-        ':': kind = TokenKind.Colon
-        ';': kind = TokenKind.Semi
-        '"':
-            while peek(l) != 0 and peek(l) != '"' { consume(l) }
-            if peek(l) == '"' { consume(l) }
-            kind = TokenKind.Str
-        else:
-            if is_alpha(c) {
-                while is_alnum(peek(l)) { consume(l) }
-                kind = TokenKind.Id
-            } else if is_digit(c) {
-                while is_digit(peek(l)) { consume(l) }
-                kind = TokenKind.Num
-            }
+// -- Scanners ---------------------------------------------------------------
+
+proc scan_ident(var l Lexer, start int) Token { unsafe {
+    while l.pos < l.size and is_alnum(l.src[l.pos] as int) {
+        l.pos += 1
     }
-    
-    return Token(kind, l.src[start..l.pos])
+    var kind = keyword(l.src, start, l.pos)
+    return Token(kind, start, l.pos)
+}}
+
+proc scan_number(var l Lexer, start int) Token { unsafe {
+    while l.pos < l.size and is_digit(l.src[l.pos] as int) {
+        l.pos += 1
+    }
+    return Token(TK.Int, start, l.pos)
+}}
+
+proc scan_string(var l Lexer, start int) Token { unsafe {
+    while l.pos < l.size and (l.src[l.pos] as int) != '"' {
+        if (l.src[l.pos] as int) == '\\' and l.pos + 1 < l.size {
+            l.pos += 2
+        } else {
+            l.pos += 1
+        }
+    }
+    if l.pos < l.size { l.pos += 1 }
+    return Token(TK.Str, start, l.pos)
+}}
+
+proc scan_char(var l Lexer, start int) Token { unsafe {
+    while l.pos < l.size and (l.src[l.pos] as int) != '\'' {
+        if (l.src[l.pos] as int) == '\\' and l.pos + 1 < l.size {
+            l.pos += 2
+        } else {
+            l.pos += 1
+        }
+    }
+    if l.pos < l.size { l.pos += 1 }
+    return Token(TK.Char, start, l.pos)
+}}
+
+// -- Main entry -------------------------------------------------------------
+
+proc next(var l Lexer) Token {
+    skip(l)
+
+    if l.pos >= l.size { return Token(TK.EOF, l.pos, l.pos) }
+
+    var start = l.pos
+    var c = eat(l)
+
+    if is_alpha(c) { return scan_ident(l, start) }
+    if is_digit(c) { return scan_number(l, start) }
+    if c == '"'    { return scan_string(l, start) }
+    if c == '\''   { return scan_char(l, start) }
+
+    // Compound operators
+    if c == '=' {
+        if try_eat(l, '=') { return Token(TK.EqEq, start, l.pos) }
+        return Token(TK.Eq, start, l.pos)
+    }
+    if c == '!' {
+        if try_eat(l, '=') { return Token(TK.BangEq, start, l.pos) }
+        return Token(TK.Bang, start, l.pos)
+    }
+    if c == '<' {
+        if try_eat(l, '=') { return Token(TK.LtEq, start, l.pos) }
+        if try_eat(l, '<') { return Token(TK.Shl, start, l.pos) }
+        return Token(TK.Lt, start, l.pos)
+    }
+    if c == '>' {
+        if try_eat(l, '=') { return Token(TK.GtEq, start, l.pos) }
+        if try_eat(l, '>') { return Token(TK.Shr, start, l.pos) }
+        return Token(TK.Gt, start, l.pos)
+    }
+    if c == '+' {
+        if try_eat(l, '=') { return Token(TK.PlusEq, start, l.pos) }
+        return Token(TK.Plus, start, l.pos)
+    }
+    if c == '-' {
+        if try_eat(l, '>') { return Token(TK.Arrow, start, l.pos) }
+        if try_eat(l, '=') { return Token(TK.MinusEq, start, l.pos) }
+        return Token(TK.Minus, start, l.pos)
+    }
+    if c == '*' {
+        if try_eat(l, '=') { return Token(TK.StarEq, start, l.pos) }
+        return Token(TK.Star, start, l.pos)
+    }
+    if c == '/' {
+        if try_eat(l, '=') { return Token(TK.SlashEq, start, l.pos) }
+        return Token(TK.Slash, start, l.pos)
+    }
+    if c == '%' {
+        if try_eat(l, '=') { return Token(TK.PercentEq, start, l.pos) }
+        return Token(TK.Percent, start, l.pos)
+    }
+    if c == '&' {
+        if try_eat(l, '=') { return Token(TK.AmpEq, start, l.pos) }
+        return Token(TK.Amp, start, l.pos)
+    }
+    if c == '|' {
+        if try_eat(l, '=') { return Token(TK.PipeEq, start, l.pos) }
+        return Token(TK.Pipe, start, l.pos)
+    }
+    if c == '^' {
+        if try_eat(l, '=') { return Token(TK.CaretEq, start, l.pos) }
+        return Token(TK.Caret, start, l.pos)
+    }
+    if c == '.' {
+        if try_eat(l, '.') {
+            if try_eat(l, '=') { return Token(TK.DotDotEq, start, l.pos) }
+            return Token(TK.DotDot, start, l.pos)
+        }
+        return Token(TK.Dot, start, l.pos)
+    }
+
+    // Single-char delimiters
+    return case c {
+        '(': Token(TK.LParen, start, l.pos)
+        ')': Token(TK.RParen, start, l.pos)
+        '{': Token(TK.LBrace, start, l.pos)
+        '}': Token(TK.RBrace, start, l.pos)
+        '[': Token(TK.LBrack, start, l.pos)
+        ']': Token(TK.RBrack, start, l.pos)
+        ',': Token(TK.Comma,  start, l.pos)
+        ';': Token(TK.Semi,   start, l.pos)
+        ':': Token(TK.Colon,  start, l.pos)
+        '~': Token(TK.Tilde,  start, l.pos)
+        '@': Token(TK.At,     start, l.pos)
+        else: Token(TK.Err, start, l.pos)
+    }
 }

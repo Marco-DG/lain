@@ -811,8 +811,8 @@ void sema_infer_expr(Expr *e) {
         } else {
             e->type = t->element_type;
         }
-        // STATIC BOUNDS CHECK
-        if (sema_ranges) {
+        // STATIC BOUNDS CHECK (skipped inside unsafe blocks)
+        if (sema_ranges && !sema_in_unsafe_block) {
             sema_check_bounds(sema_ranges, e->as.index_expr.index, t);
         }
     } else if (t->kind == TYPE_POINTER) {
@@ -850,6 +850,23 @@ void sema_infer_expr(Expr *e) {
         exit(1);
     }
     
+    // If inferred type is a fixed-length string literal type (TYPE_SLICE with
+    // sentinel_str==NULL, sentinel_len>0), unify to u8[:0] so case expressions
+    // with string arms of different lengths share a common result type.
+    if (inferred_type && inferred_type->kind == TYPE_SLICE &&
+        !inferred_type->sentinel_is_string &&
+        inferred_type->sentinel_str == NULL &&
+        inferred_type->sentinel_len > 0) {
+        Type *slice_ty = arena_push_aligned(sema_arena, Type);
+        slice_ty->kind       = TYPE_SLICE;
+        slice_ty->mode       = MODE_SHARED;
+        slice_ty->element_type = inferred_type->element_type;
+        slice_ty->sentinel_str       = "0";
+        slice_ty->sentinel_len       = 1;
+        slice_ty->sentinel_is_string = false;
+        inferred_type = slice_ty;
+    }
+
     e->type = inferred_type ? inferred_type : get_builtin_int_type();
     break;
   }
