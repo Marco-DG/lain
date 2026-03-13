@@ -46,7 +46,8 @@
       "Bash(ls:*)",
       "Bash(./output:*)",
       "Bash(./test_out:*)",
-      "Bash(./lexer_test:*)"
+      "Bash(./lexer_test:*)",
+      "Bash(xargs -I {} sh -c 'grep -l \"\"unsafe\"\" \"\"{}\"\" 2>/dev/null && grep \"\"func\"\" \"\"{}\"\" | head -1')"
     ]
   }
 }

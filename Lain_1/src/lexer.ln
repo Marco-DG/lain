@@ -123,70 +123,70 @@ proc skip(var l Lexer) { unsafe {
     }
 }}
 
-// -- Keyword lookup (flattened trie) ----------------------------------------
-// Separate procs per length avoid if-in-case parsing issues.
+// -- Keyword lookup (flattened trie, length-dispatched) ---------------------
 
-proc kw2(src u8[:0], s int) TK { unsafe {
-    if src[s] as int == 'i' and src[s+1] as int == 'f' { return TK.KwIf }
-    if src[s] as int == 'i' and src[s+1] as int == 'n' { return TK.KwIn }
-    if src[s] as int == 'a' and src[s+1] as int == 's' { return TK.KwAs }
-    if src[s] as int == 'o' and src[s+1] as int == 'r' { return TK.KwOr }
-    return TK.Ident
-}}
-
-proc kw3(src u8[:0], s int) TK { unsafe {
-    if src[s] as int == 'v' and src[s+1] as int == 'a' and src[s+2] as int == 'r' { return TK.KwVar }
-    if src[s] as int == 'f' and src[s+1] as int == 'o' and src[s+2] as int == 'r' { return TK.KwFor }
-    if src[s] as int == 'm' and src[s+1] as int == 'o' and src[s+2] as int == 'v' { return TK.KwMov }
-    if src[s] as int == 'a' and src[s+1] as int == 'n' and src[s+2] as int == 'd' { return TK.KwAnd }
-    if src[s] as int == 'n' and src[s+1] as int == 'o' and src[s+2] as int == 't' { return TK.KwNot }
-    if src[s] as int == 'm' and src[s+1] as int == 'o' and src[s+2] as int == 'd' { return TK.KwMod }
-    return TK.Ident
-}}
-
-proc kw4(src u8[:0], s int) TK { unsafe {
-    if src[s] as int == 'f' and src[s+1] as int == 'u' and src[s+2] as int == 'n' and src[s+3] as int == 'c' { return TK.KwFunc }
-    if src[s] as int == 'p' and src[s+1] as int == 'r' and src[s+2] as int == 'o' and src[s+3] as int == 'c' { return TK.KwProc }
-    if src[s] as int == 'c' and src[s+1] as int == 'a' and src[s+2] as int == 's' and src[s+3] as int == 'e' { return TK.KwCase }
-    if src[s] as int == 'e' and src[s+1] as int == 'l' and src[s+2] as int == 's' and src[s+3] as int == 'e' { return TK.KwElse }
-    if src[s] as int == 't' and src[s+1] as int == 'r' and src[s+2] as int == 'u' and src[s+3] as int == 'e' { return TK.KwTrue }
-    if src[s] as int == 't' and src[s+1] as int == 'y' and src[s+2] as int == 'p' and src[s+3] as int == 'e' { return TK.KwType }
-    if src[s] as int == 'b' and src[s+1] as int == 'o' and src[s+2] as int == 'o' and src[s+3] as int == 'l' { return TK.KwBool }
-    return TK.Ident
-}}
-
-proc kw5(src u8[:0], s int) TK { unsafe {
-    if src[s] as int == 'w' and src[s+1] as int == 'h' and src[s+2] as int == 'i' and src[s+3] as int == 'l' and src[s+4] as int == 'e' { return TK.KwWhile }
-    if src[s] as int == 'b' and src[s+1] as int == 'r' and src[s+2] as int == 'e' and src[s+3] as int == 'a' and src[s+4] as int == 'k' { return TK.KwBreak }
-    if src[s] as int == 'f' and src[s+1] as int == 'a' and src[s+2] as int == 'l' and src[s+3] as int == 's' and src[s+4] as int == 'e' { return TK.KwFalse }
-    if src[s] as int == 'd' and src[s+1] as int == 'e' and src[s+2] as int == 'f' and src[s+3] as int == 'e' and src[s+4] as int == 'r' { return TK.KwDefer }
-    return TK.Ident
-}}
-
-proc kw6(src u8[:0], s int) TK { unsafe {
-    if src[s] as int == 'r' and src[s+1] as int == 'e' and src[s+2] as int == 't' and src[s+3] as int == 'u' and src[s+4] as int == 'r' and src[s+5] as int == 'n' { return TK.KwReturn }
-    if src[s] as int == 'i' and src[s+1] as int == 'm' and src[s+2] as int == 'p' and src[s+3] as int == 'o' and src[s+4] as int == 'r' and src[s+5] as int == 't' { return TK.KwImport }
-    if src[s] as int == 'e' and src[s+1] as int == 'x' and src[s+2] as int == 't' and src[s+3] as int == 'e' and src[s+4] as int == 'r' and src[s+5] as int == 'n' { return TK.KwExtern }
-    if src[s] as int == 'u' and src[s+1] as int == 'n' and src[s+2] as int == 's' and src[s+3] as int == 'a' and src[s+4] as int == 'f' and src[s+5] as int == 'e' { return TK.KwUnsafe }
-    return TK.Ident
-}}
-
-proc kw8(src u8[:0], s int) TK { unsafe {
-    if src[s] as int == 'c' and src[s+1] as int == 'o' and src[s+2] as int == 'n' and src[s+3] as int == 't' and src[s+4] as int == 'i' and src[s+5] as int == 'n' and src[s+6] as int == 'u' and src[s+7] as int == 'e' { return TK.KwContinue }
-    if src[s] as int == 'c' and src[s+1] as int == 'o' and src[s+2] as int == 'm' and src[s+3] as int == 'p' and src[s+4] as int == 't' and src[s+5] as int == 'i' and src[s+6] as int == 'm' and src[s+7] as int == 'e' { return TK.KwComptime }
-    return TK.Ident
-}}
-
-proc keyword(src u8[:0], s int, e int) TK {
+func keyword(src u8[:0], s int, e int) TK { unsafe {
     var n = e - s
-    if n == 2 { return kw2(src, s) }
-    if n == 3 { return kw3(src, s) }
-    if n == 4 { return kw4(src, s) }
-    if n == 5 { return kw5(src, s) }
-    if n == 6 { return kw6(src, s) }
-    if n == 8 { return kw8(src, s) }
+
+    // length 2
+    if n == 2 {
+        if src[s] as int == 'i' and src[s+1] as int == 'f' { return TK.KwIf }
+        if src[s] as int == 'i' and src[s+1] as int == 'n' { return TK.KwIn }
+        if src[s] as int == 'a' and src[s+1] as int == 's' { return TK.KwAs }
+        if src[s] as int == 'o' and src[s+1] as int == 'r' { return TK.KwOr }
+        return TK.Ident
+    }
+
+    // length 3
+    if n == 3 {
+        if src[s] as int == 'v' and src[s+1] as int == 'a' and src[s+2] as int == 'r' { return TK.KwVar }
+        if src[s] as int == 'f' and src[s+1] as int == 'o' and src[s+2] as int == 'r' { return TK.KwFor }
+        if src[s] as int == 'm' and src[s+1] as int == 'o' and src[s+2] as int == 'v' { return TK.KwMov }
+        if src[s] as int == 'a' and src[s+1] as int == 'n' and src[s+2] as int == 'd' { return TK.KwAnd }
+        if src[s] as int == 'n' and src[s+1] as int == 'o' and src[s+2] as int == 't' { return TK.KwNot }
+        if src[s] as int == 'm' and src[s+1] as int == 'o' and src[s+2] as int == 'd' { return TK.KwMod }
+        return TK.Ident
+    }
+
+    // length 4
+    if n == 4 {
+        if src[s] as int == 'f' and src[s+1] as int == 'u' and src[s+2] as int == 'n' and src[s+3] as int == 'c' { return TK.KwFunc }
+        if src[s] as int == 'p' and src[s+1] as int == 'r' and src[s+2] as int == 'o' and src[s+3] as int == 'c' { return TK.KwProc }
+        if src[s] as int == 'c' and src[s+1] as int == 'a' and src[s+2] as int == 's' and src[s+3] as int == 'e' { return TK.KwCase }
+        if src[s] as int == 'e' and src[s+1] as int == 'l' and src[s+2] as int == 's' and src[s+3] as int == 'e' { return TK.KwElse }
+        if src[s] as int == 't' and src[s+1] as int == 'r' and src[s+2] as int == 'u' and src[s+3] as int == 'e' { return TK.KwTrue }
+        if src[s] as int == 't' and src[s+1] as int == 'y' and src[s+2] as int == 'p' and src[s+3] as int == 'e' { return TK.KwType }
+        if src[s] as int == 'b' and src[s+1] as int == 'o' and src[s+2] as int == 'o' and src[s+3] as int == 'l' { return TK.KwBool }
+        return TK.Ident
+    }
+
+    // length 5
+    if n == 5 {
+        if src[s] as int == 'w' and src[s+1] as int == 'h' and src[s+2] as int == 'i' and src[s+3] as int == 'l' and src[s+4] as int == 'e' { return TK.KwWhile }
+        if src[s] as int == 'b' and src[s+1] as int == 'r' and src[s+2] as int == 'e' and src[s+3] as int == 'a' and src[s+4] as int == 'k' { return TK.KwBreak }
+        if src[s] as int == 'f' and src[s+1] as int == 'a' and src[s+2] as int == 'l' and src[s+3] as int == 's' and src[s+4] as int == 'e' { return TK.KwFalse }
+        if src[s] as int == 'd' and src[s+1] as int == 'e' and src[s+2] as int == 'f' and src[s+3] as int == 'e' and src[s+4] as int == 'r' { return TK.KwDefer }
+        return TK.Ident
+    }
+
+    // length 6
+    if n == 6 {
+        if src[s] as int == 'r' and src[s+1] as int == 'e' and src[s+2] as int == 't' and src[s+3] as int == 'u' and src[s+4] as int == 'r' and src[s+5] as int == 'n' { return TK.KwReturn }
+        if src[s] as int == 'i' and src[s+1] as int == 'm' and src[s+2] as int == 'p' and src[s+3] as int == 'o' and src[s+4] as int == 'r' and src[s+5] as int == 't' { return TK.KwImport }
+        if src[s] as int == 'e' and src[s+1] as int == 'x' and src[s+2] as int == 't' and src[s+3] as int == 'e' and src[s+4] as int == 'r' and src[s+5] as int == 'n' { return TK.KwExtern }
+        if src[s] as int == 'u' and src[s+1] as int == 'n' and src[s+2] as int == 's' and src[s+3] as int == 'a' and src[s+4] as int == 'f' and src[s+5] as int == 'e' { return TK.KwUnsafe }
+        return TK.Ident
+    }
+
+    // length 8
+    if n == 8 {
+        if src[s] as int == 'c' and src[s+1] as int == 'o' and src[s+2] as int == 'n' and src[s+3] as int == 't' and src[s+4] as int == 'i' and src[s+5] as int == 'n' and src[s+6] as int == 'u' and src[s+7] as int == 'e' { return TK.KwContinue }
+        if src[s] as int == 'c' and src[s+1] as int == 'o' and src[s+2] as int == 'm' and src[s+3] as int == 'p' and src[s+4] as int == 't' and src[s+5] as int == 'i' and src[s+6] as int == 'm' and src[s+7] as int == 'e' { return TK.KwComptime }
+        return TK.Ident
+    }
+
     return TK.Ident
-}
+}}
 
 // -- Scanners ---------------------------------------------------------------
 
