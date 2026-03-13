@@ -397,9 +397,9 @@ void emit_decl(Decl* decl, int depth) {
             emit_indent(depth);
             EMIT("} %s_Tag;\n\n", adt_name);
 
-            // 3) Generate the ADT Struct: typedef struct { Shape_Tag tag; union { ... } data; } Shape;
+            // 3) Generate the ADT Struct: typedef struct Shape { Shape_Tag tag; union { ... } data; } Shape;
             emit_indent(depth);
-            EMIT("typedef struct {\n");
+            EMIT("typedef struct %s {\n", adt_name);
             emit_indent(depth + 1);
             EMIT("%s_Tag tag;\n", adt_name);
             

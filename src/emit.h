@@ -22,10 +22,13 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     EMIT("#include \"lain.h\"\n\n");
     emitted_decls = decls; // so that lookup_function_decl can see all the functions we’re about to emit.
 
-    // Emit forward declarations for structs to satisfy function parameters
+    // Emit forward declarations for structs and enums to satisfy function parameters
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (dl->decl->kind == DECL_STRUCT) {
             const char *name = c_name_for_id(dl->decl->as.struct_decl.name);
+            EMIT("typedef struct %s %s;\n", name, name);
+        } else if (dl->decl->kind == DECL_ENUM) {
+            const char *name = c_name_for_id(dl->decl->as.enum_decl.type_name);
             EMIT("typedef struct %s %s;\n", name, name);
         }
     }

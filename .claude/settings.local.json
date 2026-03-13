@@ -43,7 +43,10 @@
       "Bash(gcc:*)",
       "Bash(./lain_debug:*)",
       "Bash(wc:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(./output:*)",
+      "Bash(./test_out:*)",
+      "Bash(./lexer_test:*)"
     ]
   }
 }

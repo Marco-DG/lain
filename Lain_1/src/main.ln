@@ -1,30 +1,121 @@
-// Main testing file for Lexer
+// ---------------------------------------------------------------------------
+//  Lexer Test Driver
+// ---------------------------------------------------------------------------
 
 import Lain_1.src.lexer
 import std.c
 
-proc main() int {
-    var source u8[:0] = "var count = 100; if count { print(count) }"
-    var lex = init_lexer(source)
-    
-    libc_printf("---- Lexer Bootstrap Test ----\n")
-    libc_printf("Source:\n%s\n\n", source.data)
-    
-    var done = false
-    while done == false {
-        var t = next_token(lex)
-        
-        libc_printf("Token[%2d] | Lexeme: '%.*s'\n", t.kind, t.lexeme.len, t.lexeme.data)
-        
-        case t.kind {
-            EOF: 
-                done = true
-            Error: 
-                libc_printf("Lexer error encountered.\n")
-                done = true
-            else: 0
-        }
+func token_name(kind TK) u8[:0] {
+    return case kind {
+        EOF:       "EOF"
+        Err:       "ERR"
+        Ident:     "IDENT"
+        Int:       "INT"
+        Str:       "STR"
+        Char:      "CHAR"
+
+        LParen:    "("
+        RParen:    ")"
+        LBrace:    "{"
+        RBrace:    "}"
+        LBrack:    "["
+        RBrack:    "]"
+        Comma:     ","
+        Semi:      ";"
+        Colon:     ":"
+
+        Plus:      "+"
+        Minus:     "-"
+        Star:      "*"
+        Slash:     "/"
+        Percent:   "%"
+        Eq:        "="
+        Bang:      "!"
+        Lt:        "<"
+        Gt:        ">"
+        Amp:       "&"
+        Pipe:      "|"
+        Caret:     "^"
+        Tilde:     "~"
+        Dot:       "."
+        At:        "@"
+
+        EqEq:      "=="
+        BangEq:    "!="
+        LtEq:      "<="
+        GtEq:      ">="
+        PlusEq:    "+="
+        MinusEq:   "-="
+        StarEq:    "*="
+        SlashEq:   "/="
+        PercentEq: "%="
+        AmpEq:     "&="
+        PipeEq:    "|="
+        CaretEq:   "^="
+        Arrow:     "->"
+        DotDot:    ".."
+        DotDotEq:  "..="
+        Shl:       "<<"
+        Shr:       ">>"
+
+        KwVar:      "kw:var"
+        KwFunc:     "kw:func"
+        KwProc:     "kw:proc"
+        KwReturn:   "kw:return"
+        KwIf:       "kw:if"
+        KwElse:     "kw:else"
+        KwWhile:    "kw:while"
+        KwFor:      "kw:for"
+        KwCase:     "kw:case"
+        KwType:     "kw:type"
+        KwImport:   "kw:import"
+        KwTrue:     "kw:true"
+        KwFalse:    "kw:false"
+        KwMov:      "kw:mov"
+        KwComptime: "kw:comptime"
+        KwBreak:    "kw:break"
+        KwContinue: "kw:continue"
+        KwAnd:      "kw:and"
+        KwOr:       "kw:or"
+        KwNot:      "kw:not"
+        KwExtern:   "kw:extern"
+        KwUnsafe:   "kw:unsafe"
+        KwIn:       "kw:in"
+        KwAs:       "kw:as"
+        KwDefer:    "kw:defer"
+        KwMod:      "kw:mod"
+        KwBool:     "kw:bool"
+
+        else: "???"
     }
-    
+}
+
+func is_terminal(kind TK) bool {
+    return case kind {
+        EOF, Err: true
+        else: false
+    }
+}
+
+proc main() int {
+    var source u8[:0] = "func add(a int, b int) int { return a + b }"
+
+    libc_printf("Source:\n%s\n\n", source.data)
+
+    var l = make_lexer(source)
+    var count = 0
+
+    while true {
+        var t = next(l)
+        var name = token_name(t.kind)
+
+        libc_printf("  %3d  %-14s  %d:%d  '%.*s'\n", count, name.data, t.start, t.stop, t.stop - t.start, source.data + t.start)
+
+        count += 1
+
+        if is_terminal(t.kind) { break }
+    }
+
+    libc_printf("\n%d tokens\n", count)
     return 0
 }
