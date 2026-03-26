@@ -47,7 +47,15 @@
       "Bash(./output:*)",
       "Bash(./test_out:*)",
       "Bash(./lexer_test:*)",
-      "Bash(xargs -I {} sh -c 'grep -l \"\"unsafe\"\" \"\"{}\"\" 2>/dev/null && grep \"\"func\"\" \"\"{}\"\" | head -1')"
+      "Bash(xargs -I {} sh -c 'grep -l \"\"unsafe\"\" \"\"{}\"\" 2>/dev/null && grep \"\"func\"\" \"\"{}\"\" | head -1')",
+      "Bash(pdflatex:*)",
+      "Bash(dpkg -l:*)",
+      "Bash(./out:*)",
+      "Bash(echo:*)",
+      "Bash(/tmp/lain_test)"
+    ],
+    "additionalDirectories": [
+      "/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain"
     ]
   }
 }
