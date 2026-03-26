@@ -58,7 +58,7 @@ export const specData: SpecChapter[] = [
         id: "nll",
         title: "07.1 — Non-Lexical Lifetimes",
         content: "Unlike early safety models, Lain uses Non-Lexical Lifetimes (NLL). A borrow's lifetime is determined by its last use, not by lexical scope. This allows the compiler to accept complex but safe patterns where a borrow and a subsequent move of the same data appear in the same block, provided their usage spans do not overlap.",
-        code: `var data = Data(42)\nvar ref = get_ref(var data)\nuse(ref) // last use of ref\n\n// Borrow expires here\nconsume(mov data) // ✅ OK under NLL`
+        code: `var data = Data(42)\nvar ref = get_ref(var data)\nuse(ref) // last use of ref\n\n// Borrow expires here\nconsume(mov data) // OK under NLL`
     },
     {
         id: "linearity-deep",
