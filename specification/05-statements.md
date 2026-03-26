@@ -124,20 +124,25 @@ for i, val in 0..10 {
 
 ```lain
 while condition {
-    // loop body
+    // loop body (proc only)
+}
+
+while condition decreasing measure {
+    // loop body (allowed in func — bounded while)
 }
 ```
 
 **Syntax:**
 ```
-while_stmt = "while" expr block ;
+while_stmt = "while" expr [ "decreasing" expr ] block ;
 ```
 
 The condition is evaluated before each iteration. The body executes as long
 as the condition is true.
 
-> **CONSTRAINT:** `while` loops are only allowed in `proc` (see §6.1).
-> Using `while` inside a `func` produces diagnostic `[E011]`.
+> **CONSTRAINT:** Unbounded `while` loops (without a termination measure) are
+> only allowed in `proc` (see §6.1). Using an unbounded `while` inside a
+> `func` produces diagnostic `[E011]`.
 
 **Infinite loop pattern:**
 ```lain
@@ -145,6 +150,70 @@ while 1 {
     if done { break }
 }
 ```
+
+### 5.6.2.1 Bounded While — Termination Measure [Implemented]
+
+A `while` loop may carry an optional **termination measure** via the
+`decreasing` keyword. The measure is an integer expression that the compiler
+statically verifies:
+
+1. **Non-negative**: The measure is ≥ 0 when the loop condition is true.
+2. **Strictly decreasing**: The loop body contains assignments that strictly
+   decrease the measure on each iteration.
+
+When a termination measure is present, the `while` loop is allowed inside
+`func` (pure functions), because the compiler can guarantee termination.
+
+```lain
+func count_up(n int) int {
+    var i = 0
+    while i < n decreasing n - i {  // measure: n - i
+        i += 1                   // i increases → n - i decreases
+    }
+    return i
+}
+```
+
+**How the compiler verifies the measure:**
+
+The compiler performs two checks:
+
+1. **Non-negativity**: Pattern-matches the while condition against the measure
+   expression. For example, condition `a < b` with measure `b - a` implies
+   `b - a > 0` when the condition is true.
+
+2. **Strict decrease**: Extracts variables from the measure and their polarity
+   (positive or negative). For measure `b - a`, variable `a` has negative
+   polarity and `b` has positive polarity. Then it scans all assignments in
+   the loop body and verifies that every assignment to a measure variable
+   moves the measure in the decreasing direction. For example, `a += 1`
+   increases `a` (negative polarity), so the measure `b - a` decreases.
+
+**Supported patterns:**
+
+| Condition | Measure | Why it works |
+|:----------|:--------|:-------------|
+| `i < n` | `n - i` | `i` increases → measure decreases |
+| `pos < size` | `size - pos` | `pos` increases → measure decreases |
+| `n > 0` | `n` | `n` decreases directly |
+| `a < b` | `b - a` | Either `a` increases or `b` decreases |
+
+**Struct fields are supported**: The verification works with member expressions
+like `l.pos` and `l.size`, not just local variables.
+
+**Error diagnostics:**
+
+| Code | Meaning |
+|:-----|:--------|
+| `[E080]` | Cannot verify measure is non-negative when condition holds |
+| `[E081]` | Cannot extract variables from measure expression |
+| `[E082]` | Cannot verify measure strictly decreases each iteration |
+
+> **RATIONALE:** This feature exists because finite state machines (lexers,
+> parsers, protocol handlers) are provably terminating on finite input, yet
+> the previous `func` restriction (`while` banned) forced them to use `proc`.
+> The `decreasing` keyword bridges this gap: the programmer states *why* the
+> loop terminates, and the compiler verifies it.
 
 ### 5.6.3 Break
 

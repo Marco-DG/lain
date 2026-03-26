@@ -254,6 +254,7 @@ typedef struct {
 
 typedef struct {
     Expr     *cond;
+    Expr     *measure;   // termination measure (NULL = unbounded, banned in func)
     StmtList *body;
 } StmtWhile;
 
@@ -754,10 +755,11 @@ Stmt *stmt_for(Arena *arena, Id *index_name, Id *value_name, Expr *iterable, Stm
     return s;
 }
 
-Stmt *stmt_while(Arena *arena, Expr *cond, StmtList *body) {
+Stmt *stmt_while(Arena *arena, Expr *cond, Expr *measure, StmtList *body) {
     Stmt *s = arena_push(arena, Stmt);
     s->kind = STMT_WHILE;
     s->as.while_stmt.cond = cond;
+    s->as.while_stmt.measure = measure;
     s->as.while_stmt.body = body;
     return s;
 }

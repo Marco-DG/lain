@@ -1220,6 +1220,10 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             sema_check_expr_linearity(s->as.while_stmt.cond, tbl, loop_depth);
             if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
         }
+        if (s->as.while_stmt.measure) {
+            sema_check_expr_linearity(s->as.while_stmt.measure, tbl, loop_depth);
+            if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
+        }
         int new_depth = loop_depth + 1;
         
         LTable *pre_loop = ltable_clone(tbl);

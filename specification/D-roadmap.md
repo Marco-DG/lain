@@ -22,6 +22,7 @@
 
 ### Functions
 - `func` / `proc` distinction with purity enforcement
+- Bounded `while` with termination measures in `func` (`while cond decreasing measure`)
 - Parameter modes (shared, mutable, owned, destructured)
 - Return types with ownership annotations
 - UFCS (Universal Function Call Syntax)
@@ -36,6 +37,7 @@
 - Branch consistency for linear values
 - Per-field borrowing
 - Non-consuming match (`case &expr`)
+- Two-phase borrows (RESERVED → ACTIVE promotion during argument evaluation)
 
 ### Static Verification
 - Value Range Analysis (VRA)
@@ -57,16 +59,10 @@
 - Standard library (std.c, std.io, std.fs, std.math, std.option, std.result)
 
 ### Diagnostics
-- 15 error codes ([E001]–[E015])
+- 18 error codes ([E001]–[E015], [E080]–[E082])
 - Source-line error display with caret
 
 ## D.3 Phase 1 — Near-Term (Planned)
-
-### Two-Phase Borrows
-Enable `x.method(x.field)` without false-positive borrow errors.
-- **Impact**: High — eliminates the most common borrow checker false positive.
-- **Complexity**: Medium (~50 lines).
-- **Reference**: §7.5
 
 ### Compile-Time Integer Parameters
 ```lain

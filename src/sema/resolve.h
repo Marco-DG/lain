@@ -586,17 +586,24 @@ void sema_resolve_stmt(Stmt *s) {
     break;
   
   case STMT_WHILE: {
-    // Purity: while loops are banned in pure functions (func)
+    // Purity: while loops without a termination measure are banned in pure functions
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
-        fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops are not allowed in pure function '%.*s'. Use 'proc' instead.\n",
-                s->line, s->col,
-                (int)current_function_decl->as.function_decl.name->length,
-                current_function_decl->as.function_decl.name->name);
-        diagnostic_show_line(s->line, s->col);
-        exit(1);
+        if (!s->as.while_stmt.measure) {
+            fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination measure "
+                    "are not allowed in pure function '%.*s'. "
+                    "Add 'decreasing <measure>' or use 'proc'.\n",
+                    s->line, s->col,
+                    (int)current_function_decl->as.function_decl.name->length,
+                    current_function_decl->as.function_decl.name->name);
+            diagnostic_show_line(s->line, s->col);
+            exit(1);
+        }
     }
-    // Resolve condition and body normally (block-scoped)
+    // Resolve condition, measure, and body
     sema_resolve_expr(s->as.while_stmt.cond);
+    if (s->as.while_stmt.measure) {
+        sema_resolve_expr(s->as.while_stmt.measure);
+    }
     sema_push_scope();
     for (StmtList *b = s->as.while_stmt.body; b; b = b->next) {
         sema_resolve_stmt(b->stmt);

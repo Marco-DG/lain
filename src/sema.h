@@ -87,6 +87,261 @@ static void sema_widen_loop(StmtList *body, RangeTable *t) {
     }
 }
 
+/*─────────────────────────────────────────────────────────────────────────────╗
+│ Bounded-while termination verification                                       │
+│ Self-contained: does NOT use VRA range table (which can't track struct fields)│
+╚─────────────────────────────────────────────────────────────────────────────*/
+
+// Structural equality for expressions (IDENTIFIER, MEMBER, LITERAL)
+static bool expr_struct_equal(Expr *a, Expr *b) {
+    if (!a || !b) return false;
+    if (a->kind != b->kind) return false;
+    switch (a->kind) {
+        case EXPR_IDENTIFIER:
+            return a->as.identifier_expr.id->length == b->as.identifier_expr.id->length &&
+                   strncmp(a->as.identifier_expr.id->name,
+                           b->as.identifier_expr.id->name,
+                           a->as.identifier_expr.id->length) == 0;
+        case EXPR_MEMBER:
+            return expr_struct_equal(a->as.member_expr.target, b->as.member_expr.target) &&
+                   a->as.member_expr.member->length == b->as.member_expr.member->length &&
+                   strncmp(a->as.member_expr.member->name,
+                           b->as.member_expr.member->name,
+                           a->as.member_expr.member->length) == 0;
+        case EXPR_LITERAL:
+            return a->as.literal_expr.value == b->as.literal_expr.value;
+        default:
+            return false;
+    }
+}
+
+// --- Non-negativity: condition implies measure >= 0 ---
+
+// Extract a comparison (a < b, a > b, etc.) from a possibly conjunctive condition.
+// Tries both sides of `and`. Returns true if a relevant comparison was found.
+typedef struct { Expr *lo; Expr *hi; bool strict; } MeasureCmp;
+
+static bool measure_extract_cmp(Expr *cond, Expr *measure, MeasureCmp *out) {
+    if (!cond) return false;
+    if (cond->kind == EXPR_BINARY) {
+        TokenKind op = cond->as.binary_expr.op;
+        Expr *lhs = cond->as.binary_expr.left;
+        Expr *rhs = cond->as.binary_expr.right;
+
+        // Handle `and` conjunctions — try both sides
+        if (op == TOKEN_KEYWORD_AND) {
+            if (measure_extract_cmp(lhs, measure, out)) return true;
+            if (measure_extract_cmp(rhs, measure, out)) return true;
+            return false;
+        }
+
+        // Normalize to lo < hi or lo <= hi
+        switch (op) {
+            case TOKEN_ANGLE_BRACKET_LEFT:         // a < b
+                out->lo = lhs; out->hi = rhs; out->strict = true; return true;
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:   // a <= b
+                out->lo = lhs; out->hi = rhs; out->strict = false; return true;
+            case TOKEN_ANGLE_BRACKET_RIGHT:        // a > b => b < a
+                out->lo = rhs; out->hi = lhs; out->strict = true; return true;
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:  // a >= b => b <= a
+                out->lo = rhs; out->hi = lhs; out->strict = false; return true;
+            default: break;
+        }
+    }
+    return false;
+}
+
+static bool sema_verify_measure_nonneg(Expr *cond, Expr *measure) {
+    MeasureCmp cmp;
+    if (!measure_extract_cmp(cond, measure, &cmp)) return false;
+
+    // Pattern: measure == hi - lo  (condition gives lo < hi => hi - lo > 0)
+    if (measure->kind == EXPR_BINARY && measure->as.binary_expr.op == TOKEN_MINUS) {
+        if (expr_struct_equal(measure->as.binary_expr.left, cmp.hi) &&
+            expr_struct_equal(measure->as.binary_expr.right, cmp.lo)) {
+            return true;
+        }
+    }
+
+    // Pattern: measure is a single variable/expr that equals hi, and lo is literal >= 0
+    // e.g.  while n > 0 : n   =>  lo=0, hi=n, strict, measure=n
+    if (expr_struct_equal(measure, cmp.hi) && cmp.strict) {
+        if (cmp.lo->kind == EXPR_LITERAL && cmp.lo->as.literal_expr.value >= 0) return true;
+    }
+    if (expr_struct_equal(measure, cmp.hi) && !cmp.strict) {
+        if (cmp.lo->kind == EXPR_LITERAL && cmp.lo->as.literal_expr.value >= 0) return true;
+    }
+
+    return false;
+}
+
+// --- Strict decrease: body assignments decrease the measure ---
+
+typedef struct { Expr *var; int polarity; } MeasureVar;
+#define MAX_MEASURE_VARS 8
+
+// Extract variables and their polarities from a measure expression.
+// b - a  =>  b(+1), a(-1).     x  =>  x(+1).
+static int measure_extract_vars(Expr *m, MeasureVar *out, int max) {
+    if (!m || max <= 0) return 0;
+
+    if (m->kind == EXPR_IDENTIFIER || m->kind == EXPR_MEMBER) {
+        out[0].var = m;
+        out[0].polarity = +1;
+        return 1;
+    }
+
+    if (m->kind == EXPR_BINARY) {
+        if (m->as.binary_expr.op == TOKEN_MINUS) {
+            int n = measure_extract_vars(m->as.binary_expr.left, out, max);
+            int old_n = n;
+            n += measure_extract_vars(m->as.binary_expr.right, out + n, max - n);
+            for (int i = old_n; i < n; i++) out[i].polarity *= -1;
+            return n;
+        }
+        if (m->as.binary_expr.op == TOKEN_PLUS) {
+            int n = measure_extract_vars(m->as.binary_expr.left, out, max);
+            n += measure_extract_vars(m->as.binary_expr.right, out + n, max - n);
+            return n;
+        }
+    }
+
+    return 0;
+}
+
+static int measure_find_var(Expr *target, MeasureVar *vars, int nvar) {
+    for (int i = 0; i < nvar; i++) {
+        if (expr_struct_equal(target, vars[i].var)) return i;
+    }
+    return -1;
+}
+
+// Determine direction: does `target = rhs` increase (+1) or decrease (-1) target?
+// Only handles: target = target + K, target = target - K, K + target  (K literal > 0)
+static int assignment_direction(Expr *target, Expr *rhs) {
+    if (!rhs || rhs->kind != EXPR_BINARY) return 0;
+
+    TokenKind op  = rhs->as.binary_expr.op;
+    Expr *left    = rhs->as.binary_expr.left;
+    Expr *right   = rhs->as.binary_expr.right;
+
+    // target = target + K  or  target = target - K
+    if (expr_struct_equal(left, target) && right->kind == EXPR_LITERAL) {
+        int64_t k = right->as.literal_expr.value;
+        if (op == TOKEN_PLUS  && k > 0) return +1;
+        if (op == TOKEN_PLUS  && k < 0) return -1;
+        if (op == TOKEN_MINUS && k > 0) return -1;
+        if (op == TOKEN_MINUS && k < 0) return +1;
+    }
+    // target = K + target
+    if (expr_struct_equal(right, target) && left->kind == EXPR_LITERAL && op == TOKEN_PLUS) {
+        int64_t k = left->as.literal_expr.value;
+        if (k > 0) return +1;
+        if (k < 0) return -1;
+    }
+
+    return 0;
+}
+
+// Scan body for assignments to measure variables.
+// Returns: +1 if at least one decreases & none conflict, -1 if any conflict, 0 if none found.
+static int measure_scan_body(StmtList *body, MeasureVar *vars, int nvar) {
+    bool found_decrease = false;
+    for (StmtList *l = body; l; l = l->next) {
+        Stmt *s = l->stmt;
+        if (!s) continue;
+        switch (s->kind) {
+            case STMT_ASSIGN: {
+                int idx = measure_find_var(s->as.assign_stmt.target, vars, nvar);
+                if (idx >= 0) {
+                    int dir = assignment_direction(s->as.assign_stmt.target, s->as.assign_stmt.expr);
+                    if (dir == 0) return -1;  /* unknown change to measure var */
+                    int effect = vars[idx].polarity * dir;
+                    if (effect > 0) return -1; /* measure increases — conflict */
+                    found_decrease = true;
+                }
+                break;
+            }
+            case STMT_IF: {
+                int r = measure_scan_body(s->as.if_stmt.then_branch, vars, nvar);
+                if (r < 0) return -1;
+                if (r > 0) found_decrease = true;
+                r = measure_scan_body(s->as.if_stmt.else_branch, vars, nvar);
+                if (r < 0) return -1;
+                if (r > 0) found_decrease = true;
+                break;
+            }
+            case STMT_WHILE: {
+                int r = measure_scan_body(s->as.while_stmt.body, vars, nvar);
+                if (r < 0) return -1;
+                if (r > 0) found_decrease = true;
+                break;
+            }
+            case STMT_FOR: {
+                int r = measure_scan_body(s->as.for_stmt.body, vars, nvar);
+                if (r < 0) return -1;
+                if (r > 0) found_decrease = true;
+                break;
+            }
+            case STMT_MATCH: {
+                for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
+                    int r = measure_scan_body(c->body, vars, nvar);
+                    if (r < 0) return -1;
+                    if (r > 0) found_decrease = true;
+                }
+                break;
+            }
+            case STMT_UNSAFE: {
+                int r = measure_scan_body(s->as.unsafe_stmt.body, vars, nvar);
+                if (r < 0) return -1;
+                if (r > 0) found_decrease = true;
+                break;
+            }
+            default: break;
+        }
+    }
+    return found_decrease ? +1 : 0;
+}
+
+// Top-level verification for a bounded while loop
+static void sema_verify_bounded_while(Stmt *s) {
+    Expr *cond    = s->as.while_stmt.cond;
+    Expr *measure = s->as.while_stmt.measure;
+    if (!measure) return;
+
+    // Check 1: condition implies measure >= 0
+    if (!sema_verify_measure_nonneg(cond, measure)) {
+        fprintf(stderr, "[E080] Error Ln %li, Col %li: cannot verify that the termination measure "
+                "is non-negative when the loop condition holds.\n"
+                "  Hint: use 'while a < b : b - a { ... }' so the condition implies the measure is positive.\n",
+                s->line, s->col);
+        diagnostic_show_line(s->line, s->col);
+        exit(1);
+    }
+
+    // Check 2: body strictly decreases the measure
+    MeasureVar vars[MAX_MEASURE_VARS];
+    int nvar = measure_extract_vars(measure, vars, MAX_MEASURE_VARS);
+    if (nvar == 0) {
+        fprintf(stderr, "[E081] Error Ln %li, Col %li: cannot extract variables from termination measure.\n"
+                "  Hint: the measure must reference identifiers or struct fields.\n",
+                s->line, s->col);
+        diagnostic_show_line(s->line, s->col);
+        exit(1);
+    }
+
+    int result = measure_scan_body(s->as.while_stmt.body, vars, nvar);
+    if (result <= 0) {
+        fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify that the termination measure "
+                "strictly decreases on each iteration.\n"
+                "  Hint: the loop body must contain an assignment that decreases the measure "
+                "(e.g., 'pos += 1' when measure is 'size - pos').\n",
+                s->line, s->col);
+        diagnostic_show_line(s->line, s->col);
+        exit(1);
+    }
+}
+
 /* walk_stmt: type inference + range analysis walk over a single statement.
    Formerly a GCC nested function inside sema_resolve_module; refactored to
    file-level static for C99/Clang/MSVC portability. */
@@ -173,7 +428,11 @@ static void walk_stmt(Stmt *s) {
         }
         case STMT_WHILE:
             sema_infer_expr(s->as.while_stmt.cond);
-            
+            if (s->as.while_stmt.measure) {
+                sema_infer_expr(s->as.while_stmt.measure);
+                sema_verify_bounded_while(s);
+            }
+
             // Widen modified variables BEFORE body
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
 
@@ -181,7 +440,7 @@ static void walk_stmt(Stmt *s) {
             for (StmtList *b = s->as.while_stmt.body; b; b = b->next)
                 walk_stmt(b->stmt);
             sema_pop_scope();
-                
+
             // Widen modified variables AFTER body
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
             break;

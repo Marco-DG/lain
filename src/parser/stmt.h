@@ -450,21 +450,28 @@ Stmt *parse_for_stmt(Arena* arena, Parser* parser) {
                     body);
 }
 
-// while <expr> { <body> }
+// while <expr> [decreasing <measure>] { <body> }
 Stmt *parse_while_stmt(Arena *arena, Parser *parser) {
     // 'while' keyword already consumed
-    
+
     // 1) condition
     Expr *cond = parse_expr(arena, parser);
-    
-    // 2) body
+
+    // 2) optional termination measure: `decreasing measure_expr`
+    Expr *measure = NULL;
+    if (parser_match(TOKEN_KEYWORD_DECREASING)) {
+        parser_advance();
+        measure = parse_expr(arena, parser);
+    }
+
+    // 3) body
     parser_expect(TOKEN_L_BRACE, "Expected '{' to start while-body");
     parser_advance();
     StmtList *body = parse_stmt_list(arena, parser);
     parser_expect(TOKEN_R_BRACE, "Expected '}' after while-body");
     parser_advance();
-    
-    return stmt_while(arena, cond, body);
+
+    return stmt_while(arena, cond, measure, body);
 }
 
 // parse a standalone `continue` statement

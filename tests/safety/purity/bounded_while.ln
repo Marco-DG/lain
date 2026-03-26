@@ -1,0 +1,17 @@
+// Test: bounded while loops are allowed in pure functions (func)
+// Expected: compilation should PASS
+
+extern proc libc_printf(fmt *u8, ...) int
+
+func count_up(n int) int {
+    var i = 0
+    while i < n decreasing n - i {
+        i += 1
+    }
+    return i
+}
+
+proc main() int {
+    libc_printf("Result: %d\n", count_up(10))
+    return 0
+}
