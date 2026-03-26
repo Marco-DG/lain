@@ -1,0 +1,14 @@
+// Test: bounded while with wrong direction should be rejected
+// Expected: compilation should FAIL (measure does not decrease)
+
+func bad(n int) int {
+    var i = 0
+    while i < n decreasing n - i {
+        i -= 1
+    }
+    return i
+}
+
+proc main() int {
+    return bad(10)
+}

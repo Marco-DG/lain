@@ -11,7 +11,7 @@ Lain is a **critical-safe** programming language designed for embedded systems. 
 - **Memory Safety**: Guaranteed via linear types and borrow checking. No Garbage Collector.
 - **Purity**: Strict distinction between deterministic functions (`func`) and side-effecting procedures (`proc`).
 - **Zero Overhead**: No runtime checks for bounds or ownership. All verification is purely static, at compile time.
-- **Determinism**: Pure functions (`func`) are guaranteed to terminate. Recursion and unbounded loops are restricted to `proc`.
+- **Determinism**: Pure functions (`func`) are guaranteed to terminate. Recursion and unbounded loops are restricted to `proc`. Bounded `while` loops with a compiler-verified termination measure are allowed in `func`.
 - **C Interop**: Compiles to portable C99 via `cosmocc`. Native interoperability with C libraries.
 
 ---
@@ -36,6 +36,7 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `else` | Default branch in conditional/case |
 | `for` | Range-based for loop |
 | `while` | While loop |
+| `decreasing` | Termination measure for bounded `while` in `func` |
 | `break` | Exit the innermost loop |
 | `continue` | Skip to the next iteration |
 | `case` | Pattern matching |
@@ -741,7 +742,7 @@ Functions declared with `func` are **pure, deterministic, and guaranteed to term
 - Cannot modify global state.
 - Cannot call procedures (`proc`).
 - Cannot recurse (direct recursion is a compile error).
-- Can only use `for` loops (over finite ranges). `while` loops are banned.
+- Can only use `for` loops (over finite ranges) and bounded `while` loops with a termination measure. Unbounded `while` loops are banned.
 
 ```lain
 func add(a int, b int) int {
@@ -822,7 +823,8 @@ func check(valid bool) {
 |:--------|:-------|:-------|
 | Pure (no side effects) | ✅ Required | ❌ Not required |
 | `for` loops | ✅ Allowed | ✅ Allowed |
-| `while` loops | ❌ Banned | ✅ Allowed |
+| Unbounded `while` | ❌ Banned | ✅ Allowed |
+| Bounded `while` (`decreasing`) | ✅ Allowed | ✅ Allowed |
 | Recursion | ❌ Banned | ✅ Allowed |
 | Global state access | ❌ Banned | ✅ Allowed |
 | Calling `proc` | ❌ Banned | ✅ Allowed |
@@ -901,7 +903,7 @@ for i, val in 0..10 {
 
 ### 7.3 While Loops
 
-While loops run until the condition becomes false. They are **only allowed in `proc`** (not in `func`).
+Unbounded while loops run until the condition becomes false. They are **only allowed in `proc`** (not in `func`).
 
 ```lain
 proc count_up() {
@@ -920,6 +922,40 @@ while 1 {
     if done { break }
 }
 ```
+
+#### Bounded While — Termination Measure
+
+A `while` loop may carry an optional **termination measure** via the `decreasing` keyword. When present, the loop is also allowed inside `func` (pure functions), because the compiler statically verifies that:
+
+1. The measure is **non-negative** when the loop condition holds.
+2. The measure **strictly decreases** on every iteration.
+
+```lain
+func count_up(n int) int {
+    var i = 0
+    while i < n decreasing n - i {  // measure: n - i
+        i += 1                   // i increases → n - i decreases
+    }
+    return i
+}
+```
+
+This enables provably-terminating finite state machines (lexers, parsers, protocol handlers) to be expressed as pure `func`.
+
+**Supported patterns:**
+
+| Condition | Measure | Why it works |
+|:----------|:--------|:-------------|
+| `i < n` | `n - i` | `i` increases → measure decreases |
+| `n > 0` | `n` | `n` decreases directly |
+| `a < b` | `b - a` | Either `a` increases or `b` decreases |
+
+The measure is compile-time only — it produces no runtime overhead.
+
+**Error codes:**
+- `[E080]`: Cannot verify measure is non-negative when condition holds
+- `[E081]`: Cannot extract variables from measure expression
+- `[E082]`: Cannot verify measure strictly decreases each iteration
 
 ### 7.4 Break & Continue
 
@@ -1684,6 +1720,9 @@ Compiler errors are prefixed with error codes for easy reference and searchabili
 | `[E013]` | Redeclaration | `variable 'x' already declared in this scope` |
 | `[E014]` | Exhaustiveness | `non-exhaustive case: missing variant 'None'` |
 | `[E015]` | Division by zero | `division by zero detected at compile time` |
+| `[E080]` | Measure non-negativity | `cannot verify measure is non-negative when condition holds` |
+| `[E081]` | Measure extraction | `cannot extract variables from measure expression` |
+| `[E082]` | Measure decrease | `cannot verify measure strictly decreases each iteration` |
 
 Each error also includes source-line context with a caret pointing to the exact location:
 
@@ -1760,7 +1799,7 @@ Tests are organized under `tests/` and run via `run_tests.sh`:
 | `tests/types/` | 17 | Type system (ADTs, enums, arrays, structs, strings, bool, casts, integers, chars, floats, match borrow) |
 | `tests/safety/bounds/` | 14 | Static bounds checking & type constraints |
 | `tests/safety/ownership/` | 42 | Ownership, borrowing, move semantics, block scoping, two-phase borrows |
-| `tests/safety/purity/` | 4 | Purity enforcement |
+| `tests/safety/purity/` | 6 | Purity enforcement, bounded while termination |
 | `tests/safety/` (root) | 4 | Unsafe blocks, linear struct fields |
 | `tests/stdlib/` | 6 | Module system, extern, stdlib |
 
@@ -1835,6 +1874,7 @@ The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` 
 | `case` | ✅ Implemented | Pattern matching (§7.5) |
 | `comptime` | ✅ Implemented | Compile-time type parameters (§21) |
 | `continue` | ✅ Implemented | Loop iteration skip |
+| `decreasing` | ✅ Implemented | Termination measure for bounded `while` in `func` (§7.3) |
 | `elif` | ✅ Implemented | Else-if branch |
 | `else` | ✅ Implemented | Default branch |
 | `end` | 🔮 Reserved | — |
@@ -1861,7 +1901,7 @@ The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` 
 | `unsafe` | ✅ Implemented | Unsafe block |
 | `use` | 🔮 Reserved | — |
 | `var` | ✅ Implemented | Mutable binding |
-| `while` | ✅ Implemented | While loop (only in `proc`) |
+| `while` | ✅ Implemented | While loop (`proc`); bounded `while cond decreasing measure` also in `func` |
 
 **Primitive types:**
 | Type | Status | Category |
@@ -2123,7 +2163,7 @@ continue_stmt   = "continue" ;
 
 if_stmt         = "if" expr block { "elif" expr block } [ "else" block ] ;
 for_stmt        = "for" IDENT ["," IDENT] "in" expr ".." expr block ;
-while_stmt      = "while" expr block ;           (* only valid inside proc *)
+while_stmt      = "while" expr [ "decreasing" expr ] block ; (* unbounded: proc only; with decreasing: also in func *)
 
 case_stmt       = "case" ["&"] expr "{" { case_arm } "}" ;
 case_arm        = pattern ":" (expr | block) ;

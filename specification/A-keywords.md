@@ -13,6 +13,7 @@
 | `case` | Control flow | Pattern matching | §5.7 |
 | `comptime` | Generic | Compile-time parameter modifier | §9.2 |
 | `continue` | Control flow | Skip to next loop iteration | §5.6.4 |
+| `decreasing` | Control flow | Termination measure for bounded `while` in `func` | §5.6.2.1 |
 | `defer` | Control flow | Schedule cleanup at scope exit | §5.8 |
 | `elif` | Control flow | Else-if branch | §5.5 |
 | `else` | Control flow | Default branch | §5.5 |
@@ -39,7 +40,7 @@
 | `unsafe` | Safety | Unsafe code block | §12.2 |
 | `use` | Module | Name aliasing (reserved) | Reserved |
 | `var` | Declaration/Ownership | Mutable binding / mutable borrow | §3.2, §7.1 |
-| `while` | Control flow | Conditional loop (proc only) | §5.6.2 |
+| `while` | Control flow | Conditional loop (`proc`); bounded `while cond decreasing measure` also in `func` | §5.6.2 |
 
 ### A.1.2 Reserved Keywords
 

@@ -52,7 +52,11 @@
       "Bash(dpkg -l:*)",
       "Bash(./out:*)",
       "Bash(echo:*)",
-      "Bash(/tmp/lain_test)"
+      "Bash(/tmp/lain_test)",
+      "Read(//home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/**)",
+      "Bash(bash run_tests.sh tests/safety/purity/bounded_while.ln)",
+      "Bash(bash run_tests.sh tests/safety/purity/bounded_while_bad_fail.ln)",
+      "Bash(bash run_tests.sh:*)"
     ],
     "additionalDirectories": [
       "/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain"

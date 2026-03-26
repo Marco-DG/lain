@@ -8,7 +8,9 @@ Lain enforces a strict separation between **pure functions** and
 | Property | `func` | `proc` |
 |:---------|:-------|:-------|
 | Side effects | Forbidden | Allowed |
-| `while` loops | Forbidden | Allowed |
+| `for` loops | Allowed | Allowed |
+| Unbounded `while` | Forbidden | Allowed |
+| Bounded `while` (`decreasing`) | Allowed | Allowed |
 | Recursion | Forbidden | Allowed |
 | Calling `proc` | Forbidden | Allowed |
 | Calling `func` | Allowed | Allowed |
@@ -29,13 +31,16 @@ func add(a int, b int) int {
 ```
 
 **Termination guarantee**: `func` is guaranteed to terminate because:
-1. `while` loops are forbidden — no unbounded iteration.
+1. Unbounded `while` loops are forbidden — no unbounded iteration.
 2. Recursion (direct or indirect) is forbidden — no stack overflow.
 3. Only `for` loops over finite ranges are allowed.
+4. Bounded `while` loops (with a termination measure) are allowed — the
+   compiler statically verifies that the measure is non-negative and
+   strictly decreasing (see §5.6.2.1).
 
 > **CONSTRAINT:** A `func` shall not:
 > - Call any `proc` or `extern proc` (diagnostic `[E011]`)
-> - Use `while` loops (diagnostic `[E011]`)
+> - Use unbounded `while` loops without `decreasing` (diagnostic `[E011]`)
 > - Call itself or any function that (transitively) calls it
 > - Read or write global mutable variables (diagnostic `[E011]`)
 

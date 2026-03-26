@@ -182,6 +182,23 @@ after the loop.
 > Note: Future versions may support loop invariant annotations to improve
 > precision.
 
+### 8.8.1 Bounded While and VRA
+
+The termination measure verification for bounded `while` loops (§5.6.2.1)
+operates independently of VRA. The measure verifier uses structural pattern
+matching on AST expressions rather than the VRA range table. This is because
+VRA only tracks simple identifiers (`EXPR_IDENTIFIER`), not member
+expressions (`EXPR_MEMBER`) like `l.pos` or `l.size`, which are common in
+real-world termination measures (e.g., lexers iterating over input).
+
+The VRA loop widening still applies to variables modified inside bounded
+`while` loops — widening affects constraint verification, not termination
+verification. The two systems are complementary:
+
+- **VRA**: Tracks value ranges for constraint satisfaction (§8.2–§8.6).
+- **Measure verifier**: Proves termination via polarity-based decrease
+  analysis (§5.6.2.1).
+
 ## 8.9 Static Array Bounds Checking [Implemented]
 
 Array indexing is statically verified using VRA:
