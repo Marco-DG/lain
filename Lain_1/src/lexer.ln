@@ -80,25 +80,25 @@ func is_alnum(c int) bool {
 
 // -- Byte access ------------------------------------------------------------
 
-proc peek(l Lexer) int { unsafe {
+func peek(l Lexer) int { unsafe {
     if l.pos >= l.size { return 0 }
     return l.src[l.pos] as int
 }}
 
-proc peek_at(l Lexer, offset int) int { unsafe {
+func peek_at(l Lexer, offset int) int { unsafe {
     var i = l.pos + offset
     if i >= l.size { return 0 }
     return l.src[i] as int
 }}
 
-proc eat(var l Lexer) int { unsafe {
+func eat(var l Lexer) int { unsafe {
     if l.pos >= l.size { return 0 }
     var c = l.src[l.pos] as int
     l.pos += 1
     return c
 }}
 
-proc try_eat(var l Lexer, expected int) bool { unsafe {
+func try_eat(var l Lexer, expected int) bool { unsafe {
     if l.pos >= l.size { return false }
     if (l.src[l.pos] as int) != expected { return false }
     l.pos += 1
@@ -107,14 +107,14 @@ proc try_eat(var l Lexer, expected int) bool { unsafe {
 
 // -- Whitespace + line comments ---------------------------------------------
 
-proc skip(var l Lexer) { unsafe {
-    while l.pos < l.size {
+func skip(var l Lexer) { unsafe {
+    while l.pos < l.size decreasing l.size - l.pos {
         var c = l.src[l.pos] as int
         if c == ' ' or c == '\t' or c == '\r' or c == '\n' {
             l.pos += 1
         } else if c == '/' and peek_at(l, 1) == '/' {
             l.pos += 2
-            while l.pos < l.size and (l.src[l.pos] as int) != '\n' {
+            while l.pos < l.size and (l.src[l.pos] as int) != '\n' decreasing l.size - l.pos {
                 l.pos += 1
             }
         } else {
@@ -190,23 +190,23 @@ func keyword(src u8[:0], s int, e int) TK { unsafe {
 
 // -- Scanners ---------------------------------------------------------------
 
-proc scan_ident(var l Lexer, start int) Token { unsafe {
-    while l.pos < l.size and is_alnum(l.src[l.pos] as int) {
+func scan_ident(var l Lexer, start int) Token { unsafe {
+    while l.pos < l.size and is_alnum(l.src[l.pos] as int) decreasing l.size - l.pos {
         l.pos += 1
     }
     var kind = keyword(l.src, start, l.pos)
     return Token(kind, start, l.pos)
 }}
 
-proc scan_number(var l Lexer, start int) Token { unsafe {
-    while l.pos < l.size and is_digit(l.src[l.pos] as int) {
+func scan_number(var l Lexer, start int) Token { unsafe {
+    while l.pos < l.size and is_digit(l.src[l.pos] as int) decreasing l.size - l.pos {
         l.pos += 1
     }
     return Token(TK.Int, start, l.pos)
 }}
 
-proc scan_string(var l Lexer, start int) Token { unsafe {
-    while l.pos < l.size and (l.src[l.pos] as int) != '"' {
+func scan_string(var l Lexer, start int) Token { unsafe {
+    while l.pos < l.size and (l.src[l.pos] as int) != '"' decreasing l.size - l.pos {
         if (l.src[l.pos] as int) == '\\' and l.pos + 1 < l.size {
             l.pos += 2
         } else {
@@ -217,8 +217,8 @@ proc scan_string(var l Lexer, start int) Token { unsafe {
     return Token(TK.Str, start, l.pos)
 }}
 
-proc scan_char(var l Lexer, start int) Token { unsafe {
-    while l.pos < l.size and (l.src[l.pos] as int) != '\'' {
+func scan_char(var l Lexer, start int) Token { unsafe {
+    while l.pos < l.size and (l.src[l.pos] as int) != '\'' decreasing l.size - l.pos {
         if (l.src[l.pos] as int) == '\\' and l.pos + 1 < l.size {
             l.pos += 2
         } else {
@@ -231,7 +231,7 @@ proc scan_char(var l Lexer, start int) Token { unsafe {
 
 // -- Main entry -------------------------------------------------------------
 
-proc next(var l Lexer) Token {
+func next(var l Lexer) Token {
     skip(l)
 
     if l.pos >= l.size { return Token(TK.EOF, l.pos, l.pos) }
