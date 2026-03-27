@@ -198,6 +198,9 @@ Expr *clone_expr(Arena *arena, Expr *e) {
         case EXPR_ARRAY_LITERAL:
             new_e->as.array_literal_expr.elements = clone_expr_list(arena, e->as.array_literal_expr.elements);
             break;
+        case EXPR_BUILTIN:
+            // Shallow copy is fine — builtin_kind is a plain enum value
+            break;
     }
     return new_e;
 }
@@ -254,6 +257,11 @@ Stmt *clone_stmt(Arena *arena, Stmt *s) {
             break;
         case STMT_DEFER:
             new_s->as.defer_stmt.stmt = clone_stmt(arena, s->as.defer_stmt.stmt);
+            break;
+        case STMT_COMPTIME_IF:
+            new_s->as.comptime_if_stmt.cond = clone_expr(arena, s->as.comptime_if_stmt.cond);
+            new_s->as.comptime_if_stmt.then_branch = clone_stmt_list(arena, s->as.comptime_if_stmt.then_branch);
+            new_s->as.comptime_if_stmt.else_branch = clone_stmt_list(arena, s->as.comptime_if_stmt.else_branch);
             break;
         case STMT_CONTINUE:
         case STMT_BREAK:

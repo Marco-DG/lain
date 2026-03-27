@@ -1,0 +1,123 @@
+// ---------------------------------------------------------------------------
+//  Lain ascii module (Max Performance - Zero Data / 100% Math-based)
+//  Ottimizzato per emettere bytecode/assembly "0 cost" via C backend (-O3)
+// ---------------------------------------------------------------------------
+
+// --- PERCHE' USIAMO `int` e `u32` IN UN LEXER? ---
+// 1. `int`: Nelle architetture classiche (e in Lexer robusti), i flussi di testo 
+//    restituiscono `EOF` (End Of File, in genere -1) misto ai caratteri validi. 
+//    Lasciando il parametro `c` come `int`, evitiamo schianti non previsti o panic.
+// 2. `u32`: È il Santo Graal del "Branchless Bound Check". 
+//    Se `c` vale -1 (EOF), fare il cast a `u32` innesca il wrap-around spaziale e 
+//    lo trasforma in `4294967295`. Qualsiasi sottrazione successiva lo piazzerà
+//    ben oltre la soglia prevista matematicamente controllata, fallendo l'if
+//    gratuitamente senza bisogno di un costoso check `if c < 0`.
+
+// --- USO DELLA VRA (Value Range Analysis) ---
+// Lain possiede il raffinamento statico dei tipi. Se nel chiamante hai 
+// GIA' rimosso EOF e sai che `c` è un char, puoi perfezionare la signature in:
+//   func is_digit(c int >= 0) bool
+// Al momento nel prototipo lasciamo `int` semplice per favorire massima 
+// flessibilità stile libc, relegando la sicurezza alle meraviglie dell'underflow.
+
+
+// --- Numeri: 0-9 ---
+func is_digit(c int) bool {
+    // HACK: Underflow Trick. 
+    // L'ottimizzatore -O3 la comprime nelle istruzioni pure dell'ALU:
+    // `sub edi, 48` -> `cmp edi, 9` -> `setbe al`
+    // Zero Data Memory Loads! Sostituisce check multipli (c >= '0' && c <= '9').
+    return (c as u32 - '0') < 10
+}
+
+// --- Lettere: A-Z, a-z ---
+func is_alpha(c int) bool {
+    // HACK: Magic Bitwise Mask (0x20).
+    // La distanza binaria tra 'A' (65) e 'a' (97) è il sesto bit, ovvero 32 (0x20).
+    // Facendo `c | 0x20`, qualsiasi maiuscola viene violentemente propulsa a minuscola.
+    // Un solo check in assembly per l'interno alfabeto!
+    return ((c | 0x20) as u32 - 'a') < 26
+}
+
+// --- Alfanumerici: A-Z, a-z, 0-9 ---
+func is_alnum(c int) bool {
+    // L'inliner in frontend (Lain) o backend (Clang/GCC -O3) pialla questa chiamata
+    // inserendola dircttamente nei registri del CPU in tempo nullo.
+    return is_alpha(c) or is_digit(c)
+}
+
+// --- Lettere Minuscole: a-z ---
+func is_lower(c int) bool {
+    return (c as u32 - 'a') < 26
+}
+
+// --- Lettere Maiuscole: A-Z ---
+func is_upper(c int) bool {
+    return (c as u32 - 'A') < 26
+}
+
+// --- Spazi invisibili (spazio, \t, \n, \v, \f, \r) ---
+func is_space(c int) bool {
+    // HACK: Distance Windowing. 
+    // Tab, LF, VT, FF, CR sono in fila indiana (da indice 9 a 13 == distanza totale 4).
+    // Testiamo quello cluster più lo spazio vuoto (32).
+    return c == ' ' or (c as u32 - '\t') <= 4
+}
+
+// --- Spazi bianchi veri: spazio o tabulazione ---
+func is_blank(c int) bool {
+    return c == ' ' or c == '\t'
+}
+
+// --- Punteggiatura ---
+func is_punct(c int) bool {
+    // Range compresso in un singolo uint bound-check, invertendo la maschera logica:
+    return (c as u32 - 33) < 94 and not is_alnum(c)
+}
+
+// --- Caratteri Esadecimali (0-9, a-f, A-F) ---
+func is_xdigit(c int) bool {
+    return is_digit(c) or ((c | 0x20) as u32 - 'a') < 6
+}
+
+// --- Controllo Strutturale ASCII (0-127) ---
+func is_ascii(c int) bool {
+    // HACK: 7-bit clear check. 
+    // Se qualsiasi bit dal settimo in poi è acceso, viene rivelato immediatamente.
+    // ASM generato: singolo `test edi, -128`. Imbattibile.
+    return (c & ~0x7F) == 0
+}
+
+
+// ===========================================================================
+//  CONVERSIONI CASE (C-backend CMOV Optimization)
+// ===========================================================================
+
+func to_lower(c int) int {
+    // L'ottimizzatore O3 annienta questo "If" e non genera salti predittivi.
+    // Sintetizza tutto in una istruzione `CMOV` x86/ARM, un'operazione condizionale 
+    // a latenza bloccata sul posto e rigorosamente branchless!
+    if is_upper(c) { return c | 0x20 }
+    return c
+}
+
+func to_upper(c int) int {
+    if is_lower(c) { return c & ~0x20 }
+    return c
+}
+
+// ===========================================================================
+//  FUNZIONI "UNSAFE" SPINTE DALLA VRA (Value Range Analysis)
+// ===========================================================================
+
+// Se sei in sezioni di parser ultracritiche e applichi programmaticamente i constraints:
+// Costringi VRA a passare a questa funzione SOLO caratteri matematicamente in range. 
+// O3 vedrà questa garanzia intrinseca e farà disintegrare completamente eventuali 
+// dead code analysis generati. A runtime? Solo una istruzione di toggle bit. ZERO cost.
+func _to_lower(c int >= 65 and c <= 90) int { 
+    return c | 0x20 
+}
+
+func _to_upper(c int >= 97 and c <= 122) int { 
+    return c & ~0x20 
+}

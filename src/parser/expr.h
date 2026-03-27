@@ -370,6 +370,23 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         parser_advance();
         return expr;
     }
+    else if (parser_match(TOKEN_AT)) {
+        parser_advance(); // consume '@'
+        parser_expect(TOKEN_IDENTIFIER, "Expected builtin name after '@'");
+        const char *name = parser->token.start;
+        isize len = parser->token.length;
+        parser_advance(); // consume identifier
+
+        if (len == 2 && strncmp(name, "os", 2) == 0) {
+            return expr_builtin(arena, BUILTIN_OS);
+        } else if (len == 4 && strncmp(name, "arch", 4) == 0) {
+            return expr_builtin(arena, BUILTIN_ARCH);
+        } else {
+            fprintf(stderr, "Error Ln %li, Col %li: Unknown builtin '@%.*s'\n",
+                    parser->line, parser->column, (int)len, name);
+            exit(1);
+        }
+    }
 
     fprintf(stderr, "Error Ln %li, Col %li: Unexpected token in expression: %s (%d)\n", 
             parser->line, parser->column, token_kind_name(parser->token.kind), parser->token.kind);

@@ -104,11 +104,12 @@ int get_precedence(TokenKind op) {
         case TOKEN_SHIFT_RIGHT:
             return 8;
 
-        // <  <=  >  >=   → precedence 7
+        // <  <=  >  >=  in  → precedence 7
         case TOKEN_ANGLE_BRACKET_LEFT:
         case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:
         case TOKEN_ANGLE_BRACKET_RIGHT:
         case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:
+        case TOKEN_KEYWORD_IN:
             return 7;
 
         // ==  !=   → precedence 6

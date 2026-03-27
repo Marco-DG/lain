@@ -39,6 +39,18 @@ static void diagnostic_show_line(isize line, isize col) {
     fprintf(stderr, "^\n");
 }
 
+// In-guard table (declared before sub-header includes so typecheck.h can use them)
+typedef struct InGuardEntry {
+    Expr *index;
+    Expr *container;
+    struct InGuardEntry *next;
+} InGuardEntry;
+
+static InGuardEntry *sema_in_guards = NULL;
+
+static void sema_push_in_guards(Expr *cond);
+static bool sema_is_in_guarded(Expr *index, Expr *container);
+
 #include "sema/scope.h"
 #include "sema/resolve.h"
 #include "sema/typecheck.h"
@@ -152,6 +164,30 @@ static bool measure_extract_cmp(Expr *cond, Expr *measure, MeasureCmp *out) {
 }
 
 static bool sema_verify_measure_nonneg(Expr *cond, Expr *measure) {
+    // Handle 'and' conjunctions — try both sides
+    if (cond && cond->kind == EXPR_BINARY && cond->as.binary_expr.op == TOKEN_KEYWORD_AND) {
+        if (sema_verify_measure_nonneg(cond->as.binary_expr.left, measure)) return true;
+        if (sema_verify_measure_nonneg(cond->as.binary_expr.right, measure)) return true;
+    }
+
+    // Handle 'in' condition: idx in arr, measure = arr.len - idx
+    // idx in arr => idx < arr.len => arr.len - idx >= 1 > 0
+    if (cond && cond->kind == EXPR_BINARY && cond->as.binary_expr.op == TOKEN_KEYWORD_IN) {
+        Expr *idx = cond->as.binary_expr.left;
+        Expr *arr = cond->as.binary_expr.right;
+        if (measure->kind == EXPR_BINARY && measure->as.binary_expr.op == TOKEN_MINUS) {
+            Expr *m_hi = measure->as.binary_expr.left;
+            Expr *m_lo = measure->as.binary_expr.right;
+            if (expr_struct_equal(m_lo, idx) &&
+                m_hi->kind == EXPR_MEMBER &&
+                m_hi->as.member_expr.member->length == 3 &&
+                strncmp(m_hi->as.member_expr.member->name, "len", 3) == 0 &&
+                expr_struct_equal(m_hi->as.member_expr.target, arr)) {
+                return true;
+            }
+        }
+    }
+
     MeasureCmp cmp;
     if (!measure_extract_cmp(cond, measure, &cmp)) return false;
 
@@ -342,6 +378,38 @@ static void sema_verify_bounded_while(Stmt *s) {
     }
 }
 
+/*─────────────────────────────────────────────────────────────────────────────╗
+│ In-guard table: function definitions (type + global declared before includes)│
+╚─────────────────────────────────────────────────────────────────────────────*/
+
+static void sema_push_in_guards(Expr *cond) {
+    if (!cond || cond->kind != EXPR_BINARY) {
+        fprintf(stderr, "[DEBUG push_in_guards] cond=%p kind=%d (not binary, skipping)\n", (void*)cond, cond ? cond->kind : -1);
+        return;
+    }
+    fprintf(stderr, "[DEBUG push_in_guards] cond=%p kind=EXPR_BINARY op=%d (IN=%d AND=%d)\n", (void*)cond, cond->as.binary_expr.op, TOKEN_KEYWORD_IN, TOKEN_KEYWORD_AND);
+    if (cond->as.binary_expr.op == TOKEN_KEYWORD_IN) {
+        InGuardEntry *e = arena_push_aligned(sema_arena, InGuardEntry);
+        e->index = cond->as.binary_expr.left;
+        e->container = cond->as.binary_expr.right;
+        e->next = sema_in_guards;
+        sema_in_guards = e;
+        fprintf(stderr, "[DEBUG push_in_guards] PUSHED guard: idx=%p container=%p guards_now=%p\n", (void*)e->index, (void*)e->container, (void*)sema_in_guards);
+    } else if (cond->as.binary_expr.op == TOKEN_KEYWORD_AND) {
+        sema_push_in_guards(cond->as.binary_expr.left);
+        sema_push_in_guards(cond->as.binary_expr.right);
+    }
+}
+
+static bool sema_is_in_guarded(Expr *index, Expr *container) {
+    for (InGuardEntry *e = sema_in_guards; e; e = e->next) {
+        if (expr_struct_equal(e->index, index) &&
+            expr_struct_equal(e->container, container))
+            return true;
+    }
+    return false;
+}
+
 /* walk_stmt: type inference + range analysis walk over a single statement.
    Formerly a GCC nested function inside sema_resolve_module; refactored to
    file-level static for C99/Clang/MSVC portability. */
@@ -366,31 +434,34 @@ static void walk_stmt(Stmt *s) {
             break;
         case STMT_IF: {
             sema_infer_expr(s->as.if_stmt.cond);
-            
+
             // Save state
             RangeEntry *old_head = sema_ranges->head;
             ConstraintEntry *old_constraints = sema_ranges->constraints;
-            
+            InGuardEntry *old_guards = sema_in_guards;
+
             // Apply condition for THEN branch
             sema_apply_constraint(s->as.if_stmt.cond, sema_ranges);
-            
+            sema_push_in_guards(s->as.if_stmt.cond);
+
             sema_push_scope();
             for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next)
                 walk_stmt(b->stmt);
             sema_pop_scope();
-                
-            // Restore state (pop constraints from THEN)
+
+            // Restore state (pop constraints + in-guards from THEN)
             sema_ranges->head = old_head;
             sema_ranges->constraints = old_constraints;
-            
-            // Apply negated condition for ELSE branch
+            sema_in_guards = old_guards;
+
+            // Apply negated condition for ELSE branch (no in-guards — negated 'in' proves nothing)
             sema_apply_negated_constraint(s->as.if_stmt.cond, sema_ranges);
-            
+
             sema_push_scope();
             for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next)
                 walk_stmt(b->stmt);
             sema_pop_scope();
-                
+
             // Restore state again
             sema_ranges->head = old_head;
             sema_ranges->constraints = old_constraints;
@@ -436,10 +507,26 @@ static void walk_stmt(Stmt *s) {
             // Widen modified variables BEFORE body
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
 
-            sema_push_scope();
-            for (StmtList *b = s->as.while_stmt.body; b; b = b->next)
-                walk_stmt(b->stmt);
-            sema_pop_scope();
+            {   // Apply condition constraints + in-guards for body
+                RangeEntry *old_head = sema_ranges ? sema_ranges->head : NULL;
+                ConstraintEntry *old_constraints = sema_ranges ? sema_ranges->constraints : NULL;
+                InGuardEntry *old_guards = sema_in_guards;
+
+                if (sema_ranges) sema_apply_constraint(s->as.while_stmt.cond, sema_ranges);
+                sema_push_in_guards(s->as.while_stmt.cond);
+                fprintf(stderr, "[DEBUG STMT_WHILE] after push, guards=%p, about to walk body\n", (void*)sema_in_guards);
+
+                sema_push_scope();
+                for (StmtList *b = s->as.while_stmt.body; b; b = b->next)
+                    walk_stmt(b->stmt);
+                sema_pop_scope();
+
+                if (sema_ranges) {
+                    sema_ranges->head = old_head;
+                    sema_ranges->constraints = old_constraints;
+                }
+                sema_in_guards = old_guards;
+            }
 
             // Widen modified variables AFTER body
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);

@@ -1,0 +1,10 @@
+// Test: array access without 'in' guard should fail bounds check
+
+func bad_access(data u8[:0]) int {
+    var i = 0
+    return data[i] as int
+}
+
+proc main() int {
+    return bad_access("hello")
+}

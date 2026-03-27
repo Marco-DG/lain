@@ -1,0 +1,22 @@
+// Test: 'in' as bounds-proving condition in while and if
+
+func find_char(data u8[:0], target int) int {
+    var i = 0
+    while i in data decreasing data.len - i {
+        if (data[i] as int) == target { return i }
+        i += 1
+    }
+    return 0 - 1
+}
+
+func peek_safe(data u8[:0], pos int) int {
+    if pos in data { return data[pos] as int }
+    return 0
+}
+
+proc main() int {
+    var result = find_char("hello", 'l')
+    libc_printf("find_char: %d\n", result)
+    libc_printf("peek_safe: %d\n", peek_safe("abc", 1))
+    return 0
+}

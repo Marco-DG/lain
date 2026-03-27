@@ -220,16 +220,51 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
 
 /* ---------- implement parse_comptime_stmt ----------
 //
-// Grammar we support here (mirrors var/mov statement style):
+// Grammar we support here:
+//   comptime if <expr> { <stmts> } [else { <stmts> }]
 //   comptime <ident> [ <type> ] [ = <expr> ]
 //
-// We consume the 'comptime' keyword *before* this function is called
-// (consistent with var/mov handling above).
+// We consume the 'comptime' keyword *before* this function is called.
 //
 ----------------------------------------------------*/
+
+Stmt *parse_comptime_if_stmt(Arena *arena, Parser *parser) {
+    // 'comptime' already consumed, 'if' is current token
+    parser_advance(); // consume 'if'
+
+    // 1) condition
+    Expr *cond = parse_expr(arena, parser);
+
+    // 2) then-block
+    parser_expect(TOKEN_L_BRACE, "Expected '{' after comptime if condition");
+    parser_advance();
+    StmtList *then_branch = parse_stmt_list(arena, parser);
+    parser_expect(TOKEN_R_BRACE, "Expected '}' after comptime if block");
+    parser_advance();
+
+    // 3) optional else
+    StmtList *else_branch = NULL;
+    if (parser_match(TOKEN_KEYWORD_ELSE)) {
+        parser_advance(); // consume 'else'
+        parser_expect(TOKEN_L_BRACE, "Expected '{' after else in comptime if");
+        parser_advance();
+        else_branch = parse_stmt_list(arena, parser);
+        parser_expect(TOKEN_R_BRACE, "Expected '}' after else block");
+        parser_advance();
+    }
+
+    return stmt_comptime_if(arena, cond, then_branch, else_branch);
+}
+
 Stmt *parse_comptime_stmt(Arena* arena, Parser* parser)
 {
-    parser_expect(TOKEN_IDENTIFIER, "Expected variable name after 'comptime'");
+    // Check if this is `comptime if` (conditional compilation)
+    if (parser_match(TOKEN_KEYWORD_IF)) {
+        return parse_comptime_if_stmt(arena, parser);
+    }
+
+    // Otherwise it's a comptime variable declaration: comptime <ident> <type> = <expr>
+    parser_expect(TOKEN_IDENTIFIER, "Expected variable name or 'if' after 'comptime'");
     Id* var_name = id(arena, parser->token.length, parser->token.start);
     parser_advance(); // consume the name
 

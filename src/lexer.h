@@ -96,6 +96,7 @@ Token lexer_next(Lexer* lexer) {
                     case ',':           RETURN_TOKEN(TOKEN_COMMA);
                     case ';':           RETURN_TOKEN(TOKEN_SEMICOLON);
                     case '~':           RETURN_TOKEN(TOKEN_TILDE);
+                    case '@':           RETURN_TOKEN(TOKEN_AT);
                     default:            RETURN_TOKEN(TOKEN_INVALID);
                 }
                 break;

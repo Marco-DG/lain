@@ -146,6 +146,29 @@ void emit_expr(Expr *expr, int depth) {
       EMIT(" || ");
       emit_expr(expr->as.binary_expr.right, depth);
       EMIT(")");
+    } else if (expr->as.binary_expr.op == TOKEN_KEYWORD_IN) {
+      // idx in arr → (idx >= 0 && idx < arr.len)
+      Type *ct = expr->as.binary_expr.right->type;
+      if (ct) ct = sema_unwrap_type(ct);
+      EMIT("(");
+      emit_expr(expr->as.binary_expr.left, depth);
+      EMIT(" >= 0 && ");
+      emit_expr(expr->as.binary_expr.left, depth);
+      EMIT(" < ");
+      if (ct && ct->kind == TYPE_ARRAY && ct->array_len >= 0) {
+        EMIT("%lld", (long long)ct->array_len);
+      } else {
+        // Slice: access .len field
+        emit_expr(expr->as.binary_expr.right, depth);
+        bool is_ptr = false;
+        if (expr->as.binary_expr.right->type) {
+          Type *t = sema_unwrap_type(expr->as.binary_expr.right->type);
+          if (t->mode == MODE_MUTABLE) is_ptr = true;
+          else if (t->kind == TYPE_POINTER) is_ptr = true;
+        }
+        EMIT(is_ptr ? "->len" : ".len");
+      }
+      EMIT(")");
     } else {
       // Fallback for all other binary ops: +, -, *, /, %, <, ==, bitwise, etc.
       EMIT("(");

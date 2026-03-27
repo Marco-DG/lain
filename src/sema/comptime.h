@@ -94,6 +94,26 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
             Expr* left = comptime_evaluate_expr(arena, expr->as.binary_expr.left, env);
             Expr* right = comptime_evaluate_expr(arena, expr->as.binary_expr.right, env);
             
+            // Integer literal comparison (for @os == 1, etc.)
+            if (left && right && left->kind == EXPR_LITERAL && right->kind == EXPR_LITERAL) {
+                int lv = left->as.literal_expr.value;
+                int rv = right->as.literal_expr.value;
+                bool res = false;
+                switch (expr->as.binary_expr.op) {
+                    case TOKEN_EQUAL_EQUAL:              res = (lv == rv); break;
+                    case TOKEN_BANG_EQUAL:               res = (lv != rv); break;
+                    case TOKEN_ANGLE_BRACKET_LEFT:       res = (lv <  rv); break;
+                    case TOKEN_ANGLE_BRACKET_LEFT_EQUAL: res = (lv <= rv); break;
+                    case TOKEN_ANGLE_BRACKET_RIGHT:      res = (lv >  rv); break;
+                    case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:res = (lv >= rv); break;
+                    default: break;
+                }
+                Expr* bool_expr = clone_expr(arena, expr);
+                bool_expr->kind = EXPR_LITERAL;
+                bool_expr->as.literal_expr.value = res ? 1 : 0;
+                return bool_expr;
+            }
+
             if (left && right && left->kind == EXPR_TYPE && right->kind == EXPR_TYPE) {
                 Type *t1 = left->as.type_expr.type_value;
                 Type *t2 = right->as.type_expr.type_value;

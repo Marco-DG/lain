@@ -584,6 +584,26 @@ void emit_stmt(Stmt *stmt, int depth) {
     emit_expr(stmt->as.expr_stmt.expr, depth);
     EMIT(";\n");
     break;
+
+  case STMT_COMPTIME_IF: {
+    // Dead-branch elimination: emit only the taken branch, no if/else in output.
+    // The condition was already evaluated by sema — we just check which branch won.
+    if (!stmt->as.comptime_if_stmt.evaluated) {
+        // Should never happen — sema must evaluate before emit
+        fprintf(stderr, "Fatal: comptime if was not evaluated before emit\n");
+        exit(1);
+    }
+    if (stmt->as.comptime_if_stmt.is_taken) {
+        // Emit then-branch statements directly (no wrapping)
+        emit_stmt_list(stmt->as.comptime_if_stmt.then_branch, depth);
+    } else if (stmt->as.comptime_if_stmt.else_branch) {
+        // Emit else-branch statements directly (no wrapping)
+        emit_stmt_list(stmt->as.comptime_if_stmt.else_branch, depth);
+    }
+    // If condition was false and there's no else, emit nothing. Zero cost.
+    break;
+  }
+
   default:
     emit_indent(depth);
     EMIT("/* unhandled statement type */\n");

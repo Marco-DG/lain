@@ -1,0 +1,13 @@
+// Test comptime if with @os builtin
+// Expected: on Linux, only the Linux branch appears in out.c
+
+extern proc printf(fmt u8[:0], ...) int
+
+proc main() {
+    comptime if @os == 1 {
+        printf("Running on Linux\n")
+    } else {
+        printf("Running on another OS\n")
+    }
+    printf("Done\n")
+}

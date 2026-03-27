@@ -11,6 +11,39 @@
 #include "exhaustiveness.h"  // Match exhaustiveness checking
 #include "ranges.h"          // Range analysis
 
+/*──────────────────────────────────────────────────────────────────╗
+│ TARGET PLATFORM CONSTANTS                                         │
+│ Resolved at compiler-build-time via host platform detection.      │
+│ In a cross-compiler these would come from command-line flags.     │
+╚──────────────────────────────────────────────────────────────────*/
+
+// OS constants for @os builtin — matches .Linux/.Windows enum values
+#define LAIN_OS_LINUX   1
+#define LAIN_OS_WINDOWS 2
+#define LAIN_OS_MACOS   3
+
+// Arch constants for @arch builtin
+#define LAIN_ARCH_X86_64  1
+#define LAIN_ARCH_AARCH64 2
+
+#if defined(__linux__)
+  #define LAIN_TARGET_OS   LAIN_OS_LINUX
+#elif defined(_WIN32)
+  #define LAIN_TARGET_OS   LAIN_OS_WINDOWS
+#elif defined(__APPLE__)
+  #define LAIN_TARGET_OS   LAIN_OS_MACOS
+#else
+  #define LAIN_TARGET_OS   0
+#endif
+
+#if defined(__x86_64__) || defined(_M_X64)
+  #define LAIN_TARGET_ARCH LAIN_ARCH_X86_64
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  #define LAIN_TARGET_ARCH LAIN_ARCH_AARCH64
+#else
+  #define LAIN_TARGET_ARCH 0
+#endif
+
 
 extern Type *current_return_type;
 extern Decl *current_function_decl; // New
@@ -628,6 +661,44 @@ void sema_resolve_stmt(Stmt *s) {
     sema_resolve_stmt(s->as.defer_stmt.stmt);
     break;
 
+  case STMT_COMPTIME_IF: {
+    // 1) Resolve the condition expression (it may contain @os, @arch, etc.)
+    Expr *cond = s->as.comptime_if_stmt.cond;
+    sema_resolve_expr(cond);
+
+    // 2) Evaluate the condition at compile time
+    Expr *eval = comptime_evaluate_expr(sema_arena, cond, NULL);
+    bool is_true = false;
+    if (eval && eval->kind == EXPR_LITERAL) {
+        is_true = eval->as.literal_expr.value != 0;
+    } else {
+        fprintf(stderr, "[E014] Error Ln %li, Col %li: comptime if condition must evaluate to a compile-time constant\n",
+                s->line, s->col);
+        diagnostic_show_line(s->line, s->col);
+        exit(1);
+    }
+
+    // 3) Mark which branch was taken
+    s->as.comptime_if_stmt.evaluated = true;
+    s->as.comptime_if_stmt.is_taken = is_true;
+
+    // 4) Only resolve the taken branch (dead branch is parsed but not resolved)
+    if (is_true) {
+        sema_push_scope();
+        for (StmtList *b = s->as.comptime_if_stmt.then_branch; b; b = b->next) {
+            sema_resolve_stmt(b->stmt);
+        }
+        sema_pop_scope();
+    } else if (s->as.comptime_if_stmt.else_branch) {
+        sema_push_scope();
+        for (StmtList *b = s->as.comptime_if_stmt.else_branch; b; b = b->next) {
+            sema_resolve_stmt(b->stmt);
+        }
+        sema_pop_scope();
+    }
+    break;
+  }
+
   default:
     break;
   }
@@ -902,6 +973,20 @@ void sema_resolve_expr(Expr *e) {
         sema_resolve_expr(el->expr);
     }
     break;
+
+  case EXPR_BUILTIN: {
+    // Resolve @os / @arch to compile-time integer literals
+    int value = 0;
+    switch (e->as.builtin_expr.builtin_kind) {
+        case BUILTIN_OS:   value = LAIN_TARGET_OS;   break;
+        case BUILTIN_ARCH: value = LAIN_TARGET_ARCH; break;
+    }
+    // Replace this node in-place with a literal
+    e->kind = EXPR_LITERAL;
+    e->as.literal_expr.value = value;
+    e->type = get_builtin_int_type();
+    break;
+  }
 
   default:
     break;

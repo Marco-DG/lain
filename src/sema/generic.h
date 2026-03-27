@@ -100,6 +100,9 @@ void generic_substitute_expr(Expr *e, const char *param_name, Type *actual_type)
                 generic_substitute_expr(l->expr, param_name, actual_type);
             }
             break;
+        case EXPR_BUILTIN:
+            // No type references in builtins
+            break;
     }
 }
 
@@ -148,6 +151,11 @@ void generic_substitute_stmt(Stmt *s, const char *param_name, Type *actual_type)
             break;
         case STMT_DEFER:
             generic_substitute_stmt(s->as.defer_stmt.stmt, param_name, actual_type);
+            break;
+        case STMT_COMPTIME_IF:
+            generic_substitute_expr(s->as.comptime_if_stmt.cond, param_name, actual_type);
+            for (StmtList *l = s->as.comptime_if_stmt.then_branch; l; l = l->next) generic_substitute_stmt(l->stmt, param_name, actual_type);
+            for (StmtList *l = s->as.comptime_if_stmt.else_branch; l; l = l->next) generic_substitute_stmt(l->stmt, param_name, actual_type);
             break;
         case STMT_CONTINUE:
         case STMT_BREAK:

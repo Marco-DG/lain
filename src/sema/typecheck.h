@@ -608,8 +608,24 @@ void sema_infer_expr(Expr *e) {
 
   case EXPR_BINARY:
     sema_infer_expr(e->as.binary_expr.left);
-    sema_infer_expr(e->as.binary_expr.right);
-    
+
+    // For 'and' chains: if LHS is/contains 'in', push in-guard before evaluating RHS
+    // This allows: while l.pos in l.src and l.src[l.pos] != '"'
+    if (e->as.binary_expr.op == TOKEN_KEYWORD_AND) {
+        InGuardEntry *old_guards = sema_in_guards;
+        sema_push_in_guards(e->as.binary_expr.left);
+        sema_infer_expr(e->as.binary_expr.right);
+        sema_in_guards = old_guards;
+    } else {
+        sema_infer_expr(e->as.binary_expr.right);
+    }
+
+    // 'in' operator: result is bool, skip other checks
+    if (e->as.binary_expr.op == TOKEN_KEYWORD_IN) {
+        e->type = get_builtin_int_type();
+        break;
+    }
+
     // Division/modulo by zero check in pure func (must be total).
     // Parameter constraints (e.g., `b int != 0`) guarantee safety.
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
@@ -811,9 +827,18 @@ void sema_infer_expr(Expr *e) {
         } else {
             e->type = t->element_type;
         }
-        // STATIC BOUNDS CHECK (skipped inside unsafe blocks)
+        // STATIC BOUNDS CHECK (skipped inside unsafe blocks or when in-guarded)
         if (sema_ranges && !sema_in_unsafe_block) {
-            sema_check_bounds(sema_ranges, e->as.index_expr.index, t);
+            bool guarded = sema_is_in_guarded(e->as.index_expr.index, e->as.index_expr.target);
+            fprintf(stderr, "[DEBUG] EXPR_INDEX: idx_kind=%d target_kind=%d guarded=%d guards=%p arr_kind=%d arr_len=%lld line=%ld\n",
+                    e->as.index_expr.index->kind, e->as.index_expr.target->kind,
+                    guarded, (void*)sema_in_guards,
+                    t->kind, (long long)t->array_len, e->line);
+            if (guarded) {
+                /* bounds proven by 'in' guard — skip check */
+            } else {
+                sema_check_bounds(sema_ranges, e->as.index_expr.index, t);
+            }
         }
     } else if (t->kind == TYPE_POINTER) {
         // Pointer indexing syntax `ptr[i]` (unsafe or restricted?)
@@ -879,6 +904,11 @@ void sema_infer_expr(Expr *e) {
   case EXPR_MUT:
     sema_infer_expr(e->as.mut_expr.expr);
     e->type = type_mut(sema_arena, e->as.mut_expr.expr->type);
+    break;
+
+  case EXPR_CAST:
+    sema_infer_expr(e->as.cast_expr.expr);
+    // type already set at parse time (target_type)
     break;
 
   default:

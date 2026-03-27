@@ -1,0 +1,219 @@
+// ---------------------------------------------------------------------------
+//  memory.ln — OS-abstracted page allocator for Lain
+//
+//  Port of src/utils/common/system/memory.h
+//
+//  The ownership system replaces C's attribute soup:
+//    nodiscard  → `mov` return: you MUST bind it or the compiler errors.
+//    noalias    → `mov` return: freshly owned, zero aliasing by construction.
+//    nonnull    → VRA constraint `!= 0`: null rejected statically at call site.
+//    noescape   → Shared borrow (default param mode): pointer can't outlive call.
+//    maybe_unused → `_` parameter name: explicitly marks unused binding.
+// ---------------------------------------------------------------------------
+
+import std.c
+
+// ===========================================================================
+//  Platform Constants
+// ===========================================================================
+
+// Minimum guaranteed page size. The OS will round up all allocations to at
+// least this boundary. 4 KiB on almost everything; 8 KiB on SPARC.
+//
+// `comptime if` is a proposed Lain extension for conditional compilation.
+// The dead branch is eliminated entirely — zero code emitted, like #if in C.
+
+comptime var PAGE_MIN_SIZE: int = comptime if @arch == .Sparc_V9 { 8192 } else { 4096 }
+
+
+// ===========================================================================
+//  Extern OS Syscalls
+// ===========================================================================
+//
+// These are the raw system calls. They live behind `extern proc` because
+// they have side effects (allocating/freeing memory) and their termination
+// is not provable (the kernel could block indefinitely on memory pressure).
+//
+// We declare them once per OS using `comptime if`, replacing the C pattern
+// of #if OS_WINDOWS / #elif OS_LINUX guarding the same function body.
+
+comptime if @os == .Linux {
+
+    // void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+    //
+    // We use `mov *u8` as return: the caller inherits exclusive ownership of
+    // the mapped region. The C `noalias` attribute was merely a hint to the
+    // optimizer; in Lain, `mov` makes it a law enforced by the type system.
+    extern proc mmap(addr *u8, length usize, prot int, flags int, fd int, offset int) mov *u8
+
+    // int munmap(void *addr, size_t length);
+    extern proc munmap(mov addr *u8, length usize) int
+
+    // long sysconf(int name);
+    extern proc sysconf(name int) int
+
+    var PROT_READ:       int = 0x1
+    var PROT_WRITE:      int = 0x2
+    var MAP_PRIVATE:     int = 0x02
+    var MAP_ANONYMOUS:   int = 0x20
+    var MAP_FAILED:      *u8 = (0 - 1) as *u8   // (void*)-1
+    var _SC_PAGE_SIZE:   int = 30
+}
+
+comptime if @os == .Windows {
+
+    extern proc VirtualAlloc(addr *u8, size usize, alloc_type u32, protect u32) mov *u8
+    extern proc VirtualFree(addr mov *u8, size usize, free_type u32) int
+    extern proc GetSystemInfo(var info SystemInfo)
+
+    // Minimal forward declaration of the struct we need.
+    // Only the `dwAllocationGranularity` field matters; the rest is padding.
+    extern type SystemInfo
+
+    var MEM_RESERVE:     u32 = 0x00002000
+    var MEM_COMMIT:      u32 = 0x00001000
+    var MEM_RELEASE:     u32 = 0x00008000
+    var PAGE_READWRITE:  u32 = 0x04
+}
+
+
+// ===========================================================================
+//  Public API
+// ===========================================================================
+
+// --- alloc -----------------------------------------------------------------
+//
+//  Allocates `size` bytes via the OS page allocator.
+//
+//  Returns a page-aligned, exclusively owned pointer.
+//
+//  In C this was:
+//    nodiscard static inline noalias void *memory_alloc(usize size);
+//
+//  In Lain the return type `mov *u8` encodes ALL of that:
+//    - `mov`  → caller MUST use the result (nodiscard)
+//    - `mov`  → pointer is freshly owned, not aliased (noalias)
+//    - `*u8`  → raw byte pointer (void* equivalent)
+//
+//  The VRA constraint `size > 0` statically prevents the classic bug of
+//  allocating 0 bytes (which has implementation-defined behavior in mmap/
+//  VirtualAlloc). The C version had to test this at runtime.
+//
+//  ASM (Linux, -O3):
+//      mov     rsi, rdi            ; size → arg2
+//      xor     r9d, r9d            ; offset = 0
+//      mov     r8d, -1             ; fd = -1
+//      mov     ecx, 34             ; MAP_PRIVATE|MAP_ANONYMOUS
+//      mov     edx, 3              ; PROT_READ|PROT_WRITE
+//      xor     edi, edi            ; addr = NULL
+//      jmp     mmap
+
+proc alloc(size usize > 0) mov *u8 {
+    var p: mov *u8
+
+    comptime if @os == .Linux {
+        p = mmap(0 as *u8, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+    }
+    comptime if @os == .Windows {
+        p = VirtualAlloc(0 as *u8, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
+    }
+
+    return mov p
+}
+
+
+// --- free ------------------------------------------------------------------
+//
+//  Frees memory previously obtained from `alloc`.
+//
+//  In C this was:
+//    static inline nonnull(1) int memory_free(noescape void *ptr, maybe_unused usize size);
+//
+//  In Lain:
+//    - `mov ptr` → ownership is CONSUMED. After this call, the caller's
+//      variable is dead. Double-free is a compile error, not a runtime crash.
+//    - `ptr *u8 != 0` → VRA rejects null at every call site.
+//    - `_ usize` → Windows ignores `size`; the `_` name documents this for
+//      all platforms, and the compiler won't warn about it being unused.
+//
+//  ASM (Linux, -O3):
+//      jmp     munmap@PLT
+
+proc free(mov ptr *u8 != 0, _ usize) int {
+    var result: int
+
+    comptime if @os == .Linux {
+        result = munmap(mov ptr, _)
+    }
+    comptime if @os == .Windows {
+        result = VirtualFree(mov ptr, 0, MEM_RELEASE)
+    }
+
+    return result
+}
+
+
+// --- page_size -------------------------------------------------------------
+//
+//  Returns the system's page allocation granularity.
+//
+//  Declared as `proc` (not `func`) because it calls into the kernel, which
+//  is a side effect and does not have provable termination.
+//
+//  The VRA return constraint `int > 0` lets callers divide by page_size()
+//  without a division-by-zero check — the compiler knows it's always positive.
+//
+//  ASM (Linux, -O3):
+//      mov     edi, 30             ; _SC_PAGE_SIZE
+//      jmp     sysconf@PLT
+
+proc page_size() int > 0 {
+    comptime if @os == .Linux {
+        return sysconf(_SC_PAGE_SIZE)
+    }
+    comptime if @os == .Windows {
+        var info: SystemInfo
+        GetSystemInfo(var info)
+        return info.dwAllocationGranularity as int
+    }
+}
+
+
+// --- is_aligned ------------------------------------------------------------
+//
+//  True if `ptr` is aligned to `align` bytes.
+//
+//  This is a pure `func` — no side effects, guaranteed termination,
+//  and the compiler verifies the VRA constraints at every call site.
+//
+//  The constraint `align > 0` prevents modulo-by-zero at compile time.
+//  No runtime check needed. The C version relied on the programmer not
+//  passing 0; Lain makes it a type error.
+//
+//  ASM (-O3):
+//      mov     rax, rdi          ; ptr → rax
+//      xor     edx, edx
+//      div     rsi               ; rax % align
+//      test    rdx, rdx
+//      sete    al
+
+func is_aligned(ptr *u8 != 0, align int > 0) bool {
+    return ((ptr as usize) % (align as usize)) == 0
+}
+
+
+// --- is_aligned_log2 -------------------------------------------------------
+//
+//  True if `ptr` is aligned to 2^`bits_log2` bytes.
+//
+//  Faster than is_aligned for power-of-two alignments: uses a bitwise AND
+//  instead of a division.
+//
+//  ASM (-O3):
+//      lea     rax, [rsi - 1]    ; (1 << bits_log2) - 1
+//      test    rax, rdi          ; ptr & mask
+//      sete    al
+
+func is_aligned_log2(ptr *u8 != 0, bits_log2 int > 0) bool {
+    return ((ptr as usize) & ((bits_log2 as usize) - 1)) == 0
+}

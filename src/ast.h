@@ -214,6 +214,7 @@ typedef enum {
     STMT_UNSAFE,
     STMT_WHILE,
     STMT_DEFER,
+    STMT_COMPTIME_IF,
 } StmtKind;
 
 typedef struct {
@@ -282,6 +283,14 @@ typedef struct {
     struct Stmt *stmt; // The statement to be executed later (usually a block or an expression)
 } StmtDefer;
 
+typedef struct {
+    Expr *cond;              // compile-time condition (e.g. @os == .Linux)
+    StmtList *then_branch;
+    StmtList *else_branch;   // NULL if no else
+    bool evaluated;          // true after sema has resolved this
+    bool is_taken;           // which branch was selected (true = then, false = else)
+} StmtComptimeIf;
+
 typedef struct Stmt {
     StmtKind kind;
     isize line;  // source line number
@@ -298,6 +307,7 @@ typedef struct Stmt {
         StmtUnsafe      unsafe_stmt;
         StmtWhile       while_stmt;
         StmtDefer       defer_stmt;
+        StmtComptimeIf  comptime_if_stmt;
     } as;
 } Stmt;
 
@@ -326,7 +336,13 @@ typedef enum {
     EXPR_ANON_STRUCT,
     EXPR_ANON_ENUM,
     EXPR_ARRAY_LITERAL,
+    EXPR_BUILTIN,
 } ExprKind;
+
+typedef enum {
+    BUILTIN_OS,
+    BUILTIN_ARCH,
+} BuiltinKind;
 
 typedef struct {
     DeclList* fields;
@@ -423,6 +439,10 @@ typedef struct {
     ExprList *elements;
 } ExprArrayLiteral;
 
+typedef struct {
+    BuiltinKind builtin_kind;
+} ExprBuiltin;
+
 typedef struct Expr {
     ExprKind kind;
     isize line;  // source line number
@@ -447,6 +467,7 @@ typedef struct Expr {
         ExprAnonStruct  anon_struct_expr;
         ExprAnonEnum    anon_enum_expr;
         ExprArrayLiteral array_literal_expr;
+        ExprBuiltin     builtin_expr;
     } as;
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
@@ -816,6 +837,17 @@ Stmt *stmt_defer(Arena *arena, Stmt *deferred_stmt) {
     return s;
 }
 
+Stmt *stmt_comptime_if(Arena *arena, Expr *cond, StmtList *then_branch, StmtList *else_branch) {
+    Stmt *s = arena_push(arena, Stmt);
+    s->kind = STMT_COMPTIME_IF;
+    s->as.comptime_if_stmt.cond = cond;
+    s->as.comptime_if_stmt.then_branch = then_branch;
+    s->as.comptime_if_stmt.else_branch = else_branch;
+    s->as.comptime_if_stmt.evaluated = false;
+    s->as.comptime_if_stmt.is_taken = false;
+    return s;
+}
+
 /*──────────────────────────────────────────────────────────────────╗
 │ EXPRESSION CONSTRUCTORS                                           │
 ╚──────────────────────────────────────────────────────────────────*/
@@ -989,6 +1021,13 @@ Decl *decl_type_alias(Arena *arena, Id *name, Expr *expr) {
     d->as.type_alias_decl.name = name;
     d->as.type_alias_decl.expr = expr;
     return d;
+}
+
+Expr *expr_builtin(Arena *arena, BuiltinKind kind) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_BUILTIN;
+    e->as.builtin_expr.builtin_kind = kind;
+    return e;
 }
 
 #endif /* AST_H */
