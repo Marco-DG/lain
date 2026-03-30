@@ -13,6 +13,7 @@ extern Type *current_return_type;
 extern Decl *current_function_decl; // Defined in sema.h
 extern RangeTable *sema_ranges;     // Defined in sema.h
 extern bool sema_in_unsafe_block;   // Defined in sema.h
+extern bool sema_walk_phase;        // Defined in sema.h
 
 // ...
 
@@ -827,13 +828,9 @@ void sema_infer_expr(Expr *e) {
         } else {
             e->type = t->element_type;
         }
-        // STATIC BOUNDS CHECK (skipped inside unsafe blocks or when in-guarded)
-        if (sema_ranges && !sema_in_unsafe_block) {
+        // STATIC BOUNDS CHECK (only during walk phase, skipped in unsafe/in-guarded)
+        if (sema_ranges && sema_walk_phase && !sema_in_unsafe_block) {
             bool guarded = sema_is_in_guarded(e->as.index_expr.index, e->as.index_expr.target);
-            fprintf(stderr, "[DEBUG] EXPR_INDEX: idx_kind=%d target_kind=%d guarded=%d guards=%p arr_kind=%d arr_len=%lld line=%ld\n",
-                    e->as.index_expr.index->kind, e->as.index_expr.target->kind,
-                    guarded, (void*)sema_in_guards,
-                    t->kind, (long long)t->array_len, e->line);
             if (guarded) {
                 /* bounds proven by 'in' guard — skip check */
             } else {

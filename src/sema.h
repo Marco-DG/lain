@@ -63,6 +63,7 @@ DeclList *sema_decls = NULL;
 Arena *sema_arena = NULL;
 RangeTable *sema_ranges = NULL;
 bool sema_in_unsafe_block = false;
+bool sema_walk_phase = false;
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Public entry: call this before emit                             │
@@ -383,18 +384,13 @@ static void sema_verify_bounded_while(Stmt *s) {
 ╚─────────────────────────────────────────────────────────────────────────────*/
 
 static void sema_push_in_guards(Expr *cond) {
-    if (!cond || cond->kind != EXPR_BINARY) {
-        fprintf(stderr, "[DEBUG push_in_guards] cond=%p kind=%d (not binary, skipping)\n", (void*)cond, cond ? cond->kind : -1);
-        return;
-    }
-    fprintf(stderr, "[DEBUG push_in_guards] cond=%p kind=EXPR_BINARY op=%d (IN=%d AND=%d)\n", (void*)cond, cond->as.binary_expr.op, TOKEN_KEYWORD_IN, TOKEN_KEYWORD_AND);
+    if (!cond || cond->kind != EXPR_BINARY) return;
     if (cond->as.binary_expr.op == TOKEN_KEYWORD_IN) {
         InGuardEntry *e = arena_push_aligned(sema_arena, InGuardEntry);
         e->index = cond->as.binary_expr.left;
         e->container = cond->as.binary_expr.right;
         e->next = sema_in_guards;
         sema_in_guards = e;
-        fprintf(stderr, "[DEBUG push_in_guards] PUSHED guard: idx=%p container=%p guards_now=%p\n", (void*)e->index, (void*)e->container, (void*)sema_in_guards);
     } else if (cond->as.binary_expr.op == TOKEN_KEYWORD_AND) {
         sema_push_in_guards(cond->as.binary_expr.left);
         sema_push_in_guards(cond->as.binary_expr.right);
@@ -514,7 +510,6 @@ static void walk_stmt(Stmt *s) {
 
                 if (sema_ranges) sema_apply_constraint(s->as.while_stmt.cond, sema_ranges);
                 sema_push_in_guards(s->as.while_stmt.cond);
-                fprintf(stderr, "[DEBUG STMT_WHILE] after push, guards=%p, about to walk body\n", (void*)sema_in_guards);
 
                 sema_push_scope();
                 for (StmtList *b = s->as.while_stmt.body; b; b = b->next)
@@ -838,10 +833,12 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             sema_resolve_stmt(sl->stmt);
         }
 
-        // 2.c) Type inference
+        // 2.c) Type inference + bounds checking
         // (walk_stmt is defined as a static function above sema_resolve_module)
+        sema_walk_phase = true;
         for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next)
             walk_stmt(sl->stmt);
+        sema_walk_phase = false;
 
         current_return_type = NULL;
         current_function_decl = NULL;

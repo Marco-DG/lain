@@ -1,10 +1,9 @@
-// Test: array access without 'in' guard should fail bounds check
+// Test: array access with unknown index and unknown length should fail bounds check
 
-func bad_access(data u8[:0]) int {
-    var i = 0
+func bad_access(data u8[:0], i int) int {
     return data[i] as int
 }
 
 proc main() int {
-    return bad_access("hello")
+    return bad_access("hello", 0)
 }

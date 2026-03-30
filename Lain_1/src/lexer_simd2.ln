@@ -89,7 +89,7 @@ type Token {
 //   Why it works: the SIMD load at offset `pos` reads [pos, pos+31]. The loop
 //   guard is `pos < len`, so the furthest read is at pos = len-1, touching
 //   bytes [len-1, len+30] — all within the padded allocation. No bounds check
-//   is ever needed inside the hot loop.
+//   is ever needed inside the hot loop. 
 
 type Lexer {
     src  *u8           // raw pointer to padded buffer (avoids slice bounds checks)

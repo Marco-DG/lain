@@ -56,7 +56,8 @@
       "Read(//home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/**)",
       "Bash(bash run_tests.sh tests/safety/purity/bounded_while.ln)",
       "Bash(bash run_tests.sh tests/safety/purity/bounded_while_bad_fail.ln)",
-      "Bash(bash run_tests.sh:*)"
+      "Bash(bash run_tests.sh:*)",
+      "Bash(git stash:*)"
     ],
     "additionalDirectories": [
       "/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain"
