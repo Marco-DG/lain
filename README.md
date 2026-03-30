@@ -40,7 +40,7 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `break` | Exit the innermost loop |
 | `continue` | Skip to the next iteration |
 | `case` | Pattern matching |
-| `in` | Range iteration / index bound constraint |
+| `in` | Range iteration / index bound constraint / bounds-proving condition |
 | `and` | Logical AND |
 | `or` | Logical OR |
 | `true` | Boolean true literal |
@@ -949,6 +949,7 @@ This enables provably-terminating finite state machines (lexers, parsers, protoc
 | `i < n` | `n - i` | `i` increases → measure decreases |
 | `n > 0` | `n` | `n` decreases directly |
 | `a < b` | `b - a` | Either `a` increases or `b` decreases |
+| `i in arr` | `arr.len - i` | `in` implies `i < arr.len` (see §9.3.2) |
 
 The measure is compile-time only — it produces no runtime overhead.
 
@@ -1202,7 +1203,7 @@ Operators are evaluated according to the following precedence table (highest to 
 | 6 | `&` | Left | Bitwise AND |
 | 7 | `^` | Left | Bitwise XOR |
 | 8 | `\|` | Left | Bitwise OR |
-| 9 | `<` `>` `<=` `>=` | Left | Comparison |
+| 9 | `<` `>` `<=` `>=` `in` | Left | Comparison / bounds check |
 | 10 | `==` `!=` | Left | Equality |
 | 11 | `and` | Left | Logical AND |
 | 12 (lowest) | `or` | Left | Logical OR |
@@ -1280,7 +1281,11 @@ func bad_abs(x int) int >= 0 {
 
 ### 9.3 Index Bounds (`in` keyword)
 
-The `in` keyword declares that a value is a valid index into an array:
+The `in` keyword has two complementary roles in bounds verification:
+
+#### 9.3.1 Parameter Constraint (`i int in arr`)
+
+As a parameter constraint, `in` declares that a value is a valid index into an array:
 
 ```lain
 func get(arr int[10], i int in arr) int {
@@ -1295,6 +1300,43 @@ The caller must prove the constraint:
 get(arr, 5)      // OK: 5 ∈ [0, 10)
 get(arr, 15)     // ERROR: 15 is not in [0, 10)
 ```
+
+#### 9.3.2 Bounds-Proving Condition (`idx in arr`)
+
+As a binary expression, `idx in arr` evaluates to `true` if `0 <= idx < arr.len`. When used as the condition of an `if` or `while`, it creates an **in-guard** that authorizes `arr[idx]` accesses inside the guarded body — without `unsafe` and without runtime checks.
+
+```lain
+func peek(data u8[:0], pos int) int {
+    if pos in data { return data[pos] as int }  // safe: in-guarded
+    return 0
+}
+```
+
+**While loops with `in`:**
+```lain
+func find_zero(data u8[:0]) int {
+    var i = 0
+    while i in data decreasing data.len - i {
+        if (data[i] as int) == 0 { return i }   // safe: in-guarded
+        i += 1
+    }
+    return 0 - 1
+}
+```
+
+**And-chain composition:** The `in` guard propagates through `and`, so the right-hand side of an `and` can safely access the array:
+```lain
+while l.pos in l.src and (l.src[l.pos] as int) != '"' decreasing l.src.len - l.pos {
+    l.pos += 1   // l.src[l.pos] is safe on both sides
+}
+```
+
+**Termination integration:** `idx in arr` implies `idx < arr.len`, so the measure `arr.len - idx` is recognized as non-negative by the termination verifier (§7.3).
+
+**Scoping:** In-guards are scoped to the body of the `if`/`while` — they do not extend to `else` branches or code after the block.
+
+> [!NOTE]
+> The `in` guard uses structural expression matching: `l.pos in l.src` guards exactly `l.src[l.pos]`, including member expressions. Accesses with different offsets (e.g., `l.src[l.pos + 1]`) are **not** guarded and still require `unsafe`.
 
 ### 9.4 Relational Constraints Between Parameters
 
@@ -1601,6 +1643,9 @@ The compiler maps Lain types to C types as follows:
 
 While Lain prioritizes safety, low-level systems programming sometimes requires bypassing safety checks.
 
+> [!TIP]
+> Before reaching for `unsafe`, consider whether the `in` keyword (§9.3.2) can prove your array access safe. Code like `if idx in arr { arr[idx] }` or `while i in data decreasing data.len - i { data[i] }` is fully verified at compile time with zero runtime overhead — no `unsafe` needed.
+
 ### 12.1 Unsafe Blocks
 
 Operations that bypass safety checks must be enclosed in an `unsafe` block:
@@ -1887,7 +1932,7 @@ The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` 
 | `fun` | ⚠️ Alias | Alias for `func` |
 | `if` | ✅ Implemented | Conditional |
 | `import` | ✅ Implemented | Module import |
-| `in` | ✅ Implemented | Range iteration / index bounds |
+| `in` | ✅ Implemented | Range iteration / index bounds / bounds-proving condition (§9.3) |
 | `macro` | 🔮 Reserved | — |
 | `mov` | ✅ Implemented | Ownership transfer |
 | `or` | ✅ Implemented | Logical OR operator |
@@ -2179,7 +2224,7 @@ expr            = literal | IDENT | expr binop expr | unop expr
                 | "mov" expr | "(" expr ")" ;
 
 binop           = "+" | "-" | "*" | "/" | "%" | "==" | "!="
-                | "<" | ">" | "<=" | ">=" | "and" | "or"
+                | "<" | ">" | "<=" | ">=" | "in" | "and" | "or"
                 | "&" | "|" | "^" ;
 
 unop            = "-" | "!" | "~" | "*" ;

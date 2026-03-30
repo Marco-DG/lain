@@ -26,7 +26,7 @@
 | `fun` | Declaration | Alias for `func` | §6.2.1 |
 | `if` | Control flow | Conditional branch | §5.5 |
 | `import` | Module | Module import | §10.2 |
-| `in` | Constraint | Array index constraint / loop variable | §5.6.1, §8.4 |
+| `in` | Constraint / Operator | Array index constraint / loop variable / bounds-proving condition | §4.19, §5.6.1, §8.4 |
 | `macro` | Reserved | Macro definition | Reserved |
 | `mov` | Ownership | Ownership transfer | §7.2 |
 | `or` | Operator | Logical OR | §4.5 |
@@ -111,7 +111,7 @@ Listed from highest to lowest precedence:
 | 7 | `&` | Left | Bitwise AND |
 | 6 | `^` | Left | Bitwise XOR |
 | 5 | `\|` | Left | Bitwise OR |
-| 4 | `==` `!=` `<` `>` `<=` `>=` | Left | Comparison |
+| 4 | `==` `!=` `<` `>` `<=` `>=` `in` | Left | Comparison / bounds |
 | 3 | `and` | Left | Logical AND |
 | 2 | `or` | Left | Logical OR |
 | 1 | `=` `+=` `-=` `*=` `/=` `%=` | Right | Assignment |

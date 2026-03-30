@@ -91,6 +91,21 @@ if x < 10 {
 }
 ```
 
+### 5.5.4 In-Guard Refinement [Implemented]
+
+When the condition contains an `in` expression (see §4.19), the compiler
+creates an **in-guard** that permits the guarded array access inside the
+then-branch without further bounds checking:
+
+```lain
+if pos in data {
+    return data[pos] as int    // safe: in-guarded
+}
+```
+
+In-guards are scoped to the then-branch only — they do not extend to
+`elif` or `else` branches (the negation of `in` proves nothing useful).
+
 ## 5.6 Loops [Implemented]
 
 ### 5.6.1 For Loop (Range-Based)
@@ -139,6 +154,16 @@ while_stmt = "while" expr [ "decreasing" expr ] block ;
 
 The condition is evaluated before each iteration. The body executes as long
 as the condition is true.
+
+When the condition contains an `in` expression (see §4.19), the compiler
+creates an in-guard for the loop body, permitting the guarded array access:
+
+```lain
+while i in data decreasing data.len - i {
+    data[i]          // safe: in-guarded by the while condition
+    i += 1
+}
+```
 
 > **CONSTRAINT:** Unbounded `while` loops (without a termination measure) are
 > only allowed in `proc` (see §6.1). Using an unbounded `while` inside a
@@ -197,6 +222,7 @@ The compiler performs two checks:
 | `pos < size` | `size - pos` | `pos` increases → measure decreases |
 | `n > 0` | `n` | `n` decreases directly |
 | `a < b` | `b - a` | Either `a` increases or `b` decreases |
+| `i in arr` | `arr.len - i` | `in` implies `i < arr.len` (§4.19) |
 
 **Struct fields are supported**: The verification works with member expressions
 like `l.pos` and `l.size`, not just local variables.

@@ -88,7 +88,7 @@ Unsafe blocks do not disable other safety checks:
 | Borrow checking | **No** |
 | Move semantics | **No** |
 | Type checking | **No** |
-| Bounds checking | **No** |
+| Bounds checking | **No** (use `in` guards instead — see §8.4.2) |
 | Division by zero detection | **No** |
 | Exhaustiveness checking | **No** |
 
@@ -179,6 +179,11 @@ Lain's `unsafe` is deliberately narrow. Unlike C where all code is
 implicitly unsafe, or Rust where `unsafe` unlocks multiple capabilities,
 Lain's `unsafe` currently only enables pointer dereference and direct ADT
 field access. This minimizes the audit surface.
+
+> Note: Many array access patterns that previously required `unsafe` can now
+> be proven safe using `in` guards (§8.4.2). For example,
+> `if idx in arr { arr[idx] }` and `while i in data decreasing data.len - i`
+> are fully verified at compile time without `unsafe`.
 
 ### 12.9.3 Auditability
 

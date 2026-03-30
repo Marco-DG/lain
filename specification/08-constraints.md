@@ -64,7 +64,11 @@ func bad_abs(x int) int >= 0 {
 
 ## 8.4 Index Bounds (`in` keyword) [Implemented]
 
-The `in` keyword declares that a value is a valid index for an array:
+The `in` keyword provides two complementary mechanisms for bounds verification.
+
+### 8.4.1 Parameter Constraint
+
+As a parameter constraint, `in` declares that a value is a valid index for an array:
 
 ```lain
 func get(arr int[10], i int in arr) int {
@@ -78,6 +82,45 @@ This desugars to the constraint: `i >= 0 and i < arr.len`.
 get(arr, 5)               // OK: 5 in [0, 10)
 get(arr, 15)              // ERROR: 15 is not in [0, 10)
 ```
+
+### 8.4.2 Bounds-Proving Condition (In-Guard) [Implemented]
+
+As a binary expression, `idx in arr` evaluates to `true` iff `0 <= idx < arr.len`.
+When used as the condition of an `if` or `while` statement, or as the left
+operand of an `and` chain, it creates an **in-guard**: the compiler permits
+`arr[idx]` inside the guarded scope without further bounds verification.
+
+```lain
+func peek(data u8[:0], pos int) int {
+    if pos in data { return data[pos] as int }
+    return 0
+}
+
+func find_zero(data u8[:0]) int {
+    var i = 0
+    while i in data decreasing data.len - i {
+        if (data[i] as int) == 0 { return i }
+        i += 1
+    }
+    return 0 - 1
+}
+```
+
+**And-chain propagation:** In `a and b`, if `a` is an `in` expression,
+its guard is active when evaluating `b`:
+
+```lain
+while l.pos in l.src and (l.src[l.pos] as int) != '"' decreasing l.src.len - l.pos {
+    l.pos += 1
+}
+```
+
+> **CONSTRAINT:** In-guards use structural expression matching (AST equality).
+> `idx in arr` guards exactly `arr[idx]`. Offset accesses like `arr[idx + 1]`
+> are not guarded.
+
+> **CONSTRAINT:** In-guards are scoped to the body of the guarding `if`/`while`.
+> They do not extend to `else` branches or to code after the block.
 
 ## 8.5 Relational Constraints [Implemented]
 
@@ -198,6 +241,10 @@ verification. The two systems are complementary:
 - **VRA**: Tracks value ranges for constraint satisfaction (§8.2–§8.6).
 - **Measure verifier**: Proves termination via polarity-based decrease
   analysis (§5.6.2.1).
+- **In-guards**: Prove bounds safety via condition-guarded scoping (§8.4.2).
+  The `in` condition `idx in arr` is recognized by the measure verifier
+  as implying `idx < arr.len`, so `arr.len - idx` is a valid termination
+  measure.
 
 ## 8.9 Static Array Bounds Checking [Implemented]
 
@@ -214,8 +261,9 @@ arr[-1] = 0                // ERROR: -1 is not in [0, 10)
 ```
 
 > **CONSTRAINT:** Every array access `arr[i]` shall be statically proven
-> to satisfy `0 <= i < arr.len`. Accesses that cannot be proven safe are
-> rejected as compile errors. There are no runtime bounds checks.
+> to satisfy `0 <= i < arr.len`, either through VRA range analysis or through
+> an in-guard (§8.4.2). Accesses that cannot be proven safe are rejected as
+> compile errors. There are no runtime bounds checks.
 
 ## 8.10 Division by Zero Detection [Implemented]
 

@@ -172,8 +172,8 @@ arr[i] = 42               // write element (if arr is mutable)
 ```
 
 > **CONSTRAINT:** The index shall be statically proven to be within bounds
-> via Value Range Analysis (see §8). Accesses that cannot be statically
-> proven safe are rejected.
+> via Value Range Analysis (see §8) or an in-guard (see §4.21). Accesses
+> that cannot be statically proven safe are rejected.
 
 ## 4.11 Function Call [Implemented]
 
@@ -304,14 +304,59 @@ Operators are listed from highest to lowest precedence:
 | 7 | `&` | Left |
 | 8 | `^` | Left |
 | 9 | `\|` | Left |
-| 10 | `<` `>` `<=` `>=` | Left |
+| 10 | `<` `>` `<=` `>=` `in` | Left |
 | 11 | `==` `!=` | Left |
 | 12 | `and` | Left |
 | 13 (lowest) | `or` | Left |
 
 Parentheses `()` may be used to override precedence.
 
-## 4.19 Evaluation Order [Implemented]
+## 4.19 Bounds-Proving Expression (`in`) [Implemented]
+
+The `in` keyword can be used as a binary operator between an index expression
+and a container (array or slice):
+
+```lain
+idx in arr                // true iff 0 <= idx < arr.len
+l.pos in l.src            // works with member expressions
+```
+
+The result type is `bool`. The expression compiles to `(idx >= 0 && idx < arr.len)`.
+
+### 4.19.1 In-Guard Semantics
+
+When `idx in arr` appears as the condition (or part of an `and`-chain condition)
+of an `if` or `while` statement, it creates an **in-guard**: the compiler
+permits `arr[idx]` inside the guarded body without further bounds verification.
+
+```lain
+if pos in data {
+    return data[pos] as int   // safe: in-guarded
+}
+
+while i in arr and arr[i] != 0 decreasing arr.len - i {
+    i += 1                    // safe: in-guarded
+}
+```
+
+> **CONSTRAINT:** The in-guard matches structurally: `idx in arr` guards
+> exactly `arr[idx]`. Accesses with arithmetic offsets (e.g., `arr[idx + 1]`)
+> are **not** guarded and require separate verification or `unsafe`.
+
+### 4.19.2 And-Chain Propagation
+
+In an `and` expression, in-guards from the left operand are active when
+evaluating the right operand. This enables idiomatic bounds-then-access
+patterns:
+
+```lain
+while l.pos in l.src and (l.src[l.pos] as int) != '"' decreasing l.src.len - l.pos {
+    // l.src[l.pos] is safe in both the condition RHS and the body
+}
+```
+
+## 4.20 Evaluation Order [Implemented]
+
 
 Expressions, function arguments, and binary operands are evaluated strictly
 **left-to-right**:
@@ -326,7 +371,7 @@ This guarantee applies to:
 - Function arguments: first argument before second, etc.
 - Compound expressions: sub-expressions in textual order
 
-## 4.20 Lvalue vs Rvalue
+## 4.21 Lvalue vs Rvalue
 
 An **lvalue** is an expression that refers to a storage location. An **rvalue**
 is an expression that produces a value.
