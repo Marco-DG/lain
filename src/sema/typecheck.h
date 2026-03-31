@@ -52,6 +52,46 @@ Type *get_builtin_u8_type(void) {
 }
 
 /*─────────────────────────────────────────────────────────────────╗
+│ 1b) Implicit integer widening helpers                          │
+╚─────────────────────────────────────────────────────────────────*/
+
+static bool is_integer_type(Type *t) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
+    const char *n = t->base_type->name;
+    isize len = t->base_type->length;
+    static const struct { const char *name; int len; } tbl[] = {
+        {"u8",2},{"i8",2},{"u16",3},{"i16",3},{"u32",3},{"i32",3},
+        {"u64",3},{"i64",3},{"int",3},{"usize",5},{"isize",5},
+    };
+    for (int i = 0; i < 11; i++) {
+        if (len == tbl[i].len && memcmp(n, tbl[i].name, len) == 0)
+            return true;
+    }
+    return false;
+}
+
+static int integer_rank(Type *t) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return 0;
+    const char *n = t->base_type->name;
+    isize len = t->base_type->length;
+    if (len == 2 && (memcmp(n,"u8",2)==0 || memcmp(n,"i8",2)==0)) return 1;
+    if (len == 3 && (memcmp(n,"u16",3)==0 || memcmp(n,"i16",3)==0)) return 2;
+    if (len == 3 && (memcmp(n,"u32",3)==0 || memcmp(n,"i32",3)==0 || memcmp(n,"int",3)==0)) return 3;
+    if (len == 3 && (memcmp(n,"u64",3)==0 || memcmp(n,"i64",3)==0)) return 4;
+    if (len == 5 && (memcmp(n,"usize",5)==0 || memcmp(n,"isize",5)==0)) return 5;
+    return 0;
+}
+
+static Type *wider_integer_type(Type *a, Type *b) {
+    return integer_rank(a) >= integer_rank(b) ? a : b;
+}
+
+static bool can_widen_to(Type *from, Type *to) {
+    if (!is_integer_type(from) || !is_integer_type(to)) return false;
+    return integer_rank(from) <= integer_rank(to);
+}
+
+/*─────────────────────────────────────────────────────────────────╗
 │ 2) Keep the top-level DeclList for struct lookups              │
 ╚─────────────────────────────────────────────────────────────────*/
 
@@ -703,7 +743,25 @@ void sema_infer_expr(Expr *e) {
         }
     }
 
-    e->type = get_builtin_int_type();
+    {
+        TokenKind bop = e->as.binary_expr.op;
+        if (bop == TOKEN_EQUAL_EQUAL || bop == TOKEN_BANG_EQUAL ||
+            bop == TOKEN_ANGLE_BRACKET_LEFT || bop == TOKEN_ANGLE_BRACKET_LEFT_EQUAL ||
+            bop == TOKEN_ANGLE_BRACKET_RIGHT || bop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL ||
+            bop == TOKEN_KEYWORD_AND || bop == TOKEN_KEYWORD_OR) {
+            e->type = get_builtin_int_type();
+        } else {
+            Type *lt = e->as.binary_expr.left->type;
+            Type *rt = e->as.binary_expr.right->type;
+            if (lt && rt && is_integer_type(lt) && is_integer_type(rt)) {
+                e->type = wider_integer_type(lt, rt);
+            } else {
+                e->type = (lt && is_integer_type(lt)) ? lt :
+                          (rt && is_integer_type(rt)) ? rt :
+                          get_builtin_int_type();
+            }
+        }
+    }
     break;
 
   case EXPR_UNARY:

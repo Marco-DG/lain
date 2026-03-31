@@ -45,7 +45,7 @@ type Token {
 
 type Lexer {
     src  u8[:0]
-    pos  int
+    pos  int in src
     size int
 }
 
@@ -81,19 +81,19 @@ func is_alnum(c int) bool {
 // -- Byte access ------------------------------------------------------------
 
 func peek(l Lexer) int {
-    if l.pos in l.src { return l.src[l.pos] as int }
+    if l.pos in l.src { return l.src[l.pos] }
     return 0
 }
 
 func peek_at(l Lexer, offset int) int {
     var i = l.pos + offset
-    if i in l.src { return l.src[i] as int }
+    if i in l.src { return l.src[i] }
     return 0
 }
 
 func eat(var l Lexer) int {
     if l.pos in l.src {
-        var c = l.src[l.pos] as int
+        var c = l.src[l.pos]
         l.pos += 1
         return c
     }
@@ -102,7 +102,7 @@ func eat(var l Lexer) int {
 
 func try_eat(var l Lexer, expected int) bool {
     if l.pos in l.src {
-        if (l.src[l.pos] as int) != expected { return false }
+        if l.src[l.pos] != expected { return false }
         l.pos += 1
         return true
     }
@@ -113,12 +113,12 @@ func try_eat(var l Lexer, expected int) bool {
 
 func skip(var l Lexer) {
     while l.pos in l.src decreasing l.src.len - l.pos {
-        var c = l.src[l.pos] as int
+        var c = l.src[l.pos]
         if c == ' ' or c == '\t' or c == '\r' or c == '\n' {
             l.pos += 1
         } else if c == '/' and peek_at(l, 1) == '/' {
             l.pos += 2
-            while l.pos in l.src and (l.src[l.pos] as int) != '\n' decreasing l.src.len - l.pos {
+            while l.pos in l.src and l.src[l.pos] != '\n' decreasing l.src.len - l.pos {
                 l.pos += 1
             }
         } else {
@@ -134,58 +134,58 @@ func keyword(src u8[:0], s int, e int) TK { unsafe {
 
     // length 2
     if n == 2 {
-        if src[s] as int == 'i' and src[s+1] as int == 'f' { return TK.KwIf }
-        if src[s] as int == 'i' and src[s+1] as int == 'n' { return TK.KwIn }
-        if src[s] as int == 'a' and src[s+1] as int == 's' { return TK.KwAs }
-        if src[s] as int == 'o' and src[s+1] as int == 'r' { return TK.KwOr }
+        if src[s] == 'i' and src[s+1] == 'f' { return TK.KwIf }
+        if src[s] == 'i' and src[s+1] == 'n' { return TK.KwIn }
+        if src[s] == 'a' and src[s+1] == 's' { return TK.KwAs }
+        if src[s] == 'o' and src[s+1] == 'r' { return TK.KwOr }
         return TK.Ident
     }
 
     // length 3
     if n == 3 {
-        if src[s] as int == 'v' and src[s+1] as int == 'a' and src[s+2] as int == 'r' { return TK.KwVar }
-        if src[s] as int == 'f' and src[s+1] as int == 'o' and src[s+2] as int == 'r' { return TK.KwFor }
-        if src[s] as int == 'm' and src[s+1] as int == 'o' and src[s+2] as int == 'v' { return TK.KwMov }
-        if src[s] as int == 'a' and src[s+1] as int == 'n' and src[s+2] as int == 'd' { return TK.KwAnd }
-        if src[s] as int == 'n' and src[s+1] as int == 'o' and src[s+2] as int == 't' { return TK.KwNot }
-        if src[s] as int == 'm' and src[s+1] as int == 'o' and src[s+2] as int == 'd' { return TK.KwMod }
+        if src[s] == 'v' and src[s+1] == 'a' and src[s+2] == 'r' { return TK.KwVar }
+        if src[s] == 'f' and src[s+1] == 'o' and src[s+2] == 'r' { return TK.KwFor }
+        if src[s] == 'm' and src[s+1] == 'o' and src[s+2] == 'v' { return TK.KwMov }
+        if src[s] == 'a' and src[s+1] == 'n' and src[s+2] == 'd' { return TK.KwAnd }
+        if src[s] == 'n' and src[s+1] == 'o' and src[s+2] == 't' { return TK.KwNot }
+        if src[s] == 'm' and src[s+1] == 'o' and src[s+2] == 'd' { return TK.KwMod }
         return TK.Ident
     }
 
     // length 4
     if n == 4 {
-        if src[s] as int == 'f' and src[s+1] as int == 'u' and src[s+2] as int == 'n' and src[s+3] as int == 'c' { return TK.KwFunc }
-        if src[s] as int == 'p' and src[s+1] as int == 'r' and src[s+2] as int == 'o' and src[s+3] as int == 'c' { return TK.KwProc }
-        if src[s] as int == 'c' and src[s+1] as int == 'a' and src[s+2] as int == 's' and src[s+3] as int == 'e' { return TK.KwCase }
-        if src[s] as int == 'e' and src[s+1] as int == 'l' and src[s+2] as int == 's' and src[s+3] as int == 'e' { return TK.KwElse }
-        if src[s] as int == 't' and src[s+1] as int == 'r' and src[s+2] as int == 'u' and src[s+3] as int == 'e' { return TK.KwTrue }
-        if src[s] as int == 't' and src[s+1] as int == 'y' and src[s+2] as int == 'p' and src[s+3] as int == 'e' { return TK.KwType }
-        if src[s] as int == 'b' and src[s+1] as int == 'o' and src[s+2] as int == 'o' and src[s+3] as int == 'l' { return TK.KwBool }
+        if src[s] == 'f' and src[s+1] == 'u' and src[s+2] == 'n' and src[s+3] == 'c' { return TK.KwFunc }
+        if src[s] == 'p' and src[s+1] == 'r' and src[s+2] == 'o' and src[s+3] == 'c' { return TK.KwProc }
+        if src[s] == 'c' and src[s+1] == 'a' and src[s+2] == 's' and src[s+3] == 'e' { return TK.KwCase }
+        if src[s] == 'e' and src[s+1] == 'l' and src[s+2] == 's' and src[s+3] == 'e' { return TK.KwElse }
+        if src[s] == 't' and src[s+1] == 'r' and src[s+2] == 'u' and src[s+3] == 'e' { return TK.KwTrue }
+        if src[s] == 't' and src[s+1] == 'y' and src[s+2] == 'p' and src[s+3] == 'e' { return TK.KwType }
+        if src[s] == 'b' and src[s+1] == 'o' and src[s+2] == 'o' and src[s+3] == 'l' { return TK.KwBool }
         return TK.Ident
     }
 
     // length 5
     if n == 5 {
-        if src[s] as int == 'w' and src[s+1] as int == 'h' and src[s+2] as int == 'i' and src[s+3] as int == 'l' and src[s+4] as int == 'e' { return TK.KwWhile }
-        if src[s] as int == 'b' and src[s+1] as int == 'r' and src[s+2] as int == 'e' and src[s+3] as int == 'a' and src[s+4] as int == 'k' { return TK.KwBreak }
-        if src[s] as int == 'f' and src[s+1] as int == 'a' and src[s+2] as int == 'l' and src[s+3] as int == 's' and src[s+4] as int == 'e' { return TK.KwFalse }
-        if src[s] as int == 'd' and src[s+1] as int == 'e' and src[s+2] as int == 'f' and src[s+3] as int == 'e' and src[s+4] as int == 'r' { return TK.KwDefer }
+        if src[s] == 'w' and src[s+1] == 'h' and src[s+2] == 'i' and src[s+3] == 'l' and src[s+4] == 'e' { return TK.KwWhile }
+        if src[s] == 'b' and src[s+1] == 'r' and src[s+2] == 'e' and src[s+3] == 'a' and src[s+4] == 'k' { return TK.KwBreak }
+        if src[s] == 'f' and src[s+1] == 'a' and src[s+2] == 'l' and src[s+3] == 's' and src[s+4] == 'e' { return TK.KwFalse }
+        if src[s] == 'd' and src[s+1] == 'e' and src[s+2] == 'f' and src[s+3] == 'e' and src[s+4] == 'r' { return TK.KwDefer }
         return TK.Ident
     }
 
     // length 6
     if n == 6 {
-        if src[s] as int == 'r' and src[s+1] as int == 'e' and src[s+2] as int == 't' and src[s+3] as int == 'u' and src[s+4] as int == 'r' and src[s+5] as int == 'n' { return TK.KwReturn }
-        if src[s] as int == 'i' and src[s+1] as int == 'm' and src[s+2] as int == 'p' and src[s+3] as int == 'o' and src[s+4] as int == 'r' and src[s+5] as int == 't' { return TK.KwImport }
-        if src[s] as int == 'e' and src[s+1] as int == 'x' and src[s+2] as int == 't' and src[s+3] as int == 'e' and src[s+4] as int == 'r' and src[s+5] as int == 'n' { return TK.KwExtern }
-        if src[s] as int == 'u' and src[s+1] as int == 'n' and src[s+2] as int == 's' and src[s+3] as int == 'a' and src[s+4] as int == 'f' and src[s+5] as int == 'e' { return TK.KwUnsafe }
+        if src[s] == 'r' and src[s+1] == 'e' and src[s+2] == 't' and src[s+3] == 'u' and src[s+4] == 'r' and src[s+5] == 'n' { return TK.KwReturn }
+        if src[s] == 'i' and src[s+1] == 'm' and src[s+2] == 'p' and src[s+3] == 'o' and src[s+4] == 'r' and src[s+5] == 't' { return TK.KwImport }
+        if src[s] == 'e' and src[s+1] == 'x' and src[s+2] == 't' and src[s+3] == 'e' and src[s+4] == 'r' and src[s+5] == 'n' { return TK.KwExtern }
+        if src[s] == 'u' and src[s+1] == 'n' and src[s+2] == 's' and src[s+3] == 'a' and src[s+4] == 'f' and src[s+5] == 'e' { return TK.KwUnsafe }
         return TK.Ident
     }
 
     // length 8
     if n == 8 {
-        if src[s] as int == 'c' and src[s+1] as int == 'o' and src[s+2] as int == 'n' and src[s+3] as int == 't' and src[s+4] as int == 'i' and src[s+5] as int == 'n' and src[s+6] as int == 'u' and src[s+7] as int == 'e' { return TK.KwContinue }
-        if src[s] as int == 'c' and src[s+1] as int == 'o' and src[s+2] as int == 'm' and src[s+3] as int == 'p' and src[s+4] as int == 't' and src[s+5] as int == 'i' and src[s+6] as int == 'm' and src[s+7] as int == 'e' { return TK.KwComptime }
+        if src[s] == 'c' and src[s+1] == 'o' and src[s+2] == 'n' and src[s+3] == 't' and src[s+4] == 'i' and src[s+5] == 'n' and src[s+6] == 'u' and src[s+7] == 'e' { return TK.KwContinue }
+        if src[s] == 'c' and src[s+1] == 'o' and src[s+2] == 'm' and src[s+3] == 'p' and src[s+4] == 't' and src[s+5] == 'i' and src[s+6] == 'm' and src[s+7] == 'e' { return TK.KwComptime }
         return TK.Ident
     }
 
@@ -195,7 +195,7 @@ func keyword(src u8[:0], s int, e int) TK { unsafe {
 // -- Scanners ---------------------------------------------------------------
 
 func scan_ident(var l Lexer, start int) Token {
-    while l.pos in l.src and is_alnum(l.src[l.pos] as int) decreasing l.src.len - l.pos {
+    while l.pos in l.src and is_alnum(l.src[l.pos]) decreasing l.src.len - l.pos {
         l.pos += 1
     }
     var kind = keyword(l.src, start, l.pos)
@@ -203,15 +203,15 @@ func scan_ident(var l Lexer, start int) Token {
 }
 
 func scan_number(var l Lexer, start int) Token {
-    while l.pos in l.src and is_digit(l.src[l.pos] as int) decreasing l.src.len - l.pos {
+    while l.pos in l.src and is_digit(l.src[l.pos]) decreasing l.src.len - l.pos {
         l.pos += 1
     }
     return Token(TK.Int, start, l.pos)
 }
 
 func scan_string(var l Lexer, start int) Token {
-    while l.pos in l.src and (l.src[l.pos] as int) != '"' decreasing l.src.len - l.pos {
-        if (l.src[l.pos] as int) == '\\' and l.pos + 1 < l.size {
+    while l.pos in l.src and l.src[l.pos] != '"' decreasing l.src.len - l.pos {
+        if l.src[l.pos] == '\\' and l.pos + 1 < l.size {
             l.pos += 2
         } else {
             l.pos += 1
@@ -222,8 +222,8 @@ func scan_string(var l Lexer, start int) Token {
 }
 
 func scan_char(var l Lexer, start int) Token {
-    while l.pos in l.src and (l.src[l.pos] as int) != '\'' decreasing l.src.len - l.pos {
-        if (l.src[l.pos] as int) == '\\' and l.pos + 1 < l.size {
+    while l.pos in l.src and l.src[l.pos] != '\'' decreasing l.src.len - l.pos {
+        if l.src[l.pos] == '\\' and l.pos + 1 < l.size {
             l.pos += 2
         } else {
             l.pos += 1

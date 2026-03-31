@@ -73,25 +73,56 @@ types (`*void`) for C interoperability, analogous to C's `void*`.
 - Pointer types: `*void`, `var *void`, `mov *void`
 - Return types of procedures that return no value (implicit)
 
-## 2.3 Implicit Conversions — Forbidden [Implemented]
+## 2.3 Implicit Integer Widening [Implemented]
 
-Lain strictly forbids all implicit type conversions. There is:
-- No implicit widening (`u8` to `int`)
-- No implicit truncation (`int` to `u8`)
-- No implicit bool-to-int or int-to-bool conversion
-- No implicit float-to-int or int-to-float conversion
-- No implicit pointer coercion
+Lain permits **implicit integer widening** — a value of a smaller integer type
+may be used where a larger integer type is expected, without an explicit cast.
+This applies in all expression contexts: binary operators, function arguments,
+variable initialization, and return statements.
 
-Every conversion between types shall use the explicit `as` operator (see §4.8):
+### 2.3.1 Widening Hierarchy
+
+| Rank | Types | Size |
+|:-----|:------|:-----|
+| 1 | `u8`, `i8` | 8-bit |
+| 2 | `u16`, `i16` | 16-bit |
+| 3 | `u32`, `i32`, `int` | 32-bit |
+| 4 | `u64`, `i64` | 64-bit |
+| 5 | `usize`, `isize` | pointer-sized |
+
+A value of a lower-rank type may be implicitly used where a higher-rank type
+is expected. Examples of valid implicit widening:
+
+```lain
+var x u8 = 42
+var y int = x              // u8 → int (implicit)
+var z = x + 1000           // u8 + int → int (wider operand wins)
+```
+
+### 2.3.2 Explicit Cast Required
+
+The `as` operator is still required for:
+- **Narrowing** conversions (`int` to `u8`) — may lose information
+- **Float ↔ integer** conversions — different representation
+- **Bool ↔ integer** conversions — semantic difference
+- **Pointer** coercions — require `unsafe`
 
 ```lain
 var x i32 = 1000
-var y = x as u8           // explicit truncation: 1000 -> 232
-var big = 42 as i64       // explicit widening
+var y = x as u8            // explicit truncation: 1000 → 232
+var f = x as f64           // explicit int-to-float
 ```
 
 > **CONSTRAINT:** Passing a value of type `T1` where type `T2` is expected
-> shall produce a type error if `T1 != T2`, even if `T1` is a subrange of `T2`.
+> shall produce a type error if `T1` cannot be implicitly widened to `T2`.
+
+### 2.3.3 Binary Expression Types
+
+Arithmetic and bitwise operators (`+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`,
+`<<`, `>>`) return the wider of their operand types.
+
+Comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) and logical operators
+(`and`, `or`) always return `int` (boolean result).
 
 ## 2.4 Structs [Implemented]
 
