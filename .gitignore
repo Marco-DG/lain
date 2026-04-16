@@ -36,10 +36,11 @@ apply_crt_styler.py
 run_destructuring_test.sh
 
 # Documentation & Analysis (Ignored for GitHub)
-docs/ai_analysis/
+internal/
 changelog_category_b.md
 changelog_fixes.md
 lain.md
+PLAN.md
 
 # Backups
 _backups/
