@@ -4,15 +4,26 @@ test_destruct
 *.elf
 *.dbg
 *.out
+# Binaries without extension
+lain
+lexer_test
+ownership
+test_main
+test_out
+unsafe_nested
+unsafe_valid
 
 # Generated files
 out.c
 lain.h
+*.o
+*.obj
 out/
+test_out/
 test_output.txt
 test_output.txt*
-test_out/
 debug_out.txt
+test_uninit.ln
 
 # Backups
 _backups/
@@ -22,6 +33,12 @@ _backups/
 
 # Toolchains
 cosmocc/
+
+# Personal / Legacy / Research (Ignored for GitHub)
+legacy/
+research/
+lain-website/
+artifacts/
 
 # IDE/Tools
 .claude/
