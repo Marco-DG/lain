@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Lain Logo" width="600">
+</p>
+
 # Lain Programming Language Specification
 
 **Version**: 0.1.0 (Draft)
