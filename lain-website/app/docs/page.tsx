@@ -13,16 +13,7 @@ export default function Documentation() {
 
     return (
         <NaviShell statusLines={statusLines}>
-            <section className={styles.heroSection}>
-                <div className={styles.glitchContainer}>
-                    <h1 className={styles.heroTitle} data-text="DOCUMENTATION">DOCUMENTATION</h1>
-                </div>
-                <p className={styles.heroSubtitle}>
-                    The complete, authoritative technical reference for the Lain programming language.
-                </p>
-
-                <SpecViewer data={specData} />
-            </section>
+            <SpecViewer data={specData} />
         </NaviShell>
     );
 }
