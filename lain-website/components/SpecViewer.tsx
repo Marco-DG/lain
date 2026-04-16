@@ -2,14 +2,24 @@
 
 import React, { useState } from 'react';
 import styles from './SpecViewer.module.css';
-import { specData } from '@/app/docs/specData';
 
-export default function SpecViewer() {
+export interface SpecChapter {
+    id: string;
+    title: string;
+    content: string;
+    code?: string;
+}
+
+interface SpecViewerProps {
+    data: SpecChapter[];
+}
+
+export default function SpecViewer({ data }: SpecViewerProps) {
     const [currentIndex, setCurrentIndex] = useState(0);
-    const chapter = specData[currentIndex];
+    const chapter = data[currentIndex];
 
     const next = () => {
-        if (currentIndex < specData.length - 1) setCurrentIndex(currentIndex + 1);
+        if (currentIndex < data.length - 1) setCurrentIndex(currentIndex + 1);
     };
 
     const prev = () => {
@@ -39,9 +49,7 @@ export default function SpecViewer() {
         <section className={styles.container}>
             <div className={styles.chapter} key={chapter.id}>
                 <h2 className={styles.title}>{chapter.title}</h2>
-                <div className={styles.content}>
-                    {chapter.content}
-                </div>
+                <div className={styles.content} dangerouslySetInnerHTML={{ __html: chapter.content }} />
                 {chapter.code && (
                     <div className={styles.codeBlock}>
                         <pre><code dangerouslySetInnerHTML={{ __html: highlightLain(chapter.code) }} /></pre>
@@ -58,12 +66,12 @@ export default function SpecViewer() {
                     ← PREV
                 </button>
                 <div className={styles.pageInfo}>
-                    SECTION {String(currentIndex + 1).padStart(2, '0')} // {specData.length}
+                    SECTION {String(currentIndex + 1).padStart(2, '0')} // {data.length}
                 </div>
                 <button
                     className={styles.navButton}
                     onClick={next}
-                    disabled={currentIndex === specData.length - 1}
+                    disabled={currentIndex === data.length - 1}
                 >
                     NEXT →
                 </button>

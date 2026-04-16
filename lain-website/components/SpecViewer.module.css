@@ -119,3 +119,38 @@
     color: var(--text-muted);
     font-style: italic;
 }
+
+/* Table Styling for Documentation */
+.content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 2rem 0;
+    font-size: 1.1rem;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    border: 1px solid var(--text-muted);
+}
+
+.content th {
+    background: rgba(13, 148, 136, 0.05);
+    color: var(--accent-teal);
+    text-align: left;
+    padding: 1rem;
+    border: 1px solid var(--text-muted);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+}
+
+.content td {
+    padding: 1rem;
+    border: 1px solid var(--text-muted);
+    vertical-align: top;
+}
+
+.content code {
+    background: var(--bg-secondary);
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    color: var(--accent-salmon);
+}

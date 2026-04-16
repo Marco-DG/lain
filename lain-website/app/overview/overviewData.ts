@@ -1,9 +1,4 @@
-export interface SpecChapter {
-    id: string;
-    title: string;
-    content: string;
-    code?: string;
-}
+import { SpecChapter } from '@/components/SpecViewer';
 
 export const overviewData: SpecChapter[] = [
     {
@@ -53,36 +48,6 @@ export const overviewData: SpecChapter[] = [
         title: "07 — Ownership & Borrowing",
         content: "Lain ensures memory safety through a strict ownership model. Every value has a single owner. When the owner goes out of scope, the value is destroyed. Shared borrows (default) allow multi-reader access, while mutable borrows (var) provide exclusive read-write access. This zero-cost system eliminates data races and use-after-free bugs at compile time.",
         code: `var x = Data(10)\nread(x)       // Shared borrow\nmove_data(mov x) // Ownership transfer\n// read(x) // ERROR: x is dead`
-    },
-    {
-        id: "nll",
-        title: "07.1 — Non-Lexical Lifetimes",
-        content: "Unlike early safety models, Lain uses Non-Lexical Lifetimes (NLL). A borrow's lifetime is determined by its last use, not by lexical scope. This allows the compiler to accept complex but safe patterns where a borrow and a subsequent move of the same data appear in the same block, provided their usage spans do not overlap.",
-        code: `var data = Data(42)\nvar ref = get_ref(var data)\nuse(ref) // last use of ref\n\n// Borrow expires here\nconsume(mov data) // OK under NLL`
-    },
-    {
-        id: "linearity-deep",
-        title: "07.2 — Linear Integrity",
-        content: "Linearity in Lain is transitive and fine-grained. Structs with 'mov' fields are linear and must be consumed exactly once. The compiler tracks individual field consumption, allowing you to move one part of a struct (e.g., a file handle) while still accessing non-linear metadata in other fields.",
-        code: `type File { mov fd int, path string }\n\nproc close(mov f File) {\n    os.close(mov f.fd) // consume resource\n    log("Closed: ", f.path) // still accessible!\n}`
-    },
-    {
-        id: "safety-advanced",
-        title: "07.3 — Advanced Safety: Persistence",
-        content: "Lain supports 'persistent borrows' through function return values (return var). When a function returns a reference to its parameter's interior, the compiler registers a transitive borrow in the caller's scope. This borrow persists until its last use, effectively locking the source object from conflicting access or moves across statement boundaries.",
-        code: `func get_val(var d Data) var int {\n    return var d.value\n}\n\nproc main() {\n    var d = Data(10)\n    var r = get_val(var d)\n    // d.value = 20 // ERROR: d is borrowed\n    use(r)\n}`
-    },
-    {
-        id: "transitivity",
-        title: "07.4 — Transitive Borrowing",
-        content: "Borrowing is reflexive and transitive. If 'refB' borrows 'refA', and 'refA' borrows 'Root', the borrow checker maintains a dependency chain. The 'Root' object remains locked until the entire chain of dependents has expired. This prevents dangling pointers in complex data transformations.",
-        code: `var a = Data(10)\nvar r1 = &a\nvar r2 = &r1 // transitively borrows a\n\n// a is locked by r2\nuse(r2)\n// a is unlocked`
-    },
-    {
-        id: "formalisms",
-        title: "07.5 — Safety Formalisms",
-        content: "Lain's safety is defined by the judgment 'Γ; Σ; B ⊢ e : τ ⊣ Γ'; Σ'; B'', where Γ is the environment, Σ the linear state, and B the active borrow set. This formal model ensures that every valid program preserves the RW-Lock invariant and Linear Integrity. The system is verified to be sound: no safe program can trigger a data race or use-after-free.",
-        code: `/* Typing Judgment */\nΓ; Σ; B ⊢ e : τ\n- Γ: Env (Types)\n- Σ: Linear State (Owned)\n- B: Borrow Set (RW-Lock)`
     },
     {
         id: "constraints",
@@ -137,41 +102,5 @@ export const overviewData: SpecChapter[] = [
         title: "16 — Compiler Architecture",
         content: "The compiler follows a strict multi-pass pipeline: 1. Parser (AST generation), 2. Resolver (scoping), 3. Typechecker (VRA & Constraints), 4. NLL Pre-pass (liveness), 5. Linearity (borrow check & move tracking), 6. Emitter (C99 generation). This linear pipeline ensures predictable build times and facilitates modular verification of each safety invariant.",
         code: `/* Pipeline Flow */\nsource -> [Parser]\n       -> [Resolver]\n       -> [NLL Analysis]\n       -> [Sema/BorrowCheck]\n       -> [C99 Emitter]`
-    },
-    {
-        id: "appendix-a",
-        title: "App. A — Keyword Reference",
-        content: "Lain's keyword system is designed for clarity and ease of parsing. Key active keywords include 'mov' (ownership transfer), 'var' (mutable binding/borrow), 'proc' (procedures), and 'func' (pure functions). A strict set of 'Reserved' keywords (macro, pre, post, expr) are set aside for planned extensions like contracts and meta-programming.",
-        code: `/* Selection of Keywords */\nmov x      // Ownership transfer\nvar y = 10 // Mutable variable\nfunc f()   // Pure function\nproc p()   // Side-effecting procedure\ncomptime T // Generic parameter`
-    },
-    {
-        id: "rationale",
-        title: "App. B — Design Rationale",
-        content: "Lain's design prioritizes auditability and predictability. The func/proc separation guarantees termination in pure code, while caller-site annotations (mov/var) make resource transfers explicit. By compiling to C99 and using Value Range Analysis instead of SMT solvers, Lain achieves maximum portability and developer-scrutable safety.",
-        code: `// Why mov at call site?\nclose_file(mov f) // Explicit consumption\n\n// Why func vs proc?\nfunc add(a int, b int) int // Guaranteed pure`
-    },
-    {
-        id: "comparison",
-        title: "App. C — Comparisons",
-        content: "Lain occupies a unique niche between Rust's safety and C's simplicity. Unlike Rust, it requires no lifetime annotations, using implicit NLL instead. Compared to C, it prevents null dereferences, buffer overflows, and memory leaks at compile time. It shares comptime generics with Zig but adds a formal borrow checker.",
-        code: `/* Feature Matrix */\n// Lain: Ownership + No GC + C Backend\n// Rust: Ownership + No GC + LLVM\n// C: Manual + No GC + Native\n// Zig: Manual + No GC + LLVM`
-    },
-    {
-        id: "roadmap",
-        title: "App. D — Evolution Roadmap",
-        content: "The Lain roadmap focuses on enhancing ergonomics without compromising zero-cost principles. Planned features include two-phase borrows to reduce false positives, an error propagation operator (?), and a char type for better string interop. Long-term goals include a trait system and stackless async/concurrency.",
-        code: `// Planned: Error Propagation\nvar val = try_op()? \n\n// Planned: Traits\ntrait Printable { func print(self) }`
-    },
-    {
-        id: "appendix-e",
-        title: "App. E — Technical Status",
-        content: "The Lain compiler is actively evolving through a 5-phase plan. Ph 1 (Core) and Ph 2 (Semantic System) are largely implemented, including the borrow checker and monomorphized generics. Current work (Ph 3) focuses on formalizing the memory model and error handling. Open design questions include the exact semantics of inclusive ranges (..=) and the implementation of native 'char' for C interop.",
-        code: `// Current Task Queue:\n- [x] VRA Constraints\n- [x] Monomorphization\n- [/] Ph 3: Memory Model\n- [/] Ph 4: Stdlib Reference\n- [ ] Ph 5: Grammar Formalization`
-    },
-    {
-        id: "diagnostics",
-        title: "App. F — Diagnostic System",
-        content: "Lain's diagnostic system provides precise feedback on safety violations. It identifies where a borrow was created, why it conflicts with a current operation, and where it is expected to expire. This helps developers resolve spatial and temporal safety errors without needing explicit lifetime markers in their code.",
-        code: `/* Example Error Reporting */\nE0502: cannot borrow 'data' as shared\nbecause it is mutably borrowed.\n\n3 | var r = get(var data) // mutable here\n5 | read(data)             // shared ERROR`
     }
 ];
