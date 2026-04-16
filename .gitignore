@@ -12,6 +12,7 @@ test_main
 test_out
 unsafe_nested
 unsafe_valid
+compiler.exe
 
 # Generated files
 out.c
@@ -24,6 +25,21 @@ test_output.txt
 test_output.txt*
 debug_out.txt
 test_uninit.ln
+test_main.c
+
+# Development Utilities & Scripts (Ignored for GitHub)
+tools/
+run_tests.sh
+translate_spec.js
+translate_spec.py
+apply_crt_styler.py
+run_destructuring_test.sh
+
+# Documentation & Analysis (Ignored for GitHub)
+docs/ai_analysis/
+changelog_category_b.md
+changelog_fixes.md
+lain.md
 
 # Backups
 _backups/
