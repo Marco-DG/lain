@@ -9,8 +9,8 @@ export default function Navbar() {
                 <span className={styles.logoPrefix}>sys.</span><Link href="/">lain</Link>
             </div>
             <div className={styles.links}>
+                <Link href="/overview" className={styles.link}>[ Overview ]</Link>
                 <Link href="/docs" className={styles.link}>[ Documentation ]</Link>
-                <Link href="/spec" className={styles.link}>[ Specifications ]</Link>
                 <a href="https://github.com/Marco-DG/lain" target="_blank" rel="noopener noreferrer" className={styles.link}>[ Source_Code ]</a>
             </div>
         </nav>

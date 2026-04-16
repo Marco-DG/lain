@@ -31,17 +31,17 @@ export default function Sidebar({ statusLines }: SidebarProps) {
                 </div>
 
                 <nav className={styles.navLinks}>
-                    <div className={`${styles.navGroup} ${isLinkActive('/docs') ? styles.navGroupActive : ''}`}>
-                        <span className={styles.navLabel}>SEC_01 . DOCS</span>
-                        <Link href="/docs" className={`${styles.navLink} ${isLinkActive('/docs') ? styles.navLinkActive : ''}`}>
-                            DOCUMENTATION
+                    <div className={`${styles.navGroup} ${isLinkActive('/overview') ? styles.navGroupActive : ''}`}>
+                        <span className={styles.navLabel}>SEC_01 . CORE</span>
+                        <Link href="/overview" className={`${styles.navLink} ${isLinkActive('/overview') ? styles.navLinkActive : ''}`}>
+                            OVERVIEW
                         </Link>
                     </div>
 
-                    <div className={`${styles.navGroup} ${isLinkActive('/spec') ? styles.navGroupActive : ''}`}>
-                        <span className={styles.navLabel}>SEC_02 . SPEC</span>
-                        <Link href="/spec" className={`${styles.navLink} ${isLinkActive('/spec') ? styles.navLinkActive : ''}`}>
-                            SPECIFICATIONS
+                    <div className={`${styles.navGroup} ${isLinkActive('/docs') ? styles.navGroupActive : ''}`}>
+                        <span className={styles.navLabel}>SEC_02 . DOCS</span>
+                        <Link href="/docs" className={`${styles.navLink} ${isLinkActive('/docs') ? styles.navLinkActive : ''}`}>
+                            DOCUMENTATION
                         </Link>
                     </div>
 

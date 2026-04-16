@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import styles from './SpecViewer.module.css';
-import { specData } from '@/app/spec/specData';
+import { specData } from '@/app/docs/specData';
 
 export default function SpecViewer() {
     const [currentIndex, setCurrentIndex] = useState(0);
