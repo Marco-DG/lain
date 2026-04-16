@@ -1,10 +1,18 @@
 # Binaries
 test_destruct
+*.exe
+*.elf
+*.dbg
+*.out
 
 # Generated files
 out.c
 lain.h
 out/
+test_output.txt
+test_output.txt*
+test_out/
+debug_out.txt
 
 # Backups
 _backups/
@@ -14,3 +22,6 @@ _backups/
 
 # Toolchains
 cosmocc/
+
+# IDE/Tools
+.claude/
