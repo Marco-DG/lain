@@ -2,14 +2,8 @@ import styles from "../page.module.css";
 import NaviShell from "@/components/NaviShell";
 
 export default function Install() {
-    const statusLines = [
-        "INSTALL_SEQ INITIATED",
-        "ARCH: X86_64 / ARM64",
-        "[ WAITING_FOR_USER ]"
-    ];
-
     return (
-        <NaviShell statusLines={statusLines}>
+        <NaviShell>
             {/* CENTER PANEL: CONTENT */}
             <section className={styles.mainContent}>
                 <h2 className={styles.title} style={{ fontSize: '4rem' }}>Installation</h2>

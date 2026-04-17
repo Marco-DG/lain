@@ -197,16 +197,6 @@
     vertical-align: super;
 }
 
-.sysStatus {
-    margin-top: 2rem;
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    line-height: 1.6;
-    padding: 1rem;
-    border: 1px solid var(--border-main);
-    background: rgba(13, 148, 136, 0.02);
-}
 
 .sidebarBottom {
     display: flex;

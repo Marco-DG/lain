@@ -6,10 +6,9 @@ import { usePathname } from 'next/navigation';
 import styles from './NaviShell.module.css';
 
 interface SidebarProps {
-    statusLines?: string[];
 }
 
-export default function Sidebar({ statusLines }: SidebarProps) {
+export default function Sidebar({}: SidebarProps) {
     const pathname = usePathname();
 
     const isLinkActive = (href: string) => {
@@ -54,16 +53,6 @@ export default function Sidebar({ statusLines }: SidebarProps) {
                     </div>
                 </nav>
 
-                {statusLines && (
-                    <div className={styles.sysStatus}>
-                        {statusLines.map((line, i) => (
-                            <React.Fragment key={i}>
-                                {line}
-                                {i < statusLines.length - 1 && <br />}
-                            </React.Fragment>
-                        ))}
-                    </div>
-                )}
             </div>
 
             <div className={styles.sidebarBottom}>
