@@ -2,6 +2,10 @@
   <img src="assets/logo.png" alt="Lain Logo" width="600">
 </p>
 
+<p align="center">
+  <a href="https://lain-blush.vercel.app/"><strong>Official Website</strong></a>
+</p>
+
 Lain is a statically typed, compiled programming language designed for embedded systems, safety-critical software, and systems programming. Memory safety and resource safety are guaranteed entirely at compile time: no garbage collector, no reference counting, no runtime bounds checks.
 
 ---

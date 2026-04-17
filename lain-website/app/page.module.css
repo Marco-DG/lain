@@ -136,12 +136,22 @@
 
 .codeComment {
   font-family: var(--font-mono);
-  color: var(--text-dim);
-  font-size: 0.95rem;
-  margin-bottom: 1rem;
+  color: var(--accent-teal);
+  font-size: 0.75rem;
+  margin-bottom: 1.2rem;
   text-transform: uppercase;
-  border-bottom: 1px dashed var(--border-main);
-  padding-bottom: 0.25rem;
+  letter-spacing: 0.2em;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  opacity: 0.8;
+}
+
+.codeComment::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border-main), transparent);
 }
 
 .codeBlock pre {
