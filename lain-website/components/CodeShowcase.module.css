@@ -1,0 +1,152 @@
+.section {
+    padding: 8rem 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 5;
+}
+
+.sectionTitle {
+    font-size: 2.5rem;
+    color: var(--text-main);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-family: var(--font-logo);
+    margin-bottom: 5rem;
+    text-align: center;
+}
+
+.showcaseList {
+    display: flex;
+    flex-direction: column;
+    gap: 8rem;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 4rem;
+}
+
+.row:nth-child(even) {
+    flex-direction: row-reverse;
+}
+
+.textColumn {
+    flex: 1;
+    max-width: 450px;
+}
+
+.index {
+    font-family: var(--font-mono);
+    font-size: 1.25rem;
+    color: var(--accent-purple);
+    margin-bottom: 1rem;
+    letter-spacing: 0.1em;
+    font-weight: bold;
+}
+
+.title {
+    font-size: 2.5rem;
+    color: var(--text-main);
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+    line-height: 1.2;
+}
+
+.description {
+    font-size: 1.15rem;
+    line-height: 1.7;
+    color: var(--text-dim);
+}
+
+.codeColumn {
+    flex: 1.5;
+    min-width: 0;
+}
+
+.editorShell {
+    background-color: var(--bg-tertiary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+}
+
+.editorTop {
+    background-color: rgba(0, 0, 0, 0.2);
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.dots {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: var(--text-muted);
+}
+
+.dots:nth-child(1) {
+    background-color: #ef4444;
+}
+
+.dots:nth-child(2) {
+    background-color: #eab308;
+}
+
+.dots:nth-child(3) {
+    background-color: #22c55e;
+}
+
+.filename {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+}
+
+.editorBody {
+    padding: 1.5rem;
+    margin: 0;
+    font-family: "JetBrains Mono", "Fira Code", var(--font-mono);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: #c084fc;
+    /* purple accent as default for raw code if no syntax spans used, matching the clean aesthetic */
+    overflow-x: auto;
+    white-space: pre-wrap;
+    /* prevent horizontal scrolling bugs */
+}
+
+@media (max-width: 1024px) {
+
+    .row,
+    .row:nth-child(even) {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 3rem;
+    }
+
+    .codeColumn {
+        width: 100%;
+    }
+}
+
+@media (max-width: 768px) {
+    .section {
+        padding: 4rem 1.5rem;
+    }
+
+    .sectionTitle {
+        font-size: 2rem;
+        margin-bottom: 3rem;
+        text-align: left;
+    }
+
+    .title {
+        font-size: 1.8rem;
+    }
+}

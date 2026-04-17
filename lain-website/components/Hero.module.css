@@ -1,0 +1,224 @@
+.hero {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    position: relative;
+    padding: 0 4rem;
+    background: radial-gradient(circle at 50% 0%, rgba(168, 85, 247, 0.05) 0%, transparent 50%);
+}
+
+.container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 10;
+    gap: 4rem;
+}
+
+/* Left side: Pitch */
+.pitch {
+    flex: 1;
+    max-width: 600px;
+}
+
+.titleWrapper {
+    margin-bottom: 1.5rem;
+}
+
+.title {
+    font-size: 6rem;
+    font-family: var(--font-logo);
+    color: var(--text-main);
+    line-height: 1;
+    margin: 0;
+    letter-spacing: -0.05em;
+    text-transform: lowercase;
+}
+
+.subtitle {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent-teal);
+    margin-top: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: 4px;
+}
+
+.description {
+    font-size: 1.25rem;
+    line-height: 1.6;
+    color: var(--text-dim);
+    margin-bottom: 2.5rem;
+    font-weight: 300;
+}
+
+.description strong {
+    color: var(--text-main);
+    font-weight: 500;
+}
+
+.actions {
+    display: flex;
+    gap: 1rem;
+}
+
+.buttonMain,
+.buttonWire {
+    display: inline-block;
+    padding: 0.8rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.buttonMain {
+    background-color: var(--text-main);
+    color: var(--bg-color);
+}
+
+.buttonMain:hover {
+    background-color: #d1d5db;
+    /* gray-300 */
+}
+
+.buttonWire {
+    background-color: transparent;
+    color: var(--text-main);
+    border: 1px solid var(--text-muted);
+}
+
+.buttonWire:hover {
+    border-color: var(--text-dim);
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Right side: Code Window */
+.codeWindow {
+    flex: 1;
+    max-width: 550px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.codeHeader {
+    background-color: rgba(0, 0, 0, 0.2);
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    gap: 0.5rem;
+}
+
+.dots {
+    display: flex;
+    gap: 6px;
+    margin-right: 1rem;
+}
+
+.dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: var(--text-muted);
+}
+
+.dotRed {
+    background-color: #ef4444;
+}
+
+.dotYellow {
+    background-color: #eab308;
+}
+
+.dotGreen {
+    background-color: #22c55e;
+}
+
+.fileName {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+}
+
+.status {
+    margin-left: auto;
+    color: #10b981;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    background: rgba(16, 185, 129, 0.1);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+}
+
+.codeBlock {
+    padding: 1.5rem;
+    margin: 0;
+    font-family: "JetBrains Mono", "Fira Code", var(--font-mono);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: #e5e7eb;
+    overflow-x: auto;
+}
+
+/* VS Code Dark Modern inspired syntax highlighting with Lain accents */
+.kw {
+    color: #c678dd;
+}
+
+/* Purple */
+.ty {
+    color: #e5c07b;
+}
+
+/* Yellow/Sepia */
+.fn {
+    color: #61afef;
+}
+
+/* Blue */
+.cmt {
+    color: #7f848e;
+    font-style: italic;
+}
+
+.str {
+    color: #98c379;
+}
+
+/* Green */
+.num {
+    color: #d19a66;
+}
+
+/* Orange */
+
+@media (max-width: 1024px) {
+    .hero {
+        padding: 6rem 2rem;
+    }
+
+    .container {
+        flex-direction: column;
+        gap: 4rem;
+    }
+
+    .pitch,
+    .codeWindow {
+        max-width: 100%;
+    }
+}
