@@ -101,6 +101,15 @@
     pointer-events: none;
 }
 
+/* Docs layout — narrower TOC column */
+.naviShellDocs {
+    grid-template-columns: 280px 1fr 260px;
+}
+
+.naviShellDocs::after {
+    right: 260px;
+}
+
 /* --- SIDEBAR --- */
 .sidebar {
     border-right: 1px solid var(--border-main);
@@ -225,6 +234,14 @@
 
     .naviShell::after {
         right: 500px;
+    }
+
+    .naviShellDocs {
+        grid-template-columns: 250px 1fr 240px;
+    }
+
+    .naviShellDocs::after {
+        right: 240px;
     }
 }
 

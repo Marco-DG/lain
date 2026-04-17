@@ -12,6 +12,32 @@ function escHtml(s: string): string {
         .replace(/"/g, '&quot;');
 }
 
+// For code blocks: only escape &, <, > — not quotes (avoids breaking string literals)
+function escCode(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+// ── Lain syntax highlighting ──────────────────────────────────────────────────
+// Operates on already-escCode'd text; adds <span class="hl-*"> wrappers.
+
+function highlightLain(code: string): string {
+    return code.replace(
+        // Order matters: strings and comments first (to prevent keyword matches inside them)
+        /("(?:[^"\\]|\\.)*")|(\/\/[^\n]*)|\b(func|proc|fun|var|mov|return|type|if|elif|else|while|for|case|extern|comptime|undefined|as|import|c_include|defer|unsafe|and|or|break|continue|in|true|false|decreasing)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void)\b|(?<!\w)(\d+)(?!\w)/g,
+        (match, str, com, kw, type, num) => {
+            if (str) return `<span class="hl-str">${match}</span>`;
+            if (com) return `<span class="hl-com">${match}</span>`;
+            if (kw)  return `<span class="hl-kw">${match}</span>`;
+            if (type) return `<span class="hl-type">${match}</span>`;
+            if (num)  return `<span class="hl-num">${match}</span>`;
+            return match;
+        }
+    );
+}
+
 // ── Inline markdown → HTML ───────────────────────────────────────────────────
 
 function inlineFormat(text: string): string {
@@ -105,6 +131,7 @@ function mdBodyToHtml(md: string): string {
 
         // ── Code block ────────────────────────────────────────────────────────
         if (trimmed.startsWith('```')) {
+            const lang = trimmed.slice(3).trim().toLowerCase() || 'lain';
             i++;
             const codeLines: string[] = [];
             while (i < lines.length && !lines[i].trim().startsWith('```')) {
@@ -112,7 +139,9 @@ function mdBodyToHtml(md: string): string {
                 i++;
             }
             i++; // skip closing ```
-            html += `<pre><code>${escHtml(codeLines.join('\n'))}</code></pre>`;
+            const escaped = escCode(codeLines.join('\n'));
+            const body = lang === 'lain' ? highlightLain(escaped) : escaped;
+            html += `<pre data-lang="${lang}"><code>${body}</code></pre>`;
         }
 
         // ── Table ─────────────────────────────────────────────────────────────

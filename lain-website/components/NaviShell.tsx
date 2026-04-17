@@ -7,9 +7,14 @@ import Sidebar from './Sidebar';
 interface NaviShellProps {
     children: React.ReactNode;
     statusLines?: string[];
+    layout?: 'default' | 'docs';
 }
 
-export default function NaviShell({ children, statusLines }: NaviShellProps) {
+export default function NaviShell({ children, statusLines, layout = 'default' }: NaviShellProps) {
+    const shellClass = layout === 'docs'
+        ? `${styles.naviShell} ${styles.naviShellDocs}`
+        : styles.naviShell;
+
     return (
         <>
             <div className={styles.noise}></div>
@@ -18,7 +23,7 @@ export default function NaviShell({ children, statusLines }: NaviShellProps) {
             <div className={styles.flicker}></div>
 
             <main className={styles.container}>
-                <div className={styles.naviShell}>
+                <div className={shellClass}>
                     <Sidebar statusLines={statusLines} />
                     {children}
                 </div>

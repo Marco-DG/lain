@@ -1,56 +1,152 @@
 /* DocViewer.module.css */
+
+/* ── Main scroll container (column 2) ─────────────────────────────────────── */
 .container {
     height: 100vh;
     overflow-y: auto;
-    padding: 4rem 10rem;
+    padding: 4rem 5rem;
     background-color: var(--bg-color);
     scroll-behavior: smooth;
 }
 
 .document {
-    max-width: 1200px;
+    max-width: 900px;
     margin: 0 auto;
     color: var(--text-main);
     font-family: var(--font-main);
 }
 
+/* ── Section wrappers ──────────────────────────────────────────────────────── */
 .section {
-    margin-bottom: 4rem;
+    margin-bottom: 3rem;
 }
 
-.level1 { margin-top: 6rem; border-bottom: 2px solid var(--border-active); padding-bottom: 1rem; }
-.level2 { margin-top: 4rem; border-bottom: 1px solid var(--border-main); padding-bottom: 0.5rem; }
-.level3 { margin-top: 2.5rem; color: var(--accent-teal); }
+.level1 {
+    margin-top: 6rem;
+    border-bottom: 2px solid var(--border-active);
+    padding-bottom: 1rem;
+}
 
-.h1 { font-size: 4rem; font-family: var(--font-logo); letter-spacing: -1px; text-transform: uppercase; color: var(--text-main); }
-.h2 { font-size: 2.2rem; font-family: var(--font-logo); color: var(--accent-teal); }
-.h3 { font-size: 1.5rem; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 2px; }
+.level2 {
+    margin-top: 4rem;
+    border-bottom: 1px solid var(--border-main);
+    padding-bottom: 0.5rem;
+}
 
+.level3 {
+    margin-top: 2.5rem;
+}
+
+/* ── Headings ──────────────────────────────────────────────────────────────── */
+.h1 {
+    font-size: 3.5rem;
+    font-family: var(--font-logo);
+    letter-spacing: -1px;
+    text-transform: uppercase;
+    color: var(--text-main);
+}
+
+.h2 {
+    font-size: 2rem;
+    font-family: var(--font-main);
+    font-weight: 700;
+    color: var(--text-main);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.h3 {
+    font-size: 1.1rem;
+    font-family: var(--font-mono);
+    color: var(--accent-teal);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+/* ── Content body ──────────────────────────────────────────────────────────── */
 .content {
     font-family: var(--font-serif);
-    font-size: 1.25rem;
-    line-height: 1.7;
-    color: var(--text-dim);
+    font-size: 1.35rem;
+    line-height: 1.8;
+    color: var(--text-main);
     margin-top: 1.5rem;
 }
 
-.content p { margin-bottom: 1.5rem; text-align: justify; }
-.content b, .content strong { color: var(--text-main); font-weight: 600; }
-.content code { 
-    background: rgba(13, 148, 136, 0.1); 
-    color: var(--accent-sepia); 
-    padding: 0.2rem 0.4rem; 
-    border-radius: 3px; 
-    font-family: var(--font-mono);
-    font-size: 0.9em;
+.content p {
+    margin-bottom: 1.5rem;
+    text-align: justify;
+    hyphens: auto;
 }
 
-/* Table in content */
+.content b,
+.content strong {
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+/* ── Inline code ───────────────────────────────────────────────────────────── */
+.content code {
+    background: var(--bg-secondary);
+    color: var(--accent-sepia);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+}
+
+/* ── Code blocks — matching Overview's code panel aesthetic ────────────────── */
+.content pre {
+    position: relative;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-main);
+    border-top: 2px solid var(--border-active);
+    padding: 1.5rem;
+    margin: 2rem 0;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 1.05rem;
+    color: #dcdcdc;
+    line-height: 1.6;
+    white-space: pre;
+}
+
+/* Language label from data-lang attribute */
+.content pre[data-lang]::before {
+    content: attr(data-lang);
+    position: absolute;
+    top: 0;
+    right: 0;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.65rem;
+    background: var(--border-active);
+    color: var(--accent-teal);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* code inside pre: undo inline code styling */
+.content pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    border-radius: 0;
+    font-size: inherit;
+}
+
+/* ── Syntax highlighting (global — applied by dangerouslySetInnerHTML) ──────── */
+.content pre :global(.hl-kw)   { color: var(--accent-purple); font-weight: bold; }
+.content pre :global(.hl-type) { color: var(--accent-sepia); }
+.content pre :global(.hl-str)  { color: #888888; font-style: italic; }
+.content pre :global(.hl-com)  { color: var(--text-muted); font-style: italic; }
+.content pre :global(.hl-num)  { color: var(--accent-teal); }
+
+/* ── Tables ────────────────────────────────────────────────────────────────── */
 .content table {
     width: 100%;
     border-collapse: collapse;
     margin: 2rem 0;
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-family: var(--font-mono);
     border: 1px solid var(--border-main);
 }
@@ -59,78 +155,89 @@
     background: rgba(13, 148, 136, 0.05);
     color: var(--accent-teal);
     text-align: left;
-    padding: 1rem;
+    padding: 0.8rem 1rem;
     border: 1px solid var(--border-main);
     text-transform: uppercase;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
+    letter-spacing: 0.05em;
 }
 
 .content td {
-    padding: 1rem;
+    padding: 0.8rem 1rem;
     border: 1px solid var(--border-main);
     vertical-align: top;
+    font-size: 0.95rem;
+    color: var(--text-dim);
 }
 
-/* TOC PANEL */
-.tocPanel {
-    background-color: #030204;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    border-left: 1px solid var(--border-main);
+.content td code {
+    font-size: 0.85em;
 }
 
-.tocHeader {
-    padding: 1.5rem 2rem;
-    font-family: var(--font-mono);
+/* ── Alert blocks ──────────────────────────────────────────────────────────── */
+.content blockquote {
+    margin: 2rem 0;
+    padding: 1.2rem 1.5rem;
+    background: rgba(13, 148, 136, 0.04);
+    border-left: 3px solid var(--accent-teal);
+    font-family: var(--font-main);
+    font-size: 1rem;
+    color: var(--text-dim);
+}
+
+.content blockquote strong {
+    display: block;
+    margin-bottom: 0.4rem;
     text-transform: uppercase;
-    letter-spacing: 3px;
+    letter-spacing: 1px;
     font-size: 0.8rem;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border-main);
+    color: var(--accent-teal);
 }
 
-.tocList {
-    padding: 2rem;
-    overflow-y: auto;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.tocItem {
-    background: none;
-    border: none;
+.content blockquote p {
+    margin-bottom: 0.5rem;
     text-align: left;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    transition: all 0.2s ease;
-    padding: 0.25rem 0;
-    width: fit-content;
 }
 
-.tocItem:hover {
-    color: var(--accent-teal);
-    transform: translateX(4px);
+.content blockquote p:last-child {
+    margin-bottom: 0;
 }
 
-.tocActive {
-    color: var(--accent-teal);
-    text-shadow: 0 0 8px var(--accent-teal);
-    border-left: 2px solid var(--accent-teal);
-    padding-left: 10px;
+.content blockquote[data-type="warning"] {
+    background: rgba(197, 166, 138, 0.04);
+    border-left-color: var(--accent-sepia);
 }
 
-.tocLevel1 { font-weight: bold; font-size: 0.95rem; margin-top: 1.5rem; color: var(--text-dim); }
-.tocLevel2 { padding-left: 1rem; }
-.tocLevel3 { padding-left: 2rem; font-size: 0.75rem; opacity: 0.7; }
+.content blockquote[data-type="warning"] strong {
+    color: var(--accent-sepia);
+}
 
-/* Sub-sub-headings (#### in markdown body) */
+.content blockquote[data-type="important"] {
+    background: rgba(139, 92, 246, 0.04);
+    border-left-color: var(--accent-purple);
+}
+
+.content blockquote[data-type="important"] strong {
+    color: var(--accent-purple);
+}
+
+/* ── Lists ─────────────────────────────────────────────────────────────────── */
+.content ul,
+.content ol {
+    margin-bottom: 1.5rem;
+    padding-left: 1.8rem;
+}
+
+.content li {
+    margin-bottom: 0.4rem;
+    font-family: var(--font-serif);
+    font-size: 1.35rem;
+    color: var(--text-main);
+}
+
+/* ── h4 sub-headings (#### inside section body) ────────────────────────────── */
 .content h4 {
-    font-size: 1.05rem;
+    font-size: 1rem;
     font-family: var(--font-mono);
     text-transform: uppercase;
     letter-spacing: 1.5px;
@@ -140,76 +247,90 @@
     padding-bottom: 0.4rem;
 }
 
-/* Alert blocks */
-.content blockquote {
-    margin: 2rem 0;
-    padding: 1.5rem;
-    background: rgba(13, 148, 136, 0.05);
-    border-left: 4px solid var(--accent-teal);
-    font-family: var(--font-main);
-    font-size: 1rem;
-    color: var(--text-main);
+/* ── TOC PANEL (column 3) ──────────────────────────────────────────────────── */
+.tocPanel {
+    background-color: #030204;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--border-main);
+    overflow: hidden;
 }
 
-.content blockquote strong {
-    display: block;
-    margin-bottom: 0.5rem;
+.tocHeader {
+    padding: 1.2rem 1.5rem;
+    font-family: var(--font-mono);
     text-transform: uppercase;
-    letter-spacing: 1px;
-    font-size: 0.9rem;
-}
-
-/* Specific alert types using emojis or prefixes in content */
-.content blockquote[data-type="warning"] {
-    background: rgba(197, 166, 138, 0.05);
-    border-left-color: var(--accent-sepia);
-}
-
-.content blockquote[data-type="important"] {
-    background: rgba(139, 92, 246, 0.05);
-    border-left-color: var(--accent-purple);
-}
-
-/* Lists */
-.content ul, .content ol {
-    margin-bottom: 1.5rem;
-    padding-left: 2rem;
-}
-
-.content li {
-    margin-bottom: 0.5rem;
-}
-
-/* Code blocks refinements */
-.content pre {
-    background: #08080a;
-    border: 1px solid var(--border-main);
-    padding: 1.5rem;
-    margin: 2rem 0;
-    overflow-x: auto;
-    font-family: var(--font-mono);
-    font-size: 0.95rem;
-    color: #dcdcdc;
-    line-height: 1.6;
-    position: relative;
-}
-
-.content pre::before {
-    content: "SOURCE";
-    position: absolute;
-    top: 0;
-    right: 0;
-    padding: 0.2rem 0.6rem;
-    font-size: 0.6rem;
-    background: var(--border-main);
+    letter-spacing: 3px;
+    font-size: 0.7rem;
     color: var(--text-muted);
-    font-family: var(--font-mono);
+    border-bottom: 1px solid var(--border-main);
+    flex-shrink: 0;
 }
 
+.tocList {
+    padding: 1.2rem 0;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.tocItem {
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    transition: color 0.15s ease, border-left-color 0.15s ease;
+    border-left: 2px solid transparent;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tocItem:hover {
+    color: var(--text-dim);
+}
+
+.tocActive {
+    color: var(--accent-teal) !important;
+    border-left-color: var(--accent-teal);
+}
+
+/* Level-based indentation and sizing */
+.tocLevel1 {
+    font-size: 0.75rem;
+    font-weight: bold;
+    color: var(--text-dim);
+    padding: 0.5rem 1.2rem;
+    margin-top: 1rem;
+    letter-spacing: 0.05em;
+}
+
+.tocLevel2 {
+    font-size: 0.72rem;
+    padding: 0.3rem 1.2rem;
+}
+
+.tocLevel3 {
+    font-size: 0.65rem;
+    padding: 0.2rem 1.2rem 0.2rem 2rem;
+    opacity: 0.7;
+}
+
+.tocLevel3:hover,
+.tocActive.tocLevel3 {
+    opacity: 1;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────────── */
 @media (max-width: 1400px) {
-    .container { padding: 4rem 5rem; }
+    .container { padding: 4rem 3rem; }
 }
 
 @media (max-width: 1024px) {
     .tocPanel { display: none; }
+    .container { padding: 3rem 2rem; }
 }
