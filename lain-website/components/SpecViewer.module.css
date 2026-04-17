@@ -82,10 +82,29 @@
 
 .pageInfo {
     font-family: var(--font-mono);
-    color: var(--text-muted);
-    font-size: 0.9rem;
+    font-size: 1.1rem;
     display: flex;
     align-items: center;
+    gap: 0.8rem;
+    letter-spacing: 0.05em;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 0.5rem 1.2rem;
+    border: 1px solid var(--text-muted);
+}
+
+.pageCurrent {
+    color: var(--accent-teal);
+    font-weight: bold;
+    text-shadow: 0 0 10px rgba(13, 148, 136, 0.3);
+}
+
+.pageDivider {
+    color: var(--text-muted);
+    opacity: 0.5;
+}
+
+.pageTotal {
+    color: var(--text-dim);
 }
 
 /* Syntax Highlighting */

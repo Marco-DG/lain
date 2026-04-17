@@ -106,7 +106,9 @@ export default function SpecViewer({ data }: SpecViewerProps) {
                         ← PREV
                     </button>
                     <div className={styles.pageInfo}>
-                        SECTION {String(currentIndex + 1).padStart(2, '0')} // {data.length}
+                        <span className={styles.pageCurrent}>{String(currentIndex + 1).padStart(2, '0')}</span>
+                        <span className={styles.pageDivider}>/</span>
+                        <span className={styles.pageTotal}>{data.length}</span>
                     </div>
                     <button
                         className={styles.navButton}
