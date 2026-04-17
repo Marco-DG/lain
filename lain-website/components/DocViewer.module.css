@@ -128,17 +128,70 @@
 .tocLevel2 { padding-left: 1rem; }
 .tocLevel3 { padding-left: 2rem; font-size: 0.75rem; opacity: 0.7; }
 
-/* Code blocks in document */
+/* Alert blocks */
+.content blockquote {
+    margin: 2rem 0;
+    padding: 1.5rem;
+    background: rgba(13, 148, 136, 0.05);
+    border-left: 4px solid var(--accent-teal);
+    font-family: var(--font-main);
+    font-size: 1rem;
+    color: var(--text-main);
+}
+
+.content blockquote strong {
+    display: block;
+    margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 0.9rem;
+}
+
+/* Specific alert types using emojis or prefixes in content */
+.content blockquote[data-type="warning"] {
+    background: rgba(197, 166, 138, 0.05);
+    border-left-color: var(--accent-sepia);
+}
+
+.content blockquote[data-type="important"] {
+    background: rgba(139, 92, 246, 0.05);
+    border-left-color: var(--accent-purple);
+}
+
+/* Lists */
+.content ul, .content ol {
+    margin-bottom: 1.5rem;
+    padding-left: 2rem;
+}
+
+.content li {
+    margin-bottom: 0.5rem;
+}
+
+/* Code blocks refinements */
 .content pre {
-    background: rgba(0, 0, 0, 0.3);
+    background: #08080a;
     border: 1px solid var(--border-main);
     padding: 1.5rem;
     margin: 2rem 0;
     overflow-x: auto;
     font-family: var(--font-mono);
-    font-size: 1rem;
+    font-size: 0.95rem;
     color: #dcdcdc;
-    line-height: 1.5;
+    line-height: 1.6;
+    position: relative;
+}
+
+.content pre::before {
+    content: "SOURCE";
+    position: absolute;
+    top: 0;
+    right: 0;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.6rem;
+    background: var(--border-main);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
 }
 
 @media (max-width: 1400px) {

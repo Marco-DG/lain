@@ -19,7 +19,7 @@ export const docData: DocSection[] = [
                 <tr><th>Safety Concern</th><th>Guarantee</th><th>Mechanism</th></tr>
             </thead>
             <tbody>
-                <tr><td><b>Buffer Overflows</b></td><td>Impossible</td><td>Value Range Analysis verifies array access at compile time</td></tr>
+                <tr><td><b>Buffer Overflows</b></td><td>Impossible</td><td>Value Range Analysis (§8) verifies every array access at compile time</td></tr>
                 <tr><td><b>Use-After-Free</b></td><td>Impossible</td><td>Linear types (<code>mov</code>) ensure resources are consumed exactly once</td></tr>
                 <tr><td><b>Double Free</b></td><td>Impossible</td><td>Ownership is linear; a resource is consumed exactly once</td></tr>
                 <tr><td><b>Data Races</b></td><td>Impossible</td><td>Borrow checker enforces exclusive mutability</td></tr>
@@ -35,7 +35,7 @@ export const docData: DocSection[] = [
         level: 2,
         content: `
         <pre><code>.ln source -> [Lain Compiler] -> out.c -> [gcc/clang] -> executable</code></pre>
-        <p>All safety checks (ownership, borrowing, bounds, purity, pattern exhaustiveness) happen during compilation. The generated C99 code contains no runtime checks.</p>
+        <p>All safety checks happen during compilation. The generated C99 code contains no runtime checks.</p>
         `
     },
     {
@@ -58,37 +58,34 @@ export const docData: DocSection[] = [
         id: "lexical",
         title: "1. Lexical Structure",
         level: 2,
-        content: `
-        <p>Lain source files are UTF-8 encoded. The language supports line (//) and nested block (/* */) comments. Semicolons are optional, as newlines serve as implicit statement terminators.</p>
-        `
+        content: `<p>Lain source files are UTF-8 encoded. The language supports line and nested block comments.</p>`
     },
     {
         id: "keywords",
         title: "1.1 Keywords",
         level: 3,
         content: `
-        <table>
-            <thead><tr><th>Keyword</th><th>Purpose</th></tr></thead>
-            <tbody>
-                <tr><td><code>var</code></td><td>Mutable variable declaration</td></tr>
-                <tr><td><code>mov</code></td><td>Ownership transfer (move semantics)</td></tr>
-                <tr><td><code>type</code></td><td>Type definition (structs, ADTs)</td></tr>
-                <tr><td><code>func</code></td><td>Pure function declaration</td></tr>
-                <tr><td><code>proc</code></td><td>Procedure declaration (side effects)</td></tr>
-                <tr><td><code>case</code></td><td>Pattern matching</td></tr>
-                <tr><td><code>in</code></td><td>Bounds check / proof</td></tr>
-                <tr><td><code>defer</code></td><td>LIFO resource cleanup</td></tr>
-            </tbody>
-        </table>
+        <p>Core keywords include <code>var</code>, <code>mov</code>, <code>type</code>, <code>func</code>, <code>proc</code>, <code>case</code>, <code>in</code>, <code>defer</code>, and <code>unsafe</code>.</p>
+        <blockquote data-type="important">
+            <strong>Note</strong>
+            The keyword <code>fun</code> is accepted as an alias for <code>func</code>.
+        </blockquote>
+        `
+    },
+    {
+        id: "literals",
+        title: "1.3 Literals",
+        level: 3,
+        content: `
+        <p><b>Integers:</b> <code>42, 0, -1</code>. <b>Strings:</b> <code>"Hello"</code> (type <code>u8[:0]</code>).</p>
+        <pre><code>var s = "Lain"\nlibc_printf("%s", s.data)</code></pre>
         `
     },
     {
         id: "typesystem",
         title: "2. Type System",
         level: 2,
-        content: `
-        <p>Lain is strictly typed and forbids all implicit conversions. Primitives follow C99 binary representation for maximum portability.</p>
-        `
+        content: `<p>Lain is strictly typed with no implicit narrowing. Primitive types follow C99 binary representation.</p>`
     },
     {
         id: "primitives",
@@ -96,8 +93,33 @@ export const docData: DocSection[] = [
         level: 3,
         content: `
         <p><b>Integers:</b> <code>i8, i16, i32, i64, u8, u16, u32, u64, int, usize, isize</code>.</p>
-        <p><b>Floats:</b> <code>f32, f64</code>.</p>
-        <p><b>Boolean:</b> <code>bool</code> (true/false).</p>
+        <p><b>Floats:</b> <code>f32, f64</code>. <b>Boolean:</b> <code>bool</code>.</p>
+        `
+    },
+    {
+        id: "pointers",
+        title: "2.3 Pointer Types",
+        level: 3,
+        content: `
+        <p>Pointers use <code>*</code> prefix: <code>*int</code> (shared), <code>var *int</code> (mutable), <code>mov *int</code> (owned).</p>
+        `
+    },
+    {
+        id: "adts",
+        title: "2.8 Algebraic Data Types",
+        level: 3,
+        content: `
+        <p>Unified syntax for enums and tagged unions.</p>
+        <pre><code>type Shape {\n    Circle { radius int }\n    Point\n}</code></pre>
+        `
+    },
+    {
+        id: "variables",
+        title: "3. Variables & Mutability",
+        level: 2,
+        content: `
+        <p>Variables are immutable by default. <code>var</code> creates a mutable binding.</p>
+        <pre><code>x = 10        // Immutable\nvar y = 20    // Mutable</code></pre>
         `
     },
     {
@@ -105,28 +127,74 @@ export const docData: DocSection[] = [
         title: "4. Ownership & Borrowing",
         level: 2,
         content: `
-        <p>Memory safety is achieved through a strict ownership model based on linear logic. Every value has a single owner. When the owner goes out of scope, the value is destroyed.</p>
+        <p>Lain uses linear logic to ensure memory safety. Every value has exactly one owner.</p>
         `
     },
     {
-        id: "borrowing-sec",
+        id: "move-semantics",
+        title: "4.2 Move Semantics",
+        level: 3,
+        content: `
+        <p>The <code>mov</code> operator transfers ownership, invalidating the source.</p>
+        <pre><code>var b = mov a\n// a is now invalid</code></pre>
+        `
+    },
+    {
+        id: "borrowing-rules",
         title: "4.4 Borrowing Rules",
         level: 3,
         content: `
-        <p>Lain enforces a "Read-Write Lock" model at compile time:</p>
-        <ul>
-            <li>Multiple shared borrows are allowed simultaneously.</li>
-            <li>Exactly one mutable borrow is allowed at a time.</li>
-            <li>Shared and mutable borrows cannot coexist for the same variable.</li>
-        </ul>
+        <p>Multiple shared borrows OR exactly one mutable borrow. They cannot coexist.</p>
         `
     },
     {
-        id: "vra-sec",
-        title: "8. Static Verification (VRA)",
+        id: "functions-sec",
+        title: "5. Functions & Procedures",
         level: 2,
         content: `
-        <p>The compiler uses Value Range Analysis (VRA), a decidable, polynomial-time static analysis to verify array indexing and type constraints without runtime overhead.</p>
+        <p>Strict separation: <code>func</code> is pure and total; <code>proc</code> allows side effects.</p>
+        `
+    },
+    {
+        id: "control-flow-sec",
+        title: "6. Control Flow",
+        level: 2,
+        content: `
+        <p>Supports <code>if/elif/else</code>, <code>for</code> (range-based), <code>while</code> (restricted in <code>func</code>), and <code>case</code>.</p>
+        `
+    },
+    {
+        id: "defer-sec",
+        title: "6.7 Defer Statement",
+        level: 3,
+        content: `
+        <p>Schedules code for LIFO execution at scope end. Perfect for cleanup.</p>
+        <pre><code>var f = open()\ndefer close(mov f)</code></pre>
+        `
+    },
+    {
+        id: "constraints-sec",
+        title: "8. Type Constraints & VRA",
+        level: 2,
+        content: `
+        <p>Value Range Analysis (VRA) verifies constraints like <code>x != 0</code> statically.</p>
+        `
+    },
+    {
+        id: "in-keyword",
+        title: "8.3 Index Bounds (in)",
+        level: 3,
+        content: `
+        <p>The <code>in</code> keyword proves array access safety at compile time.</p>
+        <pre><code>if idx in arr { return arr[idx] }</code></pre>
+        `
+    },
+    {
+        id: "modules-sec",
+        title: "9. Module System",
+        level: 2,
+        content: `
+        <p>Dot-notation imports mapping to the filesystem: <code>import std.io</code>.</p>
         `
     },
     {
@@ -134,7 +202,7 @@ export const docData: DocSection[] = [
         title: "10. C Interoperability",
         level: 2,
         content: `
-        <p>Lain compiles directly to C99. The <code>c_include</code> directive injects headers, and <code>extern</code> declares C functions. Ownership annotations can be used on extern symbols to track C-allocated resources.</p>
+        <p>Direct C99 compilation with <code>c_include</code> and <code>extern</code> declarations.</p>
         `
     },
     {
@@ -142,15 +210,41 @@ export const docData: DocSection[] = [
         title: "11. Unsafe Code",
         level: 2,
         content: `
-        <p>The <code>unsafe</code> block is a controlled escape hatch for raw pointer dereferencing and ADT field access. It does NOT disable ownership or borrow checking.</p>
+        <p>Controlled escape hatch for pointer dereferencing and ADT bypass.</p>
+        <pre><code>unsafe { *ptr = 10 }</code></pre>
         `
     },
     {
-        id: "errors-sec",
-        title: "12.1 Error Codes",
+        id: "error-model-sec",
+        title: "14. Error Model",
         level: 2,
         content: `
-        <p>Compiler errors are prefixed with codes for easy reference: <code>[E001]</code> (Use after move), <code>[E004]</code> (Borrow conflict), <code>[E014]</code> (Non-exhaustive match).</p>
+        <p>No exceptions. Explicit error handling via <code>Option</code> and <code>Result</code> ADTs.</p>
+        `
+    },
+    {
+        id: "appendix-a",
+        title: "Appendix A: Type Summary",
+        level: 2,
+        content: `
+        <table>
+            <thead><tr><th>Syntax</th><th>Description</th></tr></thead>
+            <tbody>
+                <tr><td><code>T</code></td><td>Primitive type</td></tr>
+                <tr><td><code>*T</code></td><td>Shared pointer</td></tr>
+                <tr><td><code>T[N]</code></td><td>Fixed array</td></tr>
+                <tr><td><code>T[]</code></td><td>Slice</td></tr>
+            </tbody>
+        </table>
+        `
+    },
+    {
+        id: "appendix-d",
+        title: "Appendix D: Grammar",
+        level: 2,
+        content: `
+        <p>Simplified pseudo-BNF of the Lain language.</p>
+        <pre><code>program = { top_level_decl } ;\ntype_decl = "type" IDENT "{" type_body "}" ;</code></pre>
         `
     }
 ];
