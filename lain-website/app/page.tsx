@@ -20,7 +20,7 @@ export default function Home() {
 
         <div className={styles.codeScroll}>
           <div className={styles.codeBlock}>
-            <div className={styles.codeComment}>// LINEAR OWNERSHIP</div>
+            <div className={styles.codeComment}>LINEAR OWNERSHIP</div>
             <pre><code>
               <span className={styles.kw}>type</span> File {'{'} <span className={styles.kw}>mov</span> handle <span className={styles.type}>int</span> {'}'}{"\n"}
               {"\n"}
@@ -39,7 +39,7 @@ export default function Home() {
           </div>
 
           <div className={styles.codeBlock}>
-            <div className={styles.codeComment}>// VALUE RANGE ANALYSIS</div>
+            <div className={styles.codeComment}>VALUE RANGE ANALYSIS</div>
             <pre><code>
               <span className={styles.kw}>func</span> safe_div(a <span className={styles.type}>int</span>, b <span className={styles.type}>int</span> != 0) <span className={styles.type}>int</span> {'{'}{"\n"}
               {'  '}<span className={styles.kw}>return</span> a / b{"\n"}
