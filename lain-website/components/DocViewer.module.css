@@ -1,86 +1,86 @@
-/* DocViewer.module.css */
+/* DocViewer.module.css — mirrors SpecViewer layout */
 
-/* ── Main scroll container (column 2) ─────────────────────────────────────── */
+/* ── Column 2: Scrollable content ─────────────────────────────────────────── */
 .container {
-    height: 100vh;
+    height: 100%;
     overflow-y: auto;
     padding: 4rem 5rem;
-    background-color: var(--bg-color);
-    scroll-behavior: smooth;
 }
 
 .document {
-    max-width: 900px;
-    margin: 0 auto;
-    color: var(--text-main);
-    font-family: var(--font-main);
+    max-width: 1000px;
+    margin: 0 auto 6rem auto;
 }
 
 /* ── Section wrappers ──────────────────────────────────────────────────────── */
 .section {
-    margin-bottom: 3rem;
+    margin-bottom: 1rem;
 }
 
 .level1 {
     margin-top: 6rem;
-    border-bottom: 2px solid var(--border-active);
     padding-bottom: 1rem;
+    border-bottom: 1px solid var(--text-muted);
 }
 
 .level2 {
     margin-top: 4rem;
-    border-bottom: 1px solid var(--border-main);
-    padding-bottom: 0.5rem;
 }
 
 .level3 {
-    margin-top: 2.5rem;
+    margin-top: 2rem;
 }
 
 /* ── Headings ──────────────────────────────────────────────────────────────── */
 .h1 {
-    font-size: 3.5rem;
-    font-family: var(--font-logo);
-    letter-spacing: -1px;
-    text-transform: uppercase;
+    font-family: var(--font-main);
+    font-size: 2.5rem;
+    font-weight: 700;
     color: var(--text-main);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding-bottom: 1rem;
+    margin-bottom: 2rem;
 }
 
 .h2 {
-    font-size: 2rem;
     font-family: var(--font-main);
+    font-size: 1.6rem;
     font-weight: 700;
     color: var(--text-main);
     text-transform: uppercase;
     letter-spacing: 0.08em;
+    border-bottom: 1px solid var(--text-muted);
+    padding-bottom: 0.8rem;
+    margin-bottom: 1.5rem;
 }
 
 .h3 {
-    font-size: 1.1rem;
     font-family: var(--font-mono);
+    font-size: 1rem;
     color: var(--accent-teal);
     text-transform: uppercase;
     letter-spacing: 2px;
+    margin-bottom: 1rem;
 }
 
-/* ── Content body ──────────────────────────────────────────────────────────── */
+/* ── Content prose ─────────────────────────────────────────────────────────── */
 .content {
     font-family: var(--font-serif);
-    font-size: 1.35rem;
+    font-size: 1.4rem;
     line-height: 1.8;
     color: var(--text-main);
-    margin-top: 1.5rem;
+    text-align: justify;
+    hyphens: auto;
+    margin-bottom: 2rem;
 }
 
 .content p {
     margin-bottom: 1.5rem;
-    text-align: justify;
-    hyphens: auto;
 }
 
 .content b,
 .content strong {
-    color: var(--text-main);
     font-weight: 600;
 }
 
@@ -94,38 +94,34 @@
     font-size: 0.88em;
 }
 
-/* ── Code blocks — matching Overview's code panel aesthetic ────────────────── */
+/* ── Non-Lain code blocks (bash/shell stay inline) ─────────────────────────── */
 .content pre {
-    position: relative;
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid var(--border-main);
-    border-top: 2px solid var(--border-active);
-    padding: 1.5rem;
-    margin: 2rem 0;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
     overflow-x: auto;
     font-family: var(--font-mono);
-    font-size: 1.05rem;
+    font-size: 1rem;
     color: #dcdcdc;
     line-height: 1.6;
-    white-space: pre;
+    position: relative;
 }
 
-/* Language label from data-lang attribute */
 .content pre[data-lang]::before {
     content: attr(data-lang);
     position: absolute;
     top: 0;
     right: 0;
-    padding: 0.15rem 0.6rem;
-    font-size: 0.65rem;
-    background: var(--border-active);
-    color: var(--accent-teal);
+    padding: 0.1rem 0.5rem;
+    font-size: 0.6rem;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
     font-family: var(--font-mono);
     text-transform: uppercase;
     letter-spacing: 1px;
 }
 
-/* code inside pre: undo inline code styling */
 .content pre code {
     background: none;
     color: inherit;
@@ -134,13 +130,6 @@
     font-size: inherit;
 }
 
-/* ── Syntax highlighting (global — applied by dangerouslySetInnerHTML) ──────── */
-.content pre :global(.hl-kw)   { color: var(--accent-purple); font-weight: bold; }
-.content pre :global(.hl-type) { color: var(--accent-sepia); }
-.content pre :global(.hl-str)  { color: #888888; font-style: italic; }
-.content pre :global(.hl-com)  { color: var(--text-muted); font-style: italic; }
-.content pre :global(.hl-num)  { color: var(--accent-teal); }
-
 /* ── Tables ────────────────────────────────────────────────────────────────── */
 .content table {
     width: 100%;
@@ -148,7 +137,8 @@
     margin: 2rem 0;
     font-size: 1rem;
     font-family: var(--font-mono);
-    border: 1px solid var(--border-main);
+    color: var(--text-dim);
+    border: 1px solid var(--text-muted);
 }
 
 .content th {
@@ -156,22 +146,16 @@
     color: var(--accent-teal);
     text-align: left;
     padding: 0.8rem 1rem;
-    border: 1px solid var(--border-main);
+    border: 1px solid var(--text-muted);
+    font-size: 0.85rem;
     text-transform: uppercase;
-    font-size: 0.8rem;
-    letter-spacing: 0.05em;
 }
 
 .content td {
     padding: 0.8rem 1rem;
-    border: 1px solid var(--border-main);
+    border: 1px solid var(--text-muted);
     vertical-align: top;
     font-size: 0.95rem;
-    color: var(--text-dim);
-}
-
-.content td code {
-    font-size: 0.85em;
 }
 
 /* ── Alert blocks ──────────────────────────────────────────────────────────── */
@@ -187,39 +171,33 @@
 
 .content blockquote strong {
     display: block;
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.3rem;
     text-transform: uppercase;
     letter-spacing: 1px;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: var(--accent-teal);
 }
 
 .content blockquote p {
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.4rem;
     text-align: left;
+    font-size: 1rem;
+    font-family: var(--font-main);
 }
 
-.content blockquote p:last-child {
-    margin-bottom: 0;
-}
+.content blockquote p:last-child { margin-bottom: 0; }
 
 .content blockquote[data-type="warning"] {
     background: rgba(197, 166, 138, 0.04);
     border-left-color: var(--accent-sepia);
 }
-
-.content blockquote[data-type="warning"] strong {
-    color: var(--accent-sepia);
-}
+.content blockquote[data-type="warning"] strong { color: var(--accent-sepia); }
 
 .content blockquote[data-type="important"] {
     background: rgba(139, 92, 246, 0.04);
     border-left-color: var(--accent-purple);
 }
-
-.content blockquote[data-type="important"] strong {
-    color: var(--accent-purple);
-}
+.content blockquote[data-type="important"] strong { color: var(--accent-purple); }
 
 /* ── Lists ─────────────────────────────────────────────────────────────────── */
 .content ul,
@@ -231,99 +209,73 @@
 .content li {
     margin-bottom: 0.4rem;
     font-family: var(--font-serif);
-    font-size: 1.35rem;
+    font-size: 1.4rem;
     color: var(--text-main);
 }
 
-/* ── h4 sub-headings (#### inside section body) ────────────────────────────── */
+/* ── h4 sub-headings (#### inside body) ────────────────────────────────────── */
 .content h4 {
-    font-size: 1rem;
+    font-size: 0.95rem;
     font-family: var(--font-mono);
     text-transform: uppercase;
     letter-spacing: 1.5px;
     color: var(--accent-sepia);
-    margin: 2.5rem 0 1rem 0;
+    margin: 2rem 0 0.8rem 0;
     border-bottom: 1px dashed var(--border-main);
-    padding-bottom: 0.4rem;
+    padding-bottom: 0.3rem;
 }
 
-/* ── TOC PANEL (column 3) ──────────────────────────────────────────────────── */
-.tocPanel {
+/* ── Column 3: Code Panel — identical to SpecViewer ───────────────────────── */
+.codePanel {
     background-color: #030204;
-    height: 100vh;
     display: flex;
     flex-direction: column;
-    border-left: 1px solid var(--border-main);
-    overflow: hidden;
+    height: 100%;
 }
 
-.tocHeader {
-    padding: 1.2rem 1.5rem;
-    font-family: var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: 3px;
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border-main);
-    flex-shrink: 0;
-}
-
-.tocList {
-    padding: 1.2rem 0;
+.codeScroll {
     overflow-y: auto;
+    padding: 2.5rem 2rem;
     flex: 1;
-    display: flex;
-    flex-direction: column;
 }
 
-.tocItem {
-    background: none;
-    border: none;
-    text-align: left;
-    cursor: pointer;
+.codeBlockContainer {
+    animation: fadeInCode 0.3s ease-out;
+}
+
+@keyframes fadeInCode {
+    from { opacity: 0; transform: translateX(10px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+.codeBlockContainer pre {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    line-height: 1.6;
+    color: #dcdcdc;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-main);
+    padding: 1.5rem;
+    white-space: pre-wrap;
+}
+
+.noCode {
     font-family: var(--font-mono);
     color: var(--text-muted);
-    transition: color 0.15s ease, border-left-color 0.15s ease;
-    border-left: 2px solid transparent;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 1rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    opacity: 0.5;
 }
 
-.tocItem:hover {
-    color: var(--text-dim);
-}
-
-.tocActive {
-    color: var(--accent-teal) !important;
-    border-left-color: var(--accent-teal);
-}
-
-/* Level-based indentation and sizing */
-.tocLevel1 {
-    font-size: 0.75rem;
-    font-weight: bold;
-    color: var(--text-dim);
-    padding: 0.5rem 1.2rem;
-    margin-top: 1rem;
-    letter-spacing: 0.05em;
-}
-
-.tocLevel2 {
-    font-size: 0.72rem;
-    padding: 0.3rem 1.2rem;
-}
-
-.tocLevel3 {
-    font-size: 0.65rem;
-    padding: 0.2rem 1.2rem 0.2rem 2rem;
-    opacity: 0.7;
-}
-
-.tocLevel3:hover,
-.tocActive.tocLevel3 {
-    opacity: 1;
-}
+/* ── Syntax highlighting (same palette as SpecViewer) ──────────────────────── */
+.kw   { color: var(--accent-purple); font-weight: bold; }
+.type { color: var(--accent-sepia); }
+.str  { color: #888888; font-style: italic; }
+.com  { color: var(--text-muted); font-style: italic; }
 
 /* ── Responsive ────────────────────────────────────────────────────────────── */
 @media (max-width: 1400px) {
@@ -331,6 +283,6 @@
 }
 
 @media (max-width: 1024px) {
-    .tocPanel { display: none; }
+    .codePanel { display: none; }
     .container { padding: 3rem 2rem; }
 }

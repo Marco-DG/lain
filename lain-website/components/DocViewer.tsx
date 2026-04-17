@@ -7,7 +7,8 @@ export interface DocSection {
     id: string;
     title: string;
     level: 1 | 2 | 3;
-    content?: string;
+    content?: string;  // HTML prose — no lain code blocks
+    code?: string;     // Raw lain code for the panel
 }
 
 interface DocViewerProps {
@@ -15,57 +16,86 @@ interface DocViewerProps {
 }
 
 export default function DocViewer({ data }: DocViewerProps) {
-    const [activeId, setActiveCode] = useState<string>('');
+    const [activeCode, setActiveCode] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
+    // ── Syntax highlighting (identical to SpecViewer) ─────────────────────────
+    const highlightLain = (code: string): string => {
+        let s = code
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+
+        const regex = /\b(func|proc|fun|var|mov|return|type|if|elif|else|while|for|case|extern|comptime|undefined|as|import|c_include|defer|unsafe|and|or|break|continue|in|true|false|decreasing)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void)\b|("(?:[^"\\]|\\.)*")|(\/\/[^\n]*|\/\*[\s\S]*?\*\/)/g;
+
+        return s.replace(regex, (match, kw, type, str, com) => {
+            if (kw)   return `<span class="${styles.kw}">${kw}</span>`;
+            if (type) return `<span class="${styles.type}">${type}</span>`;
+            if (str)  return `<span class="${styles.str}">${str}</span>`;
+            if (com)  return `<span class="${styles.com}">${com}</span>`;
+            return match;
+        });
+    };
+
+    // ── Seed panel with first section that has code ───────────────────────────
     useEffect(() => {
-        const observerOptions = {
-            root: containerRef.current,
-            threshold: 0.1,
-            rootMargin: '-10% 0px -70% 0px'
-        };
+        const first = data.find(s => s.code);
+        if (first?.code) setActiveCode(first.code);
+    }, [data]);
 
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach((entry) => {
-                if (entry.isIntersecting) {
-                    setActiveCode(entry.target.id);
-                }
-            });
-        }, observerOptions);
+    // ── Intersection Observer: update panel as sections scroll into view ──────
+    useEffect(() => {
+        const observer = new IntersectionObserver(
+            (entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const encoded = entry.target.getAttribute('data-code');
+                        if (encoded) setActiveCode(decodeURIComponent(encoded));
+                    }
+                });
+            },
+            {
+                root: containerRef.current,
+                threshold: 0.15,
+                rootMargin: '-5% 0px -60% 0px',
+            }
+        );
 
-        const sections = document.querySelectorAll('[data-doc-section]');
-        sections.forEach(el => observer.observe(el));
+        const sectionsWithCode = containerRef.current?.querySelectorAll('[data-code]') ?? [];
+        sectionsWithCode.forEach(el => observer.observe(el));
 
         return () => observer.disconnect();
-    }, []);
-
-    const scrollTo = (id: string) => {
-        const element = document.getElementById(id);
-        if (element && containerRef.current) {
-            element.scrollIntoView({ behavior: 'smooth' });
-        }
-    };
+    }, [data]);
 
     return (
         <>
-            {/* COLUMN 2: FULL DOCUMENTATION */}
+            {/* ── Column 2: Scrollable documentation ──────────────────────── */}
             <section className={styles.container} ref={containerRef}>
                 <div className={styles.document}>
-                    {data.map((section) => (
-                        <div 
-                            key={section.id} 
-                            id={section.id} 
-                            data-doc-section 
+                    {data.map(section => (
+                        <div
+                            key={section.id}
+                            id={section.id}
+                            data-doc-section
+                            {...(section.code
+                                ? { 'data-code': encodeURIComponent(section.code) }
+                                : {})}
                             className={`${styles.section} ${styles[`level${section.level}`]}`}
                         >
-                            {section.level === 1 && <h1 className={styles.h1}>{section.title}</h1>}
-                            {section.level === 2 && <h2 className={styles.h2}>{section.title}</h2>}
-                            {section.level === 3 && <h3 className={styles.h3}>{section.title}</h3>}
-                            
+                            {section.level === 1 && (
+                                <h1 className={styles.h1}>{section.title}</h1>
+                            )}
+                            {section.level === 2 && (
+                                <h2 className={styles.h2}>{section.title}</h2>
+                            )}
+                            {section.level === 3 && (
+                                <h3 className={styles.h3}>{section.title}</h3>
+                            )}
+
                             {section.content && (
-                                <div 
-                                    className={styles.content} 
-                                    dangerouslySetInnerHTML={{ __html: section.content }} 
+                                <div
+                                    className={styles.content}
+                                    dangerouslySetInnerHTML={{ __html: section.content }}
                                 />
                             )}
                         </div>
@@ -73,20 +103,25 @@ export default function DocViewer({ data }: DocViewerProps) {
                 </div>
             </section>
 
-            {/* COLUMN 3: TABLE OF CONTENTS */}
-            <aside className={styles.tocPanel}>
-                <div className={styles.tocHeader}>Index</div>
-                <nav className={styles.tocList}>
-                    {data.map((section) => (
-                        <button
-                            key={section.id}
-                            onClick={() => scrollTo(section.id)}
-                            className={`${styles.tocItem} ${styles[`tocLevel${section.level}`]} ${activeId === section.id ? styles.tocActive : ''}`}
-                        >
-                            {section.title}
-                        </button>
-                    ))}
-                </nav>
+            {/* ── Column 3: Live code panel ────────────────────────────────── */}
+            <aside className={styles.codePanel}>
+                <div className={styles.codeScroll}>
+                    {activeCode ? (
+                        <div className={styles.codeBlockContainer} key={activeCode}>
+                            <pre>
+                                <code
+                                    dangerouslySetInnerHTML={{
+                                        __html: highlightLain(activeCode),
+                                    }}
+                                />
+                            </pre>
+                        </div>
+                    ) : (
+                        <div className={styles.noCode}>
+                            // NO SPECIMEN DETECTED
+                        </div>
+                    )}
+                </div>
             </aside>
         </>
     );

@@ -5,7 +5,7 @@ import { parseReadme } from "./readmeParser";
 export default function Documentation() {
     const data = parseReadme();
     return (
-        <NaviShell layout="docs">
+        <NaviShell>
             <DocViewer data={data} />
         </NaviShell>
     );

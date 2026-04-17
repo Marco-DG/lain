@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { DocSection } from '@/components/DocViewer';
 
-// ── HTML escape ──────────────────────────────────────────────────────────────
+// ── HTML escape (for inline text) ────────────────────────────────────────────
 
 function escHtml(s: string): string {
     return s
@@ -12,7 +12,7 @@ function escHtml(s: string): string {
         .replace(/"/g, '&quot;');
 }
 
-// For code blocks: only escape &, <, > — not quotes (avoids breaking string literals)
+// For code in <pre> blocks: don't escape quotes (breaks string literal display)
 function escCode(s: string): string {
     return s
         .replace(/&/g, '&amp;')
@@ -20,109 +20,63 @@ function escCode(s: string): string {
         .replace(/>/g, '&gt;');
 }
 
-// ── Lain syntax highlighting ──────────────────────────────────────────────────
-// Operates on already-escCode'd text; adds <span class="hl-*"> wrappers.
-
-function highlightLain(code: string): string {
-    return code.replace(
-        // Order matters: strings and comments first (to prevent keyword matches inside them)
-        /("(?:[^"\\]|\\.)*")|(\/\/[^\n]*)|\b(func|proc|fun|var|mov|return|type|if|elif|else|while|for|case|extern|comptime|undefined|as|import|c_include|defer|unsafe|and|or|break|continue|in|true|false|decreasing)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void)\b|(?<!\w)(\d+)(?!\w)/g,
-        (match, str, com, kw, type, num) => {
-            if (str) return `<span class="hl-str">${match}</span>`;
-            if (com) return `<span class="hl-com">${match}</span>`;
-            if (kw)  return `<span class="hl-kw">${match}</span>`;
-            if (type) return `<span class="hl-type">${match}</span>`;
-            if (num)  return `<span class="hl-num">${match}</span>`;
-            return match;
-        }
-    );
-}
-
 // ── Inline markdown → HTML ───────────────────────────────────────────────────
 
 function inlineFormat(text: string): string {
-    // 1. Extract inline code spans first (prevent double-processing)
     const fragments: string[] = [];
     text = text.replace(/`([^`]+)`/g, (_, code) => {
         const idx = fragments.length;
         fragments.push(`<code>${escHtml(code)}</code>`);
         return `\x00${idx}\x00`;
     });
-
-    // 2. HTML-escape plain text
     text = escHtml(text);
-
-    // 3. Bold
     text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-    // 4. Italic (avoid matching inside bold remnants)
     text = text.replace(/(?<!\*)\*([^*\x00]+)\*(?!\*)/g, '<em>$1</em>');
-
-    // 5. Restore inline code fragments
     text = text.replace(/\x00(\d+)\x00/g, (_, i) => fragments[parseInt(i)]);
-
     return text;
 }
 
 // ── Table builder ─────────────────────────────────────────────────────────────
 
 function buildTable(tableLines: string[]): string {
-    // Filter out separator rows (e.g.  |:------|:-------|)
     const rows = tableLines.filter(l => !/^\s*\|[\s\-:|]+\|\s*$/.test(l));
     if (rows.length === 0) return '';
-
     const parseCells = (line: string) =>
         line.split('|').slice(1, -1).map(c => c.trim());
-
     const [header, ...body] = rows;
-    const ths = parseCells(header)
-        .map(c => `<th>${inlineFormat(c)}</th>`)
-        .join('');
-    const trs = body
-        .map(row =>
-            `<tr>${parseCells(row)
-                .map(c => `<td>${inlineFormat(c)}</td>`)
-                .join('')}</tr>`)
-        .join('');
-
+    const ths = parseCells(header).map(c => `<th>${inlineFormat(c)}</th>`).join('');
+    const trs = body.map(row =>
+        `<tr>${parseCells(row).map(c => `<td>${inlineFormat(c)}</td>`).join('')}</tr>`
+    ).join('');
     return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
 }
 
 // ── Alert block builder ───────────────────────────────────────────────────────
 
 function buildAlert(type: string, alertLines: string[]): string {
-    const dataType = (type === 'note' || type === 'tip')
-        ? ''
-        : ` data-type="${type}"`;
+    const dataType = (type === 'note' || type === 'tip') ? '' : ` data-type="${type}"`;
     const label = type.charAt(0).toUpperCase() + type.slice(1);
-
-    // Group lines into paragraphs split by blank (>) lines
     const paragraphs: string[] = [];
-    let currentPara: string[] = [];
+    let cur: string[] = [];
     for (const line of alertLines) {
-        if (line === '') {
-            if (currentPara.length > 0) {
-                paragraphs.push(currentPara.join(' '));
-                currentPara = [];
-            }
-        } else {
-            currentPara.push(line);
-        }
+        if (line === '') { if (cur.length) { paragraphs.push(cur.join(' ')); cur = []; } }
+        else cur.push(line);
     }
-    if (currentPara.length > 0) paragraphs.push(currentPara.join(' '));
-
-    const content = paragraphs
-        .map(p => `<p>${inlineFormat(p)}</p>`)
-        .join('');
-
+    if (cur.length) paragraphs.push(cur.join(' '));
+    const content = paragraphs.map(p => `<p>${inlineFormat(p)}</p>`).join('');
     return `<blockquote${dataType}><strong>${label}</strong>${content}</blockquote>`;
 }
 
-// ── Markdown body → HTML ──────────────────────────────────────────────────────
+// ── Markdown body → HTML + extracted Lain code ───────────────────────────────
+//
+// Lain code blocks are NOT rendered inline — they are returned separately as
+// `lainCode` (the first one found) so DocViewer can display them in the panel.
+// Non-lain blocks (bash, shell, plain) stay inline.
 
-function mdBodyToHtml(md: string): string {
+function mdBodyToHtmlAndCode(md: string): { html: string; code: string | null } {
     const lines = md.split('\n');
     let html = '';
+    let firstLainCode: string | null = null;
     let i = 0;
 
     while (i < lines.length) {
@@ -138,10 +92,17 @@ function mdBodyToHtml(md: string): string {
                 codeLines.push(lines[i]);
                 i++;
             }
-            i++; // skip closing ```
-            const escaped = escCode(codeLines.join('\n'));
-            const body = lang === 'lain' ? highlightLain(escaped) : escaped;
-            html += `<pre data-lang="${lang}"><code>${body}</code></pre>`;
+            i++;
+
+            if (lang === 'lain') {
+                // Goes to the code panel — not rendered inline
+                if (firstLainCode === null) {
+                    firstLainCode = codeLines.join('\n').trim();
+                }
+            } else {
+                // bash / shell / plain — rendered inline (terminal-style)
+                html += `<pre data-lang="${lang}"><code>${escCode(codeLines.join('\n'))}</code></pre>`;
+            }
         }
 
         // ── Table ─────────────────────────────────────────────────────────────
@@ -159,17 +120,13 @@ function mdBodyToHtml(md: string): string {
             const typeMatch = trimmed.match(/^> \[!(\w+)\]/);
             const type = typeMatch ? typeMatch[1].toLowerCase() : 'note';
             const alertLines: string[] = [];
-
-            // Content on the same line as [!TYPE]
             const restOfLine = trimmed.slice(typeMatch![0].length).trim();
             if (restOfLine) alertLines.push(restOfLine);
-
             i++;
             while (i < lines.length && lines[i].trim().startsWith('>')) {
                 alertLines.push(lines[i].trim().slice(1).trim());
                 i++;
             }
-
             html += buildAlert(type, alertLines);
         }
 
@@ -186,10 +143,8 @@ function mdBodyToHtml(md: string): string {
         // ── Unordered list ────────────────────────────────────────────────────
         else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
             let items = '';
-            while (
-                i < lines.length &&
-                (lines[i].trim().startsWith('- ') || lines[i].trim().startsWith('* '))
-            ) {
+            while (i < lines.length &&
+                (lines[i].trim().startsWith('- ') || lines[i].trim().startsWith('* '))) {
                 items += `<li>${inlineFormat(lines[i].trim().slice(2))}</li>`;
                 i++;
             }
@@ -211,7 +166,7 @@ function mdBodyToHtml(md: string): string {
             i++;
         }
 
-        // ── h4 sub-heading (#### inside a section body) ──────────────────────
+        // ── h4 inside section body ────────────────────────────────────────────
         else if (trimmed.startsWith('#### ')) {
             html += `<h4>${inlineFormat(trimmed.slice(5))}</h4>`;
             i++;
@@ -245,10 +200,10 @@ function mdBodyToHtml(md: string): string {
         }
     }
 
-    return html;
+    return { html, code: firstLainCode };
 }
 
-// ── Heading id from title ─────────────────────────────────────────────────────
+// ── title → DOM id ────────────────────────────────────────────────────────────
 
 function titleToId(title: string): string {
     return title
@@ -274,35 +229,29 @@ export function parseReadme(): DocSection[] {
     let inCodeBlock = false;
 
     function flush() {
-        const content = mdBodyToHtml(currentBodyLines.join('\n')).trim();
+        const { html, code } = mdBodyToHtmlAndCode(currentBodyLines.join('\n'));
         sections.push({
             id: currentId,
             title: currentTitle,
             level: currentLevel,
-            content: content || undefined,
+            content: html.trim() || undefined,
+            code: code ?? undefined,
         });
         currentBodyLines = [];
     }
 
-    // Skip the HTML logo block at the very top (lines starting with < or blank)
+    // Skip HTML logo block at the top
     let i = 0;
     while (i < lines.length) {
         const t = lines[i].trim();
-        if (t === '' || t.startsWith('<')) {
-            i++;
-        } else {
-            break;
-        }
+        if (t === '' || t.startsWith('<')) { i++; } else { break; }
     }
 
     for (; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
 
-        // Track code-block open/close so we don't mistake content for headings
-        if (trimmed.startsWith('```')) {
-            inCodeBlock = !inCodeBlock;
-        }
+        if (trimmed.startsWith('```')) inCodeBlock = !inCodeBlock;
 
         if (!inCodeBlock) {
             const m3 = trimmed.match(/^###\s+(.+)/);
@@ -313,15 +262,13 @@ export function parseReadme(): DocSection[] {
                 currentTitle = m3[1].trim();
                 currentId = titleToId(currentTitle);
                 currentLevel = 3;
-                continue; // don't add heading line to body
+                continue;
             }
-
             if (m2) {
                 flush();
                 const title = m2[1].trim();
                 currentTitle = title;
                 currentId = titleToId(title);
-                // "Language Reference" acts as a level-1 chapter divider
                 currentLevel = title === 'Language Reference' ? 1 : 2;
                 continue;
             }
@@ -330,7 +277,6 @@ export function parseReadme(): DocSection[] {
         currentBodyLines.push(line);
     }
 
-    flush(); // save the last section
-
+    flush();
     return sections;
 }
