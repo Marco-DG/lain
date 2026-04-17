@@ -2,82 +2,11 @@
   <img src="assets/logo.png" alt="Lain Logo" width="600">
 </p>
 
-# Lain Programming Language
-
-> *"Assembly-Speed Performance, Zero-Cost Memory Safety, Static Verification, Determinism, Syntactic Simplicity."*
+# Lain Programming Language Specification
 
 **Version**: 0.1.0 (Draft)
 
-Lain is a **statically typed, compiled** programming language designed for embedded systems, safety-critical software, and systems programming. Its defining characteristic is the guarantee of **memory safety** and **resource safety** entirely at compile time, with **zero runtime overhead** — no garbage collector, no reference counting, no runtime bounds checks.
-
----
-
-## The Five Pillars
-
-Every design decision in Lain is governed by five goals, in decreasing order of priority:
-
-1. **Assembly-Speed Performance** — zero runtime overhead; generated code is as fast as hand-written C.
-2. **Zero-Cost Memory Safety** — use-after-free, double-free, data races, and buffer overflows are all *impossible* (proven at compile time).
-3. **Static Verification** — bounds checking via Value Range Analysis (VRA); no SMT solver, decidable polynomial-time analysis.
-4. **Determinism** — pure functions (`func`) always terminate and have no side effects; all effects are confined to procedures (`proc`).
-5. **Syntactic Simplicity** — clean syntax; explicit ownership annotations; no hidden copies or allocations.
-
----
-
-## Safety Guarantees at a Glance
-
-| Safety Concern | Lain's Guarantee | Mechanism |
-|:---------------|:-----------------|:----------|
-| **Buffer Overflows** | **Impossible** | Value Range Analysis (§9) verifies every array access at compile time |
-| **Use-After-Free** | **Impossible** | Linear types (`mov`) ensure resources are consumed exactly once |
-| **Double Free** | **Impossible** | Move semantics — ownership is linear, consumed exactly once |
-| **Data Races** | **Impossible** | Borrow checker enforces exclusive mutability |
-| **Null Dereference** | **Prevented** | Pointer dereference requires `unsafe` |
-| **Memory Leaks** | **Prevented** | Linear variables must be consumed — forgetting is a compile error |
-| **Division by Zero** | **Prevented** | Type constraints (`b int != 0`) enforce non-zero divisors |
-| **Integer Overflow** | **Defined** | Signed: two's complement wrapping (`-fwrapv`); Unsigned: modular arithmetic |
-| **Purity Violations** | **Impossible** | `func` cannot call `proc`, access globals, or have unbounded loops |
-
----
-
-## Compilation Model
-
-```
-.ln source → [Lain Compiler] → out.c → [gcc/clang] → executable
-```
-
-All safety checks (ownership, borrowing, bounds, purity, pattern exhaustiveness) happen during compilation. The generated C99 code contains no runtime checks.
-
----
-
-## Quick Start
-
-**Build the compiler:**
-```bash
-gcc src/main.c -o compiler -std=c99 -Wall -Wextra \
-    -Wno-unused-function -Wno-unused-parameter
-```
-
-**Compile a Lain program:**
-```bash
-# Step 1: Lain → C
-./compiler my_program.ln
-
-# Step 2: C → Executable
-gcc out.c -o my_program -Dlibc_printf=printf -Dlibc_puts=puts -w
-
-# Step 3: Run
-./my_program
-```
-
-**Run the test suite:**
-```bash
-./run_tests.sh
-```
-
----
-
-## Language Reference
+Lain is a **critical-safe** programming language designed for embedded systems. It focuses on memory safety, type safety, and determinism with **zero runtime overhead**.
 
 ---
 
@@ -126,12 +55,11 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `unsafe` | Unsafe block |
 | `c_include` | Include a C header file |
 | `defer` | Defer execution until end of scope |
-| `comptime` | Compile-time parameter |
 | `undefined` | Uninitialized explicit escape hatch |
 
 > [!NOTE]
 > **Reserved for future use**: The following keywords are recognized by the lexer but not yet fully implemented:
-> `macro`, `expr`, `pre`, `post`, `use`, `end`, `export`.
+> `comptime`, `macro`, `expr`, `pre`, `post`, `use`, `end`, `export`.
 > The keyword `fun` is accepted as an alias for `func`.
 
 ### 2.2 Operators & Punctuation
@@ -217,10 +145,7 @@ The following identifiers are reserved keywords and cannot be used as variable o
 ```lain
 'A'         // Character literal
 '\n'        // Escape sequence
-'\0'        // Null character
 ```
-
-Recognized escape sequences: `\n` (0x0A), `\t` (0x09), `\r` (0x0D), `\0` (0x00), `\\` (0x5C), `\"` (0x22), `\'` (0x27).
 
 **String literals:**
 ```lain
@@ -278,7 +203,7 @@ var y = 20     // Without semicolon
 > [!NOTE]
 > Fixed-width integer types require `<stdint.h>` in the generated C code (included automatically).
 > The type `int` is platform-dependent (typically 32-bit). Prefer `i32` for portable fixed-width semantics.
-> **Overflow Behavior**: Signed integer overflows result in Two's Complement wrap-around. The compiler injects `-fwrapv` automatically. Unsigned integers use modular arithmetic.
+> **Overflow Behavior**: Lain guarantees that all signed integer overflows result in Two's Complement wrap-around. The compiler injects `-fwrapv` automatically to prevent undefined behavior optimizations from C backends.
 
 **Floating-point:**
 
@@ -294,11 +219,16 @@ var pi f64 = 3
 var radius f32 = 5
 ```
 
+> [!NOTE]
+> Floating-point literals (e.g., `3.14`) are fully supported. When assigning numeric literals to `f32` or `f64` variables, explicit type annotations are recommended. Note: implicit conversion between integer and floating-point types is the **only** implicit conversion permitted in Lain — all other conversions between numeric types (e.g., `u8` to `int`) require an explicit `as` cast.
+
 **Boolean:**
 
 | Type | Description | C Equivalent |
 |:-----|:------------|:-------------|
 | `bool` | Boolean type with values `true` and `false` | `_Bool` |
+
+`bool` is a distinct type. The literals `true` and `false` are keywords:
 
 ```lain
 var x bool = true
@@ -309,53 +239,22 @@ if x {
 }
 ```
 
-### 3.2 Implicit Integer Widening
+> [!NOTE]
+> In the generated C code, `true` maps to `1` and `false` maps to `0`. Boolean values can be used directly in conditions without comparison.
 
-Lain allows **implicit widening**: a value of lower rank can be used where a higher-rank type is expected, without an explicit cast.
-
-**Rank hierarchy:**
-
-| Rank | Types |
-|:-----|:------|
-| 1 | `u8`, `i8` |
-| 2 | `u16`, `i16` |
-| 3 | `u32`, `i32`, `int` |
-| 4 | `u64`, `i64` |
-| 5 | `usize`, `isize` |
-
-In a binary expression, the result type is the type of the higher-rank operand. **Narrowing** (high rank to low rank), `float↔int` conversions, and pointer casts always require an explicit `as` cast.
-
-```lain
-var x u8 = 42
-var y int = x           // OK: implicit widening u8 → int
-var z = x + 1000        // result type: int (1000 is int, wider than u8)
-
-var n i32 = 1000
-var b = n as u8         // explicit cast (truncation: 1000 → 232)
-var f = n as f64        // explicit cast: int → float
-```
-
-### 3.3 Pointer Types
+### 3.2 Pointer Types
 
 Pointer types use the prefix `*` syntax:
 
 ```lain
-*int       // Pointer to int (shared, read-only)
-var *int   // Mutable pointer to int
-mov *int   // Owned pointer (linear)
+*int       // Pointer to int
 *u8        // Pointer to u8 (C string compatible)
 *void      // Opaque pointer (like C's void*)
 ```
 
-| Syntax | Mode | C Equivalent |
-|:-------|:-----|:-------------|
-| `*T` | Shared (read-only) | `const T*` |
-| `var *T` | Mutable | `T*` |
-| `mov *T` | Owned (linear) | `T*` |
+Raw pointer dereference is only allowed inside `unsafe` blocks (see §12).
 
-Raw pointer dereference and address-of (`&x`) are only allowed inside `unsafe` blocks (see §12).
-
-### 3.4 Array Types
+### 3.3 Array Types
 
 Arrays are fixed-size, stack-allocated collections. The size is part of the type.
 
@@ -365,6 +264,7 @@ var bytes u8[256]     // Array of 256 bytes
 ```
 
 **Initialization:**
+Arrays are currently initialized element-by-element after declaration. Array literal syntax (`[1, 2, 3]`) is a planned future feature.
 ```lain
 var arr int[3]
 arr[0] = 10
@@ -380,7 +280,7 @@ var x = arr[0]
 
 Array indices are **statically verified** at compile time. Accessing an out-of-bounds index is a compile error (see §9).
 
-### 3.5 Slice Types
+### 3.4 Slice Types
 
 Slices are dynamic views into arrays. They consist of a pointer and a length.
 
@@ -390,17 +290,21 @@ var s int[] = arr[0..3]   // Slice of elements [0, 1, 2]
 
 All slice types (`T[]`) expose two fields:
 - `.data` — pointer to the underlying data (`*T`)
-- `.len` — number of elements in the slice
+- `.len` — number of elements in the slice (`usize` or `int`)
 
-**Sentinel-terminated slices** end with a known sentinel value (typically `0`):
+**Sentinel-terminated slices** are a special case that end with a known sentinel value (typically `0`):
 
 ```lain
 u8[:0]     // Null-terminated byte slice (C string compatible)
 ```
 
-### 3.6 String Literals
+Sentinel slices expose:
+- `.data` — pointer to the underlying data
+- `.len` — number of elements (excluding sentinel)
 
-String literals have type `u8[:0]` (null-terminated sentinel slice).
+### 3.5 String Literals
+
+String literals have type `u8[:0]` (null-terminated sentinel slice). They are the primary mechanism for working with text.
 
 ```lain
 var greeting = "Hello, Lain!"       // Type: u8[:0]
@@ -415,9 +319,9 @@ func greet(msg u8[:0]) {
 }
 ```
 
-### 3.7 Struct Types
+### 3.6 Struct Types
 
-Structs are defined using the `type` keyword.
+Structs are defined using the `type` keyword. All variants with named fields and no sub-variants are plain structs.
 
 **Definition:**
 ```lain
@@ -455,7 +359,7 @@ p2.x = 30           // Does not modify p
 ```
 
 **Linear fields:**
-Struct fields annotated with `mov` indicate ownership and make the containing struct **linear** (move-only):
+Struct fields can be annotated with `mov` to indicate ownership:
 
 ```lain
 type File {
@@ -463,7 +367,9 @@ type File {
 }
 ```
 
-### 3.8 Algebraic Data Types (ADTs)
+A struct containing any `mov` field becomes **linear**: it cannot be copied, only moved (see §5).
+
+### 3.7 Algebraic Data Types (ADTs)
 
 Lain uses a unified syntax for enums, tagged unions, and algebraic data types. All are defined with `type`.
 
@@ -497,10 +403,11 @@ var p = Shape.Point
 See §7.5 for `case` expressions.
 
 > [!IMPORTANT]
-> The `case` expression is the **primary safety** mechanism to extract data from an ADT variant. Lain does not permit direct property access (e.g., `shape.radius`) on an ADT, because the compiler cannot statically guarantee that the ADT currently holds that specific variant. This enforces memory safety at the cost of slight verbosity.
+> The `case` expression is the **primary safety** mechanism to extract data from an ADT variant. Lain does not permit direct property access (e.g., `shape.radius`) on an ADT, because the compiler cannot statically guarantee that the ADT currently holds that specific variant. This design decision enforces memory safety at the cost of slight verbosity.
 
 **Direct Field Notation (Unsafe Extraction):**
-If you are certain of the active variant and need to bypass the branching overhead, you can extract the field directly using the variant name. This is **only allowed** inside an `unsafe` block.
+If you are mathematically certain of the active variant on the hot-path and need to bypass the branching overhead of a `case` switch, you can extract the field directly using the variant name.
+This is **only allowed** inside an `unsafe` block.
 
 ```lain
 var s = Shape.Circle(10)
@@ -508,10 +415,9 @@ unsafe {
     var r = s.Circle.radius // Zero-overhead direct C union access
 }
 ```
+If the variant at runtime is actually a `Rectangle`, this will yield garbage data (or SEGFAULT if pointers are involved), living up to its `unsafe` name.
 
-If the variant at runtime is actually a `Rectangle`, this will yield garbage data, living up to its `unsafe` name.
-
-### 3.9 Opaque Types (`extern type`)
+### 3.8 Opaque Types (`extern type`)
 
 Opaque types declare a type whose size and layout are unknown to Lain. They can only be used behind pointers.
 
@@ -524,20 +430,22 @@ extern type FILE      // C's FILE struct
 - Instantiating by value (`var f FILE`) is a compile error.
 - Emitted as `typedef struct FILE FILE;` in the generated C code.
 
+This enables safe wrapping of C library handles:
+
 ```lain
 extern type FILE
 extern func fopen(filename *u8, mode *u8) mov *FILE
 extern func fclose(stream mov *FILE) int
 ```
 
-### 3.10 The `void` Type
+### 3.9 The `void` Type
 
 The `void` keyword represents the absence of a value. It is exclusively used for declaring opaque pointers (`*void`, analogous to C's `void*`).
 Variables cannot be declared of type `void` (`var x void` is a compile error).
 
-### 3.11 Nested Types (Namespaces)
+### 3.10 Nested Types (Namespaces)
 
-Types can be nested within other types to create logical namespaces.
+Types can be nested within other types to create logical namespaces. This is particularly useful for grouping enums or related structures without polluting the global scope.
 
 ```lain
 type Token {
@@ -571,21 +479,19 @@ x = 10           // Immutable binding
 
 ### 4.2 Mutable Bindings (`var`)
 
-The `var` keyword creates a mutable binding. All variables *must* be initialized at declaration.
+The `var` keyword creates a mutable binding slot. All variables *must* be initialized at declaration to prevent garbage memory usage.
 
 ```lain
 var y = 10       // Mutable binding with initialization
 y = 20           // OK: y is mutable
+// var z int     // ERROR: Uninitialized Declaration
 ```
 
-To deliberately leave a variable uninitialized (e.g., for a large stack buffer), use `undefined`:
+If you explicitly require uninitialized memory (e.g., for performance reasons like allocating a large buffer before passing it to C), you must use the `undefined` keyword:
 
 ```lain
 var buffer u8[4096] = undefined  // Zero-cost stack allocation, data is garbage
 ```
-
-> [!WARNING]
-> The compiler enforces **Definite Initialization Analysis**. If a variable is declared with `= undefined`, the compiler flow-sensitively tracks whether it is assigned before it is read. Reading an uninitialized variable on any code path is a hard compile error.
 
 ### 4.3 Type Annotations
 
@@ -593,7 +499,7 @@ Types can be optionally specified on any declaration:
 
 ```lain
 var z int = 30            // Explicit type
-var arr u8[5]             // Array with explicit type (no initializer required for undefined)
+var arr u8[5]             // Array with explicit type (no initializer)
 name = "Lain"             // Inferred as u8[:0]
 ```
 
@@ -610,9 +516,11 @@ var global_counter int    // Mutable global variable
 
 ### 4.5 Binding vs. Assignment Disambiguation
 
+Since `x = 10` can look like both a "new immutable variable" and an "assignment to an existing mutable variable", the compiler uses the following rule:
+
 - If `x` is **not** already in scope → `x = 10` creates a **new immutable binding**.
 - If `x` **is** already in scope and was declared `var` → `x = 10` is an **assignment**.
-- If `x` **is** already in scope and is immutable → `x = 10` is a **compile error**.
+- If `x` **is** already in scope and is immutable → `x = 10` is a **compile error** (cannot assign to immutable).
 
 ```lain
 x = 10           // New immutable binding (x not in scope before)
@@ -621,18 +529,27 @@ y = 30           // Assignment (y was declared var)
 // x = 40        // ERROR: x is immutable
 ```
 
+> [!NOTE]
+> The `var` keyword is never ambiguous: `var x = ...` is always a new mutable variable declaration.
+
 ### 4.6 Lexical Block Scoping
 
-Variables declared within a block are only visible within that block. **Shadowing** is allowed: declaring a variable with the same name as an outer variable creates an independent inner variable.
+Lain enforces strict lexical block scoping. Variables declared within a block (e.g., inside `{...}` of an `if`, `for`, or `while` statement) are only visible within that block.
+When the block exits, the local environment is destroyed.
+
+- **Shadowing**: Declaring a variable with the same name as a variable in an enclosing scope is **allowed**. The inner declaration shadows the outer one for the duration of the inner block. When the inner block exits, the outer variable becomes visible again.
 
 ```lain
 var x = 10
 if true {
-    var x = 20       // Shadows outer x (independent variable)
+    var x = 20       // Shadows outer x
     // x is 20 here
 }
 // x is 10 here again
 ```
+
+> [!NOTE]
+> Shadowing creates a new, independent variable — it does not modify the original. This is useful for rebinding values in narrower scopes without affecting the enclosing context.
 
 ## 5. Ownership & Borrowing
 
@@ -657,7 +574,7 @@ The `mov` operator transfers ownership of a value. After a move, the source vari
 var a Resource
 a.id = 1
 var b = mov a       // a is moved into b
-// a.id             // ERROR [E001]: Use after move
+// a.id             // ERROR: Use after move
 ```
 
 **Move at function call site:**
@@ -673,33 +590,7 @@ func wrap(mov r Resource) Container {
 }
 ```
 
-### 5.3 Linear Types
-
-A type is **linear** if it has a `mov` field, or if it transitively contains a linear field. A linear value must be consumed **exactly once**:
-
-- Not consumed at scope end → `[E002]`
-- Consumed twice (double move) → `[E003]`
-- Moved inside a loop → `[E006]`
-
-```lain
-type File {
-    mov handle *FILE   // Linear field → File is linear
-}
-
-proc leak() {
-    var f = open_file("data.txt", "r")
-    // ERROR [E002]: linear variable 'f' not consumed before end of scope
-}
-
-proc correct() {
-    var f = open_file("data.txt", "r")
-    close_file(mov f)  // Consumed: OK
-}
-```
-
-If a linear variable is consumed in one branch of an `if` but not the other, the compiler emits `[E007]`. All execution paths must uniformly consume (or not consume) linear variables.
-
-### 5.4 Borrowing Rules (Read-Write Lock)
+### 5.3 Borrowing Rules (Read-Write Lock)
 
 Lain enforces a "Read-Write Lock" model at compile time:
 
@@ -707,14 +598,20 @@ Lain enforces a "Read-Write Lock" model at compile time:
 2. **Exactly one mutable borrow** is allowed at a time.
 3. **Shared and mutable borrows cannot coexist** for the same variable.
 
-| Active borrows | Operation attempted | Result |
-|:---------------|:--------------------|:-------|
-| None | Shared borrow | OK |
-| None | Mutable borrow | OK |
-| Shared borrow(s) | Shared borrow | OK |
-| Shared borrow(s) | Mutable borrow | **Error** `[E004]` |
-| Mutable borrow | Any other borrow | **Error** `[E004]` |
-| Any active borrow | Move | **Error** `[E005]` |
+```lain
+var data Data
+data.value = 42
+
+// OK: Multiple shared borrows
+x = read(data)
+y = read(data)
+
+// OK: Mutable borrow (no shared borrows active)
+mutate(var data)
+
+// OK: Shared borrow after mutable borrow ends
+z = read(data)
+```
 
 **Conflict example (compile error):**
 ```lain
@@ -741,9 +638,9 @@ proc main() int {
 
 Two-phase borrows do **not** permit moves or mutable writes during the reserved phase — only shared reads.
 
-### 5.5 Non-Lexical Lifetimes (NLL)
+### 5.3.1 Non-Lexical Lifetimes (NLL) and Control Flow
 
-Borrows expire at their **last use**, not at the end of the lexical scope. This makes many common patterns valid that a purely scope-based system would reject.
+Lain employs an expression-level borrow checker for control-flow conditions. Temporary borrows within `if`, `while`, `for`, and `match` conditions do not span the entire block. They are released immediately after the condition is evaluated.
 
 ```lain
 var data = Buffer(0)
@@ -755,9 +652,27 @@ while read(data) < 10 {
 }
 ```
 
-### 5.6 Caller-Site Annotations
+### 5.4 Linear Fields in Structs
 
-When calling a function, the caller must explicitly annotate `var` and `mov` to signal the intended ownership:
+Struct fields annotated with `mov` make the containing struct **linear** (move-only):
+
+```lain
+type Handle {
+    mov ptr *int
+}
+
+type Wrapper {
+    h Handle            // Wrapper is also linear (transitively)
+}
+
+var h1 = Handle(ptr)
+var h2 = h1             // Moves h1 → h2
+// var h3 = h1          // ERROR: h1 was already moved
+```
+
+### 5.5 Caller-Site Annotations
+
+When calling a function, the caller must explicitly annotate `var` and `mov` at the call site to signal the intended ownership transfer:
 
 ```lain
 func read_data(d Data) int { return d.value }            // Shared borrow
@@ -770,7 +685,7 @@ modify_data(var data)     // Explicit mutable borrow
 consume_data(mov data)    // Explicit ownership transfer
 ```
 
-### 5.7 Destructuring in Parameters
+### 5.6 Destructuring in Parameters
 
 Parameters can be destructured at the function signature level:
 
@@ -780,7 +695,11 @@ func drop(mov {id} Resource) {
 }
 ```
 
-### 5.8 Return Ownership
+This consumes the linear resource by destructuring it into its component fields.
+
+### 5.7 Return Ownership
+
+The `return` statement supports ownership annotations to control how values are returned:
 
 **`return mov` — Transfer ownership:**
 ```lain
@@ -797,12 +716,19 @@ func get_ref(var ctx Context) var int {
 ```
 
 > [!WARNING]
-> Returning a mutable reference to a local variable is a compile error — it creates a dangling pointer. `return var` is restricted to references to data that outlives the function (such as fields of `var` parameters).
+> Returning a mutable reference to a local variable (e.g., `var x = 10; return var x`) is a compile error, as it creates a dangling pointer. `return var` is restricted to returning references to data that outlives the function (such as fields of `var` parameters).
 
 **`return` (default) — Return by value (copy):**
 ```lain
 func compute(a int, b int) int {
     return a + b          // Return a copy
+}
+```
+
+The return type can also be annotated with `mov` or `var` to signal the ownership mode of the return value:
+```lain
+func open_file(path u8[:0], mode u8[:0]) mov File {
+    // Returns an owned File
 }
 ```
 
@@ -833,7 +759,7 @@ func add(a int, b int) int {
 // ERROR: Recursion not allowed in pure function
 func factorial(n int) int {
     if n <= 1 { return 1 }
-    return n * factorial(n - 1)    // Compile error [E011]
+    return n * factorial(n - 1)    // Compile error
 }
 ```
 
@@ -868,12 +794,14 @@ See §5.1 for full semantics.
 
 ### 6.4 Return Types & Void Functions
 
+Functions and procedures can return a value or be void:
+
 ```lain
 func add(a int, b int) int {    // Returns int
     return a + b
 }
 
-proc greet(msg u8[:0]) {        // Void (no return type)
+proc greet(msg u8[:0]) {        // Void (no return type) — must be proc because of I/O
     libc_printf("%s\n", msg.data)
 }
 
@@ -882,7 +810,7 @@ proc main() int {               // main must always be 'proc'
 }
 ```
 
-In void functions, `return` at the end of the block is optional. Using `return` without an expression is allowed for early exit:
+In void functions, the `return` statement at the end of the block is optional. Using `return` without an expression is allowed for early exit:
 ```lain
 func check(valid bool) {
     if !valid { return }   // Early exit from void function
@@ -891,7 +819,7 @@ func check(valid bool) {
 ```
 
 > [!IMPORTANT]
-> The `main` function **must** be declared as `proc main()`. Declaring `main` as `func` is a compile error.
+> The `main` function **must** be declared as `proc main()`. Since `main` is the program entry point and typically performs I/O, it cannot be a pure `func`. Declaring `main` as `func` is a compile error.
 
 ### 6.5 Termination Guarantees
 
@@ -909,14 +837,16 @@ func check(valid bool) {
 | Calling `extern proc` | ❌ Banned | ✅ Allowed |
 
 > [!NOTE]
-> **`extern func` vs `extern proc`**: External C functions declared as `extern func` are trusted to be pure. External C functions declared as `extern proc` may have side effects. A pure `func` can call `extern func` but **not** `extern proc`.
->
-> Example: `extern func abs(n int) int` — pure, callable from `func`.
+> **`extern func` vs `extern proc`**: External C functions declared as `extern func` are trusted to be pure (no side effects). External C functions declared as `extern proc` may have side effects. A pure `func` can call `extern func` but **not** `extern proc`.
+>  
+> Example: `extern func abs(n int) int` — pure, callable from `func`.  
 > Example: `extern proc printf(fmt *u8, ...) int` — impure, callable only from `proc`.
 
 ### 6.6 Universal Function Call Syntax (UFCS)
 
-Lain supports **UFCS** for all types. Any call of the form `target.method(arg)` is automatically translated by the compiler into `method(target, arg)`.
+Lain supports **Universal Function Call Syntax (UFCS)** for all types. Any function call of the form `target.method(arg)` is automatically translated by the compiler into `method(target, arg)`.
+
+This enables fluent, chainable APIs for built-in and user-defined types without requiring object-oriented classes or explicit method dispatch:
 
 ```lain
 func is_even(n int) bool {
@@ -929,12 +859,7 @@ proc main() {
 }
 ```
 
-This works for all types, including slices, pointers, and structs. The ownership mode of the first parameter is inferred automatically from the function declaration:
-
-```lain
-func push(var v Vec, item int) { /* ... */ }
-v.push(42)   // Desugars to: push(var v, 42)
-```
+This works for all types, including slices, pointers, and structs, drastically improving the ergonomics of the standard library (e.g., `my_file.close()` translates naturally to `close(my_file)`).
 
 ---
 
@@ -952,11 +877,13 @@ if x > 10 {
 }
 ```
 
-Conditions do not require parentheses. The body must be enclosed in `{ }`. The condition contributes to **range analysis**: inside the `if x < y` branch, the compiler knows `x < y` and propagates this constraint (see §9).
+Conditions do not require parentheses. The body must be enclosed in `{ }`.
+
+The condition contributes to **range analysis**: inside the `if x < y` branch, the compiler knows `x < y` and can propagate this constraint (see §9).
 
 ### 7.2 For Loops (Range-Based)
 
-For loops iterate over finite ranges. They are allowed in both `func` and `proc`.
+For loops iterate over finite ranges. They are the only loop construct allowed in `func`.
 
 **Single variable form:**
 ```lain
@@ -972,12 +899,15 @@ for i, val in 0..10 {
 }
 ```
 
+**Range semantics:**
+- `0..n` — half-open range: `[0, n)` (0 inclusive, n exclusive)
+
 > [!NOTE]
 > The loop variable `i` is statically known to be in `[0, n-1]`, enabling safe array indexing without runtime checks.
 
 ### 7.3 While Loops
 
-Unbounded while loops are **only allowed in `proc`** (not in `func`).
+Unbounded while loops run until the condition becomes false. They are **only allowed in `proc`** (not in `func`).
 
 ```lain
 proc count_up() {
@@ -992,13 +922,14 @@ proc count_up() {
 **Infinite loop pattern:**
 ```lain
 while 1 {
+    // Use 'break' to exit
     if done { break }
 }
 ```
 
 #### Bounded While — Termination Measure
 
-A `while` loop may carry an optional **termination measure** via the `decreasing` keyword. When present, the loop is also allowed inside `func`, because the compiler statically verifies that:
+A `while` loop may carry an optional **termination measure** via the `decreasing` keyword. When present, the loop is also allowed inside `func` (pure functions), because the compiler statically verifies that:
 
 1. The measure is **non-negative** when the loop condition holds.
 2. The measure **strictly decreases** on every iteration.
@@ -1007,7 +938,7 @@ A `while` loop may carry an optional **termination measure** via the `decreasing
 func count_up(n int) int {
     var i = 0
     while i < n decreasing n - i {  // measure: n - i
-        i += 1                       // i increases → n - i decreases
+        i += 1                   // i increases → n - i decreases
     }
     return i
 }
@@ -1082,18 +1013,12 @@ case character {
 ```
 
 **Case Expressions:**
-A `case` block can be evaluated as an expression. All branches must yield the same type:
+A `case` block can be evaluated as an expression that returns a value. All branches must yield the same type, and the block evaluates to the matched branch's value:
 ```lain
 var size = case width {
-    1..10:  "Small"
+    1..10: "Small"
     11..50: "Medium"
-    else:   "Large"
-}
-
-var area = case shape {
-    Circle(r):       r * r * 314 / 100
-    Rectangle(w, h): w * h
-    Point:           0
+    else: "Large"
 }
 ```
 
@@ -1102,6 +1027,7 @@ var area = case shape {
 case x {
     1: return 1
     2: return 2
+    3: return 3
     else: return 0    // Required: integers are not finite
 }
 ```
@@ -1113,7 +1039,7 @@ case x {
 
 #### Non-Consuming Match (`case &expr`)
 
-By default, `case expr` consumes the scrutinee (for linear types). To inspect a value **without consuming it**, prefix the scrutinee with `&`:
+By default, `case expr` consumes the scrutinee (for linear types, this means ownership is transferred). To inspect a value **without consuming it**, prefix the scrutinee with `&`:
 
 ```lain
 var x = 42
@@ -1125,7 +1051,7 @@ case &x {            // Borrowed match: x is NOT consumed
 return x + result    // x is still usable: returns 43
 ```
 
-The `&` registers a shared borrow on the scrutinee for the duration of the match. This prevents mutation inside the match arms:
+The `&` registers a shared borrow on the scrutinee for the duration of the match body. This prevents mutation of the scrutinee inside the match arms:
 
 ```lain
 var x = 42
@@ -1135,11 +1061,11 @@ case &x {
 }
 ```
 
-Particularly useful with ADTs where you want to inspect a variant without consuming the value:
+This is particularly useful with ADTs where you want to inspect a variant without consuming the value:
 
 ```lain
 case &shape {
-    Circle(r):      libc_printf("radius: %d\n", r)
+    Circle(r):   libc_printf("radius: %d\n", r)
     Rectangle(w, h): libc_printf("area: %d\n", w * h)
 }
 // shape is still available here
@@ -1162,16 +1088,17 @@ case s {
     Done:    /* ... */
 }
 
-// ERROR [E014]: Missing 'Done' variant and no 'else'
+// ERROR: Missing 'Done' variant and no 'else'
 case s {
     Ready:   /* ... */
     Running: /* ... */
+    // Compile error: non-exhaustive case
 }
 ```
 
 ### 7.7 Defer Statement
 
-The `defer` statement defers execution of a block until the end of the current lexical scope. It is the primary mechanism for deterministic resource cleanup (RAII).
+The `defer` statement defers the execution of a block of code until the end of the current lexical scope. It is the primary mechanism for Resource Acquisition Is Initialization (RAII) and resource cleanup.
 
 ```lain
 proc process_file() {
@@ -1179,17 +1106,17 @@ proc process_file() {
     defer {
         close_file(mov f)
     }
-
+    
     // ... use f ...
     // f is automatically closed when the function returns or exits the block
 }
 ```
 
 **Rules for defer:**
-1. Deferred blocks execute in reverse order (LIFO — Last In, First Out).
-2. They execute on all exit paths: normal return, `return`, `break`, or `continue`.
-3. If control flow exits multiple scopes, all `defer` statements from exited scopes are executed in the correct order.
-4. `defer` blocks cannot contain `return`, `break`, or `continue` statements that escape the block.
+1. Deferred blocks execute in reverse order (LIFO - Last In, First Out).
+2. They execute when control flow exits the scope (via reaching the end of the block, `return`, `break`, or `continue`).
+3. If control flow exits multiple scopes (e.g. `return` inside an `if` inside a `while`), all `defer` statements from the exited scopes are executed in the correct order.
+4. `defer` blocks cannot themselves contain `return`, `break`, or `continue` statements that escape the block.
 
 ---
 
@@ -1233,8 +1160,6 @@ a & b      // Bitwise AND
 a | b      // Bitwise OR
 a ^ b      // Bitwise XOR
 ~a         // Bitwise NOT (complement)
-a << n     // Left shift
-a >> n     // Right shift
 ```
 
 ### 8.5 Compound Assignment
@@ -1261,7 +1186,6 @@ var x i32 = 1000
 var y = x as u8           // Truncate i32 to u8 (wrapping)
 var big = 42 as i64       // Widen int to i64
 var small = 300 as u8     // Truncate to u8 (300 → 44)
-var n = 'A' as int        // char to int: 65
 ```
 
 **Rules:**
@@ -1271,6 +1195,8 @@ var n = 'A' as int        // char to int: 65
 
 ### 8.7 Operator Precedence
 
+Operators are evaluated according to the following precedence table (highest to lowest):
+
 | Precedence | Operators | Associativity | Description |
 |:-----------|:----------|:-------------|:------------|
 | 1 (highest) | `()` `[]` `.` | Left | Grouping, indexing, field access |
@@ -1278,14 +1204,13 @@ var n = 'A' as int        // char to int: 65
 | 3 | `as` | Left | Type cast |
 | 4 | `*` `/` `%` | Left | Multiplicative |
 | 5 | `+` `-` | Left | Additive |
-| 6 | `<<` `>>` | Left | Bit shift |
-| 7 | `&` | Left | Bitwise AND |
-| 8 | `^` | Left | Bitwise XOR |
-| 9 | `\|` | Left | Bitwise OR |
-| 10 | `<` `>` `<=` `>=` `in` | Left | Comparison / bounds check |
-| 11 | `==` `!=` | Left | Equality |
-| 12 | `and` | Left | Logical AND |
-| 13 (lowest) | `or` | Left | Logical OR |
+| 6 | `&` | Left | Bitwise AND |
+| 7 | `^` | Left | Bitwise XOR |
+| 8 | `\|` | Left | Bitwise OR |
+| 9 | `<` `>` `<=` `>=` `in` | Left | Comparison / bounds check |
+| 10 | `==` `!=` | Left | Equality |
+| 11 | `and` | Left | Logical AND |
+| 12 (lowest) | `or` | Left | Logical OR |
 
 > [!NOTE]
 > Use parentheses to override precedence when intent is unclear: `(a + b) * c`.
@@ -1298,40 +1223,13 @@ The equality operators (`==` and `!=`) are only supported for:
 
 Using `==` or `!=` directly on `struct`, `array`, or `ADT` instances is a **compile error**. Structural equality must be performed manually by comparing individual fields.
 
-### 8.9 Numeric Conversions
+### 8.9 Implicit Conversions
 
-Lain supports **implicit widening** between integer types: a value of lower rank can be used where a higher-rank integer is expected, without an explicit cast (see §3.2).
-
-**Widening (implicit — no cast needed):**
-```lain
-var x u8 = 42
-var y int = x        // OK: u8 widened to int implicitly
-var z = x + 1000     // OK: result type is int
-```
-
-**Narrowing (explicit — requires `as`):**
-```lain
-var n int = 300
-var b = n as u8      // Explicit: int → u8 (may truncate)
-```
-
-**Float ↔ int (explicit — requires `as`):**
-```lain
-var f f64 = 3
-var i = f as int     // Explicit: float → int
-var g = i as f64     // Explicit: int → float
-```
-
-**Pointer casts (requires `unsafe`):**
-```lain
-unsafe {
-    var vp = ptr as *void    // pointer cast inside unsafe
-}
-```
+Lain strictly forbids implicit type conversions. There is no implicit widening or truncation between numeric types (e.g., passing a `u8` to an `int` parameter). Every integer conversion must be explicitly annotated using the `as` operator.
 
 ### 8.10 Evaluation Order
 
-The evaluation of expressions, function arguments, and operands is strictly defined as **Left-to-Right**.
+The evaluation of expressions, function arguments, and operands is strictly defined as **Left-to-Right**. 
 For `foo(a(), b())`, `a()` is guaranteed to execute and return before `b()` is executed.
 
 ---
@@ -1401,6 +1299,7 @@ func get(arr int[10], i int in arr) int {
 
 This desugars to the constraint: `i >= 0 and i < arr.len`.
 
+The caller must prove the constraint:
 ```lain
 get(arr, 5)      // OK: 5 ∈ [0, 10)
 get(arr, 15)     // ERROR: 15 is not in [0, 10)
@@ -1469,19 +1368,9 @@ func bounded(x int >= 0 and <= 100) int {
 }
 ```
 
-### 9.6 Static Verification Mechanism (VRA)
+### 9.6 Static Verification Mechanism
 
-The compiler uses **Value Range Analysis (VRA)** — a decidable, polynomial-time static analysis. No SMT solver is required.
-
-| Property | Value |
-|:---------|:------|
-| Decidable | Yes — always terminates |
-| Complexity | Polynomial |
-| Sound | Yes — does not accept invalid programs |
-| Complete | No — may reject valid programs (conservative) |
-| Runtime overhead | Zero |
-
-**How it works:**
+The compiler uses **Value Range Analysis (VRA)** — a decidable, polynomial-time static analysis:
 
 1. **Interval tracking**: Every integer variable carries a range `[min, max]`.
    - Literals: `10` → `[10, 10]`
@@ -1496,7 +1385,12 @@ The compiler uses **Value Range Analysis (VRA)** — a decidable, polynomial-tim
    - Inside `else`: `x` is narrowed to `[10, max]`
    - After merge: conservative hull (union of both branches)
 
-4. **Assignment tracking**: Ranges are updated through assignments.
+4. **Assignment tracking**: Ranges are updated through assignments:
+   ```lain
+   var x = 10      // x: [10, 10]
+   x = 0           // x: [0, 0]
+   require_pos(x)  // ERROR: [0, 0] does not satisfy > 0
+   ```
 
 5. **Linear constraint propagation**:
    ```lain
@@ -1504,21 +1398,26 @@ The compiler uses **Value Range Analysis (VRA)** — a decidable, polynomial-tim
    require_gt(x, y) // OK: compiler knows x > y
    ```
 
+**No SMT Solver**: All verification is polynomial-time — fast and predictable.
+
 ### 9.7 Loop Widening
 
-Variables modified within loops are **conservatively widened** to their type's full range after the loop:
+Variables modified within loops are **conservatively widened** to their type's full range:
 
 ```lain
-var x = 0
-for i in 0..10 {
-    x = x + 1
+func main() int {
+    var x = 0
+    for i in 0..10 {
+        x = x + 1
+    }
+    // x is widened to [INT_MIN, INT_MAX] after the loop
+    // Cannot prove x == 10 statically
+    return require_one(x)  // ERROR: Cannot verify x == 1
 }
-// x is widened to [INT_MIN, INT_MAX] after the loop
-// Cannot prove x == 10 statically
 ```
 
 > [!WARNING]
-> This is a known limitation. Loop variables lose precision, making some post-loop constraints unverifiable. Future versions may support loop invariant annotations.
+> This is a known limitation of the current analysis. Loop variables lose precision, making some post-loop constraints unverifiable. Future versions may support loop invariant annotations.
 
 ---
 
@@ -1538,31 +1437,9 @@ import std.fs as fs         // Namespace aliasing
 
 If imported without `as`, all public declarations from the imported module are injected into the current global scope. If imported with `as`, they are accessed via the namespace prefix (e.g., `fs.open_file()`).
 
-### 10.2 Flat Namespace & C Name Mangling
-
-After module inlining, all declarations share a flat global namespace. In the generated C code, symbols receive a prefix based on their module path:
-
-| Lain Declaration | Generated C Name |
-|:-----------------|:-----------------|
-| `func add(...)` in `main.ln` | `main_add(...)` |
-| `proc print(...)` in `std/io.ln` | `std_io_print(...)` |
-| `type File` in `std/fs.ln` | `std_fs_File` |
-
-Circular imports are implicitly prevented — each module is loaded at most once.
-
-### 10.3 Standard Library
+### 10.2 Standard Library
 
 Lain ships with a minimal standard library:
-
-| Module | Purpose | Status |
-|:-------|:--------|:-------|
-| `std.c` | Core C bindings (stdio, stdlib) | Implemented |
-| `std.io` | Console output (`print`/`println`) | Implemented |
-| `std.fs` | File operations with ownership safety | Implemented |
-| `std.math` | Pure math utilities | Implemented |
-| `std.option` | Generic `Option(T)` type | Implemented |
-| `std.result` | Generic `Result(T, E)` type | Implemented |
-| `std.string` | String utilities | Placeholder |
 
 **`std/c.ln`** — Core C bindings:
 ```lain
@@ -1581,7 +1458,7 @@ extern proc libc_puts(s *u8) int
 ```
 
 > [!IMPORTANT]
-> All C standard library functions that perform I/O are declared as `extern proc` because they have side effects. A pure `func` cannot call these functions.
+> All C standard library functions that perform I/O are declared as `extern proc` because they have side effects. A pure `func` cannot call these functions. This is fundamental to Lain's purity guarantee.
 
 **`std/io.ln`** — Basic I/O:
 ```lain
@@ -1619,9 +1496,19 @@ proc write_file(f File, s u8[:0]) {
 ```
 
 > [!NOTE]
-> The `File` type is a safe wrapper around C's `FILE*`. Because `handle` is declared `mov`, the `File` struct is **linear**: it must be explicitly consumed via `close_file(mov f)`. Forgetting to close a file is a compile error `[E002]`.
+> The `File` type is a safe wrapper around C's `FILE*`. Because `handle` is declared `mov`, the `File` struct is **linear**: it must be explicitly consumed via `close_file(mov f)`. Forgetting to close a file is a compile error.
 
 **`std/math.ln`** — Pure math utilities:
+```lain
+import std.math
+
+var a = min(3, 7)        // 3
+var b = max(3, 7)        // 7
+var c = abs(0 - 5)       // 5
+var d = clamp(15, 0, 10) // 10
+```
+
+All functions in `std/math` are pure (`func`), with no side effects or external dependencies.
 
 | Function | Signature | Description |
 |:---------|:----------|:------------|
@@ -1630,10 +1517,10 @@ proc write_file(f File, s u8[:0]) {
 | `abs` | `func abs(x int) int` | Returns the absolute value |
 | `clamp` | `func clamp(x int, lo int, hi int) int` | Clamps x to [lo, hi] |
 
-All functions in `std/math` are pure (`func`), with no side effects or external dependencies.
-
 **`std/option.ln`** — Generic Option type:
 ```lain
+import std.option
+
 type OptInt = Option(int)
 
 proc main() int {
@@ -1649,10 +1536,12 @@ proc main() int {
 }
 ```
 
-`Option(T)` is a compile-time generic ADT with two variants: `Some { value T }` and `None`.
+`Option(T)` is a compile-time generic ADT with two variants: `Some { value T }` and `None`. Use `type MyOpt = Option(int)` to create a concrete type alias.
 
 **`std/result.ln`** — Generic Result type:
 ```lain
+import std.result
+
 type MyResult = Result(int, int)
 
 proc main() int {
@@ -1668,10 +1557,14 @@ proc main() int {
 
 `Result(T, E)` is a compile-time generic ADT with variants `Ok { value T }` and `Err { error E }`. Combined with pattern matching, it provides type-safe error handling.
 
-### 10.4 Name Resolution & Forward Declarations
+**`std/string.ln`** — String utilities (placeholder):
+
+> [!WARNING]
+> `std/string.ln` is currently a placeholder. Lain emits `*u8` as `uint8_t*`, but C string functions (`strlen`, `strcmp`) expect `char*`. A type-mapping solution for `char` interop is planned.
+
+### 10.3 Name Resolution & Forward Declarations
 
 Lain uses a multi-pass compiler. Functions, procedures, and types can be referenced before they are declared in the source file. There is no need for forward declarations or header files.
-
 ```lain
 func main() int { return helper() }
 proc helper() int { return 42 }      // OK: defined after use
@@ -1693,6 +1586,8 @@ c_include "<stdlib.h>"
 c_include "my_header.h"
 ```
 
+This translates to `#include <stdio.h>` / `#include "my_header.h"` in the generated C code.
+
 ### 11.2 Extern Functions
 
 The `extern` keyword declares functions defined in C:
@@ -1711,7 +1606,7 @@ extern func exit(status int)
 
 ### 11.3 Extern Types (Opaque)
 
-See §3.9. Opaque types allow wrapping C handles safely:
+See §3.8. Opaque types allow wrapping C handles safely:
 
 ```lain
 extern type FILE
@@ -1730,6 +1625,8 @@ The `...` is only valid in `extern` function declarations.
 
 ### 11.5 Type Mapping
 
+The compiler maps Lain types to C types as follows:
+
 | Lain Type | C Type | Context |
 |:----------|:-------|:--------|
 | `int` | `int` | — |
@@ -1740,6 +1637,9 @@ The `...` is only valid in `extern` function declarations.
 | `*T` (shared) | `const T*` | Default for shared references |
 | `var *T` | `T*` | Mutable references |
 | `mov *T` | `T*` | Owned pointer |
+
+> [!WARNING]
+> Currently, certain C functions (`fopen`, `fputs`, `fclose`, etc.) have hardcoded type mapping overrides in the emitter to handle `FILE*` correctly. A more general annotation system is planned for the future.
 
 ---
 
@@ -1757,32 +1657,12 @@ Operations that bypass safety checks must be enclosed in an `unsafe` block:
 ```lain
 unsafe {
     var val = *ptr      // Pointer dereference: OK inside unsafe
-    *ptr = 42           // Write through pointer
-    var addr = &x       // Address-of: OK inside unsafe
 }
 
 // var val = *ptr       // ERROR: Dereference outside unsafe block
 ```
 
-### 12.2 What `unsafe` Does NOT Disable
-
-`unsafe` only disables the specific operations listed in §12.1. The following remain fully active inside `unsafe` blocks:
-
-- Ownership tracking and move semantics (`[E001]`, `[E002]`, `[E003]`)
-- Borrow checking (`[E004]`, `[E005]`)
-- Type checking
-- VRA bounds verification (unless the specific access is inside the unsafe)
-- Pattern exhaustiveness checking
-- Purity enforcement
-
-```lain
-unsafe {
-    consume(mov resource)
-    // consume(mov resource)  // ERROR [E003]: double move (even inside unsafe)
-}
-```
-
-### 12.3 Raw Pointers
+### 12.2 Raw Pointers
 
 Raw pointers (`*int`, `*void`) bypass Lain's ownership system. **Dereferencing** a raw pointer is only allowed inside `unsafe` blocks.
 
@@ -1790,29 +1670,15 @@ Raw pointers (`*int`, `*void`) bypass Lain's ownership system. **Dereferencing**
 func main() {
     var p *int = 0
 
+    // var x = *p       // ERROR: Dereference outside unsafe
+
     unsafe {
         var y = *p      // OK (compiles, though dangerous at runtime)
     }
 }
 ```
 
-### 12.4 The Address-Of Operator (`&`)
-
-The unary address-of operator `&` creates a raw pointer to a local variable. Taking the address of a local variable is strictly **only allowed inside an `unsafe` block**.
-
-```lain
-proc main() int {
-    var x = 42
-
-    unsafe {
-        var p = &x      // OK: p is of type *int
-        *p = 100        // Mutates x
-    }
-    return x            // Returns 100
-}
-```
-
-### 12.5 Nesting Rules
+### 12.3 Nesting Rules
 
 Unsafe blocks can be nested and combined with control flow:
 
@@ -1823,11 +1689,45 @@ unsafe {
     }
     var val2 = *p       // OK: still inside outer unsafe
 }
+
+if condition {
+    unsafe {
+        var val3 = *p   // OK: unsafe inside control flow
+    }
+}
+
+unsafe {
+    if condition {
+        var val4 = *p   // OK: control flow inside unsafe
+    }
+}
 ```
 
-### 12.6 Null Pointers & C Interop
+> [!IMPORTANT]
+> The compiler does **not** enforce memory safety or linear types for raw pointers inside unsafe blocks. The programmer assumes full responsibility for pointer validity, aliasing, and lifetime correctness.
 
-Lain does not have a native `null` concept for its safe reference types. However, pointers returned by `extern` functions (like `*void` from `malloc` or `*FILE` from `fopen`) can natively be null. To safely handle C-interop pointers, they must be validated against `0` before being wrapped in safe Lain types.
+### 12.4 The Address-Of Operator (`&`)
+
+The unary address-of operator `&` creates a raw pointer to a local variable. To preserve Lain's safety guarantees, taking the address of a local variable is strictly **only allowed inside an `unsafe` block**.
+
+```lain
+proc main() int {
+    var x = 42
+    // var p = &x       // ERROR: Cannot take address outside unsafe
+    
+    unsafe {
+        var p = &x      // OK: p is of type *int
+        *p = 100        // Mutates x
+    }
+    return x            // Returns 100
+}
+
+### 12.5 Null Pointers & C Interop
+
+Lain does not have a native `null` concept for its safe reference types. However, when interfacing with C, pointers returned by `extern` functions (like `*void` from `malloc` or `*FILE` from `fopen`) can natively be null.
+
+To safely handle C-interop pointers, they must be validated against `0` before being wrapped in safe Lain abstraction types. Dereferencing a null pointer inside an `unsafe` block leads to immediate undefined behavior.
+```
 
 ---
 
@@ -1837,41 +1737,41 @@ Lain eliminates entire classes of bugs at compile time without runtime overhead.
 
 | Safety Concern | Lain's Guarantee | Mechanism |
 |:---------------|:-----------------|:----------|
-| **Buffer Overflows** | **Impossible** | Static Range Analysis (§9) verifies every array access at compile time. No runtime bounds checks needed. |
-| **Use-After-Free** | **Impossible** | Linear Types (`mov`) ensure resources are consumed exactly once. Accessing a moved variable is a compile error. |
+| **Buffer Overflows** | **Impossible** | **Static Range Analysis** (§9) verifies every array access at compile time. Accesses that cannot be statically proven safe are rejected as compilation errors. No runtime bounds checks needed. |
+| **Use-After-Free** | **Impossible** | **Linear Types** (`mov`) ensure resources are consumed exactly once. Accessing a moved variable is a compile error. |
 | **Double Free** | **Impossible** | Ownership is linear — a resource must be consumed exactly once, preventing double destruction. |
-| **Data Races** | **Impossible** | The Borrow Checker enforces exclusive mutability. Simultaneous shared + mutable borrows are rejected. |
+| **Data Races** | **Impossible** | The **Borrow Checker** enforces exclusive mutability. Simultaneous shared + mutable borrows are rejected. |
 | **Null Dereference** | **Prevented** | References are valid by construction. Raw pointer dereference requires `unsafe`. |
 | **Memory Leaks** | **Prevented** | Linear variables (`mov`) **must** be consumed. Forgetting to use or destroy a resource is a compile error. |
 | **Division by Zero** | **Prevented** | Type constraints (`b int != 0`) can enforce non-zero divisors at compile time. |
-| **Integer Overflow** | **Documented** | Signed overflow wraps (two's complement, `-fwrapv`). Unsigned overflow wraps (modular arithmetic). |
+| **Integer Overflow** | **Documented** | Signed overflow is undefined behavior (inherited from C99). Unsigned overflow wraps (modular arithmetic). See §18. |
 
 ---
 
 ## 13.1 Error Codes
 
-Compiler errors are prefixed with error codes for easy reference:
+Compiler errors are prefixed with error codes for easy reference and searchability:
 
-| Code | Category | Triggering Condition |
-|:-----|:---------|:---------------------|
-| `[E001]` | Use after move | Using a variable after it was moved |
-| `[E002]` | Unconsumed linear value | Linear variable not consumed before end of scope |
-| `[E003]` | Double move | Moving a variable that was already moved |
-| `[E004]` | Borrow conflict | Conflicting borrows (mut+shared, mut+mut) |
-| `[E005]` | Move of borrowed value | Moving a variable while it is borrowed |
-| `[E006]` | Move in loop | Moving a variable inside a loop |
-| `[E007]` | Branch inconsistency | Linear variable consumed in some branches but not others |
-| `[E008]` | Linear field error | Linear struct field not properly handled |
-| `[E009]` | Immutability violation | Assigning to an immutable variable |
-| `[E010]` | Dangling reference | `return var` of a local (doesn't outlive function) |
-| `[E011]` | Purity violation | `func` calls `proc`, uses unbounded `while`, or accesses global state |
-| `[E012]` | Type error | Type mismatch |
-| `[E013]` | Undeclared identifier | Using a variable or field that doesn't exist |
-| `[E014]` | Exhaustiveness | Non-exhaustive case: missing variant or `else` |
-| `[E015]` | Division by zero | Division by a constant zero |
-| `[E080]` | Measure non-negativity | Cannot verify measure is non-negative when condition holds |
-| `[E081]` | Measure extraction | Cannot extract variables from measure expression |
-| `[E082]` | Measure decrease | Cannot verify measure strictly decreases each iteration |
+| Code | Category | Example |
+|:-----|:---------|:--------|
+| `[E001]` | Use after move | `cannot use 'x': value was moved` |
+| `[E002]` | Unconsumed linear value | `linear variable 'handle' must be consumed` |
+| `[E003]` | Double move | `cannot move 'x': already moved` |
+| `[E004]` | Borrow conflict | `cannot mutate 'x' because it is borrowed` |
+| `[E005]` | Move of borrowed value | `cannot move 'x' while it is borrowed` |
+| `[E006]` | Move in loop | `cannot move 'x' inside a loop` |
+| `[E007]` | Branch inconsistency | `variable 'x' moved in one branch but not the other` |
+| `[E008]` | Linear field error | `struct field must be consumed` |
+| `[E009]` | Immutability violation | `cannot assign to immutable variable 'x'` |
+| `[E010]` | Dangling reference | `reference outlives its owner` |
+| `[E011]` | Purity violation | `pure function cannot call procedure` |
+| `[E012]` | Type error | `expected 'int', got 'bool'` |
+| `[E013]` | Redeclaration | `variable 'x' already declared in this scope` |
+| `[E014]` | Exhaustiveness | `non-exhaustive case: missing variant 'None'` |
+| `[E015]` | Division by zero | `division by zero detected at compile time` |
+| `[E080]` | Measure non-negativity | `cannot verify measure is non-negative when condition holds` |
+| `[E081]` | Measure extraction | `cannot extract variables from measure expression` |
+| `[E082]` | Measure decrease | `cannot verify measure strictly decreases each iteration` |
 
 Each error also includes source-line context with a caret pointing to the exact location:
 
@@ -1889,18 +1789,22 @@ Each error also includes source-line context with a caret pointing to the exact 
 
 ### 14.1 Lain → C Code Generation
 
+Lain compiles to C99 code, which is then compiled with a C compiler.
+
 ```
  .ln source → [Lain Compiler] → out.c → [C Compiler] → executable
 ```
 
-All safety checks occur during compilation. The generated C99 code contains no runtime checks.
+**C Name Mangling:**
+To prevent naming collisions with C standard libraries, Lain applies a mangling strategy to generated C code.
+Currently, this is mainly handled by prefixing library calls (e.g., `libc_printf`) and relying on user-provided macros (`-Dlibc_printf=printf`) or manual name spacing. A formalized internal mangling scheme (like `lain_module_funcName`) is planned for Phase 2.
 
 ### 14.2 Building the Compiler
 
-The Lain compiler is written in C99:
+The Lain compiler is itself written in C99:
 
 ```bash
-gcc src/main.c -o compiler -std=c99 -Wall -Wextra \
+gcc src/main.c -o src/compiler.exe -std=c99 -Wall -Wextra \
     -Wno-unused-function -Wno-unused-parameter
 ```
 
@@ -1908,29 +1812,18 @@ gcc src/main.c -o compiler -std=c99 -Wall -Wextra \
 
 ```bash
 # Step 1: Lain → C
-./compiler my_program.ln
+./compiler.exe my_program.ln
 
 # Step 2: C → Executable
-gcc out.c -o my_program -Dlibc_printf=printf -Dlibc_puts=puts -w
+gcc out.c -o my_program
 # or with cosmocc for portable binaries:
-./cosmocc/bin/cosmocc out.c -o my_program.exe -w \
-    -Dlibc_printf=printf -Dlibc_puts=puts
+./cosmocc/bin/cosmocc out.c -o my_program.exe -w
+
+# Step 3: Run
+./my_program
 ```
 
-### 14.4 C Compilation Flags
-
-When compiling the generated `out.c`:
-
-| Flag | Purpose |
-|:-----|:--------|
-| `-Dlibc_printf=printf` | Maps Lain's `libc_printf` to C's `printf` |
-| `-Dlibc_puts=puts` | Maps Lain's `libc_puts` to C's `puts` |
-| `-w` | Suppress C compiler warnings from generated code |
-
-> [!IMPORTANT]
-> The `libc_` prefix convention exists to avoid name collisions between Lain's extern declarations and C's standard library during compilation. Without these flags, the linker will report undefined symbol errors.
-
-### 14.5 Test Framework
+### 14.4 Test Framework
 
 Tests are organized under `tests/` and run via `run_tests.sh`:
 
@@ -1959,180 +1852,32 @@ Tests are organized under `tests/` and run via `run_tests.sh`:
 | `tests/safety/` (root) | 4 | Unsafe blocks, linear struct fields |
 | `tests/stdlib/` | 6 | Module system, extern, stdlib |
 
----
+### 14.5 C Compilation Flags
 
-## 15. Error Model
+When compiling the generated `out.c`, certain C preprocessor flags are needed to bridge naming differences between Lain's standard library and the underlying C library:
 
-Lain does **not** have exceptions, `try`/`catch`, or stack unwinding. All error paths are explicit through return values and ADTs.
-
-### 15.1 Error Handling Strategies
-
-| Strategy | When to use | Overhead |
-|:---------|:------------|:---------|
-| **Return codes** (`int`) | Simple pass/fail, low-level code | Zero |
-| **`Option(T)`** | Value may be absent; forces caller to handle both cases | Zero |
-| **`Result(T, E)`** | Success or failure with error info | Zero |
-| **`defer`** | Deterministic cleanup regardless of exit path | Zero |
-| **Linear types** | Prevent resource leaks at compile time | Zero |
-
-### 15.2 The `Option` and `Result` Pattern
-
-```lain
-import std.option
-import std.result
-
-type OptFile = Option(File)
-type FileResult = Result(File, int)
-
-var result = FileResult.Ok(my_file)
-case result {
-    Ok(f): write_file(f, "hello")
-    Err(code): libc_printf("Error: %d\n", code)
-}
+```bash
+# Standard compilation with cosmocc:
+./cosmocc/bin/cosmocc out.c -o program.exe -w \
+    -Dlibc_printf=printf \
+    -Dlibc_puts=puts
 ```
 
-Combined with `case` pattern matching, this provides type-safe error handling and forces the caller to acknowledge the failure path.
+**Required flags:**
+| Flag | Purpose |
+|:-----|:--------|
+| `-Dlibc_printf=printf` | Maps Lain's `libc_printf` to C's `printf` |
+| `-Dlibc_puts=puts` | Maps Lain's `libc_puts` to C's `puts` |
+| `-w` | Suppress C compiler warnings from generated code |
 
----
-
-## 16. Memory Model
-
-### 16.1 Stack Allocation
-
-All local variables, structs, and arrays in Lain are **stack-allocated** by default. There is no implicit heap allocation.
-
-```lain
-var x int = 42           // Stack-allocated integer
-var arr int[100]         // Stack-allocated array of 100 ints
-var p Point              // Stack-allocated struct
-```
-
-### 16.2 Heap Allocation
-
-Heap allocation is performed through C interop, using `malloc` and `free`:
-
-```lain
-extern proc malloc(size usize) mov *void
-extern proc free(ptr mov *void)
-
-proc main() int {
-    var ptr = malloc(1024)    // Heap allocation
-    // ... use ptr ...
-    free(mov ptr)             // Explicit deallocation
-    return 0
-}
-```
-
-Lain's ownership system tracks heap-allocated resources through `mov` annotations, preventing leaks and double-frees.
-
-### 16.3 No Garbage Collector
-
-Lain never performs automatic memory management. All resource lifetimes are statically determined at compile time via the ownership system. This guarantees:
-- **Deterministic deallocation**: Resources are freed at known, predictable points.
-- **Zero runtime overhead**: No GC pauses, no reference counting, no tracing.
-- **Embedded-friendly**: No runtime allocator needed beyond what the programmer explicitly uses.
-
----
-
-## 17. Initialization & Zero Values
-
-### 17.1 Explicit Initialization
-
-Lain requires all variables to be explicitly initialized. To deliberately leave a variable uninitialized (for performance), the programmer must assign the `undefined` keyword:
-
-```lain
-var x int = 0          // Safely initialized to 0
-var y int = undefined  // Explicitly uninitialized (contains garbage)
-```
-
-The compiler's **Definite Initialization Analysis** verifies that variables assigned `= undefined` are written before they are read on every code path.
-
-### 17.2 Struct Initialization
-
-```lain
-// All fields initialized at once (safe)
-var p = Point(10, 20)
-
-// Explicit placeholder for uninitialized field
-var q = Point(10, undefined)
-```
-
----
-
-## 18. Arithmetic Overflow
-
-| Type Category | Overflow Behavior |
-|:-------------|:------------------|
-| **Signed integers** (`int`, `i8`–`i64`, `isize`) | Two's complement wrapping (via `-fwrapv`) |
-| **Unsigned integers** (`u8`–`u64`, `usize`) | Modular arithmetic (e.g., `u8(255) + 1 → 0`) |
-| **Floating-point** (`f32`, `f64`) | IEEE 754 rules: overflow → ±infinity, underflow → 0 or denormal |
-
----
-
-## 19. Visibility & Modules
-
-### 19.1 All-Public by Default
-
-Currently, **all** top-level declarations (functions, procedures, types, global variables) are public and visible to any module that imports them. There is no `private` or module-scoped visibility.
-
-### 19.2 Future: `export` Keyword
-
-The `export` keyword is reserved for a future visibility system:
-
-```lain
-// Future vision
-export func public_api() int { return 42 }
-func internal_helper() int { return 0 }  // Not exported
-```
-
----
-
-## 20. String & Text Handling
-
-### 20.1 Byte-Oriented Strings
-
-Lain strings are **byte arrays**. The type `u8[:0]` is a null-terminated byte slice.
-
-- `.len` returns the number of **bytes** (not Unicode codepoints)
-- `.data` returns a pointer to the raw bytes
-
-```lain
-var s = "Hello"      // Type: u8[:0], .len = 5
-```
-
-### 20.2 Encoding
-
-Lain does not enforce any particular text encoding. String literals are stored as raw bytes in the source file's encoding (typically UTF-8). Multi-byte characters are represented as multiple `u8` values.
-
-```lain
-var s = "café"       // .len = 5 (4 ASCII bytes + 1 two-byte UTF-8 char)
-```
+> [!IMPORTANT]
+> The `libc_` prefix convention exists to avoid name collisions between Lain's extern declarations and C's standard library during compilation. The `-D` flags perform the final mapping. Without these flags, the linker will report undefined symbol errors.
 
 ---
 
 ## 21. Compile-Time Generics
 
-Lain uses **compile-time evaluation (CTFE)** instead of traditional generic syntax (`<T>`). Generic functions are normal `func` declarations that accept `comptime` parameters and are evaluated at compile time. The result is **monomorphized** code: each distinct set of compile-time arguments produces an independent concrete specialization.
-
-### 21.1 `comptime` Parameters
-
-```lain
-func identity(comptime T type, x T) T {
-    return x
-}
-
-func max_val(comptime T type, a T, b T) T {
-    if a > b { return a }
-    return b
-}
-
-max_val(int, 3, 5)    // generates: int max_val_int(int a, int b)
-max_val(bool, x, y)   // generates: bool max_val_bool(bool a, bool b)
-```
-
-### 21.2 Generic Types
-
-Functions that return `type` are **type constructors**:
+Lain sidesteps traditional generic syntax (`<T>`) in favor of parameterized functions where types are passed as compile-time values.
 
 ```lain
 func Option(comptime T type) type {
@@ -2142,160 +1887,35 @@ func Option(comptime T type) type {
     }
 }
 
+// Compile-time evaluation creates a concrete type alias
+type OptInt = Option(int)
+
+var a = OptInt.Some(42)
+var b = OptInt.None
+```
+
+**Monomorphization**: When a generic function is called, the compiler evaluates the type parameter at compile-time and generates a specialized version of the type (e.g. `Option_int`). Multiple instantiations with different types each produce independent concrete types.
+
+**Multiple type parameters** are supported:
+```lain
 func Result(comptime T type, comptime E type) type {
     return type {
-        Ok  { value T }
+        Ok { value T }
         Err { error E }
     }
 }
 
-// Instantiation — creates concrete type aliases
-type OptInt    = Option(int)
 type FileResult = Result(File, int)
-
-var a OptInt = OptInt.Some(42)
-var b OptInt = OptInt.None
 ```
 
-The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` (`Result(T, E)`) built on this mechanism.
+The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` (`Result(T, E)`) built on this mechanism. See §10.2.
 
 ---
 
-## 22. Complete Examples
+## Appendix A: Complete Keyword List
 
-### Hello World
-
-```lain
-import std.c
-
-proc main() int {
-    libc_printf("Hello, World!\n")
-    return 0
-}
-```
-
-### Pure Function with Bounds Checking
-
-```lain
-// Safe linear search using a for loop (i statically in [0, 9])
-func find(arr int[10], target int) int {
-    for i in 0..10 {
-        if arr[i] == target { return i }
-    }
-    return 0 - 1
-}
-
-// Safe access using in-guard
-func peek(data u8[:0], pos int) int {
-    if pos in data { return data[pos] as int }
-    return 0
-}
-```
-
-### File Handling with Ownership
-
-```lain
-import std.fs
-
-proc process() {
-    var f = open_file("log.txt", "w")
-    defer { close_file(mov f) }   // guaranteed even on early return
-
-    write_file(f, "Processing...\n")
-    // f is closed automatically here
-}
-```
-
-### ADT and Pattern Matching
-
-```lain
-type Shape {
-    Circle    { radius int }
-    Rectangle { width int, height int }
-    Point
-}
-
-func area(s Shape) int {
-    return case s {
-        Circle(r):       r * r * 314 / 100
-        Rectangle(w, h): w * h
-        Point:           0
-    }
-}
-```
-
-### Option and Result
-
-```lain
-type OptionInt  = Option(int)
-type FileResult = Result(File, int)
-
-func find_positive(arr int[10]) OptionInt {
-    for i in 0..10 {
-        if arr[i] > 0 { return OptionInt.Some(arr[i]) }
-    }
-    return OptionInt.None
-}
-
-proc main() int {
-    var arr int[10]
-    // ... fill arr ...
-
-    case find_positive(arr) {
-        Some(v): libc_printf("Found: %d\n", v)
-        None:    libc_printf("Not found\n")
-    }
-    return 0
-}
-```
-
-### Bounded While Loop in a Pure Function (Lexer)
-
-```lain
-// String length computed as a pure, provably-terminating function
-func string_length(src u8[:0]) int {
-    var i = 0
-    while i in src decreasing src.len - i {
-        i += 1
-    }
-    return i
-}
-
-// Scan for a delimiter, safe with in-guard + and-chain
-func scan_until(src u8[:0], delim u8) int {
-    var i = 0
-    while i in src and (src[i] as int) != (delim as int) decreasing src.len - i {
-        i += 1
-    }
-    return i
-}
-```
-
----
-
-## Appendix A: Type Summary
-
-| Syntax | Description | Example |
-|:-------|:------------|:--------|
-| `T` | Named/primitive type | `int`, `Point` |
-| `*T` | Shared pointer to T (read-only) | `*u8`, `*FILE` |
-| `var *T` | Mutable pointer to T | `var *int` |
-| `mov *T` | Owned pointer (linear) | `mov *FILE` |
-| `T[N]` | Fixed-size array | `int[10]`, `u8[256]` |
-| `T[]` | Slice (fat pointer) | `int[]`, `u8[]` |
-| `T[:S]` | Sentinel-terminated slice | `u8[:0]` (string) |
-| `comptime T` | Compile-time parameter | `comptime T type` |
-| `var T` | Mutable borrow / mutable param | `var int`, `var Point` |
-| `mov T` | Owned type (in params/returns) | `mov File` |
-| `type` | Meta-type (type as value) | return of generic func |
-| `*void` | Opaque pointer (like C's `void*`) | `malloc` return |
-
----
-
-## Appendix B: Complete Keyword List
-
-| Keyword | Status | Purpose |
-|:--------|:-------|:--------|
+| Keyword | Status | First Defined |
+|:--------|:-------|:--------------|
 | `and` | ✅ Implemented | Logical AND operator |
 | `as` | ✅ Implemented | Type cast operator (§8.6) |
 | `break` | ✅ Implemented | Loop exit |
@@ -2304,7 +1924,6 @@ func scan_until(src u8[:0], delim u8) int {
 | `comptime` | ✅ Implemented | Compile-time type parameters (§21) |
 | `continue` | ✅ Implemented | Loop iteration skip |
 | `decreasing` | ✅ Implemented | Termination measure for bounded `while` in `func` (§7.3) |
-| `defer` | ✅ Implemented | Deferred cleanup (§7.7) |
 | `elif` | ✅ Implemented | Else-if branch |
 | `else` | ✅ Implemented | Default branch |
 | `end` | 🔮 Reserved | — |
@@ -2347,7 +1966,7 @@ func scan_until(src u8[:0], delim u8) int {
 
 ---
 
-## Appendix C: Reserved Keywords & Future Plans
+## Appendix B: Reserved Keywords & Future Plans
 
 ### `pre` / `post` — Contract Annotations
 
@@ -2357,13 +1976,187 @@ Reserved for explicit precondition and postcondition contract blocks. Currently,
 
 Reserved for inclusive range syntax. Currently only `..` (exclusive end) is supported.
 
-### `export` — Visibility System
+---
 
-Reserved for a future module visibility system, enabling `private` declarations.
+## 15. Error Model
+
+Lain does **not** have exceptions. Error handling follows a return-value-based approach:
+
+### 15.1 Current Approach
+
+Functions signal errors through return values:
+
+```lain
+proc open_file(path u8[:0], mode u8[:0]) mov File {
+    var raw = fopen(path.data, mode.data)
+    // TODO: raw could be NULL — no way to signal failure yet
+    return File(raw)
+}
+```
+
+The caller is responsible for checking return values. For `int`-returning functions, error codes (e.g., `-1` for failure, `0` for success) are the standard pattern.
+
+### 15.2 The `Option` and `Result` Pattern
+
+Lain formalizes error handling through algebraic data types using compile-time generics:
+
+```lain
+import std.option
+import std.result
+
+type OptFile = Option(File)
+type FileResult = Result(File, int)
+```
+
+Combined with `case` pattern matching, this provides type-safe error handling without exceptions and forces the caller to acknowledge the failure path:
+
+```lain
+var result = FileResult.Ok(my_file)
+case result {
+    Ok(f): write_file(f, "hello")
+    Err(code): libc_printf("Error: %d\n", code)
+}
+```
+
+See `std/option.ln` and `std/result.ln` in §10.2 for full usage examples.
 
 ---
 
-## Appendix D: Grammar Summary (Pseudo-BNF)
+## 16. Memory Model
+
+### 16.1 Stack Allocation
+
+All local variables, structs, and arrays in Lain are **stack-allocated**. There is no implicit heap allocation.
+
+```lain
+var x int = 42           // Stack-allocated integer
+var arr int[100]         // Stack-allocated array of 100 ints
+var p Point              // Stack-allocated struct
+```
+
+### 16.2 Heap Allocation
+
+Heap allocation is performed through C interop, using `malloc` and `free`:
+
+```lain
+extern proc malloc(size usize) mov *void
+extern proc free(ptr mov *void)
+
+proc main() int {
+    var ptr = malloc(1024)    // Heap allocation
+    // ... use ptr ...
+    free(mov ptr)             // Explicit deallocation
+    return 0
+}
+```
+
+Lain's ownership system tracks heap-allocated resources through `mov` annotations, preventing leaks and double-frees.
+
+### 16.3 No Garbage Collector
+
+Lain never performs automatic memory management. All resource lifetimes are statically determined at compile time via the ownership system. This guarantees:
+- **Deterministic deallocation**: Resources are freed at known, predictable points.
+- **Zero runtime overhead**: No GC pauses, no reference counting, no tracing.
+- **Embedded-friendly**: No runtime allocator needed beyond what the programmer explicitly uses.
+
+> [!NOTE]
+> Future versions may include an optional arena/pool allocator in the standard library, but this will always be explicit — never implicit.
+
+---
+
+## 17. Initialization & Zero Values
+
+### 17.1 Uninitialized Variables
+
+By specification, Lain requires all variables to be explicitly initialized. To deliberately leave a variable uninitialized (for performance reasons), the programmer must assign the explicit `undefined` keyword.
+
+```lain
+var x int = 0          // Safely initialized to 0
+var y int = undefined  // Explicitly uninitialized (contains garbage)
+var p = Point(10, undefined) // Explicitly uninitialized field 
+```
+
+> [!WARNING]
+> The compiler strictly enforces **Definite Initialization Analysis**. If a variable is declared with `= undefined`, the compiler flow-sensitively tracks whether it is assigned a value before it is read. Any attempt to read an uninitialized variable on any code path results in a hard compilation error. Immutable bindings cannot be initialized with `undefined`.
+
+### 17.2 Struct Initialization
+
+Structs can be initialized via positional construction (which initializes all fields) or explicit field-by-field assignment:
+
+```lain
+// All fields initialized at once (safe)
+var p = Point(10, 20)
+
+// Explicit placeholder for Uninitialized
+var q = Point(10, undefined) 
+```
+
+Partial initialization without explicitly acknowledging uninitialized fields via `undefined` violates the language specification and will be a hard compilation error in Phase 2.
+
+---
+
+## 18. Arithmetic Overflow
+
+Lain's arithmetic follows C99 semantics:
+
+| Type Category | Overflow Behavior |
+|:-------------|:------------------|
+| **Signed integers** (`int`, `i8`–`i64`, `isize`) | **Undefined behavior** (inherited from C99) |
+| **Unsigned integers** (`u8`–`u64`, `usize`) | **Wrapping** (modular arithmetic, e.g., `u8(255) + 1 → 0`) |
+| **Floating-point** (`f32`, `f64`) | IEEE 754 rules: overflow → ±infinity, underflow → 0 or denormal |
+
+> [!WARNING]
+> Signed integer overflow in Lain results in Two's Complement wrap-around. The C backend is always compiled with `-fwrapv` to guarantee this behavior. This is consistent with §3.1.
+
+---
+
+## 19. Visibility & Modules
+
+### 19.1 All-Public by Default
+
+Currently, **all** top-level declarations (functions, procedures, types, global variables) are public and visible to any module that imports them. There is no `private` or module-scoped visibility.
+
+### 19.2 Future: `export` Keyword
+
+The `export` keyword is reserved for a future visibility system:
+
+```lain
+// Future vision
+export func public_api() int { return 42 }
+func internal_helper() int { return 0 }  // Not exported
+```
+
+Until `export` is implemented, all declarations are implicitly exported.
+
+---
+
+## 20. String & Text Handling
+
+### 20.1 Byte-Oriented Strings
+
+Lain strings are **byte arrays**, not character arrays. The type `u8[:0]` is a null-terminated byte slice.
+
+- `.len` returns the number of **bytes** (not Unicode codepoints)
+- `.data` returns a pointer to the raw bytes
+
+```lain
+var s = "Hello"      // Type: u8[:0], .len = 5
+```
+
+### 20.2 Encoding
+
+Lain does not enforce any particular text encoding. String literals are stored as raw bytes in the source file's encoding (typically UTF-8). Multi-byte characters are represented as multiple `u8` values.
+
+```lain
+var s = "café"       // .len = 5 (4 ASCII bytes + 1 two-byte UTF-8 char)
+```
+
+> [!NOTE]
+> Lain provides no built-in Unicode processing. String manipulation operates on raw bytes. Libraries for UTF-8 handling could be built using `extern` bindings to C libraries.
+
+---
+
+## Appendix C: Grammar Summary (Pseudo-BNF)
 
 ```
 program         = { top_level_decl } ;
@@ -2394,10 +2187,10 @@ constraints     = constraint { "and" constraint } ;
 constraint      = ("!=" | "==" | "<" | ">" | "<=" | ">=") expr
                 | "in" IDENT ;
 
-type_expr       = IDENT                      (* named type *)
-                | "*" type_expr              (* pointer *)
-                | type_expr "[" NUMBER "]"   (* array *)
-                | type_expr "[" "]"          (* slice *)
+type_expr       = IDENT                    (* named type *)
+                | "*" type_expr            (* pointer *)
+                | type_expr "[" NUMBER "]" (* array *)
+                | type_expr "[" "]"        (* slice *)
                 | type_expr "[" ":" expr "]" (* sentinel slice *) ;
 
 block           = "{" { statement } "}" ;
@@ -2419,13 +2212,11 @@ continue_stmt   = "continue" ;
 
 if_stmt         = "if" expr block { "elif" expr block } [ "else" block ] ;
 for_stmt        = "for" IDENT ["," IDENT] "in" expr ".." expr block ;
-while_stmt      = "while" expr [ "decreasing" expr ] block ;
+while_stmt      = "while" expr [ "decreasing" expr ] block ; (* unbounded: proc only; with decreasing: also in func *)
 
 case_stmt       = "case" ["&"] expr "{" { case_arm } "}" ;
 case_arm        = pattern ":" (expr | block) ;
 pattern         = IDENT [ "(" pattern_list ")" ]
-                | NUMBER | CHAR_LITERAL
-                | NUMBER ".." NUMBER
                 | "else" ;
 
 unsafe_block    = "unsafe" block ;
@@ -2438,7 +2229,7 @@ expr            = literal | IDENT | expr binop expr | unop expr
 
 binop           = "+" | "-" | "*" | "/" | "%" | "==" | "!="
                 | "<" | ">" | "<=" | ">=" | "in" | "and" | "or"
-                | "&" | "|" | "^" | "<<" | ">>" ;
+                | "&" | "|" | "^" ;
 
 unop            = "-" | "!" | "~" | "*" ;
 
