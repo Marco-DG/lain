@@ -6,9 +6,10 @@ import { usePathname } from 'next/navigation';
 import styles from './NaviShell.module.css';
 
 interface SidebarProps {
+    statusLines?: string[];
 }
 
-export default function Sidebar({}: SidebarProps) {
+export default function Sidebar({ statusLines }: SidebarProps) {
     const pathname = usePathname();
 
     const isLinkActive = (href: string) => {
@@ -24,40 +25,53 @@ export default function Sidebar({}: SidebarProps) {
                         <h1 className={styles.logo}>[ sys.lain ]</h1>
                     </Link>
                     <div className={styles.logoMetadata}>
+                        <span>PROTOCOL: V3.3</span>
+                        <span>SIG: 0XLAIN</span>
                     </div>
                 </div>
 
                 <nav className={styles.navLinks}>
                     <div className={`${styles.navGroup} ${isLinkActive('/overview') ? styles.navGroupActive : ''}`}>
+                        <span className={styles.navLabel}>SEC_01 . CORE</span>
                         <Link href="/overview" className={`${styles.navLink} ${isLinkActive('/overview') ? styles.navLinkActive : ''}`}>
                             OVERVIEW
                         </Link>
                     </div>
 
                     <div className={`${styles.navGroup} ${isLinkActive('/docs') ? styles.navGroupActive : ''}`}>
+                        <span className={styles.navLabel}>SEC_02 . DOCS</span>
                         <Link href="/docs" className={`${styles.navLink} ${isLinkActive('/docs') ? styles.navLinkActive : ''}`}>
                             DOCUMENTATION
                         </Link>
                     </div>
 
                     <div className={styles.navGroup}>
+                        <span className={styles.navLabel}>SEC_03 . REPO</span>
                         <a className={styles.navLink} href="https://github.com/Marco-DG/lain" target="_blank" rel="noopener noreferrer">
-                            GITHUB <span className={styles.externalIcon}>↗</span>
+                            SOURCE_CODE
                         </a>
                     </div>
 
                     <div className={`${styles.navGroup} ${isLinkActive('/install') ? styles.navGroupActive : ''}`} style={{ marginTop: '2rem' }}>
+                        <span className={styles.navLabel}>SYS_EXEC . INSTALL</span>
                         <Link href="/install" className={`${styles.navLink} ${isLinkActive('/install') ? styles.navLinkActive : ''}`} style={{ color: 'var(--accent-teal)' }}>
                             INSTALL_LAIN
                         </Link>
                     </div>
                 </nav>
 
+                {statusLines && statusLines.length > 0 && (
+                    <div className={styles.sysStatus}>
+                        {statusLines.map((line, i) => (
+                            <div key={i}>{line}</div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             <div className={styles.sidebarBottom}>
                 <div className={styles.dataLine}></div>
-                <span className={styles.buildInfo}>2026.03.10</span>
+                <span className={styles.buildInfo}>BUILD: 2026.03.10 // WIRED</span>
             </div>
         </aside>
     );

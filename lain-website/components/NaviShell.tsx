@@ -6,9 +6,10 @@ import Sidebar from './Sidebar';
 
 interface NaviShellProps {
     children: React.ReactNode;
+    statusLines?: string[];
 }
 
-export default function NaviShell({ children }: NaviShellProps) {
+export default function NaviShell({ children, statusLines }: NaviShellProps) {
     return (
         <>
             <div className={styles.noise}></div>
@@ -18,7 +19,7 @@ export default function NaviShell({ children }: NaviShellProps) {
 
             <main className={styles.container}>
                 <div className={styles.naviShell}>
-                    <Sidebar />
+                    <Sidebar statusLines={statusLines} />
                     {children}
                 </div>
             </main>
