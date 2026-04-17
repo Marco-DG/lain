@@ -1,18 +1,12 @@
 import NaviShell from "@/components/NaviShell";
 import DocViewer from "@/components/DocViewer";
-import { docData } from "./docData";
+import { parseReadme } from "./readmeParser";
 
 export default function Documentation() {
-    const statusLines = [
-        "DOC_SECTOR ACCESSED",
-        "FULL_SPEC_V0.1.0_LOADED",
-        "[ AUTH_REFERENCE_MODE ]",
-        "TECHNICAL_REFERENCE: ACTIVE"
-    ];
-
+    const data = parseReadme();
     return (
-        <NaviShell statusLines={statusLines}>
-            <DocViewer data={docData} />
+        <NaviShell>
+            <DocViewer data={data} />
         </NaviShell>
     );
 }
