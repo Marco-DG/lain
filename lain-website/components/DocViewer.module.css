@@ -282,6 +282,290 @@
 .str  { color: #888888; font-style: italic; }
 .com  { color: var(--text-muted); font-style: italic; }
 
+/* DocViewer.module.css */
+
+/* ── Column 2: Scrollable content ─────────────────────────────────────────── */
+.container {
+    height: 100%;
+    overflow-y: auto;
+    padding: 4rem 5rem;
+}
+
+.document {
+    max-width: 1000px;
+    margin: 0 auto 6rem auto;
+}
+
+/* ── Section wrappers ──────────────────────────────────────────────────────── */
+.section {
+    margin-bottom: 0.5rem;
+}
+
+.level1 {
+    margin-top: 6rem;
+    padding-bottom: 0.5rem;
+}
+
+.level2 {
+    margin-top: 3.5rem;
+}
+
+.level3 {
+    margin-top: 2rem;
+}
+
+/* ── Headings ──────────────────────────────────────────────────────────────── */
+
+/* h1: identical to SpecViewer .title */
+.h1 {
+    font-family: var(--font-main);
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--text-main);
+    border-bottom: 1px solid var(--text-muted);
+    padding-bottom: 1rem;
+    margin-bottom: 2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+/* h2: subsection — slightly smaller, same family */
+.h2 {
+    font-family: var(--font-main);
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: var(--text-main);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border-bottom: 1px solid var(--border-main);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+/* h3: sub-subsection — monospace teal label */
+.h3 {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--accent-teal);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 1rem;
+}
+
+/* ── Content prose — identical to SpecViewer .content ─────────────────────── */
+.content {
+    font-family: var(--font-serif);
+    font-size: 1.4rem;
+    line-height: 1.8;
+    color: var(--text-main);
+    text-align: justify;
+    hyphens: auto;
+    margin-bottom: 2rem;
+}
+
+.content p {
+    margin-bottom: 1.5rem;
+}
+
+.content b,
+.content strong {
+    font-weight: 600;
+}
+
+/* ── Inline code ───────────────────────────────────────────────────────────── */
+.content code {
+    background: var(--bg-secondary);
+    color: var(--accent-sepia);
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+}
+
+/* ── Non-Lain code blocks (bash/shell stay inline) ─────────────────────────── */
+.content pre {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-main);
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    color: #dcdcdc;
+    line-height: 1.6;
+    position: relative;
+}
+
+.content pre[data-lang]::before {
+    content: attr(data-lang);
+    position: absolute;
+    top: 0;
+    right: 0;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.6rem;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.content pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    border-radius: 0;
+    font-size: inherit;
+}
+
+/* ── Tables — identical to SpecViewer ──────────────────────────────────────── */
+.content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 2rem 0;
+    font-size: 1.1rem;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    border: 1px solid var(--text-muted);
+}
+
+.content th {
+    background: rgba(13, 148, 136, 0.05);
+    color: var(--accent-teal);
+    text-align: left;
+    padding: 1rem;
+    border: 1px solid var(--text-muted);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+}
+
+.content td {
+    padding: 1rem;
+    border: 1px solid var(--text-muted);
+    vertical-align: top;
+}
+
+/* ── Alert blocks ──────────────────────────────────────────────────────────── */
+.content blockquote {
+    margin: 2rem 0;
+    padding: 1.2rem 1.5rem;
+    background: rgba(13, 148, 136, 0.04);
+    border-left: 3px solid var(--accent-teal);
+    font-family: var(--font-main);
+    font-size: 1rem;
+    color: var(--text-dim);
+}
+
+.content blockquote strong {
+    display: block;
+    margin-bottom: 0.3rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 0.75rem;
+    color: var(--accent-teal);
+}
+
+.content blockquote p {
+    margin-bottom: 0.4rem;
+    text-align: left;
+    font-size: 1rem;
+    font-family: var(--font-main);
+    line-height: 1.65;
+}
+
+.content blockquote p:last-child { margin-bottom: 0; }
+
+.content blockquote[data-type="warning"] {
+    background: rgba(197, 166, 138, 0.04);
+    border-left-color: var(--accent-sepia);
+}
+.content blockquote[data-type="warning"] strong { color: var(--accent-sepia); }
+
+.content blockquote[data-type="important"] {
+    background: rgba(139, 92, 246, 0.04);
+    border-left-color: var(--accent-purple);
+}
+.content blockquote[data-type="important"] strong { color: var(--accent-purple); }
+
+/* ── Lists ─────────────────────────────────────────────────────────────────── */
+.content ul,
+.content ol {
+    margin-bottom: 1.5rem;
+    padding-left: 1.8rem;
+}
+
+.content li {
+    margin-bottom: 0.4rem;
+    font-family: var(--font-serif);
+    font-size: 1.4rem;
+    color: var(--text-main);
+    line-height: 1.75;
+}
+
+/* ── h4 sub-headings (#### inside body) ────────────────────────────────────── */
+.content h4 {
+    font-size: 0.95rem;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--accent-sepia);
+    margin: 2rem 0 0.8rem 0;
+    border-bottom: 1px dashed var(--border-main);
+    padding-bottom: 0.3rem;
+}
+
+/* ── Column 3: Code Panel — identical to SpecViewer ───────────────────────── */
+.codePanel {
+    background-color: #030204;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.codeScroll {
+    overflow-y: auto;
+    padding: 2.5rem 2rem;
+    flex: 1;
+}
+
+.codeBlockContainer {
+    animation: fadeInCode 0.3s ease-out;
+}
+
+@keyframes fadeInCode {
+    from { opacity: 0; transform: translateX(10px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+.codeBlockContainer pre {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    line-height: 1.6;
+    color: #dcdcdc;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-main);
+    padding: 1.5rem;
+    white-space: pre-wrap;
+}
+
+.noCode {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    font-size: 1rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    opacity: 0.5;
+}
+
+/* ── Syntax highlighting — identical to SpecViewer ────────────────────────── */
+.kw   { color: var(--accent-purple); font-weight: bold; }
+.type { color: var(--accent-sepia); }
+.str  { color: #888888; font-style: italic; }
+.com  { color: var(--text-muted); font-style: italic; }
+
 /* ── Responsive ────────────────────────────────────────────────────────────── */
 @media (max-width: 1400px) {
     .container { padding: 4rem 3rem; }
@@ -289,5 +573,15 @@
 
 @media (max-width: 1024px) {
     .codePanel { display: none; }
-    .container { padding: 3rem 2rem; }
+    
+    .container { 
+        padding: 3rem 2rem; 
+        height: auto;
+        overflow: visible;
+    }
+}
+
+@media (max-width: 768px) {
+    .h1 { font-size: 2.5rem; }
+    .h2 { font-size: 1.8rem; }
 }

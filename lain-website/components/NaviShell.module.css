@@ -246,9 +246,15 @@
 }
 
 @media (max-width: 1024px) {
+    .container {
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
+    }
+
     .naviShell {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto 1fr 1fr;
+        display: flex;
+        flex-direction: column;
         height: auto;
         max-height: none;
         overflow: visible;
@@ -256,6 +262,11 @@
 
     .naviShell::after {
         display: none;
+    }
+
+    .sidebar {
+        height: auto;
+        padding: 2rem 1.5rem;
     }
 
     .sidebar,
@@ -268,6 +279,6 @@
 
     .noise,
     .scanlines {
-        position: absolute;
+        position: fixed;
     }
 }

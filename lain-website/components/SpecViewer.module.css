@@ -12,15 +12,8 @@
 }
 
 @keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
 .title {
@@ -108,24 +101,10 @@
 }
 
 /* Syntax Highlighting */
-.kw {
-    color: var(--accent-purple);
-    font-weight: bold;
-}
-
-.type {
-    color: var(--accent-sepia);
-}
-
-.str {
-    color: #888888;
-    font-style: italic;
-}
-
-.com {
-    color: var(--text-muted);
-    font-style: italic;
-}
+.kw { color: var(--accent-purple); font-weight: bold; }
+.type { color: var(--accent-sepia); }
+.str { color: #888888; font-style: italic; }
+.com { color: var(--text-muted); font-style: italic; }
 
 /* Table Styling for Documentation */
 .content table {
@@ -193,14 +172,8 @@
 }
 
 @keyframes fadeInCode {
-    from {
-        opacity: 0;
-        transform: translateX(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
+    from { opacity: 0; transform: translateX(10px); }
+    to   { opacity: 1; transform: translateX(0); }
 }
 
 .codeBlockContainer pre {
@@ -224,4 +197,24 @@
     align-items: center;
     height: 100%;
     opacity: 0.5;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────────── */
+@media (max-width: 1400px) {
+    .container { padding: 4rem 3rem; }
+}
+
+@media (max-width: 1024px) {
+    .codePanel { display: none; }
+    
+    .container { 
+        padding: 3rem 2rem; 
+        height: auto;
+        overflow: visible;
+    }
+}
+
+@media (max-width: 768px) {
+    .title { font-size: 1.8rem; }
+    .content { font-size: 1.2rem; }
 }
