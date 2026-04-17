@@ -41,14 +41,8 @@ export default function Sidebar({ statusLines }: SidebarProps) {
 
                     <div className={styles.navGroup}>
                         <a className={styles.navLink} href="https://github.com/Marco-DG/lain" target="_blank" rel="noopener noreferrer">
-                            SOURCE_CODE
+                            GITHUB <span style={{ fontSize: '0.8em', verticalAlign: 'middle', opacity: 0.7 }}>↗</span>
                         </a>
-                    </div>
-
-                    <div className={`${styles.navGroup} ${isLinkActive('/install') ? styles.navGroupActive : ''}`} style={{ marginTop: '2rem' }}>
-                        <Link href="/install" className={`${styles.navLink} ${isLinkActive('/install') ? styles.navLinkActive : ''}`} style={{ color: 'var(--accent-teal)' }}>
-                            INSTALL_LAIN
-                        </Link>
                     </div>
                 </nav>
 
