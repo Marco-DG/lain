@@ -108,7 +108,6 @@
 /* --- RIGHT PANEL --- */
 .codePanel {
   background-color: #030204;
-  border-left: 1px solid var(--border-active);
   display: flex;
   flex-direction: column;
 }

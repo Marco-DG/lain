@@ -1,12 +1,13 @@
 /* SpecViewer.module.css */
 .container {
+    height: 100%;
+    overflow-y: auto;
     padding: 4rem 5rem;
-    max-width: 1000px;
-    margin: 0 auto;
 }
 
 .chapter {
-    margin-bottom: 6rem;
+    max-width: 1000px;
+    margin: 0 auto 6rem auto;
     animation: fadeIn 0.5s ease-out;
 }
 
@@ -67,6 +68,9 @@
     margin-top: 5rem;
     padding-top: 2rem;
     border-top: 1px solid var(--text-muted);
+    max-width: 1000px;
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .navButton {

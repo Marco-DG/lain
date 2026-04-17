@@ -88,6 +88,19 @@
     z-index: 10;
 }
 
+/* Persistent separator for the 3rd column */
+.naviShell::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 600px;
+    width: 1px;
+    height: 100%;
+    background-color: var(--border-active);
+    z-index: 20;
+    pointer-events: none;
+}
+
 /* --- SIDEBAR --- */
 .sidebar {
     border-right: 1px solid var(--border-main);
@@ -96,8 +109,8 @@
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    overflow-y: auto;
     height: 100%;
+    overflow: hidden;
 }
 
 .sidebarTop {
@@ -212,6 +225,10 @@
     .naviShell {
         grid-template-columns: 250px 1fr 500px;
     }
+
+    .naviShell::after {
+        right: 500px;
+    }
 }
 
 @media (max-width: 1024px) {
@@ -221,6 +238,10 @@
         height: auto;
         max-height: none;
         overflow: visible;
+    }
+
+    .naviShell::after {
+        display: none;
     }
 
     .sidebar,
