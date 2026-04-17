@@ -1,4 +1,4 @@
-/* DocViewer.module.css — mirrors SpecViewer layout */
+/* DocViewer.module.css */
 
 /* ── Column 2: Scrollable content ─────────────────────────────────────────── */
 .container {
@@ -8,103 +8,109 @@
 }
 
 .document {
-    max-width: 1000px;
+    max-width: 820px;
     margin: 0 auto 6rem auto;
 }
 
 /* ── Section wrappers ──────────────────────────────────────────────────────── */
 .section {
-    margin-bottom: 1rem;
+    margin-bottom: 0.5rem;
 }
 
 .level1 {
-    margin-top: 6rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--text-muted);
+    margin-top: 5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-main);
 }
 
 .level2 {
-    margin-top: 4rem;
+    margin-top: 3rem;
 }
 
 .level3 {
-    margin-top: 2rem;
+    margin-top: 1.8rem;
 }
 
 /* ── Headings ──────────────────────────────────────────────────────────────── */
 .h1 {
     font-family: var(--font-main);
-    font-size: 2.5rem;
+    font-size: 1.9rem;
     font-weight: 700;
     color: var(--text-main);
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    padding-bottom: 1rem;
-    margin-bottom: 2rem;
-}
-
-.h2 {
-    font-family: var(--font-main);
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: var(--text-main);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    border-bottom: 1px solid var(--text-muted);
+    letter-spacing: 0.12em;
     padding-bottom: 0.8rem;
     margin-bottom: 1.5rem;
 }
 
+.h2 {
+    font-family: var(--font-main);
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--text-main);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border-bottom: 1px solid var(--border-main);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.2rem;
+}
+
 .h3 {
     font-family: var(--font-mono);
-    font-size: 1rem;
+    font-size: 0.85rem;
     color: var(--accent-teal);
     text-transform: uppercase;
     letter-spacing: 2px;
-    margin-bottom: 1rem;
+    margin-bottom: 0.8rem;
+    opacity: 0.85;
 }
 
 /* ── Content prose ─────────────────────────────────────────────────────────── */
 .content {
     font-family: var(--font-serif);
-    font-size: 1.4rem;
-    line-height: 1.8;
-    color: var(--text-main);
-    text-align: justify;
-    hyphens: auto;
-    margin-bottom: 2rem;
+    font-size: 1.25rem;
+    line-height: 1.75;
+    color: var(--text-dim);
+    margin-bottom: 1.5rem;
 }
 
 .content p {
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.2rem;
 }
 
 .content b,
 .content strong {
     font-weight: 600;
+    color: var(--text-main);
+}
+
+.content em {
+    color: var(--text-main);
+    font-style: italic;
 }
 
 /* ── Inline code ───────────────────────────────────────────────────────────── */
 .content code {
-    background: var(--bg-secondary);
-    color: var(--accent-sepia);
-    padding: 0.15rem 0.4rem;
-    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #c8c8c8;
+    padding: 0.1rem 0.35rem;
+    border-radius: 2px;
     font-family: var(--font-mono);
-    font-size: 0.88em;
+    font-size: 0.82em;
+    border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 /* ── Non-Lain code blocks (bash/shell stay inline) ─────────────────────────── */
 .content pre {
-    background: rgba(255, 255, 255, 0.02);
+    background: rgba(255, 255, 255, 0.025);
     border: 1px solid var(--border-main);
-    padding: 1.2rem 1.5rem;
-    margin: 1.5rem 0;
+    padding: 1rem 1.3rem;
+    margin: 1.2rem 0;
     overflow-x: auto;
     font-family: var(--font-mono);
-    font-size: 1rem;
-    color: #dcdcdc;
-    line-height: 1.6;
+    font-size: 0.9rem;
+    color: #b0b0b0;
+    line-height: 1.55;
     position: relative;
 }
 
@@ -115,7 +121,7 @@
     right: 0;
     padding: 0.1rem 0.5rem;
     font-size: 0.6rem;
-    background: var(--bg-secondary);
+    background: rgba(255, 255, 255, 0.04);
     color: var(--text-muted);
     font-family: var(--font-mono);
     text-transform: uppercase;
@@ -126,6 +132,7 @@
     background: none;
     color: inherit;
     padding: 0;
+    border: none;
     border-radius: 0;
     font-size: inherit;
 }
@@ -134,38 +141,44 @@
 .content table {
     width: 100%;
     border-collapse: collapse;
-    margin: 2rem 0;
-    font-size: 1rem;
+    margin: 1.5rem 0;
+    font-size: 0.85rem;
     font-family: var(--font-mono);
     color: var(--text-dim);
-    border: 1px solid var(--text-muted);
+    border: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .content th {
-    background: rgba(13, 148, 136, 0.05);
-    color: var(--accent-teal);
+    background: rgba(13, 148, 136, 0.06);
+    color: var(--text-muted);
     text-align: left;
-    padding: 0.8rem 1rem;
-    border: 1px solid var(--text-muted);
-    font-size: 0.85rem;
+    padding: 0.55rem 0.9rem;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 0.7rem;
     text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
 }
 
 .content td {
-    padding: 0.8rem 1rem;
-    border: 1px solid var(--text-muted);
+    padding: 0.55rem 0.9rem;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     vertical-align: top;
-    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+.content td code {
+    font-size: 0.9em;
 }
 
 /* ── Alert blocks ──────────────────────────────────────────────────────────── */
 .content blockquote {
-    margin: 2rem 0;
-    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+    padding: 1rem 1.3rem;
     background: rgba(13, 148, 136, 0.04);
-    border-left: 3px solid var(--accent-teal);
+    border-left: 2px solid var(--accent-teal);
     font-family: var(--font-main);
-    font-size: 1rem;
+    font-size: 0.95rem;
     color: var(--text-dim);
 }
 
@@ -174,15 +187,15 @@
     margin-bottom: 0.3rem;
     text-transform: uppercase;
     letter-spacing: 1px;
-    font-size: 0.75rem;
+    font-size: 0.65rem;
     color: var(--accent-teal);
 }
 
 .content blockquote p {
-    margin-bottom: 0.4rem;
-    text-align: left;
-    font-size: 1rem;
+    margin-bottom: 0.35rem;
+    font-size: 0.95rem;
     font-family: var(--font-main);
+    line-height: 1.6;
 }
 
 .content blockquote p:last-child { margin-bottom: 0; }
@@ -202,30 +215,32 @@
 /* ── Lists ─────────────────────────────────────────────────────────────────── */
 .content ul,
 .content ol {
-    margin-bottom: 1.5rem;
-    padding-left: 1.8rem;
+    margin-bottom: 1.2rem;
+    padding-left: 1.5rem;
 }
 
 .content li {
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.3rem;
     font-family: var(--font-serif);
-    font-size: 1.4rem;
-    color: var(--text-main);
+    font-size: 1.25rem;
+    color: var(--text-dim);
+    line-height: 1.65;
 }
 
 /* ── h4 sub-headings (#### inside body) ────────────────────────────────────── */
 .content h4 {
-    font-size: 0.95rem;
+    font-size: 0.78rem;
     font-family: var(--font-mono);
     text-transform: uppercase;
     letter-spacing: 1.5px;
     color: var(--accent-sepia);
-    margin: 2rem 0 0.8rem 0;
-    border-bottom: 1px dashed var(--border-main);
+    margin: 1.8rem 0 0.6rem 0;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
     padding-bottom: 0.3rem;
+    opacity: 0.85;
 }
 
-/* ── Column 3: Code Panel — identical to SpecViewer ───────────────────────── */
+/* ── Column 3: Code Panel ──────────────────────────────────────────────────── */
 .codePanel {
     background-color: #030204;
     display: flex;
@@ -251,9 +266,9 @@
 .codeBlockContainer pre {
     margin: 0;
     font-family: var(--font-mono);
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     line-height: 1.6;
-    color: #dcdcdc;
+    color: #c8c8c8;
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid var(--border-main);
     padding: 1.5rem;
@@ -263,26 +278,26 @@
 .noCode {
     font-family: var(--font-mono);
     color: var(--text-muted);
-    font-size: 1rem;
+    font-size: 0.9rem;
     display: flex;
     justify-content: center;
     align-items: center;
     height: 100%;
-    opacity: 0.5;
+    opacity: 0.4;
 }
 
-/* ── Syntax highlighting (same palette as SpecViewer) ──────────────────────── */
-.kw   { color: var(--accent-purple); font-weight: bold; }
-.type { color: var(--accent-sepia); }
-.str  { color: #888888; font-style: italic; }
-.com  { color: var(--text-muted); font-style: italic; }
+/* ── Syntax highlighting ───────────────────────────────────────────────────── */
+.kw   { color: #a78bfa; font-weight: bold; }
+.type { color: #c5a68a; }
+.str  { color: #6b7280; font-style: italic; }
+.com  { color: #3d4450; font-style: italic; }
 
 /* ── Responsive ────────────────────────────────────────────────────────────── */
 @media (max-width: 1400px) {
-    .container { padding: 4rem 3rem; }
+    .container { padding: 3.5rem 3.5rem; }
 }
 
 @media (max-width: 1024px) {
     .codePanel { display: none; }
-    .container { padding: 3rem 2rem; }
+    .container { padding: 2.5rem 1.8rem; }
 }

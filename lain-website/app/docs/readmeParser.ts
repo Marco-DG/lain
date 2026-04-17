@@ -32,6 +32,7 @@ function inlineFormat(text: string): string {
     text = escHtml(text);
     text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     text = text.replace(/(?<!\*)\*([^*\x00]+)\*(?!\*)/g, '<em>$1</em>');
+    text = text.replace(/\\\|/g, '|');
     text = text.replace(/\x00(\d+)\x00/g, (_, i) => fragments[parseInt(i)]);
     return text;
 }
@@ -41,8 +42,11 @@ function inlineFormat(text: string): string {
 function buildTable(tableLines: string[]): string {
     const rows = tableLines.filter(l => !/^\s*\|[\s\-:|]+\|\s*$/.test(l));
     if (rows.length === 0) return '';
+    // Protect escaped pipes (\|) before splitting on |, then restore
     const parseCells = (line: string) =>
-        line.split('|').slice(1, -1).map(c => c.trim());
+        line.replace(/\\\|/g, '\x01')
+            .split('|').slice(1, -1)
+            .map(c => c.trim().replace(/\x01/g, '|'));
     const [header, ...body] = rows;
     const ths = parseCells(header).map(c => `<th>${inlineFormat(c)}</th>`).join('');
     const trs = body.map(row =>
