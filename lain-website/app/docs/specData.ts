@@ -13,24 +13,29 @@ proc main() {
     {
         id: "lexical",
         title: "01 — Lexical Structure",
-        content: `Lain source files are UTF-8 encoded. The language supports line (//) and nested block (/* */) comments. Semicolons are optional, as newlines serve as implicit statement terminators.
+        content: `
+        <section data-code="${encodeURIComponent('// Line comment\n/* Nested /* block */ comment */\n\nvar x = 42\ny = "Lain System" // Implicit semicolon')}">
+            Lain source files are UTF-8 encoded. The language supports line (//) and nested block (/* */) comments. Semicolons are optional, as newlines serve as implicit statement terminators.
+        </section>
         <br><br>
-        <b>Core Keywords:</b>
-        <table>
-            <thead>
-                <tr><th>Keyword</th><th>Purpose</th></tr>
-            </thead>
-            <tbody>
-                <tr><td><code>var</code></td><td>Mutable variable declaration</td></tr>
-                <tr><td><code>mov</code></td><td>Ownership transfer (move semantics)</td></tr>
-                <tr><td><code>type</code></td><td>Type definition (structs, ADTs)</td></tr>
-                <tr><td><code>func</code></td><td>Pure function declaration</td></tr>
-                <tr><td><code>proc</code></td><td>Procedure declaration (side effects)</td></tr>
-                <tr><td><code>case</code></td><td>Pattern matching</td></tr>
-                <tr><td><code>unsafe</code></td><td>Unsafe block escape hatch</td></tr>
-                <tr><td><code>defer</code></td><td>LIFO resource cleanup</td></tr>
-            </tbody>
-        </table>`,
+        <section data-code="${encodeURIComponent('// Keywords demonstration\ntype File { mov handle int }\n\nproc main() {\n    var f = open_file("test.txt")\n    defer close_file(mov f)\n}')}">
+            <b>Core Keywords:</b>
+            <table>
+                <thead>
+                    <tr><th>Keyword</th><th>Purpose</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>var</code></td><td>Mutable variable declaration</td></tr>
+                    <tr><td><code>mov</code></td><td>Ownership transfer (move semantics)</td></tr>
+                    <tr><td><code>type</code></td><td>Type definition (structs, ADTs)</td></tr>
+                    <tr><td><code>func</code></td><td>Pure function declaration</td></tr>
+                    <tr><td><code>proc</code></td><td>Procedure declaration (side effects)</td></tr>
+                    <tr><td><code>case</code></td><td>Pattern matching</td></tr>
+                    <tr><td><code>unsafe</code></td><td>Unsafe block escape hatch</td></tr>
+                    <tr><td><code>defer</code></td><td>LIFO resource cleanup</td></tr>
+                </tbody>
+            </table>
+        </section>`,
         code: `// Line comment
 /* Nested /* block */ comment */
 

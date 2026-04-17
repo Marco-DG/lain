@@ -6,7 +6,7 @@ import styles from './SpecViewer.module.css';
 export interface SpecChapter {
     id: string;
     title: string;
-    content: string; // HTML content, can contain <section data-code="..."> tags
+    content: string; // HTML content, can contain tags with data-code="..."
     code?: string;   // Default code if no section is active
 }
 
@@ -35,9 +35,41 @@ export default function SpecViewer({ data }: SpecViewerProps) {
         }
     };
 
+    // Reset and Initial Code
     useEffect(() => {
         setActiveCode(chapter.code || null);
     }, [currentIndex, chapter.code]);
+
+    // Intersection Observer for scroll-triggered code
+    useEffect(() => {
+        const observerOptions = {
+            root: containerRef.current,
+            threshold: 0.6, // Trigger when 60% of the element is visible
+            rootMargin: '-10% 0px -40% 0px' // Focus on the upper-middle part of the view
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                    const code = entry.target.getAttribute('data-code');
+                    if (code) {
+                        // We use a small trick: the attribute contains the code directly 
+                        // or we could use an ID to look up in a dictionary.
+                        // For simplicity, we'll assume the code is passed or handled via a map.
+                        setActiveCode(decodeURIComponent(code));
+                    }
+                }
+            });
+        }, observerOptions);
+
+        // Find all elements with data-code in the rendered HTML
+        if (contentRef.current) {
+            const triggerElements = contentRef.current.querySelectorAll('[data-code]');
+            triggerElements.forEach(el => observer.observe(el));
+        }
+
+        return () => observer.disconnect();
+    }, [currentIndex, chapter.content]);
 
     const highlightLain = (code: string) => {
         let escaped = code
@@ -88,13 +120,9 @@ export default function SpecViewer({ data }: SpecViewerProps) {
 
             {/* COLUMN 3: CODE PANEL */}
             <aside className={styles.codePanel}>
-                <div className={styles.panelHeader}>
-                    <span>Source Visualizer</span>
-                    <span>{chapter.id}.ln</span>
-                </div>
                 <div className={styles.codeScroll}>
                     {activeCode ? (
-                        <div className={styles.codeBlockContainer}>
+                        <div className={styles.codeBlockContainer} key={activeCode}>
                             <pre><code dangerouslySetInnerHTML={{ __html: highlightLain(activeCode) }} /></pre>
                         </div>
                     ) : (
