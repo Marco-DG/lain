@@ -1,12 +1,18 @@
 import NaviShell from "@/components/NaviShell";
-import SpecViewer from "@/components/SpecViewer";
-import { specData } from "./specData";
-import styles from "../page.module.css";
+import DocViewer from "@/components/DocViewer";
+import { docData } from "./docData";
 
 export default function Documentation() {
+    const statusLines = [
+        "DOC_SECTOR ACCESSED",
+        "FULL_SPEC_V0.1.0_LOADED",
+        "[ AUTH_REFERENCE_MODE ]",
+        "TECHNICAL_REFERENCE: ACTIVE"
+    ];
+
     return (
-        <NaviShell>
-            <SpecViewer data={specData} />
+        <NaviShell statusLines={statusLines}>
+            <DocViewer data={docData} />
         </NaviShell>
     );
 }

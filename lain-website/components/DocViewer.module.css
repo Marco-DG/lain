@@ -1,0 +1,150 @@
+/* DocViewer.module.css */
+.container {
+    height: 100vh;
+    overflow-y: auto;
+    padding: 4rem 10rem;
+    background-color: var(--bg-color);
+    scroll-behavior: smooth;
+}
+
+.document {
+    max-width: 1200px;
+    margin: 0 auto;
+    color: var(--text-main);
+    font-family: var(--font-main);
+}
+
+.section {
+    margin-bottom: 4rem;
+}
+
+.level1 { margin-top: 6rem; border-bottom: 2px solid var(--border-active); padding-bottom: 1rem; }
+.level2 { margin-top: 4rem; border-bottom: 1px solid var(--border-main); padding-bottom: 0.5rem; }
+.level3 { margin-top: 2.5rem; color: var(--accent-teal); }
+
+.h1 { font-size: 4rem; font-family: var(--font-logo); letter-spacing: -1px; text-transform: uppercase; color: var(--text-main); }
+.h2 { font-size: 2.2rem; font-family: var(--font-logo); color: var(--accent-teal); }
+.h3 { font-size: 1.5rem; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 2px; }
+
+.content {
+    font-family: var(--font-serif);
+    font-size: 1.25rem;
+    line-height: 1.7;
+    color: var(--text-dim);
+    margin-top: 1.5rem;
+}
+
+.content p { margin-bottom: 1.5rem; text-align: justify; }
+.content b, .content strong { color: var(--text-main); font-weight: 600; }
+.content code { 
+    background: rgba(13, 148, 136, 0.1); 
+    color: var(--accent-sepia); 
+    padding: 0.2rem 0.4rem; 
+    border-radius: 3px; 
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+}
+
+/* Table in content */
+.content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 2rem 0;
+    font-size: 1.1rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--border-main);
+}
+
+.content th {
+    background: rgba(13, 148, 136, 0.05);
+    color: var(--accent-teal);
+    text-align: left;
+    padding: 1rem;
+    border: 1px solid var(--border-main);
+    text-transform: uppercase;
+    font-size: 0.85rem;
+}
+
+.content td {
+    padding: 1rem;
+    border: 1px solid var(--border-main);
+    vertical-align: top;
+}
+
+/* TOC PANEL */
+.tocPanel {
+    background-color: #030204;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--border-main);
+}
+
+.tocHeader {
+    padding: 1.5rem 2rem;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-main);
+}
+
+.tocList {
+    padding: 2rem;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.tocItem {
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    transition: all 0.2s ease;
+    padding: 0.25rem 0;
+    width: fit-content;
+}
+
+.tocItem:hover {
+    color: var(--accent-teal);
+    transform: translateX(4px);
+}
+
+.tocActive {
+    color: var(--accent-teal);
+    text-shadow: 0 0 8px var(--accent-teal);
+    border-left: 2px solid var(--accent-teal);
+    padding-left: 10px;
+}
+
+.tocLevel1 { font-weight: bold; font-size: 0.95rem; margin-top: 1.5rem; color: var(--text-dim); }
+.tocLevel2 { padding-left: 1rem; }
+.tocLevel3 { padding-left: 2rem; font-size: 0.75rem; opacity: 0.7; }
+
+/* Code blocks in document */
+.content pre {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-main);
+    padding: 1.5rem;
+    margin: 2rem 0;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    color: #dcdcdc;
+    line-height: 1.5;
+}
+
+@media (max-width: 1400px) {
+    .container { padding: 4rem 5rem; }
+}
+
+@media (max-width: 1024px) {
+    .tocPanel { display: none; }
+}
