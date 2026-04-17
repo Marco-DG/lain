@@ -17,10 +17,6 @@ export default function Home() {
 
       {/* RIGHT PANEL: CODE DATA WINDOW */}
       <aside className={styles.codePanel}>
-        <div className={styles.panelHeader}>
-          <span>Lain Language Specification</span>
-          <span>v0.1.0-alpha</span>
-        </div>
 
         <div className={styles.codeScroll}>
           <div className={styles.codeBlock}>

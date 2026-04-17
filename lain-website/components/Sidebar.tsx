@@ -43,7 +43,7 @@ export default function Sidebar({ statusLines }: SidebarProps) {
 
                     <div className={styles.navGroup}>
                         <a className={styles.navLink} href="https://github.com/Marco-DG/lain" target="_blank" rel="noopener noreferrer">
-                            SOURCE_CODE
+                            GITHUB <span className={styles.externalIcon}>↗</span>
                         </a>
                     </div>
 
@@ -68,7 +68,7 @@ export default function Sidebar({ statusLines }: SidebarProps) {
 
             <div className={styles.sidebarBottom}>
                 <div className={styles.dataLine}></div>
-                <span className={styles.buildInfo}>BUILD: 2026.03.10</span>
+                <span className={styles.buildInfo}>2026.03.10</span>
             </div>
         </aside>
     );
