@@ -6,7 +6,8 @@ export default function EmpiricalResultsArticle() {
     return (
         <NaviShell>
             <div className={styles.container}>
-                <header className={styles.header}>
+                <div className={styles.inner}>
+                    <header className={styles.header}>
                     <Link href="/blog" className={styles.backLink}>← Back to Blog</Link>
                     <div style={{marginTop: '2rem'}}>
                         <span className={styles.date}>Apr 20, 2026 // COMPILER RESEARCH</span>
@@ -117,6 +118,7 @@ export default function EmpiricalResultsArticle() {
                     </p>
                 </div>
             </div>
-        </NaviShell>
+        </div>
+    </NaviShell>
     );
 }
