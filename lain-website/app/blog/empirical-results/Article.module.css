@@ -1,0 +1,127 @@
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 4rem 2rem;
+}
+
+.header {
+    margin-bottom: 3rem;
+    border-bottom: 1px solid var(--border-main);
+    padding-bottom: 2rem;
+}
+
+.backLink {
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.2s ease;
+}
+
+.backLink:hover {
+    color: var(--accent-teal);
+}
+
+.date {
+    font-family: var(--font-mono);
+    color: var(--accent-teal);
+    font-size: 1rem;
+    margin-bottom: 1rem;
+    display: inline-block;
+}
+
+.title {
+    font-size: 2.8rem;
+    color: var(--text-main);
+    line-height: 1.2;
+    margin-bottom: 1.5rem;
+    font-weight: 700;
+}
+
+.intro {
+    font-size: 1.25rem;
+    color: var(--text-dim);
+    line-height: 1.6;
+}
+
+.content {
+    line-height: 1.8;
+    font-size: 1.1rem;
+    color: var(--text-dim);
+}
+
+.content h2 {
+    font-size: 2rem;
+    color: var(--text-main);
+    margin-top: 3rem;
+    margin-bottom: 1.5rem;
+    font-weight: 600;
+}
+
+.content p {
+    margin-bottom: 1.5rem;
+}
+
+.content code {
+    font-family: var(--font-mono);
+    background-color: var(--bg-tertiary);
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.9em;
+    color: var(--accent-teal);
+}
+
+.tableWrapper {
+    overflow-x: auto;
+    margin: 2.5rem 0;
+    border: 1px solid var(--border-main);
+    border-radius: 6px;
+    background-color: var(--bg-secondary);
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-main);
+    font-size: 0.95rem;
+}
+
+.table th, .table td {
+    padding: 1rem 1.2rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-main);
+}
+
+.table th {
+    background-color: var(--bg-tertiary);
+    color: var(--text-main);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.table tr:last-child td {
+    border-bottom: none;
+}
+
+.table td {
+    color: var(--text-dim);
+    vertical-align: middle;
+}
+
+.statusLain {
+    color: var(--accent-teal);
+    font-weight: 700;
+}
+
+.statusWarning {
+    color: var(--accent-sepia);
+    font-style: italic;
+}
+
+.statusRuntime {
+    color: var(--accent-purple);
+}
+
+.statusMissed {
+    color: var(--text-muted);
+}

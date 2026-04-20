@@ -11,6 +11,7 @@ export default function Navbar() {
             <div className={styles.links}>
                 <Link href="/overview" className={styles.link}>[ Overview ]</Link>
                 <Link href="/docs" className={styles.link}>[ Documentation ]</Link>
+                <Link href="/blog" className={styles.link}>[ Blog ]</Link>
                 <a href="https://github.com/Marco-DG/lain" target="_blank" rel="noopener noreferrer" className={styles.link}>[ Source_Code ]</a>
             </div>
         </nav>
