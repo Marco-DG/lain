@@ -20,24 +20,10 @@
 
 .header {
     margin-bottom: 5rem;
+    padding-top: 2rem;
 }
 
-.backLink {
-    font-family: var(--font-mono);
-    color: var(--text-muted);
-    text-decoration: none;
-    font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    transition: all 0.3s ease;
-    display: inline-block;
-    margin-bottom: 4rem;
-}
-
-.backLink:hover {
-    color: var(--accent-teal);
-    transform: translateX(-4px);
-}
+/* .backLink removed */
 
 .date {
     font-family: var(--font-mono);

@@ -8,14 +8,11 @@ export default function EmpiricalResultsArticle() {
             <div className={styles.container}>
                 <div className={styles.inner}>
                     <header className={styles.header}>
-                    <Link href="/blog" className={styles.backLink}>← Back to Blog</Link>
-                    <div style={{marginTop: '2rem'}}>
-                        <span className={styles.date}>Apr 20, 2026 // COMPILER RESEARCH</span>
-                        <h1 className={styles.title}>Lain vs C/C++: The Empirical Results on Memory Safety at Compile Time</h1>
-                        <p className={styles.intro}>
-                            In our latest chapter of development, we put the Lain compiler&apos;s deterministic borrow-checker to the test against industry-standard tools: GCC, Clang, ASan, UBSan, and Valgrind. Here is what we found.
-                        </p>
-                    </div>
+                    <span className={styles.date}>Apr 20, 2026</span>
+                    <h1 className={styles.title}>Lain vs C/C++: The Empirical Results on Memory Safety at Compile Time</h1>
+                    <p className={styles.intro}>
+                        In our latest chapter of development, we put the Lain compiler&apos;s deterministic borrow-checker to the test against industry-standard tools: GCC, Clang, ASan, UBSan, and Valgrind. Here is what we found.
+                    </p>
                 </header>
 
                 <div className={styles.content}>
