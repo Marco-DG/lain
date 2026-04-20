@@ -4,7 +4,7 @@ import styles from "./Blog.module.css";
 
 export default function BlogList() {
     return (
-        <NaviShell>
+        <NaviShell layout="blog">
             <div className={styles.container}>
                 <div className={styles.inner}>
                     <div className={styles.articles}>

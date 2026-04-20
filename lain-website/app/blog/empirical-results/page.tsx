@@ -4,7 +4,7 @@ import styles from "./Article.module.css";
 
 export default function EmpiricalResultsArticle() {
     return (
-        <NaviShell>
+        <NaviShell layout="blog">
             <div className={styles.container}>
                 <div className={styles.inner}>
                     <header className={styles.header}>

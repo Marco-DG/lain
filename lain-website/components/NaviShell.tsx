@@ -7,13 +7,15 @@ import Sidebar from './Sidebar';
 interface NaviShellProps {
     children: React.ReactNode;
     statusLines?: string[];
-    layout?: 'default' | 'docs';
+    layout?: 'default' | 'docs' | 'blog';
 }
 
 export default function NaviShell({ children, statusLines, layout = 'default' }: NaviShellProps) {
     const shellClass = layout === 'docs'
         ? `${styles.naviShell} ${styles.naviShellDocs}`
-        : styles.naviShell;
+        : layout === 'blog'
+            ? `${styles.naviShell} ${styles.naviShellBlog}`
+            : styles.naviShell;
 
     return (
         <>

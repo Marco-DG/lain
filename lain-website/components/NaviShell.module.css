@@ -110,6 +110,15 @@
     right: 260px;
 }
 
+/* Blog layout — two columns, no right panel */
+.naviShellBlog {
+    grid-template-columns: 280px 1fr;
+}
+
+.naviShellBlog::after {
+    display: none;
+}
+
 /* --- SIDEBAR --- */
 .sidebar {
     border-right: 1px solid var(--border-main);
