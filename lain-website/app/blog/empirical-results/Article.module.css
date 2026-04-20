@@ -7,7 +7,7 @@
 }
 
 .inner {
-    max-width: 900px; /* Increased slightly for better balance in 2-col layout */
+    max-width: 1000px;
     margin: 0 auto;
     padding: 6rem 2rem 10rem 2rem;
 }
@@ -20,10 +20,24 @@
 
 .header {
     margin-bottom: 5rem;
-    padding-top: 2rem;
 }
 
-/* .backLink removed */
+.backLink {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    transition: all 0.3s ease;
+    display: inline-block;
+    margin-bottom: 4rem;
+}
+
+.backLink:hover {
+    color: var(--accent-teal);
+    transform: translateX(-4px);
+}
 
 .date {
     font-family: var(--font-mono);
@@ -37,7 +51,7 @@
 
 .title {
     font-family: var(--font-main);
-    font-size: clamp(2.2rem, 8vw, 4.5rem); /* Heroic & responsive */
+    font-size: clamp(2.2rem, 8vw, 4.5rem);
     color: var(--text-main);
     line-height: 1.1;
     margin-bottom: 2.5rem;
@@ -78,81 +92,103 @@
     margin-bottom: 2.2rem;
 }
 
-.content code {
-    font-family: var(--font-mono);
-    background-color: var(--bg-tertiary);
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.85em;
-    color: var(--accent-sepia);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-/* Redesigned Table */
+/* --- Table Redesign --- */
 .tableWrapper {
     overflow-x: auto;
-    margin: 4rem -4rem; /* Bleed out on desktop */
+    margin: 5rem 0;
     border: 1px solid var(--border-main);
-    background-color: #030204;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-}
-
-@media (max-width: 1100px) {
-    .tableWrapper {
-        margin: 4rem 0;
-    }
+    background-color: #08080a;
+    border-radius: 8px;
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6);
 }
 
 .table {
     width: 100%;
-    min-width: 600px; /* Ensure table doesn't squish too much */
+    min-width: 850px;
     border-collapse: collapse;
     font-family: var(--font-mono);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     color: var(--text-dim);
+    table-layout: fixed;
 }
 
 .table th, .table td {
-    padding: 1.2rem 1.5rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border-main);
+    padding: 1.5rem 1rem;
+    text-align: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
 }
 
 .table th {
-    background-color: #08080a;
-    color: var(--text-main);
+    background-color: rgba(255, 255, 255, 0.02);
+    color: var(--text-muted);
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    font-size: 0.75rem;
+    letter-spacing: 1.5px;
+    font-size: 0.7rem;
+    border-bottom: 1px solid var(--border-main);
 }
 
-.table tr:hover td {
-    background-color: rgba(255, 255, 255, 0.02);
-}
-
-.table td strong {
+.bugClass {
+    text-align: left !important;
+    padding-left: 2rem !important;
     color: var(--text-main);
+    font-weight: bold;
+    font-family: var(--font-main);
+    font-size: 1rem;
+    width: 220px;
 }
 
-.statusLain {
-    color: var(--accent-teal);
+/* Lain Highlight */
+.lainHeader {
+    background-color: rgba(13, 148, 136, 0.1) !important;
+    color: var(--accent-teal) !important;
+    border-left: 1px solid var(--border-active);
+    border-right: 1px solid var(--border-active);
+}
+
+.lainCell {
+    background-color: rgba(13, 148, 136, 0.03);
+    border-left: 1px solid rgba(13, 148, 136, 0.1);
+    border-right: 1px solid rgba(13, 148, 136, 0.1);
+}
+
+/* Badge Styles */
+.badgeLain, .badgeRuntime, .badgeWarning, .badgeMissed {
+    display: inline-block;
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
     font-weight: 700;
-    text-shadow: 0 0 10px rgba(13, 148, 136, 0.4);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
-.statusWarning {
-    color: var(--accent-sepia);
-    opacity: 0.7;
+.badgeLain {
+    background-color: var(--accent-teal);
+    color: #fff;
+    box-shadow: 0 0 15px rgba(13, 148, 136, 0.4);
 }
 
-.statusRuntime {
+.badgeRuntime {
+    background-color: rgba(139, 92, 246, 0.15);
     color: var(--accent-purple);
-    font-style: italic;
+    border: 1px solid rgba(139, 92, 246, 0.3);
 }
 
-.statusMissed {
+.badgeWarning {
+    background-color: rgba(197, 166, 138, 0.15);
+    color: var(--accent-sepia);
+    border: 1px solid rgba(197, 166, 138, 0.3);
+}
+
+.badgeMissed {
     color: var(--text-muted);
+    opacity: 0.5;
+    font-weight: 400;
+}
+
+.table tr:last-child td {
+    border-bottom: none;
 }
 
 .conclusion {
@@ -162,26 +198,12 @@
 }
 
 @media (max-width: 768px) {
-    .intro {
-        padding-left: 1rem;
-        margin-bottom: 2.5rem;
-    }
-    
-    .header {
-        margin-bottom: 3rem;
-    }
-    
-    .backLink {
-        margin-bottom: 2rem;
-    }
+    .inner { padding-top: 4rem; }
+    .intro { padding-left: 1rem; margin-bottom: 2.5rem; }
+    .header { margin-bottom: 3rem; }
 }
 
 @media (max-width: 480px) {
-    .inner {
-        padding: 3rem 1rem 4rem 1rem;
-    }
-    
-    .title {
-        font-size: 1.8rem;
-    }
+    .inner { padding: 3rem 1rem 4rem 1rem; }
+    .title { font-size: 1.8rem; }
 }
