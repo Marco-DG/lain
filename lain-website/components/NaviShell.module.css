@@ -119,6 +119,13 @@
     display: none;
 }
 
+@media (max-width: 1024px) {
+    .naviShell, .naviShellDocs, .naviShellBlog {
+        display: flex;
+        flex-direction: column;
+    }
+}
+
 /* --- SIDEBAR --- */
 .sidebar {
     border-right: 1px solid var(--border-main);

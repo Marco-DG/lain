@@ -7,9 +7,15 @@
 }
 
 .inner {
-    max-width: 900px;
+    max-width: 1100px; /* Wider for the list view */
     margin: 0 auto;
     padding: 8rem 2rem;
+}
+
+@media (max-width: 768px) {
+    .inner {
+        padding: 4rem 1.5rem;
+    }
 }
 
 .articles {
@@ -48,7 +54,7 @@
 
 .articleTitle {
     font-family: var(--font-main);
-    font-size: 3rem;
+    font-size: clamp(2.5rem, 8vw, 3.5rem); /* Fluid typography */
     color: var(--text-main);
     margin-bottom: 1.5rem;
     font-weight: 800;
@@ -60,8 +66,8 @@
     font-family: var(--font-serif);
     color: var(--text-dim);
     line-height: 1.8;
-    font-size: 1.3rem;
-    max-width: 700px;
+    font-size: clamp(1.1rem, 3vw, 1.3rem);
+    max-width: 800px;
 }
 
 .articleCard::after {
