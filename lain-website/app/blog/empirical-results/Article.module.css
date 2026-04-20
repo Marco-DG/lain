@@ -51,7 +51,7 @@
 
 .title {
     font-family: var(--font-main);
-    font-size: clamp(2.5rem, 10vw, 4.5rem); /* Heroic & responsive */
+    font-size: clamp(2.2rem, 8vw, 4.5rem); /* Heroic & responsive */
     color: var(--text-main);
     line-height: 1.1;
     margin-bottom: 2.5rem;
@@ -61,7 +61,7 @@
 
 .intro {
     font-family: var(--font-serif);
-    font-size: clamp(1.2rem, 4vw, 1.6rem);
+    font-size: clamp(1.1rem, 3.5vw, 1.6rem);
     color: var(--text-main);
     line-height: 1.6;
     margin-bottom: 4rem;
@@ -74,13 +74,13 @@
 .content {
     font-family: var(--font-serif);
     line-height: 1.9;
-    font-size: clamp(1.15rem, 3vw, 1.4rem);
+    font-size: clamp(1.1rem, 2.5vw, 1.4rem);
     color: var(--text-dim);
 }
 
 .content h2 {
     font-family: var(--font-main);
-    font-size: clamp(1.8rem, 5vw, 2.4rem);
+    font-size: clamp(1.6rem, 4.5vw, 2.4rem);
     color: var(--text-main);
     margin-top: 5rem;
     margin-bottom: 2rem;
@@ -111,7 +111,7 @@
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
     .tableWrapper {
         margin: 4rem 0;
     }
@@ -119,6 +119,7 @@
 
 .table {
     width: 100%;
+    min-width: 600px; /* Ensure table doesn't squish too much */
     border-collapse: collapse;
     font-family: var(--font-mono);
     font-size: 0.9rem;
@@ -172,4 +173,29 @@
     margin-top: 6rem;
     padding-top: 4rem;
     border-top: 1px solid var(--border-main);
+}
+
+@media (max-width: 768px) {
+    .intro {
+        padding-left: 1rem;
+        margin-bottom: 2.5rem;
+    }
+    
+    .header {
+        margin-bottom: 3rem;
+    }
+    
+    .backLink {
+        margin-bottom: 2rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .inner {
+        padding: 3rem 1rem 4rem 1rem;
+    }
+    
+    .title {
+        font-size: 1.8rem;
+    }
 }

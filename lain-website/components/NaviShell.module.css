@@ -265,14 +265,15 @@
     .container {
         height: auto;
         min-height: 100vh;
-        overflow: visible;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     .naviShell {
         display: flex;
         flex-direction: column;
         height: auto;
-        max-height: none;
+        min-height: 100vh;
         overflow: visible;
     }
 
@@ -282,10 +283,42 @@
 
     .sidebar {
         height: auto;
-        padding: 2rem 1.5rem;
+        padding: 1.5rem 1rem;
+        border-right: none;
+        border-bottom: 1px solid var(--border-main);
+        overflow: visible;
     }
 
-    .sidebar,
+    .logo {
+        font-size: 1.5rem;
+        margin-bottom: 0;
+    }
+
+    .logoContainer {
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+    }
+
+    .navLinks {
+        gap: 1rem;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+
+    .navGroup {
+        padding-left: 0.5rem;
+        border-left-width: 1px;
+    }
+
+    .navLink {
+        font-size: 0.85rem;
+    }
+
+    .sidebarBottom {
+        display: none; /* Hide date on mobile sidebar to save space */
+    }
+
     .mainContent,
     .codePanel {
         border-right: none;
@@ -296,5 +329,19 @@
     .noise,
     .scanlines {
         position: fixed;
+    }
+}
+
+@media (max-width: 480px) {
+    .navLinks {
+        gap: 0.5rem;
+    }
+    
+    .navLink {
+        font-size: 0.75rem;
+    }
+    
+    .logo {
+        font-size: 1.25rem;
     }
 }
