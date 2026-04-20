@@ -39,6 +39,12 @@ export default function Sidebar({ statusLines }: SidebarProps) {
                         </Link>
                     </div>
 
+                    <div className={`${styles.navGroup} ${isLinkActive('/blog') ? styles.navGroupActive : ''}`}>
+                        <Link href="/blog" className={`${styles.navLink} ${isLinkActive('/blog') ? styles.navLinkActive : ''}`}>
+                            BLOG
+                        </Link>
+                    </div>
+
                     <div className={styles.navGroup}>
                         <a className={styles.navLink} href="https://github.com/Marco-DG/lain" target="_blank" rel="noopener noreferrer">
                             GITHUB <span style={{ fontSize: '0.8em', verticalAlign: 'middle', opacity: 0.7 }}>↗</span>

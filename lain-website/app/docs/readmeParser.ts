@@ -102,6 +102,8 @@ function mdBodyToHtmlAndCode(md: string): { html: string; code: string | null } 
                 // Goes to the code panel — not rendered inline
                 if (firstLainCode === null) {
                     firstLainCode = codeLines.join('\n').trim();
+                } else {
+                    firstLainCode += '\n\n' + codeLines.join('\n').trim();
                 }
             } else {
                 // bash / shell / plain — rendered inline (terminal-style)
