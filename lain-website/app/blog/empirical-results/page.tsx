@@ -1,123 +1,122 @@
-import NaviShell from "@/components/NaviShell";
-import Link from "next/link";
-import styles from "./Article.module.css";
+'use client';
 
-export default function EmpiricalResultsArticle() {
+import React from 'react';
+import NaviShell from "@/components/NaviShell";
+import styles from "./Article.module.css";
+import Link from 'next/link';
+
+export default function EmpiricalResults() {
     return (
         <NaviShell layout="blog">
-            <div className={styles.container}>
+            <article className={styles.container}>
                 <div className={styles.inner}>
                     <header className={styles.header}>
-                    <span className={styles.date}>Apr 20, 2026</span>
-                    <h1 className={styles.title}>Lain vs C/C++: The Empirical Results on Memory Safety at Compile Time</h1>
-                    <p className={styles.intro}>
-                        In our latest chapter of development, we put the Lain compiler&apos;s deterministic borrow-checker to the test against industry-standard tools: GCC, Clang, ASan, UBSan, and Valgrind. Here is what we found.
-                    </p>
-                </header>
+                        <Link href="/blog" className={styles.backLink}>← Back to Blog</Link>
+                        <span className={styles.date}>APR 20, 2026 // COMPILER RESEARCH</span>
+                        <h1 className={styles.title}>Lain vs C/C++: Empirical Results on Memory Safety</h1>
+                        <p className={styles.intro}>
+                            To validate the Lain compiler, we tested it against GCC, Clang, ASan, and Valgrind on six common bug classes. The goal was to see which tools catch what, and when.
+                        </p>
+                    </header>
 
-                <div className={styles.content}>
-                    <h2>The Blind Spots of Runtime Diagnostics</h2>
-                    <p>
-                        C and C++ have relied heavily on a combination of compiler warnings and dynamic runtime checks (like Address Sanitizer or Valgrind) to catch memory leaks, use-after-free bugs, and buffer overflows. While these tools are invaluable, they share a common flaw: they often require the code path to be executed at runtime, introducing significant overhead. Sometimes, static analysis passes over critical flaws, leaving developers with a false sense of security.
-                    </p>
-                    <p>
-                        Lain fundamentally changes this paradigm. By employing strict linear types and deterministic compile-time checks, Lain turns runtime panics into immediate compile-time errors.
-                    </p>
-
-                    <h2>Test Environment</h2>
-                    <p>
-                        We ran our tests on an Ubuntu environment using <code>gcc 13.3.0</code>, <code>clang 18.1.3</code>, and <code>valgrind 3.22.0</code>. We pitted them against the current build of the Lain compiler to see which tools caught common memory anti-patterns.
-                    </p>
-
-                    <h2>The Results</h2>
-                    <p>
-                        The table below summarizes our findings. A &quot;Warning&quot; means the build proceeded despite throwing diagnostics, &quot;Runtime&quot; means the bug was caught during execution with overhead, and &quot;Compile-Time&quot; means the code rightfully failed to compile.
-                    </p>
-
-                    <div className={styles.tableWrapper}>
-                        <table className={styles.table}>
-                            <thead>
-                                <tr>
-                                    <th>Class of Error</th>
-                                    <th>GCC (-Wall)</th>
-                                    <th>GCC (-fanalyzer)</th>
-                                    <th>Clang (-Wall)</th>
-                                    <th>ASan+UBSan</th>
-                                    <th>Valgrind</th>
-                                    <th>Lain</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td>Use-after-free</td>
-                                    <td><span className={styles.statusWarning}>warning</span></td>
-                                    <td><span className={styles.statusWarning}>warning</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusRuntime}>runtime</span></td>
-                                    <td><span className={styles.statusRuntime}>runtime</span></td>
-                                    <td><span className={styles.statusLain}>compile-time</span></td>
-                                </tr>
-                                <tr>
-                                    <td>Resource leak</td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusLain}>compile-time</span></td>
-                                </tr>
-                                <tr>
-                                    <td>Double-free</td>
-                                    <td><span className={styles.statusWarning}>warning</span></td>
-                                    <td><span className={styles.statusWarning}>warning</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusRuntime}>runtime</span></td>
-                                    <td><span className={styles.statusRuntime}>runtime</span></td>
-                                    <td><span className={styles.statusLain}>compile-time</span></td>
-                                </tr>
-                                <tr>
-                                    <td>Aliasing violation</td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusLain}>compile-time</span></td>
-                                </tr>
-                                <tr>
-                                    <td>Buffer overflow</td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusWarning}>warning</span></td>
-                                    <td><span className={styles.statusWarning}>warning</span></td>
-                                    <td><span className={styles.statusRuntime}>runtime</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusLain}>compile-time</span></td>
-                                </tr>
-                                <tr>
-                                    <td>Division by zero</td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusRuntime}>runtime</span></td>
-                                    <td><span className={styles.statusMissed}>missed</span></td>
-                                    <td><span className={styles.statusLain}>compile-time</span></td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div className={styles.conclusion}>
-                        <h2>Conclusion</h2>
+                    <div className={styles.content}>
                         <p>
-                            What stands out the most is the behavior with <strong>Aliasing violations</strong> and <strong>Resource leaks</strong>: deeply ingrained tools like GCC and Clang silently allow these to slip into the codebase without so much as a warning, while Valgrind completely ignores aliasing issues. ASan and UBSan catch a subset at runtime, which is unacceptable for systems programming where performance and deterministic behavior are paramount.
+                            We wrote six C snippets, each containing a specific class of Undefined Behavior (UB) or resource mismanagement. We then attempted to detect these bugs using standard static analysis (compilers with maximum warnings), dynamic analysis (AddressSanitizer and UndefinedBehaviorSanitizer), and Valgrind. Finally, we implemented the same logic in Lain.
+                        </p>
+
+                        <div className={styles.tableWrapper}>
+                            <table className={styles.table}>
+                                <thead>
+                                    <tr>
+                                        <th>Bug Class</th>
+                                        <th>gcc -Wall</th>
+                                        <th>gcc -fanalyzer</th>
+                                        <th>ASan + UBSan</th>
+                                        <th>Valgrind</th>
+                                        <th>Lain</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong>Use-after-free</strong></td>
+                                        <td className={styles.statusWarning}>Warning</td>
+                                        <td className={styles.statusWarning}>Warning</td>
+                                        <td className={styles.statusRuntime}>Runtime Error</td>
+                                        <td className={styles.statusRuntime}>Runtime Error</td>
+                                        <td className={styles.statusLain}>Compile-Time</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Resource Leak</strong></td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusLain}>Compile-Time</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Double-free</strong></td>
+                                        <td className={styles.statusWarning}>Warning</td>
+                                        <td className={styles.statusWarning}>Warning</td>
+                                        <td className={styles.statusRuntime}>Runtime Error</td>
+                                        <td className={styles.statusRuntime}>Runtime Error</td>
+                                        <td className={styles.statusLain}>Compile-Time</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Aliasing Violation</strong></td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusLain}>Compile-Time</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Buffer Overflow</strong></td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusWarning}>Warning</td>
+                                        <td className={styles.statusRuntime}>Runtime Error</td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusLain}>Compile-Time</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Division by Zero</strong></td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusRuntime}>Runtime Error</td>
+                                        <td className={styles.statusMissed}>Missed</td>
+                                        <td className={styles.statusLain}>Compile-Time</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <h2>The "Blind Spots"</h2>
+                        <p>
+                            The most striking result is the complete failure of C tools to detect <strong>Resource Leaks</strong> and <strong>Aliasing Violations</strong>. 
                         </p>
                         <p>
-                            Lain enforces absolute strictness for these memory paradigms. The compiler simply refuses to output binaries for unsafe operations, ensuring zero overhead at runtime and total guarantees during development.
+                            In C, <code>fclose()</code> is technically an optional call for safety tools. Since it doesn't cause immediate memory corruption, neither Valgrind nor ASan flag it as an error. Lain, however, treats file handles as linear types: they <em>must</em> be consumed exactly once. Forgetting to close a file is a compiler error.
                         </p>
+                        <p>
+                            Similarly, aliasing violations (passing the same mutable pointer as two different arguments) are virtually impossible for runtime tools to catch because they don't involve "illegal" memory access, just "illegal" logic that breaks optimizer assumptions. Lain's borrow checker catches this by enforcing that only one mutable reference can exist at any time.
+                        </p>
+
+                        <h2>Static vs. Dynamic Detection</h2>
+                        <p>
+                            GCC with <code>-fanalyzer</code> has made progress, catching simple cases of use-after-free and double-free. However, these are warnings, not errors. A developer can still ship a binary with these bugs. 
+                        </p>
+                        <p>
+                            Sanitizers (ASan/UBSan) are powerful but come with a cost: they require the code to be executed (missing bugs in untested paths) and add significant runtime overhead.
+                        </p>
+
+                        <section className={styles.conclusion}>
+                            <h2>Conclusion</h2>
+                            <p>
+                                The empirical data shows that Lain provides a level of protection that standard C tooling cannot achieve without manual, exhaustive testing and runtime monitoring. By encoding safety rules directly into the type system, Lain moves the burden of verification from the developer's test suite to the compiler itself.
+                            </p>
+                        </section>
                     </div>
                 </div>
-            </div>
-        </div>
-    </NaviShell>
+            </article>
+        </NaviShell>
     );
 }
