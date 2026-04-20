@@ -11,8 +11,6 @@ export default function EmpiricalResults() {
             <article className={styles.container}>
                 <div className={styles.inner}>
                     <header className={styles.header}>
-                        <Link href="/blog" className={styles.backLink}>← Publications</Link>
-                        <span className={styles.date}>APR 20, 2026 // COMPILER RESEARCH</span>
                         <h1 className={styles.title}>Comparative Analysis of Memory Safety: Lain vs. C/C++ Tooling</h1>
                         <p className={styles.intro}>
                             Evaluation of the Lain compiler detection capabilities against industry-standard static and dynamic analysis tools across six fundamental bug classes.
