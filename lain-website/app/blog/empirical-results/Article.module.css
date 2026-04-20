@@ -3,132 +3,167 @@
     height: 100vh;
     overflow-y: auto;
     padding: 0;
+    background-color: var(--bg-color);
 }
 
 .inner {
-    max-width: 800px;
+    max-width: 760px; /* Golden width for reading */
     margin: 0 auto;
-    padding: 4rem 2rem;
+    padding: 6rem 2rem 10rem 2rem;
 }
 
 .header {
-    margin-bottom: 3rem;
-    border-bottom: 1px solid var(--border-main);
-    padding-bottom: 2rem;
+    margin-bottom: 5rem;
 }
 
 .backLink {
     font-family: var(--font-mono);
-    color: var(--text-dim);
+    color: var(--text-muted);
     text-decoration: none;
-    font-size: 0.9rem;
-    transition: color 0.2s ease;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    transition: all 0.3s ease;
+    display: inline-block;
+    margin-bottom: 4rem;
 }
 
 .backLink:hover {
     color: var(--accent-teal);
+    transform: translateX(-4px);
 }
 
 .date {
     font-family: var(--font-mono);
     color: var(--accent-teal);
-    font-size: 1rem;
-    margin-bottom: 1rem;
-    display: inline-block;
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+    display: block;
+    letter-spacing: 3px;
+    opacity: 0.8;
 }
 
 .title {
-    font-size: 2.8rem;
+    font-family: var(--font-main);
+    font-size: 4rem; /* Heroic scale */
     color: var(--text-main);
-    line-height: 1.2;
-    margin-bottom: 1.5rem;
-    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 2.5rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
 }
 
 .intro {
-    font-size: 1.25rem;
-    color: var(--text-dim);
+    font-family: var(--font-serif);
+    font-size: 1.6rem;
+    color: var(--text-main);
     line-height: 1.6;
+    margin-bottom: 4rem;
+    font-style: italic;
+    opacity: 0.9;
+    border-left: 2px solid var(--accent-teal);
+    padding-left: 2rem;
 }
 
 .content {
-    line-height: 1.8;
-    font-size: 1.1rem;
+    font-family: var(--font-serif);
+    line-height: 1.9;
+    font-size: 1.4rem;
     color: var(--text-dim);
 }
 
 .content h2 {
-    font-size: 2rem;
+    font-family: var(--font-main);
+    font-size: 2.2rem;
     color: var(--text-main);
-    margin-top: 3rem;
-    margin-bottom: 1.5rem;
-    font-weight: 600;
+    margin-top: 5rem;
+    margin-bottom: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
 }
 
 .content p {
-    margin-bottom: 1.5rem;
+    margin-bottom: 2.2rem;
 }
 
 .content code {
     font-family: var(--font-mono);
     background-color: var(--bg-tertiary);
-    padding: 0.2rem 0.4rem;
-    border-radius: 3px;
-    font-size: 0.9em;
-    color: var(--accent-teal);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.85em;
+    color: var(--accent-sepia);
+    border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+/* Redesigned Table */
 .tableWrapper {
     overflow-x: auto;
-    margin: 2.5rem 0;
+    margin: 4rem -4rem; /* Bleed out on desktop */
     border: 1px solid var(--border-main);
-    border-radius: 6px;
-    background-color: var(--bg-secondary);
+    background-color: #030204;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+
+@media (max-width: 900px) {
+    .tableWrapper {
+        margin: 4rem 0;
+    }
 }
 
 .table {
     width: 100%;
     border-collapse: collapse;
-    font-family: var(--font-main);
-    font-size: 0.95rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--text-dim);
 }
 
 .table th, .table td {
-    padding: 1rem 1.2rem;
+    padding: 1.2rem 1.5rem;
     text-align: left;
     border-bottom: 1px solid var(--border-main);
 }
 
 .table th {
-    background-color: var(--bg-tertiary);
+    background-color: #08080a;
     color: var(--text-main);
     font-weight: 600;
-    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 0.75rem;
 }
 
-.table tr:last-child td {
-    border-bottom: none;
+.table tr:hover td {
+    background-color: rgba(255, 255, 255, 0.02);
 }
 
-.table td {
-    color: var(--text-dim);
-    vertical-align: middle;
+.table td strong {
+    color: var(--text-main);
 }
 
 .statusLain {
     color: var(--accent-teal);
     font-weight: 700;
+    text-shadow: 0 0 10px rgba(13, 148, 136, 0.4);
 }
 
 .statusWarning {
     color: var(--accent-sepia);
-    font-style: italic;
+    opacity: 0.7;
 }
 
 .statusRuntime {
     color: var(--accent-purple);
+    font-style: italic;
 }
 
 .statusMissed {
     color: var(--text-muted);
+}
+
+.conclusion {
+    margin-top: 6rem;
+    padding-top: 4rem;
+    border-top: 1px solid var(--border-main);
 }

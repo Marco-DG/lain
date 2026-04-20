@@ -109,13 +109,15 @@ export default function EmpiricalResultsArticle() {
                         </table>
                     </div>
 
-                    <h2>Conclusion</h2>
-                    <p>
-                        What stands out the most is the behavior with <strong>Aliasing violations</strong> and <strong>Resource leaks</strong>: deeply ingrained tools like GCC and Clang silently allow these to slip into the codebase without so much as a warning, while Valgrind completely ignores aliasing issues. ASan and UBSan catch a subset at runtime, which is unacceptable for systems programming where performance and deterministic behavior are paramount.
-                    </p>
-                    <p>
-                        Lain enforces absolute strictness for these memory paradigms. The compiler simply refuses to output binaries for unsafe operations, ensuring zero overhead at runtime and total guarantees during development.
-                    </p>
+                    <div className={styles.conclusion}>
+                        <h2>Conclusion</h2>
+                        <p>
+                            What stands out the most is the behavior with <strong>Aliasing violations</strong> and <strong>Resource leaks</strong>: deeply ingrained tools like GCC and Clang silently allow these to slip into the codebase without so much as a warning, while Valgrind completely ignores aliasing issues. ASan and UBSan catch a subset at runtime, which is unacceptable for systems programming where performance and deterministic behavior are paramount.
+                        </p>
+                        <p>
+                            Lain enforces absolute strictness for these memory paradigms. The compiler simply refuses to output binaries for unsafe operations, ensuring zero overhead at runtime and total guarantees during development.
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
