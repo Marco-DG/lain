@@ -7,203 +7,135 @@
 }
 
 .inner {
-    max-width: 1000px;
+    max-width: 900px;
     margin: 0 auto;
     padding: 6rem 2rem 10rem 2rem;
 }
 
-@media (max-width: 1024px) {
-    .inner {
-        padding: 4rem 1.5rem 6rem 1.5rem;
-    }
-}
-
 .header {
-    margin-bottom: 5rem;
+    margin-bottom: 4rem;
+    border-bottom: 1px solid var(--border-main);
+    padding-bottom: 2rem;
 }
 
 .backLink {
     font-family: var(--font-mono);
     color: var(--text-muted);
-    text-decoration: none;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     text-transform: uppercase;
-    letter-spacing: 2px;
-    transition: all 0.3s ease;
+    letter-spacing: 1px;
+    margin-bottom: 2rem;
     display: inline-block;
-    margin-bottom: 4rem;
-}
-
-.backLink:hover {
-    color: var(--accent-teal);
-    transform: translateX(-4px);
 }
 
 .date {
     font-family: var(--font-mono);
-    color: var(--accent-teal);
-    font-size: 0.9rem;
-    margin-bottom: 1.5rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
     display: block;
-    letter-spacing: 3px;
-    opacity: 0.8;
+    margin-bottom: 1rem;
 }
 
 .title {
     font-family: var(--font-main);
-    font-size: clamp(2.2rem, 8vw, 4.5rem);
+    font-size: 2.8rem;
     color: var(--text-main);
-    line-height: 1.1;
-    margin-bottom: 2.5rem;
-    font-weight: 800;
-    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin-bottom: 1.5rem;
+    font-weight: 700;
 }
 
 .intro {
     font-family: var(--font-serif);
-    font-size: clamp(1.1rem, 3.5vw, 1.6rem);
-    color: var(--text-main);
+    font-size: 1.2rem;
+    color: var(--text-dim);
     line-height: 1.6;
-    margin-bottom: 4rem;
-    font-style: italic;
-    opacity: 0.9;
-    border-left: 2px solid var(--accent-teal);
-    padding-left: 2rem;
+    max-width: 750px;
 }
 
 .content {
     font-family: var(--font-serif);
-    line-height: 1.9;
-    font-size: clamp(1.1rem, 2.5vw, 1.4rem);
-    color: var(--text-dim);
+    line-height: 1.8;
+    font-size: 1.1rem;
+    color: var(--text-main);
 }
 
 .content h2 {
     font-family: var(--font-main);
-    font-size: clamp(1.6rem, 4.5vw, 2.4rem);
+    font-size: 1.6rem;
     color: var(--text-main);
-    margin-top: 5rem;
-    margin-bottom: 2rem;
-    font-weight: 700;
-    letter-spacing: -0.01em;
+    margin-top: 4rem;
+    margin-bottom: 1.5rem;
+    font-weight: 600;
 }
 
 .content p {
-    margin-bottom: 2.2rem;
+    margin-bottom: 1.5rem;
 }
 
-/* --- Table Redesign --- */
+/* --- LaTeX / Booktabs Table Style --- */
 .tableWrapper {
+    margin: 4rem 0;
+    width: 100%;
     overflow-x: auto;
-    margin: 5rem 0;
-    border: 1px solid var(--border-main);
-    background-color: #08080a;
-    border-radius: 8px;
-    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6);
 }
 
 .table {
     width: 100%;
-    min-width: 850px;
     border-collapse: collapse;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--text-dim);
-    table-layout: fixed;
+    font-family: var(--font-main); /* Cleaner for academic tables */
+    font-size: 0.95rem;
+    color: var(--text-main);
+    border-top: 2px solid var(--text-main);    /* \toprule */
+    border-bottom: 2px solid var(--text-main); /* \bottomrule */
 }
 
 .table th, .table td {
-    padding: 1.5rem 1rem;
+    padding: 1rem 0.5rem;
     text-align: center;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
 }
 
-.table th {
-    background-color: rgba(255, 255, 255, 0.02);
-    color: var(--text-muted);
+.table thead th {
+    border-bottom: 1px solid var(--text-main); /* \midrule */
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    font-size: 0.7rem;
-    border-bottom: 1px solid var(--border-main);
-}
-
-.bugClass {
-    text-align: left !important;
-    padding-left: 2rem !important;
     color: var(--text-main);
-    font-weight: bold;
-    font-family: var(--font-main);
-    font-size: 1rem;
-    width: 220px;
-}
-
-/* Lain Highlight */
-.lainHeader {
-    background-color: rgba(13, 148, 136, 0.1) !important;
-    color: var(--accent-teal) !important;
-    border-left: 1px solid var(--border-active);
-    border-right: 1px solid var(--border-active);
-}
-
-.lainCell {
-    background-color: rgba(13, 148, 136, 0.03);
-    border-left: 1px solid rgba(13, 148, 136, 0.1);
-    border-right: 1px solid rgba(13, 148, 136, 0.1);
-}
-
-/* Badge Styles */
-.badgeLain, .badgeRuntime, .badgeWarning, .badgeMissed {
-    display: inline-block;
-    padding: 0.4rem 0.8rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 700;
+    font-size: 0.85rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
 
-.badgeLain {
-    background-color: var(--accent-teal);
-    color: #fff;
-    box-shadow: 0 0 15px rgba(13, 148, 136, 0.4);
+.bugClass {
+    text-align: left !important;
+    font-weight: 500;
+    width: 25%;
 }
 
-.badgeRuntime {
-    background-color: rgba(139, 92, 246, 0.15);
-    color: var(--accent-purple);
-    border: 1px solid rgba(139, 92, 246, 0.3);
+/* Indicators */
+.resLain {
+    color: var(--accent-teal);
+    font-weight: 700;
 }
 
-.badgeWarning {
-    background-color: rgba(197, 166, 138, 0.15);
+.resRuntime {
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+.resWarning {
     color: var(--accent-sepia);
-    border: 1px solid rgba(197, 166, 138, 0.3);
 }
 
-.badgeMissed {
+.resMissed {
     color: var(--text-muted);
-    opacity: 0.5;
-    font-weight: 400;
-}
-
-.table tr:last-child td {
-    border-bottom: none;
 }
 
 .conclusion {
-    margin-top: 6rem;
-    padding-top: 4rem;
+    margin-top: 5rem;
+    padding-top: 3rem;
     border-top: 1px solid var(--border-main);
 }
 
 @media (max-width: 768px) {
-    .inner { padding-top: 4rem; }
-    .intro { padding-left: 1rem; margin-bottom: 2.5rem; }
-    .header { margin-bottom: 3rem; }
-}
-
-@media (max-width: 480px) {
-    .inner { padding: 3rem 1rem 4rem 1rem; }
-    .title { font-size: 1.8rem; }
+    .title { font-size: 2rem; }
+    .table { font-size: 0.8rem; }
 }
