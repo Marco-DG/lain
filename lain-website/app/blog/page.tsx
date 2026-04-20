@@ -6,9 +6,6 @@ export default function BlogList() {
     return (
         <NaviShell>
             <div className={styles.container}>
-                <h1 className={styles.title}>sys.log</h1>
-                <p className={styles.subtitle}>Technical insights, compiler development, and research from the Lain project.</p>
-                
                 <div className={styles.articles}>
                     <Link href="/blog/empirical-results" className={styles.articleCard}>
                         <div className={styles.articleDate}>Apr 20, 2026</div>

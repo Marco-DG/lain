@@ -1,22 +1,9 @@
 .container {
     max-width: 900px;
     margin: 0 auto;
-    padding: 4rem 2rem;
-}
-
-.title {
-    font-size: 3rem;
-    font-family: var(--font-logo);
-    color: var(--accent-teal);
-    margin-bottom: 0.5rem;
-}
-
-.subtitle {
-    font-size: 1.2rem;
-    color: var(--text-dim);
-    margin-bottom: 3rem;
-    border-bottom: 1px solid var(--border-main);
-    padding-bottom: 2rem;
+    padding: 2rem;
+    height: 100vh;
+    overflow-y: auto;
 }
 
 .articles {
