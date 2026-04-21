@@ -7,7 +7,7 @@
 }
 
 .inner {
-    max-width: 900px;
+    max-width: 1000px;
     margin: 0 auto;
     padding: 6rem 2rem 10rem 2rem;
 }
@@ -38,7 +38,7 @@
 
 .title {
     font-family: var(--font-main);
-    font-size: 2.8rem;
+    font-size: 3.5rem;
     color: var(--text-main);
     line-height: 1.2;
     margin-bottom: 1.5rem;
@@ -47,22 +47,22 @@
 
 .intro {
     font-family: var(--font-serif);
-    font-size: 1.2rem;
+    font-size: 1.4rem;
     color: var(--text-dim);
     line-height: 1.6;
-    max-width: 750px;
+    max-width: 850px;
 }
 
 .content {
     font-family: var(--font-serif);
     line-height: 1.8;
-    font-size: 1.1rem;
+    font-size: 1.3rem;
     color: var(--text-main);
 }
 
 .content h2 {
     font-family: var(--font-main);
-    font-size: 1.6rem;
+    font-size: 2rem;
     color: var(--text-main);
     margin-top: 4rem;
     margin-bottom: 1.5rem;
@@ -84,7 +84,7 @@
     width: 100%;
     border-collapse: collapse;
     font-family: var(--font-main); /* Cleaner for academic tables */
-    font-size: 0.95rem;
+    font-size: 1.1rem;
     color: var(--text-main);
     border-top: 2px solid var(--text-main);    /* \toprule */
     border-bottom: 2px solid var(--text-main); /* \bottomrule */
@@ -99,7 +99,7 @@
     border-bottom: 1px solid var(--text-main); /* \midrule */
     font-weight: 600;
     color: var(--text-main);
-    font-size: 0.85rem;
+    font-size: 1rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
