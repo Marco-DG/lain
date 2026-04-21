@@ -5,7 +5,7 @@ import NaviShell from "@/components/NaviShell";
 import styles from "./Article.module.css";
 import Link from 'next/link';
 
-export default function EmpiricalResults() {
+export default function ComparativeAnalysisMemorySafety() {
     return (
         <NaviShell layout="blog">
             <article className={styles.container}>
