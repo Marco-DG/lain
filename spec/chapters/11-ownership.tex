@@ -1,5 +1,291 @@
-% 11-ownership.tex — placeholder
-\chapter{Ownership}
+% 11-ownership.tex — Clause 11: Ownership and linearity
+\chapter{Ownership and linearity}
 \label{sec:11-ownership}
+\index{ownership}
+\index{linearity}
 
-% TODO: write this chapter.
+\pnum
+This clause specifies Lain's linear type system, ownership modes, borrow
+checker, and non-lexical lifetime rules.  All rules in this clause are
+enforced at compile time with zero runtime overhead.
+
+\section{Ownership modes}
+\label{sec:own.modes}
+\index{ownership mode}
+
+\pnum
+Every parameter, return value, and struct field has one of three ownership
+modes:
+
+\begin{longtable}{@{}llll@{}}
+\toprule
+\textbf{Mode} & \textbf{Param syntax} & \textbf{Call-site} & \textbf{Semantics} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Mode} & \textbf{Param syntax} & \textbf{Call-site} & \textbf{Semantics} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+Shared  & \lain{name T}     & \lain{f(x)}     & read-only; multiple concurrent borrows allowed \\
+Mutable & \lain{var name T} & \lain{f(var x)} & exclusive read-write; no other borrow concurrent \\
+Owned   & \lain{mov name T} & \lain{f(mov x)} & transfers ownership; source becomes Consumed \\
+\end{longtable}
+
+\pnum
+Local variables declared with \lain{var name = expr} have mutable storage
+accessible within their scope; their ownership mode in the type system is
+Owned (they hold linear values that must be consumed at scope exit).
+
+\section{Linear states}
+\label{sec:own.states}
+\index{linear state}
+
+\pnum
+Every variable of a linear type has a \textit{linear state} at each program
+point.  The three states are:
+
+\begin{description}[leftmargin=2em]
+  \item[Uninit]
+    The variable has been declared but no value has been assigned.
+  \item[Unconsumed]
+    The variable holds a value that has not yet been transferred.
+  \item[Consumed]
+    The variable's value has been transferred via \lain{mov} or a consuming
+    function call.
+\end{description}
+
+\pnum
+The state machine governing transitions is:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{State before} & \textbf{Operation} & \textbf{State after} \\
+\midrule
+Uninit      & first assignment              & Unconsumed \\
+Unconsumed  & \lain{mov x} (transfer)       & Consumed \\
+Unconsumed  & borrow (\lain{ref}/\lain{mut}) & Unconsumed (borrow active) \\
+Consumed    & assignment (overwrite)        & Unconsumed \\
+Consumed    & read or \lain{mov}            & \illformed{} \\
+Uninit      & read or \lain{mov}            & \illformed{} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{note}
+  The Consumed~$\to$~Unconsumed transition via overwrite enables the
+  loop-reassign-then-consume pattern: a linear variable declared outside a
+  loop may be consumed and reassigned on each iteration without leaking.
+\end{note}
+
+\section{Diagnostics}
+\label{sec:own.diag}
+\index{ownership diagnostics}
+
+\begin{constraint}
+  Using a variable that is in the Consumed or Uninit state (reading its
+  value or transferring it with \lain{mov}) is \illformed{}~(\diagcode{E001}).
+\end{constraint}
+
+\begin{constraint}
+  Transferring ownership of a variable that has already been transferred
+  (double-move) is \illformed{}~(\diagcode{E002}).
+\end{constraint}
+
+\begin{constraint}
+  A linear variable that is in the Unconsumed state when its scope exits
+  (resource leak) is \illformed{}~(\diagcode{E003}).
+\end{constraint}
+
+\begin{constraint}
+  An aliasing violation — attempting a mutable borrow when a shared borrow
+  is active, or a shared borrow when a mutable borrow is active, or a
+  second mutable borrow of the same variable — is
+  \illformed{}~(\diagcode{E004}).
+\end{constraint}
+
+\begin{constraint}
+  Attempting to move a variable that has an active borrow is
+  \illformed{}~(\diagcode{E005}).
+\end{constraint}
+
+\begin{constraint}
+  Moving a variable inside a loop body where the loop may execute more than
+  once is \illformed{}~(\diagcode{E006}).
+\end{constraint}
+
+\begin{constraint}
+  If a linear variable is consumed in one branch of an \lain{if}/\lain{else}
+  chain but not in all branches, the program is
+  \illformed{}~(\diagcode{E007}).
+\end{constraint}
+
+\section{The read-write lock invariant}
+\label{sec:own.rwlock}
+\index{read-write lock invariant}
+
+\pnum
+\textbf{Invariant}: At every program point, for every variable~$V$, exactly
+one of the following holds:
+\begin{enumerate}
+  \item $V$ has $N \geq 0$ active shared borrows and zero active mutable borrows.
+  \item $V$ has exactly one active mutable borrow and zero shared borrows.
+\end{enumerate}
+
+\pnum
+This invariant is the compile-time analogue of a reader-writer lock.  A
+conforming implementation shall enforce it at every program point.
+
+\section{Non-lexical lifetimes (NLL)}
+\label{sec:own.nll}
+\index{non-lexical lifetime}
+
+\pnum
+A borrow's lifetime ends at the borrow's \textit{last use}, not at the end
+of the variable's lexical scope.  The implementation computes last-use
+points via a use-analysis pre-pass over the AST.
+
+\begin{example}
+\begin{laincode}
+var data = Data(42)
+var r = get_ref(var data)  // mutable borrow starts
+use_ref(var r)             // last use of r: borrow ends HERE (NLL)
+var y = read(data)         // OK: borrow has expired
+\end{laincode}
+\end{example}
+
+\section{Two-phase borrows}
+\label{sec:own.two-phase}
+\index{two-phase borrow}
+
+\pnum
+During argument evaluation for a function call, borrows of the receiver
+object are placed in the \textit{RESERVED} phase.  A RESERVED borrow
+allows concurrent shared reads of the same owner but blocks mutable writes
+and moves.  After all arguments have been evaluated, RESERVED borrows are
+promoted to the \textit{ACTIVE} phase.
+
+\pnum
+This mechanism enables UFCS calls of the form \lain{x.f(x.field)} where
+the first argument (the receiver) requires a mutable borrow of \lain{x}
+while the second argument reads a field of \lain{x}.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Phase} & \textbf{Allows on owner} & \textbf{Blocks on owner} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Phase} & \textbf{Allows on owner} & \textbf{Blocks on owner} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+RESERVED & shared reads & mutable writes, moves \\
+ACTIVE   & (nothing)    & all other access \\
+\end{longtable}
+
+\begin{example}
+\begin{laincode}
+proc push_n(var v Vec, n int) { v.data = v.data + n }
+
+var v = Vec(0, 10)
+v.push_n(v.cap)   // desugars to push_n(var v, v.cap)
+                  // var v enters RESERVED phase; v.cap read is allowed
+\end{laincode}
+\end{example}
+
+\section{Move semantics}
+\label{sec:own.move}
+\index{move semantics}
+
+\pnum
+The \lain{mov} operator transfers ownership.  The source variable
+transitions to Consumed state; any subsequent read or move of the source
+is \illformed{}~(\diagcode{E001}).
+
+\pnum
+Ownership transfer is the only way to pass a linear value to a consuming
+parameter.  The \lain{mov} keyword shall be present at the call site:
+\lain{f(mov x)}.
+
+\section{Borrowed match}
+\label{sec:own.borrowed-match}
+\index{borrowed match}
+
+\pnum
+The \lain{case \&expr \{ ... \}} form (see \S\,\ref{sec:15-match}) performs
+pattern matching without consuming the scrutinee.  A temporary shared
+borrow of the scrutinee is registered for the duration of the match body
+and released when the match completes.
+
+\begin{constraint}
+  Inside a \lain{case \&expr} body, the scrutinee shall not be mutated
+  or moved.  Attempting to do so violates the active shared
+  borrow~(\diagcode{E004}).
+\end{constraint}
+
+\section{Loop and ownership}
+\label{sec:own.loop}
+\index{ownership in loops}
+
+\pnum
+A linear variable declared outside a loop may be consumed inside the loop
+body if and only if it is also reassigned (overwritten) on every path
+through the loop body before the next iteration begins.
+
+\begin{example}
+\begin{laincode}
+import std.fs
+
+proc main() int {
+    var f = open_file("data.txt", "r")
+    close_file(mov f)        // consumed before loop
+    var i = 0
+    while i < 3 decreasing 3 - i {
+        f = open_file("data.txt", "r")  // reassign (Consumed -> Unconsumed)
+        close_file(mov f)               // consume
+        i = i + 1
+    }
+    return 0
+}
+\end{laincode}
+\end{example}
+
+\section{Branch consistency}
+\label{sec:own.branches}
+\index{branch consistency}
+
+\pnum
+After an \lain{if}/\lain{else} chain, the linear state of each variable
+from the enclosing scope is the \textit{intersection} of its states across
+all branches:
+
+\begin{itemize}
+  \item If consumed in all branches: the variable is Consumed after the chain.
+  \item If consumed in no branches: the variable is Unconsumed after the chain.
+  \item If consumed in some but not all branches: \illformed{}~(\diagcode{E007}).
+\end{itemize}
+
+\section{Field-level tracking}
+\label{sec:own.fields}
+\index{field-level borrow tracking}
+
+\pnum
+The borrow checker tracks borrows at the field level.  Borrowing
+non-overlapping fields of the same struct simultaneously is permitted:
+
+\begin{laincode}
+type Pair { a int, b int }
+var p = Pair(1, 2)
+var ra = ref_a(ref p.a)   // shared borrow of p.a
+var rb = ref_b(ref p.b)   // shared borrow of p.b -- OK: non-overlapping
+\end{laincode}
+
+\begin{note}
+  The reference implementation tracks field borrows at one level of depth.
+  Nested field borrows (e.g., \lain{p.a.x} vs \lain{p.a.y}) are conservatively
+  treated as overlapping.
+\end{note}

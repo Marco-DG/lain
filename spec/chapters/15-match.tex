@@ -1,5 +1,149 @@
-% 15-match.tex — placeholder
-\chapter{Match}
+% 15-match.tex — Clause 15: Pattern matching
+\chapter{Pattern matching}
 \label{sec:15-match}
+\index{pattern matching}
 
-% TODO: write this chapter.
+\section{Overview}
+\label{sec:match.overview}
+
+\pnum
+The \lain{case} expression matches a value against a sequence of patterns
+and evaluates the body of the first matching arm.  Every \lain{case}
+expression shall be exhaustive: the patterns shall collectively cover all
+possible values of the scrutinee type.  The grammar production is
+\gramref{match-expression} (Annex~A).
+
+\section{Syntax}
+\label{sec:match.syntax}
+
+\begin{laincode}
+case expr {
+    Pattern1: body1
+    Pattern2: body2
+    else:     default_body
+}
+\end{laincode}
+
+\pnum
+Each arm consists of a pattern (or comma-separated list of patterns) and a
+body.  The body may be a single expression or a block.  The arms are
+tested in declaration order; the first matching arm is taken.
+
+\section{Patterns}
+\label{sec:match.patterns}
+
+\pnum
+The following pattern forms are supported:
+
+\begin{description}[leftmargin=2em]
+  \item[Wildcard (\lain{else})]
+    Matches any value.  Must be the last arm.  Required for integer and
+    character scrutinees.
+
+  \item[Literal pattern]
+    Matches a specific integer or character value:
+    \lain{42:}, \lain{'a':}.
+
+  \item[Enum/ADT variant pattern]
+    Matches a specific variant.  If the variant has fields, they are bound:
+    \lain{Circle(r): ...} binds the radius to \lain{r}.
+
+  \item[Range pattern]
+    Matches an inclusive range of integer or character values:
+    \lain{1..10:} matches 1 through 10.
+
+  \item[Multi-pattern (OR)]
+    A comma-separated list of patterns on a single arm:
+    \lain{1, 2, 3: ...}.
+\end{description}
+
+\section{Exhaustiveness}
+\label{sec:match.exhaustiveness}
+\index{exhaustiveness}
+
+\pnum
+A \lain{case} expression is exhaustive if the set of patterns covers all
+values of the scrutinee type.  The rules by type are:
+
+\begin{longtable}{@{}ll@{}}
+\toprule
+\textbf{Scrutinee type} & \textbf{Exhaustiveness requirement} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Scrutinee type} & \textbf{Exhaustiveness requirement} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+Enum     & All variants covered, or \lain{else} arm present \\
+ADT      & All variants covered, or \lain{else} arm present \\
+Integer  & \lain{else} arm always required \\
+\lain{u8} (char) & \lain{else} arm always required \\
+\lain{bool} & \lain{true} and \lain{false} covered, or \lain{else} \\
+\end{longtable}
+
+\begin{constraint}
+  A non-exhaustive \lain{case} expression is
+  \illformed{}~(\diagcode{E014}).
+\end{constraint}
+
+\begin{example}
+\begin{laincode}
+enum Color { Red, Green, Blue }
+var c = Color.Red
+
+case c {
+    Red:   return 1
+    Green: return 2
+    Blue:  return 3
+}  // exhaustive: all three variants covered
+\end{laincode}
+\end{example}
+
+\section{Ownership and match}
+\label{sec:match.ownership}
+\index{ownership in match}
+
+\pnum
+By default, \lain{case expr} may consume the scrutinee if it is a linear
+type.  Bindings introduced by variant patterns in consuming arms hold
+ownership of the bound values.
+
+\pnum
+\lain{case \&expr} performs a non-consuming match: the scrutinee is not
+consumed but instead temporarily borrowed for the duration of the match
+body (see \S\,\ref{sec:own.borrowed-match}).
+
+\begin{constraint}
+  Inside a \lain{case \&expr} body, the scrutinee shall not be mutated or
+  moved~(\diagcode{E004}).
+\end{constraint}
+
+\section{Case expression result type}
+\label{sec:match.type}
+
+\pnum
+When \lain{case} is used as an expression, all arms shall produce values
+of compatible types (\S\,\ref{sec:types.compat}).  The type of the
+\lain{case} expression is the common type.
+
+\begin{constraint}
+  Arms of a \lain{case} expression that produce incompatible types are
+  \illformed{}.
+\end{constraint}
+
+\section{String pattern matching}
+\label{sec:match.string}
+\index{string pattern matching}
+
+\pnum
+String literals may appear as patterns.  A string pattern matches if the
+scrutinee has the same byte sequence and length as the pattern literal.
+The comparison is performed byte-by-byte (analogous to \texttt{memcmp}).
+
+\begin{note}
+  String pattern matching in the translation output is implemented as a
+  sequence of byte comparisons or \texttt{memcmp} calls, depending on
+  the implementation.  Its asymptotic cost is O(n) in the pattern length.
+\end{note}

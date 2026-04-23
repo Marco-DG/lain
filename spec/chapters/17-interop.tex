@@ -1,5 +1,177 @@
-% 17-interop.tex — placeholder
-\chapter{Interop}
+% 17-interop.tex — Clause 17: C interoperability
+\chapter{C interoperability}
 \label{sec:17-interop}
+\index{C interoperability}
 
-% TODO: write this chapter.
+\section{Overview}
+\label{sec:interop.overview}
+
+\pnum
+Lain compiles to C99 and provides direct, zero-overhead interoperability
+with C libraries through three mechanisms:
+\begin{enumerate}
+  \item \lain{c\_include} --- injects C \texttt{\#include} directives;
+  \item \lain{extern} declarations --- declares C functions for use in Lain;
+  \item type mapping --- Lain types map to their C99 counterparts.
+\end{enumerate}
+
+\section{The \texttt{c\_include} declaration}
+\label{sec:interop.cinclude}
+\index{c\_include}
+
+\pnum
+\lain{c\_include "header.h"} causes the compiler to emit a
+\texttt{\#include} directive in the generated C code.  The string content
+is emitted verbatim.
+
+\begin{laincode}
+c_include "<stdio.h>"
+c_include "<stdlib.h>"
+\end{laincode}
+
+\begin{constraint}
+  \lain{c\_include} shall appear only at module top level.
+\end{constraint}
+
+\section{Extern function declarations}
+\label{sec:interop.extern}
+\index{extern function}
+
+\pnum
+\lain{extern func name(params) return} declares a C function that Lain
+treats as pure.  It may be called from both \lain{func} and \lain{proc}
+contexts.
+
+\pnum
+\lain{extern proc name(params) return} declares a C function with potential
+side effects.  It may be called only from \lain{proc} contexts.
+
+\begin{constraint}
+  Calling an \lain{extern proc} from a \lain{func} is
+  \illformed{}~(\diagcode{E011}).
+\end{constraint}
+
+\pnum
+Ownership annotations on extern parameters work identically to those on
+native Lain functions; the borrow checker tracks ownership of resources
+obtained via extern calls.
+
+\section{Type mapping}
+\label{sec:interop.types}
+\index{type mapping}
+
+\pnum
+The following table defines the normative mapping between Lain types and
+their C99 equivalents.  The mapping is the ABI used by the translation
+output.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Lain type} & \textbf{C99 type} & \textbf{Notes} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Lain type} & \textbf{C99 type} & \textbf{Notes} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\lain{u8}          & \texttt{uint8\_t}   & \\
+\lain{u16}         & \texttt{uint16\_t}  & \\
+\lain{u32}         & \texttt{uint32\_t}  & \\
+\lain{u64}         & \texttt{uint64\_t}  & \\
+\lain{usize}       & \texttt{size\_t}    & pointer-sized \\
+\lain{i8}          & \texttt{int8\_t}    & \\
+\lain{i16}         & \texttt{int16\_t}   & \\
+\lain{i32}         & \texttt{int32\_t}   & \\
+\lain{i64}         & \texttt{int64\_t}   & \\
+\lain{isize}       & \texttt{ptrdiff\_t} & pointer-sized \\
+\lain{int}         & \texttt{int}        & at least 32-bit \\
+\lain{f32}         & \texttt{float}      & IEEE 754 \\
+\lain{f64}         & \texttt{double}     & IEEE 754 \\
+\lain{bool}        & \texttt{int}        & \idbehav{0 or 1} \\
+shared struct \lain{T} & \texttt{const T*} & \\
+\lain{var} struct \lain{T} & \texttt{T*}  & \\
+\lain{mov} struct \lain{T} & \texttt{T}   & by value \\
+\lain{[T]}         & \texttt{struct \{ T* data; size\_t len; \}} & fat pointer \\
+\lain{*T}          & \texttt{const T*}  & unsafe only \\
+\lain{var *T}      & \texttt{T*}        & unsafe only \\
+\end{longtable}
+
+\section{ABI for function parameters}
+\label{sec:interop.abi}
+\index{ABI}
+
+\pnum
+This table is normative and applies to all Lain function calls, including
+those to \lain{extern} functions.
+
+\begin{longtable}{@{}llll@{}}
+\toprule
+\textbf{Lain param} & \textbf{Type} & \textbf{C param} & \textbf{Direction} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Lain param} & \textbf{Type} & \textbf{C param} & \textbf{Direction} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\lain{name T}     & struct & \texttt{const T*}  & in \\
+\lain{var name T} & struct & \texttt{T*}        & in/out \\
+\lain{mov name T} & struct & \texttt{T}         & in (by value) \\
+any mode          & primitive & \texttt{T}      & in \\
+\end{longtable}
+
+\section{Pointer operations}
+\label{sec:interop.pointers}
+\index{pointer operations}
+
+\pnum
+Raw pointer operations (\lain{*ptr} dereference, \lain{\&x} address-of)
+require an \lain{unsafe} block (see \S\,\ref{sec:18-unsafe}).
+
+\begin{constraint}
+  Pointer-to-pointer or integer-to-pointer casts shall occur only inside
+  an \lain{unsafe} block~(\diagcode{E012}).
+\end{constraint}
+
+\section{String interop}
+\label{sec:interop.strings}
+\index{string interop}
+
+\pnum
+Lain strings (\lain{[u8]}) are byte slices, not null-terminated C strings.
+To pass a Lain string to a C function expecting \texttt{char*}, the
+\lain{.data} pointer must be extracted explicitly:
+
+\begin{laincode}
+c_include "<stdio.h>"
+extern proc puts(s *u8) int
+
+var s = "hello"
+puts(s.data)   // OK: .data is *u8 = const char*
+\end{laincode}
+
+\pnum
+String literals are null-terminated (\S\,\ref{sec:lex.literals.string}),
+so \lain{literal.data} is a valid \texttt{const char*} for C functions
+that expect a C string.
+
+\section{Opaque C types}
+\label{sec:interop.opaque}
+\index{opaque type}
+
+\pnum
+An opaque C type is declared with \lain{extern type Name}.  The type's
+layout is unknown to Lain; it may only be used behind a pointer.
+
+\begin{laincode}
+extern type FILE
+extern proc fopen(path *u8, mode *u8) mov *FILE
+\end{laincode}
+
+\begin{constraint}
+  An opaque type shall not be used as a value type (only as a pointer
+  target).  \lain{var f FILE} is \illformed{}.
+\end{constraint}

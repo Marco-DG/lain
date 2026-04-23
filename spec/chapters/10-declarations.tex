@@ -1,5 +1,193 @@
-% 10-declarations.tex — placeholder
+% 10-declarations.tex — Clause 10: Declarations
 \chapter{Declarations}
 \label{sec:10-declarations}
+\index{declaration}
 
-% TODO: write this chapter.
+\pnum
+This clause specifies top-level declarations.  Local variable declarations
+are specified in \S\,\ref{sec:stmt.var}.  The grammar productions are in
+Annex~A (\gramref{function-declaration}, \gramref{struct-declaration},
+\gramref{enum-declaration}).
+
+\section{Struct declarations}
+\label{sec:decl.struct}
+\index{struct declaration}
+
+\pnum
+A struct declaration introduces a named product type with one or more
+named fields.  Fields are listed in declaration order; order is significant
+for construction and layout.
+
+\begin{laincode}
+struct Point {
+    x int
+    y int
+}
+\end{laincode}
+
+\pnum
+A field may be annotated with \lain{mov}, making the field (and therefore
+the containing struct) a linear type:
+
+\begin{laincode}
+struct File {
+    mov handle *FILE
+}
+\end{laincode}
+
+\begin{constraint}
+  A struct with zero fields is \illformed{}~(\diagcode{E100}).
+\end{constraint}
+
+\section{Enum and ADT declarations}
+\label{sec:decl.enum}
+\index{enum declaration}
+\index{ADT declaration}
+
+\pnum
+An enum declaration introduces a type whose values are drawn from a fixed,
+named set of variants.  If every variant has no associated fields, the type
+is a simple enum (\S\,\ref{sec:types.enum}).  If at least one variant has
+associated fields, the type is an algebraic data type (ADT)
+(\S\,\ref{sec:types.adt}).
+
+\begin{laincode}
+enum Direction { North, South, East, West }  // simple enum
+
+enum Shape {                                  // ADT
+    Circle     { radius int }
+    Rectangle  { width int, height int }
+    Point
+}
+\end{laincode}
+
+\section{Function declarations}
+\label{sec:decl.func}
+\index{function declaration}
+
+\pnum
+A function declaration introduces a \lain{func}: a pure, terminating,
+side-effect-free callable.  Its grammar production is
+\gramref{function-declaration}.
+
+\pnum
+The signature consists of: the keyword \lain{func}, a name, an optional
+list of \lain{comptime} type parameters, a parameter list, and a return
+type annotation.
+
+\subsection{Parameters}
+\label{sec:decl.func.params}
+\index{parameter}
+
+\pnum
+Each parameter has a name, a type, and an ownership mode.  The ownership
+mode determines how the argument is passed:
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Syntax} & \textbf{Mode} & \textbf{ABI (struct T)} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Syntax} & \textbf{Mode} & \textbf{ABI (struct T)} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\lain{name T}        & shared (read-only) & \texttt{const T*} \\
+\lain{var name T}    & mutable            & \texttt{T*}       \\
+\lain{mov name T}    & owned (transfer)   & \texttt{T} (by value) \\
+\end{longtable}
+
+\begin{note}
+  For primitive types (integer, float, bool), the ABI passes the value
+  directly regardless of ownership mode, as for primitive C arguments.
+\end{note}
+
+\pnum
+A parameter declared \lain{comptime name type} is a compile-time type
+parameter; it must be bound to a concrete type at every call site.
+
+\subsection{Return type annotation}
+\label{sec:decl.func.return}
+\index{return type}
+
+\pnum
+The return type is written after the parameter list.  It may carry a value
+range constraint:
+
+\begin{laincode}
+func abs(x int) int >= 0 { ... }
+\end{laincode}
+
+\begin{constraint}
+  All return paths of a \lain{func} shall produce a value whose type and
+  value range satisfy the declared return type and constraint.
+\end{constraint}
+
+\subsection{Purity constraints}
+\label{sec:decl.func.purity}
+\index{func purity constraints}
+
+\begin{constraint}
+  A \lain{func} shall not contain an unbounded \lain{while} loop (one
+  without a \lain{decreasing} measure)~(\diagcode{E011}).
+\end{constraint}
+
+\begin{constraint}
+  A \lain{func} shall not call a \lain{proc} or \lain{extern proc}~(\diagcode{E011}).
+\end{constraint}
+
+\begin{constraint}
+  A \lain{func} shall not call itself directly or indirectly (mutual
+  recursion)~(\diagcode{E011}).
+\end{constraint}
+
+\section{Procedure declarations}
+\label{sec:decl.proc}
+\index{procedure declaration}
+
+\pnum
+A procedure declaration introduces a \lain{proc}: a callable with
+unrestricted side effects.  Its syntax is identical to \lain{func} except
+for the \lain{proc} keyword.  A \lain{proc} may contain unbounded loops,
+call other \lain{proc}s, and access global mutable state.
+
+\pnum
+The entry point of every Lain program shall be declared as:
+
+\begin{laincode}
+proc main() int { ... }
+\end{laincode}
+
+\begin{constraint}
+  A program without a \lain{proc main() int} definition is
+  \illformed{}~(\diagcode{E100}).
+\end{constraint}
+
+\section{Extern declarations}
+\label{sec:decl.extern}
+\index{extern declaration}
+
+\pnum
+An extern declaration introduces a C function into the Lain name space
+without providing a body.  See \S\,\ref{sec:17-interop} for full semantics.
+
+\begin{laincode}
+extern proc printf(fmt *u8, ...) int
+extern func strlen(s *u8) usize
+\end{laincode}
+
+\begin{constraint}
+  Variadic parameters (\lain{...}) shall only appear in \lain{extern}
+  declarations.  User-defined variadic functions are \illformed{}.
+\end{constraint}
+
+\section{Comptime declarations}
+\label{sec:decl.comptime}
+\index{comptime declaration}
+
+\pnum
+A top-level \lain{comptime \{ ... \}} block is evaluated by the compiler
+before any runtime code is emitted.  It may define compile-time constants
+or trigger \lain{compileError} assertions.

@@ -1,5 +1,282 @@
-%% C-rationale.tex — Annex C (placeholder)
-\chapter{Rationale}
+%% C-rationale.tex — Annex C: Language design rationale (informative)
+\chapter{Language design rationale}
 \label{annex:C-rationale}
+\index{rationale}
 
-% TODO: Iter 19 — write this annex.
+\pnum
+This annex is informative.  It explains the reasoning behind key design
+decisions in the Lain language.  Understanding the rationale helps readers
+interpret edge cases in the normative text and guides implementors when
+the specification is ambiguous.
+
+% =========================================================================
+\section{The \texttt{func}/\texttt{proc} distinction}
+\label{sec:rationale.func-proc}
+\index{func/proc distinction!rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Separate pure functions (\lain{func}) from
+side-effecting procedures (\lain{proc}) at the declaration level.
+
+\pnum
+\textbf{Rationale.}
+\begin{itemize}
+  \item \textit{Termination guarantees}: a \lain{func} is guaranteed to
+        terminate (no unbounded \lain{while}, no unchecked recursion).
+        This enables the compiler to reason statically about function
+        completion and to use \lain{func} bodies inside \lain{comptime}
+        expressions.
+  \item \textit{Purity propagation}: the type system propagates purity
+        constraints — a \lain{func} cannot call a \lain{proc}, so pure
+        code stays pure by construction.
+  \item \textit{Optimisation}: the compiler may freely reorder, memoize,
+        or eliminate calls to \lain{func} because they have no observable
+        side effects.
+  \item \textit{Readability}: the declaration keyword tells the reader
+        whether a callable has side effects without inspecting its body.
+\end{itemize}
+
+\pnum
+\textbf{Alternatives considered.}
+Single keyword with a purity annotation (\lain{func(pure)}) was rejected
+as less visible.  A Haskell-style IO monad was rejected as too complex
+for a systems language.
+
+% =========================================================================
+\section{Explicit \texttt{mov} at call sites}
+\label{sec:rationale.mov}
+\index{mov!rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Require explicit \lain{mov} at call sites when
+transferring ownership.
+
+\pnum
+\textbf{Rationale.}
+\begin{itemize}
+  \item \textit{Readability}: \lain{close\_file(mov f)} makes ownership
+        transfer visible at the call site.
+  \item \textit{Intentionality}: accidental ownership transfer is a
+        common source of bugs.  Requiring \lain{mov} forces the
+        programmer to acknowledge the transfer.
+  \item \textit{Symmetry}: the annotation appears in both declarations
+        (\lain{mov x T}) and at call sites (\lain{mov x}), creating a
+        uniform language.
+\end{itemize}
+
+\pnum
+\textbf{Alternatives considered.}
+Rust-style implicit moves were rejected because they are invisible at
+call sites.  A library function \texttt{std::move} (C++) was rejected
+because ownership transfer should be a language primitive, not a library
+function.
+
+% =========================================================================
+\section{Implicit NLL lifetimes (no annotations)}
+\label{sec:rationale.nll}
+\index{lifetime annotations!rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Borrows have implicit lifetimes determined by
+non-lexical lifetime analysis.  No explicit lifetime annotations are
+required.
+
+\pnum
+\textbf{Rationale.}
+\begin{itemize}
+  \item \textit{Simplicity}: Rust's lifetime annotations are widely
+        cited as its steepest learning curve.  Lain targets programmers
+        who want safety without that complexity.
+  \item \textit{Sufficient expressiveness}: NLL handles the vast
+        majority of real-world borrow patterns.
+  \item \textit{Predictability}: borrows expire at last use — a single,
+        intuitive rule.
+\end{itemize}
+
+\pnum
+\textbf{Trade-offs.}  Some programs that Rust can verify with explicit
+lifetime annotations may be rejected by Lain's more conservative
+analysis.  Higher-order borrowing patterns are constrained.
+
+% =========================================================================
+\section{C99 translation output}
+\label{sec:rationale.c99}
+\index{C99 backend!rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Compile to C99 source code rather than LLVM IR,
+machine code, or bytecode.
+
+\pnum
+\textbf{Rationale.}
+\begin{itemize}
+  \item \textit{Portability}: C99 compilers exist for every platform,
+        from server-class x86 to microcontrollers.  Lain inherits this
+        portability for free.
+  \item \textit{Toolchain reuse}: users get GCC/Clang optimisation passes,
+        debuggers, profilers, and sanitisers without custom tooling.
+  \item \textit{Interoperability}: C interop is zero-cost because the
+        output \emph{is} C.
+  \item \textit{Simplicity}: a C emitter is orders of magnitude simpler
+        than an LLVM backend or a native code generator.
+  \item \textit{Auditability}: the generated C code is human-readable.
+\end{itemize}
+
+\pnum
+\textbf{Trade-offs.}  Compilation is two-phase (Lain~→~C~→~binary).
+Some optimisations are impossible without direct IR control.  The C type
+system constrains what Lain can express (e.g., no guaranteed tail calls).
+
+% =========================================================================
+\section{No exception mechanism}
+\label{sec:rationale.no-exceptions}
+\index{exceptions!absence of, rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Lain has no exception mechanism.  All error handling
+uses return values.
+
+\pnum
+\textbf{Rationale.}
+\begin{itemize}
+  \item \textit{Zero overhead}: no unwinding tables, catch tables, or
+        RTTI.
+  \item \textit{Determinism}: error handling follows the same control
+        flow as normal code; no invisible jumps.
+  \item \textit{Embedded compatibility}: stack unwinding is unavailable
+        or unreliable on many embedded platforms.
+  \item \textit{Explicit error paths}: every error is visible in the
+        function signature (via \lain{Result} return types).
+  \item \textit{Compatibility with \lain{defer}}: the \lain{defer}
+        mechanism provides deterministic cleanup without exceptions.
+\end{itemize}
+
+% =========================================================================
+\section{Explicit \texttt{unsafe} blocks}
+\label{sec:rationale.unsafe}
+\index{unsafe!rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Pointer dereference and direct ADT field access
+require an explicit \lain{unsafe} block.
+
+\pnum
+\textbf{Rationale.}
+\begin{itemize}
+  \item \textit{Auditability}: safety-critical codebases can grep for
+        \lain{unsafe \{} to enumerate all potentially dangerous
+        operations.
+  \item \textit{Minimal scope}: Lain's \lain{unsafe} is narrow — it
+        enables only pointer dereference, address-of, casts, direct ADT
+        access, and bounds suppression.  Unlike C (where everything is
+        unsafe by default) or some languages (where \lain{unsafe} enables
+        a much larger capability set), Lain's \lain{unsafe} is a
+        surgical escape hatch.
+  \item \textit{Social contract}: the keyword communicates to code
+        reviewers that extra scrutiny is warranted.
+\end{itemize}
+
+% =========================================================================
+\section{Value Range Analysis instead of SMT}
+\label{sec:rationale.vra}
+\index{VRA!rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Use interval-based VRA for static verification
+instead of an SMT solver.
+
+\pnum
+\textbf{Rationale.}
+\begin{itemize}
+  \item \textit{Decidability}: VRA always terminates in polynomial time.
+        SMT solving is NP-hard in the general case and may time out.
+  \item \textit{Predictability}: programmers can reason about what the
+        compiler will accept by thinking about integer ranges.  SMT
+        solver reasoning is opaque.
+  \item \textit{Simplicity}: the VRA implementation is approximately 600 lines.
+        An SMT integration would be orders of magnitude more complex and
+        would introduce an external dependency.
+\end{itemize}
+
+\pnum
+\textbf{Trade-offs.}  VRA is incomplete — it may reject valid programs
+that an SMT solver could prove correct.  Non-linear constraints produce
+conservatively wide ranges.
+
+% =========================================================================
+\section{Comptime generics instead of \texttt{<T>} syntax}
+\label{sec:rationale.comptime}
+\index{generics!rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Use compile-time function evaluation with
+\lain{comptime} parameters instead of traditional generic syntax.
+
+\pnum
+\textbf{Rationale.}
+\begin{itemize}
+  \item \textit{Unification}: generics, type aliases, and compile-time
+        assertions all use the same mechanism.
+  \item \textit{Expressiveness}: comptime functions can contain arbitrary
+        logic, enabling type-level programming that traditional generics
+        cannot express.
+  \item \textit{Simplicity}: no angle brackets, no trait bounds, no
+        where clauses.  Just functions that take types and return types.
+  \item \textit{Precedent}: inspired by Zig's comptime approach, which
+        has proven ergonomic in practice.
+\end{itemize}
+
+% =========================================================================
+\section{Universal Function Call Syntax (UFCS)}
+\label{sec:rationale.ufcs}
+\index{UFCS!rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Support UFCS: \lain{x.f(args)} desugars to
+\lain{f(x, args)}.
+
+\pnum
+\textbf{Rationale.}
+\begin{itemize}
+  \item \textit{No classes needed}: UFCS provides method-like syntax
+        without class hierarchies, virtual dispatch, or inheritance.
+  \item \textit{Chainability}: enables fluent APIs.
+  \item \textit{Discoverability}: IDE auto-completion works naturally —
+        typing a dot after a value shows available operations.
+  \item \textit{Simplicity}: syntactic sugar only; no new concepts, no
+        method tables, no implicit \lain{this} pointer.
+\end{itemize}
+
+% =========================================================================
+\section{Bounded \texttt{while} in \texttt{func}}
+\label{sec:rationale.bounded-while}
+\index{bounded while!rationale}
+% =========================================================================
+
+\pnum
+\textbf{Decision.}  Allow \lain{while} loops in \lain{func} bodies when
+a \lain{decreasing} termination measure is supplied.
+
+\pnum
+\textbf{Rationale.}
+Without \lain{decreasing}, any \lain{while} loop in a \lain{func} would
+require a proof of termination that goes beyond what the compiler can
+verify automatically.  Requiring the programmer to supply a
+\textit{measure} — a non-negative integer expression that strictly
+decreases on every iteration — is a well-established technique from
+program verification (\textit{ranking functions}).  The compiler's three
+checks (non-negativity, variable dependency, strict decrease) are
+sufficient to verify termination without an external solver.
+
+\pnum
+This allows algorithms such as binary search and GCD computation to be
+expressed as \lain{func} without resorting to \lain{proc}.

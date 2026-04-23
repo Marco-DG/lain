@@ -1,5 +1,19 @@
-%% A-grammar.tex — Annex A (placeholder)
-\chapter{Grammar}
+%% A-grammar.tex — Annex A: Grammar summary (normative)
+\chapter{Grammar summary}
 \label{annex:A-grammar}
+\index{grammar summary}
 
-% TODO: Iter 19 — write this annex.
+\pnum
+This annex collects all grammar productions defined in this specification.
+It is normative.  Productions are listed in the order they are introduced
+in the body of the specification.  Each section heading identifies the
+originating clause.
+
+\pnum
+The grammar uses an extended BNF notation.  \texttt{::=} introduces a
+production.  Quoted strings are terminals.  Unquoted names are
+non-terminals.  \texttt{\{~X~\}} denotes zero or more repetitions.
+\texttt{[~X~]} denotes an optional item.  \texttt{A | B} denotes
+alternatives.
+
+\input{grammar}

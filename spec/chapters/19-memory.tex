@@ -1,5 +1,318 @@
-% 19-memory.tex — placeholder
-\chapter{Memory}
+% 19-memory.tex — Clause 19: Memory model
+\chapter{Memory model}
 \label{sec:19-memory}
+\index{memory model}
 
-% TODO: write this chapter.
+\section{Overview}
+\label{sec:mem.overview}
+
+\pnum
+Lain's memory model is founded on three invariants:
+\begin{enumerate}
+  \item \textbf{Deterministic allocation} — every allocation is explicit
+        and predictable; the implementation never implicitly allocates
+        heap memory.
+  \item \textbf{Zero runtime overhead} — there is no garbage collector
+        and no reference-counting mechanism.
+  \item \textbf{C99 layout compatibility} — the physical layout of all
+        objects follows ISO/IEC~9899 (C17) rules exactly.
+\end{enumerate}
+
+\pnum
+This clause specifies the abstract notions of \textit{object},
+\textit{storage duration}, \textit{object representation}, and
+\textit{address}.  The abstract machine described here is realised by any
+conforming translation output (\S\,\ref{sec:04-conformance}).
+
+\section{Objects}
+\label{sec:mem.objects}
+\index{object}
+
+\pnum
+An \textit{object} is a contiguous region of storage that holds a value of
+a declared type.  Every variable declaration introduces exactly one object.
+Fields of a struct introduce sub-objects.  Elements of a fixed-size array
+introduce element sub-objects.
+
+\pnum
+Every object has:
+\begin{itemize}
+  \item a \textit{declared type} (\S\,\ref{sec:07-types});
+  \item an \textit{ownership mode} — shared, \lain{var}, or \lain{mov}
+        (\S\,\ref{sec:own.modes});
+  \item a \textit{linear state} — \textsc{Uninit}, \textsc{Unconsumed},
+        or \textsc{Consumed} (\S\,\ref{sec:own.state});
+  \item a \textit{storage duration} (\S\,\ref{sec:mem.storage});
+  \item an \textit{address} — the byte address of its first storage unit,
+        aligned as required by the target platform.
+\end{itemize}
+
+\section{Storage duration}
+\label{sec:mem.storage}
+\index{storage duration}
+
+\pnum
+Three storage durations are defined:
+
+\begin{description}[leftmargin=2em]
+  \item[Automatic duration]
+    Objects declared inside a function or block body (including function
+    parameters) have automatic storage duration.  Storage is allocated when
+    the enclosing scope is entered and released when that scope exits.
+
+  \item[Static duration]
+    Objects declared at module scope have static storage duration.  Their
+    storage persists for the entire program execution.
+    \idbehav{The value of a static-duration object whose declaration
+    lacks an initializer is implementation-defined; the reference
+    implementation zero-initializes such objects via C99 static
+    initialization rules}.
+
+  \item[Heap (explicit) duration]
+    Objects allocated through C interop (\lain{malloc} or equivalent)
+    have programmer-controlled duration.  The ownership system
+    (\S\,\ref{sec:11-ownership}) enforces that \lain{mov} pointers to
+    heap memory are consumed exactly once~(\diagcode{E003}).
+\end{description}
+
+\begin{constraint}
+  A \lain{return} statement shall not return a reference whose referent
+  has automatic storage duration~(\diagcode{E010}).
+\end{constraint}
+
+\section{Stack allocation}
+\label{sec:mem.stack}
+\index{stack allocation}
+
+\pnum
+All local variables, struct values, and fixed-size arrays are allocated on
+the call stack.  No implicit heap allocation is ever performed by the
+compiler.
+
+\begin{laincode}
+var x int = 42     // stack: sizeof(int32_t) bytes
+var arr int[100]    // stack: 100 * sizeof(int32_t) bytes
+var p Point         // stack: sizeof(Point) bytes
+\end{laincode}
+
+\pnum
+Each function call produces a \textit{stack frame} containing:
+\begin{itemize}
+  \item all local variables declared in the function;
+  \item all function parameters (by value or by pointer, per the calling
+        convention of \S\,\ref{sec:12-functions.abi});
+  \item compiler-generated temporaries required for expression evaluation.
+\end{itemize}
+
+\pnum
+The stack frame is automatically reclaimed when the function returns.
+\idbehav{The implementation's behaviour when the call stack is exhausted
+is implementation-defined; the reference implementation inherits the
+platform's stack overflow signal}.
+
+\section{Heap allocation}
+\label{sec:mem.heap}
+\index{heap allocation}
+
+\pnum
+Heap allocation is performed exclusively through C interop
+(\S\,\ref{sec:17-interop}).  The idiomatic pattern declares the C
+\texttt{malloc}/\texttt{free} pair as \lain{extern proc}:
+
+\begin{laincode}
+c_include "<stdlib.h>"
+extern proc malloc(size usize) mov *void
+extern proc free(ptr mov *void)
+\end{laincode}
+
+\pnum
+Because \lain{malloc} returns \lain{mov *void}, the caller receives sole
+ownership of the allocated block.  Because \lain{free} consumes
+\lain{mov *void}, calling \lain{free} transfers that ownership to the
+allocator.  The ownership system therefore enforces statically:
+\begin{itemize}
+  \item \textbf{No use-after-free}: using the pointer after \lain{free}
+        is a use-after-move~(\diagcode{E001}).
+  \item \textbf{No double-free}: a second call to \lain{free} on the
+        same pointer is a double-consume~(\diagcode{E002}).
+  \item \textbf{No leak}: failing to call \lain{free} on a \lain{mov}
+        pointer is an unconsumed linear value~(\diagcode{E003}).
+\end{itemize}
+
+\section{Value semantics}
+\label{sec:mem.value-semantics}
+\index{value semantics}
+
+\pnum
+The behaviour of assignment and function argument passing is determined
+by the type's linearity and the ownership mode:
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Type} & \textbf{Assignment \texttt{b = a}} & \textbf{Notes} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Type} & \textbf{Assignment \texttt{b = a}} & \textbf{Notes} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+Primitives (\lain{int}, \lain{bool}, \ldots) & Bitwise copy & Always allowed \\
+Non-linear struct                             & Field-by-field copy & Allowed \\
+Linear struct (has \lain{mov} field)          & Forbidden & Requires \lain{mov} \\
+Non-linear array                              & Element-wise copy & Allowed \\
+Linear array                                  & Forbidden & Requires \lain{mov} \\
+Slice (\lain{[T]})                            & Copy \texttt{\{data, len\}} pair & Always allowed \\
+Raw pointer (\lain{*T})                       & Copy address & Always allowed \\
+\end{longtable}
+
+\begin{constraint}
+  Copying a linear type without an explicit \lain{mov} expression is
+  \illformed{}~(\diagcode{E006}).
+\end{constraint}
+
+\section{Object representation}
+\label{sec:mem.representation}
+\index{object representation}
+
+\pnum
+The \textit{object representation} of a Lain type is its C99 equivalent
+as defined in \S\,\ref{sec:interop.types}.  Every object is a sequence of
+\lain{u8} bytes whose count equals the C99 \texttt{sizeof} of the
+corresponding C type.
+
+\pnum
+\textit{Value equality} is defined per type:
+\begin{itemize}
+  \item Primitives: bitwise equality of the value representation.
+  \item Structs: field-by-field value equality.
+  \item Slices: equality of both the data pointer and the length.
+  \item Raw pointers: address equality.
+  \item ADTs: tag equality and, when tags match, field-by-field equality
+        of the active variant.
+\end{itemize}
+
+\section{Alignment and layout}
+\label{sec:mem.alignment}
+\index{alignment}
+\index{struct layout}
+
+\pnum
+Lain inherits ISO/IEC~9899 (C17) alignment and padding rules:
+\begin{itemize}
+  \item Struct fields are laid out in declaration order.
+  \item Each field is aligned to its natural alignment (the alignment of
+        its C99 equivalent type).
+  \item The compiler inserts padding between fields as necessary.
+  \item The total size of a struct is rounded up to a multiple of its
+        largest field alignment.
+\end{itemize}
+
+\pnum
+Lain does not provide layout control annotations.  There is no
+\texttt{\#pragma pack} equivalent, no \texttt{alignas}, and no
+\texttt{repr(packed)}.  The layout is always the platform-default C99
+layout.
+
+\idbehav{The exact size and alignment of each type is implementation-defined,
+following the C99 ABI of the target platform}.
+
+\section{ADT and enum layout}
+\label{sec:mem.adt-layout}
+\index{ADT layout}
+\index{enum layout}
+
+\pnum
+An enum type is emitted as a C \texttt{enum} wrapped in a named struct so
+that each enum type is nominally distinct in the C translation:
+
+\begin{verbatim}
+typedef enum { Color_Red, Color_Green, Color_Blue } Color_Tag;
+typedef struct { Color_Tag tag; } Color;
+\end{verbatim}
+
+\pnum
+An ADT type is emitted as a tagged union:
+
+\begin{verbatim}
+typedef struct {
+    enum { Shape_Circle_tag, Shape_Rect_tag } tag;
+    union {
+        struct { float r; } Circle;
+        struct { float w; float h; } Rect;
+    };
+} Shape;
+\end{verbatim}
+
+\pnum
+The tag field occupies \idbehav{the size of a C \texttt{enum} on the target
+platform (typically 4 bytes)}.  The size of the union is the size of the
+largest variant.
+
+\begin{note}
+  Because the tag is stored inside the struct, sizeof(ADT) is at least
+  sizeof(enum) + sizeof(largest variant) + padding.
+\end{note}
+
+\section{No garbage collector}
+\label{sec:mem.no-gc}
+\index{garbage collector!absence of}
+
+\pnum
+Lain has no garbage collector.  Consequently:
+\begin{itemize}
+  \item execution is never interrupted for memory management;
+  \item deallocation occurs at statically deterministic program points;
+  \item no reference counting or heap tracing is performed at runtime.
+\end{itemize}
+
+\pnum
+This makes Lain suitable for real-time, embedded, and safety-critical
+applications where garbage-collection pauses are unacceptable.
+
+\section{Memory safety in the safe fragment}
+\label{sec:mem.safety}
+\index{memory safety}
+
+\pnum
+In the \textit{safe fragment} (code outside \lain{unsafe} blocks), the
+following memory safety properties hold by construction:
+
+\begin{longtable}{@{}ll@{}}
+\toprule
+\textbf{Property} & \textbf{Enforcement mechanism} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Property} & \textbf{Enforcement mechanism} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+No use-after-free         & \diagcode{E001} (use-after-move) \\
+No double-free            & \diagcode{E002} (double-consume) \\
+No leak of linear values  & \diagcode{E003} (unconsumed at scope exit) \\
+No dangling references    & \diagcode{E010} (ref to automatic-duration object) \\
+No out-of-bounds access   & \diagcode{E014} (VRA proof failure) \\
+No null-pointer deref     & No raw pointers in safe fragment \\
+No data races             & No concurrency in current version \\
+\end{longtable}
+
+\begin{constraint}
+  Inside \lain{unsafe} blocks, pointer operations may violate the
+  above properties if the programmer's safety assertion is incorrect
+  (\S\,\ref{sec:unsafe.ub}).
+\end{constraint}
+
+\section{Compiler-internal arena (informative)}
+\label{sec:mem.arena}
+\index{arena!compiler-internal}
+
+\begin{note}
+  The reference implementation uses a bump-pointer arena internally for
+  all AST nodes, symbol table entries, and diagnostic objects.  This
+  arena is an implementation detail; it is never exposed to user code.
+  User programs may implement arena allocators of their own through C
+  interop.
+\end{note}

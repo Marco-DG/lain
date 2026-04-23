@@ -1,5 +1,165 @@
-% 12-functions.tex — placeholder
-\chapter{Functions}
+% 12-functions.tex — Clause 12: Functions and procedures
+\chapter{Functions and procedures}
 \label{sec:12-functions}
+\index{function}
+\index{procedure}
 
-% TODO: write this chapter.
+\section{The func/proc distinction}
+\label{sec:fn.distinction}
+\index{func vs proc}
+
+\pnum
+Lain distinguishes between pure functions (\lain{func}) and side-effecting
+procedures (\lain{proc}).  This distinction is enforced statically and
+reflected in the type system.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Property} & \textbf{\lain{func}} & \textbf{\lain{proc}} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Property} & \textbf{\lain{func}} & \textbf{\lain{proc}} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+Side effects                      & forbidden          & allowed \\
+Unbounded \lain{while}            & forbidden          & allowed \\
+Bounded \lain{while decreasing}   & allowed            & allowed \\
+\lain{for} loops                  & allowed            & allowed \\
+Direct/indirect recursion         & forbidden          & allowed \\
+Calling \lain{proc}               & forbidden          & allowed \\
+Calling \lain{func}               & allowed            & allowed \\
+Global mutable state              & no access          & full access \\
+Termination guarantee             & yes                & no \\
+\end{longtable}
+
+\pnum
+A \lain{func} is referentially transparent: calling it with the same
+arguments always produces the same result.  Its evaluation has no
+observable effect on any state outside its own stack frame.
+
+\section{Purity enforcement}
+\label{sec:fn.purity}
+\index{purity enforcement}
+
+\begin{constraint}
+  A \lain{func} that calls a \lain{proc} or \lain{extern proc} is
+  \illformed{}~(\diagcode{E011}).
+\end{constraint}
+
+\begin{constraint}
+  A \lain{func} that contains an unbounded \lain{while} loop (one without
+  a \lain{decreasing} measure) is \illformed{}~(\diagcode{E011}).
+\end{constraint}
+
+\begin{constraint}
+  A \lain{func} that calls itself directly, or that participates in a
+  mutual-recursion cycle, is \illformed{}~(\diagcode{E011}).  The
+  implementation shall detect mutual recursion by performing a depth-first
+  search on the call graph.
+\end{constraint}
+
+\begin{note}
+  Generic functions (\lain{func} with \lain{comptime} parameters) are
+  excluded from mutual-recursion detection until they are monomorphized.
+\end{note}
+
+\section{Termination analysis}
+\label{sec:fn.termination}
+\index{termination analysis}
+
+\pnum
+A \lain{func} is guaranteed to terminate because:
+\begin{enumerate}
+  \item all \lain{while} loops carry a verified termination measure;
+  \item \lain{for} loops iterate over finite ranges;
+  \item recursion is forbidden.
+\end{enumerate}
+
+\pnum
+No termination analysis is performed for \lain{proc}s.
+
+\section{Universal Function Call Syntax (UFCS)}
+\label{sec:fn.ufcs}
+\index{UFCS}
+
+\pnum
+An expression of the form \lain{x.f(args)} is desugared to \lain{f(x, args)}
+before name resolution, provided \lain{f} is not a declared field of
+\lain{x}'s type.  This is called Universal Function Call Syntax (UFCS).
+
+\pnum
+\textbf{UFCS ownership}: the ownership mode of the first argument in the
+desugared call is determined by the declared mode of the first parameter of
+\lain{f}:
+
+\begin{itemize}
+  \item If the first parameter is \lain{var}, the receiver is automatically
+        mutably borrowed: \lain{x.f()} desugars to \lain{f(var x)}.
+  \item If the first parameter is \lain{mov}, the receiver is automatically
+        moved: \lain{x.f()} desugars to \lain{f(mov x)}.
+  \item If the first parameter is shared (default), the receiver is shared:
+        \lain{x.f()} desugars to \lain{f(x)}.
+\end{itemize}
+
+\pnum
+\textbf{UFCS resolution algorithm}:
+\begin{enumerate}
+  \item Check if \lain{f} is a declared field of \lain{x}'s type.  If so,
+        this is a field access, not UFCS.
+  \item Search for a function named \lain{f} whose first parameter type is
+        compatible with the type of \lain{x}.
+  \item If found, desugar the call.
+  \item If not found, emit \diagcode{E013} (undeclared identifier).
+\end{enumerate}
+
+\begin{example}
+\begin{laincode}
+func is_empty(s [u8]) bool { return s.len == 0 }
+
+var buf = "hello"
+var empty = buf.is_empty()   // desugars to: is_empty(buf)
+\end{laincode}
+\end{example}
+
+\section{Calling conventions}
+\label{sec:fn.abi}
+\index{calling convention}
+
+\pnum
+The calling convention for Lain functions corresponds to the C99 calling
+convention of the target platform, as determined by the C compiler used for
+the translation output.  The parameter passing rules are:
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Lain parameter} & \textbf{C type} & \textbf{Semantics} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Lain parameter} & \textbf{C type} & \textbf{Semantics} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+shared struct \lain{T} & \texttt{const T*} & pointer to read-only copy \\
+\lain{var} struct \lain{T} & \texttt{T*}       & pointer, caller's copy \\
+\lain{mov} struct \lain{T} & \texttt{T}        & by value (bitwise copy) \\
+primitive any mode      & \texttt{T}        & by value \\
+\end{longtable}
+
+\section{Return values}
+\label{sec:fn.return}
+\index{return value}
+
+\pnum
+Return values follow the same rules as parameters for ownership modes.
+A \lain{return mov x} transfers ownership of \lain{x} to the caller.
+
+\begin{constraint}
+  A \lain{return var} expression shall not refer to a local variable.
+  It shall refer only to a field or element of a \lain{var} parameter
+  or other data that outlives the function~(\diagcode{E010}).
+\end{constraint}

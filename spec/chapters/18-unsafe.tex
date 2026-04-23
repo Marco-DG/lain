@@ -1,5 +1,121 @@
-% 18-unsafe.tex — placeholder
-\chapter{Unsafe}
+% 18-unsafe.tex — Clause 18: Unsafe code
+\chapter{Unsafe code}
 \label{sec:18-unsafe}
+\index{unsafe code}
 
-% TODO: write this chapter.
+\section{Purpose}
+\label{sec:unsafe.purpose}
+
+\pnum
+The \lain{unsafe} block provides a controlled escape hatch for operations
+that a conforming implementation cannot statically verify.  Unsafe blocks
+are explicitly delimited in the source text and are therefore auditable.
+Unsafe code cannot accidentally spread outside the enclosing block.
+
+\section{Syntax}
+\label{sec:unsafe.syntax}
+
+\pnum
+An unsafe block is written as \lain{unsafe \{ body \}}.  It may appear
+wherever a statement is valid (\S\,\ref{sec:stmt.unsafe}).
+
+\section{What unsafe enables}
+\label{sec:unsafe.enables}
+\index{unsafe!what it enables}
+
+\pnum
+Inside an \lain{unsafe} block, the following operations are permitted:
+
+\begin{enumerate}
+  \item \textbf{Raw pointer dereference}: \lain{*ptr} reads the value
+        pointed to by a raw pointer; \lain{*ptr = v} writes through a
+        mutable raw pointer.
+  \item \textbf{Address-of}: \lain{\&x} creates a raw pointer to the
+        storage of \lain{x}.
+  \item \textbf{Pointer and integer casts}: \lain{p as *T},
+        \lain{n as *T}, \lain{p as usize}, etc.
+  \item \textbf{Direct ADT field access}: accessing a field of an ADT
+        variant without going through a \lain{case} arm.
+  \item \textbf{Bounds-check suppression}: array indexing inside an
+        \lain{unsafe} block does not require a VRA proof (the
+        programmer asserts the access is in bounds).
+\end{enumerate}
+
+\section{What unsafe does NOT disable}
+\label{sec:unsafe.not-disabled}
+\index{unsafe!what it does not disable}
+
+\pnum
+The following safety features remain active inside \lain{unsafe} blocks:
+
+\begin{longtable}{@{}ll@{}}
+\toprule
+\textbf{Feature} & \textbf{Disabled by \lain{unsafe}?} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Feature} & \textbf{Disabled by \lain{unsafe}?} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+Pointer dereference                  & \textbf{Yes} \\
+Pointer/integer casts                & \textbf{Yes} \\
+Direct ADT field access              & \textbf{Yes} \\
+Bounds check requirement             & \textbf{Yes} \\
+Ownership tracking (\diagcode{E001}--\diagcode{E007}) & No \\
+Borrow checking (\diagcode{E004})    & No \\
+Move semantics                       & No \\
+Type checking                        & No \\
+Division-by-zero check (\diagcode{E015}) & No \\
+Exhaustiveness checking (\diagcode{E014}) & No \\
+Purity enforcement (\diagcode{E011}) & No \\
+\end{longtable}
+
+\begin{constraint}
+  Ownership and linearity rules (\S\,\ref{sec:11-ownership}) are not
+  suspended inside \lain{unsafe} blocks.  Use-after-move, double-move,
+  and borrow conflicts are still constraint violations inside
+  \lain{unsafe}~(\diagcode{E001}--\diagcode{E007}).
+\end{constraint}
+
+\section{Undefined behavior in unsafe}
+\label{sec:unsafe.ub}
+\index{undefined behavior!in unsafe}
+
+\pnum
+The following operations inside an \lain{unsafe} block may produce
+\undefbehav{undefined behavior if the programmer's safety assertion is
+incorrect}:
+
+\begin{itemize}
+  \item Dereferencing a null pointer.
+  \item Dereferencing a pointer to freed or uninitialized memory.
+  \item Writing to memory through a pointer derived from a read-only
+        (shared) source.
+  \item Accessing an array element with an out-of-range index.
+  \item Accessing a field of an ADT through a tag that does not match
+        the active variant.
+\end{itemize}
+
+\pnum
+A conforming implementation that generates C99 translation output inherits
+the undefined behavior rules of ISO/IEC~9899 (C17) for operations within
+\lain{unsafe} blocks.
+
+\section{Borrow scope for unsafe blocks}
+\label{sec:unsafe.borrow-scope}
+
+\pnum
+An \lain{unsafe} block is a regular block scope for the purposes of borrow
+checking.  Borrows registered within the block are released on block exit,
+and the borrow checker's invariants hold at the block boundaries.
+
+\section{Nesting}
+\label{sec:unsafe.nesting}
+
+\pnum
+\lain{unsafe} blocks may be nested.  The inner block does not extend the
+permissions of the outer block beyond what is already enabled.
+\idbehav{Whether the implementation issues a diagnostic for redundant nested
+unsafe blocks is implementation-defined}.
