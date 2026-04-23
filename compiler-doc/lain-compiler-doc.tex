@@ -1,0 +1,124 @@
+% lain-compiler-doc.tex — The Lain Compiler: Implementation Reference
+%
+% Compile with:
+%   latexmk -pdf lain-compiler-doc.tex
+% or:
+%   pdflatex lain-compiler-doc.tex  (run twice for cross-references)
+%
+% Structure:
+%   Part I   — Foundations (architecture, infrastructure, lexer)
+%   Part II  — Internal Representation (AST, modules)
+%   Part III — Parsing
+%   Part IV  — Semantic Analysis
+%   Part V   — Code Generation
+%   Part VI  — Standard Library and Testing
+%   Annexes A–D — Reference material
+
+\documentclass[11pt,a4paper,twoside,openright]{book}
+\usepackage{lain-compiler-doc}
+
+% =========================================================================
+% Document metadata
+% =========================================================================
+\title{%
+  \vspace{-2cm}
+  {\LARGE\bfseries\color{lain-blue} The Lain Compiler}\\[0.8em]
+  {\large Implementation Reference}\\[0.4em]
+  {\normalsize Version 0.1 --- Draft}
+}
+\author{}
+\date{\today}
+
+% =========================================================================
+\begin{document}
+% =========================================================================
+
+\frontmatter
+
+\maketitle
+\thispagestyle{empty}
+
+\vfill
+\noindent
+\begin{tabular}{ll}
+  \textbf{Document status:}    & Draft --- not for normative use \\
+  \textbf{Compiler version:}   & Lain 1.0 \\
+  \textbf{Source base:}        & \texttt{src/} $\approx$ 15\,000 LOC C99 \\
+  \textbf{Companion document:} & \textit{The Lain Language Specification} \\
+  \textbf{Date:}               & \today \\
+\end{tabular}
+\vfill
+\noindent\textit{%
+  This document describes the internal structure and algorithms of the Lain
+  compiler reference implementation.  It is intended for contributors,
+  language implementors, and readers who want to understand \emph{how}
+  the compiler enforces the guarantees defined in the language specification.
+  Where this document and the language specification differ, the language
+  specification takes precedence.
+}
+\clearpage
+
+\tableofcontents
+\clearpage
+
+% =========================================================================
+\mainmatter
+% =========================================================================
+
+% -------------------------------------------------------------------------
+\part{Foundations}
+% -------------------------------------------------------------------------
+\include{chapters/01-architecture}
+\include{chapters/02-infrastructure}
+\include{chapters/03-lexer}
+
+% -------------------------------------------------------------------------
+\part{Internal Representation}
+% -------------------------------------------------------------------------
+\include{chapters/04-ast}
+\include{chapters/05-modules}
+
+% -------------------------------------------------------------------------
+\part{Parsing}
+% -------------------------------------------------------------------------
+\include{chapters/06-parser-framework}
+\include{chapters/07-parser-expressions}
+\include{chapters/08-parser-stmts}
+
+% -------------------------------------------------------------------------
+\part{Semantic Analysis}
+% -------------------------------------------------------------------------
+\include{chapters/09-sema-orchestration}
+\include{chapters/10-resolve}
+\include{chapters/11-typecheck}
+\include{chapters/12-linearity}
+\include{chapters/13-borrows}
+\include{chapters/14-vra}
+\include{chapters/15-bounds}
+\include{chapters/16-exhaustiveness}
+\include{chapters/17-termination}
+
+% -------------------------------------------------------------------------
+\part{Code Generation}
+% -------------------------------------------------------------------------
+\include{chapters/18-comptime}
+\include{chapters/19-codegen}
+
+% -------------------------------------------------------------------------
+\part{Standard Library and Testing}
+% -------------------------------------------------------------------------
+\include{chapters/20-stdlib-impl}
+\include{chapters/21-testing}
+
+% =========================================================================
+\backmatter
+\appendix
+% =========================================================================
+\include{annexes/A-ast-reference}
+\include{annexes/B-diagnostics-impl}
+\include{annexes/C-pass-interactions}
+\include{annexes/D-declaration-flow}
+
+\printindex
+
+\end{document}

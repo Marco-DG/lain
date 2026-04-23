@@ -1,0 +1,197 @@
+% 07-parser-expressions.tex — Chapter 7: Parser: Expressions
+\chapter{Parser: Expressions}
+\label{chap:07-parser-expressions}
+\index{parser!expressions}
+
+\pnum
+Expression parsing is implemented in \srcref{src/parser/expr.h}.  The parser
+uses a standard Pratt precedence-climbing algorithm for binary expressions,
+with a separate recursive-descent layer for unary operators and primary
+expressions.  The entry point is \cname{parse\_expr}.
+
+% -------------------------------------------------------------------------
+\section{Entry point and structure}
+\label{sec:par-expr-entry}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{parse\_expr(arena, parser)} captures the current source location, calls
+\cname{parse\_binary\_expr(arena, parser, 0)}, and stamps the resulting node's
+\cname{line}/\cname{col} fields.  The source location is captured before any
+token is consumed, so it refers to the start of the expression.
+
+\pnum
+The call hierarchy is:
+
+\begin{center}
+\begin{tikzpicture}[node distance=0.7cm]
+  \node[passbox] (e)   {\cname{parse\_expr}};
+  \node[passbox, below=of e] (be)  {\cname{parse\_binary\_expr}};
+  \node[passbox, below=of be] (ue) {\cname{parse\_unary\_expr}};
+  \node[passbox, below=of ue] (pe) {\cname{parse\_primary\_expr}};
+  \draw[arrow] (e) -- (be);
+  \draw[arrow] (be) -- (ue);
+  \draw[arrow] (ue) -- (pe);
+\end{tikzpicture}
+\end{center}
+
+% -------------------------------------------------------------------------
+\section{Pratt precedence climbing}
+\label{sec:par-expr-pratt}
+\index{Pratt parser}
+\index{precedence climbing}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{parse\_binary\_expr(arena, parser, min\_prec)}
+(\srcref{src/parser/expr.h:27}) implements left-associative precedence climbing:
+
+\begin{algorithm}
+\textbf{parse\_binary\_expr}(\textit{arena, parser, min\_prec}):
+\begin{enumerate}
+\item Parse a unary expression as \textit{left}.
+\item If the current token is \lain{as}, parse a cast type and wrap \textit{left}.
+\item Loop:
+  \begin{enumerate}[(a)]
+  \item Let \textit{prec} = \cname{get\_precedence(token.kind)}.
+  \item If \textit{prec} $<$ \textit{min\_prec}, break.
+  \item Consume the operator token.
+  \item Recurse: \textit{right} = \cname{parse\_binary\_expr(arena, parser, prec+1)}.
+  \item Build \cname{EXPR\_BINARY(op, left, right)} and assign to \textit{left}.
+  \item If the next token is \lain{as}, parse a cast and wrap \textit{left}.
+  \end{enumerate}
+\item Return \textit{left}.
+\end{enumerate}
+\end{algorithm}
+
+\pnum
+The recursive call with \textit{prec+1} produces left-associativity: operators
+at the same precedence level associate to the left because the right operand
+only claims operators of strictly higher precedence.
+
+\pnum
+The \lain{as} cast check after each sub-expression is required because \lain{as}
+is a postfix operator with higher binding than binary operators.  The check after
+the initial unary parse handles \lain{a as T op b}; the check inside the loop
+handles \lain{a op b as T op c}.
+
+% -------------------------------------------------------------------------
+\section{Unary expressions}
+\label{sec:par-expr-unary}
+\index{unary expressions}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{parse\_unary\_expr} (\srcref{src/parser/expr.h:60}) handles all prefix
+unary operators:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Token} & \textbf{AST node} & \textbf{Meaning} \\
+\midrule
+\texttt{-}         & \cname{EXPR\_UNARY(TOKEN\_MINUS, right)}    & Arithmetic negation \\
+\texttt{!}         & \cname{EXPR\_UNARY(TOKEN\_BANG, right)}     & Logical not \\
+\texttt{\&}        & \cname{EXPR\_UNARY(TOKEN\_AMPERSAND, right)}& Address-of / borrow \\
+\texttt{\~{}}      & \cname{EXPR\_UNARY(TOKEN\_TILDE, right)}    & Bitwise complement \\
+\texttt{*}         & \cname{EXPR\_UNARY(TOKEN\_ASTERISK, right)} & Pointer dereference \\
+\lain{mov}         & \cname{EXPR\_MOVE(right)}                   & Explicit ownership transfer \\
+\lain{var}         & \cname{EXPR\_MUT(right)}                    & Mutable borrow \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+Unary operators are right-recursive: \cname{parse\_unary\_expr} calls itself
+for the operand.  This allows chaining (\lain{--x} if supported, \lain{!not y},
+etc.) and correctly handles \lain{mov *ptr}.
+
+% -------------------------------------------------------------------------
+\section{Primary expressions}
+\label{sec:par-expr-primary}
+\index{primary expressions}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{parse\_primary\_expr} (\srcref{src/parser/expr.h:99}) handles all
+atom-level and postfix constructs.
+
+\subsection{Literals}
+
+\pnum
+Integer literals (\cname{TOKEN\_NUMBER}) are parsed with
+\cname{parse\_numeric\_literal} and stored as \cname{EXPR\_LITERAL} with an
+\texttt{int} value.  Float literals use \cname{strtod} and produce
+\cname{EXPR\_FLOAT\_LITERAL}.  String literals produce \cname{EXPR\_STRING} with
+the content pointer already stripped of delimiters (see \cref{sec:lex-strings}).
+Character literals produce \cname{EXPR\_CHAR} with a decoded \texttt{char} value;
+escape sequences (\texttt{\\n}, \texttt{\\t}, \texttt{\\\\}, \texttt{\\'}) are
+decoded at parse time.
+
+\subsection{Identifiers and member access}
+
+\pnum
+An \cname{TOKEN\_IDENTIFIER} produces an \cname{EXPR\_IDENTIFIER} node.  The
+parser then checks for postfix operators in a loop:
+\begin{itemize}
+\item \texttt{.} followed by an identifier: wraps in \cname{EXPR\_MEMBER}.
+\item \texttt{[} followed by an expression: produces \cname{EXPR\_INDEX}.
+  If the subscript contains \texttt{..} or \texttt{..=}, the index expression
+  is an \cname{EXPR\_RANGE}.
+\item \texttt{(} followed by arguments: produces \cname{EXPR\_CALL}.
+\end{itemize}
+
+\pnum
+Postfix operators are left-associative and bind more tightly than any binary
+operator, so \lain{a.b[i](x)} parses as \lain{((a.b)[i])(x)}.
+
+\subsection{Case expressions}
+
+\pnum
+A \lain{case} keyword inside an expression context initiates a match expression.
+The optional \texttt{\&} prefix marks the scrutinee as borrowed
+(\cname{is\_borrowed = true}).  Arms are parsed as \texttt{pattern => body}
+pairs inside a brace-delimited block.  The \texttt{else} keyword introduces the
+wildcard arm.
+
+\subsection{Builtin values}
+
+\pnum
+\texttt{@os} and \texttt{@arch} produce \cname{EXPR\_BUILTIN} nodes carrying
+the appropriate \cname{BuiltinKind} discriminant.  These are evaluated at
+comptime by \cname{sema\_eval\_comptime\_expr()} in \srcref{src/sema/comptime.h}.
+
+\subsection{Parenthesised expressions}
+
+\pnum
+A parenthesised expression \lain{(expr)} consumes \texttt{(}, calls
+\cname{parse\_expr} recursively, then expects \texttt{)}.  The result is the
+inner expression with no wrapper node.
+
+\subsection{Array literals}
+
+\pnum
+\texttt{[} initiates an array literal.  Elements are comma-separated and
+delimited by \texttt{]}.  The result is \cname{EXPR\_ARRAY\_LITERAL} with an
+\cname{ExprList} of elements.
+
+% -------------------------------------------------------------------------
+\section{Cast expressions}
+\label{sec:par-expr-cast}
+\index{cast expressions}
+% -------------------------------------------------------------------------
+
+\pnum
+The \lain{as} keyword desugars to \cname{EXPR\_CAST(expr, target\_type)}.  It is
+treated as a postfix operator rather than a binary operator; this means it does
+not participate in the standard precedence table and is checked explicitly after
+each sub-expression during Pratt climbing.  The effect is that \lain{as} binds
+tighter than all binary operators: \lain{a + b as T} parses as
+\lain{a + (b as T)}.
+
+\begin{rationale}
+Treating \lain{as} as postfix prevents the ambiguity that arises if it were a
+binary operator with a precedence level: \lain{a + b as T + c} would be
+ambiguous as to whether \texttt{T + c} is a binary expression or part of the
+type.
+\end{rationale}

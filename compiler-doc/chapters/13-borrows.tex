@@ -1,0 +1,133 @@
+% 13-borrows.tex — Chapter 13: Borrow Checking and Regions
+\chapter{Borrow Checking and Regions}
+\label{chap:13-borrows}
+\index{borrow checking}
+\index{regions}
+\index{two-phase borrows}
+
+\pnum
+The borrow checker ensures that references do not outlive their owners and that
+the aliasing invariant (one mutable borrow \emph{or} many shared borrows) is
+maintained.  It is implemented in \srcref{src/sema/region.h} and is invoked from
+the linearity checker (\srcref{src/sema/linearity.h}).
+
+% -------------------------------------------------------------------------
+\section{Regions}
+\label{sec:borrow-regions}
+\index{Region struct}
+% -------------------------------------------------------------------------
+
+\pnum
+A \cname{Region} represents a lexical scope boundary.  Regions are organized
+in a parent chain from inner to outer:
+
+\begin{structdoc}{Region}{src/sema/region.h:38}
+\cname{id}     & \cname{int}      & Unique identifier (monotonically increasing). \\
+\cname{depth}  & \cname{int}      & Nesting depth (0 = function scope). \\
+\cname{parent} & \cname{Region *} & Enclosing region (NULL for the outermost scope). \\
+\end{structdoc}
+
+\pnum
+\cname{region\_contains(outer, inner)} walks the parent chain of \texttt{inner}
+to check whether \texttt{outer} appears in it.  If so, \texttt{inner} is a
+sub-scope of \texttt{outer} and will terminate before \texttt{outer}.
+
+\pnum
+The invariant checked by the borrow checker is: the borrow region must be
+contained within the owner region.  That is, \cname{region\_contains(owner\_region, borrow\_region)} must hold, guaranteeing the owner outlives the borrow.
+
+% -------------------------------------------------------------------------
+\section{Borrow entries}
+\label{sec:borrow-entries}
+\index{BorrowEntry}
+% -------------------------------------------------------------------------
+
+\pnum
+An active borrow is recorded as a \cname{BorrowEntry}:
+
+\begin{structdoc}{BorrowEntry}{src/sema/region.h:78}
+\cname{var}           & \cname{Id *}        & The borrowed variable. \\
+\cname{owner\_var}    & \cname{Id *}        & Direct owner of the borrow. \\
+\cname{root\_owner}   & \cname{Id *}        & Ultimate non-reference owner (for transitive chains). \\
+\cname{mode}          & \cname{OwnershipMode} & \cname{MODE\_SHARED} or \cname{MODE\_MUTABLE}. \\
+\cname{phase}         & \cname{BorrowPhase}  & \cname{BORROW\_RESERVED} or \cname{BORROW\_ACTIVE}. \\
+\cname{borrow\_region}& \cname{Region *}    & Scope where the borrow is used. \\
+\cname{owner\_region} & \cname{Region *}    & Scope where the owner is defined. \\
+\cname{is\_temporary} & \cname{bool}        & Expires at end of current statement. \\
+\cname{last\_use\_stmt\_idx}& \cname{int}   & NLL: last statement index where binding is used. \\
+\end{structdoc}
+
+% -------------------------------------------------------------------------
+\section{Two-phase borrows}
+\label{sec:borrow-twophase}
+\index{two-phase borrows}
+\index{BORROW\_RESERVED}
+\index{BORROW\_ACTIVE}
+% -------------------------------------------------------------------------
+
+\pnum
+Lain implements two-phase borrows to permit calling a method on a container while
+simultaneously passing container elements as arguments.  A borrow begins in the
+\cname{BORROW\_RESERVED} phase, which allows shared reads but does not yet
+activate the exclusivity constraint.  After all call arguments have been
+evaluated, the borrow is promoted to \cname{BORROW\_ACTIVE} via
+\cname{borrow\_promote\_to\_active()}.
+
+\pnum
+The promotion sequence in the expression handler for \cname{EXPR\_CALL}:
+\begin{enumerate}
+\item Register a reserved borrow for the implicit receiver argument.
+\item Evaluate all call arguments (with the borrow in \cname{BORROW\_RESERVED}).
+\item Call \cname{borrow\_promote\_to\_active()} to activate the borrow.
+\end{enumerate}
+
+\pnum
+This follows the model described in \textit{Two-Phase Borrows} (Matsakis 2018).
+The key insight is that a reserved borrow does not conflict with shared reads
+of the same variable, so the argument evaluation (which may read the container)
+is allowed before the borrow becomes exclusive.
+
+% -------------------------------------------------------------------------
+\section{Aliasing rules}
+\label{sec:borrow-aliasing}
+\index{aliasing rules}
+% -------------------------------------------------------------------------
+
+\pnum
+The \cname{BorrowTable} enforces the following aliasing rules at every borrow
+registration:
+
+\begin{enumerate}
+\item \textbf{No mutable borrow while any borrow is active.}  If the requested
+  mode is \cname{MODE\_MUTABLE} and any active borrow of the same root owner
+  exists, the operation is rejected.
+\item \textbf{No shared borrow while a mutable borrow is active.}  If the
+  requested mode is \cname{MODE\_SHARED} and an active mutable borrow of the
+  same root owner exists, the operation is rejected.
+\end{enumerate}
+
+\pnum
+Temporary borrows (\cname{is\_temporary = true}) are released at the end of
+each statement.  Non-temporary borrows are released when their binding goes
+out of scope.
+
+% -------------------------------------------------------------------------
+\section{NLL last-use optimization}
+\label{sec:borrow-nll}
+\index{NLL}
+% -------------------------------------------------------------------------
+
+\pnum
+The \cname{last\_use\_stmt\_idx} field supports Non-Lexical Lifetime (NLL)
+shortening.  The use-analysis pre-pass (\srcref{src/sema/use\_analysis.h})
+assigns to each borrow the index of the last top-level statement that uses the
+binding.  The borrow checker can then expire a borrow as soon as it is no longer
+used, even before the lexical scope boundary is reached.  This allows code like:
+
+\begin{laincode}
+var x = acquire_resource()
+use x as r
+// r's borrow expires here (last use above)
+// x can now be moved below:
+f(mov x)
+\end{laincode}

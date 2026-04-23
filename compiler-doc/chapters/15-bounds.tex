@@ -1,0 +1,91 @@
+% 15-bounds.tex — Chapter 15: Static Bounds Checking
+\chapter{Static Bounds Checking}
+\label{chap:15-bounds}
+\index{bounds checking}
+\index{static bounds checking}
+
+\pnum
+The bounds checker verifies that every array and slice subscript is within the
+valid range $[0, \text{length}-1]$ before allowing the expression to reach the
+code generator.  It is implemented in \srcref{src/sema/bounds.h} and called from
+the type-checking walk (\cname{sema\_infer\_expr}) when processing
+\cname{EXPR\_INDEX} nodes.
+
+% -------------------------------------------------------------------------
+\section{Check algorithm}
+\label{sec:bounds-algo}
+% -------------------------------------------------------------------------
+
+\pnum
+For each \cname{EXPR\_INDEX} expression (syntax: \lain{arr[idx]}):
+
+\begin{algorithm}
+\textbf{Bounds check for \lain{arr[idx]}}:
+\begin{enumerate}
+\item If \cname{sema\_in\_unsafe\_block} is true: skip all checks (unsafe block
+  explicitly disables bounds verification).
+\item If \cname{sema\_walk\_phase} is false: skip (bounds checking only runs
+  during walk phase).
+\item If \lain{idx} is an \cname{EXPR\_RANGE} (\lain{arr[lo..hi]}): check both
+  endpoints independently.
+\item \textbf{In-guard check}: if \cname{sema\_is\_in\_guarded(idx, arr)} returns
+  true, the index is proven in-bounds by a live \lain{in} guard; skip.
+\item \textbf{VRA check}: evaluate \cname{sema\_eval\_range(idx, sema\_ranges)}.
+  If the resulting range $[min, max]$ satisfies $0 \leq min$ and $max < arr.len$
+  (for a statically known length), the access is proven safe; skip.
+\item \textbf{Runtime check}: if neither static proof applies and the array length
+  is known, emit a runtime bounds check in the generated C output.
+\item If the VRA proves the access is \emph{definitely out of bounds} (i.e.\
+  $min \geq arr.len$ or $max < 0$), emit a compile-time error \diagcode{E045}
+  (or an appropriate bounds error code).
+\end{enumerate}
+\end{algorithm}
+
+% -------------------------------------------------------------------------
+\section{Safe fragment guarantee}
+\label{sec:bounds-safe}
+% -------------------------------------------------------------------------
+
+\pnum
+In the safe fragment (no \lain{unsafe} blocks), the compiler guarantees that
+all array accesses are either statically proven in-bounds or guarded by a
+runtime check in the generated C code.  This guarantee is contingent on:
+
+\begin{itemize}
+\item The VRA not being circumvented by pointer arithmetic.
+\item The in-guard table being correctly maintained (no double-pop errors).
+\item The \cname{sema\_walk\_phase} flag being set correctly during walk.
+\end{itemize}
+
+\begin{invariant}
+No \cname{EXPR\_INDEX} node that reaches \cname{emit\_expr()} has been
+subjected to bounds checking in \lain{unsafe} mode without explicit opt-in.
+Every subscript either has a static proof or a generated runtime check.
+\end{invariant}
+
+% -------------------------------------------------------------------------
+\section{Interaction with VRA}
+\label{sec:bounds-vra}
+% -------------------------------------------------------------------------
+
+\pnum
+The bounds checker cooperates with VRA in two directions:
+\begin{enumerate}
+\item \textbf{VRA proves bounds}: if VRA has refined the range of the index
+  to be within $[0, len-1]$, no runtime check is emitted.
+\item \textbf{Constraint seeding}: \lain{in} conditions (\lain{idx in arr})
+  seed the VRA with the constraint $0 \leq idx < arr.len$, which is then
+  available as a proven fact for all code inside the guard.
+\end{enumerate}
+
+% -------------------------------------------------------------------------
+\section{Interaction with unsafe}
+\label{sec:bounds-unsafe}
+% -------------------------------------------------------------------------
+
+\pnum
+Inside \lain{unsafe \{ ... \}} blocks, \cname{sema\_in\_unsafe\_block} is
+\texttt{true} and bounds checking is skipped entirely.  The emitter generates
+raw unchecked array subscripts.  The programmer is responsible for any
+out-of-bounds accesses that may result.  This is the intended escape hatch for
+performance-critical code that has been verified by other means.

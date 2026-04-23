@@ -1,0 +1,204 @@
+% 08-parser-stmts.tex — Chapter 8: Parser: Statements and Declarations
+\chapter{Parser: Statements and Declarations}
+\label{chap:08-parser-stmts}
+\index{parser!statements}
+\index{parser!declarations}
+
+\pnum
+Statement parsing is in \srcref{src/parser/stmt.h}; declaration (top-level) parsing
+is in \srcref{src/parser/decl.h}.  Both files use the framework described in
+\cref{chap:06-parser-framework}.
+
+% -------------------------------------------------------------------------
+\section{Statement list parsing}
+\label{sec:par-stmtlist}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{parse\_stmt\_list(arena, parser)} (\srcref{src/parser/stmt.h:72})
+accumulates statements into a \cname{StmtList} until it encounters \texttt{\}}
+or \cname{TOKEN\_EOF}.  After each statement it requires an end-of-line token
+(\cname{TOKEN\_EOL}), then skips any subsequent blank lines.
+
+\begin{algorithm}
+\textbf{parse\_stmt\_list}(\textit{arena, parser}):
+\begin{enumerate}
+\item Skip leading EOL tokens.
+\item While not at \texttt{\}} or EOF:
+  \begin{enumerate}[(a)]
+  \item Parse one statement via \cname{parse\_stmt}.
+  \item Append to the list.
+  \item If the next token is \texttt{\}}, stop.
+  \item Require EOL (newline terminates the statement).
+  \item Skip further EOL tokens.
+  \end{enumerate}
+\item Return the list.
+\end{enumerate}
+\end{algorithm}
+
+% -------------------------------------------------------------------------
+\section{Statement dispatch}
+\label{sec:par-stmt-dispatch}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{parse\_stmt} (\srcref{src/parser/stmt.h}) dispatches on the current token
+to the appropriate parse function:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Token} & \textbf{Parse function} & \textbf{Stmt kind} \\
+\midrule
+\lain{var}      & \cname{parse\_var\_stmt}      & \cname{STMT\_VAR} \\
+\lain{if}       & \cname{parse\_if\_stmt}       & \cname{STMT\_IF} \\
+\lain{elif}     & (handled inside if)           & \cname{STMT\_IF} (chained) \\
+\lain{for}      & \cname{parse\_for\_stmt}      & \cname{STMT\_FOR} \\
+\lain{while}    & \cname{parse\_while\_stmt}    & \cname{STMT\_WHILE} \\
+\lain{case}     & \cname{parse\_match\_stmt}    & \cname{STMT\_MATCH} \\
+\lain{return}   & (inline)                      & \cname{STMT\_RETURN} \\
+\lain{unsafe}   & \cname{parse\_unsafe\_stmt}   & \cname{STMT\_UNSAFE} \\
+\lain{defer}    & \cname{parse\_defer\_stmt}    & \cname{STMT\_DEFER} \\
+\lain{use}      & \cname{parse\_use\_stmt}      & \cname{STMT\_USE} \\
+\lain{continue} & \cname{parse\_continue\_stmt} & \cname{STMT\_CONTINUE} \\
+\lain{break}    & \cname{parse\_break\_stmt}    & \cname{STMT\_BREAK} \\
+\lain{comptime} & \cname{parse\_comptime\_stmt} & \cname{STMT\_COMPTIME\_IF} \\
+identifier      & \cname{parse\_assign\_stmt} or \cname{parse\_decl\_stmt} & \cname{STMT\_ASSIGN}/\cname{STMT\_VAR} \\
+otherwise       & \cname{parse\_expr\_stmt}     & \cname{STMT\_EXPR} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% -------------------------------------------------------------------------
+\section{Variable declarations}
+\label{sec:par-stmt-var}
+\index{var statement}
+% -------------------------------------------------------------------------
+
+\pnum
+There are two syntactic forms for variable declarations:
+
+\begin{enumerate}
+\item \textbf{Explicit \lain{var}}: \lain{var name [Type] = expr}.  The \lain{var}
+  keyword is required for mutable bindings.  \cname{parse\_var\_stmt} expects the
+  \lain{var} keyword, then parses name, optional type annotation, and required
+  initializer.
+\item \textbf{Implicit}: \lain{name Type = expr}.  When \cname{parse\_stmt} sees
+  an identifier that is not a known keyword, it calls \cname{parse\_decl\_stmt}
+  which treats the identifier as the variable name, followed by a type annotation
+  and an initializer.
+\end{enumerate}
+
+\pnum
+Both forms require an initializer; \lain{= undefined} is allowed as a
+bypass marker.  Immutable declarations (\lain{name Type = undefined}) are
+rejected at parse time.
+
+% -------------------------------------------------------------------------
+\section{Assignment statements}
+\label{sec:par-stmt-assign}
+\index{assignment statements}
+% -------------------------------------------------------------------------
+
+\pnum
+An assignment is parsed by \cname{parse\_assign\_stmt} when the current token is
+an identifier and the lookahead after parsing a target expression is \texttt{=}
+(or a compound assignment operator like \texttt{+=}, \texttt{-=}, etc.).  The
+target is an arbitrary left-hand side expression (identifier, member access,
+index expression).  Compound assignments are desugared by the parser into
+\cname{target = target op rhs} before AST construction.
+
+% -------------------------------------------------------------------------
+\section{Control-flow statements}
+\label{sec:par-stmt-cf}
+% -------------------------------------------------------------------------
+
+\subsection{if / elif / else}
+\label{sec:par-stmt-if}
+\index{if statement}
+
+\pnum
+\cname{parse\_if\_stmt} parses the condition expression, the \texttt{\{} block,
+then checks for \lain{elif} or \lain{else}.  An \lain{elif} is desugared into a
+nested \cname{STMT\_IF} in the else branch.  The else branch is either a
+\cname{StmtList} (from \lain{else \{ ... \}}) or the single nested
+\cname{STMT\_IF} from \lain{elif}.
+
+\subsection{for}
+\label{sec:par-stmt-for}
+\index{for statement}
+
+\pnum
+\lain{for [idx,] val in iterable \{ body \}} is parsed by \cname{parse\_for\_stmt}.
+The optional index name is separated from the value name by a comma.
+The iterable is an arbitrary expression.  The body is a statement list.
+
+\subsection{while}
+\label{sec:par-stmt-while}
+\index{while statement}
+
+\pnum
+\cname{parse\_while\_stmt} parses \lain{while cond [decreasing measure] \{ body \}}.
+After the condition, the parser checks for the \cname{TOKEN\_KEYWORD\_DECREASING}
+token.  If present, the next expression is the termination measure, stored in
+\cname{StmtWhile.measure}; otherwise \cname{measure} is \texttt{NULL}.
+
+\pnum
+A \texttt{NULL} measure means the while loop is unbounded and is only legal in a
+\lain{proc} (procedure) context.  The sema pass enforces this constraint.
+
+\subsection{Match statements}
+\label{sec:par-stmt-match}
+\index{match statement}
+
+\pnum
+\lain{case [&] scrutinee \{ arms \}} is parsed by \cname{parse\_match\_stmt}.
+The optional \texttt{\&} marks the match as borrowed (\cname{is\_borrowed = true}).
+Each arm is a comma-separated list of patterns followed by \texttt{=>} and a body.
+The wildcard arm uses the \lain{else} keyword as the pattern.
+
+% -------------------------------------------------------------------------
+\section{Declaration parsing}
+\label{sec:par-decls}
+\index{parser!declarations}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{parse\_module(arena, parser)} in \srcref{src/parser/decl.h} is the top-level
+entry point.  It calls \cname{parse\_decl} in a loop until \cname{TOKEN\_EOF}.
+
+\pnum
+Top-level declarations parsed by \cname{parse\_decl}:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Keyword} & \textbf{Decl kind} & \textbf{Payload} \\
+\midrule
+\lain{func}      & \cname{DECL\_FUNCTION}   & \cname{DeclFunction} \\
+\lain{proc}      & \cname{DECL\_PROCEDURE}  & \cname{DeclFunction} \\
+\lain{struct}    & \cname{DECL\_STRUCT}     & \cname{DeclStruct} \\
+\lain{enum}      & \cname{DECL\_ENUM}       & \cname{DeclEnum} \\
+\lain{import}    & \cname{DECL\_IMPORT}     & \cname{DeclImport} \\
+\lain{extern}    & \cname{DECL\_EXTERN\_*}  & \cname{DeclFunction} \\
+\lain{c\_include}& \cname{DECL\_C\_INCLUDE} & \cname{DeclCInclude} \\
+\lain{type}      & \cname{DECL\_TYPE\_ALIAS}& \cname{DeclTypeAlias} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+Function and procedure parsing share the same \cname{DeclFunction} payload.
+The body parser calls \cname{parse\_stmt\_list} for the block.
+Optional \lain{pre}/\lain{post} contract clauses are parsed after the return
+type and before the body block.
+
+\pnum
+Struct field declarations inside a \texttt{struct} body are parsed as a list of
+\cname{DECL\_VARIABLE} nodes.  Each field may carry an optional \lain{in field}
+annotation (for bounds-proven indices) and equation-style constraints.
+
+\pnum
+Enum declarations parse a list of variants.  Each variant is either a simple
+identifier or an identifier followed by a brace-delimited list of fields
+(forming an algebraic data type variant).

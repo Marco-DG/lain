@@ -1,0 +1,374 @@
+% 04-ast.tex — Chapter 4: Abstract Syntax Tree
+\chapter{Abstract Syntax Tree}
+\label{chap:04-ast}
+\index{AST}
+\index{abstract syntax tree}
+
+\pnum
+The Abstract Syntax Tree (AST) is defined entirely in \srcref{src/ast.h}.  All
+AST nodes are allocated in \cname{ast\_arena} and live for the duration of the
+compiler run.  The AST is built by the parser (\cref{chap:06-parser-framework}),
+annotated by the semantic analysis passes (\cref{chap:09-sema-orchestration}), and
+consumed by the code generator (\cref{chap:19-codegen}).
+
+\pnum
+The AST uses four primary node types — \cname{Decl}, \cname{Stmt}, \cname{Expr},
+and \cname{Type} — each discriminated by a kind enum and using a C \texttt{union}
+for per-kind payload.  Each concrete node type that can appear in user source has
+a source-location pair (\cname{line}, \cname{col}) for diagnostics.
+
+% -------------------------------------------------------------------------
+\section{Identifier nodes}
+\label{sec:ast-identifiers}
+\index{Id struct}
+% -------------------------------------------------------------------------
+
+\pnum
+An \cname{Id} is a zero-copy reference to an identifier lexeme:
+
+\begin{ccode}
+typedef struct Id {
+    isize       length;
+    const char *name;
+} Id;
+\end{ccode}
+
+\pnum
+\cname{name} points into the source buffer; no copy is made.  The
+constructor \cname{id(Arena*, isize, const char*)} allocates the \cname{Id}
+struct in the given arena and stores the pointer and length.  Identifier
+comparison uses \cname{strncmp(a->name, b->name, a->length)} throughout the
+compiler; raw pointer equality is never used for identifier matching.
+
+% -------------------------------------------------------------------------
+\section{Type nodes}
+\label{sec:ast-types}
+\index{Type node}
+\index{TypeKind}
+\index{OwnershipMode}
+% -------------------------------------------------------------------------
+
+\pnum
+A \cname{Type} node represents a Lain type expression.  It carries an
+\cname{OwnershipMode} that is orthogonal to the structural kind:
+
+\begin{ccode}
+typedef enum { MODE_OWNED, MODE_SHARED, MODE_MUTABLE } OwnershipMode;
+typedef enum { TYPE_SIMPLE, TYPE_ARRAY, TYPE_SLICE, TYPE_POINTER,
+               TYPE_COMPTIME, TYPE_VARIANT, TYPE_META_TYPE } TypeKind;
+\end{ccode}
+
+\begin{structdoc}{Type}{src/ast.h:52}
+\cname{kind}          & \cname{TypeKind}     & Structural kind. \\
+\cname{mode}          & \cname{OwnershipMode}& Ownership semantics: \cname{MODE\_OWNED} (linear), \cname{MODE\_SHARED} (default), \cname{MODE\_MUTABLE} (borrow). \\
+\cname{base\_type}    & \cname{Id *}         & Base type name for \cname{TYPE\_SIMPLE}. \\
+\cname{element\_type} & \cname{Type *}       & Inner type for arrays, slices, pointers, comptime. \\
+\cname{array\_len}    & \cname{isize}        & $\geq 0$: fixed-length array; $-1$: dynamic/runtime slice. \\
+\cname{sentinel\_str} & \cname{const char *} & Sentinel value string for \cname{TYPE\_SLICE}. \\
+\cname{variant}       & \cname{Variant *}    & Payload descriptor for \cname{TYPE\_VARIANT}. \\
+\end{structdoc}
+
+\pnum
+Seven constructor functions in \srcref{src/ast.h:492} build typed nodes with
+the correct defaults:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Constructor} & \textbf{Produces} \\
+\midrule
+\cname{type\_simple(arena, base)}          & Named type with \cname{MODE\_SHARED} \\
+\cname{type\_array(arena, elem, len)}      & Fixed (\texttt{len}$\geq$0) or dynamic (\texttt{len}$=-1$) array \\
+\cname{type\_slice(arena, elem, sent, ...)}& Slice with sentinel \\
+\cname{type\_pointer(arena, elem)}         & Pointer type \\
+\cname{type\_move(arena, inner)}           & Copy of \texttt{inner} with \cname{MODE\_OWNED} \\
+\cname{type\_mut(arena, inner)}            & Copy of \texttt{inner} with \cname{MODE\_MUTABLE} \\
+\cname{type\_comptime(arena, base)}        & Comptime wrapper \\
+\cname{type\_meta\_type(arena)}            & The \lain{type} metatype \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{invariant}
+\cname{OwnershipMode} is a field on the \cname{Type} struct, not a wrapper node.
+\cname{type\_move} and \cname{type\_mut} physically copy the inner struct and
+override the \cname{mode} field.  This means a type node cannot simultaneously
+carry two ownership modes; the last write wins.
+\end{invariant}
+
+% -------------------------------------------------------------------------
+\section{Declaration nodes}
+\label{sec:ast-decls}
+\index{Decl node}
+\index{DeclKind}
+% -------------------------------------------------------------------------
+
+\pnum
+A \cname{Decl} represents a top-level or parameter declaration:
+
+\begin{ccode}
+typedef struct Decl {
+    DeclKind kind;
+    union { DeclVariable variable_decl; DeclStruct struct_decl;
+            DeclEnum enum_decl; DeclFunction function_decl;
+            DeclImport import_decl; DeclCInclude c_include_decl;
+            DeclDestruct destruct_decl; DeclExternType extern_type_decl;
+            DeclTypeAlias type_alias_decl; } as;
+    isize line, col;
+} Decl;
+\end{ccode}
+
+\pnum
+The 13-member \cname{DeclKind} enumeration:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Kind} & \textbf{Payload} & \textbf{Lain source} \\
+\midrule
+\cname{DECL\_VARIABLE}          & \cname{DeclVariable}   & Field or local (within params) \\
+\cname{DECL\_FUNCTION}          & \cname{DeclFunction}   & \lain{func f(...) T \{ ... \}} \\
+\cname{DECL\_PROCEDURE}         & \cname{DeclFunction}   & \lain{proc p(...) T \{ ... \}} \\
+\cname{DECL\_EXTERN\_FUNCTION}  & \cname{DeclFunction}   & \lain{extern func f(...)} \\
+\cname{DECL\_EXTERN\_PROCEDURE} & \cname{DeclFunction}   & \lain{extern proc p(...)} \\
+\cname{DECL\_STRUCT}            & \cname{DeclStruct}     & \lain{struct S \{ ... \}} \\
+\cname{DECL\_ENUM}              & \cname{DeclEnum}       & \lain{enum E \{ ... \}} \\
+\cname{DECL\_IMPORT}            & \cname{DeclImport}     & \lain{import foo.bar} \\
+\cname{DECL\_EVAL\_IMPORT}      & \cname{DeclImport}     & Evaluated import \\
+\cname{DECL\_C\_INCLUDE}        & \cname{DeclCInclude}   & \lain{c\_include "foo.h"} \\
+\cname{DECL\_DESTRUCT}          & \cname{DeclDestruct}   & Destructuring parameter \\
+\cname{DECL\_EXTERN\_TYPE}      & \cname{DeclExternType} & \lain{extern type T} \\
+\cname{DECL\_TYPE\_ALIAS}       & \cname{DeclTypeAlias}  & \lain{type Name = Expr} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+Key payload structs:
+
+\begin{structdoc}{DeclVariable}{src/ast.h:126}
+\cname{name}        & \cname{Id *}       & Variable/field name. \\
+\cname{type}        & \cname{Type *}     & Type annotation (NULL if inferred). \\
+\cname{in\_field}   & \cname{Id *}       & Optional \lain{in arr} annotation (proves index in bounds). \\
+\cname{constraints} & \cname{ExprList *} & Equation-style constraints (e.g.\ \lain{x int != 0}). \\
+\cname{is\_parameter} & \cname{bool}     & True for function parameters. \\
+\cname{is\_mutable}   & \cname{bool}     & True if declared with \lain{var}. \\
+\end{structdoc}
+
+\begin{structdoc}{DeclFunction}{src/ast.h:161}
+\cname{name}               & \cname{Id *}       & Function/procedure name. \\
+\cname{params}             & \cname{DeclList *} & Parameter declarations. \\
+\cname{return\_type}       & \cname{Type *}     & Return type. \\
+\cname{body}               & \cname{StmtList *} & Statement body. \\
+\cname{pre\_contracts}     & \cname{ExprList *} & \lain{pre} conditions. \\
+\cname{post\_contracts}    & \cname{ExprList *} & \lain{post} conditions. \\
+\cname{return\_constraints}& \cname{ExprList *} & Equation-style return constraints. \\
+\cname{is\_extern}         & \cname{bool}       & True for \lain{extern func/proc}. \\
+\cname{is\_variadic}       & \cname{bool}       & True for variadic (\lain{...}) parameter. \\
+\end{structdoc}
+
+\begin{structdoc}{DeclEnum}{src/ast.h:151}
+\cname{type\_name} & \cname{Id *}       & Enum type name. \\
+\cname{variants}   & \cname{Variant *}  & Linked list of \cname{Variant} nodes. \\
+\end{structdoc}
+
+% -------------------------------------------------------------------------
+\section{Statement nodes}
+\label{sec:ast-stmts}
+\index{Stmt node}
+\index{StmtKind}
+% -------------------------------------------------------------------------
+
+\pnum
+A \cname{Stmt} node represents a single statement:
+
+\begin{ccode}
+typedef struct Stmt {
+    StmtKind kind;
+    isize line, col;
+    union { StmtVar var_stmt; StmtAssign assign_stmt; StmtExpr expr_stmt;
+            StmtIf if_stmt; StmtFor for_stmt; StmtUse use_stmt;
+            StmtMatch match_stmt; StmtReturn return_stmt;
+            StmtUnsafe unsafe_stmt; StmtWhile while_stmt;
+            StmtDefer defer_stmt; StmtComptimeIf comptime_if_stmt; } as;
+} Stmt;
+\end{ccode}
+
+\pnum
+The 15-member \cname{StmtKind} enumeration and payload structs:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Kind} & \textbf{Payload} & \textbf{Lain source} \\
+\midrule
+\cname{STMT\_VAR}        & \cname{StmtVar}     & \lain{var x T = expr} \\
+\cname{STMT\_ASSIGN}     & \cname{StmtAssign}  & \lain{x = expr} \\
+\cname{STMT\_EXPR}       & \cname{StmtExpr}    & Expression statement \\
+\cname{STMT\_IF}         & \cname{StmtIf}      & \lain{if cond \{ ... \} else \{ ... \}} \\
+\cname{STMT\_FOR}        & \cname{StmtFor}     & \lain{for i, v in iter \{ ... \}} \\
+\cname{STMT\_WHILE}      & \cname{StmtWhile}   & \lain{while cond [decreasing m] \{ ... \}} \\
+\cname{STMT\_MATCH}      & \cname{StmtMatch}   & \lain{case [&]expr \{ ... \}} \\
+\cname{STMT\_RETURN}     & \cname{StmtReturn}  & \lain{return expr} \\
+\cname{STMT\_UNSAFE}     & \cname{StmtUnsafe}  & \lain{unsafe \{ ... \}} \\
+\cname{STMT\_DEFER}      & \cname{StmtDefer}   & \lain{defer stmt} \\
+\cname{STMT\_USE}        & \cname{StmtUse}     & \lain{use x as alias} \\
+\cname{STMT\_COMPTIME\_IF}& \cname{StmtComptimeIf} & \lain{comptime if cond \{ ... \}} \\
+\cname{STMT\_CONTINUE}   & (none)              & \lain{continue} \\
+\cname{STMT\_BREAK}      & (none)              & \lain{break} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+Notable payload fields:
+
+\begin{structdoc}{StmtWhile}{src/ast.h:256}
+\cname{cond}    & \cname{Expr *}  & Loop condition. \\
+\cname{measure} & \cname{Expr *}  & Termination measure (NULL for unbounded while; only allowed in \lain{proc}). \\
+\cname{body}    & \cname{StmtList *} & Loop body. \\
+\end{structdoc}
+
+\begin{structdoc}{StmtMatch}{src/ast.h:268}
+\cname{value}       & \cname{Expr *}       & Scrutinee expression. \\
+\cname{cases}       & \cname{StmtMatchCase *} & Linked list of match arms. \\
+\cname{is\_borrowed}& \cname{bool}         & True for \lain{case \&expr \{...\}} (non-consuming match). \\
+\end{structdoc}
+
+% -------------------------------------------------------------------------
+\section{Expression nodes}
+\label{sec:ast-exprs}
+\index{Expr node}
+\index{ExprKind}
+% -------------------------------------------------------------------------
+
+\pnum
+An \cname{Expr} node represents an expression:
+
+\begin{ccode}
+typedef struct Expr {
+    ExprKind kind;
+    isize    line, col;
+    union { /* 20 payload structs */ } as;
+    Type *type;   /* annotated by sema */
+    Decl *decl;   /* resolution target (if any) */
+    bool  is_global;
+} Expr;
+\end{ccode}
+
+\pnum
+The \cname{type} and \cname{decl} fields are set to \texttt{NULL} by the parser
+and filled in by the semantic analysis passes.  The 21-member \cname{ExprKind}
+enumeration:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Kind} & \textbf{Payload} & \textbf{Lain source} \\
+\midrule
+\cname{EXPR\_BINARY}       & \cname{ExprBinary}      & \lain{a + b}, \lain{a in arr}, \ldots \\
+\cname{EXPR\_UNARY}        & \cname{ExprUnary}       & \lain{-x}, \lain{not x}, \ldots \\
+\cname{EXPR\_IDENTIFIER}   & \cname{ExprIdentifier}  & \lain{x} \\
+\cname{EXPR\_LITERAL}      & \cname{ExprLiteral}     & Integer literal \\
+\cname{EXPR\_FLOAT\_LITERAL}& \cname{ExprFloat}      & Float literal \\
+\cname{EXPR\_STRING}       & \cname{ExprString}      & \lain{"hello"} \\
+\cname{EXPR\_CHAR}         & \cname{ExprChar}        & \lain{'c'} \\
+\cname{EXPR\_MEMBER}       & \cname{ExprMember}      & \lain{a.b} \\
+\cname{EXPR\_CALL}         & \cname{ExprCall}        & \lain{f(a, b)} \\
+\cname{EXPR\_INDEX}        & \cname{ExprIndex}       & \lain{arr[i]}, \lain{arr[lo..hi]} \\
+\cname{EXPR\_RANGE}        & \cname{ExprRange}       & \lain{lo..hi}, \lain{lo..=hi} \\
+\cname{EXPR\_MOVE}         & \cname{ExprMove}        & \lain{mov x} \\
+\cname{EXPR\_MUT}          & \cname{ExprMut}         & \lain{mut x} \\
+\cname{EXPR\_CAST}         & \cname{ExprCast}        & \lain{x as T} \\
+\cname{EXPR\_MATCH}        & \cname{ExprMatch}       & \lain{case expr \{ ... \}} (expression form) \\
+\cname{EXPR\_ARRAY\_LITERAL}& \cname{ExprArrayLiteral}& \lain{[a, b, c]} \\
+\cname{EXPR\_ANON\_STRUCT} & \cname{ExprAnonStruct}  & Anonymous struct literal \\
+\cname{EXPR\_ANON\_ENUM}   & \cname{ExprAnonEnum}    & Anonymous enum \\
+\cname{EXPR\_TYPE}         & \cname{ExprType}        & Resolved type passed as value \\
+\cname{EXPR\_BUILTIN}      & \cname{ExprBuiltin}     & \lain{@os}, \lain{@arch} \\
+\cname{EXPR\_UNDEFINED}    & (none)                  & \lain{undefined} sentinel value \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{structdoc}{ExprBinary}{src/ast.h:356}
+\cname{left}  & \cname{Expr *}     & Left operand. \\
+\cname{op}    & \cname{TokenKind}  & Operator token (e.g.\ \cname{TOKEN\_PLUS}, \cname{TOKEN\_KEYWORD\_IN}). \\
+\cname{right} & \cname{Expr *}     & Right operand. \\
+\end{structdoc}
+
+\begin{structdoc}{ExprCall}{src/ast.h:393}
+\cname{callee} & \cname{Expr *}     & Callee expression (typically \cname{EXPR\_IDENTIFIER} or \cname{EXPR\_MEMBER} after UFCS desugaring). \\
+\cname{args}   & \cname{ExprList *} & Linked list of argument expressions. \\
+\end{structdoc}
+
+% -------------------------------------------------------------------------
+\section{List nodes}
+\label{sec:ast-lists}
+\index{list nodes}
+% -------------------------------------------------------------------------
+
+\pnum
+Singly-linked list nodes connect AST nodes of the same category.  Each list
+node carries one pointer to the contained node and a \cname{next} pointer:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{List type} & \textbf{Contains} & \textbf{Typical use} \\
+\midrule
+\cname{DeclList}  & \cname{Decl *}  & Top-level declarations; struct fields; function parameters \\
+\cname{StmtList}  & \cname{Stmt *}  & Function/block bodies; branch bodies \\
+\cname{ExprList}  & \cname{Expr *}  & Call arguments; match patterns; contract expressions \\
+\cname{IdList}    & \cname{Id *}    & Destructuring name lists \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+List constructors (\cname{decl\_list}, \cname{stmt\_list}, \cname{expr\_list},
+\cname{id\_list}) all follow the same pattern: allocate the list node from the
+arena, set the payload pointer, and set \cname{next = NULL}.  The parser appends
+to the tail of each list by scanning to the end; there is no tail pointer.
+
+% -------------------------------------------------------------------------
+\section{Semantic annotation fields}
+\label{sec:ast-annot}
+\index{AST!semantic annotation}
+% -------------------------------------------------------------------------
+
+\pnum
+Three fields in \cname{Expr} are NULL after parsing and filled by semantic
+analysis:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Field} & \textbf{Set by} & \textbf{Meaning} \\
+\midrule
+\cname{->type}      & \cname{sema\_infer\_expr()} & Resolved \cname{Type *} of the expression. \\
+\cname{->decl}      & \cname{sema\_resolve\_expr()} & \cname{Decl *} this identifier/call refers to. \\
+\cname{->is\_global}& \cname{sema\_resolve\_expr()} & True if the identifier is a top-level symbol. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+The code generator relies on these annotations to emit correct C output.  It is
+a compiler-internal invariant that \cname{->type} is non-NULL for every
+\cname{Expr} node that reaches the emitter, unless the expression is of kind
+\cname{EXPR\_UNDEFINED} or \cname{EXPR\_TYPE}.
+
+% -------------------------------------------------------------------------
+\section{Deep clone}
+\label{sec:ast-clone}
+\index{AST!deep clone}
+% -------------------------------------------------------------------------
+
+\pnum
+\srcref{src/ast\_clone.h} implements deep-copy functions for all major AST node
+types (\cname{clone\_decl}, \cname{clone\_stmt}, \cname{clone\_expr},
+\cname{clone\_type}).  These are used exclusively by the comptime generic
+instantiation pass (\cref{chap:18-comptime}) to produce per-instantiation
+copies of generic function bodies before substituting type parameters.
+No other pass calls the clone functions.

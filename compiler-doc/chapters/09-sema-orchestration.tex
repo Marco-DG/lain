@@ -1,0 +1,207 @@
+% 09-sema-orchestration.tex — Chapter 9: Semantic Analysis: Orchestration
+\chapter{Semantic Analysis: Orchestration}
+\label{chap:09-sema-orchestration}
+\index{semantic analysis!orchestration}
+\index{sema\_resolve\_module}
+
+\pnum
+The semantic analysis subsystem transforms a raw parse tree into a fully-annotated,
+safety-verified AST ready for code generation.  The orchestrator lives in
+\srcref{src/sema.h}; the individual passes live in the headers under
+\srcref{src/sema/}.
+
+% -------------------------------------------------------------------------
+\section{Two-phase analysis}
+\label{sec:sema-twophase}
+\index{semantic analysis!two phases}
+% -------------------------------------------------------------------------
+
+\pnum
+Semantic analysis runs in two ordered phases for each function body:
+
+\begin{description}[leftmargin=3cm, style=nextline]
+\item[Phase 1 — Resolve.]
+  \cname{sema\_resolve\_stmt()} and \cname{sema\_resolve\_expr()} populate
+  \cname{->decl} pointers on \cname{EXPR\_IDENTIFIER} and \cname{EXPR\_CALL}
+  nodes, expand UFCS calls, instantiate comptime generics, and expand
+  destructuring parameters.  The flag \cname{sema\_walk\_phase} is
+  \texttt{false} during this phase.
+\item[Phase 2 — Walk.]
+  \cname{walk\_stmt()} runs type inference (\cname{sema\_infer\_expr}), value
+  range analysis (VRA), bounds checking, and bounded-while verification.  The
+  flag \cname{sema\_walk\_phase} is \texttt{true} during this phase.  Checks
+  that must only run during walk (e.g.\ array bounds) test this flag before
+  emitting errors.
+\end{description}
+
+\pnum
+The separation prevents resolve-phase operations from seeing walk-phase state
+(e.g.\ range information that has not yet been computed) and prevents walk-phase
+operations from emitting spurious errors on UFCS-desugared calls that are not
+yet complete.
+
+% -------------------------------------------------------------------------
+\section{sema\_resolve\_module entry point}
+\label{sec:sema-entry}
+\index{sema\_resolve\_module}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{sema\_resolve\_module(decls, module\_path, arena)}
+(\srcref{src/sema.h:833}) is called once per compilation with the flat
+declaration list produced by \cname{load\_module}.
+
+\begin{algorithm}
+\textbf{sema\_resolve\_module}(\textit{decls, module\_path, arena}):
+\begin{enumerate}
+\item Store \texttt{arena} in \cname{sema\_arena}; build a fresh \cname{RangeTable}.
+\item Retrieve the source text and file from the \cname{ModuleNode} record.
+\item Clear the global symbol table and populate it via \cname{sema\_build\_scope}.
+\item For each \cname{DECL\_FUNCTION} or \cname{DECL\_PROCEDURE} in \textit{decls}:
+  \begin{enumerate}[(a)]
+  \item Clear the local symbol table.
+  \item Insert parameter symbols (including destructuring expansion).
+  \item Apply inline parameter constraints and pre-contracts to the range table.
+  \item \textbf{Phase 1}: run \cname{sema\_resolve\_stmt} on the entire body.
+  \item \textbf{Phase 2}: set \cname{sema\_walk\_phase = true},
+    run \cname{walk\_stmt} on the entire body, then clear the flag.
+  \item Run \cname{sema\_check\_function\_linearity(d)} to verify ownership.
+  \item Clear the local symbol table.
+  \end{enumerate}
+\item Run \cname{sema\_check\_no\_mutual\_recursion(decls)}.
+\end{enumerate}
+\end{algorithm}
+
+% -------------------------------------------------------------------------
+\section{Symbol table}
+\label{sec:sema-symtab}
+\index{symbol table}
+\index{Symbol struct}
+% -------------------------------------------------------------------------
+
+\pnum
+The symbol table is implemented in \srcref{src/sema/scope.h} as two separate
+open-hash tables with 4096 buckets:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Table} & \textbf{Contents} \\
+\midrule
+\cname{sema\_globals[4096]} & Top-level declarations: functions, structs, enums, type aliases \\
+\cname{sema\_locals[4096]}  & Per-function: parameters, \lain{var} declarations \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+Lookup (\cname{sema\_lookup}) checks locals first, then globals, so function
+parameters shadow top-level symbols.
+
+\begin{structdoc}{Symbol}{src/sema/scope.h:33}
+\cname{name}      & \cname{char *} & Raw identifier string (arena copy). \\
+\cname{c\_name}   & \cname{char *} & C-mangled identifier for emit. \\
+\cname{type}      & \cname{Type *} & Symbol type (NULL before inference). \\
+\cname{decl}      & \cname{Decl *} & Originating declaration (NULL for implicit locals). \\
+\cname{is\_global}& \cname{bool}   & True if in \cname{sema\_globals}. \\
+\cname{is\_mutable}& \cname{bool}  & True if declared \lain{var}. \\
+\cname{next}      & \cname{Symbol *} & Hash-chain next. \\
+\end{structdoc}
+
+\pnum
+The hash function is DJB2 (\cname{sema\_hash}) modulo 4096.  All \cname{Symbol}
+nodes are allocated in \cname{sema\_arena}.  The ``clear'' operations
+(\cname{sema\_clear\_globals}, \cname{sema\_clear\_locals}) reset bucket
+pointers to \texttt{NULL}; arena memory is not released.
+
+% -------------------------------------------------------------------------
+\section{Block scope}
+\label{sec:sema-scope}
+\index{scope!block scope}
+% -------------------------------------------------------------------------
+
+\pnum
+Within a function body, block scope is maintained via a linked list of
+\cname{ScopeFrame} nodes.  Each frame saves a full snapshot of the 4096-pointer
+\cname{sema\_locals} array.
+
+\begin{ccode}
+static void sema_push_scope(void) {
+    ScopeFrame *frame = arena_push_aligned(sema_arena, ScopeFrame);
+    memcpy(frame->saved_locals, sema_locals, sizeof(sema_locals));
+    frame->parent = scope_stack;
+    scope_stack = frame;
+}
+static void sema_pop_scope(void) {
+    memcpy(sema_locals, scope_stack->saved_locals, sizeof(sema_locals));
+    scope_stack = scope_stack->parent;
+}
+\end{ccode}
+
+\pnum
+Symbols declared inside a block (\cname{STMT\_VAR}, \cname{STMT\_FOR} index)
+are inserted into \cname{sema\_locals} during the block.  On pop, the previous
+snapshot is restored, making the block-local symbols invisible to subsequent code.
+
+\begin{invariant}
+Every \cname{sema\_push\_scope()} call is matched by exactly one
+\cname{sema\_pop\_scope()} call.  The orchestrator wraps each function body
+pass in push/pop pairs; individual statement handlers do the same for their
+sub-blocks.
+\end{invariant}
+
+% -------------------------------------------------------------------------
+\section{Walk-phase statement handler}
+\label{sec:sema-walk}
+\index{walk\_stmt}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{walk\_stmt(s)} (\srcref{src/sema.h:412}) is the walk-phase driver.  For
+each statement kind it:
+\begin{itemize}
+\item Calls \cname{sema\_infer\_expr} on all sub-expressions to set their
+  \cname{->type} fields.
+\item Updates the \cname{RangeTable} via \cname{range\_set} and
+  \cname{sema\_apply\_constraint}.
+\item Pushes/pops in-guards for \cname{STMT\_IF} and \cname{STMT\_WHILE}
+  conditions containing \lain{in} expressions.
+\item Calls \cname{sema\_verify\_bounded\_while} for \lain{while} loops that
+  carry a termination measure.
+\item Recursively processes sub-statement lists within push/pop scope pairs.
+\end{itemize}
+
+\pnum
+Loop widening is performed before and after loop bodies via
+\cname{sema\_widen\_loop}, which sets the range of every variable assigned inside
+the loop to \cname{range\_unknown()}.  This models the conservative fixpoint
+used by the VRA.
+
+% -------------------------------------------------------------------------
+\section{Mutual recursion detection}
+\label{sec:sema-mrec}
+\index{mutual recursion detection}
+% -------------------------------------------------------------------------
+
+\pnum
+After all functions are processed, \cname{sema\_check\_no\_mutual\_recursion(decls)}
+(\srcref{src/sema.h:786}) performs DFS over the static call graph.
+
+\pnum
+For each non-generic \cname{DECL\_FUNCTION} (\lain{func}, not \lain{proc}), a
+depth-first traversal follows \cname{EXPR\_CALL} edges.  When the DFS
+revisits a node already on the current stack, a cycle is detected and error
+\diagcode{E011} is emitted.
+
+\pnum
+The DFS is bounded by \cname{MREC\_MAX\_NODES = 256}.  Functions beyond this
+limit are silently skipped; this is acceptable for the current compiler which
+does not target programs with more than 256 pure functions in a call cycle.
+\lain{proc} declarations are excluded from cycle detection because procedures
+are not required to terminate.
+
+\begin{note}
+Generic (\cname{comptime}) functions are excluded from cycle detection because
+each instantiation is a distinct function body.  Cycles through instantiations
+cannot be checked without tracking per-instantiation call graphs.
+\end{note}

@@ -1,0 +1,179 @@
+\indexentry{architecture}{3}
+\indexentry{pipeline}{3}
+\indexentry{design philosophy}{3}
+\indexentry{pipeline!compilation stages}{3}
+\indexentry{arena allocator}{4}
+\indexentry{memory!arenas}{4}
+\indexentry{source files}{5}
+\indexentry{naming conventions}{6}
+\indexentry{global state}{7}
+\indexentry{build}{7}
+\indexentry{infrastructure}{9}
+\indexentry{primitive types}{9}
+\indexentry{arena allocator}{9}
+\indexentry{file I/O}{10}
+\indexentry{panic assertions}{11}
+\indexentry{ASCII classification}{11}
+\indexentry{string type}{11}
+\indexentry{lexer}{13}
+\indexentry{tokeniser}{13}
+\indexentry{Token struct}{13}
+\indexentry{TokenKind}{13}
+\indexentry{lexer!FSM}{14}
+\indexentry{LexerState}{14}
+\indexentry{numeric literals!lexing}{15}
+\indexentry{string literals!lexing}{16}
+\indexentry{comments!nested block}{16}
+\indexentry{keywords!classification}{16}
+\indexentry{lexer!lookahead}{16}
+\indexentry{AST}{21}
+\indexentry{abstract syntax tree}{21}
+\indexentry{Id struct}{21}
+\indexentry{Type node}{21}
+\indexentry{TypeKind}{21}
+\indexentry{OwnershipMode}{21}
+\indexentry{Decl node}{22}
+\indexentry{DeclKind}{22}
+\indexentry{Stmt node}{24}
+\indexentry{StmtKind}{24}
+\indexentry{Expr node}{25}
+\indexentry{ExprKind}{25}
+\indexentry{list nodes}{27}
+\indexentry{AST!semantic annotation}{27}
+\indexentry{AST!deep clone}{27}
+\indexentry{module system}{29}
+\indexentry{module loading}{29}
+\indexentry{ModuleNode}{29}
+\indexentry{module name!path conversion}{29}
+\indexentry{load\_module}{30}
+\indexentry{module system!cycles}{30}
+\indexentry{parser!framework}{35}
+\indexentry{Parser struct}{35}
+\indexentry{parser!token advancement}{35}
+\indexentry{parser!macros}{36}
+\indexentry{parser!error reporting}{36}
+\indexentry{operator precedence}{36}
+\indexentry{numeric literals!parsing}{37}
+\indexentry{parser!path expressions}{37}
+\indexentry{parser!expressions}{39}
+\indexentry{Pratt parser}{39}
+\indexentry{precedence climbing}{39}
+\indexentry{unary expressions}{40}
+\indexentry{primary expressions}{40}
+\indexentry{cast expressions}{41}
+\indexentry{parser!statements}{43}
+\indexentry{parser!declarations}{43}
+\indexentry{var statement}{44}
+\indexentry{assignment statements}{44}
+\indexentry{if statement}{44}
+\indexentry{for statement}{45}
+\indexentry{while statement}{45}
+\indexentry{match statement}{45}
+\indexentry{parser!declarations}{45}
+\indexentry{semantic analysis!orchestration}{49}
+\indexentry{sema\_resolve\_module}{49}
+\indexentry{semantic analysis!two phases}{49}
+\indexentry{sema\_resolve\_module}{49}
+\indexentry{symbol table}{50}
+\indexentry{Symbol struct}{50}
+\indexentry{scope!block scope}{50}
+\indexentry{walk\_stmt}{51}
+\indexentry{mutual recursion detection}{51}
+\indexentry{name resolution}{53}
+\indexentry{sema\_resolve\_expr}{53}
+\indexentry{identifier resolution}{53}
+\indexentry{UFCS}{53}
+\indexentry{Uniform Function Call Syntax}{53}
+\indexentry{destructuring parameters}{53}
+\indexentry{platform constants}{54}
+\indexentry{scope building}{54}
+\indexentry{type inference}{55}
+\indexentry{sema\_infer\_expr}{55}
+\indexentry{integer widening}{55}
+\indexentry{type compatibility}{55}
+\indexentry{ownership}{57}
+\indexentry{linearity}{57}
+\indexentry{linear types}{57}
+\indexentry{sema\_type\_is\_linear}{57}
+\indexentry{LTable}{57}
+\indexentry{LEntry}{57}
+\indexentry{field-level consumption}{58}
+\indexentry{consumption rules}{58}
+\indexentry{NLL}{58}
+\indexentry{Non-Lexical Lifetimes}{58}
+\indexentry{borrow checking}{59}
+\indexentry{regions}{59}
+\indexentry{two-phase borrows}{59}
+\indexentry{Region struct}{59}
+\indexentry{BorrowEntry}{59}
+\indexentry{two-phase borrows}{60}
+\indexentry{BORROW\_RESERVED}{60}
+\indexentry{BORROW\_ACTIVE}{60}
+\indexentry{aliasing rules}{60}
+\indexentry{NLL}{61}
+\indexentry{VRA}{63}
+\indexentry{value range analysis}{63}
+\indexentry{Range struct}{63}
+\indexentry{saturating arithmetic}{63}
+\indexentry{RangeTable}{63}
+\indexentry{constraint propagation}{64}
+\indexentry{range refinement}{64}
+\indexentry{in-guard table}{64}
+\indexentry{InGuardEntry}{64}
+\indexentry{bounds checking}{65}
+\indexentry{static bounds checking}{65}
+\indexentry{exhaustiveness checking}{67}
+\indexentry{pattern matching!exhaustiveness}{67}
+\indexentry{wildcard arm}{67}
+\indexentry{enum exhaustiveness}{67}
+\indexentry{termination verification}{69}
+\indexentry{bounded while}{69}
+\indexentry{decreasing measure}{69}
+\indexentry{termination measure}{69}
+\indexentry{comptime}{73}
+\indexentry{compile-time evaluation}{73}
+\indexentry{generics}{73}
+\indexentry{ComptimeEnv}{73}
+\indexentry{comptime\_evaluate\_expr}{73}
+\indexentry{generic functions!instantiation}{73}
+\indexentry{comptime if}{74}
+\indexentry{type aliases}{74}
+\indexentry{code generation}{75}
+\indexentry{C99 backend}{75}
+\indexentry{type emission}{75}
+\indexentry{enum emission}{76}
+\indexentry{defer}{76}
+\indexentry{standard library}{79}
+\indexentry{std.c}{79}
+\indexentry{std.io}{79}
+\indexentry{std.fs}{79}
+\indexentry{std.math}{79}
+\indexentry{std.string}{80}
+\indexentry{std.option}{80}
+\indexentry{std.result}{80}
+\indexentry{testing infrastructure}{81}
+\indexentry{test suite}{81}
+\indexentry{test file conventions}{81}
+\indexentry{test categories}{81}
+\indexentry{AST!reference}{83}
+\indexentry{diagnostics!catalogue}{87}
+\indexentry{error codes}{87}
+\indexentry{linearity errors}{87}
+\indexentry{purity errors}{88}
+\indexentry{type errors}{88}
+\indexentry{termination errors}{89}
+\indexentry{parser errors}{90}
+\indexentry{VRA!diagnostics}{90}
+\indexentry{diagnostics!format}{91}
+\indexentry{pass interactions}{93}
+\indexentry{semantic analysis!passes}{93}
+\indexentry{sema\_walk\_phase}{93}
+\indexentry{global state!semantic}{93}
+\indexentry{resolve phase}{94}
+\indexentry{walk phase}{94}
+\indexentry{VRA!interaction with bounds}{95}
+\indexentry{linearity!interaction with borrows}{96}
+\indexentry{mutual recursion!detection}{96}
+\indexentry{pass dependency}{96}
+\indexentry{declaration flow}{97}
+\indexentry{declarations!lifecycle}{97}

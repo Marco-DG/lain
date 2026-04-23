@@ -1,0 +1,302 @@
+% C-pass-interactions.tex — Annex C: Pass Interactions
+\chapter{Pass Interactions}
+\label{annex:C-pass-interactions}
+\index{pass interactions}
+\index{semantic analysis!passes}
+
+\pnum
+The Lain compiler's semantic analysis is not a sequence of fully independent
+passes that each transform the AST and hand it off to the next.  Instead it is
+two \emph{phases} — resolve and walk — orchestrated by a single function
+\cname{sema\_resolve\_module} in \srcref{src/sema.h}, with tightly coupled
+sharing of mutable global state between the analysis components within each
+phase.  This annex describes how those components interact with one another and
+with the shared state, and how the two-phase structure enforces the dependency
+ordering between analyses.
+
+% -------------------------------------------------------------------------
+\section{Two-phase structure}
+\label{sec:ci-twophase}
+\index{sema\_walk\_phase}
+% -------------------------------------------------------------------------
+
+\pnum
+The boolean flag \cname{sema\_walk\_phase} (declared in \srcref{src/sema.h})
+partitions all semantic analysis into two epochs per function body:
+
+\begin{enumerate}
+\item \textbf{Resolve phase} (\cname{sema\_walk\_phase = false}).
+  \cname{sema\_resolve\_stmt} is called on every statement.
+  Name resolution, UFCS desugaring, generic instantiation, \cname{comptime if}
+  branch selection, and the initial call to \cname{sema\_infer\_expr} all occur
+  here.  VRA range propagation, bounds checks, and linearity checks are
+  \emph{not} performed.
+
+\item \textbf{Walk phase} (\cname{sema\_walk\_phase = true}).
+  \cname{walk\_stmt} is called on every statement a second time.  This invokes
+  \cname{sema\_infer\_expr} again, which now sees all \cname{->type} annotations
+  established during resolve, and activates VRA range propagation, in-guard
+  tracking, bounds checking, and the termination-measure verifier.
+\end{enumerate}
+
+\pnum
+The guard idiom used by walk-only checks is:
+
+\begin{ccode}
+if (sema_walk_phase) {
+    /* bounds check, VRA check, etc. */
+}
+\end{ccode}
+
+\noindent
+This prevents false positives during resolve, when type information may still
+be incomplete (e.g.\ a generic is being instantiated, or a forward reference
+is being resolved).
+
+% -------------------------------------------------------------------------
+\section{Shared global state}
+\label{sec:ci-globals}
+\index{global state!semantic}
+% -------------------------------------------------------------------------
+
+\pnum
+All semantic passes share the following global tables, declared in
+\srcref{src/sema.h} before the sub-header includes:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Global} & \textbf{Type} & \textbf{Consumers} \\
+\midrule
+\cname{sema\_globals}  & \cname{HashTable} (4096 buckets) & Resolve, typecheck \\
+\cname{sema\_locals}   & \cname{HashTable} (4096 buckets) & Resolve, typecheck \\
+\cname{sema\_scope}    & \cname{ScopeFrame}               & Resolve, linearity \\
+\cname{sema\_ranges}   & \cname{RangeTable *}             & VRA, bounds \\
+\cname{sema\_in\_guards} & \cname{InGuardEntry *}         & VRA, bounds \\
+\cname{sema\_ltable}   & \cname{LTable *}                 & Linearity \\
+\cname{sema\_btable}   & \cname{BorrowTable *}            & Borrows \\
+\cname{sema\_source\_text} & \cname{const char *}         & Diagnostics \\
+\cname{sema\_source\_file} & \cname{const char *}         & Diagnostics \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+The symbol tables (\cname{sema\_globals}, \cname{sema\_locals}) are written by
+the resolver (name binding and UFCS desugaring) and read by the typechecker
+(callee lookup, struct field lookup).  The range table (\cname{sema\_ranges})
+is written by VRA and read by the bounds checker.  The in-guard table
+(\cname{sema\_in\_guards}) is written by \cname{sema\_push\_in\_guards} and
+read by the bounds checker.  The linearity table (\cname{sema\_ltable}) and
+borrow table (\cname{sema\_btable}) are written and read exclusively by their
+respective passes.
+
+% -------------------------------------------------------------------------
+\section{Resolve phase interactions}
+\label{sec:ci-resolve}
+\index{resolve phase}
+% -------------------------------------------------------------------------
+
+\pnum
+Within the resolve phase the call graph is:
+
+\begin{enumerate}
+\item \cname{sema\_resolve\_stmt} dispatches on \cname{StmtKind}.  For every
+  expression inside the statement it calls \cname{sema\_resolve\_expr}, which
+  handles UFCS transformation and generic call expansion.
+
+\item \cname{sema\_resolve\_expr} calls \cname{sema\_infer\_expr} on any
+  sub-expression whose type is needed for resolution decisions (e.g.\ the
+  receiver type of a member call is needed to determine the UFCS candidate).
+  This creates a partial re-entrant dependency between resolve and typecheck.
+
+\item For generic calls (\cname{EXPR\_CALL} on a comptime-parameterised
+  \cname{DECL\_FUNCTION}), \cname{sema\_resolve\_expr} calls into
+  \srcref{src/sema/comptime.h} to evaluate comptime arguments, then calls
+  \srcref{src/sema/generic.h} to clone and substitute the function body, then
+  recursively calls \cname{sema\_resolve\_module} on the specialisation.  This
+  means generic instantiation is fully recursive and nested within resolve.
+
+\item For \cname{STMT\_COMPTIME\_IF}, \cname{sema\_resolve\_stmt} evaluates
+  the condition via \cname{comptime\_evaluate\_expr}, sets
+  \cname{is\_taken}, and recursively resolves only the selected branch.
+  The unselected branch is never visited.
+\end{enumerate}
+
+% -------------------------------------------------------------------------
+\section{Walk phase interactions}
+\label{sec:ci-walk}
+\index{walk phase}
+% -------------------------------------------------------------------------
+
+\pnum
+The walk phase processes each statement in the same statement-list order as
+resolve.  \cname{walk\_stmt} calls \cname{sema\_infer\_expr}, which in turn
+calls the following analyses:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Analysis} & \textbf{Entry point} & \textbf{Called from} \\
+\midrule
+Type inference      & \cname{sema\_infer\_expr}     & \cname{walk\_stmt} \\
+VRA propagation     & \cname{range\_set}/\cname{range\_eval} & Inside \cname{sema\_infer\_expr} \\
+In-guard push       & \cname{sema\_push\_in\_guards} & \cname{walk\_stmt} (STMT\_WHILE/STMT\_IF) \\
+Bounds check        & \cname{sema\_check\_bounds}    & Inside \cname{sema\_infer\_expr} (EXPR\_INDEX) \\
+Linearity check     & \cname{linearity\_check\_stmt} & \cname{walk\_stmt} (after infer) \\
+Borrow check        & \cname{borrow\_register}       & Inside \cname{linearity\_check\_stmt} \\
+Termination verify  & bounded-while verifier         & \cname{walk\_stmt} (STMT\_WHILE with measure) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+The ordering within a single walk-phase statement is significant:
+\begin{enumerate}
+\item \cname{sema\_infer\_expr} runs first.  It populates \cname{->type} on
+  the expression tree and propagates range information into \cname{sema\_ranges}.
+  Bounds checks are triggered as a side-effect of inferring \cname{EXPR\_INDEX}
+  expressions.
+\item In-guards are pushed immediately before the loop/if body is walked.
+  The guard for a condition \lain{idx in arr} is added to \cname{sema\_in\_guards}
+  so that bounds checks on \lain{arr[idx]} inside the body see the proof.
+\item Linearity checking (\cname{linearity\_check\_stmt}) runs after type
+  inference for the same statement, so it sees the \cname{->type} annotations
+  needed to determine linearity.  Borrow registration is a sub-step of linearity
+  checking: shared borrows are registered when a variable is passed to a shared
+  parameter, mutable borrows when passed to a \lain{var} parameter.
+\item The bounded-while verifier is invoked at \cname{STMT\_WHILE} nodes that
+  carry a non-null \cname{measure} field.  It reads the
+  current \cname{sema\_ranges} state to evaluate non-negativity and reads
+  the condition subtree to extract in-guard patterns for the decrease proof.
+\end{enumerate}
+
+% -------------------------------------------------------------------------
+\section{VRA and bounds interaction}
+\label{sec:ci-vra-bounds}
+\index{VRA!interaction with bounds}
+% -------------------------------------------------------------------------
+
+\pnum
+VRA (\cref{chap:14-vra}) and the bounds checker (\cref{chap:15-bounds}) share
+the \cname{sema\_ranges} table and the \cname{sema\_in\_guards} linked list.
+Their interaction is:
+
+\begin{enumerate}
+\item During \cname{sema\_infer\_expr} for \cname{EXPR\_BINARY} assignment,
+  \cname{range\_set} updates the range of the target variable.
+\item When \cname{sema\_infer\_expr} encounters \cname{EXPR\_INDEX}, it reads
+  the range of the index expression via \cname{range\_eval} and calls
+  \cname{sema\_check\_bounds}.
+\item \cname{sema\_check\_bounds} first checks the in-guard table for a proven
+  \texttt{(index, container)} pair.  If found, it returns without emitting a
+  runtime check.  If not, it queries \cname{sema\_ranges} for the range.
+  Static ranges trigger either a compile-time error or a silent pass;
+  unknown ranges trigger emission of a C runtime bounds-check expression.
+\end{enumerate}
+
+\pnum
+This means VRA must run before the bounds checker for any given index
+expression, and the in-guard table must be populated before the loop body is
+walked.  Both of these orderings are guaranteed by the sequential evaluation
+inside \cname{sema\_infer\_expr} and the explicit push-before-body structure
+in \cname{walk\_stmt}.
+
+% -------------------------------------------------------------------------
+\section{Linearity and borrows interaction}
+\label{sec:ci-lin-borrow}
+\index{linearity!interaction with borrows}
+% -------------------------------------------------------------------------
+
+\pnum
+The linearity checker (\cref{chap:12-linearity}) and the borrow checker
+(\cref{chap:13-borrows}) share \cname{sema\_ltable} and \cname{sema\_btable}
+but do not call each other directly.  Their interaction is through the following
+read/write protocol:
+
+\begin{itemize}
+\item When the linearity checker encounters a move (\cname{EXPR\_MOVE} or an
+  implicit transfer into a \cname{MODE\_OWNED} parameter), it calls
+  \cname{borrow\_is\_live(sema\_btable, id)} to verify no borrow is active
+  before marking the variable consumed.  If a borrow is live, \diagcode{E008}
+  is emitted.
+
+\item When a variable is passed to a shared (\cname{MODE\_SHARED}) parameter,
+  the linearity checker calls \cname{borrow\_register} with \cname{MODE\_SHARED}
+  and registers the two-phase RESERVED borrow.  After all arguments are
+  evaluated, \cname{borrow\_promote\_to\_active} upgrades the borrow to ACTIVE.
+
+\item When a variable is passed to a mutable (\cname{MODE\_MUTABLE}) parameter,
+  the linearity checker calls \cname{borrow\_register} with \cname{MODE\_MUTABLE}.
+  The borrow checker verifies no conflicting borrow exists (\diagcode{E004}) before
+  registering.
+
+\item At scope exit, the linearity checker scans \cname{sema\_ltable} for
+  unconsumed linear variables (\diagcode{E003}), and the borrow checker
+  automatically expires borrows whose region no longer contains the current
+  statement index.
+\end{itemize}
+
+% -------------------------------------------------------------------------
+\section{Mutual recursion detection}
+\label{sec:ci-mrec}
+\index{mutual recursion!detection}
+% -------------------------------------------------------------------------
+
+\pnum
+Mutual recursion detection (the DFS described in \cref{chap:09-sema-orchestration})
+runs as a standalone pre-pass over the resolved declaration list, after both
+phases have completed.  It does not share state with the other analyses except
+reading the resolved \cname{->decl} pointers set during resolve.  Its output is
+purely diagnostic: \diagcode{E011} is emitted and the exit code is set if a cycle
+involving a \lain{func} is found.
+
+% -------------------------------------------------------------------------
+\section{Pass dependency DAG}
+\label{sec:ci-dag}
+\index{pass dependency}
+% -------------------------------------------------------------------------
+
+\pnum
+The dependency relationships between passes can be summarised as a directed
+acyclic graph:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=1.5cm and 2.5cm,
+  every node/.style={font=\small},
+  box/.style={draw, rounded corners=2pt, minimum width=2.8cm, minimum height=0.7cm,
+              fill=white, align=center},
+  arrow/.style={->, >=stealth, thin}
+]
+\node[box] (lex)    {Lexer};
+\node[box, right=of lex] (parse) {Parser};
+\node[box, right=of parse] (res)   {Resolve};
+\node[box, below=of res]   (infer) {Type inference};
+\node[box, left=of infer]  (vra)   {VRA};
+\node[box, left=of vra]    (bounds){Bounds};
+\node[box, below=of infer] (lin)   {Linearity};
+\node[box, right=of lin]   (borrow){Borrows};
+\node[box, below=of vra]   (term)  {Termination};
+\node[box, below=of bounds] (mrec) {Mutual rec.};
+\node[box, right=of borrow] (emit) {Emit};
+
+\draw[arrow] (lex)    -- (parse);
+\draw[arrow] (parse)  -- (res);
+\draw[arrow] (res)    -- (infer);
+\draw[arrow] (infer)  -- (vra);
+\draw[arrow] (vra)    -- (bounds);
+\draw[arrow] (infer)  -- (lin);
+\draw[arrow] (lin)    -- (borrow);
+\draw[arrow] (vra)    -- (term);
+\draw[arrow] (res)    -- (mrec);
+\draw[arrow] (lin)    -- (emit);
+\draw[arrow] (borrow) -- (emit);
+\end{tikzpicture}
+\end{center}
+
+\pnum
+Edges represent ``must run before'' ordering.  All arcs involving the
+walk-phase analyses (VRA, bounds, linearity, borrows, termination) are
+implicitly conditioned on the walk phase having begun
+(\cname{sema\_walk\_phase = true}).

@@ -1,0 +1,155 @@
+% 05-modules.tex — Chapter 5: Module System
+\chapter{Module System}
+\label{chap:05-modules}
+\index{module system}
+\index{module loading}
+
+\pnum
+The Lain module system translates a flat dotted module name (e.g.\ \lain{foo.bar})
+to a filesystem path (\texttt{foo/bar.ln}), reads and parses the file, and
+recursively expands \lain{import} declarations in-place in the AST.  The entire
+mechanism is implemented in \srcref{src/module.h}.
+
+% -------------------------------------------------------------------------
+\section{Module records}
+\label{sec:mod-records}
+\index{ModuleNode}
+% -------------------------------------------------------------------------
+
+\pnum
+A \cname{ModuleNode} records every module that has been loaded during a compiler
+run:
+
+\begin{structdoc}{ModuleNode}{src/module.h:22}
+\cname{name}        & \cname{char *}        & Canonical dotted name (\texttt{"foo.bar"}). \\
+\cname{decls}       & \cname{DeclList *}    & Top-level declaration list for this module. \\
+\cname{source\_text}& \cname{const char *}  & NUL-terminated source buffer (for diagnostic line display). \\
+\cname{source\_file}& \cname{const char *}  & Filesystem path (for error messages). \\
+\cname{next}        & \cname{ModuleNode *}  & Next node in the global linked list. \\
+\end{structdoc}
+
+\pnum
+The global \cname{loaded\_modules} variable is the head of a singly-linked list
+of all loaded modules.  Module records are allocated in \cname{ast\_arena}; the
+name string is arena-copied so the record does not hold a pointer into a
+stack-allocated buffer.
+
+% -------------------------------------------------------------------------
+\section{Module name to path conversion}
+\label{sec:mod-path}
+\index{module name!path conversion}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{module\_name\_to\_path(mod, out, cap)} (\srcref{src/module.h:63})
+translates a dotted module name to a filesystem path by replacing every
+\texttt{.} with \texttt{/} and appending the \texttt{.ln} extension:
+
+\begin{algorithm}
+For each character \texttt{c} in \texttt{mod}:\\
+\quad if \texttt{c == '.'}:\ write \texttt{/}\\
+\quad else:\ write \texttt{c}\\
+Append \texttt{".ln"}\,.
+\end{algorithm}
+
+\pnum
+Paths are capped at 255 characters (the fixed \texttt{path[256]} buffer).
+The compiler aborts if the module name is longer, which cannot occur for
+reasonable module names.
+
+% -------------------------------------------------------------------------
+\section{load\_module algorithm}
+\label{sec:mod-load}
+\index{load\_module}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{load\_module(file\_arena, ast\_arena, modname)}
+(\srcref{src/module.h:78}) is the single entry point for module loading.
+It is called recursively for each import dependency.
+
+\begin{algorithm}
+\textbf{load\_module}(\textit{file\_arena, ast\_arena, modname}):
+\begin{enumerate}
+\item If \texttt{modname} is already in \texttt{loaded\_modules}, return \texttt{NULL}.
+  (Already loaded modules are silently skipped to prevent duplicate symbols.)
+\item Translate \texttt{modname} to a filesystem path via
+  \cname{module\_name\_to\_path}.
+\item Read the file into \textit{file\_arena} using \cname{file\_read\_into\_arena}.
+  Abort with an error if the file is missing.
+\item Create a \cname{Lexer} pointing at the source buffer and a \cname{Parser}
+  wrapping the lexer.
+\item Call \cname{parse\_module(ast\_arena, \&parser)} to build a \cname{DeclList}.
+\item Walk the top-level \cname{DeclList}.  For each \cname{DECL\_IMPORT} node:
+  \begin{enumerate}[(a)]
+  \item Recursively call \cname{load\_module} for the imported module name.
+  \item If the recursive call returns a non-NULL \cname{DeclList}, splice it
+    in-place into the current list: the import node is removed and the imported
+    declarations are inserted at that position.
+  \end{enumerate}
+\item Call \cname{record\_module} to save the module record in the linked list.
+\item Return the (now-spliced) \cname{DeclList}.
+\end{enumerate}
+\end{algorithm}
+
+\pnum
+The splice-in-place strategy means that after \cname{load\_module} returns, the
+root \cname{DeclList} passed to \cname{sema\_resolve\_module} already contains
+the declarations of all imported modules in a single flat list.  There is no
+separate per-module processing in sema; all top-level symbols are globally visible
+within the flat list.
+
+\begin{rationale}
+Splicing imports into a single flat list simplifies name resolution: there is no
+module namespace or scope stack at the top level.  Every top-level symbol is
+accessible from any function in the program.  This is sufficient for the current
+Lain compiler which does not expose separate compilation or import qualified access.
+\end{rationale}
+
+% -------------------------------------------------------------------------
+\section{Cycle prevention}
+\label{sec:mod-cycles}
+\index{module system!cycles}
+% -------------------------------------------------------------------------
+
+\pnum
+Before loading a module, \cname{module\_already\_loaded()} performs a linear
+scan of \cname{loaded\_modules}.  If the module is already present, \cname{NULL}
+is returned immediately.  When the caller splices the result, a \texttt{NULL}
+return means ``already loaded; nothing to splice'', so the import node is
+silently dropped.
+
+\begin{invariant}
+Every distinct module name appears at most once in \cname{loaded\_modules}.
+Mutually importing modules terminate because the second call to
+\cname{load\_module("A")} from inside module B (which was loaded first from A)
+finds A already registered and returns \texttt{NULL}.
+\end{invariant}
+
+% -------------------------------------------------------------------------
+\section{Diagnostic integration}
+\label{sec:mod-diagnostics}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{record\_module} stores both the source text and the filesystem path in the
+\cname{ModuleNode}.  Before running semantic analysis on a module,
+\cname{sema\_resolve\_module()} calls \cname{find\_module(module\_path)} and
+copies the pointers into the globals \cname{sema\_source\_text} and
+\cname{sema\_source\_file} (\srcref{src/sema.h:841}).  These are then available
+to \cname{diagnostic\_show\_line()} when any semantic error is reported.
+
+\pnum
+The \texttt{path} variable used as \cname{source\_file} is the local
+\texttt{char path[256]} buffer inside \cname{load\_module}.  Its address is
+stored in the module record, which means the module record is invalidated if
+the stack frame unwinds.  This is safe only because \cname{record\_module} is
+called at the end of \cname{load\_module} before the function returns, and the
+caller uses the pointer while the frame is still live, or — after the refactor
+that allocates records in \cname{ast\_arena} — the pointer points to a fixed
+path variable whose lifetime is bounded by the module loading phase.
+
+\begin{note}
+A future improvement would copy \texttt{path} into \cname{ast\_arena} before
+storing it, eliminating the dependency on stack lifetime.
+\end{note}

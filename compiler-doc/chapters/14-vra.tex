@@ -1,0 +1,156 @@
+% 14-vra.tex — Chapter 14: Value Range Analysis
+\chapter{Value Range Analysis}
+\label{chap:14-vra}
+\index{VRA}
+\index{value range analysis}
+
+\pnum
+Value Range Analysis (VRA) tracks compile-time integer value ranges for local
+variables throughout a function body.  It is the core mechanism by which the
+compiler statically proves array accesses safe without runtime checks.  VRA is
+implemented in \srcref{src/sema/ranges.h}.
+
+% -------------------------------------------------------------------------
+\section{Range representation}
+\label{sec:vra-range}
+\index{Range struct}
+% -------------------------------------------------------------------------
+
+\pnum
+A range is a closed integer interval $[\min, \max]$:
+
+\begin{ccode}
+typedef struct {
+    int64_t min;
+    int64_t max;
+    bool    known;
+} Range;
+\end{ccode}
+
+\pnum
+\cname{known = false} means the range is unknown (unbounded).  Arithmetic on an
+unknown range propagates the unknown: any operation whose operand is unknown
+returns \cname{range\_unknown()}.  Three constructors:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Constructor} & \textbf{Produces} \\
+\midrule
+\cname{range\_unknown()} & Unknown (known=false, min=max=0) \\
+\cname{range\_const(v)}  & $[v, v]$ — a known singleton \\
+\cname{range\_make(lo, hi)} & $[\textit{lo}, \textit{hi}]$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% -------------------------------------------------------------------------
+\section{Saturating arithmetic}
+\label{sec:vra-sat}
+\index{saturating arithmetic}
+% -------------------------------------------------------------------------
+
+\pnum
+All range arithmetic uses saturating 64-bit operations to prevent silent
+integer overflow.  Four helpers:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Helper} & \textbf{Saturates at} \\
+\midrule
+\cname{sat\_add\_i64(a,b)} & \texttt{INT64\_MAX}/\texttt{INT64\_MIN} \\
+\cname{sat\_sub\_i64(a,b)} & \texttt{INT64\_MAX}/\texttt{INT64\_MIN} \\
+\cname{sat\_mul\_i64(a,b)} & \texttt{INT64\_MAX}/\texttt{INT64\_MIN}, handles \texttt{INT64\_MIN/-1} UB \\
+\cname{sat\_div\_i64(a,b)} & guards \texttt{INT64\_MIN/-1} UB, returns 0 for \texttt{b=0} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% -------------------------------------------------------------------------
+\section{RangeTable}
+\label{sec:vra-table}
+\index{RangeTable}
+% -------------------------------------------------------------------------
+
+\pnum
+A \cname{RangeTable} maps variable \cname{Id *} to \cname{Range}.  It also
+maintains a list of \cname{ConstraintEntry} records for linear constraints of
+the form $x = y + c$:
+
+\begin{itemize}
+\item \cname{range\_set(table, id, range)} inserts or updates the range for a
+  variable.
+\item \cname{range\_get(table, id)} looks up a variable's range; returns
+  \cname{range\_unknown()} if not found.
+\item \cname{sema\_eval\_range(expr, table)} recursively evaluates an expression
+  to a \cname{Range} by combining sub-expression ranges with saturating arithmetic.
+\end{itemize}
+
+% -------------------------------------------------------------------------
+\section{Constraint propagation}
+\label{sec:vra-constraints}
+\index{constraint propagation}
+% -------------------------------------------------------------------------
+
+\pnum
+The \cname{STMT\_ASSIGN} handler in \cname{walk\_stmt} adds linear constraints
+to the table when the right-hand side has the form \lain{y + c}, \lain{c + y},
+or \lain{y - c}:
+
+\begin{ccode}
+// x = y + c
+constraint_add(table, x_id, y_id,  c);
+constraint_add(table, y_id, x_id, -c);
+\end{ccode}
+
+\pnum
+These bidirectional constraints allow the VRA to tighten bounds on either
+variable when the other is constrained.  For example, if \texttt{y} is known
+in range $[0, 7]$ and \texttt{x = y + 1}, the VRA can infer
+\texttt{x} $\in [1, 8]$.
+
+% -------------------------------------------------------------------------
+\section{Condition-driven range refinement}
+\label{sec:vra-cond}
+\index{range refinement}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{sema\_apply\_constraint(cond, table)} interprets a boolean condition as a
+range restriction.  For example, \lain{if x < 10} causes the VRA to tighten
+the upper bound of \texttt{x} to 9 in the then-branch.
+\cname{sema\_apply\_negated\_constraint} applies the negation in the else-branch.
+
+\pnum
+Loop widening is applied before and after every loop body.
+\cname{sema\_widen\_loop(body, table)} sets the range of any variable assigned
+inside the loop to \cname{range\_unknown()}.  This is a conservative
+over-approximation of the fixpoint; the VRA does not compute widening operators.
+
+% -------------------------------------------------------------------------
+\section{In-guard table}
+\label{sec:vra-inguards}
+\index{in-guard table}
+\index{InGuardEntry}
+% -------------------------------------------------------------------------
+
+\pnum
+The \lain{in} operator (e.g.\ \lain{idx in arr}) serves as a bounds-proving
+condition.  When used as a loop condition or if-condition, it implies
+$0 \leq \mathtt{idx} < \mathtt{arr.len}$.  The in-guard table records these
+proven guards so the bounds checker can skip runtime checks for subscripts inside
+the guarded region.
+
+\begin{structdoc}{InGuardEntry}{src/sema.h:43}
+\cname{index}     & \cname{Expr *}      & The index expression proven in-bounds. \\
+\cname{container} & \cname{Expr *}      & The array/slice expression. \\
+\cname{next}      & \cname{InGuardEntry *} & Next entry in the linked list. \\
+\end{structdoc}
+
+\pnum
+\cname{sema\_push\_in\_guards(cond)} extracts every \lain{in} sub-expression from
+a (possibly conjunctive) condition and adds an entry.  Guards are pushed at the
+start of an \lain{if} or \lain{while} body and popped on scope exit.
+\cname{sema\_is\_in\_guarded(index, container)} performs a structural-equality
+search through the guard list.

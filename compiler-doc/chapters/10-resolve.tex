@@ -1,0 +1,121 @@
+% 10-resolve.tex — Chapter 10: Name Resolution
+\chapter{Name Resolution}
+\label{chap:10-resolve}
+\index{name resolution}
+\index{sema\_resolve\_expr}
+
+\pnum
+Name resolution is implemented in \srcref{src/sema/resolve.h}.  It is Phase~1
+of semantic analysis (\cref{sec:sema-twophase}): it visits every expression and
+statement in a function body, populates \cname{->decl} pointers on identifier
+nodes, and performs a set of source-to-source transforms before type inference
+and checking.
+
+% -------------------------------------------------------------------------
+\section{Identifier resolution}
+\label{sec:res-ident}
+\index{identifier resolution}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{sema\_resolve\_expr} handles \cname{EXPR\_IDENTIFIER} by:
+\begin{enumerate}
+\item Calling \cname{sema\_lookup(name)} to search locals then globals.
+\item If found: setting \cname{e->decl = sym->decl}, \cname{e->type = sym->type},
+  and \cname{e->is\_global = sym->is\_global}.
+\item If not found: emitting an ``undefined identifier'' diagnostic and exiting.
+\end{enumerate}
+
+% -------------------------------------------------------------------------
+\section{UFCS desugaring}
+\label{sec:res-ufcs}
+\index{UFCS}
+\index{Uniform Function Call Syntax}
+% -------------------------------------------------------------------------
+
+\pnum
+Uniform Function Call Syntax (UFCS) allows method-style calls to be written
+as \lain{receiver.func(args)}.  The resolver detects \cname{EXPR\_CALL} whose
+callee is \cname{EXPR\_MEMBER} and the member name resolves to a top-level
+function.  It desugars the call by prepending the receiver as the first argument:
+
+\begin{algorithm}
+\textbf{UFCS desugaring} for \lain{recv.f(a, b)}:
+\begin{enumerate}
+\item Parse: \texttt{CALL(MEMBER(recv, "f"), [a, b])}
+\item Lookup \texttt{"f"} in globals; if it resolves to a \cname{DECL\_FUNCTION} or
+  \cname{DECL\_PROCEDURE}:
+\item Rewrite to: \texttt{CALL(IDENT("f"), [recv, a, b])}
+\end{enumerate}
+\end{algorithm}
+
+\pnum
+If the member name does not resolve to a global function, the expression is
+treated as a struct field access and left as \cname{EXPR\_MEMBER}.
+
+% -------------------------------------------------------------------------
+\section{Destructuring parameter expansion}
+\label{sec:res-destruct}
+\index{destructuring parameters}
+% -------------------------------------------------------------------------
+
+\pnum
+When a function parameter carries a \cname{DECL\_DESTRUCT} node (syntax:
+\lain{func f(\{x, y\} Point)}), the resolver:
+\begin{enumerate}
+\item Inserts a hidden parameter \cname{\_param\_N} with the struct type.
+\item Resolves the struct type by scanning \cname{sema\_decls}.
+\item For each destructured name, locates the corresponding field type and inserts
+  a local binding mapping the name to \cname{\_param\_N.field}.
+\end{enumerate}
+
+\pnum
+At emit time, the generated C function receives the hidden parameter, and each
+destructured name is emitted as a field access on that hidden parameter.
+
+% -------------------------------------------------------------------------
+\section{Target platform constants}
+\label{sec:res-platform}
+\index{platform constants}
+% -------------------------------------------------------------------------
+
+\pnum
+\srcref{src/sema/resolve.h} defines compile-time platform constants used to
+evaluate \cname{@os} and \cname{@arch} builtin expressions:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Constant} & \textbf{Value} & \textbf{Condition} \\
+\midrule
+\cname{LAIN\_TARGET\_OS}   & \cname{LAIN\_OS\_LINUX}     & \texttt{\_\_linux\_\_} defined \\
+\cname{LAIN\_TARGET\_OS}   & \cname{LAIN\_OS\_WINDOWS}   & \texttt{\_WIN32} defined \\
+\cname{LAIN\_TARGET\_OS}   & \cname{LAIN\_OS\_MACOS}     & \texttt{\_\_APPLE\_\_} defined \\
+\cname{LAIN\_TARGET\_ARCH} & \cname{LAIN\_ARCH\_X86\_64} & \texttt{\_\_x86\_64\_\_} defined \\
+\cname{LAIN\_TARGET\_ARCH} & \cname{LAIN\_ARCH\_AARCH64} & \texttt{\_\_aarch64\_\_} defined \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+These constants are compiled into the Lain compiler binary and reflect the
+host platform.  Cross-compilation would require passing them as flags; this
+is not currently supported.
+
+% -------------------------------------------------------------------------
+\section{Scope building}
+\label{sec:res-scopebuild}
+\index{scope building}
+% -------------------------------------------------------------------------
+
+\pnum
+\cname{sema\_build\_scope(decls, module\_path)} populates \cname{sema\_globals}
+with all top-level declarations before Phase~1 begins.  It iterates over the
+flat \cname{DeclList} and calls \cname{sema\_insert\_global} for each
+\cname{DECL\_FUNCTION}, \cname{DECL\_PROCEDURE}, \cname{DECL\_STRUCT},
+\cname{DECL\_ENUM}, and \cname{DECL\_TYPE\_ALIAS}.
+
+\pnum
+Global scope is built once per module before any function body is resolved.
+This allows forward references: a function \texttt{f} can call a function
+\texttt{g} that appears later in the source file.

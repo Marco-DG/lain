@@ -1,0 +1,193 @@
+\contentsline {part}{I\hspace {1em}Foundations}{1}{part.1}%
+\contentsline {chapter}{\numberline {1}Architecture and Pipeline}{3}{chapter.1}%
+\contentsline {section}{\numberline {1.1}Design philosophy}{3}{section.1.1}%
+\contentsline {section}{\numberline {1.2}Compilation pipeline}{3}{section.1.2}%
+\contentsline {section}{\numberline {1.3}Arena memory model}{4}{section.1.3}%
+\contentsline {section}{\numberline {1.4}Source file structure}{5}{section.1.4}%
+\contentsline {section}{\numberline {1.5}Naming conventions}{6}{section.1.5}%
+\contentsline {section}{\numberline {1.6}Global state}{7}{section.1.6}%
+\contentsline {section}{\numberline {1.7}Build instructions}{7}{section.1.7}%
+\contentsline {chapter}{\numberline {2}Infrastructure}{9}{chapter.2}%
+\contentsline {section}{\numberline {2.1}Primitive types}{9}{section.2.1}%
+\contentsline {section}{\numberline {2.2}Arena allocator}{9}{section.2.2}%
+\contentsline {section}{\numberline {2.3}File I/O}{10}{section.2.3}%
+\contentsline {section}{\numberline {2.4}Panic assertions}{11}{section.2.4}%
+\contentsline {section}{\numberline {2.5}ASCII classification}{11}{section.2.5}%
+\contentsline {section}{\numberline {2.6}String type}{11}{section.2.6}%
+\contentsline {chapter}{\numberline {3}Tokens and Lexer}{13}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Token representation}{13}{section.3.1}%
+\contentsline {section}{\numberline {3.2}Token kinds}{13}{section.3.2}%
+\contentsline {section}{\numberline {3.3}Lexer state machine}{14}{section.3.3}%
+\contentsline {section}{\numberline {3.4}Special lexing cases}{15}{section.3.4}%
+\contentsline {subsection}{\numberline {3.4.1}Whitespace and newlines}{15}{subsection.3.4.1}%
+\contentsline {subsection}{\numberline {3.4.2}Numeric literals}{15}{subsection.3.4.2}%
+\contentsline {subsection}{\numberline {3.4.3}String literals}{16}{subsection.3.4.3}%
+\contentsline {subsection}{\numberline {3.4.4}Nested block comments}{16}{subsection.3.4.4}%
+\contentsline {section}{\numberline {3.5}Keyword classification}{16}{section.3.5}%
+\contentsline {section}{\numberline {3.6}Lookahead}{16}{section.3.6}%
+\contentsline {part}{II\hspace {1em}Internal Representation}{19}{part.2}%
+\contentsline {chapter}{\numberline {4}Abstract Syntax Tree}{21}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Identifier nodes}{21}{section.4.1}%
+\contentsline {section}{\numberline {4.2}Type nodes}{21}{section.4.2}%
+\contentsline {section}{\numberline {4.3}Declaration nodes}{22}{section.4.3}%
+\contentsline {section}{\numberline {4.4}Statement nodes}{24}{section.4.4}%
+\contentsline {section}{\numberline {4.5}Expression nodes}{25}{section.4.5}%
+\contentsline {section}{\numberline {4.6}List nodes}{27}{section.4.6}%
+\contentsline {section}{\numberline {4.7}Semantic annotation fields}{27}{section.4.7}%
+\contentsline {section}{\numberline {4.8}Deep clone}{27}{section.4.8}%
+\contentsline {chapter}{\numberline {5}Module System}{29}{chapter.5}%
+\contentsline {section}{\numberline {5.1}Module records}{29}{section.5.1}%
+\contentsline {section}{\numberline {5.2}Module name to path conversion}{29}{section.5.2}%
+\contentsline {section}{\numberline {5.3}load\_module algorithm}{30}{section.5.3}%
+\contentsline {section}{\numberline {5.4}Cycle prevention}{30}{section.5.4}%
+\contentsline {section}{\numberline {5.5}Diagnostic integration}{31}{section.5.5}%
+\contentsline {part}{III\hspace {1em}Parsing}{33}{part.3}%
+\contentsline {chapter}{\numberline {6}Parser Framework}{35}{chapter.6}%
+\contentsline {section}{\numberline {6.1}Parser struct}{35}{section.6.1}%
+\contentsline {section}{\numberline {6.2}Token advancement and normalization}{35}{section.6.2}%
+\contentsline {section}{\numberline {6.3}Parser macros}{36}{section.6.3}%
+\contentsline {section}{\numberline {6.4}Error reporting}{36}{section.6.4}%
+\contentsline {section}{\numberline {6.5}Operator precedence}{36}{section.6.5}%
+\contentsline {section}{\numberline {6.6}Numeric literal parsing}{37}{section.6.6}%
+\contentsline {section}{\numberline {6.7}Path expression parsing}{37}{section.6.7}%
+\contentsline {section}{\numberline {6.8}Parser file structure}{37}{section.6.8}%
+\contentsline {chapter}{\numberline {7}Parser: Expressions}{39}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Entry point and structure}{39}{section.7.1}%
+\contentsline {section}{\numberline {7.2}Pratt precedence climbing}{39}{section.7.2}%
+\contentsline {section}{\numberline {7.3}Unary expressions}{40}{section.7.3}%
+\contentsline {section}{\numberline {7.4}Primary expressions}{40}{section.7.4}%
+\contentsline {subsection}{\numberline {7.4.1}Literals}{40}{subsection.7.4.1}%
+\contentsline {subsection}{\numberline {7.4.2}Identifiers and member access}{41}{subsection.7.4.2}%
+\contentsline {subsection}{\numberline {7.4.3}Case expressions}{41}{subsection.7.4.3}%
+\contentsline {subsection}{\numberline {7.4.4}Builtin values}{41}{subsection.7.4.4}%
+\contentsline {subsection}{\numberline {7.4.5}Parenthesised expressions}{41}{subsection.7.4.5}%
+\contentsline {subsection}{\numberline {7.4.6}Array literals}{41}{subsection.7.4.6}%
+\contentsline {section}{\numberline {7.5}Cast expressions}{41}{section.7.5}%
+\contentsline {chapter}{\numberline {8}Parser: Statements and Declarations}{43}{chapter.8}%
+\contentsline {section}{\numberline {8.1}Statement list parsing}{43}{section.8.1}%
+\contentsline {section}{\numberline {8.2}Statement dispatch}{43}{section.8.2}%
+\contentsline {section}{\numberline {8.3}Variable declarations}{44}{section.8.3}%
+\contentsline {section}{\numberline {8.4}Assignment statements}{44}{section.8.4}%
+\contentsline {section}{\numberline {8.5}Control-flow statements}{44}{section.8.5}%
+\contentsline {subsection}{\numberline {8.5.1}if / elif / else}{44}{subsection.8.5.1}%
+\contentsline {subsection}{\numberline {8.5.2}for}{45}{subsection.8.5.2}%
+\contentsline {subsection}{\numberline {8.5.3}while}{45}{subsection.8.5.3}%
+\contentsline {subsection}{\numberline {8.5.4}Match statements}{45}{subsection.8.5.4}%
+\contentsline {section}{\numberline {8.6}Declaration parsing}{45}{section.8.6}%
+\contentsline {part}{IV\hspace {1em}Semantic Analysis}{47}{part.4}%
+\contentsline {chapter}{\numberline {9}Semantic Analysis: Orchestration}{49}{chapter.9}%
+\contentsline {section}{\numberline {9.1}Two-phase analysis}{49}{section.9.1}%
+\contentsline {section}{\numberline {9.2}sema\_resolve\_module entry point}{49}{section.9.2}%
+\contentsline {section}{\numberline {9.3}Symbol table}{50}{section.9.3}%
+\contentsline {section}{\numberline {9.4}Block scope}{50}{section.9.4}%
+\contentsline {section}{\numberline {9.5}Walk-phase statement handler}{51}{section.9.5}%
+\contentsline {section}{\numberline {9.6}Mutual recursion detection}{51}{section.9.6}%
+\contentsline {chapter}{\numberline {10}Name Resolution}{53}{chapter.10}%
+\contentsline {section}{\numberline {10.1}Identifier resolution}{53}{section.10.1}%
+\contentsline {section}{\numberline {10.2}UFCS desugaring}{53}{section.10.2}%
+\contentsline {section}{\numberline {10.3}Destructuring parameter expansion}{53}{section.10.3}%
+\contentsline {section}{\numberline {10.4}Target platform constants}{54}{section.10.4}%
+\contentsline {section}{\numberline {10.5}Scope building}{54}{section.10.5}%
+\contentsline {chapter}{\numberline {11}Type Inference}{55}{chapter.11}%
+\contentsline {section}{\numberline {11.1}Builtin type singletons}{55}{section.11.1}%
+\contentsline {section}{\numberline {11.2}Integer widening}{55}{section.11.2}%
+\contentsline {section}{\numberline {11.3}Type compatibility}{55}{section.11.3}%
+\contentsline {section}{\numberline {11.4}Inference for each ExprKind}{56}{section.11.4}%
+\contentsline {section}{\numberline {11.5}String type inference and generics}{56}{section.11.5}%
+\contentsline {section}{\numberline {11.6}Parameter constraint propagation}{56}{section.11.6}%
+\contentsline {chapter}{\numberline {12}Ownership and Linearity}{57}{chapter.12}%
+\contentsline {section}{\numberline {12.1}Linear type classification}{57}{section.12.1}%
+\contentsline {section}{\numberline {12.2}Linearity table}{57}{section.12.2}%
+\contentsline {section}{\numberline {12.3}Field-level tracking}{58}{section.12.3}%
+\contentsline {section}{\numberline {12.4}Consumption rules}{58}{section.12.4}%
+\contentsline {section}{\numberline {12.5}Borrow interaction}{58}{section.12.5}%
+\contentsline {section}{\numberline {12.6}Non-Lexical Lifetimes (NLL)}{58}{section.12.6}%
+\contentsline {chapter}{\numberline {13}Borrow Checking and Regions}{59}{chapter.13}%
+\contentsline {section}{\numberline {13.1}Regions}{59}{section.13.1}%
+\contentsline {section}{\numberline {13.2}Borrow entries}{59}{section.13.2}%
+\contentsline {section}{\numberline {13.3}Two-phase borrows}{60}{section.13.3}%
+\contentsline {section}{\numberline {13.4}Aliasing rules}{60}{section.13.4}%
+\contentsline {section}{\numberline {13.5}NLL last-use optimization}{61}{section.13.5}%
+\contentsline {chapter}{\numberline {14}Value Range Analysis}{63}{chapter.14}%
+\contentsline {section}{\numberline {14.1}Range representation}{63}{section.14.1}%
+\contentsline {section}{\numberline {14.2}Saturating arithmetic}{63}{section.14.2}%
+\contentsline {section}{\numberline {14.3}RangeTable}{63}{section.14.3}%
+\contentsline {section}{\numberline {14.4}Constraint propagation}{64}{section.14.4}%
+\contentsline {section}{\numberline {14.5}Condition-driven range refinement}{64}{section.14.5}%
+\contentsline {section}{\numberline {14.6}In-guard table}{64}{section.14.6}%
+\contentsline {chapter}{\numberline {15}Static Bounds Checking}{65}{chapter.15}%
+\contentsline {section}{\numberline {15.1}Check algorithm}{65}{section.15.1}%
+\contentsline {section}{\numberline {15.2}Safe fragment guarantee}{65}{section.15.2}%
+\contentsline {section}{\numberline {15.3}Interaction with VRA}{66}{section.15.3}%
+\contentsline {section}{\numberline {15.4}Interaction with unsafe}{66}{section.15.4}%
+\contentsline {chapter}{\numberline {16}Pattern Matching Exhaustiveness}{67}{chapter.16}%
+\contentsline {section}{\numberline {16.1}Wildcard arm}{67}{section.16.1}%
+\contentsline {section}{\numberline {16.2}Enum exhaustiveness}{67}{section.16.2}%
+\contentsline {section}{\numberline {16.3}Boolean exhaustiveness}{67}{section.16.3}%
+\contentsline {section}{\numberline {16.4}Integer and other types}{67}{section.16.4}%
+\contentsline {chapter}{\numberline {17}Termination Verification}{69}{chapter.17}%
+\contentsline {section}{\numberline {17.1}Termination measure requirements}{69}{section.17.1}%
+\contentsline {section}{\numberline {17.2}Non-negativity verification}{69}{section.17.2}%
+\contentsline {section}{\numberline {17.3}Strict decrease verification}{70}{section.17.3}%
+\contentsline {section}{\numberline {17.4}Accepted measure patterns}{70}{section.17.4}%
+\contentsline {part}{V\hspace {1em}Code Generation}{71}{part.5}%
+\contentsline {chapter}{\numberline {18}Compile-Time Evaluation and Generics}{73}{chapter.18}%
+\contentsline {section}{\numberline {18.1}Comptime environment}{73}{section.18.1}%
+\contentsline {section}{\numberline {18.2}Expression evaluation}{73}{section.18.2}%
+\contentsline {section}{\numberline {18.3}Generic function instantiation}{73}{section.18.3}%
+\contentsline {section}{\numberline {18.4}Comptime-if}{74}{section.18.4}%
+\contentsline {section}{\numberline {18.5}Type alias evaluation}{74}{section.18.5}%
+\contentsline {chapter}{\numberline {19}Code Generation}{75}{chapter.19}%
+\contentsline {section}{\numberline {19.1}Emit context}{75}{section.19.1}%
+\contentsline {section}{\numberline {19.2}Output structure}{75}{section.19.2}%
+\contentsline {section}{\numberline {19.3}Type emission}{75}{section.19.3}%
+\contentsline {section}{\numberline {19.4}Enum emission}{76}{section.19.4}%
+\contentsline {section}{\numberline {19.5}Defer mechanics}{76}{section.19.5}%
+\contentsline {section}{\numberline {19.6}String literal initializers}{76}{section.19.6}%
+\contentsline {part}{VI\hspace {1em}Standard Library and Testing}{77}{part.6}%
+\contentsline {chapter}{\numberline {20}Standard Library Implementation}{79}{chapter.20}%
+\contentsline {section}{\numberline {20.1}std.c --- C interoperability}{79}{section.20.1}%
+\contentsline {section}{\numberline {20.2}std.io --- Console I/O}{79}{section.20.2}%
+\contentsline {section}{\numberline {20.3}std.fs --- File system}{79}{section.20.3}%
+\contentsline {section}{\numberline {20.4}std.math --- Integer math}{79}{section.20.4}%
+\contentsline {section}{\numberline {20.5}std.string --- String utilities}{80}{section.20.5}%
+\contentsline {section}{\numberline {20.6}std.option and std.result}{80}{section.20.6}%
+\contentsline {chapter}{\numberline {21}Testing Infrastructure}{81}{chapter.21}%
+\contentsline {section}{\numberline {21.1}Test file conventions}{81}{section.21.1}%
+\contentsline {section}{\numberline {21.2}Test runner}{81}{section.21.2}%
+\contentsline {section}{\numberline {21.3}Test categories}{81}{section.21.3}%
+\contentsline {section}{\numberline {21.4}Invoking the test suite}{82}{section.21.4}%
+\contentsline {chapter}{AST Node Reference}{83}{appendix*.2}%
+\contentsline {section}{\numberline {.1}ExprKind}{83}{section.Alph0.1}%
+\contentsline {section}{\numberline {.2}StmtKind}{83}{section.Alph0.2}%
+\contentsline {section}{\numberline {.3}DeclKind}{84}{section.Alph0.3}%
+\contentsline {section}{\numberline {.4}TypeKind and OwnershipMode}{85}{section.Alph0.4}%
+\contentsline {chapter}{Diagnostic Catalogue}{87}{appendix*.3}%
+\contentsline {section}{\numberline {.5}Linearity and ownership errors (E001–E010)}{87}{section.Alph0.5}%
+\contentsline {section}{\numberline {.6}Purity and mutability errors (E011)}{88}{section.Alph0.6}%
+\contentsline {section}{\numberline {.7}Type and call errors (E012–E015)}{88}{section.Alph0.7}%
+\contentsline {section}{\numberline {.8}Termination-measure errors (E080–E082)}{89}{section.Alph0.8}%
+\contentsline {section}{\numberline {.9}Parser errors (E100)}{90}{section.Alph0.9}%
+\contentsline {section}{\numberline {.10}VRA bounds diagnostics}{90}{section.Alph0.10}%
+\contentsline {section}{\numberline {.11}Diagnostic format}{91}{section.Alph0.11}%
+\contentsline {chapter}{Pass Interactions}{93}{appendix*.4}%
+\contentsline {section}{\numberline {.12}Two-phase structure}{93}{section.Alph0.12}%
+\contentsline {section}{\numberline {.13}Shared global state}{93}{section.Alph0.13}%
+\contentsline {section}{\numberline {.14}Resolve phase interactions}{94}{section.Alph0.14}%
+\contentsline {section}{\numberline {.15}Walk phase interactions}{94}{section.Alph0.15}%
+\contentsline {section}{\numberline {.16}VRA and bounds interaction}{95}{section.Alph0.16}%
+\contentsline {section}{\numberline {.17}Linearity and borrows interaction}{96}{section.Alph0.17}%
+\contentsline {section}{\numberline {.18}Mutual recursion detection}{96}{section.Alph0.18}%
+\contentsline {section}{\numberline {.19}Pass dependency DAG}{96}{section.Alph0.19}%
+\contentsline {chapter}{Declaration Flow}{97}{appendix*.5}%
+\contentsline {section}{\numberline {.20}Stage 1: Lexing}{97}{section.Alph0.20}%
+\contentsline {section}{\numberline {.21}Stage 2: Parsing}{97}{section.Alph0.21}%
+\contentsline {section}{\numberline {.22}Stage 3: Module loading}{98}{section.Alph0.22}%
+\contentsline {section}{\numberline {.23}Stage 4: Resolve phase}{98}{section.Alph0.23}%
+\contentsline {paragraph}{Forward-declaration scan.}{98}{pnumctr.Alph0.23.1}%
+\contentsline {paragraph}{Body resolution.}{98}{pnumctr.Alph0.23.1}%
+\contentsline {section}{\numberline {.24}Stage 5: Walk phase}{99}{section.Alph0.24}%
+\contentsline {section}{\numberline {.25}Stage 6: Mutual recursion check}{99}{section.Alph0.25}%
+\contentsline {section}{\numberline {.26}Stage 7: Code emission}{99}{section.Alph0.26}%
+\contentsline {section}{\numberline {.27}Per-kind summary}{99}{section.Alph0.27}%
+\contentsline {chapter}{Index}{101}{section*.6}%
