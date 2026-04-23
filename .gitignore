@@ -26,6 +26,7 @@ test_output.txt*
 debug_out.txt
 test_uninit.ln
 test_main.c
+fix_final.py
 
 # Development Utilities & Scripts (Ignored for GitHub)
 tools/
@@ -60,3 +61,5 @@ artifacts/
 
 # IDE/Tools
 .claude/
+# LinkedIn assets
+linkedin/
