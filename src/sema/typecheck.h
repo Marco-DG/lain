@@ -417,28 +417,34 @@ void sema_infer_expr(Expr *e) {
             new_callee->line = e->as.call_expr.callee->line;
             new_callee->col = e->as.call_expr.callee->col;
             
-            // 2. Prepend the target as the first argument
+            // 2. Prepend the target as the first argument.
+            // F-021: UFCS auto-wraps the target to match the first param's
+            // ownership mode (var/mov). Auto-wrapping was previously only
+            // applied for MUTABLE, leaving OWNED to fail silently. Now both
+            // are handled symmetrically.
             ExprList *new_arg = arena_push(sema_arena, ExprList);
-            
-            // If the method expects a mutable reference (var), we must implicitly wrap it or 
-            // the user must have already typed `(var a).method(b)`? UFCS normally does it automatically.
-            // For now, let's just push the target. If it needs `var`, we might auto-wrap it if the param requires it.
-            // Let's check the first parameter of the function to see what mode it expects.
             DeclList *params = sym->decl->as.function_decl.params;
-            if (params && params->decl->kind == DECL_VARIABLE && params->decl->as.variable_decl.type->mode == MODE_MUTABLE) {
-                // Auto-wrap with EXPR_MUT if it's not already
-                if (target->kind != EXPR_MUT) {
-                    Expr *mut_target = arena_push(sema_arena, Expr);
-                    mut_target->kind = EXPR_MUT;
-                    mut_target->as.mut_expr.expr = target;
-                    mut_target->line = target->line;
-                    mut_target->col = target->col;
-                    new_arg->expr = mut_target;
-                } else {
-                    new_arg->expr = target;
-                }
+            OwnershipMode first_mode = MODE_SHARED;
+            if (params && params->decl->kind == DECL_VARIABLE &&
+                params->decl->as.variable_decl.type) {
+                first_mode = params->decl->as.variable_decl.type->mode;
+            }
+            if (first_mode == MODE_MUTABLE && target->kind != EXPR_MUT) {
+                Expr *mut_target = arena_push(sema_arena, Expr);
+                mut_target->kind = EXPR_MUT;
+                mut_target->as.mut_expr.expr = target;
+                mut_target->line = target->line;
+                mut_target->col = target->col;
+                new_arg->expr = mut_target;
+            } else if (first_mode == MODE_OWNED && target->kind != EXPR_MOVE) {
+                Expr *mov_target = arena_push(sema_arena, Expr);
+                mov_target->kind = EXPR_MOVE;
+                mov_target->as.move_expr.expr = target;
+                mov_target->line = target->line;
+                mov_target->col = target->col;
+                new_arg->expr = mov_target;
             } else {
-                 new_arg->expr = target;
+                new_arg->expr = target;
             }
             
             new_arg->next = e->as.call_expr.args;
@@ -612,16 +618,23 @@ void sema_infer_expr(Expr *e) {
                                 rhs_arg = rhs_expr; 
                             }
 
-                            Expr temp;
+                            // F-025: initialize line/col so any diagnostic
+                            // path inside sema_check_condition reports a
+                            // location tied to the offending argument.
+                            Expr temp = {0};
                             temp.kind = EXPR_BINARY;
                             temp.as.binary_expr.op = c->expr->as.binary_expr.op;
                             temp.as.binary_expr.left = lhs_arg;
                             temp.as.binary_expr.right = rhs_arg;
+                            temp.line = lhs_arg ? lhs_arg->line : e->line;
+                            temp.col  = lhs_arg ? lhs_arg->col  : e->col;
 
                             int result = sema_check_condition(&temp, sema_ranges);
                             if (result == 0) {
-                                fprintf(stderr, "Error: Constraint violation. Argument does not satisfy '%s' constraint.\n",
+                                fprintf(stderr, "[E012] Error Ln %li, Col %li: Constraint violation. Argument does not satisfy '%s' constraint.\n",
+                                        (long)temp.line, (long)temp.col,
                                         token_kind_to_str(c->expr->as.binary_expr.op));
+                                diagnostic_show_line(temp.line, temp.col);
                                 exit(1);
                             } else if (result == -1) {
                                 // check safety policy
@@ -1021,10 +1034,25 @@ void sema_infer_expr(Expr *e) {
     e->type = type_mut(sema_arena, e->as.mut_expr.expr->type);
     break;
 
-  case EXPR_CAST:
+  case EXPR_CAST: {
     sema_infer_expr(e->as.cast_expr.expr);
+    // F-028: basic cast validity — pointer-related casts require `unsafe`.
+    Type *src = e->as.cast_expr.expr ? e->as.cast_expr.expr->type : NULL;
+    Type *tgt = e->as.cast_expr.target_type;
+    Type *src_u = src, *tgt_u = tgt;
+    while (src_u && src_u->kind == TYPE_COMPTIME) src_u = src_u->element_type;
+    while (tgt_u && tgt_u->kind == TYPE_COMPTIME) tgt_u = tgt_u->element_type;
+    bool src_is_ptr = src_u && src_u->kind == TYPE_POINTER;
+    bool tgt_is_ptr = tgt_u && tgt_u->kind == TYPE_POINTER;
+    if ((src_is_ptr || tgt_is_ptr) && !sema_in_unsafe_block) {
+        fprintf(stderr, "[E012] Error Ln %li, Col %li: cast involving a raw pointer requires an 'unsafe' block.\n",
+                (long)e->line, (long)e->col);
+        diagnostic_show_line(e->line, e->col);
+        exit(1);
+    }
     // type already set at parse time (target_type)
     break;
+  }
 
   default:
     break;

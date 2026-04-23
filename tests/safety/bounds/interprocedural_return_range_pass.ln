@@ -1,0 +1,16 @@
+// B.2: interprocedural VRA — a callee's return constraint is now used by
+// the caller's range analysis. Previously `sema_eval_range` returned unknown
+// for every EXPR_CALL, so the div-by-zero check below could not prove the
+// divisor non-zero even though `nonzero()` declares `int >= 1`.
+
+func nonzero() int >= 1 {
+    return 42
+}
+
+func divide(a int) int {
+    return a / nonzero()   // divisor range now known to be >= 1 → no [E015]
+}
+
+proc main() int {
+    return divide(10)
+}

@@ -21,11 +21,12 @@ typedef struct
 static File file_read_into_arena(Arena* arena, char* filename)
 {
     File f = {0};
-    
+
     f.handle = file_open_r(filename);
     if (f.handle == FILE_OPEN_FAILED) {
-        printf("ERROR OPENING FILE");
-        abort();
+        // Leave f.contents = NULL so the caller reports a useful diagnostic.
+        // (Fixed C.1: previously abort() here hid the actual path failure.)
+        return f;
     }
     f.size = file_size(f.handle);
     if (f.size < 0) {

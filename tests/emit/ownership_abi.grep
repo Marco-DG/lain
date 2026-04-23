@@ -1,0 +1,7 @@
+// Snapshot patterns checked with grep in run_tests.sh.
+// Each non-empty, non-comment line is a fixed substring that must appear
+// in the emitted .c file. Fails the test if any is missing.
+// shared struct -> const T*
+const tests_emit_ownership_abi_Vec2*
+// mutable -> T*
+tests_emit_ownership_abi_Vec2 *

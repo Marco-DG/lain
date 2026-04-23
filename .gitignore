@@ -30,11 +30,11 @@ fix_final.py
 
 # Development Utilities & Scripts (Ignored for GitHub)
 tools/
-run_tests.sh
 translate_spec.js
 translate_spec.py
 apply_crt_styler.py
 run_destructuring_test.sh
+# run_tests.sh is published — it is the project's test runner
 
 # Documentation & Analysis (Ignored for GitHub)
 internal/

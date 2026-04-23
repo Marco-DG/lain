@@ -1,0 +1,20 @@
+// Snapshot test for F-053 / thesis ABI alignment:
+// shared -> const T*, var -> T*, mov struct -> T by value.
+
+type Vec2 {
+    x int
+    y int
+}
+
+func dot(a Vec2, b Vec2) int {
+    return a.x * b.x + a.y * b.y
+}
+
+proc scale(var v Vec2, factor int) {
+    v.x = v.x * factor
+    v.y = v.y * factor
+}
+
+proc main() int {
+    return 0
+}

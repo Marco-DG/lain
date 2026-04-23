@@ -127,8 +127,9 @@ typedef struct ScopeFrame {
 static ScopeFrame *scope_stack = NULL;
 
 static void sema_push_scope(void) {
-    // Allocate on the arena so we don't need to free manually
-    ScopeFrame *frame = (ScopeFrame *)malloc(sizeof(ScopeFrame));
+    // F-017: allocate on the sema arena (freed in bulk at end of compilation).
+    // The comment that used to say "allocate on the arena" now matches reality.
+    ScopeFrame *frame = arena_push_aligned(sema_arena, ScopeFrame);
     memcpy(frame->saved_locals, sema_locals, sizeof(sema_locals));
     frame->parent = scope_stack;
     scope_stack = frame;
@@ -139,7 +140,7 @@ static void sema_pop_scope(void) {
     ScopeFrame *frame = scope_stack;
     memcpy(sema_locals, frame->saved_locals, sizeof(sema_locals));
     scope_stack = frame->parent;
-    free(frame);
+    // No free: arena owns the memory.
 }
 
 #endif // SEMA_SCOPE_H

@@ -159,6 +159,10 @@ static Range range_get(RangeTable *t, Id *var) {
     return range_unknown();
 }
 
+// B.2 forward declare: derive a Range from a callee's return_constraints
+// so that call expressions can participate in VRA.
+static Range sema_range_from_return_constraints(Decl *callee_decl);
+
 static Range sema_eval_range(Expr *e, RangeTable *t) {
     if (!e) return range_unknown();
     switch (e->kind) {
@@ -189,8 +193,46 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             // Preserve range through cast — the underlying value range is still valid
             return sema_eval_range(e->as.cast_expr.expr, t);
         }
+        case EXPR_CALL: {
+            // B.2: interprocedural VRA via return_constraints.
+            Decl *callee_decl = e->as.call_expr.callee ? e->as.call_expr.callee->decl : NULL;
+            if (callee_decl && (callee_decl->kind == DECL_FUNCTION ||
+                                callee_decl->kind == DECL_PROCEDURE)) {
+                return sema_range_from_return_constraints(callee_decl);
+            }
+            return range_unknown();
+        }
         default: return range_unknown();
     }
+}
+
+static Range sema_range_from_return_constraints(Decl *callee_decl) {
+    if (!callee_decl) return range_unknown();
+    ExprList *rc = callee_decl->as.function_decl.return_constraints;
+    if (!rc) return range_unknown();
+    // Seed with full int range; refine by each constraint on `result`.
+    Range r = range_make(INT64_MIN, INT64_MAX);
+    bool refined = false;
+    for (ExprList *c = rc; c; c = c->next) {
+        if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+        Expr *lhs = c->expr->as.binary_expr.left;
+        Expr *rhs = c->expr->as.binary_expr.right;
+        if (!lhs || lhs->kind != EXPR_IDENTIFIER) continue;
+        // Must refer to the magic `result` identifier synthesised by the parser.
+        if (lhs->as.identifier_expr.id->length != 6 ||
+            strncmp(lhs->as.identifier_expr.id->name, "result", 6) != 0) continue;
+        if (!rhs || rhs->kind != EXPR_LITERAL) continue; // only literal RHS for now
+        int64_t val = (int64_t)rhs->as.literal_expr.value;
+        switch (c->expr->as.binary_expr.op) {
+            case TOKEN_ANGLE_BRACKET_RIGHT:        if (val + 1 > r.min) r.min = val + 1; refined = true; break;
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:  if (val > r.min)     r.min = val;     refined = true; break;
+            case TOKEN_ANGLE_BRACKET_LEFT:         if (val - 1 < r.max) r.max = val - 1; refined = true; break;
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:   if (val < r.max)     r.max = val;     refined = true; break;
+            case TOKEN_EQUAL_EQUAL:                r.min = val; r.max = val;             refined = true; break;
+            default: break;
+        }
+    }
+    return refined ? r : range_unknown();
 }
 
 // Add or update a constraint: v1 - v2 <= max_diff
