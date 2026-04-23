@@ -1,3 +1,4 @@
+// EXPECT: [E008]
 // Tests that two-phase borrows still reject moves during reservation
 // Moving x while x is mutably borrowed should still fail
 

@@ -2,8 +2,8 @@
 // Tests that default bindings are immutable.
 
 proc main() int {
-    x = 10
-    // x = 20      // ERROR: Cannot assign to immutable variable
+    var x = 10
+    // x = 20      // would be fine now that x is var — this test focuses on y's mutability
     
     var y = 10
     y = 20         // OK

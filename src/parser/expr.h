@@ -205,9 +205,9 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
     }
 
     if (parser_match(TOKEN_NUMBER)) {
-        int value = atoi(parser->token.start);
+        long long value = parse_numeric_literal(parser->token.start, parser->token.length);
         parser_advance();
-        return expr_literal(arena, value);
+        return expr_literal(arena, (int)value);
     }
     else if (parser_match(TOKEN_FLOAT_LITERAL)) {
         double value = strtod(parser->token.start, NULL);
@@ -388,9 +388,14 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         }
     }
 
-    fprintf(stderr, "Error Ln %li, Col %li: Unexpected token in expression: %s (%d)\n", 
-            parser->line, parser->column, token_kind_name(parser->token.kind), parser->token.kind);
-    abort();
+    {
+        const char *tname = token_kind_name(parser->token.kind);
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: Unexpected token in expression: %s (%d)\n",
+                parser->line, parser->column,
+                tname ? tname : "UNKNOWN_TOKEN",
+                parser->token.kind);
+    }
+    exit(1);
     return NULL;
 }
 

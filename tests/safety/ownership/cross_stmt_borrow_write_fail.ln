@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Test for NLL cross-statement borrow checking: should FAIL compilation  
 // Writing to owner while it is mutably borrowed by another variable
 

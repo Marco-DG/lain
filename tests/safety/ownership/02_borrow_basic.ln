@@ -20,8 +20,8 @@ proc main() int {
     p.y = 20
     
     // Shared borrow
-    r1 = read(p)
-    r2 = read(p)
+    var r1 = read(p)
+    var r2 = read(p)
     
     // Mutable borrow
     update(var p)

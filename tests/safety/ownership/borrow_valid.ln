@@ -15,7 +15,7 @@ proc main() int {
     res.data = 42
     
     if 1 < 2 {
-        x = use_resource(res) // borrows res
+        var x = use_resource(res) // borrows res
         // borrow ends here
     }
     

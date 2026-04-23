@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Phase 3 Test: Re-borrow — FAIL
 // Two borrows: first borrow (ref) expires but second (ref2) is still alive.
 // Owner access while ref2 is alive should fail.

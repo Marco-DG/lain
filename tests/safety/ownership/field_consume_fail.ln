@@ -1,3 +1,4 @@
+// EXPECT: [E003]
 // Phase 5 Test: Per-field linearity — FAIL
 // Only consume one linear field, leave the other unconsumed.
 // Should fail: unconsumed linear field at scope exit.

@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Phase 4 Test: Direct var-expression persistent borrow — FAIL
 // var ref = var data.value creates a persistent borrow.
 // ref is used after owner mutation → should FAIL.

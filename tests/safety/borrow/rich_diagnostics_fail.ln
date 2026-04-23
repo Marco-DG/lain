@@ -1,3 +1,4 @@
+// EXPECT: [E003]
 // Test: Rich diagnostics — error messages should show declaration location and help
 // This test should FAIL with enhanced error messages showing:
 //   Error Ln X, Col Y: linear variable 'r' was not consumed before return.

@@ -1,3 +1,4 @@
+// EXPECT: [E011]
 // This should FAIL compilation if purity is enforced
 // A pure function calling an impure procedure
 

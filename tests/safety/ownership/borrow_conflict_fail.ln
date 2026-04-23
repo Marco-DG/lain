@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Test for borrow checking: should FAIL compilation
 // Attempting mutable borrow while shared borrow still active (same statement)
 

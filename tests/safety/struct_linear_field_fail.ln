@@ -1,3 +1,4 @@
+// EXPECT: [E003]
 type Handle {
     mov ptr *int
 }

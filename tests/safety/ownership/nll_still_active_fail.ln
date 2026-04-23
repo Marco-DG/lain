@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Test for NLL: borrow still active because ref is used AFTER accessing owner.
 // This should FAIL compilation.
 

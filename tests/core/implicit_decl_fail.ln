@@ -1,0 +1,9 @@
+// F-019 regression: bare `name = expr` with undeclared `name` must be rejected.
+// Prior to fix: silent immutable declaration (hid typos).
+// After fix: [E013] undeclared identifier.
+// EXPECT: [E013]
+
+proc main() int {
+    cont = 1        // typo of an intended "count" — no silent declaration
+    return cont
+}

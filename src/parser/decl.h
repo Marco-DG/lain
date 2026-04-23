@@ -48,7 +48,10 @@ DeclList *parse_module(Arena* arena, Parser* parser) {
     while (!parser_match(TOKEN_EOF)) {
         Decl* decl = parse_decl(arena, parser);
         if (!decl) {
-            fprintf(stderr, "Error: Unexpected token at top level: %s\n", token_kind_name(parser->token.kind));
+            const char *tname = token_kind_name(parser->token.kind);
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: Unexpected token at top level: %s\n",
+                    parser->line, parser->column,
+                    tname ? tname : "UNKNOWN_TOKEN");
             parser_advance(); // consume to avoid infinite loop
             continue;
         }
@@ -501,7 +504,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                         // Parse the RHS (literal or identifier)
                         Expr *rhs = NULL;
                         if (parser_match(TOKEN_NUMBER)) {
-                            int value = atoi(parser->token.start);
+                            int value = (int)parse_numeric_literal(parser->token.start, parser->token.length);
                             parser_advance();
                             rhs = expr_literal(arena, value);
                         } else if (parser_match(TOKEN_IDENTIFIER)) {
@@ -578,7 +581,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
             // Parse the RHS (literal or identifier)
             Expr *rhs = NULL;
             if (parser_match(TOKEN_NUMBER)) {
-                int value = atoi(parser->token.start);
+                int value = (int)parse_numeric_literal(parser->token.start, parser->token.length);
                 parser_advance();
                 rhs = expr_literal(arena, value);
             } else if (parser_match(TOKEN_IDENTIFIER)) {

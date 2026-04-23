@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Phase 3 Test: Full owner reassignment while borrowed — FAIL
 // data is mutably borrowed by ref, then data is reassigned entirely.
 

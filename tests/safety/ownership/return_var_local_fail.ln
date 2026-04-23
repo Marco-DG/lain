@@ -1,3 +1,4 @@
+// EXPECT: [E010]
 // Test: return var of a local variable should fail compilation (dangling reference)
 // Expected: Compiler error — cannot return mutable reference to local variable
 proc main() {

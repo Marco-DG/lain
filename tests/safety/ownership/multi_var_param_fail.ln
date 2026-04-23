@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Phase 4 Test: Multi-var-param — FAIL
 // Function takes two var params, returns var T.
 // Second var param accessed while ref still alive → should FAIL.

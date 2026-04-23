@@ -47,6 +47,10 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env);
 Expr* comptime_evaluate_stmt_list(Arena* arena, StmtList* stmts, ComptimeEnv* env);
 Expr* comptime_evaluate_function(Arena* arena, Decl* func_decl, ExprList* args);
 
+// F-045: guard against runaway CTFE recursion.
+#define COMPTIME_MAX_DEPTH 256
+static int comptime_depth = 0;
+
 Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
     if (!expr) return NULL;
     
@@ -268,7 +272,18 @@ Expr* comptime_evaluate_stmt_list(Arena* arena, StmtList* stmts, ComptimeEnv* en
 // Entry point: evaluates a function declaration statically given argument expressions.
 Expr* comptime_evaluate_function(Arena* arena, Decl* func_decl, ExprList* args) {
     if (func_decl->kind != DECL_FUNCTION) return NULL;
-    
+
+    // F-045: depth guard to prevent compiler stack overflow on recursive CTFE.
+    if (comptime_depth >= COMPTIME_MAX_DEPTH) {
+        fprintf(stderr, "[E014] Error Ln %li, Col %li: comptime recursion depth exceeded (%d) while evaluating '%.*s'.\n"
+                "  Hint: CTFE must terminate. Review recursive type aliases or generic instantiations.\n",
+                (long)func_decl->line, (long)func_decl->col, COMPTIME_MAX_DEPTH,
+                (int)func_decl->as.function_decl.name->length,
+                func_decl->as.function_decl.name->name);
+        exit(1);
+    }
+    comptime_depth++;
+
     ComptimeEnv* env = NULL;
     
     // Bind arguments to parameters
@@ -285,7 +300,7 @@ Expr* comptime_evaluate_function(Arena* arena, Decl* func_decl, ExprList* args) 
     }
     
     Expr* result = comptime_evaluate_stmt_list(arena, func_decl->as.function_decl.body, env);
-    
+
     if (result) {
         // Substitute all comptime type parameters into the resulting AST!
         for (ComptimeEnv* e = env; e; e = e->next) {
@@ -296,7 +311,10 @@ Expr* comptime_evaluate_function(Arena* arena, Decl* func_decl, ExprList* args) 
             }
         }
     }
-    
+
+    comptime_depth--;  // F-045: pair with the increment above
+
+
     return result;
 }
 

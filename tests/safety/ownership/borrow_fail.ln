@@ -1,3 +1,4 @@
+// EXPECT: [E008]
 // Test for borrow checking: should FAIL compilation
 // Attempting to move while borrowed
 

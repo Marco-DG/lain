@@ -627,7 +627,206 @@ static void walk_stmt(Stmt *s) {
         case STMT_DEFER:
             walk_stmt(s->as.defer_stmt.stmt);
             break;
+        case STMT_COMPTIME_IF: {
+            // F-049: the taken branch must be walked so VRA/bounds run on it.
+            // resolve_stmt evaluated the condition and marked is_taken.
+            StmtList *branch = s->as.comptime_if_stmt.is_taken
+                ? s->as.comptime_if_stmt.then_branch
+                : s->as.comptime_if_stmt.else_branch;
+            sema_push_scope();
+            for (StmtList *b = branch; b; b = b->next) walk_stmt(b->stmt);
+            sema_pop_scope();
+            break;
+        }
         default: break;
+    }
+}
+
+/*─────────────────────────────────────────────────────────────────╗
+│ F-020: mutual recursion detection among DECL_FUNCTION            │
+╚─────────────────────────────────────────────────────────────────*/
+
+// Walk expression; for every EXPR_CALL to a DECL_FUNCTION, call visit(callee_decl).
+static void mrec_walk_expr(Expr *e, void (*visit)(Decl *));
+static void mrec_walk_stmt_list(StmtList *list, void (*visit)(Decl *));
+
+static void mrec_walk_stmt(Stmt *s, void (*visit)(Decl *)) {
+    if (!s) return;
+    switch (s->kind) {
+        case STMT_VAR: mrec_walk_expr(s->as.var_stmt.expr, visit); break;
+        case STMT_ASSIGN:
+            mrec_walk_expr(s->as.assign_stmt.target, visit);
+            mrec_walk_expr(s->as.assign_stmt.expr, visit);
+            break;
+        case STMT_EXPR: mrec_walk_expr(s->as.expr_stmt.expr, visit); break;
+        case STMT_RETURN: mrec_walk_expr(s->as.return_stmt.value, visit); break;
+        case STMT_IF:
+            mrec_walk_expr(s->as.if_stmt.cond, visit);
+            mrec_walk_stmt_list(s->as.if_stmt.then_branch, visit);
+            mrec_walk_stmt_list(s->as.if_stmt.else_branch, visit);
+            break;
+        case STMT_FOR:
+            mrec_walk_expr(s->as.for_stmt.iterable, visit);
+            mrec_walk_stmt_list(s->as.for_stmt.body, visit);
+            break;
+        case STMT_WHILE:
+            mrec_walk_expr(s->as.while_stmt.cond, visit);
+            if (s->as.while_stmt.measure) mrec_walk_expr(s->as.while_stmt.measure, visit);
+            mrec_walk_stmt_list(s->as.while_stmt.body, visit);
+            break;
+        case STMT_MATCH:
+            mrec_walk_expr(s->as.match_stmt.value, visit);
+            for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
+                for (ExprList *p = c->patterns; p; p = p->next) mrec_walk_expr(p->expr, visit);
+                mrec_walk_stmt_list(c->body, visit);
+            }
+            break;
+        case STMT_UNSAFE: mrec_walk_stmt_list(s->as.unsafe_stmt.body, visit); break;
+        case STMT_DEFER:  mrec_walk_stmt(s->as.defer_stmt.stmt, visit); break;
+        case STMT_COMPTIME_IF:
+            mrec_walk_stmt_list(s->as.comptime_if_stmt.then_branch, visit);
+            mrec_walk_stmt_list(s->as.comptime_if_stmt.else_branch, visit);
+            break;
+        default: break;
+    }
+}
+
+static void mrec_walk_stmt_list(StmtList *list, void (*visit)(Decl *)) {
+    for (StmtList *l = list; l; l = l->next) mrec_walk_stmt(l->stmt, visit);
+}
+
+static void mrec_walk_expr(Expr *e, void (*visit)(Decl *)) {
+    if (!e) return;
+    switch (e->kind) {
+        case EXPR_CALL: {
+            Expr *callee = e->as.call_expr.callee;
+            if (callee && callee->decl && callee->decl->kind == DECL_FUNCTION) {
+                visit(callee->decl);
+            }
+            mrec_walk_expr(callee, visit);
+            for (ExprList *a = e->as.call_expr.args; a; a = a->next) mrec_walk_expr(a->expr, visit);
+            break;
+        }
+        case EXPR_BINARY:
+            mrec_walk_expr(e->as.binary_expr.left, visit);
+            mrec_walk_expr(e->as.binary_expr.right, visit);
+            break;
+        case EXPR_UNARY: mrec_walk_expr(e->as.unary_expr.right, visit); break;
+        case EXPR_MEMBER: mrec_walk_expr(e->as.member_expr.target, visit); break;
+        case EXPR_INDEX:
+            mrec_walk_expr(e->as.index_expr.target, visit);
+            mrec_walk_expr(e->as.index_expr.index, visit);
+            break;
+        case EXPR_RANGE:
+            mrec_walk_expr(e->as.range_expr.start, visit);
+            mrec_walk_expr(e->as.range_expr.end, visit);
+            break;
+        case EXPR_MOVE: mrec_walk_expr(e->as.move_expr.expr, visit); break;
+        case EXPR_MUT:  mrec_walk_expr(e->as.mut_expr.expr, visit); break;
+        case EXPR_CAST: mrec_walk_expr(e->as.cast_expr.expr, visit); break;
+        case EXPR_MATCH:
+            mrec_walk_expr(e->as.match_expr.value, visit);
+            for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
+                for (ExprList *p = c->patterns; p; p = p->next) mrec_walk_expr(p->expr, visit);
+                mrec_walk_expr(c->body, visit);
+            }
+            break;
+        case EXPR_ARRAY_LITERAL:
+            for (ExprList *el = e->as.array_literal_expr.elements; el; el = el->next)
+                mrec_walk_expr(el->expr, visit);
+            break;
+        default: break;
+    }
+}
+
+// Cycle detection via DFS. For simplicity we reject only cycles where every
+// edge goes through a DECL_FUNCTION (pure func). Procedures are allowed to
+// recurse mutually because P4 does not constrain them.
+#define MREC_MAX_NODES 256
+static Decl *mrec_stack[MREC_MAX_NODES];
+static int mrec_stack_len;
+static Decl *mrec_visited[MREC_MAX_NODES];
+static int mrec_visited_len;
+static Decl *mrec_found_cycle_start = NULL;
+static Decl *mrec_found_cycle_end = NULL;
+
+static bool mrec_in_stack(Decl *d) {
+    for (int i = 0; i < mrec_stack_len; i++) if (mrec_stack[i] == d) return true;
+    return false;
+}
+static bool mrec_in_visited(Decl *d) {
+    for (int i = 0; i < mrec_visited_len; i++) if (mrec_visited[i] == d) return true;
+    return false;
+}
+
+static Decl *mrec_current_source = NULL;
+
+static void mrec_edge_visit(Decl *callee) {
+    if (mrec_found_cycle_start) return;
+    if (!callee || callee->kind != DECL_FUNCTION) return;
+    if (mrec_in_stack(callee)) {
+        // Cycle found.
+        mrec_found_cycle_start = callee;
+        mrec_found_cycle_end = mrec_current_source;
+        return;
+    }
+    if (mrec_in_visited(callee)) return;
+    if (mrec_visited_len >= MREC_MAX_NODES) return;
+    if (mrec_stack_len >= MREC_MAX_NODES) return;
+    // DFS descent
+    mrec_visited[mrec_visited_len++] = callee;
+    mrec_stack[mrec_stack_len++] = callee;
+    Decl *saved = mrec_current_source;
+    mrec_current_source = callee;
+    mrec_walk_stmt_list(callee->as.function_decl.body, mrec_edge_visit);
+    mrec_current_source = saved;
+    mrec_stack_len--;
+}
+
+static void sema_check_no_mutual_recursion(DeclList *decls) {
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        Decl *d = dl->decl;
+        if (!d || d->kind != DECL_FUNCTION) continue;
+        // Skip generic (comptime) functions — substituted before use.
+        bool is_generic = false;
+        for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
+            if (p->decl && p->decl->kind == DECL_VARIABLE &&
+                p->decl->as.variable_decl.type &&
+                p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
+                is_generic = true;
+                break;
+            }
+        }
+        if (is_generic) continue;
+
+        // Fresh state per root
+        mrec_stack_len = 0;
+        mrec_visited_len = 0;
+        mrec_found_cycle_start = NULL;
+        mrec_found_cycle_end = NULL;
+
+        mrec_visited[mrec_visited_len++] = d;
+        mrec_stack[mrec_stack_len++] = d;
+        mrec_current_source = d;
+        mrec_walk_stmt_list(d->as.function_decl.body, mrec_edge_visit);
+        mrec_stack_len = 0;
+
+        if (mrec_found_cycle_start && mrec_found_cycle_start != d) {
+            // Cycle not rooted at d: we'll report it when iterating reaches the root.
+            // Skip this one and let the canonical entry raise the error.
+            continue;
+        }
+        if (mrec_found_cycle_start == d) {
+            fprintf(stderr,
+                    "[E011] Error Ln %li, Col %li: pure function '%.*s' participates in mutual recursion (via '%.*s'). "
+                    "Mutual recursion breaks the termination guarantee of 'func'.\n",
+                    (long)d->line, (long)d->col,
+                    (int)d->as.function_decl.name->length, d->as.function_decl.name->name,
+                    mrec_found_cycle_end ? (int)mrec_found_cycle_end->as.function_decl.name->length : 0,
+                    mrec_found_cycle_end ? mrec_found_cycle_end->as.function_decl.name->name : "?");
+            diagnostic_show_line(d->line, d->col);
+            exit(1);
+        }
     }
 }
 
@@ -852,6 +1051,11 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         // 2.e) Clear locals after all passes
         sema_clear_locals();
     }
+
+    // 3) F-020: detect mutual recursion involving pure functions.
+    // Direct recursion is already rejected in typecheck.h; here we catch
+    // indirect cycles (f -> g -> f) that break the P4 termination guarantee.
+    sema_check_no_mutual_recursion(decls);
 }
 
 // Optional: destroy/reset global state

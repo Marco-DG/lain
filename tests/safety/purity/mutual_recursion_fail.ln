@@ -1,0 +1,16 @@
+// F-020 regression: mutual recursion between pure functions breaks termination.
+// Prior to fix: silently compiled.
+// After fix: [E011] from mutual recursion detector.
+// EXPECT: [E011]
+
+func f(n int != 0) int {
+    return g(n)
+}
+
+func g(n int != 0) int {
+    return f(n)
+}
+
+proc main() int {
+    return f(1)
+}

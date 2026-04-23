@@ -1,0 +1,18 @@
+// F-040 regression test: dynamic-length slice with known index must be rejected.
+// Prior to fix: silent pass (potential buffer overflow).
+// After fix: [VRA] bounds error.
+// EXPECT: [VRA]
+
+proc take(arr u8[]) int {
+    return arr[5]
+}
+
+proc main() int {
+    var buf u8[10] = undefined
+    var i = 0
+    while i < 10 decreasing 10 - i {
+        buf[i] = 0
+        i = i + 1
+    }
+    return take(buf)
+}

@@ -116,7 +116,6 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
 
             if (strncmp(lexeme, "use", 3) == 0)         return TOKEN_KEYWORD_USE;
             if (strncmp(lexeme, "and", 3) == 0)         return TOKEN_KEYWORD_AND;
-            if (strncmp(lexeme, "fun", 3) == 0)         return TOKEN_KEYWORD_FUNC; /* FIXME */
             if (strncmp(lexeme, "pre", 3) == 0)         return TOKEN_KEYWORD_PRE;
             break;
         case 4:

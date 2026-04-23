@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Test for NLL cross-statement borrow checking: should FAIL compilation
 // A mutable borrow captured in a variable prevents access to the owner
 // while the reference is still alive (used after the owner access).

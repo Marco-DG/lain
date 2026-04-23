@@ -1,0 +1,13 @@
+// F-022 regression: passing a wrong-typed variable to a struct constructor
+// must now be rejected (previously was a silent TODO).
+// EXPECT: [E012]
+
+type Wrapper {
+    kind bool
+}
+
+proc main() int {
+    var s = "hello"
+    var w = Wrapper(s)   // bool field initialized from string slice: mismatch
+    return 0
+}

@@ -1,3 +1,4 @@
+// EXPECT: [E007]
 // Test: close_without_mov_fail.ln
 // Description: Should fail because variable 'f' is not declared linearly, 
 // so you cannot invoke functions that consume it (if close_file expects mut/mov).

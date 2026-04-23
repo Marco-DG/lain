@@ -1,3 +1,4 @@
+// EXPECT: [E013]
 // Test: Shadowing in the *same* scope should fail
 
 proc main() int {
