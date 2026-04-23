@@ -68,12 +68,14 @@ read_file(f)
 ### 7.2.5 Double Move
 
 > **CONSTRAINT:** Moving a variable that has already been moved shall
-> produce diagnostic `[E003]` (double move).
+> produce diagnostic `[E002]` (linear variable already used/consumed).
+> `[E003]` is reserved for the orthogonal case of a linear variable
+> *not consumed* before scope exit.
 
 ```lain
 var f = open_file("data.txt", "r")
 close_file(mov f)
-close_file(mov f)          // ERROR [E003]: 'f' already moved
+close_file(mov f)          // ERROR [E002]: 'f' already consumed
 ```
 
 ## 7.3 The Borrow Checker [Implemented]

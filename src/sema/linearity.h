@@ -1247,11 +1247,15 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     }
 
     case STMT_UNSAFE: {
+        // F-032: enter/exit the borrow scope so borrows created inside the
+        // unsafe block do not leak past its closing brace.
         LEntry *saved_head = tbl->head;
+        if (tbl->borrows) borrow_enter_scope(tbl->arena, tbl->borrows);
         for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) {
             sema_check_stmt_linearity_with_table(b->stmt, tbl, loop_depth, use_tbl);
         }
         ltable_pop_scope(tbl, saved_head);
+        if (tbl->borrows) borrow_exit_scope(tbl->borrows);
         break;
     }
 

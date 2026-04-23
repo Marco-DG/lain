@@ -1,3 +1,4 @@
+// EXPECT: [E003]
 // Test: forgot_close_fail.ln
 // Description: Tests that a linear variable triggers an error if not consumed before scope exit.
 

@@ -1,3 +1,4 @@
+// EXPECT: [E012]
 // Test: Partially initialized struct via constructor should fail
 
 type Point {

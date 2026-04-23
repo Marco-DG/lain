@@ -1,0 +1,12 @@
+// F-004: hex, binary, octal and underscore-separated literals.
+
+extern proc libc_printf(fmt *u8, ...) int
+
+proc main() int {
+    var a = 0xFF                 // 255
+    var b = 0b1010_0101          // 165
+    var c = 0o755                // 493
+    var d = 1_000_000            // 1000000
+    libc_printf("%d %d %d %d\n", a, b, c, d)
+    return 0
+}

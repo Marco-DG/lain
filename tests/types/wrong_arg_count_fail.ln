@@ -1,3 +1,4 @@
+// EXPECT: [E012]
 // Test: calling function with wrong number of arguments should fail
 // Expected: Compiler error — wrong argument count
 

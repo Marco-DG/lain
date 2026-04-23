@@ -18,6 +18,26 @@ static inline int64_t sat_sub_i64(int64_t a, int64_t b) {
     return a - b;
 }
 
+// F-037: saturating multiply. Prevents silent int64 wrap inside range_mul.
+static inline int64_t sat_mul_i64(int64_t a, int64_t b) {
+    if (a == 0 || b == 0) return 0;
+    // Special-case to avoid INT64_MIN / -1 UB inside the general check.
+    if (a == INT64_MIN) return (b > 0) ? INT64_MIN : INT64_MAX;
+    if (b == INT64_MIN) return (a > 0) ? INT64_MIN : INT64_MAX;
+    bool neg = (a < 0) ^ (b < 0);
+    int64_t abs_a = a < 0 ? -a : a;
+    int64_t abs_b = b < 0 ? -b : b;
+    if (abs_a > INT64_MAX / abs_b) return neg ? INT64_MIN : INT64_MAX;
+    return a * b;
+}
+
+// F-037: saturating divide. Guards the INT64_MIN / -1 UB edge case.
+static inline int64_t sat_div_i64(int64_t a, int64_t b) {
+    if (b == 0) return 0; // caller ensures non-zero range before dispatch
+    if (a == INT64_MIN && b == -1) return INT64_MAX;
+    return a / b;
+}
+
 // Simple range: [min, max] inclusive
 typedef struct {
     int64_t min;
@@ -50,9 +70,9 @@ static Range range_sub(Range a, Range b) {
 
 static Range range_mul(Range a, Range b) {
     if (!a.known || !b.known) return range_unknown();
-    // Compute all 4 products and take min/max (handles negative values)
-    int64_t p1 = a.min * b.min, p2 = a.min * b.max;
-    int64_t p3 = a.max * b.min, p4 = a.max * b.max;
+    // F-037: use saturating multiply on every corner to avoid silent wrap.
+    int64_t p1 = sat_mul_i64(a.min, b.min), p2 = sat_mul_i64(a.min, b.max);
+    int64_t p3 = sat_mul_i64(a.max, b.min), p4 = sat_mul_i64(a.max, b.max);
     int64_t lo = p1, hi = p1;
     if (p2 < lo) lo = p2;
     if (p2 > hi) hi = p2;
@@ -67,8 +87,9 @@ static Range range_div(Range a, Range b) {
     if (!a.known || !b.known) return range_unknown();
     // Division by range containing zero is undefined
     if (b.min <= 0 && b.max >= 0) return range_unknown();
-    int64_t p1 = a.min / b.min, p2 = a.min / b.max;
-    int64_t p3 = a.max / b.min, p4 = a.max / b.max;
+    // F-037: sat_div_i64 guards INT64_MIN / -1.
+    int64_t p1 = sat_div_i64(a.min, b.min), p2 = sat_div_i64(a.min, b.max);
+    int64_t p3 = sat_div_i64(a.max, b.min), p4 = sat_div_i64(a.max, b.max);
     int64_t lo = p1, hi = p1;
     if (p2 < lo) lo = p2;
     if (p2 > hi) hi = p2;
@@ -229,6 +250,15 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
         TokenKind op = cond->as.binary_expr.op;
         Expr *lhs = cond->as.binary_expr.left;
         Expr *rhs = cond->as.binary_expr.right;
+
+        // F-038: recurse into `and` chains — both sides refine the range.
+        // `or` is left as no-op: the current interval lattice would need a
+        // union merge that single-interval ranges cannot express precisely.
+        if (op == TOKEN_KEYWORD_AND) {
+            sema_apply_constraint(lhs, t);
+            sema_apply_constraint(rhs, t);
+            return;
+        }
 
         // Normalize: ensure LHS is identifier, RHS is literal
         // TODO: Handle more complex cases (e.g. x < y)

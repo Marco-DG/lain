@@ -4,6 +4,8 @@
 #include "../ast.h"
 #include <string.h>
 
+extern Arena *sema_arena;
+
 // Forward declarations of substitution functions
 void generic_substitute_type(Type **t, const char *param_name, Type *actual_type);
 void generic_substitute_expr(Expr *e, const char *param_name, Type *actual_type);
@@ -17,12 +19,19 @@ void generic_substitute_type(Type **t_ptr, const char *param_name, Type *actual_
     if (t->kind == TYPE_SIMPLE && t->base_type) {
         if ((size_t)t->base_type->length == strlen(param_name) &&
             strncmp(t->base_type->name, param_name, t->base_type->length) == 0) {
-            // Replace this type with actual_type!
-            // But keep the mode (ownership) if the parametric type has it?
-            // Usually, `mov T` means T is the actual type and mode=MODE_OWNED.
-            // Keep original mode for future use (Phase B: owned generic params)
-            // OwnershipMode original_mode = t->mode;
-            *t_ptr = actual_type;
+            // F-044 fix: preserve the original ownership mode when substituting.
+            // Without this, `mov T` specialized with `T = Handle` would lose
+            // the `mov` qualifier and the parameter would no longer be linear.
+            OwnershipMode original_mode = t->mode;
+            if (original_mode == MODE_SHARED || actual_type->mode == original_mode) {
+                *t_ptr = actual_type;
+            } else {
+                // Shallow-clone actual_type preserving the original mode.
+                Type *cloned = arena_push_aligned(sema_arena, Type);
+                *cloned = *actual_type;
+                cloned->mode = original_mode;
+                *t_ptr = cloned;
+            }
         }
     } else if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE || t->kind == TYPE_POINTER || t->kind == TYPE_COMPTIME) {
         generic_substitute_type(&t->element_type, param_name, actual_type);

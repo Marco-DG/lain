@@ -14,11 +14,13 @@ Whitespace characters are space (U+0020) and horizontal tab (U+0009).
 Whitespace serves to separate tokens and is otherwise ignored.
 
 Newlines (U+000A line feed, U+000D carriage return) are significant: they
-serve as implicit statement terminators (see §5.1). Multiple consecutive
-newlines are treated as a single statement boundary.
+serve as the statement terminator (see §5.1). Multiple consecutive newlines
+are treated as a single statement boundary.
 
-Semicolons (`;`) are recognized as explicit statement terminators but are
-optional. Newlines and semicolons are interchangeable as statement separators.
+> **CONSTRAINT:** Semicolons (`;`) are **forbidden** in Lain. Attempting to
+> use one produces diagnostic `[E100]`. Newlines are the only statement
+> separator — this keeps statement boundaries unambiguous and prevents
+> C-style chaining of multiple statements on a single line.
 
 ## 1.3 Comments [Implemented]
 

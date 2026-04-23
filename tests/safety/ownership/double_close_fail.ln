@@ -1,3 +1,4 @@
+// EXPECT: [E002]
 // Test: double_close_fail.ln
 // Description: Tests that closing a linear variable twice results in a use-after-move error.
 

@@ -91,6 +91,43 @@ static bool can_widen_to(Type *from, Type *to) {
     return integer_rank(from) <= integer_rank(to);
 }
 
+// F-022 support: structural type compatibility for argument-vs-field check.
+// Conservative: returns true for same simple type, integer widening,
+// pointer-to-same-element, or if either operand has no inferred type.
+// Returns false on clear mismatches (int vs bool, struct A vs struct B, etc.).
+static bool types_compatible(Type *from, Type *to) {
+    if (!from || !to) return true;  // missing info → skip
+    // Unwrap comptime wrappers
+    while (from && from->kind == TYPE_COMPTIME) from = from->element_type;
+    while (to && to->kind == TYPE_COMPTIME) to = to->element_type;
+    if (!from || !to) return true;
+    // Integer widening
+    if (is_integer_type(from) && is_integer_type(to)) {
+        return can_widen_to(from, to);
+    }
+    if (from->kind != to->kind) return false;
+    switch (from->kind) {
+        case TYPE_SIMPLE: {
+            if (!from->base_type || !to->base_type) return true;
+            if (from->base_type->length != to->base_type->length) return false;
+            return strncmp(from->base_type->name, to->base_type->name,
+                           from->base_type->length) == 0;
+        }
+        case TYPE_POINTER:
+            return types_compatible(from->element_type, to->element_type);
+        case TYPE_ARRAY:
+            // Same element; length must match when both known
+            if (!types_compatible(from->element_type, to->element_type)) return false;
+            if (from->array_len >= 0 && to->array_len >= 0 &&
+                from->array_len != to->array_len) return false;
+            return true;
+        case TYPE_SLICE:
+            return types_compatible(from->element_type, to->element_type);
+        default:
+            return true; // conservative
+    }
+}
+
 /*─────────────────────────────────────────────────────────────────╗
 │ 2) Keep the top-level DeclList for struct lookups              │
 ╚─────────────────────────────────────────────────────────────────*/
@@ -606,7 +643,30 @@ void sema_infer_expr(Expr *e) {
         ExprList *a = args;
         
         while (f && a) {
-            // TODO: Type compatibility check between a->expr->type and f->decl->as.variable_decl.type
+            // F-022 fix: verify argument type matches field type.
+            if (f->decl && f->decl->kind == DECL_VARIABLE && a->expr) {
+                Type *field_ty = f->decl->as.variable_decl.type;
+                Type *arg_ty = a->expr->type;
+                // Integer literals are polymorphic across integer types:
+                // skip the widen check when the arg is a literal assigned to
+                // an integer field (the literal value is trusted to fit).
+                bool literal_to_int =
+                    a->expr->kind == EXPR_LITERAL &&
+                    field_ty && is_integer_type(field_ty);
+                if (!literal_to_int && field_ty && arg_ty &&
+                    !types_compatible(arg_ty, field_ty)) {
+                    Id *fname = f->decl->as.variable_decl.name;
+                    fprintf(stderr,
+                            "[E012] Error Ln %li, Col %li: struct '%.*s' field '%.*s' type mismatch at argument %d.\n",
+                            (long)e->line, (long)e->col,
+                            (int)callee_decl->as.struct_decl.name->length,
+                            callee_decl->as.struct_decl.name->name,
+                            (int)fname->length, fname->name,
+                            field_count + 1);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+            }
             f = f->next;
             a = a->next;
             field_count++;

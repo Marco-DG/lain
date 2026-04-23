@@ -1,3 +1,4 @@
+// EXPECT: [E005]
 proc main() {
     var x int = undefined
     var y = x

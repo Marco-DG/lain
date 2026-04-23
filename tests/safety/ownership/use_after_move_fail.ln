@@ -1,3 +1,4 @@
+// EXPECT: [E013]
 // Test for use-after-move: should FAIL compilation
 // Using a move-declared variable after it has been moved
 

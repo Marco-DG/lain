@@ -99,8 +99,9 @@ Type *parse_type(Arena *arena, Parser *parser) {
       isize array_len = -1; // -1 means dynamic / runtime-length ([])
 
       if (parser_match(TOKEN_NUMBER)) {
-        // parse the integer literal token content (decimal)
-        array_len = (isize)atoi(parser->token.start);
+        // F-004: use numeric-literal parser to support hex/bin/oct/underscore
+        array_len = (isize)parse_numeric_literal(parser->token.start,
+                                                  parser->token.length);
         parser_advance(); // consume the number
       }
 

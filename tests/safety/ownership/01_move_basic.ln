@@ -10,7 +10,7 @@ func drop(mov {id} Resource) {
 }
 
 func consume_helper(mov res Resource) int {
-    val = res.id
+    var val = res.id
     drop(mov res)
     return val
 }

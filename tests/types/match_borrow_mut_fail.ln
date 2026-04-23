@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Tests that mutating the scrutinee inside case & is rejected
 
 proc main() int {

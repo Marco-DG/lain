@@ -1,3 +1,4 @@
+// EXPECT: [E008]
 // Phase 5 Test: Partial move then whole move — FAIL
 // After consuming one field, cannot whole-move the struct.
 

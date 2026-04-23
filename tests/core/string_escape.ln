@@ -1,0 +1,12 @@
+// F-002 regression: double-quote escape sequences in string literals.
+// Prior to fix: \" terminated the string prematurely, causing parse errors.
+// After fix: escapes are consumed and the C emitter preserves them verbatim.
+
+extern proc libc_printf(fmt *u8, ...) int
+
+proc main() int {
+    libc_printf("he said \"hi\"\n")
+    libc_printf("tab:\there\n")
+    libc_printf("backslash: \\\n")
+    return 0
+}

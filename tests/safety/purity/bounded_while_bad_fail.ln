@@ -1,3 +1,4 @@
+// EXPECT: [E082]
 // Test: bounded while with wrong direction should be rejected
 // Expected: compilation should FAIL (measure does not decrease)
 

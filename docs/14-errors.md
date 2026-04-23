@@ -151,7 +151,7 @@ type File {
 
 proc leak() {
     var f = open_file("data.txt", "r")
-    // ERROR [E002]: linear variable 'f' was not consumed
+    // ERROR [E003]: linear variable 'f' was not consumed before end of scope
 }
 ```
 
@@ -196,6 +196,38 @@ The `?` operator requires:
 | `defer` cleanup | Implemented | Zero | Medium |
 | Linear types | Implemented | Zero (compile-time) | High |
 | `?` propagation | Planned | Zero | High |
+
+## 14.10 Diagnostic Code Reference [Implemented]
+
+The compiler emits diagnostics tagged with a stable error code in the form
+`[EXXX]`. Codes group by concern so a grep over stderr is sufficient to
+triage a failure. The table below lists every currently assigned code.
+
+| Code | Meaning | Pillar |
+|:-----|:--------|:-------|
+| `[E001]` | Use of linear variable after it was moved | P2 |
+| `[E002]` | Linear variable already used/consumed (double-consume) | P2 |
+| `[E003]` | Linear variable not consumed before end of scope or return | P2 |
+| `[E004]` | Borrow conflict (read-write lock invariant violated) | P2 |
+| `[E005]` | Use of uninitialized variable | P2/P3 |
+| `[E006]` | Consuming a linear variable defined outside a loop from inside a loop | P2 |
+| `[E007]` | Moving a linear variable requires explicit `mov` at the call site | P5 |
+| `[E008]` | Cannot move while still borrowed, or after partial field consumption | P2 |
+| `[E009]` | Cannot assign to an immutable variable | P5 |
+| `[E010]` | Returning a mutable reference to a local variable (dangling) | P2 |
+| `[E011]` | Purity violation (`func` calling `proc`, unbounded `while` in `func`, mutual recursion, modifying a global) | P4 |
+| `[E012]` | Type/arity mismatch at call site or struct constructor | P3 |
+| `[E013]` | Redeclaration, shadowing, assignment to undeclared identifier, or `main` typed as `func` | P5 |
+| `[E014]` | Non-exhaustive match, comptime condition not constant, or CTFE recursion depth exceeded | P3/P4 |
+| `[E015]` | Potential division by zero in a pure function | P2/P4 |
+| `[E080]` | Bounded while: measure may be negative when the condition holds | P4 |
+| `[E081]` | Bounded while: cannot extract variables from the termination measure | P4 |
+| `[E082]` | Bounded while: body does not strictly decrease the measure | P4 |
+| `[E100]` | Parse error (unexpected token, forbidden semicolon, malformed construct) | P5 |
+| `[VRA]`  | Static bounds analysis rejected an index access | P2/P3 |
+
+> Codes E016–E079 are reserved for future use. The `[EXXX]` prefix is
+> part of the diagnostic contract — downstream tools may match it verbatim.
 
 ---
 

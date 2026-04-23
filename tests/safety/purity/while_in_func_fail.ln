@@ -1,3 +1,4 @@
+// EXPECT: [E011]
 // Test: while loops are banned in pure functions (func)
 // Expected: compilation should FAIL
 

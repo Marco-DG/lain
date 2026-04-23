@@ -1,3 +1,4 @@
+// EXPECT: [VRA]
 // Test: array access with unknown index and unknown length should fail bounds check
 
 func bad_access(data u8[:0], i int) int {

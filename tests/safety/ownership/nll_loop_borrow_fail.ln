@@ -1,3 +1,4 @@
+// EXPECT: [E004]
 // Test for NLL: borrow used after owner access keeps it alive.
 // This should FAIL compilation.
 

@@ -1,0 +1,14 @@
+// F-045 regression: CTFE must not crash the compiler on runaway recursion.
+// Prior to fix: infinite CTFE → stack overflow of the compiler.
+// After fix: [E014] "comptime recursion depth exceeded".
+// EXPECT: [E014]
+
+func Loop(comptime T type) type {
+    return Loop(T)
+}
+
+type X = Loop(int)
+
+proc main() int {
+    return 0
+}

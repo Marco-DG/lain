@@ -180,6 +180,24 @@ var f = fopen("data.txt", "r")
 | `var *T` (mutable) | `T*` |
 | `mov *T` (owned) | `T*` |
 
+### 11.5.2b Non-Pointer Parameter Mapping
+
+Ownership annotations on non-pointer parameters (structs and primitives)
+influence the C signature. `shared` is the default.
+
+| Lain parameter | C parameter (primitive) | C parameter (struct) |
+|:---------------|:------------------------|:---------------------|
+| `name T` (shared) | `T name` | `const T *name` |
+| `var name T`      | `T *name`               | `T *name` |
+| `mov name T`      | `T name`                | `T name` (by value) |
+
+> **Performance note.** `mov` on a struct parameter passes **by value** in C
+> (the caller's slot is linearly consumed, the callee gets a fresh copy).
+> For large aggregates this is a real memcpy — use `mov *T` if you need
+> pointer-style transfer. This choice keeps the C semantics of "the caller
+> has given up the value" identical to Lain's linear semantics, but it is
+> not zero-cost for arbitrarily large structs.
+
 ### 11.5.3 String Interop
 
 Lain's string type `u8[:0]` (null-terminated byte slice) has a `.data` field

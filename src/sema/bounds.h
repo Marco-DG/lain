@@ -59,31 +59,38 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
     
     // 3. Verify: idx >= 0
     if (idx.known && idx.min < 0) {
-        fprintf(stderr, "bounds error: index may be negative. Range: [%ld, %ld]\n", 
+        fprintf(stderr, "[VRA] bounds error: index may be negative. Range: [%ld, %ld]\n",
                 (long)idx.min, (long)idx.max);
         exit(1);
     }
-    
+
     // 4. Verify: idx < len
     if (len_range.known) {
         if (idx.known) {
              // We need rigorous proof: idx_max < len_min
              if (idx.max >= len_range.min) {
-                 fprintf(stderr, "bounds error: index %ld out of bounds for length %ld\n", 
+                 fprintf(stderr, "[VRA] bounds error: index %ld out of bounds for length %ld\n",
                          (long)idx.max, (long)len_range.min);
                  exit(1);
              }
              BOUNDS_DBG("OK: Index [%ld, %ld] < Length %ld", (long)idx.min, (long)idx.max, (long)len_range.min);
         } else {
             // Index unknown -> cannot prove safe. Reject per zero-overhead safety guarantee.
-            fprintf(stderr, "bounds error: index range unknown, cannot statically verify against length %ld. "
+            fprintf(stderr, "[VRA] bounds error: index range unknown, cannot statically verify against length %ld. "
                     "Use a 'for i in 0..arr.len' loop or an 'if' guard to narrow the index range.\n", (long)len_range.min);
             exit(1);
         }
     } else {
-        // Array length unknown (dynamic slice) — cannot verify statically
-        if (!idx.known) {
-            fprintf(stderr, "bounds error: both index and array length unknown, cannot verify bounds statically. "
+        // Array length unknown (dynamic slice) — cannot verify statically.
+        // F-040 fix: even with idx known, we cannot prove idx < len when len is
+        // unknown. Reject to uphold the zero-cost safety guarantee.
+        if (idx.known) {
+            fprintf(stderr, "[VRA] bounds error: cannot prove index < length when the array length is unknown. "
+                    "Index range [%ld, %ld]. Use a fixed-length array ([N]) or an 'in' guard to prove safety.\n",
+                    (long)idx.min, (long)idx.max);
+            exit(1);
+        } else {
+            fprintf(stderr, "[VRA] bounds error: both index and array length unknown, cannot verify bounds statically. "
                     "Use range constraints or 'in' keyword to prove safety.\n");
             exit(1);
         }

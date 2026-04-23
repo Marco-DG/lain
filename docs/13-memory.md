@@ -61,8 +61,9 @@ Heap-allocated resources are tracked by the ownership system:
 
 - `malloc` returns `mov *void` — the caller receives ownership.
 - `free` takes `mov *void` — ownership is consumed.
-- Forgetting to `free` a `mov` pointer is a compile error (`[E002]`).
-- Double-free is prevented by use-after-move detection (`[E001]`/`[E003]`).
+- Forgetting to `free` a `mov` pointer is a compile error (`[E003]`).
+- Double-free is prevented by double-consume detection (`[E002]`) and
+  use-after-move detection (`[E001]`).
 
 This turns memory management bugs into compile-time errors without any
 runtime overhead.

@@ -57,9 +57,9 @@ Token _parser_advance(Parser* parser) {
     if (token.kind == TOKEN_NEWLINE) {
         token.kind = TOKEN_EOL;
     } else if (token.kind == TOKEN_SEMICOLON) {
-        fprintf(stderr, "Error Ln %li, Col %li: Semicolons are not allowed in Lain. Use newlines to separate statements.\n",
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: Semicolons are not allowed in Lain. Use newlines to separate statements.\n",
                 parser->line, parser->column);
-        abort();
+        exit(1);
     }
 
     // write the (possibly normalized) token back into parser->token so
@@ -71,14 +71,14 @@ Token _parser_advance(Parser* parser) {
 
 
 void _parser_error(Parser* parser, const char *error_message) {
-    fprintf(stderr, "Error Ln %li, Col %li: %s\n", parser->line, parser->column, error_message);
-    abort();
+    fprintf(stderr, "[E100] Error Ln %li, Col %li: %s\n", parser->line, parser->column, error_message);
+    exit(1);
 }
 
 void _parser_expect(Parser* parser, bool expr, const char *error_message) {
     if (expr) {
-        fprintf(stderr, "Error Ln %li, Col %li: %s\n", parser->line, parser->column, error_message);
-        abort();
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: %s\n", parser->line, parser->column, error_message);
+        exit(1);
     }
 }
 
@@ -172,6 +172,29 @@ static int from_hex(char c) {
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
     printf("invalid hex digit in char literal");
     return 0;
+}
+
+// F-004 helper: strip underscores from a numeric lexeme then strtoll.
+// Accepts 0x/0X (hex), 0b/0B (binary), 0o/0O (octal), and plain decimal.
+static long long parse_numeric_literal(const char *start, long length) {
+    char buf[64];
+    long i = 0, j = 0;
+    for (; i < length && j < (long)sizeof(buf) - 1; i++) {
+        if (start[i] == '_') continue;
+        buf[j++] = start[i];
+    }
+    buf[j] = '\0';
+    // Handle 0b / 0B explicitly because strtoll base 0 doesn't recognize it.
+    if (j >= 2 && buf[0] == '0' && (buf[1] == 'b' || buf[1] == 'B')) {
+        return strtoll(buf + 2, NULL, 2);
+    }
+    if (j >= 2 && buf[0] == '0' && (buf[1] == 'o' || buf[1] == 'O')) {
+        return strtoll(buf + 2, NULL, 8);
+    }
+    if (j >= 2 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')) {
+        return strtoll(buf, NULL, 16);
+    }
+    return strtoll(buf, NULL, 10);
 }
 
 #endif // PARSER_CORE_H

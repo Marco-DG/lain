@@ -113,8 +113,38 @@ Token lexer_next(Lexer* lexer) {
                 break;
 
             case STATE_NUMBER:
+                // F-004: accept hex (0x), binary (0b), octal (0o), and
+                // underscore separators. The lexeme is kept verbatim;
+                // the parser strips underscores before strtoll.
+                if ((c == 'x' || c == 'X') && (lexer->current - token.start == 2) &&
+                    *(lexer->current - 2) == '0') {
+                    while ((*lexer->current >= '0' && *lexer->current <= '9') ||
+                           (*lexer->current >= 'a' && *lexer->current <= 'f') ||
+                           (*lexer->current >= 'A' && *lexer->current <= 'F') ||
+                           *lexer->current == '_') {
+                        lexer->current++;
+                    }
+                    RETURN_TOKEN(TOKEN_NUMBER);
+                }
+                if ((c == 'b' || c == 'B') && (lexer->current - token.start == 2) &&
+                    *(lexer->current - 2) == '0') {
+                    while (*lexer->current == '0' || *lexer->current == '1' ||
+                           *lexer->current == '_') {
+                        lexer->current++;
+                    }
+                    RETURN_TOKEN(TOKEN_NUMBER);
+                }
+                if ((c == 'o' || c == 'O') && (lexer->current - token.start == 2) &&
+                    *(lexer->current - 2) == '0') {
+                    while ((*lexer->current >= '0' && *lexer->current <= '7') ||
+                           *lexer->current == '_') {
+                        lexer->current++;
+                    }
+                    RETURN_TOKEN(TOKEN_NUMBER);
+                }
                 switch (c) {
-                    case '0' ... '9':   break;
+                    case '0' ... '9':
+                    case '_':           break;
                     case '.': {
                         // Check if this is a range operator (..) or a float decimal point
                         if (*lexer->current == '.') {
@@ -122,8 +152,9 @@ Token lexer_next(Lexer* lexer) {
                             lexer->current--;
                             RETURN_TOKEN(TOKEN_NUMBER);
                         }
-                        // It's a decimal point, scan fractional digits
-                        while (*lexer->current >= '0' && *lexer->current <= '9') {
+                        // It's a decimal point, scan fractional digits (allow underscore)
+                        while ((*lexer->current >= '0' && *lexer->current <= '9') ||
+                               *lexer->current == '_') {
                             lexer->current++;
                         }
                         RETURN_TOKEN(TOKEN_FLOAT_LITERAL);
@@ -150,6 +181,13 @@ Token lexer_next(Lexer* lexer) {
             
 
             case STATE_DOUBLE_QUOTE:
+                // F-002 fix: treat backslash as an escape that consumes the next
+                // character (including an escaped closing quote). The raw lexeme
+                // retains the escape bytes; decoding happens later in the parser.
+                if (c == '\\') {
+                    if (*lexer->current) lexer->current++;
+                    break;
+                }
                 switch (c) {
                     case '"': {
                         // We have reached the closing double quote.

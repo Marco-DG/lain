@@ -1,3 +1,4 @@
+// EXPECT: [E012]
 // Phase 4 Test: No defer, no consume — FAIL
 // Linear variable (mov field) without any consumption should fail.
 

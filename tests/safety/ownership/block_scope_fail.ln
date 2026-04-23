@@ -1,3 +1,4 @@
+// EXPECT: [E100]
 // Block Scoping Test
 // Verifies that linear variables inside blocks are tracked correctly and reported if they leak
 

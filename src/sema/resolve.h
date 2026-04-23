@@ -509,9 +509,11 @@ void sema_resolve_stmt(Stmt *s) {
     Expr *lhs = s->as.assign_stmt.target;
     Expr *rhs = s->as.assign_stmt.expr;
 
-    // Only consider bare identifiers for implicit decls:
+    // F-019 fix: no more implicit immutable declarations. A bare
+    // `name = expr` where `name` is not yet declared is now an error.
+    // Users must write `var name = expr` for mutables or `name Type = expr`
+    // (top-level) / `let name = expr` for immutables (once added).
     if (lhs->kind == EXPR_IDENTIFIER) {
-      // 1) extract the raw name
       char raw[256];
       int L = lhs->as.identifier_expr.id->length;
       if (L >= (int)sizeof(raw))
@@ -519,28 +521,18 @@ void sema_resolve_stmt(Stmt *s) {
       memcpy(raw, lhs->as.identifier_expr.id->name, L);
       raw[L] = '\0';
 
-      // 2) if it's not yet declared in either locals or globals:
       Symbol *sym = sema_lookup(raw);
       if (!sym) {
-        // resolve + infer the RHS so we know its type
-        sema_resolve_expr(rhs);
-        sema_infer_expr(rhs);
-        Type *inferred = rhs->type ? rhs->type : get_builtin_int_type();
-
-        // 3) register it as a *new* local (implicit = immutable)
-        sema_insert_local(raw, raw, inferred, NULL, false);
-
-        // 4) mark this stmt as an implicit declaration
-        s->as.assign_stmt.is_const = true;
-        return; // done: we don't need to mangle LHS/RHS further
-      } else {
-        // Identifier FOUND -> Assignment
-        // Check mutability
-        if (!sym->is_mutable) {
-             fprintf(stderr, "[E009] Error Ln %li, Col %li: Cannot assign to immutable variable '%s'\n", s->line, s->col, raw);
-             diagnostic_show_line(s->line, s->col);
-             exit(1);
-        }
+        fprintf(stderr, "[E013] Error Ln %li, Col %li: assignment to undeclared identifier '%s'. "
+                "Use 'var %s = ...' to declare a mutable variable.\n",
+                s->line, s->col, raw, raw);
+        diagnostic_show_line(s->line, s->col);
+        exit(1);
+      } else if (!sym->is_mutable) {
+        fprintf(stderr, "[E009] Error Ln %li, Col %li: Cannot assign to immutable variable '%s'\n",
+                s->line, s->col, raw);
+        diagnostic_show_line(s->line, s->col);
+        exit(1);
       }
     }
 
