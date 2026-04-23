@@ -36,9 +36,14 @@ static bool module_already_loaded(const char *name) {
     return false;
 }
 
-static void record_module(const char *name, DeclList *decls, const char *source_text, const char *source_file) {
-    ModuleNode *n = malloc(sizeof *n);
-    n->name  = strdup(name);
+static void record_module(Arena *arena, const char *name, DeclList *decls, const char *source_text, const char *source_file) {
+    // F-057: arena-allocate so the compiler stays consistent with its
+    // arena-based ownership model (no leaks, no explicit free).
+    ModuleNode *n = arena_push_aligned(arena, ModuleNode);
+    size_t name_len = strlen(name) + 1;
+    char *name_copy = arena_push_many_aligned(arena, char, name_len);
+    memcpy(name_copy, name, name_len);
+    n->name  = name_copy;
     n->decls = decls;
     n->source_text = source_text;
     n->source_file = source_file;
@@ -129,8 +134,8 @@ static DeclList* load_module(Arena *file_arena,
         cur  = cur->next;
     }
 
-    // 5) record & return
-    record_module(modname, decls, f.contents, path);
+    // 5) record & return (allocate the module record in the AST arena)
+    record_module(ast_arena, modname, decls, f.contents, path);
     return decls;
 }
 

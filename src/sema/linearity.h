@@ -1043,9 +1043,32 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                         exit(1);
                     }
                 }
-                
+
                 LEntry *entry = ltable_find(tbl, base_id);
                 if (entry) {
+                    // F-035: direct reassignment of a linear variable with a
+                    // fresh value. If the old value is still live, that is a
+                    // leak [E003]. If already consumed, the assignment "re-
+                    // initialises" the slot and we may consume it again in
+                    // the current loop iteration.
+                    bool lhs_is_identifier = (lhs && lhs->kind == EXPR_IDENTIFIER);
+                    if (lhs_is_identifier && entry->must_consume) {
+                        if (entry->state == LSTATE_UNCONSUMED && entry->is_initialized) {
+                            fprintf(stderr, "[E003] Error Ln %li, Col %li: overwriting linear variable '%.*s' without consuming the previous value.\n",
+                                    (long)s->line, (long)s->col,
+                                    (int)entry->id->length, entry->id->name);
+                            diagnostic_show_line(s->line, s->col);
+                            exit(1);
+                        }
+                        if (entry->state == LSTATE_CONSUMED) {
+                            entry->state = LSTATE_UNCONSUMED;
+                            entry->defined_loop_depth = loop_depth;
+                            // Reset field-level consumption if present.
+                            for (FieldState *fs = entry->field_states; fs; fs = fs->next) {
+                                fs->is_consumed = false;
+                            }
+                        }
+                    }
                     entry->is_initialized = true;
                 }
             }

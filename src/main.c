@@ -4,6 +4,8 @@
 #include "utils/common/system.h"
 #include "utils/panic.h"
 
+#include <unistd.h> /* chdir */
+
 #include "lexer.h"
 #include "parser.h"
 #include "ast.h"
@@ -58,6 +60,31 @@ int main(int argc, char **argv) {
     Arena _sema_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*1024);
 
     Args args = args_parse(argc, argv);
+
+    // C.1 fix: if the user passed an **absolute** path, chdir to its directory
+    // so import-based module resolution keeps working. Relative paths are left
+    // untouched — the project convention is to invoke lain from the repo root
+    // with a relative path so that std/ resolves correctly.
+    if (args.filename && args.filename[0] == '/') {
+        const char *fname = args.filename;
+        const char *last_sep = NULL;
+        for (const char *p = fname; *p; p++) {
+            if (*p == '/' || *p == '\\') last_sep = p;
+        }
+        if (last_sep && last_sep != fname) {
+            size_t dirlen = (size_t)(last_sep - fname);
+            char dirbuf[4096];
+            if (dirlen < sizeof(dirbuf)) {
+                memcpy(dirbuf, fname, dirlen);
+                dirbuf[dirlen] = '\0';
+                if (chdir(dirbuf) != 0) {
+                    fprintf(stderr, "Error: cannot chdir to '%s' for module resolution.\n", dirbuf);
+                    return 1;
+                }
+                args.filename = (char *)(last_sep + 1);
+            }
+        }
+    }
 
     // derive a nice “foo.bar” module‑name from the filename
     // (strip “.ln” and turn “/” into “.”)

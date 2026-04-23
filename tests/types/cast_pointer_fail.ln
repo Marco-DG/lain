@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// F-028 regression: pointer casts require an 'unsafe' block.
+
+proc main() int {
+    var p *int = undefined
+    var n = p as int
+    return n
+}
