@@ -1,0 +1,40 @@
+% 02-references.tex — Clause 2: Normative references
+\chapter{Normative references}
+\label{sec:references}
+\index{normative references}
+
+\pnum
+The following documents are referred to in the text in such a way that some
+or all of their content constitutes requirements of this document.  For
+dated references, only the edition cited applies.
+
+\begin{description}[leftmargin=2em, style=nextline]
+  \item[ISO/IEC 9899:2018 (C17)]
+    \textit{Information technology --- Programming languages --- C}.\\
+    International Organization for Standardization, Geneva, 2018.\\
+    Referenced for: C99/C17 calling conventions (\S\,\ref{sec:17-interop}),
+    standard integer types and their representations
+    (\S\,\ref{sec:07-types}), and undefined behavior categories
+    (\S\,\ref{sec:18-unsafe}).
+
+  \item[IEC 60559:2020 (IEEE 754-2019)]
+    \textit{Floating-point arithmetic}.\\
+    International Electrotechnical Commission, Geneva, 2020.\\
+    Referenced for: semantics of \lain{f32} and \lain{f64} arithmetic
+    (\S\,\ref{sec:07-types}).
+\end{description}
+
+\pnum
+The following documents are informative references.  They are not required
+for conformance but provide useful background.
+
+\begin{description}[leftmargin=2em, style=nextline]
+  \item[ISO/IEC 14882:2020 (C++20)]
+    \textit{Programming languages --- C++}.\\
+    Referenced for: vocabulary and structure conventions used in this
+    document.
+
+  \item[The Rust Reference]
+    \textit{The Rust Reference}, \url{https://doc.rust-lang.org/reference/}.\\
+    Referenced for: linear type and ownership terminology.
+\end{description}

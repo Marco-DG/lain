@@ -63,3 +63,34 @@ artifacts/
 .claude/
 # LinkedIn assets
 linkedin/
+
+# LaTeX build artifacts (spec/)
+spec/**/*.aux
+spec/**/*.log
+spec/**/*.toc
+spec/**/*.out
+spec/**/*.idx
+spec/**/*.ind
+spec/**/*.ilg
+spec/**/*.lot
+spec/**/*.lof
+spec/**/*.fls
+spec/**/*.fdb_latexmk
+spec/**/*.synctex.gz
+spec/**/*.bbl
+spec/**/*.blg
+spec/*.aux
+spec/*.log
+spec/*.toc
+spec/*.out
+spec/*.idx
+spec/*.ind
+spec/*.ilg
+spec/*.lot
+spec/*.lof
+spec/*.fls
+spec/*.fdb_latexmk
+spec/*.synctex.gz
+spec/*.bbl
+spec/*.blg
+# Keep: spec/lain-spec.pdf (published artifact)

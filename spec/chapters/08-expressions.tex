@@ -1,0 +1,391 @@
+% 08-expressions.tex — Clause 8: Expressions
+\chapter{Expressions}
+\label{sec:08-expressions}
+\index{expression}
+
+\pnum
+An expression is a syntactic construct that evaluates to a value.  Every
+expression has a type, determined statically at compile time.  The grammar
+production for \gramref{expression} is in Annex~A.
+
+\pnum
+Expressions are evaluated strictly left-to-right: for any binary operator
+$a\ \mathit{op}\ b$ or function call \lain{f(a, b)}, the left operand
+(or earlier argument) is fully evaluated before the right operand (or
+later argument).
+
+\section{Operator precedence and associativity}
+\label{sec:expr.precedence}
+\index{operator precedence}
+
+\pnum
+The following table lists all binary operators in order of decreasing
+precedence.  All operators listed on the same row have equal precedence.
+
+\begin{longtable}{@{}llll@{}}
+\toprule
+\textbf{Prec.} & \textbf{Operators} & \textbf{Assoc.} & \textbf{Result type} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Prec.} & \textbf{Operators} & \textbf{Assoc.} & \textbf{Result type} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+1 (high) & \lain{()} \lain{[]} \lain{.}              & left  & (context-dependent) \\
+2        & unary \lain{-} \lain{!} \lain{not} \lain{mov} \lain{ref} \lain{mut} & right & (operand type) \\
+3        & \lain{as}                                  & left  & target type \\
+4        & \lain{*} \lain{/} \lain{\%}                & left  & wider operand type \\
+5        & \lain{+} \lain{-}                          & left  & wider operand type \\
+6        & \lain{<<} \lain{>>}                        & left  & left operand type \\
+7        & \lain{\&}                                  & left  & wider operand type \\
+8        & \texttt{\textasciicircum}                                & left  & wider operand type \\
+9        & \lain{|}                                   & left  & wider operand type \\
+10       & \lain{<} \lain{>} \lain{<=} \lain{>=} \lain{in} & left & \lain{bool} \\
+11       & \lain{==} \lain{!=}                        & left  & \lain{bool} \\
+12       & \lain{and}                                 & left  & \lain{bool} \\
+13 (low) & \lain{or}                                  & left  & \lain{bool} \\
+\end{longtable}
+
+\pnum
+Parentheses override precedence.
+
+\section{Primary expressions}
+\label{sec:expr.primary}
+\index{primary expression}
+
+\pnum
+A primary expression is one of: an identifier, a literal, a parenthesized
+expression, a block expression, an \lain{if} expression, a \lain{case}
+expression, a constructor expression, or a \lain{comptime} expression.
+
+\pnum
+\textbf{Identifier expression}: evaluates to the current value of the named
+variable.
+
+\begin{constraint}
+  The identifier shall be declared in scope
+  (\diagcode{E013}).
+\end{constraint}
+
+\begin{constraint}
+  The identifier shall have been initialized before use
+  (\diagcode{E005}).
+\end{constraint}
+
+\section{Arithmetic operators}
+\label{sec:expr.arith}
+\index{arithmetic operator}
+
+\pnum
+The binary arithmetic operators are \lain{+} (addition), \lain{-}
+(subtraction), \lain{*} (multiplication), \lain{/} (division), and
+\lain{\%} (remainder).  The result type is the wider of the two operand
+types (\S\,\ref{sec:types.rank}).
+
+\pnum
+Integer division truncates toward zero.  \lain{f32}/\lain{f64} division
+follows IEEE~754.
+
+\begin{constraint}
+  Integer division or remainder where the divisor is statically provable to
+  be zero (via value range analysis, \S\,\ref{sec:13-vra}) is
+  \illformed{}~(\diagcode{E015}).
+\end{constraint}
+
+\begin{constraint}
+  \lain{\%} shall not be applied to floating-point operands.
+\end{constraint}
+
+\pnum
+The unary \lain{-} operator negates its operand.  For unsigned integer
+types the result wraps modulo $2^N$.
+
+\section{Comparison operators}
+\label{sec:expr.compare}
+\index{comparison operator}
+
+\pnum
+The comparison operators \lain{==}, \lain{!=}, \lain{<}, \lain{>},
+\lain{<=}, \lain{>=} compare two values and yield \lain{bool}.
+
+\begin{constraint}
+  Operands of a comparison operator shall have compatible types
+  (\S\,\ref{sec:types.compat}).
+\end{constraint}
+
+\begin{constraint}
+  \lain{==} and \lain{!=} shall not be applied to struct types, array types,
+  or enum types (\S\,\ref{sec:types.enum}).
+\end{constraint}
+
+\section{Logical operators}
+\label{sec:expr.logical}
+\index{logical operator}
+
+\pnum
+\lain{and} and \lain{or} are short-circuit operators: the right operand
+is not evaluated if the result is determined by the left operand alone.
+\lain{not} and \lain{!} are prefix unary negation.  All yield \lain{bool}.
+
+\begin{constraint}
+  Operands of \lain{and}, \lain{or}, \lain{not}, and \lain{!} shall have
+  type \lain{bool}.
+\end{constraint}
+
+\section{Bitwise operators}
+\label{sec:expr.bitwise}
+\index{bitwise operator}
+
+\pnum
+The bitwise operators \lain{\&}, \lain{|}, \texttt{\textasciicircum}, \lain{<<}, \lain{>>}
+operate on integer operands.  The result type is the wider operand type for
+\lain{\&}, \lain{|}, \texttt{\textasciicircum}; for shift operators, the result type is
+the left operand type.
+
+\begin{constraint}
+  Operands of bitwise operators shall be integer types.
+\end{constraint}
+
+\begin{constraint}
+  The shift amount (right operand of \lain{<<} and \lain{>>}) shall
+  satisfy $0 \leq \mathit{shift} < N$ where $N$ is the bit width of the
+  left operand.  A shift amount outside this range is
+  \illformed{}~(\diagcode{E100}).
+\end{constraint}
+
+\section{The \texttt{in} operator}
+\label{sec:expr.in}
+\index{in operator}
+\index{in guard}
+
+\pnum
+The expression \lain{idx in arr} evaluates to \lain{true} if and only if
+$0 \leq \mathit{idx} < \mathit{arr.len}$.  The operand \textit{arr} shall
+be an array or slice type; \textit{idx} shall be an integer type.
+
+\pnum
+When \lain{idx in arr} appears as the condition of a \lain{while} or
+\lain{if} statement (or as the leftmost operand of an \lain{and}-chain
+condition), it establishes an \textbf{in guard}: inside the body of that
+statement, the implementation shall accept \lain{arr[idx]} without
+requiring further bounds verification.
+
+\pnum
+In-guards propagate through \lain{and}-chains: if the left operand of
+\lain{and} establishes an in-guard, that guard is active when evaluating
+the right operand.
+
+\begin{example}
+\begin{laincode}
+// In-guard: arr[i] is safe without explicit VRA
+while i in arr {
+    var x = arr[i]   // OK: in-guarded
+    i = i + 1
+}
+
+// And-chain propagation:
+while l.pos in l.src and (l.src[l.pos] as int) != '"' {
+    l.pos = l.pos + 1
+}
+\end{laincode}
+\end{example}
+
+\begin{constraint}
+  An in-guard of the form \lain{idx in arr} covers only \lain{arr[idx]}
+  exactly.  Accesses \lain{arr[idx + k]} for any $k \neq 0$ are not
+  covered by this guard and require separate verification or an
+  \lain{unsafe} block.
+\end{constraint}
+
+\section{Cast expression (\texttt{as})}
+\label{sec:expr.cast}
+\index{cast expression}
+\index{as operator}
+
+\pnum
+The expression \lain{expr as T} explicitly converts the value of
+\textit{expr} to type \lain{T}.  The following casts are permitted:
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{From} & \textbf{To} & \textbf{Semantics} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{From} & \textbf{To} & \textbf{Semantics} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+integer & integer & Truncation (narrowing) or extension (widening) \\
+integer & float   & Nearest representable value (IEEE~754) \\
+float   & integer & Truncation toward zero \\
+float   & float   & Precision change \\
+pointer & pointer & Reinterpretation (\lain{unsafe} required) \\
+integer & pointer & Reinterpretation (\lain{unsafe} required) \\
+pointer & integer & Reinterpretation (\lain{unsafe} required) \\
+\end{longtable}
+
+\begin{constraint}
+  Casts between pointer types, between a pointer and an integer, or between
+  any type and a pointer shall occur only inside an \lain{unsafe} block.
+  Such a cast outside \lain{unsafe} is \illformed{}~(\diagcode{E012}).
+\end{constraint}
+
+\begin{constraint}
+  A cast between non-numeric, non-pointer types (e.g., struct to integer)
+  is \illformed{}.
+\end{constraint}
+
+\section{Move expression (\texttt{mov})}
+\label{sec:expr.mov}
+\index{move expression}
+
+\pnum
+\lain{mov expr} transfers ownership of the value produced by \textit{expr}.
+The source is placed in the Consumed state; any subsequent use of the
+source variable is \illformed{}~(\diagcode{E001}).  See \S\,\ref{sec:11-ownership}.
+
+\section{Borrow expressions (\texttt{ref}, \texttt{mut})}
+\label{sec:expr.borrow}
+\index{borrow expression}
+
+\pnum
+\lain{ref expr} creates a shared (read-only) borrow of \textit{expr}.
+\lain{mut expr} creates a mutable borrow of \textit{expr}.
+Both expressions are evaluated in argument contexts to pass values without
+transferring ownership.  See \S\,\ref{sec:11-ownership}.
+
+\section{Field access}
+\label{sec:expr.field}
+\index{field access}
+
+\pnum
+The expression \lain{expr.field} accesses the named field of a struct or
+ADT value, or a property of an array or slice (\lain{.len}, \lain{.data}).
+
+\begin{constraint}
+  The field name shall exist on the type of \textit{expr}.
+\end{constraint}
+
+\begin{constraint}
+  Writing to a field (\lain{expr.field = v}) requires \textit{expr} to be
+  a mutable lvalue.
+\end{constraint}
+
+\section{Index expression}
+\label{sec:expr.index}
+\index{index expression}
+
+\pnum
+The expression \lain{arr[idx]} accesses the element of array or slice
+\textit{arr} at integer index \textit{idx}.
+
+\begin{constraint}
+  The value range analysis shall prove $0 \leq \mathit{idx} < \mathit{arr.len}$
+  at every index expression.  An index expression for which this cannot be
+  proved is \illformed{}~(\diagcode{E014}).  An \lain{in} guard
+  (\S\,\ref{sec:expr.in}) or an \lain{unsafe} block suppresses this
+  requirement.
+\end{constraint}
+
+\section{Function call}
+\label{sec:expr.call}
+\index{function call}
+
+\pnum
+A function call expression \lain{f(args)} evaluates the arguments and
+transfers control to the callee.  Arguments are evaluated left-to-right.
+
+\pnum
+Argument ownership modes shall be given explicitly at the call site:
+
+\begin{longtable}{@{}ll@{}}
+\toprule
+\textbf{Syntax} & \textbf{Meaning} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Syntax} & \textbf{Meaning} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\lain{f(x)}     & shared borrow (default; parameter mode must be \lain{shared}) \\
+\lain{f(var x)} & mutable borrow (parameter mode must be \lain{var}) \\
+\lain{f(mov x)} & ownership transfer (parameter mode must be owned/\lain{mov}) \\
+\end{longtable}
+
+\begin{constraint}
+  The mode annotation at the call site shall match the declared parameter
+  mode.  A mismatch is \illformed{}.
+\end{constraint}
+
+\begin{constraint}
+  The number of arguments shall equal the number of parameters (unless the
+  callee is a variadic C function declared with \lain{...}).
+\end{constraint}
+
+\pnum
+\textbf{Two-phase borrows}: during argument evaluation, borrows of the
+receiver of a method call are placed in the RESERVED phase and promoted to
+ACTIVE after all arguments are evaluated
+(see \S\,\ref{sec:11-ownership}).
+
+\section{Block expression}
+\label{sec:expr.block}
+\index{block expression}
+
+\pnum
+A block expression \texttt{\{ stmts... expr \}} evaluates each statement
+in order, then evaluates the final expression, whose value is the value of
+the block.  If the final expression is absent, the block has no value.
+
+\section{If expression}
+\label{sec:expr.if}
+\index{if expression}
+
+\pnum
+An \lain{if} expression of the form
+\lain{if cond \{ e1 \} else \{ e2 \}} evaluates \textit{cond}; if true,
+evaluates $e_1$; otherwise, evaluates $e_2$.
+
+\begin{constraint}
+  The types of $e_1$ and $e_2$ shall be compatible.  If they are not, the
+  expression is \illformed{}.
+\end{constraint}
+
+\begin{constraint}
+  \textit{cond} shall have type \lain{bool}.
+\end{constraint}
+
+\section{Match expression (\texttt{case})}
+\label{sec:expr.match}
+\index{case expression}
+
+\pnum
+A \lain{case} expression (\gramref{match-expression}) selects one of
+several alternatives based on pattern matching.  All arms shall produce
+values of compatible types; the type of the \lain{case} expression is that
+common type.  See \S\,\ref{sec:15-match} for full exhaustiveness rules.
+
+\section{Constructor expression}
+\label{sec:expr.constructor}
+\index{constructor expression}
+
+\pnum
+A constructor expression builds a value of a struct or ADT type by
+supplying all field values.  See \S\,\ref{sec:types.struct} and
+\S\,\ref{sec:types.adt} for constructor rules.
+
+\section{Compound assignment}
+\label{sec:expr.compound-assign}
+\index{compound assignment}
+
+\pnum
+Compound assignment \lain{x op= e} is syntactic sugar for
+\lain{x = x op e}.  The left-hand side shall be a mutable lvalue.
+All compound forms of the arithmetic and bitwise operators are supported
+(see \S\,\ref{sec:lex.operators}).

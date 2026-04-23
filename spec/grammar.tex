@@ -1,0 +1,364 @@
+% grammar.tex — Complete BNF Grammar for the Lain Programming Language
+%
+% This file is the single authoritative source for all grammar productions.
+% Each rule carries a \label{gram:rule-name} for cross-referencing.
+% Productions are grouped by clause; within each group, the order is
+% top-down (start symbol first, auxiliary rules after).
+%
+% Usage in chapter files:
+%   \gramref{expression}   → hyperlinked italic "expression"
+%   To typeset a rule inline, use the grammar environment from lain-spec.sty.
+
+% =========================================================================
+% §5 — Lexical conventions
+% =========================================================================
+
+\section*{§5 Lexical grammar}
+
+\subsection*{§5.5 Tokens}
+\label{gram:token}
+\begin{grammar}
+token ::=
+    keyword
+  | identifier
+  | integer-literal
+  | float-literal
+  | string-literal
+  | char-literal
+  | bool-literal
+  | operator
+  | punctuator
+\end{grammar}
+
+\subsection*{§5.6 Keywords}
+\label{gram:keyword}
+\begin{grammar}
+keyword ::=
+    "func"   | "proc"   | "var"    | "mov"    | "shared"
+  | "return" | "if"     | "else"   | "while"  | "for"
+  | "in"     | "case"   | "import" | "module" | "struct"
+  | "enum"   | "unsafe" | "comptime" | "defer" | "ref"
+  | "mut"    | "true"   | "false"  | "and"    | "or"
+  | "not"    | "as"     | "decreasing" | "end"
+\end{grammar}
+
+\subsection*{§5.7 Identifiers}
+\label{gram:identifier}
+\begin{grammar}
+identifier       ::= identifier-start { identifier-continue }
+identifier-start ::= letter | "_"
+identifier-continue ::= letter | decimal-digit | "_"
+letter           ::= "A" .. "Z" | "a" .. "z"
+\end{grammar}
+
+\subsection*{§5.8 Literals}
+\label{gram:integer-literal}
+\begin{grammar}
+integer-literal  ::=
+    decimal-literal
+  | hex-literal
+  | binary-literal
+  | octal-literal
+
+decimal-literal  ::= nonzero-digit { decimal-digit | "_" }
+                   | "0"
+hex-literal      ::= "0x" hex-digit { hex-digit | "_" }
+binary-literal   ::= "0b" binary-digit { binary-digit | "_" }
+octal-literal    ::= "0o" octal-digit { octal-digit | "_" }
+
+decimal-digit    ::= "0" .. "9"
+nonzero-digit    ::= "1" .. "9"
+hex-digit        ::= decimal-digit | "a" .. "f" | "A" .. "F"
+binary-digit     ::= "0" | "1"
+octal-digit      ::= "0" .. "7"
+\end{grammar}
+
+\label{gram:float-literal}
+\begin{grammar}
+float-literal    ::= decimal-literal "." decimal-literal [ float-exponent ]
+float-exponent   ::= ( "e" | "E" ) [ "+" | "-" ] decimal-literal
+\end{grammar}
+
+\label{gram:string-literal}
+\begin{grammar}
+string-literal   ::= '"' { string-char } '"'
+string-char      ::= any-source-char-except-'"'-or-'\' | escape-sequence
+escape-sequence  ::= '\' ( '"' | '\' | "n" | "t" | "r" | "0" )
+\end{grammar}
+
+\label{gram:bool-literal}
+\begin{grammar}
+bool-literal     ::= "true" | "false"
+\end{grammar}
+
+\subsection*{§5.9 Operators and punctuators}
+\label{gram:operator}
+\begin{grammar}
+operator         ::=
+    "+"  | "-"  | "*"  | "/"  | "%"
+  | "==" | "!=" | "<"  | ">"  | "<=" | ">="
+  | "and"| "or" | "not"| "in"
+  | "&"  | "|"  | "^"  | "<<" | ">>"
+  | "="  | "+=" | "-=" | "*=" | "/=" | "%="
+  | "&=" | "|=" | "^=" | "<<="| ">>="
+  | "->" | "."  | ".."
+
+punctuator       ::=
+    "("  | ")"  | "{"  | "}"  | "["  | "]"
+  | ":"  | ","  | "@"
+\end{grammar}
+
+% =========================================================================
+% §6 — Basic concepts
+% =========================================================================
+
+\section*{§6 Program structure grammar}
+\label{gram:program}
+\begin{grammar}
+program              ::= { top-level-declaration }
+top-level-declaration ::=
+    module-declaration
+  | import-declaration
+  | struct-declaration
+  | enum-declaration
+  | function-declaration
+  | procedure-declaration
+  | comptime-declaration
+
+module-declaration   ::= "module" qualified-identifier newline
+import-declaration   ::= "import" qualified-identifier newline
+qualified-identifier ::= identifier { "." identifier }
+\end{grammar}
+
+% =========================================================================
+% §7 — Types
+% =========================================================================
+
+\section*{§7 Type grammar}
+\label{gram:type}
+\begin{grammar}
+type             ::=
+    primitive-type
+  | array-type
+  | slice-type
+  | pointer-type
+  | qualified-type
+  | constrained-type
+  | user-defined-type
+
+primitive-type   ::=
+    "int"   | "u8"    | "u16"   | "u32"   | "u64"   | "usize"
+  | "i8"    | "i16"   | "i32"   | "i64"   | "isize"
+  | "f32"   | "f64"
+  | "bool"  | "str"   | "void"
+
+array-type       ::= "[" type ";" integer-literal "]"
+slice-type       ::= "[" type "]"
+pointer-type     ::= "*" type | "const" "*" type
+qualified-type   ::= ownership-qualifier type
+ownership-qualifier ::= "shared" | "var"
+user-defined-type ::= qualified-identifier
+constrained-type ::= type relational-op integer-literal
+                   { ( "and" | "or" ) type relational-op integer-literal }
+relational-op    ::= ">=" | "<=" | ">" | "<" | "=="
+\end{grammar}
+
+% =========================================================================
+% §8 — Expressions
+% =========================================================================
+
+\section*{§8 Expression grammar}
+\label{gram:expression}
+\begin{grammar}
+expression           ::= assignment-expression
+
+assignment-expression ::=
+    logical-or-expression
+  | lvalue-expression assignment-operator assignment-expression
+
+assignment-operator  ::=
+    "="  | "+=" | "-=" | "*=" | "/=" | "%="
+  | "&=" | "|=" | "^=" | "<<="| ">>="
+
+logical-or-expression ::= logical-and-expression { "or" logical-and-expression }
+
+logical-and-expression ::= in-expression { "and" in-expression }
+
+in-expression        ::= equality-expression { "in" equality-expression }
+
+equality-expression  ::= relational-expression
+                        { ( "==" | "!=" ) relational-expression }
+
+relational-expression ::= shift-expression
+                         { ( "<" | ">" | "<=" | ">=" ) shift-expression }
+
+shift-expression     ::= additive-expression
+                        { ( "<<" | ">>" ) additive-expression }
+
+additive-expression  ::= multiplicative-expression
+                        { ( "+" | "-" ) multiplicative-expression }
+
+multiplicative-expression ::= cast-expression
+                             { ( "*" | "/" | "%" ) cast-expression }
+
+cast-expression      ::= unary-expression { "as" type }
+
+unary-expression     ::=
+    postfix-expression
+  | unary-operator unary-expression
+
+unary-operator       ::= "-" | "not" | "!" | "mov" | "ref" | "mut"
+
+postfix-expression   ::=
+    primary-expression
+  | postfix-expression "." identifier
+  | postfix-expression "[" expression "]"
+  | postfix-expression "(" [ argument-list ] ")"
+
+argument-list        ::= expression { "," expression }
+
+primary-expression   ::=
+    identifier
+  | literal
+  | "(" expression ")"
+  | block-expression
+  | if-expression
+  | match-expression
+  | constructor-expression
+  | comptime-expression
+
+literal              ::=
+    integer-literal
+  | float-literal
+  | string-literal
+  | bool-literal
+
+block-expression     ::= "{" { statement } expression "}"
+
+if-expression        ::=
+    "if" expression block-expression
+  [ "else" ( if-expression | block-expression ) ]
+
+match-expression     ::=
+    "case" [ "&" ] expression "{"
+    { match-arm }
+    "}"
+
+match-arm            ::= pattern [ "if" expression ] block-expression
+
+pattern              ::=
+    "_"
+  | literal
+  | identifier
+  | qualified-identifier "(" [ pattern-list ] ")"
+  | qualified-identifier "{" [ field-pattern-list ] "}"
+
+pattern-list         ::= pattern { "," pattern }
+field-pattern-list   ::= identifier ":" pattern { "," identifier ":" pattern }
+
+constructor-expression ::=
+    qualified-identifier "{" [ field-init-list ] "}"
+  | qualified-identifier "(" [ argument-list ] ")"
+
+field-init-list      ::= identifier ":" expression { "," identifier ":" expression }
+
+comptime-expression  ::= "comptime" block-expression
+
+lvalue-expression    ::=
+    identifier
+  | postfix-expression "." identifier
+  | postfix-expression "[" expression "]"
+\end{grammar}
+
+% =========================================================================
+% §9 — Statements
+% =========================================================================
+
+\section*{§9 Statement grammar}
+\label{gram:statement}
+\begin{grammar}
+statement            ::=
+    block-statement
+  | var-declaration
+  | assignment-statement
+  | expression-statement
+  | if-statement
+  | while-statement
+  | bounded-while-statement
+  | return-statement
+  | defer-statement
+  | unsafe-block
+  | comptime-if-statement
+
+block-statement      ::= "{" { statement } "}"
+
+var-declaration      ::= "var" identifier [ ":" type ] "=" expression newline
+
+assignment-statement ::= lvalue-expression assignment-operator expression newline
+
+expression-statement ::= expression newline
+
+if-statement         ::=
+    "if" expression block-statement
+  { "else" "if" expression block-statement }
+  [ "else" block-statement ]
+
+while-statement      ::= "while" expression block-statement
+
+bounded-while-statement ::=
+    "while" expression "decreasing" expression block-statement
+
+return-statement     ::= "return" [ expression ] newline
+
+defer-statement      ::= "defer" block-statement
+
+unsafe-block         ::= "unsafe" block-statement
+
+comptime-if-statement ::=
+    "comptime" "if" expression block-statement
+  [ "else" block-statement ]
+\end{grammar}
+
+% =========================================================================
+% §10 — Declarations
+% =========================================================================
+
+\section*{§10 Declaration grammar}
+\label{gram:function-declaration}
+\begin{grammar}
+function-declaration  ::=
+    "func" identifier
+    [ "[" comptime-param-list "]" ]
+    "(" [ param-list ] ")" return-annotation
+    block-statement
+
+procedure-declaration ::=
+    "proc" identifier
+    [ "[" comptime-param-list "]" ]
+    "(" [ param-list ] ")" return-annotation
+    block-statement
+
+return-annotation    ::= type [ relational-op integer-literal ]
+                       | ( empty )
+
+param-list           ::= param { "," param }
+param                ::= [ ownership-qualifier ] identifier type
+                       | "comptime" identifier "type"
+
+comptime-param-list  ::= comptime-param { "," comptime-param }
+comptime-param       ::= identifier "type"
+
+struct-declaration   ::= "struct" identifier "{" { field-declaration } "}"
+field-declaration    ::= identifier type newline
+
+enum-declaration     ::= "enum" identifier "{" { variant-declaration } "}"
+variant-declaration  ::=
+    identifier newline
+  | identifier "(" type-list ")" newline
+  | identifier "{" field-declaration-list "}" newline
+
+type-list            ::= type { "," type }
+field-declaration-list ::= field-declaration { field-declaration }
+
+comptime-declaration ::= "comptime" block-statement
+\end{grammar}
