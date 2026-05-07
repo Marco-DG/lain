@@ -64,6 +64,11 @@ artifacts/
 # LinkedIn assets
 linkedin/
 
+# Directories ignored at user request
+compiler-doc/
+docs/
+spec/
+
 # LaTeX build artifacts (spec/)
 spec/**/*.aux
 spec/**/*.log
@@ -94,3 +99,4 @@ spec/*.synctex.gz
 spec/*.bbl
 spec/*.blg
 # Keep: spec/lain-spec.pdf (published artifact)
+!spec/lain-spec.pdf
