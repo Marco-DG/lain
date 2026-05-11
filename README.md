@@ -17,7 +17,7 @@ Lain is a statically typed, compiled programming language designed for embedded 
 | **Buffer Overflows** | Impossible | Value Range Analysis (§8) verifies every array access at compile time |
 | **Use-After-Free** | Impossible | Linear types (`mov`) ensure resources are consumed exactly once |
 | **Double Free** | Impossible | Ownership is linear; a resource is consumed exactly once |
-| **Data Races** | Impossible | Borrow checker enforces exclusive mutability |
+| **Data Races** | Structurally impossible | Lain programs are single-threaded pre-1.0; no concurrency model exists. Interrupt-aware model (M2) is roadmapped. |
 | **Null Dereference** | Prevented | Pointer dereference requires `unsafe` |
 | **Memory Leaks** | Prevented | Linear variables must be consumed; forgetting is a compile error |
 | **Division by Zero** | Prevented | Type constraints (`b int != 0`) enforce non-zero divisors |
@@ -1815,7 +1815,7 @@ Lain eliminates entire classes of bugs at compile time without runtime overhead.
 | **Buffer Overflows** | Impossible | Static Range Analysis (§8) verifies every array access at compile time. No runtime bounds checks needed. |
 | **Use-After-Free** | Impossible | Linear Types (`mov`) ensure resources are consumed exactly once. Accessing a moved variable is a compile error. |
 | **Double Free** | Impossible | Ownership is linear; a resource must be consumed exactly once, preventing double destruction. |
-| **Data Races** | Impossible | The Borrow Checker enforces exclusive mutability. Simultaneous shared + mutable borrows are rejected. |
+| **Data Races** | Structurally impossible | Lain programs are single-threaded pre-1.0 — no concurrency model exists, so data races are not applicable. The Borrow Checker's exclusive-mutability rule still rules out aliasing-driven bugs intra-thread. Interrupt-aware concurrency (M2) is roadmapped. |
 | **Null Dereference** | Prevented | References are valid by construction. Raw pointer dereference requires `unsafe`. |
 | **Memory Leaks** | Prevented | Linear variables (`mov`) must be consumed. Forgetting to use or destroy a resource is a compile error. |
 | **Division by Zero** | Prevented | Type constraints (`b int != 0`) can enforce non-zero divisors at compile time. |
