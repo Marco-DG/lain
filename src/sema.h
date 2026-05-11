@@ -847,6 +847,18 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     sema_clear_globals();
     sema_build_scope(decls, module_path);
 
+    // Q-008: enforce `mov` on every linear field of every struct/enum.
+    {
+        bool any_error = false;
+        for (DeclList *dl = decls; dl; dl = dl->next) {
+            if (!dl->decl) continue;
+            if (dl->decl->kind == DECL_STRUCT || dl->decl->kind == DECL_ENUM) {
+                if (sema_check_struct_field_mov(dl->decl)) any_error = true;
+            }
+        }
+        if (any_error) exit(1);
+    }
+
     // 2) For each function: resolve → infer → linearity → clear locals
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
@@ -976,7 +988,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         // 2.b) Name resolution
         current_return_type = d->as.function_decl.return_type;
         current_function_decl = d; // Set current function
-        current_module_path = module_path;
+        // Q-018: use the decl's defining_module if known so that cross-module
+        // visibility checks within imported function bodies see the correct
+        // owning module. Fallback to top-level module_path.
+        current_module_path = d->defining_module ? d->defining_module : module_path;
 
         // Apply Pre-Contracts to Range Table
         if (sema_ranges) {

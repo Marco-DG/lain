@@ -1,0 +1,14 @@
+// EXPECT: [E083]
+// Sprint 6 — Q-008: omitting `mov` on a linear field is a compile error.
+
+type Handle {
+    mov ptr *int
+}
+
+type Wrapper {
+    h Handle           // ❌ missing `mov` — Handle is linear
+}
+
+proc main() int {
+    return 0
+}

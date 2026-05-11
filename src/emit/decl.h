@@ -194,7 +194,30 @@ void emit_decl(Decl* decl, int depth) {
             if (is_generic_function(decl)) return;
             if (decl->as.function_decl.return_type && decl->as.function_decl.return_type->kind == TYPE_META_TYPE) return; // Pure CTFE function
 
+            // Q-017 [fast_math]: emit pragma to enable FMA fusion for this function
+            bool has_fast_math = false;
+            for (Attr *a = decl->attributes; a; a = a->next) {
+                if (a->name && a->name->length == 9 && strncmp(a->name->name, "fast_math", 9) == 0) {
+                    has_fast_math = true;
+                    break;
+                }
+            }
+            if (has_fast_math) {
+                emit_indent(depth);
+                EMIT("#pragma GCC push_options\n");
+                emit_indent(depth);
+                EMIT("#pragma GCC optimize(\"fp-contract=fast\")\n");
+            }
+
             emit_indent(depth);
+            // Q-018 [private]: emit `static` for private declarations (module-internal linkage)
+            // skip for main (must be extern)
+            const char *fname = decl->as.function_decl.name->name;
+            size_t flen = decl->as.function_decl.name->length;
+            bool is_main = (flen == 4 && strncmp(fname, "main", 4) == 0);
+            if (decl->is_private && !is_main) {
+                EMIT("static ");
+            }
             // Print return type and function name.
             if (decl->as.function_decl.return_type) {
                 emit_type(decl->as.function_decl.return_type);
@@ -305,7 +328,14 @@ void emit_decl(Decl* decl, int depth) {
 
             emit_stmt_list(decl->as.function_decl.body, depth + 1);
             emit_indent(depth);
-            EMIT("}\n\n");
+            EMIT("}\n");
+
+            // Q-017 [fast_math]: pop pragma options after function body
+            if (has_fast_math) {
+                emit_indent(depth);
+                EMIT("#pragma GCC pop_options\n");
+            }
+            EMIT("\n");
             break;
         }
 

@@ -103,6 +103,20 @@ static DeclList* load_module(Arena *file_arena,
     };
     _parser_advance(&parser); // Fetch first token (and normalize NEWLINE -> EOL)
     DeclList *decls = parse_module(ast_arena, &parser);
+
+    // Q-018: tag every decl with its defining module path (for cross-module
+    // visibility checks). Use a stable copy of `modname` in ast_arena.
+    {
+        size_t mn_len = strlen(modname) + 1;
+        char *modname_copy = arena_push_many_aligned(ast_arena, char, mn_len);
+        memcpy(modname_copy, modname, mn_len);
+        for (DeclList *dl = decls; dl; dl = dl->next) {
+            if (dl->decl && dl->decl->defining_module == NULL) {
+                dl->decl->defining_module = modname_copy;
+            }
+        }
+    }
+
     // 4) splice any imports in this module
     DeclList *prev = NULL, *cur = decls;
     while (cur) {

@@ -1,0 +1,11 @@
+// Helper module with both public and private declarations.
+// Used by tests/stdlib/private_decl_*.ln
+
+[private]
+func internal_secret() int {
+    return 777
+}
+
+func public_api() int {
+    return internal_secret() + 1
+}

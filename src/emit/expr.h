@@ -253,6 +253,30 @@ void emit_expr(Expr *expr, int depth) {
   }
 
   case EXPR_CALL: {
+    // Q-014/G-007: panic builtin — emit as fprintf+abort
+    // S16: panic = abort puro (no defer, no unwind)
+    if (expr->as.call_expr.callee->kind == EXPR_IDENTIFIER) {
+      Id *cid = expr->as.call_expr.callee->as.identifier_expr.id;
+      if (cid->length == 5 && strncmp(cid->name, "panic", 5) == 0) {
+        Expr *arg = expr->as.call_expr.args ? expr->as.call_expr.args->expr : NULL;
+        if (arg && arg->kind == EXPR_STRING) {
+          // Direct string literal: emit as plain C string
+          EMIT("(fprintf(stderr, \"panic: %.*s\\n\"), abort(), 0)",
+               (int)arg->as.string_expr.length, arg->as.string_expr.value);
+        } else {
+          // Generic slice: msg.data and msg.len
+          EMIT("(fprintf(stderr, \"panic: %%.*s\\n\", (int)(");
+          if (arg) emit_expr(arg, 0);
+          else EMIT("(u8[]){0}");
+          EMIT(").len, (");
+          if (arg) emit_expr(arg, 0);
+          else EMIT("(u8[]){0}");
+          EMIT(").data), abort(), 0)");
+        }
+        break;
+      }
+    }
+
     // 1) figure out the C‐name of the callee
     const char *cname = NULL;
     if (expr->as.call_expr.callee->kind == EXPR_IDENTIFIER) {

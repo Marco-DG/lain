@@ -19,6 +19,90 @@ static bool is_comparison_op(TokenKind kind) {
     }
 }
 
+// Q-017 attribute parsing: [name] or [name(args)]
+// Whitelist of known attribute names (lista chiusa pre-1.0):
+static bool is_known_attribute(const char *name, isize len) {
+    if (len == 9 && strncmp(name, "fast_math", 9) == 0) return true;
+    if (len == 7 && strncmp(name, "private",   7) == 0) return true;
+    return false;
+}
+
+// Parse zero or more attributes [name] / [name(args)]. Returns linked list (or NULL).
+// Sets is_private flag if [private] is encountered.
+static Attr *parse_attributes(Arena *arena, Parser *parser, bool *out_is_private) {
+    Attr *head = NULL;
+    Attr **tail = &head;
+    *out_is_private = false;
+
+    while (parser_match(TOKEN_L_BRACKET)) {
+        parser_advance(); // consume '['
+
+        if (!parser_match(TOKEN_IDENTIFIER)) {
+            fprintf(stderr, "[E102] Error Ln %li, Col %li: expected attribute name after '['\n",
+                    parser->line, parser->column);
+            return head;
+        }
+
+        Id *name = id(arena, parser->token.length, parser->token.start);
+        parser_advance(); // consume identifier
+
+        // Validate against whitelist
+        if (!is_known_attribute(name->name, name->length)) {
+            fprintf(stderr, "[E103] Error Ln %li, Col %li: unknown attribute '%.*s' (known: fast_math, private)\n",
+                    parser->line, parser->column, (int)name->length, name->name);
+            exit(1);
+        }
+
+        // Optional args: [name(arg1, arg2, ...)]
+        ExprList *args = NULL;
+        if (parser_match(TOKEN_L_PAREN)) {
+            parser_advance(); // consume '('
+            ExprList **atail = &args;
+            while (!parser_match(TOKEN_R_PAREN) && !parser_match(TOKEN_EOF)) {
+                Expr *e = parse_expr(arena, parser);
+                ExprList *node = arena_push_aligned(arena, ExprList);
+                node->expr = e;
+                node->next = NULL;
+                *atail = node;
+                atail = &node->next;
+                if (parser_match(TOKEN_COMMA)) parser_advance();
+            }
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after attribute arguments");
+            parser_advance();
+        }
+
+        parser_expect(TOKEN_R_BRACKET, "Expected ']' to close attribute");
+        parser_advance();
+        parser_skip_eol();
+
+        // Q-018: cache [private]
+        if (name->length == 7 && strncmp(name->name, "private", 7) == 0) {
+            *out_is_private = true;
+        }
+
+        // Append to list
+        Attr *a = arena_push_aligned(arena, Attr);
+        a->name = name;
+        a->args = args;
+        a->next = NULL;
+        *tail = a;
+        tail = &a->next;
+    }
+
+    return head;
+}
+
+// Helper: check if a decl has a specific attribute by name
+static bool decl_has_attribute(Decl *d, const char *name, isize len) {
+    if (!d || !d->attributes) return false;
+    for (Attr *a = d->attributes; a; a = a->next) {
+        if (a->name && a->name->length == len && strncmp(a->name->name, name, len) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // entry‑point for a module
 DeclList* parse_module(Arena *arena, Parser *parser);
 
@@ -90,22 +174,35 @@ DeclList* parse_decl_list(Arena* arena, Parser* parser)
 
 Decl *parse_decl(Arena* arena, Parser* parser)
 {
+    // Q-017: parse leading attributes [name] / [name(args)]
+    bool is_private = false;
+    Attr *attrs = NULL;
+    if (parser_match(TOKEN_L_BRACKET)) {
+        attrs = parse_attributes(arena, parser, &is_private);
+        parser_skip_eol();
+    }
+
+    Decl *d = NULL;
+
     if (parser_match(TOKEN_KEYWORD_IMPORT))
     {
         parser_advance();
-        return parse_import_decl(arena, parser);
+        d = parse_import_decl(arena, parser);
+        goto done;
     }
 
     if (parser_match(TOKEN_KEYWORD_C_INCLUDE))
     {
         parser_advance();
-        return parse_c_include_decl(arena, parser);
+        d = parse_c_include_decl(arena, parser);
+        goto done;
     }
 
     if (parser_match(TOKEN_KEYWORD_TYPE))
     {
         parser_advance();
-        return parse_type_decl(arena, parser);
+        d = parse_type_decl(arena, parser);
+        goto done;
     }
 
     // extern func …
@@ -113,15 +210,18 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         parser_advance();  // consume 'extern'
         if (parser_match(TOKEN_KEYWORD_FUNC)) {
             parser_advance();  // consume 'func'
-            return parse_extern_func_decl(arena, parser);
+            d = parse_extern_func_decl(arena, parser);
+            goto done;
         }
         if (parser_match(TOKEN_KEYWORD_PROC)) {
             parser_advance();  // consume 'proc'
-            return parse_extern_proc_decl(arena, parser);
+            d = parse_extern_proc_decl(arena, parser);
+            goto done;
         }
         if (parser_match(TOKEN_KEYWORD_TYPE)) {
             parser_advance(); // consume 'type'
-            return parse_extern_type_decl(arena, parser);
+            d = parse_extern_type_decl(arena, parser);
+            goto done;
         }
         parser_expect(TOKEN_KEYWORD_FUNC, "Expected 'func', 'proc', or 'type' after 'extern'");
         return NULL;
@@ -129,25 +229,34 @@ Decl *parse_decl(Arena* arena, Parser* parser)
 
     if (parser_match(TOKEN_KEYWORD_FUNC)) {
         parser_advance();
-        return parse_func_decl(arena, parser);
+        d = parse_func_decl(arena, parser);
+        goto done;
     }
 
     if (parser_match(TOKEN_KEYWORD_PROC)) {
         parser_advance();
-        return parse_proc_decl(arena, parser);
+        d = parse_proc_decl(arena, parser);
+        goto done;
     }
 
     if (parser_match(TOKEN_KEYWORD_VAR)) {
         parser_advance();
-        return parse_var_decl(arena, parser);
+        d = parse_var_decl(arena, parser);
+        goto done;
     }
 
     // Implicit Immutable Declaration: x = value
     if (parser_match(TOKEN_IDENTIFIER)) {
-         return parse_var_decl(arena, parser);
+         d = parse_var_decl(arena, parser);
+         goto done;
     }
 
-    return NULL;
+done:
+    if (d) {
+        d->attributes = attrs;
+        d->is_private = is_private;
+    }
+    return d;
 }
 
 

@@ -1,10 +1,12 @@
 // EXPECT: [E003]
+// Q-008: linear field must be annotated `mov`. With proper annotation, the
+// struct is linear and double-use is caught with E003 below.
 type Handle {
     mov ptr *int
 }
 
 type Wrapper {
-    h Handle
+    mov h Handle
 }
 
 proc main() int {

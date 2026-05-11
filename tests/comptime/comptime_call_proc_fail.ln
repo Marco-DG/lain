@@ -1,0 +1,12 @@
+// EXPECT: [E101]
+// Sprint 13 — G-006: comptime cannot call proc
+
+proc side_effect() int {
+    return 42
+}
+
+type Bad = side_effect()
+
+proc main() int {
+    return 0
+}

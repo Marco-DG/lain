@@ -1,0 +1,21 @@
+// EXPECT: [VRA]
+// Sprint 3 — I-015 audit: post-if-join scoping for VRA range tightening.
+// VERIFIED: the checker correctly drops branch-only constraints at the join
+// point. I-015 is NOT a real soundness bug. Documented as confirmed in log.
+
+// Inside the `then` branch, x is proven in [0, 9]. After the if, x is
+// still unconstrained (could be < 0 or > 9). The bounds check on arr[x]
+// after the if should fail. If it doesn't, VRA L4 scoping is unsound.
+
+proc test(x int, arr int[10]) int {
+    if x >= 0 and x < 10 {
+        // x is bounded here
+    }
+    // After join: x is unbounded again — this access must be rejected
+    return arr[x]
+}
+
+proc main() int {
+    return 0
+}
+

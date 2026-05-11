@@ -1,0 +1,10 @@
+// Sprint 9 — Q-018: public_api is callable across modules
+
+import tests.stdlib.dummy_private
+
+proc main() int {
+    if public_api() == 778 {
+        return 0
+    }
+    return 1
+}

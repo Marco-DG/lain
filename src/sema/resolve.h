@@ -712,6 +712,19 @@ void sema_resolve_expr(Expr *e) {
     // 2) lookup in the two‐table (locals first, then globals)
     Symbol *sym = sema_lookup(raw);
     if (sym) {
+      // Q-018: enforce [private] cross-module visibility using defining_module
+      // tag set by load_module().
+      if (sym->is_global && sym->decl && sym->decl->is_private && current_module_path
+          && sym->decl->defining_module) {
+        if (strcmp(sym->decl->defining_module, current_module_path) != 0) {
+          fprintf(stderr, "[E084] Error Ln %li, Col %li: cannot access private declaration '%.*s' from module '%s' (defined in '%s')\n",
+                  e->line, e->col,
+                  (int)e->as.identifier_expr.id->length, e->as.identifier_expr.id->name,
+                  current_module_path, sym->decl->defining_module);
+          exit(1);
+        }
+      }
+
       if (sym->decl && (sym->decl->kind == DECL_STRUCT || sym->decl->kind == DECL_ENUM || sym->decl->kind == DECL_EXTERN_TYPE)) {
           // It's a user-defined type!
           e->kind = EXPR_TYPE;
@@ -738,6 +751,15 @@ void sema_resolve_expr(Expr *e) {
       e->decl = sym->decl;       // Populate decl
       e->is_global = sym->is_global; // Populate is_global
       break;
+    }
+
+    // 3) Q-014/G-007: 'panic' builtin — recognized identifier, type Never (any)
+    if (strcmp(raw, "panic") == 0) {
+        // mark as builtin: leave kind=EXPR_IDENTIFIER but ensure type is settable
+        // codegen will recognize callee identifier "panic" specially
+        e->type = get_builtin_int_type();  // 'Never'-style: callable, return type irrelevant
+        e->is_global = true;
+        break;
     }
 
     // 3) fallback: maybe it’s a builtin type name?

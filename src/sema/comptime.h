@@ -187,6 +187,18 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
                     if (sym) callee_decl = sym->decl;
                 }
                 
+                // G-006: CTFE purity filter — reject non-pure callees
+                if (callee_decl && (callee_decl->kind == DECL_PROCEDURE || callee_decl->kind == DECL_EXTERN_PROCEDURE)) {
+                    fprintf(stderr, "[E101] Comptime purity error: cannot call procedure '%.*s' from comptime context (only `func` calls allowed)\n",
+                            (int)callee_id->length, callee_id->name);
+                    exit(1);
+                }
+                if (callee_decl && callee_decl->kind == DECL_EXTERN_FUNCTION) {
+                    // extern func is trusted by convention (I-016) but still allowed in comptime
+                    // since the programmer asserted purity. Note: cannot actually execute it
+                    // at comptime (no body). Falls through to clone_expr.
+                }
+
                 if (callee_decl && callee_decl->kind == DECL_FUNCTION) {
                     // Evaluate arguments
                     ExprList* eval_args = NULL;
@@ -198,7 +210,7 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
                         *args_tail = new_arg;
                         args_tail = &new_arg->next;
                     }
-                    
+
                     // Execute function!
                     Expr* result = comptime_evaluate_function(arena, callee_decl, eval_args);
                     if (result) return result;

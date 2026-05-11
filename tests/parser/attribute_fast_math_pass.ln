@@ -1,0 +1,10 @@
+// Sprint 8 — Q-017: [fast_math] attribute is accepted and parses correctly
+
+[fast_math]
+func dot(a int, b int) int {
+    return a * b
+}
+
+proc main() int {
+    return dot(3, 4)
+}

@@ -1,0 +1,14 @@
+// Sprint 11 — Q-014: panic terminates without executing defer (S16 semantics)
+// This test simply verifies the panic call compiles and the program structure
+// is valid. Full runtime verification requires running the binary.
+
+proc maybe_panic(x int) int {
+    if x < 0 {
+        panic("negative")
+    }
+    return x
+}
+
+proc main() int {
+    return maybe_panic(7)
+}

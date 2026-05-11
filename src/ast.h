@@ -178,6 +178,13 @@ typedef struct {
     const char *path;
 } DeclCInclude;
 
+// Attribute support (Q-017): [name] or [name(args)] before declarations
+typedef struct Attr {
+    Id *name;             // attribute name (e.g., "fast_math", "private")
+    struct ExprList *args; // optional args
+    struct Attr *next;
+} Attr;
+
 typedef struct Decl {
     DeclKind kind;
     union {
@@ -193,6 +200,9 @@ typedef struct Decl {
     } as;
     isize line;  // NEW
     isize col;   // NEW
+    Attr *attributes;   // Q-017: linked list of attributes; NULL if none
+    bool is_private;    // Q-018: cached from [private] attribute (default: false = public)
+    const char *defining_module;  // Q-018: module path where this decl was defined (set by load_module); NULL = current/main
 } Decl;
 
 /*──────────────────────────────────────────────────────────────────╗
@@ -625,6 +635,9 @@ DeclList *decl_list(Arena *arena, Decl *decl) {
 
 Decl *decl_variable(Arena *arena, Id *name, Type *type) {
     Decl *d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = DECL_VARIABLE;
     d->as.variable_decl.name = name;
     d->as.variable_decl.type = type;
@@ -637,6 +650,9 @@ Decl *decl_variable(Arena *arena, Id *name, Type *type) {
 
 Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type, StmtList *body, bool is_extern, bool is_variadic) {
     Decl *d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = is_extern ? DECL_EXTERN_FUNCTION : DECL_FUNCTION;
     d->as.function_decl.name = name;
     d->as.function_decl.params = params;
@@ -652,6 +668,9 @@ Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type,
 
 Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type, StmtList *body, bool is_extern, bool is_variadic) {
     Decl *d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = is_extern ? DECL_EXTERN_PROCEDURE : DECL_PROCEDURE;
     d->as.function_decl.name = name;
     d->as.function_decl.params = params;
@@ -667,6 +686,9 @@ Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type
 
 Decl* decl_struct(Arena* arena, Id* name, DeclList* fields) {
     Decl* d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = DECL_STRUCT;  // FIXED: Use correct enum value
     d->as.struct_decl.name = name;  // FIXED: Correct member
     d->as.struct_decl.fields = fields;  // FIXED: Correct member
@@ -675,6 +697,9 @@ Decl* decl_struct(Arena* arena, Id* name, DeclList* fields) {
 
 Decl *decl_enum(Arena *arena, Id *type_name, Variant *variants) {
     Decl *d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = DECL_ENUM;
     d->as.enum_decl.type_name = type_name;
     d->as.enum_decl.variants = variants;
@@ -691,6 +716,9 @@ Variant *variant(Arena *arena, Id *name, DeclList *fields) {
 
 Decl* decl_import(Arena* arena, Id* module_name) {
     Decl* d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = DECL_IMPORT;
     d->as.import_decl.module_name = module_name;
     return d;
@@ -698,6 +726,9 @@ Decl* decl_import(Arena* arena, Id* module_name) {
 
 Decl* decl_destruct(Arena* arena, IdList* names, Type* type) {
     Decl* d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = DECL_DESTRUCT;
     d->as.destruct_decl.names = names;
     d->as.destruct_decl.type = type;
@@ -706,6 +737,9 @@ Decl* decl_destruct(Arena* arena, IdList* names, Type* type) {
 
 Decl* decl_c_include(Arena* arena, const char* path) {
     Decl* d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = DECL_C_INCLUDE;
     d->as.c_include_decl.path = path;
     return d;
@@ -713,6 +747,9 @@ Decl* decl_c_include(Arena* arena, const char* path) {
 
 Decl *decl_extern_type(Arena *arena, Id *name) {
     Decl *d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = DECL_EXTERN_TYPE;
     d->as.extern_type_decl.name = name;
     return d;
@@ -1017,6 +1054,9 @@ Expr *expr_anon_enum(Arena *arena, Variant *variants) {
 
 Decl *decl_type_alias(Arena *arena, Id *name, Expr *expr) {
     Decl *d = arena_push_aligned(arena, Decl);
+    d->attributes = NULL;
+    d->is_private = false;
+    d->defining_module = NULL;
     d->kind = DECL_TYPE_ALIAS;
     d->as.type_alias_decl.name = name;
     d->as.type_alias_decl.expr = expr;

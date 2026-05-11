@@ -41,6 +41,50 @@ static bool sema_type_is_linear(Type *t);
 // Use the robust recursive check
 #define is_type_move(t) sema_type_is_linear(t)
 
+// Q-008: enforce that every field of a struct/variant whose type is linear
+// must be annotated `mov`. Returns true if any error was emitted.
+static bool sema_check_struct_field_mov(Decl *d) {
+    bool had_error = false;
+    if (!d) return false;
+    if (d->kind == DECL_STRUCT) {
+        for (DeclList *f = d->as.struct_decl.fields; f; f = f->next) {
+            if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
+            Type *ft = f->decl->as.variable_decl.type;
+            if (!ft) continue;
+            // If the field's type is linear and the field itself is not annotated `mov`...
+            if (ft->mode != MODE_OWNED && sema_type_is_linear(ft)) {
+                Id *fname = f->decl->as.variable_decl.name;
+                Id *sname = d->as.struct_decl.name;
+                fprintf(stderr,
+                    "[E083] Error Ln %li, Col %li: field '%.*s' in struct '%.*s' has linear type but is missing `mov` annotation. Add `mov` to the field declaration.\n",
+                    f->decl->line, f->decl->col,
+                    (int)(fname ? fname->length : 0), fname ? fname->name : "?",
+                    (int)(sname ? sname->length : 0), sname ? sname->name : "?");
+                had_error = true;
+            }
+        }
+    } else if (d->kind == DECL_ENUM) {
+        for (Variant *v = d->as.enum_decl.variants; v; v = v->next) {
+            for (DeclList *f = v->fields; f; f = f->next) {
+                if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
+                Type *ft = f->decl->as.variable_decl.type;
+                if (!ft) continue;
+                if (ft->mode != MODE_OWNED && sema_type_is_linear(ft)) {
+                    Id *fname = f->decl->as.variable_decl.name;
+                    Id *vname = v->name;
+                    fprintf(stderr,
+                        "[E083] Error Ln %li, Col %li: field '%.*s' in variant '%.*s' has linear type but is missing `mov` annotation.\n",
+                        f->decl->line, f->decl->col,
+                        (int)(fname ? fname->length : 0), fname ? fname->name : "?",
+                        (int)(vname ? vname->length : 0), vname ? vname->name : "?");
+                    had_error = true;
+                }
+            }
+        }
+    }
+    return had_error;
+}
+
 static bool sema_type_is_linear(Type *t) {
     if (!t) return false;
     // 1. Explicit ownership override

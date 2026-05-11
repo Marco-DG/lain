@@ -1,0 +1,11 @@
+// Sprint 8 — Q-017: multiple stacked attributes parse correctly
+
+[fast_math]
+[private]
+func internal_dot(a int, b int) int {
+    return a * b
+}
+
+proc main() int {
+    return internal_dot(2, 3)
+}
