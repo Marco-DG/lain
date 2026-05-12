@@ -1,0 +1,14 @@
+// Sprint 5 / Q-004 step B: function returning u8[] borrows from input.
+// The returned slice can be read while the source buffer is alive.
+
+func first_half(s u8[]) u8[] {
+    return s
+}
+
+proc main() int {
+    var buf = "test"
+    var slice = first_half(buf)
+    // Both buf and slice usable until last_use of slice; NLL releases
+    // the borrow before the function returns.
+    return 0
+}

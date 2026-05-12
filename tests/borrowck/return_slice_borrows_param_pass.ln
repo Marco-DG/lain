@@ -1,0 +1,14 @@
+// Sprint 5 / Q-004 step B: function returning a slice borrows from the
+// pointer-bearing parameter. After the result is no longer used (NLL),
+// the parameter can be consumed/mutated again.
+
+func tail_of(s u8[]) u8[] {
+    return s
+}
+
+proc main() int {
+    var buf = "hello"
+    var sub = tail_of(buf)        // sub borrows from buf
+    // sub goes out of use; NLL releases the borrow.
+    return 0
+}

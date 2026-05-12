@@ -984,7 +984,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                         Type *pty = params->decl->as.variable_decl.type;
                         Expr *arg = args->expr;
                         if (!arg || !pty) continue;
-                        
+
                         // Look for mutable (var) parameters — the borrow source
                         if (pty->mode == MODE_MUTABLE) {
                             Id *owner_id = NULL;
@@ -997,19 +997,65 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                                 while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
                                 if (head && head->kind == EXPR_IDENTIFIER) owner_id = head->as.identifier_expr.id;
                             }
-                            
+
                             if (owner_id) {
                                 LEntry *owner_entry = ltable_find(tbl, owner_id);
-                                Region *owner_region = owner_entry ? owner_entry->region 
+                                Region *owner_region = owner_entry ? owner_entry->region
                                     : tbl->borrows->current_region;
                                 int lu = use_tbl ? use_table_get_last_use(use_tbl, binding_id) : -1;
-                                borrow_register_persistent(tbl->arena, tbl->borrows, 
+                                borrow_register_persistent(tbl->arena, tbl->borrows,
                                     binding_id, owner_id, MODE_MUTABLE, owner_region, lu, NULL);
                                 DBG("STMT_VAR NLL: registered persistent mutable borrow of '%.*s' by '%.*s' (last_use=%d)",
                                     (int)owner_id->length, owner_id->name,
                                     (int)binding_id->length, binding_id->name, lu);
                             }
                         }
+                    }
+                }
+
+                // Sprint 5 / Q-004 (step B): cross-function slice borrow.
+                // If the function returns a pointer-bearing type (T[], *T, struct
+                // containing pointers) AND the return is NOT marked `mov` (i.e.,
+                // not owned), then the result borrows from each pointer-bearing
+                // parameter. Register a persistent shared borrow for each such
+                // argument with NLL last_use tied to the binding.
+                if (ret_type && ret_type->mode != MODE_OWNED && ret_type->mode != MODE_MUTABLE
+                    && is_pointer_bearing(ret_type)) {
+                    DeclList *params = fn_decl->as.function_decl.params;
+                    ExprList *args = init->as.call_expr.args;
+                    for (; params && args; params = params->next, args = args->next) {
+                        Type *pty = params->decl ? params->decl->as.variable_decl.type : NULL;
+                        Expr *arg = args->expr;
+                        if (!arg || !pty) continue;
+                        // Parameter must be pointer-bearing AND not consumed (mov consumes,
+                        // doesn't borrow).
+                        if (!is_pointer_bearing(pty)) continue;
+                        if (pty->mode == MODE_OWNED) continue;
+
+                        // Resolve the root owner Id from the argument.
+                        Id *owner_id = NULL;
+                        Expr *inner = arg;
+                        if (inner->kind == EXPR_MUT) inner = inner->as.mut_expr.expr;
+                        if (inner->kind == EXPR_MOVE) continue; // moved, no borrow
+                        if (inner && inner->kind == EXPR_IDENTIFIER) {
+                            owner_id = inner->as.identifier_expr.id;
+                        } else if (inner && inner->kind == EXPR_MEMBER) {
+                            Expr *head = inner->as.member_expr.target;
+                            while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
+                            if (head && head->kind == EXPR_IDENTIFIER) owner_id = head->as.identifier_expr.id;
+                        }
+                        if (!owner_id) continue;
+
+                        LEntry *owner_entry = ltable_find(tbl, owner_id);
+                        Region *owner_region = owner_entry ? owner_entry->region
+                                                           : tbl->borrows->current_region;
+                        int lu = use_tbl ? use_table_get_last_use(use_tbl, binding_id) : -1;
+                        // SHARED borrow: callee returns a non-mutable view.
+                        borrow_register_persistent(tbl->arena, tbl->borrows,
+                            binding_id, owner_id, MODE_SHARED, owner_region, lu, NULL);
+                        DBG("STMT_VAR Q-004: registered persistent shared borrow of '%.*s' by '%.*s' (return T[])",
+                            (int)owner_id->length, owner_id->name,
+                            (int)binding_id->length, binding_id->name);
                     }
                 }
             }

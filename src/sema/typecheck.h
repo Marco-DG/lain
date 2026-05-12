@@ -91,6 +91,54 @@ static bool can_widen_to(Type *from, Type *to) {
     return integer_rank(from) <= integer_rank(to);
 }
 
+/* ─────────────────────────────────────────────────────────────────╗
+│ Sprint 5 (Q-004 step A): pointer-bearing type detection           │
+│ A type is "pointer-bearing" if any of its values can carry a      │
+│ raw pointer (and therefore borrow tracking is relevant).          │
+╚─────────────────────────────────────────────────────────────────*/
+
+static bool is_pointer_bearing(Type *t) {
+    if (!t) return false;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t) return false;
+    // Direct pointer, slice (T[]), null-terminated slice (T[:0])
+    if (t->kind == TYPE_POINTER) return true;
+    if (t->kind == TYPE_SLICE)   return true;
+    if (t->kind == TYPE_ARRAY) {
+        // Dynamic-length array (slice) is pointer-bearing.
+        // Fixed-size array (length >= 0) is NOT (data is inline).
+        if (t->array_len == -1) return true;
+        return false;
+    }
+    // TYPE_SIMPLE: check the underlying decl's fields recursively.
+    if (t->kind == TYPE_SIMPLE && t->base_type) {
+        char buf[256];
+        if ((size_t)t->base_type->length >= sizeof(buf)) return false;
+        memcpy(buf, t->base_type->name, t->base_type->length);
+        buf[t->base_type->length] = '\0';
+        extern Symbol *sema_lookup(const char *name);
+        Symbol *sym = sema_lookup(buf);
+        if (!sym || !sym->decl) return false;
+        if (sym->decl->kind == DECL_STRUCT) {
+            for (DeclList *f = sym->decl->as.struct_decl.fields; f; f = f->next) {
+                if (f->decl && f->decl->kind == DECL_VARIABLE) {
+                    if (is_pointer_bearing(f->decl->as.variable_decl.type)) return true;
+                }
+            }
+        }
+        if (sym->decl->kind == DECL_ENUM) {
+            for (Variant *v = sym->decl->as.enum_decl.variants; v; v = v->next) {
+                for (DeclList *f = v->fields; f; f = f->next) {
+                    if (f->decl && f->decl->kind == DECL_VARIABLE) {
+                        if (is_pointer_bearing(f->decl->as.variable_decl.type)) return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
 // F-022 support: structural type compatibility for argument-vs-field check.
 // Conservative: returns true for same simple type, integer widening,
 // pointer-to-same-element, or if either operand has no inferred type.
