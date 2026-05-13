@@ -1,0 +1,12 @@
+// EXPECT: [E086]
+// Sprint 1 Phase 4+5 / Q-002 Paradigm B:
+// u8 + u8 has range [0, 510]. Assigning to u8 (max 255) is rejected
+// because the source range overflows. Programmer must use `+%`, `+|`,
+// or a wider target type.
+
+proc main() int {
+    var a u8 = 100
+    var b u8 = 200
+    var bad u8 = a + b      // [E086] 510 doesn't fit u8
+    return 0
+}

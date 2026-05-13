@@ -171,16 +171,26 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
         case EXPR_BINARY: {
             Range l = sema_eval_range(e->as.binary_expr.left, t);
             Range r = sema_eval_range(e->as.binary_expr.right, t);
-            switch (e->as.binary_expr.op) {
-                case TOKEN_PLUS:
-                case TOKEN_PLUS_PERCENT:
-                case TOKEN_PLUS_PIPE:       return range_add(l, r);
-                case TOKEN_MINUS:
-                case TOKEN_MINUS_PERCENT:
-                case TOKEN_MINUS_PIPE:      return range_sub(l, r);
-                case TOKEN_ASTERISK:
-                case TOKEN_ASTERISK_PERCENT:
-                case TOKEN_ASTERISK_PIPE:   return range_mul(l, r);
+
+            // Q-002: wrapping/saturating ops produce a value bounded by the
+            // LHS type's range — wrap reduces modulo 2^N, saturate clamps.
+            // Either way the result fits in the LHS type, so we clamp.
+            extern int type_integer_range(Type *t, long long *lo, long long *hi);
+            TokenKind op = e->as.binary_expr.op;
+            bool is_wrap_or_sat = (op == TOKEN_PLUS_PERCENT  || op == TOKEN_MINUS_PERCENT
+                                || op == TOKEN_ASTERISK_PERCENT || op == TOKEN_PLUS_PIPE
+                                || op == TOKEN_MINUS_PIPE || op == TOKEN_ASTERISK_PIPE);
+            if (is_wrap_or_sat && e->as.binary_expr.left && e->as.binary_expr.left->type) {
+                long long lo, hi;
+                if (type_integer_range(e->as.binary_expr.left->type, &lo, &hi)) {
+                    return range_make(lo, hi);
+                }
+            }
+
+            switch (op) {
+                case TOKEN_PLUS:            return range_add(l, r);
+                case TOKEN_MINUS:           return range_sub(l, r);
+                case TOKEN_ASTERISK:        return range_mul(l, r);
                 case TOKEN_SLASH:           return range_div(l, r);
                 case TOKEN_PERCENT:         return range_mod(l, r);
                 default:                    return range_unknown();
@@ -196,8 +206,26 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             return range_unknown();
         }
         case EXPR_CAST: {
-            // Preserve range through cast — the underlying value range is still valid
-            return sema_eval_range(e->as.cast_expr.expr, t);
+            // Q-002: an explicit `as` cast intersects the source range with
+            // the target type's range. The user has consented to truncation
+            // (if any), so the resulting value is bounded by the target type.
+            Range src = sema_eval_range(e->as.cast_expr.expr, t);
+            Type *target = e->as.cast_expr.target_type;
+            extern int type_integer_range(Type *t, long long *lo, long long *hi);
+            long long tlo, thi;
+            if (target && type_integer_range(target, &tlo, &thi)) {
+                // If source range is unknown, fall back to target range
+                if (!src.known) return range_make(tlo, thi);
+                long long mn = src.min < tlo ? tlo : src.min;
+                long long mx = src.max > thi ? thi : src.max;
+                if (mn > mx) {
+                    // Empty intersection: the cast wraps/truncates; conservative
+                    // fall back to target range.
+                    return range_make(tlo, thi);
+                }
+                return range_make(mn, mx);
+            }
+            return src;
         }
         case EXPR_CALL: {
             // B.2: interprocedural VRA via return_constraints.

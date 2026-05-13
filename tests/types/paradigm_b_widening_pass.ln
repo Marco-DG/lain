@@ -1,0 +1,14 @@
+// Sprint 1 Phase 4 / Q-002 Paradigm B: the result type of an arithmetic
+// op is the smallest iN/uN that contains the value range.
+//
+// Example: u8 + u8 has range [0+0, 255+255] = [0, 510], which needs 9
+// bits → result type is u9 (stored as uint16_t).
+
+proc main() int {
+    var a u8 = 100
+    var b u8 = 200
+    // Inferred type of (a + b) is u9 (smallest container for range [0, 510]).
+    // Assigning to u16 (which contains u9) passes the boundary check.
+    var sum u16 = a + b
+    return 0
+}

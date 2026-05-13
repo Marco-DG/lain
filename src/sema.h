@@ -425,6 +425,26 @@ static void walk_stmt(Stmt *s) {
 
             if (sema_ranges && s->as.var_stmt.expr) {
                 Range r = sema_eval_range(s->as.var_stmt.expr, sema_ranges);
+                // Q-002 Phase 5: overflow-at-boundary check.
+                // If the variable has a sized integer type and the source
+                // range is known and CONCRETE (not unbounded) to exceed the
+                // type's range, emit E086. We skip the check inside `unsafe`
+                // blocks and when either bound is at INT64 limits (= "unknown
+                // upper/lower" — VRA is conservative on those).
+                if (!sema_in_unsafe_block && r.known && s->as.var_stmt.type) {
+                    long long tlo, thi;
+                    bool unbounded = (r.min <= LLONG_MIN + 1) || (r.max >= LLONG_MAX - 1);
+                    if (!unbounded && type_integer_range(s->as.var_stmt.type, &tlo, &thi)) {
+                        if (r.min < tlo || r.max > thi) {
+                            fprintf(stderr,
+                                "[E086] Error Ln %li, Col %li: assignment to '%.*s' would overflow declared type — value range [%lld, %lld] does not fit in [%lld, %lld]. Use `+%%`/`*%%` (wrapping) or `+|`/`*|` (saturating) or tighten the input constraint.\n",
+                                s->line, s->col,
+                                (int)s->as.var_stmt.name->length, s->as.var_stmt.name->name,
+                                (long long)r.min, (long long)r.max, tlo, thi);
+                            exit(1);
+                        }
+                    }
+                }
                 range_set(sema_ranges, s->as.var_stmt.name, r);
             }
             break;

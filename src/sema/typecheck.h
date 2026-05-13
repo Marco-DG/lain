@@ -1,6 +1,7 @@
 #ifndef SEMA_TYPECHECK_H
 #define SEMA_TYPECHECK_H
 
+#include <limits.h>
 #include "../ast.h"
 #include "resolve.h"
 #include "resolve.h"
@@ -88,6 +89,44 @@ static bool is_integer_type(Type *t) {
     return false;
 }
 
+// Q-002 Phase 5 helpers: range of a sized integer type and fit check.
+// Returns 1 if t has a known fixed-width integer range; sets *out_lo/*out_hi.
+// Handles iN/uN with N ∈ [1, 64] plus legacy `int` (treated as i32).
+// Non-static so ranges.h (included earlier) can forward-declare it.
+int type_integer_range(Type *t, long long *out_lo, long long *out_hi) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return 0;
+    int bits; bool sgn;
+    if (parse_iN_uN(t, &bits, &sgn)) {
+        if (sgn) {
+            // i64: half-bound trick to avoid signed overflow with 1LL<<63.
+            if (bits == 64) {
+                *out_lo = LLONG_MIN;
+                *out_hi = LLONG_MAX;
+            } else {
+                *out_lo = -(1LL << (bits - 1));
+                *out_hi =  (1LL << (bits - 1)) - 1;
+            }
+        } else {
+            *out_lo = 0;
+            if (bits >= 63) {
+                *out_hi = LLONG_MAX;  // uN with N ∈ [63, 64] approximated
+            } else {
+                *out_hi = (1LL << bits) - 1;
+            }
+        }
+        return 1;
+    }
+    // `int` defaults to i32 (Q-002 phase 3 not yet active).
+    const char *n = t->base_type->name;
+    isize len = t->base_type->length;
+    if (len == 3 && memcmp(n, "int", 3) == 0) {
+        *out_lo = -2147483648LL;
+        *out_hi =  2147483647LL;
+        return 1;
+    }
+    return 0;
+}
+
 // Rank in the implicit widening order (Q-002 extended).
 // Rank is essentially the container bit-width category:
 //   N=1..8  → 1     (8-bit container)
@@ -114,6 +153,58 @@ static int integer_rank(Type *t) {
 
 static Type *wider_integer_type(Type *a, Type *b) {
     return integer_rank(a) >= integer_rank(b) ? a : b;
+}
+
+// Q-002 Phase 4 (Paradigm B): smallest iN/uN that contains [min, max].
+// Returns a freshly arena-allocated Type, or NULL if unknown/unbounded.
+// If both operands were unsigned and the result is non-negative, prefer
+// uN; otherwise iN. The naming preserves the "logical N" form (`i9`,
+// `u9`, etc.) so the layout follows c_name_for_type's container rule.
+static Type *paradigm_b_result_type(long long min, long long max, bool both_unsigned) {
+    if (min > max) return NULL;
+    // Unbounded → cannot compute Paradigm B.
+    if (min <= LLONG_MIN + 1 || max >= LLONG_MAX - 1) return NULL;
+
+    int bits = 0;
+    bool sgn;
+    if (both_unsigned && min >= 0) {
+        // uN: smallest N such that max ≤ 2^N - 1
+        sgn = false;
+        unsigned long long v = (unsigned long long)max;
+        bits = 1;
+        while (bits < 64 && (v >> bits) != 0) bits++;
+        if (bits == 0) bits = 1;
+    } else {
+        // iN: smallest N such that min ≥ -2^(N-1) and max ≤ 2^(N-1) - 1
+        sgn = true;
+        // Find bits for max
+        int b_pos = 1;
+        while (b_pos < 64 && ((1LL << (b_pos - 1)) - 1) < max) b_pos++;
+        // Find bits for min (compare with -2^(N-1))
+        int b_neg = 1;
+        while (b_neg < 64 && -(1LL << (b_neg - 1)) > min) b_neg++;
+        bits = b_pos > b_neg ? b_pos : b_neg;
+        if (bits < 1) bits = 1;
+    }
+    if (bits > 64) bits = 64;
+
+    // Build type name "iN" or "uN".
+    char name_buf[8];
+    int nlen = snprintf(name_buf, sizeof(name_buf), "%c%d", sgn ? 'i' : 'u', bits);
+    char *nm = arena_push_many_aligned(sema_arena, char, nlen + 1);
+    memcpy(nm, name_buf, nlen + 1);
+    Id *base = arena_push_aligned(sema_arena, Id);
+    base->name = nm;
+    base->length = nlen;
+    Type *t = arena_push_aligned(sema_arena, Type);
+    t->kind = TYPE_SIMPLE;
+    t->mode = MODE_SHARED;
+    t->base_type = base;
+    t->element_type = NULL;
+    t->array_len = 0;
+    t->sentinel_str = NULL;
+    t->sentinel_len = 0;
+    return t;
 }
 
 static bool can_widen_to(Type *from, Type *to) {
@@ -904,7 +995,30 @@ void sema_infer_expr(Expr *e) {
         } else {
             Type *lt = e->as.binary_expr.left->type;
             Type *rt = e->as.binary_expr.right->type;
-            if (lt && rt && is_integer_type(lt) && is_integer_type(rt)) {
+            // Q-002 Phase 4 (Paradigm B): for +, -, *, /, % the result type
+            // is the smallest iN/uN that contains the value range computed
+            // by interval arithmetic. Wrap/sat ops keep the LHS type (the
+            // operation itself bounds the result to that type).
+            TokenKind aop = e->as.binary_expr.op;
+            bool is_wrap_or_sat = (aop == TOKEN_PLUS_PERCENT  || aop == TOKEN_MINUS_PERCENT
+                                || aop == TOKEN_ASTERISK_PERCENT || aop == TOKEN_PLUS_PIPE
+                                || aop == TOKEN_MINUS_PIPE || aop == TOKEN_ASTERISK_PIPE);
+            bool is_arith = (aop == TOKEN_PLUS || aop == TOKEN_MINUS
+                          || aop == TOKEN_ASTERISK || aop == TOKEN_SLASH
+                          || aop == TOKEN_PERCENT);
+            if (is_wrap_or_sat && lt && is_integer_type(lt)) {
+                e->type = lt;
+            } else if (is_arith && lt && rt && is_integer_type(lt) && is_integer_type(rt) && sema_ranges) {
+                Range r = sema_eval_range(e, sema_ranges);
+                // Detect whether both operands are unsigned: needed to pick
+                // uN vs iN for the result type.
+                int lb, rb; bool ls, rs;
+                bool both_unsigned = parse_iN_uN(lt, &lb, &ls) && parse_iN_uN(rt, &rb, &rs)
+                                     && !ls && !rs;
+                Type *pb = NULL;
+                if (r.known) pb = paradigm_b_result_type(r.min, r.max, both_unsigned);
+                e->type = pb ? pb : wider_integer_type(lt, rt);
+            } else if (lt && rt && is_integer_type(lt) && is_integer_type(rt)) {
                 e->type = wider_integer_type(lt, rt);
             } else {
                 e->type = (lt && is_integer_type(lt)) ? lt :

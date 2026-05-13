@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// Sprint 1 Phase 5 / Q-002: assignment to a sized integer type with a
+// statically-known value out of its range is a compile error.
+
+proc main() int {
+    var x i8 = 200    // i8 = [-128, 127]; 200 doesn't fit
+    return 0
+}
