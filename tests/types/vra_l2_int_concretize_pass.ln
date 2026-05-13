@@ -1,0 +1,16 @@
+// Sprint 14 / Q-011 L2: VRA uses concrete int type's range per
+// monomorphized instance. Sprint 1 Phase 3 already monomorphizes
+// `int → i64` for i64 callers; combined with Sprint 2 auto-sizing,
+// each instance gets correct VRA range.
+
+func add_one(n int) int {
+    return n + 1
+}
+
+proc main() int {
+    var small i32 = 100
+    var big   i64 = 1000000000000
+    var d1 = add_one(small)       // instance with int=i32, VRA on i32 range
+    var d2 = add_one(big)         // instance with int=i64, VRA on i64 range
+    return 0
+}

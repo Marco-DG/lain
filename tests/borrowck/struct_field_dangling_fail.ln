@@ -1,0 +1,17 @@
+// EXPECT: [E010]
+// Sprint 5 step D / Q-005 / G-004: returning a struct whose pointer-bearing
+// field borrows from a local variable produces a dangling reference.
+
+type Lexer {
+    text u8[:0]
+    cursor int
+}
+
+proc bad() Lexer {
+    var local = "hello"
+    return Lexer(local, 0)        // [E010] text borrows from local
+}
+
+proc main() int {
+    return 0
+}

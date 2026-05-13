@@ -1,0 +1,9 @@
+// EXPECT: [VRA]
+// Sprint 4 / Q-003.B: sub-slice with upper bound out of range is a
+// compile error.
+
+proc main() int {
+    var buf = "hello"        // length 5
+    var bad = buf[0..100]    // upper bound 100 > len 5
+    return 0
+}

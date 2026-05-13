@@ -1,0 +1,18 @@
+// Sprint 5 step D: returning a struct whose pointer-bearing field
+// borrows from a PARAMETER (not a local) is allowed — the parameter
+// outlives the function return.
+
+type Lexer {
+    text u8[:0]
+    cursor int
+}
+
+proc make_lexer(src u8[:0]) Lexer {
+    return Lexer(src, 0)         // OK: src is a parameter
+}
+
+proc main() int {
+    var buf = "hello"
+    var l = make_lexer(buf)
+    return 0
+}

@@ -445,6 +445,21 @@ static void walk_stmt(Stmt *s) {
                         }
                     }
                 }
+                // S2 (VRA L1 auto-sizing): intersect source range with the
+                // declared type's range. If the source range is unknown or
+                // wider, the var's range falls back to the type's bounds.
+                if (s->as.var_stmt.type) {
+                    long long tlo, thi;
+                    if (type_integer_range(s->as.var_stmt.type, &tlo, &thi)) {
+                        if (!r.known) {
+                            r = range_make(tlo, thi);
+                        } else {
+                            long long mn = r.min < tlo ? tlo : r.min;
+                            long long mx = r.max > thi ? thi : r.max;
+                            if (mn <= mx) r = range_make(mn, mx);
+                        }
+                    }
+                }
                 range_set(sema_ranges, s->as.var_stmt.name, r);
             }
             break;
@@ -1074,14 +1089,16 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             walk_stmt(sl->stmt);
         sema_walk_phase = false;
 
-        current_return_type = NULL;
-        current_function_decl = NULL;
-        current_module_path = NULL;
-
         // 2.d) Linearity check: run function-level linearity checker
         // NOTE: sema_check_function_linearity must run while sema_locals still
         // exist (so it can trust that implicit locals were created by resolve).
+        // We keep current_function_decl set so the linearity pass can inspect
+        // the function's parameters (Sprint 5 step D).
         sema_check_function_linearity(d);
+
+        current_return_type = NULL;
+        current_function_decl = NULL;
+        current_module_path = NULL;
 
         // 2.e) Clear locals after all passes
         sema_clear_locals();

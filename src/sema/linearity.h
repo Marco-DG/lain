@@ -1242,7 +1242,82 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
     case STMT_RETURN: {
         Expr *val = s->as.return_stmt.value;
         if (val) sema_check_expr_linearity(val, tbl, loop_depth);
-        
+
+        // Sprint 5 step D / Q-005: returning a struct constructor with
+        // pointer-bearing field arguments rooted at a local variable is
+        // a dangling-reference error. The struct carries pointers into
+        // memory that dies at function return. We identify "local" by
+        // exclusion: if the rooted identifier is NOT a parameter of the
+        // current function, treat it as a local.
+        if (val && val->kind == EXPR_CALL && val->as.call_expr.callee
+            && current_function_decl) {
+            Expr *callee = val->as.call_expr.callee;
+            Decl *sd = NULL;
+            if ((callee->kind == EXPR_IDENTIFIER || callee->kind == EXPR_TYPE)
+                && callee->decl && callee->decl->kind == DECL_STRUCT) {
+                sd = callee->decl;
+            }
+            if (sd) {
+                DeclList *params = current_function_decl->as.function_decl.params;
+                DeclList *field = sd->as.struct_decl.fields;
+                ExprList *arg   = val->as.call_expr.args;
+                while (field && arg) {
+                    Type *ft = (field->decl && field->decl->kind == DECL_VARIABLE)
+                                ? field->decl->as.variable_decl.type : NULL;
+                    if (ft && is_pointer_bearing(ft) && ft->mode != MODE_OWNED) {
+                        // Find root identifier of the arg.
+                        Expr *root = arg->expr;
+                        while (root) {
+                            if (root->kind == EXPR_MEMBER) root = root->as.member_expr.target;
+                            else if (root->kind == EXPR_INDEX) root = root->as.index_expr.target;
+                            else if (root->kind == EXPR_MUT) root = root->as.mut_expr.expr;
+                            else if (root->kind == EXPR_MOVE) root = root->as.move_expr.expr;
+                            else if (root->kind == EXPR_CALL && root->as.call_expr.callee
+                                     && root->as.call_expr.callee->kind == EXPR_MEMBER) {
+                                root = root->as.call_expr.callee->as.member_expr.target;
+                            } else break;
+                        }
+                        if (root && root->kind == EXPR_IDENTIFIER && root->as.identifier_expr.id) {
+                            Id *vname = root->as.identifier_expr.id;
+                            // Strip any mangling prefix: use the trailing segment after the last underscore.
+                            const char *plain = vname->name;
+                            isize plen = vname->length;
+                            for (isize i = plen - 1; i >= 0; i--) {
+                                if (plain[i] == '_') {
+                                    plain = vname->name + i + 1;
+                                    plen = vname->length - i - 1;
+                                    break;
+                                }
+                            }
+                            // Is this name a parameter of the current function?
+                            bool is_param = false;
+                            for (DeclList *p = params; p && !is_param; p = p->next) {
+                                if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+                                Id *pname = p->decl->as.variable_decl.name;
+                                if (!pname) continue;
+                                if (pname->length == plen && memcmp(pname->name, plain, plen) == 0) {
+                                    is_param = true;
+                                }
+                            }
+                            if (!is_param) {
+                                Id *fname = field->decl->as.variable_decl.name;
+                                fprintf(stderr,
+                                    "[E010] Error Ln %li, Col %li: returning struct '%.*s' whose pointer-bearing field '%.*s' borrows from local variable '%.*s'. The local is deallocated at function return, leaving a dangling reference. Pass the buffer in as a parameter, or rework the struct to own its data.\n",
+                                    (long)s->line, (long)s->col,
+                                    (int)sd->as.struct_decl.name->length, sd->as.struct_decl.name->name,
+                                    (int)(fname ? fname->length : 0), fname ? fname->name : "?",
+                                    (int)plen, plain);
+                                diagnostic_show_line(s->line, s->col);
+                                exit(1);
+                            }
+                        }
+                    }
+                    field = field->next;
+                    arg = arg->next;
+                }
+            }
+        }
+
         // Check for dangling `return var local` — returning a mutable
         // reference to a local variable is always a dangling pointer.
         // Recursively unwrap EXPR_MEMBER and EXPR_INDEX to find the root identifier.

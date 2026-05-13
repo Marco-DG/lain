@@ -32,6 +32,57 @@
 static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_type) {
     if (!index_expr || !array_type) return;
 
+    // Sprint 4 / Q-003.B: range index `arr[a..b]` bounds check.
+    // Verify: a >= 0 AND b <= arr.len (semi-open interval [a, b)).
+    if (index_expr->kind == EXPR_RANGE) {
+        Expr *lo = index_expr->as.range_expr.start;
+        Expr *hi = index_expr->as.range_expr.end;
+        Range a = lo ? sema_eval_range(lo, ctx) : range_const(0);
+        Range b = hi ? sema_eval_range(hi, ctx) : range_unknown();
+
+        // a >= 0
+        if (a.known && a.min < 0) {
+            fprintf(stderr, "[VRA] bounds error: slice lower bound may be negative. Range: [%ld, %ld]\n",
+                    (long)a.min, (long)a.max);
+            exit(1);
+        }
+        // Determine array len
+        Range len_range = range_unknown();
+        if (array_type->kind == TYPE_ARRAY && array_type->array_len >= 0) {
+            len_range = range_const(array_type->array_len);
+        } else if (array_type->kind == TYPE_SLICE && array_type->sentinel_len > 0) {
+            len_range = range_const(array_type->sentinel_len);
+        }
+        // b <= len
+        if (len_range.known) {
+            if (!hi) {
+                // Open upper: arr[a..] — fine: implicitly b = arr.len.
+            } else if (b.known) {
+                if (b.max > len_range.min) {
+                    fprintf(stderr, "[VRA] bounds error: slice upper bound %ld out of bounds for length %ld\n",
+                            (long)b.max, (long)len_range.min);
+                    exit(1);
+                }
+            } else {
+                fprintf(stderr, "[VRA] bounds error: slice upper bound range unknown, cannot statically verify against length %ld.\n",
+                        (long)len_range.min);
+                exit(1);
+            }
+            // a <= len too (a == len gives empty slice, OK)
+            if (a.known && a.max > len_range.min) {
+                fprintf(stderr, "[VRA] bounds error: slice lower bound %ld out of bounds for length %ld\n",
+                        (long)a.max, (long)len_range.min);
+                exit(1);
+            }
+        } else {
+            // Dynamic array length — cannot verify statically.
+            // The result is still a slice (a..b) but we don't verify the upper bound.
+            // Lower bound (a >= 0) was checked above. Accept; runtime check would be needed
+            // for full safety on dynamic slices.
+        }
+        return;
+    }
+
     // 1. Determine Array Length Range
     Range len_range = range_unknown();
     if (array_type->kind == TYPE_ARRAY && array_type->array_len >= 0) {
