@@ -1,0 +1,16 @@
+// Sprint 15 / Q-011 L3: post-loop affine recap.
+// `x = x + 1` inside `for i in 0..10` produces post-loop range
+// x ∈ [10, 10] exactly. Without affine recap, x would be unknown
+// after the loop and a constraint check would fail.
+
+func require_ten(x int == 10) int {
+    return 0
+}
+
+proc main() int {
+    var x = 0
+    for i in 0..10 {
+        x = x + 1
+    }
+    return require_ten(x)
+}

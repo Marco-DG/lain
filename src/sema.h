@@ -70,6 +70,39 @@ bool sema_walk_phase = false;
 ╚─────────────────────────────────────────────────────────────────*/
 
 // Helper to widen variables modified in a loop to unknown
+// S15 (VRA L3): affine pattern detection.
+// Returns true if the statement is `x = x + c` or `x = x - c` (literal c),
+// setting *out_var, *out_step (positive for +, negative for -).
+static bool sema_is_affine_assign(Stmt *s, Id **out_var, long long *out_step) {
+    if (!s || s->kind != STMT_ASSIGN) return false;
+    Expr *t = s->as.assign_stmt.target;
+    Expr *e = s->as.assign_stmt.expr;
+    if (!t || !e || t->kind != EXPR_IDENTIFIER || e->kind != EXPR_BINARY) return false;
+    TokenKind op = e->as.binary_expr.op;
+    if (op != TOKEN_PLUS && op != TOKEN_MINUS) return false;
+    Expr *l = e->as.binary_expr.left;
+    Expr *r = e->as.binary_expr.right;
+    if (!l || !r) return false;
+    // Pattern: x = x +/- LIT, or x = LIT + x (commutative for +).
+    Id *vt = t->as.identifier_expr.id;
+    bool match_xc = (l->kind == EXPR_IDENTIFIER
+        && l->as.identifier_expr.id->length == vt->length
+        && memcmp(l->as.identifier_expr.id->name, vt->name, vt->length) == 0
+        && r->kind == EXPR_LITERAL);
+    bool match_cx = (op == TOKEN_PLUS
+        && r->kind == EXPR_IDENTIFIER
+        && r->as.identifier_expr.id->length == vt->length
+        && memcmp(r->as.identifier_expr.id->name, vt->name, vt->length) == 0
+        && l->kind == EXPR_LITERAL);
+    if (!match_xc && !match_cx) return false;
+    long long c = match_xc ? l->as.literal_expr.value /* but we want r */ : 0;
+    if (match_xc) c = r->as.literal_expr.value;
+    else c = l->as.literal_expr.value;
+    *out_var = vt;
+    *out_step = (op == TOKEN_MINUS) ? -c : c;
+    return true;
+}
+
 static void sema_widen_loop(StmtList *body, RangeTable *t) {
     for (StmtList *l = body; l; l = l->next) {
         Stmt *s = l->stmt;
@@ -502,30 +535,81 @@ static void walk_stmt(Stmt *s) {
             sema_infer_expr(s->as.for_stmt.iterable);
             // Range Analysis: Loop index
             Range end_range = range_unknown();
-            if (sema_ranges && s->as.for_stmt.iterable->kind == EXPR_RANGE && s->as.for_stmt.index_name) {
-                Range start = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.start, sema_ranges);
-                end_range = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.end, sema_ranges);
-                if (start.known && end_range.known) {
-                    Range r = range_make(start.min, end_range.max - 1);
-                    range_set(sema_ranges, s->as.for_stmt.index_name, r);
+            Range start_range = range_unknown();
+            // Iteration variable for `for V in start..end` is value_name.
+            // (index_name is set only for the dual form `for I, V in ...`.)
+            Id *iter_var = s->as.for_stmt.index_name
+                ? s->as.for_stmt.index_name
+                : s->as.for_stmt.value_name;
+            if (sema_ranges && s->as.for_stmt.iterable->kind == EXPR_RANGE && iter_var) {
+                start_range = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.start, sema_ranges);
+                end_range   = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.end, sema_ranges);
+                if (start_range.known && end_range.known) {
+                    Range r = range_make(start_range.min, end_range.max - 1);
+                    range_set(sema_ranges, iter_var, r);
                 }
             }
-            
+
+            // S15 (VRA L3): collect affine updates in the body before widening.
+            // For each `x = x + c` or `x = x - c`, capture init range and step
+            // so we can compute post-loop range precisely.
+            #define MAX_AFFINE 16
+            Id   *affine_vars[MAX_AFFINE]; long long affine_steps[MAX_AFFINE];
+            Range affine_inits[MAX_AFFINE]; int n_affine = 0;
+            if (sema_ranges) {
+                for (StmtList *b = s->as.for_stmt.body; b; b = b->next) {
+                    Id *v = NULL; long long step = 0;
+                    if (sema_is_affine_assign(b->stmt, &v, &step) && n_affine < MAX_AFFINE) {
+                        affine_vars[n_affine]  = v;
+                        affine_steps[n_affine] = step;
+                        affine_inits[n_affine] = range_get(sema_ranges, v);
+                        n_affine++;
+                    }
+                }
+            }
+
             // Widen modified variables BEFORE body
             if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
-            
+
             sema_push_scope();
             for (StmtList *b = s->as.for_stmt.body; b; b = b->next)
                 walk_stmt(b->stmt);
             sema_pop_scope();
-                
+
             // Widen modified variables AFTER body
             if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
-            
-            // Preserve loop index value at exit: for i in start..end → i == end after loop
-            if (sema_ranges && s->as.for_stmt.index_name && end_range.known) {
-                range_set(sema_ranges, s->as.for_stmt.index_name, end_range);
+
+            // S15 (VRA L3): post-loop affine recap.
+            // For each affine var, compute final range from init + step * iter_count.
+            // Iter count = end - start (loop iterates exactly that many times).
+            if (sema_ranges && n_affine > 0 && start_range.known && end_range.known) {
+                long long iter_min = end_range.min - start_range.max;
+                long long iter_max = end_range.max - start_range.min;
+                if (iter_min < 0) iter_min = 0;  // empty-loop case
+                if (iter_max < 0) iter_max = 0;
+                for (int i = 0; i < n_affine; i++) {
+                    if (!affine_inits[i].known) continue;
+                    long long step = affine_steps[i];
+                    long long delta_min, delta_max;
+                    if (step >= 0) {
+                        delta_min = step * iter_min;
+                        delta_max = step * iter_max;
+                    } else {
+                        delta_min = step * iter_max;
+                        delta_max = step * iter_min;
+                    }
+                    Range r = range_make(
+                        affine_inits[i].min + delta_min,
+                        affine_inits[i].max + delta_max);
+                    range_set(sema_ranges, affine_vars[i], r);
+                }
             }
+
+            // Preserve loop index value at exit: for i in start..end → i == end after loop
+            if (sema_ranges && iter_var && end_range.known) {
+                range_set(sema_ranges, iter_var, end_range);
+            }
+            #undef MAX_AFFINE
             break;
         }
         case STMT_WHILE:
