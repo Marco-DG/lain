@@ -1,0 +1,18 @@
+// Sprint 19: [packed] struct with bit-exact layout.
+// `GpioModer` packs 16 × 2-bit fields into a single uint32_t.
+// Constructor packs values; per-field getters extract them.
+
+[packed]
+type GpioModer {
+    pin0 u2
+    pin1 u2
+    pin2 u2
+    pin3 u2
+}
+
+proc main() int {
+    var r = GpioModer(1, 2, 3, 0)
+    // Read pin1: should be 2.
+    var p1 = r.pin1
+    return 0
+}

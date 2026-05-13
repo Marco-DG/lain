@@ -157,6 +157,7 @@ typedef struct EnumDecl {
 typedef struct StructDecl {
     Id* name;          // Struct name
     DeclList* fields;  // List of fields (should be DeclList)
+    bool is_packed;    // Q-002 / Sprint 19: bit-exact layout via [packed]
 } DeclStruct;
 
 typedef struct {
@@ -693,6 +694,7 @@ Decl* decl_struct(Arena* arena, Id* name, DeclList* fields) {
     d->kind = DECL_STRUCT;  // FIXED: Use correct enum value
     d->as.struct_decl.name = name;  // FIXED: Correct member
     d->as.struct_decl.fields = fields;  // FIXED: Correct member
+    d->as.struct_decl.is_packed = false;
     return d;
 }
 

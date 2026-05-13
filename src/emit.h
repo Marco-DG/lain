@@ -25,6 +25,10 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     // Emit forward declarations for structs and enums to satisfy function parameters
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (dl->decl->kind == DECL_STRUCT) {
+            // Sprint 19: [packed] structs are emitted as scalar typedefs (not
+            // C structs), so skip the `typedef struct` forward declaration
+            // for them — it would conflict with the scalar typedef.
+            if (dl->decl->as.struct_decl.is_packed) continue;
             const char *name = c_name_for_id(dl->decl->as.struct_decl.name);
             EMIT("typedef struct %s %s;\n", name, name);
         } else if (dl->decl->kind == DECL_ENUM) {

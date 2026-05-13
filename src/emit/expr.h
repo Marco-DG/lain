@@ -247,7 +247,29 @@ void emit_expr(Expr *expr, int depth) {
 
   case EXPR_MEMBER: {
     ExprMember *m = &expr->as.member_expr;
-    
+
+    // Sprint 19: packed struct field access → StructName_get_field(r)
+    if (m->target && m->target->type
+        && m->target->type->kind == TYPE_SIMPLE
+        && m->target->type->base_type) {
+      char tnam[256];
+      isize tl = m->target->type->base_type->length;
+      if (tl < (isize)sizeof(tnam)) {
+        memcpy(tnam, m->target->type->base_type->name, tl);
+        tnam[tl] = '\0';
+        extern Symbol *sema_lookup(const char *name);
+        Symbol *tsym = sema_lookup(tnam);
+        if (tsym && tsym->decl && tsym->decl->kind == DECL_STRUCT
+            && tsym->decl->as.struct_decl.is_packed) {
+          const char *sn = c_name_for_id(tsym->decl->as.struct_decl.name);
+          EMIT("%s_get_%.*s(", sn, (int)m->member->length, m->member->name);
+          emit_expr(m->target, 0);
+          EMIT(")");
+          break;
+        }
+      }
+    }
+
     // Check if this is an ADT variant access (e.g. Shape.Point) used as a value
     if (m->target->kind == EXPR_IDENTIFIER || m->target->kind == EXPR_TYPE) {
         // We rely on the fact that sema_infer_expr sets the type to the ADT type

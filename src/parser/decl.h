@@ -24,6 +24,7 @@ static bool is_comparison_op(TokenKind kind) {
 static bool is_known_attribute(const char *name, isize len) {
     if (len == 9 && strncmp(name, "fast_math", 9) == 0) return true;
     if (len == 7 && strncmp(name, "private",   7) == 0) return true;
+    if (len == 6 && strncmp(name, "packed",    6) == 0) return true;
     return false;
 }
 
@@ -255,6 +256,19 @@ done:
     if (d) {
         d->attributes = attrs;
         d->is_private = is_private;
+        // Q-002 Sprint 19: propagate [packed] to struct decl.
+        if (d->kind == DECL_STRUCT && decl_has_attribute(d, "packed", 6)) {
+            // covered below via the attribute walk
+        }
+        if (d->kind == DECL_STRUCT) {
+            for (Attr *a = attrs; a; a = a->next) {
+                if (a->name && a->name->length == 6
+                    && strncmp(a->name->name, "packed", 6) == 0) {
+                    d->as.struct_decl.is_packed = true;
+                    break;
+                }
+            }
+        }
     }
     return d;
 }

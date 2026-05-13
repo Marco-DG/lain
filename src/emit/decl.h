@@ -341,9 +341,126 @@ void emit_decl(Decl* decl, int depth) {
 
 
         case DECL_STRUCT: {
+            const char *structName = c_name_for_id(decl->as.struct_decl.name);
+
+            // Sprint 19: [packed] struct — bit-exact layout.
+            // Each iN/uN field occupies exactly N bits within a scalar
+            // container. We emit a typedef to the smallest stdint type
+            // that fits the total bit-width and inline getter functions
+            // that extract each field via shift+mask.
+            if (decl->as.struct_decl.is_packed) {
+                // Pass 1: compute total bit-width and per-field offsets.
+                int total_bits = 0;
+                struct { int bits; int offset; bool ok; } pf[64];
+                int n_fields = 0;
+                bool fields_ok = true;
+                for (DeclList *f = decl->as.struct_decl.fields; f && n_fields < 64; f = f->next) {
+                    if (!f->decl || f->decl->kind != DECL_VARIABLE) {
+                        fields_ok = false; break;
+                    }
+                    Type *ft = f->decl->as.variable_decl.type;
+                    if (!ft || ft->kind != TYPE_SIMPLE || !ft->base_type) {
+                        fields_ok = false; break;
+                    }
+                    const char *fname = ft->base_type->name;
+                    isize flen = ft->base_type->length;
+                    if (flen < 2 || flen > 3 || (fname[0] != 'i' && fname[0] != 'u')) {
+                        fields_ok = false; break;
+                    }
+                    int n = 0; bool ok_digits = true;
+                    for (isize k = 1; k < flen; k++) {
+                        if (fname[k] < '0' || fname[k] > '9') { ok_digits = false; break; }
+                        n = n * 10 + (fname[k] - '0');
+                    }
+                    if (!ok_digits || n < 1 || n > 64) {
+                        fields_ok = false; break;
+                    }
+                    pf[n_fields].bits = n;
+                    pf[n_fields].offset = total_bits;
+                    pf[n_fields].ok = true;
+                    total_bits += n;
+                    n_fields++;
+                }
+                if (!fields_ok || total_bits == 0 || total_bits > 64) {
+                    fprintf(stderr,
+                        "[E121] [packed] struct '%s' invalid: only iN/uN fields with total ≤ 64 bits supported (got %d bits).\n",
+                        structName, total_bits);
+                    exit(1);
+                }
+                const char *container =
+                    (total_bits <= 8)  ? "uint8_t"  :
+                    (total_bits <= 16) ? "uint16_t" :
+                    (total_bits <= 32) ? "uint32_t" :
+                                         "uint64_t";
+                int container_bits =
+                    (total_bits <= 8)  ?  8 :
+                    (total_bits <= 16) ? 16 :
+                    (total_bits <= 32) ? 32 : 64;
+                (void)container_bits;
+
+                emit_indent(depth);
+                EMIT("typedef %s %s;\n", container, structName);
+                register_struct_type(structName);
+
+                // Constructor: takes all fields, returns packed container.
+                emit_indent(depth);
+                EMIT("static inline %s %s_ctor(", structName, structName);
+                int idx = 0;
+                int first = 1;
+                for (DeclList *f = decl->as.struct_decl.fields; f; f = f->next, idx++) {
+                    if (!first) EMIT(", ");
+                    emit_type(f->decl->as.variable_decl.type);
+                    EMIT(" %.*s",
+                         (int)f->decl->as.variable_decl.name->length,
+                         f->decl->as.variable_decl.name->name);
+                    first = 0;
+                }
+                EMIT(") {\n");
+                emit_indent(depth + 1);
+                EMIT("return (%s)(", container);
+                idx = 0; first = 1;
+                for (DeclList *f = decl->as.struct_decl.fields; f; f = f->next, idx++) {
+                    if (!first) EMIT(" | ");
+                    int bits = pf[idx].bits;
+                    int off  = pf[idx].offset;
+                    unsigned long long mask = (bits >= 64) ? ~0ULL : ((1ULL << bits) - 1);
+                    EMIT("(((%s)(%.*s) & 0x%llxULL) << %d)",
+                         container,
+                         (int)f->decl->as.variable_decl.name->length,
+                         f->decl->as.variable_decl.name->name,
+                         mask, off);
+                    first = 0;
+                }
+                EMIT(");\n");
+                emit_indent(depth);
+                EMIT("}\n\n");
+
+                // Per-field getter functions.
+                idx = 0;
+                for (DeclList *f = decl->as.struct_decl.fields; f; f = f->next, idx++) {
+                    int bits = pf[idx].bits;
+                    int off  = pf[idx].offset;
+                    unsigned long long mask = (bits >= 64) ? ~0ULL : ((1ULL << bits) - 1);
+                    emit_indent(depth);
+                    EMIT("static inline ");
+                    emit_type(f->decl->as.variable_decl.type);
+                    EMIT(" %s_get_%.*s(%s r) {\n",
+                         structName,
+                         (int)f->decl->as.variable_decl.name->length,
+                         f->decl->as.variable_decl.name->name,
+                         structName);
+                    emit_indent(depth + 1);
+                    EMIT("return (");
+                    emit_type(f->decl->as.variable_decl.type);
+                    EMIT(")((r >> %d) & 0x%llxULL);\n", off, mask);
+                    emit_indent(depth);
+                    EMIT("}\n\n");
+                }
+                break;
+            }
+
             // 1) struct definition
             emit_indent(depth);
-            const char *structName = c_name_for_id(decl->as.struct_decl.name);
             EMIT("typedef struct %s {\n", structName);
 
             // 2) fields
