@@ -247,6 +247,8 @@ Token lexer_next(Lexer* lexer) {
             case STATE_ASTERISK:
                 switch (c) {
                     case '=':           RETURN_TOKEN(TOKEN_ASTERISK_EQUAL);
+                    case '%':           RETURN_TOKEN(TOKEN_ASTERISK_PERCENT);
+                    case '|':           RETURN_TOKEN(TOKEN_ASTERISK_PIPE);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_ASTERISK);
                 }
@@ -327,6 +329,8 @@ Token lexer_next(Lexer* lexer) {
             case STATE_PLUS:
                 switch (c) {
                     case '=':           RETURN_TOKEN(TOKEN_PLUS_EQUAL);
+                    case '%':           RETURN_TOKEN(TOKEN_PLUS_PERCENT);
+                    case '|':           RETURN_TOKEN(TOKEN_PLUS_PIPE);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_PLUS);
                 }
@@ -335,6 +339,8 @@ Token lexer_next(Lexer* lexer) {
             case STATE_MINUS:
                 switch (c) {
                     case '=':           RETURN_TOKEN(TOKEN_MINUS_EQUAL);
+                    case '%':           RETURN_TOKEN(TOKEN_MINUS_PERCENT);
+                    case '|':           RETURN_TOKEN(TOKEN_MINUS_PIPE);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_MINUS);
                 }

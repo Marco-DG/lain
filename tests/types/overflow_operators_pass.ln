@@ -1,0 +1,15 @@
+// Sprint 1 / Q-002: overflow operators (+%, -%, *%, +|, -|, *|)
+// They are parsed and produce valid C code. Wrapping ops use plain C
+// arithmetic; saturating ops clamp via int64 widening + ternary.
+
+proc main() int {
+    var a u8 = 200
+    var b u8 = 100
+    var w = a +% b      // wrapping add  → 44
+    var s = a +| b      // saturating    → 255
+    var w2 = a *% 3     // wrapping mul
+    var s2 = a *| 3     // saturating mul
+    var d = a -% b      // wrapping sub
+    var sd = a -| b     // saturating sub → 100
+    return 0
+}

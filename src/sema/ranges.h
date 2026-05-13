@@ -172,12 +172,18 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             Range l = sema_eval_range(e->as.binary_expr.left, t);
             Range r = sema_eval_range(e->as.binary_expr.right, t);
             switch (e->as.binary_expr.op) {
-                case TOKEN_PLUS:     return range_add(l, r);
-                case TOKEN_MINUS:    return range_sub(l, r);
-                case TOKEN_ASTERISK: return range_mul(l, r);
-                case TOKEN_SLASH:    return range_div(l, r);
-                case TOKEN_PERCENT:  return range_mod(l, r);
-                default:             return range_unknown();
+                case TOKEN_PLUS:
+                case TOKEN_PLUS_PERCENT:
+                case TOKEN_PLUS_PIPE:       return range_add(l, r);
+                case TOKEN_MINUS:
+                case TOKEN_MINUS_PERCENT:
+                case TOKEN_MINUS_PIPE:      return range_sub(l, r);
+                case TOKEN_ASTERISK:
+                case TOKEN_ASTERISK_PERCENT:
+                case TOKEN_ASTERISK_PIPE:   return range_mul(l, r);
+                case TOKEN_SLASH:           return range_div(l, r);
+                case TOKEN_PERCENT:         return range_mod(l, r);
+                default:                    return range_unknown();
             }
         }
         case EXPR_UNARY: {

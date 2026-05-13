@@ -266,32 +266,53 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
       return;
     }
 
-    // Recognize unsigned/signed fixed-width integer names:
-    // u8,u16,u32,u64  -> uint8_t,uint16_t,uint32_t,uint64_t
-    // i8,i16,i32,i64  -> int8_t,int16_t,int32_t,int64_t
-    // isize, usize    -> intptr_t, uintptr_t (platform pointer-sized)
+    // Recognize generic iN / uN names (N = 1..64) → smallest C type
+    // containing N bits. Q-002 Paradigm B:
+    //   N ∈ [1,8]   → (u)int8_t
+    //   N ∈ [9,16]  → (u)int16_t
+    //   N ∈ [17,32] → (u)int32_t
+    //   N ∈ [33,64] → (u)int64_t
+    // The legacy names u8/u16/u32/u64/i8/i16/i32/i64 are a special case
+    // of this rule (their N is power-of-two).
     char base_name[256];
-    
-    if (base->length == 2 && strncmp(base->name, "u8", 2) == 0) {
-      snprintf(base_name, sizeof(base_name), "uint8_t");
-    } else if (base->length == 3 && strncmp(base->name, "u16", 3) == 0) {
-      snprintf(base_name, sizeof(base_name), "uint16_t");
-    } else if (base->length == 3 && strncmp(base->name, "u32", 3) == 0) {
-      snprintf(base_name, sizeof(base_name), "uint32_t");
-    } else if (base->length == 3 && strncmp(base->name, "u64", 3) == 0) {
-      snprintf(base_name, sizeof(base_name), "uint64_t");
-    } else if (base->length == 2 && strncmp(base->name, "i8", 2) == 0) {
-      snprintf(base_name, sizeof(base_name), "int8_t");
-    } else if (base->length == 3 && strncmp(base->name, "i16", 3) == 0) {
-      snprintf(base_name, sizeof(base_name), "int16_t");
-    } else if (base->length == 3 && strncmp(base->name, "i32", 3) == 0) {
-      snprintf(base_name, sizeof(base_name), "int32_t");
-    } else if (base->length == 3 && strncmp(base->name, "i64", 3) == 0) {
-      snprintf(base_name, sizeof(base_name), "int64_t");
+
+    // Try to parse iN / uN: 'i' or 'u' followed by 1-2 digits.
+    int parsed_bits = 0;
+    char parsed_sign = 0;
+    if (base->length >= 2 && base->length <= 3
+        && (base->name[0] == 'i' || base->name[0] == 'u')) {
+      // Special-case: isize/usize handled below.
+      if (!(base->length == 5)) {
+        bool all_digits = true;
+        for (isize k = 1; k < base->length; k++) {
+          if (base->name[k] < '0' || base->name[k] > '9') { all_digits = false; break; }
+        }
+        if (all_digits) {
+          int v = 0;
+          for (isize k = 1; k < base->length; k++) v = v * 10 + (base->name[k] - '0');
+          if (v >= 1 && v <= 64) {
+            parsed_bits = v;
+            parsed_sign = base->name[0];
+          }
+        }
+      }
+    }
+
+    if (parsed_bits > 0) {
+      int container =
+          (parsed_bits <= 8)  ?  8 :
+          (parsed_bits <= 16) ? 16 :
+          (parsed_bits <= 32) ? 32 :
+                                64;
+      snprintf(base_name, sizeof(base_name),
+               "%sint%d_t", parsed_sign == 'u' ? "u" : "", container);
     } else if (base->length == 5 && strncmp(base->name, "isize", 5) == 0) {
       snprintf(base_name, sizeof(base_name), "intptr_t");
     } else if (base->length == 5 && strncmp(base->name, "usize", 5) == 0) {
       snprintf(base_name, sizeof(base_name), "uintptr_t");
+    } else if (base->length == 3 && strncmp(base->name, "int", 3) == 0) {
+      // Q-002: `int` is logical/unsized; default concrete = int32_t.
+      snprintf(base_name, sizeof(base_name), "int32_t");
     } else if (base->length == 4 && strncmp(base->name, "bool", 4) == 0) {
       snprintf(base_name, sizeof(base_name), "_Bool");
     } else if (base->length == 3 && strncmp(base->name, "f32", 3) == 0) {

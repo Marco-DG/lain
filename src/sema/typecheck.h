@@ -55,29 +55,59 @@ Type *get_builtin_u8_type(void) {
 │ 1b) Implicit integer widening helpers                          │
 ╚─────────────────────────────────────────────────────────────────*/
 
+// Q-002 helpers: parse iN / uN. Returns 0 if not an iN/uN type.
+// On success, *out_bits is the N (1..64), *out_signed is true for iN.
+static int parse_iN_uN(Type *t, int *out_bits, bool *out_signed) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return 0;
+    const char *n = t->base_type->name;
+    isize len = t->base_type->length;
+    if (len < 2 || len > 3) return 0;
+    if (n[0] != 'i' && n[0] != 'u') return 0;
+    int v = 0;
+    for (isize k = 1; k < len; k++) {
+        if (n[k] < '0' || n[k] > '9') return 0;
+        v = v * 10 + (n[k] - '0');
+    }
+    if (v < 1 || v > 64) return 0;
+    *out_bits = v;
+    *out_signed = (n[0] == 'i');
+    return 1;
+}
+
 static bool is_integer_type(Type *t) {
     if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
     const char *n = t->base_type->name;
     isize len = t->base_type->length;
-    static const struct { const char *name; int len; } tbl[] = {
-        {"u8",2},{"i8",2},{"u16",3},{"i16",3},{"u32",3},{"i32",3},
-        {"u64",3},{"i64",3},{"int",3},{"usize",5},{"isize",5},
-    };
-    for (int i = 0; i < 11; i++) {
-        if (len == tbl[i].len && memcmp(n, tbl[i].name, len) == 0)
-            return true;
-    }
+    // Generic iN / uN (Q-002: N=1..64)
+    int bits; bool sgn;
+    if (parse_iN_uN(t, &bits, &sgn)) return true;
+    // Legacy `int` (default i32, monomorphized at call site per Q-002).
+    if (len == 3 && memcmp(n, "int", 3) == 0) return true;
+    // Pointer-sized.
+    if (len == 5 && (memcmp(n,"usize",5)==0 || memcmp(n,"isize",5)==0)) return true;
     return false;
 }
 
+// Rank in the implicit widening order (Q-002 extended).
+// Rank is essentially the container bit-width category:
+//   N=1..8  → 1     (8-bit container)
+//   N=9..16 → 2     (16-bit container)
+//   N=17..32→ 3     (32-bit container)
+//   N=33..64→ 4     (64-bit container)
+//   usize/isize → 5 (pointer-sized, may be 32 or 64)
+//   int → 3         (default i32 monomorphization)
 static int integer_rank(Type *t) {
     if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return 0;
+    int bits; bool sgn;
+    if (parse_iN_uN(t, &bits, &sgn)) {
+        if (bits <= 8) return 1;
+        if (bits <= 16) return 2;
+        if (bits <= 32) return 3;
+        return 4;  // 33..64
+    }
     const char *n = t->base_type->name;
     isize len = t->base_type->length;
-    if (len == 2 && (memcmp(n,"u8",2)==0 || memcmp(n,"i8",2)==0)) return 1;
-    if (len == 3 && (memcmp(n,"u16",3)==0 || memcmp(n,"i16",3)==0)) return 2;
-    if (len == 3 && (memcmp(n,"u32",3)==0 || memcmp(n,"i32",3)==0 || memcmp(n,"int",3)==0)) return 3;
-    if (len == 3 && (memcmp(n,"u64",3)==0 || memcmp(n,"i64",3)==0)) return 4;
+    if (len == 3 && memcmp(n, "int", 3) == 0) return 3;
     if (len == 5 && (memcmp(n,"usize",5)==0 || memcmp(n,"isize",5)==0)) return 5;
     return 0;
 }

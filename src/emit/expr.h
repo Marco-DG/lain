@@ -169,6 +169,66 @@ void emit_expr(Expr *expr, int depth) {
         EMIT(is_ptr ? "->len" : ".len");
       }
       EMIT(")");
+    } else if (expr->as.binary_expr.op == TOKEN_PLUS_PERCENT
+            || expr->as.binary_expr.op == TOKEN_MINUS_PERCENT
+            || expr->as.binary_expr.op == TOKEN_ASTERISK_PERCENT) {
+      // Q-002 wrapping ops: emit plain C op. C semantics on unsigned types are
+      // already wrapping; on signed types we rely on -fwrapv at compile time.
+      const char *op_c = (expr->as.binary_expr.op == TOKEN_PLUS_PERCENT)  ? "+"
+                       : (expr->as.binary_expr.op == TOKEN_MINUS_PERCENT) ? "-"
+                                                                          : "*";
+      EMIT("(");
+      emit_expr(expr->as.binary_expr.left, depth);
+      EMIT(" %s ", op_c);
+      emit_expr(expr->as.binary_expr.right, depth);
+      EMIT(")");
+    } else if (expr->as.binary_expr.op == TOKEN_PLUS_PIPE
+            || expr->as.binary_expr.op == TOKEN_MINUS_PIPE
+            || expr->as.binary_expr.op == TOKEN_ASTERISK_PIPE) {
+      // Q-002 saturating ops: compute in a wider type then clamp to the
+      // declared range. For signed iN: int64_t intermediate. For unsigned uN:
+      // also int64_t (signed) so the < 0 case is representable.
+      const char *op_c = (expr->as.binary_expr.op == TOKEN_PLUS_PIPE)  ? "+"
+                       : (expr->as.binary_expr.op == TOKEN_MINUS_PIPE) ? "-"
+                                                                       : "*";
+      Type *lt = expr->as.binary_expr.left ? expr->as.binary_expr.left->type : NULL;
+      long long lo = -2147483648LL, hi = 2147483647LL;
+      if (lt && lt->kind == TYPE_SIMPLE && lt->base_type) {
+        int bits; bool sgn;
+        if (parse_iN_uN(lt, &bits, &sgn)) {
+          if (!sgn) {
+            lo = 0;
+            hi = (bits >= 63) ? 9223372036854775807LL : ((1LL << bits) - 1);
+          } else {
+            long long b = bits;
+            lo = -(1LL << (b - 1));
+            hi =  (1LL << (b - 1)) - 1;
+          }
+        }
+      }
+      // Build: ({ int64_t __t = (int64_t)L op (int64_t)R; __t > hi ? hi : (__t < lo ? lo : __t); })
+      // We avoid statement expressions for portability and inline a ternary.
+      // Pattern: (((int64_t)L op (int64_t)R) > hi) ? hi : ( ((int64_t)L op (int64_t)R) < lo ? lo : ((int64_t)L op (int64_t)R) )
+      EMIT("( ");
+      // outer: > hi check
+      EMIT("(((int64_t)(");
+      emit_expr(expr->as.binary_expr.left, depth);
+      EMIT(") %s (int64_t)(", op_c);
+      emit_expr(expr->as.binary_expr.right, depth);
+      EMIT(")) > %lldLL) ? %lldLL : ", hi, hi);
+      // < lo check
+      EMIT("( (((int64_t)(");
+      emit_expr(expr->as.binary_expr.left, depth);
+      EMIT(") %s (int64_t)(", op_c);
+      emit_expr(expr->as.binary_expr.right, depth);
+      EMIT(")) < %lldLL) ? %lldLL : ", lo, lo);
+      // in-range: emit the actual op
+      EMIT("((int64_t)(");
+      emit_expr(expr->as.binary_expr.left, depth);
+      EMIT(") %s (int64_t)(", op_c);
+      emit_expr(expr->as.binary_expr.right, depth);
+      EMIT(")) )");
+      EMIT(" )");
     } else {
       // Fallback for all other binary ops: +, -, *, /, %, <, ==, bitwise, etc.
       EMIT("(");

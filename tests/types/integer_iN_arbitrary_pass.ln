@@ -1,0 +1,12 @@
+// Sprint 1 / Q-002: generic iN / uN for any N ∈ [1, 64].
+// They are accepted as types and codegen maps to the smallest C type
+// that contains N bits.
+
+proc main() int {
+    var a u4 = 15           // u4 -> uint8_t (smallest container)
+    var b i5 = 0             // i5 -> int8_t
+    var c u12 = 4095         // u12 -> uint16_t
+    var d i20 = 0            // i20 -> int32_t
+    var e u40 = 0            // u40 -> uint64_t
+    return 0
+}

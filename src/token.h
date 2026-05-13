@@ -54,6 +54,13 @@ typedef enum {
     TOKEN_SHIFT_LEFT,      // <<
     TOKEN_SHIFT_RIGHT,     // >>
     TOKEN_AT,              // @
+    // Q-002 Paradigm B overflow operators
+    TOKEN_PLUS_PERCENT,    // +%  wrapping add
+    TOKEN_MINUS_PERCENT,   // -%  wrapping sub
+    TOKEN_ASTERISK_PERCENT,// *%  wrapping mul
+    TOKEN_PLUS_PIPE,       // +|  saturating add
+    TOKEN_MINUS_PIPE,      // -|  saturating sub
+    TOKEN_ASTERISK_PIPE,   // *|  saturating mul
     TOKEN_LINE_COMMENT,
     TOKEN_MULTILINE_COMMENT,
     TOKEN_KEYWORD_IF,
@@ -209,6 +216,12 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_SHIFT_LEFT:                  return "TOKEN_SHIFT_LEFT";
         case TOKEN_SHIFT_RIGHT:                 return "TOKEN_SHIFT_RIGHT";
         case TOKEN_AT:                          return "TOKEN_AT";
+        case TOKEN_PLUS_PERCENT:                return "TOKEN_PLUS_PERCENT";
+        case TOKEN_MINUS_PERCENT:               return "TOKEN_MINUS_PERCENT";
+        case TOKEN_ASTERISK_PERCENT:            return "TOKEN_ASTERISK_PERCENT";
+        case TOKEN_PLUS_PIPE:                   return "TOKEN_PLUS_PIPE";
+        case TOKEN_MINUS_PIPE:                  return "TOKEN_MINUS_PIPE";
+        case TOKEN_ASTERISK_PIPE:               return "TOKEN_ASTERISK_PIPE";
         case TOKEN_LINE_COMMENT:                return "TOKEN_LINE_COMMENT";
         case TOKEN_MULTILINE_COMMENT:           return "TOKEN_MULTILINE_COMMENT";
         case TOKEN_KEYWORD_IF:                  return "TOKEN_KEYWORD_IF";
@@ -297,6 +310,12 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_SHIFT_LEFT:                  return "<<";
         case TOKEN_SHIFT_RIGHT:                 return ">>";
         case TOKEN_AT:                          return "@";
+        case TOKEN_PLUS_PERCENT:                return "+%";
+        case TOKEN_MINUS_PERCENT:               return "-%";
+        case TOKEN_ASTERISK_PERCENT:            return "*%";
+        case TOKEN_PLUS_PIPE:                   return "+|";
+        case TOKEN_MINUS_PIPE:                  return "-|";
+        case TOKEN_ASTERISK_PIPE:               return "*|";
         case TOKEN_LINE_COMMENT:                return "TOKEN_LINE_COMMENT";
         case TOKEN_MULTILINE_COMMENT:           return "TOKEN_MULTILINE_COMMENT";
         case TOKEN_KEYWORD_IF:                  return "if";
