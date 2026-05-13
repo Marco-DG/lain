@@ -135,7 +135,8 @@ int type_integer_range(Type *t, long long *out_lo, long long *out_hi) {
 //   N=33..64→ 4     (64-bit container)
 //   usize/isize → 5 (pointer-sized, may be 32 or 64)
 //   int → 3         (default i32 monomorphization)
-static int integer_rank(Type *t) {
+int integer_rank(Type *t);
+int integer_rank(Type *t) {
     if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return 0;
     int bits; bool sgn;
     if (parse_iN_uN(t, &bits, &sgn)) {
