@@ -453,6 +453,65 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
     // If it's a type alias: type Name = Expr
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance(); // consume '='
+
+        // Q-002 refinement type alias detection: `type Name = int >= 0 and <= N`.
+        // Snapshot parser state, try parsing a base type identifier followed by
+        // a comparison operator. If matched, parse constraints; otherwise restore
+        // and parse a normal expression.
+        const char *snap_cur = parser->lexer ? parser->lexer->current : NULL;
+        Token snap_tok = parser->token;
+        long snap_line = parser->line, snap_col = parser->column;
+        (void)snap_cur;
+
+        ExprList *type_alias_constraints = NULL;
+        Expr *base_type_expr = NULL;
+        if (parser_match(TOKEN_IDENTIFIER)) {
+            Token base_tok = parser->token;
+            parser_advance();
+            if (is_comparison_op(parser->token.kind)) {
+                // Refinement type alias!
+                Id *base_id = id(arena, base_tok.length, base_tok.start);
+                base_type_expr = expr_identifier(arena, base_id);
+                ExprList **ctail = &type_alias_constraints;
+                do {
+                    TokenKind op = parser->token.kind;
+                    parser_advance();
+                    Expr *rhs = NULL;
+                    if (parser_match(TOKEN_NUMBER)) {
+                        long long v = parse_numeric_literal(parser->token.start, parser->token.length);
+                        parser_advance();
+                        rhs = expr_literal(arena, (int)v);
+                    } else if (parser_match(TOKEN_IDENTIFIER)) {
+                        Id *rhs_id = id(arena, parser->token.length, parser->token.start);
+                        parser_advance();
+                        rhs = expr_identifier(arena, rhs_id);
+                    } else {
+                        parser_error("Expected number or identifier in type alias refinement");
+                    }
+                    Expr *constraint = expr_binary(arena, op, base_type_expr, rhs);
+                    *ctail = expr_list(arena, constraint);
+                    ctail = &(*ctail)->next;
+                    if (parser_match(TOKEN_KEYWORD_AND)) {
+                        parser_advance();
+                        if (!is_comparison_op(parser->token.kind)) {
+                            parser_error("Expected comparison operator after 'and'");
+                        }
+                    } else {
+                        break;
+                    }
+                } while (is_comparison_op(parser->token.kind));
+                Decl *d = decl_type_alias(arena, name, base_type_expr);
+                d->as.type_alias_decl.constraints = type_alias_constraints;
+                return d;
+            } else {
+                // Not a refinement — restore parser state for normal expression parse.
+                parser->token = snap_tok;
+                parser->line = snap_line;
+                parser->column = snap_col;
+                if (parser->lexer) parser->lexer->current = (char*)snap_cur;
+            }
+        }
+
         Expr *expr = parse_expr(arena, parser);
         // Optional semicolon or newline usually separates statements, but at declaration level it's handled by parse_decl
         return decl_type_alias(arena, name, expr);

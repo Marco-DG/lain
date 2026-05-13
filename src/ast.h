@@ -140,6 +140,7 @@ typedef struct {
 typedef struct {
     Id* name;
     Expr* expr; // The right-hand side of type Alias = Expr
+    struct ExprList *constraints; // Q-002 refinement: type Foo = int >= 0 and <= 100
 } DeclTypeAlias;
 
 typedef struct Variant {
@@ -1060,6 +1061,7 @@ Decl *decl_type_alias(Arena *arena, Id *name, Expr *expr) {
     d->kind = DECL_TYPE_ALIAS;
     d->as.type_alias_decl.name = name;
     d->as.type_alias_decl.expr = expr;
+    d->as.type_alias_decl.constraints = NULL;
     return d;
 }
 

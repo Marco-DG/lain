@@ -493,6 +493,53 @@ static void walk_stmt(Stmt *s) {
                         }
                     }
                 }
+
+                // Q-002 refinement type alias propagation:
+                // If the variable's type is a TYPE_SIMPLE pointing to a
+                // type alias with constraints (e.g., `type Pressure = int >= 0 and <= 1000`),
+                // apply each constraint to the source range, narrowing it
+                // and emitting E086 on violation.
+                if (sema_ranges && s->as.var_stmt.type
+                    && s->as.var_stmt.type->kind == TYPE_SIMPLE
+                    && s->as.var_stmt.type->base_type
+                    && !sema_in_unsafe_block && r.known) {
+                    char tnam[256];
+                    isize tl = s->as.var_stmt.type->base_type->length;
+                    if (tl < (isize)sizeof(tnam)) {
+                        memcpy(tnam, s->as.var_stmt.type->base_type->name, tl);
+                        tnam[tl] = '\0';
+                        Symbol *tsym = sema_lookup(tnam);
+                        if (tsym && tsym->decl && tsym->decl->kind == DECL_TYPE_ALIAS
+                            && tsym->decl->as.type_alias_decl.constraints) {
+                            for (ExprList *c = tsym->decl->as.type_alias_decl.constraints; c; c = c->next) {
+                                if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+                                TokenKind op = c->expr->as.binary_expr.op;
+                                Expr *rhs = c->expr->as.binary_expr.right;
+                                if (!rhs || rhs->kind != EXPR_LITERAL) continue;
+                                long long k = rhs->as.literal_expr.value;
+                                bool fits = true;
+                                switch (op) {
+                                    case TOKEN_ANGLE_BRACKET_LEFT_EQUAL: fits = (r.max <= k); break;  // <=
+                                    case TOKEN_ANGLE_BRACKET_LEFT:        fits = (r.max <  k); break;  // <
+                                    case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: fits = (r.min >= k); break;  // >=
+                                    case TOKEN_ANGLE_BRACKET_RIGHT:       fits = (r.min >  k); break;  // >
+                                    case TOKEN_EQUAL_EQUAL:               fits = (r.min == k && r.max == k); break;
+                                    case TOKEN_BANG_EQUAL:                fits = (r.min > k || r.max < k); break;
+                                    default: fits = true; break;
+                                }
+                                if (!fits) {
+                                    fprintf(stderr,
+                                        "[E086] Error Ln %li, Col %li: assignment to '%.*s' violates refinement constraint of type alias '%s': value range [%lld, %lld] does not satisfy the alias constraint.\n",
+                                        s->line, s->col,
+                                        (int)s->as.var_stmt.name->length, s->as.var_stmt.name->name,
+                                        tnam, (long long)r.min, (long long)r.max);
+                                    exit(1);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 range_set(sema_ranges, s->as.var_stmt.name, r);
             }
             break;
