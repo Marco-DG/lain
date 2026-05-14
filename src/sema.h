@@ -897,6 +897,170 @@ static void mrec_walk_stmt_list(StmtList *list, void (*visit)(Decl *)) {
     for (StmtList *l = list; l; l = l->next) mrec_walk_stmt(l->stmt, visit);
 }
 
+/*─────────────────────────────────────────────────────────────────╗
+│ W130: proc-could-be-func suggestion                              │
+│                                                                  │
+│ A `proc` is eligible to become `func` when its body uses no       │
+│ external side effect: no proc calls, no extern-proc calls, no    │
+│ panic, no unbounded while (without `decreasing`), no read or     │
+│ write of mutable globals. The compiler scans every proc; for    │
+│ those eligible, emits W130 with the suggestion.                  │
+╚─────────────────────────────────────────────────────────────────*/
+
+static bool proc_w130_eligible;       // false on any violation
+static Decl *proc_w130_self;          // decl being analyzed (to detect self-recursion)
+static bool proc_w130_has_while_no_measure;  // while w/o decreasing seen
+
+static void proc_w130_visit_expr(Expr *e);
+static void proc_w130_visit_stmt(Stmt *s);
+static void proc_w130_visit_stmt_list(StmtList *list) {
+    for (StmtList *l = list; l; l = l->next) proc_w130_visit_stmt(l->stmt);
+}
+
+static void proc_w130_visit_expr(Expr *e) {
+    if (!e || !proc_w130_eligible) return;
+    switch (e->kind) {
+        case EXPR_CALL: {
+            Expr *callee = e->as.call_expr.callee;
+            // Detect `panic("...")` by name.
+            if (callee && callee->kind == EXPR_IDENTIFIER &&
+                callee->as.identifier_expr.id &&
+                callee->as.identifier_expr.id->length == 5 &&
+                memcmp(callee->as.identifier_expr.id->name, "panic", 5) == 0) {
+                proc_w130_eligible = false;
+                return;
+            }
+            if (callee && callee->decl) {
+                DeclKind k = callee->decl->kind;
+                if (k == DECL_PROCEDURE || k == DECL_EXTERN_PROCEDURE) {
+                    proc_w130_eligible = false; return;
+                }
+                if (callee->decl == proc_w130_self) {
+                    // Self-recursion: func disallows it.
+                    proc_w130_eligible = false; return;
+                }
+            } else if (callee && callee->kind == EXPR_IDENTIFIER) {
+                // Unresolved callee — could be an extern proc or
+                // anything else with side effects. Be conservative:
+                // do NOT suggest func when we can't prove purity.
+                proc_w130_eligible = false; return;
+            }
+            proc_w130_visit_expr(callee);
+            for (ExprList *a = e->as.call_expr.args; a; a = a->next)
+                proc_w130_visit_expr(a->expr);
+            break;
+        }
+        case EXPR_IDENTIFIER: {
+            if (e->is_global && e->decl && e->decl->kind == DECL_VARIABLE &&
+                e->decl->as.variable_decl.is_mutable) {
+                proc_w130_eligible = false;
+            }
+            break;
+        }
+        case EXPR_BINARY:
+            proc_w130_visit_expr(e->as.binary_expr.left);
+            proc_w130_visit_expr(e->as.binary_expr.right); break;
+        case EXPR_UNARY: proc_w130_visit_expr(e->as.unary_expr.right); break;
+        case EXPR_MEMBER: proc_w130_visit_expr(e->as.member_expr.target); break;
+        case EXPR_INDEX:
+            proc_w130_visit_expr(e->as.index_expr.target);
+            proc_w130_visit_expr(e->as.index_expr.index); break;
+        case EXPR_RANGE:
+            proc_w130_visit_expr(e->as.range_expr.start);
+            proc_w130_visit_expr(e->as.range_expr.end); break;
+        case EXPR_MOVE: proc_w130_visit_expr(e->as.move_expr.expr); break;
+        case EXPR_MUT:  proc_w130_visit_expr(e->as.mut_expr.expr); break;
+        case EXPR_CAST: proc_w130_visit_expr(e->as.cast_expr.expr); break;
+        case EXPR_MATCH:
+            proc_w130_visit_expr(e->as.match_expr.value);
+            for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
+                for (ExprList *p = c->patterns; p; p = p->next) proc_w130_visit_expr(p->expr);
+                proc_w130_visit_expr(c->body);
+            }
+            break;
+        case EXPR_ARRAY_LITERAL:
+            for (ExprList *el = e->as.array_literal_expr.elements; el; el = el->next)
+                proc_w130_visit_expr(el->expr);
+            break;
+        default: break;
+    }
+}
+
+static void proc_w130_visit_stmt(Stmt *s) {
+    if (!s || !proc_w130_eligible) return;
+    switch (s->kind) {
+        case STMT_VAR: proc_w130_visit_expr(s->as.var_stmt.expr); break;
+        case STMT_ASSIGN:
+            // Writing to a mutable global counts as side effect.
+            if (s->as.assign_stmt.target &&
+                s->as.assign_stmt.target->kind == EXPR_IDENTIFIER &&
+                s->as.assign_stmt.target->is_global &&
+                s->as.assign_stmt.target->decl &&
+                s->as.assign_stmt.target->decl->kind == DECL_VARIABLE &&
+                s->as.assign_stmt.target->decl->as.variable_decl.is_mutable) {
+                proc_w130_eligible = false;
+                return;
+            }
+            proc_w130_visit_expr(s->as.assign_stmt.target);
+            proc_w130_visit_expr(s->as.assign_stmt.expr);
+            break;
+        case STMT_EXPR: proc_w130_visit_expr(s->as.expr_stmt.expr); break;
+        case STMT_RETURN: proc_w130_visit_expr(s->as.return_stmt.value); break;
+        case STMT_IF:
+            proc_w130_visit_expr(s->as.if_stmt.cond);
+            proc_w130_visit_stmt_list(s->as.if_stmt.then_branch);
+            proc_w130_visit_stmt_list(s->as.if_stmt.else_branch);
+            break;
+        case STMT_FOR:
+            proc_w130_visit_expr(s->as.for_stmt.iterable);
+            proc_w130_visit_stmt_list(s->as.for_stmt.body);
+            break;
+        case STMT_WHILE:
+            if (!s->as.while_stmt.measure) {
+                // Unbounded while → not pure-eligible.
+                proc_w130_has_while_no_measure = true;
+                proc_w130_eligible = false;
+                return;
+            }
+            proc_w130_visit_expr(s->as.while_stmt.cond);
+            proc_w130_visit_expr(s->as.while_stmt.measure);
+            proc_w130_visit_stmt_list(s->as.while_stmt.body);
+            break;
+        case STMT_MATCH:
+            proc_w130_visit_expr(s->as.match_stmt.value);
+            for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
+                for (ExprList *p = c->patterns; p; p = p->next) proc_w130_visit_expr(p->expr);
+                proc_w130_visit_stmt_list(c->body);
+            }
+            break;
+        case STMT_UNSAFE: proc_w130_visit_stmt_list(s->as.unsafe_stmt.body); break;
+        case STMT_DEFER: proc_w130_visit_stmt(s->as.defer_stmt.stmt); break;
+        default: break;
+    }
+}
+
+static bool sema_w130_silent = false;  // suppress for stdlib if needed
+
+static void sema_check_proc_eligibility(Decl *d) {
+    if (!d || d->kind != DECL_PROCEDURE) return;
+    if (sema_w130_silent) return;
+    proc_w130_eligible = true;
+    proc_w130_self = d;
+    proc_w130_has_while_no_measure = false;
+    proc_w130_visit_stmt_list(d->as.function_decl.body);
+    if (proc_w130_eligible) {
+        Id *n = d->as.function_decl.name;
+        // Skip if name is "main" — entrypoint must remain a proc (it returns
+        // i32 exit code and signals "this is the program start").
+        if (n && n->length == 4 && memcmp(n->name, "main", 4) == 0) return;
+        fprintf(stderr,
+            "[W130] '%.*s' is declared `proc` but has no observable side\n"
+            "       effect: it could be `func`. Consider downgrading to\n"
+            "       `func` for clearer intent.\n",
+            (int)n->length, n->name);
+    }
+}
+
 static void mrec_walk_expr(Expr *e, void (*visit)(Decl *)) {
     if (!e) return;
     switch (e->kind) {
@@ -1073,6 +1237,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             }
         }
     }
+
 
     // 2) For each function: resolve → infer → linearity → clear locals
     for (DeclList *dl = decls; dl; dl = dl->next) {
@@ -1288,6 +1453,14 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // Direct recursion is already rejected in typecheck.h; here we catch
     // indirect cycles (f -> g -> f) that break the P4 termination guarantee.
     sema_check_no_mutual_recursion(decls);
+
+    // 4) W130: every `proc` whose body has no side effect could be `func`.
+    // Run AFTER per-function resolve so Expr.decl is populated everywhere.
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (dl->decl && dl->decl->kind == DECL_PROCEDURE) {
+            sema_check_proc_eligibility(dl->decl);
+        }
+    }
 }
 
 // Optional: destroy/reset global state

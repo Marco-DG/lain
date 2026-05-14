@@ -5,7 +5,7 @@ type Resource {
     mov handle i32
 }
 
-proc consume(r mov Resource) i32 {
+func consume(r mov Resource) i32 {
     return mov r.handle
 }
 

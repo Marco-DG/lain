@@ -7,7 +7,7 @@ type Vec {
     cap i32
 }
 
-proc push_n(var v Vec, n i32) {
+func push_n(var v Vec, n i32) {
     v.len = v.len + n
 }
 

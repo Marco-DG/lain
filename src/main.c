@@ -65,6 +65,7 @@ int main(int argc, char **argv) {
     // Initialize target config (host auto-detect unless --target= specified).
     target_init_for(args.target_triple);
     sema_dump_niche = args.dump_niche;
+    sema_w130_silent = args.no_w130;
 
     // C.1 fix: if the user passed an **absolute** path, chdir to its directory
     // so import-based module resolution keeps working. Relative paths are left

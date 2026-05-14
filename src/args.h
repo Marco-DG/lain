@@ -15,6 +15,7 @@ typedef struct
     char*       output_file;  // -o flag, defaults to "out.c"
     bool        dump_ast;
     bool        dump_niche;    // --dump-niche: print enum niche layout decisions
+    bool        no_w130;       // --no-w130: suppress proc-could-be-func warning
     const char* target_triple; // --target=<triple>, NULL = host
 } Args;
 
@@ -45,6 +46,8 @@ static Args args_parse(int argc, char** argv)
             args.dump_ast = true;
         } else if (strcmp(argv[i], "--dump-niche") == 0) {
             args.dump_niche = true;
+        } else if (strcmp(argv[i], "--no-w130") == 0) {
+            args.no_w130 = true;
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             args.output_file = argv[++i];
         } else if (strncmp(argv[i], "--target=", 9) == 0) {

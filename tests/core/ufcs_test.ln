@@ -4,7 +4,7 @@ type Counter {
     val i32
 }
 
-proc increment(var c Counter, amount i32) {
+func increment(var c Counter, amount i32) {
     c.val = c.val + amount
 }
 

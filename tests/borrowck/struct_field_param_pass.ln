@@ -7,7 +7,7 @@ type Lexer {
     cursor i32
 }
 
-proc make_lexer(src u8[:0]) Lexer {
+func make_lexer(src u8[:0]) Lexer {
     return Lexer(src, 0)         // OK: src is a parameter
 }
 

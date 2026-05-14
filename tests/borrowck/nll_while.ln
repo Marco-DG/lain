@@ -8,7 +8,7 @@ func peek(l Lexer) i32 {
     return l.pos
 }
 
-proc consume(var l Lexer) i32 {
+func consume(var l Lexer) i32 {
     l.pos = l.pos + 1
     return l.pos
 }

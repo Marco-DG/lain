@@ -6,7 +6,7 @@ proc print_f32(val f32) {
     libc_printf("%f\n", val)
 }
 
-proc max(comptime T type, a T, b T) T {
+func max(comptime T type, a T, b T) T {
     if a > b {
         return a
     }

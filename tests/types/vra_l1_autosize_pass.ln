@@ -2,7 +2,7 @@
 // auto-inherits the type's range. Subsequent operations use the
 // auto-inferred range (intersection of source range and type bounds).
 
-proc compute() u8 {
+func compute() u8 {
     var x u8 = 50          // auto-range: [0, 255], intersected with [50, 50] = [50, 50]
     var y u8 = x + 100     // x ∈ [50, 50], +100 ∈ [150, 150]; fits u8
     return y
