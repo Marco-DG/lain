@@ -657,9 +657,36 @@ void emit_expr(Expr *expr, int depth) {
 
     char res_c_ty[256];
     c_name_for_type(expr->type, res_c_ty, sizeof(res_c_ty));
-    
+
     static int __expr_match_cnt = 0;
     int __match_id = __expr_match_cnt++;
+
+    // D-Niche M4: locate the ADT decl (if any) and its niche layout.
+    Decl *xmatch_adt = NULL;
+    NicheLayout xmatch_niche = {0};
+    bool xmatch_use_niche = false;
+    if (expr->as.match_expr.value->type &&
+        expr->as.match_expr.value->type->kind == TYPE_SIMPLE) {
+        const char *tname = c_name_for_id(
+            expr->as.match_expr.value->type->base_type);
+        size_t tlen = strlen(tname);
+        for (DeclList *dl = sema_decls; dl; dl = dl->next) {
+            if (!dl->decl || dl->decl->kind != DECL_ENUM) continue;
+            Id *en = dl->decl->as.enum_decl.type_name;
+            if (!en) continue;
+            if (((size_t)en->length == tlen &&
+                 strncmp(en->name, tname, tlen) == 0) ||
+                (tlen > (size_t)en->length + 1 &&
+                 tname[tlen - en->length - 1] == '_' &&
+                 strncmp(tname + tlen - en->length, en->name, en->length) == 0)) {
+                xmatch_adt = dl->decl;
+                break;
+            }
+        }
+        if (xmatch_adt) {
+            xmatch_use_niche = enum_is_zero_cost_niche(xmatch_adt, &xmatch_niche);
+        }
+    }
     
     EMIT("({\n");
     emit_indent(depth + 1);
@@ -727,16 +754,34 @@ void emit_expr(Expr *expr, int depth) {
                     break;
                   }
                   case EXPR_CALL: {
-                      EMIT("(__match%d.tag == ", __match_id);
-                      emit_expr(p->expr->as.call_expr.callee, depth + 1);
-                      EMIT(")");
+                      if (xmatch_use_niche && xmatch_adt) {
+                          // Niche path: comparison against the payload
+                          // variant's exclusion of all empty sentinels.
+                          // (Pattern is Variant(bindings) → assume payload.)
+                          EMIT("(1");
+                          for (Variant *ev = xmatch_adt->as.enum_decl.variants; ev; ev = ev->next) {
+                              if (ev->fields) continue;
+                              long long sv = niche_sentinel_for_variant(
+                                  &xmatch_adt->as.enum_decl, ev, &xmatch_niche);
+                              if (xmatch_niche.pool.kind == POOL_POINTER) {
+                                  EMIT(" && (uintptr_t)__match%d != %lldULL",
+                                       __match_id, sv);
+                              } else {
+                                  EMIT(" && __match%d != %lldLL",
+                                       __match_id, sv);
+                              }
+                          }
+                          EMIT(")");
+                      } else {
+                          EMIT("(__match%d.tag == ", __match_id);
+                          emit_expr(p->expr->as.call_expr.callee, depth + 1);
+                          EMIT(")");
+                      }
                       break;
                   }
                   case EXPR_IDENTIFIER: {
                       if (p->expr->is_global && p->expr->decl && p->expr->decl->kind == DECL_ENUM) {
-                          // Emit tag enum constant (e.g. TK_Tag_EOF), not constructor function.
-                          // The variant id is fully-qualified (e.g. "Lain_1_src_main_TK_EOF"),
-                          // so strip the ADT prefix to get just the raw variant name ("EOF").
+                          // Strip ADT prefix from mangled variant id.
                           char adt_buf[256];
                           strncpy(adt_buf, c_name_for_id(p->expr->decl->as.enum_decl.type_name), sizeof(adt_buf));
                           adt_buf[sizeof(adt_buf)-1] = '\0';
@@ -749,6 +794,29 @@ void emit_expr(Expr *expr, int depth) {
                               vid->name[adt_len] == '_') {
                               raw_variant = vid->name + adt_len + 1;
                               raw_len = raw_len - (int)adt_len - 1;
+                          }
+                          // Niche path: compare scrutinee against the
+                          // variant's assigned sentinel value.
+                          if (xmatch_use_niche && xmatch_adt) {
+                              Variant *matched = NULL;
+                              for (Variant *v = xmatch_adt->as.enum_decl.variants; v; v = v->next) {
+                                  if ((int)v->name->length == raw_len &&
+                                      strncmp(v->name->name, raw_variant, raw_len) == 0) {
+                                      matched = v; break;
+                                  }
+                              }
+                              if (matched) {
+                                  long long sv = niche_sentinel_for_variant(
+                                      &xmatch_adt->as.enum_decl, matched, &xmatch_niche);
+                                  if (xmatch_niche.pool.kind == POOL_POINTER) {
+                                      EMIT("(uintptr_t)__match%d == %lldULL",
+                                           __match_id, sv);
+                                  } else {
+                                      EMIT("__match%d == %lldLL",
+                                           __match_id, sv);
+                                  }
+                                  break;
+                              }
                           }
                           EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_buf,
                                raw_len, raw_variant);

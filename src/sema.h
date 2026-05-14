@@ -1061,12 +1061,13 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         if (any_error) exit(1);
     }
 
-    // D-Niche M2: precompute niche layout for every enum. Result
-    // is currently discarded; M3 will route it into the codegen.
-    // --dump-niche prints each decision to stderr for inspection.
+    // D-Niche M2+M5: precompute niche layout for every enum, emit
+    // a best-effort W120 warning when the pool was insufficient,
+    // and dump the decision when --dump-niche is set.
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (dl->decl && dl->decl->kind == DECL_ENUM) {
             NicheLayout layout = niche_compute_layout(&dl->decl->as.enum_decl);
+            niche_emit_w120(&dl->decl->as.enum_decl, &layout);
             if (sema_dump_niche) {
                 niche_dump_layout(&dl->decl->as.enum_decl, &layout);
             }

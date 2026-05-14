@@ -1,0 +1,27 @@
+// D-Niche M6: nested niche cascade. `Result(Option(*T), Err)` should
+// emit all variants packed into `*T`, with sentinels 0 (Option.None),
+// 8 (Result.Err.NotFound), 16 (Result.Err.Permission), 24 (Result.Err.OOM)
+// on host (zero_page_size=64K, alignment=8). Verify with --dump-niche:
+//
+//   [niche] enum 'Inner': payload=1 empty=1 pool=pointer ... zero_cost=yes
+//   [niche]   empty[0] = 0
+//   [niche] enum 'Outer': payload=1 empty=3 pool=pointer ... zero_cost=yes
+//   [niche]   empty[0] = 8
+//   [niche]   empty[1] = 16
+//   [niche]   empty[2] = 24
+
+type Inner {
+    Some { v *u8 }
+    None
+}
+
+type Outer {
+    Ok { value Inner }
+    NotFound
+    Permission
+    OutOfMemory
+}
+
+proc main() i32 {
+    return 0
+}

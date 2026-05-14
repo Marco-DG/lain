@@ -293,6 +293,8 @@ void emit_stmt(Stmt *stmt, int depth) {
     bool is_adt = false;
     Decl *adt_decl = NULL;
     char adt_cname[256];
+    NicheLayout match_niche = {0};
+    bool match_use_niche = false;
     if (scrut->type && scrut->type->kind == TYPE_SIMPLE) {
         // We need the resolved name of the type for C code generation
         const char *tname = c_name_for_id(scrut->type->base_type);
@@ -315,7 +317,7 @@ void emit_stmt(Stmt *stmt, int depth) {
                 adt_decl = dl->decl;
                 break;
             }
-            
+
             // 2. Suffix match
             if (tlen > (size_t)enum_name->length + 1) {
                 const char *suffix = tname + (tlen - enum_name->length);
@@ -325,6 +327,9 @@ void emit_stmt(Stmt *stmt, int depth) {
                     break;
                 }
             }
+        }
+        if (is_adt && adt_decl) {
+            match_use_niche = enum_is_zero_cost_niche(adt_decl, &match_niche);
         }
     }
 
@@ -383,7 +388,37 @@ void emit_stmt(Stmt *stmt, int depth) {
                         }
                         
                         if (matched_v) {
-                            EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_cname, (int)matched_v->name->length, matched_v->name->name);
+                            if (match_use_niche) {
+                                if (matched_v->fields) {
+                                    // Single payload variant — matches if
+                                    // value is none of the empty sentinels.
+                                    EMIT("1");
+                                    for (Variant *ev = adt_decl->as.enum_decl.variants; ev; ev = ev->next) {
+                                        if (ev->fields) continue;
+                                        long long sv = niche_sentinel_for_variant(
+                                            &adt_decl->as.enum_decl, ev, &match_niche);
+                                        if (match_niche.pool.kind == POOL_POINTER) {
+                                            EMIT(" && (uintptr_t)__match%d != %lldULL",
+                                                 __match_id, sv);
+                                        } else {
+                                            EMIT(" && __match%d != (%s)%lldLL",
+                                                 __match_id, adt_cname, sv);
+                                        }
+                                    }
+                                } else {
+                                    long long sv = niche_sentinel_for_variant(
+                                        &adt_decl->as.enum_decl, matched_v, &match_niche);
+                                    if (match_niche.pool.kind == POOL_POINTER) {
+                                        EMIT("(uintptr_t)__match%d == %lldULL",
+                                             __match_id, sv);
+                                    } else {
+                                        EMIT("__match%d == (%s)%lldLL",
+                                             __match_id, adt_cname, sv);
+                                    }
+                                }
+                            } else {
+                                EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_cname, (int)matched_v->name->length, matched_v->name->name);
+                            }
                         } else {
                             EMIT("0 /* unknown variant */");
                         }
@@ -478,14 +513,22 @@ void emit_stmt(Stmt *stmt, int depth) {
                       Type *ft = field->decl->as.variable_decl.type;
                       char fty[256];
                       c_name_for_type(ft, fty, sizeof fty);
-                      
+
                       emit_indent(depth + 1);
-                      EMIT("%s %.*s = __match%d.data.%.*s.%.*s;\n",
-                           fty,
-                           (int)var_name->length, var_name->name,
-                           __match_id,
-                           (int)matched_v->name->length, matched_v->name->name,
-                           (int)field->decl->as.variable_decl.name->length, field->decl->as.variable_decl.name->name);
+                      if (match_use_niche) {
+                          // Single-field payload — value IS the field.
+                          EMIT("%s %.*s = (%s)__match%d;\n",
+                               fty,
+                               (int)var_name->length, var_name->name,
+                               fty, __match_id);
+                      } else {
+                          EMIT("%s %.*s = __match%d.data.%.*s.%.*s;\n",
+                               fty,
+                               (int)var_name->length, var_name->name,
+                               __match_id,
+                               (int)matched_v->name->length, matched_v->name->name,
+                               (int)field->decl->as.variable_decl.name->length, field->decl->as.variable_decl.name->name);
+                      }
                   }
                   arg = arg->next;
                   field = field->next;

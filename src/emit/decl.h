@@ -540,15 +540,94 @@ void emit_decl(Decl* decl, int depth) {
             // 1) lookup the C‐enum tag, e.g. "main_Shape"
             const char *adt_name = c_name_for_id(decl->as.enum_decl.type_name);
 
+            // D-Niche M3: branch on layout. Zero-cost layouts use a
+            // direct typedef of the payload/sentinel type; legacy
+            // tag+union is the fallback path.
+            NicheLayout __niche_layout = {0};
+            bool __use_niche = enum_is_zero_cost_niche(decl, &__niche_layout);
+
+            if (__use_niche) {
+                Variant *pv = enum_payload_variant(&decl->as.enum_decl);
+
+                // Pick the C backing type.
+                //  - Pure-empty enum:        int32_t (sentinel-counted)
+                //  - Single payload pointer: that pointer type
+                //  - Single payload bool:    uint8_t (need values >1 for sentinels)
+                //  - Other:                  fall back to the payload field's type
+                char backing[256];
+                if (!pv) {
+                    snprintf(backing, sizeof backing, "int32_t");
+                } else {
+                    Type *ft = pv->fields->decl->as.variable_decl.type;
+                    if (__niche_layout.pool.kind == POOL_BOOL) {
+                        snprintf(backing, sizeof backing, "uint8_t");
+                    } else {
+                        c_name_for_type(ft, backing, sizeof backing);
+                    }
+                }
+
+                emit_indent(depth);
+                EMIT("typedef %s %s;\n\n", backing, adt_name);
+                register_struct_type(adt_name);
+
+                // Constructors. Each variant gets a static inline function;
+                // empty variants return the assigned sentinel, payload
+                // variants are identity functions on the payload field.
+                for (Variant *v = decl->as.enum_decl.variants; v; v = v->next) {
+                    emit_indent(depth);
+                    EMIT("static inline %s %s_%.*s(", adt_name, adt_name,
+                         (int)v->name->length, v->name->name);
+                    if (v->fields) {
+                        int first = 1;
+                        for (DeclList *f = v->fields; f; f = f->next) {
+                            if (!first) EMIT(", ");
+                            emit_type(f->decl->as.variable_decl.type);
+                            EMIT(" %.*s",
+                                 (int)f->decl->as.variable_decl.name->length,
+                                 f->decl->as.variable_decl.name->name);
+                            first = 0;
+                        }
+                    } else {
+                        EMIT("void");
+                    }
+                    EMIT(") {\n");
+                    emit_indent(depth + 1);
+
+                    if (!v->fields) {
+                        long long s = niche_sentinel_for_variant(
+                            &decl->as.enum_decl, v, &__niche_layout);
+                        if (__niche_layout.pool.kind == POOL_POINTER) {
+                            EMIT("return (%s)(uintptr_t)%lldLL;\n",
+                                 backing, s);
+                        } else {
+                            EMIT("return (%s)%lldLL;\n", backing, s);
+                        }
+                    } else {
+                        // Identity on the single field.
+                        Id *fname = v->fields->decl->as.variable_decl.name;
+                        if (__niche_layout.pool.kind == POOL_BOOL) {
+                            EMIT("return (uint8_t)%.*s;\n",
+                                 (int)fname->length, fname->name);
+                        } else {
+                            EMIT("return %.*s;\n",
+                                 (int)fname->length, fname->name);
+                        }
+                    }
+                    emit_indent(depth);
+                    EMIT("}\n\n");
+                }
+                break;  // skip legacy tag+union emit
+            }
+
             // 2) Generate the Tag Enum: typedef enum { Shape_Tag_Circle, Shape_Tag_Rectangle } Shape_Tag;
             emit_indent(depth);
             EMIT("typedef enum {\n");
-            
+
             for (Variant *v = decl->as.enum_decl.variants; v; v = v->next) {
                 emit_indent(depth + 1);
                 EMIT("%s_Tag_%.*s,\n", adt_name, (int)v->name->length, v->name->name);
             }
-            
+
             emit_indent(depth);
             EMIT("} %s_Tag;\n\n", adt_name);
 

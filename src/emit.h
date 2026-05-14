@@ -32,6 +32,10 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
             const char *name = c_name_for_id(dl->decl->as.struct_decl.name);
             EMIT("typedef struct %s %s;\n", name, name);
         } else if (dl->decl->kind == DECL_ENUM) {
+            // D-Niche M3: skip the `typedef struct` forward for enums
+            // that the niche pass emits as scalar typedefs — it would
+            // conflict with the scalar typedef.
+            if (enum_is_zero_cost_niche(dl->decl, NULL)) continue;
             const char *name = c_name_for_id(dl->decl->as.enum_decl.type_name);
             EMIT("typedef struct %s %s;\n", name, name);
         }

@@ -38,12 +38,13 @@ typedef enum {
 
 typedef struct {
     SentinelPoolKind kind;
-    long long size;           // total slot count
+    long long size;           // total slot count (already adjusted for index_offset)
     long long below_start;    // POOL_INTEGER_*: low end of below-range
     long long below_count;    // POOL_INTEGER_SPLIT: slots in [below_start, below_start+below_count)
     long long above_start;    // POOL_INTEGER_*: low end of above-range
     long long above_count;    // POOL_INTEGER_SPLIT: slots in [above_start, above_start+above_count)
     long long ptr_stride;     // POOL_POINTER: spacing between slots (= pointer_alignment)
+    long long index_offset;   // M6 cascade: skip the first N slots (already used by inner enum)
 } SentinelPool;
 
 /* Layout decision for one enum declaration. */
@@ -54,6 +55,7 @@ typedef struct {
     size_t     empty_variant_count;
     long long *empty_sentinels;         // assigned bit patterns, indexed by variant order
     size_t     empty_sentinels_count;   // == empty_variant_count when zero-cost
+    bool       pool_was_short;          // set when payload exists but pool < empties
     SentinelPool pool;                  // pool snapshot at decision time
 } NicheLayout;
 
@@ -216,27 +218,28 @@ static SentinelPool compute_sentinel_pool_integer_refined(Type *t,
 ╚─────────────────────────────────────────────────────────────────*/
 
 static long long sentinel_pick(SentinelPool *p, size_t index) {
+    long long i = (long long)index + p->index_offset;
     switch (p->kind) {
         case POOL_POINTER:
-            return p->ptr_stride * (long long)index;
+            return p->ptr_stride * i;
 
         case POOL_INTEGER_BELOW:
             /* descending from below_start + below_count - 1 */
-            return (p->below_start + p->below_count - 1) - (long long)index;
+            return (p->below_start + p->below_count - 1) - i;
 
         case POOL_INTEGER_ABOVE:
-            return p->above_start + (long long)index;
+            return p->above_start + i;
 
         case POOL_INTEGER_SPLIT: {
-            if ((long long)index < p->below_count) {
-                return (p->below_start + p->below_count - 1) - (long long)index;
+            if (i < p->below_count) {
+                return (p->below_start + p->below_count - 1) - i;
             }
-            long long over = (long long)index - p->below_count;
+            long long over = i - p->below_count;
             return p->above_start + over;
         }
 
         case POOL_BOOL:
-            return 2 + (long long)index;
+            return 2 + i;
 
         case POOL_EMPTY:
         default:
@@ -279,6 +282,28 @@ static size_t niche_count_empty_variants(DeclEnum *e) {
 │ Multi-payload merging is a future extension (M6 / nested enum).  │
 ╚─────────────────────────────────────────────────────────────────*/
 
+/* Forward declarations needed by niche_pool_for_field cascade. */
+static NicheLayout niche_compute_layout(DeclEnum *e);
+static Variant *enum_payload_variant(DeclEnum *e);
+
+/* Look up an enum declaration by the field type's base name.
+   M6 cascade uses this to detect nested niche-optimized enums. */
+static Decl *niche_find_enum_by_name(Type *t) {
+    extern DeclList *sema_decls;
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return NULL;
+    const char *n = t->base_type->name;
+    isize L = t->base_type->length;
+    for (DeclList *dl = sema_decls; dl; dl = dl->next) {
+        if (!dl->decl || dl->decl->kind != DECL_ENUM) continue;
+        Id *en = dl->decl->as.enum_decl.type_name;
+        if (!en) continue;
+        if (en->length == L && memcmp(en->name, n, L) == 0) {
+            return dl->decl;
+        }
+    }
+    return NULL;
+}
+
 static SentinelPool niche_pool_for_field(Type *field_ty) {
     if (!field_ty) {
         SentinelPool p = {0};
@@ -288,12 +313,36 @@ static SentinelPool niche_pool_for_field(Type *field_ty) {
     SentinelPool p = compute_sentinel_pool(field_ty);
     if (p.kind != POOL_EMPTY) return p;
 
+    /* M6 cascade: the field type might be another niche-optimized enum.
+       Its physical layout is the payload type with empties already
+       occupying the first N sentinel slots — skip them. */
+    Decl *inner_enum = niche_find_enum_by_name(field_ty);
+    if (inner_enum) {
+        NicheLayout inner = niche_compute_layout(&inner_enum->as.enum_decl);
+        if (inner.is_zero_cost) {
+            Variant *pv = enum_payload_variant(&inner_enum->as.enum_decl);
+            if (pv) {
+                Type *phys = pv->fields->decl->as.variable_decl.type;
+                SentinelPool base = compute_sentinel_pool(phys);
+                if (base.kind != POOL_EMPTY) {
+                    base.index_offset = (long long)inner.empty_sentinels_count;
+                    long long used = (long long)inner.empty_sentinels_count;
+                    base.size = base.size > used ? base.size - used : 0;
+                    if (base.size == 0) {
+                        SentinelPool empty = {0};
+                        return empty;
+                    }
+                    return base;
+                }
+            }
+        }
+    }
+
     /* For integer fields, look for a refinement on the field type.
        Refinements live on the DeclTypeAlias the field references.
        In M2 we accept inline refinements on field type only if
        parse_iN_uN succeeds AND field_ty has a non-NULL sentinel_str
-       (current ast hooks for refinement metadata are limited).
-       Fuller integration happens in M6 via the alias decl table. */
+       (current ast hooks for refinement metadata are limited). */
     return p;
 }
 
@@ -353,6 +402,11 @@ static NicheLayout niche_compute_layout(DeclEnum *e) {
         L.needs_tag_byte = false;
     }
 
+    /* W120: pool insufficient (some/all empty variants need a tag byte). */
+    if (L.needs_tag_byte && L.payload_variant_count > 0) {
+        L.pool_was_short = true;  // signal to the caller to emit W120
+    }
+
     /* Allocate sentinel array if zero-cost. */
     if (L.is_zero_cost && L.empty_variant_count > 0) {
         L.empty_sentinels = arena_push_many_aligned(
@@ -364,6 +418,61 @@ static NicheLayout niche_compute_layout(DeclEnum *e) {
     }
 
     return L;
+}
+
+/*─────────────────────────────────────────────────────────────────╗
+│ Codegen helpers (consumed by emit/decl.h and emit/stmt.h)        │
+╚─────────────────────────────────────────────────────────────────*/
+
+/* True if this enum should use niche-optimized layout. */
+static bool enum_is_zero_cost_niche(Decl *d, NicheLayout *out) {
+    if (!d || d->kind != DECL_ENUM) return false;
+    NicheLayout L = niche_compute_layout(&d->as.enum_decl);
+    if (out) *out = L;
+    return L.is_zero_cost && !L.needs_tag_byte;
+}
+
+/* The single payload variant of a niche-optimized enum (NULL if
+   pure-empty). For pure-empty enums the layout has 0 payloads. */
+static Variant *enum_payload_variant(DeclEnum *e) {
+    for (Variant *v = e->variants; v; v = v->next) {
+        if (v->fields) return v;
+    }
+    return NULL;
+}
+
+/* Sentinel for the i-th empty variant of a niche layout (by declaration
+   order in the enum). Returns 0 fallback if out of range or not zero-cost. */
+static long long niche_sentinel_for_variant(DeclEnum *e, Variant *target,
+                                            NicheLayout *L) {
+    if (!L->is_zero_cost || !L->empty_sentinels || target->fields) return 0;
+    size_t idx = 0;
+    for (Variant *v = e->variants; v; v = v->next) {
+        if (v->fields) continue;
+        if (v == target) return L->empty_sentinels[idx];
+        idx++;
+    }
+    return 0;
+}
+
+/*─────────────────────────────────────────────────────────────────╗
+│ W120 — warning emitted when niche pool insufficient              │
+╚─────────────────────────────────────────────────────────────────*/
+
+static void niche_emit_w120(DeclEnum *e, NicheLayout *L) {
+    if (!L->pool_was_short) return;
+    Id *en = e->type_name;
+    fprintf(stderr,
+        "[W120] Warning: enum '%.*s' not fully zero-cost.\n"
+        "       Payload provides %lld sentinel slot(s); %zu empty variant(s) require %zu.\n"
+        "       Layout falls back to 1 tag byte + payload union.\n"
+        "       To eliminate the tag byte: reduce empty variants, constrain the\n"
+        "       payload type with a refinement, or change payload to a type with\n"
+        "       larger sentinel space (i8: 255, i16: 65535, *T: %zu).\n",
+        en ? (int)en->length : 1, en ? en->name : "?",
+        (long long)L->pool.size,
+        L->empty_variant_count, L->empty_variant_count,
+        target.zero_page_size / (target.pointer_alignment ? target.pointer_alignment : 1));
 }
 
 /*─────────────────────────────────────────────────────────────────╗

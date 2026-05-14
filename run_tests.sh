@@ -111,6 +111,16 @@ while IFS= read -r file; do
     fi
 done < <(find tests -name '*.ln' -type f | sort)
 
+# Run shell-based helper tests (exit code = pass/fail).
+while IFS= read -r shfile; do
+    if bash "$shfile" >/dev/null 2>&1; then
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        FAILED_TESTS+=("$shfile (shell helper exited non-zero)")
+    fi
+done < <(find tests -name '*.sh' -type f | sort)
+
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo ""
 echo "=========================================="
