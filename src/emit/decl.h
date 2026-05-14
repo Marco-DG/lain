@@ -435,12 +435,14 @@ void emit_decl(Decl* decl, int depth) {
                 emit_indent(depth);
                 EMIT("}\n\n");
 
-                // Per-field getter functions.
+                // Per-field getter + setter functions.
                 idx = 0;
                 for (DeclList *f = decl->as.struct_decl.fields; f; f = f->next, idx++) {
                     int bits = pf[idx].bits;
                     int off  = pf[idx].offset;
                     unsigned long long mask = (bits >= 64) ? ~0ULL : ((1ULL << bits) - 1);
+
+                    // Getter: extract bit range.
                     emit_indent(depth);
                     EMIT("static inline ");
                     emit_type(f->decl->as.variable_decl.type);
@@ -453,6 +455,21 @@ void emit_decl(Decl* decl, int depth) {
                     EMIT("return (");
                     emit_type(f->decl->as.variable_decl.type);
                     EMIT(")((r >> %d) & 0x%llxULL);\n", off, mask);
+                    emit_indent(depth);
+                    EMIT("}\n\n");
+
+                    // Setter: produce a new container value with the field replaced.
+                    // r_new = (r & ~(mask << off)) | ((value & mask) << off)
+                    emit_indent(depth);
+                    EMIT("static inline %s %s_set_%.*s(%s r, ", structName, structName,
+                         (int)f->decl->as.variable_decl.name->length,
+                         f->decl->as.variable_decl.name->name,
+                         structName);
+                    emit_type(f->decl->as.variable_decl.type);
+                    EMIT(" value) {\n");
+                    emit_indent(depth + 1);
+                    EMIT("return (%s)((r & ~((%s)0x%llxULL << %d)) | (((%s)value & 0x%llxULL) << %d));\n",
+                         container, container, mask, off, container, mask, off);
                     emit_indent(depth);
                     EMIT("}\n\n");
                 }

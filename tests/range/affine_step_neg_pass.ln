@@ -1,0 +1,15 @@
+// Sprint 15 / Q-011 L3: affine recap with negative step (x = x - 1).
+// Verifies that post-loop range tracks x precisely as 90.
+
+func require_ninety(x int == 90) int {
+    return 0
+}
+
+proc main() int {
+    var x = 100
+    for i in 0..10 {
+        x = x - 1
+    }
+    // x is 90 after the loop (100 - 10).
+    return require_ninety(x)
+}

@@ -10,7 +10,9 @@ func max(a int, b int) int {
     return b
 }
 
-func abs(x int) int {
+// Note: abs(INT_MIN) is implementation-defined (overflow case).
+// Return constraint `int >= 0` expresses the invariant.
+func abs(x int) int >= 0 {
     if x < 0 { return 0 - x }
     return x
 }
