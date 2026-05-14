@@ -102,6 +102,14 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
                     texpr->as.type_expr.type_value = type_simple(arena, id);
                     return texpr;
                 }
+                // `int` and `float` documented aliases.
+                if ((L == 3 && strncmp(raw, "int", 3) == 0) ||
+                    (L == 5 && strncmp(raw, "float", 5) == 0)) {
+                    Expr* texpr = clone_expr(arena, expr);
+                    texpr->kind = EXPR_TYPE;
+                    texpr->as.type_expr.type_value = type_simple(arena, id);
+                    return texpr;
+                }
                 // Same for "comptime_string", "comptime_int"
                 
                 return expr;

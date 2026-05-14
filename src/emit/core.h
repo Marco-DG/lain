@@ -202,6 +202,7 @@ static bool is_primitive_type(Type *t) {
         Id *base = t->base_type;
         if (!base) return false;
         // Check for known primitives
+        if (base->length == 3 && strncmp(base->name, "int", 3) == 0) return true;
         if (base->length == 2 && strncmp(base->name, "u8", 2) == 0) return true;
         if (base->length == 3 && strncmp(base->name, "u16", 3) == 0) return true;
         if (base->length == 3 && strncmp(base->name, "u32", 3) == 0) return true;
@@ -264,12 +265,6 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
       snprintf(out, cap, "/*<anon-simple>*/");
       return;
     }
-    // `int` was removed as a type alias. Catch leftover uses with a
-    // clean error rather than letting them fall through to C's `int`.
-    if (base->length == 3 && memcmp(base->name, "int", 3) == 0) {
-      fprintf(stderr, "Error: type 'int' was removed; use 'i32' (or 'i8'/'i16'/'i64' as appropriate).\n");
-      exit(1);
-    }
 
     // Recognize generic iN / uN names (N = 1..64) → smallest C type
     // containing N bits. Q-002 Paradigm B:
@@ -315,12 +310,18 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
       snprintf(base_name, sizeof(base_name), "intptr_t");
     } else if (base->length == 5 && strncmp(base->name, "usize", 5) == 0) {
       snprintf(base_name, sizeof(base_name), "uintptr_t");
+    } else if (base->length == 3 && strncmp(base->name, "int", 3) == 0) {
+      // `int` is an alias of i32, documented for ergonomic use.
+      snprintf(base_name, sizeof(base_name), "int32_t");
     } else if (base->length == 4 && strncmp(base->name, "bool", 4) == 0) {
       snprintf(base_name, sizeof(base_name), "_Bool");
     } else if (base->length == 3 && strncmp(base->name, "f32", 3) == 0) {
       snprintf(base_name, sizeof(base_name), "float");
     } else if (base->length == 3 && strncmp(base->name, "f64", 3) == 0) {
       snprintf(base_name, sizeof(base_name), "double");
+    } else if (base->length == 5 && strncmp(base->name, "float", 5) == 0) {
+      // `float` is an alias of f32 (C float), documented for ergonomics.
+      snprintf(base_name, sizeof(base_name), "float");
     } else {
       // fallback to symbol lookup (enums, structs, locals…)
       const char *cname = c_name_for_id(base);

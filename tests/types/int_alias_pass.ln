@@ -1,0 +1,27 @@
+// `int` and `float` are documented aliases of i32 and f32 respectively.
+// They exist for ergonomics: scrivere `int` quando non importa la taglia,
+// `i32` quando importa.
+
+extern proc libc_printf(fmt *u8, ...) i32
+
+func add_int(a int, b int) int {
+    return a + b
+}
+
+func mix(a int, b i32) i32 {
+    return a + b
+}
+
+proc main() int {
+    var x int = 10
+    var y i32 = 20
+    var z = add_int(x, 5)
+    var w = mix(x, y)
+    var f float = 3.0
+    var g f32 = 4.5
+
+    var fd = f as f64
+    var gd = g as f64
+    libc_printf("z=%d w=%d f=%f g=%f\n", z, w, fd, gd)
+    return 0
+}

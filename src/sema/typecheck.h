@@ -86,7 +86,8 @@ static bool is_integer_type(Type *t) {
     if (parse_iN_uN(t, &bits, &sgn)) return true;
     // Pointer-sized.
     if (len == 5 && (memcmp(n,"usize",5)==0 || memcmp(n,"isize",5)==0)) return true;
-    (void)n;
+    // `int` documented alias of i32.
+    if (len == 3 && memcmp(n, "int", 3) == 0) return true;
     return false;
 }
 
@@ -115,6 +116,14 @@ int type_integer_range(Type *t, long long *out_lo, long long *out_hi) {
                 *out_hi = (1LL << bits) - 1;
             }
         }
+        return 1;
+    }
+    // `int` alias → i32 range.
+    const char *n = t->base_type->name;
+    isize len = t->base_type->length;
+    if (len == 3 && memcmp(n, "int", 3) == 0) {
+        *out_lo = -2147483648LL;
+        *out_hi =  2147483647LL;
         return 1;
     }
     return 0;
@@ -187,7 +196,7 @@ int integer_rank(Type *t) {
     const char *n = t->base_type->name;
     isize len = t->base_type->length;
     if (len == 5 && (memcmp(n,"usize",5)==0 || memcmp(n,"isize",5)==0)) return 5;
-    (void)n;
+    if (len == 3 && memcmp(n, "int", 3) == 0) return 3;  // alias of i32
     return 0;
 }
 

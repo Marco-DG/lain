@@ -788,12 +788,19 @@ void sema_resolve_expr(Expr *e) {
             }
         }
     }
+    // `int` and `float` are documented aliases of i32 and f32.
+    if (strcmp(raw, "int") == 0) {
+        e->kind = EXPR_TYPE;
+        e->as.type_expr.type_value = get_builtin_i32_type();
+        e->type = type_meta_type(sema_arena);
+        break;
+    }
     if (strcmp(raw, "u8") == 0) {
         e->kind = EXPR_TYPE;
         e->as.type_expr.type_value = get_builtin_u8_type();
         e->type = type_meta_type(sema_arena);
         break;
-    } else if (strcmp(raw, "f32") == 0 || strcmp(raw, "f64") == 0 || strcmp(raw, "bool") == 0 || strcmp(raw, "string") == 0) {
+    } else if (strcmp(raw, "f32") == 0 || strcmp(raw, "f64") == 0 || strcmp(raw, "float") == 0 || strcmp(raw, "bool") == 0 || strcmp(raw, "string") == 0) {
         e->kind = EXPR_TYPE;
         Id *type_id = id(sema_arena, strlen(raw), arena_push_many_aligned(sema_arena, char, strlen(raw) + 1));
         strcpy((char*)type_id->name, raw);
