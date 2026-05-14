@@ -1,6 +1,6 @@
 // Sprint 4 / Q-003.B: arr[a..b] produces a sub-slice T[].
 
-proc main() int {
+proc main() i32 {
     var buf = "hello world"
     var sub = buf[1..4]      // type: u8[], range matches buf[1..4)
     return 0

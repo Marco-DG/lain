@@ -3,11 +3,11 @@
 // x ∈ [10, 10] exactly. Without affine recap, x would be unknown
 // after the loop and a constraint check would fail.
 
-func require_ten(x int == 10) int {
+func require_ten(x i32 == 10) i32 {
     return 0
 }
 
-proc main() int {
+proc main() i32 {
     var x = 0
     for i in 0..10 {
         x = x + 1

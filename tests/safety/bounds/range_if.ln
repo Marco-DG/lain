@@ -1,8 +1,8 @@
-func require_lt(a int, b int > a) int {
+func require_lt(a i32, b i32 > a) i32 {
     return 0
 }
 
-func test_if(x int, y int) int {
+func test_if(x i32, y i32) i32 {
     if x < y {
         // Here we know x < y
         return require_lt(x, y)
@@ -10,6 +10,6 @@ func test_if(x int, y int) int {
     return 0
 }
 
-proc main() int {
+proc main() i32 {
     return 0
 }

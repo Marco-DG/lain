@@ -28,12 +28,14 @@ extern bool sema_walk_phase;        // Defined in sema.h
 │ 1) Helpers to get a builtin “int” Type* only once               │
 ╚─────────────────────────────────────────────────────────────────*/
 
-Type *get_builtin_int_type(void) {
+Type *get_builtin_i32_type(void) {
+  // Q-002 / int-removal: the default integer type for naked literals
+  // is i32. The function name is kept for historical reasons but the
+  // returned Type is concretely i32.
   static Type *int_ty = NULL;
   if (!int_ty) {
-    // make a fake Id for “int” in the arena
     Id *id = arena_push_aligned(sema_arena, Id);
-    id->name = "int";
+    id->name = "i32";
     id->length = 3;
     int_ty = type_simple(sema_arena, id);
   }
@@ -82,10 +84,9 @@ static bool is_integer_type(Type *t) {
     // Generic iN / uN (Q-002: N=1..64)
     int bits; bool sgn;
     if (parse_iN_uN(t, &bits, &sgn)) return true;
-    // Legacy `int` (default i32, monomorphized at call site per Q-002).
-    if (len == 3 && memcmp(n, "int", 3) == 0) return true;
     // Pointer-sized.
     if (len == 5 && (memcmp(n,"usize",5)==0 || memcmp(n,"isize",5)==0)) return true;
+    (void)n;
     return false;
 }
 
@@ -114,14 +115,6 @@ int type_integer_range(Type *t, long long *out_lo, long long *out_hi) {
                 *out_hi = (1LL << bits) - 1;
             }
         }
-        return 1;
-    }
-    // `int` defaults to i32 (Q-002 phase 3 not yet active).
-    const char *n = t->base_type->name;
-    isize len = t->base_type->length;
-    if (len == 3 && memcmp(n, "int", 3) == 0) {
-        *out_lo = -2147483648LL;
-        *out_hi =  2147483647LL;
         return 1;
     }
     return 0;
@@ -193,8 +186,8 @@ int integer_rank(Type *t) {
     }
     const char *n = t->base_type->name;
     isize len = t->base_type->length;
-    if (len == 3 && memcmp(n, "int", 3) == 0) return 3;
     if (len == 5 && (memcmp(n,"usize",5)==0 || memcmp(n,"isize",5)==0)) return 5;
+    (void)n;
     return 0;
 }
 
@@ -485,7 +478,7 @@ void sema_infer_expr(Expr *e) {
       Id *mem = e->as.member_expr.member;
       if (mem && mem->length == 3 && strncmp(mem->name, "len", 3) == 0) {
         // .len → integer
-        e->type = get_builtin_int_type();
+        e->type = get_builtin_i32_type();
         break;
       }
       if (mem && mem->length == 4 && strncmp(mem->name, "data", 4) == 0) {
@@ -945,7 +938,7 @@ void sema_infer_expr(Expr *e) {
 
     // 'in' operator: result is bool, skip other checks
     if (e->as.binary_expr.op == TOKEN_KEYWORD_IN) {
-        e->type = get_builtin_int_type();
+        e->type = get_builtin_i32_type();
         break;
     }
 
@@ -1031,7 +1024,7 @@ void sema_infer_expr(Expr *e) {
             bop == TOKEN_ANGLE_BRACKET_LEFT || bop == TOKEN_ANGLE_BRACKET_LEFT_EQUAL ||
             bop == TOKEN_ANGLE_BRACKET_RIGHT || bop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL ||
             bop == TOKEN_KEYWORD_AND || bop == TOKEN_KEYWORD_OR) {
-            e->type = get_builtin_int_type();
+            e->type = get_builtin_i32_type();
         } else {
             Type *lt = e->as.binary_expr.left->type;
             Type *rt = e->as.binary_expr.right->type;
@@ -1051,7 +1044,7 @@ void sema_infer_expr(Expr *e) {
             } else {
                 e->type = (lt && is_integer_type(lt)) ? lt :
                           (rt && is_integer_type(rt)) ? rt :
-                          get_builtin_int_type();
+                          get_builtin_i32_type();
             }
         }
     }
@@ -1064,7 +1057,7 @@ void sema_infer_expr(Expr *e) {
         if (!e->as.unary_expr.right || !e->as.unary_expr.right->type) {
              // If operands are broken, we can't check
              // sema_resolve should have caught typical errors, but to be safe:
-             // e->type = get_builtin_int_type(); // fallback
+             // e->type = get_builtin_i32_type(); // fallback
              // return;
              // Actually let's exit to be consistent with previous panic
              fprintf(stderr, "sema error: internal: deref operand untyped\n");
@@ -1087,10 +1080,10 @@ void sema_infer_expr(Expr *e) {
              // Likely a parsing error or a reference deref if supported.
              // For now, assume it results in element type if we can determine it, 
              // or just int if unknown.
-             e->type = get_builtin_int_type();
+             e->type = get_builtin_i32_type();
         }
     } else {
-        e->type = get_builtin_int_type();
+        e->type = get_builtin_i32_type();
     }
     break;
 
@@ -1137,7 +1130,7 @@ void sema_infer_expr(Expr *e) {
   }
 
   case EXPR_LITERAL:
-    e->type = get_builtin_int_type();
+    e->type = get_builtin_i32_type();
     break;
 
   case EXPR_CHAR:
@@ -1240,7 +1233,7 @@ void sema_infer_expr(Expr *e) {
         inferred_type = slice_ty;
     }
 
-    e->type = inferred_type ? inferred_type : get_builtin_int_type();
+    e->type = inferred_type ? inferred_type : get_builtin_i32_type();
     break;
   }
 

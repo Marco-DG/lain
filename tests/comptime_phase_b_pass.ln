@@ -5,7 +5,7 @@ func Option(comptime T type) type {
     }
 }
 
-type OptionInt = Option(int)
+type OptionInt = Option(i32)
 
 proc main() {
     var a OptionInt = OptionInt.Some(42)

@@ -4,13 +4,13 @@
 // Should fail: unconsumed linear field at scope exit.
 
 type Pair {
-    mov left *int
-    mov right *int
+    mov left *i32
+    mov right *i32
 }
 
-proc main() int {
-    var p *int = 0
-    var q *int = 0
+proc main() i32 {
+    var p *i32 = 0
+    var q *i32 = 0
     var pair = Pair(p, q)
     
     // Consume only left — right is still alive

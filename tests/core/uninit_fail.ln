@@ -1,5 +1,5 @@
 // EXPECT: [E005]
-proc main() int {
-    var x int = undefined
+proc main() i32 {
+    var x i32 = undefined
     return x
 }

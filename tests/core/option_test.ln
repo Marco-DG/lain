@@ -1,8 +1,8 @@
 import std.option
 
-type OptInt = Option(int)
+type OptInt = Option(i32)
 
-proc main() int {
+proc main() i32 {
     var a = OptInt.Some(42)
     var b = OptInt.None
 

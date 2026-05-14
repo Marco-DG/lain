@@ -2,14 +2,14 @@
 // Tests basic move semantics with 'mov' keyword.
 
 type Resource {
-    id int
+    id i32
 }
 
 func drop(mov {id} Resource) {
     // destruct to consume via parameter
 }
 
-func consume_helper(mov res Resource) int {
+func consume_helper(mov res Resource) i32 {
     var val = res.id
     drop(mov res)
     return val
@@ -19,7 +19,7 @@ func consume(mov r Resource) {
     drop(mov r)
 }
 
-proc main() int {
+proc main() i32 {
     var a Resource = undefined
     a.id = 1
     var b = mov a    // Move a -> b

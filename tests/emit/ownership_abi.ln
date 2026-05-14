@@ -2,19 +2,19 @@
 // shared -> const T*, var -> T*, mov struct -> T by value.
 
 type Vec2 {
-    x int
-    y int
+    x i32
+    y i32
 }
 
-func dot(a Vec2, b Vec2) int {
+func dot(a Vec2, b Vec2) i32 {
     return a.x * b.x + a.y * b.y
 }
 
-proc scale(var v Vec2, factor int) {
+proc scale(var v Vec2, factor i32) {
     v.x = v.x * factor
     v.y = v.y * factor
 }
 
-proc main() int {
+proc main() i32 {
     return 0
 }

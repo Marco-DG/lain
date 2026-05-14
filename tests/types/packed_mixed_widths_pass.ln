@@ -10,7 +10,7 @@ type Header {
 }
 // total: 4 + 1 + 3 + 8 = 16 bits → uint16_t
 
-proc main() int {
+proc main() i32 {
     var h = Header(7, 1, 5, 200)
     var v = h.version    // 7
     var f = h.flag       // 1

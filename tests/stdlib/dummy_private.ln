@@ -2,10 +2,10 @@
 // Used by tests/stdlib/private_decl_*.ln
 
 [private]
-func internal_secret() int {
+func internal_secret() i32 {
     return 777
 }
 
-func public_api() int {
+func public_api() i32 {
     return internal_secret() + 1
 }

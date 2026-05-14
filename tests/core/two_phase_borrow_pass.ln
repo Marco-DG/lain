@@ -3,19 +3,19 @@
 // allowing the shared read of x.field during argument evaluation.
 
 type Vec {
-    len int
-    cap int
+    len i32
+    cap i32
 }
 
-proc push_n(var v Vec, n int) {
+proc push_n(var v Vec, n i32) {
     v.len = v.len + n
 }
 
-func get_cap(v Vec) int {
+func get_cap(v Vec) i32 {
     return v.cap
 }
 
-proc main() int {
+proc main() i32 {
     var v = Vec(0, 10)
 
     // Two-phase borrow via UFCS: v is mutably borrowed for push_n,

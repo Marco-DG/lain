@@ -10,7 +10,7 @@ type GpioModer {
     pin3 u2
 }
 
-proc main() int {
+proc main() i32 {
     var r = GpioModer(1, 2, 3, 0)
     // Read pin1: should be 2.
     var p1 = r.pin1

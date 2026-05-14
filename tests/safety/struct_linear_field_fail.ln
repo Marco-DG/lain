@@ -2,15 +2,15 @@
 // Q-008: linear field must be annotated `mov`. With proper annotation, the
 // struct is linear and double-use is caught with E003 below.
 type Handle {
-    mov ptr *int
+    mov ptr *i32
 }
 
 type Wrapper {
     mov h Handle
 }
 
-proc main() int {
-    var p *int = 0
+proc main() i32 {
+    var p *i32 = 0
     // Test 1: Direct linear struct
     var h1 = Handle(p)
     var h2 = h1 // Move

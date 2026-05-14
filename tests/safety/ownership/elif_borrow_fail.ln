@@ -2,10 +2,10 @@
 // Consuming a linear variable in only some branches must fail
 
 type Resource {
-    mov handle int
+    mov handle i32
 }
 
-proc consume(r mov Resource) int {
+proc consume(r mov Resource) i32 {
     return mov r.handle
 }
 

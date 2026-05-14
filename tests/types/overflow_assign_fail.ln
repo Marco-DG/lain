@@ -2,7 +2,7 @@
 // Phase 5 extended: assignment to a sized integer type with a
 // statically-known out-of-range value is a compile error.
 
-proc main() int {
+proc main() i32 {
     var x i8 = 100      // OK: fits in [-128, 127]
     var y i8 = 50       // OK
     x = x + y           // ERROR: range [-78, 177] doesn't fit i8

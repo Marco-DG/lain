@@ -1,5 +1,5 @@
 // EXPECT: [E005]
 proc main() {
-    var x int = undefined
+    var x i32 = undefined
     var y = x
 }

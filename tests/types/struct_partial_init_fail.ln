@@ -2,12 +2,12 @@
 // Test: Partially initialized struct via constructor should fail
 
 type Point {
-    x int
-    y int
-    z int
+    x i32
+    y i32
+    z i32
 }
 
-proc main() int {
+proc main() i32 {
     var p = Point(10, 20) // Missing z
     return 0
 }

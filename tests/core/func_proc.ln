@@ -1,10 +1,10 @@
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
-func add(a int, b int) int {
+func add(a i32, b i32) i32 {
     return a + b
 }
 
-proc main() int {
+proc main() i32 {
     var x = add(10, 20)
     libc_printf("Result: %d\n", x)
     return 0

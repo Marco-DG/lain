@@ -1,5 +1,5 @@
 proc main() {
-    var x int = undefined
+    var x i32 = undefined
     if true {
         x = 10
     } else {

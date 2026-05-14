@@ -2,29 +2,29 @@
 // Test that unsafe blocks can be nested and work inside other structures.
 
 proc main() {
-    var p *int = 0
+    var p *i32 = 0
     
     // 1. Nested unsafe
     if 0 {
       unsafe {
           unsafe {
-              var val int = *p// OK
+              var val i32 = *p// OK
           }
-          var val2 int = *p// OK
+          var val2 i32 = *p// OK
       }
     }
     
     // 2. Unsafe inside control flow
     if 0 {
         unsafe {
-            var val3 int = *p// OK
+            var val3 i32 = *p// OK
         }
     }
     
     // 3. Control flow inside unsafe
     unsafe {
         if 0 {
-             var val4 int = *p// OK
+             var val4 i32 = *p// OK
         }
     }
 }

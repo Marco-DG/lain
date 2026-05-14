@@ -1,6 +1,6 @@
 func AssertTypeInt(comptime T type) type {
-    if T != int {
-        compileError("Type must be int!")
+    if T != i32 {
+        compileError("Type must be i32!")
     }
     return T
 }

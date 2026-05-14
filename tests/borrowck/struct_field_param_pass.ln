@@ -4,14 +4,14 @@
 
 type Lexer {
     text u8[:0]
-    cursor int
+    cursor i32
 }
 
 proc make_lexer(src u8[:0]) Lexer {
     return Lexer(src, 0)         // OK: src is a parameter
 }
 
-proc main() int {
+proc main() i32 {
     var buf = "hello"
     var l = make_lexer(buf)
     return 0

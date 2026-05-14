@@ -3,19 +3,19 @@
 // then owner is accessible.
 
 type Data {
-    value int
-    extra int
+    value i32
+    extra i32
 }
 
-func get_value_ref(var d Data) var int {
+func get_value_ref(var d Data) var i32 {
     return var d.value
 }
 
-func read_data(d Data) int {
+func read_data(d Data) i32 {
     return d.value
 }
 
-proc main() int {
+proc main() i32 {
     var data Data = undefined
     data.value = 100
     data.extra = 50

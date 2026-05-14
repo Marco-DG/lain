@@ -1,15 +1,15 @@
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
-func add(a int, b int) int {
+func add(a i32, b i32) i32 {
     return a + b
 }
 
-proc fib(n int) int {
+proc fib(n i32) i32 {
     if n < 2 { return n }
     return fib(n-1) + fib(n-2)
 }
 
-proc main() int {
+proc main() i32 {
     libc_printf("add(10, 20) = %d\n", add(10, 20))
     libc_printf("fib(10) = %d\n", fib(10))
     return 0

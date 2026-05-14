@@ -1,10 +1,10 @@
-// Q-002 refinement alias: types based on `int` with multiple comparison
+// Q-002 refinement alias: types based on `i32` with multiple comparison
 // operators (>=, <=, !=) chain via `and`.
 
-type SmallPos = int >= 1 and <= 10
-type NonZero = int != 0
+type SmallPos = i32 >= 1 and <= 10
+type NonZero = i32 != 0
 
-proc main() int {
+proc main() i32 {
     var p SmallPos = 5
     var n NonZero = 42
     return 0

@@ -1,7 +1,7 @@
 // EXPECT: [E013]
 // Test: Shadowing in the *same* scope should fail
 
-proc main() int {
+proc main() i32 {
     var x = 10
     var x = 20  // error: redeclaration
     return 0

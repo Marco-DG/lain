@@ -1,8 +1,8 @@
 // Test: Float types (f32, f64)
 
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() int {
+proc main() i32 {
     var a f32 = 3.14
     var b f64 = 2.71828
     

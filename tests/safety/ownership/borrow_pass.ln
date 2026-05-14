@@ -2,10 +2,10 @@
 // This test should COMPILE successfully
 
 type Counter {
-    value int
+    value i32
 }
 
-func read_counter(c Counter) int {
+func read_counter(c Counter) i32 {
     // Shared borrow: c is const Counter*
     return c.value
 }
@@ -20,7 +20,7 @@ func take_counter(mov c Counter) Counter {
     return mov c
 }
 
-proc main() int {
+proc main() i32 {
     var cnt Counter = undefined
     cnt.value = 10
     

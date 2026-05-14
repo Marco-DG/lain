@@ -1,6 +1,6 @@
 import std.io
 
-proc main() int {
+proc main() i32 {
     println("Hello World!")
     print("Partial line... ")
     println("Done.")

@@ -4,14 +4,14 @@
 // ref is used after owner mutation → should FAIL.
 
 type Data {
-    value int
+    value i32
 }
 
-func use_ref(var r int) int {
+func use_ref(var r i32) i32 {
     return r
 }
 
-proc main() int {
+proc main() i32 {
     var data Data = undefined
     data.value = 42
     

@@ -2,18 +2,18 @@
 // This should FAIL compilation if purity is enforced
 // A pure function calling an impure procedure
 
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
 proc impure_action() {
     libc_printf("Side effect!\n")
 }
 
-func pure_function() int {
+func pure_function() i32 {
     // ERROR: Pure function calling impure procedure
     impure_action()
     return 0
 }
 
-proc main() int {
+proc main() i32 {
     return pure_function()
 }

@@ -4,23 +4,23 @@
 // Second var param accessed while ref still alive → should FAIL.
 
 type Data {
-    x int
-    y int
+    x i32
+    y i32
 }
 
-func pick_x(var a Data, var b Data) var int {
+func pick_x(var a Data, var b Data) var i32 {
     return var a.x
 }
 
-func use_ref(var r int) int {
+func use_ref(var r i32) i32 {
     return r
 }
 
-func read_data(d Data) int {
+func read_data(d Data) i32 {
     return d.x
 }
 
-proc main() int {
+proc main() i32 {
     var da Data = undefined
     var db Data = undefined
     da.x = 10

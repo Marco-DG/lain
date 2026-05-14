@@ -4,23 +4,23 @@
 // NOTE: Uses struct-level re-borrow to avoid C double-pointer issue.
 
 type Data {
-    value int
-    extra int
+    value i32
+    extra i32
 }
 
-func get_value_ref(var d Data) var int {
+func get_value_ref(var d Data) var i32 {
     return var d.value
 }
 
-func get_extra_ref(var d Data) var int {
+func get_extra_ref(var d Data) var i32 {
     return var d.extra
 }
 
-func read_data(d Data) int {
+func read_data(d Data) i32 {
     return d.value
 }
 
-proc main() int {
+proc main() i32 {
     var data Data = undefined
     data.value = 42
     data.extra = 10

@@ -2,11 +2,11 @@
 // Tests borrowing rules.
 
 type Point {
-    x int
-    y int
+    x i32
+    y i32
 }
 
-func read(p Point) int {
+func read(p Point) i32 {
     return p.x + p.y
 }
 
@@ -14,7 +14,7 @@ func update(var p Point) {
     p.x = p.x + 1
 }
 
-proc main() int {
+proc main() i32 {
     var p Point = undefined
     p.x = 10
     p.y = 20

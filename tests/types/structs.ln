@@ -1,11 +1,11 @@
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
 type Vec2 {
-    x int
-    y int
+    x i32
+    y i32
 }
 
-proc main() int {
+proc main() i32 {
     var v Vec2 = undefined
     v.x = 10
     v.y = 20

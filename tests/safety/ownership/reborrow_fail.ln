@@ -4,23 +4,23 @@
 // ref is used AFTER accessing owner while ref2 keeps the borrow alive.
 
 type Data {
-    value int
-    extra int
+    value i32
+    extra i32
 }
 
-func get_value_ref(var d Data) var int {
+func get_value_ref(var d Data) var i32 {
     return var d.value
 }
 
-func consume_ref(var r int) {
+func consume_ref(var r i32) {
     // keeps ref alive
 }
 
-func read_data(d Data) int {
+func read_data(d Data) i32 {
     return d.value
 }
 
-proc main() int {
+proc main() i32 {
     var data Data = undefined
     data.value = 42
     data.extra = 10

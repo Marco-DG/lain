@@ -55,7 +55,7 @@ extern Arena *sema_arena;
 extern RangeTable *sema_ranges;
 extern bool sema_in_unsafe_block;
 
-Type *get_builtin_int_type(void);
+Type *get_builtin_i32_type(void);
 Type *get_builtin_u8_type(void);
 void sema_infer_expr(Expr *e);
 void sema_resolve_expr(Expr *e); // forward
@@ -459,11 +459,11 @@ void sema_resolve_stmt(Stmt *s) {
     sema_infer_expr(it);
 
     Type *iter_ty = it->type;
-    Type *idx_ty = get_builtin_int_type();
+    Type *idx_ty = get_builtin_i32_type();
     Type *val_ty = NULL;
 
     if (it->kind == EXPR_RANGE) {
-        val_ty = get_builtin_int_type();
+        val_ty = get_builtin_i32_type();
     } else {
         assert(iter_ty &&
                (iter_ty->kind == TYPE_ARRAY || iter_ty->kind == TYPE_SLICE));
@@ -759,18 +759,36 @@ void sema_resolve_expr(Expr *e) {
     if (strcmp(raw, "panic") == 0) {
         // mark as builtin: leave kind=EXPR_IDENTIFIER but ensure type is settable
         // codegen will recognize callee identifier "panic" specially
-        e->type = get_builtin_int_type();  // 'Never'-style: callable, return type irrelevant
+        e->type = get_builtin_i32_type();  // 'Never'-style: callable, return type irrelevant
         e->is_global = true;
         break;
     }
 
     // 3) fallback: maybe it’s a builtin type name?
-    if (strcmp(raw, "int") == 0) {
-        e->kind = EXPR_TYPE;
-        e->as.type_expr.type_value = get_builtin_int_type();
-        e->type = type_meta_type(sema_arena);
-        break;
-    } else if (strcmp(raw, "u8") == 0) {
+    // Sized integers iN/uN (N=1..64) are builtin type names.
+    {
+        size_t rl = strlen(raw);
+        if (rl >= 2 && rl <= 3 && (raw[0] == 'i' || raw[0] == 'u')) {
+            bool all_digits = true;
+            int bits = 0;
+            for (size_t k = 1; k < rl; k++) {
+                if (raw[k] < '0' || raw[k] > '9') { all_digits = false; break; }
+                bits = bits * 10 + (raw[k] - '0');
+            }
+            if (all_digits && bits >= 1 && bits <= 64) {
+                Id *type_id = arena_push_aligned(sema_arena, Id);
+                char *nbuf = arena_push_many_aligned(sema_arena, char, rl + 1);
+                memcpy(nbuf, raw, rl + 1);
+                type_id->name = nbuf;
+                type_id->length = (isize)rl;
+                e->kind = EXPR_TYPE;
+                e->as.type_expr.type_value = type_simple(sema_arena, type_id);
+                e->type = type_meta_type(sema_arena);
+                break;
+            }
+        }
+    }
+    if (strcmp(raw, "u8") == 0) {
         e->kind = EXPR_TYPE;
         e->as.type_expr.type_value = get_builtin_u8_type();
         e->type = type_meta_type(sema_arena);
@@ -809,7 +827,7 @@ void sema_resolve_expr(Expr *e) {
 
             e->as.identifier_expr.id->name = copy;
             e->as.identifier_expr.id->length = (isize)strlen(copy);
-            e->type = get_builtin_int_type();
+            e->type = get_builtin_i32_type();
             e->decl = D; // Enum variant belongs to Enum Decl
             e->is_global = true;
             return;
@@ -1006,7 +1024,7 @@ void sema_resolve_expr(Expr *e) {
     // Replace this node in-place with a literal
     e->kind = EXPR_LITERAL;
     e->as.literal_expr.value = value;
-    e->type = get_builtin_int_type();
+    e->type = get_builtin_i32_type();
     break;
   }
 

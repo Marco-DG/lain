@@ -1,14 +1,14 @@
 // Test: Algebraic Data Types (Unified Syntax)
 
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
 type Shape {
-    Circle { radius int }
-    Rectangle { width int, height int }
+    Circle { radius i32 }
+    Rectangle { width i32, height i32 }
     Point
 }
 
-proc main() int {
+proc main() i32 {
     var c = Shape.Circle(10)
     var r = Shape.Rectangle(10, 20)
     var p = Shape.Point

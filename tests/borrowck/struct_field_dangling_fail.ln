@@ -4,7 +4,7 @@
 
 type Lexer {
     text u8[:0]
-    cursor int
+    cursor i32
 }
 
 proc bad() Lexer {
@@ -12,6 +12,6 @@ proc bad() Lexer {
     return Lexer(local, 0)        // [E010] text borrows from local
 }
 
-proc main() int {
+proc main() i32 {
     return 0
 }

@@ -1,7 +1,7 @@
 c_include "stdio.h"
 c_include "stdlib.h"
-extern func printf(fmt *u8, ...) int
-extern proc exit(status int)
+extern func printf(fmt *u8, ...) i32
+extern proc exit(status i32)
 
 proc main() {
     var c = 'A'

@@ -2,9 +2,9 @@
 // Q-002 refinement type alias: assignment violating the alias's constraint
 // is rejected at compile time.
 
-type Percent = int >= 0 and <= 100
+type Percent = i32 >= 0 and <= 100
 
-proc main() int {
+proc main() i32 {
     var p Percent = 150        // 150 > 100 → constraint violated
     return 0
 }

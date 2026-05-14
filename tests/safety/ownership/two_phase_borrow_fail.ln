@@ -3,7 +3,7 @@
 // Moving x while x is mutably borrowed should still fail
 
 type Data {
-    value int
+    value i32
 }
 
 proc consume_data(var d Data, mov other Data) {
@@ -11,7 +11,7 @@ proc consume_data(var d Data, mov other Data) {
     drop(mov other)
 }
 
-proc main() int {
+proc main() i32 {
     var d = Data(42)
     var e = Data(99)
 

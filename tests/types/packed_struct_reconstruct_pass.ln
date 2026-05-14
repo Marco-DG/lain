@@ -11,7 +11,7 @@ type GpioModer {
     pin3 u2
 }
 
-proc main() int {
+proc main() i32 {
     var r = GpioModer(1, 2, 3, 0)
     // To modify pin1, reconstruct:
     var r2 = GpioModer(r.pin0, 3, r.pin2, r.pin3)

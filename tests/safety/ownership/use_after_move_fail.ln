@@ -3,7 +3,7 @@
 // Using a move-declared variable after it has been moved
 
 type Item {
-    id int
+    id i32
 }
 
 // This function properly consumes by returning via mov
@@ -11,7 +11,7 @@ func transfer(mov item Item) Item {
     return mov item
 }
 
-proc main() int {
+proc main() i32 {
     // Declare as mutable to allow init (and move tracks consumption)
     var myitem Item = undefined
     myitem.id = 42

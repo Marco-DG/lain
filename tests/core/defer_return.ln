@@ -1,6 +1,6 @@
-extern proc printf(fmt *u8, ...) int
+extern proc printf(fmt *u8, ...) i32
 
-proc test_ret() int {
+proc test_ret() i32 {
     defer printf("2")
     return 42
 }

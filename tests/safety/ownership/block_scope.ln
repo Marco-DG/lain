@@ -1,9 +1,9 @@
 // Test: Block scoping for normal (non-linear) variables
 // Variables declared inside a block should not be visible outside
 
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() int {
+proc main() i32 {
     var outer = 100
     
     if 1 {

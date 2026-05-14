@@ -1,17 +1,17 @@
 // Test: Character literals
 
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() int {
+proc main() i32 {
     var ch = 'A'
     libc_printf("char: %c\n", ch)
-    libc_printf("char as int: %d\n", ch)
+    libc_printf("char as i32: %d\n", ch)
     
     var newline = '\n'
-    libc_printf("newline as int: %d\n", newline)  // 10
+    libc_printf("newline as i32: %d\n", newline)  // 10
     
     var tab = '\t'
-    libc_printf("tab as int: %d\n", tab)          // 9
+    libc_printf("tab as i32: %d\n", tab)          // 9
     
     return 0
 }

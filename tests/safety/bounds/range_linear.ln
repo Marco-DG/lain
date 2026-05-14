@@ -1,13 +1,13 @@
-func require_gt(a int, b int < a) int {
+func require_gt(a i32, b i32 < a) i32 {
     return 0
 }
 
-func test_linear(y int) int {
+func test_linear(y i32) i32 {
     var x = y + 1
     // x = y + 1 => x > y
     return require_gt(x, y)
 }
 
-proc main() int {
+proc main() i32 {
     return 0
 }

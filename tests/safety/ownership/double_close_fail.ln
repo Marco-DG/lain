@@ -4,7 +4,7 @@
 
 import std.fs
 
-proc main() int {
+proc main() i32 {
     var path = "test.txt"
     var mode = "w"
     var f = open_file(path, mode) // returns a linear value

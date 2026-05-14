@@ -2,9 +2,9 @@
 // Test: while loops are banned in pure functions (func)
 // Expected: compilation should FAIL
 
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
-func loop_forever() int {
+func loop_forever() i32 {
     var i = 0
     while i < 10 {       // ERROR: while not allowed in func
         i = i + 1
@@ -12,6 +12,6 @@ func loop_forever() int {
     return i
 }
 
-proc main() int {
+proc main() i32 {
     return loop_forever()
 }

@@ -3,14 +3,14 @@
 // Linear variable (mov field) without any consumption should fail.
 
 type Resource {
-    mov ptr *int
+    mov ptr *i32
 }
 
 func drop(mov {ptr} Resource) {
     // destruct to consume
 }
 
-proc main() int {
+proc main() i32 {
     var r = Resource(0)
     // r is linear (has mov field) but never consumed
     // ERROR: linear variable not consumed before return

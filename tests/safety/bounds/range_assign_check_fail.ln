@@ -1,8 +1,8 @@
-func require_pos(x int > 0) int {
+func require_pos(x i32 > 0) i32 {
     return 0
 }
 
-proc main() int {
+proc main() i32 {
     var x = 10
     x = 0
     // x is now 0. This should fail (0 > 0 is false).

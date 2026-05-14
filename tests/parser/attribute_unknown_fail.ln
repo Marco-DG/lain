@@ -2,6 +2,6 @@
 // Sprint 8 — Q-017: unknown attributes are rejected pre-1.0
 
 [unknown_attr]
-proc main() int {
+proc main() i32 {
     return 0
 }

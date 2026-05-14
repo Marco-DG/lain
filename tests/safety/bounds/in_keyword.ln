@@ -1,12 +1,12 @@
 // Test: in keyword for index bounds - should compile successfully
-// func get(arr int[], i int in arr) means i is always a valid index
+// func get(arr i32[], i i32 in arr) means i is always a valid index
 
-func get(arr int[10], i int in arr) int {
+func get(arr i32[10], i i32 in arr) i32 {
     return arr[i]  // Always safe - compiler knows i ∈ [0, 9]
 }
 
-proc main() int {
-    var arr int[10] = undefined
+proc main() i32 {
+    var arr i32[10] = undefined
     arr[0] = 42
     arr[5] = 100
     

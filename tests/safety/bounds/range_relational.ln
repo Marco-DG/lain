@@ -1,13 +1,13 @@
-func require_lt(a int, b int > a) int {
+func require_lt(a i32, b i32 > a) i32 {
     return 0
 }
 
-func test(x int, y int > x) int {
+func test(x i32, y i32 > x) i32 {
     // x < y is known from parameter constraint (y > x)
     // require_lt expects arg2 > arg1
     return require_lt(x, y)
 }
 
-proc main() int {
+proc main() i32 {
     return 0
 }

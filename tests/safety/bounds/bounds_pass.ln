@@ -1,11 +1,11 @@
 // Test for static bounds checking: should COMPILE and RUN successfully
 // All array accesses are provably within bounds
 
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() int {
+proc main() i32 {
     // Fixed-size array
-    var arr int[5] = undefined
+    var arr i32[5] = undefined
     arr[0] = 10
     arr[1] = 20
     arr[2] = 30

@@ -3,10 +3,10 @@
 // After fix: parser rejects (E100).
 // EXPECT: [E100]
 
-fun add(a int, b int) int {
+fun add(a i32, b i32) i32 {
     return a + b
 }
 
-proc main() int {
+proc main() i32 {
     return add(1, 2)
 }

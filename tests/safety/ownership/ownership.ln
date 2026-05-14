@@ -1,8 +1,8 @@
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
 type Point {
-    x int
-    y int
+    x i32
+    y i32
 }
 
 proc print_point(p Point) {
@@ -22,7 +22,7 @@ func mutate_point(var p Point) {
     p.y = p.y + 1
 }
 
-proc main() int {
+proc main() i32 {
     var p1 Point = undefined
     p1.x = 10
     p1.y = 20

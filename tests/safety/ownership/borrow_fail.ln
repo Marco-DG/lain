@@ -3,10 +3,10 @@
 // Attempting to move while borrowed
 
 type Resource {
-    data int
+    data i32
 }
 
-func use_resource(r Resource) int {
+func use_resource(r Resource) i32 {
     return r.data
 }
 
@@ -18,7 +18,7 @@ func conflict(r Resource, mov r2 Resource) Resource {
     return mov r2
 }
 
-proc main() int {
+proc main() i32 {
     var res Resource = undefined
     res.data = 42
     

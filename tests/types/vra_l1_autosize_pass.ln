@@ -8,7 +8,7 @@ proc compute() u8 {
     return y
 }
 
-proc main() int {
+proc main() i32 {
     var v = compute()
     return 0
 }

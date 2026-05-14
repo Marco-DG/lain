@@ -7,7 +7,7 @@ func widen(x u8) u8 {
     return t            // ERROR: t's range doesn't fit u8 return type
 }
 
-proc main() int {
+proc main() i32 {
     var _ = widen(255)
     return 0
 }

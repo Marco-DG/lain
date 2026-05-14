@@ -1,12 +1,12 @@
 // Sprint 11 — Q-014: panic builtin emits abort + stderr message
 
-proc check(x int) int {
+proc check(x i32) i32 {
     if x < 0 {
         panic("negative value")
     }
     return x
 }
 
-proc main() int {
+proc main() i32 {
     return check(42)
 }

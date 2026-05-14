@@ -4,7 +4,7 @@
 // because the source range overflows. Programmer must use `+%`, `+|`,
 // or a wider target type.
 
-proc main() int {
+proc main() i32 {
     var a u8 = 100
     var b u8 = 200
     var bad u8 = a + b      // [E086] 510 doesn't fit u8

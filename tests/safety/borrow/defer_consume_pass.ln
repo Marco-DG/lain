@@ -2,13 +2,13 @@
 // This is a PASS test: the defer statement consumes the linear variable.
 
 type Resource {
-    id int
+    id i32
 }
 
 func drop(mov {id} Resource) {
 }
 
-proc main() int {
+proc main() i32 {
     var r = Resource(42)
     defer drop(mov r)
     // r is defer-consumed, so no error at return

@@ -1,4 +1,4 @@
-extern proc printf(fmt *u8, ...) int
+extern proc printf(fmt *u8, ...) i32
 
 proc main() {
     printf("1")

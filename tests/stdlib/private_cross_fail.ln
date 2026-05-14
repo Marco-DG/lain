@@ -3,6 +3,6 @@
 
 import tests.stdlib.dummy_private
 
-proc main() int {
+proc main() i32 {
     return internal_secret()
 }

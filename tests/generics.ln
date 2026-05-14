@@ -1,4 +1,4 @@
-proc print_int(val int) {
+proc print_int(val i32) {
     libc_printf("%d\n", val)
 }
 
@@ -18,9 +18,9 @@ func identity(comptime T type, val T) T {
 }
 
 proc main() {
-    print_int(max(int, 10, 20))
+    print_int(max(i32, 10, 20))
     print_f32(max(f32, 3.14, 2.71))
     
-    var x = identity(int, 42)
+    var x = identity(i32, 42)
     print_int(x)
 }

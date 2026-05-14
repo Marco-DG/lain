@@ -1,16 +1,16 @@
-extern func printf(fmt *u8, ...) int
+extern func printf(fmt *u8, ...) i32
 
 type Shape {
     Circle {
-        radius int
+        radius i32
     }
     Rectangle {
-        w int
-        h int
+        w i32
+        h i32
     }
 }
 
-proc main() int {
+proc main() i32 {
     var s = Shape.Circle(10)
     
     // Access directly inside unsafe block

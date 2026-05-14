@@ -2,7 +2,7 @@
 // They are parsed and produce valid C code. Wrapping ops use plain C
 // arithmetic; saturating ops clamp via int64 widening + ternary.
 
-proc main() int {
+proc main() i32 {
     var a u8 = 200
     var b u8 = 100
     var w = a +% b      // wrapping add  → 44

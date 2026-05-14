@@ -26,13 +26,15 @@ void emit_stmt(Stmt *stmt, int depth) {
       // 1) indent
       emit_indent(depth);
   
-      // 2) emit the C type (or default to int)
+      // 2) emit the C type (or default to int32_t).
+      // Default fires when a `var` has neither annotation nor initializer
+      // (post-resolve this should be rare; resolve usually infers the type).
       if (stmt->as.var_stmt.type) {
         char tybuf[256];
         c_name_for_type(stmt->as.var_stmt.type, tybuf, sizeof tybuf);
         EMIT("%s", tybuf);
       } else {
-        EMIT("int");
+        EMIT("int32_t");
       }
   
       // 3) emit the variable name
@@ -550,7 +552,7 @@ void emit_stmt(Stmt *stmt, int depth) {
         emit_indent(depth);
   
         // 2) pick up the type
-        Type *ty = rhs->type ? rhs->type : get_builtin_int_type();
+        Type *ty = rhs->type ? rhs->type : get_builtin_i32_type();
         char tybuf[256];
         c_name_for_type(ty, tybuf, sizeof tybuf);
   

@@ -6,7 +6,7 @@ func tail_of(s u8[]) u8[] {
     return s
 }
 
-proc main() int {
+proc main() i32 {
     var buf = "hello"
     var sub = tail_of(buf)        // sub borrows from buf
     // sub goes out of use; NLL releases the borrow.

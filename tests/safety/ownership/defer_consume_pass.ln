@@ -4,18 +4,18 @@
 // because the walker would consume r immediately at the defer statement.
 
 type Resource {
-    id int
+    id i32
 }
 
 func drop(mov {id} Resource) {
     // destruct to consume the linear type
 }
 
-func read_resource(r Resource) int {
+func read_resource(r Resource) i32 {
     return r.id
 }
 
-proc main() int {
+proc main() i32 {
     var r Resource = undefined
     r.id = 42
     defer drop(mov r)

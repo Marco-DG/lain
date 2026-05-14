@@ -3,7 +3,7 @@
 // After fix: [E013] undeclared identifier.
 // EXPECT: [E013]
 
-proc main() int {
+proc main() i32 {
     cont = 1        // typo of an intended "count" — no silent declaration
     return cont
 }

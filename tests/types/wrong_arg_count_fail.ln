@@ -2,7 +2,7 @@
 // Test: calling function with wrong number of arguments should fail
 // Expected: Compiler error — wrong argument count
 
-func add(a int, b int) int {
+func add(a i32, b i32) i32 {
     return a + b
 }
 

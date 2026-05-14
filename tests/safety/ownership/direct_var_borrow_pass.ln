@@ -3,14 +3,14 @@
 // ref is never used after declaration → NLL releases → owner accessible.
 
 type Data {
-    value int
+    value i32
 }
 
-func read_data(d Data) int {
+func read_data(d Data) i32 {
     return d.value
 }
 
-proc main() int {
+proc main() i32 {
     var data Data = undefined
     data.value = 42
     

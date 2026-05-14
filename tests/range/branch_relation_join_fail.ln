@@ -7,7 +7,7 @@
 // still unconstrained (could be < 0 or > 9). The bounds check on arr[x]
 // after the if should fail. If it doesn't, VRA L4 scoping is unsound.
 
-proc test(x int, arr int[10]) int {
+proc test(x i32, arr i32[10]) i32 {
     if x >= 0 and x < 10 {
         // x is bounded here
     }
@@ -15,7 +15,7 @@ proc test(x int, arr int[10]) int {
     return arr[x]
 }
 
-proc main() int {
+proc main() i32 {
     return 0
 }
 

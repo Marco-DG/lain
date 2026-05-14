@@ -5,7 +5,7 @@ func first_half(s u8[]) u8[] {
     return s
 }
 
-proc main() int {
+proc main() i32 {
     var buf = "test"
     var slice = first_half(buf)
     // Both buf and slice usable until last_use of slice; NLL releases

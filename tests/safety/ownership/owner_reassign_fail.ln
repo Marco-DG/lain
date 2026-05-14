@@ -3,18 +3,18 @@
 // data is mutably borrowed by ref, then data is reassigned entirely.
 
 type Data {
-    value int
+    value i32
 }
 
-func get_ref(var d Data) var int {
+func get_ref(var d Data) var i32 {
     return var d.value
 }
 
-func consume_ref(var r int) {
+func consume_ref(var r i32) {
     // keeps ref alive
 }
 
-proc main() int {
+proc main() i32 {
     var data Data = undefined
     data.value = 42
     

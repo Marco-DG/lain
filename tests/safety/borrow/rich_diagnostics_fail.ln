@@ -6,13 +6,13 @@
 //   help: consume with `mov r` or add `defer { drop(mov r) }`
 
 type Resource {
-    id int
+    id i32
 }
 
 func drop(mov r Resource) {
 }
 
-proc main() int {
+proc main() i32 {
     var r = Resource(42)
     // Intentionally not consuming r — should get rich diagnostic
     return 0

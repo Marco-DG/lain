@@ -1,11 +1,11 @@
 // Test: equation-style constraints - should FAIL to compile
 // Calling div with 0 should violate b != 0 constraint
 
-func div(a int, b int != 0) int {
+func div(a i32, b i32 != 0) i32 {
     return a / b
 }
 
-proc main() int {
+proc main() i32 {
     var x = div(10, 0)  // ERROR: 0 violates b != 0
     return 0
 }

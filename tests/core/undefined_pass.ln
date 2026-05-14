@@ -1,8 +1,8 @@
-extern func printf(fmt *u8, ...) int
+extern func printf(fmt *u8, ...) i32
 
 proc main() {
-    var x int = undefined
-    var y int = 10
+    var x i32 = undefined
+    var y i32 = 10
     
     printf("Passed.\n")
 }

@@ -1,7 +1,7 @@
 // Test comptime if with @os builtin
 // Expected: on Linux, only the Linux branch appears in out.c
 
-extern proc printf(fmt u8[:0], ...) int
+extern proc printf(fmt u8[:0], ...) i32
 
 proc main() {
     comptime if @os == 1 {

@@ -2,7 +2,7 @@
 // to overflow. The result range is bounded by the operand type, so
 // assigning to that type passes the boundary check.
 
-proc main() int {
+proc main() i32 {
     var a u8 = 200
     var b u8 = 100
     var w u8 = a +% b        // wrapping: result in [0, 255]

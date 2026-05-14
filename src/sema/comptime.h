@@ -22,7 +22,7 @@ typedef struct ComptimeEnv {
 
 // Forward declaration from generic.h
 void generic_substitute_expr(Expr *e, const char *param_name, Type *actual_type);
-Type* get_builtin_int_type(void);
+Type* get_builtin_i32_type(void);
 
 ComptimeEnv* comptime_env_push(Arena* arena, ComptimeEnv* env, Id* name, Expr* value) {
     ComptimeEnv* node = arena_push_aligned(arena, ComptimeEnv);
@@ -74,13 +74,27 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
                     return texpr;
                 }
                 
-                // e.g. 'int' comes from type_simple lookup usually, but builtin int might not be a sym?
-                // Wait! "int", "bool", "u8" are not in sema_globals! They are primitive types.
-                if (L == 3 && strncmp(raw, "int", 3) == 0) {
-                    Expr* texpr = clone_expr(arena, expr);
-                    texpr->kind = EXPR_TYPE;
-                    texpr->as.type_expr.type_value = get_builtin_int_type();
-                    return texpr;
+                // Sized integer builtins (iN / uN, N=1..64) aren't in
+                // sema_globals — recognize them as type values directly.
+                if (L >= 2 && L <= 3 && (raw[0] == 'i' || raw[0] == 'u')) {
+                    bool all_digits = true;
+                    int bits = 0;
+                    for (int k = 1; k < L; k++) {
+                        if (raw[k] < '0' || raw[k] > '9') { all_digits = false; break; }
+                        bits = bits * 10 + (raw[k] - '0');
+                    }
+                    if (all_digits && bits >= 1 && bits <= 64) {
+                        Id *type_id = arena_push_aligned(arena, Id);
+                        char *nbuf = arena_push_many_aligned(arena, char, L + 1);
+                        memcpy(nbuf, raw, L);
+                        nbuf[L] = '\0';
+                        type_id->name = nbuf;
+                        type_id->length = L;
+                        Expr* texpr = clone_expr(arena, expr);
+                        texpr->kind = EXPR_TYPE;
+                        texpr->as.type_expr.type_value = type_simple(arena, type_id);
+                        return texpr;
+                    }
                 }
                 if (L == 4 && strncmp(raw, "bool", 4) == 0) {
                     Expr* texpr = clone_expr(arena, expr);

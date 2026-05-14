@@ -4,7 +4,7 @@
 
 
 proc main() {
-    var ptr *int = 0// null pointer representation, or use malloc
+    var ptr *i32 = 0// null pointer representation, or use malloc
 
     unsafe {
         // This is just a compilation test. We won't actually run invalid code.
@@ -14,20 +14,20 @@ proc main() {
         // but for static analysis test, even this is enough if we don't crash.
         // Let's rely on malloc to be safe-ish.
         
-        // Actually, we can cast u8 to *int if we had casts.
+        // Actually, we can cast u8 to *i32 if we had casts.
         // For now, let's just do a pointer dereference that is valid C but maybe unsafe.
-        // Actually, let's use a newly allocated int.
+        // Actually, let's use a newly allocated i32.
         
-        var x int = 42
+        var x i32 = 42
         // We don't have address-of operator '&' for local sets yet?
         // We do have reference semantics. 
-        // If we have a *int, we can deref it.
+        // If we have a *i32, we can deref it.
         
         // Let's assume we can get a pointer from somewhere.
         // For the sake of this test, we just want to verify the block parses and compiles.
-        var p *int = 0
+        var p *i32 = 0
         if 0 {
-             var y int = *p// Should compile inside unsafe
+             var y i32 = *p// Should compile inside unsafe
         }
     }
     

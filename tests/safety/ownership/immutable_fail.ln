@@ -1,5 +1,5 @@
 // EXPECT: [E013]
-proc main() int {
+proc main() i32 {
     x = 10
     x = 20 // Should fail: x is immutable
     return 0

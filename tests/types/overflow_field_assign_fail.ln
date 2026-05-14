@@ -8,7 +8,7 @@ type Pixel {
     b u8
 }
 
-proc main() int {
+proc main() i32 {
     var p Pixel = undefined
     var big u16 = 500       // OK in u16
     p.r = big               // ERROR: u16 range doesn't fit u8 field

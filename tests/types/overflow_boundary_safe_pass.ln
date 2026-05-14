@@ -2,7 +2,7 @@
 // target type's range, all boundaries (var, assign, return, call arg)
 // pass without warnings.
 
-func clamp_u8(x int >= 0 and <= 200) u8 {
+func clamp_u8(x i32 >= 0 and <= 200) u8 {
     return x as u8      // explicit cast: programmer takes responsibility
 }
 
@@ -11,7 +11,7 @@ func double_small(x u8) u8 {
     return x +| 1
 }
 
-proc main() int {
+proc main() i32 {
     var a u8 = 100              // var boundary: OK
     var b u8 = double_small(a)  // call arg + return + var: OK
     a = b                       // assign boundary: same type, OK

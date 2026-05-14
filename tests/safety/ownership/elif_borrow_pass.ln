@@ -2,10 +2,10 @@
 // Verifies that move consumption is properly tracked across elif branches
 
 type Resource {
-    mov handle int
+    mov handle i32
 }
 
-proc consume(r mov Resource) int {
+proc consume(r mov Resource) i32 {
     return mov r.handle
 }
 

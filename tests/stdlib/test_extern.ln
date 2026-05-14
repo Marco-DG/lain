@@ -1,17 +1,17 @@
-extern proc abs(n int) int
+extern proc abs(n i32) i32
 extern proc malloc(size usize) mov *void
 extern proc free(ptr mov *void)
-extern proc exit(status int)
+extern proc exit(status i32)
 
 // Also test stdlib which uses extern
 import std.io
 
-proc main() int {
+proc main() i32 {
     println("Testing extern keyword...")
 
     // Test abs
-    var n int = -42
-    var res int = abs(n)
+    var n i32 = -42
+    var res i32 = abs(n)
     if (res != 42) {
         println("Error: abs(-42) failed")
         return 1

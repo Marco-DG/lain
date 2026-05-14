@@ -4,7 +4,7 @@
 // Example: u8 + u8 has range [0+0, 255+255] = [0, 510], which needs 9
 // bits → result type is u9 (stored as uint16_t).
 
-proc main() int {
+proc main() i32 {
     var a u8 = 100
     var b u8 = 200
     // Inferred type of (a + b) is u9 (smallest container for range [0, 510]).

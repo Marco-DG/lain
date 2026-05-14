@@ -1,7 +1,7 @@
 // EXPECT: [E004]
 // Tests that mutating the scrutinee inside case & is rejected
 
-proc main() int {
+proc main() i32 {
     var x = 42
 
     case &x {

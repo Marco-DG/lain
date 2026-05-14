@@ -1,11 +1,11 @@
 // Test: equation-style constraints - should compile successfully
-// func div(a int, b int != 0) means b must not be zero
+// func div(a i32, b i32 != 0) means b must not be zero
 
-func div(a int, b int != 0) int {
+func div(a i32, b i32 != 0) i32 {
     return a / b
 }
 
-proc main() int {
+proc main() i32 {
     var x = div(10, 2)   // OK: 2 != 0
     var y = div(100, 5)  // OK: 5 != 0
     return 0

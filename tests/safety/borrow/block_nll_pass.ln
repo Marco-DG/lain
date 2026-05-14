@@ -2,14 +2,14 @@
 // This tests that a borrow created inside an if-block doesn't persist after the block.
 
 type Resource {
-    id int
+    id i32
 }
 
-func get_id(var r Resource) int {
+func get_id(var r Resource) i32 {
     return r.id
 }
 
-proc main() int {
+proc main() i32 {
     var r = Resource(42)
     
     if r.id > 0 {

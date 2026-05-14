@@ -2,14 +2,14 @@
 // ref is never used → borrow released via NLL → data can be reassigned
 
 type Data {
-    value int
+    value i32
 }
 
-func get_ref(var d Data) var int {
+func get_ref(var d Data) var i32 {
     return var d.value
 }
 
-proc main() int {
+proc main() i32 {
     var data Data = undefined
     data.value = 42
     

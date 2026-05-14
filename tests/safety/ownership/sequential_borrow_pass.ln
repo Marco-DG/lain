@@ -3,10 +3,10 @@
 // are temporary and expire at end of statement.
 
 type Counter {
-    value int
+    value i32
 }
 
-func read_counter(c Counter) int {
+func read_counter(c Counter) i32 {
     return c.value
 }
 
@@ -14,7 +14,7 @@ func increment_counter(var c Counter) {
     c.value = c.value + 1
 }
 
-proc main() int {
+proc main() i32 {
     var cnt Counter = undefined
     cnt.value = 10
     

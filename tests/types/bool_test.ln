@@ -1,8 +1,8 @@
 // Test: bool type with true/false literals
 
-extern proc libc_printf(fmt *u8, ...) int
+extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() int {
+proc main() i32 {
     var x bool = true
     var y bool = false
     

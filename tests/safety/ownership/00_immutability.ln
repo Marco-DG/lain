@@ -1,7 +1,7 @@
 // 00_immutability.ln
 // Tests that default bindings are immutable.
 
-proc main() int {
+proc main() i32 {
     var x = 10
     // x = 20      // would be fine now that x is var — this test focuses on y's mutability
     

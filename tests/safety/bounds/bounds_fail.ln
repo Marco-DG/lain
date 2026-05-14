@@ -2,8 +2,8 @@
 // Test for static bounds checking: should FAIL compilation
 // Index 5 is out of bounds for array of size 5 (valid: 0-4)
 
-proc main() int {
-    var arr int[5] = undefined
+proc main() i32 {
+    var arr i32[5] = undefined
     arr[0] = 10
     
     // This should fail: index 5 is out of bounds!

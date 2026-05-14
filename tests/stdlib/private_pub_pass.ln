@@ -2,7 +2,7 @@
 
 import tests.stdlib.dummy_private
 
-proc main() int {
+proc main() i32 {
     if public_api() == 778 {
         return 0
     }

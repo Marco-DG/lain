@@ -1,14 +1,14 @@
 // Tests that Non-Lexical Lifetimes (NLL) work for temporary borrows in conditions.
 
 type Lexer {
-    pos int
+    pos i32
 }
 
-func peek(l Lexer) int {
+func peek(l Lexer) i32 {
     return l.pos
 }
 
-proc consume(var l Lexer) int {
+proc consume(var l Lexer) i32 {
     l.pos = l.pos + 1
     return l.pos
 }
@@ -25,7 +25,7 @@ proc test_nll_while() {
     }
 }
 
-proc main() int {
+proc main() i32 {
     test_nll_while()
     return 0
 }

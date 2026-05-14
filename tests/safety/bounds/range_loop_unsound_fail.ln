@@ -1,12 +1,12 @@
 // EXPECT: [E012]
 // Sprint 15 / Q-011 L3: with affine post-loop recap, the compiler now
-// proves x == 10 exactly. The constraint `x int == 1` is violated → E012.
+// proves x == 10 exactly. The constraint `x i32 == 1` is violated → E012.
 
-func require_one(x int == 1) int {
+func require_one(x i32 == 1) i32 {
     return 0
 }
 
-proc main() int {
+proc main() i32 {
     var x = 0
     for i in 0..10 {
         x = x + 1

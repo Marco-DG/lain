@@ -5,7 +5,7 @@ proc main() {
     dangerous()
 }
 
-func dangerous() var int {
+func dangerous() var i32 {
     var local = 42
     return var local
 }

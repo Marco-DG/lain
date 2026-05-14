@@ -1,7 +1,7 @@
 // EXPECT: [E010]
 // Test: Returning a mutable reference to a local variable should fail.
 
-func ret_var() var int {
+func ret_var() var i32 {
     var x = 10
     return var x
 }

@@ -1,23 +1,23 @@
 // Standard math utilities
 
-func min(a int, b int) int {
+func min(a i32, b i32) i32 {
     if a < b { return a }
     return b
 }
 
-func max(a int, b int) int {
+func max(a i32, b i32) i32 {
     if a > b { return a }
     return b
 }
 
 // Note: abs(INT_MIN) is implementation-defined (overflow case).
-// Return constraint `int >= 0` expresses the invariant.
-func abs(x int) int >= 0 {
+// Return constraint `i32 >= 0` expresses the invariant.
+func abs(x i32) i32 >= 0 {
     if x < 0 { return 0 - x }
     return x
 }
 
-func clamp(x int, lo int, hi int) int {
+func clamp(x i32, lo i32, hi i32) i32 {
     if x < lo { return lo }
     if x > hi { return hi }
     return x

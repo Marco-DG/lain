@@ -1,10 +1,10 @@
 // EXPECT: [VRA]
 // Test: array access with unknown index and unknown length should fail bounds check
 
-func bad_access(data u8[:0], i int) int {
-    return data[i] as int
+func bad_access(data u8[:0], i i32) i32 {
+    return data[i] as i32
 }
 
-proc main() int {
+proc main() i32 {
     return bad_access("hello", 0)
 }

@@ -1,11 +1,11 @@
-// Q-002 refinement type alias: `type Name = int >= lo and <= hi` is a
-// user-defined refinement of int. Variables declared with the alias
+// Q-002 refinement type alias: `type Name = i32 >= lo and <= hi` is a
+// user-defined refinement of i32. Variables declared with the alias
 // inherit the constraint and are checked at assignment.
 
-type Pressure = int >= 0 and <= 1000
-type Percent = int >= 0 and <= 100
+type Pressure = i32 >= 0 and <= 1000
+type Percent = i32 >= 0 and <= 100
 
-proc main() int {
+proc main() i32 {
     var p Pressure = 500       // OK: 500 in [0, 1000]
     var q Percent = 75          // OK: 75 in [0, 100]
     return 0

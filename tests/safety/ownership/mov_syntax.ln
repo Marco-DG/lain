@@ -1,12 +1,12 @@
 type Foo {
-    x int
+    x i32
 }
 
 func take_ownership(mov f Foo) Foo {
     return mov f
 }
 
-proc main() int {
+proc main() i32 {
     // Test implicit immutable declaration (not supported for structs without literals, use var)
     // f = Foo{ x: 42 } -> Revert to var
     var f Foo = undefined

@@ -1,7 +1,7 @@
 // Tests non-consuming match: case &expr doesn't consume the value
 // After the borrowed match, the original variable is still usable
 
-proc main() int {
+proc main() i32 {
     var x = 42
     var result = 0
 

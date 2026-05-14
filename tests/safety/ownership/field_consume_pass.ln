@@ -3,20 +3,20 @@
 // And if all linear fields are consumed, the struct is considered fully consumed.
 
 type Resource {
-    mov handle *int
-    id int
+    mov handle *i32
+    id i32
 }
 
 func drop_handle(mov {handle, id} Resource) {
     // destructure to consume
 }
 
-func get_id(r Resource) int {
+func get_id(r Resource) i32 {
     return r.id
 }
 
-proc main() int {
-    var p *int = 0
+proc main() i32 {
+    var p *i32 = 0
     var r = Resource(p, 42)
     
     // Read a non-linear field — this is fine

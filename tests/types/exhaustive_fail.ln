@@ -1,7 +1,7 @@
 // Test for case exhaustiveness: should FAIL compilation
 // Case without else clause on integer (not exhaustive)
 
-proc main() int {
+proc main() i32 {
     var x = 5
     
     case x {
