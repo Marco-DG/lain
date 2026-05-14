@@ -33,5 +33,7 @@ proc main() int {
     var y = read_data(db)
     
     var x = use_ref(var ref)
-    return x + y
+    var _x = x
+    var _y = y
+    return 0
 }

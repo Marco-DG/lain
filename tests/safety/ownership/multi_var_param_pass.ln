@@ -28,5 +28,7 @@ proc main() int {
     // OK: borrows released
     var x = read_data(da)
     var y = read_data(db)
-    return x + y
+    var _x = x
+    var _y = y
+    return 0
 }

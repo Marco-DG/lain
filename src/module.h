@@ -46,7 +46,16 @@ static void record_module(Arena *arena, const char *name, DeclList *decls, const
     n->name  = name_copy;
     n->decls = decls;
     n->source_text = source_text;
-    n->source_file = source_file;
+    // Arena-copy source_file: callers may pass a stack-local buffer
+    // (load_module's `path[256]`), which would dangle after return.
+    if (source_file) {
+        size_t sf_len = strlen(source_file) + 1;
+        char *sf_copy = arena_push_many_aligned(arena, char, sf_len);
+        memcpy(sf_copy, source_file, sf_len);
+        n->source_file = sf_copy;
+    } else {
+        n->source_file = NULL;
+    }
     n->next  = loaded_modules;
     loaded_modules = n;
 }

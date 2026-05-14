@@ -127,6 +127,52 @@ int type_integer_range(Type *t, long long *out_lo, long long *out_hi) {
     return 0;
 }
 
+// Q-002 Phase 5 (extended): check if a value's VRA range fits the
+// target integer type's natural range. Returns true if check passed
+// (or was skipped: unsafe block, unknown range, unbounded range).
+// On violation, emits E086 with helpful suggestions and exits.
+//
+// `context` describes the boundary site for the error message
+// (e.g., "assignment to", "return from function", "argument to").
+// `target_label` identifies the specific target (variable name,
+// parameter name, etc.) for the error.
+bool check_value_fits_type(Range r, Type *target_type,
+                           isize line, isize col,
+                           const char *context, const char *target_label);
+bool check_value_fits_type(Range r, Type *target_type,
+                           isize line, isize col,
+                           const char *context, const char *target_label) {
+    if (sema_in_unsafe_block) return true;
+    if (!r.known) return true;
+    // Skip if range is unbounded — VRA has no concrete info.
+    if (r.min <= LLONG_MIN + 1 || r.max >= LLONG_MAX - 1) return true;
+    long long tlo, thi;
+    if (!target_type || !type_integer_range(target_type, &tlo, &thi)) return true;
+    if (r.min < tlo || r.max > thi) {
+        const char *type_name = "?";
+        int type_len = 1;
+        if (target_type->kind == TYPE_SIMPLE && target_type->base_type) {
+            type_name = target_type->base_type->name;
+            type_len = (int)target_type->base_type->length;
+        }
+        fprintf(stderr,
+            "[E086] Error Ln %li, Col %li: %s '%s' would overflow target type '%.*s'.\n"
+            "       Value range [%lld, %lld] does not fit type range [%lld, %lld].\n"
+            "       Options to resolve:\n"
+            "         (a) Widen the target type (e.g., u16 instead of u8).\n"
+            "         (b) Use a wrapping operator: +%%, -%%, *%% (modular).\n"
+            "         (c) Use a saturating operator: +|, -|, *| (clamp).\n"
+            "         (d) Tighten input constraints so VRA can prove safety.\n",
+            (long)line, (long)col, context,
+            target_label ? target_label : "",
+            type_len, type_name,
+            (long long)r.min, (long long)r.max, tlo, thi);
+        diagnostic_show_line(line, col);
+        exit(1);
+    }
+    return true;
+}
+
 // Rank in the implicit widening order (Q-002 extended).
 // Rank is essentially the container bit-width category:
 //   N=1..8  → 1     (8-bit container)
@@ -768,6 +814,31 @@ void sema_infer_expr(Expr *e) {
                     }
                 }
             }
+
+            // Q-002 Phase 5: overflow-at-boundary check (call argument).
+            // Skip integer literals (polymorphic across iN/uN — trusted to fit).
+            // Only fire during walk phase: during resolve, VRA hasn't yet
+            // built up local variable ranges so we'd hit false positives.
+            if (sema_walk_phase && p->decl->kind == DECL_VARIABLE && sema_ranges) {
+                Type *ptype = p->decl->as.variable_decl.type;
+                Expr *parg = NULL;
+                int a_idx = 0;
+                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
+                    if (a_idx == param_idx) { parg = a->expr; break; }
+                    a_idx++;
+                }
+                if (parg && ptype && parg->kind != EXPR_LITERAL) {
+                    Range r = sema_eval_range(parg, sema_ranges);
+                    Id *pname = p->decl->as.variable_decl.name;
+                    char buf[160];
+                    int n = pname ? (int)pname->length : 0;
+                    if (n > 159) n = 159;
+                    if (n) memcpy(buf, pname->name, n);
+                    buf[n] = '\0';
+                    check_value_fits_type(r, ptype, parg->line, parg->col,
+                        "argument to parameter", buf);
+                }
+            }
             param_idx++;
         }
     } else if (callee_decl && callee_decl->kind == DECL_STRUCT) {
@@ -803,6 +874,19 @@ void sema_infer_expr(Expr *e) {
                             field_count + 1);
                     diagnostic_show_line(e->line, e->col);
                     exit(1);
+                }
+                // Q-002 Phase 5: overflow-at-boundary (struct field init).
+                if (sema_walk_phase && sema_ranges && field_ty
+                    && a->expr->kind != EXPR_LITERAL) {
+                    Range r = sema_eval_range(a->expr, sema_ranges);
+                    Id *fname = f->decl->as.variable_decl.name;
+                    char buf[160];
+                    int n = fname ? (int)fname->length : 0;
+                    if (n > 159) n = 159;
+                    if (n) memcpy(buf, fname->name, n);
+                    buf[n] = '\0';
+                    check_value_fits_type(r, field_ty, a->expr->line, a->expr->col,
+                        "struct field initialization", buf);
                 }
             }
             f = f->next;

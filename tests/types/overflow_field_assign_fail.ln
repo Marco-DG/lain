@@ -1,0 +1,16 @@
+// EXPECT: [E086]
+// Phase 5 extended: writing to a struct field whose declared type
+// can't hold the source range triggers an overflow-at-boundary error.
+
+type Pixel {
+    r u8
+    g u8
+    b u8
+}
+
+proc main() int {
+    var p Pixel = undefined
+    var big u16 = 500       // OK in u16
+    p.r = big               // ERROR: u16 range doesn't fit u8 field
+    return 0
+}

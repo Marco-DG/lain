@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// Phase 5 extended: returning a value whose VRA range exceeds the
+// declared return type triggers an overflow-at-boundary error.
+
+func widen(x u8) u8 {
+    var t = x + 1       // u8+1 range exceeds u8
+    return t            // ERROR: t's range doesn't fit u8 return type
+}
+
+proc main() int {
+    var _ = widen(255)
+    return 0
+}

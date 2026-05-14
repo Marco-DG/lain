@@ -458,25 +458,15 @@ static void walk_stmt(Stmt *s) {
 
             if (sema_ranges && s->as.var_stmt.expr) {
                 Range r = sema_eval_range(s->as.var_stmt.expr, sema_ranges);
-                // Q-002 Phase 5: overflow-at-boundary check.
-                // If the variable has a sized integer type and the source
-                // range is known and CONCRETE (not unbounded) to exceed the
-                // type's range, emit E086. We skip the check inside `unsafe`
-                // blocks and when either bound is at INT64 limits (= "unknown
-                // upper/lower" — VRA is conservative on those).
-                if (!sema_in_unsafe_block && r.known && s->as.var_stmt.type) {
-                    long long tlo, thi;
-                    bool unbounded = (r.min <= LLONG_MIN + 1) || (r.max >= LLONG_MAX - 1);
-                    if (!unbounded && type_integer_range(s->as.var_stmt.type, &tlo, &thi)) {
-                        if (r.min < tlo || r.max > thi) {
-                            fprintf(stderr,
-                                "[E086] Error Ln %li, Col %li: assignment to '%.*s' would overflow declared type — value range [%lld, %lld] does not fit in [%lld, %lld]. Use `+%%`/`*%%` (wrapping) or `+|`/`*|` (saturating) or tighten the input constraint.\n",
-                                s->line, s->col,
-                                (int)s->as.var_stmt.name->length, s->as.var_stmt.name->name,
-                                (long long)r.min, (long long)r.max, tlo, thi);
-                            exit(1);
-                        }
-                    }
+                // Q-002 Phase 5: overflow-at-boundary check (var declaration).
+                if (s->as.var_stmt.type) {
+                    char vname_buf[128];
+                    int vn_len = s->as.var_stmt.name->length < 127
+                                 ? (int)s->as.var_stmt.name->length : 127;
+                    memcpy(vname_buf, s->as.var_stmt.name->name, vn_len);
+                    vname_buf[vn_len] = '\0';
+                    check_value_fits_type(r, s->as.var_stmt.type, s->line, s->col,
+                        "initialization of variable", vname_buf);
                 }
                 // S2 (VRA L1 auto-sizing): intersect source range with the
                 // declared type's range. If the source range is unknown or
@@ -694,10 +684,38 @@ static void walk_stmt(Stmt *s) {
             break;
         case STMT_ASSIGN:
             sema_infer_expr(s->as.assign_stmt.expr);
+            sema_infer_expr(s->as.assign_stmt.target);
+            // Q-002 Phase 5: overflow-at-boundary check (assignment).
+            // Covers all assign target shapes: identifier / field / index.
+            if (sema_ranges && s->as.assign_stmt.target && s->as.assign_stmt.target->type) {
+                Range r = sema_eval_range(s->as.assign_stmt.expr, sema_ranges);
+                Expr *tgt = s->as.assign_stmt.target;
+                char label[160];
+                const char *ctx = "assignment to";
+                if (tgt->kind == EXPR_IDENTIFIER && tgt->as.identifier_expr.id) {
+                    int n = (int)tgt->as.identifier_expr.id->length;
+                    if (n > 159) n = 159;
+                    memcpy(label, tgt->as.identifier_expr.id->name, n);
+                    label[n] = '\0';
+                } else if (tgt->kind == EXPR_MEMBER && tgt->as.member_expr.member) {
+                    int n = (int)tgt->as.member_expr.member->length;
+                    if (n > 150) n = 150;
+                    label[0] = '.';
+                    memcpy(label + 1, tgt->as.member_expr.member->name, n);
+                    label[n + 1] = '\0';
+                    ctx = "assignment to field";
+                } else if (tgt->kind == EXPR_INDEX) {
+                    label[0] = '\0';
+                    ctx = "assignment to indexed element";
+                } else {
+                    label[0] = '\0';
+                }
+                check_value_fits_type(r, tgt->type, s->line, s->col, ctx, label);
+            }
             if (sema_ranges && s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
                 Expr *rhs = s->as.assign_stmt.expr;
                 Id *lhs_id = s->as.assign_stmt.target->as.identifier_expr.id;
-                
+
                 // 1. Update Range
                 Range r = sema_eval_range(rhs, sema_ranges);
                 range_set(sema_ranges, lhs_id, r);
@@ -739,6 +757,22 @@ static void walk_stmt(Stmt *s) {
             break;
         case STMT_RETURN:
             sema_infer_expr(s->as.return_stmt.value);
+            // Q-002 Phase 5: overflow-at-boundary check (return).
+            if (sema_ranges && s->as.return_stmt.value && current_return_type) {
+                Range r = sema_eval_range(s->as.return_stmt.value, sema_ranges);
+                const char *fname = "?";
+                int fn_len = 1;
+                if (current_function_decl && current_function_decl->as.function_decl.name) {
+                    fname = current_function_decl->as.function_decl.name->name;
+                    fn_len = (int)current_function_decl->as.function_decl.name->length;
+                }
+                char buf[160];
+                if (fn_len > 159) fn_len = 159;
+                memcpy(buf, fname, fn_len);
+                buf[fn_len] = '\0';
+                check_value_fits_type(r, current_return_type, s->line, s->col,
+                    "return from function", buf);
+            }
             // Check Post-Contracts
             if (current_function_decl && current_function_decl->as.function_decl.post_contracts) {
                 Range ret_range = sema_eval_range(s->as.return_stmt.value, sema_ranges);

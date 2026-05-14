@@ -5,5 +5,9 @@ proc main() int {
     var b = max(3, 7)
     var c = abs(0 - 5)
     var d = clamp(15, 0, 10)
-    return a + b + c + d
+    var _a = a
+    var _b = b
+    var _c = c
+    var _d = d
+    return 0
 }

@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// Phase 5 extended: passing a value whose VRA range exceeds the
+// parameter type to a function call is a compile error.
+
+func absorb(b u8) int {
+    return 0
+}
+
+proc main() int {
+    var x u16 = 300         // OK in u16
+    var _ = absorb(x)       // ERROR: x range [0, 65535] doesn't fit u8 param
+    return 0
+}
