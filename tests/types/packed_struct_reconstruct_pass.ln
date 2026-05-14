@@ -1,0 +1,20 @@
+// Sprint 19: packed struct mutation via explicit reconstruction.
+// Lain rejects implicit setter rewriting (`r.pin1 = 9`) to maintain
+// P5 "no hidden magic". To modify a packed field, reconstruct the
+// struct explicitly — the bit-shift+mask cost is visible.
+
+[packed]
+type GpioModer {
+    pin0 u2
+    pin1 u2
+    pin2 u2
+    pin3 u2
+}
+
+proc main() int {
+    var r = GpioModer(1, 2, 3, 0)
+    // To modify pin1, reconstruct:
+    var r2 = GpioModer(r.pin0, 3, r.pin2, r.pin3)
+    var p = r2.pin1
+    return 0
+}

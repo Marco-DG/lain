@@ -156,57 +156,12 @@ static Type *wider_integer_type(Type *a, Type *b) {
     return integer_rank(a) >= integer_rank(b) ? a : b;
 }
 
-// Q-002 Phase 4 (Paradigm B): smallest iN/uN that contains [min, max].
-// Returns a freshly arena-allocated Type, or NULL if unknown/unbounded.
-// If both operands were unsigned and the result is non-negative, prefer
-// uN; otherwise iN. The naming preserves the "logical N" form (`i9`,
-// `u9`, etc.) so the layout follows c_name_for_type's container rule.
-static Type *paradigm_b_result_type(long long min, long long max, bool both_unsigned) {
-    if (min > max) return NULL;
-    // Unbounded → cannot compute Paradigm B.
-    if (min <= LLONG_MIN + 1 || max >= LLONG_MAX - 1) return NULL;
-
-    int bits = 0;
-    bool sgn;
-    if (both_unsigned && min >= 0) {
-        // uN: smallest N such that max ≤ 2^N - 1
-        sgn = false;
-        unsigned long long v = (unsigned long long)max;
-        bits = 1;
-        while (bits < 64 && (v >> bits) != 0) bits++;
-        if (bits == 0) bits = 1;
-    } else {
-        // iN: smallest N such that min ≥ -2^(N-1) and max ≤ 2^(N-1) - 1
-        sgn = true;
-        // Find bits for max
-        int b_pos = 1;
-        while (b_pos < 64 && ((1LL << (b_pos - 1)) - 1) < max) b_pos++;
-        // Find bits for min (compare with -2^(N-1))
-        int b_neg = 1;
-        while (b_neg < 64 && -(1LL << (b_neg - 1)) > min) b_neg++;
-        bits = b_pos > b_neg ? b_pos : b_neg;
-        if (bits < 1) bits = 1;
-    }
-    if (bits > 64) bits = 64;
-
-    // Build type name "iN" or "uN".
-    char name_buf[8];
-    int nlen = snprintf(name_buf, sizeof(name_buf), "%c%d", sgn ? 'i' : 'u', bits);
-    char *nm = arena_push_many_aligned(sema_arena, char, nlen + 1);
-    memcpy(nm, name_buf, nlen + 1);
-    Id *base = arena_push_aligned(sema_arena, Id);
-    base->name = nm;
-    base->length = nlen;
-    Type *t = arena_push_aligned(sema_arena, Type);
-    t->kind = TYPE_SIMPLE;
-    t->mode = MODE_SHARED;
-    t->base_type = base;
-    t->element_type = NULL;
-    t->array_len = 0;
-    t->sentinel_str = NULL;
-    t->sentinel_len = 0;
-    return t;
-}
+// (Q-002 Phase 4 paradigm_b_result_type was reverted.
+//  Rationale: `iN op iM = iK` smallest-container widening was
+//  cognitively surprising (i8 + i8 = i9). The result type now
+//  follows Sprint 10 widening (`iN op iM = max(iN, iM)`); overflow
+//  is caught at the assignment boundary via Phase 5 (E086) when
+//  the source VRA range doesn't fit the target type.)
 
 static bool can_widen_to(Type *from, Type *to) {
     if (!is_integer_type(from) || !is_integer_type(to)) return false;
@@ -996,29 +951,17 @@ void sema_infer_expr(Expr *e) {
         } else {
             Type *lt = e->as.binary_expr.left->type;
             Type *rt = e->as.binary_expr.right->type;
-            // Q-002 Phase 4 (Paradigm B): for +, -, *, /, % the result type
-            // is the smallest iN/uN that contains the value range computed
-            // by interval arithmetic. Wrap/sat ops keep the LHS type (the
-            // operation itself bounds the result to that type).
+            // Q-002 simplified (post Phase 4 rollback): result type follows
+            // Sprint 10 widening — max(rank(lt), rank(rt)). Wrap/sat ops
+            // keep the LHS type unchanged (the operation bounds the result
+            // to that type). Overflow on plain ops is caught at the
+            // assignment boundary by Phase 5 (E086).
             TokenKind aop = e->as.binary_expr.op;
             bool is_wrap_or_sat = (aop == TOKEN_PLUS_PERCENT  || aop == TOKEN_MINUS_PERCENT
                                 || aop == TOKEN_ASTERISK_PERCENT || aop == TOKEN_PLUS_PIPE
                                 || aop == TOKEN_MINUS_PIPE || aop == TOKEN_ASTERISK_PIPE);
-            bool is_arith = (aop == TOKEN_PLUS || aop == TOKEN_MINUS
-                          || aop == TOKEN_ASTERISK || aop == TOKEN_SLASH
-                          || aop == TOKEN_PERCENT);
             if (is_wrap_or_sat && lt && is_integer_type(lt)) {
                 e->type = lt;
-            } else if (is_arith && lt && rt && is_integer_type(lt) && is_integer_type(rt) && sema_ranges) {
-                Range r = sema_eval_range(e, sema_ranges);
-                // Detect whether both operands are unsigned: needed to pick
-                // uN vs iN for the result type.
-                int lb, rb; bool ls, rs;
-                bool both_unsigned = parse_iN_uN(lt, &lb, &ls) && parse_iN_uN(rt, &rb, &rs)
-                                     && !ls && !rs;
-                Type *pb = NULL;
-                if (r.known) pb = paradigm_b_result_type(r.min, r.max, both_unsigned);
-                e->type = pb ? pb : wider_integer_type(lt, rt);
             } else if (lt && rt && is_integer_type(lt) && is_integer_type(rt)) {
                 e->type = wider_integer_type(lt, rt);
             } else {

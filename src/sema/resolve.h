@@ -49,28 +49,7 @@ extern Type *current_return_type;
 extern Decl *current_function_decl; // New
 extern const char *current_module_path;
 
-// Q-002 Phase 3: local rank helper (typecheck.h::integer_rank is static
-// and included later in sema.h, so we have a small local copy here).
-static int _phase3_int_rank(Type *t) {
-    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return 0;
-    const char *n = t->base_type->name;
-    isize l = t->base_type->length;
-    if (l == 5 && (memcmp(n, "usize", 5) == 0 || memcmp(n, "isize", 5) == 0)) return 5;
-    if (l == 3 && memcmp(n, "int", 3) == 0) return 3;
-    if (l >= 2 && l <= 3 && (n[0] == 'i' || n[0] == 'u')) {
-        int v = 0;
-        for (isize k = 1; k < l; k++) {
-            if (n[k] < '0' || n[k] > '9') return 0;
-            v = v * 10 + (n[k] - '0');
-        }
-        if (v < 1 || v > 64) return 0;
-        if (v <= 8) return 1;
-        if (v <= 16) return 2;
-        if (v <= 32) return 3;
-        return 4;
-    }
-    return 0;
-}
+// (Q-002 Phase 3 helper removed; int monomorphization rolled back.)
 extern DeclList *sema_decls;
 extern Arena *sema_arena;
 extern RangeTable *sema_ranges;
@@ -856,93 +835,11 @@ void sema_resolve_expr(Expr *e) {
   case EXPR_CALL:
     sema_resolve_expr(e->as.call_expr.callee);
 
-    // Q-002 Phase 3: `int` parameter monomorphization.
-    // If the function has any `int` parameter and the call site passes
-    // a sized integer wider than i32 (i.e., i64/u64), specialize the
-    // function with `int` replaced by that concrete type. The mangled
-    // name includes the concrete type. For arguments of width ≤ 32,
-    // existing widening (Sprint 10) keeps them in i32, no specialization.
-    if (e->as.call_expr.callee->decl) {
-        Decl *_df = e->as.call_expr.callee->decl;
-        if ((_df->kind == DECL_FUNCTION || _df->kind == DECL_PROCEDURE)
-            && _df->as.function_decl.body /* skip extern */) {
-            // Detect whether the function has any logical `int` parameter.
-            bool has_logical_int = false;
-            for (DeclList *p = _df->as.function_decl.params; p; p = p->next) {
-                Type *pt = (p->decl && p->decl->kind == DECL_VARIABLE)
-                           ? p->decl->as.variable_decl.type : NULL;
-                if (pt && pt->kind == TYPE_SIMPLE && pt->base_type
-                    && pt->base_type->length == 3
-                    && memcmp(pt->base_type->name, "int", 3) == 0) {
-                    has_logical_int = true; break;
-                }
-            }
-            if (has_logical_int) {
-                // Resolve args first so their types are known.
-                for (ExprList *a = e->as.call_expr.args; a; a = a->next) sema_resolve_expr(a->expr);
-                // Find the widest concrete sized-int type among int-positioned args.
-                Type *concrete = NULL; int max_rank = 3; // int's own rank
-                DeclList *pp = _df->as.function_decl.params;
-                ExprList *aa = e->as.call_expr.args;
-                while (pp && aa) {
-                    Type *pt = (pp->decl && pp->decl->kind == DECL_VARIABLE)
-                               ? pp->decl->as.variable_decl.type : NULL;
-                    if (pt && pt->kind == TYPE_SIMPLE && pt->base_type
-                        && pt->base_type->length == 3
-                        && memcmp(pt->base_type->name, "int", 3) == 0
-                        && aa->expr && aa->expr->type) {
-                        int r = _phase3_int_rank(aa->expr->type);
-                        if (r > max_rank) {
-                            max_rank = r; concrete = aa->expr->type;
-                        }
-                    }
-                    pp = pp->next; aa = aa->next;
-                }
-                if (concrete && concrete->kind == TYPE_SIMPLE && concrete->base_type) {
-                    // Build mangled name: funcname_int_<concrete>
-                    char mangled[512];
-                    int n = snprintf(mangled, sizeof(mangled), "%.*s_int_%.*s",
-                        (int)_df->as.function_decl.name->length, _df->as.function_decl.name->name,
-                        (int)concrete->base_type->length, concrete->base_type->name);
-                    (void)n;
-                    // Check if instance already exists.
-                    Symbol *existing = sema_lookup(mangled);
-                    if (!existing) {
-                        Decl *inst = clone_decl(sema_arena, _df);
-                        // Replace function name
-                        inst->as.function_decl.name = id(sema_arena, strlen(mangled),
-                            arena_push_many_aligned(sema_arena, char, strlen(mangled) + 1));
-                        strcpy((char*)inst->as.function_decl.name->name, mangled);
-                        // Substitute `int` → concrete in body / params / return
-                        generic_substitute_decl(inst, "int", concrete);
-                        // Build mangled C name
-                        char cmangled[512];
-                        snprintf(cmangled, sizeof(cmangled), "%s_%s",
-                            current_module_path ? current_module_path : "main", mangled);
-                        for (char *p = cmangled; *p; p++) if (*p == '.') *p = '_';
-                        char *cname_perm = arena_push_many_aligned(sema_arena, char, strlen(cmangled) + 1);
-                        strcpy(cname_perm, cmangled);
-                        sema_insert_global(mangled, cname_perm, inst->as.function_decl.return_type, inst, false);
-                        // Tag with the same defining module so visibility checks are correct
-                        inst->defining_module = _df->defining_module;
-                        // Append to sema_decls
-                        DeclList *new_node = decl_list(sema_arena, inst);
-                        DeclList *tail = sema_decls;
-                        while (tail && tail->next) tail = tail->next;
-                        if (tail) tail->next = new_node;
-                        else sema_decls = new_node;
-                    }
-                    // Update callee identifier to point at mangled name; re-resolve.
-                    e->as.call_expr.callee->as.identifier_expr.id =
-                        id(sema_arena, strlen(mangled),
-                           arena_push_many_aligned(sema_arena, char, strlen(mangled) + 1));
-                    strcpy((char*)e->as.call_expr.callee->as.identifier_expr.id->name, mangled);
-                    e->as.call_expr.callee->decl = NULL;
-                    sema_resolve_expr(e->as.call_expr.callee);
-                }
-            }
-        }
-    }
+    // Note: Q-002 Phase 3 (int monomorphization for i64/u64) was reverted.
+    // Rationale: it introduced hidden polymorphism that violated P5
+    // "no hidden magic". `int` is now a stable alias for i32; if you
+    // want a function that accepts wider integers, declare them
+    // explicitly: `func f(n i64)` or use type parameters `func f(T type, n T)`.
 
     // Check if the callee resolved to a generic func
     if (e->as.call_expr.callee->decl) {

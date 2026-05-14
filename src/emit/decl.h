@@ -435,7 +435,13 @@ void emit_decl(Decl* decl, int depth) {
                 emit_indent(depth);
                 EMIT("}\n\n");
 
-                // Per-field getter + setter functions.
+                // Per-field getter functions.
+                // (Setters were removed for philosophical coherence with P5
+                //  "no hidden magic": `r.pin1 = 9` looks like assignment but
+                //  was rewritten as an inline function call. To modify a
+                //  packed struct field, reconstruct the struct explicitly:
+                //  `r = GpioModer(r.pin0, 9, r.pin2, r.pin3)`. This makes
+                //  the cost and semantics visible at the call site.)
                 idx = 0;
                 for (DeclList *f = decl->as.struct_decl.fields; f; f = f->next, idx++) {
                     int bits = pf[idx].bits;
@@ -455,21 +461,6 @@ void emit_decl(Decl* decl, int depth) {
                     EMIT("return (");
                     emit_type(f->decl->as.variable_decl.type);
                     EMIT(")((r >> %d) & 0x%llxULL);\n", off, mask);
-                    emit_indent(depth);
-                    EMIT("}\n\n");
-
-                    // Setter: produce a new container value with the field replaced.
-                    // r_new = (r & ~(mask << off)) | ((value & mask) << off)
-                    emit_indent(depth);
-                    EMIT("static inline %s %s_set_%.*s(%s r, ", structName, structName,
-                         (int)f->decl->as.variable_decl.name->length,
-                         f->decl->as.variable_decl.name->name,
-                         structName);
-                    emit_type(f->decl->as.variable_decl.type);
-                    EMIT(" value) {\n");
-                    emit_indent(depth + 1);
-                    EMIT("return (%s)((r & ~((%s)0x%llxULL << %d)) | (((%s)value & 0x%llxULL) << %d));\n",
-                         container, container, mask, off, container, mask, off);
                     emit_indent(depth);
                     EMIT("}\n\n");
                 }

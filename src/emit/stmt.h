@@ -567,38 +567,10 @@ void emit_stmt(Stmt *stmt, int depth) {
         // 5) newline
         EMIT(";\n");
       } else {
-        // Sprint 19.5: packed struct field assignment.
-        // If LHS is `target.field` where target's type is a packed struct,
-        // emit `target = StructName_set_field(target, value);` using an
-        // inline setter (generated alongside getters in DECL_STRUCT codegen).
-        if (lhs && lhs->kind == EXPR_MEMBER
-            && lhs->as.member_expr.target
-            && lhs->as.member_expr.target->type
-            && lhs->as.member_expr.target->type->kind == TYPE_SIMPLE
-            && lhs->as.member_expr.target->type->base_type) {
-          char tnam[256];
-          isize tl = lhs->as.member_expr.target->type->base_type->length;
-          if (tl < (isize)sizeof(tnam)) {
-            memcpy(tnam, lhs->as.member_expr.target->type->base_type->name, tl);
-            tnam[tl] = '\0';
-            extern Symbol *sema_lookup(const char *name);
-            Symbol *tsym = sema_lookup(tnam);
-            if (tsym && tsym->decl && tsym->decl->kind == DECL_STRUCT
-                && tsym->decl->as.struct_decl.is_packed) {
-              const char *sn = c_name_for_id(tsym->decl->as.struct_decl.name);
-              emit_indent(depth);
-              emit_expr(lhs->as.member_expr.target, depth);
-              EMIT(" = %s_set_%.*s(", sn,
-                   (int)lhs->as.member_expr.member->length,
-                   lhs->as.member_expr.member->name);
-              emit_expr(lhs->as.member_expr.target, depth);
-              EMIT(", ");
-              emit_expr(rhs, depth);
-              EMIT(");\n");
-              break;
-            }
-          }
-        }
+        // Note: packed struct setter (Sprint 19.5) was reverted.
+        // Mutating a packed field requires explicit reconstruction:
+        //   r = GpioModer(r.pin0, new_value, r.pin2, r.pin3)
+        // This makes the cost of bit-shift+mask visible at the call site.
         // Normal assignment with indent
         emit_indent(depth);
         emit_expr(lhs, depth);
