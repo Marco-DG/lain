@@ -1,0 +1,18 @@
+// Q-004 option C: a func returning `var T` (mutable borrow) tied to a
+// `var T` parameter is the existing pattern. Verify end-to-end.
+
+type Cell {
+    val i32
+}
+
+func ref_val(var c Cell) var i32 {
+    return var c.val
+}
+
+proc main() i32 {
+    var c Cell = undefined
+    c.val = 0
+    var r = ref_val(var c)
+    r = 42
+    return 0
+}

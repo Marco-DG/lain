@@ -1178,6 +1178,26 @@ void sema_infer_expr(Expr *e) {
     if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
         if (e->as.index_expr.index->kind == EXPR_RANGE) {
             e->type = type_array(sema_arena, t->element_type, -1);
+            // Q-003.B: semi-open sub-slicing semantics. When both
+            // endpoints are compile-time literals, verify start <= end.
+            // VRA-tracked ranges are checked via sema_check_bounds for
+            // each endpoint separately.
+            Expr *rs = e->as.index_expr.index->as.range_expr.start;
+            Expr *re = e->as.index_expr.index->as.range_expr.end;
+            if (!sema_in_unsafe_block &&
+                rs && re &&
+                rs->kind == EXPR_LITERAL && re->kind == EXPR_LITERAL) {
+                long long sv = (long long)rs->as.literal_expr.value;
+                long long ev = (long long)re->as.literal_expr.value;
+                if (sv > ev) {
+                    fprintf(stderr,
+                        "[E087] Error Ln %li, Col %li: sub-slice start (%lld) is "
+                        "greater than end (%lld). Range must satisfy start <= end.\n",
+                        (long)e->line, (long)e->col, sv, ev);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+            }
         } else {
             e->type = t->element_type;
         }

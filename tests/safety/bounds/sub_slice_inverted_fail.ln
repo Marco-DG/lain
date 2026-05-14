@@ -1,0 +1,9 @@
+// EXPECT: [E087]
+// Q-003.B: sub-slice with start > end is a compile error.
+
+proc main() i32 {
+    var arr i32[10] = [0,1,2,3,4,5,6,7,8,9]
+    var sub = arr[5..2]   // inverted: 5 > 2
+    var _s = sub
+    return 0
+}

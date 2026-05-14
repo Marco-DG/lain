@@ -1,0 +1,22 @@
+// Q-005: a borrow lives until end of its syntactic block. Outside,
+// the owner is fully usable again.
+
+type Cell {
+    val i32
+}
+
+func tweak(var c Cell) {
+    c.val = c.val + 1
+}
+
+proc main() i32 {
+    var c Cell = undefined
+    c.val = 0
+    if 1 == 1 {
+        tweak(var c)   // borrow active only inside the if
+    }
+    // outside the if: c is fully owned, we can read/move it freely
+    var x = c.val
+    var _x = x
+    return 0
+}
