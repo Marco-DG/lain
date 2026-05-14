@@ -1,0 +1,19 @@
+// D-Niche follow-up: integer refinement payload niche.
+// Pressure is constrained to [0, 1000]. Sentinel pool for the
+// payload includes [INT_MIN, -1] ∪ [1001, INT_MAX] — plenty of
+// slots for a few empty variants.
+//   [niche] enum 'Reading': payload=1 empty=2 pool=integer-split ... zero_cost=yes
+//   [niche]   empty[0] = -1
+//   [niche]   empty[1] = -2
+
+type Pressure = i32 >= 0 and <= 1000
+
+type Reading {
+    Ok { value Pressure }
+    NoData
+    SensorFault
+}
+
+proc main() i32 {
+    return 0
+}

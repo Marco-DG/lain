@@ -304,6 +304,77 @@ static Decl *niche_find_enum_by_name(Type *t) {
     return NULL;
 }
 
+/* Look up a type alias declaration by name. Sprint D follow-up
+   uses this to extract refinement bounds for integer payload niche. */
+static Decl *niche_find_alias_by_name(Type *t) {
+    extern DeclList *sema_decls;
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return NULL;
+    const char *n = t->base_type->name;
+    isize L = t->base_type->length;
+    for (DeclList *dl = sema_decls; dl; dl = dl->next) {
+        if (!dl->decl || dl->decl->kind != DECL_TYPE_ALIAS) continue;
+        Id *an = dl->decl->as.type_alias_decl.name;
+        if (!an) continue;
+        if (an->length == L && memcmp(an->name, n, L) == 0) {
+            return dl->decl;
+        }
+    }
+    return NULL;
+}
+
+/* Extract refinement bounds [lo, hi] from a type alias's constraint
+   list. Returns true and writes the bounds if at least one is found. */
+static bool niche_extract_refinement_bounds(Decl *alias_decl,
+                                            long long *out_lo,
+                                            long long *out_hi) {
+    if (!alias_decl || alias_decl->kind != DECL_TYPE_ALIAS) return false;
+    ExprList *cs = alias_decl->as.type_alias_decl.constraints;
+    if (!cs) return false;
+    bool found = false;
+    long long lo = LLONG_MIN, hi = LLONG_MAX;
+    for (ExprList *c = cs; c; c = c->next) {
+        if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+        Expr *rhs = c->expr->as.binary_expr.right;
+        if (!rhs || rhs->kind != EXPR_LITERAL) continue;
+        long long k = rhs->as.literal_expr.value;
+        switch (c->expr->as.binary_expr.op) {
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:   // <= k
+                if (hi > k)     hi = k;     found = true; break;
+            case TOKEN_ANGLE_BRACKET_LEFT:         // < k → <= k-1
+                if (hi > k - 1) hi = k - 1; found = true; break;
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:  // >= k
+                if (lo < k)     lo = k;     found = true; break;
+            case TOKEN_ANGLE_BRACKET_RIGHT:        // > k → >= k+1
+                if (lo < k + 1) lo = k + 1; found = true; break;
+            case TOKEN_EQUAL_EQUAL:                // == k
+                lo = hi = k; found = true; break;
+            default: break;  // != and other ops ignored for bounds
+        }
+    }
+    if (found) { *out_lo = lo; *out_hi = hi; }
+    return found;
+}
+
+/* Resolve a type alias to its underlying base type, if it points to
+   an integer type. Returns the underlying Type* or NULL. */
+static Type *niche_alias_underlying_int(Decl *alias_decl) {
+    if (!alias_decl || alias_decl->kind != DECL_TYPE_ALIAS) return NULL;
+    Expr *e = alias_decl->as.type_alias_decl.expr;
+    if (!e) return NULL;
+    if (e->kind == EXPR_TYPE && e->as.type_expr.type_value) {
+        Type *t = e->as.type_expr.type_value;
+        int bits; bool sgn;
+        if (niche_parse_iN_uN(t, &bits, &sgn)) return t;
+        // accept `int` alias too
+        if (t->kind == TYPE_SIMPLE && t->base_type &&
+            t->base_type->length == 3 &&
+            memcmp(t->base_type->name, "int", 3) == 0) {
+            return t;
+        }
+    }
+    return NULL;
+}
+
 static SentinelPool niche_pool_for_field(Type *field_ty) {
     if (!field_ty) {
         SentinelPool p = {0};
@@ -338,11 +409,20 @@ static SentinelPool niche_pool_for_field(Type *field_ty) {
         }
     }
 
-    /* For integer fields, look for a refinement on the field type.
-       Refinements live on the DeclTypeAlias the field references.
-       In M2 we accept inline refinements on field type only if
-       parse_iN_uN succeeds AND field_ty has a non-NULL sentinel_str
-       (current ast hooks for refinement metadata are limited). */
+    /* Sprint D follow-up: integer refinement payload niche.
+       If the field type is a TypeAlias referencing iN/uN with
+       refinement constraints, derive a split pool from those
+       bounds. Example: `type Pressure = i32 >= 0 and <= 1000`
+       gives pool = [INT_MIN, -1] ∪ [1001, INT_MAX]. */
+    Decl *alias = niche_find_alias_by_name(field_ty);
+    if (alias) {
+        Type *under = niche_alias_underlying_int(alias);
+        long long ref_lo, ref_hi;
+        if (under && niche_extract_refinement_bounds(alias, &ref_lo, &ref_hi)) {
+            return compute_sentinel_pool_integer_refined(under, ref_lo, ref_hi);
+        }
+    }
+
     return p;
 }
 

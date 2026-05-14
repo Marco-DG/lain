@@ -330,6 +330,9 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
              } else if (eval_rhs->kind == EXPR_TYPE) {
                   // It's just an alias to an existing type (e.g., type MyInt = int)
                   sema_insert_global(raw, cname, eval_rhs->as.type_expr.type_value, d, false);
+                  // Cache the evaluated type on the decl so downstream
+                  // passes (niche, emit) can inspect the underlying type.
+                  d->as.type_alias_decl.expr = eval_rhs;
              } else {
                   fprintf(stderr, "[E012] Error Ln %li, Col %li: Type alias must evaluate to a type at compile-time (got kind=%d)\n", d->line, d->col, eval_rhs->kind);
                   diagnostic_show_line(d->line, d->col);

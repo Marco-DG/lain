@@ -34,12 +34,23 @@ static int find_type_index(TypeNode *nodes, int n, const char *name) {
     return -1;
 }
 
-// Collect all enums and structs into an array of TypeNode.
-// Returns via *out_nodes and *out_n.
+// Include type aliases that resolved to a primitive type — they need
+// a `typedef <prim> Name;` emitted before any structure that uses them.
+static bool _alias_is_primitive(Decl *d) {
+    if (!d || d->kind != DECL_TYPE_ALIAS) return false;
+    Expr *e = d->as.type_alias_decl.expr;
+    if (!e || e->kind != EXPR_TYPE) return false;
+    Type *t = e->as.type_expr.type_value;
+    return t && t->kind == TYPE_SIMPLE && t->base_type;
+}
+
+// Collect all enums, structs and primitive-aliases into an array of TypeNode.
 static void collect_type_nodes(DeclList *decls, TypeNode **out_nodes, int *out_n) {
     int count = 0;
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (dl->decl->kind == DECL_ENUM || dl->decl->kind == DECL_STRUCT)
+            count++;
+        else if (_alias_is_primitive(dl->decl))
             count++;
     }
     TypeNode *nodes = calloc((size_t)count, sizeof *nodes);
@@ -47,15 +58,19 @@ static void collect_type_nodes(DeclList *decls, TypeNode **out_nodes, int *out_n
     int idx = 0;
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
-        if (d->kind == DECL_ENUM || d->kind == DECL_STRUCT) {
+        const char *cname = NULL;
+        if (d->kind == DECL_STRUCT) {
+            cname = c_name_for_id(d->as.struct_decl.name);
+        } else if (d->kind == DECL_ENUM) {
+            cname = c_name_for_id(d->as.enum_decl.type_name);
+        } else if (_alias_is_primitive(d)) {
+            cname = c_name_for_id(d->as.type_alias_decl.name);
+        }
+        if (cname) {
             nodes[idx].decl     = d;
             nodes[idx].deps     = NULL;
             nodes[idx].n_deps   = 0;
             nodes[idx].indegree = 0;
-            // pick the appropriate name
-            const char *cname = (d->kind == DECL_STRUCT
-                                 ? c_name_for_id(d->as.struct_decl.name)
-                                 : c_name_for_id(d->as.enum_decl.type_name));
             nodes[idx].name = strdup(cname);
             idx++;
         }
@@ -65,37 +80,47 @@ static void collect_type_nodes(DeclList *decls, TypeNode **out_nodes, int *out_n
     *out_n     = count;
 }
 
-// Build dependency edges: for each struct field of simple type,
-// if its base‐name matches another node, add an edge i→j.
+// Helper: register dependency edge (i emits before j when i is in j's
+// transitive deps; the existing convention here uses deps[] to store
+// "this node's dependents — children that need me first").
+static void _add_dep_edge(TypeNode *nodes, int n, Type *ty, int i) {
+    while (ty && (ty->kind == TYPE_ARRAY || ty->kind == TYPE_SLICE
+                  || ty->kind == TYPE_COMPTIME)) {
+        ty = ty->element_type;
+    }
+    if (ty && ty->kind == TYPE_SIMPLE) {
+        const char *ref = c_name_for_id(ty->base_type);
+        int j = find_type_index(nodes, n, ref);
+        if (j >= 0 && j != i) {
+            nodes[j].deps = realloc(
+                nodes[j].deps,
+                (nodes[j].n_deps + 1) * sizeof *nodes[j].deps
+            );
+            nodes[j].deps[nodes[j].n_deps++] = i;
+        }
+    }
+    (void)n;  // silence unused-param if find_type_index inlined out
+}
+
+// Build dependency edges: struct fields, enum variant fields, and
+// alias references all create edges so type-aliases used as enum
+// field types are emitted first.
 static void build_edges(TypeNode *nodes, int n) {
     for (int i = 0; i < n; i++) {
         Decl *d = nodes[i].decl;
-        if (d->kind != DECL_STRUCT) continue;
-
-        for (DeclList *f = d->as.struct_decl.fields; f; f = f->next) {
-            Type *ty = f->decl->as.variable_decl.type;
-            // strip off arrays / slices and comptime wrappers
-            // (with new OwnershipMode, we don't have TYPE_MOVE/TYPE_MUT as kinds)
-            while (ty && (ty->kind == TYPE_ARRAY || ty->kind == TYPE_SLICE
-                          || ty->kind == TYPE_COMPTIME))
-            {
-                // prefer element_type for ARRAY/SLICE/COMPTIME
-                ty = ty->element_type;
+        if (d->kind == DECL_STRUCT) {
+            for (DeclList *f = d->as.struct_decl.fields; f; f = f->next) {
+                _add_dep_edge(nodes, n, f->decl->as.variable_decl.type, i);
             }
-            if (ty && ty->kind == TYPE_SIMPLE) {
-                const char *ref = c_name_for_id(ty->base_type);
-                int j = find_type_index(nodes, n, ref);
-                if (j >= 0) {
-                    // Kind → Token, not Token → Kind:
-                    nodes[j].deps = realloc(
-                        nodes[j].deps,
-                        (nodes[j].n_deps + 1) * sizeof *nodes[j].deps
-                    );
-                    nodes[j].deps[nodes[j].n_deps++] = i;
+        } else if (d->kind == DECL_ENUM) {
+            for (Variant *v = d->as.enum_decl.variants; v; v = v->next) {
+                for (DeclList *f = v->fields; f; f = f->next) {
+                    _add_dep_edge(nodes, n, f->decl->as.variable_decl.type, i);
                 }
             }
-
         }
+        /* DECL_TYPE_ALIAS to a primitive (`int`, `i32`, etc.) has no
+           outgoing dep to another tracked node; no-op here. */
     }
     // compute indegrees (child‐counts)
     for (int i = 0; i < n; i++) {

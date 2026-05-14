@@ -739,8 +739,29 @@ void emit_decl(Decl* decl, int depth) {
             break;
         }
 
-        case DECL_IMPORT: 
-            // Imports are handled by frontend resolution, nothing to emit directly in C 
+        case DECL_TYPE_ALIAS: {
+            // Refinement aliases like `type Pressure = i32 >= 0 and <= 1000`
+            // should emit a C typedef so downstream usage (struct fields,
+            // function parameters, niche-optimized enums) can name them.
+            // Skip aliases whose RHS isn't a concrete primitive type
+            // (struct/enum aliases are already registered separately).
+            Expr *rhs = decl->as.type_alias_decl.expr;
+            if (rhs && rhs->kind == EXPR_TYPE && rhs->as.type_expr.type_value) {
+                Type *under = rhs->as.type_expr.type_value;
+                if (under->kind == TYPE_SIMPLE && under->base_type) {
+                    const char *alias_cn = c_name_for_id(decl->as.type_alias_decl.name);
+                    char back[128];
+                    c_name_for_type(under, back, sizeof back);
+                    emit_indent(depth);
+                    EMIT("typedef %s %s;\n", back, alias_cn);
+                    register_struct_type(alias_cn);
+                }
+            }
+            break;
+        }
+
+        case DECL_IMPORT:
+            // Imports are handled by frontend resolution, nothing to emit directly in C
             // (unless we decide to emit #include "module.h" later, but for now single file/unity build assumed or managed externally)
             break;
             
