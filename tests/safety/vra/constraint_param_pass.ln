@@ -1,0 +1,11 @@
+// VRA: function parameter with refinement constraint narrows the
+// callee's local range so subsequent boundary checks succeed.
+
+func small_add(x i32 >= 0 and <= 100, y i32 >= 0 and <= 100) u8 {
+    return (x + y) as u8   // x+y fits [0, 200] — explicit cast needed
+}
+
+proc main() i32 {
+    var _ = small_add(50, 30)
+    return 0
+}

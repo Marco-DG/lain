@@ -1,0 +1,14 @@
+// EXPECT: sema error
+// A pure `func` cannot be self-recursive (would break termination).
+
+func fact(n i32) i32 {
+    if n <= 1 {
+        return 1
+    }
+    return n * fact(n - 1)   // recursion not allowed in func
+}
+
+proc main() i32 {
+    var _ = fact(5)
+    return 0
+}

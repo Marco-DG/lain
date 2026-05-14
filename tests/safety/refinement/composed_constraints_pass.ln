@@ -1,0 +1,11 @@
+// Multiple constraints chained via `and` all enforced jointly.
+
+type AgeYears = i32 >= 0 and <= 150 and != 13
+
+proc main() i32 {
+    var a AgeYears = 25
+    var b AgeYears = 100
+    var _a = a
+    var _b = b
+    return 0
+}

@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// Refinement alias enforces upper bound at assignment.
+
+type Pct = i32 >= 0 and <= 100
+
+proc main() i32 {
+    var p Pct = 150   // 150 > 100, violates alias bound
+    return 0
+}

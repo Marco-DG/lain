@@ -1,0 +1,15 @@
+// EXPECT: sema error
+// A pure `func` cannot call a side-effecting `proc`.
+
+proc do_side_effect() i32 {
+    return 42
+}
+
+func compute() i32 {
+    return do_side_effect()   // func calling proc → error
+}
+
+proc main() i32 {
+    var _ = compute()
+    return 0
+}

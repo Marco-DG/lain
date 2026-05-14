@@ -1,0 +1,17 @@
+// Refinement alias used in proc + var + return positions; full
+// compile + run with libc.
+
+extern proc libc_printf(fmt *u8, ...) i32
+
+type Pct = i32 >= 0 and <= 100
+
+func half(p Pct) Pct {
+    return p / 2
+}
+
+proc main() i32 {
+    var x Pct = 80
+    var h = half(x)
+    libc_printf("%d -> %d\n", x, h)
+    return 0
+}

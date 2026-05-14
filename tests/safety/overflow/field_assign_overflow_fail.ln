@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// Writing to a struct field whose declared type can't hold the source.
+
+type RGB {
+    r u8
+    g u8
+    b u8
+}
+
+proc main() i32 {
+    var p RGB = undefined
+    var big u16 = 500
+    p.r = big   // u16 range doesn't fit u8 field
+    return 0
+}

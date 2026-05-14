@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// u8 * u8 readily exceeds 255.
+
+proc main() i32 {
+    var a u8 = 30
+    var b u8 = 30
+    var c u8 = a * b
+    return 0
+}

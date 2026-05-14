@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// i8 range [-128, 127]. Adding two near-minimums underflows.
+
+proc main() i32 {
+    var a i8 = -100
+    var b i8 = -100
+    var c i8 = a + b   // -200 doesn't fit i8
+    return 0
+}

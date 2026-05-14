@@ -1,0 +1,17 @@
+// EXPECT: [E012]
+// Struct constructor argument with incompatible type is caught
+// by the earlier type-compatibility check (E012) before Phase 5
+// would fire. Either way the program is rejected.
+
+type RGB {
+    r u8
+    g u8
+    b u8
+}
+
+proc main() i32 {
+    var big u16 = 500
+    var p = RGB(big, 0, 0)   // big doesn't fit u8 field
+    var _p = p
+    return 0
+}

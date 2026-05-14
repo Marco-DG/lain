@@ -1,0 +1,8 @@
+// Explicit `as` cast bypasses the boundary check (programmer takes
+// responsibility for narrowing).
+
+proc main() i32 {
+    var big u16 = 500
+    var narrow u8 = big as u8   // explicit cast, no E086
+    return 0
+}

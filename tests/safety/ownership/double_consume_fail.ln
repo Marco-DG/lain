@@ -1,0 +1,21 @@
+// EXPECT: [E
+// Linear value consumed twice. The struct is linear because it has a
+// `mov` field; consuming it twice must be a compile-time error.
+
+type Handle {
+    mov ptr *i32
+}
+
+func take(mov h Handle) i32 {
+    return 0
+}
+
+proc main() i32 {
+    var p *i32 = 0
+    var h = Handle(p)
+    var a = take(mov h)
+    var b = take(mov h)   // h already consumed
+    var _a = a
+    var _b = b
+    return 0
+}

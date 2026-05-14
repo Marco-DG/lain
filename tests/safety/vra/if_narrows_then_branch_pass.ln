@@ -1,0 +1,13 @@
+// VRA: `if x <= 100 and x >= 0` narrows x in the then-branch so that
+// assignment to a refinement-bounded type succeeds.
+
+type Pct = i32 >= 0 and <= 100
+
+proc main() i32 {
+    var x i32 = 50
+    if x <= 100 and x >= 0 {
+        var p Pct = x
+        var _p = p
+    }
+    return 0
+}

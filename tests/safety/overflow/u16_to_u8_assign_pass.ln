@@ -1,0 +1,10 @@
+// u16 in [0, 100] (refinement) narrows enough to fit u8 cleanly.
+
+type SmallU16 = u16 >= 0 and <= 100
+
+proc main() i32 {
+    var s SmallU16 = 50
+    var u u8 = s as u8   // explicit cast; the constraint guarantees fit
+    var _u = u
+    return 0
+}

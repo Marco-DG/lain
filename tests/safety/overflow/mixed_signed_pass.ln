@@ -1,0 +1,13 @@
+// Mixed-signedness arithmetic with constrained inputs: both fit i32.
+
+type SmallA = i32 >= 0 and <= 100
+type SmallB = i32 >= 0 and <= 50
+
+func add(a SmallA, b SmallB) i32 {
+    return a + b   // result range [0, 150] fits i32
+}
+
+proc main() i32 {
+    var _ = add(80, 10)
+    return 0
+}

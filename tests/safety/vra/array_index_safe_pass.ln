@@ -1,0 +1,11 @@
+// Array index proved in-range via `in` guard.
+
+proc main() i32 {
+    var arr i32[5] = [10, 20, 30, 40, 50]
+    var i i32 = 2
+    if i in arr {
+        var v = arr[i]
+        var _v = v
+    }
+    return 0
+}

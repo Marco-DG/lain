@@ -1,0 +1,7 @@
+// EXPECT: [E086]
+// VRA: literal whose value doesn't fit the declared narrow type.
+
+proc main() i32 {
+    var x u8 = 300   // 300 > 255
+    return 0
+}

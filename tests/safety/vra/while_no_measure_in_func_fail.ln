@@ -1,0 +1,15 @@
+// EXPECT: [E
+// `while` in `func` without `decreasing` measure must fail.
+
+func bad_loop(n i32) i32 {
+    var i i32 = 0
+    while i < n {     // missing decreasing measure
+        i = i + 1
+    }
+    return i
+}
+
+proc main() i32 {
+    var _ = bad_loop(5)
+    return 0
+}

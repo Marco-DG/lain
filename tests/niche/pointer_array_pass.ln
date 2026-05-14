@@ -1,0 +1,27 @@
+// 16 empty variants packed into a pointer's zero-page slots.
+//   [niche] enum 'BigErr': payload=1 empty=16 pool=pointer ... zero_cost=yes
+//   [niche]   empty[0]=0  ...  empty[15]=120
+
+type BigErr {
+    Ok { p *u8 }
+    E0
+    E1
+    E2
+    E3
+    E4
+    E5
+    E6
+    E7
+    E8
+    E9
+    E10
+    E11
+    E12
+    E13
+    E14
+    E15
+}
+
+proc main() i32 {
+    return 0
+}

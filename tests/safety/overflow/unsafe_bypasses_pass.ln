@@ -1,0 +1,12 @@
+// Inside an `unsafe` block, the boundary check is bypassed. The
+// programmer is taking responsibility.
+
+proc main() i32 {
+    var a u8 = 200
+    var b u8 = 100
+    unsafe {
+        var c u8 = a + b   // wraps at runtime, no E086
+        var _c = c
+    }
+    return 0
+}

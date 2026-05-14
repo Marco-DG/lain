@@ -1,0 +1,15 @@
+// EXPECT: [E
+// After moving, the original binding cannot be read.
+
+type Handle {
+    mov ptr *i32
+}
+
+proc main() i32 {
+    var p *i32 = 0
+    var h1 = Handle(p)
+    var h2 = h1   // move
+    var x = h1   // ERROR: h1 was moved
+    var _x = x
+    return 0
+}

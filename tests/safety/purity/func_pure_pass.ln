@@ -1,0 +1,14 @@
+// A pure `func` calling another pure func is allowed.
+
+func square(n i32) i32 {
+    return n * n
+}
+
+func quad(n i32) i32 {
+    return square(square(n))
+}
+
+proc main() i32 {
+    var _ = quad(3)
+    return 0
+}

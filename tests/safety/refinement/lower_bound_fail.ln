@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// Refinement alias enforces lower bound at assignment.
+
+type PosI = i32 >= 1
+
+proc main() i32 {
+    var p PosI = 0   // 0 violates >= 1
+    return 0
+}

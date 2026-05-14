@@ -1,0 +1,15 @@
+// Refinement with `!=` constraint: NonZero type. The alias can be
+// declared and used as an annotation; full VRA-propagation of `!= 0`
+// to arithmetic safety (e.g. division) is a separate concern.
+
+type NonZeroI32 = i32 != 0
+
+func double(d NonZeroI32) i32 {
+    return d + d
+}
+
+proc main() i32 {
+    var d NonZeroI32 = 5
+    var _ = double(d)
+    return 0
+}

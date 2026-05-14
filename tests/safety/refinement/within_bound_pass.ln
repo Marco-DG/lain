@@ -1,0 +1,14 @@
+// Refinement alias accepts values inside the declared range.
+
+type Pct = i32 >= 0 and <= 100
+
+func clamp_id(x Pct) Pct {
+    return x
+}
+
+proc main() i32 {
+    var p Pct = 50
+    var q = clamp_id(p)
+    var _q = q
+    return 0
+}

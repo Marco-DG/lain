@@ -1,0 +1,13 @@
+// On cortex-m4-bare the pointer pool is empty, so Option(*T) falls
+// back to tag+union with W120. Compilation still succeeds; this
+// confirms the W120 path is non-blocking.
+// Invoke: lain --target=cortex-m4-bare tests/niche/cortex_no_niche_pass.ln
+
+type OptByte {
+    Some { v *u8 }
+    None
+}
+
+proc main() i32 {
+    return 0
+}

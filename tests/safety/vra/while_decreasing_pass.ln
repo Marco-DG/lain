@@ -1,0 +1,17 @@
+// Bounded while loop with `decreasing measure` is allowed in `func`
+// (otherwise loops are reserved to `proc`).
+
+func count_down(n i32 >= 0) i32 {
+    var i i32 = n
+    var k i32 = 0
+    while i > 0 decreasing i {
+        i = i - 1
+        k = k + 1
+    }
+    return k
+}
+
+proc main() i32 {
+    var _ = count_down(5)
+    return 0
+}

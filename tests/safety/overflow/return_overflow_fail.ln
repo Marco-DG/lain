@@ -1,0 +1,12 @@
+// EXPECT: [E086]
+// Return boundary catches overflow at the return point.
+
+func widen_inc(x u8) u8 {
+    var t = x + 1   // u8 + 1 may produce 256
+    return t        // boundary check fails here
+}
+
+proc main() i32 {
+    var _ = widen_inc(255)
+    return 0
+}

@@ -1,0 +1,15 @@
+// Known VRA limitation: `a - b` with unconstrained i32 inputs is
+// computed as [INT_MIN, INT_MAX], which Phase 5 considers "unbounded"
+// (LLONG_MIN-clamped, returns true to skip). So returning to u32
+// currently passes silently. Ideal future behaviour: VRA tracks that
+// the subtraction can produce negatives unless bounds prove otherwise,
+// then E086 fires. Documented here as a deferred enhancement.
+
+func gap(a i32, b i32) u32 {
+    return (a - b) as u32   // explicit cast: programmer takes blame
+}
+
+proc main() i32 {
+    var _ = gap(5, 10)
+    return 0
+}

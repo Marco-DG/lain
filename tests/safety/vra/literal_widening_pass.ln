@@ -1,0 +1,11 @@
+// VRA: integer literals have a known concrete range. Assigning a
+// literal that fits the narrow type passes; the lexer-side default
+// `i32` does NOT cause E086.
+
+proc main() i32 {
+    var x u8 = 200       // literal 200 fits u8 even though default type is i32
+    var y i16 = -1000    // fits i16
+    var _x = x
+    var _y = y
+    return 0
+}

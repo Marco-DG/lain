@@ -1,0 +1,9 @@
+// Sprint 10 implicit widening: u8 + u8 stays u8 in type, but a wider
+// target type accepts the result without overflow check failure.
+
+proc main() i32 {
+    var a u8 = 200
+    var b u8 = 100
+    var c u16 = a + b   // result fits in u16
+    return 0
+}

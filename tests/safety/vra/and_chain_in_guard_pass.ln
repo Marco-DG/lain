@@ -1,0 +1,12 @@
+// `idx in arr and arr[idx] != 0` — the left `in` guard proves the
+// subsequent index access on the right.
+
+proc main() i32 {
+    var arr i32[3] = [1, 2, 3]
+    var i i32 = 1
+    if i in arr and arr[i] != 0 {
+        var v = arr[i]
+        var _v = v
+    }
+    return 0
+}

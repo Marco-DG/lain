@@ -1,0 +1,15 @@
+// Refinement payload niche where only the lower-bound creates the
+// hole. `i32 >= 0` leaves [INT_MIN, -1] as sentinel pool.
+//   [niche] enum 'PosResult': payload=1 empty=1 pool=integer-below ... zero_cost=yes
+//   [niche]   empty[0] = -1
+
+type NonNeg = i32 >= 0
+
+type PosResult {
+    Ok { v NonNeg }
+    Fail
+}
+
+proc main() i32 {
+    return 0
+}

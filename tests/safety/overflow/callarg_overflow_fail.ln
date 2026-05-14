@@ -1,0 +1,12 @@
+// EXPECT: [E086]
+// Call argument boundary catches overflow at the call site.
+
+func require_u8(b u8) i32 {
+    return 0
+}
+
+proc main() i32 {
+    var big u16 = 500
+    var _ = require_u8(big)   // u16 [0,65535] does not fit u8 param
+    return 0
+}

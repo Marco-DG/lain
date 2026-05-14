@@ -1,0 +1,16 @@
+// Refinement creates a split pool: 2 empties land below-range first.
+//   [niche] enum 'Range100': payload=1 empty=2 pool=integer-split ... zero_cost=yes
+//   [niche]   empty[0] = -1
+//   [niche]   empty[1] = -2
+
+type R100 = i32 >= 0 and <= 100
+
+type Range100 {
+    Ok { v R100 }
+    Below
+    Above
+}
+
+proc main() i32 {
+    return 0
+}

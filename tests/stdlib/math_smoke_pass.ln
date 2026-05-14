@@ -1,0 +1,15 @@
+// stdlib smoke test: std/math.ln min/max/abs/clamp behave on small literals.
+
+import std.math
+
+proc main() i32 {
+    var a = min(3, 7)
+    var b = max(3, 7)
+    var c = abs(-5)
+    var d = clamp(15, 0, 10)
+    var _a = a
+    var _b = b
+    var _c = c
+    var _d = d
+    return 0
+}

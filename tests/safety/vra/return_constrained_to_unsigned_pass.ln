@@ -1,0 +1,16 @@
+// Conversely: if both inputs are constrained so the result is
+// provably non-negative, returning as u32 succeeds.
+
+type NonNeg = i32 >= 0
+
+func diff(a NonNeg, b NonNeg) u32 {
+    if a >= b {
+        return (a - b) as u32   // explicit cast; VRA proves >= 0
+    }
+    return 0
+}
+
+proc main() i32 {
+    var _ = diff(10, 3)
+    return 0
+}
