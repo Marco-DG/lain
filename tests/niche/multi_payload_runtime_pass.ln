@@ -1,0 +1,53 @@
+// Sprint D follow-up (multi-payload): Result(*T, EnumOfEmpties) packs
+// the error sub-variants as sentinels of the pointer pool. End-to-end
+// runtime check: Ok and each Err variant must dispatch correctly.
+
+extern proc libc_printf(fmt *u8, ...) i32
+
+type FileErr {
+    NotFound
+    Permission
+    OOM
+}
+
+type FileResult {
+    Ok { f *u8 }
+    Err { e FileErr }
+}
+
+proc main() i32 {
+    var r1 = FileResult.Err(FileErr.NotFound)
+    var r2 = FileResult.Err(FileErr.Permission)
+    var r3 = FileResult.Err(FileErr.OOM)
+    var r4 = FileResult.Ok("data")
+
+    case r1 {
+        Err(NotFound): libc_printf("r1=NotFound\n")
+        Err(Permission): libc_printf("r1=Permission BAD\n")
+        Err(OOM): libc_printf("r1=OOM BAD\n")
+        Ok(f): libc_printf("r1=Ok BAD\n")
+    }
+
+    case r2 {
+        Err(NotFound): libc_printf("r2=NotFound BAD\n")
+        Err(Permission): libc_printf("r2=Permission\n")
+        Err(OOM): libc_printf("r2=OOM BAD\n")
+        Ok(f): libc_printf("r2=Ok BAD\n")
+    }
+
+    case r3 {
+        Err(NotFound): libc_printf("r3=NotFound BAD\n")
+        Err(Permission): libc_printf("r3=Permission BAD\n")
+        Err(OOM): libc_printf("r3=OOM\n")
+        Ok(f): libc_printf("r3=Ok BAD\n")
+    }
+
+    case r4 {
+        Err(NotFound): libc_printf("r4=NotFound BAD\n")
+        Err(Permission): libc_printf("r4=Permission BAD\n")
+        Err(OOM): libc_printf("r4=OOM BAD\n")
+        Ok(f): libc_printf("r4=Ok\n")
+    }
+
+    return 0
+}

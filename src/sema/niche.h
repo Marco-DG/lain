@@ -56,6 +56,18 @@ typedef struct {
     long long *empty_sentinels;         // assigned bit patterns, indexed by variant order
     size_t     empty_sentinels_count;   // == empty_variant_count when zero-cost
     bool       pool_was_short;          // set when payload exists but pool < empties
+
+    /* Sprint D follow-up: multi-payload niche.
+       When two payload variants exist and one of them has a single
+       field of type "enum-of-pure-empties", that variant can be
+       encoded by mapping its inner enum value into the primary's
+       sentinel pool. */
+    Variant   *primary_variant;         // the variant whose payload type becomes the backing
+    Variant   *secondary_variant;       // the variant that gets sentinel-encoded
+    Decl      *secondary_subenum_decl;  // the inner enum decl (all empties)
+    long long *secondary_sentinels;     // sentinel for each sub-variant (declaration order)
+    size_t     secondary_sentinels_count;
+
     SentinelPool pool;                  // pool snapshot at decision time
 } NicheLayout;
 
@@ -431,8 +443,8 @@ static NicheLayout niche_compute_layout(DeclEnum *e) {
     L.payload_variant_count = niche_count_payload_variants(e);
     L.empty_variant_count   = niche_count_empty_variants(e);
 
-    /* Pure-empty enum: represented as the smallest integer that
-       holds all variants. No payload, no niche question; trivially
+    /* Pure-empty enum: represented as a small integer with sequential
+       sentinels 0, 1, 2, ... assigned in declaration order. Trivially
        zero-cost. */
     if (L.payload_variant_count == 0) {
         L.is_zero_cost = true;
@@ -440,6 +452,12 @@ static NicheLayout niche_compute_layout(DeclEnum *e) {
         SentinelPool p = {0};
         p.kind = POOL_EMPTY;
         L.pool = p;
+        L.empty_sentinels = arena_push_many_aligned(
+            sema_arena, long long, L.empty_variant_count);
+        L.empty_sentinels_count = L.empty_variant_count;
+        for (size_t i = 0; i < L.empty_variant_count; i++) {
+            L.empty_sentinels[i] = (long long)i;
+        }
         return L;
     }
 
@@ -448,6 +466,52 @@ static NicheLayout niche_compute_layout(DeclEnum *e) {
     for (Variant *v = e->variants; v; v = v->next) {
         if (v->fields) { payload_v = v; break; }
     }
+
+    /* Sprint D follow-up: 2-payload niche.
+       Pattern: outer has exactly 2 payload variants and 0 empties.
+       One payload (primary) has a single field with non-empty pool;
+       the other (secondary) has a single field of type "enum of pure
+       empties". Encode each sub-empty as a sentinel of the primary. */
+    if (L.payload_variant_count == 2 && L.empty_variant_count == 0) {
+        Variant *p1 = NULL, *p2 = NULL;
+        for (Variant *v = e->variants; v; v = v->next) {
+            if (v->fields) {
+                if (!p1) p1 = v;
+                else if (!p2) { p2 = v; break; }
+            }
+        }
+        for (int swap = 0; swap < 2; swap++) {
+            Variant *prim = swap ? p2 : p1;
+            Variant *sec  = swap ? p1 : p2;
+            if (!prim || !sec) continue;
+            if (!prim->fields || prim->fields->next != NULL) continue;
+            if (!sec->fields || sec->fields->next != NULL) continue;
+            Type *prim_ty = prim->fields->decl->as.variable_decl.type;
+            Type *sec_ty  = sec->fields->decl->as.variable_decl.type;
+            SentinelPool pool = niche_pool_for_field(prim_ty);
+            if (pool.kind == POOL_EMPTY) continue;
+            Decl *sub_enum = niche_find_enum_by_name(sec_ty);
+            if (!sub_enum) continue;
+            if (niche_count_payload_variants(&sub_enum->as.enum_decl) != 0) continue;
+            size_t sub_count = niche_count_empty_variants(&sub_enum->as.enum_decl);
+            if (sub_count == 0 || (long long)sub_count > pool.size) continue;
+            /* Success. */
+            L.pool = pool;
+            L.is_zero_cost = true;
+            L.needs_tag_byte = false;
+            L.primary_variant   = prim;
+            L.secondary_variant = sec;
+            L.secondary_subenum_decl = sub_enum;
+            L.secondary_sentinels = arena_push_many_aligned(
+                sema_arena, long long, sub_count);
+            L.secondary_sentinels_count = sub_count;
+            for (size_t i = 0; i < sub_count; i++) {
+                L.secondary_sentinels[i] = sentinel_pick(&pool, i);
+            }
+            return L;
+        }
+    }
+
     if (!payload_v || !payload_v->fields ||
         payload_v->fields->next != NULL ||
         L.payload_variant_count != 1) {
@@ -587,6 +651,15 @@ static void niche_dump_layout(DeclEnum *e, NicheLayout *L) {
         for (size_t i = 0; i < L->empty_sentinels_count; i++) {
             fprintf(stderr, "[niche]   empty[%zu] = %lld\n",
                     i, L->empty_sentinels[i]);
+        }
+    }
+    if (L->is_zero_cost && L->secondary_sentinels) {
+        Id *sn = L->secondary_variant->name;
+        fprintf(stderr, "[niche]   multi-payload secondary=%.*s sub_count=%zu\n",
+                (int)sn->length, sn->name, L->secondary_sentinels_count);
+        for (size_t i = 0; i < L->secondary_sentinels_count; i++) {
+            fprintf(stderr, "[niche]     %.*s[%zu] = %lld\n",
+                    (int)sn->length, sn->name, i, L->secondary_sentinels[i]);
         }
     }
 }

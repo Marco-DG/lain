@@ -547,19 +547,24 @@ void emit_decl(Decl* decl, int depth) {
             bool __use_niche = enum_is_zero_cost_niche(decl, &__niche_layout);
 
             if (__use_niche) {
-                Variant *pv = enum_payload_variant(&decl->as.enum_decl);
+                bool is_multi = (__niche_layout.primary_variant != NULL &&
+                                 __niche_layout.secondary_variant != NULL);
 
                 // Pick the C backing type.
-                //  - Pure-empty enum:        int32_t (sentinel-counted)
+                //  - Multi-payload niche:    primary's field type
+                //  - Pure-empty enum:        int32_t
                 //  - Single payload pointer: that pointer type
-                //  - Single payload bool:    uint8_t (need values >1 for sentinels)
-                //  - Other:                  fall back to the payload field's type
+                //  - Single payload bool:    uint8_t
+                //  - Other:                  payload field's type
                 char backing[256];
-                if (!pv) {
+                Variant *primary = is_multi
+                    ? __niche_layout.primary_variant
+                    : enum_payload_variant(&decl->as.enum_decl);
+                if (!primary) {
                     snprintf(backing, sizeof backing, "int32_t");
                 } else {
-                    Type *ft = pv->fields->decl->as.variable_decl.type;
-                    if (__niche_layout.pool.kind == POOL_BOOL) {
+                    Type *ft = primary->fields->decl->as.variable_decl.type;
+                    if (!is_multi && __niche_layout.pool.kind == POOL_BOOL) {
                         snprintf(backing, sizeof backing, "uint8_t");
                     } else {
                         c_name_for_type(ft, backing, sizeof backing);
@@ -573,6 +578,7 @@ void emit_decl(Decl* decl, int depth) {
                 // Constructors. Each variant gets a static inline function;
                 // empty variants return the assigned sentinel, payload
                 // variants are identity functions on the payload field.
+                // Multi-payload secondary: maps sub-enum value -> sentinel.
                 for (Variant *v = decl->as.enum_decl.variants; v; v = v->next) {
                     emit_indent(depth);
                     EMIT("static inline %s %s_%.*s(", adt_name, adt_name,
@@ -593,7 +599,23 @@ void emit_decl(Decl* decl, int depth) {
                     EMIT(") {\n");
                     emit_indent(depth + 1);
 
-                    if (!v->fields) {
+                    if (is_multi && v == __niche_layout.secondary_variant) {
+                        // Secondary: map sub-enum value to sentinel via
+                        // (value * stride). Sub-enum's empties are 0,1,2,...
+                        // and primary pool sentinels are 0, stride, 2*stride, ...
+                        Id *fname = v->fields->decl->as.variable_decl.name;
+                        long long stride = __niche_layout.pool.ptr_stride > 0
+                            ? __niche_layout.pool.ptr_stride : 1;
+                        if (__niche_layout.pool.kind == POOL_POINTER) {
+                            EMIT("return (%s)(uintptr_t)((long long)%.*s * %lldLL);\n",
+                                 backing,
+                                 (int)fname->length, fname->name, stride);
+                        } else {
+                            EMIT("return (%s)((long long)%.*s * %lldLL);\n",
+                                 backing,
+                                 (int)fname->length, fname->name, stride);
+                        }
+                    } else if (!v->fields) {
                         long long s = niche_sentinel_for_variant(
                             &decl->as.enum_decl, v, &__niche_layout);
                         if (__niche_layout.pool.kind == POOL_POINTER) {
@@ -603,9 +625,10 @@ void emit_decl(Decl* decl, int depth) {
                             EMIT("return (%s)%lldLL;\n", backing, s);
                         }
                     } else {
-                        // Identity on the single field.
+                        // Identity on the single field (primary in multi-payload
+                        // OR sole payload in single-payload niche).
                         Id *fname = v->fields->decl->as.variable_decl.name;
-                        if (__niche_layout.pool.kind == POOL_BOOL) {
+                        if (__niche_layout.pool.kind == POOL_BOOL && !is_multi) {
                             EMIT("return (uint8_t)%.*s;\n",
                                  (int)fname->length, fname->name);
                         } else {
