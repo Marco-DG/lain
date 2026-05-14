@@ -14,6 +14,7 @@
 #include "emit.h"
 #include "error.h"
 #include "args.h"
+#include "target.h"
 #include "sema.h"
 
 void expr_print_ast(Expr *expr, int depth);
@@ -60,6 +61,10 @@ int main(int argc, char **argv) {
     Arena _sema_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*1024);
 
     Args args = args_parse(argc, argv);
+
+    // Initialize target config (host auto-detect unless --target= specified).
+    target_init_for(args.target_triple);
+    sema_dump_niche = args.dump_niche;
 
     // C.1 fix: if the user passed an **absolute** path, chdir to its directory
     // so import-based module resolution keeps working. Relative paths are left

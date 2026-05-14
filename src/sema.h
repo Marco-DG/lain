@@ -55,6 +55,7 @@ static bool sema_is_in_guarded(Expr *index, Expr *container);
 #include "sema/resolve.h"
 #include "sema/typecheck.h"
 #include "sema/linearity.h"
+#include "sema/niche.h"
 
 Type *current_return_type = NULL;
 Decl *current_function_decl = NULL;
@@ -64,6 +65,7 @@ Arena *sema_arena = NULL;
 RangeTable *sema_ranges = NULL;
 bool sema_in_unsafe_block = false;
 bool sema_walk_phase = false;
+bool sema_dump_niche = false;  // set by main from args.dump_niche
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Public entry: call this before emit                             │
@@ -1057,6 +1059,18 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             }
         }
         if (any_error) exit(1);
+    }
+
+    // D-Niche M2: precompute niche layout for every enum. Result
+    // is currently discarded; M3 will route it into the codegen.
+    // --dump-niche prints each decision to stderr for inspection.
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (dl->decl && dl->decl->kind == DECL_ENUM) {
+            NicheLayout layout = niche_compute_layout(&dl->decl->as.enum_decl);
+            if (sema_dump_niche) {
+                niche_dump_layout(&dl->decl->as.enum_decl, &layout);
+            }
+        }
     }
 
     // 2) For each function: resolve → infer → linearity → clear locals

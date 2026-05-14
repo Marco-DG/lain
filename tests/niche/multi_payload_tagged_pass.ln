@@ -1,0 +1,13 @@
+// D-Niche M2: enum with >1 payload variant. Multi-payload merging
+// is deferred to M6; M2 conservatively falls back to tag+union.
+// Test verifies the compiler accepts this shape (no crash).
+//   [niche] enum 'Shape': payload=2 empty=0 pool=empty ... zero_cost=no
+
+type Shape {
+    Circle { radius i32 }
+    Rectangle { width i32, height i32 }
+}
+
+proc main() i32 {
+    return 0
+}

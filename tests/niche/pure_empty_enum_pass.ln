@@ -1,0 +1,17 @@
+// D-Niche M2: pure-empty enum (no payload variants). Trivially
+// zero-cost; codegen will pick the smallest integer width.
+//   [niche] enum 'Day': payload=0 empty=7 pool=empty ... zero_cost=yes
+
+type Day {
+    Mon
+    Tue
+    Wed
+    Thu
+    Fri
+    Sat
+    Sun
+}
+
+proc main() i32 {
+    return 0
+}

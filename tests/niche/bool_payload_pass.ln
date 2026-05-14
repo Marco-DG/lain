@@ -1,0 +1,17 @@
+// D-Niche M2: bool payload + multiple empty variants. Bool occupies
+// 1 byte with 254 unused slots [2..255]; all empties fit zero-cost.
+//   [niche] enum 'BoolTri': payload=1 empty=3 pool=bool pool.size=254 zero_cost=yes
+//   [niche]   empty[0] = 2
+//   [niche]   empty[1] = 3
+//   [niche]   empty[2] = 4
+
+type BoolTri {
+    Set { value bool }
+    Unset
+    Pending
+    Error
+}
+
+proc main() i32 {
+    return 0
+}

@@ -1,0 +1,19 @@
+// D-Niche M2: pointer payload + 4 empty variants. Pool pointer
+// provides thousands of slots; all 4 empties fit zero-cost.
+//   [niche] enum 'FileResult': payload=1 empty=4 pool=pointer ... zero_cost=yes
+//   [niche]   empty[0] = 0
+//   [niche]   empty[1] = 8        (pointer alignment stride)
+//   [niche]   empty[2] = 16
+//   [niche]   empty[3] = 24
+
+type FileResult {
+    Ok { f *u8 }
+    NotFound
+    Permission
+    OutOfMemory
+    Other
+}
+
+proc main() i32 {
+    return 0
+}

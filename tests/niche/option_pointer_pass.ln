@@ -1,0 +1,14 @@
+// D-Niche M2: Option with pointer payload. On host targets, the
+// pointer pool provides the niche; None gets sentinel = NULL.
+// Run with `--dump-niche` to inspect:
+//   [niche] enum 'OptionNode': payload=1 empty=1 pool=pointer ... zero_cost=yes
+//   [niche]   empty[0] = 0
+
+type OptionNode {
+    Some { node *u8 }
+    None
+}
+
+proc main() i32 {
+    return 0
+}
