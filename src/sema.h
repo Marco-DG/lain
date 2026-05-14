@@ -458,6 +458,12 @@ static void walk_stmt(Stmt *s) {
                 s->as.var_stmt.type = s->as.var_stmt.expr->type;
             }
 
+            // F4 (spec audit): full type-compatibility enforcement at
+            // STMT_VAR is non-trivial — requires refinement-alias
+            // resolution + float literal polymorphism + integer literal
+            // polymorphism. Deferred. See internal/ai_analysis/
+            // spec_audit_2026_05_14.md §F4.
+
             if (sema_ranges && s->as.var_stmt.expr) {
                 Range r = sema_eval_range(s->as.var_stmt.expr, sema_ranges);
                 // Q-002 Phase 5: overflow-at-boundary check (var declaration).

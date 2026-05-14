@@ -1,0 +1,15 @@
+type OptionPtr {
+    Some { p *u8 }
+    None
+}
+
+type ResultPtr {
+    Ok { v *u8 }
+    Err1
+    Err2
+    Err3
+}
+
+proc main() i32 {
+    return 0
+}
