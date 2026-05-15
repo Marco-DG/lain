@@ -222,6 +222,8 @@ static bool is_primitive_type(Type *t) {
         // Enums are primitives (integers)
         Symbol *sym = sema_lookup(c_name_for_id(base));
         if (sym && sym->decl && sym->decl->kind == DECL_ENUM) return true;
+        // Niche-typedef'd enums / primitive aliases (emit-side registry).
+        if (is_scalar_typedef(c_name_for_id(base))) return true;
     }
     return false;
 }

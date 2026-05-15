@@ -56,9 +56,9 @@ static char *filepath_to_modname(Arena *arena, const char *path) {
 int main(int argc, char **argv) {
     // two arenas:
     // two arenas:
-    Arena file_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*1024);
-    Arena ast_arena  = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*1024);
-    Arena _sema_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*1024);
+    Arena file_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
+    Arena ast_arena  = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
+    Arena _sema_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
 
     Args args = args_parse(argc, argv);
 

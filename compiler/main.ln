@@ -1,0 +1,40 @@
+// Self-hosted lexer test driver — stage 1.
+
+import compiler.lexer
+
+extern proc libc_printf(fmt *u8, ...) i32
+
+func kind_name(k Kind) *u8 {
+    case k {
+        Eof:        return "Eof"
+        Identifier: return "Identifier"
+        Number:     return "Number"
+        Plus:       return "Plus"
+        Minus:      return "Minus"
+        Star:       return "Star"
+        Slash:      return "Slash"
+        LParen:     return "LParen"
+        RParen:     return "RParen"
+        LBrace:     return "LBrace"
+        RBrace:     return "RBrace"
+        Semicolon:  return "Semicolon"
+        Comma:      return "Comma"
+        Dot:        return "Dot"
+        Invalid:    return "Invalid"
+    }
+}
+
+proc main() i32 {
+    var src = "x + 42 ;"
+    var lx = new_lexer()
+    var stop bool = false
+    while !stop {
+        var t = next_token(var lx, src)
+        libc_printf("kind=%s start=%d len=%d\n", kind_name(t.kind), t.start, t.len)
+        case t.kind {
+            Eof: stop = true
+            else: stop = false
+        }
+    }
+    return 0
+}

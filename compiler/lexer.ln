@@ -1,0 +1,124 @@
+// Self-hosted Lain lexer — stage 1 (minimal).
+//
+// Scope: identifiers, integer literals, single-char punctuation,
+//        whitespace skip, EOF. No strings, no multi-char punct, no
+//        keywords (parser classifies later), no comments.
+
+type Kind {
+    Eof
+    Identifier
+    Number
+    Plus
+    Minus
+    Star
+    Slash
+    LParen
+    RParen
+    LBrace
+    RBrace
+    Semicolon
+    Comma
+    Dot
+    Invalid
+}
+
+type Token {
+    kind  Kind
+    start i32
+    len   i32
+}
+
+type Lexer {
+    pos i32
+}
+
+func new_lexer() Lexer {
+    return Lexer(0)
+}
+
+func is_ws(c u8) bool {
+    if c == 32 { return true }
+    if c == 9  { return true }
+    if c == 10 { return true }
+    if c == 13 { return true }
+    return false
+}
+
+func is_digit(c u8) bool {
+    if c >= 48 and c <= 57 { return true }
+    return false
+}
+
+func is_ident_start(c u8) bool {
+    if c >= 65 and c <= 90  { return true }
+    if c >= 97 and c <= 122 { return true }
+    if c == 95              { return true }
+    return false
+}
+
+func is_ident_cont(c u8) bool {
+    if is_ident_start(c) { return true }
+    if is_digit(c)       { return true }
+    return false
+}
+
+func skip_ws(var lx Lexer, src u8[:0]) {
+    while lx.pos in src decreasing (src.len - lx.pos) {
+        var c = src[lx.pos]
+        if !is_ws(c) { return }
+        lx.pos = lx.pos + 1
+    }
+}
+
+func scan_ident(var lx Lexer, src u8[:0]) i32 {
+    var start = lx.pos
+    while lx.pos in src decreasing (src.len - lx.pos) {
+        var c = src[lx.pos]
+        if !is_ident_cont(c) { return lx.pos - start }
+        lx.pos = lx.pos + 1
+    }
+    return lx.pos - start
+}
+
+func scan_number(var lx Lexer, src u8[:0]) i32 {
+    var start = lx.pos
+    while lx.pos in src decreasing (src.len - lx.pos) {
+        var c = src[lx.pos]
+        if !is_digit(c) { return lx.pos - start }
+        lx.pos = lx.pos + 1
+    }
+    return lx.pos - start
+}
+
+func next_token(var lx Lexer, src u8[:0]) Token {
+    skip_ws(var lx, src)
+    if !(lx.pos in src) {
+        return Token(Kind.Eof, lx.pos, 0)
+    }
+    var start = lx.pos
+    var c = src[lx.pos]
+
+    if is_ident_start(c) {
+        var l = scan_ident(var lx, src)
+        return Token(Kind.Identifier, start, l)
+    }
+    if is_digit(c) {
+        var l = scan_number(var lx, src)
+        return Token(Kind.Number, start, l)
+    }
+
+    lx.pos = lx.pos + 1
+    if c == 43  { return Token(Kind.Plus,      start, 1) }
+    if c == 45  { return Token(Kind.Minus,     start, 1) }
+    if c == 42  { return Token(Kind.Star,      start, 1) }
+    if c == 47  { return Token(Kind.Slash,     start, 1) }
+    if c == 40  { return Token(Kind.LParen,    start, 1) }
+    if c == 41  { return Token(Kind.RParen,    start, 1) }
+    if c == 123 { return Token(Kind.LBrace,    start, 1) }
+    if c == 125 { return Token(Kind.RBrace,    start, 1) }
+    if c == 59  { return Token(Kind.Semicolon, start, 1) }
+    if c == 44  { return Token(Kind.Comma,     start, 1) }
+    if c == 46  { return Token(Kind.Dot,       start, 1) }
+
+    return Token(Kind.Invalid, start, 1)
+}

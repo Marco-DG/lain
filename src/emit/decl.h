@@ -571,9 +571,11 @@ void emit_decl(Decl* decl, int depth) {
                     }
                 }
 
-                emit_indent(depth);
-                EMIT("typedef %s %s;\n\n", backing, adt_name);
-                register_struct_type(adt_name);
+                if (!is_struct_type(adt_name)) {
+                    emit_indent(depth);
+                    EMIT("typedef %s %s;\n\n", backing, adt_name);
+                    register_scalar_typedef(adt_name);
+                }
 
                 // Constructors. Each variant gets a static inline function;
                 // empty variants return the assigned sentinel, payload
@@ -764,20 +766,21 @@ void emit_decl(Decl* decl, int depth) {
 
         case DECL_TYPE_ALIAS: {
             // Refinement aliases like `type Pressure = i32 >= 0 and <= 1000`
-            // should emit a C typedef so downstream usage (struct fields,
-            // function parameters, niche-optimized enums) can name them.
-            // Skip aliases whose RHS isn't a concrete primitive type
-            // (struct/enum aliases are already registered separately).
+            // get a typedef so downstream usage can name them. May have
+            // been pre-emitted in the forward stage (see emit.h); skip
+            // duplicates via is_struct_type().
             Expr *rhs = decl->as.type_alias_decl.expr;
             if (rhs && rhs->kind == EXPR_TYPE && rhs->as.type_expr.type_value) {
                 Type *under = rhs->as.type_expr.type_value;
                 if (under->kind == TYPE_SIMPLE && under->base_type) {
                     const char *alias_cn = c_name_for_id(decl->as.type_alias_decl.name);
-                    char back[128];
-                    c_name_for_type(under, back, sizeof back);
-                    emit_indent(depth);
-                    EMIT("typedef %s %s;\n", back, alias_cn);
-                    register_struct_type(alias_cn);
+                    if (!is_struct_type(alias_cn)) {
+                        char back[128];
+                        c_name_for_type(under, back, sizeof back);
+                        emit_indent(depth);
+                        EMIT("typedef %s %s;\n", back, alias_cn);
+                        register_scalar_typedef(alias_cn);
+                    }
                 }
             }
             break;

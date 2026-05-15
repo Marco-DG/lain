@@ -4,8 +4,8 @@
 #include "ast.h"
 #include "sema.h"
 
-#include "emit/lain_header.h"
 #include "emit/ctor.h"
+#include "emit/lain_header.h"
 #include "emit/core.h"
 #include "emit/expr.h"
 #include "emit/stmt.h"
@@ -32,12 +32,47 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
             const char *name = c_name_for_id(dl->decl->as.struct_decl.name);
             EMIT("typedef struct %s %s;\n", name, name);
         } else if (dl->decl->kind == DECL_ENUM) {
-            // D-Niche M3: skip the `typedef struct` forward for enums
-            // that the niche pass emits as scalar typedefs — it would
-            // conflict with the scalar typedef.
-            if (enum_is_zero_cost_niche(dl->decl, NULL)) continue;
+            // D-Niche: niche-optimized enums get a scalar `typedef T E;`
+            // here so that later function forward declarations can
+            // reference them. The structural `typedef struct E E;` form
+            // is skipped (would conflict).
             const char *name = c_name_for_id(dl->decl->as.enum_decl.type_name);
-            EMIT("typedef struct %s %s;\n", name, name);
+            NicheLayout nl;
+            if (enum_is_zero_cost_niche(dl->decl, &nl)) {
+                // Choose the same backing type as emit_decl will use.
+                Variant *primary = nl.primary_variant
+                    ? nl.primary_variant
+                    : enum_payload_variant(&dl->decl->as.enum_decl);
+                char backing[256];
+                if (!primary) {
+                    snprintf(backing, sizeof backing, "int32_t");
+                } else {
+                    Type *ft = primary->fields->decl->as.variable_decl.type;
+                    if (nl.pool.kind == POOL_BOOL && !nl.primary_variant) {
+                        snprintf(backing, sizeof backing, "uint8_t");
+                    } else {
+                        c_name_for_type(ft, backing, sizeof backing);
+                    }
+                }
+                EMIT("typedef %s %s;\n", backing, name);
+                register_scalar_typedef(name);
+            } else {
+                EMIT("typedef struct %s %s;\n", name, name);
+            }
+        } else if (dl->decl->kind == DECL_TYPE_ALIAS) {
+            // Primitive-aliased typedefs (`type Pressure = i32 >= 0...`)
+            // also need to appear before function forward declarations.
+            Expr *rhs = dl->decl->as.type_alias_decl.expr;
+            if (rhs && rhs->kind == EXPR_TYPE && rhs->as.type_expr.type_value) {
+                Type *under = rhs->as.type_expr.type_value;
+                if (under->kind == TYPE_SIMPLE && under->base_type) {
+                    const char *alias_cn = c_name_for_id(dl->decl->as.type_alias_decl.name);
+                    char back[128];
+                    c_name_for_type(under, back, sizeof back);
+                    EMIT("typedef %s %s;\n", back, alias_cn);
+                    register_scalar_typedef(alias_cn);
+                }
+            }
         }
     }
     EMIT("\n");

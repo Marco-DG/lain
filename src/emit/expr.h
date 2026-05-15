@@ -636,11 +636,28 @@ void emit_expr(Expr *expr, int depth) {
     emit_expr(expr->as.move_expr.expr, depth);
     break;
 
-  case EXPR_MUT:
-    EMIT("&(");
-    emit_expr(expr->as.mut_expr.expr, depth);
-    EMIT(")");
+  case EXPR_MUT: {
+    // When the inner expression is already a `var T` parameter (which
+    // is stored as T* in C), passing `&inner` would create a double
+    // pointer. Detect that case and emit the identifier directly.
+    Expr *inner = expr->as.mut_expr.expr;
+    bool already_pointer = false;
+    if (inner && inner->kind == EXPR_IDENTIFIER && inner->decl &&
+        inner->decl->kind == DECL_VARIABLE &&
+        inner->decl->as.variable_decl.is_parameter &&
+        inner->decl->as.variable_decl.type &&
+        inner->decl->as.variable_decl.type->mode == MODE_MUTABLE) {
+        already_pointer = true;
+    }
+    if (already_pointer) {
+        emit_expr(inner, depth);
+    } else {
+        EMIT("&(");
+        emit_expr(inner, depth);
+        EMIT(")");
+    }
     break;
+  }
 
   case EXPR_CAST: {
     char tybuf[256];

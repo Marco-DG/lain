@@ -146,8 +146,14 @@ bool check_value_fits_type(Range r, Type *target_type,
                            const char *context, const char *target_label) {
     if (sema_in_unsafe_block) return true;
     if (!r.known) return true;
-    // Skip if range is unbounded — VRA has no concrete info.
-    if (r.min <= LLONG_MIN + 1 || r.max >= LLONG_MAX - 1) return true;
+    // Skip if range is effectively unbounded — VRA may have widened from
+    // an unconstrained value, so a range whose extremum sits within a
+    // small window of LLONG_MIN/LLONG_MAX is treated as "no info".
+    // The window absorbs arithmetic from type-max constants
+    // (e.g. `n - 2` widens to [LLONG_MIN+2, LLONG_MAX-2]).
+    const long long UNBOUNDED_WINDOW = 4096;
+    if (r.min <= LLONG_MIN + UNBOUNDED_WINDOW ||
+        r.max >= LLONG_MAX - UNBOUNDED_WINDOW) return true;
     long long tlo, thi;
     if (!target_type || !type_integer_range(target_type, &tlo, &thi)) return true;
     if (r.min < tlo || r.max > thi) {

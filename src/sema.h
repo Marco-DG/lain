@@ -558,6 +558,19 @@ static void walk_stmt(Stmt *s) {
                 walk_stmt(b->stmt);
             sema_pop_scope();
 
+            // Detect early-return-only then-branch: if THEN ends with a
+            // return statement, the code after the if-stmt is reachable
+            // only when the condition was false. Propagate the negated
+            // condition to the trailing scope (no else-branch case).
+            bool then_returns = false;
+            {
+                StmtList *last = NULL;
+                for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next) last = b;
+                if (last && last->stmt && last->stmt->kind == STMT_RETURN) {
+                    then_returns = true;
+                }
+            }
+
             // Restore state (pop constraints + in-guards from THEN)
             sema_ranges->head = old_head;
             sema_ranges->constraints = old_constraints;
@@ -571,9 +584,22 @@ static void walk_stmt(Stmt *s) {
                 walk_stmt(b->stmt);
             sema_pop_scope();
 
-            // Restore state again
-            sema_ranges->head = old_head;
-            sema_ranges->constraints = old_constraints;
+            if (then_returns) {
+                // Keep the negated constraints for the rest of the
+                // function. Also, if the original cond was `!(E)`, then
+                // the negation is `E` — push E's in-guards so subsequent
+                // bounds checks can use them.
+                Expr *cond = s->as.if_stmt.cond;
+                if (cond && cond->kind == EXPR_UNARY &&
+                    cond->as.unary_expr.op == TOKEN_BANG &&
+                    cond->as.unary_expr.right) {
+                    sema_push_in_guards(cond->as.unary_expr.right);
+                }
+            } else {
+                // Normal: restore state to what it was before the if.
+                sema_ranges->head = old_head;
+                sema_ranges->constraints = old_constraints;
+            }
             break;
         }
         case STMT_FOR: {
@@ -1435,10 +1461,21 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
 
         // 2.c) Type inference + bounds checking
         // (walk_stmt is defined as a static function above sema_resolve_module)
+        // Snapshot sema_ranges state so any constraints added during walk
+        // (e.g. by post-`if then-returns` propagation) don't leak to the
+        // next function's resolve.
+        RangeEntry *__fn_old_head = sema_ranges ? sema_ranges->head : NULL;
+        ConstraintEntry *__fn_old_cons = sema_ranges ? sema_ranges->constraints : NULL;
+        InGuardEntry *__fn_old_guards = sema_in_guards;
         sema_walk_phase = true;
         for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next)
             walk_stmt(sl->stmt);
         sema_walk_phase = false;
+        if (sema_ranges) {
+            sema_ranges->head = __fn_old_head;
+            sema_ranges->constraints = __fn_old_cons;
+        }
+        sema_in_guards = __fn_old_guards;
 
         // 2.d) Linearity check: run function-level linearity checker
         // NOTE: sema_check_function_linearity must run while sema_locals still
