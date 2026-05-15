@@ -503,7 +503,7 @@ static void ltable_check_branch_consistency(LTable *parent, LTable *a, LTable *b
         LState sa = ea ? ea->state : LSTATE_UNCONSUMED;
         LState sb = eb ? eb->state : LSTATE_UNCONSUMED;
         if (sa != sb) {
-            fprintf(stderr, "sema error: linear variable '%.*s' is used inconsistently in the branches of %s (one branch: %d, other: %d)\n",
+            fprintf(stderr, "[E016] Error: linear variable '%.*s' is used inconsistently in the branches of %s (one branch: %d, other: %d)\n",
                     (int)p->id->length, p->id->name ? p->id->name : "<unknown>", stmt_name ? stmt_name : "if", (int)sa, (int)sb);
             exit(1);
         }
@@ -511,7 +511,7 @@ static void ltable_check_branch_consistency(LTable *parent, LTable *a, LTable *b
         if (ea && eb && ea->field_states && eb->field_states) {
             for (FieldState *fa = ea->field_states, *fb = eb->field_states; fa && fb; fa = fa->next, fb = fb->next) {
                 if (fa->is_consumed != fb->is_consumed) {
-                    fprintf(stderr, "sema error: linear field '%.*s' of '%.*s' is consumed inconsistently in the branches of %s\n",
+                    fprintf(stderr, "[E016] Error: linear field '%.*s' of '%.*s' is consumed inconsistently in the branches of %s\n",
                             (int)fa->field_name->length, fa->field_name->name,
                             (int)p->id->length, p->id->name ? p->id->name : "<unknown>",
                             stmt_name ? stmt_name : "if");
