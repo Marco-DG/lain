@@ -61,6 +61,14 @@ typedef struct Type {
     */
     isize array_len;
 
+    /* Sized-slice annotations: i32[out.len], i32[>= n], i32[a.len + b.len]
+       size_expr  == NULL → no size constraint (plain dynamic slice)
+       size_relop == TOKEN_EQUAL_EQUAL → arr.len == size_expr  (i32[out.len])
+       size_relop == other relop       → arr.len relop size_expr (i32[>= n])
+    */
+    struct Expr *size_expr;
+    TokenKind    size_relop;
+
     const char* sentinel_str;
     isize       sentinel_len;
     bool        sentinel_is_string;
@@ -522,8 +530,17 @@ Type *type_array(Arena *arena, Type *element_type, isize array_len) {
     return t;
 }
 
+/* Dynamic slice with a size constraint expression: i32[out.len], i32[>= n].
+   size_relop defaults to TOKEN_EQUAL_EQUAL for the implicit-equality case. */
+Type *type_sized_array(Arena *arena, Type *element_type, struct Expr *size_expr, TokenKind size_relop) {
+    Type *t = type_array(arena, element_type, -1);
+    t->size_expr  = size_expr;
+    t->size_relop = size_relop;
+    return t;
+}
+
 // Slices with a compile-time sentinel
-Type *type_slice(Arena *arena, Type *element_type, const char *sentinel_str, 
+Type *type_slice(Arena *arena, Type *element_type, const char *sentinel_str,
                  isize sentinel_len, bool sentinel_is_string) {
     Type *t = arena_push_aligned(arena, Type);
     t->kind              = TYPE_SLICE;

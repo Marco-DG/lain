@@ -1213,7 +1213,7 @@ void sema_infer_expr(Expr *e) {
             if (guarded) {
                 /* bounds proven by 'in' guard — skip check */
             } else {
-                sema_check_bounds(sema_ranges, e->as.index_expr.index, t);
+                sema_check_bounds(sema_ranges, e->as.index_expr.index, t, e->as.index_expr.target);
             }
         }
     } else if (t->kind == TYPE_POINTER) {

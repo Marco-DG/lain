@@ -642,10 +642,48 @@ static void walk_stmt(Stmt *s) {
             // Widen modified variables BEFORE body
             if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
 
+            // Sized-slice constraint injection: add symbolic "iter_var < end" constraint
+            // scoped to the body so it doesn't pollute post-loop analysis.
+            ConstraintEntry *__for_old_constraints = sema_ranges ? sema_ranges->constraints : NULL;
+            if (sema_ranges && iter_var &&
+                s->as.for_stmt.iterable->kind == EXPR_RANGE &&
+                s->as.for_stmt.iterable->as.range_expr.end) {
+                Expr *end_expr = s->as.for_stmt.iterable->as.range_expr.end;
+                if (end_expr->kind == EXPR_MEMBER &&
+                    end_expr->as.member_expr.target->kind == EXPR_IDENTIFIER &&
+                    end_expr->as.member_expr.member->length == 3 &&
+                    strncmp(end_expr->as.member_expr.member->name, "len", 3) == 0) {
+                    // for i in 0..obj.len → i - __len_obj <= -1 inside body
+                    Id *obj_id = end_expr->as.member_expr.target->as.identifier_expr.id;
+                    char key[272];
+                    int klen = 6 + (int)obj_id->length;
+                    if (klen < (int)sizeof(key)) {
+                        memcpy(key, "__len_", 6);
+                        memcpy(key + 6, obj_id->name, obj_id->length);
+                        Id *len_id = NULL;
+                        for (RangeEntry *re = sema_ranges->head; re; re = re->next) {
+                            if (re->var->length == klen &&
+                                strncmp(re->var->name, key, klen) == 0) {
+                                len_id = re->var;
+                                break;
+                            }
+                        }
+                        if (len_id) constraint_add(sema_ranges, iter_var, len_id, -1);
+                    }
+                } else if (end_expr->kind == EXPR_IDENTIFIER) {
+                    // for i in 0..n → i - n <= -1 inside body
+                    Id *n_id = end_expr->as.identifier_expr.id;
+                    constraint_add(sema_ranges, iter_var, n_id, -1);
+                }
+            }
+
             sema_push_scope();
             for (StmtList *b = s->as.for_stmt.body; b; b = b->next)
                 walk_stmt(b->stmt);
             sema_pop_scope();
+
+            // Restore constraint scope: the symbolic bound only holds inside the body
+            if (sema_ranges) sema_ranges->constraints = __for_old_constraints;
 
             // Widen modified variables AFTER body
             if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
@@ -1391,6 +1429,71 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 if (p->decl->as.variable_decl.constraints && sema_ranges) {
                     for (ExprList *c = p->decl->as.variable_decl.constraints; c; c = c->next) {
                         sema_apply_constraint(c->expr, sema_ranges);
+                    }
+                }
+
+                // Sized slices: for every dynamic-length array parameter (including plain
+                // i32[]), register a synthetic __len_PARAM entry in the VRA range table.
+                // This lets the for-loop constraint injector and the bounds checker use
+                // symbolic proof even when the interval is wide ([0, INT64_MAX]).
+                if (sema_ranges && pty->kind == TYPE_ARRAY && pty->array_len == -1) {
+                    char lenkey[272];
+                    int lklen = 6 + (int)pid->length;
+                    if (lklen < (int)sizeof(lenkey)) {
+                        memcpy(lenkey, "__len_", 6);
+                        memcpy(lenkey + 6, pid->name, pid->length);
+                        // Allocate persistent storage for the key in the sema arena
+                        char *stored = arena_push_many(sema_ranges->arena, char, lklen);
+                        memcpy(stored, lenkey, lklen);
+                        Id *len_id = arena_push_aligned(sema_ranges->arena, Id);
+                        len_id->length = lklen;
+                        len_id->name   = stored;
+                        range_set(sema_ranges, len_id, range_make(0, INT64_MAX));
+
+                        // If a size_expr is given with equality, add constraint linking
+                        // this parameter's length to the referenced expression.
+                        if (pty->size_expr && pty->size_relop == TOKEN_EQUAL_EQUAL) {
+                            if (pty->size_expr->kind == EXPR_MEMBER &&
+                                pty->size_expr->as.member_expr.target->kind == EXPR_IDENTIFIER &&
+                                pty->size_expr->as.member_expr.member->length == 3 &&
+                                strncmp(pty->size_expr->as.member_expr.member->name, "len", 3) == 0) {
+                                // a i32[out.len] → a.len == out.len (__len_a == __len_out)
+                                Id *ref_id = pty->size_expr->as.member_expr.target->as.identifier_expr.id;
+                                char rkey[272];
+                                int rklen = 6 + (int)ref_id->length;
+                                if (rklen < (int)sizeof(rkey)) {
+                                    memcpy(rkey, "__len_", 6);
+                                    memcpy(rkey + 6, ref_id->name, ref_id->length);
+                                    // Find the already-registered __len_REF Id
+                                    Id *ref_len_id = NULL;
+                                    for (RangeEntry *re = sema_ranges->head; re; re = re->next) {
+                                        if (re->var->length == rklen &&
+                                            strncmp(re->var->name, rkey, rklen) == 0) {
+                                            ref_len_id = re->var;
+                                            break;
+                                        }
+                                    }
+                                    if (ref_len_id) {
+                                        constraint_add(sema_ranges, len_id, ref_len_id, 0);
+                                        constraint_add(sema_ranges, ref_len_id, len_id, 0);
+                                    }
+                                }
+                            } else if (pty->size_expr->kind == EXPR_IDENTIFIER) {
+                                // out i32[n] → out.len == n (__len_out == n)
+                                Id *n_id = pty->size_expr->as.identifier_expr.id;
+                                constraint_add(sema_ranges, len_id, n_id, 0);
+                                constraint_add(sema_ranges, n_id, len_id, 0);
+                            }
+                        } else if (pty->size_expr &&
+                                   (pty->size_relop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL ||
+                                    pty->size_relop == TOKEN_ANGLE_BRACKET_RIGHT)) {
+                            // arr i32[>= n] → arr.len >= n → n - __len_arr <= 0
+                            if (pty->size_expr->kind == EXPR_IDENTIFIER) {
+                                Id *n_id = pty->size_expr->as.identifier_expr.id;
+                                int64_t delta = (pty->size_relop == TOKEN_ANGLE_BRACKET_RIGHT) ? -1 : 0;
+                                constraint_add(sema_ranges, n_id, len_id, delta);
+                            }
+                        }
                     }
                 }
             }

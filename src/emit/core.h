@@ -228,6 +228,15 @@ static bool is_primitive_type(Type *t) {
     return false;
 }
 
+// Fase 7: true iff d is a dynamic-array (i32[]) function parameter.
+// These are decomposed to (size_t __len_PARAM,)? T * [restrict] PARAM.
+static bool is_dynarray_param_decl(Decl *d) {
+    if (!d || d->kind != DECL_VARIABLE) return false;
+    if (!d->as.variable_decl.is_parameter) return false;
+    Type *t = d->as.variable_decl.type;
+    return t && t->kind == TYPE_ARRAY && t->array_len == -1;
+}
+
 /*───────────────────────────────────────────────────────────────╗
 │ Helper: emit the C-decl name for *any* semantic Type*        │
 ╚───────────────────────────────────────────────────────────────*/

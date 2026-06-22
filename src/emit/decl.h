@@ -9,7 +9,7 @@ static void emit_forward_decl(Decl *decl, int depth);
 // Emit a list of declarations (the whole program)
 void emit_decl_list(DeclList *decls, int depth);
 
-static void emit_param_type(Type *t); // Forward for use in forward decl
+static void emit_param_type(Type *t, bool with_restrict); // Forward for use in forward decl
 
 static bool is_generic_function(Decl *decl) {
     if (!decl || (decl->kind != DECL_FUNCTION && decl->kind != DECL_PROCEDURE)) return false;
@@ -21,6 +21,21 @@ static bool is_generic_function(Decl *decl) {
     return false;
 }
 
+// Q-019 [pure]: returns true if any parameter of decl is a var (MODE_MUTABLE) borrow.
+// A DECL_FUNCTION with no var params has no caller-visible side effects and qualifies
+// for __attribute__((pure)): Lain already guarantees no mutable global access and
+// no proc calls, so the only possible side-effect channel is var parameters.
+static bool func_has_var_param(Decl *decl) {
+    for (DeclList *p = decl->as.function_decl.params; p; p = p->next) {
+        if (!p->decl) continue;
+        Type *pt = (p->decl->kind == DECL_VARIABLE)   ? p->decl->as.variable_decl.type
+                 : (p->decl->kind == DECL_DESTRUCT)    ? p->decl->as.destruct_decl.type
+                 : NULL;
+        if (pt && pt->mode == MODE_MUTABLE) return true;
+    }
+    return false;
+}
+
 static void emit_forward_decl(Decl *decl, int depth) {
     if (!decl) return;
     if (is_generic_function(decl)) return;
@@ -28,12 +43,17 @@ static void emit_forward_decl(Decl *decl, int depth) {
         if (decl->as.function_decl.return_type && decl->as.function_decl.return_type->kind == TYPE_META_TYPE) return; // Pure CTFE function
         
         emit_indent(depth);
+        // Q-019 [pure]: forward-declare func without var params as __attribute__((pure))
+        // so that callers in the same TU benefit from LICM and CSE optimizations.
+        if (decl->kind == DECL_FUNCTION && !func_has_var_param(decl)) {
+            EMIT("__attribute__((pure)) ");
+        }
         if (decl->as.function_decl.return_type) {
             emit_type(decl->as.function_decl.return_type);
         } else {
             EMIT("void");
         }
-        
+
         const char *id_name = decl->as.function_decl.name->name;
         size_t id_len = decl->as.function_decl.name->length;
         if (id_len == 4 && strncmp(id_name, "main", 4) == 0) {
@@ -54,9 +74,23 @@ static void emit_forward_decl(Decl *decl, int depth) {
                     EMIT(", ");
                 }
                 if (param->decl->kind == DECL_DESTRUCT) {
-                    emit_param_type(param->decl->as.destruct_decl.type);
+                    emit_param_type(param->decl->as.destruct_decl.type, true);
                 } else {
-                    emit_param_type(param->decl->as.variable_decl.type);
+                    Type *pt = param->decl->as.variable_decl.type;
+                    Id   *pn = param->decl->as.variable_decl.name;
+                    if (pt && pt->kind == TYPE_ARRAY && pt->array_len == -1) {
+                        // Fase 7: decompose dynamic array param to size_t? + T *
+                        char elem_buf[256];
+                        c_name_for_type(pt->element_type, elem_buf, sizeof elem_buf);
+                        if (pt->size_expr == NULL)
+                            EMIT("size_t __len_%.*s, ", (int)pn->length, pn->name);
+                        if (pt->mode == MODE_MUTABLE)
+                            EMIT("%s * restrict", elem_buf);
+                        else
+                            EMIT("const %s*", elem_buf);
+                    } else {
+                        emit_param_type(pt, true);
+                    }
                 }
                 first = 0;
                 param = param->next;
@@ -68,9 +102,9 @@ static void emit_forward_decl(Decl *decl, int depth) {
     }
 }
 
-static void emit_param_type(Type *t) {
+static void emit_param_type(Type *t, bool with_restrict) {
     if (!t) return;
-    
+
     // Get the base type name without ownership decorations,
     // BUT for Pointers, the mode dictates the C type (const vs non-const),
     // so we must preserve it to generate the correct base "value type".
@@ -78,19 +112,26 @@ static void emit_param_type(Type *t) {
     if (t->kind != TYPE_POINTER) {
         t->mode = MODE_SHARED;
     }
-    
+
     char base_name[256];
     c_name_for_type(t, base_name, sizeof(base_name));
-    
+
     t->mode = original_mode;  // restore original mode
-    
+
     // Now emit the correct C type based on ownership mode
     if (original_mode == MODE_OWNED) {
         // mov T -> pass by value (T)
         EMIT("%s", base_name);
     } else if (original_mode == MODE_MUTABLE) {
-        // mut T -> pass as mutable pointer (T*)
-        EMIT("%s *", base_name);
+        // mut T -> pass as mutable pointer.
+        // with_restrict=true for Lain functions: the borrow checker has
+        // already proven at every call site that no two mut parameters alias,
+        // so `restrict` is a sound annotation and enables SIMD vectorization.
+        if (with_restrict) {
+            EMIT("%s * restrict", base_name);
+        } else {
+            EMIT("%s *", base_name);
+        }
     } else {
         // Shared Reference (MODE_SHARED)
         if (is_primitive_type(t)) {
@@ -132,8 +173,8 @@ void emit_decl(Decl* decl, int depth) {
                  while (param) {
                      if (!first) EMIT(", ");
                      if (param->decl->kind == DECL_DESTRUCT) {
-                          emit_param_type(param->decl->as.destruct_decl.type);
-                          EMIT(" _destruct_param_"); 
+                          emit_param_type(param->decl->as.destruct_decl.type, false);
+                          EMIT(" _destruct_param_");
                      } else {
                           Type *pt = param->decl->as.variable_decl.type;
                           const char *fname = c_name_for_id(decl->as.function_decl.name);
@@ -142,7 +183,7 @@ void emit_decl(Decl* decl, int depth) {
                               (
                                 // Strings: *char, *u8
                                 ((pt->element_type->base_type->length == 4 && strncmp(pt->element_type->base_type->name, "char", 4) == 0) ||
-                                 (pt->element_type->base_type->length == 2 && strncmp(pt->element_type->base_type->name, "u8", 2) == 0)) 
+                                 (pt->element_type->base_type->length == 2 && strncmp(pt->element_type->base_type->name, "u8", 2) == 0))
                                 ||
                                 // FILE handles: *FILE (Shared) -> FILE *
                                 (pt->element_type->base_type->length == 4 && strncmp(pt->element_type->base_type->name, "FILE", 4) == 0)
@@ -150,7 +191,7 @@ void emit_decl(Decl* decl, int depth) {
                               (strcmp(fname, "puts") == 0 || strcmp(fname, "printf") == 0 ||
                                strcmp(fname, "libc_puts") == 0 || strcmp(fname, "libc_printf") == 0 ||
                                strcmp(fname, "fopen") == 0 || strcmp(fname, "fputs") == 0 ||
-                               strcmp(fname, "fgets") == 0)) 
+                               strcmp(fname, "fgets") == 0))
                           {
                               // C-Interop: Map u8* to char* and FILE* to FILE* (mut)
                               Id *base = pt->element_type->base_type;
@@ -165,7 +206,7 @@ void emit_decl(Decl* decl, int depth) {
                                   }
                               }
                           } else {
-                              emit_param_type(pt);
+                              emit_param_type(pt, false);
                           }
                           EMIT(" %.*s",
                                (int)param->decl->as.variable_decl.name->length,
@@ -218,6 +259,15 @@ void emit_decl(Decl* decl, int depth) {
             if (decl->is_private && !is_main) {
                 EMIT("static ");
             }
+            // Q-019 [pure]: func without var params → __attribute__((pure)).
+            // Lain guarantees no mutable global access and no proc calls for func;
+            // without var params there are no caller-visible side effects either,
+            // so the function depends only on its arguments. GCC can then apply
+            // loop-invariant code motion (LICM) and common subexpression elimination
+            // (CSE) across call sites.
+            if (decl->kind == DECL_FUNCTION && !is_main && !func_has_var_param(decl)) {
+                EMIT("__attribute__((pure)) ");
+            }
             // Print return type and function name.
             if (decl->as.function_decl.return_type) {
                 emit_type(decl->as.function_decl.return_type);
@@ -250,14 +300,26 @@ void emit_decl(Decl* decl, int depth) {
                     
                     if (param->decl->kind == DECL_DESTRUCT) {
                         // Emit: Type _param_N
-                        emit_param_type(param->decl->as.destruct_decl.type);
+                        emit_param_type(param->decl->as.destruct_decl.type, true);
                         EMIT(" _param_%d", param_idx);
                     } else {
-                        // Use emit_param_type to print parameter type.
-                        emit_param_type(param->decl->as.variable_decl.type);
-                        EMIT(" %.*s",
-                                (int)param->decl->as.variable_decl.name->length,
-                                param->decl->as.variable_decl.name->name);
+                        Type *pt = param->decl->as.variable_decl.type;
+                        Id   *pn = param->decl->as.variable_decl.name;
+                        if (pt && pt->kind == TYPE_ARRAY && pt->array_len == -1) {
+                            // Fase 7: decompose dynamic array param to (size_t __len_X,)? T * X
+                            char elem_buf[256];
+                            c_name_for_type(pt->element_type, elem_buf, sizeof elem_buf);
+                            if (pt->size_expr == NULL)
+                                EMIT("size_t __len_%.*s, ", (int)pn->length, pn->name);
+                            if (pt->mode == MODE_MUTABLE)
+                                EMIT("%s * restrict %.*s", elem_buf, (int)pn->length, pn->name);
+                            else
+                                EMIT("const %s* %.*s", elem_buf, (int)pn->length, pn->name);
+                        } else {
+                            // Use emit_param_type to print parameter type.
+                            emit_param_type(pt, true);
+                            EMIT(" %.*s", (int)pn->length, pn->name);
+                        }
                     }
                     first = 0;
                     param = param->next;

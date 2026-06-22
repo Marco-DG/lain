@@ -329,6 +329,21 @@ void emit_expr(Expr *expr, int depth) {
         break;
     }
 
+    // Fase 7: dynamic array param.len → __len_PARAM (or size_expr for constrained params)
+    if (m->member->length == 3 && strncmp(m->member->name, "len", 3) == 0 &&
+        m->target->kind == EXPR_IDENTIFIER && m->target->decl &&
+        is_dynarray_param_decl(m->target->decl)) {
+        Type *tgt_t = m->target->decl->as.variable_decl.type;
+        if (tgt_t->size_expr == NULL) {
+            Id *pname = m->target->decl->as.variable_decl.name;
+            EMIT("__len_%.*s", (int)pname->length, pname->name);
+        } else {
+            // Constrained param: length is determined by size_expr (e.g. out.len or n)
+            emit_expr(tgt_t->size_expr, depth);
+        }
+        break;
+    }
+
     emit_expr(m->target, depth);
     EMIT(is_ptr ? "->%.*s" : ".%.*s", (int)m->member->length, m->member->name);
     break;
@@ -531,7 +546,36 @@ void emit_expr(Expr *expr, int depth) {
       // Handle implicit address-of for shared/mutable reference parameters
       if (param) {
            Type *pt = param->decl->as.variable_decl.type;
-           
+
+           // Fase 7: dynamic array param at call site → (size_t len,)? T *data
+           if (param->decl->kind == DECL_VARIABLE &&
+               pt && pt->kind == TYPE_ARRAY && pt->array_len == -1) {
+               Expr *base_arg = arg->expr;
+               if (base_arg->kind == EXPR_MUT) base_arg = base_arg->as.mut_expr.expr;
+               Type *at = base_arg->type ? sema_unwrap_type(base_arg->type) : NULL;
+               // Inject length iff the callee param has no size_expr
+               if (pt->size_expr == NULL) {
+                   if (at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
+                       EMIT("(size_t)%lld, ", (long long)at->array_len);
+                   } else if (at && at->kind == TYPE_ARRAY && at->array_len == -1 &&
+                              base_arg->kind == EXPR_IDENTIFIER && base_arg->decl) {
+                       Id *an = base_arg->decl->as.variable_decl.name;
+                       EMIT("__len_%.*s, ", (int)an->length, an->name);
+                   } else {
+                       emit_expr(base_arg, depth); EMIT(".len, ");
+                   }
+               }
+               // Emit data pointer
+               if (at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
+                   emit_expr(base_arg, depth); EMIT(".data");
+               } else if (at && at->kind == TYPE_ARRAY && at->array_len == -1) {
+                   emit_expr(base_arg, depth);
+               } else {
+                   emit_expr(base_arg, depth); EMIT(".data");
+               }
+               goto next_arg;
+           }
+
            // Attempt coercion for sentinel slices (e.g. "foo" -> u8[:0] or fixed var)
            if (emit_slice_coercion(pt, arg->expr, depth)) {
                goto next_arg;
@@ -624,10 +668,19 @@ void emit_expr(Expr *expr, int depth) {
           is_ptr = true;
       }
     
-      emit_expr(ix->target, 0);
-      EMIT(is_ptr ? "->data[" : ".data[");
-      emit_expr(ix->index, 0);
-      EMIT("]");
+      // Fase 7: dynamic array params are raw pointers — index directly
+      if (ix->target->kind == EXPR_IDENTIFIER && ix->target->decl &&
+          is_dynarray_param_decl(ix->target->decl)) {
+          emit_expr(ix->target, 0);
+          EMIT("[");
+          emit_expr(ix->index, 0);
+          EMIT("]");
+      } else {
+          emit_expr(ix->target, 0);
+          EMIT(is_ptr ? "->data[" : ".data[");
+          emit_expr(ix->index, 0);
+          EMIT("]");
+      }
     }
     break;
   }

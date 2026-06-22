@@ -3,6 +3,9 @@
 
 #include "../parser.h"
 
+// Forward declaration: defined in parser/expr.h (included after this file in parser.h)
+Expr *parse_expr(Arena *arena, Parser *parser);
+
 // parse any (possibly nested) type e.g. `Foo[][]`, `Bar:[3]`, and `mov Foo`
 Type *parse_type(Arena *arena, Parser *parser) {
   Type *base_type = NULL;
@@ -95,20 +98,40 @@ Type *parse_type(Arena *arena, Parser *parser) {
       }
 
     } else {
-      // Either a numeric fixed length like [5] or plain [] dynamic array
-      isize array_len = -1; // -1 means dynamic / runtime-length ([])
+      // [N] fixed, [] plain dynamic, or [expr]/[relop expr] sized slice
+      isize array_len = -1;
+      Expr *size_expr = NULL;
+      TokenKind size_relop = TOKEN_EQUAL_EQUAL; // default: equality
 
       if (parser_match(TOKEN_NUMBER)) {
         // F-004: use numeric-literal parser to support hex/bin/oct/underscore
         array_len = (isize)parse_numeric_literal(parser->token.start,
                                                   parser->token.length);
         parser_advance(); // consume the number
+      } else if (!parser_match(TOKEN_R_BRACKET)) {
+        // Anything before ']' that is not a number is a size constraint.
+        // Optional leading relational operator: i32[>= n], i32[< n]
+        TokenKind tok = parser->token.kind;
+        if (tok == TOKEN_ANGLE_BRACKET_LEFT         ||
+            tok == TOKEN_ANGLE_BRACKET_LEFT_EQUAL   ||
+            tok == TOKEN_ANGLE_BRACKET_RIGHT        ||
+            tok == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL  ||
+            tok == TOKEN_BANG_EQUAL                 ||
+            tok == TOKEN_EQUAL_EQUAL) {
+          size_relop = tok;
+          parser_advance();
+        }
+        size_expr = parse_expr(arena, parser);
       }
 
       parser_expect(TOKEN_R_BRACKET, "Expected ']' after '[' in array type");
       parser_advance(); // consume ']'
 
-      base_type = type_array(arena, base_type, array_len);
+      if (size_expr) {
+        base_type = type_sized_array(arena, base_type, size_expr, size_relop);
+      } else {
+        base_type = type_array(arena, base_type, array_len);
+      }
     }
   }
 

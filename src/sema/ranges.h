@@ -236,6 +236,28 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             }
             return range_unknown();
         }
+        case EXPR_MEMBER: {
+            // Sized-slice VRA: look up __len_PARAM synthetic entry for foo.len
+            Expr *tgt = e->as.member_expr.target;
+            Id   *mem = e->as.member_expr.member;
+            if (tgt->kind == EXPR_IDENTIFIER &&
+                mem->length == 3 && strncmp(mem->name, "len", 3) == 0) {
+                Id *obj = tgt->as.identifier_expr.id;
+                char key[272];
+                int klen = 6 + (int)obj->length;
+                if (klen < (int)sizeof(key)) {
+                    memcpy(key, "__len_", 6);
+                    memcpy(key + 6, obj->name, obj->length);
+                    for (RangeEntry *re = t->head; re; re = re->next) {
+                        if (re->var->length == klen &&
+                            strncmp(re->var->name, key, klen) == 0) {
+                            return re->range;
+                        }
+                    }
+                }
+            }
+            return range_unknown();
+        }
         default: return range_unknown();
     }
 }
