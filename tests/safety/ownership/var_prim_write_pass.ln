@@ -1,0 +1,13 @@
+// var T primitive write-through — PASS
+// Assignment to a var i32 param must write through to the caller's variable.
+// Was: E009 ("cannot assign to immutable variable").
+
+proc add_one(var n i32) {
+    n = n + 1
+}
+
+proc main() i32 {
+    var x i32 = 41
+    add_one(var x)
+    return x
+}

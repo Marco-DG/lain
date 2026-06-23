@@ -1,0 +1,12 @@
+// var T primitive read — PASS
+// Reading a var i32 param must dereference the pointer and yield the value.
+// Was: silent C bug (returned the pointer address instead of the value).
+
+func peek(var n i32) i32 {
+    return n
+}
+
+proc main() i32 {
+    var x i32 = 42
+    return peek(var x)
+}

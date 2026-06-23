@@ -109,9 +109,23 @@ void emit_expr(Expr *expr, int depth) {
     break;
   }
 
-  case EXPR_IDENTIFIER:
-    EMIT("%s", c_name_for_id(expr->as.identifier_expr.id));
+  case EXPR_IDENTIFIER: {
+    // var T primitive param in value context: the C representation is T*, so we
+    // must dereference to get/write the value. Structs are exempt because they
+    // are always accessed through EXPR_MEMBER which already emits '->'.
+    bool is_var_prim_param = expr->decl &&
+        expr->decl->kind == DECL_VARIABLE &&
+        expr->decl->as.variable_decl.is_parameter &&
+        expr->decl->as.variable_decl.type &&
+        expr->decl->as.variable_decl.type->mode == MODE_MUTABLE &&
+        is_primitive_type(expr->decl->as.variable_decl.type);
+    if (is_var_prim_param) {
+        EMIT("(*%s)", c_name_for_id(expr->as.identifier_expr.id));
+    } else {
+        EMIT("%s", c_name_for_id(expr->as.identifier_expr.id));
+    }
     break;
+  }
 
   case EXPR_BINARY: {
     // Special‑case: slice == string literal → length check + memcmp
@@ -592,11 +606,16 @@ void emit_expr(Expr *expr, int depth) {
 
            if (needs_ptr) {
                Type *at = arg->expr->type;
-               // fprintf(stderr, "DEBUG: needs_ptr! at_mode=%d at_kind=%d\n", at ? at->mode:-1, at ? at->kind:-1);
                if (at && at->mode != MODE_MUTABLE && at->kind != TYPE_POINTER) {
                    EMIT("&(");
                    emit_expr(arg->expr, depth);
                    EMIT(")");
+                   goto next_arg;
+               }
+               // Argument is already a pointer (var T param forwarded to another var T param).
+               // Emit the raw identifier to pass the pointer as-is — do not auto-deref.
+               if (at && at->mode == MODE_MUTABLE && arg->expr->kind == EXPR_IDENTIFIER) {
+                   EMIT("%s", c_name_for_id(arg->expr->as.identifier_expr.id));
                    goto next_arg;
                }
            }
@@ -703,7 +722,9 @@ void emit_expr(Expr *expr, int depth) {
         already_pointer = true;
     }
     if (already_pointer) {
-        emit_expr(inner, depth);
+        // Emit the raw pointer identifier — do NOT go through emit_expr, which
+        // would auto-deref var primitive params and produce (*r) instead of r.
+        EMIT("%s", c_name_for_id(inner->as.identifier_expr.id));
     } else {
         EMIT("&(");
         emit_expr(inner, depth);

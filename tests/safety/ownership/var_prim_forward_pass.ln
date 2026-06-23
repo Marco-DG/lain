@@ -1,0 +1,17 @@
+// var T primitive forwarding — PASS
+// A var i32 param forwarded to another var i32 function passes the raw pointer
+// (no double-dereference, no double-address-of).
+
+proc double_in_place(var n i32) {
+    n = n + n
+}
+
+proc apply(var x i32) {
+    double_in_place(var x)
+}
+
+proc main() i32 {
+    var val i32 = 21
+    apply(var val)
+    return val
+}

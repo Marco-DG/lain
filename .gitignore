@@ -7,8 +7,8 @@ test_destruct
 # Binaries without extension
 lain
 lexer_test
-ownership
-test_main
+/ownership
+/test_main
 test_out
 unsafe_nested
 unsafe_valid

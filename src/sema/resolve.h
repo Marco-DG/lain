@@ -534,10 +534,19 @@ void sema_resolve_stmt(Stmt *s) {
         diagnostic_show_line(s->line, s->col);
         exit(1);
       } else if (!sym->is_mutable) {
-        fprintf(stderr, "[E009] Error Ln %li, Col %li: Cannot assign to immutable variable '%s'\n",
-                s->line, s->col, raw);
-        diagnostic_show_line(s->line, s->col);
-        exit(1);
+        // Exception: var T parameter (mutable borrow) — assignment is write-through,
+        // not rebind. The caller's value is modified via the pointer.
+        bool is_var_param = sym->decl &&
+                            sym->decl->kind == DECL_VARIABLE &&
+                            sym->decl->as.variable_decl.is_parameter &&
+                            sym->decl->as.variable_decl.type &&
+                            sym->decl->as.variable_decl.type->mode == MODE_MUTABLE;
+        if (!is_var_param) {
+          fprintf(stderr, "[E009] Error Ln %li, Col %li: Cannot assign to immutable variable '%s'\n",
+                  s->line, s->col, raw);
+          diagnostic_show_line(s->line, s->col);
+          exit(1);
+        }
       }
     }
 
