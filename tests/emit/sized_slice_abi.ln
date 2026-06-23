@@ -1,0 +1,19 @@
+// Snapshot: sized slice params with arithmetic size_expr.
+// out i32[src.len - 1]: out.len must emit as __len_src - 1 (not as __len_out).
+// Concat: out.len emits as __len_a + __len_b.
+
+func slide(src i32[], out i32[src.len - 1]) {
+    for i in 0..out.len {
+        out[i] = src[i]
+    }
+}
+
+func concat_prefix(a i32[], b i32[], out i32[a.len + b.len]) {
+    for i in 0..a.len {
+        out[i] = a[i]
+    }
+}
+
+proc main() i32 {
+    return 0
+}

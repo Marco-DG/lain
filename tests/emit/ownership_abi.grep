@@ -6,6 +6,8 @@ const tests_emit_ownership_abi_Vec2*
 // mutable -> T* restrict (var)
 tests_emit_ownership_abi_Vec2 * restrict
 // func without var params -> __attribute__((pure))
-__attribute__((pure)) int32_t tests_emit_ownership_abi_dot
-// func with var params -> no pure attribute
-void tests_emit_ownership_abi_scale(tests_emit_ownership_abi_Vec2 * restrict
+__attribute__((pure)) __attribute__((nonnull)) int32_t tests_emit_ownership_abi_dot
+// borrow params -> __attribute__((nonnull)) on both func and proc
+__attribute__((nonnull)) void tests_emit_ownership_abi_scale(tests_emit_ownership_abi_Vec2 * restrict
+// var T return -> __attribute__((returns_nonnull))
+__attribute__((nonnull)) __attribute__((returns_nonnull)) int32_t * tests_emit_ownership_abi_get_x

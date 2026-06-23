@@ -37,6 +37,43 @@ static DeclFunction *lookup_function_decl(Expr *callee) {
   return NULL;
 }
 
+// Emit a size_expr from a type annotation without calling sema_infer_expr.
+// Size_expr nodes are parsed in a type context; their EXPR_IDENTs are never
+// resolved by the body sema pass, so sema_infer_expr would crash on them.
+// We emit by reading raw AST names: x.len → __len_x, literals → value, etc.
+static void emit_size_expr(Expr *se, int depth) {
+    (void)depth;
+    if (!se) return;
+    if (se->kind == EXPR_MEMBER &&
+        se->as.member_expr.member->length == 3 &&
+        strncmp(se->as.member_expr.member->name, "len", 3) == 0 &&
+        se->as.member_expr.target->kind == EXPR_IDENTIFIER) {
+        Id *ref = se->as.member_expr.target->as.identifier_expr.id;
+        EMIT("__len_%.*s", (int)ref->length, ref->name);
+        return;
+    }
+    if (se->kind == EXPR_BINARY) {
+        TokenKind op = se->as.binary_expr.op;
+        emit_size_expr(se->as.binary_expr.left, depth);
+        if (op == TOKEN_PLUS)        EMIT(" + ");
+        else if (op == TOKEN_MINUS)  EMIT(" - ");
+        else if (op == TOKEN_ASTERISK) EMIT(" * ");
+        else if (op == TOKEN_SLASH)    EMIT(" / ");
+        else                         EMIT(" ? ");
+        emit_size_expr(se->as.binary_expr.right, depth);
+        return;
+    }
+    if (se->kind == EXPR_LITERAL) {
+        EMIT("%ld", (long)se->as.literal_expr.value);
+        return;
+    }
+    if (se->kind == EXPR_IDENTIFIER) {
+        Id *id = se->as.identifier_expr.id;
+        EMIT("%.*s", (int)id->length, id->name);
+        return;
+    }
+}
+
 // Emit an expression at given indent‐depth
 void emit_expr(Expr *expr, int depth);
 
@@ -352,8 +389,9 @@ void emit_expr(Expr *expr, int depth) {
             Id *pname = m->target->decl->as.variable_decl.name;
             EMIT("__len_%.*s", (int)pname->length, pname->name);
         } else {
-            // Constrained param: length is determined by size_expr (e.g. out.len or n)
-            emit_expr(tgt_t->size_expr, depth);
+            // Constrained param: emit size_expr without sema_infer_expr
+            // (type-annotation nodes are unresolved; use raw-name emitter)
+            emit_size_expr(tgt_t->size_expr, depth);
         }
         break;
     }

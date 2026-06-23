@@ -325,6 +325,10 @@ static void constraint_add(RangeTable *t, Id *v1, Id *v2, int64_t max_diff) {
 }
 
 // Get known max difference: v1 - v2 <= ?
+// Includes a one-step bridge: if v1-MID <= d1 and MID-v2 <= d2 in the table,
+// returns d1+d2 when no direct entry exists. This lets the prover derive
+// i - src <= -2 from (i - out <= -1) + (out - src <= -1) without a
+// full transitive closure pass.
 static int64_t constraint_get_diff(RangeTable *t, Id *v1, Id *v2, bool *found) {
     if (!t || !v1 || !v2) { *found = false; return 0; }
     // Direct check
@@ -335,6 +339,22 @@ static int64_t constraint_get_diff(RangeTable *t, Id *v1, Id *v2, bool *found) {
             return c->max_diff;
         }
     }
+    // One-step bridge: v1 - MID <= d1, MID - v2 <= d2 → v1 - v2 <= d1+d2
+    int64_t best = INT64_MAX;
+    bool bridge = false;
+    for (ConstraintEntry *c1 = t->constraints; c1; c1 = c1->next) {
+        if (c1->v1->length != v1->length ||
+            strncmp(c1->v1->name, v1->name, v1->length) != 0) continue;
+        for (ConstraintEntry *c2 = t->constraints; c2; c2 = c2->next) {
+            if (c2->v1->length != c1->v2->length ||
+                strncmp(c2->v1->name, c1->v2->name, c1->v2->length) != 0) continue;
+            if (c2->v2->length != v2->length ||
+                strncmp(c2->v2->name, v2->name, v2->length) != 0) continue;
+            int64_t total = sat_add_i64(c1->max_diff, c2->max_diff);
+            if (!bridge || total < best) { best = total; bridge = true; }
+        }
+    }
+    if (bridge) { *found = true; return best; }
     *found = false;
     return 0;
 }

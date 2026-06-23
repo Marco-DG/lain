@@ -1317,13 +1317,12 @@ void sema_infer_expr(Expr *e) {
 
     if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
         if (e->as.index_expr.index->kind == EXPR_RANGE) {
-            e->type = type_array(sema_arena, t->element_type, -1);
-            // Q-003.B: semi-open sub-slicing semantics. When both
-            // endpoints are compile-time literals, verify start <= end.
-            // VRA-tracked ranges are checked via sema_check_bounds for
-            // each endpoint separately.
+            // Q-003.B: result type carries size_expr = end - start so that
+            // subsequent accesses can be VRA-proven without unsafe.
             Expr *rs = e->as.index_expr.index->as.range_expr.start;
             Expr *re = e->as.index_expr.index->as.range_expr.end;
+            Expr *len_expr = expr_binary(sema_arena, TOKEN_MINUS, re, rs);
+            e->type = type_sized_array(sema_arena, t->element_type, len_expr, TOKEN_EQUAL_EQUAL);
             if (!sema_in_unsafe_block &&
                 rs && re &&
                 rs->kind == EXPR_LITERAL && re->kind == EXPR_LITERAL) {

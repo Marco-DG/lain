@@ -184,6 +184,48 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
                            (int)idx_id->length, idx_id->name);
                 proved = true;
             }
+        } else if (array_type->size_expr &&
+                   array_type->size_expr->kind == EXPR_BINARY) {
+            // Arithmetic size_expr: i32[a.len + b.len] or i32[src.len - k].
+            TokenKind bop = array_type->size_expr->as.binary_expr.op;
+            Expr *blhs = array_type->size_expr->as.binary_expr.left;
+            Expr *brhs = array_type->size_expr->as.binary_expr.right;
+            // Helper macro: given an EXPR_MEMBER(x.len) node, find __len_x Id in VRA
+            // and check idx - __len_x <= threshold via constraint_get_diff (with bridge).
+            #define TRY_MEMBER_LEN(MEM_EXPR, THRESHOLD) do { \
+                if (!proved && (MEM_EXPR)->kind == EXPR_MEMBER && \
+                    (MEM_EXPR)->as.member_expr.member->length == 3 && \
+                    strncmp((MEM_EXPR)->as.member_expr.member->name, "len", 3) == 0 && \
+                    (MEM_EXPR)->as.member_expr.target->kind == EXPR_IDENTIFIER) { \
+                    Id *_ref = (MEM_EXPR)->as.member_expr.target->as.identifier_expr.id; \
+                    char _k[272]; int _kl = 6 + (int)_ref->length; \
+                    if (_kl < (int)sizeof(_k)) { \
+                        memcpy(_k, "__len_", 6); memcpy(_k+6, _ref->name, _ref->length); \
+                        Id *_lid = NULL; \
+                        for (RangeEntry *_re = ctx->head; _re; _re = _re->next) { \
+                            if (_re->var->length == _kl && \
+                                strncmp(_re->var->name, _k, _kl) == 0) \
+                            { _lid = _re->var; break; } \
+                        } \
+                        if (_lid) { \
+                            bool _f = false; \
+                            int64_t _d = constraint_get_diff(ctx, idx_id, _lid, &_f); \
+                            if (_f && _d <= (THRESHOLD)) proved = true; \
+                        } \
+                    } \
+                } \
+            } while(0)
+            if (bop == TOKEN_PLUS) {
+                // out i32[a.len + b.len]: idx < a.len OR idx < b.len → idx < out.len
+                TRY_MEMBER_LEN(blhs, -1);
+                TRY_MEMBER_LEN(brhs, -1);
+            } else if (bop == TOKEN_MINUS && brhs->kind == EXPR_LITERAL) {
+                // out i32[src.len - k]: need idx - __len_src <= -(k+1)
+                // (bridge: i-__len_out<=-1, __len_out-__len_src<=-k → i-__len_src<=-(k+1))
+                int64_t k = brhs->as.literal_expr.value;
+                TRY_MEMBER_LEN(blhs, -(k + 1));
+            }
+            #undef TRY_MEMBER_LEN
         } else {
             // Plain i32[]: check i - __len_ARRAY <= -1 (from for loop over arr.len)
             if (array_expr && array_expr->kind == EXPR_IDENTIFIER) {
@@ -193,17 +235,23 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
                 if (klen < (int)sizeof(key)) {
                     memcpy(key, "__len_", 6);
                     memcpy(key + 6, arr_id->name, arr_id->length);
-                    for (ConstraintEntry *ce = ctx->constraints; ce; ce = ce->next) {
-                        if (ce->v1->length == idx_id->length &&
-                            strncmp(ce->v1->name, idx_id->name, idx_id->length) == 0 &&
-                            ce->v2->length == klen &&
-                            strncmp(ce->v2->name, key, klen) == 0 &&
-                            ce->max_diff <= -1) {
-                            BOUNDS_DBG("OK: %.*s < %.*s.len via constraint",
+                    // Use constraint_get_diff (includes one-step bridge) so that
+                    // transitive chains like i-__len_out<=-1, __len_out-__len_src<=-1
+                    // prove i < src.len without needing a direct entry.
+                    Id *arr_len_id = NULL;
+                    for (RangeEntry *re = ctx->head; re; re = re->next) {
+                        if (re->var->length == klen &&
+                            strncmp(re->var->name, key, klen) == 0)
+                        { arr_len_id = re->var; break; }
+                    }
+                    if (arr_len_id) {
+                        bool gd_found = false;
+                        int64_t gd = constraint_get_diff(ctx, idx_id, arr_len_id, &gd_found);
+                        if (gd_found && gd <= -1) {
+                            BOUNDS_DBG("OK: %.*s < %.*s.len via constraint (bridge)",
                                        (int)idx_id->length, idx_id->name,
                                        (int)arr_id->length, arr_id->name);
                             proved = true;
-                            break;
                         }
                     }
                 }

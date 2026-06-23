@@ -1,0 +1,7 @@
+// Arithmetic size_expr ABI: out.len emits as derived expression, not __len_out.
+// slide: out i32[src.len - 1] → loop bound is __len_src - 1
+__i0 < __len_src - 1
+// slide signature: only __len_src, no __len_out
+tests_emit_sized_slice_abi_slide(size_t __len_src
+// concat: out has no __len_out param (derived from __len_a + __len_b)
+tests_emit_sized_slice_abi_concat_prefix(size_t __len_a

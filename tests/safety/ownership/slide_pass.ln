@@ -1,0 +1,15 @@
+// Sliding window: out i32[src.len - 1] — proof via bridge constraint.
+// out.len emits as __len_src - 1; loop proves out[i] and src[i] in bounds.
+
+func slide(src i32[], out i32[src.len - 1]) {
+    for i in 0..out.len {
+        out[i] = src[i]
+    }
+}
+
+proc main() i32 {
+    var xs i32[4] = [1, 2, 3, 4]
+    var ys i32[3] = [0, 0, 0]
+    slide(xs, ys)
+    return ys[0]
+}

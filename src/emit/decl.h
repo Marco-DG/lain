@@ -36,6 +36,61 @@ static bool func_has_var_param(Decl *decl) {
     return false;
 }
 
+// Q-019c [const]: returns true if every parameter of decl is passed by value in C
+// (primitive shared borrows or owned values — no pointer parameters at all).
+// When combined with !func_has_var_param, the function qualifies for the stronger
+// __attribute__((const)): no pointer params → no indirect memory reads → return
+// value depends only on by-value arguments regardless of memory state.
+static bool func_all_params_by_value(Decl *decl) {  // also used by func_has_ptr_param
+    for (DeclList *p = decl->as.function_decl.params; p; p = p->next) {
+        if (!p->decl) continue;
+        Type *pt = (p->decl->kind == DECL_VARIABLE) ? p->decl->as.variable_decl.type
+                 : (p->decl->kind == DECL_DESTRUCT)  ? p->decl->as.destruct_decl.type
+                 : NULL;
+        if (!pt) continue;
+        if (pt->kind == TYPE_META_TYPE || pt->kind == TYPE_COMPTIME) continue;
+        if (pt->kind == TYPE_ARRAY) return false;          // decomposed to ptr
+        if (pt->mode == MODE_MUTABLE) return false;        // T * restrict
+        if (pt->mode == MODE_SHARED && !is_primitive_type(pt)) return false; // const T*
+    }
+    return true;
+}
+
+// Q-020 [nonnull]: returns true if any parameter becomes a pointer in the C ABI.
+// The Lain borrow checker guarantees every borrow (var T or shared T) is a valid,
+// non-null reference at the call site — never a null or dangling pointer.
+// This mirrors the exact conditions in func_all_params_by_value (inverted).
+static bool func_has_ptr_param(Decl *decl) {
+    for (DeclList *p = decl->as.function_decl.params; p; p = p->next) {
+        if (!p->decl) continue;
+        Type *pt = (p->decl->kind == DECL_DESTRUCT)  ? p->decl->as.destruct_decl.type
+                 : (p->decl->kind == DECL_VARIABLE)  ? p->decl->as.variable_decl.type
+                 : NULL;
+        if (!pt) continue;
+        if (pt->kind == TYPE_META_TYPE || pt->kind == TYPE_COMPTIME) continue;
+        if (pt->kind == TYPE_ARRAY) return true;
+        if (pt->mode == MODE_MUTABLE) return true;
+        if (pt->mode == MODE_SHARED && !is_primitive_type(pt)) return true;
+    }
+    return false;
+}
+
+// Q-021 [returns_nonnull]: returns true if the function's return type becomes
+// a non-null pointer in the C ABI.  Only borrow returns qualify: MODE_MUTABLE
+// (var T return → T*) and MODE_SHARED on non-primitives (shared struct → const T*).
+// Raw TYPE_POINTER returns are excluded — those may legitimately be null.
+static bool func_returns_nonnull_ptr(Decl *decl) {
+    if (!decl) return false;
+    if (decl->kind != DECL_FUNCTION && decl->kind != DECL_PROCEDURE) return false;
+    Type *rt = decl->as.function_decl.return_type;
+    if (!rt) return false;
+    if (rt->kind == TYPE_META_TYPE || rt->kind == TYPE_COMPTIME) return false;
+    if (rt->kind == TYPE_POINTER) return false;  // raw pointer: may be null
+    if (rt->mode == MODE_MUTABLE) return true;
+    if (rt->mode == MODE_SHARED && !is_primitive_type(rt)) return true;
+    return false;
+}
+
 static void emit_forward_decl(Decl *decl, int depth) {
     if (!decl) return;
     if (is_generic_function(decl)) return;
@@ -43,11 +98,22 @@ static void emit_forward_decl(Decl *decl, int depth) {
         if (decl->as.function_decl.return_type && decl->as.function_decl.return_type->kind == TYPE_META_TYPE) return; // Pure CTFE function
         
         emit_indent(depth);
-        // Q-019 [pure]: forward-declare func without var params as __attribute__((pure))
-        // so that callers in the same TU benefit from LICM and CSE optimizations.
+        // Q-019 [pure/const]: forward-declare func without var params as
+        // __attribute__((const)) when all params are by-value, otherwise
+        // __attribute__((pure)). Both enable LICM/CSE; const is stronger.
         if (decl->kind == DECL_FUNCTION && !func_has_var_param(decl)) {
-            EMIT("__attribute__((pure)) ");
+            if (func_all_params_by_value(decl))
+                EMIT("__attribute__((const)) ");
+            else
+                EMIT("__attribute__((pure)) ");
         }
+        // Q-020 [nonnull]: every borrow (var T or shared T) is provably non-null;
+        // emit nonnull with no args to cover all pointer parameters at once.
+        if (func_has_ptr_param(decl))
+            EMIT("__attribute__((nonnull)) ");
+        // Q-021 [returns_nonnull]: borrow return types are provably non-null pointers.
+        if (func_returns_nonnull_ptr(decl))
+            EMIT("__attribute__((returns_nonnull)) ");
         if (decl->as.function_decl.return_type) {
             emit_type(decl->as.function_decl.return_type);
         } else {
@@ -259,15 +325,22 @@ void emit_decl(Decl* decl, int depth) {
             if (decl->is_private && !is_main) {
                 EMIT("static ");
             }
-            // Q-019 [pure]: func without var params → __attribute__((pure)).
-            // Lain guarantees no mutable global access and no proc calls for func;
-            // without var params there are no caller-visible side effects either,
-            // so the function depends only on its arguments. GCC can then apply
-            // loop-invariant code motion (LICM) and common subexpression elimination
-            // (CSE) across call sites.
+            // Q-019 [pure/const]: func without var params gets __attribute__((const))
+            // when all params are by value (no pointer args → no indirect reads),
+            // or __attribute__((pure)) otherwise. Both allow LICM/CSE; const is
+            // the stronger guarantee and allows hoisting even when memory changes.
             if (decl->kind == DECL_FUNCTION && !is_main && !func_has_var_param(decl)) {
-                EMIT("__attribute__((pure)) ");
+                if (func_all_params_by_value(decl))
+                    EMIT("__attribute__((const)) ");
+                else
+                    EMIT("__attribute__((pure)) ");
             }
+            // Q-020 [nonnull]: borrow checker proves every pointer param is non-null.
+            if (!is_main && func_has_ptr_param(decl))
+                EMIT("__attribute__((nonnull)) ");
+            // Q-021 [returns_nonnull]: borrow return type is provably non-null.
+            if (!is_main && func_returns_nonnull_ptr(decl))
+                EMIT("__attribute__((returns_nonnull)) ");
             // Print return type and function name.
             if (decl->as.function_decl.return_type) {
                 emit_type(decl->as.function_decl.return_type);

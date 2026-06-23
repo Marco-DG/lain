@@ -1,0 +1,8 @@
+// Sub-slicing Q-003.B: arr[a..b] produces T[b-a] typed result.
+// The result type carries the concrete length, allowing static bounds checks.
+
+proc main() i32 {
+    var xs i32[5] = [10, 20, 30, 40, 50]
+    var s = xs[1..4]
+    return s[0] + s[2]
+}

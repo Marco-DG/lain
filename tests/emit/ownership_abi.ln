@@ -15,6 +15,11 @@ func scale(var v Vec2, factor i32) {
     v.y = v.y * factor
 }
 
+// var T return: borrow checker proves non-null -> returns_nonnull emitted
+func get_x(var v Vec2) var i32 {
+    return var v.x
+}
+
 proc main() i32 {
     return 0
 }

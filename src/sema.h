@@ -539,6 +539,25 @@ static void walk_stmt(Stmt *s) {
                 }
 
                 range_set(sema_ranges, s->as.var_stmt.name, r);
+
+                // Register __len_VAR for local sized-slice variables (e.g. var s = arr[lo..hi]).
+                // This lets subsequent accesses s[i] use the constraint/interval prover.
+                Type *sv_ty = s->as.var_stmt.type;
+                if (sv_ty && sv_ty->kind == TYPE_ARRAY && sv_ty->array_len == -1 && sv_ty->size_expr) {
+                    Id *vname = s->as.var_stmt.name;
+                    char lk[272]; int lklen = 6 + (int)vname->length;
+                    if (lklen < (int)sizeof(lk)) {
+                        memcpy(lk, "__len_", 6);
+                        memcpy(lk + 6, vname->name, vname->length);
+                        char *stored = arena_push_many(sema_arena, char, lklen);
+                        memcpy(stored, lk, lklen);
+                        Id *len_id = arena_push_aligned(sema_arena, Id);
+                        len_id->length = lklen; len_id->name = stored;
+                        Range len_r = sema_eval_range(sv_ty->size_expr, sema_ranges);
+                        if (!len_r.known) len_r = range_make(0, INT64_MAX);
+                        range_set(sema_ranges, len_id, len_r);
+                    }
+                }
             }
             break;
         case STMT_IF: {
@@ -1483,8 +1502,50 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                                 Id *n_id = pty->size_expr->as.identifier_expr.id;
                                 constraint_add(sema_ranges, len_id, n_id, 0);
                                 constraint_add(sema_ranges, n_id, len_id, 0);
+                            } else if (pty->size_expr->kind == EXPR_BINARY) {
+                            // Arithmetic size_expr: out i32[a.len + b.len] or i32[src.len - k].
+                            // Derive monotone constraints that the constraint prover can chain.
+                            TokenKind binop = pty->size_expr->as.binary_expr.op;
+                            Expr *se_lhs = pty->size_expr->as.binary_expr.left;
+                            Expr *se_rhs = pty->size_expr->as.binary_expr.right;
+                            // Helper: if E is EXPR_MEMBER(x.len), find __len_x and return its Id.
+                            #define FIND_LEN_ID(E, OUT_ID) do { \
+                                if ((E)->kind == EXPR_MEMBER && \
+                                    (E)->as.member_expr.member->length == 3 && \
+                                    strncmp((E)->as.member_expr.member->name, "len", 3) == 0 && \
+                                    (E)->as.member_expr.target->kind == EXPR_IDENTIFIER) { \
+                                    Id *_ref = (E)->as.member_expr.target->as.identifier_expr.id; \
+                                    char _rk[272]; int _rkl = 6 + (int)_ref->length; \
+                                    if (_rkl < (int)sizeof(_rk)) { \
+                                        memcpy(_rk, "__len_", 6); \
+                                        memcpy(_rk + 6, _ref->name, _ref->length); \
+                                        for (RangeEntry *_re = sema_ranges->head; _re; _re = _re->next) { \
+                                            if (_re->var->length == _rkl && \
+                                                strncmp(_re->var->name, _rk, _rkl) == 0) \
+                                            { (OUT_ID) = _re->var; break; } \
+                                        } \
+                                    } \
+                                } \
+                            } while(0)
+                            if (binop == TOKEN_PLUS) {
+                                // out i32[a.len + b.len]:
+                                //   a.len ≤ out.len → __len_a - __len_out <= 0
+                                //   b.len ≤ out.len → __len_b - __len_out <= 0
+                                Id *la_id = NULL; FIND_LEN_ID(se_lhs, la_id);
+                                Id *lb_id = NULL; FIND_LEN_ID(se_rhs, lb_id);
+                                if (la_id) constraint_add(sema_ranges, la_id, len_id, 0);
+                                if (lb_id) constraint_add(sema_ranges, lb_id, len_id, 0);
+                            } else if (binop == TOKEN_MINUS && se_rhs->kind == EXPR_LITERAL) {
+                                // out i32[src.len - k]:
+                                //   out.len = src.len - k → out.len - src.len <= -k
+                                int64_t k = se_rhs->as.literal_expr.value;
+                                Id *ls_id = NULL; FIND_LEN_ID(se_lhs, ls_id);
+                                if (ls_id) constraint_add(sema_ranges, len_id, ls_id, -k);
                             }
-                        } else if (pty->size_expr &&
+                            #undef FIND_LEN_ID
+                            }  // closes else if (EXPR_BINARY)
+                        }      // closes if (TOKEN_EQUAL_EQUAL)
+                        if (pty->size_expr &&
                                    (pty->size_relop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL ||
                                     pty->size_relop == TOKEN_ANGLE_BRACKET_RIGHT)) {
                             // arr i32[>= n] → arr.len >= n → n - __len_arr <= 0
