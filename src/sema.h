@@ -1492,6 +1492,12 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                                 Id *n_id = pty->size_expr->as.identifier_expr.id;
                                 int64_t delta = (pty->size_relop == TOKEN_ANGLE_BRACKET_RIGHT) ? -1 : 0;
                                 constraint_add(sema_ranges, n_id, len_id, delta);
+                            } else if (pty->size_expr->kind == EXPR_LITERAL) {
+                                // arr i32[> k] / arr i32[>= k] with literal k:
+                                // register a concrete lower bound on __len_arr.
+                                int64_t k = pty->size_expr->as.literal_expr.value;
+                                int64_t min_len = k + (pty->size_relop == TOKEN_ANGLE_BRACKET_RIGHT ? 1 : 0);
+                                range_set(sema_ranges, len_id, range_make(min_len, INT64_MAX));
                             }
                         }
                     }

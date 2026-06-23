@@ -847,6 +847,140 @@ void sema_infer_expr(Expr *e) {
                         "argument to parameter", buf);
                 }
             }
+            // E087: verify sized-slice length constraints at call site.
+            // Conservative: only fires when a violation is statically provable.
+            if (sema_walk_phase && sema_ranges && p->decl->kind == DECL_VARIABLE) {
+                Type *e87_ptype = p->decl->as.variable_decl.type;
+                if (e87_ptype && e87_ptype->kind == TYPE_ARRAY &&
+                    e87_ptype->array_len == -1 && e87_ptype->size_expr) {
+                    Expr *e87_parg = NULL;
+                    { int e87_ai = 0;
+                      for (ExprList *e87_a = e->as.call_expr.args; e87_a; e87_a = e87_a->next) {
+                          if (e87_ai == param_idx) { e87_parg = e87_a->expr; break; }
+                          e87_ai++;
+                      }
+                    }
+                    if (e87_parg) {
+                        Id *e87_pname = p->decl->as.variable_decl.name;
+                        // Determine arg's concrete length as a Range
+                        Range e87_alen = range_unknown();
+                        if (e87_parg->type && e87_parg->type->kind == TYPE_ARRAY &&
+                            e87_parg->type->array_len >= 0)
+                            e87_alen = range_const(e87_parg->type->array_len);
+                        if (!e87_alen.known && e87_parg->kind == EXPR_IDENTIFIER) {
+                            Id *aid = e87_parg->as.identifier_expr.id;
+                            char lk[272]; int lklen = 6 + (int)aid->length;
+                            if (lklen < (int)sizeof(lk)) {
+                                memcpy(lk, "__len_", 6);
+                                memcpy(lk + 6, aid->name, aid->length);
+                                for (RangeEntry *re = sema_ranges->head; re; re = re->next) {
+                                    if (re->var->length == lklen &&
+                                        strncmp(re->var->name, lk, lklen) == 0)
+                                    { e87_alen = re->range; break; }
+                                }
+                            }
+                        }
+                        bool e87_fail = false;
+                        char e87_msg[320]; e87_msg[0] = '\0';
+                        if (e87_ptype->size_relop == TOKEN_ANGLE_BRACKET_RIGHT ||
+                            e87_ptype->size_relop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL) {
+                            // i32[> k] / i32[>= k] with literal k
+                            if (e87_ptype->size_expr->kind == EXPR_LITERAL) {
+                                int64_t k = e87_ptype->size_expr->as.literal_expr.value;
+                                int64_t req = k + (e87_ptype->size_relop == TOKEN_ANGLE_BRACKET_RIGHT ? 1 : 0);
+                                if (e87_alen.known && e87_alen.max < req) {
+                                    snprintf(e87_msg, sizeof(e87_msg),
+                                        "argument for '%.*s' has length at most %ld"
+                                        " but constraint requires length %s %ld",
+                                        (int)e87_pname->length, e87_pname->name,
+                                        (long)e87_alen.max,
+                                        e87_ptype->size_relop == TOKEN_ANGLE_BRACKET_RIGHT ? ">" : ">=",
+                                        (long)k);
+                                    e87_fail = true;
+                                }
+                            }
+                        } else if (e87_ptype->size_relop == TOKEN_EQUAL_EQUAL) {
+                            if (e87_ptype->size_expr->kind == EXPR_LITERAL) {
+                                // i32[k]: arg.len must equal k
+                                int64_t k = e87_ptype->size_expr->as.literal_expr.value;
+                                if (e87_alen.known &&
+                                    (e87_alen.min > k || e87_alen.max < k)) {
+                                    snprintf(e87_msg, sizeof(e87_msg),
+                                        "argument for '%.*s' has length [%ld,%ld]"
+                                        " but constraint requires length == %ld",
+                                        (int)e87_pname->length, e87_pname->name,
+                                        (long)e87_alen.min, (long)e87_alen.max,
+                                        (long)k);
+                                    e87_fail = true;
+                                }
+                            } else if (e87_ptype->size_expr->kind == EXPR_MEMBER &&
+                                       e87_ptype->size_expr->as.member_expr.member->length == 3 &&
+                                       strncmp(e87_ptype->size_expr->as.member_expr.member->name, "len", 3) == 0 &&
+                                       e87_ptype->size_expr->as.member_expr.target->kind == EXPR_IDENTIFIER) {
+                                // i32[ref.len]: find ref param and compare concrete lengths
+                                Id *ref_pid = e87_ptype->size_expr->as.member_expr.target->as.identifier_expr.id;
+                                Expr *ref_arg = NULL;
+                                int rpi = 0;
+                                for (DeclList *rp = params; rp; rp = rp->next) {
+                                    if (rp->decl->kind == DECL_VARIABLE) {
+                                        Id *rpn = rp->decl->as.variable_decl.name;
+                                        if (rpn->length == ref_pid->length &&
+                                            strncmp(rpn->name, ref_pid->name, rpn->length) == 0) {
+                                            int ri = 0;
+                                            for (ExprList *ra = e->as.call_expr.args; ra; ra = ra->next) {
+                                                if (ri++ == rpi) { ref_arg = ra->expr; break; }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    rpi++;
+                                }
+                                if (ref_arg) {
+                                    Range ref_len = range_unknown();
+                                    if (ref_arg->type && ref_arg->type->kind == TYPE_ARRAY &&
+                                        ref_arg->type->array_len >= 0)
+                                        ref_len = range_const(ref_arg->type->array_len);
+                                    if (!ref_len.known && ref_arg->kind == EXPR_IDENTIFIER) {
+                                        Id *rid = ref_arg->as.identifier_expr.id;
+                                        char rk[272]; int rklen = 6 + (int)rid->length;
+                                        if (rklen < (int)sizeof(rk)) {
+                                            memcpy(rk, "__len_", 6);
+                                            memcpy(rk + 6, rid->name, rid->length);
+                                            for (RangeEntry *re = sema_ranges->head; re; re = re->next) {
+                                                if (re->var->length == rklen &&
+                                                    strncmp(re->var->name, rk, rklen) == 0)
+                                                { ref_len = re->range; break; }
+                                            }
+                                        }
+                                    }
+                                    // Fire only when both sides are concrete point values that differ
+                                    if (e87_alen.known && ref_len.known &&
+                                        e87_alen.min == e87_alen.max &&
+                                        ref_len.min == ref_len.max &&
+                                        e87_alen.min != ref_len.min) {
+                                        Id *disp = (ref_arg->kind == EXPR_IDENTIFIER)
+                                                   ? ref_arg->as.identifier_expr.id : ref_pid;
+                                        snprintf(e87_msg, sizeof(e87_msg),
+                                            "argument for '%.*s' has length %ld"
+                                            " but constraint requires == %.*s.len (%ld)",
+                                            (int)e87_pname->length, e87_pname->name,
+                                            (long)e87_alen.min,
+                                            (int)disp->length, disp->name,
+                                            (long)ref_len.min);
+                                        e87_fail = true;
+                                    }
+                                }
+                            }
+                        }
+                        if (e87_fail) {
+                            fprintf(stderr, "[E087] Error Ln %li, Col %li: %s.\n",
+                                    (long)e87_parg->line, (long)e87_parg->col, e87_msg);
+                            diagnostic_show_line(e87_parg->line, e87_parg->col);
+                            exit(1);
+                        }
+                    }
+                }
+            }
             param_idx++;
         }
     } else if (callee_decl && callee_decl->kind == DECL_STRUCT) {

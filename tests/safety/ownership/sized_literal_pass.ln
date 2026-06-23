@@ -1,0 +1,16 @@
+// Sized slice with literal lower bound — PASS
+// i32[> 0], i32[>= 2], i32[> 3]: VRA must prove index valid from the bound.
+
+func first(arr i32[> 0]) i32 {
+    return arr[0]
+}
+
+func second(arr i32[>= 2]) i32 {
+    return arr[1]
+}
+
+func fourth(arr i32[> 3]) i32 {
+    return arr[3]
+}
+
+proc main() i32 { return 0 }

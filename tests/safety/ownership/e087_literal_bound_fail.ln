@@ -1,0 +1,11 @@
+// E087: passing 1-element array to i32[>= 2] param — FAIL
+// The argument has length 1, violating the >= 2 constraint.
+
+func pair_sum(arr i32[>= 2]) i32 {
+    return arr[0] + arr[1]
+}
+
+proc main() i32 {
+    var single i32[1] = [42]
+    return pair_sum(single)
+}

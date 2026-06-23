@@ -1,0 +1,12 @@
+// E087: passing arrays of different concrete lengths to i32[ref.len] param — FAIL
+// b i32[a.len] but at call site a has 3 elems, b has 2 elems.
+
+func dot(a i32[> 0], b i32[a.len]) i32 {
+    return a[0] + b[0]
+}
+
+proc main() i32 {
+    var xs i32[3] = [1, 2, 3]
+    var ys i32[2] = [4, 5]
+    return dot(xs, ys)
+}

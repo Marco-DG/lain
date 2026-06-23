@@ -1,0 +1,18 @@
+// F-035: declaring a linear variable outside a loop, reassigning + consuming
+// it on every iteration is now accepted. The previous behaviour rejected this
+// pattern with [E006] even when the reassign leaves no live value to leak.
+
+import std.fs
+
+proc main() i32 {
+    var total = 0
+    var i = 0
+    var f = open_file("data.txt", "r")
+    close_file(mov f)
+    while i < 3 decreasing 3 - i {
+        f = open_file("data.txt", "r")
+        close_file(mov f)
+        i = i + 1
+    }
+    return total
+}

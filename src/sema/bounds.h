@@ -94,8 +94,19 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
         len_range = range_const(array_type->sentinel_len);
     } else if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
                array_type->size_expr) {
-        // Sized slice: evaluate the size expression via VRA
-        len_range = sema_eval_range(array_type->size_expr, ctx);
+        // Sized slice: evaluate the size expression via VRA.
+        // For relop constraints (i32[>= k], i32[> k]), len_range is a lower bound,
+        // not an equality: len >= base (or len > base).
+        Range base = sema_eval_range(array_type->size_expr, ctx);
+        if (array_type->size_relop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL ||
+            array_type->size_relop == TOKEN_ANGLE_BRACKET_RIGHT) {
+            if (base.known) {
+                int64_t delta = (array_type->size_relop == TOKEN_ANGLE_BRACKET_RIGHT) ? 1 : 0;
+                len_range = range_make(base.min + delta, INT64_MAX);
+            }
+        } else {
+            len_range = base;
+        }
     }
 
     // 2. Compute Index Range
