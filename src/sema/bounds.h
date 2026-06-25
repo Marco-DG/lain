@@ -10,6 +10,7 @@
 
 #include "../ast.h"
 #include "ranges.h"
+#include "omega.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -114,9 +115,14 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
 
     // 3. Verify: idx >= 0
     if (idx.known && idx.min < 0) {
-        fprintf(stderr, "[E085] bounds error: index may be negative. Range: [%ld, %ld]\n",
-                (long)idx.min, (long)idx.max);
-        exit(1);
+        // Interval is pessimistic. Try Omega to prove expr >= 0 given VRA constraints.
+        if (!omega_prove_nonneg(ctx, index_expr)) {
+            fprintf(stderr, "[E085] bounds error: index may be negative. Range: [%ld, %ld]\n",
+                    (long)idx.min, (long)idx.max);
+            exit(1);
+        }
+        // Omega proved non-negativity; mark idx as known-safe for subsequent checks.
+        idx.min = 0;
     }
 
     // 4. Interval proof: idx_max < len_min (fast path — works for fixed arrays and
@@ -258,6 +264,15 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
             }
         }
         if (proved) return;
+    }
+
+    // 5.5. Omega Test fallback: linear arithmetic for arithmetic index
+    //      expressions (e.g. j + a.len) against sized-slice bounds.
+    //      Handles all patterns that reduce to difference constraints after
+    //      FM variable elimination (concat, reverse, interleave, etc.).
+    if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
+        array_type->size_expr) {
+        if (omega_prove_lt(ctx, index_expr, array_type->size_expr)) return;
     }
 
     // 6. No proof found — emit E085

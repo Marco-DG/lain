@@ -540,6 +540,40 @@ static void walk_stmt(Stmt *s) {
 
                 range_set(sema_ranges, s->as.var_stmt.name, r);
 
+                // If the initializer is x.len, register n = __len_x as two difference
+                // constraints so Omega Test can cancel terms like (n - i - 1 < n).
+                {
+                    Expr *init = s->as.var_stmt.expr;
+                    if (init && init->kind == EXPR_MEMBER &&
+                        init->as.member_expr.member &&
+                        init->as.member_expr.member->length == 3 &&
+                        memcmp(init->as.member_expr.member->name, "len", 3) == 0 &&
+                        init->as.member_expr.target &&
+                        init->as.member_expr.target->kind == EXPR_IDENTIFIER) {
+                        Id *ref = init->as.member_expr.target->as.identifier_expr.id;
+                        if (ref) {
+                            char lk[272]; int lklen = 6 + (int)ref->length;
+                            if (lklen < (int)sizeof(lk)) {
+                                memcpy(lk, "__len_", 6);
+                                memcpy(lk + 6, ref->name, ref->length);
+                                // Find __len_ref Id in the range table
+                                Id *len_id = NULL;
+                                for (RangeEntry *re = sema_ranges->head; re; re = re->next) {
+                                    if ((int)re->var->length == lklen &&
+                                        memcmp(re->var->name, lk, lklen) == 0) {
+                                        len_id = re->var; break;
+                                    }
+                                }
+                                if (len_id) {
+                                    Id *n_id = s->as.var_stmt.name;
+                                    constraint_add(sema_ranges, n_id,   len_id, 0); /* n ≤ __len_ref */
+                                    constraint_add(sema_ranges, len_id, n_id,   0); /* __len_ref ≤ n */
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Register __len_VAR for local sized-slice variables (e.g. var s = arr[lo..hi]).
                 // This lets subsequent accesses s[i] use the constraint/interval prover.
                 Type *sv_ty = s->as.var_stmt.type;

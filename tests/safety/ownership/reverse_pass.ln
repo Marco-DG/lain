@@ -1,0 +1,17 @@
+// Reverse: out[n - i - 1] — non-negativity and upper bound proved by Omega.
+// var n = arr.len registers n = __len_arr equality; FM eliminates n and __len_arr,
+// reducing to (i <= -1) AND (i >= 0) → UNSAT at both proof sites.
+
+func reverse(arr i32[], out i32[arr.len]) {
+    var n = arr.len
+    for i in 0..n {
+        out[n - i - 1] = arr[i]
+    }
+}
+
+proc main() i32 {
+    var xs i32[4] = [1, 2, 3, 4]
+    var ys i32[4] = [0, 0, 0, 0]
+    reverse(xs, ys)
+    return ys[0]
+}

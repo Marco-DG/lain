@@ -1,9 +1,13 @@
-// Concat prefix: out i32[a.len + b.len] — proves out[i] < out.len in bounds.
-// Monotone constraint: a.len <= out.len, so i < a.len → i < out.len.
+// Full concat: out i32[a.len + b.len].
+// Second loop uses index j + a.len — proved by Omega Test (FM elimination).
+// After eliminating j: cross-pair (j<b.len, j≥b.len) gives 0 ≤ -1 → UNSAT.
 
 func concat(a i32[], b i32[], out i32[a.len + b.len]) {
     for i in 0..a.len {
         out[i] = a[i]
+    }
+    for j in 0..b.len {
+        out[j + a.len] = b[j]
     }
 }
 
