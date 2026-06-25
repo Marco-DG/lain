@@ -1,0 +1,18 @@
+// Fix 2b: modulo ring-buffer pattern.
+// buf[i % buf.len] where i >= 0 (for-loop) and buf.len > 0 (i32[> 0]).
+// Proof: modulus == array's own .len; i >= 0 from loop range; len > 0 from constraint.
+// i % buf.len ∈ [0, buf.len-1] → trivially < buf.len → safe.
+
+func ring_fill(buf i32[> 0], src i32[], out i32[src.len]) {
+    for i in 0..src.len {
+        out[i] = buf[i % buf.len]
+    }
+}
+
+proc main() i32 {
+    var ring i32[3] = [10, 20, 30]
+    var src  i32[5] = [0, 0, 0, 0, 0]
+    var out  i32[5] = [0, 0, 0, 0, 0]
+    ring_fill(ring, src, out)
+    return out[0]
+}

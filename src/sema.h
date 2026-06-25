@@ -540,35 +540,70 @@ static void walk_stmt(Stmt *s) {
 
                 range_set(sema_ranges, s->as.var_stmt.name, r);
 
-                // If the initializer is x.len, register n = __len_x as two difference
-                // constraints so Omega Test can cancel terms like (n - i - 1 < n).
+                // If the initializer is x.len or x.len ± k, register the equality
+                // (or affine relationship) between n and __len_x as difference constraints
+                // so the Omega Test can cancel terms like (n - i - 1 < n).
+                //
+                //   var n = x.len      → n = __len_x  (constraints: n-__len_x≤0, __len_x-n≤0)
+                //   var n = x.len - k  → n = __len_x - k
+                //                        (constraints: n-__len_x≤-k, __len_x-n≤k)
+                //   var n = x.len + k  → n = __len_x + k
+                //                        (constraints: n-__len_x≤k, __len_x-n≤-k)
                 {
                     Expr *init = s->as.var_stmt.expr;
+                    Id *n_id   = s->as.var_stmt.name;
+
+                    /* Extract (ref, delta) such that init == ref.len + delta */
+                    Id      *ref   = NULL;
+                    int64_t  delta = 0;
+
                     if (init && init->kind == EXPR_MEMBER &&
                         init->as.member_expr.member &&
                         init->as.member_expr.member->length == 3 &&
                         memcmp(init->as.member_expr.member->name, "len", 3) == 0 &&
                         init->as.member_expr.target &&
                         init->as.member_expr.target->kind == EXPR_IDENTIFIER) {
-                        Id *ref = init->as.member_expr.target->as.identifier_expr.id;
-                        if (ref) {
-                            char lk[272]; int lklen = 6 + (int)ref->length;
-                            if (lklen < (int)sizeof(lk)) {
-                                memcpy(lk, "__len_", 6);
-                                memcpy(lk + 6, ref->name, ref->length);
-                                // Find __len_ref Id in the range table
-                                Id *len_id = NULL;
-                                for (RangeEntry *re = sema_ranges->head; re; re = re->next) {
-                                    if ((int)re->var->length == lklen &&
-                                        memcmp(re->var->name, lk, lklen) == 0) {
-                                        len_id = re->var; break;
-                                    }
+                        /* var n = x.len */
+                        ref   = init->as.member_expr.target->as.identifier_expr.id;
+                        delta = 0;
+                    } else if (init && init->kind == EXPR_BINARY &&
+                               (init->as.binary_expr.op == TOKEN_PLUS ||
+                                init->as.binary_expr.op == TOKEN_MINUS) &&
+                               init->as.binary_expr.left &&
+                               init->as.binary_expr.left->kind == EXPR_MEMBER &&
+                               init->as.binary_expr.left->as.member_expr.member &&
+                               init->as.binary_expr.left->as.member_expr.member->length == 3 &&
+                               memcmp(init->as.binary_expr.left->as.member_expr.member->name,
+                                      "len", 3) == 0 &&
+                               init->as.binary_expr.left->as.member_expr.target &&
+                               init->as.binary_expr.left->as.member_expr.target->kind == EXPR_IDENTIFIER &&
+                               init->as.binary_expr.right &&
+                               init->as.binary_expr.right->kind == EXPR_LITERAL) {
+                        /* var n = x.len ± k */
+                        ref = init->as.binary_expr.left->as.member_expr.target
+                                  ->as.identifier_expr.id;
+                        int64_t k = (int64_t)init->as.binary_expr.right->as.literal_expr.value;
+                        delta = (init->as.binary_expr.op == TOKEN_PLUS) ? k : -k;
+                    }
+
+                    if (ref && sema_ranges) {
+                        char lk[272]; int lklen = 6 + (int)ref->length;
+                        if (lklen < (int)sizeof(lk)) {
+                            memcpy(lk, "__len_", 6);
+                            memcpy(lk + 6, ref->name, ref->length);
+                            Id *len_id = NULL;
+                            for (RangeEntry *re = sema_ranges->head; re; re = re->next) {
+                                if ((int)re->var->length == lklen &&
+                                    memcmp(re->var->name, lk, lklen) == 0) {
+                                    len_id = re->var; break;
                                 }
-                                if (len_id) {
-                                    Id *n_id = s->as.var_stmt.name;
-                                    constraint_add(sema_ranges, n_id,   len_id, 0); /* n ≤ __len_ref */
-                                    constraint_add(sema_ranges, len_id, n_id,   0); /* __len_ref ≤ n */
-                                }
+                            }
+                            if (len_id) {
+                                /* n = __len_x + delta
+                                   ↔  n - __len_x ≤  delta
+                                      __len_x - n ≤ -delta  */
+                                constraint_add(sema_ranges, n_id,   len_id,  delta);
+                                constraint_add(sema_ranges, len_id, n_id,   -delta);
                             }
                         }
                     }
@@ -1445,7 +1480,34 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 rawp[L] = '\0';
 
                 sema_insert_local(rawp, rawp, pty, p->decl, false);
-                
+
+                // Seed VRA range for UNSIGNED integer parameters only.
+                // uN / usize params are always >= 0; seeding [0, max_uN] lets the prover
+                // use non-negativity (and tight upper bounds for small types like u1/u8)
+                // without requiring an explicit >= 0 annotation.
+                //
+                // We do NOT seed signed types (iN): they carry no new information beyond
+                // "could be anything", and seeding [-2^(N-1), 2^(N-1)-1] would make
+                // arithmetic on two i32 params produce a range that violates the return
+                // type's bounds, triggering false E086 errors on otherwise valid functions.
+                if (sema_ranges && pty) {
+                    int bits; bool sgn;
+                    if (parse_iN_uN(pty, &bits, &sgn) && !sgn) {
+                        /* uN: range is [0, 2^N - 1]  (or [0, INT64_MAX] for N >= 63) */
+                        long long tlo, thi;
+                        if (type_integer_range(pty, &tlo, &thi)) {
+                            range_set(sema_ranges, pid,
+                                      range_make((int64_t)tlo, (int64_t)thi));
+                        }
+                    } else if (pty->kind == TYPE_SIMPLE && pty->base_type) {
+                        /* usize: also unsigned */
+                        isize pl = pty->base_type->length;
+                        if (pl == 5 && memcmp(pty->base_type->name, "usize", 5) == 0) {
+                            range_set(sema_ranges, pid, range_make(0, INT64_MAX));
+                        }
+                    }
+                }
+
                 // Handle 'in' constraint: param int in arr
                 // Desugars to: param >= 0 and param < arr.len
                 if (p->decl->as.variable_decl.in_field && sema_ranges) {

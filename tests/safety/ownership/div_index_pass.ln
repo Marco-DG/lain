@@ -1,0 +1,17 @@
+// Fix 2a: division monotonicity.
+// arr[i/2] where i is a for-loop variable with constraint i < arr.len.
+// Proof: i >= 0 (from loop range [0, arr.len-1]) AND i - __len_arr <= -1
+// (difference constraint) → i/2 <= i < arr.len → safe (path c: constraint table).
+
+func half_view(arr i32[> 0]) i32 {
+    var acc = 0
+    for i in 0..arr.len {
+        acc = acc + arr[i / 2]
+    }
+    return acc
+}
+
+proc main() i32 {
+    var xs i32[4] = [2, 4, 6, 8]
+    return half_view(xs)
+}

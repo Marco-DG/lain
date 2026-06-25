@@ -266,6 +266,90 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
         if (proved) return;
     }
 
+    // 5.4. Division/modulo monotonicity proofs.
+    //
+    // Division:  arr[i / d]  with literal d >= 1.
+    //   Mathematical fact: if i >= 0 and i < n, then i/d <= i < n.
+    //   Sufficient conditions: (a) i >= 0  (b) i < arr.len.
+    //   (b) is checked via three paths: interval (L1), sized-slice FM (L4),
+    //   and constraint table (for plain i32[] with for-loop injected constraints).
+    //
+    // Modulo:  arr[i % arr.len]  (modulus = the same array's .len).
+    //   i % arr.len ∈ [0, arr.len-1] when i >= 0 and arr.len > 0.
+    //   For modulo with a literal divisor, L1 already handles it via range_mod.
+    if (index_expr->kind == EXPR_BINARY) {
+        TokenKind idx_op = index_expr->as.binary_expr.op;
+        Expr *idx_lhs   = index_expr->as.binary_expr.left;
+        Expr *idx_rhs   = index_expr->as.binary_expr.right;
+
+        if (idx_op == TOKEN_SLASH &&
+            idx_rhs && idx_rhs->kind == EXPR_LITERAL &&
+            idx_rhs->as.literal_expr.value >= 1) {
+            /* --- division monotonicity: i/d < arr.len iff i >= 0 and i < arr.len --- */
+            bool num_nn = false;
+            Range nr = sema_eval_range(idx_lhs, ctx);
+            if (nr.known && nr.min >= 0)             num_nn = true;
+            else if (omega_prove_nonneg(ctx, idx_lhs)) num_nn = true;
+
+            if (num_nn) {
+                /* (a) interval path: numerator.max < fixed arr.len */
+                if (len_range.known && nr.known && nr.max < len_range.min) return;
+
+                /* (b) sized-slice FM path: prove num < size_expr (equality constraints) */
+                if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
+                    array_type->size_expr && array_type->size_relop == TOKEN_EQUAL_EQUAL &&
+                    omega_prove_lt(ctx, idx_lhs, array_type->size_expr)) return;
+
+                /* (c) constraint path: numerator - __len_arr ≤ -1 (for-loop / in-guard) */
+                if (idx_lhs->kind == EXPR_IDENTIFIER && array_expr &&
+                    array_expr->kind == EXPR_IDENTIFIER) {
+                    Id *num_id = idx_lhs->as.identifier_expr.id;
+                    Id *arr_id = array_expr->as.identifier_expr.id;
+                    char _k[272]; int _kl = 6 + (int)arr_id->length;
+                    if (_kl < (int)sizeof(_k)) {
+                        memcpy(_k, "__len_", 6);
+                        memcpy(_k + 6, arr_id->name, arr_id->length);
+                        Id *aln_id = NULL;
+                        for (RangeEntry *re = ctx->head; re; re = re->next) {
+                            if ((int)re->var->length == _kl &&
+                                strncmp(re->var->name, _k, _kl) == 0)
+                            { aln_id = re->var; break; }
+                        }
+                        if (aln_id) {
+                            bool gf = false;
+                            int64_t gd = constraint_get_diff(ctx, num_id, aln_id, &gf);
+                            if (gf && gd <= -1) return; /* num < arr.len → num/d < arr.len */
+                        }
+                    }
+                }
+            }
+        }
+
+        if (idx_op == TOKEN_PERCENT && array_expr &&
+            array_expr->kind == EXPR_IDENTIFIER) {
+            /* --- modulo: arr[i % arr.len] — safe when i >= 0 and arr.len > 0 --- */
+            Id *arr_id = array_expr->as.identifier_expr.id;
+            if (idx_rhs && idx_rhs->kind == EXPR_MEMBER &&
+                idx_rhs->as.member_expr.target &&
+                idx_rhs->as.member_expr.target->kind == EXPR_IDENTIFIER &&
+                idx_rhs->as.member_expr.member &&
+                idx_rhs->as.member_expr.member->length == 3 &&
+                memcmp(idx_rhs->as.member_expr.member->name, "len", 3) == 0) {
+                Id *ref_id = idx_rhs->as.member_expr.target->as.identifier_expr.id;
+                if (ref_id && ref_id->length == arr_id->length &&
+                    memcmp(ref_id->name, arr_id->name, arr_id->length) == 0) {
+                    /* numerator must be non-negative (i % n is negative if i < 0 in C) */
+                    bool lhs_nn = false;
+                    Range lr = sema_eval_range(idx_lhs, ctx);
+                    if (lr.known && lr.min >= 0)               lhs_nn = true;
+                    else if (omega_prove_nonneg(ctx, idx_lhs)) lhs_nn = true;
+                    /* arr.len must be > 0 so modulo domain is valid */
+                    if (lhs_nn && len_range.known && len_range.min > 0) return;
+                }
+            }
+        }
+    }
+
     // 5.5. Omega Test fallback: linear arithmetic for arithmetic index
     //      expressions (e.g. j + a.len) against sized-slice bounds.
     //      Handles all patterns that reduce to difference constraints after

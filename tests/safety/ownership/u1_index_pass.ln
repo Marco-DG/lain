@@ -1,0 +1,13 @@
+// Fix 1: unsigned type param seeded with type-level range.
+// u1 has range [0, 1]. Indexing i32[2] (len=2) is safe via L1: max(u1)=1 < 2.
+// Before Fix 1: u1 param had range_unknown() → L1 couldn't use 1 < 2.
+// With Fix 1: range [0, 1] seeded → idx.max = 1 < len = 2 → proved at L1.
+
+func pick2(pair i32[2], b u1) i32 {
+    return pair[b as i32]
+}
+
+proc main() i32 {
+    var p i32[2] = [10, 20]
+    return pick2(p, 1)
+}
