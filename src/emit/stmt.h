@@ -27,19 +27,27 @@ void emit_stmt(Stmt *stmt, int depth) {
       emit_indent(depth);
   
       // 2) emit the C type (or default to int32_t).
-      // Default fires when a `var` has neither annotation nor initializer
-      // (post-resolve this should be rare; resolve usually infers the type).
-      if (stmt->as.var_stmt.type) {
-        char tybuf[256];
-        c_name_for_type(stmt->as.var_stmt.type, tybuf, sizeof tybuf);
-        EMIT("%s", tybuf);
-      } else {
-        EMIT("int32_t");
-      }
-  
-      // 3) emit the variable name
+      Type *ty_var = stmt->as.var_stmt.type;
       Id *v = stmt->as.var_stmt.name;
-      EMIT(" %s", c_name_for_id(v));
+
+      // Fixed arrays of user-defined element types: use native C array syntax
+      // "ElemType name[N]" to avoid Fixed_T_N typedef ordering issues (those
+      // typedefs would be in lain.h before the element struct is defined).
+      if (is_user_type_fixed_array(ty_var)) {
+        char elem_c[256];
+        c_name_for_type(ty_var->element_type, elem_c, sizeof elem_c);
+        EMIT("%s %s[%ld]", elem_c, c_name_for_id(v), (long)ty_var->array_len);
+      } else {
+        if (ty_var) {
+          char tybuf[256];
+          c_name_for_type(ty_var, tybuf, sizeof tybuf);
+          EMIT("%s", tybuf);
+        } else {
+          EMIT("int32_t");
+        }
+        // 3) emit the variable name
+        EMIT(" %s", c_name_for_id(v));
+      }
   
       // 4) optional initializer
       if (stmt->as.var_stmt.expr && stmt->as.var_stmt.expr->kind != EXPR_UNDEFINED) {

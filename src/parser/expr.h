@@ -282,82 +282,65 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         parser_advance();
         Expr *expr = expr_identifier(arena, identifier);
     
-        // 2) consume any number of `.field` suffixes
-        // member‑access: a.b → EXPR_MEMBER
-        while (parser_match(TOKEN_DOT)) {
-            parser_advance();  // consume '.'
+        // Single postfix loop: handles .field, (call), [index] in any order.
+        // Supports chained expressions like p.data[i].val or f(x)[0].name.
+        while (true) {
+            if (parser_match(TOKEN_DOT)) {
+                parser_advance();  // consume '.'
+                parser_expect(TOKEN_IDENTIFIER, "Expected identifier after '.'");
+                Id *field_id = id(arena, parser->token.length, parser->token.start);
+                parser_advance();
+                expr = expr_member(arena, expr, field_id);
 
-            parser_expect(TOKEN_IDENTIFIER,
-                "Expected identifier after '.'");
-            Id *field_id = id(arena,
-                              parser->token.length,
-                              parser->token.start);
-            parser_advance();
-
-            expr = expr_member(arena, expr, field_id);
-        }
-    
-        // 3) now handle function calls, if any
-        while (parser_match(TOKEN_L_PAREN)) {
-            parser_advance(); // Consume '('
-            ExprList* args = NULL;
-            ExprList** args_tail = &args;
-            if (!parser_match(TOKEN_R_PAREN)) {
-                // parse comma‑separated args
-                do {
-                    Expr *arg = parse_expr(arena, parser);
-                    *args_tail = expr_list(arena, arg);
-                    args_tail = &(*args_tail)->next;
-                    if (parser_match(TOKEN_COMMA)) parser_advance();
-                    else break;
-                } while (true);
-            }
-            parser_expect(TOKEN_R_PAREN,
-                          "Expected ')' after function call arguments");
-            parser_advance(); // Consume ')'
-    
-            expr = expr_call(arena, expr, args);
-        }
-    
-        // 4) then handle any number of indexing/slicing suffixes:  a[expr]
-        while (parser_match(TOKEN_L_BRACKET)) {
-            parser_advance();  // consume '['
-
-            // check for an open-ended slice: <start> '..' ']'
-            Expr *idx_expr = NULL;
-            Expr *start = NULL;
-            Expr *end   = NULL;
-
-            // first thing inside the brackets
-            if (parser_match(TOKEN_DOT_DOT)) {
-                // form “[..end]” – empty start
-                parser_advance();  // consume '..'
-                end = parse_expr(arena, parser);
-            } else {
-                // parse the start expression
-                start = parse_expr(arena, parser);
-                if (parser_match(TOKEN_DOT_DOT)) {
-                    // slice: start .. [maybe end]
-                    parser_advance();  // consume '..'
-                    if (!parser_match(TOKEN_R_BRACKET)) {
-                        end = parse_expr(arena, parser);
-                    }
-                } else {
-                    // just a plain index: [start]
-                    idx_expr = start;
+            } else if (parser_match(TOKEN_L_PAREN)) {
+                parser_advance(); // consume '('
+                ExprList* args = NULL;
+                ExprList** args_tail = &args;
+                if (!parser_match(TOKEN_R_PAREN)) {
+                    do {
+                        Expr *arg = parse_expr(arena, parser);
+                        *args_tail = expr_list(arena, arg);
+                        args_tail = &(*args_tail)->next;
+                        if (parser_match(TOKEN_COMMA)) parser_advance();
+                        else break;
+                    } while (true);
                 }
+                parser_expect(TOKEN_R_PAREN, "Expected ')' after function call arguments");
+                parser_advance(); // consume ')'
+                expr = expr_call(arena, expr, args);
+
+            } else if (parser_match(TOKEN_L_BRACKET)) {
+                parser_advance();  // consume '['
+                Expr *idx_expr = NULL;
+                Expr *start = NULL;
+                Expr *end   = NULL;
+                if (parser_match(TOKEN_DOT_DOT)) {
+                    // "[..end]" – empty start
+                    parser_advance();  // consume '..'
+                    end = parse_expr(arena, parser);
+                } else {
+                    start = parse_expr(arena, parser);
+                    if (parser_match(TOKEN_DOT_DOT)) {
+                        // slice: start .. [maybe end]
+                        parser_advance();  // consume '..'
+                        if (!parser_match(TOKEN_R_BRACKET)) {
+                            end = parse_expr(arena, parser);
+                        }
+                    } else {
+                        // plain index
+                        idx_expr = start;
+                    }
+                }
+                parser_expect(TOKEN_R_BRACKET, "Expected ']' after index or slice");
+                parser_advance();  // consume ']'
+                if (!idx_expr && (start || end)) {
+                    idx_expr = expr_range(arena, start, end, /*inclusive=*/false);
+                }
+                expr = expr_index(arena, expr, idx_expr);
+
+            } else {
+                break;
             }
-
-            parser_expect(TOKEN_R_BRACKET,
-                          "Expected ']' after index or slice");
-            parser_advance();  // consume the ']'
-
-            if (!idx_expr && (start || end)) {
-                // build a Range expr (open‐ended if end==NULL)
-                idx_expr = expr_range(arena, start, end, /*inclusive=*/false);
-            }
-
-            expr = expr_index(arena, expr, idx_expr);
         }
 
         return expr;

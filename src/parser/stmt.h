@@ -308,18 +308,25 @@ Stmt *parse_var_stmt(Arena* arena, Parser* parser)
         type_annotation = parse_type(arena, parser);
     }
 
-    // optional initializer
+    // optional initializer; if absent with a type annotation, treat as `= undefined`
     Expr *assigned_expr = NULL;
+    bool explicit_undef = false;
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance();
         assigned_expr = parse_expr(arena, parser);
+        if (assigned_expr && assigned_expr->kind == EXPR_UNDEFINED) {
+            explicit_undef = true;
+        }
+    } else if (type_annotation) {
+        assigned_expr = expr_undefined(arena); // synthesized: no explicit `= undefined`
     } else {
-        parser_error("Uninitialized Declaration: variables must be initialized. Use '= undefined' to bypass.");
+        parser_error("Uninitialized Declaration: cannot infer type without initializer.");
     }
 
     // var creates a MUTABLE variable
     Stmt *s = stmt_var(arena, var_name, type_annotation, assigned_expr);
-    s->as.var_stmt.is_mutable = true; 
+    s->as.var_stmt.is_mutable = true;
+    s->as.var_stmt.explicit_undefined = explicit_undef;
     return s;
 }
 

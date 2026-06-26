@@ -169,6 +169,7 @@ typedef struct LEntry {
     bool must_consume; // true if type is strictly linear
     bool is_initialized; // true if the variable has been definitely initialized
     bool is_defer_consumed; // Phase 4: true if consumed inside a defer block
+    bool explicit_undefined; // true if declared with `= undefined` explicitly
     Type *var_type;    // Phase 5: the type of the variable (for field resolution)
     FieldState *field_states; // Phase 5: per-field consumption (NULL = whole-var tracking)
     isize line;        // line where var is defined
@@ -207,7 +208,7 @@ static LEntry *ltable_find(LTable *t, Id *id) {
     return NULL;
 }
 
-static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume, bool is_initialized, isize line, isize col) {
+static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume, bool is_initialized, bool explicit_undef, isize line, isize col) {
     if (!id) return;
     if (ltable_find(t, id)) return; // already present — ignore
     LEntry *e = arena_push_aligned(t->arena, LEntry);
@@ -217,6 +218,7 @@ static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool 
     e->is_mutable = is_mutable;
     e->must_consume = must_consume;
     e->is_initialized = is_initialized;
+    e->explicit_undefined = explicit_undef;
     e->is_defer_consumed = false;
     e->var_type = NULL;
     e->field_states = NULL;
@@ -348,12 +350,13 @@ static LTable *ltable_clone(LTable *src) {
     }
     // shallow-copy entries (Id* pointers are fine)
     for (LEntry *s = src->head; s; s = s->next) {
-        ltable_add(dst, s->id, s->defined_loop_depth, s->is_mutable, s->must_consume, s->is_initialized, s->line, s->col);
+        ltable_add(dst, s->id, s->defined_loop_depth, s->is_mutable, s->must_consume, s->is_initialized, s->explicit_undefined, s->line, s->col);
         LEntry *d = ltable_find(dst, s->id);
         if (d) {
             d->state = s->state;
             d->region = s->region;
             d->is_initialized = s->is_initialized;
+            d->explicit_undefined = s->explicit_undefined;
             d->is_defer_consumed = s->is_defer_consumed;
             d->var_type = s->var_type;
             
@@ -632,7 +635,7 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     diagnostic_show_line((e->line), (e->col));
                     exit(1);
                 }
-                if (!entry->is_initialized) {
+                if (!entry->is_initialized && (entry->must_consume || entry->explicit_undefined)) {
                     fprintf(stderr, "[E005] Error Ln %li, Col %li: use of uninitialized variable '%.*s'.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
                     diagnostic_show_line((e->line), (e->col));
@@ -945,7 +948,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         if (must || s->as.var_stmt.is_mutable) {
             Id *id = s->as.var_stmt.name;
             bool is_init = (init != NULL && init->kind != EXPR_UNDEFINED);
-            ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable, must, is_init, s->line, s->col);
+            ltable_add(tbl, id, loop_depth, s->as.var_stmt.is_mutable, must, is_init, s->as.var_stmt.explicit_undefined, s->line, s->col);
             // Phase 5: init field-level tracking if struct with linear fields
             if (must && ty) {
                 LEntry *entry = ltable_find(tbl, id);
@@ -1105,7 +1108,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 Type *decl_ty = rhs ? rhs->type : NULL;
                 if (is_type_move(decl_ty)) {
                     bool must = is_type_move(decl_ty);
-                    ltable_add(tbl, id, loop_depth, true, must, true, s->line, s->col);
+                    ltable_add(tbl, id, loop_depth, true, must, true, false, s->line, s->col);
                 }
             }
         } else {
@@ -1516,7 +1519,7 @@ static void sema_check_function_linearity(Decl *d) {
             Type *pty = p->decl->as.variable_decl.type;
             if (is_type_move(pty) && pty->mode == MODE_OWNED) {
                 // parameters are assumed definitely initialized
-                ltable_add(tbl, pid, /*loop_depth=*/0, true, true, true, p->decl->line, p->decl->col);
+                ltable_add(tbl, pid, /*loop_depth=*/0, true, true, true, false, p->decl->line, p->decl->col);
             }
         } else if (p->decl->kind == DECL_DESTRUCT) {
             // For destructuring parameters, the aggregate is already consumed/destructured.

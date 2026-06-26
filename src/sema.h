@@ -455,7 +455,16 @@ static void walk_stmt(Stmt *s) {
                     fprintf(stderr, "Error: Cannot infer type for variable initialized with 'undefined'. Explicit type annotation required.\n");
                     exit(1);
                 }
-                s->as.var_stmt.type = s->as.var_stmt.expr->type;
+                // Strip MODE_MUTABLE from inferred type: `var x = var_param`
+                // gives x the VALUE type, not the reference type.
+                Type *inferred = s->as.var_stmt.expr->type;
+                if (inferred && inferred->mode == MODE_MUTABLE) {
+                    Type *stripped = arena_push_aligned(sema_arena, Type);
+                    *stripped = *inferred;
+                    stripped->mode = MODE_SHARED;
+                    inferred = stripped;
+                }
+                s->as.var_stmt.type = inferred;
             }
 
             // F4 (spec audit): full type-compatibility enforcement at

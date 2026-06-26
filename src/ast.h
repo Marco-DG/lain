@@ -242,6 +242,7 @@ typedef struct {
     Type*       type;     // NULL if no annotation
     Expr*       expr;     // NULL if no init
     bool        is_mutable; // New: true if declared with 'var'
+    bool        explicit_undefined; // true iff user wrote `= undefined` (not synthesized)
 } StmtVar;
 
 typedef struct {
@@ -786,6 +787,7 @@ Stmt *stmt_var(Arena *arena, Id *name, Type* type, Expr *expr) {
     s->as.var_stmt.expr = expr;
     s->as.var_stmt.type = type;
     s->as.var_stmt.is_mutable = false; // default
+    s->as.var_stmt.explicit_undefined = false; // default (synthesized)
     return s;
 }
 

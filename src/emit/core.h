@@ -228,6 +228,15 @@ static bool is_primitive_type(Type *t) {
     return false;
 }
 
+// True iff a TYPE_ARRAY with a non-primitive element type should be emitted
+// as a native C array (ElemType name[N]) rather than a Fixed_T_N struct.
+// User-defined element types cannot be used in Fixed_ structs defined in
+// lain.h because the struct body is not yet complete at include time.
+static bool is_user_type_fixed_array(Type *ty) {
+    return ty && ty->kind == TYPE_ARRAY && ty->array_len > 0 &&
+           ty->element_type && !is_primitive_type(ty->element_type);
+}
+
 // Fase 7: true iff d is a dynamic-array (i32[]) function parameter.
 // These are decomposed to (size_t __len_PARAM,)? T * [restrict] PARAM.
 static bool is_dynarray_param_decl(Decl *d) {

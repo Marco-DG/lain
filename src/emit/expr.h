@@ -209,15 +209,15 @@ void emit_expr(Expr *expr, int depth) {
       if (ct && ct->kind == TYPE_ARRAY && ct->array_len >= 0) {
         EMIT("%lld", (long long)ct->array_len);
       } else {
-        // Slice: access .len field
-        emit_expr(expr->as.binary_expr.right, depth);
-        bool is_ptr = false;
-        if (expr->as.binary_expr.right->type) {
-          Type *t = sema_unwrap_type(expr->as.binary_expr.right->type);
-          if (t->mode == MODE_MUTABLE) is_ptr = true;
-          else if (t->kind == TYPE_POINTER) is_ptr = true;
+        // Dynamic slice param: length is the hidden __len_NAME parameter.
+        Expr *rhs = expr->as.binary_expr.right;
+        if (rhs->kind == EXPR_IDENTIFIER && rhs->as.identifier_expr.id) {
+          Id *rname = rhs->as.identifier_expr.id;
+          EMIT("__len_%.*s", (int)rname->length, rname->name);
+        } else {
+          emit_expr(rhs, depth);
+          EMIT(".len");
         }
-        EMIT(is_ptr ? "->len" : ".len");
       }
       EMIT(")");
     } else if (expr->as.binary_expr.op == TOKEN_PLUS_PERCENT
@@ -393,6 +393,14 @@ void emit_expr(Expr *expr, int depth) {
             // (type-annotation nodes are unresolved; use raw-name emitter)
             emit_size_expr(tgt_t->size_expr, depth);
         }
+        break;
+    }
+
+    // Fase 7: dynamic array param.data → the raw C pointer (it IS the data)
+    if (m->member->length == 4 && strncmp(m->member->name, "data", 4) == 0 &&
+        m->target->kind == EXPR_IDENTIFIER && m->target->decl &&
+        is_dynarray_param_decl(m->target->decl)) {
+        emit_expr(m->target, depth); // just emit the identifier; the C pointer IS the data
         break;
     }
 
@@ -619,7 +627,9 @@ void emit_expr(Expr *expr, int depth) {
                }
                // Emit data pointer
                if (at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
-                   emit_expr(base_arg, depth); EMIT(".data");
+                   emit_expr(base_arg, depth);
+                   // User-type fixed arrays are native C arrays (decay to ptr); no .data
+                   if (!is_user_type_fixed_array(at)) EMIT(".data");
                } else if (at && at->kind == TYPE_ARRAY && at->array_len == -1) {
                    emit_expr(base_arg, depth);
                } else {
@@ -734,7 +744,12 @@ void emit_expr(Expr *expr, int depth) {
           EMIT("]");
       } else {
           emit_expr(ix->target, 0);
-          EMIT(is_ptr ? "->data[" : ".data[");
+          // User-type fixed arrays are native C arrays: direct index, no .data
+          if (is_user_type_fixed_array(ix->target->type)) {
+              EMIT("[");
+          } else {
+              EMIT(is_ptr ? "->data[" : ".data[");
+          }
           emit_expr(ix->index, 0);
           EMIT("]");
       }

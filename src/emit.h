@@ -85,6 +85,9 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     }
     EMIT("\n");
     emit_decl_list_topo(decls, depth);
+    // Emit Fixed_<UserType>_N typedefs that couldn't go in lain.h because
+    // they depend on user-defined struct types (complete type required for arrays).
+    emit_user_fixed_typedefs(output_file);
     fclose(output_file);
     generate_lain_header("lain.h");
 }

@@ -26,6 +26,7 @@ typedef struct SliceTypeNode {
     bool        has_len;        // true for dynamic OR fixed-length slices (len field present or length known)
     bool        has_sentinel;   // true if sentinel-terminated (numeric or string)
     bool        sentinel_is_string; // true if sentinel is a string of bytes
+    bool        user_type_elem; // true if element type is user-defined (not a C primitive)
     size_t      sentinel_len;   // for string sentinel: length in bytes; for fixed-length: the fixed length
     char       *sentinel_str;   // if string sentinel, pointer to bytes (not necessarily null-terminated)
     int         sentinel_val;   // for numeric sentinel (e.g. 0, 1)
@@ -70,6 +71,19 @@ static char __attribute__((unused)) *strdup_fmt(const char *fmt, ...) {
     return s;
 }
 
+/* ------------------------ primitive type name check --------------------- */
+static bool is_c_primitive_type_name(const char *ctype) {
+    static const char *prims[] = {
+        "uint8_t", "int8_t", "uint16_t", "int16_t",
+        "uint32_t", "int32_t", "uint64_t", "int64_t",
+        "size_t", "ptrdiff_t", "float", "double", "char", "bool",
+        NULL
+    };
+    for (int i = 0; prims[i]; i++)
+        if (strcmp(ctype, prims[i]) == 0) return true;
+    return false;
+}
+
 /* ------------------------ record a slice type --------------------------- */
 /**
  * Records one slice type for later emission.
@@ -100,6 +114,7 @@ static void record_slice_type(const char *sliceName,
     n->has_len           = has_len;
     n->has_sentinel      = has_sentinel;
     n->sentinel_is_string= sentinel_is_string;
+    n->user_type_elem    = !is_c_primitive_type_name(c_type);
     n->sentinel_len      = 0;
     n->sentinel_str      = NULL;
     n->sentinel_val      = 0;
@@ -156,6 +171,9 @@ static void emit_needed_slice_types(FILE *out) {
             }
         }
         else /* fixed-length: has_len && sentinel_len > 0 */ {
+            // User-defined element types are emitted in out.c (after struct defs),
+            // not here in lain.h (where the struct isn't defined yet).
+            if (n->user_type_elem) continue;
             fprintf(out, "typedef struct {\n");
             fprintf(out, "  %s data[%zu];\n", n->c_type, n->sentinel_len);
             fprintf(out, "} %s;\n", n->sliceName);
@@ -164,6 +182,20 @@ static void emit_needed_slice_types(FILE *out) {
                     "#define %s_LENGTH %zu\n\n",
                     n->sliceName,
                     n->sentinel_len);
+        }
+    }
+}
+
+// Emit Fixed_<UserType>_N typedefs that were deferred from lain.h because
+// they depend on user-defined struct types. Call this into out.c AFTER all
+// struct definitions are emitted.
+static void emit_user_fixed_typedefs(FILE *out) {
+    for (SliceTypeNode *n = emitted_slice_types; n; n = n->next) {
+        if (n->has_len && n->sentinel_len > 0 && !n->has_sentinel && n->user_type_elem) {
+            fprintf(out, "typedef struct {\n");
+            fprintf(out, "  %s data[%zu];\n", n->c_type, n->sentinel_len);
+            fprintf(out, "} %s;\n", n->sliceName);
+            fprintf(out, "#define %s_LENGTH %zu\n\n", n->sliceName, n->sentinel_len);
         }
     }
 }

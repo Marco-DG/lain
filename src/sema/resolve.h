@@ -411,6 +411,13 @@ void sema_resolve_stmt(Stmt *s) {
       }
       if (!ty) {
           ty = rhs->type;           // infer from initializer
+          // Strip MODE_MUTABLE: `var x = var_param` gives value type, not reference
+          if (ty && ty->mode == MODE_MUTABLE) {
+              Type *stripped = arena_push_aligned(sema_arena, Type);
+              *stripped = *ty;
+              stripped->mode = MODE_SHARED;
+              ty = stripped;
+          }
           s->as.var_stmt.type = ty;
       } else {
           // TODO: check compatibility between ty and rhs->type
