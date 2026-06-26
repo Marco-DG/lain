@@ -1189,7 +1189,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
         LTable *then_tbl = ltable_clone(parent_snapshot);
         LEntry *then_saved = then_tbl->head;
         if (then_tbl->borrows) borrow_enter_scope(then_tbl->arena, then_tbl->borrows);
-        for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next) {
+        for (StmtList *b = s->as.if_stmt.then_body; b; b = b->next) {
             sema_check_stmt_linearity_with_table(b->stmt, then_tbl, loop_depth, use_tbl);
         }
         ltable_pop_scope(then_tbl, then_saved);

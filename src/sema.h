@@ -116,7 +116,7 @@ static void sema_widen_loop(StmtList *body, RangeTable *t) {
                 }
                 break;
             case STMT_IF:
-                sema_widen_loop(s->as.if_stmt.then_branch, t);
+                sema_widen_loop(s->as.if_stmt.then_body, t);
                 sema_widen_loop(s->as.if_stmt.else_branch, t);
                 break;
             case STMT_FOR:
@@ -335,7 +335,7 @@ static int measure_scan_body(StmtList *body, MeasureVar *vars, int nvar) {
                 break;
             }
             case STMT_IF: {
-                int r = measure_scan_body(s->as.if_stmt.then_branch, vars, nvar);
+                int r = measure_scan_body(s->as.if_stmt.then_body, vars, nvar);
                 if (r < 0) return -1;
                 if (r > 0) found_decrease = true;
                 r = measure_scan_body(s->as.if_stmt.else_branch, vars, nvar);
@@ -554,7 +554,7 @@ static void walk_stmt(Stmt *s) {
             sema_push_in_guards(s->as.if_stmt.cond);
 
             sema_push_scope();
-            for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next)
+            for (StmtList *b = s->as.if_stmt.then_body; b; b = b->next)
                 walk_stmt(b->stmt);
             sema_pop_scope();
 
@@ -565,7 +565,7 @@ static void walk_stmt(Stmt *s) {
             bool then_returns = false;
             {
                 StmtList *last = NULL;
-                for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next) last = b;
+                for (StmtList *b = s->as.if_stmt.then_body; b; b = b->next) last = b;
                 if (last && last->stmt && last->stmt->kind == STMT_RETURN) {
                     then_returns = true;
                 }
@@ -934,7 +934,7 @@ static void mrec_walk_stmt(Stmt *s, void (*visit)(Decl *)) {
         case STMT_RETURN: mrec_walk_expr(s->as.return_stmt.value, visit); break;
         case STMT_IF:
             mrec_walk_expr(s->as.if_stmt.cond, visit);
-            mrec_walk_stmt_list(s->as.if_stmt.then_branch, visit);
+            mrec_walk_stmt_list(s->as.if_stmt.then_body, visit);
             mrec_walk_stmt_list(s->as.if_stmt.else_branch, visit);
             break;
         case STMT_FOR:
@@ -1078,7 +1078,7 @@ static void proc_w130_visit_stmt(Stmt *s) {
         case STMT_RETURN: proc_w130_visit_expr(s->as.return_stmt.value); break;
         case STMT_IF:
             proc_w130_visit_expr(s->as.if_stmt.cond);
-            proc_w130_visit_stmt_list(s->as.if_stmt.then_branch);
+            proc_w130_visit_stmt_list(s->as.if_stmt.then_body);
             proc_w130_visit_stmt_list(s->as.if_stmt.else_branch);
             break;
         case STMT_FOR:

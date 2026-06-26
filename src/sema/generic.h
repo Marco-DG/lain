@@ -131,7 +131,7 @@ void generic_substitute_stmt(Stmt *s, const char *param_name, Type *actual_type)
             break;
         case STMT_IF:
             generic_substitute_expr(s->as.if_stmt.cond, param_name, actual_type);
-            for (StmtList *l = s->as.if_stmt.then_branch; l; l = l->next) generic_substitute_stmt(l->stmt, param_name, actual_type);
+            for (StmtList *l = s->as.if_stmt.then_body; l; l = l->next) generic_substitute_stmt(l->stmt, param_name, actual_type);
             for (StmtList *l = s->as.if_stmt.else_branch; l; l = l->next) generic_substitute_stmt(l->stmt, param_name, actual_type);
             break;
         case STMT_FOR:

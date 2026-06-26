@@ -198,7 +198,7 @@ void emit_stmt(Stmt *stmt, int depth) {
   case STMT_IF: {
     // 1) extract condition, then‐branch, else‐branch
     Expr *cond = stmt->as.if_stmt.cond;
-    StmtList *then_pl = stmt->as.if_stmt.then_branch;
+    StmtList *then_pl = stmt->as.if_stmt.then_body;
     StmtList *else_pl = stmt->as.if_stmt.else_branch;
 
     // 2) emit "if (<cond>) {"
