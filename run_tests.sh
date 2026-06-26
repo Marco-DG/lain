@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Test runner per la suite Lain.
+# Test runner for the Lain test suite.
 # Convention:
-#   *_fail.ln  → compilazione deve fallire (exit non-zero)
-#   *_pass.ln  → compilazione deve riuscire (exit 0)
-#   altri .ln  → trattati come pass per default
-# Se un _fail.ln contiene "// EXPECT: [EXXX]" nel testo, stderr deve contenere quel codice.
+#   *_fail.ln  → compilation must fail (non-zero exit)
+#   *_pass.ln  → compilation must succeed (exit 0)
+#   other .ln  → treated as passing by default
+# If a _fail.ln file contains "// EXPECT: [EXXX]" in its contents,
+# stderr must contain that code.
 
 set -u
 
