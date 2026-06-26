@@ -260,7 +260,7 @@ Stmt *clone_stmt(Arena *arena, Stmt *s) {
             break;
         case STMT_COMPTIME_IF:
             new_s->as.comptime_if_stmt.cond = clone_expr(arena, s->as.comptime_if_stmt.cond);
-            new_s->as.comptime_if_stmt.then_branch = clone_stmt_list(arena, s->as.comptime_if_stmt.then_branch);
+            new_s->as.comptime_if_stmt.then_body = clone_stmt_list(arena, s->as.comptime_if_stmt.then_body);
             new_s->as.comptime_if_stmt.else_branch = clone_stmt_list(arena, s->as.comptime_if_stmt.else_branch);
             break;
         case STMT_CONTINUE:

@@ -759,7 +759,7 @@ void emit_stmt(Stmt *stmt, int depth) {
     }
     if (stmt->as.comptime_if_stmt.is_taken) {
         // Emit then-branch statements directly (no wrapping)
-        emit_stmt_list(stmt->as.comptime_if_stmt.then_branch, depth);
+        emit_stmt_list(stmt->as.comptime_if_stmt.then_body, depth);
     } else if (stmt->as.comptime_if_stmt.else_branch) {
         // Emit else-branch statements directly (no wrapping)
         emit_stmt_list(stmt->as.comptime_if_stmt.else_branch, depth);

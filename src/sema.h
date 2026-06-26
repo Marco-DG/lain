@@ -1000,7 +1000,7 @@ static void walk_stmt(Stmt *s) {
             // F-049: the taken branch must be walked so VRA/bounds run on it.
             // resolve_stmt evaluated the condition and marked is_taken.
             StmtList *branch = s->as.comptime_if_stmt.is_taken
-                ? s->as.comptime_if_stmt.then_branch
+                ? s->as.comptime_if_stmt.then_body
                 : s->as.comptime_if_stmt.else_branch;
             sema_push_scope();
             for (StmtList *b = branch; b; b = b->next) walk_stmt(b->stmt);
@@ -1053,7 +1053,7 @@ static void mrec_walk_stmt(Stmt *s, void (*visit)(Decl *)) {
         case STMT_UNSAFE: mrec_walk_stmt_list(s->as.unsafe_stmt.body, visit); break;
         case STMT_DEFER:  mrec_walk_stmt(s->as.defer_stmt.stmt, visit); break;
         case STMT_COMPTIME_IF:
-            mrec_walk_stmt_list(s->as.comptime_if_stmt.then_branch, visit);
+            mrec_walk_stmt_list(s->as.comptime_if_stmt.then_body, visit);
             mrec_walk_stmt_list(s->as.comptime_if_stmt.else_branch, visit);
             break;
         default: break;

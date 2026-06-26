@@ -306,7 +306,7 @@ typedef struct {
 
 typedef struct {
     Expr *cond;              // compile-time condition (e.g. @os == .Linux)
-    StmtList *then_branch;
+    StmtList *then_body;
     StmtList *else_branch;   // NULL if no else
     bool evaluated;          // true after sema has resolved this
     bool is_taken;           // which branch was selected (true = then, false = else)
@@ -900,7 +900,7 @@ Stmt *stmt_comptime_if(Arena *arena, Expr *cond, StmtList *then_branch, StmtList
     Stmt *s = arena_push(arena, Stmt);
     s->kind = STMT_COMPTIME_IF;
     s->as.comptime_if_stmt.cond = cond;
-    s->as.comptime_if_stmt.then_branch = then_branch;
+    s->as.comptime_if_stmt.then_body = then_branch;
     s->as.comptime_if_stmt.else_branch = else_branch;
     s->as.comptime_if_stmt.evaluated = false;
     s->as.comptime_if_stmt.is_taken = false;

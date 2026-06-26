@@ -698,7 +698,7 @@ void sema_resolve_stmt(Stmt *s) {
     // 4) Only resolve the taken branch (dead branch is parsed but not resolved)
     if (is_true) {
         sema_push_scope();
-        for (StmtList *b = s->as.comptime_if_stmt.then_branch; b; b = b->next) {
+        for (StmtList *b = s->as.comptime_if_stmt.then_body; b; b = b->next) {
             sema_resolve_stmt(b->stmt);
         }
         sema_pop_scope();
