@@ -1,0 +1,55 @@
+// Test std/bump.ln: stack-backed bump allocator.
+// Uses a local u8[256] as backing; no heap involved.
+
+import std.bump
+import std.c
+
+proc main() i32 {
+    var backing u8[256]
+    var bump BumpAlloc
+
+    bump_init(var bump, backing)
+
+    // capacity should be 256
+    if bump_remaining(bump) != 256 {
+        libc_printf("FAIL: initial remaining\n")
+        return 1
+    }
+
+    // alloc 64 bytes → offset 0
+    var off0 = bump_alloc(var bump, 64)
+    if off0 != 0 {
+        libc_printf("FAIL: first alloc offset\n")
+        return 1
+    }
+
+    // alloc 64 bytes → offset 64
+    var off1 = bump_alloc(var bump, 64)
+    if off1 != 64 {
+        libc_printf("FAIL: second alloc offset\n")
+        return 1
+    }
+
+    // used = 128, remaining = 128
+    if bump_used(bump) != 128 {
+        libc_printf("FAIL: used\n")
+        return 1
+    }
+
+    // alloc too large → -1
+    var off2 = bump_alloc(var bump, 512)
+    if off2 != -1 {
+        libc_printf("FAIL: OOM should return -1\n")
+        return 1
+    }
+
+    // reset: back to empty
+    bump_reset(var bump)
+    if bump_remaining(bump) != 256 {
+        libc_printf("FAIL: remaining after reset\n")
+        return 1
+    }
+
+    libc_printf("bump: ok\n")
+    return 0
+}

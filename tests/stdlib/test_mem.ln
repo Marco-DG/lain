@@ -1,0 +1,17 @@
+// Smoke test for std/mem.ln: mem_alloc / mem_free / mem_alloc_zeroed
+
+import std.mem
+import std.c
+
+proc main() i32 {
+    // Basic alloc + free
+    var buf = mem_alloc(64)
+    mem_free(mov buf)
+
+    // Zero-initialized alloc
+    var zbuf = mem_alloc_zeroed(64)
+    mem_free(mov zbuf)
+
+    libc_printf("mem: ok\n")
+    return 0
+}

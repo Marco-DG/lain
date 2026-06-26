@@ -1,0 +1,50 @@
+// Index-based linked list using a fixed arena.
+// Nodes live in arr[]; next = -1 means end of list.
+// pool_push uses if-in guard to prove the write is in bounds.
+// list_sum uses while-in guard: traversal of a cyclic structure
+// is not provably terminating, so it must be proc.
+
+extern proc libc_printf(fmt *u8, ...) i32
+
+type Node {
+    val  i32
+    next i32
+}
+
+func pool_push(var arr Node[], var len i32, head i32, val i32) i32 {
+    if len in arr {
+        var n Node
+        n.val  = val
+        n.next = head
+        arr[len] = n
+        var idx = len
+        len = len + 1
+        return idx
+    }
+    return -1
+}
+
+proc list_sum(arr Node[], head i32) i32 {
+    var s = 0
+    var cur = head
+    while cur in arr {
+        s = s + arr[cur].val
+        cur = arr[cur].next
+    }
+    return s
+}
+
+proc main() i32 {
+    var data Node[64]
+    var len = 0
+
+    var h = -1
+    h = pool_push(data, len, h, 1)
+    h = pool_push(data, len, h, 2)
+    h = pool_push(data, len, h, 3)
+
+    var s = list_sum(data, h)
+    libc_printf("sum = %d\n", s)
+    if s == 6 { return 0 }
+    return 1
+}

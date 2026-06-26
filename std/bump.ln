@@ -1,0 +1,58 @@
+// std/bump.ln — Bump (arena) allocator
+//
+// A BumpAlloc tracks a position inside a caller-owned backing buffer.
+// The caller creates a fixed array, then passes it to bump_init.
+// Individual allocations are tracked by the returned index; the caller
+// accesses bytes via the original backing array.
+//
+// Sub-slice return (`buf[a..b]`) requires Q-003.B (not yet implemented),
+// so bump_alloc currently returns the byte offset rather than a slice.
+//
+// Usage pattern:
+//   var backing u8[4096]
+//   var bump = bump_init(backing)
+//   var off = bump_alloc(var bump, 64)
+//   if off >= 0 {
+//       // write into backing[off .. off+64]
+//   }
+
+type BumpAlloc {
+    data *u8    // raw pointer into caller's backing buffer
+    cap  usize  // total capacity in bytes
+    pos  usize  // current allocation offset
+}
+
+// Initialise from a mutable byte slice.
+// The caller owns the backing memory; BumpAlloc only borrows the pointer.
+func bump_init(var a BumpAlloc, buf var u8[]) {
+    a.data = buf.data
+    a.cap  = buf.len
+    a.pos  = 0
+}
+
+// Allocate `size` bytes. Returns byte offset into the backing buffer,
+// or -1 if the allocator is full.
+func bump_alloc(var a BumpAlloc, size usize) i32 {
+    if a.pos + size > a.cap {
+        return -1
+    }
+    var off = a.pos
+    a.pos = a.pos + size
+    return off as i32
+}
+
+// Reset: all previously allocated regions are considered freed.
+// Does NOT zero-fill; caller is responsible for reuse safety.
+func bump_reset(var a BumpAlloc) {
+    a.pos = 0
+}
+
+// Remaining bytes available.
+func bump_remaining(a BumpAlloc) usize {
+    return a.cap - a.pos
+}
+
+// Bytes allocated so far.
+func bump_used(a BumpAlloc) usize {
+    return a.pos
+}
