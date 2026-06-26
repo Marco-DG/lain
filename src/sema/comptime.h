@@ -281,7 +281,7 @@ Expr* comptime_evaluate_stmt_list(Arena* arena, StmtList* stmts, ComptimeEnv* en
                 }
                 
                 if (is_true) {
-                     Expr* ret = comptime_evaluate_stmt_list(arena, stmt->as.if_stmt.then_branch, env);
+                     Expr* ret = comptime_evaluate_stmt_list(arena, stmt->as.if_stmt.then_body, env);
                      if (ret) return ret;
                 } else if (stmt->as.if_stmt.else_branch) {
                      Expr* ret = comptime_evaluate_stmt_list(arena, stmt->as.if_stmt.else_branch, env);

@@ -450,7 +450,7 @@ void sema_resolve_stmt(Stmt *s) {
     sema_infer_expr(cond);
     // 2) Recurse into the "then" branch (block-scoped)
     sema_push_scope();
-    for (StmtList *b = s->as.if_stmt.then_branch; b; b = b->next) {
+    for (StmtList *b = s->as.if_stmt.then_body; b; b = b->next) {
       sema_resolve_stmt(b->stmt);
     }
     sema_pop_scope();

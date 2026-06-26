@@ -263,7 +263,7 @@ typedef struct {
 
 typedef struct StmtIf {
     Expr *cond;
-    StmtList *then_branch;  // TODO: rename then_body ?
+    StmtList *then_body;
     StmtList *else_branch;  // possibly NULL, or a single-item list if it’s an “else if”
   } StmtIf;
 
@@ -818,7 +818,7 @@ Stmt *stmt_if(Arena *arena, Expr *cond, StmtList *then_branch, StmtList *else_br
     Stmt *s = arena_push_aligned(arena, Stmt);
     s->kind = STMT_IF;
     s->as.if_stmt.cond         = cond;
-    s->as.if_stmt.then_branch = then_branch;
+    s->as.if_stmt.then_body = then_branch;
     s->as.if_stmt.else_branch = else_branch;  // may be NULL
     return s;
 }

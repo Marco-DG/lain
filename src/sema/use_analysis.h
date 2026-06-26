@@ -194,7 +194,7 @@ static void use_walk_stmt(Stmt *s, UseTable *t, int stmt_idx) {
 
     case STMT_IF:
         use_walk_expr(s->as.if_stmt.cond, t, stmt_idx);
-        use_walk_stmt_list(s->as.if_stmt.then_branch, t, stmt_idx);
+        use_walk_stmt_list(s->as.if_stmt.then_body, t, stmt_idx);
         use_walk_stmt_list(s->as.if_stmt.else_branch, t, stmt_idx);
         break;
 
