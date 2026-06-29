@@ -1,0 +1,8 @@
+import std.c
+
+proc main() i32 {
+    x = 42
+    y = 10 as u8
+    libc_printf("x=%d y=%d\n", x, y as i32)
+    return 0
+}

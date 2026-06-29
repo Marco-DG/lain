@@ -1,0 +1,10 @@
+import std.c
+
+proc main() i32 {
+    pi i32 = 314
+    var counter i32 = 0
+    counter = counter + pi
+    counter = counter + pi
+    libc_printf("counter=%d\n", counter)
+    return 0
+}

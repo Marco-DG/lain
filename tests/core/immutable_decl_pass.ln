@@ -1,0 +1,18 @@
+import std.c
+
+type Point {
+    x i32
+    y i32
+}
+
+proc main() i32 {
+    a i32 = 42
+    b u8 = 10
+    c usize = 100
+    d bool = true
+
+    p Point = Point(1, 2)
+
+    libc_printf("a=%d b=%d c=%zu d=%d px=%d py=%d\n", a, b as i32, c, d as i32, p.x, p.y)
+    return 0
+}

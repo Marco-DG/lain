@@ -163,6 +163,29 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
     else {
     Expr *lhs = parse_expr(arena, parser);
 
+    // Immutable declaration: name Type = expr
+    // parse_expr consumed only the bare identifier; the current token starts the type.
+    if (lhs->kind == EXPR_IDENTIFIER
+        && !parser_match(TOKEN_EQUAL) && !parser_match(TOKEN_PLUS_EQUAL)
+        && !parser_match(TOKEN_MINUS_EQUAL) && !parser_match(TOKEN_ASTERISK_EQUAL)
+        && !parser_match(TOKEN_SLASH_EQUAL) && !parser_match(TOKEN_PERCENT_EQUAL)
+        && !parser_match(TOKEN_AMPERSAND_EQUAL) && !parser_match(TOKEN_PIPE_EQUAL)
+        && !parser_match(TOKEN_CARET_EQUAL)
+        && !parser_match(TOKEN_EOL) && !parser_match(TOKEN_EOF)
+        && !parser_match(TOKEN_R_BRACE) && !parser_match(TOKEN_SEMICOLON)) {
+        Id *name = lhs->as.identifier_expr.id;
+        Type *type_annotation = parse_type(arena, parser);
+        if (!parser_match(TOKEN_EQUAL)) {
+            parser_error("Expected '=' in immutable declaration. Use 'var' for uninitialized mutable variables.");
+        }
+        parser_advance();
+        Expr *init = parse_expr(arena, parser);
+        if (init && init->kind == EXPR_UNDEFINED) {
+            parser_error("Immutable declarations cannot use 'undefined'. Use 'var' for mutable variables.");
+        }
+        result = stmt_var(arena, name, type_annotation, init);
+    } else {
+
     // Check for assignment operator
     TokenKind op = parser->token.kind;
     bool is_assign = false;
@@ -204,10 +227,10 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         }
         result = stmt_assign(arena, lhs, rhs);
     } else {
-
-    // Otherwise it's an expression statement
         result = stmt_expr(arena, lhs);
     }
+
+    } // close immutable-vs-assign check
     } // close else from parse_stmt
 
     // Set source location on the result

@@ -33,11 +33,16 @@ void emit_stmt(Stmt *stmt, int depth) {
       // Fixed arrays of user-defined element types: use native C array syntax
       // "ElemType name[N]" to avoid Fixed_T_N typedef ordering issues (those
       // typedefs would be in lain.h before the element struct is defined).
+      bool emit_const = !stmt->as.var_stmt.is_mutable
+                        && ty_var && ty_var->kind != TYPE_POINTER;
+
       if (is_user_type_fixed_array(ty_var)) {
         char elem_c[256];
         c_name_for_type(ty_var->element_type, elem_c, sizeof elem_c);
+        if (emit_const) EMIT("const ");
         EMIT("%s %s[%ld]", elem_c, c_name_for_id(v), (long)ty_var->array_len);
       } else {
+        if (emit_const) EMIT("const ");
         if (ty_var) {
           char tybuf[256];
           c_name_for_type(ty_var, tybuf, sizeof tybuf);

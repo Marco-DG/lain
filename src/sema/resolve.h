@@ -521,10 +521,9 @@ void sema_resolve_stmt(Stmt *s) {
     Expr *lhs = s->as.assign_stmt.target;
     Expr *rhs = s->as.assign_stmt.expr;
 
-    // F-019 fix: no more implicit immutable declarations. A bare
-    // `name = expr` where `name` is not yet declared is now an error.
-    // Users must write `var name = expr` for mutables or `name Type = expr`
-    // (top-level) / `let name = expr` for immutables (once added).
+    // Implicit immutable declaration: bare `name = expr` where `name`
+    // is not yet declared creates an immutable binding (type inferred).
+    // If `name` IS declared, this is a reassignment (requires `var`).
     if (lhs->kind == EXPR_IDENTIFIER) {
       char raw[256];
       int L = lhs->as.identifier_expr.id->length;
@@ -535,11 +534,17 @@ void sema_resolve_stmt(Stmt *s) {
 
       Symbol *sym = sema_lookup(raw);
       if (!sym) {
-        fprintf(stderr, "[E013] Error Ln %li, Col %li: assignment to undeclared identifier '%s'. "
-                "Use 'var %s = ...' to declare a mutable variable.\n",
-                s->line, s->col, raw, raw);
-        diagnostic_show_line(s->line, s->col);
-        exit(1);
+        // Convert STMT_ASSIGN → STMT_VAR (immutable, type inferred from RHS)
+        Id *name = lhs->as.identifier_expr.id;
+        Expr *init = rhs;
+        s->kind = STMT_VAR;
+        s->as.var_stmt.name = name;
+        s->as.var_stmt.type = NULL;
+        s->as.var_stmt.expr = init;
+        s->as.var_stmt.is_mutable = false;
+        s->as.var_stmt.explicit_undefined = false;
+        sema_resolve_stmt(s);
+        return;
       } else if (!sym->is_mutable) {
         // Exception: var T parameter (mutable borrow) — assignment is write-through,
         // not rebind. The caller's value is modified via the pointer.
@@ -549,7 +554,8 @@ void sema_resolve_stmt(Stmt *s) {
                             sym->decl->as.variable_decl.type &&
                             sym->decl->as.variable_decl.type->mode == MODE_MUTABLE;
         if (!is_var_param) {
-          fprintf(stderr, "[E009] Error Ln %li, Col %li: Cannot assign to immutable variable '%s'\n",
+          fprintf(stderr, "[E009] Error Ln %li, Col %li: Cannot assign to immutable variable '%s'. "
+                  "Declare with 'var' for mutable variables.\n",
                   s->line, s->col, raw);
           diagnostic_show_line(s->line, s->col);
           exit(1);
