@@ -900,6 +900,87 @@ static void walk_stmt(Stmt *s) {
         case STMT_ASSIGN:
             sema_infer_expr(s->as.assign_stmt.expr);
             sema_infer_expr(s->as.assign_stmt.target);
+
+            // E121: struct field invariant violation check.
+            // If LHS is `obj.field` and `field` has `in_field = container`,
+            // verify that the RHS value is in range of `obj.container`.
+            if (s->as.assign_stmt.target->kind == EXPR_MEMBER) {
+                Expr *obj = s->as.assign_stmt.target->as.member_expr.target;
+                Id   *fld_name = s->as.assign_stmt.target->as.member_expr.member;
+                if (obj && fld_name && obj->type && obj->type->kind == TYPE_SIMPLE && obj->type->base_type) {
+                    char sn[256];
+                    int snl = (int)obj->type->base_type->length;
+                    if (snl < (int)sizeof(sn)) {
+                        memcpy(sn, obj->type->base_type->name, snl);
+                        sn[snl] = '\0';
+                        Symbol *ss = sema_lookup(sn);
+                        if (ss && ss->decl && ss->decl->kind == DECL_STRUCT) {
+                            for (DeclList *sf = ss->decl->as.struct_decl.fields; sf; sf = sf->next) {
+                                if (!sf->decl || sf->decl->kind != DECL_VARIABLE) continue;
+                                Id *fn = sf->decl->as.variable_decl.name;
+                                if (!fn || fn->length != fld_name->length ||
+                                    strncmp(fn->name, fld_name->name, fn->length) != 0) continue;
+                                Id *in_fld = sf->decl->as.variable_decl.in_field;
+                                if (!in_fld) break; // field found but no invariant
+                                // Build synthetic EXPR_MEMBER for obj.container
+                                Expr *cnt_expr = arena_push_aligned(sema_arena, Expr);
+                                memset(cnt_expr, 0, sizeof(Expr));
+                                cnt_expr->kind = EXPR_MEMBER;
+                                cnt_expr->as.member_expr.target = obj;
+                                cnt_expr->as.member_expr.member = in_fld;
+                                // Find container field type for the bounds check
+                                Type *cnt_type = NULL;
+                                for (DeclList *cf = ss->decl->as.struct_decl.fields; cf; cf = cf->next) {
+                                    if (!cf->decl || cf->decl->kind != DECL_VARIABLE) continue;
+                                    Id *cfn = cf->decl->as.variable_decl.name;
+                                    if (cfn && cfn->length == in_fld->length &&
+                                        strncmp(cfn->name, in_fld->name, cfn->length) == 0) {
+                                        cnt_type = cf->decl->as.variable_decl.type;
+                                        break;
+                                    }
+                                }
+                                // Run bounds check: rhs must be in [0, obj.container.len)
+                                if (cnt_type && sema_ranges && !sema_in_unsafe_block) {
+                                    // Temporarily push the container in-guard so sema_is_in_guarded
+                                    // doesn't double-fire; directly call sema_check_bounds.
+                                    // Override error message to E121.
+                                    // We can't easily override, so use the VRA in-guard mechanism:
+                                    // push (rhs, cnt_expr) and check; if not proven, emit E121.
+                                    Expr *rhs = s->as.assign_stmt.expr;
+                                    bool proven = sema_is_in_guarded(rhs, cnt_expr);
+                                    if (!proven && sema_ranges) {
+                                        // Try VRA: check rhs < cnt_type length
+                                        Range r = sema_eval_range(rhs, sema_ranges);
+                                        bool ok = false;
+                                        if (cnt_type->kind == TYPE_ARRAY && cnt_type->array_len >= 0) {
+                                            // fixed-size container
+                                            if (r.known && r.min >= 0 && r.max < cnt_type->array_len) ok = true;
+                                        }
+                                        // For dynamic slice: conservatively accept (we can't easily prove without
+                                        // the synthetic __len_ var for member access — future work).
+                                        if (cnt_type->kind == TYPE_ARRAY && cnt_type->array_len == -1) ok = true;
+                                        if (!ok && cnt_type->kind == TYPE_ARRAY && cnt_type->array_len >= 0) {
+                                            fprintf(stderr,
+                                                "[E121] Error Ln %li, Col %li: assignment to '%.*s' may violate struct invariant "
+                                                "'%.*s in %.*s': value range [%lld, %lld] is not proven to be in [0, %lld).\n",
+                                                s->line, s->col,
+                                                (int)fld_name->length, fld_name->name,
+                                                (int)fld_name->length, fld_name->name,
+                                                (int)in_fld->length, in_fld->name,
+                                                (long long)r.min, (long long)r.max,
+                                                (long long)cnt_type->array_len);
+                                            diagnostic_show_line(s->line, s->col);
+                                            exit(1);
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Q-002 Phase 5: overflow-at-boundary check (assignment).
             // Covers all assign target shapes: identifier / field / index.
             if (sema_ranges && s->as.assign_stmt.target && s->as.assign_stmt.target->type) {

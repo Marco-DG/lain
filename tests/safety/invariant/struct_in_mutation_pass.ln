@@ -1,0 +1,14 @@
+import std.c
+
+type Buf {
+    data u8[5]
+    pos  usize in data
+}
+
+proc main() i32 {
+    var data u8[5]
+    var b = Buf(data, 0)
+    b.pos = 2       // OK: 2 < 5, invariant preserved
+    libc_printf("pos=%zu\n", b.pos)
+    return 0
+}

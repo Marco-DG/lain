@@ -1,0 +1,13 @@
+// EXPECT: [E121]
+
+type Buf {
+    data u8[5]
+    pos  usize in data
+}
+
+proc main() i32 {
+    var data u8[5]
+    var b = Buf(data, 0)
+    b.pos = 10      // E121: 10 >= 5, invariant violated
+    return 0
+}
