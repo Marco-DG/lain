@@ -1,0 +1,28 @@
+// Struct field invariant: interprocedural propagation.
+// When `l Lexer` is passed to a function, the callee also knows pos in text.
+
+import std.c
+
+type Lexer {
+    text *u8[]
+    pos  usize in text
+}
+
+// Callee: does NOT need explicit guard — invariant propagates
+func lexer_current(l Lexer) u8 {
+    return l.text[l.pos]    // safe: invariant pos in text known from parameter type
+}
+
+func lexer_advance(var l Lexer) u8 {
+    ch = l.text[l.pos]      // safe: same invariant
+    l.pos = l.pos + 1
+    return ch
+}
+
+proc main() i32 {
+    src u8[5] = "hello"
+    lex = Lexer(src, 0)
+    c0 = lexer_current(lex)
+    libc_printf("%c\n", c0 as i32)
+    return 0
+}

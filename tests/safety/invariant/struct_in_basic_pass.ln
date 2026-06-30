@@ -1,0 +1,21 @@
+// Struct field invariant: pos usize in text
+// Access l.text[l.pos] should be bounds-proven WITHOUT explicit in-guard.
+
+import std.c
+
+type Lexer {
+    text *u8[]
+    pos  usize in text
+}
+
+func lexer_peek(l Lexer) u8 {
+    return l.text[l.pos]    // safe: struct invariant proves pos in text
+}
+
+proc main() i32 {
+    src u8[5] = "hello"
+    lex = Lexer(src, 0)
+    ch = lexer_peek(lex)
+    libc_printf("ch=%c\n", ch as i32)
+    return 0
+}

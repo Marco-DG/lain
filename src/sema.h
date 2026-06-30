@@ -441,6 +441,48 @@ static bool sema_is_in_guarded(Expr *index, Expr *container) {
     return false;
 }
 
+// Push persistent InGuardEntries for each "field Type in container" annotation
+// in a struct definition. Call this when a variable or parameter of a struct
+// type enters scope. `var_name_id` is the variable/parameter name Id.
+static void sema_push_struct_field_guards(Id *var_name_id, Type *var_ty) {
+    if (!var_ty || var_ty->kind != TYPE_SIMPLE || !var_ty->base_type) return;
+    char sname[256];
+    int snlen = (int)var_ty->base_type->length;
+    if (snlen >= (int)sizeof(sname)) return;
+    memcpy(sname, var_ty->base_type->name, snlen);
+    sname[snlen] = '\0';
+    Symbol *ssym = sema_lookup(sname);
+    if (!ssym || !ssym->decl || ssym->decl->kind != DECL_STRUCT) return;
+    for (DeclList *sf = ssym->decl->as.struct_decl.fields; sf; sf = sf->next) {
+        if (!sf->decl || sf->decl->kind != DECL_VARIABLE) continue;
+        Id *in_fld = sf->decl->as.variable_decl.in_field;
+        if (!in_fld) continue;
+        // Synthetic EXPR_IDENTIFIER for the variable
+        Expr *ve = arena_push_aligned(sema_arena, Expr);
+        memset(ve, 0, sizeof(Expr));
+        ve->kind = EXPR_IDENTIFIER;
+        ve->as.identifier_expr.id = var_name_id;
+        // EXPR_MEMBER: var.field (the index)
+        Expr *fidx = arena_push_aligned(sema_arena, Expr);
+        memset(fidx, 0, sizeof(Expr));
+        fidx->kind = EXPR_MEMBER;
+        fidx->as.member_expr.target = ve;
+        fidx->as.member_expr.member = sf->decl->as.variable_decl.name;
+        // EXPR_MEMBER: var.container
+        Expr *fcnt = arena_push_aligned(sema_arena, Expr);
+        memset(fcnt, 0, sizeof(Expr));
+        fcnt->kind = EXPR_MEMBER;
+        fcnt->as.member_expr.target = ve;
+        fcnt->as.member_expr.member = in_fld;
+        // Push the guard
+        InGuardEntry *ig = arena_push_aligned(sema_arena, InGuardEntry);
+        ig->index = fidx;
+        ig->container = fcnt;
+        ig->next = sema_in_guards;
+        sema_in_guards = ig;
+    }
+}
+
 /* walk_stmt: type inference + range analysis walk over a single statement.
    Formerly a GCC nested function inside sema_resolve_module; refactored to
    file-level static for C99/Clang/MSVC portability. */
@@ -637,6 +679,10 @@ static void walk_stmt(Stmt *s) {
                     }
                 }
             }
+
+            // Struct field invariants: push persistent in-guards so that
+            // accesses like `l.text[l.pos]` are bounds-proven automatically.
+            sema_push_struct_field_guards(s->as.var_stmt.name, s->as.var_stmt.type);
             break;
         case STMT_IF: {
             sema_infer_expr(s->as.if_stmt.cond);
@@ -1668,6 +1714,9 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                         }
                     }
                 }
+                // Struct-typed parameter: push field invariants as in-guards
+                // so the callee proves `l.text[l.pos]` safe without explicit guard.
+                sema_push_struct_field_guards(pid, pty);
             }
             param_idx++;
         }

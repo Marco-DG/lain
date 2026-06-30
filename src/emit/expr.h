@@ -451,7 +451,9 @@ void emit_expr(Expr *expr, int depth) {
     // 3) find the matching DeclStruct
     DeclStruct *sd = NULL;
     if (is_ctor) {
-      const char *unders = strchr(cname, '_');
+      // Use strrchr (last '_') so module-prefixed names like
+      // "tests_foo_bar_MyStruct" → "MyStruct" (not "foo_bar_MyStruct")
+      const char *unders = strrchr(cname, '_');
       const char *struct_name = unders ? unders + 1 : cname;
       for (DeclList *dl = emitted_decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
@@ -583,6 +585,13 @@ void emit_expr(Expr *expr, int depth) {
           }
         }
 
+        // Auto-coerce: fixed array u8[N] → dynamic/sentinel slice in struct ctor
+        if (emit_slice_coercion(ft, arg->expr, depth)) {
+            fld = fld->next;
+            if (param) param = param->next;
+            continue;
+        }
+
         // ORIGINAL: sentinel-terminated slice literal (keep existing behavior)
         if (ft->kind == TYPE_SLICE && arg->expr->kind == EXPR_STRING) {
            // your previous sentinel-handling logic:
@@ -606,6 +615,21 @@ void emit_expr(Expr *expr, int depth) {
       // Handle implicit address-of for shared/mutable reference parameters
       if (param) {
            Type *pt = param->decl->as.variable_decl.type;
+
+           // Auto-decay: u8[N] → *u8[N] — param expects pointer to fixed array,
+           // arg is the fixed array itself. Emit &(arg) to take its address.
+           if (pt && pt->kind == TYPE_POINTER &&
+               pt->element_type && pt->element_type->kind == TYPE_ARRAY &&
+               pt->element_type->array_len >= 0) {
+               Type *at = arg->expr->type ? sema_unwrap_type(arg->expr->type) : NULL;
+               // Only add & if the arg is a fixed array (not already a pointer)
+               if (!at || (at->kind == TYPE_ARRAY && at->array_len >= 0)) {
+                   EMIT("&(");
+                   emit_expr(arg->expr, depth);
+                   EMIT(")");
+                   goto next_arg;
+               }
+           }
 
            // Fase 7: dynamic array param at call site → (size_t len,)? T *data
            if (param->decl->kind == DECL_VARIABLE &&

@@ -122,6 +122,10 @@ static bool emit_slice_coercion(Type *target, Expr *source, int depth) {
 
     // Check Source Type (Must be Fixed Array/Slice)
     Type *st = source->type;
+    // Fallback: if type not set on expr, get it from the declaration
+    if (!st && source->decl && source->decl->kind == DECL_VARIABLE) {
+        st = source->decl->as.variable_decl.type;
+    }
     size_t src_len = 0;
     bool src_is_fixed = false;
     

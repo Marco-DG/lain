@@ -1,0 +1,8 @@
+func take_fixed(v *u8[8]) u8 {
+    return v[0]
+}
+proc main() i32 {
+    buf u8[8] = "hello!!!"
+    ch = take_fixed(buf)
+    return ch as i32
+}
