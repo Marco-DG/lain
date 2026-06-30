@@ -25,9 +25,12 @@ Type *parse_type(Arena *arena, Parser *parser) {
     parser_advance();
     Type *inner = parse_type(arena, parser);
     // *T[] and *T[:S] collapse: the * is syntactic (these are already reference types).
-    // *T[N] (pointer to fixed array) keeps the TYPE_POINTER wrapper.
-    if ((inner->kind == TYPE_ARRAY && inner->array_len < 0) || inner->kind == TYPE_SLICE) {
-        return inner;
+    // *T[N] (fixed) and *T['N] (typevar-sized) keep the TYPE_POINTER wrapper.
+    bool is_typevar_sized = (inner->kind == TYPE_ARRAY && inner->array_len < 0
+                             && inner->size_relop == TOKEN_TYPEVAR);
+    if (!is_typevar_sized &&
+        ((inner->kind == TYPE_ARRAY && inner->array_len < 0) || inner->kind == TYPE_SLICE)) {
+        return inner;  // collapse *T[] and *T[:S]
     }
     return type_pointer(arena, inner);
   }
@@ -121,6 +124,12 @@ Type *parse_type(Arena *arena, Parser *parser) {
         array_len = (isize)parse_numeric_literal(parser->token.start,
                                                   parser->token.length);
         parser_advance(); // consume the number
+      } else if (parser_match(TOKEN_TYPEVAR)) {
+        // 'N as compile-time size variable — store as size_expr with TOKEN_TYPEVAR relop
+        Id *tv_name = id(arena, parser->token.length - 1, parser->token.start + 1);
+        parser_advance(); // consume 'N
+        size_expr = expr_identifier(arena, tv_name);
+        size_relop = TOKEN_TYPEVAR; // marker: size from a type variable
       } else if (!parser_match(TOKEN_R_BRACKET)) {
         // Anything before ']' that is not a number is a size constraint.
         // Optional leading relational operator: i32[>= n], i32[< n]

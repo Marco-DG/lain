@@ -995,11 +995,21 @@ void sema_resolve_expr(Expr *e) {
     if (e->as.call_expr.callee->decl) {
         Decl *df = e->as.call_expr.callee->decl;
         if (df->kind == DECL_FUNCTION || df->kind == DECL_PROCEDURE) {
+            // Helper: does this type contain any 'T or 'N (typevar or typevar-sized array)?
+            #define type_has_typevar(t) ({                                          \
+                Type *_t = (t); bool _r = false;                                   \
+                while (_t) {                                                        \
+                    if (_t->kind == TYPE_VAR) { _r = true; break; }                \
+                    if (_t->kind == TYPE_ARRAY && _t->size_relop == TOKEN_TYPEVAR)  \
+                        { _r = true; break; }                                      \
+                    _t = _t->element_type;                                         \
+                }                                                                   \
+                _r; })
             bool is_typevar = false;
             for (DeclList *p = df->as.function_decl.params; p; p = p->next) {
                 if (p->decl && p->decl->kind == DECL_VARIABLE) {
                     Type *pt = p->decl->as.variable_decl.type;
-                    if (pt && pt->kind == TYPE_VAR) { is_typevar = true; break; }
+                    if (pt && type_has_typevar(pt)) { is_typevar = true; break; }
                 }
             }
             if (is_typevar) {
@@ -1008,16 +1018,19 @@ void sema_resolve_expr(Expr *e) {
                     sema_resolve_expr(a->expr);
                     sema_infer_expr(a->expr);
                 }
-                // 2. Bind each type variable to the type of the first matching arg
+                // 2. Bind type variables ('T → Type) and size variables ('N → integer)
                 #define MAX_TVARS 8
                 const char *tv_names[MAX_TVARS]; Type *tv_types[MAX_TVARS];
-                int n_tv = 0;
+                const char *sv_names[MAX_TVARS]; isize sv_sizes[MAX_TVARS];
+                int n_tv = 0, n_sv = 0;
                 DeclList *p = df->as.function_decl.params;
                 ExprList *a = e->as.call_expr.args;
                 while (p && a) {
                     if (p->decl && p->decl->kind == DECL_VARIABLE) {
                         Type *pt = p->decl->as.variable_decl.type;
-                        if (pt && pt->kind == TYPE_VAR && pt->base_type && a->expr->type) {
+                        Type *at = a->expr->type;
+                        // Direct 'T type variable: param is TYPE_VAR
+                        if (pt && pt->kind == TYPE_VAR && pt->base_type && at) {
                             bool found = false;
                             for (int i = 0; i < n_tv; i++) {
                                 if (strncmp(tv_names[i], pt->base_type->name,
@@ -1028,16 +1041,37 @@ void sema_resolve_expr(Expr *e) {
                                                                    pt->base_type->length + 1);
                                 memcpy(nm, pt->base_type->name, pt->base_type->length);
                                 nm[pt->base_type->length] = '\0';
-                                tv_names[n_tv] = nm;
-                                tv_types[n_tv] = a->expr->type;
-                                n_tv++;
+                                tv_names[n_tv] = nm; tv_types[n_tv] = at; n_tv++;
+                            }
+                        }
+                        // Size variable 'N: param is *T['N] (POINTER to typevar-sized ARRAY)
+                        // Arg is T[K] (inline fixed array) → bind 'N = K
+                        if (pt && pt->kind == TYPE_POINTER && pt->element_type &&
+                            pt->element_type->kind == TYPE_ARRAY &&
+                            pt->element_type->array_len < 0 &&
+                            pt->element_type->size_relop == TOKEN_TYPEVAR &&
+                            pt->element_type->size_expr &&
+                            pt->element_type->size_expr->kind == EXPR_IDENTIFIER &&
+                            at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
+                            Id *sv_id = pt->element_type->size_expr->as.identifier_expr.id;
+                            bool found = false;
+                            for (int i = 0; i < n_sv; i++) {
+                                if (strncmp(sv_names[i], sv_id->name, sv_id->length) == 0)
+                                    { found = true; break; }
+                            }
+                            if (!found && n_sv < MAX_TVARS) {
+                                char *nm = arena_push_many_aligned(sema_arena, char,
+                                                                   sv_id->length + 1);
+                                memcpy(nm, sv_id->name, sv_id->length);
+                                nm[sv_id->length] = '\0';
+                                sv_names[n_sv] = nm; sv_sizes[n_sv] = at->array_len; n_sv++;
                             }
                         }
                     }
                     p = p->next; a = a->next;
                 }
-                if (n_tv > 0) {
-                    // 3. Build mangled name: funcname_T1_T2...
+                if (n_tv > 0 || n_sv > 0) {
+                    // 3. Build mangled name: funcname_T1_T2..._N1_N2...
                     char mn[512];
                     snprintf(mn, sizeof(mn), "%.*s",
                              (int)df->as.function_decl.name->length,
@@ -1050,6 +1084,10 @@ void sema_resolve_expr(Expr *e) {
                                      (int)bt->base_type->length, bt->base_type->name);
                         }
                         snprintf(mn + strlen(mn), sizeof(mn) - strlen(mn), "_%s", tn);
+                    }
+                    for (int i = 0; i < n_sv; i++) {
+                        snprintf(mn + strlen(mn), sizeof(mn) - strlen(mn),
+                                 "_%lld", (long long)sv_sizes[i]);
                     }
                     // 4. Instantiate if not already done
                     size_t cmlen = strlen(current_module_path) + 1 + strlen(mn) + 1;
@@ -1066,6 +1104,9 @@ void sema_resolve_expr(Expr *e) {
                         // Substitute all type variables
                         for (int i = 0; i < n_tv; i++)
                             generic_substitute_decl(inst, tv_names[i], tv_types[i]);
+                        // Substitute all size variables ('N → integer)
+                        for (int i = 0; i < n_sv; i++)
+                            generic_substitute_size_in_decl(inst, sv_names[i], sv_sizes[i]);
                         sema_insert_global(mn, cm, inst->as.function_decl.return_type, inst, false);
                         DeclList *nn = decl_list(sema_arena, inst);
                         DeclList *tail = sema_decls;

@@ -363,6 +363,16 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
 
   case TYPE_ARRAY:
   case TYPE_SLICE: {
+    // Typevar-sized array (u8['N]): emit the element type name only — the size
+    // is a type variable and will be resolved at pointer level (*u8['N] → const uint8_t *)
+    if (t->kind == TYPE_ARRAY && t->array_len < 0 && t->size_relop == TOKEN_TYPEVAR) {
+        if (t->element_type) {
+            c_name_for_type(t->element_type, out, cap);
+        } else {
+            snprintf(out, cap, "uint8_t");
+        }
+        return;
+    }
     const char *sliceName = emit_slice_type_definition(t);
     if (is_mutable_ref) {
       snprintf(out, cap, "%s *", sliceName);

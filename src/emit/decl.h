@@ -11,12 +11,21 @@ void emit_decl_list(DeclList *decls, int depth);
 
 static void emit_param_type(Type *t, bool with_restrict); // Forward for use in forward decl
 
+static bool type_contains_typevar(Type *t) {
+    while (t) {
+        if (t->kind == TYPE_COMPTIME || t->kind == TYPE_VAR) return true;
+        if (t->kind == TYPE_ARRAY && t->size_relop == TOKEN_TYPEVAR) return true;
+        t = t->element_type;
+    }
+    return false;
+}
+
 static bool is_generic_function(Decl *decl) {
     if (!decl || (decl->kind != DECL_FUNCTION && decl->kind != DECL_PROCEDURE)) return false;
     for (DeclList *p = decl->as.function_decl.params; p; p = p->next) {
         if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
         Type *pt = p->decl->as.variable_decl.type;
-        if (pt && (pt->kind == TYPE_COMPTIME || pt->kind == TYPE_VAR)) return true;
+        if (pt && type_contains_typevar(pt)) return true;
     }
     return false;
 }
@@ -87,7 +96,9 @@ static bool func_returns_nonnull_ptr(Decl *decl) {
     if (rt->kind == TYPE_META_TYPE || rt->kind == TYPE_COMPTIME) return false;
     if (rt->kind == TYPE_POINTER) return false;  // raw pointer: may be null
     if (rt->mode == MODE_MUTABLE) return true;
-    if (rt->mode == MODE_SHARED && !is_primitive_type(rt)) return true;
+    // MODE_SHARED non-primitive: only pointer types return as C pointers (not structs)
+    if (rt->mode == MODE_SHARED && rt->kind == TYPE_POINTER) return true;
+    if (rt->mode == MODE_SHARED && rt->kind == TYPE_ARRAY && rt->array_len == -1) return true;
     return false;
 }
 

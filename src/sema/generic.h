@@ -227,4 +227,76 @@ void generic_substitute_decl(Decl *d, const char *param_name, Type *actual_type)
     }
 }
 
+// Substitute a size variable 'N with a concrete integer value in all TYPE_ARRAY
+// size_expr positions. Used for monomorphizing functions with *T['N] params.
+void generic_substitute_size_in_type(Type **t_ptr, const char *var_name, isize size_val) {
+    if (!t_ptr || !*t_ptr) return;
+    Type *t = *t_ptr;
+
+    if (t->kind == TYPE_ARRAY && t->array_len < 0 &&
+        t->size_relop == TOKEN_TYPEVAR && t->size_expr &&
+        t->size_expr->kind == EXPR_IDENTIFIER) {
+        Id *n = t->size_expr->as.identifier_expr.id;
+        if ((size_t)n->length == strlen(var_name) &&
+            strncmp(n->name, var_name, n->length) == 0) {
+            Type *newt = arena_push_aligned(sema_arena, Type);
+            *newt = *t;
+            newt->array_len = size_val;
+            newt->size_expr = NULL;
+            newt->size_relop = 0;
+            *t_ptr = newt;
+            return;
+        }
+    }
+    // Recurse into nested types
+    if (t->kind == TYPE_ARRAY || t->kind == TYPE_POINTER ||
+        t->kind == TYPE_SLICE || t->kind == TYPE_COMPTIME) {
+        generic_substitute_size_in_type(&t->element_type, var_name, size_val);
+    }
+}
+
+static void generic_substitute_size_in_decl(Decl *d, const char *var_name, isize size_val);
+
+static void generic_substitute_size_in_stmt(Stmt *s, const char *var_name, isize size_val) {
+    if (!s) return;
+    switch (s->kind) {
+        case STMT_VAR:
+            generic_substitute_size_in_type(&s->as.var_stmt.type, var_name, size_val);
+            break;
+        case STMT_RETURN:
+            break; // expr types handled by infer pass
+        default: break;
+    }
+    // Walk sub-stmts
+    StmtList *body = NULL;
+    switch (s->kind) {
+        case STMT_IF:
+            for (StmtList *b = s->as.if_stmt.then_body; b; b = b->next)
+                generic_substitute_size_in_stmt(b->stmt, var_name, size_val);
+            for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next)
+                generic_substitute_size_in_stmt(b->stmt, var_name, size_val);
+            break;
+        case STMT_WHILE:
+            for (StmtList *b = s->as.while_stmt.body; b; b = b->next)
+                generic_substitute_size_in_stmt(b->stmt, var_name, size_val);
+            break;
+        default: (void)body; break;
+    }
+}
+
+static void generic_substitute_size_in_decl(Decl *d, const char *var_name, isize size_val) {
+    if (!d) return;
+    if (d->kind == DECL_FUNCTION || d->kind == DECL_PROCEDURE) {
+        for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
+            if (p->decl && p->decl->kind == DECL_VARIABLE)
+                generic_substitute_size_in_type(&p->decl->as.variable_decl.type,
+                                                var_name, size_val);
+        }
+        generic_substitute_size_in_type(&d->as.function_decl.return_type,
+                                        var_name, size_val);
+        for (StmtList *b = d->as.function_decl.body; b; b = b->next)
+            generic_substitute_size_in_stmt(b->stmt, var_name, size_val);
+    }
+}
+
 #endif // SEMA_GENERIC_H
