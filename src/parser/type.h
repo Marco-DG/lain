@@ -12,10 +12,23 @@ Type *parse_type(Arena *arena, Parser *parser) {
 
 
 
-  // 1) prefixes: pointers, etc.
+  // 1) prefixes: pointers, type variables, etc.
+
+  // Type variable: 'T — token includes the leading ' (skip it for the name)
+  if (parser_match(TOKEN_TYPEVAR)) {
+      Id *var_name = id(arena, parser->token.length - 1, parser->token.start + 1);
+      parser_advance();
+      return type_var(arena, var_name);
+  }
+
   if (parser_match(TOKEN_ASTERISK)) {
     parser_advance();
     Type *inner = parse_type(arena, parser);
+    // *T[] and *T[:S] collapse: the * is syntactic (these are already reference types).
+    // *T[N] (pointer to fixed array) keeps the TYPE_POINTER wrapper.
+    if ((inner->kind == TYPE_ARRAY && inner->array_len < 0) || inner->kind == TYPE_SLICE) {
+        return inner;
+    }
     return type_pointer(arena, inner);
   }
   

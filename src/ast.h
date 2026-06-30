@@ -47,6 +47,7 @@ typedef enum {
     TYPE_COMPTIME,  // comptime modifier
     TYPE_VARIANT,   // inner payload of an ADT variant
     TYPE_META_TYPE, // e.g. "type" as a value
+    TYPE_VAR,       // type variable: 'T, 'N, 'E (base_type holds the name)
 } TypeKind;
 
 typedef struct Type {
@@ -596,6 +597,16 @@ Type *type_meta_type(Arena *arena) {
     Type *t = arena_push_aligned(arena, Type);
     t->kind = TYPE_META_TYPE;
     t->mode = MODE_SHARED;
+    t->element_type = NULL;
+    return t;
+}
+
+// Type variable: 'T, 'N, 'E — base_type holds the variable name (without the ')
+Type *type_var(Arena *arena, Id *name) {
+    Type *t = arena_push_aligned(arena, Type);
+    t->kind = TYPE_VAR;
+    t->mode = MODE_SHARED;
+    t->base_type = name;
     t->element_type = NULL;
     return t;
 }

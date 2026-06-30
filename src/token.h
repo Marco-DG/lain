@@ -54,6 +54,7 @@ typedef enum {
     TOKEN_SHIFT_LEFT,      // <<
     TOKEN_SHIFT_RIGHT,     // >>
     TOKEN_AT,              // @
+    TOKEN_TYPEVAR,         // 'T type variable (apostrophe + identifier)
     // Q-002 Paradigm B overflow operators
     TOKEN_PLUS_PERCENT,    // +%  wrapping add
     TOKEN_MINUS_PERCENT,   // -%  wrapping sub
@@ -202,6 +203,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_SHIFT_LEFT:                  return "TOKEN_SHIFT_LEFT";
         case TOKEN_SHIFT_RIGHT:                 return "TOKEN_SHIFT_RIGHT";
         case TOKEN_AT:                          return "TOKEN_AT";
+        case TOKEN_TYPEVAR:                     return "TOKEN_TYPEVAR";
         case TOKEN_PLUS_PERCENT:                return "TOKEN_PLUS_PERCENT";
         case TOKEN_MINUS_PERCENT:               return "TOKEN_MINUS_PERCENT";
         case TOKEN_ASTERISK_PERCENT:            return "TOKEN_ASTERISK_PERCENT";
@@ -291,6 +293,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_SHIFT_LEFT:                  return "<<";
         case TOKEN_SHIFT_RIGHT:                 return ">>";
         case TOKEN_AT:                          return "@";
+        case TOKEN_TYPEVAR:                     return "'T";
         case TOKEN_PLUS_PERCENT:                return "+%";
         case TOKEN_MINUS_PERCENT:               return "-%";
         case TOKEN_ASTERISK_PERCENT:            return "*%";

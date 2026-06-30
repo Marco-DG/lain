@@ -1,0 +1,18 @@
+import std.c
+
+func max(a 'T, b 'T) 'T {
+    if a > b { return a }
+    return b
+}
+
+func identity(val 'T) 'T {
+    return val
+}
+
+proc main() i32 {
+    x = max(10, 20)        // 'T = i32 inferred
+    y = max(3 as i32, 1 as i32)
+    z = identity(42)       // 'T = i32
+    libc_printf("%d %d %d\n", x, y, z)
+    return 0
+}

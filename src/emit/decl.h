@@ -14,9 +14,9 @@ static void emit_param_type(Type *t, bool with_restrict); // Forward for use in 
 static bool is_generic_function(Decl *decl) {
     if (!decl || (decl->kind != DECL_FUNCTION && decl->kind != DECL_PROCEDURE)) return false;
     for (DeclList *p = decl->as.function_decl.params; p; p = p->next) {
-        if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type && p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
-            return true;
-        }
+        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+        Type *pt = p->decl->as.variable_decl.type;
+        if (pt && (pt->kind == TYPE_COMPTIME || pt->kind == TYPE_VAR)) return true;
     }
     return false;
 }

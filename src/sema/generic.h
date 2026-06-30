@@ -33,6 +33,20 @@ void generic_substitute_type(Type **t_ptr, const char *param_name, Type *actual_
                 *t_ptr = cloned;
             }
         }
+    } else if (t->kind == TYPE_VAR && t->base_type) {
+        // 'T type variable — substitute if name matches
+        if ((size_t)t->base_type->length == strlen(param_name) &&
+            strncmp(t->base_type->name, param_name, t->base_type->length) == 0) {
+            OwnershipMode original_mode = t->mode;
+            if (original_mode == MODE_SHARED || actual_type->mode == original_mode) {
+                *t_ptr = actual_type;
+            } else {
+                Type *cloned = arena_push_aligned(sema_arena, Type);
+                *cloned = *actual_type;
+                cloned->mode = original_mode;
+                *t_ptr = cloned;
+            }
+        }
     } else if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE || t->kind == TYPE_POINTER || t->kind == TYPE_COMPTIME) {
         generic_substitute_type(&t->element_type, param_name, actual_type);
     }

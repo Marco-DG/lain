@@ -1,26 +1,28 @@
+import std.c
+
 proc print_int(val i32) {
     libc_printf("%d\n", val)
 }
 
-proc print_f32(val f32) {
-    libc_printf("%f\n", val)
-}
-
-func max(comptime T type, a T, b T) T {
+// 'T type variables: inferred from arguments, no explicit type arg needed.
+// Old syntax: func max(comptime T type, a T, b T) T { ... }
+// New syntax: func max(a 'T, b 'T) 'T { ... }
+func max(a 'T, b 'T) 'T {
     if a > b {
         return a
     }
     return b
 }
 
-func identity(comptime T type, val T) T {
+func identity(val 'T) 'T {
     return val
 }
 
-proc main() {
-    print_int(max(i32, 10, 20))
-    print_f32(max(f32, 3.14, 2.71))
-    
-    var x = identity(i32, 42)
+proc main() i32 {
+    print_int(max(10, 20))          // 'T = i32, inferred from args
+    print_int(max(3 as i32, 7 as i32))
+
+    var x = identity(42)
     print_int(x)
+    return 0
 }

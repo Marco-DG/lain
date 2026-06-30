@@ -396,6 +396,17 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
     return;
   }
 
+  case TYPE_VAR: {
+    // Should have been substituted before emit; emit a placeholder if not.
+    if (t->base_type) {
+        snprintf(out, cap, "/*<typevar-%.*s>*/",
+                 (int)t->base_type->length, t->base_type->name);
+    } else {
+        snprintf(out, cap, "/*<typevar>*/");
+    }
+    return;
+  }
+
   default:
     fprintf(stderr, "emit error: unhandled type kind %d\n", t->kind);
     exit(1);
