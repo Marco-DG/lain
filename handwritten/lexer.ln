@@ -1,0 +1,321 @@
+import std.c
+
+// ── Token kinds ────────────────────────────────────────────────────────────
+
+type TK {
+    // Control
+    EOF, Err,
+    // Literals
+    Ident, Int, Str, Char,
+    // Delimiters
+    LParen, RParen, LBrace, RBrace, LBrack, RBrack,
+    Comma, Semi, Colon, Dot, DotDot, DotDotEq, At,
+    // Operators (single)
+    Plus, Minus, Star, Slash, Percent,
+    Eq, Bang, Lt, Gt, Amp, Pipe, Caret, Tilde,
+    // Operators (compound)
+    EqEq, BangEq, LtEq, GtEq,
+    PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
+    AmpEq, PipeEq, CaretEq,
+    Arrow, Shl, Shr,
+    PlusPercent, MinusPercent, StarPercent,
+    PlusPipe, MinusPipe, StarPipe,
+    // Keywords
+    KwVar, KwMov, KwFunc, KwProc, KwReturn,
+    KwIf, KwElse, KwWhile, KwFor,
+    KwCase, KwType, KwImport,
+    KwTrue, KwFalse,
+    KwComptime, KwDefer, KwUnsafe, KwExtern,
+    KwAnd, KwOr, KwNot,
+    KwIn, KwAs, KwMod, KwBool,
+    KwBreak, KwContinue, KwDecreasing
+}
+
+type Token {
+    kind  TK
+    start usize
+    stop  usize
+}
+
+// ── Lexer ──────────────────────────────────────────────────────────────────
+//
+// Design: text must include a null sentinel byte as its last element.
+//   text[text.len - 1] == 0
+//
+// This ensures pos in text is always satisfiable (0 <= pos < text.len),
+// even at EOF. text[pos] == 0 signals end of input without bounds violation.
+
+type Lexer {
+    text *u8[]
+    pos  usize in text
+}
+
+func lexer_new(text *u8[]) Lexer {
+    return Lexer(text, 0)
+}
+
+// ── Character classification ───────────────────────────────────────────────
+
+func is_alpha(c u8) bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_'
+}
+
+func is_digit(c u8) bool { return c >= '0' and c <= '9' }
+
+func is_alnum(c u8) bool { return is_alpha(c) or is_digit(c) }
+
+// ── Byte access ────────────────────────────────────────────────────────────
+
+// Current byte — safe via pos in text invariant.
+// Returns 0 when pos is at the null sentinel (EOF).
+func peek(l Lexer) u8 {
+    return l.text[l.pos]
+}
+
+// Byte at pos + offset, or 0 if out of range.
+func peek_at(l Lexer, offset usize) u8 {
+    i = l.pos + offset
+    if i in l.text { return l.text[i] }
+    return 0
+}
+
+func at_end(l Lexer) bool {
+    return l.text[l.pos] == 0
+}
+
+// Consume current byte and advance; return the consumed byte.
+func eat(var l Lexer) u8 {
+    ch = l.text[l.pos]             // safe: pos in text
+    if l.pos + 1 in l.text { l.pos = l.pos + 1 }
+    return ch
+}
+
+// Consume only if current byte matches expected; return whether consumed.
+func try_eat(var l Lexer, expected u8) bool {
+    if l.text[l.pos] != expected { return false }
+    if l.pos + 1 in l.text { l.pos = l.pos + 1 }
+    return true
+}
+
+// ── Whitespace + line comments ─────────────────────────────────────────────
+
+func skip(var l Lexer) {
+    while l.pos in l.text decreasing l.text.len - l.pos {
+        c = l.text[l.pos]           // safe: pos in text (invariant + in condition)
+        if c == 0 { break }         // null sentinel: EOF
+        if c == ' ' or c == '\t' or c == '\r' or c == '\n' {
+            l.pos = l.pos + 1
+        } else if c == '/' and peek_at(l, 1) == '/' {
+            l.pos = l.pos + 2       // skip '//'
+            while l.pos in l.text and l.text[l.pos] != '\n' decreasing l.text.len - l.pos {
+                l.pos = l.pos + 1
+            }
+        } else {
+            break
+        }
+    }
+}
+
+// ── Keyword lookup ─────────────────────────────────────────────────────────
+// Indices s..e are into src, provided by the caller after scanning an ident.
+// Uses unsafe: the caller guarantees s < e <= src.len.
+
+func keyword(src *u8[], s usize, e usize) TK { unsafe {
+    n = e - s
+
+    if n == 2 {
+        if src[s]=='i' and src[s+1]=='f' { return TK.KwIf }
+        if src[s]=='i' and src[s+1]=='n' { return TK.KwIn }
+        if src[s]=='a' and src[s+1]=='s' { return TK.KwAs }
+        if src[s]=='o' and src[s+1]=='r' { return TK.KwOr }
+        return TK.Ident
+    }
+    if n == 3 {
+        if src[s]=='v' and src[s+1]=='a' and src[s+2]=='r' { return TK.KwVar }
+        if src[s]=='f' and src[s+1]=='o' and src[s+2]=='r' { return TK.KwFor }
+        if src[s]=='m' and src[s+1]=='o' and src[s+2]=='v' { return TK.KwMov }
+        if src[s]=='a' and src[s+1]=='n' and src[s+2]=='d' { return TK.KwAnd }
+        if src[s]=='n' and src[s+1]=='o' and src[s+2]=='t' { return TK.KwNot }
+        if src[s]=='m' and src[s+1]=='o' and src[s+2]=='d' { return TK.KwMod }
+        return TK.Ident
+    }
+    if n == 4 {
+        if src[s]=='f' and src[s+1]=='u' and src[s+2]=='n' and src[s+3]=='c' { return TK.KwFunc }
+        if src[s]=='p' and src[s+1]=='r' and src[s+2]=='o' and src[s+3]=='c' { return TK.KwProc }
+        if src[s]=='c' and src[s+1]=='a' and src[s+2]=='s' and src[s+3]=='e' { return TK.KwCase }
+        if src[s]=='e' and src[s+1]=='l' and src[s+2]=='s' and src[s+3]=='e' { return TK.KwElse }
+        if src[s]=='t' and src[s+1]=='r' and src[s+2]=='u' and src[s+3]=='e' { return TK.KwTrue }
+        if src[s]=='t' and src[s+1]=='y' and src[s+2]=='p' and src[s+3]=='e' { return TK.KwType }
+        if src[s]=='b' and src[s+1]=='o' and src[s+2]=='o' and src[s+3]=='l' { return TK.KwBool }
+        return TK.Ident
+    }
+    if n == 5 {
+        if src[s]=='w' and src[s+1]=='h' and src[s+2]=='i' and src[s+3]=='l' and src[s+4]=='e' { return TK.KwWhile }
+        if src[s]=='f' and src[s+1]=='a' and src[s+2]=='l' and src[s+3]=='s' and src[s+4]=='e' { return TK.KwFalse }
+        if src[s]=='b' and src[s+1]=='r' and src[s+2]=='e' and src[s+3]=='a' and src[s+4]=='k' { return TK.KwBreak }
+        if src[s]=='d' and src[s+1]=='e' and src[s+2]=='f' and src[s+3]=='e' and src[s+4]=='r' { return TK.KwDefer }
+        return TK.Ident
+    }
+    if n == 6 {
+        if src[s]=='r' and src[s+1]=='e' and src[s+2]=='t' and src[s+3]=='u' and src[s+4]=='r' and src[s+5]=='n' { return TK.KwReturn }
+        if src[s]=='i' and src[s+1]=='m' and src[s+2]=='p' and src[s+3]=='o' and src[s+4]=='r' and src[s+5]=='t' { return TK.KwImport }
+        if src[s]=='e' and src[s+1]=='x' and src[s+2]=='t' and src[s+3]=='e' and src[s+4]=='r' and src[s+5]=='n' { return TK.KwExtern }
+        if src[s]=='u' and src[s+1]=='n' and src[s+2]=='s' and src[s+3]=='a' and src[s+4]=='f' and src[s+5]=='e' { return TK.KwUnsafe }
+        return TK.Ident
+    }
+    if n == 8 {
+        if src[s]=='c' and src[s+1]=='o' and src[s+2]=='n' and src[s+3]=='t' and src[s+4]=='i' and src[s+5]=='n' and src[s+6]=='u' and src[s+7]=='e' { return TK.KwContinue }
+        if src[s]=='c' and src[s+1]=='o' and src[s+2]=='m' and src[s+3]=='p' and src[s+4]=='t' and src[s+5]=='i' and src[s+6]=='m' and src[s+7]=='e' { return TK.KwComptime }
+        return TK.Ident
+    }
+    if n == 10 {
+        if src[s]=='d' and src[s+1]=='e' and src[s+2]=='c' and src[s+3]=='r' and src[s+4]=='e' and src[s+5]=='a' and src[s+6]=='s' and src[s+7]=='i' and src[s+8]=='n' and src[s+9]=='g' { return TK.KwDecreasing }
+        return TK.Ident
+    }
+    return TK.Ident
+}}
+
+// ── Scanners ──────────────────────────────────────────────────────────────
+
+func scan_ident(var l Lexer, start usize) Token {
+    while l.pos in l.text and is_alnum(l.text[l.pos]) decreasing l.text.len - l.pos {
+        l.pos = l.pos + 1
+    }
+    return Token(keyword(l.text, start, l.pos), start, l.pos)
+}
+
+func scan_number(var l Lexer, start usize) Token {
+    while l.pos in l.text and is_digit(l.text[l.pos]) decreasing l.text.len - l.pos {
+        l.pos = l.pos + 1
+    }
+    return Token(TK.Int, start, l.pos)
+}
+
+func scan_string(var l Lexer, start usize) Token {
+    while l.pos in l.text and l.text[l.pos] != '"' decreasing l.text.len - l.pos {
+        if l.text[l.pos] == '\\' and peek_at(l, 1) != 0 { l.pos = l.pos + 1 }
+        l.pos = l.pos + 1
+    }
+    if l.pos in l.text { l.pos = l.pos + 1 }     // consume closing "
+    return Token(TK.Str, start, l.pos)
+}
+
+func scan_char_lit(var l Lexer, start usize) Token {
+    while l.pos in l.text and l.text[l.pos] != '\'' decreasing l.text.len - l.pos {
+        if l.text[l.pos] == '\\' and peek_at(l, 1) != 0 { l.pos = l.pos + 1 }
+        l.pos = l.pos + 1
+    }
+    if l.pos in l.text { l.pos = l.pos + 1 }     // consume closing '
+    return Token(TK.Char, start, l.pos)
+}
+
+// ── Main entry ────────────────────────────────────────────────────────────
+
+func next(var l Lexer) Token {
+    skip(l)
+    if l.text[l.pos] == 0 { return Token(TK.EOF, l.pos, l.pos) }
+
+    start = l.pos
+    c     = eat(l)
+
+    if is_alpha(c) { return scan_ident(l, start) }
+    if is_digit(c) { return scan_number(l, start) }
+    if c == '"'    { return scan_string(l, start) }
+    if c == '\''   { return scan_char_lit(l, start) }
+
+    if c == '=' {
+        if try_eat(l, '=') { return Token(TK.EqEq,   start, l.pos) }
+        return Token(TK.Eq, start, l.pos)
+    }
+    if c == '!' {
+        if try_eat(l, '=') { return Token(TK.BangEq, start, l.pos) }
+        return Token(TK.Bang, start, l.pos)
+    }
+    if c == '<' {
+        if try_eat(l, '=') { return Token(TK.LtEq, start, l.pos) }
+        if try_eat(l, '<') { return Token(TK.Shl,  start, l.pos) }
+        return Token(TK.Lt, start, l.pos)
+    }
+    if c == '>' {
+        if try_eat(l, '=') { return Token(TK.GtEq, start, l.pos) }
+        if try_eat(l, '>') { return Token(TK.Shr,  start, l.pos) }
+        return Token(TK.Gt, start, l.pos)
+    }
+    if c == '+' {
+        if try_eat(l, '=') { return Token(TK.PlusEq,      start, l.pos) }
+        if try_eat(l, '%') { return Token(TK.PlusPercent,  start, l.pos) }
+        if try_eat(l, '|') { return Token(TK.PlusPipe,     start, l.pos) }
+        return Token(TK.Plus, start, l.pos)
+    }
+    if c == '-' {
+        if try_eat(l, '>') { return Token(TK.Arrow,        start, l.pos) }
+        if try_eat(l, '=') { return Token(TK.MinusEq,      start, l.pos) }
+        if try_eat(l, '%') { return Token(TK.MinusPercent,  start, l.pos) }
+        if try_eat(l, '|') { return Token(TK.MinusPipe,     start, l.pos) }
+        return Token(TK.Minus, start, l.pos)
+    }
+    if c == '*' {
+        if try_eat(l, '=') { return Token(TK.StarEq,      start, l.pos) }
+        if try_eat(l, '%') { return Token(TK.StarPercent,  start, l.pos) }
+        if try_eat(l, '|') { return Token(TK.StarPipe,     start, l.pos) }
+        return Token(TK.Star, start, l.pos)
+    }
+    if c == '/' {
+        if try_eat(l, '=') { return Token(TK.SlashEq,   start, l.pos) }
+        return Token(TK.Slash, start, l.pos)
+    }
+    if c == '%' {
+        if try_eat(l, '=') { return Token(TK.PercentEq, start, l.pos) }
+        return Token(TK.Percent, start, l.pos)
+    }
+    if c == '&' {
+        if try_eat(l, '=') { return Token(TK.AmpEq,  start, l.pos) }
+        return Token(TK.Amp, start, l.pos)
+    }
+    if c == '|' {
+        if try_eat(l, '=') { return Token(TK.PipeEq, start, l.pos) }
+        return Token(TK.Pipe, start, l.pos)
+    }
+    if c == '^' {
+        if try_eat(l, '=') { return Token(TK.CaretEq, start, l.pos) }
+        return Token(TK.Caret, start, l.pos)
+    }
+    if c == '.' {
+        if try_eat(l, '.') {
+            if try_eat(l, '=') { return Token(TK.DotDotEq, start, l.pos) }
+            return Token(TK.DotDot, start, l.pos)
+        }
+        return Token(TK.Dot, start, l.pos)
+    }
+
+    return case c {
+        '(':  Token(TK.LParen, start, l.pos)
+        ')':  Token(TK.RParen, start, l.pos)
+        '{':  Token(TK.LBrace, start, l.pos)
+        '}':  Token(TK.RBrace, start, l.pos)
+        '[':  Token(TK.LBrack, start, l.pos)
+        ']':  Token(TK.RBrack, start, l.pos)
+        ',':  Token(TK.Comma,  start, l.pos)
+        ';':  Token(TK.Semi,   start, l.pos)
+        ':':  Token(TK.Colon,  start, l.pos)
+        '~':  Token(TK.Tilde,  start, l.pos)
+        '@':  Token(TK.At,     start, l.pos)
+        else: Token(TK.Err,    start, l.pos)
+    }
+}
+
+// ── Smoke test ────────────────────────────────────────────────────────────
+// text must end with null sentinel; u8[N] zero-pads, providing the sentinel.
+
+proc main() i32 {
+    src u8[12] = "x + 42 ;"   // 8 chars, remaining bytes are null (sentinel)
+    var l = lexer_new(src)
+    var count = 0
+    max = 20
+    while l.pos in l.text and l.text[l.pos] != 0 and count < max decreasing max - count {
+        tok = next(l)
+        libc_printf("kind=%-2d  [%zu..%zu]\n", tok.kind as i32, tok.start, tok.stop)
+        count = count + 1
+    }
+    return 0
+}

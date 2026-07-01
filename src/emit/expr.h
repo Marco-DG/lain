@@ -582,6 +582,21 @@ void emit_expr(Expr *expr, int depth) {
           }
         }
 
+        // Dynamic slice param → Slice_u8 field: reconstruct from decomposed (len, ptr)
+        if (ft->kind == TYPE_ARRAY && ft->array_len == -1 &&
+            arg->expr->kind == EXPR_IDENTIFIER && arg->expr->decl &&
+            is_dynarray_param_decl(arg->expr->decl)) {
+            Id *an = arg->expr->as.identifier_expr.id;
+            char sliceBuf[256];
+            c_name_for_type(ft, sliceBuf, sizeof sliceBuf);
+            EMIT("(%s){ .len = __len_%.*s, .data = %.*s }",
+                 sliceBuf, (int)an->length, an->name,
+                 (int)an->length, an->name);
+            fld = fld->next;
+            if (param) param = param->next;
+            continue;
+        }
+
         // Auto-coerce: fixed array u8[N] → dynamic/sentinel slice in struct ctor
         if (emit_slice_coercion(ft, arg->expr, depth)) {
             fld = fld->next;
@@ -647,10 +662,14 @@ void emit_expr(Expr *expr, int depth) {
                // Emit data pointer
                if (at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
                    emit_expr(base_arg, depth);
-                   // User-type fixed arrays are native C arrays (decay to ptr); no .data
-                   if (!is_user_type_fixed_array(at)) EMIT(".data");
+                   // Native C array — decays to pointer, no .data field.
                } else if (at && at->kind == TYPE_ARRAY && at->array_len == -1) {
                    emit_expr(base_arg, depth);
+                   // Decomposed dynarray param: already a raw pointer, no .data.
+                   // Slice struct field (e.g. l.text): needs .data to get the pointer.
+                   bool _is_decomposed = (base_arg->kind == EXPR_IDENTIFIER && base_arg->decl &&
+                                          is_dynarray_param_decl(base_arg->decl));
+                   if (!_is_decomposed) EMIT(".data");
                } else {
                    emit_expr(base_arg, depth); EMIT(".data");
                }
