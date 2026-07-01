@@ -383,9 +383,22 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
   }
 
   case TYPE_POINTER: {
+    // *T[N] and *T['N]: thin pointer — emit const T *, not const Fixed_T_N *
+    // N is tracked in the type system for bounds checking only; no runtime overhead.
+    if (t->element_type && t->element_type->kind == TYPE_ARRAY &&
+        (t->element_type->array_len >= 0 || t->element_type->size_relop == TOKEN_TYPEVAR)) {
+        char elem[256];
+        c_name_for_type(t->element_type->element_type, elem, sizeof elem);
+        if (t->mode == MODE_MUTABLE || t->mode == MODE_OWNED)
+            snprintf(out, cap, "%s *", elem);
+        else
+            snprintf(out, cap, "const %s *", elem);
+        return;
+    }
+
     char tgt[256];
     c_name_for_type(t->element_type, tgt, sizeof tgt);
-    
+
     // Check mode for const correctness
     if (t->mode == MODE_MUTABLE || t->mode == MODE_OWNED) {
         snprintf(out, cap, "%s *", tgt);

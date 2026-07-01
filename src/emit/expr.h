@@ -616,17 +616,16 @@ void emit_expr(Expr *expr, int depth) {
       if (param) {
            Type *pt = param->decl->as.variable_decl.type;
 
-           // Auto-decay: u8[N] → *u8[N] — param expects pointer to fixed array,
-           // arg is the fixed array itself. Emit &(arg) to take its address.
+           // Auto-decay: u8[N] → *u8[N] (thin pointer) — emit arg.data
+           // *T[N] is now a thin pointer (const T *), so pass the data field.
            if (pt && pt->kind == TYPE_POINTER &&
                pt->element_type && pt->element_type->kind == TYPE_ARRAY &&
                pt->element_type->array_len >= 0) {
                Type *at = arg->expr->type ? sema_unwrap_type(arg->expr->type) : NULL;
-               // Only add & if the arg is a fixed array (not already a pointer)
                if (!at || (at->kind == TYPE_ARRAY && at->array_len >= 0)) {
-                   EMIT("&(");
                    emit_expr(arg->expr, depth);
-                   EMIT(")");
+                   if (!is_user_type_fixed_array(at)) EMIT(".data");
+                   // user-type fixed arrays are native C arrays — already a pointer when used as expression
                    goto next_arg;
                }
            }
@@ -768,8 +767,11 @@ void emit_expr(Expr *expr, int depth) {
           EMIT("]");
       } else {
           emit_expr(ix->target, 0);
-          // User-type fixed arrays are native C arrays: direct index, no .data
-          if (is_user_type_fixed_array(ix->target->type)) {
+          // User-type fixed arrays and thin pointers (*T[N]): index directly
+          bool is_thin_ptr = ix->target->type && ix->target->type->kind == TYPE_POINTER &&
+                             ix->target->type->element_type &&
+                             ix->target->type->element_type->kind == TYPE_ARRAY;
+          if (is_user_type_fixed_array(ix->target->type) || is_thin_ptr) {
               EMIT("[");
           } else {
               EMIT(is_ptr ? "->data[" : ".data[");
