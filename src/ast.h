@@ -244,6 +244,7 @@ typedef struct {
     Expr*       expr;     // NULL if no init
     bool        is_mutable; // New: true if declared with 'var'
     bool        explicit_undefined; // true iff user wrote `= undefined` (not synthesized)
+    Expr*       in_expr;  // NULL, or the container for `var p *T in arr` (local pointer invariant)
 } StmtVar;
 
 typedef struct {
@@ -359,6 +360,8 @@ typedef enum {
     EXPR_ANON_ENUM,
     EXPR_ARRAY_LITERAL,
     EXPR_BUILTIN,
+    EXPR_ADDR,   // &lvalue — address of an element
+    EXPR_DEREF,  // *ptr   — dereference a pointer (safe when ptr in arr proven)
 } ExprKind;
 
 typedef enum {
@@ -388,6 +391,14 @@ typedef struct {
 typedef struct {
     Expr*       expr;   // The expression being moved
 } ExprMove;
+
+typedef struct {
+    Expr*       expr;   // lvalue whose address is taken (&expr)
+} ExprAddr;
+
+typedef struct {
+    Expr*       expr;   // pointer being dereferenced (*ptr)
+} ExprDeref;
 
 typedef struct {
     Expr*       expr;
@@ -490,6 +501,8 @@ typedef struct Expr {
         ExprAnonEnum    anon_enum_expr;
         ExprArrayLiteral array_literal_expr;
         ExprBuiltin     builtin_expr;
+        ExprAddr        addr_expr;
+        ExprDeref       deref_expr;
     } as;
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
@@ -799,6 +812,7 @@ Stmt *stmt_var(Arena *arena, Id *name, Type* type, Expr *expr) {
     s->as.var_stmt.type = type;
     s->as.var_stmt.is_mutable = false; // default
     s->as.var_stmt.explicit_undefined = false; // default (synthesized)
+    s->as.var_stmt.in_expr = NULL; // default: no pointer invariant
     return s;
 }
 
@@ -1040,6 +1054,20 @@ Expr *expr_mut(Arena *arena, Expr *expr) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_MUT;
     e->as.mut_expr.expr = expr;
+    return e;
+}
+
+Expr *expr_addr(Arena *arena, Expr *expr) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_ADDR;
+    e->as.addr_expr.expr = expr;
+    return e;
+}
+
+Expr *expr_deref(Arena *arena, Expr *expr) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_DEREF;
+    e->as.deref_expr.expr = expr;
     return e;
 }
 

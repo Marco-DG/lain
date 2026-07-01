@@ -117,7 +117,12 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
     // Sanitize module path for C names
     char *safe_module_path = strdup(module_path);
     for (char *p = safe_module_path; *p; p++) {
-        if (*p == '.') *p = '_';
+        char c = *p;
+        // Make it a valid C identifier: dots and non-identifier chars become '_'
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_')) {
+            *p = '_';
+        }
     }
 
     for (DeclList *dl = decls; dl; dl = dl->next) {
@@ -411,8 +416,10 @@ void sema_resolve_stmt(Stmt *s) {
       }
       if (!ty) {
           ty = rhs->type;           // infer from initializer
-          // Strip MODE_MUTABLE: `var x = var_param` gives value type, not reference
-          if (ty && ty->mode == MODE_MUTABLE) {
+          // Strip MODE_MUTABLE: `var x = var_param` gives value type, not reference.
+          // Exception: TYPE_POINTER with MODE_MUTABLE is a mutable thin pointer
+          // (from `&arr[k]`) — preserve mutability so it emits without const.
+          if (ty && ty->mode == MODE_MUTABLE && ty->kind != TYPE_POINTER) {
               Type *stripped = arena_push_aligned(sema_arena, Type);
               *stripped = *ty;
               stripped->mode = MODE_SHARED;
@@ -1155,6 +1162,14 @@ void sema_resolve_expr(Expr *e) {
     sema_resolve_expr(e->as.index_expr.target);
     sema_resolve_expr(e->as.index_expr.index);
     break;
+  case EXPR_ADDR:
+    sema_resolve_expr(e->as.addr_expr.expr);
+    break;
+
+  case EXPR_DEREF:
+    sema_resolve_expr(e->as.deref_expr.expr);
+    break;
+
   case EXPR_MOVE:
     sema_resolve_expr(e->as.move_expr.expr);
     break;

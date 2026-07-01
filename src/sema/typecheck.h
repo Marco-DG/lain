@@ -1091,6 +1091,29 @@ void sema_infer_expr(Expr *e) {
         break;
     }
 
+    // Pointer arithmetic: ptr ± integer → ptr (same type)
+    {
+        Type *lt = e->as.binary_expr.left  ? e->as.binary_expr.left->type  : NULL;
+        Type *rt = e->as.binary_expr.right ? e->as.binary_expr.right->type : NULL;
+        TokenKind op = e->as.binary_expr.op;
+        if (lt && lt->kind == TYPE_POINTER &&
+            (op == TOKEN_PLUS || op == TOKEN_MINUS) &&
+            rt && rt->kind == TYPE_SIMPLE) {
+            // ptr ± integer → same pointer type
+            e->type = lt;
+            break;
+        }
+        // Pointer subtraction: ptr - ptr → usize (offset between two pointers in same array)
+        if (lt && lt->kind == TYPE_POINTER &&
+            rt && rt->kind == TYPE_POINTER &&
+            op == TOKEN_MINUS) {
+            // Build usize type
+            Id *usize_id = id(sema_arena, 5, "usize");
+            e->type = type_simple(sema_arena, usize_id);
+            break;
+        }
+    }
+
     // Division/modulo by zero check in pure func (must be total).
     // Parameter constraints (e.g., `b int != 0`) guarantee safety.
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
@@ -1432,6 +1455,57 @@ void sema_infer_expr(Expr *e) {
         exit(1);
     }
     // type already set at parse time (target_type)
+    break;
+  }
+
+  case EXPR_ADDR: {
+    // &arr[k] — address of an element.
+    // Type: TYPE_POINTER(elem_type).
+    // Mutability: if arr is mutable (var), the pointer is writable (no const).
+    sema_infer_expr(e->as.addr_expr.expr);
+    Type *inner = e->as.addr_expr.expr ? e->as.addr_expr.expr->type : NULL;
+    if (inner) {
+        e->type = type_pointer(sema_arena, inner);
+        // Propagate mutability from the indexed array.
+        Expr *addr_inner = e->as.addr_expr.expr;
+        if (addr_inner->kind == EXPR_INDEX && addr_inner->as.index_expr.target) {
+            Type *arr_ty = addr_inner->as.index_expr.target->type;
+            if (arr_ty && (arr_ty->mode == MODE_MUTABLE || arr_ty->mode == MODE_OWNED)) {
+                e->type->mode = MODE_MUTABLE; // mutable borrow: int32_t *, not linear
+            }
+        }
+    }
+    break;
+  }
+
+  case EXPR_DEREF: {
+    // *ptr — dereference a pointer.
+    // Safe without unsafe ONLY when ptr is associated with an array via
+    // `var p *T in arr` and the in-guard `p in arr` has been pushed.
+    // Otherwise requires an unsafe block (same as before).
+    sema_infer_expr(e->as.deref_expr.expr);
+    Type *ptr_ty = e->as.deref_expr.expr ? e->as.deref_expr.expr->type : NULL;
+    if (ptr_ty && ptr_ty->kind == TYPE_POINTER && ptr_ty->element_type) {
+        e->type = ptr_ty->element_type;
+    }
+    // Safety check only during walk phase (when in-guards are active).
+    // During resolve phase, in-guards aren't pushed yet — skip the check.
+    if (sema_walk_phase && !sema_in_unsafe_block) {
+        bool guarded = false;
+        for (InGuardEntry *ig = sema_in_guards; ig; ig = ig->next) {
+            if (ig->is_ptr_guard && expr_struct_equal(ig->index, e->as.deref_expr.expr)) {
+                guarded = true; break;
+            }
+        }
+        if (!guarded) {
+            fprintf(stderr,
+                "[E060] Error Ln %li, Col %li: pointer dereference outside 'unsafe' block. "
+                "Use 'unsafe { }' or declare the pointer with 'var p *T in arr' and guard with 'p in arr'.\n",
+                e->line, e->col);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        }
+    }
     break;
   }
 

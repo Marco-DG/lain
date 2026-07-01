@@ -43,13 +43,16 @@ static void diagnostic_show_line(isize line, isize col) {
 typedef struct InGuardEntry {
     Expr *index;
     Expr *container;
+    bool is_ptr_guard; // true when index is a pointer and container is its array
     struct InGuardEntry *next;
 } InGuardEntry;
 
 static InGuardEntry *sema_in_guards = NULL;
 
+static bool expr_struct_equal(Expr *a, Expr *b); // defined later in sema.h
 static void sema_push_in_guards(Expr *cond);
 static bool sema_is_in_guarded(Expr *index, Expr *container);
+static bool sema_is_ptr_in_guarded(Expr *ptr, Expr *arr);
 
 #include "sema/scope.h"
 #include "sema/resolve.h"
@@ -200,10 +203,21 @@ static bool measure_extract_cmp(Expr *cond, Expr *measure, MeasureCmp *out) {
 }
 
 static bool sema_verify_measure_nonneg(Expr *cond, Expr *measure) {
-    // Handle 'and' conjunctions — try both sides
+    if (!measure) return false;
+
+    // Handle 'and' conjunctions — try each part of the condition
     if (cond && cond->kind == EXPR_BINARY && cond->as.binary_expr.op == TOKEN_KEYWORD_AND) {
         if (sema_verify_measure_nonneg(cond->as.binary_expr.left, measure)) return true;
         if (sema_verify_measure_nonneg(cond->as.binary_expr.right, measure)) return true;
+    }
+
+    // Sum measure: prove each addend >= 0 independently using the full condition.
+    // Handles: (p1 - &arr1[0]) + (p2 - &arr2[0]) with condition (p1 in arr1) and (p2 in arr2)
+    if (measure->kind == EXPR_BINARY && measure->as.binary_expr.op == TOKEN_PLUS) {
+        if (sema_verify_measure_nonneg(cond, measure->as.binary_expr.left) &&
+            sema_verify_measure_nonneg(cond, measure->as.binary_expr.right)) {
+            return true;
+        }
     }
 
     // Handle 'in' condition: idx in arr, measure = arr.len - idx
@@ -214,12 +228,26 @@ static bool sema_verify_measure_nonneg(Expr *cond, Expr *measure) {
         if (measure->kind == EXPR_BINARY && measure->as.binary_expr.op == TOKEN_MINUS) {
             Expr *m_hi = measure->as.binary_expr.left;
             Expr *m_lo = measure->as.binary_expr.right;
+            // Index in-guard: arr.len - idx
             if (expr_struct_equal(m_lo, idx) &&
                 m_hi->kind == EXPR_MEMBER &&
                 m_hi->as.member_expr.member->length == 3 &&
                 strncmp(m_hi->as.member_expr.member->name, "len", 3) == 0 &&
                 expr_struct_equal(m_hi->as.member_expr.target, arr)) {
                 return true;
+            }
+            // Pointer in-guard: ptr in arr, measure = ptr - &arr[0]
+            // ptr - &arr[0] >= 0 when ptr in arr (ptr >= arr base)
+            if (idx && idx->type && idx->type->kind == TYPE_POINTER) {
+                if (expr_struct_equal(m_hi, idx)) {
+                    // m_lo should be &arr[0] (EXPR_ADDR of arr[0])
+                    if (m_lo->kind == EXPR_ADDR &&
+                        m_lo->as.addr_expr.expr &&
+                        m_lo->as.addr_expr.expr->kind == EXPR_INDEX) {
+                        Expr *base = m_lo->as.addr_expr.expr->as.index_expr.target;
+                        if (expr_struct_equal(base, arr)) return true;
+                    }
+                }
             }
         }
     }
@@ -254,6 +282,7 @@ typedef struct { Expr *var; int polarity; } MeasureVar;
 
 // Extract variables and their polarities from a measure expression.
 // b - a  =>  b(+1), a(-1).     x  =>  x(+1).
+// p - &arr[0]  =>  p(+1) only (addr term treated as constant base).
 static int measure_extract_vars(Expr *m, MeasureVar *out, int max) {
     if (!m || max <= 0) return 0;
 
@@ -265,6 +294,13 @@ static int measure_extract_vars(Expr *m, MeasureVar *out, int max) {
 
     if (m->kind == EXPR_BINARY) {
         if (m->as.binary_expr.op == TOKEN_MINUS) {
+            // Special case: ptr - &arr[0] — treat the EXPR_ADDR as a constant.
+            // Only the pointer variable (left side) is tracked in the measure.
+            Expr *rhs_m = m->as.binary_expr.right;
+            if (rhs_m && rhs_m->kind == EXPR_ADDR) {
+                // ptr - &arr[0]: only ptr contributes, addr is constant
+                return measure_extract_vars(m->as.binary_expr.left, out, max);
+            }
             int n = measure_extract_vars(m->as.binary_expr.left, out, max);
             int old_n = n;
             n += measure_extract_vars(m->as.binary_expr.right, out + n, max - n);
@@ -421,9 +457,13 @@ static void sema_verify_bounded_while(Stmt *s) {
 static void sema_push_in_guards(Expr *cond) {
     if (!cond || cond->kind != EXPR_BINARY) return;
     if (cond->as.binary_expr.op == TOKEN_KEYWORD_IN) {
+        Expr *lhs = cond->as.binary_expr.left;
+        Expr *rhs = cond->as.binary_expr.right;
         InGuardEntry *e = arena_push_aligned(sema_arena, InGuardEntry);
-        e->index = cond->as.binary_expr.left;
-        e->container = cond->as.binary_expr.right;
+        e->index = lhs;
+        e->container = rhs;
+        // Pointer in-guard: left is a pointer type (TYPE_POINTER)
+        e->is_ptr_guard = (lhs && lhs->type && lhs->type->kind == TYPE_POINTER);
         e->next = sema_in_guards;
         sema_in_guards = e;
     } else if (cond->as.binary_expr.op == TOKEN_KEYWORD_AND) {
@@ -434,8 +474,20 @@ static void sema_push_in_guards(Expr *cond) {
 
 static bool sema_is_in_guarded(Expr *index, Expr *container) {
     for (InGuardEntry *e = sema_in_guards; e; e = e->next) {
+        if (e->is_ptr_guard) continue;
         if (expr_struct_equal(e->index, index) &&
             expr_struct_equal(e->container, container))
+            return true;
+    }
+    return false;
+}
+
+// Check if a POINTER `ptr` is guarded within `arr` (pointer `in` guard).
+static bool sema_is_ptr_in_guarded(Expr *ptr, Expr *arr) {
+    for (InGuardEntry *e = sema_in_guards; e; e = e->next) {
+        if (!e->is_ptr_guard) continue;
+        if (expr_struct_equal(e->index, ptr) &&
+            expr_struct_equal(e->container, arr))
             return true;
     }
     return false;
@@ -683,6 +735,22 @@ static void walk_stmt(Stmt *s) {
             // Struct field invariants: push persistent in-guards so that
             // accesses like `l.text[l.pos]` are bounds-proven automatically.
             sema_push_struct_field_guards(s->as.var_stmt.name, s->as.var_stmt.type);
+
+            // Local pointer invariant: `var p *T in arr = &arr[k]`
+            // Push a pointer in-guard so `*p` is safe when `p in arr` is checked.
+            if (s->as.var_stmt.in_expr) {
+                Expr *p_ve = arena_push_aligned(sema_arena, Expr);
+                memset(p_ve, 0, sizeof(Expr));
+                p_ve->kind = EXPR_IDENTIFIER;
+                p_ve->as.identifier_expr.id = s->as.var_stmt.name;
+                p_ve->type = s->as.var_stmt.type;
+                InGuardEntry *ig = arena_push_aligned(sema_arena, InGuardEntry);
+                ig->index = p_ve;
+                ig->container = s->as.var_stmt.in_expr;
+                ig->is_ptr_guard = true;
+                ig->next = sema_in_guards;
+                sema_in_guards = ig;
+            }
             break;
         case STMT_IF: {
             sema_infer_expr(s->as.if_stmt.cond);

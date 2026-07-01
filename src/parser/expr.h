@@ -59,13 +59,26 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
 // <op> <expr>
 Expr *parse_unary_expr(Arena* arena, Parser* parser)
 {
-    // -, !, &
-    if (parser_match(TOKEN_MINUS) || parser_match(TOKEN_BANG) || parser_match(TOKEN_AMPERSAND) || parser_match(TOKEN_TILDE)) {
+    // -, !, ~  (arithmetic/logic unary)
+    if (parser_match(TOKEN_MINUS) || parser_match(TOKEN_BANG) || parser_match(TOKEN_TILDE)) {
         TokenKind op = parser->token.kind;
         parser_advance();
-        
         Expr *right = parse_unary_expr(arena, parser);
         return expr_unary(arena, op, right);
+    }
+
+    // &expr — address-of (produces a pointer to an array element)
+    if (parser_match(TOKEN_AMPERSAND)) {
+        parser_advance();
+        Expr *right = parse_unary_expr(arena, parser);
+        return expr_addr(arena, right);
+    }
+
+    // *expr — pointer dereference (safe when ptr in arr proven via in-guard)
+    if (parser_match(TOKEN_ASTERISK)) {
+        parser_advance();
+        Expr *right = parse_unary_expr(arena, parser);
+        return expr_deref(arena, right);
     }
 
     // mov <expr>
@@ -73,17 +86,6 @@ Expr *parse_unary_expr(Arena* arena, Parser* parser)
         parser_advance();
         Expr *right = parse_unary_expr(arena, parser);
         return expr_move(arena, right);
-    }
-
-    // mut <expr>
-    // but what about just `*` (dereference)? 
-    
-    // dereference *<expr>
-    if (parser_match(TOKEN_ASTERISK)) {
-        TokenKind op = parser->token.kind;
-        parser_advance();
-        Expr *right = parse_unary_expr(arena, parser);
-        return expr_unary(arena, op, right);
     }
 
     if (parser_match(TOKEN_KEYWORD_VAR)) {

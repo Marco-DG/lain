@@ -1,0 +1,51 @@
+// Original C (three-pointer, descending scan):
+//   int *p1 = nums1 + m - 1;
+//   int *p2 = nums2 + n - 1;
+//   int *out = nums1 + m + n - 1;
+//   while (p1 >= nums1 && p2 >= nums2) *out-- = (*p1 > *p2) ? *p1-- : *p2--;
+//   while (p2 >= nums2) *out-- = *p2--;
+//
+// Preconditions (caller's responsibility for m=0 or n=0):
+//   m >= 1, n >= 1  →  all three initial addresses are provably in-bounds
+//   nums1.len == m + n  (expressed in the type *i32[m + n])
+//   nums2.len == n      (expressed in the type *i32[n])
+//
+// Pointer semantics: `*T in arr` is a TYPE TAG, not a maintained invariant.
+//   p = p - 1 is pointer arithmetic (may temporarily exit range — intentional,
+//   it is the termination mechanism). `*p` is safe ONLY when `p in arr` is proven.
+//   The while conditions serve as in-guards before every dereference.
+//
+// Safety proofs: see internal/design/leetcode88_merge_design.md
+
+func merge(m usize >= 1, n usize >= 1, var nums1 *i32[m + n], nums2 *i32[n]) {
+
+    // Initializations — all provably in-bounds via VRA:
+    //   m >= 1  →  m-1   < m+n = nums1.len  ✓
+    //   n >= 1  →  n-1   < n   = nums2.len  ✓
+    //   m,n>=1  →  m+n-1 < m+n = nums1.len  ✓
+    var p1  in nums1 = &nums1[m - 1]
+    var p2  in nums2 = &nums2[n - 1]
+    var out in nums1 = &nums1[m + n - 1]
+
+    // C1 fix: `out in nums1` added → proves *out safe at every write.
+    // Measure: (p1 - &nums1[0]) + (p2 - &nums2[0]) decreases by 1 each iteration.
+    while p1 in nums1 and p2 in nums2 and out in nums1
+          decreasing (p1 - &nums1[0]) + (p2 - &nums2[0]) {
+        if *p1 > *p2 {
+            *out = *p1
+            p1 = p1 - 1
+        } else {
+            *out = *p2
+            p2 = p2 - 1
+        }
+        out = out - 1
+    }
+
+    // C8 fix: `out in nums1` added → proves *out safe in residual loop.
+    // Measure: (p2 - &nums2[0]) decreases by 1 each iteration.
+    while p2 in nums2 and out in nums1 decreasing p2 - &nums2[0] {
+        *out = *p2
+        p2 = p2 - 1
+        out = out - 1
+    }
+}

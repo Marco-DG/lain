@@ -327,8 +327,16 @@ Stmt *parse_var_stmt(Arena* arena, Parser* parser)
 
     // optional type annotation
     Type *type_annotation = NULL;
-    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_ASTERISK)) {
+    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) ||
+        parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_TYPEVAR)) {
         type_annotation = parse_type(arena, parser);
+    }
+
+    // optional `in <expr>` — local pointer invariant: var p *T in arr = &arr[k]
+    Expr *in_expr = NULL;
+    if (parser_match(TOKEN_KEYWORD_IN)) {
+        parser_advance();
+        in_expr = parse_expr(arena, parser);
     }
 
     // optional initializer; if absent with a type annotation, treat as `= undefined`
@@ -350,6 +358,7 @@ Stmt *parse_var_stmt(Arena* arena, Parser* parser)
     Stmt *s = stmt_var(arena, var_name, type_annotation, assigned_expr);
     s->as.var_stmt.is_mutable = true;
     s->as.var_stmt.explicit_undefined = explicit_undef;
+    s->as.var_stmt.in_expr = in_expr;
     return s;
 }
 
@@ -523,6 +532,8 @@ Stmt *parse_while_stmt(Arena *arena, Parser *parser) {
     Expr *cond = parse_expr(arena, parser);
 
     // 2) optional termination measure: `decreasing measure_expr`
+    // Skip EOLs before `decreasing` to allow multi-line while conditions.
+    parser_skip_eol();
     Expr *measure = NULL;
     if (parser_match(TOKEN_KEYWORD_DECREASING)) {
         parser_advance();

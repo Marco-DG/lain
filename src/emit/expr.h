@@ -198,28 +198,63 @@ void emit_expr(Expr *expr, int depth) {
       emit_expr(expr->as.binary_expr.right, depth);
       EMIT(")");
     } else if (expr->as.binary_expr.op == TOKEN_KEYWORD_IN) {
-      // idx in arr → (idx >= 0 && idx < arr.len)
-      Type *ct = expr->as.binary_expr.right->type;
+      Expr *lhs = expr->as.binary_expr.left;
+      Expr *rhs = expr->as.binary_expr.right;
+      Type *lty = lhs ? lhs->type : NULL;
+      Type *ct  = rhs ? rhs->type : NULL;
       if (ct) ct = sema_unwrap_type(ct);
-      EMIT("(");
-      emit_expr(expr->as.binary_expr.left, depth);
-      EMIT(" >= 0 && ");
-      emit_expr(expr->as.binary_expr.left, depth);
-      EMIT(" < ");
-      if (ct && ct->kind == TYPE_ARRAY && ct->array_len >= 0) {
-        EMIT("%lld", (long long)ct->array_len);
-      } else {
-        // Dynamic slice param: length is the hidden __len_NAME parameter.
-        Expr *rhs = expr->as.binary_expr.right;
-        if (rhs->kind == EXPR_IDENTIFIER && rhs->as.identifier_expr.id) {
-          Id *rname = rhs->as.identifier_expr.id;
-          EMIT("__len_%.*s", (int)rname->length, rname->name);
-        } else {
-          emit_expr(rhs, depth);
-          EMIT(".len");
+
+      if (lty && lty->kind == TYPE_POINTER) {
+        // Pointer in-guard: ptr in arr → (ptr >= arr_base && ptr < arr_base + arr_len)
+        // arr_base: the Fase7-decomposed C pointer name
+        // arr_len: derived from array type (literal, size_expr, or __len_ for dynamic)
+        EMIT("(");
+        emit_expr(lhs, depth);
+        EMIT(" >= ");
+        emit_expr(rhs, depth);
+        EMIT(" && ");
+        emit_expr(lhs, depth);
+        EMIT(" < ");
+        emit_expr(rhs, depth);
+        // Emit the length of rhs (the array)
+        if (ct && ct->kind == TYPE_ARRAY) {
+          if (ct->array_len >= 0) {
+            EMIT(" + %lld", (long long)ct->array_len);
+          } else if (ct->size_expr != NULL) {
+            EMIT(" + (");
+            emit_expr(ct->size_expr, depth);
+            EMIT(")");
+          } else {
+            // Dynamic slice: use __len_ synthetic param
+            if (rhs->kind == EXPR_IDENTIFIER && rhs->as.identifier_expr.id) {
+              EMIT(" + __len_%.*s", (int)rhs->as.identifier_expr.id->length,
+                   rhs->as.identifier_expr.id->name);
+            } else {
+              EMIT(".len");
+            }
+          }
         }
+        EMIT(")");
+      } else {
+        // idx in arr → (idx >= 0 && idx < arr.len)
+        EMIT("(");
+        emit_expr(lhs, depth);
+        EMIT(" >= 0 && ");
+        emit_expr(lhs, depth);
+        EMIT(" < ");
+        if (ct && ct->kind == TYPE_ARRAY && ct->array_len >= 0) {
+          EMIT("%lld", (long long)ct->array_len);
+        } else {
+          if (rhs->kind == EXPR_IDENTIFIER && rhs->as.identifier_expr.id) {
+            Id *rname = rhs->as.identifier_expr.id;
+            EMIT("__len_%.*s", (int)rname->length, rname->name);
+          } else {
+            emit_expr(rhs, depth);
+            EMIT(".len");
+          }
+        }
+        EMIT(")");
       }
-      EMIT(")");
     } else if (expr->as.binary_expr.op == TOKEN_PLUS_PERCENT
             || expr->as.binary_expr.op == TOKEN_MINUS_PERCENT
             || expr->as.binary_expr.op == TOKEN_ASTERISK_PERCENT) {
@@ -281,12 +316,29 @@ void emit_expr(Expr *expr, int depth) {
       EMIT(")) )");
       EMIT(" )");
     } else {
-      // Fallback for all other binary ops: +, -, *, /, %, <, ==, bitwise, etc.
-      EMIT("(");
-      emit_expr(expr->as.binary_expr.left, depth);
-      EMIT(" %s ", token_kind_to_str(expr->as.binary_expr.op));
-      emit_expr(expr->as.binary_expr.right, depth);
-      EMIT(")");
+      // Pointer subtraction ptr1 - ptr2 → (uintptr_t)(ptr1 - ptr2)
+      // This gives the element offset (ptrdiff_t cast to usize).
+      Type *lt = expr->as.binary_expr.left  ? expr->as.binary_expr.left->type  : NULL;
+      Type *rt = expr->as.binary_expr.right ? expr->as.binary_expr.right->type : NULL;
+      bool ptr_sub = lt && lt->kind == TYPE_POINTER &&
+                     rt && rt->kind == TYPE_POINTER &&
+                     expr->as.binary_expr.op == TOKEN_MINUS;
+      if (ptr_sub) {
+          EMIT("((uintptr_t)(");
+          emit_expr(expr->as.binary_expr.left, depth);
+          EMIT(") - (uintptr_t)(");
+          emit_expr(expr->as.binary_expr.right, depth);
+          EMIT(")) / sizeof(*");
+          emit_expr(expr->as.binary_expr.left, depth);
+          EMIT(")");
+      } else {
+          // Fallback for all other binary ops: +, -, *, /, %, <, ==, bitwise, etc.
+          EMIT("(");
+          emit_expr(expr->as.binary_expr.left, depth);
+          EMIT(" %s ", token_kind_to_str(expr->as.binary_expr.op));
+          emit_expr(expr->as.binary_expr.right, depth);
+          EMIT(")");
+      }
     }
     break;
   }
@@ -1047,6 +1099,35 @@ void emit_expr(Expr *expr, int depth) {
     EMIT("__result%d;\n", __match_id);
     emit_indent(depth);
     EMIT("})");
+    break;
+  }
+
+  case EXPR_ADDR: {
+    // &arr[k] — address of element.
+    // For Fase 7 decomposed arrays (T * arr), arr[k] is already a valid lvalue.
+    // We emit: arr + k  (pointer to element k)
+    // If inner is EXPR_INDEX: emit (base_ptr + index)
+    Expr *inner = expr->as.addr_expr.expr;
+    if (inner && inner->kind == EXPR_INDEX) {
+        EMIT("(");
+        emit_expr(inner->as.index_expr.target, depth);
+        EMIT(" + ");
+        emit_expr(inner->as.index_expr.index, depth);
+        EMIT(")");
+    } else {
+        EMIT("&(");
+        emit_expr(inner, depth);
+        EMIT(")");
+    }
+    break;
+  }
+
+  case EXPR_DEREF: {
+    // *ptr — dereference a pointer.
+    // Safe: verified by sema that ptr is in an in-guard (ptr in arr).
+    EMIT("(*");
+    emit_expr(expr->as.deref_expr.expr, depth);
+    EMIT(")");
     break;
   }
 

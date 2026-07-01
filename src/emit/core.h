@@ -189,7 +189,13 @@ const char *c_name_for_id(Id *id) {
   }
   
   for (int i = 0; i < len; i++) {
-      if (buf[i] == '.') buf[i] = '_';
+      char c = buf[i];
+      if (c == '.') buf[i] = '_';
+      // Sanitize any non-identifier char (spaces, hyphens, etc.) to underscore
+      else if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (c >= '0' && c <= '9') || c == '_')) {
+          buf[i] = '_';
+      }
   }
   return buf;
 }
