@@ -169,7 +169,7 @@ static void emit_forward_decl(Decl *decl, int depth) {
                         if (pt->mode == MODE_MUTABLE)
                             EMIT("%s * restrict", elem_buf);
                         else
-                            EMIT("const %s*", elem_buf);
+                            EMIT("const %s * restrict", elem_buf);
                     } else {
                         emit_param_type(pt, true);
                     }
@@ -405,7 +405,7 @@ void emit_decl(Decl* decl, int depth) {
                             if (pt->mode == MODE_MUTABLE)
                                 EMIT("%s * restrict %.*s", elem_buf, (int)pn->length, pn->name);
                             else
-                                EMIT("const %s* %.*s", elem_buf, (int)pn->length, pn->name);
+                                EMIT("const %s * restrict %.*s", elem_buf, (int)pn->length, pn->name);
                         } else {
                             // Use emit_param_type to print parameter type.
                             emit_param_type(pt, true);
