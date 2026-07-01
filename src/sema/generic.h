@@ -64,6 +64,12 @@ void generic_substitute_expr(Expr *e, const char *param_name, Type *actual_type)
         case EXPR_UNARY:
             generic_substitute_expr(e->as.unary_expr.right, param_name, actual_type);
             break;
+        case EXPR_ADDR:
+            generic_substitute_expr(e->as.addr_expr.expr, param_name, actual_type);
+            break;
+        case EXPR_DEREF:
+            generic_substitute_expr(e->as.deref_expr.expr, param_name, actual_type);
+            break;
         case EXPR_IDENTIFIER:
         case EXPR_LITERAL:
         case EXPR_FLOAT_LITERAL:

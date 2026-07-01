@@ -172,6 +172,12 @@ Expr *clone_expr(Arena *arena, Expr *e) {
             new_e->as.index_expr.target = clone_expr(arena, e->as.index_expr.target);
             new_e->as.index_expr.index  = clone_expr(arena, e->as.index_expr.index);
             break;
+        case EXPR_ADDR:
+            new_e->as.addr_expr.expr = clone_expr(arena, e->as.addr_expr.expr);
+            break;
+        case EXPR_DEREF:
+            new_e->as.deref_expr.expr = clone_expr(arena, e->as.deref_expr.expr);
+            break;
         case EXPR_MOVE:
             new_e->as.move_expr.expr = clone_expr(arena, e->as.move_expr.expr);
             break;
