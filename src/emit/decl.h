@@ -128,7 +128,12 @@ static void emit_forward_decl(Decl *decl, int depth) {
         if (decl->as.function_decl.return_type) {
             emit_type(decl->as.function_decl.return_type);
         } else {
-            EMIT("void");
+            const char *_fn = decl->as.function_decl.name->name;
+            size_t _fl = decl->as.function_decl.name->length;
+            if (_fl == 4 && strncmp(_fn, "main", 4) == 0)
+                EMIT("int32_t"); // C99: main must return int
+            else
+                EMIT("void");
         }
 
         const char *id_name = decl->as.function_decl.name->name;
@@ -355,6 +360,8 @@ void emit_decl(Decl* decl, int depth) {
             // Print return type and function name.
             if (decl->as.function_decl.return_type) {
                 emit_type(decl->as.function_decl.return_type);
+            } else if (is_main) {
+                EMIT("int32_t"); // C99: main must return int
             } else {
                 EMIT("void");
             }

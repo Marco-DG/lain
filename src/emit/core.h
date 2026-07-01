@@ -87,15 +87,16 @@ static bool emit_fixed_string_init(Type *ty, Expr *rhs, int depth) {
   char sliceBuf[256];
   c_name_for_type(ty, sliceBuf, sizeof sliceBuf);
 
-  // Emit initializer:
-  // Use direct brace initialization to support array fields in struct
-  EMIT("(%s){ .data = { ", sliceBuf);
+  // Emit C array initializer: { 0x78, 0x20, ... }
+  // (No struct wrapper — u8[N] is now a native C array)
+  (void)sliceBuf;
+  EMIT("{ ");
   for (size_t i = 0; i < fixed_len; i++) {
       unsigned v = (i < bytes_len) ? (unsigned)bytes[i] : 0u;
       EMIT("0x%02X", v);
       if (i + 1 < fixed_len) EMIT(", ");
   }
-  EMIT(" } }");
+  EMIT(" }");
   return true;
 }
 
@@ -143,9 +144,10 @@ static bool emit_slice_coercion(Type *target, Expr *source, int depth) {
         char targetBuf[256];
         c_name_for_type(target, targetBuf, sizeof targetBuf);
         
+        // Native C arrays decay to pointer — no .data field needed
         EMIT("(%s){ .len = %zu, .data = ", targetBuf, src_len);
         emit_expr(source, depth);
-        EMIT(".data }"); 
+        EMIT(" }");
         return true;
     }
     return false;

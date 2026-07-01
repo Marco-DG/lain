@@ -567,17 +567,14 @@ void emit_expr(Expr *expr, int depth) {
               int L = (int)lit->as.string_expr.length;
               const unsigned char *S = (const unsigned char*)lit->as.string_expr.value;
 
-              char sliceBuf[256];
-              c_name_for_type(ft, sliceBuf, sizeof sliceBuf);
-
-              // emit inline array literal with EXACT fixed_len bytes (no trailing NUL)
-              EMIT("(%s){ .data = (uint8_t[]){ ", sliceBuf);
+              // Native C array initializer: { 0x78, ... }
+              EMIT("{ ");
               for (size_t i = 0; i < fixed_len; i++) {
                 unsigned v = (i < (size_t)L) ? (unsigned)S[i] : 0u;
                 EMIT("0x%02X", v);
                 if (i + 1 < fixed_len) EMIT(", ");
               }
-              EMIT(" } }");
+              EMIT(" }");
 
               fld = fld->next;
               if (param) param = param->next; // Advance param too if it exists
@@ -616,16 +613,15 @@ void emit_expr(Expr *expr, int depth) {
       if (param) {
            Type *pt = param->decl->as.variable_decl.type;
 
-           // Auto-decay: u8[N] → *u8[N] (thin pointer) — emit arg.data
-           // *T[N] is now a thin pointer (const T *), so pass the data field.
+           // Auto-decay: u8[N] → *u8[N] (thin pointer).
+           // u8[N] is now a native C array — it decays to a pointer automatically.
            if (pt && pt->kind == TYPE_POINTER &&
                pt->element_type && pt->element_type->kind == TYPE_ARRAY &&
                pt->element_type->array_len >= 0) {
                Type *at = arg->expr->type ? sema_unwrap_type(arg->expr->type) : NULL;
                if (!at || (at->kind == TYPE_ARRAY && at->array_len >= 0)) {
                    emit_expr(arg->expr, depth);
-                   if (!is_user_type_fixed_array(at)) EMIT(".data");
-                   // user-type fixed arrays are native C arrays — already a pointer when used as expression
+                   // Native C arrays decay to pointer in C — no .data or & needed
                    goto next_arg;
                }
            }
