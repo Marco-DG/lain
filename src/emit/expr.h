@@ -205,36 +205,41 @@ void emit_expr(Expr *expr, int depth) {
       if (ct) ct = sema_unwrap_type(ct);
 
       if (lty && lty->kind == TYPE_POINTER) {
-        // Pointer in-guard: ptr in arr → (ptr >= arr_base && ptr < arr_base + arr_len)
-        // arr_base: the Fase7-decomposed C pointer name
-        // arr_len: derived from array type (literal, size_expr, or __len_ for dynamic)
-        EMIT("(");
-        emit_expr(lhs, depth);
-        EMIT(" >= ");
-        emit_expr(rhs, depth);
-        EMIT(" && ");
-        emit_expr(lhs, depth);
-        EMIT(" < ");
-        emit_expr(rhs, depth);
-        // Emit the length of rhs (the array)
-        if (ct && ct->kind == TYPE_ARRAY) {
-          if (ct->array_len >= 0) {
-            EMIT(" + %lld", (long long)ct->array_len);
-          } else if (ct->size_expr != NULL) {
-            EMIT(" + (");
-            emit_expr(ct->size_expr, depth);
+        // L3: check if the upper-bound was marked dead during sema analysis.
+        // Marked on the EXPR_BINARY(IN) node by l3_mark_dead_upper_bounds.
+        bool upper_bound_dead = expr->as.binary_expr.l3_upper_dead;
+
+        if (upper_bound_dead) {
+            // L3 eliminates upper bound: only emit lower-bound check
+            EMIT("(");
+            emit_expr(lhs, depth);
+            EMIT(" >= ");
+            emit_expr(rhs, depth);
             EMIT(")");
-          } else {
-            // Dynamic slice: use __len_ synthetic param
-            if (rhs->kind == EXPR_IDENTIFIER && rhs->as.identifier_expr.id) {
-              EMIT(" + __len_%.*s", (int)rhs->as.identifier_expr.id->length,
-                   rhs->as.identifier_expr.id->name);
-            } else {
-              EMIT(".len");
+        } else {
+            // Full pointer in-guard: (ptr >= arr_base && ptr < arr_base + arr_len)
+            EMIT("(");
+            emit_expr(lhs, depth);
+            EMIT(" >= ");
+            emit_expr(rhs, depth);
+            EMIT(" && ");
+            emit_expr(lhs, depth);
+            EMIT(" < ");
+            emit_expr(rhs, depth);
+            if (ct && ct->kind == TYPE_ARRAY) {
+                if (ct->array_len >= 0) {
+                    EMIT(" + %lld", (long long)ct->array_len);
+                } else if (ct->size_expr != NULL) {
+                    EMIT(" + ("); emit_expr(ct->size_expr, depth); EMIT(")");
+                } else {
+                    if (rhs->kind == EXPR_IDENTIFIER && rhs->as.identifier_expr.id) {
+                        EMIT(" + __len_%.*s", (int)rhs->as.identifier_expr.id->length,
+                             rhs->as.identifier_expr.id->name);
+                    } else { EMIT(".len"); }
+                }
             }
-          }
+            EMIT(")");
         }
-        EMIT(")");
       } else {
         // idx in arr → (idx >= 0 && idx < arr.len)
         EMIT("(");

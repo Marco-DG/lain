@@ -50,9 +50,20 @@ typedef struct InGuardEntry {
 static InGuardEntry *sema_in_guards = NULL;
 
 static bool expr_struct_equal(Expr *a, Expr *b); // defined later in sema.h
+static bool sema_is_affine_assign(Stmt *s, Id **out_var, long long *out_step); // defined below
 static void sema_push_in_guards(Expr *cond);
 static bool sema_is_in_guarded(Expr *index, Expr *container);
 static bool sema_is_ptr_in_guarded(Expr *ptr, Expr *arr);
+
+// L3: pointer monotone table — pointers whose upper bound is dead inside while loops.
+// When p is monotone non-increasing and was initialized at a valid index into arr,
+// the upper-bound check `p < arr + arr_len` is always true → dead code in emit.
+typedef struct PtrMonotoneEntry {
+    Id *ptr_id;           // the pointer variable (p1, p2, out)
+    Expr *arr_expr;       // the array it belongs to
+    struct PtrMonotoneEntry *next;
+} PtrMonotoneEntry;
+static PtrMonotoneEntry *sema_ptr_monotone = NULL;
 
 #include "sema/scope.h"
 #include "sema/resolve.h"
@@ -73,6 +84,127 @@ bool sema_dump_niche = false;  // set by main from args.dump_niche
 /*─────────────────────────────────────────────────────────────────╗
 │ Public entry: call this before emit                             │
 ╚─────────────────────────────────────────────────────────────────*/
+
+// L3: recursive body scanner for affine assignments.
+// Collects x = x ± c patterns across nested if/else branches.
+// If a variable has updates with DIFFERENT signs (both + and -) it is not monotone
+// and is excluded. Variables with SAME-sign updates only are registered.
+#define MAX_AFFINE_L3 32
+static void l3_scan_affine(StmtList *body, Id **vars, long long *steps,
+                            Range *inits, int *n, int max, RangeTable *ranges) {
+    for (StmtList *b = body; b; b = b->next) {
+        Stmt *s = b->stmt;
+        if (!s) continue;
+        Id *v = NULL; long long step = 0;
+        if (sema_is_affine_assign(s, &v, &step)) {
+            // Check for conflict: same var with opposite sign
+            bool conflict = false;
+            for (int i = 0; i < *n; i++) {
+                if (vars[i] && vars[i]->length == v->length &&
+                    memcmp(vars[i]->name, v->name, v->length) == 0) {
+                    // Same var seen before — conflict if sign differs
+                    if ((steps[i] > 0) != (step > 0)) {
+                        vars[i] = NULL; // mark as conflicted (not monotone)
+                    }
+                    conflict = true; break;
+                }
+            }
+            if (!conflict && *n < max) {
+                vars[*n] = v; steps[*n] = step;
+                inits[*n] = ranges ? range_get(ranges, v) : range_unknown();
+                (*n)++;
+            }
+        } else if (s->kind == STMT_IF) {
+            l3_scan_affine(s->as.if_stmt.then_body, vars, steps, inits, n, max, ranges);
+            l3_scan_affine(s->as.if_stmt.else_branch, vars, steps, inits, n, max, ranges);
+        }
+    }
+}
+
+// L3: walk the while condition and mark `l3_upper_dead` on pointer in-guards
+// where L3 proves the upper bound (ptr < arr + arr_len) is always true.
+static void l3_mark_dead_upper_bounds(Expr *cond, PtrMonotoneEntry *monotone) {
+    if (!cond || cond->kind != EXPR_BINARY) return;
+    if (cond->as.binary_expr.op == TOKEN_KEYWORD_AND) {
+        l3_mark_dead_upper_bounds(cond->as.binary_expr.left, monotone);
+        l3_mark_dead_upper_bounds(cond->as.binary_expr.right, monotone);
+    } else if (cond->as.binary_expr.op == TOKEN_KEYWORD_IN) {
+        Expr *lhs = cond->as.binary_expr.left;
+        Expr *rhs = cond->as.binary_expr.right;
+        if (lhs && lhs->type && lhs->type->kind == TYPE_POINTER &&
+            lhs->kind == EXPR_IDENTIFIER) {
+            Id *pid = lhs->as.identifier_expr.id;
+            for (PtrMonotoneEntry *e = monotone; e; e = e->next) {
+                if (e->ptr_id->length == pid->length &&
+                    memcmp(e->ptr_id->name, pid->name, pid->length) == 0 &&
+                    expr_struct_equal(e->arr_expr, rhs)) {
+                    cond->as.binary_expr.l3_upper_dead = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// L3 pointer monotone analysis: detect `p = p - 1` for pointer vars.
+// Registers p in sema_ptr_monotone so the emit can skip the upper-bound check.
+static void l3_register_ptr_monotone(StmtList *body) {
+    for (StmtList *b = body; b; b = b->next) {
+        Stmt *s = b->stmt;
+        if (!s) continue;
+        if (s->kind == STMT_ASSIGN) {
+            Expr *tgt = s->as.assign_stmt.target;
+            Expr *rhs = s->as.assign_stmt.expr;
+            // Pattern: p = p - 1 where p is TYPE_POINTER
+            if (tgt && tgt->kind == EXPR_IDENTIFIER &&
+                tgt->type && tgt->type->kind == TYPE_POINTER &&
+                rhs && rhs->kind == EXPR_BINARY &&
+                rhs->as.binary_expr.op == TOKEN_MINUS) {
+                Expr *l = rhs->as.binary_expr.left;
+                Expr *r = rhs->as.binary_expr.right;
+                // l must be same identifier as tgt, r must be literal 1
+                if (l && l->kind == EXPR_IDENTIFIER && r && r->kind == EXPR_LITERAL &&
+                    r->as.literal_expr.value > 0) {
+                    Id *pid = tgt->as.identifier_expr.id;
+                    Id *lid = l->as.identifier_expr.id;
+                    if (pid->length == lid->length &&
+                        memcmp(pid->name, lid->name, pid->length) == 0) {
+                        // Find this pointer's associated array from active in-guards
+                        for (InGuardEntry *ig = sema_in_guards; ig; ig = ig->next) {
+                            if (!ig->is_ptr_guard) continue;
+                            if (ig->index && ig->index->kind == EXPR_IDENTIFIER) {
+                                Id *gid = ig->index->as.identifier_expr.id;
+                                if (gid->length == pid->length &&
+                                    memcmp(gid->name, pid->name, pid->length) == 0) {
+                                    // Found: p is monotone non-increasing in arr
+                                    // Check not already registered
+                                    bool dup = false;
+                                    for (PtrMonotoneEntry *e = sema_ptr_monotone; e; e = e->next) {
+                                        if (e->ptr_id->length == pid->length &&
+                                            memcmp(e->ptr_id->name, pid->name, pid->length) == 0) {
+                                            dup = true; break;
+                                        }
+                                    }
+                                    if (!dup) {
+                                        PtrMonotoneEntry *entry = arena_push_aligned(sema_arena, PtrMonotoneEntry);
+                                        entry->ptr_id = pid;
+                                        entry->arr_expr = ig->container;
+                                        entry->next = sema_ptr_monotone;
+                                        sema_ptr_monotone = entry;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (s->kind == STMT_IF) {
+            l3_register_ptr_monotone(s->as.if_stmt.then_body);
+            l3_register_ptr_monotone(s->as.if_stmt.else_branch);
+        }
+    }
+}
 
 // Helper to widen variables modified in a loop to unknown
 // S15 (VRA L3): affine pattern detection.
@@ -739,10 +871,21 @@ static void walk_stmt(Stmt *s) {
             // Local pointer invariant: `var p *T in arr = &arr[k]`
             // Push a pointer in-guard so `*p` is safe when `p in arr` is checked.
             if (s->as.var_stmt.in_expr) {
+                // Use the RESOLVED (mangled) Id so that comparisons with assignment
+                // targets (which use the mangled name after sema_resolve_expr) work.
+                char raw_ptr[256];
+                int rlen = s->as.var_stmt.name->length < 255 ? s->as.var_stmt.name->length : 255;
+                memcpy(raw_ptr, s->as.var_stmt.name->name, rlen); raw_ptr[rlen] = '\0';
+                Symbol *psym = sema_lookup(raw_ptr);
+                const char *cname_ptr = psym ? psym->c_name : raw_ptr;
+                Id *resolved_id = arena_push_aligned(sema_arena, Id);
+                resolved_id->length = strlen(cname_ptr);
+                resolved_id->name = cname_ptr;
+
                 Expr *p_ve = arena_push_aligned(sema_arena, Expr);
                 memset(p_ve, 0, sizeof(Expr));
                 p_ve->kind = EXPR_IDENTIFIER;
-                p_ve->as.identifier_expr.id = s->as.var_stmt.name;
+                p_ve->as.identifier_expr.id = resolved_id; // mangled name
                 p_ve->type = s->as.var_stmt.type;
                 InGuardEntry *ig = arena_push_aligned(sema_arena, InGuardEntry);
                 ig->index = p_ve;
@@ -939,8 +1082,55 @@ static void walk_stmt(Stmt *s) {
                 sema_verify_bounded_while(s);
             }
 
-            // Widen modified variables BEFORE body
+            // L3 affine analysis for WHILE loops.
+            // Collect monotone variables before widening so we can recover
+            // their upper/lower bounds after the conservative widen.
+            Id   *wl3_vars[MAX_AFFINE_L3]; long long wl3_steps[MAX_AFFINE_L3];
+            Range wl3_inits[MAX_AFFINE_L3]; int n_wl3 = 0;
+            if (sema_ranges) {
+                l3_scan_affine(s->as.while_stmt.body,
+                               wl3_vars, wl3_steps, wl3_inits, &n_wl3, MAX_AFFINE_L3,
+                               sema_ranges);
+            }
+
+            // L3 pointer monotone: register pointers that only decrement.
+            // Then mark the while condition's `p in arr` expressions with dead upper bounds.
+            l3_register_ptr_monotone(s->as.while_stmt.body);
+            l3_mark_dead_upper_bounds(s->as.while_stmt.cond, sema_ptr_monotone);
+
+            // Widen modified variables BEFORE body (conservative)
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
+
+            // L3 apply: re-establish monotone bounds after widen.
+            // Non-increasing vars: upper bound = initial max (preserved throughout).
+            // Non-decreasing vars: lower bound = initial min (preserved throughout).
+            if (sema_ranges) {
+                for (int i = 0; i < n_wl3; i++) {
+                    if (!wl3_vars[i]) continue; // conflicted (not monotone)
+                    if (!wl3_inits[i].known) continue;
+                    Range cur = range_get(sema_ranges, wl3_vars[i]);
+                    if (wl3_steps[i] < 0) {
+                        // Monotone non-increasing: x ≤ initial_max throughout loop
+                        // Re-apply upper bound after widen
+                        if (!cur.known || cur.max > wl3_inits[i].max) {
+                            Range r = cur.known
+                                ? range_make(cur.min, wl3_inits[i].max)
+                                : range_make(INT64_MIN, wl3_inits[i].max);
+                            r.known = true;
+                            range_set(sema_ranges, wl3_vars[i], r);
+                        }
+                    } else if (wl3_steps[i] > 0) {
+                        // Monotone non-decreasing: x ≥ initial_min throughout loop
+                        if (!cur.known || cur.min < wl3_inits[i].min) {
+                            Range r = cur.known
+                                ? range_make(wl3_inits[i].min, cur.max)
+                                : range_make(wl3_inits[i].min, INT64_MAX);
+                            r.known = true;
+                            range_set(sema_ranges, wl3_vars[i], r);
+                        }
+                    }
+                }
+            }
 
             {   // Apply condition constraints + in-guards for body
                 RangeEntry *old_head = sema_ranges ? sema_ranges->head : NULL;
@@ -964,6 +1154,7 @@ static void walk_stmt(Stmt *s) {
 
             // Widen modified variables AFTER body
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
+
             break;
         case STMT_ASSIGN:
             sema_infer_expr(s->as.assign_stmt.expr);

@@ -381,6 +381,7 @@ typedef struct {
     Expr*       left;   // Left operand
     TokenKind   op;     // Operator
     Expr*       right;  // Right operand
+    bool        l3_upper_dead; // L3: upper-bound part of `ptr in arr` is dead code
 } ExprBinary;
 
 typedef struct {
