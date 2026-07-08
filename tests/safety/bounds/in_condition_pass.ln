@@ -1,6 +1,6 @@
 // Test: 'in' as bounds-proving condition in while and if
 
-func find_char(data u8[:0], target i32) i32 {
+func find_char(data *u8[:0], target i32) i32 {
     var i = 0
     while i in data decreasing data.len - i {
         if (data[i] as i32) == target { return i }
@@ -9,7 +9,7 @@ func find_char(data u8[:0], target i32) i32 {
     return 0 - 1
 }
 
-func peek_safe(data u8[:0], pos i32) i32 {
+func peek_safe(data *u8[:0], pos i32) i32 {
     if pos in data { return data[pos] as i32 }
     return 0
 }

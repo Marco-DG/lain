@@ -15,6 +15,7 @@ extern Decl *current_function_decl; // Defined in sema.h
 extern RangeTable *sema_ranges;     // Defined in sema.h
 extern bool sema_in_unsafe_block;   // Defined in sema.h
 extern bool sema_walk_phase;        // Defined in sema.h
+extern bool sema_addr_of_context;   // Defined in sema.h — set by EXPR_ADDR to relax &arr[len]
 
 // ...
 
@@ -1330,6 +1331,10 @@ void sema_infer_expr(Expr *e) {
 
   case EXPR_INDEX: {
     sema_infer_expr(e->as.index_expr.target);
+    // Capture and clear the addr-of flag before inferring the index sub-expression
+    // so that nested array accesses within the index are NOT treated as addr-of.
+    bool _is_addr_of = sema_addr_of_context;
+    sema_addr_of_context = false;
     sema_infer_expr(e->as.index_expr.index);
 
     Type *t = sema_unwrap_type(e->as.index_expr.target->type);
@@ -1369,7 +1374,7 @@ void sema_infer_expr(Expr *e) {
             if (guarded) {
                 /* bounds proven by 'in' guard — skip check */
             } else {
-                sema_check_bounds(sema_ranges, e->as.index_expr.index, t, e->as.index_expr.target);
+                sema_check_bounds(sema_ranges, e->as.index_expr.index, t, e->as.index_expr.target, _is_addr_of);
             }
         }
     } else if (t->kind == TYPE_POINTER) {
@@ -1462,7 +1467,10 @@ void sema_infer_expr(Expr *e) {
     // &arr[k] — address of an element.
     // Type: TYPE_POINTER(elem_type).
     // Mutability: if arr is mutable (var), the pointer is writable (no const).
+    bool _prev_addr_of = sema_addr_of_context;
+    sema_addr_of_context = true;
     sema_infer_expr(e->as.addr_expr.expr);
+    sema_addr_of_context = _prev_addr_of;
     Type *inner = e->as.addr_expr.expr ? e->as.addr_expr.expr->type : NULL;
     if (inner) {
         e->type = type_pointer(sema_arena, inner);
@@ -1492,9 +1500,26 @@ void sema_infer_expr(Expr *e) {
     // During resolve phase, in-guards aren't pushed yet — skip the check.
     if (sema_walk_phase && !sema_in_unsafe_block) {
         bool guarded = false;
-        for (InGuardEntry *ig = sema_in_guards; ig; ig = ig->next) {
-            if (ig->is_ptr_guard && expr_struct_equal(ig->index, e->as.deref_expr.expr)) {
-                guarded = true; break;
+        Expr *deref_ptr = e->as.deref_expr.expr;
+        // Forward in-guard: `p in arr` or `p in arr` pointer guard
+        for (InGuardEntry *ig = sema_in_guards; ig && !guarded; ig = ig->next) {
+            if (ig->is_ptr_guard && !ig->is_backward_guard &&
+                expr_struct_equal(ig->index, deref_ptr))
+                guarded = true;
+        }
+        // Backward in-guard: `*(p - k)` where k >= 1 and `p > arr` guard exists.
+        // Proves p > arr → p >= arr+1 → p-k >= arr (for k=1), so access is safe.
+        if (!guarded && deref_ptr && deref_ptr->kind == EXPR_BINARY &&
+            deref_ptr->as.binary_expr.op == TOKEN_MINUS) {
+            Expr *base   = deref_ptr->as.binary_expr.left;
+            Expr *offset = deref_ptr->as.binary_expr.right;
+            bool offset_pos = (offset && offset->kind == EXPR_LITERAL &&
+                               offset->as.literal_expr.value >= 1);
+            if (offset_pos) {
+                for (InGuardEntry *ig = sema_in_guards; ig && !guarded; ig = ig->next) {
+                    if (ig->is_backward_guard && expr_struct_equal(ig->index, base))
+                        guarded = true;
+                }
             }
         }
         if (!guarded) {
@@ -1505,6 +1530,20 @@ void sema_infer_expr(Expr *e) {
             diagnostic_show_line(e->line, e->col);
             exit(1);
         }
+    }
+    break;
+  }
+
+  case EXPR_BUILTIN: {
+    BuiltinKind bk = e->as.builtin_expr.builtin_kind;
+    if ((bk == BUILTIN_LIKELY || bk == BUILTIN_UNLIKELY) && e->as.builtin_expr.arg) {
+        sema_infer_expr(e->as.builtin_expr.arg);
+        // Propagate inner type; @likely/@unlikely are transparent wrappers
+        e->type = e->as.builtin_expr.arg->type;
+    } else if (bk == BUILTIN_ASSUME_ALIGNED && e->as.builtin_expr.arg) {
+        sema_infer_expr(e->as.builtin_expr.arg);
+        // Return type is same pointer type as the argument
+        e->type = e->as.builtin_expr.arg->type;
     }
     break;
   }

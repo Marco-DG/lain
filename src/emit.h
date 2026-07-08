@@ -19,7 +19,11 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
         fprintf(stderr, "Error: cannot open %s\n", filename);
         exit(1);
     }
-    EMIT("#include \"lain.h\"\n\n");
+    EMIT("#include <stdint.h>\n");
+    EMIT("#include <stddef.h>\n");
+    EMIT("#include <stdio.h>\n");
+    EMIT("#include <string.h>\n");
+    EMIT("#include <stdbool.h>\n\n");
     emitted_decls = decls; // so that lookup_function_decl can see all the functions we’re about to emit.
 
     // Emit forward declarations for structs and enums to satisfy function parameters
@@ -89,7 +93,7 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     // they depend on user-defined struct types (complete type required for arrays).
     emit_user_fixed_typedefs(output_file);
     fclose(output_file);
-    generate_lain_header("lain.h");
+    // lain.h is no longer generated — all types are inlined directly into out.c.
 }
 
 #endif // EMIT_H

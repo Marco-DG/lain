@@ -205,7 +205,8 @@ Expr *clone_expr(Arena *arena, Expr *e) {
             new_e->as.array_literal_expr.elements = clone_expr_list(arena, e->as.array_literal_expr.elements);
             break;
         case EXPR_BUILTIN:
-            // Shallow copy is fine — builtin_kind is a plain enum value
+            if (e->as.builtin_expr.arg)
+                new_e->as.builtin_expr.arg = clone_expr(arena, e->as.builtin_expr.arg);
             break;
     }
     return new_e;

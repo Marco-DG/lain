@@ -325,6 +325,41 @@ static bool omega_prove_nonneg(RangeTable *ctx, Expr *index_expr) {
 }
 
 /*
+ * Try to prove  index_expr <= bound_expr  given the VRA context `ctx`.
+ * Used for address-of one-past-end: &arr[arr.len] is valid (forming pointer,
+ * not dereferencing).  Same structure as omega_prove_lt but negated query is
+ * index > bound  ↔  bound - index <= -1  (strict, RHS offset by -1).
+ */
+static bool omega_prove_le(RangeTable *ctx, Expr *index_expr,
+                           Expr *bound_expr) {
+    if (!ctx || !index_expr || !bound_expr) return false;
+
+    OmegaSystem sys;
+    memset(&sys, 0, sizeof(sys));
+
+    OmegaLin idx_lin, bnd_lin;
+    memset(&idx_lin, 0, sizeof(idx_lin));
+    memset(&bnd_lin, 0, sizeof(bnd_lin));
+
+    if (!omega_decompose(&sys, index_expr, &idx_lin, +1)) return false;
+    if (!omega_decompose(&sys, bound_expr, &bnd_lin, +1)) return false;
+
+    if (sys.n_vars == 0)
+        return idx_lin.const_term <= bnd_lin.const_term;
+
+    /* Negated query: index > bound  ↔  bound - index <= -1 */
+    {
+        int64_t qc[OMEGA_MAX_VARS];
+        for (int i = 0; i < OMEGA_MAX_VARS; i++)
+            qc[i] = bnd_lin.coeff[i] - idx_lin.coeff[i];
+        omega_add_ineq(&sys, qc, idx_lin.const_term - bnd_lin.const_term - 1);
+    }
+
+    omega_extract_vra(&sys, ctx);
+    return !omega_fm_sat(&sys);
+}
+
+/*
  * Try to prove  index_expr < bound_expr  given the VRA context `ctx`.
  *
  * Returns true  → proved safe.

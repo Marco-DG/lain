@@ -4,7 +4,7 @@
 // Before Fix 3: n equality was only registered for pure x.len (delta=0).
 // With Fix 3: delta=-1 is tracked, so FM can cancel n and __len_arr.
 
-func last_n(arr i32[> 0], out i32[arr.len]) {
+func last_n(arr *i32[> 0], out *i32[arr.len]) {
     var n = arr.len - 1
     for i in 0..n {
         out[n - i] = arr[i]

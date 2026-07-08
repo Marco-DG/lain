@@ -3,7 +3,7 @@
 // After fix: [VRA] bounds error.
 // EXPECT: [VRA]
 
-proc take(arr u8[]) i32 {
+proc take(arr *u8[]) i32 {
     return arr[5]
 }
 

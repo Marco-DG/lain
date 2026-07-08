@@ -38,6 +38,18 @@ Token _parser_advance(Parser* parser) {
     // keep pulling tokens until it's not a comment
     do {
         parser->token = lexer_next(parser->lexer);
+        // Block comments may span multiple lines — count their internal newlines
+        // so that subsequent tokens get the correct line number.
+        if (parser->token.kind == TOKEN_MULTILINE_COMMENT) {
+            const char *p   = parser->token.start;
+            const char *end = p + parser->token.length;
+            for (; p < end; p++) {
+                if (*p == '\n') {
+                    parser->line++;
+                    parser->column = 1;
+                }
+            }
+        }
     } while (parser->token.kind == TOKEN_LINE_COMMENT
           || parser->token.kind == TOKEN_MULTILINE_COMMENT);
 
@@ -52,14 +64,9 @@ Token _parser_advance(Parser* parser) {
         parser->column += token.length;
     }
 
-    // normalize newline into a single canonical EOL token
-    // Semicolons are FORBIDDEN in Lain — newlines are the only statement terminator
-    if (token.kind == TOKEN_NEWLINE) {
+    // normalize newline and semicolon into a single canonical EOL token
+    if (token.kind == TOKEN_NEWLINE || token.kind == TOKEN_SEMICOLON) {
         token.kind = TOKEN_EOL;
-    } else if (token.kind == TOKEN_SEMICOLON) {
-        fprintf(stderr, "[E100] Error Ln %li, Col %li: Semicolons are not allowed in Lain. Use newlines to separate statements.\n",
-                parser->line, parser->column);
-        exit(1);
     }
 
     // write the (possibly normalized) token back into parser->token so

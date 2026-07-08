@@ -102,6 +102,66 @@ static bool func_returns_nonnull_ptr(Decl *decl) {
     return false;
 }
 
+// O-001 [access]: for each TYPE_ARRAY param whose size_expr is a simple
+// EXPR_IDENTIFIER referencing another param, emit
+//   __attribute__((access(read_only|read_write, ptr_idx, size_idx)))
+// This tells GCC the exact buffer bound for each sized-array parameter,
+// enabling better alias analysis and caller-side static bounds checking.
+// Only emitted when size_expr is a bare identifier (not a complex expression
+// like m+n) so the mapping to a parameter index is unambiguous.
+static void emit_access_attributes(Decl *decl) {
+    if (!decl) return;
+    DeclList *params = decl->as.function_decl.params;
+    // Build a flat array of (name, index) for lookup.
+    // NOTE: c_name_for_id returns a static buffer — must copy each string.
+    #define MAX_PARAMS 32
+    char pname_bufs[MAX_PARAMS][256]; const char *pnames[MAX_PARAMS]; int nparams = 0;
+    for (DeclList *p = params; p && nparams < MAX_PARAMS; p = p->next) {
+        if (!p->decl || p->decl->kind != DECL_VARIABLE) { pnames[nparams++] = NULL; continue; }
+        const char *cn = c_name_for_id(p->decl->as.variable_decl.name);
+        strncpy(pname_bufs[nparams], cn, 255); pname_bufs[nparams][255] = '\0';
+        pnames[nparams] = pname_bufs[nparams];
+        nparams++;
+    }
+    int pidx = 0;
+    for (DeclList *p = params; p; p = p->next, pidx++) {
+        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+        Type *pt = p->decl->as.variable_decl.type;
+        if (!pt || pt->kind != TYPE_ARRAY) continue;          // only array params
+        if (!pt->size_expr) continue;                          // unsized: skip
+        if (pt->size_expr->kind != EXPR_IDENTIFIER) continue; // complex expr: skip
+        // Find the size param by matching the mangled name
+        Id *sid = pt->size_expr->as.identifier_expr.id;
+        int sidx = -1;
+        for (int i = 0; i < nparams; i++) {
+            if (!pnames[i]) continue;
+            if ((size_t)sid->length == strlen(pnames[i]) &&
+                strncmp(sid->name, pnames[i], sid->length) == 0) {
+                sidx = i; break;
+            }
+        }
+        if (sidx < 0) {
+            // size param name not found by C name — try original Lain name
+            for (DeclList *q = params; q; q = q->next) {
+                if (!q->decl || q->decl->kind != DECL_VARIABLE) continue;
+                Id *qn = q->decl->as.variable_decl.name;
+                if (qn->length == sid->length &&
+                    strncmp(qn->name, sid->name, sid->length) == 0) {
+                    // found — compute its 0-based index
+                    int qi = 0;
+                    for (DeclList *r = params; r && r != q; r = r->next) qi++;
+                    sidx = qi; break;
+                }
+            }
+        }
+        if (sidx < 0) continue; // can't find size param
+        const char *mode = (pt->mode == MODE_MUTABLE) ? "read_write" : "read_only";
+        // GCC access indices are 1-based
+        EMIT("__attribute__((access(%s, %d, %d))) ", mode, pidx + 1, sidx + 1);
+    }
+    #undef MAX_PARAMS
+}
+
 static void emit_forward_decl(Decl *decl, int depth) {
     if (!decl) return;
     if (is_generic_function(decl)) return;
@@ -109,6 +169,17 @@ static void emit_forward_decl(Decl *decl, int depth) {
         if (decl->as.function_decl.return_type && decl->as.function_decl.return_type->kind == TYPE_META_TYPE) return; // Pure CTFE function
         
         emit_indent(depth);
+        // @cold / @hot: programmer-declared frequency hints.
+        if (decl->as.function_decl.is_cold) EMIT("__attribute__((cold)) ");
+        if (decl->as.function_decl.is_hot)  EMIT("__attribute__((hot)) ");
+        // @allocator: return pointer doesn't alias any existing pointer.
+        if (decl->as.function_decl.is_allocator)
+            EMIT("__attribute__((malloc, returns_nonnull)) ");
+        // @noreturn: function never returns (exit, panic, infinite loop).
+        if (decl->as.function_decl.is_noreturn)
+            EMIT("__attribute__((noreturn)) ");
+        // O-001 [access]: sized-array params → buffer bound annotation for GCC.
+        emit_access_attributes(decl);
         // Q-019 [pure/const]: forward-declare func without var params as
         // __attribute__((const)) when all params are by-value, otherwise
         // __attribute__((pure)). Both enable LICM/CSE; const is stronger.
@@ -341,6 +412,17 @@ void emit_decl(Decl* decl, int depth) {
             if (decl->is_private && !is_main) {
                 EMIT("static ");
             }
+            // @cold / @hot: programmer-declared frequency hints.
+            if (!is_main && decl->as.function_decl.is_cold) EMIT("__attribute__((cold)) ");
+            if (!is_main && decl->as.function_decl.is_hot)  EMIT("__attribute__((hot)) ");
+            // @allocator: fresh heap pointer — no aliasing with existing data.
+            if (!is_main && decl->as.function_decl.is_allocator)
+                EMIT("__attribute__((malloc, returns_nonnull)) ");
+            // @noreturn: function never returns.
+            if (!is_main && decl->as.function_decl.is_noreturn)
+                EMIT("__attribute__((noreturn)) ");
+            // O-001 [access]: sized-array params → buffer bound annotation.
+            if (!is_main) emit_access_attributes(decl);
             // Q-019 [pure/const]: func without var params gets __attribute__((const))
             // when all params are by value (no pointer args → no indirect reads),
             // or __attribute__((pure)) otherwise. Both allow LICM/CSE; const is
@@ -420,6 +502,180 @@ void emit_decl(Decl* decl, int depth) {
                 EMIT("void");
             }
             EMIT(") {\n");
+
+            // Q-022 [refinement-unreachable]: for every parameter with a refinement
+            // constraint (e.g. `m usize >= 1`), emit __builtin_unreachable() on the
+            // impossible branch. This tells GCC the range of each parameter at
+            // zero runtime cost — it eliminates dead branches and enables better
+            // prologue/address computation optimization.
+            {
+                DeclList *rp = decl->as.function_decl.params;
+                bool emitted_any = false;
+                while (rp) {
+                    if (rp->decl && rp->decl->kind == DECL_VARIABLE) {
+                        ExprList *cs = rp->decl->as.variable_decl.constraints;
+                        const char *pname = c_name_for_id(rp->decl->as.variable_decl.name);
+                        for (ExprList *c = cs; c; c = c->next) {
+                            Expr *ce = c->expr;
+                            if (!ce || ce->kind != EXPR_BINARY) continue;
+                            Expr *rhs = ce->as.binary_expr.right;
+                            if (!rhs || rhs->kind != EXPR_LITERAL) continue;
+                            TokenKind op = ce->as.binary_expr.op;
+                            long long val = (long long)rhs->as.literal_expr.value;
+                            emit_indent(depth + 1);
+                            // Emit the complementary (impossible) branch:
+                            // param >= lo  →  if (param < lo)  __builtin_unreachable();
+                            // param <= hi  →  if (param > hi)  __builtin_unreachable();
+                            // param > lo   →  if (param <= lo) __builtin_unreachable();
+                            // param < hi   →  if (param >= hi) __builtin_unreachable();
+                            if (op == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL)       // >= val
+                                EMIT("if (%s < %lld) __builtin_unreachable();\n", pname, val);
+                            else if (op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL)   // <= val
+                                EMIT("if (%s > %lld) __builtin_unreachable();\n", pname, val);
+                            else if (op == TOKEN_ANGLE_BRACKET_RIGHT)        // > val
+                                EMIT("if (%s <= %lld) __builtin_unreachable();\n", pname, val);
+                            else if (op == TOKEN_ANGLE_BRACKET_LEFT)         // < val
+                                EMIT("if (%s >= %lld) __builtin_unreachable();\n", pname, val);
+                            emitted_any = true;
+                        }
+                    }
+                    rp = rp->next;
+                }
+                (void)emitted_any;
+            }
+
+            // Sprint C [struct-invariant-assume]: for each struct-type parameter,
+            // emit if (!(param->field < bound)) __builtin_unreachable() for every
+            // field annotated `field Type in container`.  This propagates the
+            // struct invariant into the function body, letting GCC eliminate
+            // defensive branches that check the same condition.
+            //
+            // Case 1: scalar field, dynamic slice container  → if (!(f < c.len)) unreachable
+            // Case 2: scalar field, fixed array container   → if (!(f < N))     unreachable
+            // Case 3: pointer field, any container          → if (!(p >= c.data && p < c.data+N)) unreachable
+            {
+                DeclList *sp = decl->as.function_decl.params;
+                while (sp) {
+                    Decl *pd = sp->decl;
+                    sp = sp->next;
+                    if (!pd || pd->kind != DECL_VARIABLE) continue;
+                    Type *pt = pd->as.variable_decl.type;
+                    // Only non-primitive TYPE_SIMPLE (struct types)
+                    if (!pt || pt->kind != TYPE_SIMPLE || !pt->base_type) continue;
+                    if (is_primitive_type(pt)) continue;
+
+                    // Find the struct definition by matching Lain name.
+                    // pt->base_type->name is the Lain name ("Lexer").
+                    // After sema resolution, the base_type name might be the
+                    // module-qualified Lain name (e.g. "struct_inv_test_Lexer").
+                    // Try both: exact match first, then suffix match.
+                    Decl *sd = NULL;
+                    for (DeclList *dl = emitted_decls; dl; dl = dl->next) {
+                        if (!dl->decl || dl->decl->kind != DECL_STRUCT) continue;
+                        Id *sn = dl->decl->as.struct_decl.name;
+                        if (!sn) continue;
+                        // Try exact match by Lain name
+                        if (sn->length == pt->base_type->length &&
+                            strncmp(sn->name, pt->base_type->name, sn->length) == 0) {
+                            sd = dl->decl; break;
+                        }
+                        // Try C name match: c_name_for_id of struct decl name
+                        const char *struct_cname = c_name_for_id(sn);
+                        if (struct_cname && strlen(struct_cname) == (size_t)pt->base_type->length &&
+                            strncmp(struct_cname, pt->base_type->name, pt->base_type->length) == 0) {
+                            sd = dl->decl; break;
+                        }
+                    }
+                    if (!sd) continue;
+
+                    // Copy param C name (c_name_for_id uses a static buffer)
+                    const char *raw_pn = c_name_for_id(pd->as.variable_decl.name);
+                    char pnbuf[256]; strncpy(pnbuf, raw_pn, 255); pnbuf[255] = '\0';
+
+                    // Struct params are always pointer in C (const T* or T*)
+                    // so field access uses -> not .
+                    const char *acc = "->";
+
+                    // Scan struct fields for in_field annotations
+                    for (DeclList *f = sd->as.struct_decl.fields; f; f = f->next) {
+                        if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
+                        Id *in_fld = f->decl->as.variable_decl.in_field;
+                        if (!in_fld) continue;
+
+                        Type *fty = f->decl->as.variable_decl.type;
+                        if (!fty) continue;
+                        // Handle: scalar index (Cases 1+2) and pointer (Case 3)
+                        bool is_scalar = (fty->kind == TYPE_SIMPLE);
+                        bool is_ptr    = (fty->kind == TYPE_POINTER);
+                        if (!is_scalar && !is_ptr) continue;
+
+                        Id *fname = f->decl->as.variable_decl.name;
+
+                        // Find the container field by matching in_fld name
+                        Type *cty = NULL; Id *cname_id = NULL;
+                        for (DeclList *cf = sd->as.struct_decl.fields; cf; cf = cf->next) {
+                            if (!cf->decl || cf->decl->kind != DECL_VARIABLE) continue;
+                            Id *cfn = cf->decl->as.variable_decl.name;
+                            if (!cfn || cfn->length != in_fld->length) continue;
+                            if (strncmp(cfn->name, in_fld->name, in_fld->length) != 0) continue;
+                            cty = cf->decl->as.variable_decl.type;
+                            cname_id = cfn;
+                            break;
+                        }
+                        if (!cty || !cname_id) continue;
+
+                        // Pre-format names to avoid repeated %.*s verbosity
+                        char fnbuf[256], cnbuf[256];
+                        snprintf(fnbuf, sizeof fnbuf, "%.*s",
+                                 (int)fname->length, fname->name);
+                        snprintf(cnbuf, sizeof cnbuf, "%.*s",
+                                 (int)cname_id->length, cname_id->name);
+
+                        emit_indent(depth + 1);
+                        if (is_scalar) {
+                            if (cty->kind == TYPE_ARRAY && cty->array_len == -1) {
+                                // Case 1: dynamic slice *T[] — bound = container.len
+                                EMIT("if (!(%s%s%s < %s%s%s.len)) __builtin_unreachable();\n",
+                                     pnbuf, acc, fnbuf, pnbuf, acc, cnbuf);
+                            } else if (cty->kind == TYPE_ARRAY && cty->array_len >= 0) {
+                                // Case 2: fixed array T[N] — bound = N (compile-time)
+                                EMIT("if (!(%s%s%s < %lld)) __builtin_unreachable();\n",
+                                     pnbuf, acc, fnbuf, (long long)cty->array_len);
+                            }
+                        } else {
+                            // Case 3: pointer field — two-sided bound check
+                            if (cty->kind == TYPE_ARRAY && cty->array_len == -1) {
+                                // slice container: ptr >= arr.data && ptr < arr.data + arr.len
+                                EMIT("if (!(%s%s%s >= %s%s%s.data && %s%s%s < %s%s%s.data + %s%s%s.len)) __builtin_unreachable();\n",
+                                     pnbuf, acc, fnbuf,
+                                     pnbuf, acc, cnbuf,
+                                     pnbuf, acc, fnbuf,
+                                     pnbuf, acc, cnbuf,
+                                     pnbuf, acc, cnbuf);
+                            } else if (cty->kind == TYPE_ARRAY && cty->array_len >= 0) {
+                                // fixed array container: ptr >= base && ptr < base + N
+                                if (is_user_type_fixed_array(cty)) {
+                                    // native C array T arr[N]: decays to pointer
+                                    EMIT("if (!(%s%s%s >= %s%s%s && %s%s%s < %s%s%s + %lld)) __builtin_unreachable();\n",
+                                         pnbuf, acc, fnbuf,
+                                         pnbuf, acc, cnbuf,
+                                         pnbuf, acc, fnbuf,
+                                         pnbuf, acc, cnbuf,
+                                         (long long)cty->array_len);
+                                } else {
+                                    // Fixed_T_N struct: .data is the array field
+                                    EMIT("if (!(%s%s%s >= %s%s%s.data && %s%s%s < %s%s%s.data + %lld)) __builtin_unreachable();\n",
+                                         pnbuf, acc, fnbuf,
+                                         pnbuf, acc, cnbuf,
+                                         pnbuf, acc, fnbuf,
+                                         pnbuf, acc, cnbuf,
+                                         (long long)cty->array_len);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             // Inject destructuring initialization
             param = decl->as.function_decl.params;

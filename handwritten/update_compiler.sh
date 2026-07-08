@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: bash update_compiler.sh  (NOT sh — requires bash for ${BASH_SOURCE[0]})
 # Rebuilds the Lain compiler from source and copies the binary here.
 # Run this after modifying the compiler source to get the updated version.
 

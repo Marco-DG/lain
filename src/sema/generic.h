@@ -130,7 +130,8 @@ void generic_substitute_expr(Expr *e, const char *param_name, Type *actual_type)
             }
             break;
         case EXPR_BUILTIN:
-            // No type references in builtins
+            if (e->as.builtin_expr.arg)
+                generic_substitute_expr(e->as.builtin_expr.arg, param_name, actual_type);
             break;
     }
 }

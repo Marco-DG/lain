@@ -1,5 +1,5 @@
 // Index-based linked list using a fixed arena.
-// Nodes live in arr[]; next = -1 means end of list.
+// Nodes live in *arr[]; next = -1 means end of list.
 // pool_push uses if-in guard to prove the write is in bounds.
 // list_sum uses while-in guard: traversal of a cyclic structure
 // is not provably terminating, so it must be proc.
@@ -11,7 +11,7 @@ type Node {
     next i32
 }
 
-func pool_push(var arr Node[], var len i32, head i32, val i32) i32 {
+func pool_push(var arr *Node[], var len i32, head i32, val i32) i32 {
     if len in arr {
         var n Node
         n.val  = val
@@ -24,7 +24,7 @@ func pool_push(var arr Node[], var len i32, head i32, val i32) i32 {
     return -1
 }
 
-proc list_sum(arr Node[], head i32) i32 {
+proc list_sum(arr *Node[], head i32) i32 {
     var s = 0
     var cur = head
     while cur in arr {

@@ -1,7 +1,7 @@
-// Sprint 5 / Q-004 step B: function returning u8[] borrows from input.
+// Sprint 5 / Q-004 step B: function returning *u8[] borrows from input.
 // The returned slice can be read while the source buffer is alive.
 
-func first_half(s u8[]) u8[] {
+func first_half(s *u8[]) *u8[] {
     return s
 }
 

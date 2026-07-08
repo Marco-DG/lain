@@ -124,6 +124,15 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
             *p = '_';
         }
     }
+    // C identifiers cannot start with a digit: prepend '_'
+    if (safe_module_path[0] >= '0' && safe_module_path[0] <= '9') {
+        size_t old_len = strlen(safe_module_path);
+        char *prefixed = malloc(old_len + 2);
+        prefixed[0] = '_';
+        memcpy(prefixed + 1, safe_module_path, old_len + 1);
+        free(safe_module_path);
+        safe_module_path = prefixed;
+    }
 
     for (DeclList *dl = decls; dl; dl = dl->next) {
       Decl *d = dl->decl;
@@ -645,17 +654,37 @@ void sema_resolve_stmt(Stmt *s) {
     break;
   
   case STMT_WHILE: {
-    // Purity: while loops without a termination measure are banned in pure functions
+    // Purity: while loops without a termination measure are banned in pure functions,
+    // UNLESS the condition consists entirely of pointer-in-arr guards (p in arr where
+    // p has TYPE_POINTER): the walk phase will auto-synthesize the measure from the
+    // monotone pointer decrement pattern.
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         if (!s->as.while_stmt.measure) {
-            fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination measure "
-                    "are not allowed in pure function '%.*s'. "
-                    "Add 'decreasing <measure>' or use 'proc'.\n",
-                    s->line, s->col,
-                    (int)current_function_decl->as.function_decl.name->length,
-                    current_function_decl->as.function_decl.name->name);
-            diagnostic_show_line(s->line, s->col);
-            exit(1);
+            // Structural scan: any `expr in expr` in condition → defer to walk phase
+            bool has_in_cond = false;
+            {
+                Expr *stk[16]; int top = 0; stk[top++] = s->as.while_stmt.cond;
+                while (top > 0) {
+                    Expr *e = stk[--top];
+                    if (!e || e->kind != EXPR_BINARY) continue;
+                    if (e->as.binary_expr.op == TOKEN_KEYWORD_IN) { has_in_cond = true; break; }
+                    if (e->as.binary_expr.op == TOKEN_KEYWORD_AND && top < 14) {
+                        stk[top++] = e->as.binary_expr.left;
+                        stk[top++] = e->as.binary_expr.right;
+                    }
+                }
+            }
+            if (!has_in_cond) {
+                fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination measure "
+                        "are not allowed in pure function '%.*s'. "
+                        "Add 'decreasing <measure>' or use 'proc'.\n",
+                        s->line, s->col,
+                        (int)current_function_decl->as.function_decl.name->length,
+                        current_function_decl->as.function_decl.name->name);
+                diagnostic_show_line(s->line, s->col);
+                exit(1);
+            }
+            // has_in_cond: defer — walk phase will auto-infer or emit E011
         }
     }
     // Resolve condition, measure, and body
@@ -1199,16 +1228,25 @@ void sema_resolve_expr(Expr *e) {
     break;
 
   case EXPR_BUILTIN: {
-    // Resolve @os / @arch to compile-time integer literals
-    int value = 0;
     switch (e->as.builtin_expr.builtin_kind) {
-        case BUILTIN_OS:   value = LAIN_TARGET_OS;   break;
-        case BUILTIN_ARCH: value = LAIN_TARGET_ARCH; break;
+        case BUILTIN_OS:
+        case BUILTIN_ARCH: {
+            // Resolve @os / @arch to compile-time integer literals
+            int value = (e->as.builtin_expr.builtin_kind == BUILTIN_OS)
+                        ? LAIN_TARGET_OS : LAIN_TARGET_ARCH;
+            e->kind = EXPR_LITERAL;
+            e->as.literal_expr.value = value;
+            e->type = get_builtin_i32_type();
+            break;
+        }
+        case BUILTIN_LIKELY:
+        case BUILTIN_UNLIKELY:
+        case BUILTIN_ASSUME_ALIGNED:
+            // Resolve the inner argument, keep node as-is
+            if (e->as.builtin_expr.arg)
+                sema_resolve_expr(e->as.builtin_expr.arg);
+            break;
     }
-    // Replace this node in-place with a literal
-    e->kind = EXPR_LITERAL;
-    e->as.literal_expr.value = value;
-    e->type = get_builtin_i32_type();
     break;
   }
 

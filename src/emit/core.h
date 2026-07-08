@@ -179,16 +179,24 @@ Id *get_root_base_type(Type *type) {
 
 const char *c_name_for_id(Id *id) {
   static char buf[1024];
-  int len = id->length < (int)sizeof(buf) - 1 ? id->length : (int)sizeof(buf) - 1;
-  memcpy(buf, id->name, len);
-  buf[len] = '\0';
+  int len = id->length < (int)sizeof(buf) - 2 ? id->length : (int)sizeof(buf) - 2;
+  int offset = 0;
+
+  // C identifiers cannot start with a digit: prefix with '_'
+  if (len > 0 && id->name[0] >= '0' && id->name[0] <= '9') {
+      buf[0] = '_';
+      offset = 1;
+  }
+
+  memcpy(buf + offset, id->name, len);
+  buf[len + offset] = '\0';
 
   Symbol *sym = sema_lookup(buf);
   if (sym) {
       return sym->c_name;
   }
   
-  for (int i = 0; i < len; i++) {
+  for (int i = offset; i < len + offset; i++) {
       char c = buf[i];
       if (c == '.') buf[i] = '_';
       // Sanitize any non-identifier char (spaces, hyphens, etc.) to underscore
@@ -199,6 +207,7 @@ const char *c_name_for_id(Id *id) {
   }
   return buf;
 }
+
 
 static bool is_primitive_type(Type *t) {
     if (!t) return false;

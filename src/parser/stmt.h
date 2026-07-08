@@ -90,6 +90,31 @@ StmtList* parse_stmt_list(Arena* arena, Parser* parser) {
              break;
         }
 
+        // If the just-parsed if-stmt has no else branch yet, the `else` may be on
+        // the next line (when `;` is used as separator inside the if-body).
+        // Consume EOLs and attach the else branch if found.
+        if (stmt && stmt->kind == STMT_IF && !stmt->as.if_stmt.else_branch &&
+            parser_match(TOKEN_EOL)) {
+            while (parser_match(TOKEN_EOL)) parser_advance();
+            if (parser_match(TOKEN_KEYWORD_ELSE)) {
+                parser_advance(); // consume `else`
+                if (parser_match(TOKEN_KEYWORD_IF)) {
+                    Stmt *nested = parse_if_stmt(arena, parser);
+                    stmt->as.if_stmt.else_branch = stmt_list(arena, nested);
+                } else {
+                    parser_expect(TOKEN_L_BRACE, "Expected '{' after else");
+                    parser_advance();
+                    stmt->as.if_stmt.else_branch = parse_stmt_list(arena, parser);
+                    parser_expect(TOKEN_R_BRACE, "Expected '}' after else block");
+                    parser_advance();
+                }
+            }
+            // EOLs already consumed; jump to next loop iteration directly
+            if (parser_match(TOKEN_R_BRACE)) break;
+            parser_skip_eol();
+            continue;
+        }
+
         // Deve esserci un terminatore (newline o semicolon)
         parser_expect_eol("Expected ';' or newline after statement");
         parser_advance();

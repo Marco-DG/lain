@@ -43,7 +43,8 @@ static void diagnostic_show_line(isize line, isize col) {
 typedef struct InGuardEntry {
     Expr *index;
     Expr *container;
-    bool is_ptr_guard; // true when index is a pointer and container is its array
+    bool is_ptr_guard;      // true when index is a pointer and container is its array
+    bool is_backward_guard; // true when guard is `p > arr` (backward iteration)
     struct InGuardEntry *next;
 } InGuardEntry;
 
@@ -61,9 +62,19 @@ static bool sema_is_ptr_in_guarded(Expr *ptr, Expr *arr);
 typedef struct PtrMonotoneEntry {
     Id *ptr_id;           // the pointer variable (p1, p2, out)
     Expr *arr_expr;       // the array it belongs to
+    Expr *init_idx;       // the index k in `var p in arr = &arr[k]` (for lower bound proof)
+    bool unconditional;   // true if p = p-1 only at top level (not in if/else)
     struct PtrMonotoneEntry *next;
 } PtrMonotoneEntry;
 static PtrMonotoneEntry *sema_ptr_monotone = NULL;
+
+// L3 init-index table: records the initialization index for ptr in arr variables.
+typedef struct PtrInitIdxEntry {
+    Id *ptr_id;       // mangled name
+    Expr *init_idx;   // the k in &arr[k]
+    struct PtrInitIdxEntry *next;
+} PtrInitIdxEntry;
+static PtrInitIdxEntry *sema_ptr_init_idx = NULL;
 
 #include "sema/scope.h"
 #include "sema/resolve.h"
@@ -80,6 +91,7 @@ RangeTable *sema_ranges = NULL;
 bool sema_in_unsafe_block = false;
 bool sema_walk_phase = false;
 bool sema_dump_niche = false;  // set by main from args.dump_niche
+bool sema_addr_of_context = false; // set by EXPR_ADDR to relax &arr[len] in bounds check
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Public entry: call this before emit                             │
@@ -117,6 +129,172 @@ static void l3_scan_affine(StmtList *body, Id **vars, long long *steps,
         } else if (s->kind == STMT_IF) {
             l3_scan_affine(s->as.if_stmt.then_body, vars, steps, inits, n, max, ranges);
             l3_scan_affine(s->as.if_stmt.else_branch, vars, steps, inits, n, max, ranges);
+        }
+    }
+}
+
+// L3: check if ptr_id is ONLY decremented at the top level of body (not in if/else).
+// Unconditionally decremented pointers decrement every iteration, not conditionally.
+static bool l3_is_unconditional_decrement(StmtList *body, Id *pid) {
+    bool found_top = false, found_nested = false;
+    for (StmtList *b = body; b; b = b->next) {
+        Stmt *s = b->stmt;
+        if (!s) continue;
+        Id *v = NULL; long long step = 0;
+        if (sema_is_affine_assign(s, &v, &step) && step < 0 &&
+            v && v->length == pid->length && memcmp(v->name, pid->name, v->length) == 0) {
+            found_top = true;
+        } else if (s->kind == STMT_IF) {
+            // Scan then + else branches for nested decrements
+            for (StmtList *tb = s->as.if_stmt.then_body; tb; tb = tb->next) {
+                Id *v2 = NULL; long long s2 = 0;
+                if (sema_is_affine_assign(tb->stmt, &v2, &s2) && s2 < 0 &&
+                    v2 && v2->length == pid->length && memcmp(v2->name, pid->name, v2->length) == 0)
+                    found_nested = true;
+            }
+            for (StmtList *eb = s->as.if_stmt.else_branch; eb; eb = eb->next) {
+                Id *v2 = NULL; long long s2 = 0;
+                if (sema_is_affine_assign(eb->stmt, &v2, &s2) && s2 < 0 &&
+                    v2 && v2->length == pid->length && memcmp(v2->name, pid->name, v2->length) == 0)
+                    found_nested = true;
+            }
+        }
+    }
+    return found_top && !found_nested;
+}
+
+// Auto-measure: check if body contains p = p - k (ptr decrement) for a given ptr id.
+static bool body_has_ptr_decrement(StmtList *body, Id *pid) {
+    for (StmtList *l = body; l; l = l->next) {
+        Stmt *s = l->stmt;
+        if (!s) continue;
+        if (s->kind == STMT_ASSIGN) {
+            Expr *tgt = s->as.assign_stmt.target;
+            Expr *val = s->as.assign_stmt.expr;
+            if (tgt && tgt->kind == EXPR_IDENTIFIER) {
+                Id *tid = tgt->as.identifier_expr.id;
+                if (tid->length == pid->length && memcmp(tid->name, pid->name, pid->length) == 0) {
+                    if (val && val->kind == EXPR_BINARY && val->as.binary_expr.op == TOKEN_MINUS) {
+                        Expr *vlhs = val->as.binary_expr.left;
+                        if (vlhs && vlhs->kind == EXPR_IDENTIFIER) {
+                            Id *vid = vlhs->as.identifier_expr.id;
+                            if (vid->length == pid->length && memcmp(vid->name, pid->name, pid->length) == 0)
+                                return true;
+                        }
+                    }
+                }
+            }
+        }
+        if (s->kind == STMT_IF) {
+            if (body_has_ptr_decrement(s->as.if_stmt.then_body, pid)) return true;
+            if (body_has_ptr_decrement(s->as.if_stmt.else_branch, pid)) return true;
+        }
+    }
+    return false;
+}
+
+// L3 lower bound: mark `l3_lower_dead` on pointer in-guards where the lower-bound
+// check `ptr >= arr_base` is provably always true, enabling GCC memcpy detection.
+//
+// Strategy A (algebraic): for ptr P with init index k_P and others with sum k_others:
+//   eval(k_P - k_others, ranges).min >= 0 → lower bound dead.
+//   Covers: out.init = (m+n-1) vs p1.init+p2.init = (m-1)+(n-1) → diff = 1 >= 0 ✓
+//
+// Strategy B (co-decrement): if ALL monotone ptrs in condition decrement unconditionally
+//   (every iteration) → they stay in sync → lower bounds are mutually implied → dead.
+//   Covers second loop: p2 and out both unconditionally decrement together.
+static void l3_mark_dead_lower_bounds(Expr *cond, PtrMonotoneEntry *monotone,
+                                       StmtList *body) {
+    if (!cond) return;
+
+    // Collect all `p in arr` pointer in-guards in this condition
+    #define MAX_PTR_CONDS 8
+    Expr *cond_ptrs[MAX_PTR_CONDS]; int n_conds = 0;
+    // Recursive collection from AND chain
+    Expr *stack[32]; int top = 0; stack[top++] = cond;
+    while (top > 0) {
+        Expr *e = stack[--top];
+        if (!e || e->kind != EXPR_BINARY) continue;
+        if (e->as.binary_expr.op == TOKEN_KEYWORD_AND) {
+            if (top < 30) { stack[top++] = e->as.binary_expr.left; stack[top++] = e->as.binary_expr.right; }
+        } else if (e->as.binary_expr.op == TOKEN_KEYWORD_IN) {
+            Expr *lhs = e->as.binary_expr.left;
+            if (lhs && lhs->type && lhs->type->kind == TYPE_POINTER && n_conds < MAX_PTR_CONDS)
+                cond_ptrs[n_conds++] = e; // the whole `p in arr` expr
+        }
+    }
+    if (n_conds == 0) return;
+
+    // Strategy B: co-decrement — all ptrs unconditionally decremented
+    bool all_unconditional = true;
+    for (int i = 0; i < n_conds; i++) {
+        Expr *lhs = cond_ptrs[i]->as.binary_expr.left;
+        if (lhs->kind != EXPR_IDENTIFIER) { all_unconditional = false; break; }
+        Id *pid = lhs->as.identifier_expr.id;
+        if (!l3_is_unconditional_decrement(body, pid)) { all_unconditional = false; break; }
+    }
+    if (all_unconditional && n_conds >= 2) {
+        // All pointers decrement every iteration → they stay in sync.
+        // Mark lower bounds dead ONLY for pointers in MUTABLE arrays (output pointers).
+        // Read-only input pointers (const arr) retain their lower-bound check as the
+        // true termination condition — eliminating them would cause infinite loops.
+        for (int i = 0; i < n_conds; i++) {
+            Expr *rhs = cond_ptrs[i]->as.binary_expr.right;
+            if (!rhs) continue;
+            Type *arr_ty = rhs->type ? sema_unwrap_type(rhs->type) : NULL;
+            // Mutable array param (var *T[]): its associated pointer is "output"
+            // and its lower bound is implied by the input pointer's condition.
+            bool is_mutable_arr = arr_ty && arr_ty->mode == MODE_MUTABLE;
+            if (is_mutable_arr)
+                cond_ptrs[i]->as.binary_expr.l3_lower_dead = true;
+        }
+        return;
+    }
+
+    // Strategy A: algebraic — for each ptr P, check k_P - sum(k_others) >= 0
+    for (int i = 0; i < n_conds; i++) {
+        Expr *lhs = cond_ptrs[i]->as.binary_expr.left;
+        if (lhs->kind != EXPR_IDENTIFIER) continue;
+        Id *pid = lhs->as.identifier_expr.id;
+
+        // Find init_idx for this pointer
+        Expr *my_idx = NULL;
+        for (PtrInitIdxEntry *pie = sema_ptr_init_idx; pie; pie = pie->next) {
+            if (pie->ptr_id->length == pid->length &&
+                memcmp(pie->ptr_id->name, pid->name, pid->length) == 0) {
+                my_idx = pie->init_idx; break;
+            }
+        }
+        if (!my_idx) continue;
+
+        // Build sum of OTHER ptrs' init indices
+        Expr *sum_others = NULL;
+        for (int j = 0; j < n_conds; j++) {
+            if (j == i) continue;
+            Expr *other_lhs = cond_ptrs[j]->as.binary_expr.left;
+            if (other_lhs->kind != EXPR_IDENTIFIER) continue;
+            Id *opid = other_lhs->as.identifier_expr.id;
+            Expr *other_idx = NULL;
+            for (PtrInitIdxEntry *pie = sema_ptr_init_idx; pie; pie = pie->next) {
+                if (pie->ptr_id->length == opid->length &&
+                    memcmp(pie->ptr_id->name, opid->name, opid->length) == 0) {
+                    other_idx = pie->init_idx; break;
+                }
+            }
+            if (!other_idx) { sum_others = NULL; break; } // can't build sum
+            if (!sum_others) sum_others = other_idx;
+            else sum_others = expr_binary(sema_arena, TOKEN_PLUS, sum_others, other_idx);
+        }
+        // Single-pointer loop: the lower bound is the termination condition itself — never dead.
+        // Multi-pointer: skip if we couldn't build sum_others for this pointer.
+        if (!sum_others) continue;
+
+        // Evaluate diff = my_idx - sum_others
+        Expr *diff_expr = expr_binary(sema_arena, TOKEN_MINUS, my_idx, sum_others);
+        Range diff = sema_eval_range(diff_expr, sema_ranges);
+        if (diff.known && diff.min >= 0) {
+            // Lower bound provably dead: ptr.offset >= other_offsets_sum >= 0
+            cond_ptrs[i]->as.binary_expr.l3_lower_dead = true;
         }
     }
 }
@@ -189,6 +367,16 @@ static void l3_register_ptr_monotone(StmtList *body) {
                                         PtrMonotoneEntry *entry = arena_push_aligned(sema_arena, PtrMonotoneEntry);
                                         entry->ptr_id = pid;
                                         entry->arr_expr = ig->container;
+                                        // init_idx: look up from sema_ptr_init_idx
+                                        entry->init_idx = NULL;
+                                        for (PtrInitIdxEntry *pie = sema_ptr_init_idx; pie; pie = pie->next) {
+                                            if (pie->ptr_id->length == pid->length &&
+                                                memcmp(pie->ptr_id->name, pid->name, pid->length) == 0) {
+                                                entry->init_idx = pie->init_idx; break;
+                                            }
+                                        }
+                                        // unconditional: decrement only at top level?
+                                        entry->unconditional = l3_is_unconditional_decrement(body, pid);
                                         entry->next = sema_ptr_monotone;
                                         sema_ptr_monotone = entry;
                                     }
@@ -594,10 +782,23 @@ static void sema_push_in_guards(Expr *cond) {
         InGuardEntry *e = arena_push_aligned(sema_arena, InGuardEntry);
         e->index = lhs;
         e->container = rhs;
-        // Pointer in-guard: left is a pointer type (TYPE_POINTER)
         e->is_ptr_guard = (lhs && lhs->type && lhs->type->kind == TYPE_POINTER);
+        e->is_backward_guard = false;
         e->next = sema_in_guards;
         sema_in_guards = e;
+    } else if (cond->as.binary_expr.op == TOKEN_ANGLE_BRACKET_RIGHT) {
+        // `p > arr_ptr` — backward pointer guard: proves p-1 >= arr_ptr
+        Expr *lhs = cond->as.binary_expr.left;
+        Expr *rhs = cond->as.binary_expr.right;
+        if (lhs && lhs->type && lhs->type->kind == TYPE_POINTER) {
+            InGuardEntry *e = arena_push_aligned(sema_arena, InGuardEntry);
+            e->index = lhs;
+            e->container = rhs;
+            e->is_ptr_guard = true;
+            e->is_backward_guard = true;
+            e->next = sema_in_guards;
+            sema_in_guards = e;
+        }
     } else if (cond->as.binary_expr.op == TOKEN_KEYWORD_AND) {
         sema_push_in_guards(cond->as.binary_expr.left);
         sema_push_in_guards(cond->as.binary_expr.right);
@@ -868,6 +1069,19 @@ static void walk_stmt(Stmt *s) {
             // accesses like `l.text[l.pos]` are bounds-proven automatically.
             sema_push_struct_field_guards(s->as.var_stmt.name, s->as.var_stmt.type);
 
+            // Auto-infer pointer in-guard from `&arr[k]` initializer.
+            // `var p = &arr[k]` carries the same safety guarantee as
+            // `var p in arr = &arr[k]` — the init bounds check already proved
+            // p is within arr at declaration time.
+            if (!s->as.var_stmt.in_expr &&
+                s->as.var_stmt.type && s->as.var_stmt.type->kind == TYPE_POINTER &&
+                s->as.var_stmt.expr && s->as.var_stmt.expr->kind == EXPR_ADDR &&
+                s->as.var_stmt.expr->as.addr_expr.expr &&
+                s->as.var_stmt.expr->as.addr_expr.expr->kind == EXPR_INDEX) {
+                s->as.var_stmt.in_expr =
+                    s->as.var_stmt.expr->as.addr_expr.expr->as.index_expr.target;
+            }
+
             // Local pointer invariant: `var p *T in arr = &arr[k]`
             // Push a pointer in-guard so `*p` is safe when `p in arr` is checked.
             if (s->as.var_stmt.in_expr) {
@@ -893,6 +1107,19 @@ static void walk_stmt(Stmt *s) {
                 ig->is_ptr_guard = true;
                 ig->next = sema_in_guards;
                 sema_in_guards = ig;
+
+                // L3 lower bound: record init index from &arr[k] initializer
+                Expr *init = s->as.var_stmt.expr;
+                if (init && init->kind == EXPR_ADDR &&
+                    init->as.addr_expr.expr &&
+                    init->as.addr_expr.expr->kind == EXPR_INDEX) {
+                    Expr *idx = init->as.addr_expr.expr->as.index_expr.index;
+                    PtrInitIdxEntry *pie = arena_push_aligned(sema_arena, PtrInitIdxEntry);
+                    pie->ptr_id = resolved_id;
+                    pie->init_idx = idx;
+                    pie->next = sema_ptr_init_idx;
+                    sema_ptr_init_idx = pie;
+                }
             }
             break;
         case STMT_IF: {
@@ -1077,6 +1304,110 @@ static void walk_stmt(Stmt *s) {
         }
         case STMT_WHILE:
             sema_infer_expr(s->as.while_stmt.cond);
+
+            // Auto-infer `decreasing` when measure is absent and all conditions are
+            // pointer-in-arr guards (p in arr) or backward pointer guards (p > arr_ptr).
+            // Synthesizes measure as sum of (p - &arr[0]) or (p - arr_ptr).
+            if (!s->as.while_stmt.measure && current_function_decl &&
+                current_function_decl->kind == DECL_FUNCTION) {
+                // Collect pointer conditions from AND-chain
+                Expr *ptr_exprs[8]; Expr *arr_exprs[8];
+                bool  is_backward[8]; int n_ptrs = 0;
+                {
+                    Expr *stk[16]; int top = 0; stk[top++] = s->as.while_stmt.cond;
+                    while (top > 0) {
+                        Expr *ce = stk[--top];
+                        if (!ce || ce->kind != EXPR_BINARY) continue;
+                        if (ce->as.binary_expr.op == TOKEN_KEYWORD_AND && top < 14) {
+                            stk[top++] = ce->as.binary_expr.left;
+                            stk[top++] = ce->as.binary_expr.right;
+                        } else if (ce->as.binary_expr.op == TOKEN_KEYWORD_IN) {
+                            Expr *lhs = ce->as.binary_expr.left;
+                            if (lhs && lhs->type && lhs->type->kind == TYPE_POINTER && n_ptrs < 8) {
+                                ptr_exprs[n_ptrs] = lhs;
+                                arr_exprs[n_ptrs] = ce->as.binary_expr.right;
+                                is_backward[n_ptrs] = false;
+                                n_ptrs++;
+                            }
+                        } else if (ce->as.binary_expr.op == TOKEN_ANGLE_BRACKET_RIGHT) {
+                            // p > arr_ptr — backward guard
+                            Expr *lhs = ce->as.binary_expr.left;
+                            Expr *rhs = ce->as.binary_expr.right;
+                            if (lhs && lhs->type && lhs->type->kind == TYPE_POINTER && n_ptrs < 8) {
+                                ptr_exprs[n_ptrs] = lhs;
+                                arr_exprs[n_ptrs] = rhs;
+                                is_backward[n_ptrs] = true;
+                                n_ptrs++;
+                            }
+                        }
+                    }
+                }
+                // Build measure from decreasing pointers
+                Expr *synth_measure = NULL;
+                for (int i = 0; i < n_ptrs; i++) {
+                    Expr *ptr = ptr_exprs[i];
+                    if (ptr->kind != EXPR_IDENTIFIER) continue;
+                    Id *pid = ptr->as.identifier_expr.id;
+                    if (!body_has_ptr_decrement(s->as.while_stmt.body, pid)) continue;
+                    // Build the subtracted base: &arr[0] for forward, arr_ptr for backward
+                    Expr *base_ptr;
+                    if (is_backward[i]) {
+                        // arr_exprs[i] is already a pointer — use directly as `p - arr_ptr`
+                        base_ptr = arr_exprs[i];
+                    } else {
+                        // Build &arr[0]
+                        Expr *zero = arena_push_aligned(sema_arena, Expr);
+                        memset(zero, 0, sizeof(Expr));
+                        zero->kind = EXPR_LITERAL; zero->line = s->line; zero->col = s->col;
+                        Expr *aidx = arena_push_aligned(sema_arena, Expr);
+                        memset(aidx, 0, sizeof(Expr));
+                        aidx->kind = EXPR_INDEX;
+                        aidx->as.index_expr.target = arr_exprs[i];
+                        aidx->as.index_expr.index = zero;
+                        aidx->line = s->line; aidx->col = s->col;
+                        Expr *aaddr = arena_push_aligned(sema_arena, Expr);
+                        memset(aaddr, 0, sizeof(Expr));
+                        aaddr->kind = EXPR_ADDR;
+                        aaddr->as.addr_expr.expr = aidx;
+                        aaddr->line = s->line; aaddr->col = s->col;
+                        base_ptr = aaddr;
+                    }
+                    // p - base_ptr
+                    Expr *term = arena_push_aligned(sema_arena, Expr);
+                    memset(term, 0, sizeof(Expr));
+                    term->kind = EXPR_BINARY;
+                    term->as.binary_expr.op = TOKEN_MINUS;
+                    term->as.binary_expr.left = ptr;
+                    term->as.binary_expr.right = base_ptr;
+                    term->line = s->line; term->col = s->col;
+                    if (!synth_measure) {
+                        synth_measure = term;
+                    } else {
+                        Expr *plus = arena_push_aligned(sema_arena, Expr);
+                        memset(plus, 0, sizeof(Expr));
+                        plus->kind = EXPR_BINARY;
+                        plus->as.binary_expr.op = TOKEN_PLUS;
+                        plus->as.binary_expr.left = synth_measure;
+                        plus->as.binary_expr.right = term;
+                        plus->line = s->line; plus->col = s->col;
+                        synth_measure = plus;
+                    }
+                }
+                if (synth_measure) {
+                    s->as.while_stmt.measure = synth_measure;
+                } else {
+                    // No pointer decrements found: emit E011
+                    fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination "
+                            "measure are not allowed in pure function '%.*s'. "
+                            "Add 'decreasing <measure>' or use 'proc'.\n",
+                            s->line, s->col,
+                            (int)current_function_decl->as.function_decl.name->length,
+                            current_function_decl->as.function_decl.name->name);
+                    diagnostic_show_line(s->line, s->col);
+                    exit(1);
+                }
+            }
+
             if (s->as.while_stmt.measure) {
                 sema_infer_expr(s->as.while_stmt.measure);
                 sema_verify_bounded_while(s);
@@ -1097,6 +1428,9 @@ static void walk_stmt(Stmt *s) {
             // Then mark the while condition's `p in arr` expressions with dead upper bounds.
             l3_register_ptr_monotone(s->as.while_stmt.body);
             l3_mark_dead_upper_bounds(s->as.while_stmt.cond, sema_ptr_monotone);
+            if (sema_ranges)
+                l3_mark_dead_lower_bounds(s->as.while_stmt.cond, sema_ptr_monotone,
+                                          s->as.while_stmt.body);
 
             // Widen modified variables BEFORE body (conservative)
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);

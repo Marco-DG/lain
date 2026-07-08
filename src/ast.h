@@ -177,8 +177,12 @@ typedef struct {
     ExprList*   pre_contracts;  // New: pre-conditions (requires/pre)
     ExprList*   post_contracts; // New: post-conditions (ensures/post)
     ExprList*   return_constraints; // Equation-style: func f() int >= 0
-    bool        is_extern;      // rue for “extern func”
-    bool        is_variadic;    // new: true for "..."
+    bool        is_extern;      // true for “extern func”
+    bool        is_variadic;    // true for “...”
+    bool        is_cold;        // @cold:     GCC moves to .text.cold, pessimizes branch
+    bool        is_hot;         // @hot:      GCC optimizes aggressively, prefers inline
+    bool        is_allocator;   // @allocator: return ptr doesn't alias any existing ptr
+    bool        is_noreturn;    // @noreturn:  function never returns (exit, panic, etc.)
 } DeclFunction;
 
 typedef struct {
@@ -367,6 +371,9 @@ typedef enum {
 typedef enum {
     BUILTIN_OS,
     BUILTIN_ARCH,
+    BUILTIN_LIKELY,          // @likely(cond)        → __builtin_expect(!!(cond), 1)
+    BUILTIN_UNLIKELY,        // @unlikely(cond)      → __builtin_expect(!!(cond), 0)
+    BUILTIN_ASSUME_ALIGNED,  // @assume_aligned(p,N) → __builtin_assume_aligned(p, N)
 } BuiltinKind;
 
 typedef struct {
@@ -382,6 +389,7 @@ typedef struct {
     TokenKind   op;     // Operator
     Expr*       right;  // Right operand
     bool        l3_upper_dead; // L3: upper-bound part of `ptr in arr` is dead code
+    bool        l3_lower_dead; // L3: lower-bound part of `ptr in arr` is dead code
 } ExprBinary;
 
 typedef struct {
@@ -475,6 +483,8 @@ typedef struct {
 
 typedef struct {
     BuiltinKind builtin_kind;
+    struct Expr *arg;   // argument for @likely/@unlikely/@assume_aligned; NULL for @os/@arch
+    isize       align;  // alignment value for BUILTIN_ASSUME_ALIGNED
 } ExprBuiltin;
 
 typedef struct Expr {
@@ -1130,6 +1140,19 @@ Expr *expr_builtin(Arena *arena, BuiltinKind kind) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_BUILTIN;
     e->as.builtin_expr.builtin_kind = kind;
+    e->as.builtin_expr.arg = NULL;
+    return e;
+}
+
+Expr *expr_builtin_arg(Arena *arena, BuiltinKind kind, Expr *arg) {
+    Expr *e = expr_builtin(arena, kind);
+    e->as.builtin_expr.arg = arg;
+    return e;
+}
+
+Expr *expr_builtin_assume_aligned(Arena *arena, Expr *ptr, isize align) {
+    Expr *e = expr_builtin_arg(arena, BUILTIN_ASSUME_ALIGNED, ptr);
+    e->as.builtin_expr.align = align;
     return e;
 }
 

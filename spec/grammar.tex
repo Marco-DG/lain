@@ -152,9 +152,12 @@ primitive-type   ::=
   | "f32"   | "f64"
   | "bool"  | "str"   | "void"
 
-array-type       ::= "[" type ";" integer-literal "]"
-slice-type       ::= "[" type "]"
-pointer-type     ::= "*" type | "const" "*" type
+array-type       ::= type "[" integer-literal "]"
+slice-type       ::= "*" type "[]"
+                   | "*" type "[" ":" sentinel-literal "]"
+                   | "*" type "[" size-constraint "]"
+pointer-type     ::= "*" type
+                   | "*" type "[" integer-literal "]"
 qualified-type   ::= ownership-qualifier type
 ownership-qualifier ::= "var" | "mov"
 user-defined-type ::= qualified-identifier

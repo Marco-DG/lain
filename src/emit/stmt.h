@@ -72,9 +72,45 @@ void emit_stmt(Stmt *stmt, int depth) {
   
       // 5) terminate
       EMIT(";\n");
+
+      // O-003 [assume-return]: if the initializer is a function call whose callee
+      // has return_constraints, emit __builtin_assume() for each constraint.
+      // This propagates the callee's return-value range to the caller,
+      // enabling GCC to eliminate defensive branches like `if (r < 0)`.
+      if (stmt->as.var_stmt.expr && stmt->as.var_stmt.expr->kind == EXPR_CALL) {
+          Expr *call = stmt->as.var_stmt.expr;
+          Decl *callee_decl = call->as.call_expr.callee ? call->as.call_expr.callee->decl : NULL;
+          if (callee_decl && (callee_decl->kind == DECL_FUNCTION ||
+                              callee_decl->kind == DECL_PROCEDURE)) {
+              ExprList *rc = callee_decl->as.function_decl.return_constraints;
+              const char *vname = c_name_for_id(stmt->as.var_stmt.name);
+              for (ExprList *c = rc; c; c = c->next) {
+                  if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+                  Expr *rhs_c = c->expr->as.binary_expr.right;
+                  if (!rhs_c || rhs_c->kind != EXPR_LITERAL) continue;
+                  const char *op_str = NULL;
+                  switch (c->expr->as.binary_expr.op) {
+                      case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: op_str = ">="; break;
+                      case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  op_str = "<="; break;
+                      case TOKEN_ANGLE_BRACKET_RIGHT:       op_str = ">";  break;
+                      case TOKEN_ANGLE_BRACKET_LEFT:        op_str = "<";  break;
+                      case TOKEN_EQUAL_EQUAL:               op_str = "=="; break;
+                      case TOKEN_BANG_EQUAL:                op_str = "!="; break;
+                      default: break;
+                  }
+                  if (!op_str) continue;
+                  // Use portable GCC/Clang form: if (!(cond)) __builtin_unreachable()
+                  // This is equivalent to __builtin_assume(cond) on Clang and
+                  // [[assume(cond)]] on GCC 13+ / C23, but works on all versions.
+                  emit_indent(depth);
+                  EMIT("if (!(%s %s %lld)) __builtin_unreachable();\n",
+                       vname, op_str, (long long)rhs_c->as.literal_expr.value);
+              }
+          }
+      }
       break;
     }
-  
+
 
   case STMT_DEFER:
     if (emit_defer_count < MAX_DEFERS) {
@@ -277,7 +313,17 @@ void emit_stmt(Stmt *stmt, int depth) {
     break;
 
   case STMT_WHILE: {
-    // 1) emit "while (<cond>) {"
+    // Emit a standard while loop.
+    // Note: Q-023 (explicit memcpy transformation) was removed because:
+    //   - `restrict` (emitted by the borrow checker) already tells GCC there is no
+    //     aliasing between the pointers, which is sufficient for GCC -O2 to
+    //     recognize the copy pattern and emit jmp memcpy@PLT automatically.
+    //   - Q-023 duplicated GCC's own memcpy-detection pass, with the added
+    //     downside of being fragile (only matched one exact loop shape) and
+    //     conceptually wrong (Lain should express language guarantees, not
+    //     second-guess the backend optimizer).
+    //
+    // 1) Emit standard "while (<cond>) {"
     emit_indent(depth);
     EMIT("while (");
     emit_expr(stmt->as.while_stmt.cond, depth);
@@ -358,6 +404,7 @@ void emit_stmt(Stmt *stmt, int depth) {
 
     // 3) each case
     bool first_clause = true;
+    bool had_catchall = false;   // true if a wildcard _ case was emitted
     for (StmtMatchCase *c = stmt->as.match_stmt.cases; c; /**/) {
       // group fall‐through cases
       StmtMatchCase *group = c;
@@ -562,7 +609,8 @@ void emit_stmt(Stmt *stmt, int depth) {
         }
         EMIT(") ");
       } else {
-        // catch‐all
+        // catch‐all / wildcard
+        had_catchall = true;
         EMIT(first_clause ? "if (1) " : "else ");
       }
 
@@ -666,6 +714,14 @@ void emit_stmt(Stmt *stmt, int depth) {
 
       first_clause = false;
       c = group->next;
+    }
+    // Exhaustive ADT match without wildcard: all variants covered by the
+    // type checker. Emit `else { __builtin_unreachable(); }` so GCC sees
+    // that no other tag value exists — enables tighter jump tables and
+    // eliminates dead code on the "impossible" path.
+    if (is_adt && !first_clause && !had_catchall) {
+        emit_indent(depth);
+        EMIT("else { __builtin_unreachable(); }\n");
     }
     break;
   }

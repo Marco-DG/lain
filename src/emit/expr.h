@@ -74,6 +74,37 @@ static void emit_size_expr(Expr *se, int depth) {
     }
 }
 
+// C operator precedence (higher number = tighter binding).
+// Used by emit_expr to decide when child expressions need parentheses.
+static int c_prec_of_token(TokenKind tk) {
+    switch (tk) {
+        case TOKEN_ASTERISK: case TOKEN_SLASH: case TOKEN_PERCENT: return 12;
+        case TOKEN_PLUS:     case TOKEN_MINUS:                      return 11;
+        case TOKEN_ANGLE_BRACKET_LEFT:  case TOKEN_ANGLE_BRACKET_RIGHT:
+        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL: case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: return 9;
+        case TOKEN_EQUAL_EQUAL: case TOKEN_BANG_EQUAL:              return 8;
+        case TOKEN_AMPERSAND:                                        return 7;
+        case TOKEN_CARET:                                            return 6;
+        case TOKEN_PIPE:                                             return 5;
+        case TOKEN_KEYWORD_AND:                                      return 4;
+        case TOKEN_KEYWORD_OR:                                       return 3;
+        default:                                                     return 11;
+    }
+}
+
+static int c_prec_of_expr(Expr *e) {
+    if (!e) return 99;
+    switch (e->kind) {
+        case EXPR_LITERAL: case EXPR_IDENTIFIER: case EXPR_FLOAT_LITERAL:
+        case EXPR_STRING:  case EXPR_CHAR:         return 99; // atoms never need wrapping
+        case EXPR_CALL:    case EXPR_INDEX: case EXPR_MEMBER: return 14; // postfix
+        case EXPR_DEREF:   case EXPR_ADDR: case EXPR_UNARY:   return 13; // unary prefix
+        case EXPR_CAST:                                         return 13;
+        case EXPR_BINARY:  return c_prec_of_token(e->as.binary_expr.op);
+        default:           return 99;
+    }
+}
+
 // Emit an expression at given indent‐depth
 void emit_expr(Expr *expr, int depth);
 
@@ -183,20 +214,19 @@ void emit_expr(Expr *expr, int depth) {
       EMIT("memcmp(");
       emit_expr(slice, 0);
       EMIT(".data, \"%.*s\", %d) == 0)", L, S, L);
-    } else if (expr->as.binary_expr.op == TOKEN_KEYWORD_AND) {
-      // logical AND → emit "(<left> && <right>)"
-      EMIT("(");
-      emit_expr(expr->as.binary_expr.left, depth);
-      EMIT(" && ");
-      emit_expr(expr->as.binary_expr.right, depth);
-      EMIT(")");
-    } else if (expr->as.binary_expr.op == TOKEN_KEYWORD_OR) {
-      // logical OR → emit "(<left> || <right>)"
-      EMIT("(");
-      emit_expr(expr->as.binary_expr.left, depth);
-      EMIT(" || ");
-      emit_expr(expr->as.binary_expr.right, depth);
-      EMIT(")");
+    } else if (expr->as.binary_expr.op == TOKEN_KEYWORD_AND ||
+               expr->as.binary_expr.op == TOKEN_KEYWORD_OR) {
+      // logical AND / OR — no outer parens; let the parent (while/if) supply them.
+      // Children with lower precedence (e.g. another || inside &&) still get parens.
+      int prec = c_prec_of_token(expr->as.binary_expr.op);
+      const char *op_str = (expr->as.binary_expr.op == TOKEN_KEYWORD_AND) ? " && " : " || ";
+      Expr *lhs = expr->as.binary_expr.left;
+      Expr *rhs = expr->as.binary_expr.right;
+      if (c_prec_of_expr(lhs) < prec) { EMIT("("); emit_expr(lhs, depth); EMIT(")"); }
+      else emit_expr(lhs, depth);
+      EMIT("%s", op_str);
+      if (c_prec_of_expr(rhs) < prec) { EMIT("("); emit_expr(rhs, depth); EMIT(")"); }
+      else emit_expr(rhs, depth);
     } else if (expr->as.binary_expr.op == TOKEN_KEYWORD_IN) {
       Expr *lhs = expr->as.binary_expr.left;
       Expr *rhs = expr->as.binary_expr.right;
@@ -209,13 +239,30 @@ void emit_expr(Expr *expr, int depth) {
         // Marked on the EXPR_BINARY(IN) node by l3_mark_dead_upper_bounds.
         bool upper_bound_dead = expr->as.binary_expr.l3_upper_dead;
 
-        if (upper_bound_dead) {
-            // L3 eliminates upper bound: only emit lower-bound check
-            EMIT("(");
+        bool lower_bound_dead = expr->as.binary_expr.l3_lower_dead;
+
+        if (upper_bound_dead && lower_bound_dead) {
+            // L3: both bounds dead — entire check is always true → emit 1
+            EMIT("1");
+        } else if (upper_bound_dead) {
+            // L3 eliminates upper bound: single comparison, no extra parens needed
             emit_expr(lhs, depth);
             EMIT(" >= ");
             emit_expr(rhs, depth);
-            EMIT(")");
+        } else if (lower_bound_dead) {
+            // L3 eliminates lower bound: single comparison, no extra parens needed
+            emit_expr(lhs, depth);
+            EMIT(" < ");
+            emit_expr(rhs, depth);
+            if (ct && ct->kind == TYPE_ARRAY) {
+                if (ct->array_len >= 0) { EMIT(" + %lld", (long long)ct->array_len); }
+                else if (ct->size_expr) { EMIT(" + ("); emit_expr(ct->size_expr, depth); EMIT(")"); }
+                else {
+                    if (rhs->kind == EXPR_IDENTIFIER && rhs->as.identifier_expr.id)
+                        EMIT(" + __len_%.*s", (int)rhs->as.identifier_expr.id->length, rhs->as.identifier_expr.id->name);
+                    else EMIT(".len");
+                }
+            }
         } else {
             // Full pointer in-guard: (ptr >= arr_base && ptr < arr_base + arr_len)
             EMIT("(");
@@ -338,11 +385,23 @@ void emit_expr(Expr *expr, int depth) {
           EMIT(")");
       } else {
           // Fallback for all other binary ops: +, -, *, /, %, <, ==, bitwise, etc.
-          EMIT("(");
-          emit_expr(expr->as.binary_expr.left, depth);
-          EMIT(" %s ", token_kind_to_str(expr->as.binary_expr.op));
-          emit_expr(expr->as.binary_expr.right, depth);
-          EMIT(")");
+          // Use C precedence to decide whether children need parens.
+          int prec = c_prec_of_token(expr->as.binary_expr.op);
+          Expr *lhs = expr->as.binary_expr.left;
+          Expr *rhs = expr->as.binary_expr.right;
+          TokenKind op = expr->as.binary_expr.op;
+          // Left child: needs parens only when it binds looser than the current op.
+          if (c_prec_of_expr(lhs) < prec) { EMIT("("); emit_expr(lhs, depth); EMIT(")"); }
+          else emit_expr(lhs, depth);
+          EMIT(" %s ", token_kind_to_str(op));
+          // Right child: additionally needs parens for same-prec left-assoc ops where
+          // order matters (e.g. a - (b - c) ≠ a - b - c; a / (b * c) ≠ a / b / c).
+          bool right_needs_same_prec_parens =
+              (op == TOKEN_MINUS || op == TOKEN_SLASH || op == TOKEN_PERCENT) &&
+              c_prec_of_expr(rhs) == prec;
+          if (c_prec_of_expr(rhs) < prec || right_needs_same_prec_parens) {
+              EMIT("("); emit_expr(rhs, depth); EMIT(")");
+          } else emit_expr(rhs, depth);
       }
     }
     break;
@@ -1108,31 +1167,44 @@ void emit_expr(Expr *expr, int depth) {
   }
 
   case EXPR_ADDR: {
-    // &arr[k] — address of element.
-    // For Fase 7 decomposed arrays (T * arr), arr[k] is already a valid lvalue.
-    // We emit: arr + k  (pointer to element k)
-    // If inner is EXPR_INDEX: emit (base_ptr + index)
+    // &arr[k] — address of element (native C arrays decompose to T*).
+    // Emit as: arr + k  (no outer parens needed; caller adds them if required).
     Expr *inner = expr->as.addr_expr.expr;
     if (inner && inner->kind == EXPR_INDEX) {
-        EMIT("(");
         emit_expr(inner->as.index_expr.target, depth);
         EMIT(" + ");
         emit_expr(inner->as.index_expr.index, depth);
-        EMIT(")");
     } else {
-        EMIT("&(");
+        EMIT("&");
         emit_expr(inner, depth);
-        EMIT(")");
     }
     break;
   }
 
   case EXPR_DEREF: {
     // *ptr — dereference a pointer.
-    // Safe: verified by sema that ptr is in an in-guard (ptr in arr).
-    EMIT("(*");
-    emit_expr(expr->as.deref_expr.expr, depth);
-    EMIT(")");
+    // Parens needed only when inner expression would otherwise bind too loosely
+    // (e.g. `*(a + b)` needs them; `*p` and `*p.field` do not).
+    Expr *inner = expr->as.deref_expr.expr;
+    bool needs_parens = inner && c_prec_of_expr(inner) < 13;
+    EMIT("*");
+    if (needs_parens) { EMIT("("); emit_expr(inner, depth); EMIT(")"); }
+    else emit_expr(inner, depth);
+    break;
+  }
+
+  case EXPR_BUILTIN: {
+    BuiltinKind bk = expr->as.builtin_expr.builtin_kind;
+    if (bk == BUILTIN_LIKELY || bk == BUILTIN_UNLIKELY) {
+        int hint = (bk == BUILTIN_LIKELY) ? 1 : 0;
+        EMIT("__builtin_expect(!!(");
+        emit_expr(expr->as.builtin_expr.arg, depth);
+        EMIT("), %d)", hint);
+    } else if (bk == BUILTIN_ASSUME_ALIGNED) {
+        EMIT("__builtin_assume_aligned(");
+        emit_expr(expr->as.builtin_expr.arg, depth);
+        EMIT(", %lld)", (long long)expr->as.builtin_expr.align);
+    }
     break;
   }
 

@@ -1,9 +1,9 @@
 import std.c
 
-proc print(s u8[:0]) {
+proc print(s *u8[:0]) {
     libc_printf(s.data)
 }
 
-proc println(s u8[:0]) {
+proc println(s *u8[:0]) {
     libc_puts(s.data)
 }

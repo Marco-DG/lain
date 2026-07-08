@@ -26,13 +26,105 @@
 #endif
 
 /*───────────────────────────────────────────────────────────────────╗
+│ Diagnostic Helpers                                                 │
+╚───────────────────────────────────────────────────────────────────*/
+
+/* Format a range value: cap INT64 sentinels to readable symbols. */
+static void bounds_fmt_val(int64_t v, char *buf, int n) {
+    if (v >= (int64_t)4e18)       snprintf(buf, n, "MAX");
+    else if (v <= -(int64_t)4e18) snprintf(buf, n, "MIN");
+    else                           snprintf(buf, n, "%ld", (long)v);
+}
+
+/* Format a range as "[lo, hi]" with readable sentinels. */
+static void bounds_fmt_range(Range r, char *buf, int n) {
+    if (!r.known) { snprintf(buf, n, "[unknown]"); return; }
+    char lo[32], hi[32];
+    bounds_fmt_val(r.min, lo, sizeof lo);
+    bounds_fmt_val(r.max, hi, sizeof hi);
+    snprintf(buf, n, "[%s, %s]", lo, hi);
+}
+
+/* Render an expression to a short human-readable string (best-effort). */
+static void bounds_expr_str(Expr *e, char *buf, int n) {
+    if (!e || n <= 1) { if (n > 0) buf[0] = '\0'; return; }
+    switch (e->kind) {
+        case EXPR_IDENTIFIER: {
+            Id *id = e->as.identifier_expr.id;
+            if (id) snprintf(buf, n, "%.*s", (int)id->length, id->name);
+            else    snprintf(buf, n, "?");
+            break;
+        }
+        case EXPR_LITERAL:
+            snprintf(buf, n, "%lld", (long long)e->as.literal_expr.value);
+            break;
+        case EXPR_BINARY: {
+            char lhs[64], rhs[64];
+            bounds_expr_str(e->as.binary_expr.left,  lhs, sizeof lhs);
+            bounds_expr_str(e->as.binary_expr.right, rhs, sizeof rhs);
+            const char *op = token_kind_to_str(e->as.binary_expr.op);
+            snprintf(buf, n, "%s %s %s", lhs, op ? op : "?", rhs);
+            break;
+        }
+        case EXPR_MEMBER: {
+            char tgt[64];
+            bounds_expr_str(e->as.member_expr.target, tgt, sizeof tgt);
+            Id *mem = e->as.member_expr.member;
+            if (mem) snprintf(buf, n, "%s.%.*s", tgt, (int)mem->length, mem->name);
+            else     snprintf(buf, n, "%s.?", tgt);
+            break;
+        }
+        case EXPR_UNARY: {
+            char operand[64];
+            bounds_expr_str(e->as.unary_expr.right, operand, sizeof operand);
+            const char *op = token_kind_to_str(e->as.unary_expr.op);
+            snprintf(buf, n, "%s%s", op ? op : "?", operand);
+            break;
+        }
+        default:
+            snprintf(buf, n, "<expr>");
+            break;
+    }
+}
+
+/* Emit a standard E085 header + source snippet + context lines, then exit(1). */
+static void bounds_error(
+    const char *kind,       /* short one-line description */
+    Expr       *index_expr, /* index sub-expression (for location) */
+    Expr       *array_expr, /* array being indexed (for name) */
+    Range       idx,        /* computed index range */
+    Range       len,        /* computed length range */
+    const char *hint)       /* optional suggestion, or NULL */
+{
+    char idx_str[128] = "<expr>";
+    char arr_str[64]  = "<array>";
+    char idx_range[64];
+    char len_range[64];
+
+    if (index_expr) bounds_expr_str(index_expr, idx_str, sizeof idx_str);
+    if (array_expr) bounds_expr_str(array_expr, arr_str, sizeof arr_str);
+    bounds_fmt_range(idx, idx_range, sizeof idx_range);
+    bounds_fmt_range(len, len_range, sizeof len_range);
+
+    isize line = index_expr ? index_expr->line : 0;
+    isize col  = index_expr ? index_expr->col  : 0;
+
+    fprintf(stderr, "[E085] bounds error: %s\n", kind);
+    if (line > 0) diagnostic_show_line(line, col);
+    fprintf(stderr, "       index `%s`: range %s\n", idx_str, idx_range);
+    fprintf(stderr, "       array `%s`: length %s\n", arr_str, len_range);
+    if (hint) fprintf(stderr, "       hint: %s\n", hint);
+    exit(1);
+}
+
+/*───────────────────────────────────────────────────────────────────╗
 │ Bounds Checking                                                    │
 ╚───────────────────────────────────────────────────────────────────*/
 
 // Check if an index access is within bounds.
 // array_expr is the expression being indexed (used to identify the array by name
 // for constraint-based proof when the array has no size_expr annotation).
-static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_type, Expr *array_expr) {
+static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_type, Expr *array_expr, bool is_addr_of) {
     if (!index_expr || !array_type) return;
 
     // Sprint 4 / Q-003.B: range index `arr[a..b]` bounds check.
@@ -45,9 +137,9 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
 
         // a >= 0
         if (a.known && a.min < 0) {
-            fprintf(stderr, "[E085] bounds error: slice lower bound may be negative. Range: [%ld, %ld]\n",
-                    (long)a.min, (long)a.max);
-            exit(1);
+            bounds_error("slice lower bound may be negative",
+                         lo, array_expr, a, range_unknown(),
+                         "ensure start index >= 0");
         }
         // Determine array len
         Range len_range = range_unknown();
@@ -62,20 +154,18 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
                 // Open upper: arr[a..] — fine: implicitly b = arr.len.
             } else if (b.known) {
                 if (b.max > len_range.min) {
-                    fprintf(stderr, "[E085] bounds error: slice upper bound %ld out of bounds for length %ld\n",
-                            (long)b.max, (long)len_range.min);
-                    exit(1);
+                    bounds_error("slice upper bound out of range",
+                                 hi, array_expr, b, len_range, NULL);
                 }
             } else {
-                fprintf(stderr, "[E085] bounds error: slice upper bound range unknown, cannot statically verify against length %ld.\n",
-                        (long)len_range.min);
-                exit(1);
+                bounds_error("slice upper bound cannot be statically verified",
+                             hi, array_expr, b, len_range,
+                             "use a literal or constrained upper bound");
             }
             // a <= len too (a == len gives empty slice, OK)
             if (a.known && a.max > len_range.min) {
-                fprintf(stderr, "[E085] bounds error: slice lower bound %ld out of bounds for length %ld\n",
-                        (long)a.max, (long)len_range.min);
-                exit(1);
+                bounds_error("slice lower bound out of range",
+                             lo, array_expr, a, len_range, NULL);
             }
         } else {
             // Dynamic array length — cannot verify statically.
@@ -117,24 +207,42 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
     if (idx.known && idx.min < 0) {
         // Interval is pessimistic. Try Omega to prove expr >= 0 given VRA constraints.
         if (!omega_prove_nonneg(ctx, index_expr)) {
-            fprintf(stderr, "[E085] bounds error: index may be negative. Range: [%ld, %ld]\n",
-                    (long)idx.min, (long)idx.max);
-            exit(1);
+            // Build a hint: if the index is "param - 1" and param has constraint >= 0,
+            // suggest tightening to >= 1.
+            char hint_buf[256] = "";
+            if (index_expr->kind == EXPR_BINARY &&
+                index_expr->as.binary_expr.op == TOKEN_MINUS &&
+                index_expr->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                index_expr->as.binary_expr.right->kind == EXPR_LITERAL &&
+                index_expr->as.binary_expr.right->as.literal_expr.value == 1) {
+                Id *pid = index_expr->as.binary_expr.left->as.identifier_expr.id;
+                if (pid) snprintf(hint_buf, sizeof hint_buf,
+                    "parameter `%.*s` has constraint >= 0; change to `>= 1`, "
+                    "or guard with `if %.*s == 0 { ... }`",
+                    (int)pid->length, pid->name, (int)pid->length, pid->name);
+            }
+            bounds_error("index may be negative",
+                         index_expr, array_expr, idx, len_range,
+                         hint_buf[0] ? hint_buf : NULL);
         }
         // Omega proved non-negativity; mark idx as known-safe for subsequent checks.
         idx.min = 0;
     }
 
-    // 4. Interval proof: idx_max < len_min (fast path — works for fixed arrays and
-    //    sized slices whose size_expr evaluated to a concrete narrow range)
+    // 4. Interval proof: idx_max < len_min (or <= len_min for address-of).
+    //    Fast path — works for fixed arrays and sized slices with narrow ranges.
     if (len_range.known && idx.known) {
-        if (idx.max >= len_range.min) {
-            // Fall through to constraint proof before erroring
-        } else {
-            BOUNDS_DBG("OK: Index [%ld, %ld] < Length %ld",
-                       (long)idx.min, (long)idx.max, (long)len_range.min);
+        // For plain dereference: idx must be strictly < len.
+        // For address-of (&arr[i]): idx == len is valid (one-past-end pointer).
+        bool interval_safe = is_addr_of ? (idx.max <= len_range.min)
+                                        : (idx.max <  len_range.min);
+        if (interval_safe) {
+            BOUNDS_DBG("OK: Index [%ld, %ld] %s Length %ld",
+                       (long)idx.min, (long)idx.max,
+                       is_addr_of ? "<=" : "<", (long)len_range.min);
             return; // safe via interval
         }
+        // else fall through to constraint proof
     } else if (len_range.known && !idx.known) {
         // len known but idx unknown: fall through to constraint proof
     }
@@ -354,26 +462,28 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
     //      expressions (e.g. j + a.len) against sized-slice bounds.
     //      Handles all patterns that reduce to difference constraints after
     //      FM variable elimination (concat, reverse, interleave, etc.).
+    //      For address-of, also try index <= size (one-past-end valid).
     if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
         array_type->size_expr) {
         if (omega_prove_lt(ctx, index_expr, array_type->size_expr)) return;
+        if (is_addr_of && omega_prove_le(ctx, index_expr, array_type->size_expr)) return;
     }
 
     // 6. No proof found — emit E085
     if (len_range.known) {
         if (!idx.known) {
-            fprintf(stderr, "[E085] bounds error: index range unknown, cannot statically verify against length %ld. "
-                    "Use a 'for i in 0..arr.len' loop or an 'if' guard to narrow the index range.\n",
-                    (long)len_range.min);
+            bounds_error("cannot statically verify index is within bounds",
+                         index_expr, array_expr, idx, len_range,
+                         "use `for i in 0..arr.len`, a parameter constraint, or an `in` guard");
         } else {
-            fprintf(stderr, "[E085] bounds error: index %ld out of bounds for length %ld\n",
-                    (long)idx.max, (long)len_range.min);
+            bounds_error("index out of bounds",
+                         index_expr, array_expr, idx, len_range, NULL);
         }
     } else {
-        fprintf(stderr, "[E085] bounds error: cannot prove index is within bounds for a dynamic-length array. "
-                "Use 'for i in 0..arr.len', a fixed-length array ([N]), or an 'in' guard.\n");
+        bounds_error("cannot prove index is within bounds for dynamic-length array",
+                     index_expr, array_expr, idx, len_range,
+                     "use `for i in 0..arr.len`, a fixed-length type `[N]`, or a `p in arr` guard");
     }
-    exit(1);
 }
 
 #endif /* SEMA_BOUNDS_H */

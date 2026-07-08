@@ -366,6 +366,28 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
             return expr_builtin(arena, BUILTIN_OS);
         } else if (len == 4 && strncmp(name, "arch", 4) == 0) {
             return expr_builtin(arena, BUILTIN_ARCH);
+        } else if ((len == 6 && strncmp(name, "likely", 6) == 0) ||
+                   (len == 8 && strncmp(name, "unlikely", 8) == 0)) {
+            BuiltinKind bk = (len == 6) ? BUILTIN_LIKELY : BUILTIN_UNLIKELY;
+            parser_expect(TOKEN_L_PAREN, "Expected '(' after '@likely'/'@unlikely'");
+            parser_advance(); // consume '('
+            Expr *arg = parse_expr(arena, parser);
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after @likely/@unlikely argument");
+            parser_advance(); // consume ')'
+            return expr_builtin_arg(arena, bk, arg);
+        } else if (len == 14 && strncmp(name, "assume_aligned", 14) == 0) {
+            // @assume_aligned(ptr, N) → __builtin_assume_aligned(ptr, N)
+            parser_expect(TOKEN_L_PAREN, "Expected '(' after '@assume_aligned'");
+            parser_advance(); // consume '('
+            Expr *ptr_arg = parse_expr(arena, parser);
+            parser_expect(TOKEN_COMMA, "Expected ',' after pointer argument in '@assume_aligned'");
+            parser_advance(); // consume ','
+            parser_expect(TOKEN_NUMBER, "Expected alignment integer literal in '@assume_aligned'");
+            isize align_val = (isize)parse_numeric_literal(parser->token.start, parser->token.length);
+            parser_advance(); // consume N
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after '@assume_aligned' arguments");
+            parser_advance(); // consume ')'
+            return expr_builtin_assume_aligned(arena, ptr_arg, align_val);
         } else {
             fprintf(stderr, "Error Ln %li, Col %li: Unknown builtin '@%.*s'\n",
                     parser->line, parser->column, (int)len, name);

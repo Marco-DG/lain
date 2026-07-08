@@ -228,15 +228,45 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         return NULL;
     }
 
+    // @cold / @hot / @allocator / @noreturn annotations before func/proc
+    bool decl_is_cold = false, decl_is_hot = false;
+    bool decl_is_allocator = false, decl_is_noreturn = false;
+    if (parser_match(TOKEN_AT)) {
+        parser_advance(); // consume '@'
+        parser_expect(TOKEN_IDENTIFIER, "Expected annotation name after '@'");
+        const char *aname = parser->token.start;
+        isize alen = parser->token.length;
+        if      (alen == 4 && strncmp(aname, "cold",      4) == 0) decl_is_cold      = true;
+        else if (alen == 3 && strncmp(aname, "hot",       3) == 0) decl_is_hot       = true;
+        else if (alen == 9 && strncmp(aname, "allocator", 9) == 0) decl_is_allocator = true;
+        else if (alen == 8 && strncmp(aname, "noreturn", 8) == 0)  decl_is_noreturn  = true;
+        if (decl_is_cold || decl_is_hot || decl_is_allocator || decl_is_noreturn) {
+            parser_advance(); // consume annotation name
+            parser_skip_eol();
+        }
+    }
+
     if (parser_match(TOKEN_KEYWORD_FUNC)) {
         parser_advance();
         d = parse_func_decl(arena, parser);
+        if (d) {
+            d->as.function_decl.is_cold      = decl_is_cold;
+            d->as.function_decl.is_hot       = decl_is_hot;
+            d->as.function_decl.is_allocator = decl_is_allocator;
+            d->as.function_decl.is_noreturn  = decl_is_noreturn;
+        }
         goto done;
     }
 
     if (parser_match(TOKEN_KEYWORD_PROC)) {
         parser_advance();
         d = parse_proc_decl(arena, parser);
+        if (d) {
+            d->as.function_decl.is_cold      = decl_is_cold;
+            d->as.function_decl.is_hot       = decl_is_hot;
+            d->as.function_decl.is_allocator = decl_is_allocator;
+            d->as.function_decl.is_noreturn  = decl_is_noreturn;
+        }
         goto done;
     }
 

@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
     sema_resolve_module(program, modname, &_sema_arena);
 
     // then code-gen:
-    emit_source_filename = args.filename;
+    emit_source_filename = args.no_line_directives ? NULL : args.filename;
     emit(program, 0, args.output_file);
 
     sema_destroy();

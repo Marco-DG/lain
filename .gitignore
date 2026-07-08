@@ -100,3 +100,25 @@ spec/*.bbl
 spec/*.blg
 # Keep: spec/lain-spec.pdf (published artifact)
 !spec/lain-spec.pdf
+
+# Additional Binaries & Test Artifacts
+arena_list_out
+out_test
+lain_dbg
+lain_new
+src/lainc
+tests/core/out
+
+# AST Dump & Dot Graphs
+*.dot
+.vadd.dot
+
+# Scratch & Temporary Files
+*_scratch.ln
+_*.ln
+
+# LeetCode Temporary / Generated Output Files
+handwritten/leetcode/*.c
+handwritten/leetcode/*.txt
+handwritten/leetcode/update_compiler.sh
+handwritten/main.ln

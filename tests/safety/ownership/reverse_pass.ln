@@ -2,7 +2,7 @@
 // var n = arr.len registers n = __len_arr equality; FM eliminates n and __len_arr,
 // reducing to (i <= -1) AND (i >= 0) → UNSAT at both proof sites.
 
-func reverse(arr i32[], out i32[arr.len]) {
+func reverse(arr *i32[], out *i32[arr.len]) {
     var n = arr.len
     for i in 0..n {
         out[n - i - 1] = arr[i]
