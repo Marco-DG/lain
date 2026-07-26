@@ -16,7 +16,6 @@ typedef enum {
     STATE_IDENTIFIER,
     STATE_NUMBER,
     STATE_SINGLE_QUOTE,
-    STATE_TYPEVAR,
     STATE_DOUBLE_QUOTE,
     STATE_LINE_COMMENT,
     STATE_MULTILINE_COMMENT,
@@ -166,11 +165,6 @@ Token lexer_next(Lexer* lexer) {
                 break;
 
             case STATE_SINGLE_QUOTE:
-                // Type variable 'T: if first char is alpha/_ and next is NOT '
-                if (((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_')
-                    && *lexer->current != '\'') {
-                    SWITCH_STATE(STATE_TYPEVAR);
-                }
                 // keep scanning until we hit the *matching* closing '
                 if (c == '\\') {
                     // skip over backslash-escape plus its following char
@@ -184,17 +178,6 @@ Token lexer_next(Lexer* lexer) {
                 }
                 // otherwise just loop and consume more
                 break;
-
-            case STATE_TYPEVAR:
-                // Scan alphanumeric/underscore chars as the rest of the type var name
-                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                    (c >= '0' && c <= '9') || c == '_') {
-                    break; // consume and continue
-                }
-                // End of identifier — back up one char, return TOKEN_TYPEVAR
-                lexer->current--;
-                RETURN_TOKEN(TOKEN_TYPEVAR);
-            
 
             case STATE_DOUBLE_QUOTE:
                 // F-002 fix: treat backslash as an escape that consumes the next

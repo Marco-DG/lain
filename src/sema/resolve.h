@@ -6,7 +6,6 @@
 
 #include "../ast.h"
 #include "../ast_clone.h"
-#include "generic.h"
 #include "comptime.h" // CTFE engine
 #include "exhaustiveness.h"  // Match exhaustiveness checking
 #include "ranges.h"          // Range analysis
@@ -792,7 +791,7 @@ void sema_resolve_expr(Expr *e) {
           // It's a user-defined type!
           e->kind = EXPR_TYPE;
           e->as.type_expr.type_value = sym->type;
-          e->type = type_meta_type(sema_arena);
+          e->type = NULL;
           e->decl = sym->decl;
           e->is_global = true;
           break;
@@ -844,7 +843,7 @@ void sema_resolve_expr(Expr *e) {
                 type_id->length = (isize)rl;
                 e->kind = EXPR_TYPE;
                 e->as.type_expr.type_value = type_simple(sema_arena, type_id);
-                e->type = type_meta_type(sema_arena);
+                e->type = NULL;
                 break;
             }
         }
@@ -853,20 +852,20 @@ void sema_resolve_expr(Expr *e) {
     if (strcmp(raw, "int") == 0) {
         e->kind = EXPR_TYPE;
         e->as.type_expr.type_value = get_builtin_i32_type();
-        e->type = type_meta_type(sema_arena);
+        e->type = NULL;
         break;
     }
     if (strcmp(raw, "u8") == 0) {
         e->kind = EXPR_TYPE;
         e->as.type_expr.type_value = get_builtin_u8_type();
-        e->type = type_meta_type(sema_arena);
+        e->type = NULL;
         break;
     } else if (strcmp(raw, "f32") == 0 || strcmp(raw, "f64") == 0 || strcmp(raw, "float") == 0 || strcmp(raw, "bool") == 0 || strcmp(raw, "string") == 0) {
         e->kind = EXPR_TYPE;
         Id *type_id = id(sema_arena, strlen(raw), arena_push_many_aligned(sema_arena, char, strlen(raw) + 1));
         strcpy((char*)type_id->name, raw);
         e->as.type_expr.type_value = type_simple(sema_arena, type_id);
-        e->type = type_meta_type(sema_arena);
+        e->type = NULL;
         break;
     }
 
@@ -921,248 +920,7 @@ void sema_resolve_expr(Expr *e) {
   case EXPR_CALL:
     sema_resolve_expr(e->as.call_expr.callee);
 
-    // Note: Q-002 Phase 3 (int monomorphization for i64/u64) was reverted.
-    // Rationale: it introduced hidden polymorphism that violated P5
-    // "no hidden magic". `int` is now a stable alias for i32; if you
-    // want a function that accepts wider integers, declare them
-    // explicitly: `func f(n i64)` or use type parameters `func f(T type, n T)`.
-
-    // Check if the callee resolved to a generic func
-    if (e->as.call_expr.callee->decl) {
-        Decl *df = e->as.call_expr.callee->decl;
-        if (df->kind == DECL_FUNCTION || df->kind == DECL_PROCEDURE) {
-            // Check for comptime parameters
-            bool is_generic = false;
-            for (DeclList *p = df->as.function_decl.params; p; p = p->next) {
-                if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type && p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
-                    is_generic = true;
-                    break;
-                }
-            }
-
-            if (is_generic) {
-                // 1. Resolve arguments first to get types
-                for (ExprList *a = e->as.call_expr.args; a; a = a->next) sema_resolve_expr(a->expr);
-
-                // 2. Build mangled name, e.g., max_int
-                char mangled_name[512];
-                snprintf(mangled_name, sizeof(mangled_name), "%.*s", (int)df->as.function_decl.name->length, df->as.function_decl.name->name);
-                
-                DeclList *p = df->as.function_decl.params;
-                ExprList *a = e->as.call_expr.args;
-                while (p && a) {
-                    if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type && p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
-                        if (a->expr->kind == EXPR_TYPE) {
-                            Type *arg_ty = a->expr->as.type_expr.type_value;
-                            if (arg_ty->kind == TYPE_SIMPLE && arg_ty->base_type) {
-                                snprintf(mangled_name + strlen(mangled_name), sizeof(mangled_name) - strlen(mangled_name), "_%.*s", 
-                                    (int)arg_ty->base_type->length, arg_ty->base_type->name);
-                            } else {
-                                snprintf(mangled_name + strlen(mangled_name), sizeof(mangled_name) - strlen(mangled_name), "_complexT");
-                            }
-                        } else {
-                             fprintf(stderr, "[E012] Error Ln %li: call to generic function '%.*s' missing type argument\n",
-                                 e->line, (int)df->as.function_decl.name->length, df->as.function_decl.name->name);
-                             diagnostic_show_line(e->line, e->col);
-                             exit(1);
-                        }
-                    }
-                    p = p->next;
-                    a = a->next;
-                }
-
-                size_t cname_mangled_len = strlen(current_module_path) + 1 + strlen(mangled_name) + 1;
-                char *cname_mangled = malloc(cname_mangled_len);
-                snprintf(cname_mangled, cname_mangled_len, "%s_%s", current_module_path, mangled_name);
-                for (char *ptr = cname_mangled; *ptr; ptr++) if (*ptr == '.') *ptr = '_';
-
-                // 3. Instantiate if needed
-                Symbol *existing = sema_lookup(mangled_name);
-                if (!existing) {
-                    Decl *inst = clone_decl(sema_arena, df);
-                    
-                    // Replace the name
-                    inst->as.function_decl.name = id(sema_arena, strlen(mangled_name), arena_push_many_aligned(sema_arena, char, strlen(mangled_name) + 1));
-                    strcpy((char*)inst->as.function_decl.name->name, mangled_name);
-
-                    // Substitute type parameters
-                    p = inst->as.function_decl.params;
-                    a = e->as.call_expr.args;
-                    while (p && a) {
-                        if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type && p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
-                            Id *param_name = p->decl->as.variable_decl.name;
-                            Type *arg_ty = a->expr->as.type_expr.type_value;
-                            p->decl->as.variable_decl.type = type_meta_type(sema_arena);
-                            
-                            char param_str[256];
-                            snprintf(param_str, 256, "%.*s", (int)param_name->length, param_name->name);
-                            generic_substitute_decl(inst, param_str, arg_ty);
-                        }
-                        p = p->next;
-                        a = a->next;
-                    }
-
-                    sema_insert_global(mangled_name, cname_mangled, inst->as.function_decl.return_type, inst, false);
-                    
-                    // Append to sema_decls so it will be typechecked and emitted
-                    DeclList *new_node = decl_list(sema_arena, inst);
-                    DeclList *tail = sema_decls;
-                    while (tail && tail->next) tail = tail->next;
-                    if (tail) tail->next = new_node;
-                    else sema_decls = new_node;
-                }
-                
-                // 4. Update the callee identifier to point to `mangled_name`
-                e->as.call_expr.callee->as.identifier_expr.id = id(sema_arena, strlen(mangled_name), arena_push_many_aligned(sema_arena, char, strlen(mangled_name) + 1));
-                strcpy((char*)e->as.call_expr.callee->as.identifier_expr.id->name, mangled_name);
-                
-                // Re-resolve callee
-                e->as.call_expr.callee->decl = NULL;
-                sema_resolve_expr(e->as.call_expr.callee);
-                
-                free(cname_mangled);
-                break; // Skip normal arg resolution, we already did it
-            }
-        }
-    }
-
-    // 'T type variable generics: infer type bindings from argument types.
-    // Unlike comptime T type, no explicit type arg — T is inferred from values.
-    if (e->as.call_expr.callee->decl) {
-        Decl *df = e->as.call_expr.callee->decl;
-        if (df->kind == DECL_FUNCTION || df->kind == DECL_PROCEDURE) {
-            // Helper: does this type contain any 'T or 'N (typevar or typevar-sized array)?
-            #define type_has_typevar(t) ({                                          \
-                Type *_t = (t); bool _r = false;                                   \
-                while (_t) {                                                        \
-                    if (_t->kind == TYPE_VAR) { _r = true; break; }                \
-                    if (_t->kind == TYPE_ARRAY && _t->size_relop == TOKEN_TYPEVAR)  \
-                        { _r = true; break; }                                      \
-                    _t = _t->element_type;                                         \
-                }                                                                   \
-                _r; })
-            bool is_typevar = false;
-            for (DeclList *p = df->as.function_decl.params; p; p = p->next) {
-                if (p->decl && p->decl->kind == DECL_VARIABLE) {
-                    Type *pt = p->decl->as.variable_decl.type;
-                    if (pt && type_has_typevar(pt)) { is_typevar = true; break; }
-                }
-            }
-            if (is_typevar) {
-                // 1. Resolve + infer all args to get concrete types
-                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
-                    sema_resolve_expr(a->expr);
-                    sema_infer_expr(a->expr);
-                }
-                // 2. Bind type variables ('T → Type) and size variables ('N → integer)
-                #define MAX_TVARS 8
-                const char *tv_names[MAX_TVARS]; Type *tv_types[MAX_TVARS];
-                const char *sv_names[MAX_TVARS]; isize sv_sizes[MAX_TVARS];
-                int n_tv = 0, n_sv = 0;
-                DeclList *p = df->as.function_decl.params;
-                ExprList *a = e->as.call_expr.args;
-                while (p && a) {
-                    if (p->decl && p->decl->kind == DECL_VARIABLE) {
-                        Type *pt = p->decl->as.variable_decl.type;
-                        Type *at = a->expr->type;
-                        // Direct 'T type variable: param is TYPE_VAR
-                        if (pt && pt->kind == TYPE_VAR && pt->base_type && at) {
-                            bool found = false;
-                            for (int i = 0; i < n_tv; i++) {
-                                if (strncmp(tv_names[i], pt->base_type->name,
-                                            pt->base_type->length) == 0) { found = true; break; }
-                            }
-                            if (!found && n_tv < MAX_TVARS) {
-                                char *nm = arena_push_many_aligned(sema_arena, char,
-                                                                   pt->base_type->length + 1);
-                                memcpy(nm, pt->base_type->name, pt->base_type->length);
-                                nm[pt->base_type->length] = '\0';
-                                tv_names[n_tv] = nm; tv_types[n_tv] = at; n_tv++;
-                            }
-                        }
-                        // Size variable 'N: param is *T['N] (POINTER to typevar-sized ARRAY)
-                        // Arg is T[K] (inline fixed array) → bind 'N = K
-                        if (pt && pt->kind == TYPE_POINTER && pt->element_type &&
-                            pt->element_type->kind == TYPE_ARRAY &&
-                            pt->element_type->array_len < 0 &&
-                            pt->element_type->size_relop == TOKEN_TYPEVAR &&
-                            pt->element_type->size_expr &&
-                            pt->element_type->size_expr->kind == EXPR_IDENTIFIER &&
-                            at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
-                            Id *sv_id = pt->element_type->size_expr->as.identifier_expr.id;
-                            bool found = false;
-                            for (int i = 0; i < n_sv; i++) {
-                                if (strncmp(sv_names[i], sv_id->name, sv_id->length) == 0)
-                                    { found = true; break; }
-                            }
-                            if (!found && n_sv < MAX_TVARS) {
-                                char *nm = arena_push_many_aligned(sema_arena, char,
-                                                                   sv_id->length + 1);
-                                memcpy(nm, sv_id->name, sv_id->length);
-                                nm[sv_id->length] = '\0';
-                                sv_names[n_sv] = nm; sv_sizes[n_sv] = at->array_len; n_sv++;
-                            }
-                        }
-                    }
-                    p = p->next; a = a->next;
-                }
-                if (n_tv > 0 || n_sv > 0) {
-                    // 3. Build mangled name: funcname_T1_T2..._N1_N2...
-                    char mn[512];
-                    snprintf(mn, sizeof(mn), "%.*s",
-                             (int)df->as.function_decl.name->length,
-                             df->as.function_decl.name->name);
-                    for (int i = 0; i < n_tv; i++) {
-                        char tn[128] = "T";
-                        Type *bt = tv_types[i];
-                        if (bt->kind == TYPE_SIMPLE && bt->base_type) {
-                            snprintf(tn, sizeof(tn), "%.*s",
-                                     (int)bt->base_type->length, bt->base_type->name);
-                        }
-                        snprintf(mn + strlen(mn), sizeof(mn) - strlen(mn), "_%s", tn);
-                    }
-                    for (int i = 0; i < n_sv; i++) {
-                        snprintf(mn + strlen(mn), sizeof(mn) - strlen(mn),
-                                 "_%lld", (long long)sv_sizes[i]);
-                    }
-                    // 4. Instantiate if not already done
-                    size_t cmlen = strlen(current_module_path) + 1 + strlen(mn) + 1;
-                    char *cm = malloc(cmlen);
-                    snprintf(cm, cmlen, "%s_%s", current_module_path, mn);
-                    for (char *ptr = cm; *ptr; ptr++) if (*ptr == '.') *ptr = '_';
-
-                    if (!sema_lookup(mn)) {
-                        Decl *inst = clone_decl(sema_arena, df);
-                        size_t mlen = strlen(mn);
-                        char *mbuf = arena_push_many_aligned(sema_arena, char, mlen + 1);
-                        memcpy(mbuf, mn, mlen + 1);
-                        inst->as.function_decl.name = id(sema_arena, mlen, mbuf);
-                        // Substitute all type variables
-                        for (int i = 0; i < n_tv; i++)
-                            generic_substitute_decl(inst, tv_names[i], tv_types[i]);
-                        // Substitute all size variables ('N → integer)
-                        for (int i = 0; i < n_sv; i++)
-                            generic_substitute_size_in_decl(inst, sv_names[i], sv_sizes[i]);
-                        sema_insert_global(mn, cm, inst->as.function_decl.return_type, inst, false);
-                        DeclList *nn = decl_list(sema_arena, inst);
-                        DeclList *tail = sema_decls;
-                        while (tail && tail->next) tail = tail->next;
-                        if (tail) tail->next = nn; else sema_decls = nn;
-                    }
-                    // 5. Rewrite callee to mangled name
-                    size_t mlen = strlen(mn);
-                    char *mbuf2 = arena_push_many_aligned(sema_arena, char, mlen + 1);
-                    memcpy(mbuf2, mn, mlen + 1);
-                    e->as.call_expr.callee->as.identifier_expr.id = id(sema_arena, mlen, mbuf2);
-                    e->as.call_expr.callee->decl = NULL;
-                    sema_resolve_expr(e->as.call_expr.callee);
-                    free(cm);
-                    break; // args already resolved; skip normal resolution
-                }
-            }
-        }
-    }
-
+    // (generics/monomorphization removed: no comptime type params or 'T typevars)
     // Purity Check: func cannot call proc
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         Expr *callee = e->as.call_expr.callee;

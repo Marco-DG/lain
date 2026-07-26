@@ -380,16 +380,6 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
 
   case TYPE_ARRAY:
   case TYPE_SLICE: {
-    // Typevar-sized array (u8['N]): emit the element type name only — the size
-    // is a type variable and will be resolved at pointer level (*u8['N] → const uint8_t *)
-    if (t->kind == TYPE_ARRAY && t->array_len < 0 && t->size_relop == TOKEN_TYPEVAR) {
-        if (t->element_type) {
-            c_name_for_type(t->element_type, out, cap);
-        } else {
-            snprintf(out, cap, "uint8_t");
-        }
-        return;
-    }
     const char *sliceName = emit_slice_type_definition(t);
     if (is_mutable_ref) {
       snprintf(out, cap, "%s *", sliceName);
@@ -400,10 +390,10 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
   }
 
   case TYPE_POINTER: {
-    // *T[N] and *T['N]: thin pointer — emit const T *, not const Fixed_T_N *
+    // *T[N]: thin pointer — emit const T *, not const Fixed_T_N *
     // N is tracked in the type system for bounds checking only; no runtime overhead.
     if (t->element_type && t->element_type->kind == TYPE_ARRAY &&
-        (t->element_type->array_len >= 0 || t->element_type->size_relop == TOKEN_TYPEVAR)) {
+        t->element_type->array_len >= 0) {
         char elem[256];
         c_name_for_type(t->element_type->element_type, elem, sizeof elem);
         if (t->mode == MODE_MUTABLE || t->mode == MODE_OWNED)
@@ -433,17 +423,6 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
       return;
     }
     snprintf(out, cap, "/*<unknown-comptime-type>*/");
-    return;
-  }
-
-  case TYPE_VAR: {
-    // Should have been substituted before emit; emit a placeholder if not.
-    if (t->base_type) {
-        snprintf(out, cap, "/*<typevar-%.*s>*/",
-                 (int)t->base_type->length, t->base_type->name);
-    } else {
-        snprintf(out, cap, "/*<typevar>*/");
-    }
     return;
   }
 

@@ -20,8 +20,6 @@ typedef struct ComptimeEnv {
     struct ComptimeEnv* next;
 } ComptimeEnv;
 
-// Forward declaration from generic.h
-void generic_substitute_expr(Expr *e, const char *param_name, Type *actual_type);
 Type* get_builtin_i32_type(void);
 
 ComptimeEnv* comptime_env_push(Arena* arena, ComptimeEnv* env, Id* name, Expr* value) {
@@ -45,11 +43,6 @@ Expr* comptime_env_lookup(ComptimeEnv* env, Id* name) {
 // Forward declarations of evaluation functions
 Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env);
 Expr* comptime_evaluate_stmt_list(Arena* arena, StmtList* stmts, ComptimeEnv* env);
-Expr* comptime_evaluate_function(Arena* arena, Decl* func_decl, ExprList* args);
-
-// F-045: guard against runaway CTFE recursion.
-#define COMPTIME_MAX_DEPTH 256
-static int comptime_depth = 0;
 
 Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
     if (!expr) return NULL;
@@ -221,24 +214,11 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
                     // at comptime (no body). Falls through to clone_expr.
                 }
 
-                if (callee_decl && callee_decl->kind == DECL_FUNCTION) {
-                    // Evaluate arguments
-                    ExprList* eval_args = NULL;
-                    ExprList** args_tail = &eval_args;
-                    for (ExprList* curr_arg = expr->as.call_expr.args; curr_arg; curr_arg = curr_arg->next) {
-                        ExprList* new_arg = arena_push_aligned(arena, ExprList);
-                        new_arg->expr = comptime_evaluate_expr(arena, curr_arg->expr, env);
-                        new_arg->next = NULL;
-                        *args_tail = new_arg;
-                        args_tail = &new_arg->next;
-                    }
-
-                    // Execute function!
-                    Expr* result = comptime_evaluate_function(arena, callee_decl, eval_args);
-                    if (result) return result;
-                }
+                // NOTE: compile-time evaluation of user `func` calls to a `type`
+                // (generic instantiation) was removed. A `func` call in a comptime
+                // context now simply falls through unevaluated.
             }
-            
+
             return clone_expr(arena, expr);
         }
 
@@ -301,55 +281,6 @@ Expr* comptime_evaluate_stmt_list(Arena* arena, StmtList* stmts, ComptimeEnv* en
         }
     }
     return NULL; // Function fell through without returning
-}
-
-// Entry point: evaluates a function declaration statically given argument expressions.
-Expr* comptime_evaluate_function(Arena* arena, Decl* func_decl, ExprList* args) {
-    if (func_decl->kind != DECL_FUNCTION) return NULL;
-
-    // F-045: depth guard to prevent compiler stack overflow on recursive CTFE.
-    if (comptime_depth >= COMPTIME_MAX_DEPTH) {
-        fprintf(stderr, "[E014] Error Ln %li, Col %li: comptime recursion depth exceeded (%d) while evaluating '%.*s'.\n"
-                "  Hint: CTFE must terminate. Review recursive type aliases or generic instantiations.\n",
-                (long)func_decl->line, (long)func_decl->col, COMPTIME_MAX_DEPTH,
-                (int)func_decl->as.function_decl.name->length,
-                func_decl->as.function_decl.name->name);
-        exit(1);
-    }
-    comptime_depth++;
-
-    ComptimeEnv* env = NULL;
-    
-    // Bind arguments to parameters
-    DeclList* param_curr = func_decl->as.function_decl.params;
-    ExprList* arg_curr = args;
-    
-    while (param_curr && arg_curr) {
-        if (param_curr->decl->kind == DECL_VARIABLE) {
-            // We assume arguments passed to comptime functions are fully evaluated (e.g. types)
-            env = comptime_env_push(arena, env, param_curr->decl->as.variable_decl.name, arg_curr->expr);
-        }
-        param_curr = param_curr->next;
-        arg_curr = arg_curr->next;
-    }
-    
-    Expr* result = comptime_evaluate_stmt_list(arena, func_decl->as.function_decl.body, env);
-
-    if (result) {
-        // Substitute all comptime type parameters into the resulting AST!
-        for (ComptimeEnv* e = env; e; e = e->next) {
-            if (e->value && e->value->kind == EXPR_TYPE) {
-                char param_str[256];
-                snprintf(param_str, 256, "%.*s", (int)e->name->length, e->name->name);
-                generic_substitute_expr(result, param_str, e->value->as.type_expr.type_value);
-            }
-        }
-    }
-
-    comptime_depth--;  // F-045: pair with the increment above
-
-
-    return result;
 }
 
 #endif // SEMANTICS_COMPTIME_H

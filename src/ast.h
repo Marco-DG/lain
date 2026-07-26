@@ -46,8 +46,6 @@ typedef enum {
     TYPE_POINTER,   // pointer to element type, e.g. "u8 *"
     TYPE_COMPTIME,  // comptime modifier
     TYPE_VARIANT,   // inner payload of an ADT variant
-    TYPE_META_TYPE, // e.g. "type" as a value
-    TYPE_VAR,       // type variable: 'T, 'N, 'E (base_type holds the name)
 } TypeKind;
 
 typedef struct Type {
@@ -617,23 +615,6 @@ Type *type_pointer(Arena *arena, Type *element_type) {
     return t;
 }
 
-Type *type_meta_type(Arena *arena) {
-    Type *t = arena_push_aligned(arena, Type);
-    t->kind = TYPE_META_TYPE;
-    t->mode = MODE_SHARED;
-    t->element_type = NULL;
-    return t;
-}
-
-// Type variable: 'T, 'N, 'E — base_type holds the variable name (without the ')
-Type *type_var(Arena *arena, Id *name) {
-    Type *t = arena_push_aligned(arena, Type);
-    t->kind = TYPE_VAR;
-    t->mode = MODE_SHARED;
-    t->base_type = name;
-    t->element_type = NULL;
-    return t;
-}
 
 // Helper: get underlying type without ownership wrapper
 static inline Type *type_unwrap(Type *t) {
@@ -1003,7 +984,7 @@ Expr *expr_type(Arena *arena, Type *type_value) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_TYPE;
     e->as.type_expr.type_value = type_value;
-    e->type = type_meta_type(arena); // A type expression has type `type`
+    e->type = NULL; // A type expression has type `type`
     return e;
 }
 
@@ -1112,7 +1093,7 @@ Expr *expr_anon_struct(Arena *arena, DeclList *fields) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_ANON_STRUCT;
     e->as.anon_struct_expr.fields = fields;
-    e->type = type_meta_type(arena);
+    e->type = NULL;
     return e;
 }
 
@@ -1120,7 +1101,7 @@ Expr *expr_anon_enum(Arena *arena, Variant *variants) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_ANON_ENUM;
     e->as.anon_enum_expr.variants = variants;
-    e->type = type_meta_type(arena);
+    e->type = NULL;
     return e;
 }
 

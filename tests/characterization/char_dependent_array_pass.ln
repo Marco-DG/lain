@@ -1,0 +1,7 @@
+// Lock: value-dependent array sizing (i32[out.len]) — the DML-style feature that MUST survive.
+proc vadd(var out i32[], a i32[out.len], b i32[out.len]) {
+    for i in 0..out.len {
+        out[i] = a[i] + b[i]
+    }
+}
+proc main() i32 { return 0 }

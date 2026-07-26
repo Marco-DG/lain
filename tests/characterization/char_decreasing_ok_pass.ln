@@ -1,0 +1,7 @@
+// Lock: a well-formed decreasing measure (non-negative + strictly decreasing) is accepted.
+func countdown(n i32) i32 {
+    var i = n
+    while i > 0 decreasing i { i = i - 1 }
+    return i
+}
+proc main() i32 { return 0 }

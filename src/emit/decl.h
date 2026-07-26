@@ -11,25 +11,6 @@ void emit_decl_list(DeclList *decls, int depth);
 
 static void emit_param_type(Type *t, bool with_restrict); // Forward for use in forward decl
 
-static bool type_contains_typevar(Type *t) {
-    while (t) {
-        if (t->kind == TYPE_COMPTIME || t->kind == TYPE_VAR) return true;
-        if (t->kind == TYPE_ARRAY && t->size_relop == TOKEN_TYPEVAR) return true;
-        t = t->element_type;
-    }
-    return false;
-}
-
-static bool is_generic_function(Decl *decl) {
-    if (!decl || (decl->kind != DECL_FUNCTION && decl->kind != DECL_PROCEDURE)) return false;
-    for (DeclList *p = decl->as.function_decl.params; p; p = p->next) {
-        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
-        Type *pt = p->decl->as.variable_decl.type;
-        if (pt && type_contains_typevar(pt)) return true;
-    }
-    return false;
-}
-
 // Q-019 [pure]: returns true if any parameter of decl is a var (MODE_MUTABLE) borrow.
 // A DECL_FUNCTION with no var params has no caller-visible side effects and qualifies
 // for __attribute__((pure)): Lain already guarantees no mutable global access and
@@ -57,7 +38,7 @@ static bool func_all_params_by_value(Decl *decl) {  // also used by func_has_ptr
                  : (p->decl->kind == DECL_DESTRUCT)  ? p->decl->as.destruct_decl.type
                  : NULL;
         if (!pt) continue;
-        if (pt->kind == TYPE_META_TYPE || pt->kind == TYPE_COMPTIME) continue;
+        if (pt->kind == TYPE_COMPTIME) continue;
         if (pt->kind == TYPE_ARRAY) return false;          // decomposed to ptr
         if (pt->mode == MODE_MUTABLE) return false;        // T * restrict
         if (pt->mode == MODE_SHARED && !is_primitive_type(pt)) return false; // const T*
@@ -76,7 +57,7 @@ static bool func_has_ptr_param(Decl *decl) {
                  : (p->decl->kind == DECL_VARIABLE)  ? p->decl->as.variable_decl.type
                  : NULL;
         if (!pt) continue;
-        if (pt->kind == TYPE_META_TYPE || pt->kind == TYPE_COMPTIME) continue;
+        if (pt->kind == TYPE_COMPTIME) continue;
         if (pt->kind == TYPE_ARRAY) return true;
         if (pt->mode == MODE_MUTABLE) return true;
         if (pt->mode == MODE_SHARED && !is_primitive_type(pt)) return true;
@@ -93,7 +74,7 @@ static bool func_returns_nonnull_ptr(Decl *decl) {
     if (decl->kind != DECL_FUNCTION && decl->kind != DECL_PROCEDURE) return false;
     Type *rt = decl->as.function_decl.return_type;
     if (!rt) return false;
-    if (rt->kind == TYPE_META_TYPE || rt->kind == TYPE_COMPTIME) return false;
+    if (rt->kind == TYPE_COMPTIME) return false;
     if (rt->kind == TYPE_POINTER) return false;  // raw pointer: may be null
     if (rt->mode == MODE_MUTABLE) return true;
     // MODE_SHARED non-primitive: only pointer types return as C pointers (not structs)
@@ -164,10 +145,7 @@ static void emit_access_attributes(Decl *decl) {
 
 static void emit_forward_decl(Decl *decl, int depth) {
     if (!decl) return;
-    if (is_generic_function(decl)) return;
     if (decl->kind == DECL_FUNCTION || decl->kind == DECL_PROCEDURE) {
-        if (decl->as.function_decl.return_type && decl->as.function_decl.return_type->kind == TYPE_META_TYPE) return; // Pure CTFE function
-        
         emit_indent(depth);
         // @cold / @hot: programmer-declared frequency hints.
         if (decl->as.function_decl.is_cold) EMIT("__attribute__((cold)) ");
@@ -219,7 +197,7 @@ static void emit_forward_decl(Decl *decl, int depth) {
         if (param) {
             int first = 1;
             while (param) {
-                if (param->decl->kind == DECL_VARIABLE && param->decl->as.variable_decl.type && (param->decl->as.variable_decl.type->kind == TYPE_META_TYPE || param->decl->as.variable_decl.type->kind == TYPE_COMPTIME)) {
+                if (param->decl->kind == DECL_VARIABLE && param->decl->as.variable_decl.type && param->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
                     param = param->next;
                     continue;
                 }
@@ -385,9 +363,6 @@ void emit_decl(Decl* decl, int depth) {
 
         case DECL_PROCEDURE:
         case DECL_FUNCTION: {
-            if (is_generic_function(decl)) return;
-            if (decl->as.function_decl.return_type && decl->as.function_decl.return_type->kind == TYPE_META_TYPE) return; // Pure CTFE function
-
             // Q-017 [fast_math]: emit pragma to enable FMA fusion for this function
             bool has_fast_math = false;
             for (Attr *a = decl->attributes; a; a = a->next) {
@@ -462,7 +437,7 @@ void emit_decl(Decl* decl, int depth) {
                 int first = 1;
                 int param_idx = 0;
                 while (param) {
-                    if (param->decl->kind == DECL_VARIABLE && param->decl->as.variable_decl.type && (param->decl->as.variable_decl.type->kind == TYPE_META_TYPE || param->decl->as.variable_decl.type->kind == TYPE_COMPTIME)) {
+                    if (param->decl->kind == DECL_VARIABLE && param->decl->as.variable_decl.type && param->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
                         param = param->next;
                         param_idx++;
                         continue;

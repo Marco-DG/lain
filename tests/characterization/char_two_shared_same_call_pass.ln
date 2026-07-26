@@ -1,0 +1,11 @@
+// Lock: two simultaneous shared borrows of the same variable are allowed (N readers).
+type Vec {
+    x i32
+    y i32
+}
+func dot(a Vec, b Vec) i32 { return a.x * b.x + a.y * b.y }
+proc main() i32 {
+    var v = Vec(1, 2)
+    var d = dot(v, v)
+    return d
+}

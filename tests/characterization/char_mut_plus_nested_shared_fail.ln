@@ -1,0 +1,13 @@
+// EXPECT: [E004]
+// Lock: mutable borrow + nested-call shared borrow of the same var is an aliasing violation.
+type Vec {
+    x i32
+    y i32
+}
+func length(v Vec) i32 { return v.x }
+proc scale(var v Vec, factor i32) { v.x = v.x * factor }
+proc main() i32 {
+    var v = Vec(2, 3)
+    scale(var v, length(v))
+    return v.x
+}

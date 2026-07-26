@@ -1,0 +1,11 @@
+// EXPECT: [E001]
+// Lock: use of a linear variable after it is moved is rejected.
+type R {
+    h i32
+}
+proc sink(mov r R) { drop(mov r) }
+proc main() i32 {
+    var a = R(1)
+    sink(mov a)
+    return a.h
+}

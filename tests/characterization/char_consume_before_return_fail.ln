@@ -1,0 +1,7 @@
+// EXPECT: [E003]
+// Lock: an owned linear param must be consumed before return.
+type R {
+    h i32
+}
+proc sink(mov r R) { }
+proc main() i32 { return 0 }

@@ -1,0 +1,7 @@
+// EXPECT: [E085]
+// Lock: non-linear index expression cannot be proven in bounds (Fourier-Motzkin is linear).
+func at(m i32[], cols i32, r i32, c i32) i32 {
+    if r * cols + c in m { return m[r * cols + c] }
+    return 0
+}
+proc main() i32 { return 0 }

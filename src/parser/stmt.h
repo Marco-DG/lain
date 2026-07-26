@@ -353,7 +353,7 @@ Stmt *parse_var_stmt(Arena* arena, Parser* parser)
     // optional type annotation
     Type *type_annotation = NULL;
     if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) ||
-        parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_TYPEVAR)) {
+        parser_match(TOKEN_ASTERISK)) {
         type_annotation = parse_type(arena, parser);
     }
 

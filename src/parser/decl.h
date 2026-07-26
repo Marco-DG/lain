@@ -321,13 +321,6 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
         parser_skip_eol();
         if (parser_match(TOKEN_R_BRACE)) break;
 
-        /* Accept optional 'comptime' prefix for a field */
-        bool field_is_comptime = false;
-        if (parser_match(TOKEN_KEYWORD_COMPTIME)) {
-            field_is_comptime = true;
-            parser_advance(); // consume 'comptime'
-        }
-
         /* Check for modifiers (Prefix syntax): mov name Type, var name Type */
         bool is_move = false;
         bool is_mut = false;
@@ -357,7 +350,7 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
         } else if (parser_match(TOKEN_L_BRACE)) {
             // Case 2: ADT Variant with fields
             // is_adt_variant = true;
-        } else if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_KEYWORD_COMPTIME) || parser_match(TOKEN_L_BRACKET) || parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_TYPEVAR)) {
+        } else if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_L_BRACKET) || parser_match(TOKEN_ASTERISK)) {
             // Case 1: Struct Field (followed by Type start tokens)
             is_struct_field = true;
         } else {
@@ -372,10 +365,7 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
             
             /* Struct field: parse its type */
             Type *field_type = parse_type(arena, parser);
-            if (field_is_comptime && field_type) {
-                field_type = type_comptime(arena, field_type);
-            }
-            
+
             if (is_mut) field_type = type_mut(arena, field_type);
             if (is_move) field_type = type_move(arena, field_type);
 
@@ -614,12 +604,6 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
 
     if (!parser_match(TOKEN_R_PAREN)) {
         do {
-            bool is_comptime = false;
-            if (parser_match(TOKEN_KEYWORD_COMPTIME)) {
-                parser_advance(); // consume 'comptime'
-                is_comptime = true;
-            }
-
             // Check for modifiers first (Prefix syntax)
             bool is_mut = false;
             bool is_move = false;
@@ -684,8 +668,6 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                 
                 if (is_mut) ptype = type_mut(arena, ptype);
                 if (is_move) ptype = type_move(arena, ptype);
-
-                if (is_comptime) ptype = type_comptime(arena, ptype);
 
                 pdecl = decl_variable(arena, pname, ptype);
                 pdecl->line = param_line;
@@ -762,21 +744,11 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     parser_advance();
 
     // --- return type ---
-    bool ret_is_comptime = false;
-    if (parser_match(TOKEN_KEYWORD_COMPTIME)) {
-        parser_advance();
-        ret_is_comptime = true;
-    }
-    
     Type *ret_type = NULL;
-    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_TYPE) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_TYPEVAR)) {
+    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK)) {
         ret_type = parse_type(arena, parser);
     }
 
-    if (ret_is_comptime && ret_type) {
-        ret_type = type_comptime(arena, ret_type);
-    }
-    
     // --- return type constraints (equation-style): int >= 0, int >= lo and <= hi ---
     ExprList *return_constraints = NULL;
     if (ret_type && is_comparison_op(parser->token.kind)) {
@@ -915,20 +887,10 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
     parser_expect(TOKEN_R_PAREN, "Expected ')' after parameters");
     parser_advance();
 
-    // return type: accept optional 'comptime' prefix
-    bool ret_is_comptime = false;
-    if (parser_match(TOKEN_KEYWORD_COMPTIME)) {
-        parser_advance();
-        ret_is_comptime = true;
-    }
-    
+    // return type
     Type *ret_type = NULL;
-    if (ret_is_comptime || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_TYPE) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_TYPEVAR)) {
+    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK)) {
         ret_type = parse_type(arena, parser);
-    }
-
-    if (ret_is_comptime && ret_type) {
-        ret_type = type_comptime(arena, ret_type);
     }
 
     // require end-of-decl (newline or semicolon)

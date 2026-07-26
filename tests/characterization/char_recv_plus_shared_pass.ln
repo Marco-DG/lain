@@ -1,0 +1,11 @@
+// Lock: two-phase borrow — mutable receiver + direct shared arg of the same var compiles.
+type Vec {
+    x i32
+    y i32
+}
+proc merge(var a Vec, b Vec) { a.x = a.x + b.y }
+proc main() i32 {
+    var v = Vec(2, 3)
+    merge(var v, v)
+    return v.x
+}

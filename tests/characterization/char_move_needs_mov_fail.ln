@@ -1,0 +1,11 @@
+// EXPECT: [E007]
+// Lock: passing a linear value to an owned param requires explicit `mov`.
+type R {
+    h i32
+}
+proc sink(mov r R) { drop(mov r) }
+proc main() i32 {
+    var a = R(1)
+    sink(a)
+    return 0
+}

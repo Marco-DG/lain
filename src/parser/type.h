@@ -12,24 +12,14 @@ Type *parse_type(Arena *arena, Parser *parser) {
 
 
 
-  // 1) prefixes: pointers, type variables, etc.
-
-  // Type variable: 'T — token includes the leading ' (skip it for the name)
-  if (parser_match(TOKEN_TYPEVAR)) {
-      Id *var_name = id(arena, parser->token.length - 1, parser->token.start + 1);
-      parser_advance();
-      return type_var(arena, var_name);
-  }
+  // 1) prefixes: pointers, etc.
 
   if (parser_match(TOKEN_ASTERISK)) {
     parser_advance();
     Type *inner = parse_type(arena, parser);
     // *T[] and *T[:S] collapse: the * is syntactic (these are already reference types).
-    // *T[N] (fixed) and *T['N] (typevar-sized) keep the TYPE_POINTER wrapper.
-    bool is_typevar_sized = (inner->kind == TYPE_ARRAY && inner->array_len < 0
-                             && inner->size_relop == TOKEN_TYPEVAR);
-    if (!is_typevar_sized &&
-        ((inner->kind == TYPE_ARRAY && inner->array_len < 0) || inner->kind == TYPE_SLICE)) {
+    // *T[N] (fixed) keeps the TYPE_POINTER wrapper.
+    if ((inner->kind == TYPE_ARRAY && inner->array_len < 0) || inner->kind == TYPE_SLICE) {
         return inner;  // collapse *T[] and *T[:S]
     }
     return type_pointer(arena, inner);
@@ -47,30 +37,24 @@ Type *parse_type(Arena *arena, Parser *parser) {
     return type_mut(arena, inner);
   }
 
-  // 2) parse a simple identifier type (e.g. "Foo", "int")
-  // 2) parse a simple identifier type (e.g. "Foo", "int", "std.sub.Type") or "type"
-  if (parser_match(TOKEN_KEYWORD_TYPE)) {
+  // 2) parse a simple identifier type (e.g. "Foo", "int", "std.sub.Type")
+  parser_expect(TOKEN_IDENTIFIER, "Expected type name");
+  Token start = parser->token;
+  parser_advance();
+
+  Token end = start;
+  while (parser_match(TOKEN_DOT)) {
+      parser_advance(); // .
+      parser_expect(TOKEN_IDENTIFIER, "Expected identifier after dot");
+      end = parser->token;
       parser_advance();
-      base_type = type_meta_type(arena);
-  } else {
-      parser_expect(TOKEN_IDENTIFIER, "Expected type name");
-      Token start = parser->token;
-      parser_advance();
-
-      Token end = start;
-      while (parser_match(TOKEN_DOT)) {
-          parser_advance(); // .
-          parser_expect(TOKEN_IDENTIFIER, "Expected identifier after dot");
-          end = parser->token;
-          parser_advance();
-      }
-
-      // Combine into one Id based on source range
-      isize len = (end.start + end.length) - start.start;
-      Id *type_name = id(arena, len, start.start);
-
-      base_type = type_simple(arena, type_name);
   }
+
+  // Combine into one Id based on source range
+  isize len = (end.start + end.length) - start.start;
+  Id *type_name = id(arena, len, start.start);
+
+  base_type = type_simple(arena, type_name);
 
   // 3) allow array/slice suffixes
   while (parser_match(TOKEN_L_BRACKET)) {
@@ -124,12 +108,6 @@ Type *parse_type(Arena *arena, Parser *parser) {
         array_len = (isize)parse_numeric_literal(parser->token.start,
                                                   parser->token.length);
         parser_advance(); // consume the number
-      } else if (parser_match(TOKEN_TYPEVAR)) {
-        // 'N as compile-time size variable — store as size_expr with TOKEN_TYPEVAR relop
-        Id *tv_name = id(arena, parser->token.length - 1, parser->token.start + 1);
-        parser_advance(); // consume 'N
-        size_expr = expr_identifier(arena, tv_name);
-        size_relop = TOKEN_TYPEVAR; // marker: size from a type variable
       } else if (!parser_match(TOKEN_R_BRACKET)) {
         // Anything before ']' that is not a number is a size constraint.
         // Optional leading relational operator: i32[>= n], i32[< n]

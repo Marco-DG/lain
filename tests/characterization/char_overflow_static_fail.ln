@@ -1,0 +1,6 @@
+// EXPECT: [E086]
+// Lock: statically-provable overflow into a narrower type is rejected.
+proc main() i32 {
+    var x u8 = 300
+    return 0
+}
