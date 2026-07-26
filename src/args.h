@@ -14,7 +14,6 @@ typedef struct
     char*       filename;
     char*       output_file;  // -o flag, defaults to "out.c"
     bool        dump_ast;
-    bool        dump_niche;    // --dump-niche: print enum niche layout decisions
     bool        no_w130;           // --no-w130: suppress proc-could-be-func warning
     bool        no_line_directives; // --no-line-directives: suppress #line in emitted C
     const char* target_triple;      // --target=<triple>, NULL = host
@@ -26,7 +25,6 @@ static void _args_help(void)
     printf("Usage: <path_to_file_to_compile> [options]\n");
     printf("Options:\n");
     printf("  --dump-ast            Print the AST after parsing\n");
-    printf("  --dump-niche          Print niche layout decision for every enum\n");
     printf("  --no-line-directives  Suppress #line directives in emitted C\n");
     printf("  -o <file>             Set output C file (default: out.c)\n");
     printf("  --target=<triple>     Cross-compile target. Supported:\n");
@@ -46,8 +44,6 @@ static Args args_parse(int argc, char** argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--dump-ast") == 0) {
             args.dump_ast = true;
-        } else if (strcmp(argv[i], "--dump-niche") == 0) {
-            args.dump_niche = true;
         } else if (strcmp(argv[i], "--no-w130") == 0) {
             args.no_w130 = true;
         } else if (strcmp(argv[i], "--no-line-directives") == 0) {

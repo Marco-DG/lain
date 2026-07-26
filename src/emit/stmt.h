@@ -354,8 +354,6 @@ void emit_stmt(Stmt *stmt, int depth) {
     bool is_adt = false;
     Decl *adt_decl = NULL;
     char adt_cname[256];
-    NicheLayout match_niche = {0};
-    bool match_use_niche = false;
     if (scrut->type && scrut->type->kind == TYPE_SIMPLE) {
         // We need the resolved name of the type for C code generation
         const char *tname = c_name_for_id(scrut->type->base_type);
@@ -388,9 +386,6 @@ void emit_stmt(Stmt *stmt, int depth) {
                     break;
                 }
             }
-        }
-        if (is_adt && adt_decl) {
-            match_use_niche = enum_is_zero_cost_niche(adt_decl, &match_niche);
         }
     }
 
@@ -450,111 +445,7 @@ void emit_stmt(Stmt *stmt, int depth) {
                         }
                         
                         if (matched_v) {
-                            if (match_use_niche) {
-                                bool is_multi = match_niche.primary_variant != NULL &&
-                                                match_niche.secondary_variant != NULL;
-                                if (is_multi && matched_v == match_niche.primary_variant) {
-                                    // Primary in multi-payload: matches when scrutinee
-                                    // is not any of the secondary sentinels.
-                                    EMIT("1");
-                                    for (size_t si = 0; si < match_niche.secondary_sentinels_count; si++) {
-                                        long long sv = match_niche.secondary_sentinels[si];
-                                        if (match_niche.pool.kind == POOL_POINTER) {
-                                            EMIT(" && (uintptr_t)__match%d != %lldULL",
-                                                 __match_id, sv);
-                                        } else {
-                                            EMIT(" && __match%d != (%s)%lldLL",
-                                                 __match_id, adt_cname, sv);
-                                        }
-                                    }
-                                } else if (is_multi && matched_v == match_niche.secondary_variant) {
-                                    // Secondary in multi-payload: look at the pattern
-                                    // argument to determine which sub-variant or binding.
-                                    ExprList *arg = (pat->expr->kind == EXPR_CALL)
-                                        ? pat->expr->as.call_expr.args : NULL;
-                                    long long stride = match_niche.pool.ptr_stride > 0
-                                        ? match_niche.pool.ptr_stride : 1;
-                                    bool emitted = false;
-                                    if (arg && arg->expr) {
-                                        Id *sub_id = NULL;
-                                        if (arg->expr->kind == EXPR_IDENTIFIER)
-                                            sub_id = arg->expr->as.identifier_expr.id;
-                                        else if (arg->expr->kind == EXPR_MEMBER)
-                                            sub_id = arg->expr->as.member_expr.member;
-                                        // Try resolving sub_id against the sub-enum's variants.
-                                        // sub_id may be mangled (e.g. "..._FileErr_NotFound")
-                                        // or raw ("NotFound"). Try exact + suffix match.
-                                        if (sub_id && match_niche.secondary_subenum_decl) {
-                                            int idx = 0;
-                                            DeclEnum *sub_e = &match_niche.secondary_subenum_decl->as.enum_decl;
-                                            for (Variant *sv = sub_e->variants; sv; sv = sv->next, idx++) {
-                                                bool m = false;
-                                                if (sv->name->length == sub_id->length &&
-                                                    memcmp(sv->name->name, sub_id->name, sub_id->length) == 0) {
-                                                    m = true;
-                                                } else if (sub_id->length > sv->name->length + 1) {
-                                                    const char *suffix = sub_id->name + (sub_id->length - sv->name->length);
-                                                    if (*(suffix-1) == '_' &&
-                                                        memcmp(suffix, sv->name->name, sv->name->length) == 0) {
-                                                        m = true;
-                                                    }
-                                                }
-                                                if (m) {
-                                                    long long sentinel = (long long)idx * stride;
-                                                    if (match_niche.pool.kind == POOL_POINTER) {
-                                                        EMIT("(uintptr_t)__match%d == %lldULL",
-                                                             __match_id, sentinel);
-                                                    } else {
-                                                        EMIT("__match%d == (%s)%lldLL",
-                                                             __match_id, adt_cname, sentinel);
-                                                    }
-                                                    emitted = true; break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if (!emitted) {
-                                        // Binding-style or unresolved — match if scrutinee
-                                        // falls in the secondary range [0, count*stride).
-                                        long long upper = (long long)match_niche.secondary_sentinels_count * stride;
-                                        if (match_niche.pool.kind == POOL_POINTER) {
-                                            EMIT("(uintptr_t)__match%d < %lldULL",
-                                                 __match_id, upper);
-                                        } else {
-                                            EMIT("__match%d < (%s)%lldLL",
-                                                 __match_id, adt_cname, upper);
-                                        }
-                                    }
-                                } else if (matched_v->fields) {
-                                    // Single payload variant — matches if
-                                    // value is none of the empty sentinels.
-                                    EMIT("1");
-                                    for (Variant *ev = adt_decl->as.enum_decl.variants; ev; ev = ev->next) {
-                                        if (ev->fields) continue;
-                                        long long sv = niche_sentinel_for_variant(
-                                            &adt_decl->as.enum_decl, ev, &match_niche);
-                                        if (match_niche.pool.kind == POOL_POINTER) {
-                                            EMIT(" && (uintptr_t)__match%d != %lldULL",
-                                                 __match_id, sv);
-                                        } else {
-                                            EMIT(" && __match%d != (%s)%lldLL",
-                                                 __match_id, adt_cname, sv);
-                                        }
-                                    }
-                                } else {
-                                    long long sv = niche_sentinel_for_variant(
-                                        &adt_decl->as.enum_decl, matched_v, &match_niche);
-                                    if (match_niche.pool.kind == POOL_POINTER) {
-                                        EMIT("(uintptr_t)__match%d == %lldULL",
-                                             __match_id, sv);
-                                    } else {
-                                        EMIT("__match%d == (%s)%lldLL",
-                                             __match_id, adt_cname, sv);
-                                    }
-                                }
-                            } else {
                                 EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_cname, (int)matched_v->name->length, matched_v->name->name);
-                            }
                         } else {
                             EMIT("0 /* unknown variant */");
                         }
@@ -644,61 +535,20 @@ void emit_stmt(Stmt *stmt, int depth) {
           if (matched_v) {
               ExprList *arg = c->patterns->expr->as.call_expr.args;
               DeclList *field = matched_v->fields;
-              bool is_multi_match = match_use_niche &&
-                                    match_niche.primary_variant != NULL &&
-                                    match_niche.secondary_variant != NULL;
-              bool is_secondary = is_multi_match && matched_v == match_niche.secondary_variant;
               while (arg && field) {
                   if (arg->expr->kind == EXPR_IDENTIFIER) {
                       Id *var_name = arg->expr->as.identifier_expr.id;
-                      // Skip when the identifier resolves to a sub-variant
-                      // (static pattern like Err(NotFound)): no binding needed.
-                      bool is_sub_variant = false;
-                      if (is_secondary && match_niche.secondary_subenum_decl) {
-                          DeclEnum *sub_e = &match_niche.secondary_subenum_decl->as.enum_decl;
-                          for (Variant *sv = sub_e->variants; sv; sv = sv->next) {
-                              if (sv->name->length == var_name->length &&
-                                  memcmp(sv->name->name, var_name->name, var_name->length) == 0) {
-                                  is_sub_variant = true; break;
-                              }
-                              if (var_name->length > sv->name->length + 1) {
-                                  const char *suffix = var_name->name + (var_name->length - sv->name->length);
-                                  if (*(suffix-1) == '_' &&
-                                      memcmp(suffix, sv->name->name, sv->name->length) == 0) {
-                                      is_sub_variant = true; break;
-                                  }
-                              }
-                          }
-                      }
-                      if (is_sub_variant) { arg = arg->next; field = field->next; continue; }
-
                       Type *ft = field->decl->as.variable_decl.type;
                       char fty[256];
                       c_name_for_type(ft, fty, sizeof fty);
 
                       emit_indent(depth + 1);
-                      if (is_secondary) {
-                          // Decode scrutinee back to the sub-enum value via stride.
-                          long long stride = match_niche.pool.ptr_stride > 0
-                              ? match_niche.pool.ptr_stride : 1;
-                          EMIT("%s %.*s = (%s)((uintptr_t)__match%d / %lldULL);\n",
-                               fty,
-                               (int)var_name->length, var_name->name,
-                               fty, __match_id, stride);
-                      } else if (match_use_niche) {
-                          // Single-field payload — value IS the field.
-                          EMIT("%s %.*s = (%s)__match%d;\n",
-                               fty,
-                               (int)var_name->length, var_name->name,
-                               fty, __match_id);
-                      } else {
                           EMIT("%s %.*s = __match%d.data.%.*s.%.*s;\n",
                                fty,
                                (int)var_name->length, var_name->name,
                                __match_id,
                                (int)matched_v->name->length, matched_v->name->name,
                                (int)field->decl->as.variable_decl.name->length, field->decl->as.variable_decl.name->name);
-                      }
                   }
                   arg = arg->next;
                   field = field->next;

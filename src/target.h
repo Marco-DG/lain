@@ -2,11 +2,9 @@
 #define TARGET_H
 
 /*
-   Target configuration for codegen and niche optimization.
-   See internal/ai_analysis/analysis19_aggressive_niche.md §4.4.
+   Target configuration for codegen.
 
-   The sentinel pool sizes drive aggressive multi-slot niche
-   packing for enum types. Host auto-detection is the default;
+   Host auto-detection is the default;
    --target=<triple> overrides for cross-compilation.
 */
 
@@ -52,7 +50,7 @@ static void target_init_host(void) {
     target.has_mmu           = true;
 #else
     // Conservative fallback. zero_page_size=4096 is the minimum
-    // any sane OS reserves; safe-but-not-optimal niche allocation.
+    // any sane OS reserves.
     target.triple            = "unknown";
     target.pointer_size      = sizeof(void *);
     target.pointer_alignment = sizeof(void *);
@@ -84,7 +82,7 @@ static void target_init_for(const char *triple) {
         target.has_mmu           = true;
     } else if (strcmp(triple, "cortex-m4-bare") == 0) {
         // Bare-metal: address 0 may be valid (vector table on Cortex-M).
-        // No mappable zero page → no pointer niche available.
+        // No mappable zero page.
         target.triple            = "cortex-m4-bare";
         target.pointer_size      = 4;
         target.pointer_alignment = 4;

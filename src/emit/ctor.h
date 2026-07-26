@@ -10,7 +10,7 @@ static const char* __emitted_structs[MAX_STRUCT_TYPES];
 static int         __num_emitted_structs = 0;
 
 /* Subset of registered names that are emitted as scalar typedefs
- * (niche-optimized enums, primitive-aliased typedefs). They behave
+ * (primitive-aliased typedefs). They behave
  * like primitives at the C ABI level — pass by value, no const T*. */
 #define MAX_SCALAR_TYPEDEFS 128
 static const char* __emitted_scalar_typedefs[MAX_SCALAR_TYPEDEFS];
@@ -31,7 +31,7 @@ static inline bool is_struct_type(const char *cname) {
     return false;
 }
 
-/* Record a scalar-typedef (niche enum / primitive alias). Also marks
+/* Record a scalar-typedef (primitive alias). Also marks
  * the name as a struct type so existing callers find it. */
 static inline void register_scalar_typedef(const char *cname) {
     register_struct_type(cname);
