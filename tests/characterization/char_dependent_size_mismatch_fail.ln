@@ -1,0 +1,20 @@
+// EXPECT: [E087]
+// A dependent size contract (`out i32[a.len + b.len]`) must be verified at the
+// CALL boundary, not just trusted for the callee's internal proofs. Was a real
+// OOB hole (G4): passing a length-4 array where a.len+b.len == 5 is required
+// let concat write out[4] out of bounds.
+proc concat(a i32[], b i32[], out var i32[a.len + b.len]) {
+    for i in 0..a.len {
+        out[i] = a[i]
+    }
+    for j in 0..b.len {
+        out[j + a.len] = b[j]
+    }
+}
+proc main() i32 {
+    var xs i32[2] = [1, 2]
+    var ys i32[3] = [3, 4, 5]
+    var zs i32[4] = [0, 0, 0, 0]
+    concat(xs, ys, var zs)
+    return 0
+}

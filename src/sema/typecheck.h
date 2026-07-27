@@ -617,6 +617,61 @@ static void check_type_alias_constraints(Type *to, Range r, isize line, isize co
     }
 }
 
+// P2/S4: evaluate a dependent size expression (e.g. `a.len + b.len`) to a Range
+// by resolving each `param.len` to the actual argument's length at a call site.
+// Handles member(.len), literals, and +/-/* of those. Returns range_unknown()
+// if any referenced length is not statically known. Used to verify dependent
+// size contracts at the CALL boundary (closes the OOB where the caller passes a
+// wrong-length array — the callee's internal proofs trust the declared size).
+static Range eval_callsite_size_range(Expr *se, DeclList *params, ExprList *args) {
+    if (!se) return range_unknown();
+    if (se->kind == EXPR_LITERAL) return range_const(se->as.literal_expr.value);
+    if (se->kind == EXPR_MEMBER && se->as.member_expr.member &&
+        se->as.member_expr.member->length == 3 &&
+        strncmp(se->as.member_expr.member->name, "len", 3) == 0 &&
+        se->as.member_expr.target->kind == EXPR_IDENTIFIER) {
+        Id *rid = se->as.member_expr.target->as.identifier_expr.id;
+        int rpi = 0; Expr *ref_arg = NULL;
+        for (DeclList *rp = params; rp; rp = rp->next, rpi++) {
+            if (rp->decl->kind != DECL_VARIABLE) continue;
+            Id *rpn = rp->decl->as.variable_decl.name;
+            if (rpn && rpn->length == rid->length &&
+                strncmp(rpn->name, rid->name, rpn->length) == 0) {
+                int ri = 0;
+                for (ExprList *ra = args; ra; ra = ra->next)
+                    if (ri++ == rpi) { ref_arg = ra->expr; break; }
+                break;
+            }
+        }
+        if (!ref_arg) return range_unknown();
+        if (ref_arg->type && ref_arg->type->kind == TYPE_ARRAY && ref_arg->type->array_len >= 0)
+            return range_const(ref_arg->type->array_len);
+        if (ref_arg->kind == EXPR_IDENTIFIER && sema_ranges) {
+            Id *aid = ref_arg->as.identifier_expr.id;
+            char lk[272]; int lklen = 6 + (int)aid->length;
+            if (lklen < (int)sizeof(lk)) {
+                memcpy(lk, "__len_", 6); memcpy(lk + 6, aid->name, aid->length);
+                for (RangeEntry *re = sema_ranges->head; re; re = re->next)
+                    if (re->var->length == lklen && strncmp(re->var->name, lk, lklen) == 0)
+                        return re->range;
+            }
+        }
+        return range_unknown();
+    }
+    if (se->kind == EXPR_BINARY) {
+        Range l = eval_callsite_size_range(se->as.binary_expr.left, params, args);
+        Range r = eval_callsite_size_range(se->as.binary_expr.right, params, args);
+        if (!l.known || !r.known) return range_unknown();
+        switch (se->as.binary_expr.op) {
+            case TOKEN_PLUS:     return (Range){ l.min + r.min, l.max + r.max, true };
+            case TOKEN_MINUS:    return (Range){ l.min - r.max, l.max - r.min, true };
+            case TOKEN_ASTERISK: return (Range){ l.min * r.min, l.max * r.max, true };
+            default: return range_unknown();
+        }
+    }
+    return range_unknown();
+}
+
 // P2/S3: THE scalar/pointer boundary conversion check — one call for "a value
 // of static type `from` (VRA range r, source expr src_expr) flows into a slot
 // of type `to`". Consolidates the boundary policy, in call order:
@@ -1359,6 +1414,22 @@ void sema_infer_expr(Expr *e) {
                                             (long)ref_len.min);
                                         e87_fail = true;
                                     }
+                                }
+                            } else {
+                                // General dependent size (e.g. `a.len + b.len`): evaluate
+                                // it against the actual argument lengths and require the
+                                // passed length to match. Closes the OOB where a wrong-
+                                // length array is passed for `out i32[a.len + b.len]`.
+                                Range req = eval_callsite_size_range(e87_ptype->size_expr,
+                                                                     params, e->as.call_expr.args);
+                                if (e87_alen.known && req.known &&
+                                    e87_alen.min == e87_alen.max && req.min == req.max &&
+                                    e87_alen.min != req.min) {
+                                    snprintf(e87_msg, sizeof(e87_msg),
+                                        "argument for '%.*s' has length %ld but the dependent size requires length %ld",
+                                        (int)e87_pname->length, e87_pname->name,
+                                        (long)e87_alen.min, (long)req.min);
+                                    e87_fail = true;
                                 }
                             }
                         }
