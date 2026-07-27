@@ -635,6 +635,14 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     diagnostic_show_line((e->line), (e->col));
                     exit(1);
                 }
+                // NOTE: this is gated on must_consume/explicit_undefined rather
+                // than firing for every !is_initialized local. Relaxing it to all
+                // scalars catches `var x i32; return x` but FALSE-POSITIVES on two
+                // legitimate patterns the table doesn't mark initialized: out-param
+                // init (`f(var x)` where the callee initializes x) and aggregates
+                // used uninitialized (`var data u8[5]` passed by value). Closing the
+                // uninit-scalar gap needs var/mut-arg init tracking + aggregate
+                // handling first — see project_deep_analysis_plan.
                 if (!entry->is_initialized && (entry->must_consume || entry->explicit_undefined)) {
                     fprintf(stderr, "[E005] Error Ln %li, Col %li: use of uninitialized variable '%.*s'.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
