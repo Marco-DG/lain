@@ -1452,7 +1452,35 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 }
             }
         }
-        
+
+        // Dangling `return &local` — the address of a local variable (or of its
+        // field/element) is a pointer into stack memory freed at return. The
+        // `var`-reference form above is caught; the explicit address-of `&x` was
+        // not, and emitted C that warns "returns address of local variable".
+        if (val && val->kind == EXPR_ADDR) {
+            Expr *root = val->as.addr_expr.expr;
+            while (root) {
+                if (root->kind == EXPR_MEMBER) root = root->as.member_expr.target;
+                else if (root->kind == EXPR_INDEX) root = root->as.index_expr.target;
+                else break;
+            }
+            // A local is `!is_global` and not a parameter (locals carry no Decl,
+            // so identify them the same way the `return var local` check does).
+            if (root && root->kind == EXPR_IDENTIFIER && !root->is_global) {
+                bool is_param = root->decl && root->decl->kind == DECL_VARIABLE &&
+                                root->decl->as.variable_decl.is_parameter;
+                if (!is_param) {
+                    fprintf(stderr, "[E010] Error Ln %li, Col %li: cannot return the address of local variable "
+                            "'%.*s' — it is deallocated when the function returns (dangling pointer).\n",
+                            (long)s->line, (long)s->col,
+                            (int)root->as.identifier_expr.id->length,
+                            root->as.identifier_expr.id->name);
+                    diagnostic_show_line(s->line, s->col);
+                    exit(1);
+                }
+            }
+        }
+
         ltable_ensure_all_consumed(tbl);
         break;
     }

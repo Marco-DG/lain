@@ -1,0 +1,11 @@
+// EXPECT: [E010]
+// Returning the address of a local (`&x`) is a dangling pointer — the local is
+// deallocated at return (gcc: "function returns address of local variable"). The
+// `return var x` form was caught; the explicit address-of `&x` was not.
+func bad() *i32 {
+    var x i32 = 5
+    return &x
+}
+proc main() i32 {
+    return 0
+}
