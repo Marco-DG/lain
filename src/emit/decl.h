@@ -76,10 +76,14 @@ static bool func_returns_nonnull_ptr(Decl *decl) {
     if (!rt) return false;
     if (rt->kind == TYPE_COMPTIME) return false;
     if (rt->kind == TYPE_POINTER) return false;  // raw pointer: may be null
+    // Slice/dynamic-array returns are emitted as a Slice_<T> STRUCT (by value),
+    // not a C pointer — returns_nonnull on them is invalid ("attribute on a
+    // function not returning a pointer"). Exclude all array/slice returns
+    // regardless of mode.
+    if (rt->kind == TYPE_ARRAY) return false;
     if (rt->mode == MODE_MUTABLE) return true;
     // MODE_SHARED non-primitive: only pointer types return as C pointers (not structs)
     if (rt->mode == MODE_SHARED && rt->kind == TYPE_POINTER) return true;
-    if (rt->mode == MODE_SHARED && rt->kind == TYPE_ARRAY && rt->array_len == -1) return true;
     return false;
 }
 
@@ -223,6 +227,15 @@ static void emit_forward_decl(Decl *decl, int depth) {
     if (!decl) return;
     if (decl->kind == DECL_FUNCTION || decl->kind == DECL_PROCEDURE) {
         emit_indent(depth);
+        // [private] → internal linkage. The forward declaration MUST carry the
+        // same `static` as the definition, or gcc errors "static declaration
+        // follows non-static declaration".
+        {
+            const char *_fn = decl->as.function_decl.name->name;
+            size_t _fl = decl->as.function_decl.name->length;
+            bool _is_main = (_fl == 4 && strncmp(_fn, "main", 4) == 0);
+            if (decl->is_private && !_is_main) EMIT("static ");
+        }
         // @cold / @hot: programmer-declared frequency hints.
         if (decl->as.function_decl.is_cold) EMIT("__attribute__((cold)) ");
         if (decl->as.function_decl.is_hot)  EMIT("__attribute__((hot)) ");
