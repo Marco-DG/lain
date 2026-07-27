@@ -1,0 +1,15 @@
+// P2/S3: a narrowing that VRA can PROVE fits must stay allowed — the lossy
+// conversion check must not defeat legitimate refinement narrowing. Here VRA
+// proves a is in [0, 255] on the final path, so i32 -> u8 is safe.
+func clamp(a i32) u8 {
+    if a < 0 {
+        return 0
+    }
+    if a > 255 {
+        return 255
+    }
+    return a
+}
+proc main() i32 {
+    return 0
+}

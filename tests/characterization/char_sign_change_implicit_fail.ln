@@ -1,0 +1,10 @@
+// EXPECT: [E086]
+// P2/S3: an implicit signedness change is lossy (a negative source value does
+// not fit an unsigned target). Was a hole: can_widen_to ranked by bit-width
+// only, so i32 -> u32 was wrongly treated as a safe widening.
+func to_unsigned(a i32) u32 {
+    return a
+}
+proc main() i32 {
+    return 0
+}

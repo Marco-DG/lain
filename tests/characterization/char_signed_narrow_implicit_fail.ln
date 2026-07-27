@@ -1,0 +1,10 @@
+// EXPECT: [E086]
+// P2/S3: a fixed-width narrowing whose source range VRA cannot bound must be
+// rejected. Was a hole: a signed parameter has an effectively-unbounded VRA
+// range, so `return a` (i32 -> i8) slipped past check_value_fits_type silently.
+func narrow(a i32) i8 {
+    return a
+}
+proc main() i32 {
+    return 0
+}

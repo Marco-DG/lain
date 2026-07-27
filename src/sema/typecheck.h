@@ -210,6 +210,69 @@ bool check_value_fits_type(Range r, Type *target_type,
     return true;
 }
 
+// P2/S3: true static integer-type subsumption — does EVERY value of `from`
+// fit in `to`? Compares the exact [lo,hi] type ranges, so it is correct for
+// BOTH width and signedness (unlike rank comparison, which wrongly makes
+// i32 <: u32 and i8 <: u8). Returns false if either type has no fixed range
+// (usize/isize/unknown) — the caller decides what to do with that.
+static bool int_type_subsumes(Type *from, Type *to) {
+    long long flo, fhi, tlo, thi;
+    if (!type_integer_range(from, &flo, &fhi)) return false;
+    if (!type_integer_range(to,   &tlo, &thi)) return false;
+    return flo >= tlo && fhi <= thi;
+}
+
+// True ONLY when VRA has proven a concrete bounded range for the source that
+// fits `to`. Unlike check_value_fits_type, the fail-open cases (unknown or
+// effectively-unbounded range) return FALSE here — "not proven safe", rather
+// than "assume safe". This is the positive half needed to close the narrowing
+// hole without also silencing genuine refinement narrowing.
+static bool range_proves_int_fit(Range r, Type *to) {
+    if (!r.known) return false;
+    const long long W = 4096;
+    if (r.min <= LLONG_MIN + W || r.max >= LLONG_MAX - W) return false;
+    long long tlo, thi;
+    if (!type_integer_range(to, &tlo, &thi)) return false;
+    return r.min >= tlo && r.max <= thi;
+}
+
+// P2/S3: reject an implicit LOSSY integer conversion at a boundary. A fixed
+// width narrowing or signedness change is permitted only when it is either
+// statically safe (from <: to) or VRA-proven to fit; otherwise it needs an
+// explicit `as` cast (or a wrapping/saturating operator). This closes the
+// hole where signed / u64 sources — whose bare-parameter VRA range is
+// effectively unbounded — slipped past check_value_fits_type silently
+// (e.g. `func f(a i32) i8 { return a }` truncated with no diagnostic).
+// usize/isize (platform-dependent width) are left to other checks.
+static void reject_lossy_int_conversion(Type *from, Type *to, Range r,
+                                        isize line, isize col,
+                                        const char *ctx, const char *label) {
+    if (sema_in_unsafe_block) return;
+    if (from == to) return;                              // interned identity: same type
+    if (!is_integer_type(from) || !is_integer_type(to)) return;
+    long long flo, fhi, tlo, thi;
+    if (!type_integer_range(from, &flo, &fhi)) return;   // usize/isize source: don't judge
+    if (!type_integer_range(to,   &tlo, &thi)) return;   // usize/isize target: don't judge
+    if (flo >= tlo && fhi <= thi) return;                // statically safe widening
+    if (range_proves_int_fit(r, to)) return;             // VRA proved the narrowing safe
+    const char *fn = (from->base_type) ? from->base_type->name : "?";
+    int fl = (from->base_type) ? (int)from->base_type->length : 1;
+    const char *tn = (to->base_type) ? to->base_type->name : "?";
+    int tl = (to->base_type) ? (int)to->base_type->length : 1;
+    fprintf(stderr,
+        "[E086] Error Ln %li, Col %li: %s '%s' implicitly converts '%.*s' to '%.*s', "
+        "which may lose information.\n"
+        "       Source type range [%lld, %lld] does not fit target range [%lld, %lld].\n"
+        "       Options to resolve:\n"
+        "         (a) Use an explicit cast: 'value as %.*s' (truncates).\n"
+        "         (b) Use a wrapping (+%%) or saturating (+|) operator.\n"
+        "         (c) Constrain the source so VRA can prove it fits.\n",
+        (long)line, (long)col, ctx, label ? label : "",
+        fl, fn, tl, tn, flo, fhi, tlo, thi, tl, tn);
+    diagnostic_show_line(line, col);
+    exit(1);
+}
+
 // Rank in the implicit widening order (Q-002 extended).
 // Rank is essentially the container bit-width category:
 //   N=1..8  → 1     (8-bit container)
@@ -248,7 +311,15 @@ static Type *wider_integer_type(Type *a, Type *b) {
 
 static bool can_widen_to(Type *from, Type *to) {
     if (!is_integer_type(from) || !is_integer_type(to)) return false;
-    return integer_rank(from) <= integer_rank(to);
+    if (from == to) return true;
+    long long a, b, c, d;
+    // Platform-width types (usize/isize) have no fixed range: fall back to the
+    // conservative rank rule for them.
+    if (!type_integer_range(from, &a, &b) || !type_integer_range(to, &c, &d))
+        return integer_rank(from) <= integer_rank(to);
+    // Fixed-width: true range subsumption (correct for width AND signedness,
+    // so i32 does NOT widen to u32, nor i8 to u8).
+    return int_type_subsumes(from, to);
 }
 
 /* ─────────────────────────────────────────────────────────────────╗
@@ -888,6 +959,8 @@ void sema_infer_expr(Expr *e) {
                     check_value_fits_type(r, ptype, parg->line, parg->col,
                         "argument to parameter", buf);
                     reject_float_int_mismatch(parg->type, ptype, parg->line, parg->col,
+                        "argument to parameter", buf);
+                    reject_lossy_int_conversion(parg->type, ptype, r, parg->line, parg->col,
                         "argument to parameter", buf);
                 }
             }
