@@ -40,6 +40,14 @@ static bool func_all_params_by_value(Decl *decl) {  // also used by func_has_ptr
         if (!pt) continue;
         if (pt->kind == TYPE_COMPTIME) continue;
         if (pt->kind == TYPE_ARRAY) return false;          // decomposed to ptr
+        // A pointer or slice parameter is passed by value in C, but the function
+        // READS memory THROUGH it. gcc's __attribute__((const)) means "reads no
+        // memory at all" — emitting it here lets -O2 CSE/hoist those loads across
+        // a store to the pointee and silently miscompile. is_primitive_type()
+        // returns true for TYPE_POINTER/TYPE_SLICE, so they must be excluded
+        // explicitly; they then fall back to the sound `pure` (may read memory).
+        if (pt->kind == TYPE_POINTER) return false;        // reads through *p
+        if (pt->kind == TYPE_SLICE) return false;          // reads through .data
         if (pt->mode == MODE_MUTABLE) return false;        // T * restrict
         if (pt->mode == MODE_SHARED && !is_primitive_type(pt)) return false; // const T*
     }

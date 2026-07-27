@@ -1,0 +1,1 @@
+__attribute__((pure)) int32_t tests_codegen_const_attr_pointer_reader_pass_deref

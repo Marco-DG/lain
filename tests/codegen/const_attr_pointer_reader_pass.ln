@@ -1,0 +1,11 @@
+// A func that READS through a pointer/slice param must be emitted __attribute__((pure)),
+// NOT __attribute__((const)). const means "reads no memory"; emitting it on a memory
+// reader lets -O2 CSE/hoist the loads across a store to the pointee and silently
+// miscompile. is_primitive_type() returns true for pointers/slices, so they are now
+// excluded from func_all_params_by_value.
+func deref(p *i32) i32 {
+    unsafe { return *p }
+}
+proc main() i32 {
+    return 0
+}
