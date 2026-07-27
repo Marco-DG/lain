@@ -1787,9 +1787,18 @@ static void walk_stmt(Stmt *s) {
                 
                 for (ExprList *rc = current_function_decl->as.function_decl.return_constraints; rc; rc = rc->next) {
                     int result = sema_check_post_condition(rc->expr, ret_range, sema_ranges);
-                    
-                    if (result == 0) {
-                        fprintf(stderr, "Error: Return constraint violation. Return value does not satisfy type constraint.\n");
+                    // PROVE-OR-REJECT: the compiler TRUSTS a return refinement to
+                    // narrow every caller's VRA, so the body must PROVABLY satisfy
+                    // it. `result == 1` means proven; 0 (violated) or -1 (unknown,
+                    // e.g. unbounded/wrapping) must both be rejected — a refinement
+                    // it can't prove is a lie that defeats callers' bounds proofs.
+                    if (result != 1 && !sema_in_unsafe_block) {
+                        fprintf(stderr, "[E086] Error Ln %li, Col %li: return value cannot be proven "
+                            "to satisfy the function's return refinement (range [%lld, %lld]). Constrain "
+                            "the inputs or narrow the value so VRA can prove it.\n",
+                            (long)s->line, (long)s->col,
+                            (long long)ret_range.min, (long long)ret_range.max);
+                        diagnostic_show_line(s->line, s->col);
                         exit(1);
                     }
                 }

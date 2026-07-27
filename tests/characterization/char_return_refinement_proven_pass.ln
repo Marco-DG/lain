@@ -1,0 +1,11 @@
+// A return refinement the body PROVABLY satisfies (VRA narrows x to >= 0 on each
+// path) must still compile — the prove-or-reject check must not be over-strict.
+func clamp(x i32) i32 >= 0 {
+    if x < 0 {
+        return 0
+    }
+    return x
+}
+proc main() i32 {
+    return 0
+}

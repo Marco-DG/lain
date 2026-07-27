@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// A function's return refinement is TRUSTED by callers (it narrows their VRA), so
+// the body must PROVABLY satisfy it. Was unsound: the check only rejected a proven
+// violation and failed OPEN on unknown ranges, so `i32 >= 0` returning a wrapping
+// -7 (unknown range) was believed — actively defeating callers' bounds proofs.
+func f() i32 >= 0 {
+    return 0 -% 7
+}
+proc main() i32 {
+    return 0
+}
