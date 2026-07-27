@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// P2/S3: an array-literal element overflowing the element type must be rejected
+// (was a gap: u8[3] = [1, 2, 300] compiled silently).
+proc main() i32 {
+    var a u8[3] = [1, 2, 300]
+    var _ = a[0]
+    return 0
+}

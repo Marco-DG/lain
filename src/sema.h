@@ -918,6 +918,23 @@ static void walk_stmt(Stmt *s) {
                     vname_buf[vn_len] = '\0';
                     check_value_fits_type(r, s->as.var_stmt.type, s->line, s->col,
                         "initialization of variable", vname_buf);
+                    // P2/S3: an array literal's literal elements must fit the target
+                    // array's element type (was a gap: u8[3] = [1,2,300] compiled).
+                    if (s->as.var_stmt.type->kind == TYPE_ARRAY
+                        && s->as.var_stmt.type->element_type
+                        && is_integer_type(s->as.var_stmt.type->element_type)
+                        && s->as.var_stmt.expr->kind == EXPR_ARRAY_LITERAL) {
+                        Type *et = s->as.var_stmt.type->element_type;
+                        for (ExprList *el = s->as.var_stmt.expr->as.array_literal_expr.elements;
+                             el; el = el->next) {
+                            if (el->expr && el->expr->kind == EXPR_LITERAL) {
+                                Range er = { el->expr->as.literal_expr.value,
+                                             el->expr->as.literal_expr.value, true };
+                                check_value_fits_type(er, et, el->expr->line,
+                                    el->expr->col, "array element", vname_buf);
+                            }
+                        }
+                    }
                 }
                 // S2 (VRA L1 auto-sizing): intersect source range with the
                 // declared type's range. If the source range is unknown or
