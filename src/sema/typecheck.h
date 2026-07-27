@@ -1014,7 +1014,21 @@ void sema_infer_expr(Expr *e) {
                 bool literal_to_int =
                     a->expr->kind == EXPR_LITERAL &&
                     field_ty && is_integer_type(field_ty);
-                if (!literal_to_int && field_ty && arg_ty &&
+                if (literal_to_int) {
+                    // P2/S3: a literal assigned to an integer field must fit the
+                    // field's type. Previously skipped entirely — a real overflow
+                    // gap (e.g. S(300) with a u8 field compiled silently).
+                    long long lit = a->expr->as.literal_expr.value;
+                    Range r = { lit, lit, true };
+                    Id *fn2 = f->decl->as.variable_decl.name;
+                    char lbuf[160];
+                    int ln2 = fn2 ? (int)fn2->length : 0;
+                    if (ln2 > 159) ln2 = 159;
+                    if (ln2) memcpy(lbuf, fn2->name, ln2);
+                    lbuf[ln2] = '\0';
+                    check_value_fits_type(r, field_ty, a->expr->line, a->expr->col,
+                        "struct field initialization", lbuf);
+                } else if (field_ty && arg_ty &&
                     !types_compatible(arg_ty, field_ty)) {
                     Id *fname = f->decl->as.variable_decl.name;
                     fprintf(stderr,

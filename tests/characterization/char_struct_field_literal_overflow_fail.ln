@@ -1,0 +1,10 @@
+// EXPECT: [E086]
+// P2/S3: a literal that overflows a struct field's type must be rejected.
+// Was a soundness gap: struct-field-init skipped the range check for literals.
+type S {
+    x u8
+}
+proc main() i32 {
+    var s = S(300)
+    return 0
+}
