@@ -539,12 +539,36 @@ Id *id(Arena *arena, isize length, const char* name) {
 │ TYPE CONSTRUCTORS                                               │
 ╚──────────────────────────────────────────────────────────────────*/
 
+// P2/S1b: intern TYPE_SIMPLE nodes so equal scalar/nominal types (same name,
+// same mode) share ONE canonical, immutable node. Safe: Type nodes are now
+// immutable and nothing compares Type* by identity. Single-shot compiler, so a
+// global list is fine.
+typedef struct InternedSimple {
+    Type *type;
+    struct InternedSimple *next;
+} InternedSimple;
+static InternedSimple *g_interned_simple = NULL;
+
+static bool id_bytes_equal(Id *a, Id *b) {
+    if (!a || !b || a->length != b->length) return false;
+    for (isize i = 0; i < a->length; i++) if (a->name[i] != b->name[i]) return false;
+    return true;
+}
+
 // Simple names: no element_type, no sentinel
 Type *type_simple(Arena *arena, Id *base) {
+    for (InternedSimple *it = g_interned_simple; it; it = it->next) {
+        if (it->type->mode == MODE_SHARED && id_bytes_equal(it->type->base_type, base))
+            return it->type;  // canonical, deduplicated
+    }
     Type *t = arena_push_aligned(arena, Type);
     t->kind      = TYPE_SIMPLE;
     t->mode      = MODE_SHARED;  // default ownership
     t->base_type = base;
+    InternedSimple *node = arena_push_aligned(arena, InternedSimple);
+    node->type = t;
+    node->next = g_interned_simple;
+    g_interned_simple = node;
     return t;
 }
 
