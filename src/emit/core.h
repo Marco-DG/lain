@@ -143,10 +143,14 @@ static bool emit_slice_coercion(Type *target, Expr *source, int depth) {
         // Emit Coercion
         char targetBuf[256];
         c_name_for_type(target, targetBuf, sizeof targetBuf);
-        
-        // Native C arrays decay to pointer — no .data field needed
+
         EMIT("(%s){ .len = %zu, .data = ", targetBuf, src_len);
         emit_expr(source, depth);
+        // A native C array (TYPE_ARRAY, e.g. a local `u8[N]`) decays to a pointer
+        // directly. A fixed TYPE_SLICE (a Fixed_<T>_N struct — e.g. a string
+        // literal binding `var s = "..."`) is a struct with a `.data[N]` member,
+        // so it needs `.data` to yield the pointer.
+        if (st && st->kind == TYPE_SLICE) EMIT(".data");
         EMIT(" }");
         return true;
     }

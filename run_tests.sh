@@ -43,7 +43,6 @@ GCC_ERR=""
 # Lain exit code; only their gcc compile is skipped so the suite reflects the
 # real, known state instead of hiding it.
 GCC_CHECK_SKIP=(
-    "struct_field_param_pass"
     "struct_in_mutation_pass"
 )
 
