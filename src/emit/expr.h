@@ -1002,10 +1002,14 @@ void emit_expr(Expr *expr, int depth) {
                              ix->target->type->element_type->kind == TYPE_ARRAY;
           // Native fixed array (`int32_t arr[N]` — the local-var emission form):
           // index directly, not via `.data`. Excludes by-pointer (shared/mutable)
-          // params, which keep the struct/pointer form handled by `is_ptr`.
+          // params, which keep the struct/pointer form handled by `is_ptr`. Also
+          // excludes struct FIELDS (`m.data[i]`): a fixed-array field is emitted
+          // as a Fixed_<T>_N struct member, not a native array, so it needs
+          // `.data[i]` (indexing `m->data[i]` on the struct is invalid C).
           bool is_native_fixed = !is_ptr && ix->target->type &&
                                  ix->target->type->kind == TYPE_ARRAY &&
-                                 ix->target->type->array_len > 0;
+                                 ix->target->type->array_len > 0 &&
+                                 ix->target->kind != EXPR_MEMBER;
           if (is_user_type_fixed_array(ix->target->type) || is_thin_ptr || is_native_fixed) {
               EMIT("[");
           } else {

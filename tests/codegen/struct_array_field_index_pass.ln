@@ -1,0 +1,20 @@
+// Indexing a fixed-array struct field must emit `m->data.data[i]`: the field is a
+// Fixed_<T>_N struct member, not a native array, so `m->data[i]` is invalid C
+// ("subscripted value is neither array nor pointer"). The is_native_fixed index
+// path wrongly treated a struct-FIELD array like a native local array.
+type M {
+    data i32[4]
+    n i32
+}
+proc get(m M, i usize < 4) i32 {
+    return m.data[i]
+}
+proc setit(m var M, i usize < 4, v i32) {
+    m.data[i] = v
+}
+proc main() i32 {
+    var m = M([10, 20, 30, 40], 4)
+    setit(var m, 1, 99)
+    if get(m, 1) == 99 { if get(m, 2) == 30 { return 0 } }
+    return 1
+}
