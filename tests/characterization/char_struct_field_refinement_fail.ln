@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// Struct-field refinements (`type Config { pct i32 >= 0 and <= 100 }`) must be
+// enforced at construction so the invariant holds for every value. Was a gap:
+// struct fields accepted only `field T` / `field T in x`, no refinement.
+type Config {
+    pct i32 >= 0 and <= 100
+}
+proc main() i32 {
+    var c = Config(200)
+    return 0
+}

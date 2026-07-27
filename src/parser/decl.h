@@ -395,6 +395,40 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                 var_decl->as.variable_decl.in_field = container_name;
             }
 
+            // G5: optional field refinement constraints, e.g.
+            // `type Config { pct i32 >= 0 and <= 100 }`. Same grammar as parameter
+            // and alias constraints; stored on the field's variable_decl.constraints
+            // and enforced at construction (see the struct-constructor check).
+            if (is_comparison_op(parser->token.kind)) {
+                ExprList *fconstraints = NULL;
+                ExprList **fctail = &fconstraints;
+                Expr *field_expr = expr_identifier(arena, name);
+                do {
+                    TokenKind op = parser->token.kind;
+                    parser_advance();
+                    Expr *rhs = NULL;
+                    if (parser_match(TOKEN_NUMBER)) {
+                        int value = (int)parse_numeric_literal(parser->token.start, parser->token.length);
+                        parser_advance();
+                        rhs = expr_literal(arena, value);
+                    } else if (parser_match(TOKEN_IDENTIFIER)) {
+                        Id *rid = id(arena, parser->token.length, parser->token.start);
+                        parser_advance();
+                        rhs = expr_identifier(arena, rid);
+                    } else {
+                        parser_error("Expected number or identifier after comparison operator");
+                    }
+                    *fctail = expr_list(arena, expr_binary(arena, op, field_expr, rhs));
+                    fctail = &(*fctail)->next;
+                    if (parser_match(TOKEN_KEYWORD_AND)) {
+                        parser_advance();
+                        if (!is_comparison_op(parser->token.kind))
+                            parser_error("Expected comparison operator after 'and'");
+                    } else break;
+                } while (is_comparison_op(parser->token.kind));
+                var_decl->as.variable_decl.constraints = fconstraints;
+            }
+
             /* Append to struct_fields list */
             *struct_tail = decl_list(arena, var_decl);
             struct_tail = &(*struct_tail)->next;

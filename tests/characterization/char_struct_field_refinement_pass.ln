@@ -1,0 +1,8 @@
+// A struct-field refinement satisfied by the constructed value must compile.
+type Config {
+    pct i32 >= 0 and <= 100
+}
+proc main() i32 {
+    var c = Config(50)
+    return 0
+}

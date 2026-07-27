@@ -1552,6 +1552,45 @@ void sema_infer_expr(Expr *e) {
                     check_value_fits_type(r, field_ty, a->expr->line, a->expr->col,
                         "struct field initialization", buf);
                 }
+                // G5: enforce field refinement constraints at construction
+                // (`type Config { pct i32 >= 0 and <= 100 }`), so the invariant
+                // holds for every constructed value.
+                if (f->decl->as.variable_decl.constraints && sema_ranges &&
+                    !sema_in_unsafe_block) {
+                    Range r = (a->expr->kind == EXPR_LITERAL)
+                        ? (Range){ a->expr->as.literal_expr.value, a->expr->as.literal_expr.value, true }
+                        : sema_eval_range(a->expr, sema_ranges);
+                    if (r.known) {
+                        for (ExprList *c = f->decl->as.variable_decl.constraints; c; c = c->next) {
+                            if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+                            Expr *rhs = c->expr->as.binary_expr.right;
+                            if (!rhs || rhs->kind != EXPR_LITERAL) continue;
+                            long long k = rhs->as.literal_expr.value;
+                            bool fits = true;
+                            switch (c->expr->as.binary_expr.op) {
+                                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  fits = (r.max <= k); break;
+                                case TOKEN_ANGLE_BRACKET_LEFT:        fits = (r.max <  k); break;
+                                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: fits = (r.min >= k); break;
+                                case TOKEN_ANGLE_BRACKET_RIGHT:       fits = (r.min >  k); break;
+                                case TOKEN_EQUAL_EQUAL:               fits = (r.min == k && r.max == k); break;
+                                case TOKEN_BANG_EQUAL:                fits = (r.min > k || r.max < k); break;
+                                default: break;
+                            }
+                            if (!fits) {
+                                Id *fnm = f->decl->as.variable_decl.name;
+                                fprintf(stderr, "[E086] Error Ln %li, Col %li: struct '%.*s' field '%.*s' "
+                                    "value range [%lld, %lld] violates its refinement constraint.\n",
+                                    (long)e->line, (long)e->col,
+                                    (int)callee_decl->as.struct_decl.name->length,
+                                    callee_decl->as.struct_decl.name->name,
+                                    (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
+                                    (long long)r.min, (long long)r.max);
+                                diagnostic_show_line(e->line, e->col);
+                                exit(1);
+                            }
+                        }
+                    }
+                }
             }
             f = f->next;
             a = a->next;
