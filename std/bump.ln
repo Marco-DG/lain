@@ -33,7 +33,11 @@ func bump_init(var a BumpAlloc, buf var *u8[]) {
 // Allocate `size` bytes. Returns byte offset into the backing buffer,
 // or -1 if the allocator is full.
 func bump_alloc(var a BumpAlloc, size usize) i32 {
-    if a.pos + size > a.cap {
+    // Overflow-safe capacity check. `a.pos + size` can wrap around usize for a
+    // huge `size`, making the naive `a.pos + size > a.cap` pass and hand out an
+    // out-of-bounds offset. The invariant a.pos <= a.cap holds (pos only grows
+    // by size after this check succeeds), so a.cap - a.pos never underflows.
+    if size > a.cap - a.pos {
         return -1
     }
     var off = a.pos

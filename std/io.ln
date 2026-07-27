@@ -1,7 +1,10 @@
 import std.c
 
 proc print(s *u8[:0]) {
-    libc_printf(s.data)
+    // Use an explicit "%s" format so the caller's bytes are never interpreted
+    // as printf conversion specifiers (a '%' in `s` would otherwise be a
+    // format-string vulnerability / undefined behavior).
+    libc_printf("%s", s.data)
 }
 
 proc println(s *u8[:0]) {
