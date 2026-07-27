@@ -1,0 +1,12 @@
+// The common early-return bounds guard using `or` must let VRA prove the index.
+// `if i < 0 or i >= a.len { return }` leaves `!(i<0 or i>=len)` = `i>=0 and i<len`
+// in force, so `a[i]` is provable. Previously `or` was a no-op in negated
+// constraints (only the split-if form worked); De Morgan now distributes it.
+func at(a i32[], i i32) i32 {
+    if i < 0 or i >= a.len { return 0 - 1 }
+    return a[i]
+}
+proc main() i32 {
+    var xs i32[3] = [10, 20, 30]
+    return at(xs, 1)
+}

@@ -551,6 +551,19 @@ static void sema_apply_negated_constraint(Expr *cond, RangeTable *t) {
         Expr *lhs = cond->as.binary_expr.left;
         Expr *rhs = cond->as.binary_expr.right;
 
+        // De Morgan on the negation of a compound guard. The common early-return
+        // idiom `if i < 0 or i >= a.len { return }` leaves `!(i<0 or i>=len)` in
+        // force afterward, i.e. `i >= 0 and i < len` — both facts must be applied
+        // so `a[i]` is provable. Without this, `or` was a no-op and the equivalent
+        // split-if form was needed. `!(A and B)` is a disjunction (no single
+        // narrowing), so nothing is added.
+        if (op == TOKEN_KEYWORD_OR) {
+            sema_apply_negated_constraint(lhs, t);
+            sema_apply_negated_constraint(rhs, t);
+            return;
+        }
+        if (op == TOKEN_KEYWORD_AND) return;
+
         // Handle Identifier vs Identifier: !(x < y) <=> x >= y
         if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_IDENTIFIER) {
             Id *v1 = lhs->as.identifier_expr.id;
