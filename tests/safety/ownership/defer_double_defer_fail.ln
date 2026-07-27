@@ -1,0 +1,15 @@
+// EXPECT: [E002]
+// Two `defer drop(mov r)` on the same linear variable both run at scope exit —
+// a double free. The second defer's mov is rejected once r is defer-committed.
+type Resource {
+    id i32
+}
+func drop(mov {id} Resource) {
+}
+proc main() i32 {
+    var r Resource = undefined
+    r.id = 42
+    defer drop(mov r)
+    defer drop(mov r)
+    return 0
+}

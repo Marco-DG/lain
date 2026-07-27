@@ -394,6 +394,22 @@ static void ltable_consume(LTable *t, Id *id, int current_loop_depth) {
         DBG("ltable_consume: id '%.*s' not tracked (ignored)", id ? (int)id->length : 0, id ? id->name : "<null>");
         return;
     }
+    // A variable already committed to a deferred consumption (`defer drop(mov r)`)
+    // keeps state UNCONSUMED so it stays readable (Phase 4), but its single
+    // linear consumption is now owned by the defer. Consuming it again — an
+    // explicit `drop(mov r)`, a second `defer drop(mov r)`, passing it by `mov`,
+    // etc. — would run the drop twice at scope exit (double free). The plain
+    // state check below misses this because the state was restored to UNCONSUMED.
+    if (e->is_defer_consumed) {
+        fprintf(stderr, "[E002] Error Ln %li, Col %li: linear variable '%.*s' is already committed "
+                "to a deferred consumption (`defer drop(mov %.*s)`); consuming it again would "
+                "double-free it at scope exit.\n",
+                (long)e->line, (long)e->col, (int)e->id->length,
+                e->id->name ? e->id->name : "<unknown>",
+                (int)e->id->length, e->id->name ? e->id->name : "<unknown>");
+        diagnostic_show_line(e->line, e->col);
+        exit(1);
+    }
     if (e->state != LSTATE_UNCONSUMED) {
         fprintf(stderr, "[E002] Error Ln %li, Col %li: linear variable '%.*s' was already used/consumed.\n",
                 (long)e->line, (long)e->col, (int)e->id->length, e->id->name ? e->id->name : "<unknown>");

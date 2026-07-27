@@ -1,0 +1,18 @@
+// EXPECT: [E002]
+// A linear variable committed to a deferred consumption (defer drop(mov r)) must
+// not be consumed again — the defer already owns its single linear consumption,
+// so an explicit drop(mov r) would double-free it at scope exit. Phase 4 restores
+// r to UNCONSUMED (so it stays readable), which hid this from the plain
+// already-consumed check; the is_defer_consumed guard in ltable_consume catches it.
+type Resource {
+    id i32
+}
+func drop(mov {id} Resource) {
+}
+proc main() i32 {
+    var r Resource = undefined
+    r.id = 42
+    defer drop(mov r)
+    drop(mov r)
+    return 0
+}
