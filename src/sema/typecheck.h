@@ -903,8 +903,25 @@ void sema_infer_expr(Expr *e) {
         // If it's EXPR_IDENTIFIER but NOT an enum, it's a variable instance (e.g. `s.Circle`). Falls down.
     }
 
-    assert(t && "member on untyped target");
-    
+    if (!t) {
+        // The target of a member access has no value type. The common trigger is
+        // module-qualified access (`io.println(...)`) — imports are a flat
+        // namespace, so `io` is not a value. Emit a diagnostic instead of the old
+        // assertion abort (a compiler crash on user input).
+        Expr *tgt = e->as.member_expr.target;
+        int tl = (tgt && tgt->kind == EXPR_IDENTIFIER && tgt->as.identifier_expr.id)
+                 ? (int)tgt->as.identifier_expr.id->length : 0;
+        const char *tn = tl ? tgt->as.identifier_expr.id->name : "";
+        int ml = (int)e->as.member_expr.member->length;
+        const char *mn = e->as.member_expr.member->name;
+        fprintf(stderr, "[E102] Error Ln %li, Col %li: cannot access member '%.*s' of "
+            "'%.*s' — '%.*s' is not a value. If it is an imported module, imports share "
+            "a flat namespace: call '%.*s' directly (unqualified).\n",
+            e->line, e->col, ml, mn, tl, tn, tl, tn, ml, mn);
+        diagnostic_show_line(e->line, e->col);
+        exit(1);
+    }
+
     // Unwrap wrappers (mut, mov, ptr)
     t = sema_unwrap_type(t);
 

@@ -36,7 +36,7 @@ static bool module_already_loaded(const char *name) {
     return false;
 }
 
-static void record_module(Arena *arena, const char *name, DeclList *decls, const char *source_text, const char *source_file) {
+static ModuleNode* record_module(Arena *arena, const char *name, DeclList *decls, const char *source_text, const char *source_file) {
     // F-057: arena-allocate so the compiler stays consistent with its
     // arena-based ownership model (no leaks, no explicit free).
     ModuleNode *n = arena_push_aligned(arena, ModuleNode);
@@ -58,6 +58,7 @@ static void record_module(Arena *arena, const char *name, DeclList *decls, const
     }
     n->next  = loaded_modules;
     loaded_modules = n;
+    return n;
 }
 
 // Lookup a module record by name
@@ -126,6 +127,13 @@ static DeclList* load_module(Arena *file_arena,
         }
     }
 
+    // Record this module BEFORE recursing into its imports so a cyclic import
+    // (A imports B imports A) sees A as already loaded and stops instead of
+    // recursing forever into a stack-overflow crash. The decls pointer is
+    // refreshed after splicing (the head can change). Imports are a flat
+    // namespace, so a cycle just resolves to a single shared load.
+    ModuleNode *self = record_module(ast_arena, modname, decls, f.contents, path);
+
     // 4) splice any imports in this module
     DeclList *prev = NULL, *cur = decls;
     while (cur) {
@@ -157,8 +165,9 @@ static DeclList* load_module(Arena *file_arena,
         cur  = cur->next;
     }
 
-    // 5) record & return (allocate the module record in the AST arena)
-    record_module(ast_arena, modname, decls, f.contents, path);
+    // 5) refresh the record's decls head (splicing above may have changed it)
+    //    and return. The module was already registered before the import loop.
+    self->decls = decls;
     return decls;
 }
 

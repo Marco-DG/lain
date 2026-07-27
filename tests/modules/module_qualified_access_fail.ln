@@ -1,0 +1,9 @@
+// EXPECT: [E102]
+// Module-qualified access used to abort the compiler (assertion "member on
+// untyped target"). Imports are a flat namespace, so `io` is not a value; this is
+// now a diagnostic, not a crash. (println is callable unqualified.)
+import std.io
+proc main() i32 {
+    io.println("hi")
+    return 0
+}
