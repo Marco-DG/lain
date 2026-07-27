@@ -44,7 +44,6 @@ GCC_ERR=""
 # real, known state instead of hiding it.
 GCC_CHECK_SKIP=(
     "struct_field_param_pass"
-    "in_condition_pass"
     "struct_in_mutation_pass"
 )
 

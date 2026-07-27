@@ -296,6 +296,12 @@ void emit_expr(Expr *expr, int depth) {
         EMIT(" < ");
         if (ct && ct->kind == TYPE_ARRAY && ct->array_len >= 0) {
           EMIT("%lld", (long long)ct->array_len);
+        } else if (ct && ct->kind == TYPE_SLICE) {
+          // Slice value passed as a Slice_<T> struct (e.g. a sentinel `*u8[:0]`
+          // parameter) — it carries a real `.len` member. Only a *decomposed*
+          // dynamic-array param (TYPE_ARRAY, array_len == -1) uses `__len_x`.
+          emit_expr(rhs, depth);
+          EMIT(".len");
         } else {
           if (rhs->kind == EXPR_IDENTIFIER && rhs->as.identifier_expr.id) {
             Id *rname = rhs->as.identifier_expr.id;
