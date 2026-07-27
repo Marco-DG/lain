@@ -1837,6 +1837,22 @@ void sema_infer_expr(Expr *e) {
 
     {
         TokenKind bop = e->as.binary_expr.op;
+        // Reject any operator on nominal aggregates (struct/enum). The ==/!=
+        // case is handled just above with a tailored message; everything else
+        // (arithmetic, bitwise, shift, relational) has no meaning on an
+        // aggregate and would silently default the result to i32 and emit
+        // broken C (`a + b` on two structs). Users must implement a method.
+        {
+            Type *alt = e->as.binary_expr.left->type;
+            Type *art = e->as.binary_expr.right->type;
+            if (is_nominal_aggregate(alt) || is_nominal_aggregate(art)) {
+                fprintf(stderr, "[E012] Error Ln %li, Col %li: operator '%s' is not "
+                    "defined on struct/enum types. Implement a method instead.\n",
+                    (long)e->line, (long)e->col, token_kind_to_str(bop));
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
+        }
         bool is_cmp = (bop == TOKEN_EQUAL_EQUAL || bop == TOKEN_BANG_EQUAL ||
             bop == TOKEN_ANGLE_BRACKET_LEFT || bop == TOKEN_ANGLE_BRACKET_LEFT_EQUAL ||
             bop == TOKEN_ANGLE_BRACKET_RIGHT || bop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL);

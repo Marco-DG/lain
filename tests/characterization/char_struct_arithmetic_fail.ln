@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// Relational/arithmetic operators are undefined on struct types.
+type P {
+    x i32
+    y i32
+}
+proc main() i32 {
+    var a = P(1, 2)
+    var b = P(3, 4)
+    var c = a < b
+    return 0
+}

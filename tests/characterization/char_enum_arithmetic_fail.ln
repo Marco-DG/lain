@@ -1,0 +1,14 @@
+// EXPECT: [E012]
+// Arithmetic on nominal aggregates (enum/struct) has no meaning and previously
+// defaulted the result type to i32, emitting broken C (`a + b` on two structs).
+// Now rejected — implement a method instead.
+type Color {
+    Red
+    Blue
+}
+proc main() i32 {
+    var a = Color.Red
+    var b = Color.Blue
+    var c = a + b
+    return 0
+}
