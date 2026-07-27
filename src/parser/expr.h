@@ -209,7 +209,7 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
     if (parser_match(TOKEN_NUMBER)) {
         long long value = parse_numeric_literal(parser->token.start, parser->token.length);
         parser_advance();
-        return expr_literal(arena, (int)value);
+        return expr_literal(arena, value);
     }
     else if (parser_match(TOKEN_FLOAT_LITERAL)) {
         double value = strtod(parser->token.start, NULL);

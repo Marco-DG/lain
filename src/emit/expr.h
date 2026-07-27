@@ -64,7 +64,7 @@ static void emit_size_expr(Expr *se, int depth) {
         return;
     }
     if (se->kind == EXPR_LITERAL) {
-        EMIT("%ld", (long)se->as.literal_expr.value);
+        EMIT("%lld", (long long)se->as.literal_expr.value);
         return;
     }
     if (se->kind == EXPR_IDENTIFIER) {
@@ -123,7 +123,7 @@ void emit_expr(Expr *expr, int depth) {
 
   switch (expr->kind) {
   case EXPR_LITERAL:
-    EMIT("%d", expr->as.literal_expr.value);
+    EMIT("%lld", (long long)expr->as.literal_expr.value);
     break;
 
   case EXPR_FLOAT_LITERAL:

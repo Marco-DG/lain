@@ -408,7 +408,7 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                     parser_advance();
                     Expr *rhs = NULL;
                     if (parser_match(TOKEN_NUMBER)) {
-                        int value = (int)parse_numeric_literal(parser->token.start, parser->token.length);
+                        long long value = parse_numeric_literal(parser->token.start, parser->token.length);
                         parser_advance();
                         rhs = expr_literal(arena, value);
                     } else if (parser_match(TOKEN_IDENTIFIER)) {
@@ -560,7 +560,7 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
                     if (parser_match(TOKEN_NUMBER)) {
                         long long v = parse_numeric_literal(parser->token.start, parser->token.length);
                         parser_advance();
-                        rhs = expr_literal(arena, (int)v);
+                        rhs = expr_literal(arena, v);
                     } else if (parser_match(TOKEN_IDENTIFIER)) {
                         Id *rhs_id = id(arena, parser->token.length, parser->token.start);
                         parser_advance();
@@ -744,7 +744,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                         // Parse the RHS (literal or identifier)
                         Expr *rhs = NULL;
                         if (parser_match(TOKEN_NUMBER)) {
-                            int value = (int)parse_numeric_literal(parser->token.start, parser->token.length);
+                            long long value = parse_numeric_literal(parser->token.start, parser->token.length);
                             parser_advance();
                             rhs = expr_literal(arena, value);
                         } else if (parser_match(TOKEN_IDENTIFIER)) {
@@ -820,7 +820,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
             // Parse the RHS (literal or identifier)
             Expr *rhs = NULL;
             if (parser_match(TOKEN_NUMBER)) {
-                int value = (int)parse_numeric_literal(parser->token.start, parser->token.length);
+                long long value = parse_numeric_literal(parser->token.start, parser->token.length);
                 parser_advance();
                 rhs = expr_literal(arena, value);
             } else if (parser_match(TOKEN_IDENTIFIER)) {

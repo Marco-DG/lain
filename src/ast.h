@@ -435,7 +435,8 @@ typedef struct {
 } ExprIdentifier;
 
 typedef struct {
-    int         value;  // Literal value (TODO: extend to support other types)
+    int64_t     value;  // Literal integer value (64-bit; was 32-bit int — truncated
+                        // any literal above 2^31-1, e.g. i64/u64 constants).
 } ExprLiteral;
 
 typedef struct {
@@ -1013,7 +1014,7 @@ Expr *expr_identifier(Arena *arena, Id *id) {
     return e;
 }
 
-Expr *expr_literal(Arena *arena, int value) {
+Expr *expr_literal(Arena *arena, int64_t value) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_LITERAL;
     e->as.literal_expr.value = value;
