@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// A `.len`-based param precondition (`i usize < a.len`) must be enforced at the
+// CALL site, else it is an unchecked assumption that lets the callee's proven
+// `a[i]` read out of bounds. Passing i=100 for a length-3 array must be rejected.
+func get(a i32[], i usize < a.len) i32 {
+    return a[i]
+}
+proc main() i32 {
+    var xs i32[3] = [1, 2, 3]
+    return get(xs, 100)
+}

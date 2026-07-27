@@ -717,6 +717,15 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                             Id *rhs_id = id(arena, parser->token.length, parser->token.start);
                             parser_advance();
                             rhs = expr_identifier(arena, rhs_id);
+                            // G8: allow `ident.member` (e.g. `i usize < a.len`) as a
+                            // constraint RHS — the dependent bound against a length.
+                            if (parser_match(TOKEN_DOT)) {
+                                parser_advance();  // consume '.'
+                                parser_expect(TOKEN_IDENTIFIER, "Expected identifier after '.'");
+                                Id *member = id(arena, parser->token.length, parser->token.start);
+                                parser_advance();
+                                rhs = expr_member(arena, rhs, member);
+                            }
                         } else {
                             parser_error("Expected number or identifier after comparison operator");
                         }

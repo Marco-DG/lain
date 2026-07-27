@@ -1,0 +1,9 @@
+// Dependent-type expressiveness (G8): the canonical dependent bound
+// `i usize < a.len` as a parameter refinement must parse and prove the indexed
+// access `a[i]` safe. Previously the constraint RHS parser rejected `.len`.
+func get(a i32[], i usize < a.len) i32 {
+    return a[i]
+}
+proc main() i32 {
+    return 0
+}

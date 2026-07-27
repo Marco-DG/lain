@@ -1237,9 +1237,41 @@ void sema_infer_expr(Expr *e) {
                                     }
                                     rhs_p_idx++;
                                 }
-                                if (!rhs_arg) rhs_arg = rhs_expr; 
+                                if (!rhs_arg) rhs_arg = rhs_expr;
+                            } else if (rhs_expr->kind == EXPR_MEMBER &&
+                                       rhs_expr->as.member_expr.member &&
+                                       rhs_expr->as.member_expr.member->length == 3 &&
+                                       strncmp(rhs_expr->as.member_expr.member->name, "len", 3) == 0) {
+                                // G8: `param.len` RHS — check the passed value against the
+                                // referenced argument's actual length at the CALL site,
+                                // directly by range (sema_check_condition can't evaluate a
+                                // local fixed array's `.len`). Otherwise `i < a.len` would
+                                // be an unchecked precondition -> OOB inside the callee.
+                                Range lr = lhs_arg ? sema_eval_range(lhs_arg, sema_ranges) : range_unknown();
+                                Range lenr = eval_callsite_size_range(rhs_expr, params, e->as.call_expr.args);
+                                if (lr.known && lenr.known) {
+                                    bool violated = false;
+                                    switch (c->expr->as.binary_expr.op) {
+                                        case TOKEN_ANGLE_BRACKET_LEFT:        violated = (lr.min >= lenr.max); break;
+                                        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  violated = (lr.min >  lenr.max); break;
+                                        case TOKEN_ANGLE_BRACKET_RIGHT:       violated = (lr.max <= lenr.min); break;
+                                        case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: violated = (lr.max <  lenr.min); break;
+                                        default: break;
+                                    }
+                                    if (violated) {
+                                        isize el = lhs_arg ? lhs_arg->line : e->line;
+                                        isize ec = lhs_arg ? lhs_arg->col  : e->col;
+                                        fprintf(stderr, "[E012] Error Ln %li, Col %li: Constraint violation. "
+                                            "Argument does not satisfy '%s' constraint.\n",
+                                            (long)el, (long)ec,
+                                            token_kind_to_str(c->expr->as.binary_expr.op));
+                                        diagnostic_show_line(el, ec);
+                                        exit(1);
+                                    }
+                                }
+                                continue;  // handled directly; skip the sema_check_condition path
                             } else {
-                                rhs_arg = rhs_expr; 
+                                rhs_arg = rhs_expr;
                             }
 
                             // F-025: initialize line/col so any diagnostic
