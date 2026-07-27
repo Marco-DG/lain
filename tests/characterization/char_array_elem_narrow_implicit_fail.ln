@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// P2/S3: a non-literal array element that narrows (unbounded source range)
+// must be rejected too. Was a hole: the array-element check was VRA-only, so
+// an i32 element flowing into a u8[] array compiled silently.
+func mk(a i32) i32 {
+    xs u8[2] = [a, a]
+    return 0
+}
+proc main() i32 {
+    return 0
+}

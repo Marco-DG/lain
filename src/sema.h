@@ -941,6 +941,10 @@ static void walk_stmt(Stmt *s) {
                                     : sema_eval_range(el->expr, sema_ranges);
                                 check_value_fits_type(er, et, el->expr->line,
                                     el->expr->col, "array element", vname_buf);
+                                reject_float_int_mismatch(el->expr->type, et,
+                                    el->expr->line, el->expr->col, "array element", vname_buf);
+                                reject_lossy_int_conversion(el->expr->type, et, er,
+                                    el->expr->line, el->expr->col, "array element", vname_buf);
                             }
                         }
                     }
