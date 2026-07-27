@@ -1,0 +1,13 @@
+// A local fixed-size array must compile to correct C. Was BROKEN (masked because
+// run_tests never compiles the emitted C): the declaration was native
+// `int32_t arr[3]` but the initializer emitted `(Fixed_i32_3){.data=...}` (an
+// undeclared struct) and indexing emitted `arr.data[1]`. Now native throughout.
+proc main() i32 {
+    var a i32[3] = [10, 20, 30]
+    a[0] = 5
+    var s i32 = 0
+    for i in 0..3 {
+        s = s + a[i]
+    }
+    return s + a.len as i32
+}

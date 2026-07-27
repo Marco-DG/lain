@@ -415,6 +415,21 @@ void emit_expr(Expr *expr, int depth) {
   case EXPR_MEMBER: {
     ExprMember *m = &expr->as.member_expr;
 
+    // Native fixed array (`int32_t arr[N]`): `.len` is the compile-time count and
+    // `.data` is the array itself (decays to a pointer). A native array has no
+    // struct fields, so a bare `.member` would be invalid C.
+    if (m->target && m->target->type && m->target->type->kind == TYPE_ARRAY &&
+        m->target->type->array_len > 0 && m->member) {
+        if (m->member->length == 3 && strncmp(m->member->name, "len", 3) == 0) {
+            EMIT("%ld", (long)m->target->type->array_len);
+            break;
+        }
+        if (m->member->length == 4 && strncmp(m->member->name, "data", 4) == 0) {
+            emit_expr(m->target, 0);
+            break;
+        }
+    }
+
     // Sprint 19: packed struct field access → StructName_get_field(r)
     if (m->target && m->target->type
         && m->target->type->kind == TYPE_SIMPLE
@@ -902,7 +917,13 @@ void emit_expr(Expr *expr, int depth) {
           bool is_thin_ptr = ix->target->type && ix->target->type->kind == TYPE_POINTER &&
                              ix->target->type->element_type &&
                              ix->target->type->element_type->kind == TYPE_ARRAY;
-          if (is_user_type_fixed_array(ix->target->type) || is_thin_ptr) {
+          // Native fixed array (`int32_t arr[N]` — the local-var emission form):
+          // index directly, not via `.data`. Excludes by-pointer (shared/mutable)
+          // params, which keep the struct/pointer form handled by `is_ptr`.
+          bool is_native_fixed = !is_ptr && ix->target->type &&
+                                 ix->target->type->kind == TYPE_ARRAY &&
+                                 ix->target->type->array_len > 0;
+          if (is_user_type_fixed_array(ix->target->type) || is_thin_ptr || is_native_fixed) {
               EMIT("[");
           } else {
               EMIT(is_ptr ? "->data[" : ".data[");
