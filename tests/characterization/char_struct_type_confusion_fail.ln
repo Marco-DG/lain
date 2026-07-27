@@ -1,0 +1,16 @@
+// EXPECT: [E012]
+// P2/S3: two distinct nominal types must not implicitly convert (reinterpreting
+// one struct's memory as another). Was a hole: the boundaries never verified
+// base type-kind compatibility, so returning an A where B is expected compiled.
+type A {
+    x i32
+}
+type B {
+    y i32
+}
+func f(a A) B {
+    return a
+}
+proc main() i32 {
+    return 0
+}

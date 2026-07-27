@@ -500,6 +500,21 @@ static bool is_zero_int_literal(Expr *e) {
     return e && e->kind == EXPR_LITERAL && e->as.literal_expr.value == 0;
 }
 
+// A TYPE_SIMPLE naming a user struct or enum (nominal aggregate), as opposed to
+// a builtin scalar (iN/uN/bool/fN). Distinct nominal types never implicitly
+// convert to each other or to a scalar.
+static bool is_nominal_aggregate(Type *t) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
+    if ((size_t)t->base_type->length >= 128) return false;
+    char buf[128];
+    memcpy(buf, t->base_type->name, t->base_type->length);
+    buf[t->base_type->length] = '\0';
+    extern Symbol *sema_lookup(const char *name);
+    Symbol *sym = sema_lookup(buf);
+    return sym && sym->decl &&
+           (sym->decl->kind == DECL_STRUCT || sym->decl->kind == DECL_ENUM);
+}
+
 // P2/S3: reject POINTER type-confusion at a boundary — the memory-unsafe
 // conversions with no legitimate implicit counterpart:
 //   * two pointers with different pointee types (*i32 <-> *u8) — aliasing lie
@@ -525,24 +540,31 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
     if (f == t) return;
     bool f_ptr = (f->kind == TYPE_POINTER);
     bool t_ptr = (t->kind == TYPE_POINTER);
-    if (!f_ptr && !t_ptr) return;              // no pointer involved: out of scope
+    bool ok = false;
     if (f_ptr && t_ptr) {
-        if (types_equal_exact(f->element_type, t->element_type)) return;  // same pointee
-    } else {
+        ok = types_equal_exact(f->element_type, t->element_type);        // same pointee
+    } else if (f_ptr || t_ptr) {
         Type *ptr   = f_ptr ? f : t;
         Type *other = f_ptr ? t : f;
-        if (other->kind == TYPE_ARRAY || other->kind == TYPE_SLICE) {
-            if (types_equal_exact(other->element_type, ptr->element_type)) return; // T[] -> *T
-            if (types_equal_exact(other, ptr->element_type)) return;              // T[N] -> *T[N]
-        }
-        if (t_ptr && is_zero_int_literal(src_expr)) return;   // null idiom: 0 -> *T
+        if (other->kind == TYPE_ARRAY || other->kind == TYPE_SLICE)
+            ok = types_equal_exact(other->element_type, ptr->element_type)  // T[] -> *T
+              || types_equal_exact(other, ptr->element_type);               // T[N] -> *T[N]
+        if (!ok && t_ptr && is_zero_int_literal(src_expr)) ok = true;    // null idiom: 0 -> *T
+    } else {
+        // Neither is a pointer. Reject nominal (struct/enum) confusion — a
+        // distinct struct/enum, or a struct-vs-scalar. Pure-scalar mismatches
+        // (bool<->int, which share a representation) are deferred to the full
+        // subsumption relation.
+        if (!is_nominal_aggregate(f) && !is_nominal_aggregate(t)) return;
+        ok = types_compatible(f, t);   // same struct/enum name (mode-agnostic) is fine
     }
+    if (ok) return;
     char fb[128], tb[128];
     type_describe(f, fb, sizeof fb);
     type_describe(t, tb, sizeof tb);
     fprintf(stderr,
-        "[E012] Error Ln %li, Col %li: %s '%s' has incompatible pointer type: cannot "
-        "implicitly convert '%s' to '%s' (use an explicit 'as' cast in an 'unsafe' block).\n",
+        "[E012] Error Ln %li, Col %li: %s '%s' has incompatible type: cannot implicitly "
+        "convert '%s' to '%s'.\n",
         (long)line, (long)col, ctx, label ? label : "", fb, tb);
     diagnostic_show_line(line, col);
     exit(1);
