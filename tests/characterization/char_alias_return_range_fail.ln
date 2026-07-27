@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// A refinement-alias return type must be enforced (G2).
+type Pct = i32 >= 0 and <= 100
+func f(p i32) Pct {
+    return 200
+}
+proc main() i32 {
+    return 0
+}

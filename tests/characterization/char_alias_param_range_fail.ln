@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// A refinement-alias parameter must be checked at the call site. Was a soundness
+// hole (G1): only the initial var-decl enforced the alias; params/returns/
+// reassignments were unchecked, so the headline feature was "documentation".
+type Pct = i32 >= 0 and <= 100
+func f(p Pct) i32 {
+    return p
+}
+proc main() i32 {
+    return f(200)
+}

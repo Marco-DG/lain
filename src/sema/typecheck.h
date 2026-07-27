@@ -570,6 +570,53 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
     exit(1);
 }
 
+// P2/S4: enforce a refinement-type-alias's constraints on a value whose VRA
+// range is r flowing into a slot of type `to`. A refinement alias
+// (`type Pct = i32 >= 0 and <= 100`) stores its constraints on its
+// DECL_TYPE_ALIAS; check the value's range against each literal-bounded
+// constraint and exit with E086 on violation. No-op for non-alias types,
+// unknown range, or inside unsafe. Because this rides inside check_conversion,
+// refinement aliases become sound at EVERY boundary (param, return, assignment,
+// var-decl) — previously only the initial var-decl was checked.
+static void check_type_alias_constraints(Type *to, Range r, isize line, isize col,
+                                         const char *ctx, const char *label) {
+    if (sema_in_unsafe_block || !r.known) return;
+    if (!to || to->kind != TYPE_SIMPLE || !to->base_type) return;
+    if ((size_t)to->base_type->length >= 256) return;
+    char tnam[256];
+    memcpy(tnam, to->base_type->name, to->base_type->length);
+    tnam[to->base_type->length] = '\0';
+    extern Symbol *sema_lookup(const char *name);
+    Symbol *tsym = sema_lookup(tnam);
+    if (!tsym || !tsym->decl || tsym->decl->kind != DECL_TYPE_ALIAS ||
+        !tsym->decl->as.type_alias_decl.constraints) return;
+    for (ExprList *c = tsym->decl->as.type_alias_decl.constraints; c; c = c->next) {
+        if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+        TokenKind op = c->expr->as.binary_expr.op;
+        Expr *rhs = c->expr->as.binary_expr.right;
+        if (!rhs || rhs->kind != EXPR_LITERAL) continue;   // only literal-bounded constraints
+        long long k = rhs->as.literal_expr.value;
+        bool fits = true;
+        switch (op) {
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  fits = (r.max <= k); break;  // <=
+            case TOKEN_ANGLE_BRACKET_LEFT:        fits = (r.max <  k); break;  // <
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: fits = (r.min >= k); break;  // >=
+            case TOKEN_ANGLE_BRACKET_RIGHT:       fits = (r.min >  k); break;  // >
+            case TOKEN_EQUAL_EQUAL:               fits = (r.min == k && r.max == k); break;
+            case TOKEN_BANG_EQUAL:                fits = (r.min > k || r.max < k); break;
+            default: fits = true; break;
+        }
+        if (!fits) {
+            fprintf(stderr, "[E086] Error Ln %li, Col %li: %s '%s' violates refinement "
+                "constraint of type alias '%s': value range [%lld, %lld] does not satisfy it.\n",
+                (long)line, (long)col, ctx, label ? label : "", tnam,
+                (long long)r.min, (long long)r.max);
+            diagnostic_show_line(line, col);
+            exit(1);
+        }
+    }
+}
+
 // P2/S3: THE scalar/pointer boundary conversion check — one call for "a value
 // of static type `from` (VRA range r, source expr src_expr) flows into a slot
 // of type `to`". Consolidates the boundary policy, in call order:
@@ -577,6 +624,7 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
 //   2. float <-> int rejection                                [E012]
 //   3. integer narrowing / signedness soundness               [E086]
 //   4. pointer & nominal (struct/enum) type-kind confusion    [E012]
+//   5. refinement-type-alias constraints                      [E086]
 // Each sub-check exits on violation. This is the boundary-level precursor to
 // the full `subsumes(from, to, range)` relation (P2/S2). Callers pass the
 // source expr where available (enables the null-literal idiom, 0 -> *T); NULL
@@ -588,6 +636,7 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     reject_float_int_mismatch(from, to, line, col, ctx, label);
     reject_lossy_int_conversion(from, to, r, line, col, ctx, label);
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
+    check_type_alias_constraints(to, r, line, col, ctx, label);
 }
 
 // P2/S3: reject a type-confused comparison (==, !=, <, <=, >, >=). Comparing a
@@ -1167,7 +1216,11 @@ void sema_infer_expr(Expr *e) {
                     // parameter compiled silently).
                     Range r;
                     if (parg->kind == EXPR_LITERAL) {
-                        r = is_integer_type(ptype)
+                        // Resolve refinement aliases to their integer base so a
+                        // literal arg gets its point range (needed for the alias
+                        // constraint check inside check_conversion — fixes f(200)
+                        // where p is a `type Pct = i32 >= 0 and <= 100`).
+                        r = is_integer_type(resolve_type_alias(ptype))
                             ? (Range){ parg->as.literal_expr.value,
                                        parg->as.literal_expr.value, true }
                             : range_unknown();

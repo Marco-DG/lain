@@ -6,9 +6,9 @@
 */
 
 func merge(m i32 >= 0, n i32 >= 0, var nums1 *i32[m + n], nums2 *i32[n]) {
-    var p1  = &nums1[m]
-    var p2  = &nums2[n]
-    var out = &nums1[m + n]
+    p1  = &nums1[m]
+    p2  = &nums2[n]
+    out = &nums1[m + n]
 
     while p1 > nums1 and p2 > nums2 {
         if *(p1 - 1) > *(p2 - 1) {*(out - 1) = *(p1 - 1); p1 -= 1 }

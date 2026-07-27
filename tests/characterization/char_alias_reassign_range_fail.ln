@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// Reassigning a refinement-alias variable must be re-checked (G3).
+type Pct = i32 >= 0 and <= 100
+proc main() i32 {
+    var p Pct = 50
+    p = 150
+    return 0
+}
