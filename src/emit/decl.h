@@ -83,6 +83,78 @@ static bool func_returns_nonnull_ptr(Decl *decl) {
     return false;
 }
 
+// ---- parameter write detection ---------------------------------------------
+// A dynamic-array/pointer parameter written through in the body (out[i]=…, *p=…,
+// p.f=…) cannot be emitted `const`, and its presence makes the function impure
+// (a caller-visible side-effect channel) — even for a `func` with a sized output
+// parameter such as `out *i32[a.len]`. Without this, such a param emitted as
+// `const T * restrict` produced C that gcc rejects ("assignment of read-only
+// location"), and `__attribute__((pure))` on it was semantically wrong.
+static Id *emit_lvalue_root_id(Expr *e) {
+    while (e) {
+        switch (e->kind) {
+            case EXPR_IDENTIFIER: return e->as.identifier_expr.id;
+            case EXPR_INDEX:      e = e->as.index_expr.target;  break;
+            case EXPR_MEMBER:     e = e->as.member_expr.target; break;
+            case EXPR_DEREF:      e = e->as.deref_expr.expr;    break;
+            default:              return NULL;
+        }
+    }
+    return NULL;
+}
+static bool emit_id_eq(Id *a, Id *b) {
+    return a && b && a->length == b->length &&
+           memcmp(a->name, b->name, (size_t)a->length) == 0;
+}
+static bool emit_stmtlist_writes_id(StmtList *body, Id *pname);
+static bool emit_stmt_writes_id(Stmt *s, Id *pname) {
+    if (!s) return false;
+    switch (s->kind) {
+        case STMT_ASSIGN:
+            return emit_id_eq(emit_lvalue_root_id(s->as.assign_stmt.target), pname);
+        case STMT_IF:
+            return emit_stmtlist_writes_id(s->as.if_stmt.then_body, pname) ||
+                   emit_stmtlist_writes_id(s->as.if_stmt.else_branch, pname);
+        case STMT_FOR:
+            return emit_stmtlist_writes_id(s->as.for_stmt.body, pname);
+        case STMT_WHILE:
+            return emit_stmtlist_writes_id(s->as.while_stmt.body, pname);
+        case STMT_UNSAFE:
+            return emit_stmtlist_writes_id(s->as.unsafe_stmt.body, pname);
+        case STMT_DEFER:
+            return emit_stmt_writes_id(s->as.defer_stmt.stmt, pname);
+        case STMT_COMPTIME_IF:
+            return emit_stmtlist_writes_id(s->as.comptime_if_stmt.then_body, pname) ||
+                   emit_stmtlist_writes_id(s->as.comptime_if_stmt.else_branch, pname);
+        case STMT_MATCH:
+            for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next)
+                if (emit_stmtlist_writes_id(c->body, pname)) return true;
+            return false;
+        default:
+            return false;
+    }
+}
+static bool emit_stmtlist_writes_id(StmtList *body, Id *pname) {
+    for (; body; body = body->next)
+        if (emit_stmt_writes_id(body->stmt, pname)) return true;
+    return false;
+}
+// True if `func`/`proc` `decl` writes through the given parameter decl.
+static bool emit_param_is_written(Decl *decl, Decl *param) {
+    if (!decl || !param || param->kind != DECL_VARIABLE) return false;
+    if (decl->kind != DECL_FUNCTION && decl->kind != DECL_PROCEDURE) return false;
+    Id *pn = param->as.variable_decl.name;
+    if (!pn) return false;
+    return emit_stmtlist_writes_id(decl->as.function_decl.body, pn);
+}
+// True if the function writes through ANY parameter (=> not pure/const).
+static bool func_writes_through_param(Decl *decl) {
+    if (decl->kind != DECL_FUNCTION && decl->kind != DECL_PROCEDURE) return false;
+    for (DeclList *p = decl->as.function_decl.params; p; p = p->next)
+        if (p->decl && emit_param_is_written(decl, p->decl)) return true;
+    return false;
+}
+
 // O-001 [access]: for each TYPE_ARRAY param whose size_expr is a simple
 // EXPR_IDENTIFIER referencing another param, emit
 //   __attribute__((access(read_only|read_write, ptr_idx, size_idx)))
@@ -136,7 +208,11 @@ static void emit_access_attributes(Decl *decl) {
             }
         }
         if (sidx < 0) continue; // can't find size param
-        const char *mode = (pt->mode == MODE_MUTABLE) ? "read_write" : "read_only";
+        // A written output param (sized `out *T[n]`) is read_write even though its
+        // mode is SHARED — emitting read_only here would license the optimizer to
+        // assume it is never stored to (miscompilation), so honor actual writes.
+        const char *mode = (pt->mode == MODE_MUTABLE || emit_param_is_written(decl, p->decl))
+                           ? "read_write" : "read_only";
         // GCC access indices are 1-based
         EMIT("__attribute__((access(%s, %d, %d))) ", mode, pidx + 1, sidx + 1);
     }
@@ -161,7 +237,10 @@ static void emit_forward_decl(Decl *decl, int depth) {
         // Q-019 [pure/const]: forward-declare func without var params as
         // __attribute__((const)) when all params are by-value, otherwise
         // __attribute__((pure)). Both enable LICM/CSE; const is stronger.
-        if (decl->kind == DECL_FUNCTION && !func_has_var_param(decl)) {
+        // A func that writes through a pointer param (sized output param) has a
+        // side effect and qualifies for neither.
+        if (decl->kind == DECL_FUNCTION && !func_has_var_param(decl) &&
+            !func_writes_through_param(decl)) {
             if (func_all_params_by_value(decl))
                 EMIT("__attribute__((const)) ");
             else
@@ -215,7 +294,7 @@ static void emit_forward_decl(Decl *decl, int depth) {
                         c_name_for_type(pt->element_type, elem_buf, sizeof elem_buf);
                         if (pt->size_expr == NULL)
                             EMIT("size_t __len_%.*s, ", (int)pn->length, pn->name);
-                        if (pt->mode == MODE_MUTABLE)
+                        if (pt->mode == MODE_MUTABLE || emit_param_is_written(decl, param->decl))
                             EMIT("%s * restrict", elem_buf);
                         else
                             EMIT("const %s * restrict", elem_buf);
@@ -407,7 +486,8 @@ void emit_decl(Decl* decl, int depth) {
             // when all params are by value (no pointer args → no indirect reads),
             // or __attribute__((pure)) otherwise. Both allow LICM/CSE; const is
             // the stronger guarantee and allows hoisting even when memory changes.
-            if (decl->kind == DECL_FUNCTION && !is_main && !func_has_var_param(decl)) {
+            if (decl->kind == DECL_FUNCTION && !is_main && !func_has_var_param(decl) &&
+                !func_writes_through_param(decl)) {
                 if (func_all_params_by_value(decl))
                     EMIT("__attribute__((const)) ");
                 else
@@ -464,7 +544,7 @@ void emit_decl(Decl* decl, int depth) {
                             c_name_for_type(pt->element_type, elem_buf, sizeof elem_buf);
                             if (pt->size_expr == NULL)
                                 EMIT("size_t __len_%.*s, ", (int)pn->length, pn->name);
-                            if (pt->mode == MODE_MUTABLE)
+                            if (pt->mode == MODE_MUTABLE || emit_param_is_written(decl, param->decl))
                                 EMIT("%s * restrict %.*s", elem_buf, (int)pn->length, pn->name);
                             else
                                 EMIT("const %s * restrict %.*s", elem_buf, (int)pn->length, pn->name);
