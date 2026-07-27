@@ -1,0 +1,19 @@
+// A refined struct field carries its invariant to use sites. `v i32 >= 0 and <= 3`
+// was enforced only at construction; now `a[b.v]` is provable in bounds (and
+// `b.pct + 1` provable non-overflowing) because a member read seeds the field's
+// refinement range.
+type Box {
+    v   i32 >= 0 and <= 3
+    pct i32 >= 0 and <= 100
+}
+func get(b Box, a i32[4]) i32 {
+    return a[b.v]
+}
+func inc(b Box) i32 {
+    return b.pct + 1
+}
+proc main() i32 {
+    var b = Box(2, 50)
+    var xs i32[4] = [10, 20, 30, 40]
+    return get(b, xs)
+}

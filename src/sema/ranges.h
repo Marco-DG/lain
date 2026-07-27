@@ -163,6 +163,33 @@ static Range range_get(RangeTable *t, Id *var) {
 // so that call expressions can participate in VRA.
 static Range sema_range_from_return_constraints(Decl *callee_decl);
 
+// Build a range from a refinement/field constraint list, where each entry is
+// `<var> <relop> LITERAL` (the field-invariant form). Lets a refined struct field
+// carry its invariant to use sites (e.g. `a[b.v]` with `v i32 >= 0 and <= 3`).
+static Range range_from_refinement_constraints(ExprList *constraints) {
+    if (!constraints) return range_unknown();
+    Range r = range_make(INT64_MIN, INT64_MAX);
+    bool refined = false;
+    for (ExprList *c = constraints; c; c = c->next) {
+        if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+        Expr *rhs = c->expr->as.binary_expr.right;
+        if (!rhs || rhs->kind != EXPR_LITERAL) continue;
+        int64_t k = (int64_t)rhs->as.literal_expr.value;
+        switch (c->expr->as.binary_expr.op) {
+            case TOKEN_ANGLE_BRACKET_RIGHT:       if (k+1 > r.min) r.min = k+1; refined = true; break;
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (k   > r.min) r.min = k;   refined = true; break;
+            case TOKEN_ANGLE_BRACKET_LEFT:        if (k-1 < r.max) r.max = k-1; refined = true; break;
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (k   < r.max) r.max = k;   refined = true; break;
+            case TOKEN_EQUAL_EQUAL:               r.min = k; r.max = k;         refined = true; break;
+            default: break;
+        }
+    }
+    return refined ? r : range_unknown();
+}
+// Defined in typecheck.h (needs find_struct_decl): the refinement constraints of
+// struct field `field` on a value of `struct_type`, or NULL.
+static ExprList *sema_member_field_constraints(Type *struct_type, Id *field);
+
 static Range sema_eval_range(Expr *e, RangeTable *t) {
     if (!e) return range_unknown();
     switch (e->kind) {
@@ -275,6 +302,17 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                             return re->range;
                         }
                     }
+                }
+            }
+            // Refined struct field read: `b.v` where field v has an invariant
+            // (`v i32 >= 0 and <= 3`). Seed its declared range so use sites can use
+            // it (the invariant was previously only checked at construction).
+            if (tgt->type) {
+                Type *st = tgt->type;
+                while (st && st->kind == TYPE_COMPTIME) st = st->element_type;
+                if (st && st->kind == TYPE_SIMPLE && st->base_type) {
+                    ExprList *fc = sema_member_field_constraints(st, mem);
+                    if (fc) return range_from_refinement_constraints(fc);
                 }
             }
             return range_unknown();

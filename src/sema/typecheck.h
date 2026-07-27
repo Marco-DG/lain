@@ -785,6 +785,23 @@ static DeclStruct *find_struct_decl(Id *struct_name) {
   return NULL;
 }
 
+// The refinement constraints of struct field `field` on a value of `struct_type`
+// (forward-declared in ranges.h so sema_eval_range can seed a refined field read).
+static ExprList *sema_member_field_constraints(Type *struct_type, Id *field) {
+    if (!struct_type || struct_type->kind != TYPE_SIMPLE || !struct_type->base_type || !field)
+        return NULL;
+    DeclStruct *sd = find_struct_decl(struct_type->base_type);
+    if (!sd) return NULL;
+    for (DeclList *f = sd->fields; f; f = f->next) {
+        if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
+        Id *fn = f->decl->as.variable_decl.name;
+        if (fn && fn->length == field->length &&
+            strncmp(fn->name, field->name, fn->length) == 0)
+            return f->decl->as.variable_decl.constraints;
+    }
+    return NULL;
+}
+
 /* lookup a field’s Type* given a struct and field Id */
 static Type *lookup_struct_field_type(Id *struct_name, Id *field) {
   if (!struct_name) {
