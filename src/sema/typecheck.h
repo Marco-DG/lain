@@ -590,6 +590,46 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
 }
 
+// P2/S3: reject a type-confused comparison (==, !=, <, <=, >, >=). Comparing a
+// pointer to a non-pointer (except the null idiom `p == 0`), two pointers with
+// different pointee types, or a float to an integer are confusions that emit
+// broken/mis-evaluated C. Integer signedness is intentionally NOT policed here
+// — i32-vs-usize comparisons (`i < xs.len`) are idiomatic; struct/enum '==' is
+// handled separately. `unsafe` bypasses the check.
+static void check_comparison_operands(Type *lt, Type *rt, Expr *le, Expr *re,
+                                      const char *op, isize line, isize col) {
+    if (sema_in_unsafe_block) return;
+    if (!lt || !rt) return;
+    Type *l = lt, *r = rt;
+    while (l && l->kind == TYPE_COMPTIME) l = l->element_type;
+    while (r && r->kind == TYPE_COMPTIME) r = r->element_type;
+    if (!l || !r) return;
+    l = resolve_type_alias(l);
+    r = resolve_type_alias(r);
+    if (l == r) return;
+    bool l_ptr = (l->kind == TYPE_POINTER), r_ptr = (r->kind == TYPE_POINTER);
+    bool bad = false;
+    if ((is_float_type(l) && is_integer_type(r)) || (is_integer_type(l) && is_float_type(r))) {
+        bad = true;                                          // float vs int
+    } else if (l_ptr || r_ptr) {
+        if (l_ptr && r_ptr) {
+            if (types_equal_exact(l->element_type, r->element_type)) return;  // same pointee
+        } else if (is_zero_int_literal(l_ptr ? re : le)) {
+            return;                                          // null idiom: p == 0
+        }
+        bad = true;
+    }
+    if (!bad) return;
+    char lb[128], rb[128];
+    type_describe(l, lb, sizeof lb);
+    type_describe(r, rb, sizeof rb);
+    fprintf(stderr,
+        "[E012] Error Ln %li, Col %li: incompatible operand types for '%s': '%s' and '%s'.\n",
+        (long)line, (long)col, op, lb, rb);
+    diagnostic_show_line(line, col);
+    exit(1);
+}
+
 /*─────────────────────────────────────────────────────────────────╗
 │ 2) Keep the top-level DeclList for struct lookups              │
 ╚─────────────────────────────────────────────────────────────────*/
@@ -1500,10 +1540,15 @@ void sema_infer_expr(Expr *e) {
 
     {
         TokenKind bop = e->as.binary_expr.op;
-        if (bop == TOKEN_EQUAL_EQUAL || bop == TOKEN_BANG_EQUAL ||
+        bool is_cmp = (bop == TOKEN_EQUAL_EQUAL || bop == TOKEN_BANG_EQUAL ||
             bop == TOKEN_ANGLE_BRACKET_LEFT || bop == TOKEN_ANGLE_BRACKET_LEFT_EQUAL ||
-            bop == TOKEN_ANGLE_BRACKET_RIGHT || bop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL ||
-            bop == TOKEN_KEYWORD_AND || bop == TOKEN_KEYWORD_OR) {
+            bop == TOKEN_ANGLE_BRACKET_RIGHT || bop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL);
+        if (is_cmp) {
+            check_comparison_operands(e->as.binary_expr.left->type,
+                e->as.binary_expr.right->type, e->as.binary_expr.left,
+                e->as.binary_expr.right, token_kind_to_str(bop), e->line, e->col);
+        }
+        if (is_cmp || bop == TOKEN_KEYWORD_AND || bop == TOKEN_KEYWORD_OR) {
             e->type = get_builtin_i32_type();
         } else {
             Type *lt = e->as.binary_expr.left->type;

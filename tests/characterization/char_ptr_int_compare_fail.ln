@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// P2/S3: comparing a pointer to a non-zero integer is type confusion (emits C
+// "comparison between pointer and integer"). Was a hole: the comparison branch
+// set the result to bool without checking operand compatibility. `p == 0`
+// (null idiom) stays allowed.
+func g(a *i32, b i32) bool {
+    return a == b
+}
+proc main() i32 {
+    return 0
+}

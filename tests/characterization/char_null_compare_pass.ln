@@ -1,0 +1,8 @@
+// P2/S3: the null comparison idiom (pointer == 0) must stay allowed — the
+// comparison-operand check must not defeat null-pointer checks.
+func is_null(a *i32) bool {
+    return a == 0
+}
+proc main() i32 {
+    return 0
+}
