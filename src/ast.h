@@ -72,6 +72,12 @@ typedef struct Type {
     isize       sentinel_len;
     bool        sentinel_is_string;
 
+    /* P2/S1: cached integer width/signedness on the node, so the type name
+       ("i32") is parsed once instead of on every width query.
+       int_width_cache: 0 = not computed yet, -1 = not an integer, 1..64 = width. */
+    signed char int_width_cache;
+    bool        int_signed_cache;
+
     struct Variant* variant; // For TYPE_VARIANT
 } Type;
 
