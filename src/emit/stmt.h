@@ -596,7 +596,25 @@ void emit_stmt(Stmt *stmt, int depth) {
     emit_indent(depth);
     EMIT("return ");
     if (stmt->as.return_stmt.value) {
-        emit_expr(stmt->as.return_stmt.value, depth);
+        Expr *rv = stmt->as.return_stmt.value;
+        // Returning a dynamic-array parameter as a slice: the parameter is
+        // decomposed in the C ABI into (size_t __len_p, T *p), but the return
+        // type is a Slice_<T> struct. Reconstruct it instead of returning the
+        // bare pointer (which gcc rejects: incompatible types). Only the unsized
+        // `*T[]` form (size in __len_p) is handled here.
+        if (rv && rv->kind == EXPR_IDENTIFIER && rv->decl &&
+            is_dynarray_param_decl(rv->decl) &&
+            rv->type && rv->type->kind == TYPE_ARRAY &&
+            rv->decl->as.variable_decl.type &&
+            rv->decl->as.variable_decl.type->size_expr == NULL) {
+            char sbuf[256];
+            c_name_for_type(rv->type, sbuf, sizeof sbuf);
+            Id *pn = rv->decl->as.variable_decl.name;
+            EMIT("(%s){ .len = __len_%.*s, .data = %.*s }",
+                 sbuf, (int)pn->length, pn->name, (int)pn->length, pn->name);
+        } else {
+            emit_expr(rv, depth);
+        }
     }
     EMIT(";\n");
     break;

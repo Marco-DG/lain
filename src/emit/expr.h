@@ -430,6 +430,18 @@ void emit_expr(Expr *expr, int depth) {
         }
     }
 
+    // Fixed-length slice struct (Fixed_<T>_N, e.g. from a string literal
+    // `var msg = "hello"`): the C struct is `{ T data[N]; }` — it has a real
+    // `.data` member but NO `.len`, so `.len` must emit the compile-time count.
+    if (m->target && m->target->type && m->target->type->kind == TYPE_SLICE &&
+        m->target->type->sentinel_len > 0 &&
+        !m->target->type->sentinel_is_string &&
+        m->target->type->sentinel_str == NULL && m->member &&
+        m->member->length == 3 && strncmp(m->member->name, "len", 3) == 0) {
+        EMIT("%ld", (long)m->target->type->sentinel_len);
+        break;
+    }
+
     // Sprint 19: packed struct field access → StructName_get_field(r)
     if (m->target && m->target->type
         && m->target->type->kind == TYPE_SIMPLE
@@ -786,6 +798,11 @@ void emit_expr(Expr *expr, int depth) {
                               base_arg->kind == EXPR_IDENTIFIER && base_arg->decl) {
                        Id *an = base_arg->decl->as.variable_decl.name;
                        EMIT("__len_%.*s, ", (int)an->length, an->name);
+                   } else if (at && at->kind == TYPE_SLICE && at->sentinel_len > 0 &&
+                              !at->sentinel_is_string && at->sentinel_str == NULL) {
+                       // Fixed-length slice (Fixed_<T>_N, e.g. a string literal):
+                       // the struct has no `.len` member — use the known length.
+                       EMIT("(size_t)%lld, ", (long long)at->sentinel_len);
                    } else {
                        emit_expr(base_arg, depth); EMIT(".len, ");
                    }
