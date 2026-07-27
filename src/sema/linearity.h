@@ -734,6 +734,16 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                         borrow_invalidate_owner(tbl->borrows, owner_id);
                     }
                 } else if (pty && pty->mode == MODE_MUTABLE) {
+                    // P1: a mutable ('var') parameter requires an explicit 'var' at
+                    // the call site (like Rust's &mut). UFCS method calls auto-wrap
+                    // the receiver to EXPR_MUT during type inference, so `x.f()` is
+                    // fine; a bare `f(x)` for a var-param is rejected.
+                    if (arg->kind != EXPR_MUT) {
+                        fprintf(stderr, "[E017] Error Ln %li, Col %li: passing '%.*s' to a mutable ('var') parameter requires explicit 'var' at the call site.\n",
+                                (long)(e->line), (long)(e->col), (int)owner_id->length, owner_id->name);
+                        diagnostic_show_line((e->line), (e->col));
+                        exit(1);
+                    }
                     // Mutable borrow: check for conflicts
                     LEntry *entry = ltable_find(tbl, owner_id);
                     Region *owner_region = entry ? entry->region : (tbl->borrows ? tbl->borrows->current_region : NULL);

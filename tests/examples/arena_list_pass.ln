@@ -39,9 +39,9 @@ proc main() i32 {
     var len = 0
 
     var h = -1
-    h = pool_push(data, len, h, 1)
-    h = pool_push(data, len, h, 2)
-    h = pool_push(data, len, h, 3)
+    h = pool_push(var data, var len, h, 1)
+    h = pool_push(var data, var len, h, 2)
+    h = pool_push(var data, var len, h, 3)
 
     var s = list_sum(data, h)
     libc_printf("sum = %d\n", s)

@@ -1,0 +1,13 @@
+// EXPECT: [E017]
+// P1: passing to a `var` (mutable) parameter requires explicit `var` at the call site.
+type Vec {
+    x i32
+}
+proc bump(var v Vec) {
+    v.x = v.x + 1
+}
+proc main() i32 {
+    var a = Vec(1)
+    bump(a)
+    return a.x
+}
