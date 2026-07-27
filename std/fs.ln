@@ -4,8 +4,17 @@ type File {
     mov handle *FILE
 }
 
+// Open a file, or abort. fopen returns null on failure; wrapping that null in a
+// File would defer the fault to a later fputs/fclose on a null handle (undefined
+// behavior). Until first-class error handling (Result) lands, open_file panics on
+// failure so a File never holds a null handle — a defined abort instead of UB.
+// The null check reads the owned pointer, so it lives in an `unsafe` block; the
+// pointer is still consumed on the success path by File(raw).
 proc open_file(path *u8[:0], mode *u8[:0]) mov File {
     var raw = fopen(path.data, mode.data)
+    unsafe {
+        if raw == 0 { panic("open_file: could not open file") }
+    }
     return File(raw)
 }
 
