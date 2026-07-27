@@ -1,0 +1,11 @@
+// EXPECT: [E010]
+// Returning a LOCAL fixed-size array as a dynamic slice makes a slice into stack
+// memory freed at return (dangling slice; gcc emits a pile of warnings). A
+// parameter array is owned by the caller and stays returnable.
+func bad() i32[] {
+    var xs i32[3] = [1, 2, 3]
+    return xs
+}
+proc main() i32 {
+    return 0
+}

@@ -1481,6 +1481,31 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             }
         }
 
+        // Dangling slice: returning a LOCAL fixed-size array where the declared
+        // return type is a dynamic slice makes a slice pointing into stack memory
+        // freed at return (gcc emits a pile of warnings). A fixed-array return
+        // (by value) or a parameter array (owned by the caller) is fine.
+        if (val && val->kind == EXPR_IDENTIFIER && !val->is_global && current_function_decl &&
+            (current_function_decl->kind == DECL_FUNCTION ||
+             current_function_decl->kind == DECL_PROCEDURE)) {
+            bool is_param = val->decl && val->decl->kind == DECL_VARIABLE &&
+                            val->decl->as.variable_decl.is_parameter;
+            Type *vt = val->type;
+            Type *rt = current_function_decl->as.function_decl.return_type;
+            bool val_fixed_array = vt && vt->kind == TYPE_ARRAY && vt->array_len >= 0;
+            bool ret_is_slice = rt && ((rt->kind == TYPE_ARRAY && rt->array_len == -1) ||
+                                       rt->kind == TYPE_SLICE);
+            if (!is_param && val_fixed_array && ret_is_slice) {
+                fprintf(stderr, "[E010] Error Ln %li, Col %li: cannot return local fixed-size array '%.*s' as a "
+                        "slice — it is deallocated at function return (dangling slice). Return it by value or "
+                        "write into an output-buffer parameter.\n",
+                        (long)s->line, (long)s->col,
+                        (int)val->as.identifier_expr.id->length, val->as.identifier_expr.id->name);
+                diagnostic_show_line(s->line, s->col);
+                exit(1);
+            }
+        }
+
         ltable_ensure_all_consumed(tbl);
         break;
     }
