@@ -705,6 +705,50 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
 
         if (fn_decl) {
             DBG("EXPR_CALL: matched function decl '%.*s'", (int)fn_decl->as.function_decl.name->length, fn_decl->as.function_decl.name->name);
+
+            // Co-argument aliasing: reject passing the SAME owner both as a `var`
+            // (mutable — emitted `restrict`) and as a shared/read argument in one
+            // call, e.g. `f(var b, b)`. Both become pointers to the same object,
+            // and the restrict on the mutable one makes the aliasing undefined
+            // behavior (a real miscompile). mut+mut is already caught by the
+            // borrow table; the two-phase rule wrongly let mut+shared through.
+            {
+                Id *mut_own[32]; int n_mut = 0;
+                DeclList *pp = fn_decl->as.function_decl.params;
+                ExprList *aa = e->as.call_expr.args;
+                for (; pp && aa; pp = pp->next, aa = aa->next) {
+                    if (!pp->decl || pp->decl->kind != DECL_VARIABLE || !aa->expr) continue;
+                    Type *pt = pp->decl->as.variable_decl.type;
+                    if (pt && pt->mode == MODE_MUTABLE && aa->expr->kind == EXPR_MUT) {
+                        Expr *inner = aa->expr->as.mut_expr.expr;
+                        if (inner && inner->kind == EXPR_IDENTIFIER && n_mut < 32)
+                            mut_own[n_mut++] = inner->as.identifier_expr.id;
+                    }
+                }
+                if (n_mut > 0) {
+                    pp = fn_decl->as.function_decl.params;
+                    aa = e->as.call_expr.args;
+                    for (; pp && aa; pp = pp->next, aa = aa->next) {
+                        if (!pp->decl || pp->decl->kind != DECL_VARIABLE || !aa->expr) continue;
+                        Type *pt = pp->decl->as.variable_decl.type;
+                        if (pt && pt->mode != MODE_MUTABLE && aa->expr->kind == EXPR_IDENTIFIER) {
+                            Id *oid = aa->expr->as.identifier_expr.id;
+                            for (int k = 0; k < n_mut; k++) {
+                                if (oid && mut_own[k] && oid->length == mut_own[k]->length &&
+                                    strncmp(oid->name, mut_own[k]->name, oid->length) == 0) {
+                                    fprintf(stderr, "[E004] Error Ln %li, Col %li: cannot pass '%.*s' as a "
+                                        "shared argument while it is also passed as a mutable ('var') "
+                                        "argument in the same call (aliasing a mutable borrow).\n",
+                                        (long)e->line, (long)e->col, (int)oid->length, oid->name);
+                                    diagnostic_show_line(e->line, e->col);
+                                    exit(1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             DeclList *params = fn_decl->as.function_decl.params;
             ExprList *args = e->as.call_expr.args;
             for (; params && args; params = params->next, args = args->next) {

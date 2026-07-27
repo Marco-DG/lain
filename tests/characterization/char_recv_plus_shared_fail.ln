@@ -1,0 +1,19 @@
+// EXPECT: [E004]
+// CORRECTED (was char_recv_plus_shared_pass, which locked UNSOUND behavior):
+// passing the same variable as both a mutable ('var') and a shared argument in
+// one call aliases a `restrict` pointer with a non-restrict one in the emitted C
+// — undefined behavior / a latent miscompile. Rust rejects `merge(&mut v, &v)`;
+// so does Lain now. The two-phase borrow only safely covers a shared read that
+// is released before the mutable borrow activates, not a persistent co-argument.
+type Vec {
+    x i32
+    y i32
+}
+proc merge(var a Vec, b Vec) {
+    a.x = a.x + b.y
+}
+proc main() i32 {
+    var v = Vec(2, 3)
+    merge(var v, v)
+    return v.x
+}
