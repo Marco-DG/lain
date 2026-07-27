@@ -361,6 +361,30 @@ static int64_t constraint_get_diff(RangeTable *t, Id *v1, Id *v2, bool *found) {
 
 // Apply a boolean constraint to the range table
 // e.g. "x > 10" -> update x's min to 11
+// VRA: resolve `x.len` (an EXPR_MEMBER) to the synthetic `__len_x` difference
+// variable Id, reusing an existing arena-backed Id from the range table (param
+// seeding populates `__len_PARAM`). Returns NULL when not a `.len` member or no
+// such Id exists yet (conservative — the caller simply adds no constraint).
+// Enables `if i < arr.len` / `while i < arr.len` to narrow i against the length.
+static Id *range_member_len_id(RangeTable *t, Expr *member) {
+    if (!t || !member || member->kind != EXPR_MEMBER ||
+        !member->as.member_expr.member ||
+        member->as.member_expr.member->length != 3 ||
+        strncmp(member->as.member_expr.member->name, "len", 3) != 0 ||
+        member->as.member_expr.target->kind != EXPR_IDENTIFIER)
+        return NULL;
+    Id *obj = member->as.member_expr.target->as.identifier_expr.id;
+    char key[272];
+    int klen = 6 + (int)obj->length;
+    if (klen >= (int)sizeof(key)) return NULL;
+    memcpy(key, "__len_", 6);
+    memcpy(key + 6, obj->name, obj->length);
+    for (RangeEntry *re = t->head; re; re = re->next)
+        if (re->var && re->var->length == klen && strncmp(re->var->name, key, klen) == 0)
+            return re->var;
+    return NULL;
+}
+
 static void sema_apply_constraint(Expr *cond, RangeTable *t) {
     if (!cond || !t) return;
 
@@ -478,6 +502,22 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
                 default: break;
             }
         }
+        // VRA: Identifier vs member(.len): x < arr.len (narrows i against length)
+        else if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_MEMBER) {
+            Id *v1 = lhs->as.identifier_expr.id;
+            Id *v2 = range_member_len_id(t, rhs);
+            if (v2) {
+                switch (op) {
+                    case TOKEN_ANGLE_BRACKET_LEFT:        constraint_add(t, v1, v2, -1); break; // x < len
+                    case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  constraint_add(t, v1, v2, 0);  break; // x <= len
+                    case TOKEN_ANGLE_BRACKET_RIGHT:       constraint_add(t, v2, v1, -1); break; // x > len
+                    case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: constraint_add(t, v2, v1, 0);  break; // x >= len
+                    case TOKEN_EQUAL_EQUAL:
+                        constraint_add(t, v1, v2, 0); constraint_add(t, v2, v1, 0); break;
+                    default: break;
+                }
+            }
+        }
     }
 }
 
@@ -510,6 +550,20 @@ static void sema_apply_negated_constraint(Expr *cond, RangeTable *t) {
                     break;
                 // Equality negation is hard for ranges/DBM (disjunction)
                 default: break;
+            }
+        }
+        // VRA: negated Identifier vs member(.len): e.g. `if i >= arr.len { return }`
+        else if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_MEMBER) {
+            Id *v1 = lhs->as.identifier_expr.id;
+            Id *v2 = range_member_len_id(t, rhs);
+            if (v2) {
+                switch (op) {
+                    case TOKEN_ANGLE_BRACKET_LEFT:        constraint_add(t, v2, v1, 0);  break; // !(x<len) => x>=len
+                    case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  constraint_add(t, v2, v1, -1); break; // !(x<=len) => x>len
+                    case TOKEN_ANGLE_BRACKET_RIGHT:       constraint_add(t, v1, v2, 0);  break; // !(x>len) => x<=len
+                    case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: constraint_add(t, v1, v2, -1); break; // !(x>=len) => x<len
+                    default: break;
+                }
             }
         }
         // Handle Identifier vs Literal: !(x < 10) <=> x >= 10

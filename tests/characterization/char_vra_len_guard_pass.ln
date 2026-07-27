@@ -1,0 +1,15 @@
+// VRA precision: `if i < arr.len` (and the negated early-return `if i >= arr.len
+// { return }`) must narrow i against the array length so the subsequent index is
+// proven in-bounds. Previously conditions against `.len` added no constraint.
+func get(a i32[], i i32) i32 {
+    if i < 0 {
+        return 0
+    }
+    if i >= a.len {
+        return 0
+    }
+    return a[i]
+}
+proc main() i32 {
+    return 0
+}
