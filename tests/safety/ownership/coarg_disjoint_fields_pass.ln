@@ -1,0 +1,18 @@
+// Disjoint field borrows in one call are safe (Rust-style split borrow): `b.sub`
+// and `b.other` do not overlap, so `f(var b.sub, b.other)` must be accepted. The
+// path-prefix aliasing check allows it while still rejecting overlapping paths.
+type Inner {
+    v i32
+}
+type Outer {
+    sub Inner
+    other Inner
+}
+proc f(x var Inner, y Inner) {
+    x.v = 1
+}
+proc main() i32 {
+    var b = Outer(Inner(0), Inner(0))
+    f(var b.sub, b.other)
+    return 0
+}

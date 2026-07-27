@@ -1,0 +1,21 @@
+// EXPECT: [E004]
+// P0 aliasing: passing a mutable ('var') field arg and a shared arg that overlap
+// it in the same call emits `Inner * restrict x` aliasing `const Outer* y` -> UB
+// under -O2. The co-argument check previously only recorded BARE-identifier
+// mutable args, so `f(var b.sub, b)` (mut b.sub aliasing shared whole b) slipped
+// through. Now access paths are compared for prefix-overlap.
+type Inner {
+    v i32
+}
+type Outer {
+    sub Inner
+    tag i32
+}
+proc f(x var Inner, y Outer) {
+    x.v = y.tag
+}
+proc main() i32 {
+    var b = Outer(Inner(0), 5)
+    f(var b.sub, b)
+    return 0
+}

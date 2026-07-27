@@ -664,6 +664,51 @@ static bool type_is_uninit_flaggable(Type *t) {
     return false;
 }
 
+// P0 aliasing (co-argument): build a canonical access path for an lvalue arg —
+// "b", "b.sub", "b.arr[]" — used to decide whether a mutable ('var') argument and
+// a shared argument in the same call refer to overlapping memory. Index
+// subscripts collapse to "[]" (index-agnostic, so `a[i]`/`a[j]` conservatively
+// alias). Returns false for a non-path expression.
+static bool linear_build_access_path(Expr *e, char *buf, size_t cap) {
+    if (!e || cap == 0) return false;
+    switch (e->kind) {
+        case EXPR_IDENTIFIER: {
+            Id *id = e->as.identifier_expr.id;
+            if (!id) return false;
+            int n = (int)id->length; if (n > (int)cap - 1) n = (int)cap - 1;
+            memcpy(buf, id->name, (size_t)n); buf[n] = '\0';
+            return true;
+        }
+        case EXPR_MEMBER: {
+            if (!linear_build_access_path(e->as.member_expr.target, buf, cap)) return false;
+            Id *m = e->as.member_expr.member; if (!m) return false;
+            size_t len = strlen(buf);
+            if (len + 1 >= cap) return true;               // truncated, conservative
+            buf[len++] = '.';
+            int n = (int)m->length; if (len + (size_t)n >= cap) n = (int)(cap - 1 - len);
+            memcpy(buf + len, m->name, (size_t)n); buf[len + (size_t)n] = '\0';
+            return true;
+        }
+        case EXPR_INDEX: {
+            if (!linear_build_access_path(e->as.index_expr.target, buf, cap)) return false;
+            size_t len = strlen(buf);
+            if (len + 2 < cap) { buf[len] = '['; buf[len+1] = ']'; buf[len+2] = '\0'; }
+            return true;
+        }
+        default: return false;
+    }
+}
+static bool linear_path_is_prefix(const char *pre, const char *full) {
+    size_t lp = strlen(pre);
+    if (strncmp(pre, full, lp) != 0) return false;
+    char c = full[lp];                                     // must end at a field/index boundary
+    return c == '\0' || c == '.' || c == '[';
+}
+// Two access paths ALIAS iff one is a prefix of the other at a boundary.
+static bool linear_paths_alias(const char *a, const char *b) {
+    return linear_path_is_prefix(a, b) || linear_path_is_prefix(b, a);
+}
+
 static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
     if (!e) return;
     switch (e->kind) {
@@ -743,16 +788,22 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
             // behavior (a real miscompile). mut+mut is already caught by the
             // borrow table; the two-phase rule wrongly let mut+shared through.
             {
-                Id *mut_own[32]; int n_mut = 0;
+                // Build a canonical access path ("b", "b.sub", "b.arr[]") for an
+                // lvalue arg. Two args ALIAS iff one path is a prefix of the other
+                // at a field boundary: `b.sub` aliases `b` (prefix) but is disjoint
+                // from `b.other` (Rust-style split borrow). Index subscripts are
+                // rendered "[]" (index-agnostic) so `b.arr[i]`/`b.arr[j]` are
+                // conservatively treated as possibly-aliasing. Returns false for a
+                // non-path expression.
+                char mut_paths[32][256]; int n_mut = 0;
                 DeclList *pp = fn_decl->as.function_decl.params;
                 ExprList *aa = e->as.call_expr.args;
                 for (; pp && aa; pp = pp->next, aa = aa->next) {
                     if (!pp->decl || pp->decl->kind != DECL_VARIABLE || !aa->expr) continue;
                     Type *pt = pp->decl->as.variable_decl.type;
-                    if (pt && pt->mode == MODE_MUTABLE && aa->expr->kind == EXPR_MUT) {
-                        Expr *inner = aa->expr->as.mut_expr.expr;
-                        if (inner && inner->kind == EXPR_IDENTIFIER && n_mut < 32)
-                            mut_own[n_mut++] = inner->as.identifier_expr.id;
+                    if (pt && pt->mode == MODE_MUTABLE && aa->expr->kind == EXPR_MUT && n_mut < 32) {
+                        if (linear_build_access_path(aa->expr->as.mut_expr.expr, mut_paths[n_mut], 256))
+                            n_mut++;
                     }
                 }
                 if (n_mut > 0) {
@@ -762,23 +813,14 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                         if (!pp->decl || pp->decl->kind != DECL_VARIABLE || !aa->expr) continue;
                         Type *pt = pp->decl->as.variable_decl.type;
                         if (pt && pt->mode != MODE_MUTABLE && type_passed_by_pointer(pt)) {
-                            // Root identifier of the shared arg (`v` or `v.field...`) —
-                            // an aggregate member of a mutably-borrowed owner aliases it.
-                            Id *oid = NULL;
-                            if (aa->expr->kind == EXPR_IDENTIFIER) {
-                                oid = aa->expr->as.identifier_expr.id;
-                            } else if (aa->expr->kind == EXPR_MEMBER) {
-                                Expr *head = aa->expr;
-                                while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
-                                if (head && head->kind == EXPR_IDENTIFIER) oid = head->as.identifier_expr.id;
-                            }
-                            for (int k = 0; oid && k < n_mut; k++) {
-                                if (oid && mut_own[k] && oid->length == mut_own[k]->length &&
-                                    strncmp(oid->name, mut_own[k]->name, oid->length) == 0) {
-                                    fprintf(stderr, "[E004] Error Ln %li, Col %li: cannot pass '%.*s' as a "
-                                        "shared argument while it is also passed as a mutable ('var') "
+                            char spath[256];
+                            if (!linear_build_access_path(aa->expr, spath, 256)) continue;
+                            for (int k = 0; k < n_mut; k++) {
+                                if (linear_paths_alias(mut_paths[k], spath)) {
+                                    fprintf(stderr, "[E004] Error Ln %li, Col %li: cannot pass '%s' as a "
+                                        "shared argument while '%s' is passed as a mutable ('var') "
                                         "argument in the same call (aliasing a mutable borrow).\n",
-                                        (long)e->line, (long)e->col, (int)oid->length, oid->name);
+                                        (long)e->line, (long)e->col, spath, mut_paths[k]);
                                     diagnostic_show_line(e->line, e->col);
                                     exit(1);
                                 }
