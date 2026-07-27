@@ -12,13 +12,21 @@
 #include "emit/decl.h"
 #include "emit/type_order.h"
 
-// Entry point: write out C file + generate lain.h
+// Entry point: write out C file (all types inlined — no separate lain.h).
+//
+// Slice/array typedefs (Slice_<T>, Fixed_<T>_N, sentinel variants) are recorded
+// lazily as the body is emitted, but must appear BEFORE their first use. Since
+// everything now lives in one translation unit, the body is emitted into a temp
+// file first (populating the recorded-type list), then the typedefs are written
+// ahead of the buffered body. Struct/enum forward typedefs are emitted directly
+// so that a Slice_<UserType> (a pointer to a forward-declared struct) is valid.
 static inline void emit(DeclList *decls, int depth, const char *filename) {
-    output_file = fopen(filename, "w");
-    if (!output_file) {
+    FILE *real_out = fopen(filename, "w");
+    if (!real_out) {
         fprintf(stderr, "Error: cannot open %s\n", filename);
         exit(1);
     }
+    output_file = real_out;
     EMIT("#include <stdint.h>\n");
     EMIT("#include <stddef.h>\n");
     EMIT("#include <stdio.h>\n");
@@ -56,6 +64,12 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     }
     EMIT("\n");
 
+    // Emit the body (function forward decls + definitions) into a temp file so
+    // that every slice/array type it references gets recorded before we decide
+    // which typedefs to emit. Fall back to writing directly if tmpfile() fails.
+    FILE *body = tmpfile();
+    output_file = body ? body : real_out;
+
     // Emit forward declarations for all functions and procedures
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
@@ -64,11 +78,23 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     }
     EMIT("\n");
     emit_decl_list_topo(decls, depth);
-    // Emit Fixed_<UserType>_N typedefs that couldn't go in lain.h because
-    // they depend on user-defined struct types (complete type required for arrays).
+    // Emit Fixed_<UserType>_N typedefs that depend on user-defined struct types
+    // (complete type required for arrays) — after all struct definitions.
     emit_user_fixed_typedefs(output_file);
-    fclose(output_file);
-    // lain.h is no longer generated — all types are inlined directly into out.c.
+
+    // Now that all slice/array types are recorded, emit the primitive and
+    // dynamic-slice typedefs ahead of the body, then splice the body in.
+    if (body) {
+        emit_needed_slice_types(real_out);
+        fflush(body);
+        rewind(body);
+        char buf[8192];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, body)) > 0)
+            fwrite(buf, 1, n, real_out);
+        fclose(body);
+    }
+    fclose(real_out);
 }
 
 #endif // EMIT_H

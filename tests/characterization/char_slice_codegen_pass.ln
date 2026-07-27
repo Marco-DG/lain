@@ -1,0 +1,10 @@
+// Numeric slices must emit a real Slice_<T> typedef and slice a native local
+// array by pointer decay (`a + 0`), not `a.data` (a native array has no member).
+// The Slice_<T> typedef was orphaned when lain.h generation was removed, so all
+// slice code emitted broken C; slicing a native array also used `.data`.
+proc main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var s = a[0..4]
+    var t = s[2..4]
+    return t[0] + t[1]
+}

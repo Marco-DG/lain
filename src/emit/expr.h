@@ -868,9 +868,33 @@ void emit_expr(Expr *expr, int depth) {
       // Open the struct literal with the real slice type
       EMIT("(%s){ .data = ", sliceBuf);
 
-      // pointer = original slice .data + start index
-      emit_expr(ix->target, 0);
-      EMIT(".data + ");
+      // Base pointer of the sliced target. A slice value carries a `.data`
+      // member (`->data` when the slice is passed by pointer); native and
+      // user fixed arrays, dynamic-array params and thin *T[N] pointers all
+      // already decay to a pointer, so no member access is emitted (`a.data`
+      // would be invalid C on a native array).
+      {
+        Type *tt = ix->target->type;
+        bool is_ptr = false;
+        if (ix->target->decl && ix->target->decl->kind == DECL_VARIABLE) {
+            Type *dt = ix->target->decl->as.variable_decl.type;
+            if (dt && !is_primitive_type(dt) &&
+                (dt->mode == MODE_SHARED || dt->mode == MODE_MUTABLE))
+                is_ptr = true;
+        }
+        bool dynarray = ix->target->kind == EXPR_IDENTIFIER && ix->target->decl &&
+                        is_dynarray_param_decl(ix->target->decl);
+        // Decay to a bare pointer for: a native fixed array (array_len > 0), a
+        // dynamic-array param (raw pointer), or a thin pointer. A slice value —
+        // whether typed TYPE_SLICE or a dynamic-array LOCAL (array_len < 0, not
+        // a param) — is a Slice_ struct and needs `.data`/`->data`.
+        bool decays = dynarray ||
+                      (tt && tt->kind == TYPE_ARRAY && tt->array_len > 0) ||
+                      (tt && tt->kind == TYPE_POINTER);
+        emit_expr(ix->target, 0);
+        if (!decays) EMIT(is_ptr ? "->data" : ".data");
+      }
+      EMIT(" + ");
       emit_expr(r->start, 0);
 
       // length = end - start (+1 if inclusive)
