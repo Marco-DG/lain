@@ -1985,6 +1985,35 @@ void sema_infer_expr(Expr *e) {
                       : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->line : e->line);
             long dc = e->line > 0 ? e->col
                       : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->col : e->col);
+            // Wide multiplication soundness: range_mul saturates the i64 product,
+            // so a genuinely-overflowing wide multiply (u32*u32 up to ~1.8e19)
+            // saturates into check_value_fits_type's fail-open window and is
+            // MISSED (silent unsigned wrap). Compute the exact product range in
+            // 128-bit and check it directly. (i32*i32 is already caught by the
+            // i64 range, so this only adds the wide/unsigned cases.)
+            if (aop2 == TOKEN_ASTERISK) {
+                Range lrg = sema_eval_range(e->as.binary_expr.left, sema_ranges);
+                Range rrg = sema_eval_range(e->as.binary_expr.right, sema_ranges);
+                long long tlo, thi;
+                if (lrg.known && rrg.known && type_integer_range(check_ty, &tlo, &thi)) {
+                    __int128 c1 = (__int128)lrg.min * (__int128)rrg.min;
+                    __int128 c2 = (__int128)lrg.min * (__int128)rrg.max;
+                    __int128 c3 = (__int128)lrg.max * (__int128)rrg.min;
+                    __int128 c4 = (__int128)lrg.max * (__int128)rrg.max;
+                    __int128 pmin = c1, pmax = c1;
+                    if (c2 < pmin) pmin = c2; if (c2 > pmax) pmax = c2;
+                    if (c3 < pmin) pmin = c3; if (c3 > pmax) pmax = c3;
+                    if (c4 < pmin) pmin = c4; if (c4 > pmax) pmax = c4;
+                    if (pmin < (__int128)tlo || pmax > (__int128)thi) {
+                        fprintf(stderr, "[E086] Error Ln %li, Col %li: multiplication would "
+                            "overflow target type — the product range exceeds the type's range. "
+                            "Use a wrapping (*%%) or saturating (*|) operator, widen the type, or "
+                            "constrain the operands.\n", dl, dc);
+                        diagnostic_show_line(dl, dc);
+                        exit(1);
+                    }
+                }
+            }
             check_value_fits_type(rr, check_ty, dl, dc, "arithmetic result of", "");
         }
     }

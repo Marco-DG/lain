@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// u32 * u32 can reach ~1.8e19, which the saturating i64 range arithmetic clamps to
+// INT64_MAX -- landing in check_value_fits_type's fail-open window, so the silent
+// unsigned wrap was ACCEPTED. A 128-bit exact-product check now catches it. (Bounded
+// operands, wrapping *%, and literals still pass.)
+func g(a u32, b u32) u32 {
+    return a * b
+}
+proc main() i32 { return 0 }
