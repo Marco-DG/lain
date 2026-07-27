@@ -1,0 +1,8 @@
+// EXPECT: [E100]
+// Multidimensional fixed arrays (`i32[2][3]`) emitted broken C (an undeclared
+// `Fixed_` type) with reversed dimension nesting. Reject cleanly and direct to a
+// flat `T[m*n]` indexed `a[i*n+j]`.
+proc main() i32 {
+    var m i32[2][3] = [[1, 2], [3, 4], [5, 6]]
+    return 0
+}

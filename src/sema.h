@@ -919,6 +919,19 @@ static void walk_stmt(Stmt *s) {
                     check_conversion(s->as.var_stmt.expr->type, s->as.var_stmt.type, r,
                         s->as.var_stmt.expr, s->line, s->col,
                         "initialization of variable", vname_buf);
+                    // Reject multidimensional fixed arrays (nested `T[N][M]`): the
+                    // backend emits an undeclared `Fixed_` type name (broken C), and
+                    // the dimension nesting is reversed vs C. Use a flat `T[m*n]`
+                    // indexed `a[i*n + j]`.
+                    if (s->as.var_stmt.type->kind == TYPE_ARRAY &&
+                        s->as.var_stmt.type->element_type &&
+                        s->as.var_stmt.type->element_type->kind == TYPE_ARRAY) {
+                        fprintf(stderr, "[E100] Error Ln %li, Col %li: multidimensional arrays are "
+                            "not supported — use a flat array 'T[m*n]' indexed 'a[i*n + j]'.\n",
+                            (long)s->line, (long)s->col);
+                        diagnostic_show_line(s->line, s->col);
+                        exit(1);
+                    }
                     // P2/S4: an array literal's element count must match a fixed
                     // array length (was a gap: u8[3] = [1,2] and u8[2] = [1,2,3]
                     // compiled, emitting bad C with missing/excess initializers).
