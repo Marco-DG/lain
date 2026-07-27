@@ -1465,6 +1465,49 @@ void sema_infer_expr(Expr *e) {
         }
     }
 
+    // Division/modulo by a definitely-zero divisor (a literal 0, or a value VRA
+    // proves is exactly 0) is undefined behavior in ANY context — reject in func
+    // AND proc (the func-only totality check below is a stricter superset).
+    {
+        TokenKind dop = e->as.binary_expr.op;
+        if (dop == TOKEN_SLASH || dop == TOKEN_PERCENT) {
+            Expr *rhs = e->as.binary_expr.right;
+            bool is_zero = rhs && rhs->kind == EXPR_LITERAL && rhs->as.literal_expr.value == 0;
+            if (!is_zero && sema_ranges && rhs) {
+                Range dr = sema_eval_range(rhs, sema_ranges);
+                if (dr.known && dr.min == 0 && dr.max == 0) is_zero = true;
+            }
+            if (is_zero) {
+                fprintf(stderr, "[E015] Error Ln %li, Col %li: division or modulo by zero.\n",
+                        (long)e->line, (long)e->col);
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
+        }
+    }
+
+    // Shift by a constant amount that is negative or >= the bit width of the
+    // left operand is undefined behavior (gcc: "shift count >= width of type").
+    {
+        TokenKind sop = e->as.binary_expr.op;
+        if (sop == TOKEN_SHIFT_LEFT || sop == TOKEN_SHIFT_RIGHT) {
+            Expr *lhs = e->as.binary_expr.left;
+            Expr *rhs = e->as.binary_expr.right;
+            int bits; bool sgn;
+            if (rhs && rhs->kind == EXPR_LITERAL && lhs && lhs->type &&
+                parse_iN_uN(lhs->type, &bits, &sgn)) {
+                long long n = rhs->as.literal_expr.value;
+                if (n < 0 || n >= bits) {
+                    fprintf(stderr, "[E086] Error Ln %li, Col %li: shift amount %lld is out of "
+                        "range for a %d-bit operand (valid range 0..%d).\n",
+                        (long)e->line, (long)e->col, n, bits, bits - 1);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+            }
+        }
+    }
+
     // Division/modulo by zero check in pure func (must be total).
     // Parameter constraints (e.g., `b int != 0`) guarantee safety.
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {

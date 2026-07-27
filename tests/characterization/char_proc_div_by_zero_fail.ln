@@ -1,0 +1,10 @@
+// EXPECT: [E015]
+// Division by a definitely-zero divisor is UB in ANY context. Was a hole: the
+// div-by-zero check was gated on pure `func` only, so a `proc` dividing by a
+// literal 0 compiled (and emitted `a / 0`).
+proc f(a i32) i32 {
+    return a / 0
+}
+proc main() i32 {
+    return 0
+}
