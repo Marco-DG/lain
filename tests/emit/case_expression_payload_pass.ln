@@ -1,0 +1,21 @@
+// case-as-EXPRESSION with payload binding must compile and evaluate correctly.
+// Two bugs made it emit uncompilable / wrong C: (1) the arm value `v` was never
+// bound (`int32_t v = __matchN.data.Ok.val;` was missing -> gcc "v undeclared"),
+// and (2) the tag test compared against the CONSTRUCTOR function `p_R_Ok` instead
+// of the enum constant `p_R_Tag_Ok`, so no arm matched.
+type R {
+    Ok { val i32 }
+    Err { code i32 }
+}
+func unwrap_or(r R, fallback i32) i32 {
+    return case r {
+        Ok(v): v
+        Err(c): fallback
+    }
+}
+proc main() i32 {
+    var a = unwrap_or(R.Ok(42), 0)
+    var b = unwrap_or(R.Err(7), 99)
+    if a == 42 { if b == 99 { return 0 } }
+    return 1
+}

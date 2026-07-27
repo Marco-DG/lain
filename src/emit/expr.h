@@ -1132,9 +1132,37 @@ void emit_expr(Expr *expr, int depth) {
                     break;
                   }
                   case EXPR_CALL: {
+                      // ADT variant pattern `Ok(v)`: compare the tag against the
+                      // enum constant <Enum>_Tag_<Variant>. Emitting the callee
+                      // directly gave `tag == p_R_Ok` (the CONSTRUCTOR function),
+                      // so no arm ever matched and the result was garbage.
+                      Expr *pcallee = p->expr->as.call_expr.callee;
+                      Id *pvid = (pcallee && pcallee->kind == EXPR_IDENTIFIER) ? pcallee->as.identifier_expr.id
+                               : (pcallee && pcallee->kind == EXPR_MEMBER)     ? pcallee->as.member_expr.member
+                               : NULL;
+                      DeclEnum *padt = (scrut_type && scrut_type->kind == TYPE_SIMPLE)
+                                       ? find_adt_decl(scrut_type->base_type) : NULL;
+                      Variant *pmv = NULL;
+                      if (padt && pvid) {
+                          for (Variant *v = padt->variants; v; v = v->next) {
+                              if (v->name->length == pvid->length &&
+                                  strncmp(v->name->name, pvid->name, v->name->length) == 0) { pmv = v; break; }
+                              if (pvid->length > v->name->length + 1) {
+                                  const char *sfx = pvid->name + (pvid->length - v->name->length);
+                                  if (*(sfx-1) == '_' && strncmp(sfx, v->name->name, v->name->length) == 0) { pmv = v; break; }
+                              }
+                          }
+                      }
+                      if (padt && pmv) {
+                          char ecn[256];
+                          strncpy(ecn, c_name_for_id(padt->type_name), sizeof ecn); ecn[sizeof ecn - 1] = '\0';
+                          EMIT("(__match%d.tag == %s_Tag_%.*s)", __match_id, ecn,
+                               (int)pmv->name->length, pmv->name->name);
+                      } else {
                           EMIT("(__match%d.tag == ", __match_id);
-                          emit_expr(p->expr->as.call_expr.callee, depth + 1);
+                          emit_expr(pcallee, depth + 1);
                           EMIT(")");
+                      }
                       break;
                   }
                   case EXPR_IDENTIFIER: {
@@ -1172,7 +1200,50 @@ void emit_expr(Expr *expr, int depth) {
         } else {
             EMIT(first_clause ? "if (1) {\n" : "else {\n");
         }
-        
+
+        // Bind ADT payload variables for this arm before the value is emitted:
+        // `Ok(v): v` must emit `int32_t v = __matchN.data.Ok.val;` first. The
+        // statement form does this; the expression form previously did not, so
+        // the arm value referenced an undeclared variable (gcc: `v` undeclared).
+        if (c->patterns && c->patterns->expr->kind == EXPR_CALL &&
+            scrut_type && scrut_type->kind == TYPE_SIMPLE && scrut_type->base_type) {
+            DeclEnum *adt = find_adt_decl(scrut_type->base_type);
+            Expr *callee = c->patterns->expr->as.call_expr.callee;
+            Id *variant_id = (callee && callee->kind == EXPR_IDENTIFIER) ? callee->as.identifier_expr.id
+                           : (callee && callee->kind == EXPR_MEMBER)     ? callee->as.member_expr.member
+                           : NULL;
+            Variant *mv = NULL;
+            if (adt && variant_id) {
+                for (Variant *v = adt->variants; v; v = v->next) {
+                    if (v->name->length == variant_id->length &&
+                        strncmp(v->name->name, variant_id->name, v->name->length) == 0) { mv = v; break; }
+                    if (variant_id->length > v->name->length + 1) {
+                        const char *sfx = variant_id->name + (variant_id->length - v->name->length);
+                        if (*(sfx-1) == '_' && strncmp(sfx, v->name->name, v->name->length) == 0) { mv = v; break; }
+                    }
+                }
+            }
+            if (mv) {
+                ExprList *arg = c->patterns->expr->as.call_expr.args;
+                DeclList *field = mv->fields;
+                while (arg && field) {
+                    if (arg->expr && arg->expr->kind == EXPR_IDENTIFIER &&
+                        field->decl && field->decl->kind == DECL_VARIABLE) {
+                        Id *vn = arg->expr->as.identifier_expr.id;
+                        Type *ft = field->decl->as.variable_decl.type;
+                        char fty[256]; c_name_for_type(ft, fty, sizeof fty);
+                        emit_indent(depth + 2);
+                        EMIT("%s %.*s = __match%d.data.%.*s.%.*s;\n",
+                             fty, (int)vn->length, vn->name, __match_id,
+                             (int)mv->name->length, mv->name->name,
+                             (int)field->decl->as.variable_decl.name->length,
+                             field->decl->as.variable_decl.name->name);
+                    }
+                    arg = arg->next; field = field->next;
+                }
+            }
+        }
+
         emit_indent(depth + 2);
         EMIT("__result%d = ", __match_id);
         // Coerce string literal to slice type in case expression arms.
