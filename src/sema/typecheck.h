@@ -63,21 +63,12 @@ Type *get_builtin_u8_type(void) {
 // On success, *out_bits is the N (1..64), *out_signed is true for iN.
 static int parse_iN_uN(Type *t, int *out_bits, bool *out_signed) {
     if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return 0;
-    // P2/S1: compute the width once and cache it on the node (idempotent).
+    // P2/Stage0: width is authoritative — set eagerly in type_simple. The lazy
+    // branch remains only as a fallback for any Type built without the
+    // constructor (int_width_cache still 0 = uncomputed there).
     if (t->int_width_cache == 0) {
-        signed char w = -1; bool sgn = false;
-        const char *n = t->base_type->name;
-        isize len = t->base_type->length;
-        if (len >= 2 && len <= 3 && (n[0] == 'i' || n[0] == 'u')) {
-            int v = 0; bool ok = true;
-            for (isize k = 1; k < len; k++) {
-                if (n[k] < '0' || n[k] > '9') { ok = false; break; }
-                v = v * 10 + (n[k] - '0');
-            }
-            if (ok && v >= 1 && v <= 64) { w = (signed char)v; sgn = (n[0] == 'i'); }
-        }
-        t->int_width_cache  = w;
-        t->int_signed_cache = sgn;
+        ast_parse_int_width(t->base_type->name, t->base_type->length,
+                            &t->int_width_cache, &t->int_signed_cache);
     }
     if (t->int_width_cache < 0) return 0;
     *out_bits   = t->int_width_cache;

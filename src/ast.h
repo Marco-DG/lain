@@ -555,6 +555,22 @@ static bool id_bytes_equal(Id *a, Id *b) {
     return true;
 }
 
+// P2/Stage0: parse an iN/uN type name to width (1..64) + signedness. Sets
+// *w = -1 for non-fixed-width names. This is the AUTHORITATIVE source of a
+// TYPE_SIMPLE's integer width — set eagerly at construction (below), not
+// re-derived from the name string on each query.
+static void ast_parse_int_width(const char *n, isize len, signed char *w, bool *sgn) {
+    *w = -1; *sgn = false;
+    if (n && len >= 2 && len <= 3 && (n[0] == 'i' || n[0] == 'u')) {
+        int v = 0; bool ok = true;
+        for (isize k = 1; k < len; k++) {
+            if (n[k] < '0' || n[k] > '9') { ok = false; break; }
+            v = v * 10 + (n[k] - '0');
+        }
+        if (ok && v >= 1 && v <= 64) { *w = (signed char)v; *sgn = (n[0] == 'i'); }
+    }
+}
+
 // Simple names: no element_type, no sentinel
 Type *type_simple(Arena *arena, Id *base) {
     for (InternedSimple *it = g_interned_simple; it; it = it->next) {
@@ -565,6 +581,9 @@ Type *type_simple(Arena *arena, Id *base) {
     t->kind      = TYPE_SIMPLE;
     t->mode      = MODE_SHARED;  // default ownership
     t->base_type = base;
+    // Authoritative integer width/signedness, computed once at construction.
+    ast_parse_int_width(base ? base->name : NULL, base ? (isize)base->length : 0,
+                        &t->int_width_cache, &t->int_signed_cache);
     InternedSimple *node = arena_push_aligned(arena, InternedSimple);
     node->type = t;
     node->next = g_interned_simple;
