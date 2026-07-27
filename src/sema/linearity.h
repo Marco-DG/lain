@@ -745,10 +745,18 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     for (; pp && aa; pp = pp->next, aa = aa->next) {
                         if (!pp->decl || pp->decl->kind != DECL_VARIABLE || !aa->expr) continue;
                         Type *pt = pp->decl->as.variable_decl.type;
-                        if (pt && pt->mode != MODE_MUTABLE && type_passed_by_pointer(pt) &&
-                            aa->expr->kind == EXPR_IDENTIFIER) {
-                            Id *oid = aa->expr->as.identifier_expr.id;
-                            for (int k = 0; k < n_mut; k++) {
+                        if (pt && pt->mode != MODE_MUTABLE && type_passed_by_pointer(pt)) {
+                            // Root identifier of the shared arg (`v` or `v.field...`) —
+                            // an aggregate member of a mutably-borrowed owner aliases it.
+                            Id *oid = NULL;
+                            if (aa->expr->kind == EXPR_IDENTIFIER) {
+                                oid = aa->expr->as.identifier_expr.id;
+                            } else if (aa->expr->kind == EXPR_MEMBER) {
+                                Expr *head = aa->expr;
+                                while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
+                                if (head && head->kind == EXPR_IDENTIFIER) oid = head->as.identifier_expr.id;
+                            }
+                            for (int k = 0; oid && k < n_mut; k++) {
                                 if (oid && mut_own[k] && oid->length == mut_own[k]->length &&
                                     strncmp(oid->name, mut_own[k]->name, oid->length) == 0) {
                                     fprintf(stderr, "[E004] Error Ln %li, Col %li: cannot pass '%.*s' as a "

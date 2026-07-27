@@ -1,0 +1,20 @@
+// EXPECT: [E004]
+// Passing an aggregate FIELD of a mutably-borrowed variable as a shared argument
+// (`combine(var o, o.a)` where o.a is a struct) aliases the mutable restrict
+// pointer — same miscompile class as f(var v, v). A scalar field would be safe
+// (by value), so the check is gated on the shared param being by-pointer.
+type Inner {
+    n i32
+}
+type Outer {
+    a Inner
+    b i32
+}
+proc combine(x var Outer, y Inner) {
+    x.b = y.n
+}
+proc main() i32 {
+    var o = Outer(Inner(1), 2)
+    combine(var o, o.a)
+    return 0
+}
