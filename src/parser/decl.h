@@ -129,7 +129,8 @@ DeclList *parse_module(Arena* arena, Parser* parser) {
     
     DeclList*  list = NULL;
     DeclList** list_tail = &list;
-    
+    bool had_top_level_error = false;
+
     while (!parser_match(TOKEN_EOF)) {
         Decl* decl = parse_decl(arena, parser);
         if (!decl) {
@@ -138,13 +139,20 @@ DeclList *parse_module(Arena* arena, Parser* parser) {
                     parser->line, parser->column,
                     tname ? tname : "UNKNOWN_TOKEN");
             parser_advance(); // consume to avoid infinite loop
-            continue;
+            had_top_level_error = true;
+            continue;         // keep reporting further top-level errors...
         }
 
         *list_tail = decl_list(arena, decl);
         list_tail = &(*list_tail)->next;
-        
+
         parser_skip_eol();
+    }
+
+    // ...but a top-level parse error is fatal: never proceed to sema/emit with a
+    // partial AST and exit 0 (that silently "compiled" a file full of errors).
+    if (had_top_level_error) {
+        exit(1);
     }
 
     return list;

@@ -1,0 +1,9 @@
+// EXPECT: [E100]
+// A top-level parse error must be FATAL (non-zero exit, no output emitted).
+// Was a bug: parse_module printed E100 for an unexpected top-level token but
+// then recovered and continued, so a file whose only problem was a top-level
+// parse error "compiled" successfully (exit 0) and produced output.
+42
+proc main() i32 {
+    return 0
+}
