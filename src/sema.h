@@ -2184,6 +2184,62 @@ static void mrec_edge_visit(Decl *callee) {
     mrec_stack_len--;
 }
 
+// Resolve a TYPE_SIMPLE name to its struct/enum Decl (or NULL).
+static Decl *sema_decl_for_type_name(Type *t) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return NULL;
+    if ((size_t)t->base_type->length >= 256) return NULL;
+    char buf[256];
+    memcpy(buf, t->base_type->name, t->base_type->length);
+    buf[t->base_type->length] = '\0';
+    Symbol *sym = sema_lookup(buf);
+    if (sym && sym->decl && (sym->decl->kind == DECL_STRUCT || sym->decl->kind == DECL_ENUM))
+        return sym->decl;
+    return NULL;
+}
+
+// Does aggregate `d` transitively contain `target` BY VALUE — through nominal or
+// fixed-array fields, NOT pointers/slices (which break the size cycle)? A
+// by-value cycle is infinite size and crashes the layout / is_linear walks.
+static bool sema_aggregate_reaches_by_value(Decl *d, Decl *target, Decl **seen, int nseen) {
+    if (!d || nseen >= 128) return false;
+    for (int i = 0; i < nseen; i++) if (seen[i] == d) return false;
+    seen[nseen] = d;
+    #define _FIELD_STEP(FT) do { \
+        Type *ft = (FT); \
+        while (ft && ft->kind == TYPE_ARRAY && ft->array_len > 0) ft = ft->element_type; \
+        Decl *fd = sema_decl_for_type_name(ft); \
+        if (fd) { if (fd == target) return true; \
+                  if (sema_aggregate_reaches_by_value(fd, target, seen, nseen + 1)) return true; } \
+    } while (0)
+    if (d->kind == DECL_STRUCT) {
+        for (DeclList *f = d->as.struct_decl.fields; f; f = f->next)
+            if (f->decl && f->decl->kind == DECL_VARIABLE) _FIELD_STEP(f->decl->as.variable_decl.type);
+    } else if (d->kind == DECL_ENUM) {
+        for (Variant *v = d->as.enum_decl.variants; v; v = v->next)
+            for (DeclList *f = v->fields; f; f = f->next)
+                if (f->decl && f->decl->kind == DECL_VARIABLE) _FIELD_STEP(f->decl->as.variable_decl.type);
+    }
+    #undef _FIELD_STEP
+    return false;
+}
+
+// Reject a struct/enum that contains itself by value (infinite size) — must be
+// indirected through a pointer. Prevents an infinite-recursion crash in the
+// layout and is-linear walks.
+static void sema_check_no_value_cycle(Decl *d) {
+    if (!d || (d->kind != DECL_STRUCT && d->kind != DECL_ENUM)) return;
+    Decl *seen[128];
+    if (sema_aggregate_reaches_by_value(d, d, seen, 0)) {
+        Id *nm = (d->kind == DECL_STRUCT) ? d->as.struct_decl.name : d->as.enum_decl.type_name;
+        int nl = nm ? (int)nm->length : 0;
+        fprintf(stderr, "[E104] Error Ln %li, Col %li: type '%.*s' contains itself by value "
+            "(infinite size) — a recursive field must go through a pointer (e.g. '*%.*s').\n",
+            (long)d->line, (long)d->col, nl, nm ? nm->name : "", nl, nm ? nm->name : "");
+        diagnostic_show_line(d->line, d->col);
+        exit(1);
+    }
+}
+
 static void sema_check_no_mutual_recursion(DeclList *decls) {
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
@@ -2254,6 +2310,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         for (DeclList *dl = decls; dl; dl = dl->next) {
             if (!dl->decl) continue;
             if (dl->decl->kind == DECL_STRUCT || dl->decl->kind == DECL_ENUM) {
+                sema_check_no_value_cycle(dl->decl);  // reject infinite-size before any recursive walk
                 if (sema_check_struct_field_mov(dl->decl)) any_error = true;
             }
         }

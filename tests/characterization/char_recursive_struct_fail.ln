@@ -1,0 +1,11 @@
+// EXPECT: [E104]
+// A struct containing itself BY VALUE is infinite-size and previously SEGFAULTED
+// the compiler (infinite recursion in the is-linear / layout walks). Reject it;
+// a recursive field must go through a pointer (`next *Node`).
+type Node {
+    val i32
+    next Node
+}
+proc main() i32 {
+    return 0
+}
