@@ -99,6 +99,27 @@ static bool is_integer_type(Type *t) {
     return false;
 }
 
+static bool is_float_type(Type *t) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
+    return t->base_type->length == 3 &&
+           (memcmp(t->base_type->name, "f32", 3) == 0 ||
+            memcmp(t->base_type->name, "f64", 3) == 0);
+}
+
+// P2/S3: reject an implicit float<->int conversion at a boundary (lossy — Lain
+// requires an explicit `as` cast). Exits with E012 on violation.
+static void reject_float_int_mismatch(Type *from, Type *to, isize line, isize col,
+                                      const char *what, const char *label) {
+    if ((is_float_type(from) && is_integer_type(to)) ||
+        (is_integer_type(from) && is_float_type(to))) {
+        fprintf(stderr, "[E012] Error Ln %li, Col %li: implicit conversion between "
+            "float and integer in %s '%s' — use an explicit 'as' cast.\n",
+            (long)line, (long)col, what, label ? label : "");
+        diagnostic_show_line(line, col);
+        exit(1);
+    }
+}
+
 // Q-002 Phase 5 helpers: range of a sized integer type and fit check.
 // Returns 1 if t has a known fixed-width integer range; sets *out_lo/*out_hi.
 // Handles iN/uN with N ∈ [1, 64] plus legacy `int` (treated as i32).
@@ -865,6 +886,8 @@ void sema_infer_expr(Expr *e) {
                     if (n) memcpy(buf, pname->name, n);
                     buf[n] = '\0';
                     check_value_fits_type(r, ptype, parg->line, parg->col,
+                        "argument to parameter", buf);
+                    reject_float_int_mismatch(parg->type, ptype, parg->line, parg->col,
                         "argument to parameter", buf);
                 }
             }

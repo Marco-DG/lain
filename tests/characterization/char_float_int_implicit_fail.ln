@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// P2/S3: an implicit float->int conversion is lossy and must be rejected
+// (was a gap: `var i i32 = f` silently truncated). Requires an explicit 'as' cast.
+proc main() i32 {
+    f f32 = 3.5
+    var i i32 = f
+    return i
+}
