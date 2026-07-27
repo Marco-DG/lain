@@ -1,0 +1,10 @@
+// EXPECT: [E086]
+// P2/S3: a literal argument overflowing the parameter type must be rejected
+// (was a gap: call-arg boundary skipped the range check for literals).
+proc take(x u8) {
+    var _ = x
+}
+proc main() i32 {
+    take(300)
+    return 0
+}

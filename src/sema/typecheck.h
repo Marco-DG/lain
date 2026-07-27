@@ -845,8 +845,19 @@ void sema_infer_expr(Expr *e) {
                     if (a_idx == param_idx) { parg = a->expr; break; }
                     a_idx++;
                 }
-                if (parg && ptype && parg->kind != EXPR_LITERAL) {
-                    Range r = sema_eval_range(parg, sema_ranges);
+                if (parg && ptype) {
+                    // P2/S3: also range-check LITERAL arguments (previously skipped
+                    // — same overflow gap as struct-field-init: take(300) with a u8
+                    // parameter compiled silently).
+                    Range r;
+                    if (parg->kind == EXPR_LITERAL) {
+                        r = is_integer_type(ptype)
+                            ? (Range){ parg->as.literal_expr.value,
+                                       parg->as.literal_expr.value, true }
+                            : range_unknown();
+                    } else {
+                        r = sema_eval_range(parg, sema_ranges);
+                    }
                     Id *pname = p->decl->as.variable_decl.name;
                     char buf[160];
                     int n = pname ? (int)pname->length : 0;
