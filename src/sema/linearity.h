@@ -619,6 +619,21 @@ static Decl *find_function_decl_by_mangled_or_raw(const char *mangled) {
 
 static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_depth, UseTable *use_tbl);
 
+// P2/S4: is a not-yet-initialized read of this type worth flagging (E005)?
+// Scalars (integers/floats/bool) and pointers carry a garbage value when read
+// uninitialized. Aggregates (array/struct/slice) have real storage and are used
+// uninitialized legitimately in current Lain (like C stack arrays), so they are
+// NOT flagged — flagging them would false-positive on `var data u8[5]`.
+static bool type_is_uninit_flaggable(Type *t) {
+    if (!t) return false;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t) return false;
+    if (t->kind == TYPE_POINTER) return true;
+    if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) return false;
+    if (t->kind == TYPE_SIMPLE) return !is_nominal_aggregate(t);  // scalar yes, struct/enum no
+    return false;
+}
+
 static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
     if (!e) return;
     switch (e->kind) {
@@ -635,15 +650,14 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     diagnostic_show_line((e->line), (e->col));
                     exit(1);
                 }
-                // NOTE: this is gated on must_consume/explicit_undefined rather
-                // than firing for every !is_initialized local. Relaxing it to all
-                // scalars catches `var x i32; return x` but FALSE-POSITIVES on two
-                // legitimate patterns the table doesn't mark initialized: out-param
-                // init (`f(var x)` where the callee initializes x) and aggregates
-                // used uninitialized (`var data u8[5]` passed by value). Closing the
-                // uninit-scalar gap needs var/mut-arg init tracking + aggregate
-                // handling first — see project_deep_analysis_plan.
-                if (!entry->is_initialized && (entry->must_consume || entry->explicit_undefined)) {
+                // P2/S4: fire for an uninitialized read of a linear var (must_consume),
+                // an explicit `= undefined`, OR a plain scalar/pointer. Aggregates are
+                // excluded (used uninitialized legitimately) and a var passed to a
+                // var/mut parameter is marked initialized below (out-param init), so
+                // this no longer false-positives on those patterns.
+                if (!entry->is_initialized &&
+                    (entry->must_consume || entry->explicit_undefined ||
+                     type_is_uninit_flaggable(entry->var_type ? entry->var_type : e->type))) {
                     fprintf(stderr, "[E005] Error Ln %li, Col %li: use of uninitialized variable '%.*s'.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
                     diagnostic_show_line((e->line), (e->col));
@@ -886,6 +900,13 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         break;
 
     case EXPR_MUT:
+        // Passing `var x` mutably borrows x and may initialize it (the out-param
+        // pattern, e.g. `init(var x)`). Mark it initialized before descending so
+        // it is not treated as an uninitialized read; other checks still run.
+        if (e->as.mut_expr.expr && e->as.mut_expr.expr->kind == EXPR_IDENTIFIER) {
+            LEntry *me = ltable_find(tbl, e->as.mut_expr.expr->as.identifier_expr.id);
+            if (me) me->is_initialized = true;
+        }
         sema_check_expr_linearity(e->as.mut_expr.expr, tbl, loop_depth);
         break;
 

@@ -1,0 +1,10 @@
+// EXPECT: [E005]
+// Assigned on only ONE branch, so not definitely initialized at the use — must
+// be rejected. Guards the branch-join half of the definite-assignment check.
+proc main() i32 {
+    var x i32
+    if 1 > 0 {
+        x = 1
+    }
+    return x
+}
