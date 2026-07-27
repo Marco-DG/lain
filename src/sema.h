@@ -669,8 +669,10 @@ static int assignment_direction(Expr *target, Expr *rhs) {
     return 0;
 }
 
-// Scan body for assignments to measure variables.
-// Returns: +1 if at least one decreases & none conflict, -1 if any conflict, 0 if none found.
+// Scan a block: does the measure strictly decrease on EVERY path?
+// Returns: +1 if the block guarantees a decrease on all paths & none increase,
+//          -1 if some path changes the measure the wrong way (conflict),
+//           0 if no conflict but not every path is guaranteed to decrease.
 static int measure_scan_body(StmtList *body, MeasureVar *vars, int nvar) {
     bool found_decrease = false;
     for (StmtList *l = body; l; l = l->next) {
@@ -689,32 +691,39 @@ static int measure_scan_body(StmtList *body, MeasureVar *vars, int nvar) {
                 break;
             }
             case STMT_IF: {
-                int r = measure_scan_body(s->as.if_stmt.then_body, vars, nvar);
-                if (r < 0) return -1;
-                if (r > 0) found_decrease = true;
-                r = measure_scan_body(s->as.if_stmt.else_branch, vars, nvar);
-                if (r < 0) return -1;
-                if (r > 0) found_decrease = true;
+                // Soundness: the measure must decrease on EVERY path, so an `if`
+                // guarantees a decrease only if BOTH branches decrease. A missing
+                // `else` scans to 0, so a one-armed `if` never guarantees it.
+                int rt = measure_scan_body(s->as.if_stmt.then_body, vars, nvar);
+                if (rt < 0) return -1;
+                int re = measure_scan_body(s->as.if_stmt.else_branch, vars, nvar);
+                if (re < 0) return -1;
+                if (rt > 0 && re > 0) found_decrease = true;
                 break;
             }
             case STMT_WHILE: {
+                // A nested loop may run zero times: it cannot GUARANTEE a decrease
+                // of the outer measure, only conflict (increase).
                 int r = measure_scan_body(s->as.while_stmt.body, vars, nvar);
                 if (r < 0) return -1;
-                if (r > 0) found_decrease = true;
                 break;
             }
             case STMT_FOR: {
                 int r = measure_scan_body(s->as.for_stmt.body, vars, nvar);
                 if (r < 0) return -1;
-                if (r > 0) found_decrease = true;
                 break;
             }
             case STMT_MATCH: {
+                // Match is exhaustive: exactly one case runs, so it guarantees a
+                // decrease only if EVERY case decreases.
+                bool all_dec = true, any = false;
                 for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
+                    any = true;
                     int r = measure_scan_body(c->body, vars, nvar);
                     if (r < 0) return -1;
-                    if (r > 0) found_decrease = true;
+                    if (r <= 0) all_dec = false;
                 }
+                if (any && all_dec) found_decrease = true;
                 break;
             }
             case STMT_UNSAFE: {

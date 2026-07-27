@@ -1,0 +1,9 @@
+// Guard: both branches decrease the measure → still accepted (no over-rejection).
+func f(n i32, flag i32) i32 {
+    var i = 0
+    while i < n decreasing n - i {
+        if flag > 0 { i = i + 1 } else { i = i + 2 }
+    }
+    return i
+}
+proc main() i32 { return 0 }

@@ -1,0 +1,13 @@
+// EXPECT: [E082]
+// P0 soundness fix: the measure must strictly decrease on EVERY path.
+// This loop does NOT terminate when flag <= 0 (i never changes) → must be rejected.
+func loopy(n i32, flag i32) i32 {
+    var i = 0
+    while i < n decreasing n - i {
+        if flag > 0 {
+            i = i + 1
+        }
+    }
+    return i
+}
+proc main() i32 { return 0 }
