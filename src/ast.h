@@ -78,6 +78,13 @@ typedef struct Type {
     signed char int_width_cache;
     bool        int_signed_cache;
 
+    /* P2/Stage0: the mode/refinement-stripped canonical CORE of this type.
+       Set to the interned core by every constructor; ownership wrappers
+       (type_move/type_mut) inherit it via struct-copy, so `mov i32`, `var i32`
+       and `i32` all share one canon. NULL only on Types built without a
+       constructor — core_identical() falls back to pointer identity there. */
+    struct Type *canon;
+
     struct Variant* variant; // For TYPE_VARIANT
 } Type;
 
@@ -584,6 +591,7 @@ Type *type_simple(Arena *arena, Id *base) {
     // Authoritative integer width/signedness, computed once at construction.
     ast_parse_int_width(base ? base->name : NULL, base ? (isize)base->length : 0,
                         &t->int_width_cache, &t->int_signed_cache);
+    t->canon = t;  // interned scalar/nominal core is its own canon
     InternedSimple *node = arena_push_aligned(arena, InternedSimple);
     node->type = t;
     node->next = g_interned_simple;
@@ -600,6 +608,7 @@ Type *type_array(Arena *arena, Type *element_type, isize array_len) {
     t->mode         = MODE_SHARED;  // default ownership
     t->element_type = element_type;
     t->array_len    = array_len;
+    t->canon = t;
     return t;
 }
 
@@ -622,6 +631,7 @@ Type *type_slice(Arena *arena, Type *element_type, const char *sentinel_str,
     t->sentinel_str      = sentinel_str;
     t->sentinel_len      = sentinel_len;
     t->sentinel_is_string = sentinel_is_string;
+    t->canon = t;
     return t;
 }
 
@@ -652,6 +662,7 @@ Type *type_comptime(Arena *arena, Type *base) {
     t->kind         = TYPE_COMPTIME;
     t->mode         = base->mode;  // preserve ownership
     t->element_type = base;
+    t->canon = t;
     return t;
 }
 
@@ -661,6 +672,7 @@ Type *type_pointer(Arena *arena, Type *element_type) {
     t->kind         = TYPE_POINTER;
     t->mode         = MODE_SHARED;  // pointers default to shared
     t->element_type = element_type;
+    t->canon = t;
     return t;
 }
 

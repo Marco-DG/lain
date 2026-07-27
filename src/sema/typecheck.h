@@ -365,14 +365,26 @@ static bool is_pointer_bearing(Type *t) {
 // Conservative: returns true for same simple type, integer widening,
 // pointer-to-same-element, or if either operand has no inferred type.
 // Returns false on clear mismatches (int vs bool, struct A vs struct B, etc.).
+// P2/Stage0: do two types share the same canonical CORE (same base type modulo
+// ownership mode / refinement)? Total across qualifiers via the interned canon
+// pointer (mov i32, var i32, i32 all share it). Falls through (false) when canon
+// is unset, so callers proceed to their structural check — behavior-preserving.
+static bool core_identical(Type *a, Type *b) {
+    if (a == b) return true;
+    if (!a || !b) return false;
+    if (a->canon && b->canon) return a->canon == b->canon;
+    return false;
+}
+
 static bool types_compatible(Type *from, Type *to) {
     if (!from || !to) return true;  // missing info → skip
     // Unwrap comptime wrappers
     while (from && from->kind == TYPE_COMPTIME) from = from->element_type;
     while (to && to->kind == TYPE_COMPTIME) to = to->element_type;
     if (!from || !to) return true;
-    // P2/S3: interned canonical types (scalars/nominals) compare by identity.
-    if (from == to) return true;
+    // P2/Stage0: canonical CORE identity — total across ownership modes, so
+    // `mov i32` matches `i32` by pointer instead of falling to strncmp.
+    if (core_identical(from, to)) return true;
     // Integer widening
     if (is_integer_type(from) && is_integer_type(to)) {
         return can_widen_to(from, to);
