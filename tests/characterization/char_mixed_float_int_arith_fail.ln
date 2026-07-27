@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// P2/S3: float/integer mixed arithmetic with a typed integer operand must be
+// rejected (needs an explicit `as`). Was a hole: `a + b` (f32 + i32) mis-typed
+// as i32, silently dropping the float — which also hid `x += f` truncation via
+// the compound-assign desugar. An integer LITERAL still promotes (`a + 2`).
+func g(a f32, b i32) f32 {
+    return a + b
+}
+proc main() i32 {
+    return 0
+}

@@ -1567,9 +1567,29 @@ void sema_infer_expr(Expr *e) {
             } else if (lt && rt && is_integer_type(lt) && is_integer_type(rt)) {
                 e->type = wider_integer_type(lt, rt);
             } else {
-                e->type = (lt && is_integer_type(lt)) ? lt :
-                          (rt && is_integer_type(rt)) ? rt :
-                          get_builtin_i32_type();
+                bool l_flt = lt && is_float_type(lt), r_flt = rt && is_float_type(rt);
+                bool l_int = lt && is_integer_type(lt), r_int = rt && is_integer_type(rt);
+                if ((l_flt && r_int) || (l_int && r_flt)) {
+                    // float <op> int: the integer side must be a literal (which
+                    // promotes to the float type); a typed integer operand needs
+                    // an explicit `as` cast. Without this the result mis-typed as
+                    // the integer, silently truncating (e.g. `x += f` desugars to
+                    // `x = x + f`, hiding the float->int loss at the boundary).
+                    Expr *int_side = l_int ? e->as.binary_expr.left : e->as.binary_expr.right;
+                    if (int_side && int_side->kind == EXPR_LITERAL) {
+                        e->type = l_flt ? lt : rt;
+                    } else {
+                        fprintf(stderr, "[E012] Error Ln %li, Col %li: mixed float/integer "
+                            "arithmetic requires an explicit 'as' cast.\n",
+                            (long)e->line, (long)e->col);
+                        diagnostic_show_line(e->line, e->col);
+                        exit(1);
+                    }
+                } else if (l_flt || r_flt) {
+                    e->type = l_flt ? lt : rt;
+                } else {
+                    e->type = l_int ? lt : (r_int ? rt : get_builtin_i32_type());
+                }
             }
         }
     }

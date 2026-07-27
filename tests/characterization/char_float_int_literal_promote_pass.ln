@@ -1,0 +1,9 @@
+// P2/S3: an integer LITERAL in float arithmetic still promotes to the float
+// type (`a + 2` == `a + 2.0`) — the mixed-arithmetic check must not defeat this
+// ergonomic case.
+func g(a f32) f32 {
+    return a + 2
+}
+proc main() i32 {
+    return 0
+}
