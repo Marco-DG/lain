@@ -1581,6 +1581,42 @@ static void walk_stmt(Stmt *s) {
                                 Id *fn = sf->decl->as.variable_decl.name;
                                 if (!fn || fn->length != fld_name->length ||
                                     strncmp(fn->name, fld_name->name, fn->length) != 0) continue;
+                                // G5: enforce the field's refinement constraints on
+                                // REASSIGNMENT too (`c.pct = 200` must satisfy pct's
+                                // `>= 0 and <= 100`), not just at construction.
+                                if (sf->decl->as.variable_decl.constraints && sema_ranges &&
+                                    !sema_in_unsafe_block) {
+                                    Expr *frhs = s->as.assign_stmt.expr;
+                                    Range r = (frhs && frhs->kind == EXPR_LITERAL)
+                                        ? (Range){ frhs->as.literal_expr.value, frhs->as.literal_expr.value, true }
+                                        : (frhs ? sema_eval_range(frhs, sema_ranges) : range_unknown());
+                                    if (r.known) {
+                                        for (ExprList *fc = sf->decl->as.variable_decl.constraints; fc; fc = fc->next) {
+                                            if (!fc->expr || fc->expr->kind != EXPR_BINARY) continue;
+                                            Expr *crhs = fc->expr->as.binary_expr.right;
+                                            if (!crhs || crhs->kind != EXPR_LITERAL) continue;
+                                            long long k = crhs->as.literal_expr.value;
+                                            bool fits = true;
+                                            switch (fc->expr->as.binary_expr.op) {
+                                                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  fits = (r.max <= k); break;
+                                                case TOKEN_ANGLE_BRACKET_LEFT:        fits = (r.max <  k); break;
+                                                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: fits = (r.min >= k); break;
+                                                case TOKEN_ANGLE_BRACKET_RIGHT:       fits = (r.min >  k); break;
+                                                case TOKEN_EQUAL_EQUAL:               fits = (r.min == k && r.max == k); break;
+                                                case TOKEN_BANG_EQUAL:                fits = (r.min > k || r.max < k); break;
+                                                default: break;
+                                            }
+                                            if (!fits) {
+                                                fprintf(stderr, "[E086] Error Ln %li, Col %li: assignment to field "
+                                                    "'%.*s' value range [%lld, %lld] violates its refinement "
+                                                    "constraint.\n", (long)s->line, (long)s->col,
+                                                    (int)fn->length, fn->name, (long long)r.min, (long long)r.max);
+                                                diagnostic_show_line(s->line, s->col);
+                                                exit(1);
+                                            }
+                                        }
+                                    }
+                                }
                                 Id *in_fld = sf->decl->as.variable_decl.in_field;
                                 if (!in_fld) break; // field found but no invariant
                                 // Build synthetic EXPR_MEMBER for obj.container

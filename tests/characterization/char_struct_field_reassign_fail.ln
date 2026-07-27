@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// A struct-field refinement must be enforced on REASSIGNMENT, not just at
+// construction — otherwise `c.pct = 200` silently breaks the `<= 100` invariant.
+type Config {
+    pct i32 >= 0 and <= 100
+}
+proc main() i32 {
+    var c = Config(50)
+    c.pct = 200
+    return 0
+}
