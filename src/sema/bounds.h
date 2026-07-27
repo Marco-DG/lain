@@ -469,6 +469,18 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
         if (is_addr_of && omega_prove_le(ctx, index_expr, array_type->size_expr)) return;
     }
 
+    // 5.6. VRA#3: plain dynamic array `T[]` (no size_expr) — synthesize `arr.len`
+    //      as the bound so the Omega fallback proves arithmetic indices
+    //      (reverse `a[a.len-i-1]`, two-pointer, interleave) on plain slices too,
+    //      not only sized `T[n]`. omega_decompose maps `.len` → `__len_arr`.
+    if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
+        !array_type->size_expr && ctx && array_expr && array_expr->kind == EXPR_IDENTIFIER) {
+        Id *len_name = id(ctx->arena, 3, "len");
+        Expr *synth_len = expr_member(ctx->arena, array_expr, len_name);
+        if (omega_prove_lt(ctx, index_expr, synth_len)) return;
+        if (is_addr_of && omega_prove_le(ctx, index_expr, synth_len)) return;
+    }
+
     // 6. No proof found — emit E085
     if (len_range.known) {
         if (!idx.known) {

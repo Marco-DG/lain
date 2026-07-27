@@ -1,0 +1,13 @@
+// VRA precision (synergy of #1+#2+#3): reverse iteration and two-pointer indexing
+// over a PLAIN dynamic slice must be proven safe, not only over sized `T[n]`. The
+// Omega fallback now synthesizes `a.len` as the bound for plain `[]`.
+func rev(a i32[]) i32 {
+    var s i32 = 0
+    for i in 0..a.len {
+        s = s + a[a.len - i - 1]
+    }
+    return s
+}
+proc main() i32 {
+    return 0
+}
