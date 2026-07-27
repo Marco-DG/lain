@@ -1,0 +1,14 @@
+// EXPECT: [E002]
+// P0 memory safety: `var q = p` on an owned/linear value must MOVE it, not alias.
+// Before move-on-assign, q was an untracked copy: freeing both p and q was a
+// double-free (ASan-confirmed), and reading p after freeing q was a UAF. Now the
+// copy moves p, so `libc_free(mov p)` is a use-after-move (E002 already-consumed).
+extern proc libc_malloc(n usize) mov *u8
+extern proc libc_free(p mov *u8)
+proc main() i32 {
+    var p = libc_malloc(16)
+    var q = p
+    libc_free(mov p)
+    libc_free(mov q)
+    return 0
+}

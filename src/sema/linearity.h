@@ -1057,6 +1057,28 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
 
 /* ---------- statement traversal ---------- */
 
+// P0 (memory safety): an owned/linear value copied by a plain assignment
+// (`var q = p`, `q = p`) must be MOVED, not aliased. Without this the source
+// stays usable while a second independent linear obligation points at the same
+// resource — freeing both double-frees, and reading the source after freeing the
+// copy is a use-after-free (both ASan-confirmed). Only a BARE linear lvalue
+// (identifier or member path) needs the implicit move; `mov`, calls, and
+// constructors already consume through sema_check_expr_linearity. Gated on
+// is_type_move, so shared borrows and Copy scalars are untouched.
+static void sema_move_on_assign_source(Expr *init, LTable *tbl, int loop_depth) {
+    if (!init || !is_type_move(init->type)) return;
+    if (init->kind == EXPR_IDENTIFIER) {
+        if (ltable_find(tbl, init->as.identifier_expr.id))
+            ltable_consume(tbl, init->as.identifier_expr.id, loop_depth);
+    } else if (init->kind == EXPR_MEMBER) {
+        Expr *root = init->as.member_expr.target;
+        Id *leaf = init->as.member_expr.member;
+        while (root && root->kind == EXPR_MEMBER) root = root->as.member_expr.target;
+        if (root && root->kind == EXPR_IDENTIFIER && leaf)
+            ltable_consume_field(tbl, root->as.identifier_expr.id, leaf, loop_depth);
+    }
+}
+
 static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_depth, UseTable *use_tbl) {
     if (!s) return;
     switch (s->kind) {
@@ -1077,7 +1099,9 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 if (entry) ltable_init_field_states(entry, ty, tbl->arena);
             }
         }
-        
+        // P0: `var q = p` moves an owned source (see sema_move_on_assign_source).
+        sema_move_on_assign_source(init, tbl, loop_depth);
+
         // NLL Phase 2: Register persistent borrow when init is a call
         // returning a reference (MODE_MUTABLE return type).
         // Pattern: var ref = func(var data)  where func returns var T
@@ -1233,6 +1257,8 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                     ltable_add(tbl, id, loop_depth, true, must, true, false, s->line, s->col);
                 }
             }
+            // P0: `q = p` (immutable decl) moves an owned source, same as `var q = p`.
+            sema_move_on_assign_source(rhs, tbl, loop_depth);
         } else {
             // Phase 3: Check if writing to a persistently-borrowed owner
             // This covers both member/index paths AND direct identifier assignment

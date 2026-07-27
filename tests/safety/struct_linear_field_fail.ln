@@ -1,6 +1,9 @@
-// EXPECT: [E003]
+// EXPECT: [E001]
 // Q-008: linear field must be annotated `mov`. With proper annotation, the
-// struct is linear and double-use is caught with E003 below.
+// struct is linear and the second use is a use-after-move (E001). Previously
+// `var w2 = w1` aliased w1 instead of moving it (the double-free hole), so this
+// slipped through to an E003 leak; move-on-assign now catches the real error:
+// `var w3 = w1` uses w1 after it was moved into w2.
 type Handle {
     mov ptr *i32
 }
