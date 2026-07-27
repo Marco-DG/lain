@@ -281,6 +281,10 @@ Decl *parse_decl(Arena* arena, Parser* parser)
     if (parser_match(TOKEN_KEYWORD_VAR)) {
         parser_advance();
         d = parse_var_decl(arena, parser);
+        // A top-level `var` is a MUTABLE global. Without this it defaulted to
+        // immutable: a proc could not assign it (spurious E009) and a `func`
+        // could read it (a purity hole — the read guard is keyed on is_mutable).
+        if (d && d->kind == DECL_VARIABLE) d->as.variable_decl.is_mutable = true;
         goto done;
     }
 

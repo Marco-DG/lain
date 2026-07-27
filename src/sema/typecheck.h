@@ -730,9 +730,12 @@ void sema_infer_expr(Expr *e) {
     // already set in resolve
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         if (e->is_global && e->decl && e->decl->kind == DECL_VARIABLE && e->decl->as.variable_decl.is_mutable) {
-            fprintf(stderr, "sema error: pure function '%.*s' cannot read mutable global variable '%.*s'\n",
+            fprintf(stderr, "[E011] Error Ln %li, Col %li: pure function '%.*s' cannot read "
+                    "mutable global variable '%.*s' (its result would depend on hidden state).\n",
+                    (long)e->line, (long)e->col,
                     (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name,
                     (int)e->as.identifier_expr.id->length, e->as.identifier_expr.id->name);
+            diagnostic_show_line(e->line, e->col);
             exit(1);
         }
     }

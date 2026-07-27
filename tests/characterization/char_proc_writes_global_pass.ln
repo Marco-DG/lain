@@ -1,0 +1,10 @@
+// A `proc` may read and write a mutable global. Was broken: the top-level `var`
+// global was mis-parsed as immutable, so assigning it raised a spurious E009.
+var k i32
+proc bump() {
+    k = k + 1
+}
+proc main() i32 {
+    bump()
+    return 0
+}
