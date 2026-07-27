@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// P2/S3: two pointers with different pointee types must not be interchangeable
+// (aliasing type-confusion). Pointer element types are invariant, so *i32 does
+// not convert to *u8 even though u8 widens to i32.
+func f(p *i32) *u8 {
+    return p
+}
+proc main() i32 {
+    return 0
+}

@@ -1,0 +1,7 @@
+// P2/S3: the null idiom (integer literal 0 -> pointer) must stay allowed — the
+// pointer-safety boundary check must not defeat null-pointer initialization.
+proc main() i32 {
+    var p *i32 = 0
+    var _ = p
+    return 0
+}

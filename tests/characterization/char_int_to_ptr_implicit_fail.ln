@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// P2/S3: fabricating a pointer from a non-zero integer must be rejected. Was a
+// hole: the boundaries only range-checked integers and never verified base
+// type-kind compatibility, so returning an i32 as a *i32 compiled silently
+// (gcc: "makes pointer from integer without a cast"). The null idiom (0 -> *T)
+// stays allowed; a non-zero value needs an explicit cast in an unsafe block.
+func f(a i32) *i32 {
+    return a
+}
+proc main() i32 {
+    return 0
+}

@@ -923,6 +923,8 @@ static void walk_stmt(Stmt *s) {
                         s->line, s->col, "initialization of variable", vname_buf);
                     reject_lossy_int_conversion(s->as.var_stmt.expr->type, s->as.var_stmt.type,
                         r, s->line, s->col, "initialization of variable", vname_buf);
+                    reject_incompatible_conversion(s->as.var_stmt.expr->type, s->as.var_stmt.type,
+                        s->as.var_stmt.expr, s->line, s->col, "initialization of variable", vname_buf);
                     // P2/S3: an array literal's literal elements must fit the target
                     // array's element type (was a gap: u8[3] = [1,2,300] compiled).
                     if (s->as.var_stmt.type->kind == TYPE_ARRAY
@@ -1641,6 +1643,8 @@ static void walk_stmt(Stmt *s) {
                     s->line, s->col, ctx, label);
                 reject_lossy_int_conversion(s->as.assign_stmt.expr->type, tgt->type,
                     r, s->line, s->col, ctx, label);
+                reject_incompatible_conversion(s->as.assign_stmt.expr->type, tgt->type,
+                    s->as.assign_stmt.expr, s->line, s->col, ctx, label);
             }
             if (sema_ranges && s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
                 Expr *rhs = s->as.assign_stmt.expr;
@@ -1706,6 +1710,8 @@ static void walk_stmt(Stmt *s) {
                     s->line, s->col, "return from function", buf);
                 reject_lossy_int_conversion(s->as.return_stmt.value->type, current_return_type,
                     r, s->line, s->col, "return from function", buf);
+                reject_incompatible_conversion(s->as.return_stmt.value->type, current_return_type,
+                    s->as.return_stmt.value, s->line, s->col, "return from function", buf);
             }
             // Check Post-Contracts
             if (current_function_decl && current_function_decl->as.function_decl.post_contracts) {

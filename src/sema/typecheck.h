@@ -409,6 +409,145 @@ static bool types_compatible(Type *from, Type *to) {
     }
 }
 
+// P2/S3: render a Type into `buf` for diagnostics (best-effort, a couple of
+// levels of pointer/slice/array nesting; falls back to "?").
+static void type_describe(Type *t, char *buf, size_t cap) {
+    if (cap == 0) return;
+    buf[0] = '\0';
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t) { snprintf(buf, cap, "?"); return; }
+    char inner[96];
+    switch (t->kind) {
+        case TYPE_SIMPLE:
+            if (t->base_type)
+                snprintf(buf, cap, "%.*s", (int)t->base_type->length, t->base_type->name);
+            else snprintf(buf, cap, "?");
+            break;
+        case TYPE_POINTER:
+            type_describe(t->element_type, inner, sizeof inner);
+            snprintf(buf, cap, "*%s", inner);
+            break;
+        case TYPE_SLICE:
+            type_describe(t->element_type, inner, sizeof inner);
+            snprintf(buf, cap, "%s[]", inner);
+            break;
+        case TYPE_ARRAY:
+            type_describe(t->element_type, inner, sizeof inner);
+            if (t->array_len >= 0) snprintf(buf, cap, "%s[%lld]", inner, (long long)t->array_len);
+            else snprintf(buf, cap, "%s[]", inner);
+            break;
+        default:
+            snprintf(buf, cap, "?");
+    }
+}
+
+// P2/S3: peel refinement/type-alias layers to the underlying base type. A
+// refinement alias (`type SmallPos = i32 >= 1`) is registered as a symbol whose
+// ->type is the base type and ->decl is the alias; the alias's own refinement
+// is enforced separately (E086), so for kind-compatibility it IS its base.
+static Type *resolve_type_alias(Type *t) {
+    extern Symbol *sema_lookup(const char *name);
+    for (int guard = 0; guard < 8; guard++) {
+        if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return t;
+        if ((size_t)t->base_type->length >= 128) return t;
+        char buf[128];
+        memcpy(buf, t->base_type->name, t->base_type->length);
+        buf[t->base_type->length] = '\0';
+        Symbol *sym = sema_lookup(buf);
+        if (sym && sym->decl && sym->decl->kind == DECL_TYPE_ALIAS &&
+            sym->type && sym->type != t) {
+            t = sym->type;   // peel one alias layer
+            continue;
+        }
+        return t;
+    }
+    return t;
+}
+
+// Strict structural type equality (NO widening, NO decay). Used where variance
+// is unsound — the element types behind a pointer/slice/array must match
+// invariantly (so *i32 is NOT interchangeable with *u8).
+static bool types_equal_exact(Type *a, Type *b) {
+    if (a == b) return true;
+    if (!a || !b) return true;                    // missing info: don't judge
+    while (a && a->kind == TYPE_COMPTIME) a = a->element_type;
+    while (b && b->kind == TYPE_COMPTIME) b = b->element_type;
+    a = resolve_type_alias(a);
+    b = resolve_type_alias(b);
+    if (a == b) return true;
+    if (!a || !b) return true;
+    if (a->kind != b->kind) return false;
+    switch (a->kind) {
+        case TYPE_SIMPLE:
+            if (!a->base_type || !b->base_type) return true;
+            if (a->base_type->length != b->base_type->length) return false;
+            return strncmp(a->base_type->name, b->base_type->name,
+                           a->base_type->length) == 0;
+        case TYPE_POINTER:
+        case TYPE_SLICE:
+            return types_equal_exact(a->element_type, b->element_type);
+        case TYPE_ARRAY:
+            if (!types_equal_exact(a->element_type, b->element_type)) return false;
+            if (a->array_len >= 0 && b->array_len >= 0 &&
+                a->array_len != b->array_len) return false;
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool is_zero_int_literal(Expr *e) {
+    return e && e->kind == EXPR_LITERAL && e->as.literal_expr.value == 0;
+}
+
+// P2/S3: reject POINTER type-confusion at a boundary — the memory-unsafe
+// conversions with no legitimate implicit counterpart:
+//   * two pointers with different pointee types (*i32 <-> *u8) — aliasing lie
+//   * pointer <-> non-pointer scalar (int/float/struct <-> *T) — fabricating or
+//     reinterpreting an address (so `func f(a i32) *i32 { return a }` is caught)
+// Legitimate exceptions preserved: array/slice DECAY to a pointer (u8[] -> *u8,
+// T[N] -> *T[N]), the null idiom (integer literal 0 -> *T), explicit `as`
+// casts (source type already matches), and anything inside an `unsafe` block.
+// Non-pointer mismatches (bool<->int, struct<->struct, array element policy)
+// are intentionally deferred to the dedicated checks / the full subsumption
+// relation — this pass is scoped to pointer safety only.
+static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
+                                           isize line, isize col,
+                                           const char *ctx, const char *label) {
+    if (sema_in_unsafe_block) return;
+    if (!from || !to) return;
+    Type *f = from, *t = to;
+    while (f && f->kind == TYPE_COMPTIME) f = f->element_type;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!f || !t) return;
+    f = resolve_type_alias(f);
+    t = resolve_type_alias(t);
+    if (f == t) return;
+    bool f_ptr = (f->kind == TYPE_POINTER);
+    bool t_ptr = (t->kind == TYPE_POINTER);
+    if (!f_ptr && !t_ptr) return;              // no pointer involved: out of scope
+    if (f_ptr && t_ptr) {
+        if (types_equal_exact(f->element_type, t->element_type)) return;  // same pointee
+    } else {
+        Type *ptr   = f_ptr ? f : t;
+        Type *other = f_ptr ? t : f;
+        if (other->kind == TYPE_ARRAY || other->kind == TYPE_SLICE) {
+            if (types_equal_exact(other->element_type, ptr->element_type)) return; // T[] -> *T
+            if (types_equal_exact(other, ptr->element_type)) return;              // T[N] -> *T[N]
+        }
+        if (t_ptr && is_zero_int_literal(src_expr)) return;   // null idiom: 0 -> *T
+    }
+    char fb[128], tb[128];
+    type_describe(f, fb, sizeof fb);
+    type_describe(t, tb, sizeof tb);
+    fprintf(stderr,
+        "[E012] Error Ln %li, Col %li: %s '%s' has incompatible pointer type: cannot "
+        "implicitly convert '%s' to '%s' (use an explicit 'as' cast in an 'unsafe' block).\n",
+        (long)line, (long)col, ctx, label ? label : "", fb, tb);
+    diagnostic_show_line(line, col);
+    exit(1);
+}
+
 /*─────────────────────────────────────────────────────────────────╗
 │ 2) Keep the top-level DeclList for struct lookups              │
 ╚─────────────────────────────────────────────────────────────────*/
@@ -961,6 +1100,8 @@ void sema_infer_expr(Expr *e) {
                     reject_float_int_mismatch(parg->type, ptype, parg->line, parg->col,
                         "argument to parameter", buf);
                     reject_lossy_int_conversion(parg->type, ptype, r, parg->line, parg->col,
+                        "argument to parameter", buf);
+                    reject_incompatible_conversion(parg->type, ptype, parg, parg->line, parg->col,
                         "argument to parameter", buf);
                 }
             }
