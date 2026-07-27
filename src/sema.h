@@ -919,6 +919,24 @@ static void walk_stmt(Stmt *s) {
                     check_conversion(s->as.var_stmt.expr->type, s->as.var_stmt.type, r,
                         s->as.var_stmt.expr, s->line, s->col,
                         "initialization of variable", vname_buf);
+                    // P2/S4: an array literal's element count must match a fixed
+                    // array length (was a gap: u8[3] = [1,2] and u8[2] = [1,2,3]
+                    // compiled, emitting bad C with missing/excess initializers).
+                    if (s->as.var_stmt.type->kind == TYPE_ARRAY
+                        && s->as.var_stmt.type->array_len >= 0
+                        && s->as.var_stmt.expr->kind == EXPR_ARRAY_LITERAL) {
+                        long count = 0;
+                        for (ExprList *el = s->as.var_stmt.expr->as.array_literal_expr.elements;
+                             el; el = el->next) count++;
+                        if (count != (long)s->as.var_stmt.type->array_len) {
+                            fprintf(stderr, "[E012] Error Ln %li, Col %li: array literal has %ld "
+                                "element(s) but '%s' has fixed length %lld.\n",
+                                (long)s->line, (long)s->col, count, vname_buf,
+                                (long long)s->as.var_stmt.type->array_len);
+                            diagnostic_show_line(s->line, s->col);
+                            exit(1);
+                        }
+                    }
                     // P2/S3: an array literal's literal elements must fit the target
                     // array's element type (was a gap: u8[3] = [1,2,300] compiled).
                     if (s->as.var_stmt.type->kind == TYPE_ARRAY

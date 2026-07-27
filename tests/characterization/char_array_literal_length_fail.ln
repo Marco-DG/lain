@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// An array literal's element count must match a fixed array length. Was a hole:
+// `u8[3] = [1,2]` (too few) and `u8[2] = [1,2,3]` (too many) compiled, emitting
+// C with missing/excess initializers.
+proc main() i32 {
+    var xs u8[3] = [1, 2]
+    return 0
+}
