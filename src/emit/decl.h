@@ -240,14 +240,19 @@ static void emit_param_type(Type *t, bool with_restrict) {
     // BUT for Pointers, the mode dictates the C type (const vs non-const),
     // so we must preserve it to generate the correct base "value type".
     OwnershipMode original_mode = t->mode;
-    if (t->kind != TYPE_POINTER) {
-        t->mode = MODE_SHARED;
-    }
 
+    // Get the base type name without ownership decoration WITHOUT mutating the
+    // (possibly shared) type node: for non-pointers use a stack-local shallow
+    // copy with a neutral mode. Type nodes must stay immutable so they can be
+    // interned (P2/S1).
     char base_name[256];
-    c_name_for_type(t, base_name, sizeof(base_name));
-
-    t->mode = original_mode;  // restore original mode
+    if (t->kind != TYPE_POINTER) {
+        Type tmp = *t;
+        tmp.mode = MODE_SHARED;
+        c_name_for_type(&tmp, base_name, sizeof(base_name));
+    } else {
+        c_name_for_type(t, base_name, sizeof(base_name));
+    }
 
     // Now emit the correct C type based on ownership mode
     if (original_mode == MODE_OWNED) {
