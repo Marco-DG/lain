@@ -288,6 +288,8 @@ static bool types_compatible(Type *from, Type *to) {
     while (from && from->kind == TYPE_COMPTIME) from = from->element_type;
     while (to && to->kind == TYPE_COMPTIME) to = to->element_type;
     if (!from || !to) return true;
+    // P2/S3: interned canonical types (scalars/nominals) compare by identity.
+    if (from == to) return true;
     // Integer widening
     if (is_integer_type(from) && is_integer_type(to)) {
         return can_widen_to(from, to);
@@ -311,7 +313,7 @@ static bool types_compatible(Type *from, Type *to) {
         case TYPE_SLICE:
             return types_compatible(from->element_type, to->element_type);
         default:
-            return true; // conservative
+            return false; // P2/S3: sound — an unhandled kind is not assumed compatible
     }
 }
 
