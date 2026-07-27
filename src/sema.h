@@ -191,6 +191,42 @@ static bool body_has_ptr_decrement(StmtList *body, Id *pid) {
     return false;
 }
 
+// P0 (memory safety): the affine post-loop recap assumes the loop runs EXACTLY
+// `end-start` times and steps each affine var once per iteration. That is false
+// when the body can exit early or skip iterations: `break`/`continue`/`return`
+// invalidate the iteration count (a var reaches a SMALLER final value than the
+// recap computes → the compiler then "proves" an out-of-bounds index safe —
+// ASan-confirmed). Return true if the recap must be discarded (fall back to the
+// sound widened range). Recursing into nested loops is a safe over-approximation.
+static bool loop_body_defeats_affine_recap(StmtList *body) {
+    for (StmtList *b = body; b; b = b->next) {
+        Stmt *s = b->stmt;
+        if (!s) continue;
+        switch (s->kind) {
+            case STMT_BREAK: case STMT_CONTINUE: case STMT_RETURN: return true;
+            case STMT_IF:
+                if (loop_body_defeats_affine_recap(s->as.if_stmt.then_body)) return true;
+                if (loop_body_defeats_affine_recap(s->as.if_stmt.else_branch)) return true;
+                break;
+            case STMT_MATCH:
+                for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next)
+                    if (loop_body_defeats_affine_recap(c->body)) return true;
+                break;
+            case STMT_UNSAFE:
+                if (loop_body_defeats_affine_recap(s->as.unsafe_stmt.body)) return true;
+                break;
+            case STMT_FOR:
+                if (loop_body_defeats_affine_recap(s->as.for_stmt.body)) return true;
+                break;
+            case STMT_WHILE:
+                if (loop_body_defeats_affine_recap(s->as.while_stmt.body)) return true;
+                break;
+            default: break;
+        }
+    }
+    return false;
+}
+
 // L3 lower bound: mark `l3_lower_dead` on pointer in-guards where the lower-bound
 // check `ptr >= arr_base` is provably always true, enabling GCC memcpy detection.
 //
@@ -1340,7 +1376,22 @@ static void walk_stmt(Stmt *s) {
             // S15 (VRA L3): post-loop affine recap.
             // For each affine var, compute final range from init + step * iter_count.
             // Iter count = end - start (loop iterates exactly that many times).
-            if (sema_ranges && n_affine > 0 && start_range.known && end_range.known) {
+            //
+            // P0: this exact recap is SOUND only when the loop body cannot exit
+            // early or skip iterations, and steps each var exactly once. A
+            // break/continue/return, or the same var stepped twice at top level,
+            // makes the real final value differ from the recap — which then lets
+            // the bounds checker "prove" an out-of-bounds index (ASan-confirmed).
+            // When unsafe, discard the recap: sema_widen_loop already set a sound
+            // (wider) range for these vars above.
+            bool recap_unsafe = loop_body_defeats_affine_recap(s->as.for_stmt.body);
+            for (int i = 0; !recap_unsafe && i < n_affine; i++)      // same var stepped twice
+                for (int j = i + 1; j < n_affine; j++)
+                    if (affine_vars[i] && affine_vars[j] &&
+                        affine_vars[i]->length == affine_vars[j]->length &&
+                        strncmp(affine_vars[i]->name, affine_vars[j]->name,
+                                affine_vars[i]->length) == 0) { recap_unsafe = true; break; }
+            if (!recap_unsafe && sema_ranges && n_affine > 0 && start_range.known && end_range.known) {
                 long long iter_min = end_range.min - start_range.max;
                 long long iter_max = end_range.max - start_range.min;
                 if (iter_min < 0) iter_min = 0;  // empty-loop case
@@ -1363,9 +1414,14 @@ static void walk_stmt(Stmt *s) {
                 }
             }
 
-            // Preserve loop index value at exit: for i in start..end → i == end after loop
+            // Preserve loop index value at exit. A clean `for i in start..end`
+            // exits with i == end; but with a break the index can be anywhere in
+            // [start, end], so widen it conservatively rather than claim `end`.
             if (sema_ranges && iter_var && end_range.known) {
-                range_set(sema_ranges, iter_var, end_range);
+                if (recap_unsafe && start_range.known)
+                    range_set(sema_ranges, iter_var, range_make(start_range.min, end_range.max));
+                else
+                    range_set(sema_ranges, iter_var, end_range);
             }
             #undef MAX_AFFINE
             break;

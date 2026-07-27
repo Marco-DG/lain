@@ -1,0 +1,14 @@
+// EXPECT: [E085]
+// The recap counted the same variable's step only once when it is assigned
+// twice per iteration (x += 1; x += 2 → +3/iter, not +2), undercounting the
+// final value. arr[x] with x==30 on a length-21 array was accepted. Now a
+// duplicate affine step discards the exact recap.
+proc main() i32 {
+    var arr i32[21] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+    var x i32 = 0
+    for i in 0..10 {
+        x = x + 1
+        x = x + 2
+    }
+    return arr[x]
+}
