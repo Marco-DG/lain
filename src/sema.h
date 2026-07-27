@@ -2211,6 +2211,25 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
 
         sema_clear_locals();
 
+        // Reject duplicate parameter names (ambiguous — C would redefine the
+        // symbol; the second shadows the first with no diagnostic otherwise).
+        for (DeclList *pa = d->as.function_decl.params; pa; pa = pa->next) {
+            if (!pa->decl || pa->decl->kind != DECL_VARIABLE) continue;
+            Id *na = pa->decl->as.variable_decl.name;
+            if (!na) continue;
+            for (DeclList *pb = pa->next; pb; pb = pb->next) {
+                if (!pb->decl || pb->decl->kind != DECL_VARIABLE) continue;
+                Id *nb = pb->decl->as.variable_decl.name;
+                if (nb && nb->length == na->length &&
+                    strncmp(na->name, nb->name, na->length) == 0) {
+                    fprintf(stderr, "[E013] Error Ln %li, Col %li: duplicate parameter name '%.*s'.\n",
+                        (long)d->line, (long)d->col, (int)na->length, na->name);
+                    diagnostic_show_line(d->line, d->col);
+                    exit(1);
+                }
+            }
+        }
+
         // 2.a) Insert parameters into locals
         int param_idx = 0;
         for (DeclList *p = d->as.function_decl.params; p; p = p->next) {

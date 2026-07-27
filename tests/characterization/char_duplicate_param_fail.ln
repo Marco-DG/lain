@@ -1,0 +1,9 @@
+// EXPECT: [E013]
+// Two parameters with the same name are ambiguous and were accepted (C would
+// redefine the symbol; the second silently shadowed the first).
+func f(a i32, a i32) i32 {
+    return a
+}
+proc main() i32 {
+    return 0
+}
