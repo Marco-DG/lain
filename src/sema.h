@@ -916,15 +916,9 @@ static void walk_stmt(Stmt *s) {
                                  ? (int)s->as.var_stmt.name->length : 127;
                     memcpy(vname_buf, s->as.var_stmt.name->name, vn_len);
                     vname_buf[vn_len] = '\0';
-                    check_value_fits_type(r, s->as.var_stmt.type, s->line, s->col,
+                    check_conversion(s->as.var_stmt.expr->type, s->as.var_stmt.type, r,
+                        s->as.var_stmt.expr, s->line, s->col,
                         "initialization of variable", vname_buf);
-                    // P2/S3: reject implicit float<->int conversion (lossy — needs `as`).
-                    reject_float_int_mismatch(s->as.var_stmt.expr->type, s->as.var_stmt.type,
-                        s->line, s->col, "initialization of variable", vname_buf);
-                    reject_lossy_int_conversion(s->as.var_stmt.expr->type, s->as.var_stmt.type,
-                        r, s->line, s->col, "initialization of variable", vname_buf);
-                    reject_incompatible_conversion(s->as.var_stmt.expr->type, s->as.var_stmt.type,
-                        s->as.var_stmt.expr, s->line, s->col, "initialization of variable", vname_buf);
                     // P2/S3: an array literal's literal elements must fit the target
                     // array's element type (was a gap: u8[3] = [1,2,300] compiled).
                     if (s->as.var_stmt.type->kind == TYPE_ARRAY
@@ -941,11 +935,7 @@ static void walk_stmt(Stmt *s) {
                                     ? (Range){ el->expr->as.literal_expr.value,
                                                el->expr->as.literal_expr.value, true }
                                     : sema_eval_range(el->expr, sema_ranges);
-                                check_value_fits_type(er, et, el->expr->line,
-                                    el->expr->col, "array element", vname_buf);
-                                reject_float_int_mismatch(el->expr->type, et,
-                                    el->expr->line, el->expr->col, "array element", vname_buf);
-                                reject_lossy_int_conversion(el->expr->type, et, er,
+                                check_conversion(el->expr->type, et, er, el->expr,
                                     el->expr->line, el->expr->col, "array element", vname_buf);
                             }
                         }
@@ -1638,12 +1628,7 @@ static void walk_stmt(Stmt *s) {
                 } else {
                     label[0] = '\0';
                 }
-                check_value_fits_type(r, tgt->type, s->line, s->col, ctx, label);
-                reject_float_int_mismatch(s->as.assign_stmt.expr->type, tgt->type,
-                    s->line, s->col, ctx, label);
-                reject_lossy_int_conversion(s->as.assign_stmt.expr->type, tgt->type,
-                    r, s->line, s->col, ctx, label);
-                reject_incompatible_conversion(s->as.assign_stmt.expr->type, tgt->type,
+                check_conversion(s->as.assign_stmt.expr->type, tgt->type, r,
                     s->as.assign_stmt.expr, s->line, s->col, ctx, label);
             }
             if (sema_ranges && s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
@@ -1704,13 +1689,7 @@ static void walk_stmt(Stmt *s) {
                 if (fn_len > 159) fn_len = 159;
                 memcpy(buf, fname, fn_len);
                 buf[fn_len] = '\0';
-                check_value_fits_type(r, current_return_type, s->line, s->col,
-                    "return from function", buf);
-                reject_float_int_mismatch(s->as.return_stmt.value->type, current_return_type,
-                    s->line, s->col, "return from function", buf);
-                reject_lossy_int_conversion(s->as.return_stmt.value->type, current_return_type,
-                    r, s->line, s->col, "return from function", buf);
-                reject_incompatible_conversion(s->as.return_stmt.value->type, current_return_type,
+                check_conversion(s->as.return_stmt.value->type, current_return_type, r,
                     s->as.return_stmt.value, s->line, s->col, "return from function", buf);
             }
             // Check Post-Contracts

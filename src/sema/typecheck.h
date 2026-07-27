@@ -570,6 +570,26 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
     exit(1);
 }
 
+// P2/S3: THE scalar/pointer boundary conversion check — one call for "a value
+// of static type `from` (VRA range r, source expr src_expr) flows into a slot
+// of type `to`". Consolidates the boundary policy, in call order:
+//   1. VRA range / overflow fit (literals, arithmetic)        [E086]
+//   2. float <-> int rejection                                [E012]
+//   3. integer narrowing / signedness soundness               [E086]
+//   4. pointer & nominal (struct/enum) type-kind confusion    [E012]
+// Each sub-check exits on violation. This is the boundary-level precursor to
+// the full `subsumes(from, to, range)` relation (P2/S2). Callers pass the
+// source expr where available (enables the null-literal idiom, 0 -> *T); NULL
+// is fine (that sub-check simply won't fire).
+static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
+                             isize line, isize col,
+                             const char *ctx, const char *label) {
+    check_value_fits_type(r, to, line, col, ctx, label);
+    reject_float_int_mismatch(from, to, line, col, ctx, label);
+    reject_lossy_int_conversion(from, to, r, line, col, ctx, label);
+    reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
+}
+
 /*─────────────────────────────────────────────────────────────────╗
 │ 2) Keep the top-level DeclList for struct lookups              │
 ╚─────────────────────────────────────────────────────────────────*/
@@ -1117,13 +1137,7 @@ void sema_infer_expr(Expr *e) {
                     if (n > 159) n = 159;
                     if (n) memcpy(buf, pname->name, n);
                     buf[n] = '\0';
-                    check_value_fits_type(r, ptype, parg->line, parg->col,
-                        "argument to parameter", buf);
-                    reject_float_int_mismatch(parg->type, ptype, parg->line, parg->col,
-                        "argument to parameter", buf);
-                    reject_lossy_int_conversion(parg->type, ptype, r, parg->line, parg->col,
-                        "argument to parameter", buf);
-                    reject_incompatible_conversion(parg->type, ptype, parg, parg->line, parg->col,
+                    check_conversion(parg->type, ptype, r, parg, parg->line, parg->col,
                         "argument to parameter", buf);
                 }
             }
