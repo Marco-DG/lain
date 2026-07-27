@@ -1,0 +1,12 @@
+// Both branches of the if return, so control never falls off the end — must be
+// accepted. Guards against the return-path check being over-strict.
+func f(x i32) i32 {
+    if x > 0 {
+        return 1
+    } else {
+        return 2
+    }
+}
+proc main() i32 {
+    return 0
+}

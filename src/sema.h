@@ -1978,6 +1978,49 @@ static void sema_check_proc_eligibility(Decl *d) {
     }
 }
 
+// ── Return-path completeness ─────────────────────────────────────────────────
+// A non-void function must not fall off the end without returning a value (that
+// is C undefined behavior). "Always exits" = every path leaves via `return` or a
+// diverging call (`panic`). Structurally analogous to measure_scan_body's
+// per-path analysis (if → both branches, match → all cases).
+static bool sema_stmt_always_exits(Stmt *s);
+
+static bool sema_stmts_always_exit(StmtList *list) {
+    for (StmtList *l = list; l; l = l->next)
+        if (sema_stmt_always_exits(l->stmt)) return true;
+    return false;
+}
+
+static bool sema_call_diverges(Expr *e) {
+    if (!e || e->kind != EXPR_CALL) return false;
+    Expr *callee = e->as.call_expr.callee;
+    return callee && callee->kind == EXPR_IDENTIFIER && callee->as.identifier_expr.id &&
+           callee->as.identifier_expr.id->length == 5 &&
+           memcmp(callee->as.identifier_expr.id->name, "panic", 5) == 0;
+}
+
+static bool sema_stmt_always_exits(Stmt *s) {
+    if (!s) return false;
+    switch (s->kind) {
+        case STMT_RETURN: return true;
+        case STMT_EXPR:   return sema_call_diverges(s->as.expr_stmt.expr);
+        case STMT_IF:
+            // Needs an else, and both branches must exit.
+            return s->as.if_stmt.else_branch &&
+                   sema_stmts_always_exit(s->as.if_stmt.then_body) &&
+                   sema_stmts_always_exit(s->as.if_stmt.else_branch);
+        case STMT_MATCH: {
+            // All arms must exit (exhaustiveness is enforced separately, E014).
+            if (!s->as.match_stmt.cases) return false;
+            for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next)
+                if (!sema_stmts_always_exit(c->body)) return false;
+            return true;
+        }
+        case STMT_UNSAFE: return sema_stmts_always_exit(s->as.unsafe_stmt.body);
+        default: return false;   // loops / plain statements: no guarantee
+    }
+}
+
 static void mrec_walk_expr(Expr *e, void (*visit)(Decl *)) {
     if (!e) return;
     switch (e->kind) {
@@ -2490,6 +2533,19 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             sema_ranges->constraints = __fn_old_cons;
         }
         sema_in_guards = __fn_old_guards;
+
+        // 2.c.i) Return-path completeness: a non-void function must return (or
+        // diverge) on every path — never fall off the end (C UB).
+        if (d->as.function_decl.return_type &&
+            !sema_stmts_always_exit(d->as.function_decl.body)) {
+            fprintf(stderr, "[E018] Error Ln %li, Col %li: function '%.*s' can reach the end "
+                "without returning a value.\n"
+                "       Every path must end in a `return` (or a diverging call such as panic).\n",
+                (long)d->line, (long)d->col,
+                (int)d->as.function_decl.name->length, d->as.function_decl.name->name);
+            diagnostic_show_line(d->line, d->col);
+            exit(1);
+        }
 
         // 2.d) Linearity check: run function-level linearity checker
         // NOTE: sema_check_function_linearity must run while sema_locals still

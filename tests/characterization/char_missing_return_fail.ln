@@ -1,0 +1,13 @@
+// EXPECT: [E018]
+// A non-void function must return (or diverge) on every path — never fall off
+// the end, which is C undefined behavior ("control reaches end of non-void
+// function"). Here the `else` path has no return. Was a hole: no return-path
+// analysis existed.
+func f(x i32) i32 {
+    if x > 0 {
+        return 1
+    }
+}
+proc main() i32 {
+    return 0
+}
