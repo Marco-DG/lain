@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// A decimal integer literal larger than i64 max used to be clamped to LLONG_MAX
+// by strtoll (which fits i64, so the E086 boundary check never fired) — it wrapped
+// in silently. parse_numeric_literal now checks errno==ERANGE and rejects.
+proc main() i32 {
+    var x i64 = 99999999999999999999
+    return 0
+}

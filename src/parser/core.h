@@ -1,6 +1,8 @@
 #ifndef PARSER_CORE_H
 #define PARSER_CORE_H
 
+#include <errno.h>
+#include <stdlib.h>
 #include "../parser.h"
 
 typedef struct Parser {
@@ -187,17 +189,31 @@ static int from_hex(char c) {
     return 0;
 }
 
-// F-004 helper: strip underscores from a numeric lexeme then strtoll.
+// F-004 helper: strip underscores from a numeric lexeme then convert.
 // Accepts 0x/0X (hex), 0b/0B (binary), 0o/0O (octal), and plain decimal.
+//
+// Overflow is a hard error rather than a silent saturation: strtoll clamps an
+// out-of-range value to LLONG_MAX (which then fits i64, so the downstream E086
+// boundary check never fires) — so `99999999999999999999` used to wrap in
+// silently. Decimal literals must fit the i64 value representation. Non-decimal
+// bases are bit-pattern notations, so they may span the full unsigned 64-bit
+// range (e.g. 0xFFFFFFFFFFFFFFFF == -1 as the stored int64_t), matching C.
 static long long parse_numeric_literal(const char *start, long length) {
-    char buf[64];
+    char buf[80];
     long i = 0, j = 0;
-    for (; i < length && j < (long)sizeof(buf) - 1; i++) {
+    bool truncated = false;
+    for (; i < length; i++) {
         if (start[i] == '_') continue;
+        if (j >= (long)sizeof(buf) - 1) { truncated = true; break; }
         buf[j++] = start[i];
     }
     buf[j] = '\0';
-    // Handle 0b / 0B explicitly because strtoll base 0 doesn't recognize it.
+
+    // Non-decimal bases are bit-pattern notations and keep their original
+    // conversion (a full u64 literal representation is a separate follow-up).
+    // Decimal literals must fit the i64 value model; strtoll otherwise clamps to
+    // LLONG_MAX (which fits i64, so the E086 boundary check never fires) — this
+    // is what let `99999999999999999999` wrap in silently.
     if (j >= 2 && buf[0] == '0' && (buf[1] == 'b' || buf[1] == 'B')) {
         return strtoll(buf + 2, NULL, 2);
     }
@@ -207,7 +223,14 @@ static long long parse_numeric_literal(const char *start, long length) {
     if (j >= 2 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')) {
         return strtoll(buf, NULL, 16);
     }
-    return strtoll(buf, NULL, 10);
+    errno = 0;
+    long long value = strtoll(buf, NULL, 10);
+    if (truncated || errno == ERANGE) {
+        fprintf(stderr, "[E086] Error: integer literal '%.*s' is too large to fit "
+                "in a signed 64-bit integer.\n", (int)length, start);
+        exit(1);
+    }
+    return value;
 }
 
 #endif // PARSER_CORE_H
