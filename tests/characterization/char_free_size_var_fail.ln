@@ -1,0 +1,11 @@
+// EXPECT: [E100]
+// A dependent array size that is a bare identifier bound to nothing (`i32[n]`
+// with free n) must be rejected at the front-end — it previously emitted C with
+// an undeclared `n`. Sizes may reference other params (n, a.len); use `T[]` for
+// an unsized slice.
+func f(a i32[n]) i32 {
+    return n
+}
+proc main() i32 {
+    return 0
+}

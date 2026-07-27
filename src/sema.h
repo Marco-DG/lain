@@ -2238,6 +2238,40 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             }
         }
 
+        // Reject a dependent array size that is a bare identifier referencing
+        // neither a parameter nor an in-scope name (e.g. `func f(a i32[n])` with
+        // free n) — the backend emits an undeclared `n`. Sizes may reference
+        // other parameters (`n`, `a.len`); use `T[]` for an unsized slice.
+        for (DeclList *sp = d->as.function_decl.params; sp; sp = sp->next) {
+            if (!sp->decl || sp->decl->kind != DECL_VARIABLE) continue;
+            Type *spt = sp->decl->as.variable_decl.type;
+            if (!spt || spt->kind != TYPE_ARRAY || !spt->size_expr ||
+                spt->size_expr->kind != EXPR_IDENTIFIER) continue;
+            Id *sid = spt->size_expr->as.identifier_expr.id;
+            if (!sid) continue;
+            bool bound = false;
+            for (DeclList *pp = d->as.function_decl.params; pp && !bound; pp = pp->next) {
+                if (pp->decl && pp->decl->kind == DECL_VARIABLE) {
+                    Id *pn = pp->decl->as.variable_decl.name;
+                    if (pn && pn->length == sid->length &&
+                        strncmp(pn->name, sid->name, pn->length) == 0) bound = true;
+                }
+            }
+            if (!bound && (size_t)sid->length < 128) {
+                char nb[128];
+                memcpy(nb, sid->name, sid->length); nb[sid->length] = '\0';
+                if (sema_lookup(nb)) bound = true;
+            }
+            if (!bound) {
+                fprintf(stderr, "[E100] Error Ln %li, Col %li: dependent array size '%.*s' is "
+                    "not a parameter or in scope — use 'T[]' for an unsized slice or add a "
+                    "length parameter.\n",
+                    (long)d->line, (long)d->col, (int)sid->length, sid->name);
+                diagnostic_show_line(d->line, d->col);
+                exit(1);
+            }
+        }
+
         // 2.a) Insert parameters into locals
         int param_idx = 0;
         for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
