@@ -37,13 +37,9 @@ FAILED_TESTS=()
 LAIN_GCC_CHECK="${LAIN_GCC_CHECK:-1}"
 GCC_BIN="${CC:-gcc}"
 GCC_ERR=""
-# Known-broken emitted C — tracked follow-ups (fixed-array / sentinel-slice ABI
-# consistency: a native local array passed to a Fixed_<T>_N by-value parameter,
-# and *T[:0] sentinel-slice param/field representation). These still run for
-# Lain exit code; only their gcc compile is skipped so the suite reflects the
-# real, known state instead of hiding it.
+# Emitted C that gcc must reject-list. Empty: every _pass test's emitted C now
+# compiles with gcc.
 GCC_CHECK_SKIP=(
-    "struct_in_mutation_pass"
 )
 
 # Returns 0 if the emitted C compiles (or the check is disabled/skipped),

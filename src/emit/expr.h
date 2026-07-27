@@ -753,6 +753,37 @@ void emit_expr(Expr *expr, int depth) {
             continue;
         }
 
+        // Fixed-array-by-value field (Fixed_<T>_N struct). A local fixed array is
+        // emitted as a native C array (int32_t a[N]); a param/field of the same
+        // type is a Fixed_ struct. They are layout-identical, so pass the argument
+        // through a reinterpret of its address — `*(Fixed_T_N*)(&(arg))`. Taking
+        // the address normalizes a native array and an existing Fixed_ value
+        // uniformly (no decl needed to tell them apart), and a plain `arg` for a
+        // native local would be an incompatible array→struct initialization in C.
+        {
+            bool ft_is_fixed_byval =
+                (ft->kind == TYPE_ARRAY && ft->array_len >= 0) ||
+                (ft->kind == TYPE_SLICE && ft->sentinel_len > 0 &&
+                 !ft->sentinel_is_string && ft->sentinel_str == NULL);
+            Type *at = arg->expr->type ? sema_unwrap_type(arg->expr->type) : NULL;
+            bool arg_is_fixed_lvalue =
+                (arg->expr->kind == EXPR_IDENTIFIER || arg->expr->kind == EXPR_MEMBER ||
+                 arg->expr->kind == EXPR_INDEX) &&
+                at && ((at->kind == TYPE_ARRAY && at->array_len >= 0) ||
+                       (at->kind == TYPE_SLICE && at->sentinel_len > 0 &&
+                        !at->sentinel_is_string && at->sentinel_str == NULL));
+            if (ft_is_fixed_byval && arg_is_fixed_lvalue) {
+                char fbuf[256];
+                c_name_for_type(ft, fbuf, sizeof fbuf);
+                EMIT("(*(%s*)(&(", fbuf);
+                emit_expr(arg->expr, depth);
+                EMIT(")))");
+                fld = fld->next;
+                if (param) param = param->next;
+                continue;
+            }
+        }
+
         // ORIGINAL: sentinel-terminated slice literal (keep existing behavior)
         if (ft->kind == TYPE_SLICE && arg->expr->kind == EXPR_STRING) {
            // your previous sentinel-handling logic:
