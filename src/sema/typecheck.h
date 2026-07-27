@@ -997,14 +997,17 @@ void sema_infer_expr(Expr *e) {
     // Check if this is an ADT constructor call
     if (e->as.call_expr.callee->kind == EXPR_MEMBER) {
         Expr *target = e->as.call_expr.callee->as.member_expr.target;
-        if (target->kind == EXPR_IDENTIFIER) {
+        // The target of the ctor (`Shape` in `Shape.Circle(...)`) resolves to
+        // either an identifier or — after type resolution — an EXPR_TYPE. Both
+        // carry the enum decl in ->decl; only identifiers also support the
+        // find_adt_decl fallback. Mirror the EXPR_MEMBER handler above.
+        if (target->kind == EXPR_IDENTIFIER || target->kind == EXPR_TYPE) {
              DeclEnum *adt = NULL;
              if (target->decl && target->decl->kind == DECL_ENUM) {
                  adt = &target->decl->as.enum_decl;
-             } else {
+             } else if (target->kind == EXPR_IDENTIFIER) {
                  adt = find_adt_decl(target->as.identifier_expr.id);
              }
-             
              if (adt) {
                  // It IS an ADT constructor call: Shape.Circle(...)
                  // Verify arguments match fields
@@ -1017,7 +1020,29 @@ void sema_infer_expr(Expr *e) {
                  int arg_idx = 0;
                  while (arg && field) {
                      sema_infer_expr(arg->expr);
-                     // TODO: Check type compatibility between arg->expr->type and field->decl->type
+                     // Check the payload argument against the variant field's type,
+                     // same as a struct constructor — was a TODO, so `Circle(3.9)`
+                     // truncated float->int and `Circle(300)` overflowed a u8 field
+                     // silently (and other mismatches emitted broken C).
+                     Type *field_ty = (field->decl && field->decl->kind == DECL_VARIABLE)
+                                      ? field->decl->as.variable_decl.type : NULL;
+                     if (field_ty && arg->expr) {
+                         Range r;
+                         if (arg->expr->kind == EXPR_LITERAL)
+                             r = (Range){ arg->expr->as.literal_expr.value,
+                                          arg->expr->as.literal_expr.value, true };
+                         else if (sema_ranges)
+                             r = sema_eval_range(arg->expr, sema_ranges);
+                         else
+                             r = range_unknown();
+                         char vlbl[64];
+                         int vn = v->name ? (int)v->name->length : 0;
+                         if (vn > 63) vn = 63;
+                         if (vn) memcpy(vlbl, v->name->name, vn);
+                         vlbl[vn] = '\0';
+                         check_conversion(arg->expr->type, field_ty, r, arg->expr,
+                             arg->expr->line, arg->expr->col, "enum variant field", vlbl);
+                     }
                      arg = arg->next;
                      field = field->next;
                      arg_idx++;

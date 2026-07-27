@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// Enum constructor payload overflow: 300 does not fit in a u8 field.
+// Routed through the same boundary check as struct constructor args.
+type Shape {
+    Circle { radius u8 }
+    Square
+}
+proc main() i32 {
+    var c = Shape.Circle(300)
+    return 0
+}

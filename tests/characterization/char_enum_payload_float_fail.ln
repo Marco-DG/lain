@@ -1,0 +1,13 @@
+// EXPECT: [E012]
+// Enum constructor payloads must be type-checked like struct fields.
+// Was a TODO: `Shape.Circle(3.9)` silently truncated a float into an i32
+// field (the arg-check block was gated on EXPR_IDENTIFIER, but the ctor
+// target resolves to EXPR_TYPE, so the check was dead).
+type Shape {
+    Circle { radius i32 }
+    Square
+}
+proc main() i32 {
+    var c = Shape.Circle(3.9)
+    return 0
+}
