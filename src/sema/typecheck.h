@@ -2001,9 +2001,12 @@ void sema_infer_expr(Expr *e) {
                     __int128 c3 = (__int128)lrg.max * (__int128)rrg.min;
                     __int128 c4 = (__int128)lrg.max * (__int128)rrg.max;
                     __int128 pmin = c1, pmax = c1;
-                    if (c2 < pmin) pmin = c2; if (c2 > pmax) pmax = c2;
-                    if (c3 < pmin) pmin = c3; if (c3 > pmax) pmax = c3;
-                    if (c4 < pmin) pmin = c4; if (c4 > pmax) pmax = c4;
+                    if (c2 < pmin) pmin = c2;
+                    if (c2 > pmax) pmax = c2;
+                    if (c3 < pmin) pmin = c3;
+                    if (c3 > pmax) pmax = c3;
+                    if (c4 < pmin) pmin = c4;
+                    if (c4 > pmax) pmax = c4;
                     if (pmin < (__int128)tlo || pmax > (__int128)thi) {
                         fprintf(stderr, "[E086] Error Ln %li, Col %li: multiplication would "
                             "overflow target type — the product range exceeds the type's range. "
