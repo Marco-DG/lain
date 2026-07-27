@@ -1918,24 +1918,25 @@ void sema_infer_expr(Expr *e) {
             sema_walk_phase && sema_ranges && !sema_in_unsafe_block &&
             e->type && is_integer_type(e->type)) {
             // C integer promotion: operands narrower than int (i8/i16/u8/u16) are
-            // promoted to int for the operation, so the op itself cannot overflow
-            // the narrow type — only the store back to it can, which the
-            // assignment boundary already checks. Overflow AT the operation is
-            // possible only for i32/u32 and wider.
+            // promoted to int for the operation. So the op is computed in `int`,
+            // and it must be checked against the INT range — NOT skipped. u16*u16
+            // (65535*65535 = 4.29e9) overflows int and is UB even though nothing
+            // is stored back to a u16 (the store, if any, is caught separately at
+            // the boundary). Checking narrow results against i32 both catches that
+            // UB and stays a no-op for u8+u8 (fits int; its narrow store is caught
+            // at the assignment boundary). i32/u32 and wider check against self.
             int abits; bool asgn;
             bool narrow = parse_iN_uN(e->type, &abits, &asgn) && abits < 32;
-            if (!narrow) {
-                Range rr = sema_eval_range(e, sema_ranges);
-                // Some parsed sub-expressions (notably arithmetic inside if/while
-                // conditions) carry no line info; borrow the left operand's so the
-                // diagnostic points somewhere useful instead of "Ln 0".
-                long dl = e->line > 0 ? e->line
-                          : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->line : e->line);
-                long dc = e->line > 0 ? e->col
-                          : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->col : e->col);
-                check_value_fits_type(rr, e->type, dl, dc,
-                                      "arithmetic result of", "");
-            }
+            Type *check_ty = narrow ? get_builtin_i32_type() : e->type;
+            Range rr = sema_eval_range(e, sema_ranges);
+            // Some parsed sub-expressions (notably arithmetic inside if/while
+            // conditions) carry no line info; borrow the left operand's so the
+            // diagnostic points somewhere useful instead of "Ln 0".
+            long dl = e->line > 0 ? e->line
+                      : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->line : e->line);
+            long dc = e->line > 0 ? e->col
+                      : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->col : e->col);
+            check_value_fits_type(rr, check_ty, dl, dc, "arithmetic result of", "");
         }
     }
     break;

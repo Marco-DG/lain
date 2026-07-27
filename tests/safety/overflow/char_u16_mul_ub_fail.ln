@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// P0: u16 * u16 is computed in `int` after C integer promotion, and 65535*65535
+// = 4.29e9 exceeds INT_MAX -> signed-overflow UB in the multiply itself, with no
+// store to a u16 to blame (UBSan-confirmed). The overflow check previously
+// SKIPPED all sub-32-bit results ("promotes to int, only the store can
+// overflow"); it now checks narrow results against the promoted int range.
+func big(a u16, b u16) bool {
+    return a * b > 1000000000
+}
+proc main() i32 {
+    var r = big(65535, 65535)
+    return 0
+}
