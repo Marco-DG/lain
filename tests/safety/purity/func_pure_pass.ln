@@ -1,7 +1,8 @@
 // A pure `func` calling another pure func is allowed.
+// n * n can overflow i32, so it wraps (`*%`) — purity is what's under test here.
 
 func square(n i32) i32 {
-    return n * n
+    return n *% n
 }
 
 func quad(n i32) i32 {

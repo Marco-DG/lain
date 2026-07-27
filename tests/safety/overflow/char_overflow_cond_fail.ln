@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// Overflow is caught even without an assignment boundary — arithmetic inside a
+// condition is checked at the operation itself.
+func check(a i32, b i32) i32 {
+    if a + b > 100 { return 1 }
+    return 0
+}
+proc main() i32 { return 0 }

@@ -1,6 +1,8 @@
 // EXPECT: [E085]
-// Lock: non-linear index expression cannot be proven in bounds (Fourier-Motzkin is linear).
-func at(m i32[], cols i32, r i32, c i32) i32 {
+// Lock: a non-linear index expression cannot be proven in bounds (Fourier-Motzkin
+// is linear). Inputs are bounded so the arithmetic itself is provably overflow-free
+// — the remaining failure is the non-linear bounds proof, not overflow.
+func at(m i32[], cols i32 >= 0 and < 1000, r i32 >= 0 and < 1000, c i32 >= 0 and < 1000) i32 {
     if r * cols + c in m { return m[r * cols + c] }
     return 0
 }

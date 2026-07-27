@@ -3,6 +3,8 @@
 // pool_push uses if-in guard to prove the write is in bounds.
 // list_sum uses while-in guard: traversal of a cyclic structure
 // is not provably terminating, so it must be proc.
+// len++ and the running sum wrap (`+%`): their bounds depend on the caller's
+// dynamic capacity / node values, which VRA can't prove don't overflow i32.
 
 extern proc libc_printf(fmt *u8, ...) i32
 
@@ -18,7 +20,7 @@ func pool_push(var arr *Node[], var len i32, head i32, val i32) i32 {
         n.next = head
         arr[len] = n
         var idx = len
-        len = len + 1
+        len = len +% 1
         return idx
     }
     return -1
@@ -28,7 +30,7 @@ proc list_sum(arr *Node[], head i32) i32 {
     var s = 0
     var cur = head
     while cur in arr {
-        s = s + arr[cur].val
+        s = s +% arr[cur].val
         cur = arr[cur].next
     }
     return s

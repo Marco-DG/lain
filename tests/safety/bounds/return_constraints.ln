@@ -1,9 +1,11 @@
 // Test: return type constraints - should compile successfully
-// func abs(x i32) i32 >= 0 means return value must be non-negative
+// func abs(x i32) i32 >= 0 means return value must be non-negative.
+// The negation saturates (`-|`) so abs(INT_MIN) clamps to INT_MAX and the
+// `>= 0` refinement holds for every input (a plain `0 - x` overflows at INT_MIN).
 
 func abs(x i32) i32 >= 0 {
     if x < 0 {
-        return 0 - x  // Result is positive
+        return 0 -| x  // saturating negation: always non-negative
     }
     return x  // Result is non-negative when x >= 0
 }

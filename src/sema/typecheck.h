@@ -1906,6 +1906,38 @@ void sema_infer_expr(Expr *e) {
             }
         }
     }
+    // Overflow prove-or-reject: a plain +, -, * on integers must have a result
+    // that provably fits its own type. Wrapping (+%,-%,*%) and saturating
+    // (+|,-|,*|) ops define their overflow (their range is already clamped to
+    // the type), so they are exempt; `unsafe` opts out. This makes "no silent
+    // overflow" the default instead of only checking assignment boundaries —
+    // `if a + b > 0` is caught here even with no assignment.
+    {
+        TokenKind aop2 = e->as.binary_expr.op;
+        if ((aop2 == TOKEN_PLUS || aop2 == TOKEN_MINUS || aop2 == TOKEN_ASTERISK) &&
+            sema_walk_phase && sema_ranges && !sema_in_unsafe_block &&
+            e->type && is_integer_type(e->type)) {
+            // C integer promotion: operands narrower than int (i8/i16/u8/u16) are
+            // promoted to int for the operation, so the op itself cannot overflow
+            // the narrow type — only the store back to it can, which the
+            // assignment boundary already checks. Overflow AT the operation is
+            // possible only for i32/u32 and wider.
+            int abits; bool asgn;
+            bool narrow = parse_iN_uN(e->type, &abits, &asgn) && abits < 32;
+            if (!narrow) {
+                Range rr = sema_eval_range(e, sema_ranges);
+                // Some parsed sub-expressions (notably arithmetic inside if/while
+                // conditions) carry no line info; borrow the left operand's so the
+                // diagnostic points somewhere useful instead of "Ln 0".
+                long dl = e->line > 0 ? e->line
+                          : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->line : e->line);
+                long dc = e->line > 0 ? e->col
+                          : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->col : e->col);
+                check_value_fits_type(rr, e->type, dl, dc,
+                                      "arithmetic result of", "");
+            }
+        }
+    }
     break;
 
   case EXPR_UNARY:
@@ -1942,6 +1974,24 @@ void sema_infer_expr(Expr *e) {
         }
     } else {
         e->type = get_builtin_i32_type();
+        // Unary negation overflow: `-x` overflows at the type minimum
+        // (e.g. -INT_MIN is not representable). Check against the operand's
+        // integer type. (The common abs idiom uses the binary form `0 - x`,
+        // which the EXPR_BINARY check above already covers.)
+        if (e->as.unary_expr.op == TOKEN_MINUS &&
+            sema_walk_phase && sema_ranges && !sema_in_unsafe_block) {
+            Type *ot = e->as.unary_expr.right ? e->as.unary_expr.right->type : NULL;
+            int nbits; bool nsgn;
+            bool narrow = ot && parse_iN_uN(ot, &nbits, &nsgn) && nbits < 32;
+            if (ot && is_integer_type(ot) && !narrow) {
+                Range rr = sema_eval_range(e, sema_ranges);
+                long dl = e->line > 0 ? e->line
+                          : (e->as.unary_expr.right ? (long)e->as.unary_expr.right->line : e->line);
+                long dc = e->line > 0 ? e->col
+                          : (e->as.unary_expr.right ? (long)e->as.unary_expr.right->col : e->col);
+                check_value_fits_type(rr, ot, dl, dc, "negation result of", "");
+            }
+        }
     }
     break;
 

@@ -1,12 +1,14 @@
 extern proc libc_printf(fmt *u8, ...) i32
 
 func add(a i32, b i32) i32 {
-    return a + b
+    return a +% b
 }
 
-proc fib(n i32) i32 {
+// Fibonacci grows exponentially and overflows i32, so the recursive sum wraps
+// (`+%`). n >= 0 keeps the n-1 / n-2 index arithmetic in range.
+proc fib(n i32 >= 0) i32 {
     if n < 2 { return n }
-    return fib(n-1) + fib(n-2)
+    return fib(n-1) +% fib(n-2)
 }
 
 proc main() i32 {

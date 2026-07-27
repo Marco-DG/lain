@@ -1,9 +1,10 @@
 // EXPECT: [E012]
 // Test: calling function with wrong number of arguments should fail
 // Expected: Compiler error — wrong argument count
+// (add uses `+%` so its body compiles; the failure must be the arg count.)
 
 func add(a i32, b i32) i32 {
-    return a + b
+    return a +% b
 }
 
 proc main() {

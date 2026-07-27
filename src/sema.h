@@ -2463,29 +2463,30 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
 
                 sema_insert_local(rawp, rawp, pty, p->decl, false);
 
-                // Seed VRA range for UNSIGNED integer parameters only.
-                // uN / usize params are always >= 0; seeding [0, max_uN] lets the prover
-                // use non-negativity (and tight upper bounds for small types like u1/u8)
-                // without requiring an explicit >= 0 annotation.
-                //
-                // We do NOT seed signed types (iN): they carry no new information beyond
-                // "could be anything", and seeding [-2^(N-1), 2^(N-1)-1] would make
-                // arithmetic on two i32 params produce a range that violates the return
-                // type's bounds, triggering false E086 errors on otherwise valid functions.
+                // Seed the VRA range of every fixed-width integer parameter with
+                // its TYPE range. This is what makes overflow prove-or-reject the
+                // default: an unconstrained iN/uN param now carries [T_min, T_max]
+                // instead of "unknown", so arithmetic on it (e.g. `a + b` of two
+                // i32s → [2*i32_min, 2*i32_max]) has a concrete range that provably
+                // can exceed the result type and is rejected unless the inputs are
+                // constrained, a wrapping/saturating op is used, or an `as` widening
+                // cast is applied. (i64/isize seed to the full i64 range, which the
+                // UNBOUNDED_WINDOW treats as no-info — i64 has no headroom for VRA to
+                // detect overflow, so i64 arithmetic is unchecked, as before.)
                 if (sema_ranges && pty) {
                     int bits; bool sgn;
-                    if (parse_iN_uN(pty, &bits, &sgn) && !sgn) {
-                        /* uN: range is [0, 2^N - 1]  (or [0, INT64_MAX] for N >= 63) */
+                    if (parse_iN_uN(pty, &bits, &sgn)) {
                         long long tlo, thi;
                         if (type_integer_range(pty, &tlo, &thi)) {
                             range_set(sema_ranges, pid,
                                       range_make((int64_t)tlo, (int64_t)thi));
                         }
                     } else if (pty->kind == TYPE_SIMPLE && pty->base_type) {
-                        /* usize: also unsigned */
                         isize pl = pty->base_type->length;
                         if (pl == 5 && memcmp(pty->base_type->name, "usize", 5) == 0) {
                             range_set(sema_ranges, pid, range_make(0, INT64_MAX));
+                        } else if (pl == 5 && memcmp(pty->base_type->name, "isize", 5) == 0) {
+                            range_set(sema_ranges, pid, range_make(INT64_MIN, INT64_MAX));
                         }
                     }
                 }

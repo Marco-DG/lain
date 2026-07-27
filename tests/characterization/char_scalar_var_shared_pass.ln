@@ -1,8 +1,9 @@
 // A SCALAR passed as both a mutable ('var') and a shared argument is safe — the
 // shared scalar goes by value (a copy), so there is no aliasing. The co-argument
 // aliasing check must fire only for by-pointer AGGREGATE shared params.
+// y + 1 wraps (`+%`) since y is an unconstrained i32.
 proc ms(x var i32, y i32) {
-    x = y + 1
+    x = y +% 1
 }
 proc main() i32 {
     var a i32 = 5

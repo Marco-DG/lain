@@ -183,6 +183,27 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             if (is_wrap_or_sat && e->as.binary_expr.left && e->as.binary_expr.left->type) {
                 long long lo, hi;
                 if (type_integer_range(e->as.binary_expr.left->type, &lo, &hi)) {
+                    bool is_sat = (op == TOKEN_PLUS_PIPE || op == TOKEN_MINUS_PIPE
+                                || op == TOKEN_ASTERISK_PIPE);
+                    if (is_sat) {
+                        // Saturating clamps to the type range, so compute the raw
+                        // arithmetic range and intersect it with [lo, hi]. This
+                        // keeps sign/magnitude info that the coarse full-type range
+                        // would lose — e.g. `0 -| x` for x < 0 is provably in
+                        // [1, type_max], which lets `abs` satisfy an `i32 >= 0`
+                        // return refinement even at INT_MIN (clamped to INT_MAX).
+                        Range raw;
+                        switch (op) {
+                            case TOKEN_PLUS_PIPE:     raw = range_add(l, r); break;
+                            case TOKEN_MINUS_PIPE:    raw = range_sub(l, r); break;
+                            case TOKEN_ASTERISK_PIPE: raw = range_mul(l, r); break;
+                            default:                  raw = range_make(lo, hi); break;
+                        }
+                        int64_t cmin = raw.min < (int64_t)lo ? (int64_t)lo : raw.min;
+                        int64_t cmax = raw.max > (int64_t)hi ? (int64_t)hi : raw.max;
+                        return range_make(cmin, cmax);
+                    }
+                    // Wrapping (modulo 2^N): any value in the type is possible.
                     return range_make(lo, hi);
                 }
             }

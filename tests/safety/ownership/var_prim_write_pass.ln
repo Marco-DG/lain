@@ -1,9 +1,10 @@
 // var T primitive write-through — PASS
 // Assignment to a var i32 param must write through to the caller's variable.
 // Was: E009 ("cannot assign to immutable variable").
+// n + 1 wraps (`+%`) since n is an unconstrained i32.
 
 proc add_one(var n i32) {
-    n = n + 1
+    n = n +% 1
 }
 
 proc main() i32 {

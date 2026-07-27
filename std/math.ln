@@ -10,10 +10,12 @@ func max(a i32, b i32) i32 {
     return b
 }
 
-// Note: abs(INT_MIN) is implementation-defined (overflow case).
-// Return constraint `i32 >= 0` expresses the invariant.
+// Absolute value. The negation uses the SATURATING operator `-|` so the one
+// overflow case, abs(INT_MIN), clamps to INT_MAX instead of wrapping back to a
+// negative value — this is what lets the `i32 >= 0` return refinement hold for
+// every input (a plain `0 - x` overflows at INT_MIN and is now rejected).
 func abs(x i32) i32 >= 0 {
-    if x < 0 { return 0 - x }
+    if x < 0 { return 0 -| x }
     return x
 }
 

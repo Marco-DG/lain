@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// Overflow prove-or-reject: adding two unconstrained i32 can overflow i32, so it
+// is rejected. Signed params are seeded with their type range, and each +/-/*
+// checks that its result provably fits (C promotion exempts i8/i16/u8/u16).
+func add(a i32, b i32) i32 {
+    return a + b
+}
+proc main() i32 { return 0 }

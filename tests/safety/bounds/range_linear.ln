@@ -2,9 +2,9 @@ func require_gt(a i32, b i32 < a) i32 {
     return 0
 }
 
-func test_linear(y i32) i32 {
+func test_linear(y i32 >= 0 and < 1000000) i32 {
     var x = y + 1
-    // x = y + 1 => x > y
+    // x = y + 1 => x > y  (y is bounded, so y + 1 provably fits i32)
     return require_gt(x, y)
 }
 

@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// Multiplication of two unconstrained i32 can overflow — rejected.
+proc main() i32 {
+    var a i32 = 100000
+    var b i32 = 100000
+    var c = a * b
+    return 0
+}

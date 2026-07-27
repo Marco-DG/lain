@@ -1,15 +1,14 @@
-// VRA uses the concrete i32 type's range for a call. (The old i32->i64
-// monomorphization this file also exercised was removed in Fase 0, and the
-// `add_one(big)` line only "passed" because a 1e12 literal was truncated to
-// 32 bits — now fixed, so a 1e12 argument to an i32 parameter correctly
-// overflows and is no longer written here.)
+// VRA uses the concrete i32 type's range for a call. `n + 1` is only provably
+// non-overflowing when n is bounded away from i32 max, so the parameter carries
+// a refinement; VRA then proves the addition fits. (An unconstrained `n + 1`
+// is now correctly rejected under overflow prove-or-reject.)
 
-func add_one(n i32) i32 {
+func add_one(n i32 >= 0 and <= 1000) i32 {
     return n + 1
 }
 
 proc main() i32 {
     var small i32 = 100
-    var d1 = add_one(small)       // VRA on the i32 range
+    var d1 = add_one(small)       // 100 satisfies [0, 1000]; VRA proves 101 fits
     return 0
 }

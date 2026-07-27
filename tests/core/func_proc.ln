@@ -1,7 +1,9 @@
 extern proc libc_printf(fmt *u8, ...) i32
 
+// A general add of two unconstrained i32 can overflow, so under overflow
+// prove-or-reject it uses the wrapping operator `+%` (modular) to opt in.
 func add(a i32, b i32) i32 {
-    return a + b
+    return a +% b
 }
 
 proc main() i32 {

@@ -1,0 +1,16 @@
+// The three sound escapes from overflow prove-or-reject all compile:
+//   - wrapping (`+%`, `*%`): modular, result bounded to the type
+//   - saturating (`-|`): clamps, so `0 -| x` is provably >= 0 (abs at INT_MIN)
+//   - constraints: bounded inputs let VRA prove the result fits
+func wrap_add(a i32, b i32) i32 { return a +% b }
+func sat_abs(x i32) i32 >= 0 {
+    if x < 0 { return 0 -| x }
+    return x
+}
+func bounded_add(a i32 >= 0 and <= 1000, b i32 >= 0 and <= 1000) i32 { return a + b }
+proc main() i32 {
+    var w = wrap_add(2000000000, 2000000000)
+    var s = sat_abs(0 -| 5)
+    var bd = bounded_add(3, 4)
+    return 0
+}
