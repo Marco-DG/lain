@@ -1,0 +1,9 @@
+// Dependent-type expressiveness (G9): the `in` guard on a DYNAMIC-array param
+// (`i usize in a` where a is a plain slice) must tie i < a.len so `a[i]` is
+// proven safe. Previously only fixed-size array params tightened the bound.
+func get(a i32[], i usize in a) i32 {
+    return a[i]
+}
+proc main() i32 {
+    return 0
+}

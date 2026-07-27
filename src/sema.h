@@ -2363,13 +2363,31 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     if (arr_type) {
                         // Apply range: param >= 0
                         Range r = range_make(0, INT64_MAX);
-                        
+
                         // If array has known length (fixed-size), tighten upper bound
                         if (arr_type->kind == TYPE_ARRAY && arr_type->array_len >= 0) {
                             r = range_make(0, arr_type->array_len - 1);
                         }
-                        
+
                         range_set(sema_ranges, param_id, r);
+
+                        // G9: dynamic array `i usize in a` — tie `i < a.len` via a
+                        // difference constraint against the synthetic __len_a var
+                        // (registered by the __len_PARAM seeding for array params
+                        // processed earlier). Previously only fixed arrays tightened,
+                        // so `a[i]` on a plain slice was rejected E085.
+                        if (arr_type->kind == TYPE_ARRAY && arr_type->array_len == -1) {
+                            char key[272]; int klen = 6 + (int)arr_id->length;
+                            if (klen < (int)sizeof(key)) {
+                                memcpy(key, "__len_", 6);
+                                memcpy(key + 6, arr_id->name, arr_id->length);
+                                Id *len_id = NULL;
+                                for (RangeEntry *re = sema_ranges->head; re; re = re->next)
+                                    if (re->var && re->var->length == klen &&
+                                        strncmp(re->var->name, key, klen) == 0) { len_id = re->var; break; }
+                                if (len_id) constraint_add(sema_ranges, param_id, len_id, -1);
+                            }
+                        }
                     }
                 }
                 
