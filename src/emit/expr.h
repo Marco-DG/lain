@@ -196,25 +196,30 @@ void emit_expr(Expr *expr, int depth) {
   }
 
   case EXPR_BINARY: {
-    // Special‑case: slice == string literal → length check + memcmp
-    if (expr->as.binary_expr.op == TOKEN_EQUAL &&
-        expr->as.binary_expr.left->type &&
-        expr->as.binary_expr.left->type->kind == TYPE_SLICE &&
-        expr->as.binary_expr.right->kind == EXPR_STRING) {
-      Expr *slice = expr->as.binary_expr.left;
-      Expr *lit = expr->as.binary_expr.right;
-      int L = (int)lit->as.string_expr.length;
-      const char *S = lit->as.string_expr.value;
-
-      EMIT("(");
-      // check length
-      emit_expr(slice, 0);
-      EMIT(".len == %d && ", L);
-      // compare data via memcmp
-      EMIT("memcmp(");
-      emit_expr(slice, 0);
-      EMIT(".data, \"%.*s\", %d) == 0)", L, S, L);
-    } else if (expr->as.binary_expr.op == TOKEN_KEYWORD_AND ||
+    // Special-case: slice ==/!= string literal → length check + memcmp. The
+    // operator is TOKEN_EQUAL_EQUAL / TOKEN_BANG_EQUAL (an earlier version checked
+    // TOKEN_EQUAL, the assignment token, so this never fired and emitted a raw
+    // struct `==` that gcc rejects). The literal may be on either side.
+    {
+      TokenKind sop = expr->as.binary_expr.op;
+      bool is_eq = (sop == TOKEN_EQUAL_EQUAL), is_ne = (sop == TOKEN_BANG_EQUAL);
+      Expr *L_ = expr->as.binary_expr.left, *R_ = expr->as.binary_expr.right;
+      Expr *slice = NULL, *lit = NULL;
+      if (L_ && R_ && L_->type && L_->type->kind == TYPE_SLICE && R_->kind == EXPR_STRING) { slice = L_; lit = R_; }
+      else if (L_ && R_ && R_->type && R_->type->kind == TYPE_SLICE && L_->kind == EXPR_STRING) { slice = R_; lit = L_; }
+      if ((is_eq || is_ne) && slice && lit) {
+        int L = (int)lit->as.string_expr.length;
+        const char *S = lit->as.string_expr.value;
+        // == : len matches AND bytes match.  != : len differs OR bytes differ.
+        EMIT("(");
+        emit_expr(slice, 0);
+        EMIT(".len %s %d %s memcmp(", is_eq ? "==" : "!=", L, is_eq ? "&&" : "||");
+        emit_expr(slice, 0);
+        EMIT(".data, \"%.*s\", %d) %s 0)", L, S, L, is_eq ? "==" : "!=");
+        break;
+      }
+    }
+    if (expr->as.binary_expr.op == TOKEN_KEYWORD_AND ||
                expr->as.binary_expr.op == TOKEN_KEYWORD_OR) {
       // logical AND / OR — no outer parens; let the parent (while/if) supply them.
       // Children with lower precedence (e.g. another || inside &&) still get parens.

@@ -1845,12 +1845,27 @@ void sema_infer_expr(Expr *e) {
         {
             Type *alt = e->as.binary_expr.left->type;
             Type *art = e->as.binary_expr.right->type;
-            if (is_nominal_aggregate(alt) || is_nominal_aggregate(art)) {
-                fprintf(stderr, "[E012] Error Ln %li, Col %li: operator '%s' is not "
-                    "defined on struct/enum types. Implement a method instead.\n",
-                    (long)e->line, (long)e->col, token_kind_to_str(bop));
-                diagnostic_show_line(e->line, e->col);
-                exit(1);
+            bool l_agg = is_nominal_aggregate(alt) ||
+                         (alt && (alt->kind == TYPE_ARRAY || alt->kind == TYPE_SLICE));
+            bool r_agg = is_nominal_aggregate(art) ||
+                         (art && (art->kind == TYPE_ARRAY || art->kind == TYPE_SLICE));
+            if (l_agg || r_agg) {
+                // Exception: slice/string ==/!= against a string LITERAL is a
+                // content comparison lowered to a length check + memcmp in codegen.
+                bool eqop = (bop == TOKEN_EQUAL_EQUAL || bop == TOKEN_BANG_EQUAL);
+                bool str_lit_cmp = eqop &&
+                    (e->as.binary_expr.left->kind == EXPR_STRING ||
+                     e->as.binary_expr.right->kind == EXPR_STRING);
+                if (!str_lit_cmp) {
+                    const char *what = (is_nominal_aggregate(alt) || is_nominal_aggregate(art))
+                                       ? "struct/enum" : "array/slice";
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: operator '%s' is not "
+                        "defined on %s types%s. Implement a method instead.\n",
+                        (long)e->line, (long)e->col, token_kind_to_str(bop), what,
+                        eqop ? " (compare a slice against a string literal, or write a helper)" : "");
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
             }
         }
         bool is_cmp = (bop == TOKEN_EQUAL_EQUAL || bop == TOKEN_BANG_EQUAL ||

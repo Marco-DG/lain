@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// Arithmetic/ordering operators are undefined on slice/array (string) operands and
+// previously emitted broken C (int32_t c = a + b on two Fixed_u8_N). The E012
+// operator-reject now covers array/slice operands, not just nominal struct/enum.
+proc main() i32 {
+    var a = "ab"
+    var b = "cd"
+    var c = a + b
+    return 0
+}
