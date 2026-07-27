@@ -1,0 +1,16 @@
+// VRA precision: `for i in 0..n` with a non-constant end must still retain the
+// known lower bound i >= 0, so a narrowed index proves in-bounds. Previously the
+// whole counter range was dropped unless both ends were constant, forcing a
+// false E085 "index may be negative".
+func f(a i32[10], n i32) i32 {
+    var s i32 = 0
+    for i in 0..n {
+        if i < 10 {
+            s = s + a[i]
+        }
+    }
+    return s
+}
+proc main() i32 {
+    return 0
+}

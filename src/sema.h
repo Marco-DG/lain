@@ -1243,9 +1243,17 @@ static void walk_stmt(Stmt *s) {
             if (sema_ranges && s->as.for_stmt.iterable->kind == EXPR_RANGE && iter_var) {
                 start_range = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.start, sema_ranges);
                 end_range   = sema_eval_range(s->as.for_stmt.iterable->as.range_expr.end, sema_ranges);
-                if (start_range.known && end_range.known) {
-                    Range r = range_make(start_range.min, end_range.max - 1);
-                    range_set(sema_ranges, iter_var, r);
+                // VRA: seed the counter's lower bound whenever `start` is known,
+                // even if `end` is not constant (`for i in 0..n` / `0..a.len`).
+                // Previously the whole range was dropped unless BOTH ends were
+                // known, discarding the always-true `i >= start` premise that
+                // every arithmetic-index / reverse-iteration proof needs.
+                // Safe: check_value_fits_type treats max within 4096 of INT64_MAX
+                // as unbounded, so no false overflow; the counter is overwritten
+                // post-loop.
+                if (start_range.known) {
+                    int64_t hi = end_range.known ? end_range.max - 1 : INT64_MAX;
+                    range_set(sema_ranges, iter_var, range_make(start_range.min, hi));
                 }
             }
 
