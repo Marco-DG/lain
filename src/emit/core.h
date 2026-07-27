@@ -239,7 +239,16 @@ static bool is_primitive_type(Type *t) {
         if (base->length == 5 && strncmp(base->name, "float", 5) == 0) return true;
         if (base->length == 3 && strncmp(base->name, "f32", 3) == 0) return true;
         if (base->length == 3 && strncmp(base->name, "f64", 3) == 0) return true;
-        
+        // Arbitrary bit-width integers: u<N> / i<N> (u1, u2, u7, i3, ...). These
+        // are scalar primitives passed by value — without this they were treated
+        // as aggregates and passed by pointer, so a call emitted `&(literal)`.
+        if (base->length >= 2 && (base->name[0] == 'u' || base->name[0] == 'i')) {
+            bool all_digits = true;
+            for (isize k = 1; k < base->length; k++)
+                if (base->name[k] < '0' || base->name[k] > '9') { all_digits = false; break; }
+            if (all_digits) return true;
+        }
+
         // Enums are primitives (integers)
         Symbol *sym = sema_lookup(c_name_for_id(base));
         if (sym && sym->decl && sym->decl->kind == DECL_ENUM) return true;
