@@ -1,0 +1,11 @@
+// Dependent-type expressiveness: a refinement-alias parameter's range must flow
+// into VRA so a bounded-alias index proves in-bounds. `i SmallIdx` (i32 0..9)
+// indexing an i32[10] is safe. (The alias's constraints live on the alias decl,
+// not the param, so they must be seeded explicitly.)
+type SmallIdx = i32 >= 0 and <= 9
+func get(a i32[10], i SmallIdx) i32 {
+    return a[i]
+}
+proc main() i32 {
+    return 0
+}

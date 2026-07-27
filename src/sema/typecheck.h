@@ -570,6 +570,21 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
     exit(1);
 }
 
+// Return a refinement type alias's constraint list if `t` names one, else NULL.
+// (Constraints live on the DECL_TYPE_ALIAS, not on the using declaration.)
+static ExprList *alias_constraints_for(Type *t) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return NULL;
+    if ((size_t)t->base_type->length >= 256) return NULL;
+    char nm[256];
+    memcpy(nm, t->base_type->name, t->base_type->length);
+    nm[t->base_type->length] = '\0';
+    extern Symbol *sema_lookup(const char *name);
+    Symbol *sym = sema_lookup(nm);
+    if (sym && sym->decl && sym->decl->kind == DECL_TYPE_ALIAS)
+        return sym->decl->as.type_alias_decl.constraints;
+    return NULL;
+}
+
 // P2/S4: enforce a refinement-type-alias's constraints on a value whose VRA
 // range is r flowing into a slot of type `to`. A refinement alias
 // (`type Pct = i32 >= 0 and <= 100`) stores its constraints on its

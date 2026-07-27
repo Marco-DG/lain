@@ -2398,6 +2398,25 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     }
                 }
 
+                // Alias-typed param: seed VRA from the refinement alias's own
+                // constraints too (they live on the alias decl, not the param),
+                // rewriting each as `param <op> bound`. Lets a bounded-alias
+                // index prove in-bounds (`a[i]` with `i SmallIdx` = i32 0..9).
+                if (sema_ranges) {
+                    ExprList *ac = alias_constraints_for(p->decl->as.variable_decl.type);
+                    for (ExprList *c = ac; c; c = c->next) {
+                        if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+                        Expr pe; memset(&pe, 0, sizeof(pe));
+                        pe.kind = EXPR_IDENTIFIER; pe.as.identifier_expr.id = pid;
+                        Expr synth; memset(&synth, 0, sizeof(synth));
+                        synth.kind = EXPR_BINARY;
+                        synth.as.binary_expr.op = c->expr->as.binary_expr.op;
+                        synth.as.binary_expr.left = &pe;
+                        synth.as.binary_expr.right = c->expr->as.binary_expr.right;
+                        sema_apply_constraint(&synth, sema_ranges);
+                    }
+                }
+
                 // Sized slices: for every dynamic-length array parameter (including plain
                 // i32[]), register a synthetic __len_PARAM entry in the VRA range table.
                 // This lets the for-loop constraint injector and the bounds checker use
