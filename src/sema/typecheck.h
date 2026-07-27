@@ -376,6 +376,19 @@ static bool core_identical(Type *a, Type *b) {
     return false;
 }
 
+// A scalar `as`-castable type: integer, float, or bool. `as` converts only
+// between these (and raw pointers inside unsafe); casting an aggregate
+// (struct/enum/array/slice) to/from a scalar is nonsense and emits broken C.
+static bool is_castable_scalar(Type *t) {
+    if (!t) return false;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
+    if (is_integer_type(t) || is_float_type(t)) return true;  // iN/uN/int/usize/isize/fN
+    if (t->base_type->length == 4 && memcmp(t->base_type->name, "bool", 4) == 0) return true;
+    if (t->base_type->length == 5 && memcmp(t->base_type->name, "float", 5) == 0) return true; // alias of f64
+    return false;
+}
+
 static bool types_compatible(Type *from, Type *to) {
     if (!from || !to) return true;  // missing info → skip
     // Unwrap comptime wrappers
@@ -2089,6 +2102,26 @@ void sema_infer_expr(Expr *e) {
                 (long)e->line, (long)e->col);
         diagnostic_show_line(e->line, e->col);
         exit(1);
+    }
+    // Reject incompatible `as` casts between an aggregate (struct/enum/array/
+    // slice) and a scalar, or between distinct aggregates — they emit broken C
+    // ("aggregate value used where an integer was expected"). `as` is for
+    // numeric<->numeric only (raw-pointer casts handled above; same core is a
+    // no-op). Refinement aliases resolve to their scalar base first.
+    if (!src_is_ptr && !tgt_is_ptr) {
+        Type *src_r = resolve_type_alias(src_u);
+        Type *tgt_r = resolve_type_alias(tgt_u);
+        if (src_r && tgt_r && !core_identical(src_r, tgt_r) &&
+            (!is_castable_scalar(src_r) || !is_castable_scalar(tgt_r))) {
+            char sb[128], tb[128];
+            type_describe(src_r, sb, sizeof sb);
+            type_describe(tgt_r, tb, sizeof tb);
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot cast '%s' to '%s' with 'as' — "
+                "'as' converts between numeric types only.\n",
+                (long)e->line, (long)e->col, sb, tb);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        }
     }
     // type already set at parse time (target_type)
     break;

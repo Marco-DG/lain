@@ -1,0 +1,13 @@
+// EXPECT: [E012]
+// `as` converts between numeric types only. Casting an aggregate (enum/struct)
+// to a scalar emitted uncompilable C ("aggregate value used where an integer was
+// expected") — the front-end validated only pointer casts.
+type Color {
+    Red
+    Green
+}
+proc main() i32 {
+    var c = Color.Red
+    var n = c as i32
+    return 0
+}
