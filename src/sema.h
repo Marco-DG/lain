@@ -927,9 +927,13 @@ static void walk_stmt(Stmt *s) {
                         Type *et = s->as.var_stmt.type->element_type;
                         for (ExprList *el = s->as.var_stmt.expr->as.array_literal_expr.elements;
                              el; el = el->next) {
-                            if (el->expr && el->expr->kind == EXPR_LITERAL) {
-                                Range er = { el->expr->as.literal_expr.value,
-                                             el->expr->as.literal_expr.value, true };
+                            if (el->expr) {
+                                // Literal → exact point range; otherwise the VRA range
+                                // (unknown → check skips, conservative).
+                                Range er = (el->expr->kind == EXPR_LITERAL)
+                                    ? (Range){ el->expr->as.literal_expr.value,
+                                               el->expr->as.literal_expr.value, true }
+                                    : sema_eval_range(el->expr, sema_ranges);
                                 check_value_fits_type(er, et, el->expr->line,
                                     el->expr->col, "array element", vname_buf);
                             }
