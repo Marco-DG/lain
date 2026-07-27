@@ -619,6 +619,20 @@ static Decl *find_function_decl_by_mangled_or_raw(const char *mangled) {
 
 static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_depth, UseTable *use_tbl);
 
+// True if a value of this type is passed to a function BY POINTER (so a shared
+// borrow of it can alias a mutable one). Aggregates — struct/enum, array, slice
+// — go by pointer; scalars (iN/uN/fN/bool) go by value (no aliasing). Used to
+// scope the mutable+shared co-argument aliasing check to the cases that can
+// actually violate `restrict`.
+static bool type_passed_by_pointer(Type *t) {
+    if (!t) return false;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t) return false;
+    if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) return true;
+    if (t->kind == TYPE_SIMPLE) return is_nominal_aggregate(t);
+    return false;
+}
+
 // P2/S4: is a not-yet-initialized read of this type worth flagging (E005)?
 // Scalars (integers/floats/bool) and pointers carry a garbage value when read
 // uninitialized. Aggregates (array/struct/slice) have real storage and are used
@@ -731,7 +745,8 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     for (; pp && aa; pp = pp->next, aa = aa->next) {
                         if (!pp->decl || pp->decl->kind != DECL_VARIABLE || !aa->expr) continue;
                         Type *pt = pp->decl->as.variable_decl.type;
-                        if (pt && pt->mode != MODE_MUTABLE && aa->expr->kind == EXPR_IDENTIFIER) {
+                        if (pt && pt->mode != MODE_MUTABLE && type_passed_by_pointer(pt) &&
+                            aa->expr->kind == EXPR_IDENTIFIER) {
                             Id *oid = aa->expr->as.identifier_expr.id;
                             for (int k = 0; k < n_mut; k++) {
                                 if (oid && mut_own[k] && oid->length == mut_own[k]->length &&
