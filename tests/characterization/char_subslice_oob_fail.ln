@@ -1,0 +1,11 @@
+// EXPECT: [E085]
+// Sub-slicing a slice must be bounds-checked against the slice's length. A slice
+// produced by a[lo..hi] carries size_expr = hi-lo, but the range branch of
+// sema_check_bounds ignored size_expr (only the plain-index branch used it), so
+// s[0..9] on a length-3 slice was silently accepted (latent out-of-bounds).
+proc main() i32 {
+    var a i32[3] = [1, 2, 3]
+    var s = a[0..3]
+    var t = s[0..9]
+    return 0
+}

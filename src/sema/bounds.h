@@ -147,6 +147,22 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
             len_range = range_const(array_type->array_len);
         } else if (array_type->kind == TYPE_SLICE && array_type->sentinel_len > 0) {
             len_range = range_const(array_type->sentinel_len);
+        } else if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
+                   array_type->size_expr) {
+            // Sized slice — the result of another `a[lo..hi]` carries
+            // size_expr = hi - lo. Evaluate it so sub-slicing a slice is bounds
+            // checked against its length (previously silently accepted → OOB).
+            // Mirror the plain-index branch: `>=`/`>` give a lower bound only.
+            Range base = sema_eval_range(array_type->size_expr, ctx);
+            if (array_type->size_relop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL ||
+                array_type->size_relop == TOKEN_ANGLE_BRACKET_RIGHT) {
+                if (base.known) {
+                    int64_t delta = (array_type->size_relop == TOKEN_ANGLE_BRACKET_RIGHT) ? 1 : 0;
+                    len_range = range_make(base.min + delta, INT64_MAX);
+                }
+            } else {
+                len_range = base;
+            }
         }
         // b <= len
         if (len_range.known) {
