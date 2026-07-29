@@ -29,6 +29,7 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     output_file = real_out;
     EMIT("#include <stdint.h>\n");
     EMIT("#include <stddef.h>\n");
+    EMIT("#include <stdlib.h>\n");   // abort (panic), malloc/free/realloc/calloc, exit — otherwise implicit-int declarations truncate their pointers on LP64
     EMIT("#include <stdio.h>\n");
     EMIT("#include <string.h>\n");
     EMIT("#include <stdbool.h>\n\n");

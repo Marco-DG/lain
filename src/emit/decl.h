@@ -261,8 +261,8 @@ static void emit_forward_decl(Decl *decl, int depth) {
         // __attribute__((pure)). Both enable LICM/CSE; const is stronger.
         // A func that writes through a pointer param (sized output param) has a
         // side effect and qualifies for neither.
-        if (decl->kind == DECL_FUNCTION && !func_has_var_param(decl) &&
-            !func_writes_through_param(decl)) {
+        if (decl->kind == DECL_FUNCTION && decl->as.function_decl.return_type &&
+            !func_has_var_param(decl) && !func_writes_through_param(decl)) {
             if (func_all_params_by_value(decl))
                 EMIT("__attribute__((const)) ");
             else
@@ -508,8 +508,8 @@ void emit_decl(Decl* decl, int depth) {
             // when all params are by value (no pointer args → no indirect reads),
             // or __attribute__((pure)) otherwise. Both allow LICM/CSE; const is
             // the stronger guarantee and allows hoisting even when memory changes.
-            if (decl->kind == DECL_FUNCTION && !is_main && !func_has_var_param(decl) &&
-                !func_writes_through_param(decl)) {
+            if (decl->kind == DECL_FUNCTION && !is_main && decl->as.function_decl.return_type &&
+                !func_has_var_param(decl) && !func_writes_through_param(decl)) {
                 if (func_all_params_by_value(decl))
                     EMIT("__attribute__((const)) ");
                 else
