@@ -59,6 +59,8 @@ Type *get_builtin_u8_type(void);
 void sema_infer_expr(Expr *e);
 // Defined in typecheck.h (included after this file); checks a fn-ptr initialiser.
 static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col);
+// Defined in monomorph.h; rewrites a generic call to its concrete instance.
+static bool sema_monomorphize_call(Expr *call);
 void sema_resolve_expr(Expr *e); // forward
 
 /*
@@ -925,8 +927,14 @@ void sema_resolve_expr(Expr *e) {
   case EXPR_CALL:
     sema_resolve_expr(e->as.call_expr.callee);
 
-    // (generics/monomorphization removed: no comptime type params or 'T typevars)
-    // Purity Check: func cannot call proc
+    // Resolve arguments first (so a type argument like `i32` becomes EXPR_TYPE),
+    // then rewrite a generic call to its concrete monomorphized instance.
+    for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
+      sema_resolve_expr(a->expr);
+    }
+    sema_monomorphize_call(e);   // no-op unless callee is a generic template
+
+    // Purity Check: func cannot call proc (checked on the possibly-rewritten callee)
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         Expr *callee = e->as.call_expr.callee;
         if (callee->decl) {
@@ -939,11 +947,6 @@ void sema_resolve_expr(Expr *e) {
                 exit(1);
             }
         }
-    }
-
-    // Normal argument resolution for non-generic
-    for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
-      sema_resolve_expr(a->expr);
     }
     break;
   case EXPR_RANGE:

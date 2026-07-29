@@ -67,6 +67,13 @@ Type *parse_type(Arena *arena, Parser *parser) {
     return type_mut(arena, inner);
   }
 
+  // The meta-type `type` — the type of a type parameter (`T type`). A parameter
+  // of this type is a generic type parameter.
+  if (parser_match(TOKEN_KEYWORD_TYPE)) {
+    parser_advance();
+    return type_meta(arena);
+  }
+
   // 2) parse a simple identifier type (e.g. "Foo", "int", "std.sub.Type")
   parser_expect(TOKEN_IDENTIFIER, "Expected type name");
   Token start = parser->token;

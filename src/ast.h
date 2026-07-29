@@ -47,6 +47,7 @@ typedef enum {
     TYPE_COMPTIME,  // comptime modifier
     TYPE_VARIANT,   // inner payload of an ADT variant
     TYPE_FUNC,      // non-capturing function pointer: *func(params) ret / *proc(params) ret
+    TYPE_META,      // the meta-type `type` — the "type" of a type parameter (`T type`)
 } TypeKind;
 
 typedef struct Type {
@@ -184,12 +185,14 @@ typedef struct Variant {
 typedef struct EnumDecl {
     Id* type_name;          // Enum name
     Variant* variants;      // Linked list of variants
+    DeclList* type_params;  // generic params `type R(T type){...}` (NULL = non-generic)
 } DeclEnum;
 
 typedef struct StructDecl {
     Id* name;          // Struct name
     DeclList* fields;  // List of fields (should be DeclList)
     bool is_packed;    // Q-002 / Sprint 19: bit-exact layout via [packed]
+    DeclList* type_params;  // generic params `type Vec(T type){...}` (NULL = non-generic)
 } DeclStruct;
 
 typedef struct {
@@ -689,6 +692,16 @@ Type *type_pointer(Arena *arena, Type *element_type) {
     return t;
 }
 
+// The meta-type `type` — the "type" of a type parameter (`T type`). A parameter
+// whose type is TYPE_META is a type parameter; the function/type is generic.
+Type *type_meta(Arena *arena) {
+    Type *t = arena_push_aligned(arena, Type);
+    t->kind = TYPE_META;
+    t->mode = MODE_SHARED;
+    t->canon = t;
+    return t;
+}
+
 // Non-capturing function pointer type. `ret == NULL` means a void return.
 // `is_total` distinguishes `*func` (provably terminating) from `*proc`.
 Type *type_func(Arena *arena, TypeList *params, Type *ret, bool is_total) {
@@ -823,6 +836,7 @@ Decl* decl_struct(Arena* arena, Id* name, DeclList* fields) {
     d->as.struct_decl.name = name;  // FIXED: Correct member
     d->as.struct_decl.fields = fields;  // FIXED: Correct member
     d->as.struct_decl.is_packed = false;
+    d->as.struct_decl.type_params = NULL;
     return d;
 }
 
@@ -834,7 +848,25 @@ Decl *decl_enum(Arena *arena, Id *type_name, Variant *variants) {
     d->kind = DECL_ENUM;
     d->as.enum_decl.type_name = type_name;
     d->as.enum_decl.variants = variants;
+    d->as.enum_decl.type_params = NULL;
     return d;
+}
+
+// A decl is a generic TEMPLATE iff it carries a type parameter: a function with
+// a parameter of meta-type `type`, or a struct/enum with a `(…)` header. Pure
+// AST predicate (used by both sema/monomorph and emit, so it lives here).
+static bool decl_is_generic_template(Decl *d) {
+    if (!d) return false;
+    if (d->kind == DECL_STRUCT) return d->as.struct_decl.type_params != NULL;
+    if (d->kind == DECL_ENUM)   return d->as.enum_decl.type_params != NULL;
+    if (d->kind == DECL_FUNCTION) {
+        for (DeclList *p = d->as.function_decl.params; p; p = p->next)
+            if (p->decl && p->decl->kind == DECL_VARIABLE &&
+                p->decl->as.variable_decl.type &&
+                p->decl->as.variable_decl.type->kind == TYPE_META)
+                return true;
+    }
+    return false;
 }
 
 Variant *variant(Arena *arena, Id *name, DeclList *fields) {

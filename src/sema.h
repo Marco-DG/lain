@@ -79,6 +79,7 @@ static PtrInitIdxEntry *sema_ptr_init_idx = NULL;
 #include "sema/scope.h"
 #include "sema/resolve.h"
 #include "sema/typecheck.h"
+#include "sema/monomorph.h"
 #include "sema/linearity.h"
 
 Type *current_return_type = NULL;
@@ -2309,17 +2310,8 @@ static void sema_check_no_mutual_recursion(DeclList *decls) {
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
         if (!d || d->kind != DECL_FUNCTION) continue;
-        // Skip generic (comptime) functions — substituted before use.
-        bool is_generic = false;
-        for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
-            if (p->decl && p->decl->kind == DECL_VARIABLE &&
-                p->decl->as.variable_decl.type &&
-                p->decl->as.variable_decl.type->kind == TYPE_COMPTIME) {
-                is_generic = true;
-                break;
-            }
-        }
-        if (is_generic) continue;
+        // Skip generic templates — only their concrete instances are checked.
+        if (decl_is_generic_template(d)) continue;
 
         // Fresh state per root
         mrec_stack_len = 0;
@@ -2387,6 +2379,9 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         Decl *d = dl->decl;
         if (!d) continue;
         if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE) continue;
+        // Generic templates are never processed directly — only their concrete
+        // monomorphized instances (appended to this same list) are.
+        if (decl_is_generic_template(d)) continue;
 
         sema_clear_locals();
 

@@ -1,0 +1,15 @@
+// Duck-typed monomorphization: generic functions with explicit type arguments.
+// pick exercises multiple params of T; dup exercises a `var x T` in the body.
+func pick(T type, a T, b T) T {
+    return a
+}
+func dup(T type, a T) T {
+    var x T = a
+    return x
+}
+proc main() i32 {
+    if pick(i32, 7, 9) == 7 {
+        if dup(i32, 42) == 42 { return 0 }
+    }
+    return 1
+}

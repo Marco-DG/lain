@@ -37,6 +37,7 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
 
     // Emit forward declarations for structs and enums to satisfy function parameters
     for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (decl_is_generic_template(dl->decl)) continue;   // templates: only instances are emitted
         if (dl->decl->kind == DECL_STRUCT) {
             // Sprint 19: [packed] structs are emitted as scalar typedefs (not
             // C structs), so skip the `typedef struct` forward declaration
@@ -73,6 +74,7 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
 
     // Emit forward declarations for all functions and procedures
     for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (decl_is_generic_template(dl->decl)) continue;   // templates: only instances are emitted
         if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
             emit_forward_decl(dl->decl, 0);
         }

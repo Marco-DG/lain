@@ -530,6 +530,31 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
     isize len = (end.start + end.length) - start.start;
     Id* name = id(arena, len, start.start);
 
+    // Optional generic parameter header: `type Vec(T type) { … }`, `type Buf(N usize) { … }`.
+    // Each entry is an ordinary `name Type` parameter (a type param has type `type`).
+    DeclList *type_params = NULL;
+    if (parser_match(TOKEN_L_PAREN)) {
+        parser_advance(); // '('
+        DeclList *tp_tail = NULL;
+        if (!parser_match(TOKEN_R_PAREN)) {
+            for (;;) {
+                parser_expect(TOKEN_IDENTIFIER, "Expected parameter name in type header");
+                Id *pn = id(arena, parser->token.length, parser->token.start);
+                parser_advance();
+                Type *pt = parse_type(arena, parser);
+                Decl *pd = decl_variable(arena, pn, pt);
+                pd->as.variable_decl.is_parameter = true;
+                DeclList *node = decl_list(arena, pd);
+                if (!type_params) type_params = node; else tp_tail->next = node;
+                tp_tail = node;
+                if (parser_match(TOKEN_COMMA)) { parser_advance(); continue; }
+                break;
+            }
+        }
+        parser_expect(TOKEN_R_PAREN, "Expected ')' after type parameters");
+        parser_advance();
+    }
+
     // If it's a type alias: type Name = Expr
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance(); // consume '='
@@ -611,9 +636,13 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
     parser_advance();
 
     if (is_enum) {
-        return decl_enum(arena, name, adt_variants);
+        Decl *d = decl_enum(arena, name, adt_variants);
+        d->as.enum_decl.type_params = type_params;
+        return d;
     } else {
-        return decl_struct(arena, name, struct_fields);
+        Decl *d = decl_struct(arena, name, struct_fields);
+        d->as.struct_decl.type_params = type_params;
+        return d;
     }
 }
 
