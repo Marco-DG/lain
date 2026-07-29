@@ -186,8 +186,31 @@ static Decl *mono_instantiate_function(Decl *tmpl, SubstCtx *ctx, Id *inst_id) {
     return inst;
 }
 
-// Detect + rewrite a call to a generic function with explicit type arguments.
-// Returns true iff `call` was a generic call (now rewritten to its instance).
+// Bind type-param `name` → concrete in ctx (idempotent; last write wins — the
+// instance's own typecheck catches any genuine inconsistency).
+static void mono_bind(SubstCtx *ctx, Id *name, Type *concrete) {
+    if (!name || !concrete) return;
+    for (int i = 0; i < ctx->n; i++)
+        if (mono_id_eq(ctx->names[i], name)) return;   // already bound
+    if (ctx->n < MONO_MAX_TPARAMS) { ctx->names[ctx->n] = name; ctx->concretes[ctx->n] = concrete; ctx->n++; }
+}
+
+// Structurally unify a parameter's type pattern against a concrete argument type,
+// binding any type-param names it mentions (T, *T[], etc.).
+static void mono_unify(Type *pat, Type *arg, SubstCtx *ctx, Id **tp, int ntp) {
+    if (!pat || !arg) return;
+    if (pat->kind == TYPE_SIMPLE && pat->base_type) {
+        for (int i = 0; i < ntp; i++)
+            if (mono_id_eq(pat->base_type, tp[i])) { mono_bind(ctx, pat->base_type, arg); return; }
+        return;   // concrete type in the pattern → nothing to bind
+    }
+    if (pat->element_type && arg->element_type)
+        mono_unify(pat->element_type, arg->element_type, ctx, tp, ntp);
+}
+
+// Detect + rewrite a call to a generic function. Type arguments may be passed
+// explicitly (`max(i32, 3, 5)`) or inferred from the value arguments
+// (`max(3, 5)`). Returns true iff `call` was a generic call (now rewritten).
 static bool sema_monomorphize_call(Expr *call) {
     Expr *callee = call->as.call_expr.callee;
     if (!callee || callee->kind != EXPR_IDENTIFIER || !callee->decl) return false;
@@ -195,40 +218,77 @@ static bool sema_monomorphize_call(Expr *call) {
     if (tmpl->kind != DECL_FUNCTION || !decl_is_generic_template(tmpl)) return false;
 
     Id *base = tmpl->as.function_decl.name;
-    char suffix[224]; int soff = 0; suffix[0] = '\0';
+
+    // Partition params into type params (meta) and value params, in order.
+    Id   *tp_names[MONO_MAX_TPARAMS]; int ntp = 0;
+    DeclList *vparams[64]; int nvp = 0;
+    for (DeclList *p = tmpl->as.function_decl.params; p; p = p->next) {
+        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+        Type *pt = p->decl->as.variable_decl.type;
+        if (pt && pt->kind == TYPE_META) { if (ntp < MONO_MAX_TPARAMS) tp_names[ntp++] = p->decl->as.variable_decl.name; }
+        else if (nvp < 64) vparams[nvp++] = p;
+    }
+
+    // Count arguments.
+    int nargs = 0; for (ExprList *a = call->as.call_expr.args; a; a = a->next) nargs++;
+
     SubstCtx ctx; ctx.n = 0;
     ExprList *new_args = NULL, *na_tail = NULL;
 
-    DeclList *p = tmpl->as.function_decl.params;
-    ExprList *a = call->as.call_expr.args;
-    for (; p && a; p = p->next, a = a->next) {
-        Type *pt = (p->decl && p->decl->kind == DECL_VARIABLE) ? p->decl->as.variable_decl.type : NULL;
-        if (pt && pt->kind == TYPE_META) {
-            Expr *ta = a->expr;
-            if (ta->kind != EXPR_TYPE || !ta->as.type_expr.type_value) {
+    if (nargs == ntp + nvp) {
+        // Explicit mode: leading `ntp` args are the type arguments.
+        ExprList *a = call->as.call_expr.args;
+        for (int i = 0; i < ntp; i++, a = a->next) {
+            if (a->expr->kind != EXPR_TYPE || !a->expr->as.type_expr.type_value) {
                 fprintf(stderr, "[E124] Error Ln %li, Col %li: type parameter '%.*s' expects a type argument.\n",
-                        (long)call->line, (long)call->col,
-                        (int)p->decl->as.variable_decl.name->length, p->decl->as.variable_decl.name->name);
+                        (long)call->line, (long)call->col, (int)tp_names[i]->length, tp_names[i]->name);
                 diagnostic_show_line(call->line, call->col); exit(1);
             }
-            if (ctx.n < MONO_MAX_TPARAMS) {
-                ctx.names[ctx.n] = p->decl->as.variable_decl.name;
-                ctx.concretes[ctx.n] = ta->as.type_expr.type_value;
-                ctx.n++;
-            }
-            char tb[128]; mono_mangle_type(ta->as.type_expr.type_value, tb, sizeof tb);
-            soff += snprintf(suffix + soff, sizeof suffix - (size_t)soff, "_%s", tb);
-        } else {
+            mono_bind(&ctx, tp_names[i], a->expr->as.type_expr.type_value);
+        }
+        for (; a; a = a->next) {           // remaining args are the value args
             ExprList *node = arena_push(sema_arena, ExprList);
             node->expr = a->expr; node->next = NULL;
             if (!new_args) new_args = node; else na_tail->next = node;
             na_tail = node;
         }
-    }
-    if (p || a) {
-        fprintf(stderr, "[E124] Error Ln %li, Col %li: wrong number of arguments to generic '%.*s'.\n",
-                (long)call->line, (long)call->col, (int)base->length, base->name);
+    } else if (nargs == nvp) {
+        // Inferred mode: type arguments omitted → infer from the value args.
+        ExprList *a = call->as.call_expr.args;
+        for (int i = 0; i < nvp && a; i++, a = a->next) {
+            sema_infer_expr(a->expr);      // ensure the arg has a type to unify against
+            mono_unify(vparams[i]->decl->as.variable_decl.type, a->expr->type, &ctx, tp_names, ntp);
+            ExprList *node = arena_push(sema_arena, ExprList);
+            node->expr = a->expr; node->next = NULL;
+            if (!new_args) new_args = node; else na_tail->next = node;
+            na_tail = node;
+        }
+        // Every type parameter must have been inferred.
+        for (int i = 0; i < ntp; i++) {
+            bool bound = false;
+            for (int j = 0; j < ctx.n; j++) if (mono_id_eq(ctx.names[j], tp_names[i])) bound = true;
+            if (!bound) {
+                fprintf(stderr, "[E124] Error Ln %li, Col %li: cannot infer type parameter '%.*s' of '%.*s' "
+                        "from the arguments — pass it explicitly.\n",
+                        (long)call->line, (long)call->col, (int)tp_names[i]->length, tp_names[i]->name,
+                        (int)base->length, base->name);
+                diagnostic_show_line(call->line, call->col); exit(1);
+            }
+        }
+    } else {
+        fprintf(stderr, "[E124] Error Ln %li, Col %li: wrong number of arguments to generic '%.*s' "
+                "(expected %d value arguments, with %d type argument(s) explicit or inferred).\n",
+                (long)call->line, (long)call->col, (int)base->length, base->name, nvp, ntp);
         diagnostic_show_line(call->line, call->col); exit(1);
+    }
+
+    // Build the mangled suffix in type-parameter order (stable across explicit/inferred).
+    char suffix[224]; int soff = 0; suffix[0] = '\0';
+    for (int i = 0; i < ntp; i++) {
+        Type *concrete = NULL;
+        for (int j = 0; j < ctx.n; j++) if (mono_id_eq(ctx.names[j], tp_names[i])) concrete = ctx.concretes[j];
+        char tb[128]; mono_mangle_type(concrete, tb, sizeof tb);
+        soff += snprintf(suffix + soff, sizeof suffix - (size_t)soff, "_%s", tb);
     }
 
     // Mangled raw name: base ⧺ suffix (e.g. "max_i32"). Dedup via the symbol table.
