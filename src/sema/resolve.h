@@ -57,6 +57,8 @@ extern bool sema_in_unsafe_block;
 Type *get_builtin_i32_type(void);
 Type *get_builtin_u8_type(void);
 void sema_infer_expr(Expr *e);
+// Defined in typecheck.h (included after this file); checks a fn-ptr initialiser.
+static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col);
 void sema_resolve_expr(Expr *e); // forward
 
 /*
@@ -435,7 +437,10 @@ void sema_resolve_stmt(Stmt *s) {
           }
           s->as.var_stmt.type = ty;
       } else {
-          // TODO: check compatibility between ty and rhs->type
+          // Function-pointer target: enforce arity / param+return types / totality.
+          // (General value type-compat between ty and rhs->type is still TODO.)
+          if (ty && ty->kind == TYPE_FUNC)
+              fnptr_assign_check(ty, rhs, s->line, s->col);
       }
     }
 

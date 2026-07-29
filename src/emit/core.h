@@ -10,6 +10,9 @@
 const char *emit_slice_type_definition(Type *type);
 
 void c_name_for_type(Type *t, char *out, size_t cap);
+// Build a C function-pointer declarator into `out`: "R (*<name>)(P..)".
+// `name` is "" for an abstract type (casts) or the variable/param C name.
+static void c_name_for_fnptr(Type *t, const char *name, char *out, size_t cap);
 
 /*— where all output goes —*/
 static FILE *output_file;
@@ -452,10 +455,39 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
     return;
   }
 
+  case TYPE_FUNC: {
+    // Abstract function-pointer type `R (*)(P..)` — valid in casts/sizeof.
+    // Declarations that need the name inside use c_name_for_fnptr(t, name, …).
+    c_name_for_fnptr(t, "", out, cap);
+    return;
+  }
+
   default:
     fprintf(stderr, "emit error: unhandled type kind %d\n", t->kind);
     exit(1);
   }
+}
+
+static void c_name_for_fnptr(Type *t, const char *name, char *out, size_t cap) {
+  char rbuf[192];
+  if (t->element_type) c_name_for_type(t->element_type, rbuf, sizeof rbuf);
+  else                 snprintf(rbuf, sizeof rbuf, "void");
+
+  char pbuf[512];
+  if (!t->func_params) {
+    snprintf(pbuf, sizeof pbuf, "void");
+  } else {
+    size_t off = 0; int first = 1;
+    pbuf[0] = '\0';
+    for (TypeList *p = t->func_params; p && off < sizeof pbuf; p = p->next) {
+      char pb[192];
+      c_name_for_type(p->type, pb, sizeof pb);
+      int n = snprintf(pbuf + off, sizeof pbuf - off, "%s%s", first ? "" : ", ", pb);
+      if (n > 0) off += (size_t)n;
+      first = 0;
+    }
+  }
+  snprintf(out, cap, "%s (*%s)(%s)", rbuf, name ? name : "", pbuf);
 }
 
 

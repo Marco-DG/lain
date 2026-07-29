@@ -1,0 +1,7 @@
+// EXPECT: [E122]
+// A `proc` cannot be assigned to a `*func` (total) pointer.
+proc effp(a i32) i32 { return a }
+proc main() i32 {
+    var f *func(i32) i32 = effp
+    return 0
+}

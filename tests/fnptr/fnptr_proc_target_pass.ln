@@ -1,0 +1,7 @@
+// A *proc target accepts a total func (totality subtyping: func <: proc).
+func idn(a i32) i32 { return a }
+proc main() i32 {
+    var g *proc(i32) i32 = idn
+    if g(5) == 5 { return 0 }
+    return 1
+}

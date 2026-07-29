@@ -46,6 +46,7 @@ typedef enum {
     TYPE_POINTER,   // pointer to element type, e.g. "u8 *"
     TYPE_COMPTIME,  // comptime modifier
     TYPE_VARIANT,   // inner payload of an ADT variant
+    TYPE_FUNC,      // non-capturing function pointer: *func(params) ret / *proc(params) ret
 } TypeKind;
 
 typedef struct Type {
@@ -71,6 +72,12 @@ typedef struct Type {
     const char* sentinel_str;
     isize       sentinel_len;
     bool        sentinel_is_string;
+
+    /* TYPE_FUNC (non-capturing function pointer, `*func(P..)R` / `*proc(P..)R`):
+       func_params = ordered parameter types; element_type = return type (NULL = void);
+       func_is_total = true for `func` (provably terminating), false for `proc`. */
+    struct TypeList *func_params;
+    bool            func_is_total;
 
     /* P2/S1: cached integer width/signedness on the node, so the type name
        ("i32") is parsed once instead of on every width query.
@@ -112,6 +119,11 @@ typedef struct DeclList{
     Decl*       decl;
     DeclList*   next;
 } DeclList;
+
+typedef struct TypeList {
+    struct Type*     type;
+    struct TypeList* next;
+} TypeList;
 
 /*──────────────────────────────────────────────────────────────────╗
 │ DECLARATION NODES                                                 │
@@ -677,6 +689,19 @@ Type *type_pointer(Arena *arena, Type *element_type) {
     return t;
 }
 
+// Non-capturing function pointer type. `ret == NULL` means a void return.
+// `is_total` distinguishes `*func` (provably terminating) from `*proc`.
+Type *type_func(Arena *arena, TypeList *params, Type *ret, bool is_total) {
+    Type *t = arena_push_aligned(arena, Type);
+    t->kind          = TYPE_FUNC;
+    t->mode          = MODE_SHARED;  // a bare function pointer is a shared value
+    t->element_type  = ret;          // return type (NULL = void)
+    t->func_params   = params;
+    t->func_is_total = is_total;
+    t->canon = t;
+    return t;
+}
+
 
 // Helper: get underlying type without ownership wrapper
 static inline Type *type_unwrap(Type *t) {
@@ -709,6 +734,13 @@ IdList *id_list(Arena *arena, Id *id) {
 ExprList *expr_list(Arena *arena, Expr *expr) {
     ExprList *l = arena_push_aligned(arena, ExprList);
     l->expr = expr;
+    l->next = NULL;
+    return l;
+}
+
+TypeList *type_list(Arena *arena, Type *type) {
+    TypeList *l = arena_push_aligned(arena, TypeList);
+    l->type = type;
     l->next = NULL;
     return l;
 }

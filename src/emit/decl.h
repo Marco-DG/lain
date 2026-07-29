@@ -26,6 +26,23 @@ static bool func_has_var_param(Decl *decl) {
     return false;
 }
 
+// A function that takes a function-pointer parameter may CALL it, and an
+// indirect call is an unanalysed effect (a `*proc` target can diverge or
+// mutate). Such a function must therefore NOT be marked const/pure, or gcc
+// could CSE/elide calls and drop real effects. (The Phase-3 effect system will
+// refine this to allow `pure` when the fn-ptr param is a side-effect-free
+// `*func`.)
+static bool func_has_fnptr_param(Decl *decl) {
+    for (DeclList *p = decl->as.function_decl.params; p; p = p->next) {
+        if (!p->decl) continue;
+        Type *pt = (p->decl->kind == DECL_VARIABLE)   ? p->decl->as.variable_decl.type
+                 : (p->decl->kind == DECL_DESTRUCT)    ? p->decl->as.destruct_decl.type
+                 : NULL;
+        if (pt && pt->kind == TYPE_FUNC) return true;
+    }
+    return false;
+}
+
 // Q-019c [const]: returns true if every parameter of decl is passed by value in C
 // (primitive shared borrows or owned values — no pointer parameters at all).
 // When combined with !func_has_var_param, the function qualifies for the stronger
@@ -262,7 +279,8 @@ static void emit_forward_decl(Decl *decl, int depth) {
         // A func that writes through a pointer param (sized output param) has a
         // side effect and qualifies for neither.
         if (decl->kind == DECL_FUNCTION && decl->as.function_decl.return_type &&
-            !func_has_var_param(decl) && !func_writes_through_param(decl)) {
+            !func_has_var_param(decl) && !func_writes_through_param(decl) &&
+            !func_has_fnptr_param(decl)) {
             if (func_all_params_by_value(decl))
                 EMIT("__attribute__((const)) ");
             else
@@ -336,6 +354,17 @@ static void emit_forward_decl(Decl *decl, int depth) {
 
 static void emit_param_type(Type *t, bool with_restrict) {
     if (!t) return;
+
+    // Function-pointer parameter → abstract C declarator `R (*)(P..)`.
+    // (The definition site injects the parameter name inside the parens; a
+    // prototype uses the abstract form emitted here.)
+    if (t->kind == TYPE_FUNC) {
+        (void)with_restrict;
+        char fb[768];
+        c_name_for_fnptr(t, "", fb, sizeof fb);
+        EMIT("%s", fb);
+        return;
+    }
 
     // Get the base type name without ownership decorations,
     // BUT for Pointers, the mode dictates the C type (const vs non-const),
@@ -509,7 +538,8 @@ void emit_decl(Decl* decl, int depth) {
             // or __attribute__((pure)) otherwise. Both allow LICM/CSE; const is
             // the stronger guarantee and allows hoisting even when memory changes.
             if (decl->kind == DECL_FUNCTION && !is_main && decl->as.function_decl.return_type &&
-                !func_has_var_param(decl) && !func_writes_through_param(decl)) {
+                !func_has_var_param(decl) && !func_writes_through_param(decl) &&
+                !func_has_fnptr_param(decl)) {
                 if (func_all_params_by_value(decl))
                     EMIT("__attribute__((const)) ");
                 else
@@ -570,6 +600,14 @@ void emit_decl(Decl* decl, int depth) {
                                 EMIT("%s * restrict %.*s", elem_buf, (int)pn->length, pn->name);
                             else
                                 EMIT("const %s * restrict %.*s", elem_buf, (int)pn->length, pn->name);
+                        } else if (pt && pt->kind == TYPE_FUNC) {
+                            // Function-pointer param: name goes inside `R (*name)(P..)`.
+                            char nb[128];
+                            int nl = pn->length < 127 ? (int)pn->length : 127;
+                            memcpy(nb, pn->name, nl); nb[nl] = '\0';
+                            char fb[768];
+                            c_name_for_fnptr(pt, nb, fb, sizeof fb);
+                            EMIT("%s", fb);
                         } else {
                             // Use emit_param_type to print parameter type.
                             emit_param_type(pt, true);

@@ -1,0 +1,11 @@
+// Higher-order function: a function pointer as a parameter.
+func idn(a i32) i32 {
+    return a
+}
+func apply(f *func(i32) i32, x i32) i32 {
+    return f(x)
+}
+proc main() i32 {
+    if apply(idn, 42) == 42 { return 0 }
+    return 1
+}

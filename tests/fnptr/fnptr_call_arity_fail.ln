@@ -1,0 +1,7 @@
+// EXPECT: [E123]
+// Calling through the pointer with the wrong number of args — reject.
+func two(a i32, b i32) i32 { return a }
+proc main() i32 {
+    var f *func(i32, i32) i32 = two
+    return f(1)
+}

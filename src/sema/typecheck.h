@@ -874,6 +874,63 @@ static Variant *lookup_adt_variant(DeclEnum *adt, Id *variant_name) {
     return NULL;
 }
 
+/*──────────────────────────────────────────────────────────────────╗
+│ Function-pointer typing (non-capturing `*func`/`*proc`)            │
+╚──────────────────────────────────────────────────────────────────*/
+
+// Synthesize the function-pointer type of a function/procedure decl.
+static Type *fnptr_type_of_decl(Decl *d) {
+    if (!d) return NULL;
+    bool is_func = (d->kind == DECL_FUNCTION || d->kind == DECL_EXTERN_FUNCTION);
+    bool is_proc = (d->kind == DECL_PROCEDURE || d->kind == DECL_EXTERN_PROCEDURE);
+    if (!is_func && !is_proc) return NULL;
+    TypeList *pts = NULL, *tail = NULL;
+    for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
+        Type *pt = (p->decl && p->decl->kind == DECL_VARIABLE)
+                   ? p->decl->as.variable_decl.type : NULL;
+        TypeList *node = type_list(sema_arena, pt);
+        if (!pts) pts = node; else tail->next = node;
+        tail = node;
+    }
+    return type_func(sema_arena, pts, d->as.function_decl.return_type, is_func);
+}
+
+// Is a function-pointer value of type `from` assignable to target `to`?
+// Equal arity, structurally-equal parameter/return types, and totality
+// subtyping: a `*func` target (total) accepts only a total source; `*proc`
+// accepts either.
+static bool fnptr_types_assignable(Type *to, Type *from) {
+    if (!to || !from || to->kind != TYPE_FUNC || from->kind != TYPE_FUNC) return false;
+    if (to->func_is_total && !from->func_is_total) return false;
+    if ((to->element_type == NULL) != (from->element_type == NULL)) return false;
+    if (to->element_type && !types_equal_exact(to->element_type, from->element_type)) return false;
+    TypeList *a = to->func_params, *b = from->func_params;
+    while (a && b) {
+        if (!a->type || !b->type || !types_equal_exact(a->type, b->type)) return false;
+        a = a->next; b = b->next;
+    }
+    return a == NULL && b == NULL;   // same arity
+}
+
+// Boundary check for initialising/assigning a function-pointer target.
+static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col) {
+    if (!target || target->kind != TYPE_FUNC || !rhs) return;
+    Type *from = (rhs->type && rhs->type->kind == TYPE_FUNC)
+                 ? rhs->type                       // another fn-ptr value
+                 : fnptr_type_of_decl(rhs->decl);  // a bare function name
+    if (!from) {
+        fprintf(stderr, "[E122] Error Ln %li, Col %li: a function-pointer must be initialised with "
+                "a matching function or function-pointer.\n", (long)line, (long)col);
+        diagnostic_show_line(line, col); exit(1);
+    }
+    if (!fnptr_types_assignable(target, from)) {
+        fprintf(stderr, "[E122] Error Ln %li, Col %li: function does not match the function-pointer "
+                "type — arity, parameter/return types, or totality (`func` vs `proc`) differ.\n",
+                (long)line, (long)col);
+        diagnostic_show_line(line, col); exit(1);
+    }
+}
+
 void sema_infer_expr(Expr *e) {
   if (!e) return;
 // (removed debug print)
@@ -1027,7 +1084,38 @@ void sema_infer_expr(Expr *e) {
   case EXPR_CALL: {
     // ensure callee resolved & infer args
     sema_infer_expr(e->as.call_expr.callee); // Changed from resolve to infer to handle Shape.Circle
-    
+
+    // Call THROUGH a function pointer: the callee is a VALUE of TYPE_FUNC (a
+    // variable/param/field), not a direct function reference. Check args
+    // against the pointer's parameter types (same discipline as a direct call)
+    // and take the result type from the pointer's return type.
+    {
+      Decl *cd = e->as.call_expr.callee->decl;
+      bool callee_is_direct_fn = cd && (cd->kind == DECL_FUNCTION || cd->kind == DECL_PROCEDURE ||
+                                        cd->kind == DECL_EXTERN_FUNCTION || cd->kind == DECL_EXTERN_PROCEDURE);
+      Type *fnty = e->as.call_expr.callee->type;
+      if (!callee_is_direct_fn && fnty && fnty->kind == TYPE_FUNC) {
+        TypeList *pt = fnty->func_params;
+        ExprList *arg = e->as.call_expr.args;
+        while (pt && arg) {
+          sema_infer_expr(arg->expr);
+          Range r = (arg->expr->kind == EXPR_LITERAL)
+                    ? (Range){ arg->expr->as.literal_expr.value, arg->expr->as.literal_expr.value, true }
+                    : (sema_ranges ? sema_eval_range(arg->expr, sema_ranges) : range_unknown());
+          check_conversion(arg->expr->type, pt->type, r, arg->expr, arg->expr->line, arg->expr->col,
+                           "function-pointer argument", "");
+          pt = pt->next; arg = arg->next;
+        }
+        if (pt || arg) {
+          fprintf(stderr, "[E123] Error Ln %li, Col %li: wrong number of arguments in call through "
+                  "a function pointer.\n", (long)e->line, (long)e->col);
+          diagnostic_show_line(e->line, e->col); exit(1);
+        }
+        e->type = fnty->element_type;   // return type (NULL = void)
+        break;
+      }
+    }
+
     // Check if this is an ADT constructor call
     if (e->as.call_expr.callee->kind == EXPR_MEMBER) {
         Expr *target = e->as.call_expr.callee->as.member_expr.target;

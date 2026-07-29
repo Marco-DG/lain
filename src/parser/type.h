@@ -16,6 +16,36 @@ Type *parse_type(Arena *arena, Parser *parser) {
 
   if (parser_match(TOKEN_ASTERISK)) {
     parser_advance();
+
+    // *func(P..)R / *proc(P..)R — non-capturing function-pointer type.
+    // `func` encodes totality (provably terminating); `proc` may diverge.
+    if (parser_match(TOKEN_KEYWORD_FUNC) || parser_match(TOKEN_KEYWORD_PROC)) {
+      bool is_total = parser_match(TOKEN_KEYWORD_FUNC);
+      parser_advance(); // consume func/proc
+      parser_expect(TOKEN_L_PAREN, "Expected '(' after 'func'/'proc' in function-pointer type");
+      parser_advance(); // consume '('
+      TypeList *params = NULL, *tail = NULL;
+      if (!parser_match(TOKEN_R_PAREN)) {
+        for (;;) {
+          Type *pt = parse_type(arena, parser);
+          TypeList *node = type_list(arena, pt);
+          if (!params) params = node; else tail->next = node;
+          tail = node;
+          if (parser_match(TOKEN_COMMA)) { parser_advance(); continue; }
+          break;
+        }
+      }
+      parser_expect(TOKEN_R_PAREN, "Expected ')' after function-pointer parameter types");
+      parser_advance(); // consume ')'
+      // Optional return type: present iff the next token can start a type.
+      Type *ret = NULL;
+      if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_ASTERISK) ||
+          parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR)) {
+        ret = parse_type(arena, parser);
+      }
+      return type_func(arena, params, ret, is_total);
+    }
+
     Type *inner = parse_type(arena, parser);
     // *T[] and *T[:S] collapse: the * is syntactic (these are already reference types).
     // *T[N] (fixed) keeps the TYPE_POINTER wrapper.

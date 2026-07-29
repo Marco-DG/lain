@@ -1,0 +1,7 @@
+// EXPECT: [E122]
+// Return type differs (bool vs i32) — reject.
+func geti(a i32) i32 { return a }
+proc main() i32 {
+    var f *func(i32) bool = geti
+    return 0
+}

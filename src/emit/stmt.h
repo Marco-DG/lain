@@ -37,8 +37,14 @@ void emit_stmt(Stmt *stmt, int depth) {
       // - avoids Fixed_T_N typedef ordering issues for user types
       // - produces cleaner code for primitive types (uint8_t src[8], not Fixed_u8_8 src)
       bool is_fixed_array = ty_var && ty_var->kind == TYPE_ARRAY && ty_var->array_len > 0;
+      bool is_fnptr       = ty_var && ty_var->kind == TYPE_FUNC;
 
-      if (is_fixed_array) {
+      if (is_fnptr) {
+        // C function-pointer declarator: the name goes inside — `R (*name)(P..)`.
+        char fb[768];
+        c_name_for_fnptr(ty_var, c_name_for_id(v), fb, sizeof fb);
+        EMIT("%s", fb);
+      } else if (is_fixed_array) {
         char elem_c[256];
         c_name_for_type(ty_var->element_type, elem_c, sizeof elem_c);
         if (emit_const) EMIT("const ");
