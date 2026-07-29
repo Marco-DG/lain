@@ -539,7 +539,7 @@ void emit_expr(Expr *expr, int depth) {
         m->target->kind == EXPR_IDENTIFIER && m->target->decl &&
         is_dynarray_param_decl(m->target->decl)) {
         Type *tgt_t = m->target->decl->as.variable_decl.type;
-        if (tgt_t->size_expr == NULL) {
+        if (dynarray_param_has_runtime_len(tgt_t)) {
             Id *pname = m->target->decl->as.variable_decl.name;
             EMIT("__len_%.*s", (int)pname->length, pname->name);
         } else {
@@ -832,8 +832,10 @@ void emit_expr(Expr *expr, int depth) {
                Expr *base_arg = arg->expr;
                if (base_arg->kind == EXPR_MUT) base_arg = base_arg->as.mut_expr.expr;
                Type *at = base_arg->type ? sema_unwrap_type(base_arg->type) : NULL;
-               // Inject length iff the callee param has no size_expr
-               if (pt->size_expr == NULL) {
+               // Inject length iff the callee param carries a runtime __len_x
+               // (plain slice OR size-constrained i32[> 0]/[>= n] — NOT a
+               // concrete size binding i32[n]/i32[out.len], which derives .len).
+               if (dynarray_param_has_runtime_len(pt)) {
                    if (at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
                        EMIT("(size_t)%lld, ", (long long)at->array_len);
                    } else if (at && at->kind == TYPE_ARRAY && at->array_len == -1 &&

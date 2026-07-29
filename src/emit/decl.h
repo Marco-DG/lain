@@ -194,6 +194,7 @@ static void emit_access_attributes(Decl *decl) {
         Type *pt = p->decl->as.variable_decl.type;
         if (!pt || pt->kind != TYPE_ARRAY) continue;          // only array params
         if (!pt->size_expr) continue;                          // unsized: skip
+        if (pt->size_relop != TOKEN_EQUAL_EQUAL) continue;    // constraint bound (i32[>= n]): length is __len_x at runtime, not n
         if (pt->size_expr->kind != EXPR_IDENTIFIER) continue; // complex expr: skip
         // Find the size param by matching the mangled name
         Id *sid = pt->size_expr->as.identifier_expr.id;
@@ -313,7 +314,7 @@ static void emit_forward_decl(Decl *decl, int depth) {
                         // Fase 7: decompose dynamic array param to size_t? + T *
                         char elem_buf[256];
                         c_name_for_type(pt->element_type, elem_buf, sizeof elem_buf);
-                        if (pt->size_expr == NULL)
+                        if (dynarray_param_has_runtime_len(pt))
                             EMIT("size_t __len_%.*s, ", (int)pn->length, pn->name);
                         if (pt->mode == MODE_MUTABLE || emit_param_is_written(decl, param->decl))
                             EMIT("%s * restrict", elem_buf);
@@ -563,7 +564,7 @@ void emit_decl(Decl* decl, int depth) {
                             // Fase 7: decompose dynamic array param to (size_t __len_X,)? T * X
                             char elem_buf[256];
                             c_name_for_type(pt->element_type, elem_buf, sizeof elem_buf);
-                            if (pt->size_expr == NULL)
+                            if (dynarray_param_has_runtime_len(pt))
                                 EMIT("size_t __len_%.*s, ", (int)pn->length, pn->name);
                             if (pt->mode == MODE_MUTABLE || emit_param_is_written(decl, param->decl))
                                 EMIT("%s * restrict %.*s", elem_buf, (int)pn->length, pn->name);

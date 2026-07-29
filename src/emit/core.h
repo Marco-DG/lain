@@ -280,6 +280,19 @@ static bool is_dynarray_param_decl(Decl *d) {
     return t && t->kind == TYPE_ARRAY && t->array_len == -1;
 }
 
+// A dynamic-array param carries its length in a runtime `__len_PARAM` argument
+// UNLESS it has a CONCRETE size binding (size_relop '==', e.g. i32[n],
+// i32[out.len], i32[m+n] — there the length IS that expression). A pure size
+// CONSTRAINT (i32[> 0], i32[>= 2]) only BOUNDS the length; the actual length is
+// unknown at compile time, so it must be threaded at runtime exactly like a
+// plain slice i32[]. Emitting the bound as `.len` was a miscompile: `buf.len`
+// on an `*i32[> 0]` param rendered as the literal `0`, so `x % buf.len` divided
+// by zero at runtime on a program VRA had "proven" safe.
+static bool dynarray_param_has_runtime_len(Type *t) {
+    if (!t || t->kind != TYPE_ARRAY || t->array_len != -1) return false;
+    return t->size_expr == NULL || t->size_relop != TOKEN_EQUAL_EQUAL;
+}
+
 /*───────────────────────────────────────────────────────────────╗
 │ Helper: emit the C-decl name for *any* semantic Type*        │
 ╚───────────────────────────────────────────────────────────────*/
