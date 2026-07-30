@@ -1,0 +1,19 @@
+// Generic ADT: Option(T) — construction, variant patterns, match, passing.
+type Option(T type) {
+    Some { val T }
+    None
+}
+func get_or(o Option(i32), d i32) i32 {
+    return case o {
+        Some(v): v
+        None: d
+    }
+}
+proc main() i32 {
+    var s Option(i32) = Option(i32).Some(5)
+    var n Option(i32) = Option(i32).None
+    if get_or(s, 0) == 5 {
+        if get_or(n, 42) == 42 { return 0 }
+    }
+    return 1
+}

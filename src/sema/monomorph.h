@@ -326,6 +326,34 @@ static bool mono_construct_generic_struct(Expr *call, Decl *tmpl) {
     return true;
 }
 
+// Generic enum reference `Option(i32)` (all args are type args) → instantiate
+// Option_i32 and rewrite the call node into an EXPR_TYPE for the instance, so a
+// following `.Some(5)` / `.None` resolves as a variant of the concrete enum.
+static bool mono_ref_generic_enum(Expr *call, Decl *tmpl) {
+    DeclList *tparams = tmpl->as.enum_decl.type_params;
+    Id *base = tmpl->as.enum_decl.type_name;
+    SubstCtx ctx; ctx.n = 0; char suffix[224]; int soff = 0; suffix[0] = '\0';
+    ExprList *a = call->as.call_expr.args;
+    for (DeclList *tp = tparams; tp; tp = tp->next) {
+        if (!a || a->expr->kind != EXPR_TYPE || !a->expr->as.type_expr.type_value) {
+            fprintf(stderr, "[E124] Error Ln %li, Col %li: generic type '%.*s' expects a type argument.\n",
+                    (long)call->line, (long)call->col, (int)base->length, base->name);
+            diagnostic_show_line(call->line, call->col); exit(1);
+        }
+        mono_bind(&ctx, tp->decl->as.variable_decl.name, a->expr->as.type_expr.type_value);
+        char tb[128]; mono_mangle_type(a->expr->as.type_expr.type_value, tb, sizeof tb);
+        soff += snprintf(suffix + soff, sizeof suffix - (size_t)soff, "_%s", tb);
+        a = a->next;
+    }
+    Decl *inst = mono_type_instance(tmpl, &ctx, suffix);
+    Type *ity = type_simple(sema_arena, inst->as.enum_decl.type_name);
+    call->kind = EXPR_TYPE;
+    call->as.type_expr.type_value = ity;
+    call->decl = inst;
+    call->type = ity;
+    return true;
+}
+
 // Detect + rewrite a call to a generic function. Type arguments may be passed
 // explicitly (`max(i32, 3, 5)`) or inferred from the value arguments
 // (`max(3, 5)`). Returns true iff `call` was a generic call (now rewritten).
@@ -336,6 +364,15 @@ static bool sema_monomorphize_call(Expr *call) {
     Decl *tmpl = callee->decl;
     if (!decl_is_generic_template(tmpl)) return false;
     if (tmpl->kind == DECL_STRUCT) return mono_construct_generic_struct(call, tmpl);
+    if (tmpl->kind == DECL_ENUM) {
+        // Only a reference to the enum's OWN name is a type-application
+        // (`Option(i32)`). A variant pattern/constructor like `Some(v)` also
+        // carries the enum decl but must NOT be treated as `Enum(typeargs)`.
+        bool is_enum_ref = (callee->kind == EXPR_TYPE) ||
+            (callee->kind == EXPR_IDENTIFIER &&
+             mono_id_eq(callee->as.identifier_expr.id, tmpl->as.enum_decl.type_name));
+        return is_enum_ref ? mono_ref_generic_enum(call, tmpl) : false;
+    }
     if (tmpl->kind != DECL_FUNCTION) return false;
 
     Id *base = tmpl->as.function_decl.name;

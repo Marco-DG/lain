@@ -1173,22 +1173,32 @@ void emit_expr(Expr *expr, int depth) {
                   }
                   case EXPR_IDENTIFIER: {
                       if (p->expr->is_global && p->expr->decl && p->expr->decl->kind == DECL_ENUM) {
-                          // Strip ADT prefix from mangled variant id.
-                          char adt_buf[256];
-                          strncpy(adt_buf, c_name_for_id(p->expr->decl->as.enum_decl.type_name), sizeof(adt_buf));
-                          adt_buf[sizeof(adt_buf)-1] = '\0';
-                          size_t adt_len = strlen(adt_buf);
+                          // Resolve the nullary variant against the SCRUTINEE's enum
+                          // (so a generic instance like Option_i32 uses its own tags),
+                          // matching the pattern id by plain name or mangled suffix,
+                          // and emit the plain variant name.
+                          DeclEnum *sadt = (scrut_type && scrut_type->kind == TYPE_SIMPLE)
+                                           ? find_adt_decl(scrut_type->base_type) : NULL;
+                          if (!sadt) sadt = &p->expr->decl->as.enum_decl;
                           Id *vid = p->expr->as.identifier_expr.id;
-                          const char *raw_variant = vid->name;
-                          int raw_len = (int)vid->length;
-                          if (raw_len > (int)adt_len + 1 &&
-                              strncmp(vid->name, adt_buf, adt_len) == 0 &&
-                              vid->name[adt_len] == '_') {
-                              raw_variant = vid->name + adt_len + 1;
-                              raw_len = raw_len - (int)adt_len - 1;
+                          Variant *mv = NULL;
+                          for (Variant *v = sadt->variants; v; v = v->next) {
+                              if (v->name->length == vid->length &&
+                                  strncmp(v->name->name, vid->name, v->name->length) == 0) { mv = v; break; }
+                              if (vid->length > v->name->length + 1) {
+                                  const char *sfx = vid->name + (vid->length - v->name->length);
+                                  if (*(sfx-1) == '_' && strncmp(sfx, v->name->name, v->name->length) == 0) { mv = v; break; }
+                              }
                           }
-                          EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_buf,
-                               raw_len, raw_variant);
+                          char adt_buf[256];
+                          strncpy(adt_buf, c_name_for_id(sadt->type_name), sizeof(adt_buf));
+                          adt_buf[sizeof(adt_buf)-1] = '\0';
+                          if (mv)
+                              EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_buf,
+                                   (int)mv->name->length, mv->name->name);
+                          else
+                              EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_buf,
+                                   (int)vid->length, vid->name);
                           break;
                       }
                       EMIT("__match%d == ", __match_id);
