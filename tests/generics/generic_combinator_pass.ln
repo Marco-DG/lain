@@ -1,0 +1,20 @@
+// The core generic-programming pattern: a function generic over T that returns
+// Option(T) and builds it in its body, plus a consumer taking Option(i32).
+type Option(T type) {
+    Some { val T }
+    None
+}
+func some(T type, x T) Option(T) {
+    return Option(T).Some(x)
+}
+func unwrap(o Option(i32)) i32 {
+    return case o {
+        Some(v): v
+        None: 0
+    }
+}
+proc main() i32 {
+    var o Option(i32) = some(7)
+    if unwrap(o) == 7 { return 0 }
+    return 1
+}

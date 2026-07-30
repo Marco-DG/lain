@@ -63,6 +63,18 @@ static void mono_subst_expr(Expr *e, SubstCtx *ctx) {
     if (!e) return;
     if (e->type) e->type = mono_subst_type(e->type, ctx);
     switch (e->kind) {
+        case EXPR_IDENTIFIER: {
+            // A bare identifier naming a type parameter — used as a type argument
+            // in the body, e.g. `Option(T).Some(x)` — becomes the concrete type.
+            Id *nm = e->as.identifier_expr.id;
+            for (int i = 0; i < ctx->n; i++)
+                if (mono_id_eq(nm, ctx->names[i])) {
+                    e->kind = EXPR_TYPE;
+                    e->as.type_expr.type_value = ctx->concretes[i];
+                    break;
+                }
+            break;
+        }
         case EXPR_TYPE:
             e->as.type_expr.type_value = mono_subst_type(e->as.type_expr.type_value, ctx);
             break;
@@ -522,6 +534,10 @@ static bool sema_monomorphize_call(Expr *call) {
         snprintf(cnamebuf, sizeof cnamebuf, "%s%s", tsym ? tsym->c_name : rawbuf, suffix);
         char *cname = mono_dup(cnamebuf, strlen(cnamebuf));
         inst = mono_instantiate_function(tmpl, &ctx, inst_id);
+        // Resolve the instance's signature NOW (`Option(T)` → Option_i32) so a
+        // caller inferring this call's result type sees the concrete type even
+        // though the instance is appended after (and processed later than) it.
+        mono_resolve_signature(inst);
         sema_insert_global(raw, cname, inst->as.function_decl.return_type, inst, false);
         DeclList *node = decl_list(sema_arena, inst);
         DeclList *tail = sema_decls; while (tail && tail->next) tail = tail->next;
