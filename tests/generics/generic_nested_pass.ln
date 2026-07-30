@@ -1,0 +1,19 @@
+// Composing generics: a generic struct with a generic-enum field.
+type Option(T type) {
+    Some { val T }
+    None
+}
+type Box(T type) {
+    inner Option(T)
+}
+func peek(b Box(i32)) i32 {
+    return case b.inner {
+        Some(v): v
+        None: 0
+    }
+}
+proc main() i32 {
+    var b Box(i32) = Box(i32, Option(i32).Some(5))
+    if peek(b) == 5 { return 0 }
+    return 1
+}

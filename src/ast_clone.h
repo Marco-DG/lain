@@ -81,7 +81,30 @@ Type *clone_type(Arena *arena, Type *t) {
     *new_type = *t; // Shallow copy
     new_type->base_type = clone_id(arena, t->base_type);
     if (t->element_type) new_type->element_type = clone_type(arena, t->element_type);
-    
+
+    // Deep-copy the type-argument / function-parameter lists so per-instance
+    // generic substitution can rewrite them without corrupting the template.
+    if (t->type_args) {
+        TypeList *head = NULL, *tail = NULL;
+        for (TypeList *ta = t->type_args; ta; ta = ta->next) {
+            TypeList *node = arena_push_aligned(arena, TypeList);
+            node->type = clone_type(arena, ta->type); node->next = NULL;
+            if (!head) head = node; else tail->next = node;
+            tail = node;
+        }
+        new_type->type_args = head;
+    }
+    if (t->kind == TYPE_FUNC && t->func_params) {
+        TypeList *head = NULL, *tail = NULL;
+        for (TypeList *fp = t->func_params; fp; fp = fp->next) {
+            TypeList *node = arena_push_aligned(arena, TypeList);
+            node->type = clone_type(arena, fp->type); node->next = NULL;
+            if (!head) head = node; else tail->next = node;
+            tail = node;
+        }
+        new_type->func_params = head;
+    }
+
     // t->variant is not cloned here; it's resolved during sema, generic substitution will re-resolve it
     new_type->variant = t->variant;
     return new_type;

@@ -42,6 +42,10 @@ static Type *mono_subst_type(Type *t, SubstCtx *ctx) {
         for (int i = 0; i < ctx->n; i++)
             if (mono_id_eq(t->base_type, ctx->names[i]))
                 return ctx->concretes[i];
+        // Type-application `Option(T)` → substitute within the type arguments
+        // (leaves e.g. `Option(i32)`, which the caller then resolves to Option_i32).
+        for (TypeList *ta = t->type_args; ta; ta = ta->next)
+            ta->type = mono_subst_type(ta->type, ctx);
         return t;
     }
     if (t->element_type) t->element_type = mono_subst_type(t->element_type, ctx);
@@ -210,29 +214,12 @@ static void mono_unify(Type *pat, Type *arg, SubstCtx *ctx, Id **tp, int ntp) {
 
 // Clone + specialize a generic struct/enum: substitute the type parameters in
 // every field (and, for enums, every variant field) type; rename; drop the
-// header. Returns the concrete instance decl.
-static Decl *mono_instantiate_type(Decl *tmpl, SubstCtx *ctx, Id *inst_id) {
-    Decl *inst = clone_decl(sema_arena, tmpl);
-    if (inst->kind == DECL_STRUCT) {
-        inst->as.struct_decl.name = inst_id;
-        inst->as.struct_decl.type_params = NULL;
-        for (DeclList *f = inst->as.struct_decl.fields; f; f = f->next)
-            if (f->decl && f->decl->kind == DECL_VARIABLE)
-                f->decl->as.variable_decl.type = mono_subst_type(f->decl->as.variable_decl.type, ctx);
-    } else if (inst->kind == DECL_ENUM) {
-        inst->as.enum_decl.type_name = inst_id;
-        inst->as.enum_decl.type_params = NULL;
-        for (Variant *v = inst->as.enum_decl.variants; v; v = v->next)
-            for (DeclList *f = v->fields; f; f = f->next)
-                if (f->decl && f->decl->kind == DECL_VARIABLE)
-                    f->decl->as.variable_decl.type = mono_subst_type(f->decl->as.variable_decl.type, ctx);
-    }
-    return inst;
-}
-
 // Get-or-create the concrete instance of a generic type for the bound type args
-// (dedup via the symbol table; append the fresh instance to the decl list, where
-// the per-decl passes + emit reach it). Returns the instance decl.
+// (dedup via the symbol table). The instance SHELL is cloned, renamed, and
+// registered BEFORE its fields are specialized, so a self-referential generic
+// (`Node(T){ next *Node(T) }`) dedups to the in-progress instance instead of
+// recursing forever. Appended to the decl list, where the per-decl passes + emit
+// reach it. Returns the instance decl.
 static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
     Id *base = (tmpl->kind == DECL_STRUCT) ? tmpl->as.struct_decl.name : tmpl->as.enum_decl.type_name;
     char rawbuf[256];
@@ -245,12 +232,33 @@ static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
     Symbol *tsym = sema_lookup(tmplraw);
     char cnamebuf[288]; snprintf(cnamebuf, sizeof cnamebuf, "%s%s", tsym ? tsym->c_name : rawbuf, suffix);
     char *cname = mono_dup(cnamebuf, strlen(cnamebuf));
-    Decl *inst = mono_instantiate_type(tmpl, ctx, inst_id);
+
+    // 1) clone + rename + drop the header (the shell).
+    Decl *inst = clone_decl(sema_arena, tmpl);
+    if (inst->kind == DECL_STRUCT) { inst->as.struct_decl.name = inst_id; inst->as.struct_decl.type_params = NULL; }
+    else                          { inst->as.enum_decl.type_name = inst_id; inst->as.enum_decl.type_params = NULL; }
+
+    // 2) register + append BEFORE specializing fields (breaks self-reference).
     Type *ity = type_simple(sema_arena, inst_id);
     sema_insert_global(raw, cname, ity, inst, false);
     DeclList *node = decl_list(sema_arena, inst);
     DeclList *tail = sema_decls; while (tail && tail->next) tail = tail->next;
     if (tail) tail->next = node; else sema_decls = node;
+
+    // 3) specialize each field: substitute the type params, then resolve any
+    //    nested generic type-application (`inner Option(T)` → Option_i32).
+    if (inst->kind == DECL_STRUCT) {
+        for (DeclList *f = inst->as.struct_decl.fields; f; f = f->next)
+            if (f->decl && f->decl->kind == DECL_VARIABLE)
+                f->decl->as.variable_decl.type =
+                    mono_resolve_type_apps(mono_subst_type(f->decl->as.variable_decl.type, ctx));
+    } else if (inst->kind == DECL_ENUM) {
+        for (Variant *v = inst->as.enum_decl.variants; v; v = v->next)
+            for (DeclList *f = v->fields; f; f = f->next)
+                if (f->decl && f->decl->kind == DECL_VARIABLE)
+                    f->decl->as.variable_decl.type =
+                        mono_resolve_type_apps(mono_subst_type(f->decl->as.variable_decl.type, ctx));
+    }
     return inst;
 }
 
