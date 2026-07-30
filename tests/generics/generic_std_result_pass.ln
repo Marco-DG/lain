@@ -1,0 +1,19 @@
+// Use std.result AND std.option together (no cross-module helper clash).
+import std.option
+import std.result
+
+proc main() i32 {
+    var ok  Result(i32, i32) = Result(i32, i32).Ok(7)
+    var err Result(i32, i32) = Result(i32, i32).Err(99)
+    var s   Option(i32)      = Option(i32).Some(3)
+    if is_ok(ok) {
+        if is_err(err) {
+            if ok_or(ok, 0) == 7 {
+                if ok_or(err, 0) == 0 {
+                    if unwrap_or(s, 0) == 3 { return 0 }
+                }
+            }
+        }
+    }
+    return 1
+}

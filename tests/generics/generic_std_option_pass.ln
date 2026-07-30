@@ -1,0 +1,15 @@
+// Use the std.option library across a module boundary.
+import std.option
+
+proc main() i32 {
+    var s Option(i32) = Option(i32).Some(9)
+    var n Option(i32) = Option(i32).None
+    if is_some(s) {
+        if is_none(n) {
+            if unwrap_or(s, 0) == 9 {
+                if unwrap_or(n, 42) == 42 { return 0 }
+            }
+        }
+    }
+    return 1
+}

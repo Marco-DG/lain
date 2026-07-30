@@ -32,6 +32,28 @@ typedef struct {
     int   n;
 } SubstCtx;
 
+// Registry of generic type instances → their concrete type arguments, so
+// inference can unify a `Foo(T)` parameter pattern against a `Foo_i32` argument
+// (an instance is a flat TYPE_SIMPLE name that does not otherwise carry its args).
+typedef struct MonoInst {
+    Id   *name;                       // e.g. "Option_i32"
+    Type *args[MONO_MAX_TPARAMS];
+    int   n;
+    struct MonoInst *next;
+} MonoInst;
+static MonoInst *g_mono_insts = NULL;
+
+static void mono_record_inst(Id *name, Type **args, int n) {
+    MonoInst *m = arena_push_aligned(sema_arena, MonoInst);
+    m->name = name; m->n = n < MONO_MAX_TPARAMS ? n : MONO_MAX_TPARAMS;
+    for (int i = 0; i < m->n; i++) m->args[i] = args[i];
+    m->next = g_mono_insts; g_mono_insts = m;
+}
+static MonoInst *mono_find_inst(Id *name) {
+    for (MonoInst *m = g_mono_insts; m; m = m->next) if (mono_id_eq(m->name, name)) return m;
+    return NULL;
+}
+
 // Return the substituted type: a TYPE_SIMPLE whose name is a type-param becomes
 // the concrete type; composite types are rewritten in place (the clone is
 // freshly allocated, so mutating its element/param slots is safe — interned
@@ -218,6 +240,16 @@ static void mono_unify(Type *pat, Type *arg, SubstCtx *ctx, Id **tp, int ntp) {
     if (pat->kind == TYPE_SIMPLE && pat->base_type) {
         for (int i = 0; i < ntp; i++)
             if (mono_id_eq(pat->base_type, tp[i])) { mono_bind(ctx, pat->base_type, arg); return; }
+        // Type-application pattern `Foo(T..)` vs an instance argument `Foo_i32`:
+        // recover the instance's concrete type args and unify positionally.
+        if (pat->type_args && arg->kind == TYPE_SIMPLE && arg->base_type) {
+            MonoInst *info = mono_find_inst(arg->base_type);
+            if (info) {
+                int i = 0;
+                for (TypeList *pa = pat->type_args; pa && i < info->n; pa = pa->next, i++)
+                    mono_unify(pa->type, info->args[i], ctx, tp, ntp);
+            }
+        }
         return;   // concrete type in the pattern → nothing to bind
     }
     if (pat->element_type && arg->element_type)
@@ -253,6 +285,7 @@ static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
     // 2) register + append BEFORE specializing fields (breaks self-reference).
     Type *ity = type_simple(sema_arena, inst_id);
     sema_insert_global(raw, cname, ity, inst, false);
+    mono_record_inst(inst_id, ctx->concretes, ctx->n);   // for inference: Foo_i32 → [i32]
     DeclList *node = decl_list(sema_arena, inst);
     DeclList *tail = sema_decls; while (tail && tail->next) tail = tail->next;
     if (tail) tail->next = node; else sema_decls = node;

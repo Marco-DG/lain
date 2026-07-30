@@ -1,0 +1,29 @@
+// std.option — the generic optional type and its core combinators.
+// Zero-cost: each Option(T) monomorphizes to a plain tagged union.
+
+type Option(T type) {
+    Some { val T }
+    None
+}
+
+func is_some(T type, o Option(T)) bool {
+    return case o {
+        Some(v): true
+        None: false
+    }
+}
+
+func is_none(T type, o Option(T)) bool {
+    return case o {
+        Some(v): false
+        None: true
+    }
+}
+
+// Return the contained value, or `fallback` when None.
+func unwrap_or(T type, o Option(T), fallback T) T {
+    return case o {
+        Some(v): v
+        None: fallback
+    }
+}

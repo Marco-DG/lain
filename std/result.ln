@@ -1,0 +1,29 @@
+// std.result — the generic result type for recoverable errors.
+// Zero-cost: each Result(T, E) monomorphizes to a plain tagged union.
+
+type Result(T type, E type) {
+    Ok  { val T }
+    Err { err E }
+}
+
+func is_ok(T type, E type, r Result(T, E)) bool {
+    return case r {
+        Ok(v): true
+        Err(e): false
+    }
+}
+
+func is_err(T type, E type, r Result(T, E)) bool {
+    return case r {
+        Ok(v): false
+        Err(e): true
+    }
+}
+
+// Return the Ok value, or `fallback` when Err.
+func ok_or(T type, E type, r Result(T, E), fallback T) T {
+    return case r {
+        Ok(v): v
+        Err(e): fallback
+    }
+}
