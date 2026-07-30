@@ -240,6 +240,19 @@ static void mono_bind(SubstCtx *ctx, Id *name, Type *concrete) {
     if (ctx->n < MONO_MAX_TPARAMS) { ctx->names[ctx->n] = name; ctx->concretes[ctx->n] = concrete; ctx->n++; }
 }
 
+// Reinterpret an explicit type-argument expression as a Type. A plain type name
+// resolves to EXPR_TYPE; a pointer type-arg `*T` parses as EXPR_DEREF wrapping
+// the element type (recursively for `**T`). Returns NULL if `e` is not a type.
+static Type *mono_arg_to_type(Expr *e) {
+    if (!e) return NULL;
+    if (e->kind == EXPR_TYPE) return e->as.type_expr.type_value;
+    if (e->kind == EXPR_DEREF) {
+        Type *inner = mono_arg_to_type(e->as.deref_expr.expr);
+        return inner ? type_pointer(sema_arena, inner) : NULL;
+    }
+    return NULL;
+}
+
 // Structurally unify a parameter's type pattern against a concrete argument type,
 // binding any type-param names it mentions (T, *T[], etc.).
 static void mono_unify(Type *pat, Type *arg, SubstCtx *ctx, Id **tp, int ntp) {
@@ -383,12 +396,13 @@ static bool mono_construct_generic_struct(Expr *call, Decl *tmpl) {
         // Explicit: leading `ntp` args are the type arguments.
         ExprList *a = call->as.call_expr.args;
         for (int i = 0; i < ntp; i++, a = a->next) {
-            if (a->expr->kind != EXPR_TYPE || !a->expr->as.type_expr.type_value) {
+            Type *ta = mono_arg_to_type(a->expr);
+            if (!ta) {
                 fprintf(stderr, "[E124] Error Ln %li, Col %li: generic type '%.*s' expects a leading type argument.\n",
                         (long)call->line, (long)call->col, (int)base->length, base->name);
                 diagnostic_show_line(call->line, call->col); exit(1);
             }
-            mono_bind(&ctx, tp_names[i], a->expr->as.type_expr.type_value);
+            mono_bind(&ctx, tp_names[i], ta);
         }
         field_args = a;
     } else if (nargs == nf) {
@@ -445,13 +459,14 @@ static bool mono_ref_generic_enum(Expr *call, Decl *tmpl) {
     SubstCtx ctx; ctx.n = 0; char suffix[224]; int soff = 0; suffix[0] = '\0';
     ExprList *a = call->as.call_expr.args;
     for (DeclList *tp = tparams; tp; tp = tp->next) {
-        if (!a || a->expr->kind != EXPR_TYPE || !a->expr->as.type_expr.type_value) {
+        Type *ta = a ? mono_arg_to_type(a->expr) : NULL;
+        if (!ta) {
             fprintf(stderr, "[E124] Error Ln %li, Col %li: generic type '%.*s' expects a type argument.\n",
                     (long)call->line, (long)call->col, (int)base->length, base->name);
             diagnostic_show_line(call->line, call->col); exit(1);
         }
-        mono_bind(&ctx, tp->decl->as.variable_decl.name, a->expr->as.type_expr.type_value);
-        char tb[128]; mono_mangle_type(a->expr->as.type_expr.type_value, tb, sizeof tb);
+        mono_bind(&ctx, tp->decl->as.variable_decl.name, ta);
+        char tb[128]; mono_mangle_type(ta, tb, sizeof tb);
         soff += snprintf(suffix + soff, sizeof suffix - (size_t)soff, "_%s", tb);
         a = a->next;
     }
@@ -507,12 +522,13 @@ static bool sema_monomorphize_call(Expr *call) {
         // Explicit mode: leading `ntp` args are the type arguments.
         ExprList *a = call->as.call_expr.args;
         for (int i = 0; i < ntp; i++, a = a->next) {
-            if (a->expr->kind != EXPR_TYPE || !a->expr->as.type_expr.type_value) {
+            Type *ta = mono_arg_to_type(a->expr);
+            if (!ta) {
                 fprintf(stderr, "[E124] Error Ln %li, Col %li: type parameter '%.*s' expects a type argument.\n",
                         (long)call->line, (long)call->col, (int)tp_names[i]->length, tp_names[i]->name);
                 diagnostic_show_line(call->line, call->col); exit(1);
             }
-            mono_bind(&ctx, tp_names[i], a->expr->as.type_expr.type_value);
+            mono_bind(&ctx, tp_names[i], ta);
         }
         for (; a; a = a->next) {           // remaining args are the value args
             ExprList *node = arena_push(sema_arena, ExprList);

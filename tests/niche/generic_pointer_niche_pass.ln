@@ -1,0 +1,21 @@
+// niche x generics: a generic Option(T) instantiated at a pointer type
+// monomorphizes to Option_ptr_u8 and THEN niche-optimizes to a bare pointer
+// (None = NULL, no tag byte). Proves the north-star order: monomorphize first,
+// then niche-optimize the concrete instance.
+extern proc libc_printf(fmt *u8, ...) i32
+
+type Option(T type) {
+    Some { val T }
+    None
+}
+
+proc main() i32 {
+    var s Option(*u8) = Option(*u8).Some("hi")
+    var n Option(*u8) = Option(*u8).None
+    var r1 = case s { Some(v): 10  None: 20 }
+    var r2 = case n { Some(v): 10  None: 20 }
+    if r1 == 10 {
+        if r2 == 20 { return 0 }
+    }
+    return 1
+}
