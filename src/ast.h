@@ -44,6 +44,7 @@ typedef enum {
     TYPE_ARRAY,     // e.g. "u8[]"
     TYPE_SLICE,     // e.g. "u8[:0]"
     TYPE_POINTER,   // pointer to element type, e.g. "u8 *"
+    TYPE_NULLABLE,  // ?T — a nullable T (element_type = T); layout = niche of T
     TYPE_COMPTIME,  // comptime modifier
     TYPE_VARIANT,   // inner payload of an ADT variant
     TYPE_FUNC,      // non-capturing function pointer: *func(params) ret / *proc(params) ret
@@ -692,6 +693,18 @@ Type *type_pointer(Arena *arena, Type *element_type) {
     Type *t = arena_push_aligned(arena, Type);
     t->kind         = TYPE_POINTER;
     t->mode         = MODE_SHARED;  // pointers default to shared
+    t->element_type = element_type;
+    t->canon = t;
+    return t;
+}
+
+// ?T — a nullable T. Layout is the niche of T (?*T = one pointer, nil = null).
+// element_type = the wrapped T. LANGUAGE_MODEL §2: the optionality primitive.
+Type *type_nullable(Arena *arena, Type *element_type) {
+    assert(element_type != NULL);
+    Type *t = arena_push_aligned(arena, Type);
+    t->kind         = TYPE_NULLABLE;
+    t->mode         = MODE_SHARED;
     t->element_type = element_type;
     t->canon = t;
     return t;

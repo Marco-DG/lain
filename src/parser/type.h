@@ -67,6 +67,13 @@ Type *parse_type(Arena *arena, Parser *parser) {
     return type_mut(arena, inner);
   }
 
+  // ?T — nullable T (LANGUAGE_MODEL §2). Layout is the niche of T.
+  if (parser_match(TOKEN_QUESTION)) {
+    parser_advance();
+    Type *inner = parse_type(arena, parser);
+    return type_nullable(arena, inner);
+  }
+
   // The meta-type `type` — the type of a type parameter (`T type`). A parameter
   // of this type is a generic type parameter.
   if (parser_match(TOKEN_KEYWORD_TYPE)) {

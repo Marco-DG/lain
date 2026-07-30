@@ -35,6 +35,7 @@ typedef enum {
     TOKEN_ANGLE_BRACKET_RIGHT_EQUAL,
     TOKEN_ASTERISK,
     TOKEN_ASTERISK_EQUAL,
+    TOKEN_QUESTION,        // ?  — nullable-type prefix (?T / ?*T)
     TOKEN_SLASH,
     TOKEN_SLASH_EQUAL,
     TOKEN_PLUS,
@@ -183,6 +184,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:   return "TOKEN_ANGLE_BRACKET_RIGHT_EQUAL";
         case TOKEN_ASTERISK:                    return "TOKEN_ASTERISK";
         case TOKEN_ASTERISK_EQUAL:              return "TOKEN_ASTERISK_EQUAL";
+        case TOKEN_QUESTION:                    return "TOKEN_QUESTION";
         case TOKEN_SLASH:                       return "TOKEN_SLASH";
         case TOKEN_SLASH_EQUAL:                 return "TOKEN_SLASH_EQUAL";
         case TOKEN_PLUS:                        return "TOKEN_PLUS";

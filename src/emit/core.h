@@ -218,9 +218,10 @@ const char *c_name_for_id(Id *id) {
 
 static bool is_primitive_type(Type *t) {
     if (!t) return false;
-    // Unwrap comptime wrapper only (mode is now just a field)
+    // Unwrap comptime + nullable wrappers (a ?T is passed like its inner T:
+    // ?*T is pointer-sized → by value, not by hidden pointer).
     while (t) {
-        if (t->kind == TYPE_COMPTIME) { t = t->element_type; continue; }
+        if (t->kind == TYPE_COMPTIME || t->kind == TYPE_NULLABLE) { t = t->element_type; continue; }
         break;
     }
     
@@ -306,10 +307,13 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
     return;
   }
 
-  // --- Unwrap transparent wrappers (only TYPE_COMPTIME is a wrapper now) ---
+  // --- Unwrap transparent wrappers. TYPE_COMPTIME; and TYPE_NULLABLE, which
+  //     lays out as the niche of its inner, so for C naming ?T is just T.
+  //     (Increment 1: correct for ?*T = bare pointer, nil = null. Non-pointer
+  //     ?T niche + flow-narrowing come in later increments.) ---
   Type *u = t;
   while (u) {
-    if (u->kind == TYPE_COMPTIME) {
+    if (u->kind == TYPE_COMPTIME || u->kind == TYPE_NULLABLE) {
       if (u->element_type) { u = u->element_type; continue; }
       break;
     }

@@ -90,6 +90,7 @@ Token lexer_next(Lexer* lexer) {
                     case '}':           RETURN_TOKEN(TOKEN_R_BRACE);
                     case '[':           RETURN_TOKEN(TOKEN_L_BRACKET);
                     case ']':           RETURN_TOKEN(TOKEN_R_BRACKET);
+                    case '?':           RETURN_TOKEN(TOKEN_QUESTION);
                     case '(':           RETURN_TOKEN(TOKEN_L_PAREN);
                     case ')':           RETURN_TOKEN(TOKEN_R_PAREN);
                     case ':':           RETURN_TOKEN(TOKEN_COLON);
