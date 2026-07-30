@@ -1,0 +1,15 @@
+// Option.map composes generics with a (bare) function pointer — explicit & inferred.
+import std.option
+
+func triple(x i32) i32 {
+    return x
+}
+proc main() i32 {
+    var s Option(i32) = Option(i32).Some(5)
+    var a Option(i32) = map(i32, i32, s, triple)   // explicit
+    var b Option(i32) = map(s, triple)             // inferred T, U
+    if unwrap_or(a, 0) == 5 {
+        if unwrap_or(b, 0) == 5 { return 0 }
+    }
+    return 1
+}

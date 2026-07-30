@@ -123,6 +123,13 @@ static void mono_subst_expr(Expr *e, SubstCtx *ctx) {
             e->as.cast_expr.target_type = mono_subst_type(e->as.cast_expr.target_type, ctx);
             mono_subst_expr(e->as.cast_expr.expr, ctx);
             break;
+        case EXPR_MATCH:
+            mono_subst_expr(e->as.match_expr.value, ctx);
+            for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
+                for (ExprList *p = c->patterns; p; p = p->next) mono_subst_expr(p->expr, ctx);
+                mono_subst_expr(c->body, ctx);
+            }
+            break;
         case EXPR_MUT:
             mono_subst_expr(e->as.mut_expr.expr, ctx);
             break;
@@ -252,7 +259,11 @@ static void mono_unify(Type *pat, Type *arg, SubstCtx *ctx, Id **tp, int ntp) {
         }
         return;   // concrete type in the pattern → nothing to bind
     }
-    if (pat->element_type && arg->element_type)
+    if (pat->kind == TYPE_FUNC && arg->kind == TYPE_FUNC) {
+        TypeList *pp = pat->func_params, *ap = arg->func_params;
+        while (pp && ap) { mono_unify(pp->type, ap->type, ctx, tp, ntp); pp = pp->next; ap = ap->next; }
+    }
+    if (pat->element_type && arg->element_type)   // pointer/array element, or fn-ptr return
         mono_unify(pat->element_type, arg->element_type, ctx, tp, ntp);
 }
 
@@ -514,7 +525,14 @@ static bool sema_monomorphize_call(Expr *call) {
         ExprList *a = call->as.call_expr.args;
         for (int i = 0; i < nvp && a; i++, a = a->next) {
             sema_infer_expr(a->expr);      // ensure the arg has a type to unify against
-            mono_unify(vparams[i]->decl->as.variable_decl.type, a->expr->type, &ctx, tp_names, ntp);
+            Type *argt = a->expr->type;
+            // A bare function name passed as an argument has no fn-ptr type yet;
+            // synthesize it so a `*func(T) U` parameter can bind T and U.
+            if ((!argt || argt->kind != TYPE_FUNC) && a->expr->decl) {
+                Type *ft = fnptr_type_of_decl(a->expr->decl);
+                if (ft) argt = ft;
+            }
+            mono_unify(vparams[i]->decl->as.variable_decl.type, argt, &ctx, tp_names, ntp);
             ExprList *node = arena_push(sema_arena, ExprList);
             node->expr = a->expr; node->next = NULL;
             if (!new_args) new_args = node; else na_tail->next = node;

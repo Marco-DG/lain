@@ -27,3 +27,11 @@ func unwrap_or(T type, o Option(T), fallback T) T {
         None: fallback
     }
 }
+
+// Apply `f` to the contained value, if any — the functor map.
+func map(T type, U type, o Option(T), f *func(T) U) Option(U) {
+    return case o {
+        Some(v): Option(U).Some(f(v))
+        None: Option(U).None
+    }
+}
