@@ -46,7 +46,22 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
             const char *name = c_name_for_id(dl->decl->as.struct_decl.name);
             EMIT("typedef struct %s %s;\n", name, name);
         } else if (dl->decl->kind == DECL_ENUM) {
-            const char *name = c_name_for_id(dl->decl->as.enum_decl.type_name);
+            char name[256];
+            strncpy(name, c_name_for_id(dl->decl->as.enum_decl.type_name), sizeof name);
+            name[sizeof name - 1] = '\0';
+            // D-Niche: a niche-optimized enum is a scalar (pointer/int backing),
+            // not a struct. Emit its real typedef HERE (complete + early) so the
+            // name is usable in the function forward decls that pass it by
+            // `const T*`; the definition pass then emits only its constructors.
+            // (Same reasoning as the [packed] struct scalar typedef above.)
+            NicheLayout __fwd_niche = {0};
+            if (enum_is_zero_cost_niche(dl->decl, &__fwd_niche)) {
+                char backing[256];
+                emit_niche_backing_type(dl->decl, &__fwd_niche, backing, sizeof backing);
+                EMIT("typedef %s %s;\n", backing, name);
+                register_struct_type(name);
+                continue;
+            }
             EMIT("typedef struct %s %s;\n", name, name);
         } else if (dl->decl->kind == DECL_TYPE_ALIAS) {
             // Primitive-aliased typedefs (`type Pressure = i32 >= 0...`)

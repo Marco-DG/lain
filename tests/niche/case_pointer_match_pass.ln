@@ -1,0 +1,27 @@
+// D-Niche M3+M4: end-to-end with case matching on a niche-optimized
+// Option(*T). Compile, link, run — exit 0 means the niche layout
+// emitted is correct (no tag byte, sentinel-based discrimination).
+
+extern proc libc_printf(fmt *u8, ...) i32
+
+type OptionByte {
+    Some { v *u8 }
+    None
+}
+
+proc main() i32 {
+    var none_val = OptionByte.None
+    var some_val = OptionByte.Some("hi")
+
+    case none_val {
+        Some(b): libc_printf("none unexpectedly took Some\n")
+        None: libc_printf("ok: None branch\n")
+    }
+
+    case some_val {
+        Some(b): libc_printf("ok: Some branch\n")
+        None: libc_printf("some unexpectedly took None\n")
+    }
+
+    return 0
+}

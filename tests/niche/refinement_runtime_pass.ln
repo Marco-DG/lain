@@ -1,0 +1,39 @@
+// D-Niche follow-up: refinement payload niche end-to-end runtime.
+// `Reading` packs `value` (i32 in [0,1000]) with `NoData=-1` and
+// `SensorFault=-2` into a single i32, no tag byte.
+
+extern proc libc_printf(fmt *u8, ...) i32
+
+type Pressure = i32 >= 0 and <= 1000
+
+type Reading {
+    Ok { value Pressure }
+    NoData
+    SensorFault
+}
+
+proc main() i32 {
+    var r1 = Reading.NoData
+    var r2 = Reading.SensorFault
+    var r3 = Reading.Ok(500)
+
+    case r1 {
+        NoData: libc_printf("r1=NoData\n")
+        SensorFault: libc_printf("r1=SensorFault BAD\n")
+        Ok(v): libc_printf("r1=Ok BAD\n")
+    }
+
+    case r2 {
+        NoData: libc_printf("r2=NoData BAD\n")
+        SensorFault: libc_printf("r2=SensorFault\n")
+        Ok(v): libc_printf("r2=Ok BAD\n")
+    }
+
+    case r3 {
+        NoData: libc_printf("r3=NoData BAD\n")
+        SensorFault: libc_printf("r3=SensorFault BAD\n")
+        Ok(v): libc_printf("r3=Ok(%d)\n", v)
+    }
+
+    return 0
+}

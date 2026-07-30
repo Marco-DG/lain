@@ -11,6 +11,23 @@ void emit_decl_list(DeclList *decls, int depth);
 
 static void emit_param_type(Type *t, bool with_restrict); // Forward for use in forward decl
 
+// D-Niche: compute the C backing type for a niche-optimized enum (multi ->
+// primary field; pure-empty -> int32_t; bool payload -> uint8_t; else the
+// payload field's type). Shared by the forward-decl pass (emit.h) and the
+// definition pass below so the scalar typedef and its constructors agree.
+static void emit_niche_backing_type(Decl *decl, NicheLayout *nl, char *backing, size_t n) {
+    bool is_multi = (nl->primary_variant != NULL && nl->secondary_variant != NULL);
+    Variant *primary = is_multi ? nl->primary_variant
+                                : enum_payload_variant(&decl->as.enum_decl);
+    if (!primary) {
+        snprintf(backing, n, "int32_t");
+    } else {
+        Type *ft = primary->fields->decl->as.variable_decl.type;
+        if (!is_multi && nl->pool.kind == POOL_BOOL) snprintf(backing, n, "uint8_t");
+        else c_name_for_type(ft, backing, n);
+    }
+}
+
 // Q-019 [pure]: returns true if any parameter of decl is a var (MODE_MUTABLE) borrow.
 // A DECL_FUNCTION with no var params has no caller-visible side effects and qualifies
 // for __attribute__((pure)): Lain already guarantees no mutable global access and
@@ -1068,6 +1085,78 @@ void emit_decl(Decl* decl, int depth) {
         case DECL_ENUM: {
             // 1) lookup the C‐enum tag, e.g. "main_Shape"
             const char *adt_name = c_name_for_id(decl->as.enum_decl.type_name);
+
+            // D-Niche (re-land): if the payload has enough sentinel space, emit a
+            // bare typedef to the backing type (NO tag byte) plus sentinel/identity
+            // constructors, then skip the legacy tag+union path entirely.
+            NicheLayout __niche_layout = {0};
+            if (enum_is_zero_cost_niche(decl, &__niche_layout)) {
+                bool is_multi = (__niche_layout.primary_variant != NULL &&
+                                 __niche_layout.secondary_variant != NULL);
+
+                // The scalar typedef + registration were emitted in the
+                // forward-decl pass (emit.h) so the name is complete before the
+                // function forward decls that pass it by `const T*`. Here we emit
+                // only constructors; `backing` still drives the return casts.
+                char backing[256];
+                emit_niche_backing_type(decl, &__niche_layout, backing, sizeof backing);
+
+                // Constructors: empty variants return their sentinel; the single
+                // payload variant is the identity; a multi secondary maps its
+                // sub-enum ordinal into the primary's sentinel pool (value*stride).
+                for (Variant *v = decl->as.enum_decl.variants; v; v = v->next) {
+                    emit_indent(depth);
+                    EMIT("static inline %s %s_%.*s(", adt_name, adt_name,
+                         (int)v->name->length, v->name->name);
+                    if (v->fields) {
+                        int first = 1;
+                        for (DeclList *f = v->fields; f; f = f->next) {
+                            if (!first) EMIT(", ");
+                            emit_type(f->decl->as.variable_decl.type);
+                            EMIT(" %.*s",
+                                 (int)f->decl->as.variable_decl.name->length,
+                                 f->decl->as.variable_decl.name->name);
+                            first = 0;
+                        }
+                    } else {
+                        EMIT("void");
+                    }
+                    EMIT(") {\n");
+                    emit_indent(depth + 1);
+
+                    if (is_multi && v == __niche_layout.secondary_variant) {
+                        Id *fname = v->fields->decl->as.variable_decl.name;
+                        long long stride = __niche_layout.pool.ptr_stride > 0
+                            ? __niche_layout.pool.ptr_stride : 1;
+                        if (__niche_layout.pool.kind == POOL_POINTER) {
+                            EMIT("return (%s)(uintptr_t)((long long)%.*s * %lldLL);\n",
+                                 backing, (int)fname->length, fname->name, stride);
+                        } else {
+                            EMIT("return (%s)((long long)%.*s * %lldLL);\n",
+                                 backing, (int)fname->length, fname->name, stride);
+                        }
+                    } else if (!v->fields) {
+                        long long s = niche_sentinel_for_variant(
+                            &decl->as.enum_decl, v, &__niche_layout);
+                        if (__niche_layout.pool.kind == POOL_POINTER) {
+                            EMIT("return (%s)(uintptr_t)%lldLL;\n", backing, s);
+                        } else {
+                            EMIT("return (%s)%lldLL;\n", backing, s);
+                        }
+                    } else {
+                        Id *fname = v->fields->decl->as.variable_decl.name;
+                        if (__niche_layout.pool.kind == POOL_BOOL && !is_multi) {
+                            EMIT("return (uint8_t)%.*s;\n",
+                                 (int)fname->length, fname->name);
+                        } else {
+                            EMIT("return %.*s;\n", (int)fname->length, fname->name);
+                        }
+                    }
+                    emit_indent(depth);
+                    EMIT("}\n\n");
+                }
+                break;  // skip legacy tag+union emit
+            }
 
             // 2) Generate the Tag Enum: typedef enum { Shape_Tag_Circle, Shape_Tag_Rectangle } Shape_Tag;
             emit_indent(depth);

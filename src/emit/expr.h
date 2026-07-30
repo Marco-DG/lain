@@ -1116,7 +1116,19 @@ void emit_expr(Expr *expr, int depth) {
     EMIT("%s __result%d;\n", res_c_ty, __match_id);
 
     Type *scrut_type = sema_unwrap_type(expr->as.match_expr.value->type);
-    
+
+    // D-Niche: niche layout for the scrutinee enum. When zero-cost, arms
+    // discriminate on the sentinel value and bind payloads by identity —
+    // there is no `.tag`/`.data` (the scrutinee is a bare scalar).
+    DeclEnum *xmatch_adt = (scrut_type && scrut_type->kind == TYPE_SIMPLE && scrut_type->base_type)
+                           ? find_adt_decl(scrut_type->base_type) : NULL;
+    NicheLayout xmatch_niche = {0};
+    bool xmatch_use_niche = false;
+    if (xmatch_adt) {
+        xmatch_niche = niche_compute_layout(xmatch_adt);
+        xmatch_use_niche = xmatch_niche.is_zero_cost;
+    }
+
     bool first_clause = true;
     for (ExprMatchCase *c = expr->as.match_expr.cases; c; c = c->next) {
         emit_indent(depth + 1);
@@ -1174,7 +1186,64 @@ void emit_expr(Expr *expr, int depth) {
                               }
                           }
                       }
-                      if (padt && pmv) {
+                      if (padt && pmv && xmatch_use_niche) {
+                          char ecn[256];
+                          strncpy(ecn, c_name_for_id(padt->type_name), sizeof ecn); ecn[sizeof ecn - 1] = '\0';
+                          bool is_multi = xmatch_niche.primary_variant && xmatch_niche.secondary_variant;
+                          EMIT("(");
+                          if (is_multi && pmv == xmatch_niche.primary_variant) {
+                              EMIT("1");
+                              for (size_t si = 0; si < xmatch_niche.secondary_sentinels_count; si++) {
+                                  long long sv = xmatch_niche.secondary_sentinels[si];
+                                  if (xmatch_niche.pool.kind == POOL_POINTER) EMIT(" && (uintptr_t)__match%d != %lldULL", __match_id, sv);
+                                  else EMIT(" && __match%d != (%s)%lldLL", __match_id, ecn, sv);
+                              }
+                          } else if (is_multi && pmv == xmatch_niche.secondary_variant) {
+                              ExprList *arg = p->expr->as.call_expr.args;
+                              long long stride = xmatch_niche.pool.ptr_stride > 0 ? xmatch_niche.pool.ptr_stride : 1;
+                              bool emitted = false;
+                              if (arg && arg->expr) {
+                                  Id *sub_id = (arg->expr->kind == EXPR_IDENTIFIER) ? arg->expr->as.identifier_expr.id
+                                             : (arg->expr->kind == EXPR_MEMBER) ? arg->expr->as.member_expr.member : NULL;
+                                  if (sub_id && xmatch_niche.secondary_subenum_decl) {
+                                      int idx = 0;
+                                      DeclEnum *sub_e = &xmatch_niche.secondary_subenum_decl->as.enum_decl;
+                                      for (Variant *sv = sub_e->variants; sv; sv = sv->next, idx++) {
+                                          bool m = false;
+                                          if (sv->name->length == sub_id->length && memcmp(sv->name->name, sub_id->name, sub_id->length) == 0) m = true;
+                                          else if (sub_id->length > sv->name->length + 1) {
+                                              const char *sfx = sub_id->name + (sub_id->length - sv->name->length);
+                                              if (*(sfx-1) == '_' && memcmp(sfx, sv->name->name, sv->name->length) == 0) m = true;
+                                          }
+                                          if (m) {
+                                              long long sentinel = (long long)idx * stride;
+                                              if (xmatch_niche.pool.kind == POOL_POINTER) EMIT("(uintptr_t)__match%d == %lldULL", __match_id, sentinel);
+                                              else EMIT("__match%d == (%s)%lldLL", __match_id, ecn, sentinel);
+                                              emitted = true; break;
+                                          }
+                                      }
+                                  }
+                              }
+                              if (!emitted) {
+                                  long long upper = (long long)xmatch_niche.secondary_sentinels_count * stride;
+                                  if (xmatch_niche.pool.kind == POOL_POINTER) EMIT("(uintptr_t)__match%d < %lldULL", __match_id, upper);
+                                  else EMIT("__match%d < (%s)%lldLL", __match_id, ecn, upper);
+                              }
+                          } else if (pmv->fields) {
+                              EMIT("1");
+                              for (Variant *ev = padt->variants; ev; ev = ev->next) {
+                                  if (ev->fields) continue;
+                                  long long sv = niche_sentinel_for_variant(padt, ev, &xmatch_niche);
+                                  if (xmatch_niche.pool.kind == POOL_POINTER) EMIT(" && (uintptr_t)__match%d != %lldULL", __match_id, sv);
+                                  else EMIT(" && __match%d != (%s)%lldLL", __match_id, ecn, sv);
+                              }
+                          } else {
+                              long long sv = niche_sentinel_for_variant(padt, pmv, &xmatch_niche);
+                              if (xmatch_niche.pool.kind == POOL_POINTER) EMIT("(uintptr_t)__match%d == %lldULL", __match_id, sv);
+                              else EMIT("__match%d == (%s)%lldLL", __match_id, ecn, sv);
+                          }
+                          EMIT(")");
+                      } else if (padt && pmv) {
                           char ecn[256];
                           strncpy(ecn, c_name_for_id(padt->type_name), sizeof ecn); ecn[sizeof ecn - 1] = '\0';
                           EMIT("(__match%d.tag == %s_Tag_%.*s)", __match_id, ecn,
@@ -1208,7 +1277,14 @@ void emit_expr(Expr *expr, int depth) {
                           char adt_buf[256];
                           strncpy(adt_buf, c_name_for_id(sadt->type_name), sizeof(adt_buf));
                           adt_buf[sizeof(adt_buf)-1] = '\0';
-                          if (mv)
+                          if (xmatch_use_niche && mv) {
+                              // Empty variant — value equals its assigned sentinel.
+                              long long sv = niche_sentinel_for_variant(xmatch_adt, mv, &xmatch_niche);
+                              if (xmatch_niche.pool.kind == POOL_POINTER)
+                                  EMIT("(uintptr_t)__match%d == %lldULL", __match_id, sv);
+                              else
+                                  EMIT("__match%d == (%s)%lldLL", __match_id, adt_buf, sv);
+                          } else if (mv)
                               EMIT("__match%d.tag == %s_Tag_%.*s", __match_id, adt_buf,
                                    (int)mv->name->length, mv->name->name);
                           else
@@ -1257,18 +1333,45 @@ void emit_expr(Expr *expr, int depth) {
             if (mv) {
                 ExprList *arg = c->patterns->expr->as.call_expr.args;
                 DeclList *field = mv->fields;
+                bool is_multi_match = xmatch_use_niche &&
+                                      xmatch_niche.primary_variant && xmatch_niche.secondary_variant;
+                bool is_secondary = is_multi_match && mv == xmatch_niche.secondary_variant;
                 while (arg && field) {
                     if (arg->expr && arg->expr->kind == EXPR_IDENTIFIER &&
                         field->decl && field->decl->kind == DECL_VARIABLE) {
                         Id *vn = arg->expr->as.identifier_expr.id;
+                        // Static sub-variant pattern like Err(NotFound): no binding.
+                        bool is_sub_variant = false;
+                        if (is_secondary && xmatch_niche.secondary_subenum_decl) {
+                            DeclEnum *sub_e = &xmatch_niche.secondary_subenum_decl->as.enum_decl;
+                            for (Variant *sv = sub_e->variants; sv; sv = sv->next) {
+                                if (sv->name->length == vn->length && memcmp(sv->name->name, vn->name, vn->length) == 0) { is_sub_variant = true; break; }
+                                if (vn->length > sv->name->length + 1) {
+                                    const char *sfx = vn->name + (vn->length - sv->name->length);
+                                    if (*(sfx-1) == '_' && memcmp(sfx, sv->name->name, sv->name->length) == 0) { is_sub_variant = true; break; }
+                                }
+                            }
+                        }
+                        if (is_sub_variant) { arg = arg->next; field = field->next; continue; }
+
                         Type *ft = field->decl->as.variable_decl.type;
                         char fty[256]; c_name_for_type(ft, fty, sizeof fty);
                         emit_indent(depth + 2);
-                        EMIT("%s %.*s = __match%d.data.%.*s.%.*s;\n",
-                             fty, (int)vn->length, vn->name, __match_id,
-                             (int)mv->name->length, mv->name->name,
-                             (int)field->decl->as.variable_decl.name->length,
-                             field->decl->as.variable_decl.name->name);
+                        if (is_secondary) {
+                            long long stride = xmatch_niche.pool.ptr_stride > 0 ? xmatch_niche.pool.ptr_stride : 1;
+                            EMIT("%s %.*s = (%s)((uintptr_t)__match%d / %lldULL);\n",
+                                 fty, (int)vn->length, vn->name, fty, __match_id, stride);
+                        } else if (xmatch_use_niche) {
+                            // Single-field payload — the value IS the field.
+                            EMIT("%s %.*s = (%s)__match%d;\n",
+                                 fty, (int)vn->length, vn->name, fty, __match_id);
+                        } else {
+                            EMIT("%s %.*s = __match%d.data.%.*s.%.*s;\n",
+                                 fty, (int)vn->length, vn->name, __match_id,
+                                 (int)mv->name->length, mv->name->name,
+                                 (int)field->decl->as.variable_decl.name->length,
+                                 field->decl->as.variable_decl.name->name);
+                        }
                     }
                     arg = arg->next; field = field->next;
                 }
