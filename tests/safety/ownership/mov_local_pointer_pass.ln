@@ -1,0 +1,12 @@
+// `mov <name> *<ptr> = expr` owned-local declaration (previously CRASHED the
+// compiler via a mis-parse `(mov p) * u8`). Declares an owned pointer and
+// consumes it exactly once. Self-contained (no std.mem) so the emitted C
+// compiles cleanly under the test gate.
+extern proc acquire() mov *u8
+extern proc release(p mov *u8)
+
+proc main() i32 {
+    mov p *u8 = acquire()
+    release(mov p)
+    return 0
+}

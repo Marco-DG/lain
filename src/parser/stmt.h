@@ -152,6 +152,20 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         parser_advance();
         result = parse_var_stmt(arena, parser);
     }
+    else if (parser_match(TOKEN_KEYWORD_MOV)) {
+        // Owned-local declaration: `mov x T = expr`. Parse like `var`, then mark
+        // it non-mutable and give the annotated type MODE_OWNED so linearity
+        // tracks it as must-consume. Without this, a leading `mov` fell through
+        // to expression parsing — `mov p *u8` mis-parsed as `(mov p) * u8` and
+        // crashed at type_move(NULL).
+        parser_advance(); // consume 'mov'
+        result = parse_var_stmt(arena, parser);
+        if (result && result->kind == STMT_VAR) {
+            result->as.var_stmt.is_mutable = false;
+            if (result->as.var_stmt.type)
+                result->as.var_stmt.type = type_move(arena, result->as.var_stmt.type);
+        }
+    }
     else if (parser_match(TOKEN_KEYWORD_IF)) {
         result = parse_if_stmt(arena, parser);
     }

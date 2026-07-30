@@ -2340,6 +2340,11 @@ void sema_infer_expr(Expr *e) {
 
   case EXPR_MOVE:
     sema_infer_expr(e->as.move_expr.expr);
+    if (!e->as.move_expr.expr->type) {
+        fprintf(stderr, "[E012] Error Ln %li, Col %li: `mov` expects an owned value, but its operand "
+                "has no value type.\n", (long)e->line, (long)e->col);
+        diagnostic_show_line(e->line, e->col); exit(1);
+    }
     e->type = type_move(sema_arena, e->as.move_expr.expr->type);
     break;
 
