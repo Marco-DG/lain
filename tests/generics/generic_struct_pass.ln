@@ -1,0 +1,13 @@
+// Generic struct: type-application in signatures + var annotation + construction.
+type Pair(T type) {
+    a T
+    b T
+}
+func fst(p Pair(i32)) i32 {
+    return p.a
+}
+proc main() i32 {
+    var p Pair(i32) = Pair(i32, 4, 9)
+    if fst(p) == 4 { return 0 }
+    return 1
+}

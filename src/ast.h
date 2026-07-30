@@ -80,6 +80,11 @@ typedef struct Type {
     struct TypeList *func_params;
     bool            func_is_total;
 
+    /* Generic type-application `Vec(i32)`: a TYPE_SIMPLE whose base_type names a
+       generic type, with the concrete type arguments here (NULL = not an
+       application). Sema instantiates it and rewrites the node to the instance. */
+    struct TypeList *type_args;
+
     /* P2/S1: cached integer width/signedness on the node, so the type name
        ("i32") is parsed once instead of on every width query.
        int_width_cache: 0 = not computed yet, -1 = not an integer, 1..64 = width. */
@@ -689,6 +694,19 @@ Type *type_pointer(Arena *arena, Type *element_type) {
     t->mode         = MODE_SHARED;  // pointers default to shared
     t->element_type = element_type;
     t->canon = t;
+    return t;
+}
+
+// A generic type-application `Name(args)` in type position (e.g. `Vec(i32)`).
+// A fresh, non-interned TYPE_SIMPLE carrying the type arguments; sema replaces
+// it with the concrete instance type.
+Type *type_application(Arena *arena, Id *name, struct TypeList *type_args) {
+    Type *t = arena_push_aligned(arena, Type);
+    t->kind      = TYPE_SIMPLE;
+    t->mode      = MODE_SHARED;
+    t->base_type = name;
+    t->type_args = type_args;
+    t->canon     = t;
     return t;
 }
 

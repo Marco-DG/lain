@@ -48,6 +48,7 @@ static bool _alias_is_primitive(Decl *d) {
 static void collect_type_nodes(DeclList *decls, TypeNode **out_nodes, int *out_n) {
     int count = 0;
     for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (decl_is_generic_template(dl->decl)) continue;   // templates: only instances emit
         if (dl->decl->kind == DECL_ENUM || dl->decl->kind == DECL_STRUCT)
             count++;
         else if (_alias_is_primitive(dl->decl))
@@ -58,6 +59,7 @@ static void collect_type_nodes(DeclList *decls, TypeNode **out_nodes, int *out_n
     int idx = 0;
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
+        if (decl_is_generic_template(d)) continue;          // templates: only instances emit
         const char *cname = NULL;
         if (d->kind == DECL_STRUCT) {
             cname = c_name_for_id(d->as.struct_decl.name);

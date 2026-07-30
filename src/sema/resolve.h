@@ -61,6 +61,9 @@ void sema_infer_expr(Expr *e);
 static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col);
 // Defined in monomorph.h; rewrites a generic call to its concrete instance.
 static bool sema_monomorphize_call(Expr *call);
+// Defined in monomorph.h; resolves generic type-applications `Vec(i32)` in a type.
+static Type *mono_resolve_type_apps(Type *t);
+static void  mono_resolve_signature(Decl *d);
 void sema_resolve_expr(Expr *e); // forward
 
 /*
@@ -405,6 +408,9 @@ void sema_resolve_stmt(Stmt *s) {
     // 1) resolve & infer initializer
     // 1) resolve & infer initializer
     Expr *rhs = s->as.var_stmt.expr;
+    // Resolve a generic type-application annotation (`var v Vec(i32)`).
+    if (s->as.var_stmt.type)
+        s->as.var_stmt.type = mono_resolve_type_apps(s->as.var_stmt.type);
     Type *ty = s->as.var_stmt.type; // Start with the annotation (if any)
     
     // If there is an annotation, resolve it first

@@ -93,6 +93,25 @@ Type *parse_type(Arena *arena, Parser *parser) {
 
   base_type = type_simple(arena, type_name);
 
+  // Generic type-application in type position: `Name(T1, T2, …)` (e.g. Vec(i32)).
+  if (parser_match(TOKEN_L_PAREN)) {
+    parser_advance(); // '('
+    TypeList *targs = NULL, *tt = NULL;
+    if (!parser_match(TOKEN_R_PAREN)) {
+      for (;;) {
+        Type *arg = parse_type(arena, parser);
+        TypeList *node = type_list(arena, arg);
+        if (!targs) targs = node; else tt->next = node;
+        tt = node;
+        if (parser_match(TOKEN_COMMA)) { parser_advance(); continue; }
+        break;
+      }
+    }
+    parser_expect(TOKEN_R_PAREN, "Expected ')' after type arguments");
+    parser_advance();
+    base_type = type_application(arena, type_name, targs);
+  }
+
   // 3) allow array/slice suffixes
   while (parser_match(TOKEN_L_BRACKET)) {
     parser_advance(); // consume '['

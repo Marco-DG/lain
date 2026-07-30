@@ -208,14 +208,135 @@ static void mono_unify(Type *pat, Type *arg, SubstCtx *ctx, Id **tp, int ntp) {
         mono_unify(pat->element_type, arg->element_type, ctx, tp, ntp);
 }
 
+// Clone + specialize a generic struct/enum: substitute the type parameters in
+// every field (and, for enums, every variant field) type; rename; drop the
+// header. Returns the concrete instance decl.
+static Decl *mono_instantiate_type(Decl *tmpl, SubstCtx *ctx, Id *inst_id) {
+    Decl *inst = clone_decl(sema_arena, tmpl);
+    if (inst->kind == DECL_STRUCT) {
+        inst->as.struct_decl.name = inst_id;
+        inst->as.struct_decl.type_params = NULL;
+        for (DeclList *f = inst->as.struct_decl.fields; f; f = f->next)
+            if (f->decl && f->decl->kind == DECL_VARIABLE)
+                f->decl->as.variable_decl.type = mono_subst_type(f->decl->as.variable_decl.type, ctx);
+    } else if (inst->kind == DECL_ENUM) {
+        inst->as.enum_decl.type_name = inst_id;
+        inst->as.enum_decl.type_params = NULL;
+        for (Variant *v = inst->as.enum_decl.variants; v; v = v->next)
+            for (DeclList *f = v->fields; f; f = f->next)
+                if (f->decl && f->decl->kind == DECL_VARIABLE)
+                    f->decl->as.variable_decl.type = mono_subst_type(f->decl->as.variable_decl.type, ctx);
+    }
+    return inst;
+}
+
+// Get-or-create the concrete instance of a generic type for the bound type args
+// (dedup via the symbol table; append the fresh instance to the decl list, where
+// the per-decl passes + emit reach it). Returns the instance decl.
+static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
+    Id *base = (tmpl->kind == DECL_STRUCT) ? tmpl->as.struct_decl.name : tmpl->as.enum_decl.type_name;
+    char rawbuf[256];
+    snprintf(rawbuf, sizeof rawbuf, "%.*s%s", (int)base->length, base->name, suffix);
+    Symbol *existing = sema_lookup(rawbuf);
+    if (existing) return existing->decl;
+    char *raw = mono_dup(rawbuf, strlen(rawbuf));
+    Id *inst_id = id(sema_arena, (isize)strlen(raw), raw);
+    char tmplraw[224]; snprintf(tmplraw, sizeof tmplraw, "%.*s", (int)base->length, base->name);
+    Symbol *tsym = sema_lookup(tmplraw);
+    char cnamebuf[288]; snprintf(cnamebuf, sizeof cnamebuf, "%s%s", tsym ? tsym->c_name : rawbuf, suffix);
+    char *cname = mono_dup(cnamebuf, strlen(cnamebuf));
+    Decl *inst = mono_instantiate_type(tmpl, ctx, inst_id);
+    Type *ity = type_simple(sema_arena, inst_id);
+    sema_insert_global(raw, cname, ity, inst, false);
+    DeclList *node = decl_list(sema_arena, inst);
+    DeclList *tail = sema_decls; while (tail && tail->next) tail = tail->next;
+    if (tail) tail->next = node; else sema_decls = node;
+    return inst;
+}
+
+// Resolve generic type-applications in a type: `Vec(i32)` in a signature/field
+// becomes the concrete instance type. Recurses into nested applications and
+// composite types. Returns the (possibly rewritten) type.
+static Type *mono_resolve_type_apps(Type *t) {
+    if (!t) return t;
+    if (t->kind == TYPE_SIMPLE && t->type_args && t->base_type) {
+        for (TypeList *ta = t->type_args; ta; ta = ta->next) ta->type = mono_resolve_type_apps(ta->type);
+        char nb[224]; snprintf(nb, sizeof nb, "%.*s", (int)t->base_type->length, t->base_type->name);
+        Symbol *sym = sema_lookup(nb);
+        if (!sym || !sym->decl || !decl_is_generic_template(sym->decl) ||
+            (sym->decl->kind != DECL_STRUCT && sym->decl->kind != DECL_ENUM)) {
+            fprintf(stderr, "[E124] Error: '%.*s' is not a generic type.\n",
+                    (int)t->base_type->length, t->base_type->name);
+            exit(1);
+        }
+        Decl *tmpl = sym->decl;
+        DeclList *tparams = (tmpl->kind == DECL_STRUCT) ? tmpl->as.struct_decl.type_params
+                                                        : tmpl->as.enum_decl.type_params;
+        SubstCtx ctx; ctx.n = 0; char suffix[224]; int soff = 0; suffix[0] = '\0';
+        TypeList *ta = t->type_args;
+        for (DeclList *tp = tparams; tp && ta; tp = tp->next, ta = ta->next) {
+            mono_bind(&ctx, tp->decl->as.variable_decl.name, ta->type);
+            char tb[128]; mono_mangle_type(ta->type, tb, sizeof tb);
+            soff += snprintf(suffix + soff, sizeof suffix - (size_t)soff, "_%s", tb);
+        }
+        Decl *inst = mono_type_instance(tmpl, &ctx, suffix);
+        Id *iname = (inst->kind == DECL_STRUCT) ? inst->as.struct_decl.name : inst->as.enum_decl.type_name;
+        return type_simple(sema_arena, iname);
+    }
+    if (t->element_type) t->element_type = mono_resolve_type_apps(t->element_type);
+    return t;
+}
+
+// Resolve type-applications across a function's signature (param + return types).
+static void mono_resolve_signature(Decl *d) {
+    if (!d || d->kind != DECL_FUNCTION) return;
+    for (DeclList *p = d->as.function_decl.params; p; p = p->next)
+        if (p->decl && p->decl->kind == DECL_VARIABLE)
+            p->decl->as.variable_decl.type = mono_resolve_type_apps(p->decl->as.variable_decl.type);
+    d->as.function_decl.return_type = mono_resolve_type_apps(d->as.function_decl.return_type);
+}
+
+// Generic struct construction: `Pair(i32, 3, 5)` → instantiate Pair_i32 and
+// rewrite the call to construct it (leading type args peeled, fields kept).
+static bool mono_construct_generic_struct(Expr *call, Decl *tmpl) {
+    Expr *callee = call->as.call_expr.callee;
+    DeclList *tparams = tmpl->as.struct_decl.type_params;
+    Id *base = tmpl->as.struct_decl.name;
+    SubstCtx ctx; ctx.n = 0;
+    char suffix[224]; int soff = 0; suffix[0] = '\0';
+    ExprList *a = call->as.call_expr.args;
+    for (DeclList *tp = tparams; tp; tp = tp->next) {
+        if (!a || a->expr->kind != EXPR_TYPE || !a->expr->as.type_expr.type_value) {
+            fprintf(stderr, "[E124] Error Ln %li, Col %li: generic type '%.*s' expects a leading type argument.\n",
+                    (long)call->line, (long)call->col, (int)base->length, base->name);
+            diagnostic_show_line(call->line, call->col); exit(1);
+        }
+        mono_bind(&ctx, tp->decl->as.variable_decl.name, a->expr->as.type_expr.type_value);
+        char tb[128]; mono_mangle_type(a->expr->as.type_expr.type_value, tb, sizeof tb);
+        soff += snprintf(suffix + soff, sizeof suffix - (size_t)soff, "_%s", tb);
+        a = a->next;
+    }
+    call->as.call_expr.args = a;                 // remaining args are the field values
+    Decl *inst = mono_type_instance(tmpl, &ctx, suffix);
+    Type *ity = type_simple(sema_arena, inst->as.struct_decl.name);
+    callee->decl = inst;
+    callee->type = ity;
+    if (callee->kind == EXPR_TYPE) callee->as.type_expr.type_value = ity;
+    else                           callee->as.identifier_expr.id = inst->as.struct_decl.name;
+    return true;
+}
+
 // Detect + rewrite a call to a generic function. Type arguments may be passed
 // explicitly (`max(i32, 3, 5)`) or inferred from the value arguments
 // (`max(3, 5)`). Returns true iff `call` was a generic call (now rewritten).
 static bool sema_monomorphize_call(Expr *call) {
     Expr *callee = call->as.call_expr.callee;
-    if (!callee || callee->kind != EXPR_IDENTIFIER || !callee->decl) return false;
+    if (!callee || (callee->kind != EXPR_IDENTIFIER && callee->kind != EXPR_TYPE) || !callee->decl)
+        return false;
     Decl *tmpl = callee->decl;
-    if (tmpl->kind != DECL_FUNCTION || !decl_is_generic_template(tmpl)) return false;
+    if (!decl_is_generic_template(tmpl)) return false;
+    if (tmpl->kind == DECL_STRUCT) return mono_construct_generic_struct(call, tmpl);
+    if (tmpl->kind != DECL_FUNCTION) return false;
 
     Id *base = tmpl->as.function_decl.name;
 

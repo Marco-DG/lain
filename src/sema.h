@@ -2382,6 +2382,9 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         // Generic templates are never processed directly — only their concrete
         // monomorphized instances (appended to this same list) are.
         if (decl_is_generic_template(d)) continue;
+        // Resolve generic type-applications in the signature (`Vec(i32)` params/
+        // returns) — for original functions and appended instances alike.
+        mono_resolve_signature(d);
 
         sema_clear_locals();
 
