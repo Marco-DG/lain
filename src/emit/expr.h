@@ -885,9 +885,24 @@ void emit_expr(Expr *expr, int depth) {
            if (needs_ptr) {
                Type *at = arg->expr->type;
                if (at && at->mode != MODE_MUTABLE && at->kind != TYPE_POINTER) {
-                   EMIT("&(");
-                   emit_expr(arg->expr, depth);
-                   EMIT(")");
+                   // A shared value passed by pointer. If the argument is an
+                   // lvalue, take its address; otherwise (a call/constructor/case
+                   // result — an rvalue whose address is illegal C) materialize
+                   // it in a compound-literal array, which is an lvalue with
+                   // block lifetime and decays to the required pointer.
+                   ExprKind k = arg->expr->kind;
+                   bool is_lvalue = (k == EXPR_IDENTIFIER || k == EXPR_MEMBER || k == EXPR_INDEX);
+                   if (is_lvalue) {
+                       EMIT("&(");
+                       emit_expr(arg->expr, depth);
+                       EMIT(")");
+                   } else {
+                       Type tn = *at; tn.mode = MODE_SHARED;
+                       char tbuf[256]; c_name_for_type(&tn, tbuf, sizeof tbuf);
+                       EMIT("(%s[1]){ ", tbuf);
+                       emit_expr(arg->expr, depth);
+                       EMIT(" }");
+                   }
                    goto next_arg;
                }
                // Argument is already a pointer (var T param forwarded to another var T param).

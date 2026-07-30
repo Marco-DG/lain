@@ -1,5 +1,6 @@
 // The core generic-programming pattern: a function generic over T that returns
-// Option(T) and builds it in its body, plus a consumer taking Option(i32).
+// Option(T) and builds it in its body, chained directly into a consumer that
+// takes Option(i32) by value (its rvalue result materialized for the pointer ABI).
 type Option(T type) {
     Some { val T }
     None
@@ -14,7 +15,6 @@ func unwrap(o Option(i32)) i32 {
     }
 }
 proc main() i32 {
-    var o Option(i32) = some(7)
-    if unwrap(o) == 7 { return 0 }
+    if unwrap(some(7)) == 7 { return 0 }
     return 1
 }
