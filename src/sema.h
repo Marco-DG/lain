@@ -81,6 +81,7 @@ static PtrInitIdxEntry *sema_ptr_init_idx = NULL;
 #include "sema/typecheck.h"
 #include "sema/monomorph.h"
 #include "sema/linearity.h"
+#include "sema/niche.h"
 
 Type *current_return_type = NULL;
 Decl *current_function_decl = NULL;
@@ -91,6 +92,7 @@ RangeTable *sema_ranges = NULL;
 bool sema_in_unsafe_block = false;
 bool sema_walk_phase = false;
 bool sema_addr_of_context = false; // set by EXPR_ADDR to relax &arr[len] in bounds check
+bool sema_dump_niche = false;      // set by main from args.dump_niche (D-Niche re-land)
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Public entry: call this before emit                             │
@@ -2372,6 +2374,20 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             }
         }
         if (any_error) exit(1);
+    }
+
+    // D-Niche (re-land): precompute niche layout for every enum, emit a
+    // best-effort W120 when the sentinel pool was insufficient, and dump the
+    // decision when --dump-niche is set. Codegen (emit/*) recomputes per enum,
+    // so this loop is diagnostic; it runs after monomorphization below only for
+    // W120 coverage of generic instances — non-generic enums are covered here.
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (dl->decl && dl->decl->kind == DECL_ENUM &&
+            !decl_is_generic_template(dl->decl)) {
+            NicheLayout layout = niche_compute_layout(&dl->decl->as.enum_decl);
+            niche_emit_w120(&dl->decl->as.enum_decl, &layout);
+            if (sema_dump_niche) niche_dump_layout(&dl->decl->as.enum_decl, &layout);
+        }
     }
 
     // 2) For each function: resolve → infer → linearity → clear locals
