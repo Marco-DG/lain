@@ -1,0 +1,12 @@
+// Constructor type inference: type parameter inferred from the field values.
+type Pair(T type) {
+    a T
+    b T
+}
+proc main() i32 {
+    var p = Pair(4, 9)       // T inferred = i32 (no explicit type argument)
+    if p.a == 4 {
+        if p.b == 9 { return 0 }
+    }
+    return 1
+}

@@ -304,27 +304,73 @@ static void mono_resolve_signature(Decl *d) {
     d->as.function_decl.return_type = mono_resolve_type_apps(d->as.function_decl.return_type);
 }
 
-// Generic struct construction: `Pair(i32, 3, 5)` → instantiate Pair_i32 and
-// rewrite the call to construct it (leading type args peeled, fields kept).
+// Generic struct construction. Type args may be explicit and leading
+// (`Pair(i32, 3, 5)`) or inferred from the field values (`Pair(3, 5)` — unify
+// each field's type pattern against its argument). Instantiates Pair_i32 and
+// rewrites the call to construct the concrete struct.
 static bool mono_construct_generic_struct(Expr *call, Decl *tmpl) {
     Expr *callee = call->as.call_expr.callee;
     DeclList *tparams = tmpl->as.struct_decl.type_params;
+    DeclList *fields  = tmpl->as.struct_decl.fields;
     Id *base = tmpl->as.struct_decl.name;
+
+    Id *tp_names[MONO_MAX_TPARAMS]; int ntp = 0;
+    for (DeclList *tp = tparams; tp; tp = tp->next)
+        if (ntp < MONO_MAX_TPARAMS) tp_names[ntp++] = tp->decl->as.variable_decl.name;
+    int nf = 0;    for (DeclList *f = fields; f; f = f->next) nf++;
+    int nargs = 0; for (ExprList *a = call->as.call_expr.args; a; a = a->next) nargs++;
+
     SubstCtx ctx; ctx.n = 0;
-    char suffix[224]; int soff = 0; suffix[0] = '\0';
-    ExprList *a = call->as.call_expr.args;
-    for (DeclList *tp = tparams; tp; tp = tp->next) {
-        if (!a || a->expr->kind != EXPR_TYPE || !a->expr->as.type_expr.type_value) {
-            fprintf(stderr, "[E124] Error Ln %li, Col %li: generic type '%.*s' expects a leading type argument.\n",
-                    (long)call->line, (long)call->col, (int)base->length, base->name);
-            diagnostic_show_line(call->line, call->col); exit(1);
+    ExprList *field_args;
+
+    if (nargs == ntp + nf) {
+        // Explicit: leading `ntp` args are the type arguments.
+        ExprList *a = call->as.call_expr.args;
+        for (int i = 0; i < ntp; i++, a = a->next) {
+            if (a->expr->kind != EXPR_TYPE || !a->expr->as.type_expr.type_value) {
+                fprintf(stderr, "[E124] Error Ln %li, Col %li: generic type '%.*s' expects a leading type argument.\n",
+                        (long)call->line, (long)call->col, (int)base->length, base->name);
+                diagnostic_show_line(call->line, call->col); exit(1);
+            }
+            mono_bind(&ctx, tp_names[i], a->expr->as.type_expr.type_value);
         }
-        mono_bind(&ctx, tp->decl->as.variable_decl.name, a->expr->as.type_expr.type_value);
-        char tb[128]; mono_mangle_type(a->expr->as.type_expr.type_value, tb, sizeof tb);
-        soff += snprintf(suffix + soff, sizeof suffix - (size_t)soff, "_%s", tb);
-        a = a->next;
+        field_args = a;
+    } else if (nargs == nf) {
+        // Inferred: unify each field's type pattern against its argument.
+        ExprList *a = call->as.call_expr.args;
+        for (DeclList *f = fields; f && a; f = f->next, a = a->next) {
+            sema_infer_expr(a->expr);
+            if (f->decl && f->decl->kind == DECL_VARIABLE)
+                mono_unify(f->decl->as.variable_decl.type, a->expr->type, &ctx, tp_names, ntp);
+        }
+        for (int i = 0; i < ntp; i++) {
+            bool bound = false;
+            for (int j = 0; j < ctx.n; j++) if (mono_id_eq(ctx.names[j], tp_names[i])) bound = true;
+            if (!bound) {
+                fprintf(stderr, "[E124] Error Ln %li, Col %li: cannot infer type parameter '%.*s' of '%.*s' "
+                        "from the field values — pass it explicitly.\n",
+                        (long)call->line, (long)call->col, (int)tp_names[i]->length, tp_names[i]->name,
+                        (int)base->length, base->name);
+                diagnostic_show_line(call->line, call->col); exit(1);
+            }
+        }
+        field_args = call->as.call_expr.args;
+    } else {
+        fprintf(stderr, "[E124] Error Ln %li, Col %li: wrong number of arguments to construct generic '%.*s' "
+                "(expected %d field values, with %d type argument(s) explicit or inferred).\n",
+                (long)call->line, (long)call->col, (int)base->length, base->name, nf, ntp);
+        diagnostic_show_line(call->line, call->col); exit(1);
     }
-    call->as.call_expr.args = a;                 // remaining args are the field values
+
+    char suffix[224]; int soff = 0; suffix[0] = '\0';
+    for (int i = 0; i < ntp; i++) {
+        Type *concrete = NULL;
+        for (int j = 0; j < ctx.n; j++) if (mono_id_eq(ctx.names[j], tp_names[i])) concrete = ctx.concretes[j];
+        char tb[128]; mono_mangle_type(concrete, tb, sizeof tb);
+        soff += snprintf(suffix + soff, sizeof suffix - (size_t)soff, "_%s", tb);
+    }
+
+    call->as.call_expr.args = field_args;
     Decl *inst = mono_type_instance(tmpl, &ctx, suffix);
     Type *ity = type_simple(sema_arena, inst->as.struct_decl.name);
     callee->decl = inst;
