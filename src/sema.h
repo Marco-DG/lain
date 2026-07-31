@@ -56,6 +56,15 @@ static void sema_push_in_guards(Expr *cond);
 static bool sema_is_in_guarded(Expr *index, Expr *container);
 static bool sema_is_ptr_in_guarded(Expr *ptr, Expr *arr);
 
+// Nullable narrowing: `if x { … }` / `if x != nil { … }` proves x non-nil inside
+// the branch, so ?T narrows to T there (deref/pass/return-safe). Mirrors the
+// in-guard mechanism — a scoped stack of variables proven present. Declared here
+// (before the sub-header includes) so check_conversion in typecheck.h can query it.
+typedef struct NilNarrowEntry { Expr *var; struct NilNarrowEntry *next; } NilNarrowEntry;
+static NilNarrowEntry *sema_nil_narrows = NULL;
+static void sema_push_nil_narrows(Expr *cond, bool negated);
+static bool sema_is_nil_narrowed(Expr *e);
+
 // L3: pointer monotone table — pointers whose upper bound is dead inside while loops.
 // When p is monotone non-increasing and was initialized at a valid index into arr,
 // the upper-bound check `p < arr + arr_len` is always true → dead code in emit.
@@ -820,6 +829,52 @@ static void sema_verify_bounded_while(Stmt *s) {
 │ In-guard table: function definitions (type + global declared before includes)│
 ╚─────────────────────────────────────────────────────────────────────────────*/
 
+// Is e a reference to a nullable-typed variable (an identifier with a ?T type)?
+static bool nn_is_nullable_var(Expr *e) {
+    if (!e || e->kind != EXPR_IDENTIFIER || !e->type) return false;
+    Type *t = e->type;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    return t && t->kind == TYPE_NULLABLE;
+}
+
+// Push the variables a condition proves NON-nil for the branch being entered.
+// `negated` = we are entering the else-branch (the condition is false there).
+//   `if x` / `if x != nil`  -> x present in THEN.
+//   `if x == nil { } else`  -> x present in ELSE (negated).
+//   `and`/`or` chains combined via De Morgan.
+static void sema_push_nil_narrows(Expr *cond, bool negated) {
+    if (!cond) return;
+    if (cond->kind == EXPR_IDENTIFIER) {
+        if (!negated && nn_is_nullable_var(cond)) {
+            NilNarrowEntry *e = arena_push_aligned(sema_arena, NilNarrowEntry);
+            e->var = cond; e->next = sema_nil_narrows; sema_nil_narrows = e;
+        }
+        return;
+    }
+    if (cond->kind != EXPR_BINARY) return;
+    TokenKind op = cond->as.binary_expr.op;
+    Expr *l = cond->as.binary_expr.left, *r = cond->as.binary_expr.right;
+    if (op == TOKEN_KEYWORD_AND && !negated) {
+        sema_push_nil_narrows(l, false); sema_push_nil_narrows(r, false);
+    } else if (op == TOKEN_KEYWORD_OR && negated) {          // !(a or b) = !a and !b
+        sema_push_nil_narrows(l, true); sema_push_nil_narrows(r, true);
+    } else if (op == TOKEN_BANG_EQUAL || op == TOKEN_EQUAL_EQUAL) {
+        bool proves_present = (op == TOKEN_BANG_EQUAL) ? !negated : negated;
+        Expr *var = is_nil_literal(l) ? r : (is_nil_literal(r) ? l : NULL);
+        if (proves_present && var && nn_is_nullable_var(var)) {
+            NilNarrowEntry *e = arena_push_aligned(sema_arena, NilNarrowEntry);
+            e->var = var; e->next = sema_nil_narrows; sema_nil_narrows = e;
+        }
+    }
+}
+
+static bool sema_is_nil_narrowed(Expr *e) {
+    if (!e || e->kind != EXPR_IDENTIFIER) return false;
+    for (NilNarrowEntry *n = sema_nil_narrows; n; n = n->next)
+        if (expr_struct_equal(e, n->var)) return true;
+    return false;
+}
+
 static void sema_push_in_guards(Expr *cond) {
     if (!cond || cond->kind != EXPR_BINARY) return;
     if (cond->as.binary_expr.op == TOKEN_KEYWORD_IN) {
@@ -1228,10 +1283,12 @@ static void walk_stmt(Stmt *s) {
             RangeEntry *old_head = sema_ranges->head;
             ConstraintEntry *old_constraints = sema_ranges->constraints;
             InGuardEntry *old_guards = sema_in_guards;
+            NilNarrowEntry *old_narrows = sema_nil_narrows;
 
             // Apply condition for THEN branch
             sema_apply_constraint(s->as.if_stmt.cond, sema_ranges);
             sema_push_in_guards(s->as.if_stmt.cond);
+            sema_push_nil_narrows(s->as.if_stmt.cond, false);   // ?T narrows to T in THEN
 
             sema_push_scope();
             for (StmtList *b = s->as.if_stmt.then_body; b; b = b->next)
@@ -1255,14 +1312,17 @@ static void walk_stmt(Stmt *s) {
             sema_ranges->head = old_head;
             sema_ranges->constraints = old_constraints;
             sema_in_guards = old_guards;
+            sema_nil_narrows = old_narrows;
 
             // Apply negated condition for ELSE branch (no in-guards — negated 'in' proves nothing)
             sema_apply_negated_constraint(s->as.if_stmt.cond, sema_ranges);
+            sema_push_nil_narrows(s->as.if_stmt.cond, true);    // else: x present when cond was `x == nil`
 
             sema_push_scope();
             for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next)
                 walk_stmt(b->stmt);
             sema_pop_scope();
+            sema_nil_narrows = old_narrows;
 
             if (then_returns) {
                 // Keep the negated constraints for the rest of the
@@ -1275,6 +1335,9 @@ static void walk_stmt(Stmt *s) {
                     cond->as.unary_expr.right) {
                     sema_push_in_guards(cond->as.unary_expr.right);
                 }
+                // Nullable guard clause: `if x == nil { return }` — the trailing
+                // code runs only when the cond was false, so x is present below.
+                sema_push_nil_narrows(s->as.if_stmt.cond, true);
             } else {
                 // Normal: restore state to what it was before the if.
                 sema_ranges->head = old_head;
@@ -2826,6 +2889,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         RangeEntry *__fn_old_head = sema_ranges ? sema_ranges->head : NULL;
         ConstraintEntry *__fn_old_cons = sema_ranges ? sema_ranges->constraints : NULL;
         InGuardEntry *__fn_old_guards = sema_in_guards;
+        NilNarrowEntry *__fn_old_narrows = sema_nil_narrows;
         sema_walk_phase = true;
         for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next)
             walk_stmt(sl->stmt);
@@ -2835,6 +2899,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             sema_ranges->constraints = __fn_old_cons;
         }
         sema_in_guards = __fn_old_guards;
+        sema_nil_narrows = __fn_old_narrows;
 
         // 2.c.i) Return-path completeness: a non-void function must return (or
         // diverge) on every path — never fall off the end (C UB).

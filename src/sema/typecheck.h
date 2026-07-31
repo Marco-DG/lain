@@ -735,7 +735,13 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
             check_conversion(from, tu->element_type, r, src_expr, line, col, ctx, label); // T -> ?T
             return;
         }
-        if (fu && fu->kind == TYPE_NULLABLE && !sema_in_unsafe_block) {
+        if (fu && fu->kind == TYPE_NULLABLE) {
+            if (sema_in_unsafe_block || sema_is_nil_narrowed(src_expr)) {
+                // Proven present — narrowed by `if x` / `if x != nil` (or unsafe):
+                // treat as the inner T.
+                check_conversion(fu->element_type, to, r, src_expr, line, col, ctx, label);
+                return;
+            }
             char tb[128]; type_describe(tu ? tu : to, tb, sizeof tb);
             fprintf(stderr, "[E063] Error Ln %li, Col %li: %s value may be nil; test it "
                     "(`if x { … }`) before using it as '%s'.\n",
