@@ -829,7 +829,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
 
     // --- return type ---
     Type *ret_type = NULL;
-    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK)) {
+    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_QUESTION)) {
         ret_type = parse_type(arena, parser);
     }
 

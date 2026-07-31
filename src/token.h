@@ -85,6 +85,7 @@ typedef enum {
     TOKEN_KEYWORD_CONTINUE,
     TOKEN_KEYWORD_BREAK,
     TOKEN_KEYWORD_TRUE,
+    TOKEN_KEYWORD_NIL,     // nil — the absent value of a ?T
     TOKEN_KEYWORD_FALSE,
     TOKEN_KEYWORD_COMPTIME,
     TOKEN_KEYWORD_UNSAFE,
@@ -116,6 +117,7 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
 
             if (strncmp(lexeme, "use", 3) == 0)         return TOKEN_KEYWORD_USE;
             if (strncmp(lexeme, "and", 3) == 0)         return TOKEN_KEYWORD_AND;
+            if (strncmp(lexeme, "nil", 3) == 0)         return TOKEN_KEYWORD_NIL;
             break;
         case 4:
             if (strncmp(lexeme, "type", 4) == 0)        return TOKEN_KEYWORD_TYPE;
@@ -234,6 +236,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_KEYWORD_COMPTIME:            return "TOKEN_KEYWORD_COMPTIME";
         case TOKEN_KEYWORD_C_INCLUDE:           return "TOKEN_KEYWORD_C_INCLUDE";
         case TOKEN_KEYWORD_TRUE:                return "TOKEN_KEYWORD_TRUE";
+        case TOKEN_KEYWORD_NIL:                 return "TOKEN_KEYWORD_NIL";
         case TOKEN_KEYWORD_FALSE:               return "TOKEN_KEYWORD_FALSE";
         case TOKEN_KEYWORD_UNDEFINED:           return "TOKEN_KEYWORD_UNDEFINED";
         case TOKEN_KEYWORD_DECREASING:          return "TOKEN_KEYWORD_DECREASING";

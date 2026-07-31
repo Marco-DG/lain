@@ -41,7 +41,7 @@ Stmt *parse_decl_stmt(Arena *arena, Parser *parser) {
 
     // optional type annotation: expect an IDENT (type name) or 'mov' prefix
     Type *type_annotation = NULL;
-    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_COMPTIME) || parser_match(TOKEN_ASTERISK)) {
+    if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_COMPTIME) || parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_QUESTION)) {
         type_annotation = parse_type(arena, parser);
     }
 
@@ -332,7 +332,7 @@ Stmt *parse_comptime_stmt(Arena* arena, Parser* parser)
 
     // optional type annotation (allow 'mov' or an identifier or nested 'comptime' if parse_type handles it)
     Type *type_annotation = NULL;
-    if (parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_COMPTIME) || parser_match(TOKEN_ASTERISK)) {
+    if (parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_COMPTIME) || parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_QUESTION)) {
         type_annotation = parse_type(arena, parser);
         // wrap with comptime type so later passes know it's compile-time
         if (type_annotation) {
@@ -367,7 +367,7 @@ Stmt *parse_var_stmt(Arena* arena, Parser* parser)
     // optional type annotation
     Type *type_annotation = NULL;
     if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) ||
-        parser_match(TOKEN_ASTERISK)) {
+        parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_QUESTION)) {
         type_annotation = parse_type(arena, parser);
     }
 

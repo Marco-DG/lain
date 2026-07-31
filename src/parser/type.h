@@ -40,7 +40,8 @@ Type *parse_type(Arena *arena, Parser *parser) {
       // Optional return type: present iff the next token can start a type.
       Type *ret = NULL;
       if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_ASTERISK) ||
-          parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR)) {
+          parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) ||
+          parser_match(TOKEN_QUESTION)) {
         ret = parse_type(arena, parser);
       }
       return type_func(arena, params, ret, is_total);

@@ -162,6 +162,8 @@ Expr *clone_expr(Arena *arena, Expr *e) {
     new_e->type = clone_type(arena, e->type);
 
     switch (e->kind) {
+        case EXPR_NIL:
+            break;  // leaf literal: the shallow copy above is sufficient
         case EXPR_BINARY:
             new_e->as.binary_expr.left  = clone_expr(arena, e->as.binary_expr.left);
             new_e->as.binary_expr.right = clone_expr(arena, e->as.binary_expr.right);

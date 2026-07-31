@@ -391,6 +391,7 @@ typedef enum {
     EXPR_FLOAT_LITERAL,
     EXPR_MATCH,
     EXPR_UNDEFINED, // New
+    EXPR_NIL,       // nil — the absent value of a ?T (LANGUAGE_MODEL §2)
     EXPR_TYPE,      // a resolved Type* used as a parameter value
     EXPR_ANON_STRUCT,
     EXPR_ANON_ENUM,
@@ -1134,6 +1135,12 @@ Expr *expr_member(Arena *arena, Expr *target, Id *member) {
 Expr *expr_undefined(Arena *arena) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_UNDEFINED;
+    return e;
+}
+
+Expr *expr_nil(Arena *arena) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_NIL;
     return e;
 }
 

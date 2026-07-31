@@ -182,6 +182,10 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         parser_advance();
         return expr_undefined(arena);
     }
+    if (parser_match(TOKEN_KEYWORD_NIL)) {
+        parser_advance();
+        return expr_nil(arena);
+    }
     
     // Anonymous types: type { ... }
     if (parser_match(TOKEN_KEYWORD_TYPE)) {

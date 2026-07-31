@@ -715,9 +715,34 @@ static Range eval_callsite_size_range(Expr *se, DeclList *params, ExprList *args
 // the full `subsumes(from, to, range)` relation (P2/S2). Callers pass the
 // source expr where available (enables the null-literal idiom, 0 -> *T); NULL
 // is fine (that sub-check simply won't fire).
+static bool is_nil_literal(Expr *e) { return e && e->kind == EXPR_NIL; }
+
 static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
                              isize line, isize col,
                              const char *ctx, const char *label) {
+    // ?T coercion (LANGUAGE_MODEL §2) — handled before the pointer/int/etc.
+    // checks, which don't understand TYPE_NULLABLE:
+    //   nil -> ?T          OK        T  -> ?T (present)  OK (check the inner)
+    //   ?T  -> ?T          OK        ?T -> T  (unnarrowed) REJECT (may be nil)
+    // Increment 3 narrows `from` to the inner T inside `if x { … }`, so the
+    // reject fires only on genuinely unchecked uses.
+    {
+        Type *tu = to;   while (tu && tu->kind == TYPE_COMPTIME) tu = tu->element_type;
+        Type *fu = from; while (fu && fu->kind == TYPE_COMPTIME) fu = fu->element_type;
+        if (tu && tu->kind == TYPE_NULLABLE) {
+            if (is_nil_literal(src_expr)) return;                       // nil -> ?T
+            if (fu && fu->kind == TYPE_NULLABLE) return;                // ?T -> ?T (inner-match deferred)
+            check_conversion(from, tu->element_type, r, src_expr, line, col, ctx, label); // T -> ?T
+            return;
+        }
+        if (fu && fu->kind == TYPE_NULLABLE && !sema_in_unsafe_block) {
+            char tb[128]; type_describe(tu ? tu : to, tb, sizeof tb);
+            fprintf(stderr, "[E063] Error Ln %li, Col %li: %s value may be nil; test it "
+                    "(`if x { … }`) before using it as '%s'.\n",
+                    (long)line, (long)col, ctx ? ctx : "this", tb);
+            diagnostic_show_line(line, col); exit(1);
+        }
+    }
     check_value_fits_type(r, to, line, col, ctx, label);
     reject_float_int_mismatch(from, to, line, col, ctx, label);
     reject_lossy_int_conversion(from, to, r, line, col, ctx, label);
@@ -935,6 +960,10 @@ void sema_infer_expr(Expr *e) {
   if (!e) return;
 // (removed debug print)
   switch (e->kind) {
+  case EXPR_NIL:
+    // Contextually typed: nil carries no type of its own; it is accepted only
+    // at a ?T boundary (check_conversion via is_nil_literal). Leaving type NULL.
+    break;
   case EXPR_IDENTIFIER:
     // already set in resolve
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
