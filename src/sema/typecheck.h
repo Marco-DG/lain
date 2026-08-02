@@ -748,6 +748,21 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
                     (long)line, (long)col, ctx ? ctx : "this", tb);
             diagnostic_show_line(line, col); exit(1);
         }
+        // `T | markers` used where a non-union value is expected: allow it only
+        // when proven present (narrowed by `if r`) — then treat it as the payload
+        // T; otherwise it may be a marker, so reject (use `if r`/`case r`).
+        Type *fpay = union_payload_type(fu);
+        if (fpay && !union_payload_type(tu)) {
+            if (sema_in_unsafe_block || sema_is_nil_narrowed(src_expr)) {
+                check_conversion(fpay, to, r, src_expr, line, col, ctx, label);
+                return;
+            }
+            char tb[128]; type_describe(to, tb, sizeof tb);
+            fprintf(stderr, "[E063] Error Ln %li, Col %li: %s value may be a marker; test it "
+                    "(`if r { … }`) or match it (`case r { … }`) before using it as '%s'.\n",
+                    (long)line, (long)col, ctx ? ctx : "this", tb);
+            diagnostic_show_line(line, col); exit(1);
+        }
     }
     check_value_fits_type(r, to, line, col, ctx, label);
     reject_float_int_mismatch(from, to, line, col, ctx, label);

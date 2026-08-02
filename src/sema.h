@@ -74,6 +74,11 @@ static bool niche_enum_is_zero_cost(struct EnumDecl *e);
 // forward-declared here so the call-argument check in typecheck.h can reach it.
 static void sema_union_coerce(Expr **slot, Type *target);
 
+// If `t` is a union enum (`T | markers`), the payload type T (the `some`
+// variant's field); else NULL. Forward-declared so check_conversion (typecheck.h)
+// can narrow a proven-present union to its value type.
+static Type *union_payload_type(Type *t);
+
 // L3: pointer monotone table — pointers whose upper bound is dead inside while loops.
 // When p is monotone non-increasing and was initialized at a valid index into arr,
 // the upper-bound check `p < arr + arr_len` is always true → dead code in emit.
@@ -130,6 +135,15 @@ static Decl *find_union_enum(Type *t) {
         Id *en = d->as.enum_decl.type_name;
         if (en && en->length == nl && memcmp(en->name, n, (size_t)nl) == 0) return d;
     }
+    return NULL;
+}
+
+static Type *union_payload_type(Type *t) {
+    Decl *U = find_union_enum(t);
+    if (!U) return NULL;
+    Variant *sv = U->as.enum_decl.variants;   // `some` payload variant is first
+    if (sv && sv->fields && sv->fields->decl && sv->fields->decl->kind == DECL_VARIABLE)
+        return sv->fields->decl->as.variable_decl.type;
     return NULL;
 }
 
@@ -916,7 +930,18 @@ static bool nn_is_nullable_var(Expr *e) {
     if (!e || e->kind != EXPR_IDENTIFIER || !e->type) return false;
     Type *t = e->type;
     while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
-    return t && t->kind == TYPE_NULLABLE;
+    if (t && t->kind == TYPE_NULLABLE) return true;
+    // A union `T | markers` gets `if r` narrowing only when it has exactly ONE
+    // marker: `if (r)` soundly excludes a single sentinel; a multi-marker union
+    // must be discriminated with `case` (its markers sit at several sentinels).
+    Decl *U = find_union_enum(t);
+    if (U) {
+        int markers = 0;
+        for (Variant *v = U->as.enum_decl.variants; v; v = v->next)
+            if (!v->fields) markers++;
+        return markers == 1;
+    }
+    return false;
 }
 
 // Push the variables a condition proves NON-nil for the branch being entered.

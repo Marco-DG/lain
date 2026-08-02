@@ -1,0 +1,10 @@
+// EXPECT: [E063]
+// `if r` narrowing is only sound for a single-marker union (`if (r)` excludes one
+// sentinel). A multi-marker union must be discriminated with `case` — using its
+// value after a bare `if r` is rejected.
+func use_it(p *u8) i32 { return 0 }
+func f(r *u8 | NotFound | Denied) i32 {
+    if r { return use_it(r) }
+    return 0
+}
+proc main() i32 { return 0 }
