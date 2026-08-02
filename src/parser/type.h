@@ -6,8 +6,32 @@
 // Forward declaration: defined in parser/expr.h (included after this file in parser.h)
 Expr *parse_expr(Arena *arena, Parser *parser);
 
-// parse any (possibly nested) type e.g. `Foo[][]`, `Bar:[3]`, and `mov Foo`
+static Type *parse_type_core(Arena *arena, Parser *parser);
+
+// A type is a core type optionally followed by union markers: `T | m1 | m2`.
+// `|` binds looser than every prefix/suffix, so `*File | none` = `(*File) | none`
+// and `T[] | A` = `(T[]) | A`. This is the one construct for optionality
+// (`T | none`) and errors (`T | NotFound | Denied`).
 Type *parse_type(Arena *arena, Parser *parser) {
+  Type *t = parse_type_core(arena, parser);
+  if (parser_match(TOKEN_PIPE)) {
+    IdList *markers = NULL, **mt = &markers;
+    while (parser_match(TOKEN_PIPE)) {
+      parser_advance();  // consume '|'
+      parser_expect(TOKEN_IDENTIFIER, "Expected a marker name after '|' in a union type");
+      Id *m = id(arena, parser->token.length, parser->token.start);
+      parser_advance();
+      IdList *node = arena_push_aligned(arena, IdList);
+      node->id = m; node->next = NULL;
+      *mt = node; mt = &node->next;
+    }
+    t = type_union(arena, t, markers);
+  }
+  return t;
+}
+
+// parse any (possibly nested) type e.g. `Foo[][]`, `Bar:[3]`, and `mov Foo`
+static Type *parse_type_core(Arena *arena, Parser *parser) {
   Type *base_type = NULL;
 
 
@@ -27,7 +51,7 @@ Type *parse_type(Arena *arena, Parser *parser) {
       TypeList *params = NULL, *tail = NULL;
       if (!parser_match(TOKEN_R_PAREN)) {
         for (;;) {
-          Type *pt = parse_type(arena, parser);
+          Type *pt = parse_type_core(arena, parser);
           TypeList *node = type_list(arena, pt);
           if (!params) params = node; else tail->next = node;
           tail = node;
@@ -42,12 +66,12 @@ Type *parse_type(Arena *arena, Parser *parser) {
       if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_ASTERISK) ||
           parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) ||
           parser_match(TOKEN_QUESTION)) {
-        ret = parse_type(arena, parser);
+        ret = parse_type_core(arena, parser);
       }
       return type_func(arena, params, ret, is_total);
     }
 
-    Type *inner = parse_type(arena, parser);
+    Type *inner = parse_type_core(arena, parser);
     // *T[] and *T[:S] collapse: the * is syntactic (these are already reference types).
     // *T[N] (fixed) keeps the TYPE_POINTER wrapper.
     if ((inner->kind == TYPE_ARRAY && inner->array_len < 0) || inner->kind == TYPE_SLICE) {
@@ -58,20 +82,20 @@ Type *parse_type(Arena *arena, Parser *parser) {
   
   if (parser_match(TOKEN_KEYWORD_MOV)) {
     parser_advance();
-    Type *inner = parse_type(arena, parser);
+    Type *inner = parse_type_core(arena, parser);
     return type_move(arena, inner);
   }
 
   if (parser_match(TOKEN_KEYWORD_VAR)) {
     parser_advance();
-    Type *inner = parse_type(arena, parser);
+    Type *inner = parse_type_core(arena, parser);
     return type_mut(arena, inner);
   }
 
   // ?T — nullable T (LANGUAGE_MODEL §2). Layout is the niche of T.
   if (parser_match(TOKEN_QUESTION)) {
     parser_advance();
-    Type *inner = parse_type(arena, parser);
+    Type *inner = parse_type_core(arena, parser);
     return type_nullable(arena, inner);
   }
 
@@ -107,7 +131,7 @@ Type *parse_type(Arena *arena, Parser *parser) {
     TypeList *targs = NULL, *tt = NULL;
     if (!parser_match(TOKEN_R_PAREN)) {
       for (;;) {
-        Type *arg = parse_type(arena, parser);
+        Type *arg = parse_type_core(arena, parser);
         TypeList *node = type_list(arena, arg);
         if (!targs) targs = node; else tt->next = node;
         tt = node;

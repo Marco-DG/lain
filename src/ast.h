@@ -45,6 +45,7 @@ typedef enum {
     TYPE_SLICE,     // e.g. "u8[:0]"
     TYPE_POINTER,   // pointer to element type, e.g. "u8 *"
     TYPE_NULLABLE,  // ?T — a nullable T (element_type = T); layout = niche of T
+    TYPE_UNION,     // T | m1 | m2 — value type (element_type) + nullary markers (union_markers)
     TYPE_COMPTIME,  // comptime modifier
     TYPE_VARIANT,   // inner payload of an ADT variant
     TYPE_FUNC,      // non-capturing function pointer: *func(params) ret / *proc(params) ret
@@ -85,6 +86,11 @@ typedef struct Type {
        generic type, with the concrete type arguments here (NULL = not an
        application). Sema instantiates it and rewrites the node to the instance. */
     struct TypeList *type_args;
+
+    /* TYPE_UNION `T | m1 | m2`: element_type = the value type T; union_markers =
+       the ordered nullary marker names. Sema lowers this to a niche-optimized
+       anonymous enum (one payload variant T + one empty variant per marker). */
+    struct IdList *union_markers;
 
     /* P2/S1: cached integer width/signedness on the node, so the type name
        ("i32") is parsed once instead of on every width query.
@@ -707,6 +713,20 @@ Type *type_nullable(Arena *arena, Type *element_type) {
     t->kind         = TYPE_NULLABLE;
     t->mode         = MODE_SHARED;
     t->element_type = element_type;
+    t->canon = t;
+    return t;
+}
+
+// T | m1 | m2 — a value of type `value`, or one of the nullary markers. The one
+// construct for optionality (`T | none`) and errors (`T | A | B`). Lowered by
+// sema to a niche-optimized anonymous enum; zero-cost or rejected.
+Type *type_union(Arena *arena, Type *value, struct IdList *markers) {
+    assert(value != NULL);
+    Type *t = arena_push_aligned(arena, Type);
+    t->kind          = TYPE_UNION;
+    t->mode          = MODE_SHARED;
+    t->element_type  = value;
+    t->union_markers = markers;
     t->canon = t;
     return t;
 }
