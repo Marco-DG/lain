@@ -334,8 +334,69 @@ static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
 // Resolve generic type-applications in a type: `Vec(i32)` in a signature/field
 // becomes the concrete instance type. Recurses into nested applications and
 // composite types. Returns the (possibly rewritten) type.
+// Lower `T | m1 | m2` (TYPE_UNION) to a niche-optimized anonymous enum: one
+// payload variant `some { __v: T }` + one empty variant per marker. Deduped by a
+// deterministic mangled name so the same union in two signatures shares one enum.
+// ZERO-COST MANDATORY: reject (E064) if the markers don't fit T's niche.
+static Type *union_lower(Type *u) {
+    Type *value = u->element_type;
+    char nb[256]; int off = 0;
+    char vb[128]; mono_mangle_type(value, vb, sizeof vb);
+    off += snprintf(nb + off, sizeof nb - (size_t)off, "__U_%s", vb);
+    int nmark = 0;
+    for (IdList *m = u->union_markers; m; m = m->next) {
+        off += snprintf(nb + off, sizeof nb - (size_t)off, "_%.*s", (int)m->id->length, m->id->name);
+        nmark++;
+    }
+    Symbol *ex = sema_lookup(nb);
+    if (ex && ex->decl && ex->decl->kind == DECL_ENUM)
+        return type_simple(sema_arena, ex->decl->as.enum_decl.type_name);
+
+    char *raw = mono_dup(nb, strlen(nb));
+    Id *ename = id(sema_arena, (isize)strlen(raw), raw);
+
+    // payload variant `some { __v : value }`, then one empty variant per marker.
+    Variant *pv = arena_push_aligned(sema_arena, Variant);
+    pv->name   = id(sema_arena, 4, "some");
+    pv->fields = decl_list(sema_arena, decl_variable(sema_arena, id(sema_arena, 3, "__v"), value));
+    pv->next   = NULL;
+    Variant *tail = pv;
+    for (IdList *m = u->union_markers; m; m = m->next) {
+        Variant *mv = arena_push_aligned(sema_arena, Variant);
+        mv->name = m->id; mv->fields = NULL; mv->next = NULL;
+        tail->next = mv; tail = mv;
+    }
+
+    Decl *ed = arena_push_aligned(sema_arena, Decl);
+    ed->kind = DECL_ENUM;
+    ed->as.enum_decl.type_name   = ename;
+    ed->as.enum_decl.variants    = pv;
+    ed->as.enum_decl.type_params = NULL;
+
+    Type *ity = type_simple(sema_arena, ename);
+    sema_insert_global(raw, raw, ity, ed, false);
+    DeclList *node = decl_list(sema_arena, ed);
+    DeclList *tl = sema_decls; while (tl && tl->next) tl = tl->next;
+    if (tl) tl->next = node; else sema_decls = node;
+
+    // Zero-cost mandatory: the markers must fit the value's niche, else reject.
+    if (!niche_enum_is_zero_cost(&ed->as.enum_decl)) {
+        char vd[128]; type_describe(value, vd, sizeof vd);
+        fprintf(stderr, "[E064] Error: the union `%s | ...` cannot be zero-cost — '%s' has no "
+                "spare bit-patterns for its %d marker(s). Give the value type niche room "
+                "(a refinement like `u8 where < 200`, a pointer, or a slice), or use fewer markers.\n",
+                vd, vd, nmark);
+        exit(1);
+    }
+    return ity;
+}
+
 static Type *mono_resolve_type_apps(Type *t) {
     if (!t) return t;
+    if (t->kind == TYPE_UNION) {                 // `T | markers` → niche'd anonymous enum
+        t->element_type = mono_resolve_type_apps(t->element_type);
+        return union_lower(t);
+    }
     if (t->kind == TYPE_SIMPLE && t->type_args && t->base_type) {
         for (TypeList *ta = t->type_args; ta; ta = ta->next) ta->type = mono_resolve_type_apps(ta->type);
         char nb[224]; snprintf(nb, sizeof nb, "%.*s", (int)t->base_type->length, t->base_type->name);

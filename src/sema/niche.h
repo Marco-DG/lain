@@ -576,6 +576,13 @@ static bool enum_is_zero_cost_niche(Decl *d, NicheLayout *out) {
     return L.is_zero_cost && !L.needs_tag_byte;
 }
 
+// DeclEnum* form, forward-declared in sema.h so union_lower() (monomorph.h) can
+// enforce zero-cost on the anonymous enum it synthesizes for `T | markers`.
+static bool niche_enum_is_zero_cost(DeclEnum *e) {
+    NicheLayout L = niche_compute_layout(e);
+    return L.is_zero_cost && !L.needs_tag_byte;
+}
+
 /* The single payload variant of a niche-optimized enum (NULL if
    pure-empty). For pure-empty enums the layout has 0 payloads. */
 static Variant *enum_payload_variant(DeclEnum *e) {

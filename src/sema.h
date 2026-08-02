@@ -65,6 +65,11 @@ static NilNarrowEntry *sema_nil_narrows = NULL;
 static void sema_push_nil_narrows(Expr *cond, bool negated);
 static bool sema_is_nil_narrowed(Expr *e);
 
+// Defined in sema/niche.h (included after monomorph.h) — forward-declared here so
+// union_lower() in monomorph.h can enforce "zero-cost or reject" on the anonymous
+// enum it synthesizes for `T | markers`.
+static bool niche_enum_is_zero_cost(struct EnumDecl *e);
+
 // L3: pointer monotone table — pointers whose upper bound is dead inside while loops.
 // When p is monotone non-increasing and was initialized at a valid index into arr,
 // the upper-bound check `p < arr + arr_len` is always true → dead code in emit.

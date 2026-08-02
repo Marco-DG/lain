@@ -1,0 +1,5 @@
+// R2: `T | markers` lowers to a niche-optimized anonymous enum. A pointer value
+// has a huge niche, so `*u8 | NotFound | Denied` is a bare pointer (no tag byte).
+// Markers pack into the pointer's spare bit-patterns — zero-cost.
+func f(x *u8 | NotFound | Denied) i32 { return 0 }
+proc main() i32 { return 0 }
