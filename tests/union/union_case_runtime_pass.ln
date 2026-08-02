@@ -1,0 +1,20 @@
+extern proc libc_printf(fmt *u8, ...) i32
+func classify(p *u8, e bool) *u8 | NotFound | Denied {
+    if e { return NotFound }
+    return p
+}
+proc main() i32 {
+    var ok *u8 | NotFound | Denied = classify("hi", false)
+    var bad *u8 | NotFound | Denied = classify("hi", true)
+    case ok {
+        NotFound: libc_printf("ok=nf\n")
+        Denied: libc_printf("ok=dn\n")
+        some(v): libc_printf("ok=some\n")
+    }
+    case bad {
+        NotFound: libc_printf("bad=nf\n")
+        Denied: libc_printf("bad=dn\n")
+        some(v): libc_printf("bad=some\n")
+    }
+    return 0
+}
