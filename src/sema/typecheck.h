@@ -1134,6 +1134,7 @@ void sema_infer_expr(Expr *e) {
         ExprList *arg = e->as.call_expr.args;
         while (pt && arg) {
           sema_infer_expr(arg->expr);
+          sema_union_coerce(&arg->expr, pt->type);   // `T | markers` construction
           Range r = (arg->expr->kind == EXPR_LITERAL)
                     ? (Range){ arg->expr->as.literal_expr.value, arg->expr->as.literal_expr.value, true }
                     : (sema_ranges ? sema_eval_range(arg->expr, sema_ranges) : range_unknown());

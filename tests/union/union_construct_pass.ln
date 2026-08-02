@@ -1,0 +1,8 @@
+// R3: construct a union by returning a bare marker (→ its niche sentinel) or a
+// payload value (→ identity via the synthesized `some` constructor). Both are
+// contextually resolved against the return type `*u8 | NotFound | Denied`.
+func classify(p *u8, err bool) *u8 | NotFound | Denied {
+    if err { return NotFound }
+    return p
+}
+proc main() i32 { return 0 }

@@ -198,6 +198,7 @@ typedef struct EnumDecl {
     Id* type_name;          // Enum name
     Variant* variants;      // Linked list of variants
     DeclList* type_params;  // generic params `type R(T type){...}` (NULL = non-generic)
+    bool is_union;          // synthesized from `T | m1 | m2` (payload variant `some` + markers)
 } DeclEnum;
 
 typedef struct StructDecl {

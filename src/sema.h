@@ -70,6 +70,10 @@ static bool sema_is_nil_narrowed(Expr *e);
 // enum it synthesizes for `T | markers`.
 static bool niche_enum_is_zero_cost(struct EnumDecl *e);
 
+// Union (`T | markers`) construction coercion — defined below (after the includes);
+// forward-declared here so the call-argument check in typecheck.h can reach it.
+static void sema_union_coerce(Expr **slot, Type *target);
+
 // L3: pointer monotone table — pointers whose upper bound is dead inside while loops.
 // When p is monotone non-increasing and was initialized at a valid index into arr,
 // the upper-bound check `p < arr + arr_len` is always true → dead code in emit.
@@ -107,6 +111,73 @@ bool sema_in_unsafe_block = false;
 bool sema_walk_phase = false;
 bool sema_addr_of_context = false; // set by EXPR_ADDR to relax &arr[len] in bounds check
 bool sema_dump_niche = false;      // set by main from args.dump_niche (D-Niche re-land)
+
+/*─────────────────────────────────────────────────────────────────╗
+│ Union (`T | markers`) construction coercion                      │
+│ At a boundary whose target is a union enum, rewrite the value    │
+│ into normal enum construction — a bare marker → `U.marker`, a    │
+│ payload value → `U.some(value)` — so sema + emit handle it via   │
+│ the existing enum path (the constructors are niche-optimized).   │
+╚─────────────────────────────────────────────────────────────────*/
+static Decl *find_union_enum(Type *t) {
+    if (!t) return NULL;
+    while (t->kind == TYPE_COMPTIME && t->element_type) t = t->element_type;
+    if (t->kind != TYPE_SIMPLE || !t->base_type) return NULL;
+    const char *n = t->base_type->name; isize nl = t->base_type->length;
+    for (DeclList *dl = sema_decls; dl; dl = dl->next) {
+        Decl *d = dl->decl;
+        if (!d || d->kind != DECL_ENUM || !d->as.enum_decl.is_union) continue;
+        Id *en = d->as.enum_decl.type_name;
+        if (en && en->length == nl && memcmp(en->name, n, (size_t)nl) == 0) return d;
+    }
+    return NULL;
+}
+
+// If `e` (post-resolve) refers to one of union U's markers, return that marker
+// variant's name (matched by the mangled-name suffix `..._<marker>`).
+static Id *union_match_marker(Decl *U, Expr *e) {
+    if (!U || !e || e->kind != EXPR_IDENTIFIER) return NULL;
+    if (e->decl != U) return NULL;                 // resolve bound it to this enum's variant
+    const char *nm = e->as.identifier_expr.id->name; isize nl = e->as.identifier_expr.id->length;
+    for (Variant *v = U->as.enum_decl.variants; v; v = v->next) {
+        if (v->fields) continue;                   // skip the `some` payload variant
+        isize vl = v->name->length;
+        if (nl > vl && nm[nl - vl - 1] == '_' &&
+            memcmp(nm + nl - vl, v->name->name, (size_t)vl) == 0)
+            return v->name;
+    }
+    return NULL;
+}
+
+static void sema_union_coerce(Expr **slot, Type *target) {
+    if (!slot || !*slot || !target) return;
+    Decl *U = find_union_enum(target);
+    if (!U) return;
+    Expr *e = *slot;
+    if (e->type && core_identical(e->type, target)) return;   // already exactly this union
+    if (e->type && find_union_enum(e->type)) return;          // already SOME union value — don't re-wrap
+    Type *uty = type_simple(sema_arena, U->as.enum_decl.type_name);
+    Id *marker = union_match_marker(U, e);
+    if (marker) {                                             // bare marker → U.marker
+        Expr *tgt = expr_type(sema_arena, uty); tgt->decl = U;   // member handler keys on target->decl
+        Expr *m = expr_member(sema_arena, tgt, marker);
+        sema_infer_expr(m);
+        *slot = m;
+        return;
+    }
+    // payload value → U.some(value) — ONLY when e is exactly the payload type.
+    // Anything else (a union value, a type mismatch, or untyped) is left to
+    // check_conversion so it can pass a same-union assignment or report the error.
+    Variant *sv = U->as.enum_decl.variants;   // the `some` payload variant is first
+    Type *payload = (sv && sv->fields && sv->fields->decl && sv->fields->decl->kind == DECL_VARIABLE)
+                    ? sv->fields->decl->as.variable_decl.type : NULL;
+    if (!e->type || !payload || !types_equal_exact(e->type, payload)) return;
+    Expr *tgt = expr_type(sema_arena, uty); tgt->decl = U;
+    Expr *some = expr_member(sema_arena, tgt, id(sema_arena, 4, "some"));
+    Expr *call = expr_call(sema_arena, some, expr_list(sema_arena, e));
+    sema_infer_expr(call);
+    *slot = call;
+}
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Public entry: call this before emit                             │
@@ -1006,6 +1077,7 @@ static void walk_stmt(Stmt *s) {
             // polymorphism. Deferred. See internal/ai_analysis/
             // spec_audit_2026_05_14.md §F4.
 
+            sema_union_coerce(&s->as.var_stmt.expr, s->as.var_stmt.type);  // `T | markers` construction
             if (sema_ranges && s->as.var_stmt.expr) {
                 Range r = sema_eval_range(s->as.var_stmt.expr, sema_ranges);
                 // Q-002 Phase 5: overflow-at-boundary check (var declaration).
@@ -1830,6 +1902,7 @@ static void walk_stmt(Stmt *s) {
                 } else {
                     label[0] = '\0';
                 }
+                sema_union_coerce(&s->as.assign_stmt.expr, tgt->type);  // `T | markers` construction
                 check_conversion(s->as.assign_stmt.expr->type, tgt->type, r,
                     s->as.assign_stmt.expr, s->line, s->col, ctx, label);
             }
@@ -1878,6 +1951,7 @@ static void walk_stmt(Stmt *s) {
             break;
         case STMT_RETURN:
             sema_infer_expr(s->as.return_stmt.value);
+            sema_union_coerce(&s->as.return_stmt.value, current_return_type);  // `T | markers` construction
             // Q-002 Phase 5: overflow-at-boundary check (return).
             if (sema_ranges && s->as.return_stmt.value && current_return_type) {
                 Range r = sema_eval_range(s->as.return_stmt.value, sema_ranges);
@@ -2456,6 +2530,18 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             niche_emit_w120(&dl->decl->as.enum_decl, &layout);
             if (sema_dump_niche) niche_dump_layout(&dl->decl->as.enum_decl, &layout);
         }
+    }
+
+    // Pre-pass: resolve EVERY function signature (lowering `T | markers` return
+    // and param types to their niche'd enum) before any body is inferred — so a
+    // call to a union-returning function reads the lowered enum, not a raw
+    // TYPE_UNION. mono_resolve_signature is idempotent, so the loop below re-runs
+    // it harmlessly.
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        Decl *d = dl->decl;
+        if (d && (d->kind == DECL_FUNCTION || d->kind == DECL_PROCEDURE) &&
+            !decl_is_generic_template(d))
+            mono_resolve_signature(d);
     }
 
     // 2) For each function: resolve → infer → linearity → clear locals
