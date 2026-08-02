@@ -151,6 +151,12 @@ static Id *union_match_marker(Decl *U, Expr *e) {
 
 static void sema_union_coerce(Expr **slot, Type *target) {
     if (!slot || !*slot || !target) return;
+    // A union-returning call's result type may still be a raw TYPE_UNION (its
+    // type_func was cached before signature lowering) — lower both sides so a
+    // same-union assignment matches instead of mis-firing the `some` wrap.
+    if (target->kind == TYPE_UNION) target = mono_resolve_type_apps(target);
+    if ((*slot)->type && (*slot)->type->kind == TYPE_UNION)
+        (*slot)->type = mono_resolve_type_apps((*slot)->type);
     Decl *U = find_union_enum(target);
     if (!U) return;
     Expr *e = *slot;

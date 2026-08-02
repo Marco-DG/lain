@@ -1,0 +1,9 @@
+// R3: a union value flows through — assigning a union-returning call to a union
+// variable/return is identity (no re-wrapping), even though the call's cached
+// result type was a raw TYPE_UNION (lowered on the spot).
+func make() *u8 | NotFound | Denied { return NotFound }
+func forward() *u8 | NotFound | Denied {
+    var b *u8 | NotFound | Denied = make()
+    return b
+}
+proc main() i32 { return 0 }
