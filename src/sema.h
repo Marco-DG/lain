@@ -2545,9 +2545,19 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // it harmlessly.
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
-        if (d && (d->kind == DECL_FUNCTION || d->kind == DECL_PROCEDURE) &&
-            !decl_is_generic_template(d))
+        if (!d || decl_is_generic_template(d)) continue;
+        if (d->kind == DECL_FUNCTION || d->kind == DECL_PROCEDURE) {
             mono_resolve_signature(d);
+        } else if (d->kind == DECL_STRUCT) {   // lower `T | markers` / Vec(i32) field types
+            for (DeclList *f = d->as.struct_decl.fields; f; f = f->next)
+                if (f->decl && f->decl->kind == DECL_VARIABLE)
+                    f->decl->as.variable_decl.type = mono_resolve_type_apps(f->decl->as.variable_decl.type);
+        } else if (d->kind == DECL_ENUM) {
+            for (Variant *v = d->as.enum_decl.variants; v; v = v->next)
+                for (DeclList *f = v->fields; f; f = f->next)
+                    if (f->decl && f->decl->kind == DECL_VARIABLE)
+                        f->decl->as.variable_decl.type = mono_resolve_type_apps(f->decl->as.variable_decl.type);
+        }
     }
 
     // 2) For each function: resolve → infer → linearity → clear locals

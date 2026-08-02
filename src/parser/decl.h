@@ -362,8 +362,8 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
         } else if (parser_match(TOKEN_L_BRACE)) {
             // Case 2: ADT Variant with fields
             // is_adt_variant = true;
-        } else if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_L_BRACKET) || parser_match(TOKEN_ASTERISK)) {
-            // Case 1: Struct Field (followed by Type start tokens)
+        } else if (parser_match(TOKEN_IDENTIFIER) || parser_match(TOKEN_KEYWORD_MOV) || parser_match(TOKEN_KEYWORD_VAR) || parser_match(TOKEN_L_BRACKET) || parser_match(TOKEN_ASTERISK) || parser_match(TOKEN_QUESTION)) {
+            // Case 1: Struct Field (followed by Type start tokens, incl. `?T` nullable)
             is_struct_field = true;
         } else {
             // Case 3: Simple Enum Variant

@@ -1,0 +1,13 @@
+// R5a: union (`T | markers`) and `?T` types work as struct fields — the field
+// parser recognizes `?` as a type start, and struct field types are lowered so
+// a union field becomes its niche'd enum (a self-referential linked-list node
+// is a bare pointer, none = null).
+type Node {
+    val  i32
+    next *Node | none
+}
+type Box {
+    ptr ?*u8
+    tag i32
+}
+proc main() i32 { return 0 }
