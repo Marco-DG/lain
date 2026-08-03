@@ -1,8 +1,0 @@
-// EXPECT: [E063]
-// A ?*T may be nil — using it as a non-null *T without a nil-check is unsound
-// and rejected. (Increment 3 will permit it inside `if x { ... }`.)
-proc bad(x ?*u8) i32 {
-    var y *u8 = x
-    return 0
-}
-proc main() i32 { return 0 }

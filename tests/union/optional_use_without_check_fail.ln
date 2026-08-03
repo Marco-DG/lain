@@ -1,0 +1,8 @@
+// EXPECT: [E063]
+// A `*u8 | none` may be the `none` marker — using it as a bare `*u8` without a
+// presence check (`if r` / `case r`) is rejected.
+func bad(x *u8 | none) i32 {
+    var y *u8 = x
+    return 0
+}
+proc main() i32 { return 0 }

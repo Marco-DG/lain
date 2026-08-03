@@ -183,8 +183,7 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         return expr_undefined(arena);
     }
     if (parser_match(TOKEN_KEYWORD_NIL)) {
-        parser_advance();
-        return expr_nil(arena);
+        parser_error("`nil` is retired — write `none` (the marker) for the absent case of `T | none`.");
     }
     
     // Anonymous types: type { ... }

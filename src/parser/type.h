@@ -92,12 +92,10 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
     return type_mut(arena, inner);
   }
 
-  // ?T — sugar for `T | none`: the one value-or-markers construct with the single
-  // conventional `none` marker. No separate nullable mechanism.
+  // `?T` is retired: there is one construct, `T | markers`. Write `T | none`.
   if (parser_match(TOKEN_QUESTION)) {
-    parser_advance();
-    Type *inner = parse_type_core(arena, parser);
-    return type_union(arena, inner, id_list(arena, id(arena, 4, "none")));
+    parser_error("`?T` is not a type — write `T | none` (a value, or the `none` marker). "
+                 "Optionality and errors are the one construct `T | markers`.");
   }
 
   // The meta-type `type` — the type of a type parameter (`T type`). A parameter

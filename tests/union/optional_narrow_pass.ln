@@ -1,0 +1,8 @@
+// Narrowing: inside `if x`, a `T | none` narrows to the value (deref/pass-safe).
+// The old `!= nil` / guard-clause idioms all collapse to `if x`.
+func use_it(p *u8) i32 { return 0 }
+func via_if(x *u8 | none) i32 {
+    if x { return use_it(x) }
+    return 0
+}
+proc main() i32 { return 0 }

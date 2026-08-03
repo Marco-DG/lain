@@ -1,16 +1,16 @@
 extern proc libc_printf(fmt *u8, ...) i32
-// `?*u8` and `*u8 | none` are the SAME type — they interoperate freely.
+// Optionality is `T | none` — one construct, one spelling.
 func take(x *u8 | none) i32 {
     if x { return 1 }
     return 0
 }
-func make(p *u8, present bool) ?*u8 {
+func make(p *u8, present bool) *u8 | none {
     if present { return p }
-    return nil
+    return none
 }
 proc main() i32 {
-    var a ?*u8 = make("hi", true)      // ?T from a fn returning ?T
-    var b *u8 | none = nil              // explicit union = nil
-    libc_printf("take(a)=%d take(b)=%d (want 1 0)\n", take(a), take(b))  // ?T passed to |none param
+    var a *u8 | none = make("hi", true)
+    var b *u8 | none = none
+    libc_printf("take(a)=%d take(b)=%d (want 1 0)\n", take(a), take(b))
     return 0
 }
