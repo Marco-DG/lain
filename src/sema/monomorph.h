@@ -355,9 +355,12 @@ static Type *union_lower(Type *u) {
     char *raw = mono_dup(nb, strlen(nb));
     Id *ename = id(sema_arena, (isize)strlen(raw), raw);
 
-    // payload variant `some { __v : value }`, then one empty variant per marker.
+    // payload variant `__payload { __v : value }`, then one empty variant per
+    // marker. The payload variant's name is a compiler-internal detail: user
+    // code never spells it — the value is reached with the `else` arm of a
+    // `case` (which narrows the scrutinee to the value type), never `some(v)`.
     Variant *pv = arena_push_aligned(sema_arena, Variant);
-    pv->name   = id(sema_arena, 4, "some");
+    pv->name   = id(sema_arena, 9, "__payload");
     pv->fields = decl_list(sema_arena, decl_variable(sema_arena, id(sema_arena, 3, "__v"), value));
     pv->next   = NULL;
     Variant *tail = pv;

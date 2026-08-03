@@ -6,15 +6,17 @@ func classify(p *u8, e bool) *u8 | NotFound | Denied {
 proc main() i32 {
     var ok *u8 | NotFound | Denied = classify("hi", false)
     var bad *u8 | NotFound | Denied = classify("hi", true)
+    // Every marker is matched explicitly, so the `else` arm is provably the
+    // value: the scrutinee narrows to `*u8` there — no compiler-invented `some`.
     case ok {
         NotFound: libc_printf("ok=nf\n")
         Denied: libc_printf("ok=dn\n")
-        some(v): libc_printf("ok=some\n")
+        else: libc_printf("ok=%s\n", ok)
     }
     case bad {
         NotFound: libc_printf("bad=nf\n")
         Denied: libc_printf("bad=dn\n")
-        some(v): libc_printf("bad=some\n")
+        else: libc_printf("bad=%s\n", bad)
     }
     return 0
 }

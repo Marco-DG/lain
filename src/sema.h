@@ -121,8 +121,8 @@ bool sema_dump_niche = false;      // set by main from args.dump_niche (D-Niche 
 │ Union (`T | markers`) construction coercion                      │
 │ At a boundary whose target is a union enum, rewrite the value    │
 │ into normal enum construction — a bare marker → `U.marker`, a    │
-│ payload value → `U.some(value)` — so sema + emit handle it via   │
-│ the existing enum path (the constructors are niche-optimized).   │
+│ payload value → `U.__payload(value)` — so sema + emit handle it  │
+│ via the existing enum path (the constructors are niche-optimized).│
 ╚─────────────────────────────────────────────────────────────────*/
 static Decl *find_union_enum(Type *t) {
     if (!t) return NULL;
@@ -164,6 +164,31 @@ static Id *union_match_marker(Decl *U, Expr *e) {
     return NULL;
 }
 
+// The value of a `T | markers` union is reached through the `else` arm of a
+// `case`: when EVERY marker is explicitly matched by a non-`else` arm, the
+// `else` arm provably covers only the payload, so the scrutinee narrows to the
+// value type T there. Returns true when that narrowing is sound. (If a marker
+// is left to `else`, narrowing would be unsound — `else` could be that marker —
+// so we return false and the value stays a union, i.e. E063 on bare use.)
+static bool union_else_covers_payload(Expr *value, StmtMatchCase *cases) {
+    if (!value || value->kind != EXPR_IDENTIFIER || !value->type) return false;
+    Type *t = value->type;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    Decl *U = find_union_enum(t);
+    if (!U) return false;
+    for (Variant *v = U->as.enum_decl.variants; v; v = v->next) {
+        if (v->fields || !v->name) continue;         // skip the payload variant
+        bool covered = false;
+        for (StmtMatchCase *c = cases; c && !covered; c = c->next) {
+            if (!c->patterns) continue;              // the `else` arm itself doesn't cover markers
+            for (ExprList *p = c->patterns; p; p = p->next)
+                if (pattern_matches_variant(p->expr, v->name)) { covered = true; break; }
+        }
+        if (!covered) return false;
+    }
+    return true;
+}
+
 static void sema_union_coerce(Expr **slot, Type *target) {
     if (!slot || !*slot || !target) return;
     // A union-returning call's result type may still be a raw TYPE_UNION (its
@@ -186,16 +211,16 @@ static void sema_union_coerce(Expr **slot, Type *target) {
         *slot = m;
         return;
     }
-    // payload value → U.some(value) — ONLY when e is exactly the payload type.
-    // Anything else (a union value, a type mismatch, or untyped) is left to
+    // payload value → U.__payload(value) — ONLY when e is exactly the payload
+    // type. Anything else (a union value, a type mismatch, or untyped) is left to
     // check_conversion so it can pass a same-union assignment or report the error.
-    Variant *sv = U->as.enum_decl.variants;   // the `some` payload variant is first
+    Variant *sv = U->as.enum_decl.variants;   // the payload variant is first
     Type *payload = (sv && sv->fields && sv->fields->decl && sv->fields->decl->kind == DECL_VARIABLE)
                     ? sv->fields->decl->as.variable_decl.type : NULL;
     if (!e->type || !payload || !types_equal_exact(e->type, payload)) return;
     Expr *tgt = expr_type(sema_arena, uty); tgt->decl = U;
-    Expr *some = expr_member(sema_arena, tgt, id(sema_arena, 4, "some"));
-    Expr *call = expr_call(sema_arena, some, expr_list(sema_arena, e));
+    Expr *pw = expr_member(sema_arena, tgt, sv->name);   // the payload variant, by its own name
+    Expr *call = expr_call(sema_arena, pw, expr_list(sema_arena, e));
     sema_infer_expr(call);
     *slot = call;
 }
@@ -2028,18 +2053,31 @@ static void walk_stmt(Stmt *s) {
                 }
             }
             break;
-        case STMT_MATCH:
+        case STMT_MATCH: {
             sema_infer_expr(s->as.match_stmt.value);
+            // Union scrutinee: reaching the value is the `else` arm, which narrows
+            // the scrutinee to the value type — but only when every marker is
+            // matched explicitly (else the `else` arm could BE a marker).
+            bool else_narrows = union_else_covers_payload(s->as.match_stmt.value,
+                                                          s->as.match_stmt.cases);
             for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
                 sema_push_scope();
+                NilNarrowEntry *old_narrows = sema_nil_narrows;
+                if (else_narrows && c->patterns == NULL) {   // the `else` arm
+                    NilNarrowEntry *ne = arena_push_aligned(sema_arena, NilNarrowEntry);
+                    ne->var = s->as.match_stmt.value;
+                    ne->next = sema_nil_narrows; sema_nil_narrows = ne;
+                }
                 for (ExprList *p = c->patterns; p; p = p->next) {
                     sema_infer_expr(p->expr);
                 }
                 for (StmtList *b = c->body; b; b = b->next)
                     walk_stmt(b->stmt);
+                sema_nil_narrows = old_narrows;
                 sema_pop_scope();
             }
             break;
+        }
         case STMT_UNSAFE: {
             bool old_unsafe = sema_in_unsafe_block;
             sema_in_unsafe_block = true;
