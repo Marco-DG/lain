@@ -178,17 +178,6 @@ static void sema_union_coerce(Expr **slot, Type *target) {
     if (e->type && core_identical(e->type, target)) return;   // already exactly this union
     if (e->type && find_union_enum(e->type)) return;          // already SOME union value — don't re-wrap
     Type *uty = type_simple(sema_arena, U->as.enum_decl.type_name);
-    if (e->kind == EXPR_NIL) {                                // nil → the `none` marker (`?T` = `T | none`)
-        for (Variant *v = U->as.enum_decl.variants; v; v = v->next) {
-            if (!v->fields && v->name->length == 4 && memcmp(v->name->name, "none", 4) == 0) {
-                Expr *tn = expr_type(sema_arena, uty); tn->decl = U;
-                Expr *m = expr_member(sema_arena, tn, v->name);
-                sema_infer_expr(m);
-                *slot = m;
-                return;
-            }
-        }
-    }
     Id *marker = union_match_marker(U, e);
     if (marker) {                                             // bare marker → U.marker
         Expr *tgt = expr_type(sema_arena, uty); tgt->decl = U;   // member handler keys on target->decl
@@ -937,15 +926,13 @@ static void sema_verify_bounded_while(Stmt *s) {
 │ In-guard table: function definitions (type + global declared before includes)│
 ╚─────────────────────────────────────────────────────────────────────────────*/
 
-// Is e a reference to a nullable-typed variable (an identifier with a ?T type)?
+// Is e an identifier whose type is a single-marker union (`T | m`)? Only those
+// get `if r` narrowing: `if (r)` soundly excludes one sentinel; a multi-marker
+// union must be discriminated with `case` (its markers sit at several sentinels).
 static bool nn_is_nullable_var(Expr *e) {
     if (!e || e->kind != EXPR_IDENTIFIER || !e->type) return false;
     Type *t = e->type;
     while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
-    if (t && t->kind == TYPE_NULLABLE) return true;
-    // A union `T | markers` gets `if r` narrowing only when it has exactly ONE
-    // marker: `if (r)` soundly excludes a single sentinel; a multi-marker union
-    // must be discriminated with `case` (its markers sit at several sentinels).
     Decl *U = find_union_enum(t);
     if (U) {
         int markers = 0;
@@ -977,13 +964,6 @@ static void sema_push_nil_narrows(Expr *cond, bool negated) {
         sema_push_nil_narrows(l, false); sema_push_nil_narrows(r, false);
     } else if (op == TOKEN_KEYWORD_OR && negated) {          // !(a or b) = !a and !b
         sema_push_nil_narrows(l, true); sema_push_nil_narrows(r, true);
-    } else if (op == TOKEN_BANG_EQUAL || op == TOKEN_EQUAL_EQUAL) {
-        bool proves_present = (op == TOKEN_BANG_EQUAL) ? !negated : negated;
-        Expr *var = is_nil_literal(l) ? r : (is_nil_literal(r) ? l : NULL);
-        if (proves_present && var && nn_is_nullable_var(var)) {
-            NilNarrowEntry *e = arena_push_aligned(sema_arena, NilNarrowEntry);
-            e->var = var; e->next = sema_nil_narrows; sema_nil_narrows = e;
-        }
     }
 }
 

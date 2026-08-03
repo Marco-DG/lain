@@ -44,7 +44,6 @@ typedef enum {
     TYPE_ARRAY,     // e.g. "u8[]"
     TYPE_SLICE,     // e.g. "u8[:0]"
     TYPE_POINTER,   // pointer to element type, e.g. "u8 *"
-    TYPE_NULLABLE,  // ?T — a nullable T (element_type = T); layout = niche of T
     TYPE_UNION,     // T | m1 | m2 — value type (element_type) + nullary markers (union_markers)
     TYPE_COMPTIME,  // comptime modifier
     TYPE_VARIANT,   // inner payload of an ADT variant
@@ -398,7 +397,6 @@ typedef enum {
     EXPR_FLOAT_LITERAL,
     EXPR_MATCH,
     EXPR_UNDEFINED, // New
-    EXPR_NIL,       // nil — the absent value of a ?T (LANGUAGE_MODEL §2)
     EXPR_TYPE,      // a resolved Type* used as a parameter value
     EXPR_ANON_STRUCT,
     EXPR_ANON_ENUM,
@@ -701,18 +699,6 @@ Type *type_pointer(Arena *arena, Type *element_type) {
     Type *t = arena_push_aligned(arena, Type);
     t->kind         = TYPE_POINTER;
     t->mode         = MODE_SHARED;  // pointers default to shared
-    t->element_type = element_type;
-    t->canon = t;
-    return t;
-}
-
-// ?T — a nullable T. Layout is the niche of T (?*T = one pointer, nil = null).
-// element_type = the wrapped T. LANGUAGE_MODEL §2: the optionality primitive.
-Type *type_nullable(Arena *arena, Type *element_type) {
-    assert(element_type != NULL);
-    Type *t = arena_push_aligned(arena, Type);
-    t->kind         = TYPE_NULLABLE;
-    t->mode         = MODE_SHARED;
     t->element_type = element_type;
     t->canon = t;
     return t;
@@ -1159,11 +1145,6 @@ Expr *expr_undefined(Arena *arena) {
     return e;
 }
 
-Expr *expr_nil(Arena *arena) {
-    Expr *e = arena_push_aligned(arena, Expr);
-    e->kind = EXPR_NIL;
-    return e;
-}
 
 Expr *expr_type(Arena *arena, Type *type_value) {
     Expr *e = arena_push_aligned(arena, Expr);

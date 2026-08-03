@@ -715,42 +715,16 @@ static Range eval_callsite_size_range(Expr *se, DeclList *params, ExprList *args
 // the full `subsumes(from, to, range)` relation (P2/S2). Callers pass the
 // source expr where available (enables the null-literal idiom, 0 -> *T); NULL
 // is fine (that sub-check simply won't fire).
-static bool is_nil_literal(Expr *e) { return e && e->kind == EXPR_NIL; }
-
 static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
                              isize line, isize col,
                              const char *ctx, const char *label) {
-    // ?T coercion (LANGUAGE_MODEL §2) — handled before the pointer/int/etc.
-    // checks, which don't understand TYPE_NULLABLE:
-    //   nil -> ?T          OK        T  -> ?T (present)  OK (check the inner)
-    //   ?T  -> ?T          OK        ?T -> T  (unnarrowed) REJECT (may be nil)
-    // Increment 3 narrows `from` to the inner T inside `if x { … }`, so the
-    // reject fires only on genuinely unchecked uses.
+    // `T | markers` coercion: a union proven present (narrowed by `if r`) is used
+    // as its payload T; using it unnarrowed where a non-union is expected is
+    // rejected (it may be a marker). Construction (value/marker -> union) is done
+    // earlier by sema_union_coerce at each boundary.
     {
         Type *tu = to;   while (tu && tu->kind == TYPE_COMPTIME) tu = tu->element_type;
         Type *fu = from; while (fu && fu->kind == TYPE_COMPTIME) fu = fu->element_type;
-        if (tu && tu->kind == TYPE_NULLABLE) {
-            if (is_nil_literal(src_expr)) return;                       // nil -> ?T
-            if (fu && fu->kind == TYPE_NULLABLE) return;                // ?T -> ?T (inner-match deferred)
-            check_conversion(from, tu->element_type, r, src_expr, line, col, ctx, label); // T -> ?T
-            return;
-        }
-        if (fu && fu->kind == TYPE_NULLABLE) {
-            if (sema_in_unsafe_block || sema_is_nil_narrowed(src_expr)) {
-                // Proven present — narrowed by `if x` / `if x != nil` (or unsafe):
-                // treat as the inner T.
-                check_conversion(fu->element_type, to, r, src_expr, line, col, ctx, label);
-                return;
-            }
-            char tb[128]; type_describe(tu ? tu : to, tb, sizeof tb);
-            fprintf(stderr, "[E063] Error Ln %li, Col %li: %s value may be nil; test it "
-                    "(`if x { … }`) before using it as '%s'.\n",
-                    (long)line, (long)col, ctx ? ctx : "this", tb);
-            diagnostic_show_line(line, col); exit(1);
-        }
-        // `T | markers` used where a non-union value is expected: allow it only
-        // when proven present (narrowed by `if r`) — then treat it as the payload
-        // T; otherwise it may be a marker, so reject (use `if r`/`case r`).
         Type *fpay = union_payload_type(fu);
         if (fpay && !union_payload_type(tu)) {
             if (sema_in_unsafe_block || sema_is_nil_narrowed(src_expr)) {
@@ -788,12 +762,6 @@ static void check_comparison_operands(Type *lt, Type *rt, Expr *le, Expr *re,
     l = resolve_type_alias(l);
     r = resolve_type_alias(r);
     if (l == r) return;
-    // `union == nil` / `union != nil` (or union vs union): allowed — it compares
-    // the niche'd backing value against the marker sentinel (`x != 0` for none=0).
-    if (union_payload_type(l) || union_payload_type(r)) {
-        if (is_nil_literal(le) || is_nil_literal(re)) return;
-        if (union_payload_type(l) && union_payload_type(r)) return;
-    }
     bool l_ptr = (l->kind == TYPE_POINTER), r_ptr = (r->kind == TYPE_POINTER);
     bool bad = false;
     if ((is_float_type(l) && is_integer_type(r)) || (is_integer_type(l) && is_float_type(r))) {
@@ -987,10 +955,6 @@ void sema_infer_expr(Expr *e) {
   if (!e) return;
 // (removed debug print)
   switch (e->kind) {
-  case EXPR_NIL:
-    // Contextually typed: nil carries no type of its own; it is accepted only
-    // at a ?T boundary (check_conversion via is_nil_literal). Leaving type NULL.
-    break;
   case EXPR_IDENTIFIER:
     // already set in resolve
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
@@ -2003,25 +1967,12 @@ void sema_infer_expr(Expr *e) {
                 lbuf[ll] = '\0';
                 Symbol *lsym = sema_lookup(lbuf);
                 if (lsym && lsym->decl && (lsym->decl->kind == DECL_STRUCT || lsym->decl->kind == DECL_ENUM)) {
-                    // A union (`T | markers`) MAY be compared to nil or another union
-                    // — it tests the niche'd backing value against a sentinel.
-                    Expr *rexp = e->as.binary_expr.right;
-                    bool l_union = (lsym->decl->kind == DECL_ENUM && lsym->decl->as.enum_decl.is_union);
-                    bool r_ok = is_nil_literal(rexp);
-                    if (!r_ok && rexp && rexp->type && rexp->type->kind == TYPE_SIMPLE && rexp->type->base_type) {
-                        char rb[256]; int rl2 = rexp->type->base_type->length < 255 ? (int)rexp->type->base_type->length : 255;
-                        memcpy(rb, rexp->type->base_type->name, (size_t)rl2); rb[rl2] = '\0';
-                        Symbol *rsym = sema_lookup(rb);
-                        r_ok = rsym && rsym->decl && rsym->decl->kind == DECL_ENUM && rsym->decl->as.enum_decl.is_union;
-                    }
-                    if (!(l_union && r_ok)) {
-                        fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot use '%s' on struct/enum type '%s'. "
-                                "Implement an 'equals' method and use it instead.\n",
-                                (long)e->line, (long)e->col,
-                                op == TOKEN_EQUAL_EQUAL ? "==" : "!=", lbuf);
-                        diagnostic_show_line(e->line, e->col);
-                        exit(1);
-                    }
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot use '%s' on struct/enum type '%s'. "
+                            "Implement an 'equals' method and use it instead.\n",
+                            (long)e->line, (long)e->col,
+                            op == TOKEN_EQUAL_EQUAL ? "==" : "!=", lbuf);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
                 }
             }
         }
@@ -2048,11 +1999,7 @@ void sema_infer_expr(Expr *e) {
                 bool str_lit_cmp = eqop &&
                     (e->as.binary_expr.left->kind == EXPR_STRING ||
                      e->as.binary_expr.right->kind == EXPR_STRING);
-                // A union (`T | markers`) compared to nil / another union is allowed.
-                bool union_cmp = eqop && (union_payload_type(alt) || union_payload_type(art)) &&
-                    (is_nil_literal(e->as.binary_expr.left) || is_nil_literal(e->as.binary_expr.right) ||
-                     (union_payload_type(alt) && union_payload_type(art)));
-                if (!str_lit_cmp && !union_cmp) {
+                if (!str_lit_cmp) {
                     const char *what = (is_nominal_aggregate(alt) || is_nominal_aggregate(art))
                                        ? "struct/enum" : "array/slice";
                     fprintf(stderr, "[E012] Error Ln %li, Col %li: operator '%s' is not "

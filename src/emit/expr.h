@@ -126,12 +126,6 @@ void emit_expr(Expr *expr, int depth) {
     EMIT("%lld", (long long)expr->as.literal_expr.value);
     break;
 
-  case EXPR_NIL:
-    // The absent value. For the ?*T / pointer-niche layout this is the null
-    // sentinel; emitted as 0 (assigned/compared against a bare pointer).
-    EMIT("0");
-    break;
-
   case EXPR_FLOAT_LITERAL:
     EMIT("%.17g", expr->as.float_expr.value);
     break;
