@@ -428,7 +428,7 @@ static Type *mono_resolve_type_apps(Type *t) {
 
 // Resolve type-applications across a function's signature (param + return types).
 static void mono_resolve_signature(Decl *d) {
-    if (!d || d->kind != DECL_FUNCTION) return;
+    if (!d || (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE)) return;
     for (DeclList *p = d->as.function_decl.params; p; p = p->next)
         if (p->decl && p->decl->kind == DECL_VARIABLE)
             p->decl->as.variable_decl.type = mono_resolve_type_apps(p->decl->as.variable_decl.type);

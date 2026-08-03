@@ -788,6 +788,12 @@ static void check_comparison_operands(Type *lt, Type *rt, Expr *le, Expr *re,
     l = resolve_type_alias(l);
     r = resolve_type_alias(r);
     if (l == r) return;
+    // `union == nil` / `union != nil` (or union vs union): allowed — it compares
+    // the niche'd backing value against the marker sentinel (`x != 0` for none=0).
+    if (union_payload_type(l) || union_payload_type(r)) {
+        if (is_nil_literal(le) || is_nil_literal(re)) return;
+        if (union_payload_type(l) && union_payload_type(r)) return;
+    }
     bool l_ptr = (l->kind == TYPE_POINTER), r_ptr = (r->kind == TYPE_POINTER);
     bool bad = false;
     if ((is_float_type(l) && is_integer_type(r)) || (is_integer_type(l) && is_float_type(r))) {
@@ -1997,12 +2003,25 @@ void sema_infer_expr(Expr *e) {
                 lbuf[ll] = '\0';
                 Symbol *lsym = sema_lookup(lbuf);
                 if (lsym && lsym->decl && (lsym->decl->kind == DECL_STRUCT || lsym->decl->kind == DECL_ENUM)) {
-                    fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot use '%s' on struct/enum type '%s'. "
-                            "Implement an 'equals' method and use it instead.\n",
-                            (long)e->line, (long)e->col,
-                            op == TOKEN_EQUAL_EQUAL ? "==" : "!=", lbuf);
-                    diagnostic_show_line(e->line, e->col);
-                    exit(1);
+                    // A union (`T | markers`) MAY be compared to nil or another union
+                    // — it tests the niche'd backing value against a sentinel.
+                    Expr *rexp = e->as.binary_expr.right;
+                    bool l_union = (lsym->decl->kind == DECL_ENUM && lsym->decl->as.enum_decl.is_union);
+                    bool r_ok = is_nil_literal(rexp);
+                    if (!r_ok && rexp && rexp->type && rexp->type->kind == TYPE_SIMPLE && rexp->type->base_type) {
+                        char rb[256]; int rl2 = rexp->type->base_type->length < 255 ? (int)rexp->type->base_type->length : 255;
+                        memcpy(rb, rexp->type->base_type->name, (size_t)rl2); rb[rl2] = '\0';
+                        Symbol *rsym = sema_lookup(rb);
+                        r_ok = rsym && rsym->decl && rsym->decl->kind == DECL_ENUM && rsym->decl->as.enum_decl.is_union;
+                    }
+                    if (!(l_union && r_ok)) {
+                        fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot use '%s' on struct/enum type '%s'. "
+                                "Implement an 'equals' method and use it instead.\n",
+                                (long)e->line, (long)e->col,
+                                op == TOKEN_EQUAL_EQUAL ? "==" : "!=", lbuf);
+                        diagnostic_show_line(e->line, e->col);
+                        exit(1);
+                    }
                 }
             }
         }
@@ -2029,7 +2048,11 @@ void sema_infer_expr(Expr *e) {
                 bool str_lit_cmp = eqop &&
                     (e->as.binary_expr.left->kind == EXPR_STRING ||
                      e->as.binary_expr.right->kind == EXPR_STRING);
-                if (!str_lit_cmp) {
+                // A union (`T | markers`) compared to nil / another union is allowed.
+                bool union_cmp = eqop && (union_payload_type(alt) || union_payload_type(art)) &&
+                    (is_nil_literal(e->as.binary_expr.left) || is_nil_literal(e->as.binary_expr.right) ||
+                     (union_payload_type(alt) && union_payload_type(art)));
+                if (!str_lit_cmp && !union_cmp) {
                     const char *what = (is_nominal_aggregate(alt) || is_nominal_aggregate(art))
                                        ? "struct/enum" : "array/slice";
                     fprintf(stderr, "[E012] Error Ln %li, Col %li: operator '%s' is not "

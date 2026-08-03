@@ -92,11 +92,12 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
     return type_mut(arena, inner);
   }
 
-  // ?T — nullable T (LANGUAGE_MODEL §2). Layout is the niche of T.
+  // ?T — sugar for `T | none`: the one value-or-markers construct with the single
+  // conventional `none` marker. No separate nullable mechanism.
   if (parser_match(TOKEN_QUESTION)) {
     parser_advance();
     Type *inner = parse_type_core(arena, parser);
-    return type_nullable(arena, inner);
+    return type_union(arena, inner, id_list(arena, id(arena, 4, "none")));
   }
 
   // The meta-type `type` — the type of a type parameter (`T type`). A parameter

@@ -127,6 +127,7 @@ bool sema_dump_niche = false;      // set by main from args.dump_niche (D-Niche 
 static Decl *find_union_enum(Type *t) {
     if (!t) return NULL;
     while (t->kind == TYPE_COMPTIME && t->element_type) t = t->element_type;
+    if (t->kind == TYPE_UNION) t = mono_resolve_type_apps(t);  // lower a raw union → its enum
     if (t->kind != TYPE_SIMPLE || !t->base_type) return NULL;
     const char *n = t->base_type->name; isize nl = t->base_type->length;
     for (DeclList *dl = sema_decls; dl; dl = dl->next) {
@@ -177,6 +178,17 @@ static void sema_union_coerce(Expr **slot, Type *target) {
     if (e->type && core_identical(e->type, target)) return;   // already exactly this union
     if (e->type && find_union_enum(e->type)) return;          // already SOME union value — don't re-wrap
     Type *uty = type_simple(sema_arena, U->as.enum_decl.type_name);
+    if (e->kind == EXPR_NIL) {                                // nil → the `none` marker (`?T` = `T | none`)
+        for (Variant *v = U->as.enum_decl.variants; v; v = v->next) {
+            if (!v->fields && v->name->length == 4 && memcmp(v->name->name, "none", 4) == 0) {
+                Expr *tn = expr_type(sema_arena, uty); tn->decl = U;
+                Expr *m = expr_member(sema_arena, tn, v->name);
+                sema_infer_expr(m);
+                *slot = m;
+                return;
+            }
+        }
+    }
     Id *marker = union_match_marker(U, e);
     if (marker) {                                             // bare marker → U.marker
         Expr *tgt = expr_type(sema_arena, uty); tgt->decl = U;   // member handler keys on target->decl
@@ -2952,7 +2964,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         }
 
         // 2.b) Name resolution
-        current_return_type = d->as.function_decl.return_type;
+        current_return_type = mono_resolve_type_apps(d->as.function_decl.return_type);
         current_function_decl = d; // Set current function
         // Q-018: use the decl's defining_module if known so that cross-module
         // visibility checks within imported function bodies see the correct
