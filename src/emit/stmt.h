@@ -62,8 +62,9 @@ void emit_stmt(Stmt *stmt, int depth) {
         EMIT(" %s", c_name_for_id(v));
       }
   
-      // 4) optional initializer (NULL = a bare `var x T`, emitted as raw `T x;`)
-      if (stmt->as.var_stmt.expr) {
+      // 4) optional initializer (NULL = a bare `var x T`, emitted as raw `T x;`;
+      //    an array comprehension is lowered to a fill loop after the decl below)
+      if (stmt->as.var_stmt.expr && stmt->as.var_stmt.expr->kind != EXPR_ARRAY_COMPREHENSION) {
         EMIT(" = ");
   
         // centralized helper: emits compound byte array literal for fixed-like types
@@ -90,6 +91,28 @@ void emit_stmt(Stmt *stmt, int depth) {
   
       // 5) terminate
       EMIT(";\n");
+
+      // 5b) array comprehension: `T a[N];` above, now the fill loop
+      //     `for (i32 idx = lo; idx < hi; idx++) a[idx - lo] = body;`
+      if (stmt->as.var_stmt.expr && stmt->as.var_stmt.expr->kind == EXPR_ARRAY_COMPREHENSION) {
+          Expr *comp  = stmt->as.var_stmt.expr;
+          Expr *range = comp->as.array_comprehension_expr.range;
+          char aname[256];  snprintf(aname,  sizeof aname,  "%s", c_name_for_id(v));
+          char idxname[256]; snprintf(idxname, sizeof idxname, "%s",
+                                      c_name_for_id(comp->as.array_comprehension_expr.idx));
+          long lo = (long)range->as.range_expr.start->as.literal_expr.value;
+          long hi = (long)range->as.range_expr.end->as.literal_expr.value;
+          if (range->as.range_expr.inclusive) hi += 1;
+          emit_indent(depth);
+          if (lo == 0)
+              EMIT("for (int32_t %s = 0; %s < %ld; %s++) %s[%s] = ",
+                   idxname, idxname, hi, idxname, aname, idxname);
+          else
+              EMIT("for (int32_t %s = %ld; %s < %ld; %s++) %s[%s - %ld] = ",
+                   idxname, lo, idxname, hi, idxname, aname, idxname, lo);
+          emit_expr(comp->as.array_comprehension_expr.body, depth);
+          EMIT(";\n");
+      }
 
       // O-003 [assume-return]: if the initializer is a function call whose callee
       // has return_constraints, emit __builtin_assume() for each constraint.

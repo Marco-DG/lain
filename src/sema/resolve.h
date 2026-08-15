@@ -998,6 +998,26 @@ void sema_resolve_expr(Expr *e) {
     }
     break;
 
+  case EXPR_ARRAY_COMPREHENSION: {
+    // [ body for idx in range ] — resolve the range, then bind idx (an i32) in a
+    // fresh scope while resolving the body.
+    sema_resolve_expr(e->as.array_comprehension_expr.range);
+    sema_infer_expr(e->as.array_comprehension_expr.range);
+    sema_push_scope();
+    Id *ix = e->as.array_comprehension_expr.idx;
+    if (ix) {
+        char raw[256];
+        size_t li = (ix->length < 0) ? 0 : (size_t)ix->length;
+        if (li > sizeof(raw) - 1) li = sizeof(raw) - 1;
+        memcpy(raw, ix->name, li); raw[li] = '\0';
+        sema_insert_local(raw, raw, get_builtin_i32_type(), NULL, false);
+    }
+    sema_resolve_expr(e->as.array_comprehension_expr.body);
+    sema_infer_expr(e->as.array_comprehension_expr.body);   // set body type while idx is in scope
+    sema_pop_scope();
+    break;
+  }
+
   case EXPR_BUILTIN: {
     switch (e->as.builtin_expr.builtin_kind) {
         case BUILTIN_OS:

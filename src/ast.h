@@ -399,6 +399,7 @@ typedef enum {
     EXPR_ANON_STRUCT,
     EXPR_ANON_ENUM,
     EXPR_ARRAY_LITERAL,
+    EXPR_ARRAY_COMPREHENSION,   // [ body for idx in start..end ]
     EXPR_BUILTIN,
     EXPR_ADDR,   // &lvalue — address of an element
     EXPR_DEREF,  // *ptr   — dereference a pointer (safe when ptr in arr proven)
@@ -519,6 +520,12 @@ typedef struct {
 } ExprArrayLiteral;
 
 typedef struct {
+    struct Expr *body;   // element expression, references `idx`
+    Id          *idx;    // loop variable, bound inside `body`
+    struct Expr *range;  // an EXPR_RANGE giving the index bounds
+} ExprArrayComprehension;
+
+typedef struct {
     BuiltinKind builtin_kind;
     struct Expr *arg;   // argument for @likely/@unlikely/@assume_aligned; NULL for @os/@arch
     isize       align;  // alignment value for BUILTIN_ASSUME_ALIGNED
@@ -548,6 +555,7 @@ typedef struct Expr {
         ExprAnonStruct  anon_struct_expr;
         ExprAnonEnum    anon_enum_expr;
         ExprArrayLiteral array_literal_expr;
+        ExprArrayComprehension array_comprehension_expr;
         ExprBuiltin     builtin_expr;
         ExprAddr        addr_expr;
         ExprDeref       deref_expr;
@@ -1166,6 +1174,15 @@ Expr *expr_array_literal(Arena *arena, ExprList *elements) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_ARRAY_LITERAL;
     e->as.array_literal_expr.elements = elements;
+    return e;
+}
+
+Expr *expr_array_comprehension(Arena *arena, Expr *body, Id *idx, Expr *range) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_ARRAY_COMPREHENSION;
+    e->as.array_comprehension_expr.body  = body;
+    e->as.array_comprehension_expr.idx   = idx;
+    e->as.array_comprehension_expr.range = range;
     return e;
 }
 

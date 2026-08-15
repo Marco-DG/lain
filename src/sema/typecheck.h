@@ -2228,6 +2228,31 @@ void sema_infer_expr(Expr *e) {
     break;
   }
 
+  case EXPR_ARRAY_COMPREHENSION: {
+    // [ body for idx in start..end ] : T[end-start], T = type of body.
+    Expr *body  = e->as.array_comprehension_expr.body;
+    Expr *range = e->as.array_comprehension_expr.range;
+    sema_infer_expr(body);
+    sema_infer_expr(range);
+    if (!range || range->kind != EXPR_RANGE) {
+        fprintf(stderr, "sema error Ln %li, Col %li: array comprehension requires a range `start..end`\n", e->line, e->col);
+        diagnostic_show_line(e->line, e->col); exit(1);
+    }
+    Expr *lo = range->as.range_expr.start, *hi = range->as.range_expr.end;
+    if (!lo || lo->kind != EXPR_LITERAL || !hi || hi->kind != EXPR_LITERAL) {
+        fprintf(stderr, "sema error Ln %li, Col %li: array comprehension range bounds must be integer literals\n", e->line, e->col);
+        diagnostic_show_line(e->line, e->col); exit(1);
+    }
+    isize n = (isize)hi->as.literal_expr.value - (isize)lo->as.literal_expr.value;
+    if (range->as.range_expr.inclusive) n += 1;
+    if (n <= 0) {
+        fprintf(stderr, "sema error Ln %li, Col %li: array comprehension length must be positive\n", e->line, e->col);
+        diagnostic_show_line(e->line, e->col); exit(1);
+    }
+    e->type = type_array(sema_arena, body->type, n);
+    break;
+  }
+
   case EXPR_LITERAL:
     e->type = get_builtin_i32_type();
     break;

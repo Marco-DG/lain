@@ -1,0 +1,6 @@
+// EXPECT: [E100]
+// First cut: a comprehension is only valid as a variable initializer.
+func take(a i32[3]) i32 { return a[0] }
+proc main() i32 {
+    return take([i for i in 0..3])
+}

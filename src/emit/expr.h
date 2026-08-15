@@ -135,6 +135,15 @@ void emit_expr(Expr *expr, int depth) {
          expr->as.string_expr.value);
     break;
 
+  case EXPR_ARRAY_COMPREHENSION:
+    // First cut: comprehensions are lowered only in a `var` initializer (a fill
+    // loop, see emit/stmt.h). Any other position reaches here.
+    fprintf(stderr, "[E100] Error Ln %li, Col %li: an array comprehension is only "
+            "supported as a variable initializer (`var a = [expr for i in a..b]`) "
+            "for now.\n", (long)expr->line, (long)expr->col);
+    diagnostic_show_line(expr->line, expr->col);
+    exit(1);
+
   case EXPR_ARRAY_LITERAL: {
     char typeName[256];
     c_name_for_type(expr->type, typeName, sizeof typeName);

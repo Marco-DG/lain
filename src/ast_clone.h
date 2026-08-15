@@ -166,6 +166,10 @@ Expr *clone_expr(Arena *arena, Expr *e) {
             new_e->as.binary_expr.left  = clone_expr(arena, e->as.binary_expr.left);
             new_e->as.binary_expr.right = clone_expr(arena, e->as.binary_expr.right);
             break;
+        case EXPR_ARRAY_COMPREHENSION:
+            new_e->as.array_comprehension_expr.body  = clone_expr(arena, e->as.array_comprehension_expr.body);
+            new_e->as.array_comprehension_expr.range = clone_expr(arena, e->as.array_comprehension_expr.range);
+            break;
         case EXPR_UNARY:
             new_e->as.unary_expr.right = clone_expr(arena, e->as.unary_expr.right);
             break;

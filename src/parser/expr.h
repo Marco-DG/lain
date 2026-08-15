@@ -262,13 +262,46 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         ExprList *elements = NULL;
         ExprList **tail = &elements;
         if (!parser_match(TOKEN_R_BRACKET)) {
-            do {
-                Expr *elem = parse_expr(arena, parser);
-                *tail = expr_list(arena, elem);
-                tail = &(*tail)->next;
-                if (parser_match(TOKEN_COMMA)) parser_advance();
-                else break;
-            } while (!parser_match(TOKEN_R_BRACKET));
+            Expr *first = parse_expr(arena, parser);
+            // Array comprehension: [ body for idx in start..end ]
+            if (parser_match(TOKEN_KEYWORD_FOR)) {
+                parser_advance();  // consume 'for'
+                parser_expect(TOKEN_IDENTIFIER, "Expected loop variable after 'for' in comprehension");
+                Id *idx = id(arena, parser->token.length, parser->token.start);
+                parser_advance();
+                parser_expect(TOKEN_KEYWORD_IN, "Expected 'in' after comprehension loop variable");
+                parser_advance();
+                Expr *start = parse_expr(arena, parser);
+                Expr *range = start;
+                if (parser_match(TOKEN_DOT_DOT)) {
+                    parser_advance();
+                    range = expr_range(arena, start, parse_expr(arena, parser), false);
+                } else if (parser_match(TOKEN_DOT_DOT_EQUAL)) {
+                    parser_advance();
+                    range = expr_range(arena, start, parse_expr(arena, parser), true);
+                } else {
+                    parser_error("Expected a range `start..end` in array comprehension");
+                }
+                parser_expect(TOKEN_R_BRACKET, "Expected ']' after comprehension");
+                parser_advance();
+                Expr *comp = expr_array_comprehension(arena, first, idx, range);
+                comp->line = arr_line;
+                comp->col  = arr_col;
+                return comp;
+            }
+            // Otherwise: array literal; `first` is the first element.
+            *tail = expr_list(arena, first);
+            tail = &(*tail)->next;
+            if (parser_match(TOKEN_COMMA)) {
+                parser_advance();
+                while (!parser_match(TOKEN_R_BRACKET)) {
+                    Expr *elem = parse_expr(arena, parser);
+                    *tail = expr_list(arena, elem);
+                    tail = &(*tail)->next;
+                    if (parser_match(TOKEN_COMMA)) parser_advance();
+                    else break;
+                }
+            }
         }
         parser_expect(TOKEN_R_BRACKET, "Expected ']' after array literal");
         parser_advance();
