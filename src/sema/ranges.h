@@ -109,6 +109,20 @@ static Range range_mod(Range a, Range b) {
     return range_make(-(abs_b_max - 1), abs_b_max - 1);
 }
 
+// Bitwise AND on non-negative operands: `x & y` clears bits, so it cannot exceed
+// either operand — [0, min(max_x, max_y)]. This is what makes masked reads like
+// `CTYPE[c] & FLAG` provably small. Negative operands (two's complement) bail.
+static Range range_bitand(Range a, Range b) {
+    if (!a.known || !b.known || a.min < 0 || b.min < 0) return range_unknown();
+    return range_make(0, a.max < b.max ? a.max : b.max);
+}
+// Bitwise OR on non-negative operands: `x | y` ≥ max(x, y) ≥ max(min_x, min_y),
+// and `x | y` ≤ x + y ≤ max_x + max_y. Loose but safe (exact for single values).
+static Range range_bitor(Range a, Range b) {
+    if (!a.known || !b.known || a.min < 0 || b.min < 0) return range_unknown();
+    return range_make(a.min > b.min ? a.min : b.min, sat_add_i64(a.max, b.max));
+}
+
 // Map from Variable Id* to Range
 typedef struct RangeEntry {
     Id *var;
@@ -194,7 +208,46 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
     if (!e) return range_unknown();
     switch (e->kind) {
         case EXPR_LITERAL: return range_const(e->as.literal_expr.value);
-        case EXPR_IDENTIFIER: return range_get(t, e->as.identifier_expr.id);
+        case EXPR_IDENTIFIER: {
+            Range rg = range_get(t, e->as.identifier_expr.id);
+            if (rg.known) return rg;
+            // Not in the local range table — a top-level constant contributes its
+            // value (a literal init) or, failing that, its declared integer type
+            // range, so arithmetic on constants stays provable (no false E086).
+            Decl *cd = e->decl;
+            if (cd && cd->kind == DECL_VARIABLE && !cd->as.variable_decl.is_mutable &&
+                !cd->as.variable_decl.is_parameter && cd->as.variable_decl.init) {
+                // A top-level constant (has an initializer, not a parameter): use
+                // its literal value, or a NARROW declared type's range. A wide
+                // type's full range would make ordinary arithmetic look
+                // overflowing, so leave those unknown.
+                Expr *ci = cd->as.variable_decl.init;
+                if (ci->kind == EXPR_LITERAL) return range_const(ci->as.literal_expr.value);
+                extern int type_integer_range(Type *ty, long long *lo, long long *hi);
+                long long lo, hi;
+                if (cd->as.variable_decl.type &&
+                    type_integer_range(cd->as.variable_decl.type, &lo, &hi) &&
+                    lo >= -32768 && hi <= 65535)
+                    return range_make(lo, hi);
+            }
+            return rg;
+        }
+        case EXPR_INDEX: {
+            // An element read of a NARROW-element array (`u8[N]` → [0,255]) has a
+            // small provable range. For 32-bit+ element types, keep it unknown:
+            // a full-width range would make ordinary `a[i]+a[j]` look overflowing
+            // (a false E086) — the old, safe "unanalyzable, skip" behavior.
+            Type *tt = e->as.index_expr.target ? e->as.index_expr.target->type : NULL;
+            while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
+            Type *et = (tt && (tt->kind == TYPE_ARRAY || tt->kind == TYPE_SLICE))
+                       ? tt->element_type : NULL;
+            extern int type_integer_range(Type *ty, long long *lo, long long *hi);
+            long long lo, hi;
+            if (et && type_integer_range(et, &lo, &hi) &&
+                lo >= -32768 && hi <= 65535)   // ≤16-bit: safe to fold, no false overflow
+                return range_make(lo, hi);
+            return range_unknown();
+        }
         case EXPR_BINARY: {
             Range l = sema_eval_range(e->as.binary_expr.left, t);
             Range r = sema_eval_range(e->as.binary_expr.right, t);
@@ -241,6 +294,8 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                 case TOKEN_ASTERISK:        return range_mul(l, r);
                 case TOKEN_SLASH:           return range_div(l, r);
                 case TOKEN_PERCENT:         return range_mod(l, r);
+                case TOKEN_AMPERSAND:       return range_bitand(l, r);
+                case TOKEN_PIPE:            return range_bitor(l, r);
                 default:                    return range_unknown();
             }
         }

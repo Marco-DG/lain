@@ -1,0 +1,14 @@
+// VRA folds a top-level constant's value and a narrow (u8/u16) array element's
+// range, and handles bitwise & / | — so constant-driven arithmetic that used to
+// trip the overflow prover (E086) is now provably safe.
+extern proc libc_printf(fmt *u8, ...) i32
+
+MASK u8 = 0x0F
+TABLE u8[4] = [10, 20, 30, 40]
+
+proc main() i32 {
+    var masked u8 = 0xF3 & MASK       // & bounds to [0,15]
+    var elem   i32 = TABLE[2] as i32 + 1   // u8 element [0,255] → no false overflow
+    var sum    i32 = masked as i32 + elem  // 3 + 31 = 34
+    return sum - 34
+}
