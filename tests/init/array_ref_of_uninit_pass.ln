@@ -1,0 +1,7 @@
+// Forming a slice of an uninitialized array reads its ADDRESS, not its contents,
+// so it is sound and allowed (the scratch-buffer / lend-a-region pattern).
+proc main() i32 {
+    var a i32[8]
+    var s = a[0..4]
+    return 0
+}

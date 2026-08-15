@@ -4,14 +4,9 @@
 extern proc libc_printf(fmt *u8, ...) i32
 
 proc main() i32 {
-    // Fixed-size array
-    var arr i32[5]
-    arr[0] = 10
-    arr[1] = 20
-    arr[2] = 30
-    arr[3] = 40
-    arr[4] = 50  // Max valid index is 4 for array of 5
-    
+    // Fixed-size array (whole-array literal init)
+    var arr i32[5] = [10, 20, 30, 40, 50]  // Max valid index is 4 for array of 5
+
     // Valid index access with compile-time constant
     var a = arr[0]
     var b = arr[4]

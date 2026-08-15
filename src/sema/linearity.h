@@ -747,7 +747,11 @@ static bool type_is_uninit_flaggable(Type *t) {
     while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
     if (!t) return false;
     if (t->kind == TYPE_POINTER) return true;
-    if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) return false;
+    // Arrays and slices are whole-value tracked: an uninitialized read is garbage
+    // (a slice is a fat pointer). Element writes don't initialize an array (see
+    // STMT_ASSIGN); a whole-array initializer does. As a struct field, an
+    // array/slice becomes a single opaque leaf in fi_flatten.
+    if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) return true;
     if (t->kind == TYPE_SIMPLE) return !is_nominal_aggregate(t);  // scalar yes, struct/enum no
     return false;
 }
@@ -787,6 +791,9 @@ static bool fi_flatten(Decl *sd, const char *prefix, bool all_init, int depth,
               : snprintf(path, sizeof path, "%.*s", (int)fname->length, fname->name);
         if (n <= 0 || n >= (int)sizeof path) return false;
 
+        // Array/slice fields abandon struct-field tracking for now (they'd need
+        // per-field-element checking); the struct falls back to whole-var.
+        if (ft && (ft->kind == TYPE_ARRAY || ft->kind == TYPE_SLICE)) return false;
         if (type_is_uninit_flaggable(ft)) {                 // scalar/pointer leaf
             if (*count >= FI_MAX_LEAVES) return false;
             char *p = arena_push_many(sema_arena, char, (isize)n + 1);
@@ -903,14 +910,16 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     diagnostic_show_line((e->line), (e->col));
                     exit(1);
                 }
-                // P2/S4: fire for an uninitialized read of a linear var (must_consume),
-                // an explicit `= undefined`, OR a plain scalar/pointer. Aggregates are
-                // excluded (used uninitialized legitimately) and a var passed to a
-                // var/mut parameter is marked initialized below (out-param init), so
-                // this no longer false-positives on those patterns.
-                if (!entry->is_initialized &&
-                    (entry->must_consume ||
-                     type_is_uninit_flaggable(entry->var_type ? entry->var_type : e->type))) {
+                // Fire for an uninitialized read of a linear var (must_consume)
+                // or a plain scalar/pointer. Arrays/slices are handled at the
+                // element-read site (EXPR_INDEX): forming a slice or borrowing a
+                // whole array reads its address, not its contents, so a bare
+                // array identifier here is a reference, not a garbage read.
+                Type *vt = entry->var_type ? entry->var_type : e->type;
+                while (vt && vt->kind == TYPE_COMPTIME) vt = vt->element_type;
+                bool is_arrlike = vt && (vt->kind == TYPE_ARRAY || vt->kind == TYPE_SLICE);
+                if (!entry->is_initialized && !is_arrlike &&
+                    (entry->must_consume || type_is_uninit_flaggable(vt))) {
                     fprintf(stderr, "[E005] Error Ln %li, Col %li: use of uninitialized variable '%.*s'.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "<unknown>");
                     diagnostic_show_line((e->line), (e->col));
@@ -973,10 +982,33 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         break;
     }
 
-    case EXPR_INDEX:
-        sema_check_expr_linearity(e->as.index_expr.target, tbl, loop_depth);
-        sema_check_expr_linearity(e->as.index_expr.index, tbl, loop_depth);
+    case EXPR_INDEX: {
+        // A single-element read `a[i]` reads CONTENT — require the array
+        // initialized (E005). A range index `a[lo..hi]` forms a sub-slice (a
+        // reference, no content read) and is allowed on an uninitialized array.
+        Expr *ixt = e->as.index_expr.target;
+        Expr *ixi = e->as.index_expr.index;
+        if (tbl && ixt && ixt->kind == EXPR_IDENTIFIER &&
+            ixi && ixi->kind != EXPR_RANGE) {
+            LEntry *ae = ltable_find(tbl, ixt->as.identifier_expr.id);
+            if (ae && !ae->is_initialized && !ae->field_inits) {
+                Type *at = ae->var_type ? ae->var_type : ixt->type;
+                while (at && at->kind == TYPE_COMPTIME) at = at->element_type;
+                if (at && (at->kind == TYPE_ARRAY || at->kind == TYPE_SLICE)) {
+                    Id *aid = ixt->as.identifier_expr.id;
+                    fprintf(stderr, "[E005] Error Ln %li, Col %li: read of an element of "
+                            "uninitialized array '%.*s'; initialize it with a whole-array "
+                            "value (a literal or comprehension) before reading elements.\n",
+                            (long)e->line, (long)e->col, (int)aid->length, aid->name ? aid->name : "?");
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+            }
+        }
+        sema_check_expr_linearity(ixt, tbl, loop_depth);
+        sema_check_expr_linearity(ixi, tbl, loop_depth);
         break;
+    }
 
     case EXPR_CALL: {
         // descend callee and args first
@@ -1594,9 +1626,13 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                             field_init_mark_prefix(entry, "");      // whole var
                         }
                         entry->is_initialized = field_init_all(entry);
-                    } else {
+                    } else if (lhs && lhs->kind == EXPR_IDENTIFIER) {
+                        // Whole assignment `x = …` / `a = [ … ]` initializes.
                         entry->is_initialized = true;
                     }
+                    // else: an element/index write `a[i] = v` (or a member write
+                    // on a non-tracked value) does NOT initialize — array element
+                    // coverage is undecidable; use a whole-array initializer.
                 }
             }
         }
