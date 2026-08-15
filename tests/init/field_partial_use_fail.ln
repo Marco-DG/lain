@@ -1,0 +1,12 @@
+// EXPECT: [E019]
+// Using a struct as a WHOLE while a field is still unset is caught.
+type Point {
+    x i32
+    y i32
+}
+func sum(p Point) i32 { return p.x }
+proc main() i32 {
+    var p Point
+    p.x = 5
+    return sum(p)
+}

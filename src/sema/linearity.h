@@ -161,6 +161,15 @@ typedef struct FieldState {
     struct FieldState *next;
 } FieldState;
 
+// Field-sensitive definite assignment: per-field init state for a FLAT struct
+// local (every field a non-aggregate scalar/pointer). A NULL `field_inits` means
+// the variable is not field-tracked and falls back to whole-var `is_initialized`.
+typedef struct FieldInit {
+    Id *field_name;
+    bool is_initialized;
+    struct FieldInit *next;
+} FieldInit;
+
 typedef struct LEntry {
     Id *id;            // Id pointer for the variable (identifies it)
     int defined_loop_depth; // loop depth where var was declared
@@ -172,6 +181,7 @@ typedef struct LEntry {
     bool explicit_undefined; // true if declared with `= undefined` explicitly
     Type *var_type;    // Phase 5: the type of the variable (for field resolution)
     FieldState *field_states; // Phase 5: per-field consumption (NULL = whole-var tracking)
+    FieldInit *field_inits;   // field-sensitive definite assignment (NULL = whole-var only)
     isize line;        // line where var is defined
     isize col;         // col where var is defined
     LState state;
@@ -208,6 +218,26 @@ static LEntry *ltable_find(LTable *t, Id *id) {
     return NULL;
 }
 
+// ── field-sensitive definite assignment helpers ──────────────────────────────
+static FieldInit *field_init_find(LEntry *e, Id *name) {
+    if (!e || !name) return NULL;
+    for (FieldInit *fi = e->field_inits; fi; fi = fi->next)
+        if (fi->field_name && fi->field_name->length == name->length &&
+            strncmp(fi->field_name->name, name->name, name->length) == 0)
+            return fi;
+    return NULL;
+}
+static bool field_init_all(LEntry *e) {
+    for (FieldInit *fi = e->field_inits; fi; fi = fi->next)
+        if (!fi->is_initialized) return false;
+    return true;
+}
+static Id *field_init_first_uninit(LEntry *e) {
+    for (FieldInit *fi = e->field_inits; fi; fi = fi->next)
+        if (!fi->is_initialized) return fi->field_name;
+    return NULL;
+}
+
 static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume, bool is_initialized, bool explicit_undef, isize line, isize col) {
     if (!id) return;
     if (ltable_find(t, id)) return; // already present — ignore
@@ -222,6 +252,7 @@ static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool 
     e->is_defer_consumed = false;
     e->var_type = NULL;
     e->field_states = NULL;
+    e->field_inits = NULL;
     e->line = line;
     e->col = col;
     e->state = LSTATE_UNCONSUMED;
@@ -372,6 +403,20 @@ static LTable *ltable_clone(LTable *src) {
                     if (last_fs) last_fs->next = df;
                     else d->field_states = df;
                     last_fs = df;
+                }
+            }
+            // Deep copy field_inits (field-sensitive definite assignment)
+            if (s->field_inits) {
+                FieldInit *last_fi = NULL;
+                d->field_inits = NULL;
+                for (FieldInit *sf = s->field_inits; sf; sf = sf->next) {
+                    FieldInit *df = arena_push_aligned(dst->arena, FieldInit);
+                    df->field_name = sf->field_name;
+                    df->is_initialized = sf->is_initialized;
+                    df->next = NULL;
+                    if (last_fi) last_fi->next = df;
+                    else d->field_inits = df;
+                    last_fi = df;
                 }
             }
         }
@@ -566,6 +611,17 @@ static void ltable_intersect_initialization(LTable *parent, LTable *a, LTable *b
         bool init_a = ea ? ea->is_initialized : false;
         bool init_b = eb ? eb->is_initialized : false;
         p->is_initialized = p->is_initialized || (init_a && init_b);
+        // Field-sensitive: a field is initialized after the join iff it was
+        // initialized on BOTH branches.
+        if (p->field_inits && ea && eb) {
+            for (FieldInit *pf = p->field_inits; pf; pf = pf->next) {
+                if (pf->is_initialized) continue;
+                FieldInit *fa = field_init_find(ea, pf->field_name);
+                FieldInit *fb = field_init_find(eb, pf->field_name);
+                if (fa && fb && fa->is_initialized && fb->is_initialized)
+                    pf->is_initialized = true;
+            }
+        }
     }
 }
 
@@ -574,6 +630,14 @@ static void ltable_apply_initialization(LTable *parent, LTable *branch) {
     for (LEntry *p = parent->head; p; p = p->next) {
         LEntry *b = ltable_find(branch, p->id);
         if (b) p->is_initialized = p->is_initialized || b->is_initialized;
+        // Field-sensitive: pull field-init from the (already intersected) branch.
+        if (p->field_inits && b) {
+            for (FieldInit *pf = p->field_inits; pf; pf = pf->next) {
+                if (pf->is_initialized) continue;
+                FieldInit *bf = field_init_find(b, pf->field_name);
+                if (bf && bf->is_initialized) pf->is_initialized = true;
+            }
+        }
     }
 }
 
@@ -664,6 +728,42 @@ static bool type_is_uninit_flaggable(Type *t) {
     return false;
 }
 
+// Resolve a simple type name to its struct Decl, or NULL.
+static Decl *linear_struct_decl_for(Type *ty) {
+    if (!ty || ty->kind != TYPE_SIMPLE || !ty->base_type) return NULL;
+    extern Symbol *sema_lookup(const char *name);
+    char buf[256];
+    if ((size_t)ty->base_type->length >= sizeof buf) return NULL;
+    memcpy(buf, ty->base_type->name, (size_t)ty->base_type->length);
+    buf[ty->base_type->length] = '\0';
+    Symbol *sym = sema_lookup(buf);
+    if (sym && sym->decl && sym->decl->kind == DECL_STRUCT) return sym->decl;
+    return NULL;
+}
+
+// Set up field-sensitive definite assignment for a FLAT struct local — every
+// field a non-aggregate scalar/pointer, so every member access is single-level
+// `p.field`. `all_init` seeds each field (true when the whole var was given a
+// value at its declaration). Non-flat / non-struct types: no-op (whole-var only).
+static void ltable_setup_field_inits(LEntry *e, Type *ty, Arena *arena, bool all_init) {
+    if (!e || !ty || !arena) return;
+    Decl *sd = linear_struct_decl_for(ty);
+    if (!sd) return;
+    // Flatness gate: bail if any field is itself an aggregate (struct/array/slice).
+    for (DeclList *f = sd->as.struct_decl.fields; f; f = f->next) {
+        if (!f->decl || f->decl->kind != DECL_VARIABLE) return;
+        if (!type_is_uninit_flaggable(f->decl->as.variable_decl.type)) return;
+    }
+    FieldInit *head = NULL;
+    for (DeclList *f = sd->as.struct_decl.fields; f; f = f->next) {
+        FieldInit *fi = arena_push_aligned(arena, FieldInit);
+        fi->field_name = f->decl->as.variable_decl.name;
+        fi->is_initialized = all_init;
+        fi->next = head; head = fi;
+    }
+    if (head) e->field_inits = head;
+}
+
 // P0 aliasing (co-argument): build a canonical access path for an lvalue arg —
 // "b", "b.sub", "b.arr[]" — used to decide whether a mutable ('var') argument and
 // a shared argument in the same call refer to overlapping memory. Index
@@ -738,6 +838,18 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                     diagnostic_show_line((e->line), (e->col));
                     exit(1);
                 }
+                // Field-sensitive definite assignment: using a field-tracked
+                // struct as a WHOLE requires every field set. (Single-level
+                // member reads are handled in EXPR_MEMBER and never land here.)
+                if (entry->field_inits && !field_init_all(entry)) {
+                    Id *miss = field_init_first_uninit(entry);
+                    fprintf(stderr, "[E019] Error Ln %li, Col %li: '%.*s' is partially initialized "
+                            "(field '%.*s' is not set); initialize all fields before using it as a whole.\n",
+                            (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "?",
+                            miss ? (int)miss->length : 1, miss ? miss->name : "?");
+                    diagnostic_show_line((e->line), (e->col));
+                    exit(1);
+                }
             }
             // NLL: Check if this variable is persistently borrowed (read access)
             if (tbl->borrows) {
@@ -749,9 +861,40 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         break;
     }
 
-    case EXPR_MEMBER:
-        sema_check_expr_linearity(e->as.member_expr.target, tbl, loop_depth);
+    case EXPR_MEMBER: {
+        Expr *tgt = e->as.member_expr.target;
+        // Single-level field read `p.field` on a field-tracked struct: require
+        // THAT field initialized (E005), without treating the base as a whole
+        // read (which would demand every field be set). Handle the base's
+        // move/borrow checks inline so we needn't recurse into the whole check.
+        if (tgt && tgt->kind == EXPR_IDENTIFIER && tbl) {
+            LEntry *base = ltable_find(tbl, tgt->as.identifier_expr.id);
+            if (base && base->field_inits) {
+                Id *bid = tgt->as.identifier_expr.id;
+                if (base->state == LSTATE_CONSUMED) {
+                    fprintf(stderr, "[E001] Error Ln %li, Col %li: use of linear variable '%.*s' after it was moved.\n",
+                            (long)e->line, (long)e->col, (int)bid->length, bid->name ? bid->name : "<unknown>");
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+                FieldInit *fi = field_init_find(base, e->as.member_expr.member);
+                if (fi && !fi->is_initialized) {
+                    fprintf(stderr, "[E005] Error Ln %li, Col %li: use of uninitialized field '%.*s.%.*s'.\n",
+                            (long)e->line, (long)e->col,
+                            (int)bid->length, bid->name ? bid->name : "?",
+                            (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+                if (tbl->borrows &&
+                    borrow_check_owner_access(tbl->borrows, bid, MODE_SHARED, e->line, e->col))
+                    exit(1);
+                break;   // handled — skip the whole-identifier check
+            }
+        }
+        sema_check_expr_linearity(tgt, tbl, loop_depth);
         break;
+    }
 
     case EXPR_INDEX:
         sema_check_expr_linearity(e->as.index_expr.target, tbl, loop_depth);
@@ -1030,7 +1173,15 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         // it is not treated as an uninitialized read; other checks still run.
         if (e->as.mut_expr.expr && e->as.mut_expr.expr->kind == EXPR_IDENTIFIER) {
             LEntry *me = ltable_find(tbl, e->as.mut_expr.expr->as.identifier_expr.id);
-            if (me) me->is_initialized = true;
+            if (me) {
+                me->is_initialized = true;
+                // Phase 1 keeps the pragmatic out-param rule: passing `var x`
+                // assumes the callee fully initializes x (Phase 2 replaces this
+                // with construct-and-return). Mark every field so a field-tracked
+                // struct isn't seen as partially initialized afterward.
+                for (FieldInit *fi = me->field_inits; fi; fi = fi->next)
+                    fi->is_initialized = true;
+            }
         }
         sema_check_expr_linearity(e->as.mut_expr.expr, tbl, loop_depth);
         break;
@@ -1139,6 +1290,13 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             if (must && ty) {
                 LEntry *entry = ltable_find(tbl, id);
                 if (entry) ltable_init_field_states(entry, ty, tbl->arena);
+            }
+            // Field-sensitive definite assignment: track per-field init for a
+            // flat struct local. Seeded from `is_init` (a whole initializer sets
+            // every field; a bare/undefined decl leaves them all uninitialized).
+            if (ty) {
+                LEntry *entry = ltable_find(tbl, id);
+                if (entry) ltable_setup_field_inits(entry, ty, tbl->arena, is_init);
             }
         }
         // P0: `var q = p` moves an owned source (see sema_move_on_assign_source).
@@ -1352,7 +1510,23 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                             }
                         }
                     }
-                    entry->is_initialized = true;
+                    // Field-sensitive definite assignment. A single-level member
+                    // write `p.field = v` initializes ONLY that field; the whole
+                    // var is initialized once every field is. A whole write
+                    // `p = v` (or any non-tracked target) initializes everything.
+                    if (entry->field_inits && lhs && lhs->kind == EXPR_MEMBER &&
+                        lhs->as.member_expr.target &&
+                        lhs->as.member_expr.target->kind == EXPR_IDENTIFIER) {
+                        FieldInit *fi = field_init_find(entry, lhs->as.member_expr.member);
+                        if (fi) fi->is_initialized = true;
+                        entry->is_initialized = field_init_all(entry);
+                    } else {
+                        if (entry->field_inits) {
+                            for (FieldInit *fi = entry->field_inits; fi; fi = fi->next)
+                                fi->is_initialized = true;
+                        }
+                        entry->is_initialized = true;
+                    }
                 }
             }
         }

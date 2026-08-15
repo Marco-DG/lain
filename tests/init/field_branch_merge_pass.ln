@@ -1,0 +1,16 @@
+// A field written on BOTH branches of an if is initialized after the join.
+type Point {
+    x i32
+    y i32
+}
+func sum(p Point) i32 { return p.x + p.y }
+proc main() i32 {
+    var p Point
+    p.x = 0
+    if p.x > 0 {
+        p.y = 1
+    } else {
+        p.y = 0
+    }
+    return sum(p)
+}

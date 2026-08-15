@@ -1,0 +1,12 @@
+// Partial construction: fill fields one at a time, then use — all sound.
+type Point {
+    x i32
+    y i32
+}
+func sum(p Point) i32 { return p.x + p.y }
+proc main() i32 {
+    var p Point
+    p.x = 5
+    p.y = 6
+    return sum(p) - 11
+}
