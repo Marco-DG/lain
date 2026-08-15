@@ -727,7 +727,7 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
         Type *fu = from; while (fu && fu->kind == TYPE_COMPTIME) fu = fu->element_type;
         Type *fpay = union_payload_type(fu);
         if (fpay && !union_payload_type(tu)) {
-            if (sema_in_unsafe_block || sema_is_nil_narrowed(src_expr)) {
+            if (sema_in_unsafe_block || sema_is_narrowed(src_expr)) {
                 check_conversion(fpay, to, r, src_expr, line, col, ctx, label);
                 return;
             }

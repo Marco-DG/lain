@@ -54,16 +54,15 @@ static bool expr_struct_equal(Expr *a, Expr *b); // defined later in sema.h
 static bool sema_is_affine_assign(Stmt *s, Id **out_var, long long *out_step); // defined below
 static void sema_push_in_guards(Expr *cond);
 static bool sema_is_in_guarded(Expr *index, Expr *container);
-static bool sema_is_ptr_in_guarded(Expr *ptr, Expr *arr);
 
 // Nullable narrowing: `if x { … }` / `if x != nil { … }` proves x non-nil inside
 // the branch, so ?T narrows to T there (deref/pass/return-safe). Mirrors the
 // in-guard mechanism — a scoped stack of variables proven present. Declared here
 // (before the sub-header includes) so check_conversion in typecheck.h can query it.
-typedef struct NilNarrowEntry { Expr *var; struct NilNarrowEntry *next; } NilNarrowEntry;
-static NilNarrowEntry *sema_nil_narrows = NULL;
-static void sema_push_nil_narrows(Expr *cond, bool negated);
-static bool sema_is_nil_narrowed(Expr *e);
+typedef struct NarrowEntry { Expr *var; struct NarrowEntry *next; } NarrowEntry;
+static NarrowEntry *sema_narrows = NULL;
+static void sema_push_narrows(Expr *cond, bool negated);
+static bool sema_is_narrowed(Expr *e);
 
 // Defined in sema/niche.h (included after monomorph.h) — forward-declared here so
 // union_lower() in monomorph.h can enforce "zero-cost or reject" on the anonymous
@@ -371,8 +370,7 @@ static bool loop_body_defeats_affine_recap(StmtList *body) {
 // Strategy B (co-decrement): if ALL monotone ptrs in condition decrement unconditionally
 //   (every iteration) → they stay in sync → lower bounds are mutually implied → dead.
 //   Covers second loop: p2 and out both unconditionally decrement together.
-static void l3_mark_dead_lower_bounds(Expr *cond, PtrMonotoneEntry *monotone,
-                                       StmtList *body) {
+static void l3_mark_dead_lower_bounds(Expr *cond, StmtList *body) {
     if (!cond) return;
 
     // Collect all `p in arr` pointer in-guards in this condition
@@ -954,7 +952,7 @@ static void sema_verify_bounded_while(Stmt *s) {
 // Is e an identifier whose type is a single-marker union (`T | m`)? Only those
 // get `if r` narrowing: `if (r)` soundly excludes one sentinel; a multi-marker
 // union must be discriminated with `case` (its markers sit at several sentinels).
-static bool nn_is_nullable_var(Expr *e) {
+static bool nn_is_single_marker_var(Expr *e) {
     if (!e || e->kind != EXPR_IDENTIFIER || !e->type) return false;
     Type *t = e->type;
     while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
@@ -973,12 +971,12 @@ static bool nn_is_nullable_var(Expr *e) {
 //   `if x` / `if x != nil`  -> x present in THEN.
 //   `if x == nil { } else`  -> x present in ELSE (negated).
 //   `and`/`or` chains combined via De Morgan.
-static void sema_push_nil_narrows(Expr *cond, bool negated) {
+static void sema_push_narrows(Expr *cond, bool negated) {
     if (!cond) return;
     if (cond->kind == EXPR_IDENTIFIER) {
-        if (!negated && nn_is_nullable_var(cond)) {
-            NilNarrowEntry *e = arena_push_aligned(sema_arena, NilNarrowEntry);
-            e->var = cond; e->next = sema_nil_narrows; sema_nil_narrows = e;
+        if (!negated && nn_is_single_marker_var(cond)) {
+            NarrowEntry *e = arena_push_aligned(sema_arena, NarrowEntry);
+            e->var = cond; e->next = sema_narrows; sema_narrows = e;
         }
         return;
     }
@@ -986,15 +984,15 @@ static void sema_push_nil_narrows(Expr *cond, bool negated) {
     TokenKind op = cond->as.binary_expr.op;
     Expr *l = cond->as.binary_expr.left, *r = cond->as.binary_expr.right;
     if (op == TOKEN_KEYWORD_AND && !negated) {
-        sema_push_nil_narrows(l, false); sema_push_nil_narrows(r, false);
+        sema_push_narrows(l, false); sema_push_narrows(r, false);
     } else if (op == TOKEN_KEYWORD_OR && negated) {          // !(a or b) = !a and !b
-        sema_push_nil_narrows(l, true); sema_push_nil_narrows(r, true);
+        sema_push_narrows(l, true); sema_push_narrows(r, true);
     }
 }
 
-static bool sema_is_nil_narrowed(Expr *e) {
+static bool sema_is_narrowed(Expr *e) {
     if (!e || e->kind != EXPR_IDENTIFIER) return false;
-    for (NilNarrowEntry *n = sema_nil_narrows; n; n = n->next)
+    for (NarrowEntry *n = sema_narrows; n; n = n->next)
         if (expr_struct_equal(e, n->var)) return true;
     return false;
 }
@@ -1035,17 +1033,6 @@ static bool sema_is_in_guarded(Expr *index, Expr *container) {
         if (e->is_ptr_guard) continue;
         if (expr_struct_equal(e->index, index) &&
             expr_struct_equal(e->container, container))
-            return true;
-    }
-    return false;
-}
-
-// Check if a POINTER `ptr` is guarded within `arr` (pointer `in` guard).
-static bool sema_is_ptr_in_guarded(Expr *ptr, Expr *arr) {
-    for (InGuardEntry *e = sema_in_guards; e; e = e->next) {
-        if (!e->is_ptr_guard) continue;
-        if (expr_struct_equal(e->index, ptr) &&
-            expr_struct_equal(e->container, arr))
             return true;
     }
     return false;
@@ -1404,12 +1391,12 @@ static void walk_stmt(Stmt *s) {
             RangeEntry *old_head = sema_ranges->head;
             ConstraintEntry *old_constraints = sema_ranges->constraints;
             InGuardEntry *old_guards = sema_in_guards;
-            NilNarrowEntry *old_narrows = sema_nil_narrows;
+            NarrowEntry *old_narrows = sema_narrows;
 
             // Apply condition for THEN branch
             sema_apply_constraint(s->as.if_stmt.cond, sema_ranges);
             sema_push_in_guards(s->as.if_stmt.cond);
-            sema_push_nil_narrows(s->as.if_stmt.cond, false);   // ?T narrows to T in THEN
+            sema_push_narrows(s->as.if_stmt.cond, false);   // ?T narrows to T in THEN
 
             sema_push_scope();
             for (StmtList *b = s->as.if_stmt.then_body; b; b = b->next)
@@ -1433,17 +1420,17 @@ static void walk_stmt(Stmt *s) {
             sema_ranges->head = old_head;
             sema_ranges->constraints = old_constraints;
             sema_in_guards = old_guards;
-            sema_nil_narrows = old_narrows;
+            sema_narrows = old_narrows;
 
             // Apply negated condition for ELSE branch (no in-guards — negated 'in' proves nothing)
             sema_apply_negated_constraint(s->as.if_stmt.cond, sema_ranges);
-            sema_push_nil_narrows(s->as.if_stmt.cond, true);    // else: x present when cond was `x == nil`
+            sema_push_narrows(s->as.if_stmt.cond, true);    // else: x present when cond was `x == nil`
 
             sema_push_scope();
             for (StmtList *b = s->as.if_stmt.else_branch; b; b = b->next)
                 walk_stmt(b->stmt);
             sema_pop_scope();
-            sema_nil_narrows = old_narrows;
+            sema_narrows = old_narrows;
 
             if (then_returns) {
                 // Keep the negated constraints for the rest of the
@@ -1458,7 +1445,7 @@ static void walk_stmt(Stmt *s) {
                 }
                 // Nullable guard clause: `if x == nil { return }` — the trailing
                 // code runs only when the cond was false, so x is present below.
-                sema_push_nil_narrows(s->as.if_stmt.cond, true);
+                sema_push_narrows(s->as.if_stmt.cond, true);
             } else {
                 // Normal: restore state to what it was before the if.
                 sema_ranges->head = old_head;
@@ -1740,7 +1727,7 @@ static void walk_stmt(Stmt *s) {
             l3_register_ptr_monotone(s->as.while_stmt.body);
             l3_mark_dead_upper_bounds(s->as.while_stmt.cond, sema_ptr_monotone);
             if (sema_ranges)
-                l3_mark_dead_lower_bounds(s->as.while_stmt.cond, sema_ptr_monotone,
+                l3_mark_dead_lower_bounds(s->as.while_stmt.cond,
                                           s->as.while_stmt.body);
 
             // Widen modified variables BEFORE body (conservative)
@@ -2058,18 +2045,18 @@ static void walk_stmt(Stmt *s) {
                                                           s->as.match_stmt.cases);
             for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
                 sema_push_scope();
-                NilNarrowEntry *old_narrows = sema_nil_narrows;
+                NarrowEntry *old_narrows = sema_narrows;
                 if (else_narrows && c->patterns == NULL) {   // the `else` arm
-                    NilNarrowEntry *ne = arena_push_aligned(sema_arena, NilNarrowEntry);
+                    NarrowEntry *ne = arena_push_aligned(sema_arena, NarrowEntry);
                     ne->var = s->as.match_stmt.value;
-                    ne->next = sema_nil_narrows; sema_nil_narrows = ne;
+                    ne->next = sema_narrows; sema_narrows = ne;
                 }
                 for (ExprList *p = c->patterns; p; p = p->next) {
                     sema_infer_expr(p->expr);
                 }
                 for (StmtList *b = c->body; b; b = b->next)
                     walk_stmt(b->stmt);
-                sema_nil_narrows = old_narrows;
+                sema_narrows = old_narrows;
                 sema_pop_scope();
             }
             break;
@@ -3047,7 +3034,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         RangeEntry *__fn_old_head = sema_ranges ? sema_ranges->head : NULL;
         ConstraintEntry *__fn_old_cons = sema_ranges ? sema_ranges->constraints : NULL;
         InGuardEntry *__fn_old_guards = sema_in_guards;
-        NilNarrowEntry *__fn_old_narrows = sema_nil_narrows;
+        NarrowEntry *__fn_old_narrows = sema_narrows;
         sema_walk_phase = true;
         for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next)
             walk_stmt(sl->stmt);
@@ -3057,7 +3044,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             sema_ranges->constraints = __fn_old_cons;
         }
         sema_in_guards = __fn_old_guards;
-        sema_nil_narrows = __fn_old_narrows;
+        sema_narrows = __fn_old_narrows;
 
         // 2.c.i) Return-path completeness: a non-void function must return (or
         // diverge) on every path — never fall off the end (C UB).
