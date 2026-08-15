@@ -12,7 +12,7 @@ func use_ref(var r i32) i32 {
 }
 
 proc main() i32 {
-    var data Data = undefined
+    var data Data
     data.value = 42
     
     // Direct var-expression borrow — ref borrows data

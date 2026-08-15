@@ -1103,10 +1103,6 @@ static void walk_stmt(Stmt *s) {
             sema_infer_expr(s->as.var_stmt.expr);
             // Infer variable type from initializer if missing
             if (!s->as.var_stmt.type && s->as.var_stmt.expr) {
-                if (s->as.var_stmt.expr->kind == EXPR_UNDEFINED) {
-                    fprintf(stderr, "Error: Cannot infer type for variable initialized with 'undefined'. Explicit type annotation required.\n");
-                    exit(1);
-                }
                 // Strip MODE_MUTABLE from inferred type: `var x = var_param`
                 // gives x the VALUE type, not the reference type.
                 Type *inferred = s->as.var_stmt.expr->type;

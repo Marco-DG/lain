@@ -6,7 +6,7 @@ type Vec2 {
 }
 
 proc main() i32 {
-    var v Vec2 = undefined
+    var v Vec2
     v.x = 10
     v.y = 20
     libc_printf("v = {%d, %d}\n", v.x, v.y)

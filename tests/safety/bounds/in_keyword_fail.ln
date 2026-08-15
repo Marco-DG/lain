@@ -6,7 +6,7 @@ func get(arr i32[10], i i32 in arr) i32 {
 }
 
 proc main() i32 {
-    var arr i32[10] = undefined
+    var arr i32[10]
     var x = get(arr, 15)  // ERROR: 15 is not in [0, 10)
     
     return 0

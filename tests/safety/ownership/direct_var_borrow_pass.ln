@@ -11,7 +11,7 @@ func read_data(d Data) i32 {
 }
 
 proc main() i32 {
-    var data Data = undefined
+    var data Data
     data.value = 42
     
     // Direct var-expression borrow — ref borrows data

@@ -1,7 +1,7 @@
 extern func printf(fmt *u8, ...) i32
 
 proc main() {
-    var x i32 = undefined
+    var x i32
     var y i32 = 10
     
     printf("Passed.\n")

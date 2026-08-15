@@ -19,7 +19,7 @@ func consume_ref(var r i32) {
 }
 
 proc main() i32 {
-    var data Data = undefined
+    var data Data
     data.value = 42
     
     // get_ref borrows 'data' mutably → ref holds the borrow alive

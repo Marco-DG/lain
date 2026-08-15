@@ -19,7 +19,7 @@ func conflict(r Resource, mov r2 Resource) Resource {
 }
 
 proc main() i32 {
-    var res Resource = undefined
+    var res Resource
     res.data = 42
     
     // This should fail: borrowing and moving in the same call

@@ -10,7 +10,7 @@ func tweak(var c Cell) {
 }
 
 proc main() i32 {
-    var c Cell = undefined
+    var c Cell
     c.val = 0
     if 1 == 1 {
         tweak(var c)   // borrow active only inside the if

@@ -2,7 +2,7 @@
 // F-028 regression: pointer casts require an 'unsafe' block.
 
 proc main() i32 {
-    var p *i32 = undefined
+    var p *i32
     var n = p as i32
     return n
 }

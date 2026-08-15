@@ -16,8 +16,8 @@ func read_data(d Data) i32 {
 }
 
 proc main() i32 {
-    var da Data = undefined
-    var db Data = undefined
+    var da Data
+    var db Data
     da.x = 10
     da.y = 0
     db.x = 20

@@ -10,7 +10,7 @@ type Resource {
 func drop(mov {id} Resource) {
 }
 proc main() i32 {
-    var r Resource = undefined
+    var r Resource
     r.id = 42
     defer drop(mov r)
     drop(mov r)

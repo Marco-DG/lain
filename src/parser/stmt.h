@@ -50,13 +50,9 @@ Stmt *parse_decl_stmt(Arena *arena, Parser *parser) {
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance();
         assigned_expr = parse_expr(arena, parser);
-        
-        // Immutable declarations cannot be explicitly left uninitialized
-        if (assigned_expr && assigned_expr->kind == EXPR_UNDEFINED) {
-            parser_error("Immutable declarations cannot be initialized with '= undefined'");
-        }
     } else {
-        parser_error("Uninitialized Declaration: variables must be initialized. Use '= undefined' to bypass.");
+        parser_error("Uninitialized Declaration: immutable declarations must be initialized. "
+                     "Use `var name T` for an uninitialized mutable variable.");
     }
 
     return stmt_var(arena, var_name, type_annotation, assigned_expr);
@@ -219,9 +215,6 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         }
         parser_advance();
         Expr *init = parse_expr(arena, parser);
-        if (init && init->kind == EXPR_UNDEFINED) {
-            parser_error("Immutable declarations cannot use 'undefined'. Use 'var' for mutable variables.");
-        }
         result = stmt_var(arena, name, type_annotation, init);
     } else {
 
@@ -346,7 +339,8 @@ Stmt *parse_comptime_stmt(Arena* arena, Parser* parser)
         parser_advance();
         assigned_expr = parse_expr(arena, parser);
     } else {
-        parser_error("Uninitialized Declaration: variables must be initialized. Use '= undefined' to bypass.");
+        parser_error("Uninitialized Declaration: immutable declarations must be initialized. "
+                     "Use `var name T` for an uninitialized mutable variable.");
     }
 
     // NOTE: reuse stmt_var node (semantic passes should look for TYPE_COMPTIME
@@ -378,25 +372,20 @@ Stmt *parse_var_stmt(Arena* arena, Parser* parser)
         in_expr = parse_expr(arena, parser);
     }
 
-    // optional initializer; if absent with a type annotation, treat as `= undefined`
+    // Optional initializer. A bare `var x T` (no `=`) is uninitialized — its
+    // initializer is simply NULL. Reads of unset scalars/fields are then caught
+    // by definite-assignment (E005/E019). The bare form is the one and only way.
     Expr *assigned_expr = NULL;
-    bool explicit_undef = false;
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance();
         assigned_expr = parse_expr(arena, parser);
-        if (assigned_expr && assigned_expr->kind == EXPR_UNDEFINED) {
-            explicit_undef = true;
-        }
-    } else if (type_annotation) {
-        assigned_expr = expr_undefined(arena); // synthesized: no explicit `= undefined`
-    } else {
+    } else if (!type_annotation) {
         parser_error("Uninitialized Declaration: cannot infer type without initializer.");
     }
 
     // var creates a MUTABLE variable
     Stmt *s = stmt_var(arena, var_name, type_annotation, assigned_expr);
     s->as.var_stmt.is_mutable = true;
-    s->as.var_stmt.explicit_undefined = explicit_undef;
     s->as.var_stmt.in_expr = in_expr;
     return s;
 }

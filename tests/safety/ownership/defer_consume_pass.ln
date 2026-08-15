@@ -16,7 +16,7 @@ func read_resource(r Resource) i32 {
 }
 
 proc main() i32 {
-    var r Resource = undefined
+    var r Resource
     r.id = 42
     defer drop(mov r)
     

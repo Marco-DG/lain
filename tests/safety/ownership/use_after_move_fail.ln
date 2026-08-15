@@ -13,7 +13,7 @@ func transfer(mov item Item) Item {
 
 proc main() i32 {
     // Declare as mutable to allow init (and move tracks consumption)
-    var myitem Item = undefined
+    var myitem Item
     myitem.id = 42
     
     // This consumes myitem (transfers ownership)

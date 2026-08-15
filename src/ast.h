@@ -285,7 +285,6 @@ typedef struct {
     Type*       type;     // NULL if no annotation
     Expr*       expr;     // NULL if no init
     bool        is_mutable; // New: true if declared with 'var'
-    bool        explicit_undefined; // true iff user wrote `= undefined` (not synthesized)
     Expr*       in_expr;  // NULL, or the container for `var p *T in arr` (local pointer invariant)
 } StmtVar;
 
@@ -396,7 +395,6 @@ typedef enum {
     EXPR_CAST, // x as Type
     EXPR_FLOAT_LITERAL,
     EXPR_MATCH,
-    EXPR_UNDEFINED, // New
     EXPR_TYPE,      // a resolved Type* used as a parameter value
     EXPR_ANON_STRUCT,
     EXPR_ANON_ENUM,
@@ -968,7 +966,6 @@ Stmt *stmt_var(Arena *arena, Id *name, Type* type, Expr *expr) {
     s->as.var_stmt.expr = expr;
     s->as.var_stmt.type = type;
     s->as.var_stmt.is_mutable = false; // default
-    s->as.var_stmt.explicit_undefined = false; // default (synthesized)
     s->as.var_stmt.in_expr = NULL; // default: no pointer invariant
     return s;
 }
@@ -1139,11 +1136,6 @@ Expr *expr_member(Arena *arena, Expr *target, Id *member) {
     return e;
 }
 
-Expr *expr_undefined(Arena *arena) {
-    Expr *e = arena_push_aligned(arena, Expr);
-    e->kind = EXPR_UNDEFINED;
-    return e;
-}
 
 
 Expr *expr_type(Arena *arena, Type *type_value) {

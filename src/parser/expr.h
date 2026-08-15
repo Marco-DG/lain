@@ -178,10 +178,6 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         parser_advance();
         return expr_literal(arena, 0);
     }
-    if (parser_match(TOKEN_KEYWORD_UNDEFINED)) {
-        parser_advance();
-        return expr_undefined(arena);
-    }
     if (parser_match(TOKEN_KEYWORD_NIL)) {
         parser_error("`nil` is retired — write `none` (the marker) for the absent case of `T | none`.");
     }

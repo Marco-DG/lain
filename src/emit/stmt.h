@@ -62,8 +62,8 @@ void emit_stmt(Stmt *stmt, int depth) {
         EMIT(" %s", c_name_for_id(v));
       }
   
-      // 4) optional initializer
-      if (stmt->as.var_stmt.expr && stmt->as.var_stmt.expr->kind != EXPR_UNDEFINED) {
+      // 4) optional initializer (NULL = a bare `var x T`, emitted as raw `T x;`)
+      if (stmt->as.var_stmt.expr) {
         EMIT(" = ");
   
         // centralized helper: emits compound byte array literal for fixed-like types

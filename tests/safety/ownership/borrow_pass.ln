@@ -21,7 +21,7 @@ func take_counter(mov c Counter) Counter {
 }
 
 proc main() i32 {
-    var cnt Counter = undefined
+    var cnt Counter
     cnt.value = 10
     
     // Test 1: Multiple shared borrows OK

@@ -10,7 +10,7 @@ func ref_val(var c Cell) var i32 {
 }
 
 proc main() i32 {
-    var c Cell = undefined
+    var c Cell
     c.val = 0
     var r = ref_val(var c)
     r = 42

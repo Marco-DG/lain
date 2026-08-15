@@ -15,7 +15,7 @@ func increment_counter(var c Counter) {
 }
 
 proc main() i32 {
-    var cnt Counter = undefined
+    var cnt Counter
     cnt.value = 10
     
     // Sequential temporary borrows: each borrow expires at end of statement

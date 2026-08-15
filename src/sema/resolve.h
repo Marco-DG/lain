@@ -570,7 +570,6 @@ void sema_resolve_stmt(Stmt *s) {
         s->as.var_stmt.type = NULL;
         s->as.var_stmt.expr = init;
         s->as.var_stmt.is_mutable = false;
-        s->as.var_stmt.explicit_undefined = false;
         sema_resolve_stmt(s);
         return;
       } else if (!sym->is_mutable) {

@@ -91,7 +91,6 @@ typedef enum {
     TOKEN_KEYWORD_UNSAFE,
     TOKEN_KEYWORD_C_INCLUDE,
     TOKEN_KEYWORD_WHILE,
-    TOKEN_KEYWORD_UNDEFINED,
     TOKEN_KEYWORD_DEFER,
     TOKEN_KEYWORD_DECREASING,
 } TokenKind;
@@ -145,7 +144,6 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             break;
         case 9:
             if (strncmp(lexeme, "c_include", 9) == 0)   return TOKEN_KEYWORD_C_INCLUDE;
-            if (strncmp(lexeme, "undefined", 9) == 0)   return TOKEN_KEYWORD_UNDEFINED;
             break;
         case 10:
             if (strncmp(lexeme, "decreasing", 10) == 0) return TOKEN_KEYWORD_DECREASING;
@@ -238,7 +236,6 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_KEYWORD_TRUE:                return "TOKEN_KEYWORD_TRUE";
         case TOKEN_KEYWORD_NIL:                 return "TOKEN_KEYWORD_NIL";
         case TOKEN_KEYWORD_FALSE:               return "TOKEN_KEYWORD_FALSE";
-        case TOKEN_KEYWORD_UNDEFINED:           return "TOKEN_KEYWORD_UNDEFINED";
         case TOKEN_KEYWORD_DECREASING:          return "TOKEN_KEYWORD_DECREASING";
         default:                                return 0;
     }
@@ -329,7 +326,6 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_KEYWORD_C_INCLUDE:           return "c_include";
         case TOKEN_KEYWORD_TRUE:                return "true";
         case TOKEN_KEYWORD_FALSE:               return "false";
-        case TOKEN_KEYWORD_UNDEFINED:           return "undefined";
         case TOKEN_KEYWORD_DECREASING:          return "decreasing";
         default:                                return 0;
     }

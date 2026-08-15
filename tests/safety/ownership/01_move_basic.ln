@@ -20,7 +20,7 @@ func consume(mov r Resource) {
 }
 
 proc main() i32 {
-    var a Resource = undefined
+    var a Resource
     a.id = 1
     var b = mov a    // Move a -> b
     

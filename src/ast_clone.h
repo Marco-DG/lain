@@ -176,7 +176,6 @@ Expr *clone_expr(Arena *arena, Expr *e) {
         case EXPR_FLOAT_LITERAL:
         case EXPR_STRING:
         case EXPR_CHAR:
-        case EXPR_UNDEFINED:
             // Data is primitive or pointer to source, shallow copy is fine
             break;
         case EXPR_MEMBER:

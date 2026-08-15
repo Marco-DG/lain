@@ -15,7 +15,7 @@ func update(var p Point) {
 }
 
 proc main() i32 {
-    var p Point = undefined
+    var p Point
     p.x = 10
     p.y = 20
     

@@ -1,6 +1,6 @@
 // EXPECT: [E005]
 // Reading a scalar local before it is initialized is a garbage read (was
-// accepted: the E005 gate only covered linear/`= undefined` vars). Now scalars
+// accepted: the E005 gate only covered linear/`` vars). Now scalars
 // and pointers are covered too, via the linearity table's definite-assignment
 // tracking (assignment sets initialized; if/else requires BOTH branches).
 proc main() i32 {
