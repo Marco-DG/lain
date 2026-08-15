@@ -226,6 +226,7 @@ typedef struct {
 
 typedef struct {
     Id *module_name;   // contains "foo.bar"
+    Id *alias;         // `import foo.bar as baz` → baz; else NULL (qualifier = last segment)
 } DeclImport;
 
 typedef struct {
@@ -931,6 +932,7 @@ Decl* decl_import(Arena* arena, Id* module_name) {
     d->defining_module = NULL;
     d->kind = DECL_IMPORT;
     d->as.import_decl.module_name = module_name;
+    d->as.import_decl.alias = NULL;
     return d;
 }
 

@@ -29,6 +29,29 @@ typedef struct ModuleNode {
 
 static ModuleNode *loaded_modules = NULL;
 
+// Registry of import qualifiers (the alias, or a module path's last segment) so
+// name resolution can recognize `qualifier.Member` as qualified module access.
+// Populated during load (the DECL_IMPORT nodes are spliced out afterward).
+typedef struct QualifierNode {
+    char *name;
+    struct QualifierNode *next;
+} QualifierNode;
+static QualifierNode *import_qualifiers = NULL;
+
+static void register_qualifier(Arena *arena, const char *name, size_t len) {
+    for (QualifierNode *q = import_qualifiers; q; q = q->next)
+        if (strlen(q->name) == len && strncmp(q->name, name, len) == 0) return;
+    QualifierNode *q = arena_push_aligned(arena, QualifierNode);
+    q->name = arena_push_many(arena, char, (isize)len + 1);
+    memcpy(q->name, name, len); q->name[len] = '\0';
+    q->next = import_qualifiers; import_qualifiers = q;
+}
+static bool qualifier_is_module(const char *name, size_t len) {
+    for (QualifierNode *q = import_qualifiers; q; q = q->next)
+        if (strlen(q->name) == len && strncmp(q->name, name, len) == 0) return true;
+    return false;
+}
+
 static bool module_already_loaded(const char *name) {
     for (ModuleNode *n = loaded_modules; n; n = n->next)
         if (strcmp(n->name, name) == 0)
@@ -144,6 +167,19 @@ static DeclList* load_module(Arena *file_arena,
             if (len >= sizeof buf) len = sizeof buf - 1;
             memcpy(buf, imp->name, len);
             buf[len] = '\0';
+
+            // Register the access qualifier: the alias, else the path's last
+            // segment (`std.math` → `math`). Enables `qualifier.Member` access
+            // (the glob still binds bare names, so this is additive).
+            Id *alias = cur->decl->as.import_decl.alias;
+            if (alias) {
+                register_qualifier(ast_arena, alias->name, (size_t)alias->length);
+            } else {
+                const char *seg = buf; size_t seglen = strlen(buf);
+                const char *dot = strrchr(buf, '.');
+                if (dot) { seg = dot + 1; seglen = strlen(dot + 1); }
+                register_qualifier(ast_arena, seg, seglen);
+            }
 
             // recurse
             DeclList *child = load_module(file_arena, ast_arena, buf);

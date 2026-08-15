@@ -1,0 +1,6 @@
+// `import ... as` gives an alias qualifier.
+import std.io as o
+proc main() i32 {
+    o.println("via alias")
+    return 0
+}

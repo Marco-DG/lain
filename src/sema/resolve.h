@@ -919,9 +919,24 @@ void sema_resolve_expr(Expr *e) {
     break;
   }
 
-  case EXPR_MEMBER:
-    sema_resolve_expr(e->as.member_expr.target);
+  case EXPR_MEMBER: {
+    Expr *mtgt = e->as.member_expr.target;
+    // Qualified module access: `qualifier.Member`, where `qualifier` is an
+    // imported module or its alias. The glob already binds the member's bare
+    // name, so rewrite this node into that identifier and resolve it normally.
+    if (mtgt && mtgt->kind == EXPR_IDENTIFIER && e->as.member_expr.member) {
+        Id *q = mtgt->as.identifier_expr.id;
+        if (q && qualifier_is_module(q->name, (size_t)q->length)) {
+            Id *member = e->as.member_expr.member;
+            e->kind = EXPR_IDENTIFIER;
+            e->as.identifier_expr.id = member;
+            sema_resolve_expr(e);
+            break;
+        }
+    }
+    sema_resolve_expr(mtgt);
     break;
+  }
   case EXPR_BINARY:
     sema_resolve_expr(e->as.binary_expr.left);
     sema_resolve_expr(e->as.binary_expr.right);

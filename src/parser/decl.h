@@ -1036,7 +1036,15 @@ Decl *parse_import_decl(Arena* arena, Parser* parser) {
     size_t len = (end.start + end.length) - start.start;
     Id* mod = id(arena, len, start.start);
 
-    return decl_import(arena, mod);
+    Decl *d = decl_import(arena, mod);
+    // Optional alias: `import foo.bar as baz` → qualified access via `baz.`
+    if (parser_match(TOKEN_KEYWORD_AS)) {
+        parser_advance();
+        parser_expect(TOKEN_IDENTIFIER, "Expected an alias identifier after 'as'");
+        d->as.import_decl.alias = id(arena, parser->token.length, parser->token.start);
+        parser_advance();
+    }
+    return d;
 }
 
 Decl *parse_c_include_decl(Arena *arena, Parser *parser) {

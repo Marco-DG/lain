@@ -118,9 +118,10 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
       parser_advance();
   }
 
-  // Combine into one Id based on source range
-  isize len = (end.start + end.length) - start.start;
-  Id *type_name = id(arena, len, start.start);
+  // A dotted type name is module-qualified (`dep.Widget`) — the real type is the
+  // LAST segment, which the glob binds by its bare name (there are no nested
+  // types, so a dot here always means module qualification).
+  Id *type_name = id(arena, end.length, end.start);
 
   base_type = type_simple(arena, type_name);
 

@@ -1,0 +1,9 @@
+// Module-qualified access: `io.println` resolves the member through the imported
+// module `io` (the last segment of `std.io`). The glob still binds `println`
+// unqualified too — qualification is additive.
+import std.io
+proc main() i32 {
+    io.println("hi")
+    println("also unqualified")
+    return 0
+}
