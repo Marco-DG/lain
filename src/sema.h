@@ -2602,6 +2602,17 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
         if (!d) continue;
+        // Top-level constant: resolve + type its initializer (all globals were
+        // registered in the first pass, so cross-references between constants and
+        // arrays like CTYPE resolve here).
+        if (d->kind == DECL_VARIABLE) {
+            if (d->as.variable_decl.init) {
+                sema_clear_locals();
+                sema_resolve_expr(d->as.variable_decl.init);
+                sema_infer_expr(d->as.variable_decl.init);
+            }
+            continue;
+        }
         if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE) continue;
         // Generic templates are never processed directly — only their concrete
         // monomorphized instances (appended to this same list) are.

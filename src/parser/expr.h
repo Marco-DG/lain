@@ -259,6 +259,7 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         isize arr_line = parser->line;
         isize arr_col  = parser->column;
         parser_advance();  // consume '['
+        parser_skip_eol();          // allow a multi-line array literal
         ExprList *elements = NULL;
         ExprList **tail = &elements;
         if (!parser_match(TOKEN_R_BRACKET)) {
@@ -292,17 +293,21 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
             // Otherwise: array literal; `first` is the first element.
             *tail = expr_list(arena, first);
             tail = &(*tail)->next;
+            parser_skip_eol();
             if (parser_match(TOKEN_COMMA)) {
                 parser_advance();
+                parser_skip_eol();
                 while (!parser_match(TOKEN_R_BRACKET)) {
                     Expr *elem = parse_expr(arena, parser);
                     *tail = expr_list(arena, elem);
                     tail = &(*tail)->next;
-                    if (parser_match(TOKEN_COMMA)) parser_advance();
+                    parser_skip_eol();
+                    if (parser_match(TOKEN_COMMA)) { parser_advance(); parser_skip_eol(); }
                     else break;
                 }
             }
         }
+        parser_skip_eol();
         parser_expect(TOKEN_R_BRACKET, "Expected ']' after array literal");
         parser_advance();
         Expr *arr = expr_array_literal(arena, elements);

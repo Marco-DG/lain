@@ -1,0 +1,20 @@
+// Top-level compile-time constants (no keyword — a bare `NAME T = expr` at file
+// scope is a comptime constant; there are no runtime globals). Scalars, a
+// multi-line array table, cross-references, and native indexing all work.
+extern proc libc_printf(fmt *u8, ...) i32
+
+U u8 = 0x01
+L u8 = 0x02
+MASK u8 = U | L
+
+FLAGS u8[8] = [
+    U, L, U|L, 0,
+    U, L, U|L, MASK
+]
+
+proc main() i32 {
+    var m u8 = MASK
+    var f u8 = FLAGS[2]
+    libc_printf("MASK=%d FLAGS[2]=%d\n", m, f)
+    return 0
+}

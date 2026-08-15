@@ -179,6 +179,7 @@ typedef struct {
     
     bool  is_parameter; // New: true if this is a function parameter
     bool  is_mutable;   // New: true if declared with 'var' (mutable binding)
+    struct Expr* init;  // top-level constant initializer (`NAME T = expr`), else NULL
 } DeclVariable;
 
 typedef struct {
@@ -833,6 +834,7 @@ Decl *decl_variable(Arena *arena, Id *name, Type *type) {
     d->as.variable_decl.constraints = NULL; // default: no constraints
     d->as.variable_decl.is_parameter = false;
     d->as.variable_decl.is_mutable = false; // default
+    d->as.variable_decl.init = NULL;        // default: no initializer
     return d;
 }
 

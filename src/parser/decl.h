@@ -660,6 +660,12 @@ Decl *parse_var_decl(Arena* arena, Parser* parser)
     Decl *d = decl_variable(arena, var_name, var_type);
     d->line = line;
     d->col = col;
+    // Optional constant initializer: `NAME TYPE = expr` at file scope declares a
+    // compile-time constant (there are no runtime globals).
+    if (parser_match(TOKEN_EQUAL)) {
+        parser_advance();
+        d->as.variable_decl.init = parse_expr(arena, parser);
+    }
     return d;
 }
 

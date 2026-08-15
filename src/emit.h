@@ -81,6 +81,44 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     }
     EMIT("\n");
 
+    // Emit top-level constants BEFORE any function, so function bodies (and later
+    // constants like a lookup table) can reference them. `static const` — a
+    // module-scoped compile-time constant, folded by the C compiler.
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (!dl->decl || dl->decl->kind != DECL_VARIABLE) continue;
+        Decl *d = dl->decl;
+        Type *ty = d->as.variable_decl.type;
+        // A bare `NAME T = expr` is an immutable compile-time constant (`static
+        // const`); a `var NAME T` is a mutable global (`static`, no const).
+        const char *cst = d->as.variable_decl.is_mutable ? "static " : "static const ";
+        char nm[256]; snprintf(nm, sizeof nm, "%s", c_name_for_id(d->as.variable_decl.name));
+        if (ty && ty->kind == TYPE_ARRAY && ty->array_len > 0) {
+            char elem[256]; c_name_for_type(ty->element_type, elem, sizeof elem);
+            EMIT("%s%s %s[%ld]", cst, elem, nm, (long)ty->array_len);
+        } else {
+            char tb[256]; c_name_for_type(ty, tb, sizeof tb);
+            EMIT("%s%s %s", cst, tb, nm);
+        }
+        Expr *init = d->as.variable_decl.init;
+        if (init) {
+            EMIT(" = ");
+            if (init->kind == EXPR_ARRAY_LITERAL) {
+                EMIT("{ ");
+                bool first = true;
+                for (ExprList *el = init->as.array_literal_expr.elements; el; el = el->next) {
+                    if (!first) EMIT(", ");
+                    first = false;
+                    emit_expr(el->expr, 0);
+                }
+                EMIT(" }");
+            } else {
+                emit_expr(init, 0);
+            }
+        }
+        EMIT(";\n");
+    }
+    EMIT("\n");
+
     // Emit the body (function forward decls + definitions) into a temp file so
     // that every slice/array type it references gets recorded before we decide
     // which typedefs to emit. Fall back to writing directly if tmpfile() fails.

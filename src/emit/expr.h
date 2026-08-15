@@ -999,10 +999,11 @@ void emit_expr(Expr *expr, int depth) {
       bool is_ptr = false;
       if (ix->target->decl && ix->target->decl->kind == DECL_VARIABLE) {
           Type *t = ix->target->decl->as.variable_decl.type;
-          // Logic matching emit_decl.h: shared structs/arrays are const pointers
-          // mutable are pointers
-          // owned are value
-          if (t && !is_primitive_type(t)) {
+          // Logic matching emit_decl.h: shared/mutable structs/arrays are passed
+          // as pointers — but ONLY as parameters. A top-level constant array is a
+          // native `static const T[N]`, indexed directly, not via `.data`.
+          if (t && !is_primitive_type(t) &&
+              ix->target->decl->as.variable_decl.is_parameter) {
                if (t->mode == MODE_SHARED || t->mode == MODE_MUTABLE) {
                    is_ptr = true;
                }

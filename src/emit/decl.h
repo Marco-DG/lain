@@ -429,11 +429,8 @@ void emit_decl(Decl* decl, int depth) {
     if (!decl) return;
     switch (decl->kind) {
         case DECL_VARIABLE:
-            // Emit a top-level variable declaration: <type> <name>;
-            emit_indent(depth);
-            emit_type(decl->as.variable_decl.type);
-            EMIT(" %s;\n",
-                c_name_for_id(decl->as.variable_decl.name));
+            // Top-level constants are emitted earlier (as `static const …`) in the
+            // forward pass so they precede every function; nothing to do here.
             break;
 
         case DECL_EXTERN_PROCEDURE:
