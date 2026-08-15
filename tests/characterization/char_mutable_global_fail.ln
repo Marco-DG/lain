@@ -1,0 +1,9 @@
+// EXPECT: [E100]
+// Mutable global state is not allowed ("no runtime globals"): a top-level `var`
+// is rejected outright. A `func` reading one would depend on hidden state, and it
+// invites static-init-order hazards. Top-level bindings are compile-time
+// constants; runtime state is threaded through arguments / a context struct.
+var k i32
+proc main() i32 {
+    return 0
+}

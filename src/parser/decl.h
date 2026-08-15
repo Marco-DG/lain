@@ -279,16 +279,16 @@ Decl *parse_decl(Arena* arena, Parser* parser)
     }
 
     if (parser_match(TOKEN_KEYWORD_VAR)) {
-        parser_advance();
-        d = parse_var_decl(arena, parser);
-        // A top-level `var` is a MUTABLE global. Without this it defaulted to
-        // immutable: a proc could not assign it (spurious E009) and a `func`
-        // could read it (a purity hole — the read guard is keyed on is_mutable).
-        if (d && d->kind == DECL_VARIABLE) d->as.variable_decl.is_mutable = true;
-        goto done;
+        // No mutable global state ("no runtime globals"): a `func` reading one
+        // would depend on hidden state, and it invites static-init-order hazards.
+        // Top-level bindings are compile-time constants — thread runtime state
+        // through arguments / a context struct instead.
+        parser_error("mutable global variables are not allowed — top-level bindings "
+                     "are compile-time constants. Write `NAME T = value`, and thread "
+                     "runtime state explicitly.");
     }
 
-    // Implicit Immutable Declaration: x = value
+    // Top-level compile-time constant: `NAME T = value`
     if (parser_match(TOKEN_IDENTIFIER)) {
          d = parse_var_decl(arena, parser);
          goto done;
@@ -660,11 +660,13 @@ Decl *parse_var_decl(Arena* arena, Parser* parser)
     Decl *d = decl_variable(arena, var_name, var_type);
     d->line = line;
     d->col = col;
-    // Optional constant initializer: `NAME TYPE = expr` at file scope declares a
-    // compile-time constant (there are no runtime globals).
+    // A top-level binding is a compile-time constant, so it must have a value:
+    // `NAME TYPE = expr`.
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance();
         d->as.variable_decl.init = parse_expr(arena, parser);
+    } else {
+        parser_error("a top-level constant must have a value — write `NAME T = value`.");
     }
     return d;
 }
