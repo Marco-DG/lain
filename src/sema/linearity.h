@@ -161,11 +161,14 @@ typedef struct FieldState {
     struct FieldState *next;
 } FieldState;
 
-// Field-sensitive definite assignment: per-field init state for a FLAT struct
-// local (every field a non-aggregate scalar/pointer). A NULL `field_inits` means
-// the variable is not field-tracked and falls back to whole-var `is_initialized`.
+// Field-sensitive definite assignment. A struct local is flattened into its
+// scalar/pointer LEAF paths — "x", "a.x", "a.y" — one FieldInit each, tracked
+// independently through the CFG. Nested structs recurse; a variable whose struct
+// contains an array/slice field (at any depth) is not field-tracked (NULL
+// field_inits → whole-var `is_initialized`), which keeps every path single-valued
+// and avoids false positives. `path` is an arena string in sema_arena.
 typedef struct FieldInit {
-    Id *field_name;
+    const char *path;    // dotted leaf path, e.g. "a.x" (relative to the variable)
     bool is_initialized;
     struct FieldInit *next;
 } FieldInit;
@@ -218,23 +221,47 @@ static LEntry *ltable_find(LTable *t, Id *id) {
 }
 
 // ── field-sensitive definite assignment helpers ──────────────────────────────
-static FieldInit *field_init_find(LEntry *e, Id *name) {
-    if (!e || !name) return NULL;
+// `path` is an exact leaf path ("a.x"); `prefix` is a whole sub-object ("a" →
+// matches leaves "a.x", "a.y"). A NULL/empty prefix means the whole variable.
+static FieldInit *field_init_find(LEntry *e, const char *path) {
+    if (!e || !path) return NULL;
     for (FieldInit *fi = e->field_inits; fi; fi = fi->next)
-        if (fi->field_name && fi->field_name->length == name->length &&
-            strncmp(fi->field_name->name, name->name, name->length) == 0)
-            return fi;
+        if (strcmp(fi->path, path) == 0) return fi;
     return NULL;
+}
+// True if `leaf` == prefix, or `leaf` lies under `prefix` (i.e. "prefix.…").
+static bool fi_path_under(const char *leaf, const char *prefix) {
+    if (!prefix || !*prefix) return true;                 // whole variable
+    size_t pl = strlen(prefix);
+    if (strncmp(leaf, prefix, pl) != 0) return false;
+    return leaf[pl] == '\0' || leaf[pl] == '.';           // boundary
 }
 static bool field_init_all(LEntry *e) {
     for (FieldInit *fi = e->field_inits; fi; fi = fi->next)
         if (!fi->is_initialized) return false;
     return true;
 }
-static Id *field_init_first_uninit(LEntry *e) {
+static const char *field_init_first_uninit(LEntry *e) {
     for (FieldInit *fi = e->field_inits; fi; fi = fi->next)
-        if (!fi->is_initialized) return fi->field_name;
+        if (!fi->is_initialized) return fi->path;
     return NULL;
+}
+// First uninitialized leaf under `prefix`, or NULL if all set / none match.
+static const char *field_init_prefix_first_uninit(LEntry *e, const char *prefix) {
+    for (FieldInit *fi = e->field_inits; fi; fi = fi->next)
+        if (fi_path_under(fi->path, prefix) && !fi->is_initialized) return fi->path;
+    return NULL;
+}
+// Mark every leaf under `prefix` initialized (prefix "" = whole variable).
+static void field_init_mark_prefix(LEntry *e, const char *prefix) {
+    for (FieldInit *fi = e->field_inits; fi; fi = fi->next)
+        if (fi_path_under(fi->path, prefix)) fi->is_initialized = true;
+}
+// Does `prefix` name a tracked sub-object (some leaf lies under it)?
+static bool field_init_has_prefix(LEntry *e, const char *prefix) {
+    for (FieldInit *fi = e->field_inits; fi; fi = fi->next)
+        if (fi_path_under(fi->path, prefix)) return true;
+    return false;
 }
 
 static void ltable_add(LTable *t, Id *id, int loop_depth, bool is_mutable, bool must_consume, bool is_initialized, isize line, isize col) {
@@ -408,7 +435,7 @@ static LTable *ltable_clone(LTable *src) {
                 d->field_inits = NULL;
                 for (FieldInit *sf = s->field_inits; sf; sf = sf->next) {
                     FieldInit *df = arena_push_aligned(dst->arena, FieldInit);
-                    df->field_name = sf->field_name;
+                    df->path = sf->path;   // shared: path strings live in sema_arena
                     df->is_initialized = sf->is_initialized;
                     df->next = NULL;
                     if (last_fi) last_fi->next = df;
@@ -613,8 +640,8 @@ static void ltable_intersect_initialization(LTable *parent, LTable *a, LTable *b
         if (p->field_inits && ea && eb) {
             for (FieldInit *pf = p->field_inits; pf; pf = pf->next) {
                 if (pf->is_initialized) continue;
-                FieldInit *fa = field_init_find(ea, pf->field_name);
-                FieldInit *fb = field_init_find(eb, pf->field_name);
+                FieldInit *fa = field_init_find(ea, pf->path);
+                FieldInit *fb = field_init_find(eb, pf->path);
                 if (fa && fb && fa->is_initialized && fb->is_initialized)
                     pf->is_initialized = true;
             }
@@ -631,7 +658,7 @@ static void ltable_apply_initialization(LTable *parent, LTable *branch) {
         if (p->field_inits && b) {
             for (FieldInit *pf = p->field_inits; pf; pf = pf->next) {
                 if (pf->is_initialized) continue;
-                FieldInit *bf = field_init_find(b, pf->field_name);
+                FieldInit *bf = field_init_find(b, pf->path);
                 if (bf && bf->is_initialized) pf->is_initialized = true;
             }
         }
@@ -738,27 +765,81 @@ static Decl *linear_struct_decl_for(Type *ty) {
     return NULL;
 }
 
-// Set up field-sensitive definite assignment for a FLAT struct local — every
-// field a non-aggregate scalar/pointer, so every member access is single-level
-// `p.field`. `all_init` seeds each field (true when the whole var was given a
-// value at its declaration). Non-flat / non-struct types: no-op (whole-var only).
+// Recursively flatten a struct type into scalar/pointer leaf paths, appending a
+// FieldInit per leaf. `prefix` is the dotted path so far (""/no trailing dot for
+// the root). Returns false — and the caller must abandon field tracking — if the
+// struct contains an array/slice field at any depth (arrays are not element-
+// tracked) or the shape is too large/deep to track safely.
+#define FI_MAX_LEAVES 96
+#define FI_MAX_DEPTH  8
+static bool fi_flatten(Decl *sd, const char *prefix, bool all_init, int depth,
+                       int *count, FieldInit **head, Arena *arena) {
+    if (!sd || depth > FI_MAX_DEPTH) return false;
+    for (DeclList *f = sd->as.struct_decl.fields; f; f = f->next) {
+        if (!f->decl || f->decl->kind != DECL_VARIABLE) return false;
+        Type *ft = f->decl->as.variable_decl.type;
+        Id *fname = f->decl->as.variable_decl.name;
+        if (!fname) return false;
+        // Build the child path "prefix.fname" (or "fname" at the root).
+        char path[256];
+        int n = prefix && *prefix
+              ? snprintf(path, sizeof path, "%s.%.*s", prefix, (int)fname->length, fname->name)
+              : snprintf(path, sizeof path, "%.*s", (int)fname->length, fname->name);
+        if (n <= 0 || n >= (int)sizeof path) return false;
+
+        if (type_is_uninit_flaggable(ft)) {                 // scalar/pointer leaf
+            if (*count >= FI_MAX_LEAVES) return false;
+            char *p = arena_push_many(sema_arena, char, (isize)n + 1);
+            memcpy(p, path, (size_t)n + 1);
+            FieldInit *fi = arena_push_aligned(arena, FieldInit);
+            fi->path = p; fi->is_initialized = all_init;
+            fi->next = *head; *head = fi;
+            (*count)++;
+        } else {
+            Decl *nested = linear_struct_decl_for(ft);       // nested struct → recurse
+            if (!nested) return false;                        // array/slice/other → abandon
+            if (!fi_flatten(nested, path, all_init, depth + 1, count, head, arena)) return false;
+        }
+    }
+    return true;
+}
+
+// Set up field-sensitive definite assignment for a struct local by flattening it
+// into scalar/pointer leaf paths (nested structs recurse). `all_init` seeds each
+// leaf (true when the whole var was given a value at declaration). If the struct
+// bears an array/slice field at any depth, tracking is abandoned (whole-var only).
 static void ltable_setup_field_inits(LEntry *e, Type *ty, Arena *arena, bool all_init) {
     if (!e || !ty || !arena) return;
     Decl *sd = linear_struct_decl_for(ty);
     if (!sd) return;
-    // Flatness gate: bail if any field is itself an aggregate (struct/array/slice).
-    for (DeclList *f = sd->as.struct_decl.fields; f; f = f->next) {
-        if (!f->decl || f->decl->kind != DECL_VARIABLE) return;
-        if (!type_is_uninit_flaggable(f->decl->as.variable_decl.type)) return;
-    }
+    int count = 0;
     FieldInit *head = NULL;
-    for (DeclList *f = sd->as.struct_decl.fields; f; f = f->next) {
-        FieldInit *fi = arena_push_aligned(arena, FieldInit);
-        fi->field_name = f->decl->as.variable_decl.name;
-        fi->is_initialized = all_init;
-        fi->next = head; head = fi;
+    if (fi_flatten(sd, "", all_init, 0, &count, &head, arena) && head)
+        e->field_inits = head;
+}
+
+// For a place expression, find its root identifier and build the dotted path
+// after it ("" for a bare identifier, "a.x" for `p.a.x`). Returns false if the
+// expression is not a pure identifier/member chain (e.g. contains an index).
+static bool field_path_of(Expr *e, Id **root, char *buf, size_t cap) {
+    if (!e || cap == 0) return false;
+    if (e->kind == EXPR_IDENTIFIER) {
+        *root = e->as.identifier_expr.id;
+        buf[0] = '\0';
+        return true;
     }
-    if (head) e->field_inits = head;
+    if (e->kind == EXPR_MEMBER) {
+        if (!field_path_of(e->as.member_expr.target, root, buf, cap)) return false;
+        Id *m = e->as.member_expr.member;
+        if (!m) return false;
+        size_t len = strlen(buf);
+        int n = (len == 0)
+              ? snprintf(buf, cap, "%.*s", (int)m->length, m->name)
+              : snprintf(buf + len, cap - len, ".%.*s", (int)m->length, m->name);
+        if (n <= 0 || (size_t)n >= cap - len) return false;
+        return true;
+    }
+    return false;   // index / call / other → not a tracked place
 }
 
 // P0 aliasing (co-argument): build a canonical access path for an lvalue arg —
@@ -839,11 +920,11 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
                 // struct as a WHOLE requires every field set. (Single-level
                 // member reads are handled in EXPR_MEMBER and never land here.)
                 if (entry->field_inits && !field_init_all(entry)) {
-                    Id *miss = field_init_first_uninit(entry);
+                    const char *miss = field_init_first_uninit(entry);
                     fprintf(stderr, "[E019] Error Ln %li, Col %li: '%.*s' is partially initialized "
-                            "(field '%.*s' is not set); initialize all fields before using it as a whole.\n",
+                            "(field '%s' is not set); initialize all fields before using it as a whole.\n",
                             (long)(e->line), (long)(e->col), (int)id->length, id->name ? id->name : "?",
-                            miss ? (int)miss->length : 1, miss ? miss->name : "?");
+                            miss ? miss : "?");
                     diagnostic_show_line((e->line), (e->col));
                     exit(1);
                 }
@@ -859,37 +940,36 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
     }
 
     case EXPR_MEMBER: {
-        Expr *tgt = e->as.member_expr.target;
-        // Single-level field read `p.field` on a field-tracked struct: require
-        // THAT field initialized (E005), without treating the base as a whole
-        // read (which would demand every field be set). Handle the base's
-        // move/borrow checks inline so we needn't recurse into the whole check.
-        if (tgt && tgt->kind == EXPR_IDENTIFIER && tbl) {
-            LEntry *base = ltable_find(tbl, tgt->as.identifier_expr.id);
-            if (base && base->field_inits) {
-                Id *bid = tgt->as.identifier_expr.id;
+        // A field read `p.a.x` (any depth) on a field-tracked struct: build the
+        // dotted path and require it initialized — a leaf must be set, a whole
+        // sub-object requires all its leaves set (E005) — WITHOUT treating the
+        // root as a whole read. The root's move/borrow checks are done inline.
+        Id *root = NULL;
+        char path[256];
+        if (tbl && field_path_of(e, &root, path, sizeof path) && root && path[0]) {
+            LEntry *base = ltable_find(tbl, root);
+            if (base && base->field_inits && field_init_has_prefix(base, path)) {
                 if (base->state == LSTATE_CONSUMED) {
                     fprintf(stderr, "[E001] Error Ln %li, Col %li: use of linear variable '%.*s' after it was moved.\n",
-                            (long)e->line, (long)e->col, (int)bid->length, bid->name ? bid->name : "<unknown>");
+                            (long)e->line, (long)e->col, (int)root->length, root->name ? root->name : "<unknown>");
                     diagnostic_show_line(e->line, e->col);
                     exit(1);
                 }
-                FieldInit *fi = field_init_find(base, e->as.member_expr.member);
-                if (fi && !fi->is_initialized) {
-                    fprintf(stderr, "[E005] Error Ln %li, Col %li: use of uninitialized field '%.*s.%.*s'.\n",
+                const char *miss = field_init_prefix_first_uninit(base, path);
+                if (miss) {
+                    fprintf(stderr, "[E005] Error Ln %li, Col %li: use of uninitialized field '%.*s.%s'.\n",
                             (long)e->line, (long)e->col,
-                            (int)bid->length, bid->name ? bid->name : "?",
-                            (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+                            (int)root->length, root->name ? root->name : "?", miss);
                     diagnostic_show_line(e->line, e->col);
                     exit(1);
                 }
                 if (tbl->borrows &&
-                    borrow_check_owner_access(tbl->borrows, bid, MODE_SHARED, e->line, e->col))
+                    borrow_check_owner_access(tbl->borrows, root, MODE_SHARED, e->line, e->col))
                     exit(1);
                 break;   // handled — skip the whole-identifier check
             }
         }
-        sema_check_expr_linearity(tgt, tbl, loop_depth);
+        sema_check_expr_linearity(e->as.member_expr.target, tbl, loop_depth);
         break;
     }
 
@@ -1498,21 +1578,23 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                             }
                         }
                     }
-                    // Field-sensitive definite assignment. A single-level member
-                    // write `p.field = v` initializes ONLY that field; the whole
-                    // var is initialized once every field is. A whole write
-                    // `p = v` (or any non-tracked target) initializes everything.
-                    if (entry->field_inits && lhs && lhs->kind == EXPR_MEMBER &&
-                        lhs->as.member_expr.target &&
-                        lhs->as.member_expr.target->kind == EXPR_IDENTIFIER) {
-                        FieldInit *fi = field_init_find(entry, lhs->as.member_expr.member);
-                        if (fi) fi->is_initialized = true;
+                    // Field-sensitive definite assignment. A member write
+                    // `p.a.x = v` initializes the leaf `a.x`; a whole sub-object
+                    // write `p.a = v` initializes every leaf under `a`; a whole
+                    // write `p = v` initializes everything. The var counts as
+                    // initialized once all its leaves are.
+                    if (entry->field_inits) {
+                        Id *wroot = NULL;
+                        char wpath[256];
+                        if (lhs && lhs->kind == EXPR_MEMBER &&
+                            field_path_of(lhs, &wroot, wpath, sizeof wpath) &&
+                            wroot == base_id && wpath[0]) {
+                            field_init_mark_prefix(entry, wpath);   // leaf or sub-object
+                        } else {
+                            field_init_mark_prefix(entry, "");      // whole var
+                        }
                         entry->is_initialized = field_init_all(entry);
                     } else {
-                        if (entry->field_inits) {
-                            for (FieldInit *fi = entry->field_inits; fi; fi = fi->next)
-                                fi->is_initialized = true;
-                        }
                         entry->is_initialized = true;
                     }
                 }

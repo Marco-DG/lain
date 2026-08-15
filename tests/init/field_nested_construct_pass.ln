@@ -1,0 +1,19 @@
+// Nested construction: fill every leaf (incl. a whole-sub-object write), then use.
+type Inner {
+    x i32
+    y i32
+}
+type Outer {
+    a Inner
+    b i32
+}
+func rd(p Outer) i32 { return p.a.x + p.a.y + p.b }
+proc main() i32 {
+    var p Outer
+    var i Inner
+    i.x = 1
+    i.y = 2
+    p.a = i
+    p.b = 3
+    return rd(p) - 6
+}

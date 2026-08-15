@@ -1,0 +1,21 @@
+// A nested leaf written on both branches is initialized after the join.
+type Inner {
+    x i32
+    y i32
+}
+type Outer {
+    a Inner
+    b i32
+}
+func rd(p Outer) i32 { return p.a.x + p.b }
+proc main() i32 {
+    var p Outer
+    p.a.y = 0
+    p.b = 0
+    if p.b > 0 {
+        p.a.x = 1
+    } else {
+        p.a.x = 0
+    }
+    return rd(p)
+}

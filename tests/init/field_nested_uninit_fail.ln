@@ -1,0 +1,16 @@
+// EXPECT: [E005]
+// Reading an unset field of a NESTED struct is caught (path-keyed init).
+type Inner {
+    x i32
+    y i32
+}
+type Outer {
+    a Inner
+    b i32
+}
+proc main() i32 {
+    var p Outer
+    p.a.y = 1
+    p.b = 2
+    return p.a.x
+}
