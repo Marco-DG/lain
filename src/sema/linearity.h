@@ -1168,21 +1168,12 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         break;
 
     case EXPR_MUT:
-        // Passing `var x` mutably borrows x and may initialize it (the out-param
-        // pattern, e.g. `init(var x)`). Mark it initialized before descending so
-        // it is not treated as an uninitialized read; other checks still run.
-        if (e->as.mut_expr.expr && e->as.mut_expr.expr->kind == EXPR_IDENTIFIER) {
-            LEntry *me = ltable_find(tbl, e->as.mut_expr.expr->as.identifier_expr.id);
-            if (me) {
-                me->is_initialized = true;
-                // Phase 1 keeps the pragmatic out-param rule: passing `var x`
-                // assumes the callee fully initializes x (Phase 2 replaces this
-                // with construct-and-return). Mark every field so a field-tracked
-                // struct isn't seen as partially initialized afterward.
-                for (FieldInit *fi = me->field_inits; fi; fi = fi->next)
-                    fi->is_initialized = true;
-            }
-        }
+        // Phase 2: a `var x` mutable borrow is for modifying an ALREADY-complete
+        // value in place, never for filling an empty one. We no longer mark x
+        // initialized here, so descending runs the ordinary read checks — an
+        // uninitialized scalar is E005 and a partially-initialized struct is
+        // E019. To build a value, construct it and return it (which the ABI
+        // compiles to the same in-place fill; see the field-init design doc).
         sema_check_expr_linearity(e->as.mut_expr.expr, tbl, loop_depth);
         break;
 

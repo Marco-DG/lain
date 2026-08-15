@@ -6,9 +6,7 @@ import std.c
 
 proc main() i32 {
     var backing u8[256]
-    var bump BumpAlloc
-
-    bump_init(var bump, var backing)
+    var bump = bump_init(var backing)
 
     // capacity should be 256
     if bump_remaining(bump) != 256 {

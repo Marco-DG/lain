@@ -10,7 +10,7 @@
 //
 // Usage pattern:
 //   var backing u8[4096]
-//   var bump = bump_init(backing)
+//   var bump = bump_init(var backing)
 //   var off = bump_alloc(var bump, 64)
 //   if off >= 0 {
 //       // write into backing[off .. off+64]
@@ -24,10 +24,12 @@ type BumpAlloc {
 
 // Initialise from a mutable byte slice.
 // The caller owns the backing memory; BumpAlloc only borrows the pointer.
-func bump_init(var a BumpAlloc, buf var *u8[]) {
+func bump_init(buf var *u8[]) BumpAlloc {
+    var a BumpAlloc
     a.data = buf.data
     a.cap  = buf.len
     a.pos  = 0
+    return a
 }
 
 // Allocate `size` bytes. Returns byte offset into the backing buffer,

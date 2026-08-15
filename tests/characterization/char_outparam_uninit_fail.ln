@@ -1,0 +1,12 @@
+// EXPECT: [E005]
+// A `var x` mutable borrow is for modifying an ALREADY-initialized value, not
+// for filling an empty one: passing an uninitialized `var v` is now rejected.
+// To produce a value, construct-and-return it instead (`v = makeit()`).
+proc setit(x var i32) {
+    x = 9
+}
+proc main() i32 {
+    var v i32
+    setit(var v)
+    return v
+}

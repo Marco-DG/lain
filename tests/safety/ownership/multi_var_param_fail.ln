@@ -24,7 +24,9 @@ proc main() i32 {
     var da Data = undefined
     var db Data = undefined
     da.x = 10
+    da.y = 0
     db.x = 20
+    db.y = 0
     
     // pick_x borrows both da and db
     var ref = pick_x(var da, var db)

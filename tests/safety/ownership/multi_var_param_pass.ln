@@ -19,7 +19,9 @@ proc main() i32 {
     var da Data = undefined
     var db Data = undefined
     da.x = 10
+    da.y = 0
     db.x = 20
+    db.y = 0
     
     // pick_x borrows both da and db (both are var params).
     // ref is never used → NLL releases immediately.
