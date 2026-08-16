@@ -1,0 +1,13 @@
+// @splat / @store round-trip (proof_licensed_performance.md §4), 16-wide so it
+// uses x86-64 baseline SSE2 (no -mavx2) — harness-safe.
+//   @splat(T, x)        → every lane = x            ((T){0} + x)
+//   @store(ptr, off, v) → write v to ptr+off        (memcpy → vmovdqu)
+// (@shuffle is SSSE3 (pshufb), above the bare-harness baseline, so it is
+// exercised by the AVX2 benchmark rather than here.)
+proc main() i32 {
+    var buf u8[16] = [1 for i in 0..16]
+    @store(buf, 0, @splat(u8x16, 65))              // write sixteen 'A's
+    var back u8x16 = @load(u8x16, buf, 0)
+    var m u32 = @movemask(back == 65)              // all 16 lanes match → popcount 16
+    return @popcount(m) as i32                     // 16
+}

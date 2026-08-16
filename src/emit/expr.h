@@ -1494,6 +1494,43 @@ void emit_expr(Expr *expr, int depth) {
         EMIT(") + (");
         emit_expr(expr->as.builtin_expr.arg2, depth);  // byte offset
         EMIT("), sizeof(__lv)); __lv; })");
+    } else if (bk == BUILTIN_SPLAT) {
+        // Broadcast: a zero vector plus the scalar duplicates it to every lane.
+        char vt[128];
+        c_name_for_type(expr->as.builtin_expr.vec_type, vt, sizeof vt);
+        EMIT("(((%s){0}) + (", vt);
+        emit_expr(expr->as.builtin_expr.arg, depth);   // scalar x
+        EMIT("))");
+    } else if (bk == BUILTIN_STORE) {
+        // memcpy from a vector temp (the value may be an rvalue) → vmovdqu at -O2.
+        char vt[128];
+        Type *vtp = expr->as.builtin_expr.arg3 ? expr->as.builtin_expr.arg3->type : NULL;
+        c_name_for_type(vtp, vt, sizeof vt);
+        EMIT("({ %s __sv = (", vt);
+        emit_expr(expr->as.builtin_expr.arg3, depth);  // value v
+        EMIT("); memcpy((uint8_t*)(");
+        emit_expr(expr->as.builtin_expr.arg, depth);   // ptr base
+        EMIT(") + (");
+        emit_expr(expr->as.builtin_expr.arg2, depth);  // byte offset
+        EMIT("), &__sv, sizeof(__sv)); })");
+    } else if (bk == BUILTIN_SHUFFLE) {
+        // Per-lane table lookup (pshufb): result[i] = tbl[idx[i] & 15] within each
+        // 128-bit lane; a high index bit zeroes the lane.
+        Type *tt = expr->as.builtin_expr.arg ? expr->as.builtin_expr.arg->type : NULL;
+        long n = (tt && tt->kind == TYPE_VECTOR) ? (long)tt->array_len : 0;
+        char vt[128]; c_name_for_type(tt, vt, sizeof vt);
+        if (n == 16 || n == 32) {
+            EMIT(n == 32 ? "((%s)_mm256_shuffle_epi8((__m256i)("
+                         : "((%s)_mm_shuffle_epi8((__m128i)(", vt);
+            emit_expr(expr->as.builtin_expr.arg, depth);   // tbl
+            EMIT(n == 32 ? "), (__m256i)(" : "), (__m128i)(");
+            emit_expr(expr->as.builtin_expr.arg2, depth);  // idx
+            EMIT(")))");
+        } else {
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: @shuffle requires a "
+                    "Vec(16, u8) or Vec(32, u8) table.\n", (long)expr->line, (long)expr->col);
+            exit(1);
+        }
     }
     break;
   }

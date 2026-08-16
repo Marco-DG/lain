@@ -442,6 +442,49 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
             e->as.builtin_expr.vec_type = vt;
             e->as.builtin_expr.arg2 = off;
             return e;
+        } else if (len == 5 && strncmp(name, "splat", 5) == 0) {
+            // @splat(T, x) → a vector T with every lane = x.
+            parser_expect(TOKEN_L_PAREN, "Expected '(' after '@splat'");
+            parser_advance();
+            Type *vt = parse_type(arena, parser);
+            parser_expect(TOKEN_COMMA, "Expected ',' after the vector type in '@splat'");
+            parser_advance();
+            Expr *x = parse_expr(arena, parser);
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after '@splat' arguments");
+            parser_advance();
+            Expr *e = expr_builtin_arg(arena, BUILTIN_SPLAT, x);
+            e->as.builtin_expr.vec_type = vt;
+            return e;
+        } else if (len == 5 && strncmp(name, "store", 5) == 0) {
+            // @store(ptr, off, v) → write vector v to ptr+off.
+            parser_expect(TOKEN_L_PAREN, "Expected '(' after '@store'");
+            parser_advance();
+            Expr *ptr = parse_expr(arena, parser);
+            parser_expect(TOKEN_COMMA, "Expected ',' after the pointer in '@store'");
+            parser_advance();
+            Expr *off = parse_expr(arena, parser);
+            parser_expect(TOKEN_COMMA, "Expected ',' after the offset in '@store'");
+            parser_advance();
+            Expr *v = parse_expr(arena, parser);
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after '@store' arguments");
+            parser_advance();
+            Expr *e = expr_builtin_arg(arena, BUILTIN_STORE, ptr);
+            e->as.builtin_expr.arg2 = off;
+            e->as.builtin_expr.arg3 = v;
+            return e;
+        } else if (len == 7 && strncmp(name, "shuffle", 7) == 0) {
+            // @shuffle(tbl, idx) → per-lane table lookup (pshufb).
+            parser_expect(TOKEN_L_PAREN, "Expected '(' after '@shuffle'");
+            parser_advance();
+            Expr *tbl = parse_expr(arena, parser);
+            parser_expect(TOKEN_COMMA, "Expected ',' after the table in '@shuffle'");
+            parser_advance();
+            Expr *idx = parse_expr(arena, parser);
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after '@shuffle' arguments");
+            parser_advance();
+            Expr *e = expr_builtin_arg(arena, BUILTIN_SHUFFLE, tbl);
+            e->as.builtin_expr.arg2 = idx;
+            return e;
         } else if ((len == 3 && strncmp(name, "ctz", 3) == 0) ||
                    (len == 3 && strncmp(name, "clz", 3) == 0) ||
                    (len == 8 && strncmp(name, "popcount", 8) == 0) ||

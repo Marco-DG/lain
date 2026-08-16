@@ -421,6 +421,9 @@ typedef enum {
     BUILTIN_POPCOUNT,        // @popcount(x) → __builtin_popcount (set-bit count        → u32)
     BUILTIN_MOVEMASK,        // @movemask(v) → _mm{256,}_movemask_epi8 (Vec(N,u8) → u32 bitmask)
     BUILTIN_LOAD,            // @load(T, ptr, off) → read sizeof(T) bytes at ptr+off into a vector T
+    BUILTIN_SPLAT,           // @splat(T, x)       → a vector T with every lane = x
+    BUILTIN_STORE,           // @store(ptr, off, v)→ write vector v to ptr+off (sizeof(v) bytes)
+    BUILTIN_SHUFFLE,         // @shuffle(tbl, idx) → per-lane table lookup (pshufb): r[i]=tbl[idx[i]]
 } BuiltinKind;
 
 typedef struct {
@@ -540,9 +543,13 @@ typedef struct {
     BuiltinKind builtin_kind;
     struct Expr *arg;   // argument for @likely/@unlikely/@assume_aligned; NULL for @os/@arch
     isize       align;  // alignment value for BUILTIN_ASSUME_ALIGNED
-    // @load(T, ptr, off): vec_type = T, arg = ptr, arg2 = off (byte offset).
+    // @load(T, ptr, off):   vec_type = T,  arg = ptr, arg2 = off
+    // @splat(T, x):          vec_type = T,  arg = x
+    // @store(ptr, off, v):   arg = ptr, arg2 = off, arg3 = v
+    // @shuffle(tbl, idx):    arg = tbl, arg2 = idx
     struct Type *vec_type;
     struct Expr *arg2;
+    struct Expr *arg3;
 } ExprBuiltin;
 
 typedef struct Expr {

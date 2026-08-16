@@ -2560,11 +2560,17 @@ void sema_infer_expr(Expr *e) {
             u32_ty = type_simple(sema_arena, uid);
         }
         e->type = u32_ty;
-    } else if (bk == BUILTIN_LOAD) {
-        // @load(T, ptr, off): result type is the vector T.
+    } else if (bk == BUILTIN_LOAD || bk == BUILTIN_SPLAT || bk == BUILTIN_STORE ||
+               bk == BUILTIN_SHUFFLE) {
         if (e->as.builtin_expr.arg)  sema_infer_expr(e->as.builtin_expr.arg);
         if (e->as.builtin_expr.arg2) sema_infer_expr(e->as.builtin_expr.arg2);
-        e->type = e->as.builtin_expr.vec_type;
+        if (e->as.builtin_expr.arg3) sema_infer_expr(e->as.builtin_expr.arg3);
+        if (bk == BUILTIN_LOAD || bk == BUILTIN_SPLAT)
+            e->type = e->as.builtin_expr.vec_type;                 // result is the vector T
+        else if (bk == BUILTIN_SHUFFLE)
+            e->type = e->as.builtin_expr.arg ? e->as.builtin_expr.arg->type : NULL; // table's vector
+        else
+            e->type = NULL;                                        // @store: void statement
     }
     break;
   }

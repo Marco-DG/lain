@@ -231,8 +231,16 @@ Expr *clone_expr(Arena *arena, Expr *e) {
             new_e->as.array_literal_expr.elements = clone_expr_list(arena, e->as.array_literal_expr.elements);
             break;
         case EXPR_BUILTIN:
+            // Clone every operand: @load/@splat/@store/@shuffle use arg2/arg3 and a
+            // vec_type, not just arg.
             if (e->as.builtin_expr.arg)
                 new_e->as.builtin_expr.arg = clone_expr(arena, e->as.builtin_expr.arg);
+            if (e->as.builtin_expr.arg2)
+                new_e->as.builtin_expr.arg2 = clone_expr(arena, e->as.builtin_expr.arg2);
+            if (e->as.builtin_expr.arg3)
+                new_e->as.builtin_expr.arg3 = clone_expr(arena, e->as.builtin_expr.arg3);
+            if (e->as.builtin_expr.vec_type)
+                new_e->as.builtin_expr.vec_type = clone_type(arena, e->as.builtin_expr.vec_type);
             break;
     }
     return new_e;
