@@ -1,0 +1,24 @@
+// Handwritten by Marco De Groskovskaja
+// License: MIT
+// 15/08/2025
+
+type Token {    // 8 bytes
+    kind TokenKind
+    pos  u32    // Max file size is ~ 4 GB
+    len  u16    // Max token lenght is 65535 chars
+                // Unused padding is 1 Byte
+}
+
+type TokenKind {
+    Eof
+    Ident
+    Number
+    Plus
+    Minus
+    Star
+    Slash
+    LParen
+    RParen
+    Assign
+    Unknown
+}

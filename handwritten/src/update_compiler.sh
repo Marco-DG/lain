@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 # Usage: bash update_compiler.sh  (NOT sh — requires bash for ${BASH_SOURCE[0]})
-# Rebuilds the Lain compiler from source and copies the binary here.
+# Copies the main Lain compiler binary to this directory.
 # Run this after modifying the compiler source to get the updated version.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$SCRIPT_DIR/.."
+PROJECT_ROOT="$SCRIPT_DIR/../.."
 DST="$SCRIPT_DIR/lain"
+SRC="$PROJECT_ROOT/lain"
 
-echo "Building Lain compiler..."
-gcc -std=c99 -Wall -Wextra -o "$ROOT/lain" "$ROOT/src/main.c" -I "$ROOT/src"
+if [ ! -f "$SRC" ]; then
+    echo "Error: Lain compiler not found at $SRC"
+    echo "Build the compiler first."
+    exit 1
+fi
 
-cp -f "$ROOT/lain" "$DST"
+echo "Copying Lain compiler from $SRC..."
+
+cp -f "$SRC" "$DST"
 chmod +x "$DST"
 
 echo "OK: $DST updated"

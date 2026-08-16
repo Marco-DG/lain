@@ -1,0 +1,49 @@
+// Handwritten by Marco De Groskovskaja
+// License: MIT
+// 15/08/2025
+
+U  u8 = 0x01  // upper
+L  u8 = 0x02  // lower
+D  u8 = 0x04  // digit
+C  u8 = 0x08  // cntrl
+P  u8 = 0x10  // punct
+S  u8 = 0x20  // white space (space/lf/tab)
+X  u8 = 0x40  // hex digit
+SP u8 = 0x80  // hard space (0x20)
+
+CTYPE u8[256] = [  // 256 bytes table loads in L1 cache
+    C, C, C, C, C, C, C, C,                                     // 0-7
+    C, C|S, C|S, C|S, C|S, C|S, C, C,                           // 8-15
+    C, C, C, C, C, C, C, C,                                     // 16-23
+    C, C, C, C, C, C, C, C,                                     // 24-31
+    S|SP, P, P, P, P, P, P, P,                                  // 32-39
+    P, P, P, P, P, P, P, P,                                     // 40-47
+    D, D, D, D, D, D, D, D,                                     // 48-55
+    D, D, P, P, P, P, P, P,                                     // 56-63
+    P, U|X, U|X, U|X, U|X, U|X, U|X, U,                         // 64-71
+    U, U, U, U, U, U, U, U,                                     // 72-79
+    U, U, U, U, U, U, U, U,                                     // 80-87
+    U, U, U, P, P, P, P, P,                                     // 88-95
+    P, L|X, L|X, L|X, L|X, L|X, L|X, L,                         // 96-103
+    L, L, L, L, L, L, L, L,                                     // 104-111
+    L, L, L, L, L, L, L, L,                                     // 112-119
+    L, L, L, P, P, P, P, C,                                     // 120-127
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,             // 128-143
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,             // 144-159
+    S|SP, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P,          // 160-175
+    P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P,             // 176-191
+    U, U, U, U, U, U, U, U, U, U, U, U, U, U, U, U,             // 192-207
+    U, U, U, U, U, U, U, P, U, U, U, U, U, U, U, L,             // 208-223
+    L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L,             // 224-239
+    L, L, L, L, L, L, L, P, L, L, L, L, L, L, L, L              // 240-255
+]
+
+func is_alnum(c u8)  bool { return (CTYPE[c] & (U | L | D)) != 0 }
+func is_alpha(c u8)  bool { return (CTYPE[c] & (U | L)) != 0 }
+func is_cntrl(c u8)  bool { return (CTYPE[c] & C) != 0 }
+func is_digit(c u8)  bool { return (CTYPE[c] & D) != 0 }
+func is_lower(c u8)  bool { return (CTYPE[c] & L) != 0 }
+func is_upper(c u8)  bool { return (CTYPE[c] & U) != 0 }
+func is_punct(c u8)  bool { return (CTYPE[c] & P) != 0 }
+func is_space(c u8)  bool { return (CTYPE[c] & S) != 0 }
+func is_xdigit(c u8) bool { return (CTYPE[c] & (D | X)) != 0 }

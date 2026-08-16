@@ -1,0 +1,29 @@
+// Handwritten by Marco De Groskovskaja
+// License: MIT
+// 15/08/2025
+
+import token.{
+    Token
+    TokenKind
+}
+
+import ctype.{
+    is_alpha
+    is_alnum
+    is_digit
+    is_space
+}
+
+type Lexer {            // 16 Bytes
+    src  *u8[:0]        // The file has to be null terminated
+    pos   u32 in src    // Max file size is ~ 4 GB
+                        // Unused padding is 4 bytes
+}
+
+func lexer_new(text *u8[:0]) Lexer {
+    return Lexer(text, 0)
+}
+
+func lexer_next(l *Lexer) Token {
+    // ...
+}
