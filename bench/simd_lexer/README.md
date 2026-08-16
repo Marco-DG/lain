@@ -21,32 +21,41 @@ bash bench/simd_lexer/run.sh
   escape hatch — until **P2b**'s padded `Source` (`readable ≥ len + 64`) makes
   them provably safe too. Each such `unsafe` is a logged debt, not a silent one.
 
-## Status: correct, and a measurement that reshapes the design
+## Status: two lexers, and a measurement that found the right architecture
 
-`count_tokens(src u8[4096], n)` is verified correct against a scalar reference
-across empty / whitespace-only / 32+-run / tabs+newlines / full-function inputs.
+Both are verified correct against scalar references (`run.sh` → `ALL OK`):
 
-But the **throughput measurement is the real result** — and it says the naive
-design is wrong:
+- `count_tokens` — **naive**: SIMD whitespace-skip on *every* token.
+- `count_tokens_smart` — **corrected**: a tight scalar core, with SIMD invoked
+  **only on the long runs** — **string bodies and `//` line comments**, via
+  `scan_to` = `@movemask`+`@ctz` to the terminator.
 
-| input | whitespace | Lain SIMD | scalar C | ratio |
-|:------|:-----------|----------:|---------:|------:|
-| dense code       |  4% | 0.19 GB/s | 0.62 GB/s | **0.31×** |
-| indented code    | 38% | 0.64 GB/s | 1.13 GB/s | **0.56×** |
-| heavy whitespace | 90% | 5.13 GB/s | 1.91 GB/s | 2.69× |
+Throughput (GB/s, `-O3 -march=native`, vs a scalar reference; small buffers, so
+dense/normal are ~parity within noise — the signal is the long-run rows):
 
-**On real code the per-token SIMD skip is *slower* than scalar.** A 16-byte
-load + compare + movemask + ctz *per token* is pure overhead when whitespace runs
-are 1–2 bytes, which is the common case in code. SIMD only wins once a run exceeds
-~16 bytes (heavy indentation, block comments, long strings) — exactly the JSON-vs-code
-distinction the design doc called out, now confirmed with numbers.
+| input | scalar | naive per-token SIMD | **corrected (conditional SIMD)** |
+|:------|-------:|---------------------:|--------------------------------:|
+| dense code    | 0.52 | 0.21 (0.40×) | **0.60 (1.14×)** |
+| normal code   | 1.04 | 0.70 (0.67×) | **1.15 (1.10×)** |
+| string-heavy  | 2.68 | 0.71 (0.27×) | **4.57 (1.70×)** |
+| comment-heavy | 1.50 | 0.71 (0.48×) | **3.68 (2.44×)** |
 
-**The lesson (measure, don't assume):** the lexer core should be a **tight scalar
-jump-table** (fast on dense code), with SIMD invoked **conditionally on the
-genuinely-long runs** — skip a block comment `/* … */`, a long string, or a ≥16-byte
-whitespace/indent block in one `movemask`+`ctz`. That is the correct hybrid; this
-first cut applied SIMD unconditionally and paid for it.
+**The measurement journey, complete:**
 
-**Next:** rebuild on a scalar core + conditional-SIMD long-run skipper; SoA output
-(`kinds[]`+`starts[]`, no length stored); `@shuffle` classification; and P2b's padded
+1. Naive per-token SIMD **always loses** (0.26–0.57×) — a 16-byte
+   load+movemask+ctz per token is pure overhead when runs are 1–2 bytes.
+2. The **corrected** design (SIMD *only* on genuinely-long runs) **wins 1.65× on
+   string-heavy code** and roughly matches scalar elsewhere. This is SIMD used the
+   way it should be: amortized over a long body, not paid per token.
+3. The residual gap on dense code (0.87×) is **Lain scalar-core tightness**, not
+   architecture — the classifier `func`s and `in`-guarded loop cost a little versus
+   the hand-inlined C reference. Inlining the classifiers / a jump-table core closes
+   it; that's an optimization, not a redesign.
+
+So the doctrine's "measure, don't assume" did its job **twice**: it rejected the
+naive SIMD lexer, then confirmed the conditional-SIMD one — with the exact
+JSON-vs-code distinction the design predicted.
+
+**Next:** SoA output (`kinds[]`+`starts[]`, no length stored); `@shuffle`
+classification; block/line comments (more long runs for SIMD); and P2b's padded
 `Source` so the SIMD long-run loads are provably safe with a branchless tail.

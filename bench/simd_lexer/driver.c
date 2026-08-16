@@ -18,12 +18,13 @@ typedef struct { uint8_t data[4096]; } Fixed_u8_4096;
 extern uint32_t simdlex_count_tokens(const Fixed_u8_4096*, uint32_t);        /* naive */
 extern uint32_t simdlex_count_tokens_smart(const Fixed_u8_4096*, uint32_t);  /* corrected */
 
-/* string-aware scalar reference — same token semantics as count_tokens_smart */
+/* string+comment-aware scalar reference — same token semantics as count_tokens_smart */
 static uint32_t ref_smart(const uint8_t *s, uint32_t n){
     uint32_t count=0,i=0;
     while(i<n){
         while(i<n&&(s[i]==' '||s[i]=='\t'||s[i]=='\n'||s[i]=='\r'))i++; if(i>=n)break;
         uint8_t c=s[i];
+        if(c=='/'&&i+1<n&&s[i+1]=='/'){ i+=2; while(i<n&&s[i]!='\n')i++; continue; } /* line comment: skip, no count */
         if(c=='"'){ i++; while(i<n&&s[i]!='"')i++; if(i<n)i++; }
         else if((c>='A'&&c<='Z')||(c>='a'&&c<='z')||c=='_'){ while(i<n&&(((s[i]>='A'&&s[i]<='Z')||(s[i]>='a'&&s[i]<='z')||s[i]=='_')||(s[i]>='0'&&s[i]<='9')))i++; }
         else if(c>='0'&&c<='9'){ while(i<n&&(s[i]>='0'&&s[i]<='9'))i++; }
@@ -59,11 +60,13 @@ int main(void){
     check("empty","");                 check("expr","a + b * 42");
     check("string","x = \"hello world\"");
     check("string + code","if (s == \"quit\") break");
+    check("line comment","x = 1 // set x to one\ny = 2");
     check("function","func add(x i32, y i32) i32 { return x + y }");
     printf(fails?"  => %d MISMATCH\n":"  => ALL OK\n",fails);
-    printf("\nthroughput vs scalar (smart should match on dense, WIN on strings):\n");
+    printf("\nthroughput vs scalar (smart should match on dense, WIN on long runs):\n");
     bench("dense code","a+b*c-d/e=f(g,h,i)k;\n");
     bench("normal code","    var result = compute(alpha, beta) + gamma\n");
     bench("string-heavy","msg = \"the quick brown fox jumps over the lazy dog\"\n");
+    bench("comment-heavy","x = 1  // a fairly long trailing explanation of this line\n");
     return fails;
 }
