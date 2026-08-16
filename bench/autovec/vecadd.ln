@@ -1,0 +1,11 @@
+// Tier-1 auto-vectorization via proofs (simd_strategy.md). Ordinary loops — no
+// SIMD in the source — that the borrow checker proves alias-free, so the emitter
+// stamps `restrict` and the C backend vectorizes them. The `restrict` is PROVEN
+// (var out cannot alias shared a/b), not a hand-written gamble that is UB if a
+// caller aliases.
+proc add_fixed(a i32[16384], b i32[16384], var out i32[16384]) {
+    for i in 0..16384 { out[i] = a[i] +% b[i] }
+}
+proc add_slices(n usize, a i32[n], b i32[n], var out i32[n]) {
+    for i in 0..n { out[i] = a[i] +% b[i] }     // realistic: runtime-length slices
+}
