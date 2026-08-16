@@ -2571,6 +2571,29 @@ void sema_infer_expr(Expr *e) {
             e->type = e->as.builtin_expr.arg ? e->as.builtin_expr.arg->type : NULL; // table's vector
         else
             e->type = NULL;                                        // @store: void statement
+
+        // P2: a @load from a SIZED u8 buffer (a `u8[N]` / `u8[]` array) is
+        // bounds-CHECKED — reading [off, off+L) must lie inside it. A @load from
+        // a raw `*u8` stays the unchecked unsafe primitive. For a u8 buffer the
+        // byte offset IS the element index, so the existing bounds machinery
+        // proves it directly (never invent a proof): off ∈ [0,len) and
+        // off+L-1 ∈ [0,len)  ⟹  [off, off+L) ⊆ [0,len). Unproven ⟹ hard [VRA].
+        if (bk == BUILTIN_LOAD && sema_ranges && sema_walk_phase && !sema_in_unsafe_block) {
+            Type *bt = e->as.builtin_expr.arg ? sema_unwrap_type(e->as.builtin_expr.arg->type) : NULL;
+            Type *vt = e->as.builtin_expr.vec_type;
+            bool u8_buf = bt && bt->kind == TYPE_ARRAY &&
+                          bt->element_type && bt->element_type->base_type &&
+                          bt->element_type->base_type->length == 2 &&
+                          strncmp(bt->element_type->base_type->name, "u8", 2) == 0;
+            if (u8_buf && vt && vt->kind == TYPE_VECTOR && e->as.builtin_expr.arg2) {
+                long L = (long)vt->array_len;
+                Expr *off  = e->as.builtin_expr.arg2;
+                Expr *last = expr_binary(sema_arena, TOKEN_PLUS, off,
+                                         expr_literal(sema_arena, L - 1));
+                sema_check_bounds(sema_ranges, off,  bt, e->as.builtin_expr.arg, false);
+                sema_check_bounds(sema_ranges, last, bt, e->as.builtin_expr.arg, false);
+            }
+        }
     }
     break;
   }

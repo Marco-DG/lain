@@ -1,0 +1,13 @@
+// P2 keystone: a @load from a SIZED u8 buffer is bounds-CHECKED and here PROVEN
+// safe — the offset comes from the loop variable, and VRA proves
+// i*16 + 15 ≤ 31 < 32 for i ∈ {0,1}. No runtime check is emitted, and no `unsafe`
+// is needed: fast, safe, and machine-verified. (16-wide → baseline SSE2.)
+proc main() i32 {
+    var buf u8[32] = [32 for i in 0..32]         // 32 spaces
+    var total i32 = 0
+    for i in 0..2 {
+        var bits u32 = @movemask(@load(u8x16, buf, i * 16) == 32)
+        total = total +% (@popcount(bits) as i32)
+    }
+    return total                                  // 32
+}

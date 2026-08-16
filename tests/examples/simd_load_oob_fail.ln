@@ -1,0 +1,10 @@
+// EXPECT: [E085]
+// P2 soundness: a @load that reads past a sized u8 buffer is REJECTED — reading
+// 32 bytes from a 16-byte buffer overruns (last byte 0+31 ≥ 16). The checked
+// load never emits an unproven access; it is a hard bounds error, exactly like
+// array indexing. (Drop to the raw @load(u8x32, *u8, off) form for unchecked.)
+proc main() i32 {
+    var a u8[16] = [i as u8 for i in 0..16]
+    var v u8x32 = @load(u8x32, a, 0)
+    return v[0] as i32
+}
