@@ -1,0 +1,14 @@
+// VRA knows the tight ranges of the bit-scan builtins: @popcount/@ctz ∈ [0,64],
+// @movemask ∈ [0, 2^N). So ordinary (non-wrapping) arithmetic on a population
+// count no longer false-trips [E086] — the "safety obstructs the perfect code"
+// flaw #6, now closed. (16-wide movemask = baseline SSE2, harness-safe.)
+proc main() i32 {
+    var d u8x16 = [7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0]
+    var s u8x16 = [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]
+
+    var bits  u32 = @movemask(d == s)
+    var count u32 = @popcount(bits)     // ∈ [0,64]
+    var first u32 = @ctz(bits)          // ∈ [0,64]
+
+    return (count as i32) * 100 + (first as i32)   // provable: [0,6400] + [0,64]
+}

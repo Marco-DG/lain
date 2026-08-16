@@ -340,6 +340,26 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             }
             return range_unknown();
         }
+        case EXPR_BUILTIN: {
+            switch (e->as.builtin_expr.builtin_kind) {
+                case BUILTIN_CTZ: case BUILTIN_CLZ: case BUILTIN_POPCOUNT:
+                    // A bit count / index of a ≤64-bit word is in [0, 64].
+                    return range_make(0, 64);
+                case BUILTIN_MOVEMASK: {
+                    // An N-lane mask occupies N low bits → [0, 2^N − 1].
+                    Type *at = e->as.builtin_expr.arg ? e->as.builtin_expr.arg->type : NULL;
+                    long n = (at && at->kind == TYPE_VECTOR) ? (long)at->array_len : 32;
+                    if (n >= 32) return range_make(0, 4294967295LL);
+                    return range_make(0, (1LL << n) - 1);
+                }
+                case BUILTIN_LIKELY: case BUILTIN_UNLIKELY:
+                    // Transparent wrapper — the inner expression's range.
+                    return e->as.builtin_expr.arg
+                         ? sema_eval_range(e->as.builtin_expr.arg, t) : range_unknown();
+                default:
+                    return range_unknown();
+            }
+        }
         case EXPR_MEMBER: {
             // Sized-slice VRA: look up __len_PARAM synthetic entry for foo.len
             Expr *tgt = e->as.member_expr.target;
