@@ -24,7 +24,8 @@ static uint32_t ref_smart(const uint8_t *s, uint32_t n){
     while(i<n){
         while(i<n&&(s[i]==' '||s[i]=='\t'||s[i]=='\n'||s[i]=='\r'))i++; if(i>=n)break;
         uint8_t c=s[i];
-        if(c=='/'&&i+1<n&&s[i+1]=='/'){ i+=2; while(i<n&&s[i]!='\n')i++; continue; } /* line comment: skip, no count */
+        if(c=='/'&&i+1<n&&s[i+1]=='/'){ i+=2; while(i<n&&s[i]!='\n')i++; continue; }              /* line comment */
+        if(c=='/'&&i+1<n&&s[i+1]=='*'){ i+=2; while(i+1<n&&!(s[i]=='*'&&s[i+1]=='/'))i++; i=(i+1<n)?i+2:n; continue; } /* block comment */
         if(c=='"'){ i++; while(i<n&&s[i]!='"')i++; if(i<n)i++; }
         else if((c>='A'&&c<='Z')||(c>='a'&&c<='z')||c=='_'){ while(i<n&&(((s[i]>='A'&&s[i]<='Z')||(s[i]>='a'&&s[i]<='z')||s[i]=='_')||(s[i]>='0'&&s[i]<='9')))i++; }
         else if(c>='0'&&c<='9'){ while(i<n&&(s[i]>='0'&&s[i]<='9'))i++; }
@@ -61,6 +62,8 @@ int main(void){
     check("string","x = \"hello world\"");
     check("string + code","if (s == \"quit\") break");
     check("line comment","x = 1 // set x to one\ny = 2");
+    check("block comment","a /* inline note */ b + c");
+    check("block multi","x /* long\nmulti-line\ncomment */ y");
     check("function","func add(x i32, y i32) i32 { return x + y }");
     printf(fails?"  => %d MISMATCH\n":"  => ALL OK\n",fails);
     printf("\nthroughput vs scalar (smart should match on dense, WIN on long runs):\n");
