@@ -1082,6 +1082,10 @@ void sema_resolve_expr(Expr *e) {
         case BUILTIN_LIKELY:
         case BUILTIN_UNLIKELY:
         case BUILTIN_ASSUME_ALIGNED:
+        case BUILTIN_CTZ:
+        case BUILTIN_CLZ:
+        case BUILTIN_POPCOUNT:
+        case BUILTIN_MOVEMASK:
             // Resolve the inner argument, keep node as-is
             if (e->as.builtin_expr.arg)
                 sema_resolve_expr(e->as.builtin_expr.arg);

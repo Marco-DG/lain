@@ -1461,6 +1461,29 @@ void emit_expr(Expr *expr, int depth) {
         EMIT("__builtin_assume_aligned(");
         emit_expr(expr->as.builtin_expr.arg, depth);
         EMIT(", %lld)", (long long)expr->as.builtin_expr.align);
+    } else if (bk == BUILTIN_CTZ || bk == BUILTIN_CLZ || bk == BUILTIN_POPCOUNT) {
+        const char *fn = (bk == BUILTIN_CTZ) ? "__builtin_ctz"
+                       : (bk == BUILTIN_CLZ) ? "__builtin_clz"
+                                             : "__builtin_popcount";
+        EMIT("((uint32_t)%s((unsigned)(", fn);
+        emit_expr(expr->as.builtin_expr.arg, depth);
+        EMIT(")))");
+    } else if (bk == BUILTIN_MOVEMASK) {
+        // Vec(N,u8) → an N-bit lane bitmask. 128-bit is x86-64 baseline (SSE2);
+        // 256-bit needs AVX2 (`-mavx2`). immintrin.h is emitted with the vector
+        // typedefs; the same-size vector cast to __m128i/__m256i is well-defined.
+        Type *at = expr->as.builtin_expr.arg ? expr->as.builtin_expr.arg->type : NULL;
+        long n = (at && at->kind == TYPE_VECTOR) ? (long)at->array_len : 0;
+        if (n == 16 || n == 32) {
+            EMIT(n == 32 ? "((uint32_t)_mm256_movemask_epi8((__m256i)("
+                         : "((uint32_t)_mm_movemask_epi8((__m128i)(");
+            emit_expr(expr->as.builtin_expr.arg, depth);
+            EMIT(")))");
+        } else {
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: @movemask requires a "
+                    "Vec(16, u8) or Vec(32, u8) argument.\n", (long)expr->line, (long)expr->col);
+            exit(1);
+        }
     }
     break;
   }

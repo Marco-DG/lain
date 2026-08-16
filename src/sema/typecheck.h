@@ -1857,6 +1857,18 @@ void sema_infer_expr(Expr *e) {
             e->type = type_simple(sema_arena, usize_id);
             break;
         }
+        // SIMD: an elementwise op on vectors yields a vector of the same shape (a
+        // comparison yields a same-width lane mask). Take the vector operand's
+        // type so an inline `d == s` is itself a Vec(N,u8) that can feed
+        // @movemask. Vector arithmetic is inherently lane-wise wrapping, so this
+        // also (correctly) bypasses the scalar overflow check below.
+        {
+            Type *ltv = lt, *rtv = rt;
+            while (ltv && ltv->kind == TYPE_COMPTIME) ltv = ltv->element_type;
+            while (rtv && rtv->kind == TYPE_COMPTIME) rtv = rtv->element_type;
+            if (ltv && ltv->kind == TYPE_VECTOR) { e->type = ltv; break; }
+            if (rtv && rtv->kind == TYPE_VECTOR) { e->type = rtv; break; }
+        }
     }
 
     // Division/modulo by a definitely-zero divisor (a literal 0, or a value VRA
@@ -2536,6 +2548,18 @@ void sema_infer_expr(Expr *e) {
         sema_infer_expr(e->as.builtin_expr.arg);
         // Return type is same pointer type as the argument
         e->type = e->as.builtin_expr.arg->type;
+    } else if ((bk == BUILTIN_CTZ || bk == BUILTIN_CLZ || bk == BUILTIN_POPCOUNT ||
+                bk == BUILTIN_MOVEMASK) && e->as.builtin_expr.arg) {
+        sema_infer_expr(e->as.builtin_expr.arg);
+        // @ctz/@clz/@popcount take an integer; @movemask takes a Vec(N,u8). All
+        // yield a u32 (a bit count, or a lane bitmask).
+        static Type *u32_ty = NULL;
+        if (!u32_ty) {
+            Id *uid = arena_push_aligned(sema_arena, Id);
+            uid->name = "u32"; uid->length = 3;
+            u32_ty = type_simple(sema_arena, uid);
+        }
+        e->type = u32_ty;
     }
     break;
   }

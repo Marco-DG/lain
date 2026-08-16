@@ -425,6 +425,21 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
             parser_expect(TOKEN_R_PAREN, "Expected ')' after '@assume_aligned' arguments");
             parser_advance(); // consume ')'
             return expr_builtin_assume_aligned(arena, ptr_arg, align_val);
+        } else if ((len == 3 && strncmp(name, "ctz", 3) == 0) ||
+                   (len == 3 && strncmp(name, "clz", 3) == 0) ||
+                   (len == 8 && strncmp(name, "popcount", 8) == 0) ||
+                   (len == 8 && strncmp(name, "movemask", 8) == 0)) {
+            // Single-arg SIMD / bit-scan intrinsics: @ctz @clz @popcount @movemask.
+            BuiltinKind bk = (len == 3 && name[1] == 't') ? BUILTIN_CTZ
+                           : (len == 3 && name[1] == 'l') ? BUILTIN_CLZ
+                           : (name[0] == 'p')             ? BUILTIN_POPCOUNT
+                                                          : BUILTIN_MOVEMASK;
+            parser_expect(TOKEN_L_PAREN, "Expected '(' after a SIMD/bit builtin");
+            parser_advance(); // consume '('
+            Expr *arg = parse_expr(arena, parser);
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after the builtin argument");
+            parser_advance(); // consume ')'
+            return expr_builtin_arg(arena, bk, arg);
         } else {
             fprintf(stderr, "Error Ln %li, Col %li: Unknown builtin '@%.*s'\n",
                     parser->line, parser->column, (int)len, name);

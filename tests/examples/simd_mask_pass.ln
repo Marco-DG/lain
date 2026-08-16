@@ -1,0 +1,17 @@
+// SIMD mask pipeline (proof_licensed_performance.md §4): an elementwise vector
+// compare yields a lane mask, `@movemask` compresses it to a bitmask, and
+// `@ctz`/`@clz`/`@popcount` scan it. The 16-wide path uses x86-64 baseline SSE2
+// (`_mm_movemask_epi8`), so it compiles with no `-mavx2`; the scalar bit builtins
+// lower to `__builtin_ctz/clz/popcount` and are fully portable.
+proc main() i32 {
+    var d u8x16 = [7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0]
+    var s u8x16 = [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]
+
+    var bits  u32 = @movemask(d == s)   // inline compare → mask → bitmask
+    var count u32 = @popcount(bits)     // 8 matches
+    var first u32 = @ctz(bits)          // first match at lane 0
+    var lead  u32 = @clz(bits)          // leading zeros of the 32-bit mask
+
+    // wrapping add avoids a scalar overflow proof on full-range u32 counts
+    return (count +% first +% lead) as i32
+}

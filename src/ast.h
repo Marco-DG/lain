@@ -415,6 +415,11 @@ typedef enum {
     BUILTIN_LIKELY,          // @likely(cond)        → __builtin_expect(!!(cond), 1)
     BUILTIN_UNLIKELY,        // @unlikely(cond)      → __builtin_expect(!!(cond), 0)
     BUILTIN_ASSUME_ALIGNED,  // @assume_aligned(p,N) → __builtin_assume_aligned(p, N)
+    // SIMD / bit-scan intrinsics (proof_licensed_performance.md §4). All single-arg.
+    BUILTIN_CTZ,             // @ctz(x)      → __builtin_ctz      (count trailing zeros → u32)
+    BUILTIN_CLZ,             // @clz(x)      → __builtin_clz      (count leading zeros  → u32)
+    BUILTIN_POPCOUNT,        // @popcount(x) → __builtin_popcount (set-bit count        → u32)
+    BUILTIN_MOVEMASK,        // @movemask(v) → _mm{256,}_movemask_epi8 (Vec(N,u8) → u32 bitmask)
 } BuiltinKind;
 
 typedef struct {

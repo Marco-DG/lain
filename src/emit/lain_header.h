@@ -67,10 +67,14 @@ static void record_vector_type(const char *vecName, const char *c_elem, int byte
 // Emit `typedef <elem> <name> __attribute__((vector_size(<bytes>)));` for each.
 // Must be flushed BEFORE slice typedefs (a slice may have a vector element type).
 static void emit_needed_vector_types(FILE *out) {
+    if (!emitted_vector_types) return;
+    // x86 SIMD intrinsics for @movemask/@shuffle (harmless when merely present;
+    // only AVX2 uses like a 256-bit movemask require `-mavx2` at gcc time).
+    fprintf(out, "#include <immintrin.h>\n");
     for (VectorTypeNode *n = emitted_vector_types; n; n = n->next)
         fprintf(out, "typedef %s %s __attribute__((vector_size(%d)));\n",
                 n->c_elem, n->vecName, n->bytes);
-    if (emitted_vector_types) fprintf(out, "\n");
+    fprintf(out, "\n");
 }
 
 /* ------------------------ small helpers --------------------------------- */
