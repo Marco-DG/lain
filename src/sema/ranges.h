@@ -239,7 +239,8 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             // (a false E086) — the old, safe "unanalyzable, skip" behavior.
             Type *tt = e->as.index_expr.target ? e->as.index_expr.target->type : NULL;
             while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
-            Type *et = (tt && (tt->kind == TYPE_ARRAY || tt->kind == TYPE_SLICE))
+            Type *et = (tt && (tt->kind == TYPE_ARRAY || tt->kind == TYPE_SLICE ||
+                               tt->kind == TYPE_VECTOR))   // a SIMD lane has the element's range
                        ? tt->element_type : NULL;
             extern int type_integer_range(Type *ty, long long *lo, long long *hi);
             long long lo, hi;

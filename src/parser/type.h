@@ -8,6 +8,43 @@ Expr *parse_expr(Arena *arena, Parser *parser);
 
 static Type *parse_type_core(Arena *arena, Parser *parser);
 
+// SIMD vector sugar `<prim>x<N>` (u8x32, i32x4, f32x8) = Vec(N, prim). Returns a
+// TYPE_VECTOR on a match, or NULL if `name` is not the sugar form (then it is an
+// ordinary type name). The element must be a scalar primitive iN/uN (N=1..64) or
+// f32/f64 — no primitive contains an 'x', so splitting at the first 'x' is safe,
+// and a user type like `foox3` fails the primitive check and stays a plain name.
+static Type *try_parse_vector_sugar(Arena *arena, const char *name, isize len) {
+    isize xp = -1;
+    for (isize k = 1; k < len - 1; k++) if (name[k] == 'x') { xp = k; break; }
+    if (xp < 0) return NULL;
+
+    // element = name[0 .. xp)
+    isize elen = xp;
+    bool ok_elem = false;
+    if ((name[0] == 'i' || name[0] == 'u') && elen >= 2) {
+        bool digits = true; int v = 0;
+        for (isize k = 1; k < elen; k++) {
+            if (name[k] < '0' || name[k] > '9') { digits = false; break; }
+            v = v * 10 + (name[k] - '0');
+        }
+        if (digits && v >= 1 && v <= 64) ok_elem = true;
+    } else if (elen == 3 && (strncmp(name, "f32", 3) == 0 || strncmp(name, "f64", 3) == 0)) {
+        ok_elem = true;
+    }
+    if (!ok_elem) return NULL;
+
+    // lanes = name[xp+1 .. len), all digits, > 0
+    long lanes = 0; bool ld = false;
+    for (isize k = xp + 1; k < len; k++) {
+        if (name[k] < '0' || name[k] > '9') return NULL;
+        lanes = lanes * 10 + (name[k] - '0'); ld = true;
+    }
+    if (!ld || lanes <= 0) return NULL;
+
+    Id *eid = id(arena, elen, name);
+    return type_vector(arena, (isize)lanes, type_simple(arena, eid));
+}
+
 // A type is a core type optionally followed by union markers: `T | m1 | m2`.
 // `|` binds looser than every prefix/suffix, so `*File | none` = `(*File) | none`
 // and `T[] | A` = `(T[]) | A`. This is the one construct for optionality
@@ -124,6 +161,32 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
   Id *type_name = id(arena, end.length, end.start);
 
   base_type = type_simple(arena, type_name);
+
+  // Builtin SIMD vector sugar `<prim>x<N>` (u8x32, i32x4, …) = Vec(N, prim).
+  // Only a bare, unqualified name (start.start == end.start ⇒ no dotted qualifier).
+  if (start.start == end.start) {
+    Type *sugar = try_parse_vector_sugar(arena, end.start, end.length);
+    if (sugar) return sugar;
+  }
+
+  // Builtin SIMD vector `Vec(N, T)` — N lanes of element type T. Recognized here,
+  // before generic type-application, because N is a NUMBER (not a type), so the
+  // generic-arg path (which parses every argument as a type) cannot express it.
+  // Only the bare, unqualified `Vec` is the builtin (start.start == end.start ⇒
+  // no dotted qualifier); `mymod.Vec` stays a user type.
+  if (start.start == end.start && end.length == 3 && strncmp(end.start, "Vec", 3) == 0
+      && parser_match(TOKEN_L_PAREN)) {
+    parser_advance(); // '('
+    parser_expect(TOKEN_NUMBER, "Vec(N, T): expected a lane count N");
+    isize lanes = (isize)parse_numeric_literal(parser->token.start, parser->token.length);
+    parser_advance();
+    parser_expect(TOKEN_COMMA, "Vec(N, T): expected ',' after the lane count");
+    parser_advance();
+    Type *elem = parse_type_core(arena, parser);
+    parser_expect(TOKEN_R_PAREN, "Vec(N, T): expected ')' after the element type");
+    parser_advance();
+    return type_vector(arena, lanes, elem);
+  }
 
   // Generic type-application in type position: `Name(T1, T2, …)` (e.g. Vec(i32)).
   if (parser_match(TOKEN_L_PAREN)) {

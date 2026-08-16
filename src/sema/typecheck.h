@@ -2328,6 +2328,22 @@ void sema_infer_expr(Expr *e) {
                 sema_check_bounds(sema_ranges, e->as.index_expr.index, t, e->as.index_expr.target, _is_addr_of);
             }
         }
+    } else if (t->kind == TYPE_VECTOR) {
+        // SIMD lane access v[i]: result is the element type. The vector has a
+        // fixed lane count (array_len); a constant lane outside [0, N) is UB in
+        // C, so reject it at compile time.
+        e->type = t->element_type;
+        Expr *ix = e->as.index_expr.index;
+        if (!sema_in_unsafe_block && ix && ix->kind == EXPR_LITERAL) {
+            long long li = (long long)ix->as.literal_expr.value;
+            if (li < 0 || li >= t->array_len) {
+                fprintf(stderr, "[VRA] Error Ln %li, Col %li: vector lane %lld is out of "
+                        "range for Vec(%ld, ...).\n",
+                        (long)e->line, (long)e->col, li, (long)t->array_len);
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
+        }
     } else if (t->kind == TYPE_POINTER) {
         // Pointer indexing syntax `ptr[i]` (unsafe or restricted?)
         // Lain spec says pointers are unsafe. But let's allow indexing if it mimics C.

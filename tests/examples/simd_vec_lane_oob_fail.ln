@@ -1,0 +1,7 @@
+// EXPECT: [VRA]
+// A constant SIMD lane outside [0, N) is UB in C, so it is rejected at compile
+// time — the vector's fixed lane count is a static bound.
+proc main() i32 {
+    var a Vec(4, i32) = [1, 2, 3, 4]
+    return a[7] as i32
+}

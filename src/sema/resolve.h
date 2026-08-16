@@ -449,6 +449,20 @@ void sema_resolve_stmt(Stmt *s) {
           // (General value type-compat between ty and rhs->type is still TODO.)
           if (ty && ty->kind == TYPE_FUNC)
               fnptr_assign_check(ty, rhs, s->line, s->col);
+          // SIMD vector target from an array literal: retype the literal to the
+          // vector so it lowers to `(Vec_N_T){...}` (a GCC vector init), not a
+          // Fixed_ struct. Enforce the lane count.
+          if (ty && ty->kind == TYPE_VECTOR && rhs->kind == EXPR_ARRAY_LITERAL) {
+              isize n = 0;
+              for (ExprList *el = rhs->as.array_literal_expr.elements; el; el = el->next) n++;
+              if (n != ty->array_len) {
+                  fprintf(stderr, "[E012] Error Ln %li, Col %li: Vec(%ld, ...) needs %ld "
+                          "lane values, got %ld.\n", s->line, s->col,
+                          (long)ty->array_len, (long)ty->array_len, (long)n);
+                  diagnostic_show_line(s->line, s->col); exit(1);
+              }
+              rhs->type = ty;
+          }
       }
     }
 

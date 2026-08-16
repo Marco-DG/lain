@@ -8,6 +8,9 @@
 
 // forward‐declaration of the slice‐recording helper
 const char *emit_slice_type_definition(Type *type);
+// forward decls: defined later in lain_header.h (which includes this file first)
+static void record_vector_type(const char *vecName, const char *c_elem, int bytes);
+static const char *canonical_base_name(Id *base_id, char *out, size_t cap);
 
 void c_name_for_type(Type *t, char *out, size_t cap);
 // Build a C function-pointer declarator into `out`: "R (*<name>)(P..)".
@@ -226,6 +229,7 @@ static bool is_primitive_type(Type *t) {
     
     if (t->kind == TYPE_POINTER) return true;
     if (t->kind == TYPE_SLICE) return true; // Slices are small {ptr, len}
+    if (t->kind == TYPE_VECTOR) return true; // SIMD vectors live in registers — by value
     if (t->kind == TYPE_SIMPLE) {
         Id *base = t->base_type;
         if (!base) return false;
@@ -415,6 +419,28 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
     } else {
       snprintf(out, cap, "%s", sliceName);
     }
+    return;
+  }
+
+  case TYPE_VECTOR: {
+    // Vec(N, T) → a GCC/Clang `vector_size` typedef `Vec_<N>_<elem>`.
+    Type *elem = t->element_type;
+    char c_elem[128];
+    c_name_for_type(elem, c_elem, sizeof c_elem);            // e.g. "int32_t"
+    char rawname[64];
+    canonical_base_name(elem ? elem->base_type : NULL, rawname, sizeof rawname); // "i32"
+    // Element byte size from its C primitive name.
+    int esz = 4;
+    if      (!strcmp(c_elem,"uint8_t")  || !strcmp(c_elem,"int8_t")  || !strcmp(c_elem,"_Bool")) esz = 1;
+    else if (!strcmp(c_elem,"uint16_t") || !strcmp(c_elem,"int16_t")) esz = 2;
+    else if (!strcmp(c_elem,"uint32_t") || !strcmp(c_elem,"int32_t") || !strcmp(c_elem,"float"))  esz = 4;
+    else if (!strcmp(c_elem,"uint64_t") || !strcmp(c_elem,"int64_t") || !strcmp(c_elem,"double")) esz = 8;
+    int lanes = (int)t->array_len;
+    char vecName[128];
+    snprintf(vecName, sizeof vecName, "Vec_%d_%s", lanes, rawname);
+    record_vector_type(vecName, c_elem, lanes * esz);
+    if (is_mutable_ref) snprintf(out, cap, "%s *", vecName);
+    else                snprintf(out, cap, "%s", vecName);
     return;
   }
 

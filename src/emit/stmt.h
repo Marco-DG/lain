@@ -71,10 +71,11 @@ void emit_stmt(Stmt *stmt, int depth) {
         Type *ty = stmt->as.var_stmt.type;
         Expr *rhs = stmt->as.var_stmt.expr;
   
-        if (is_fixed_array && rhs->kind == EXPR_ARRAY_LITERAL) {
-          // Native fixed array (`int32_t arr[3]`) takes a native initializer
-          // `{ e0, e1, ... }`, NOT the Fixed_T_N struct wrapper (which is never
-          // typedef'd for it) — this was emitting uncompilable C.
+        bool is_vec_decl = ty && ty->kind == TYPE_VECTOR;
+        if ((is_fixed_array || is_vec_decl) && rhs->kind == EXPR_ARRAY_LITERAL) {
+          // Native fixed array (`int32_t arr[3]`) and SIMD vectors (`Vec_4_i32`)
+          // both take a native initializer `{ e0, e1, ... }` — NOT the Fixed_T_N
+          // struct wrapper (which is never typedef'd for them).
           EMIT("{ ");
           bool first_el = true;
           for (ExprList *el = rhs->as.array_literal_expr.elements; el; el = el->next) {

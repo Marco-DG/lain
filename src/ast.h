@@ -49,6 +49,7 @@ typedef enum {
     TYPE_VARIANT,   // inner payload of an ADT variant
     TYPE_FUNC,      // non-capturing function pointer: *func(params) ret / *proc(params) ret
     TYPE_META,      // the meta-type `type` — the "type" of a type parameter (`T type`)
+    TYPE_VECTOR,    // SIMD vector `Vec(N, T)`: N lanes of element type T
 } TypeKind;
 
 typedef struct Type {
@@ -656,6 +657,20 @@ Type *type_sized_array(Arena *arena, Type *element_type, struct Expr *size_expr,
     Type *t = type_array(arena, element_type, -1);
     t->size_expr  = size_expr;
     t->size_relop = size_relop;
+    return t;
+}
+
+/* SIMD vector `Vec(N, T)`: N lanes of element type T. Lowers to a GCC/Clang
+   `vector_size` typedef (§3 of proof_licensed_performance.md). The lane count
+   reuses array_len; element_type is the (primitive) lane type. A Vec is a plain
+   Copy value type — no linearity, register-resident. */
+Type *type_vector(Arena *arena, isize lanes, Type *element_type) {
+    Type *t = arena_push_aligned(arena, Type);
+    t->kind         = TYPE_VECTOR;
+    t->mode         = MODE_SHARED;
+    t->element_type = element_type;
+    t->array_len    = lanes;
+    t->canon = t;
     return t;
 }
 

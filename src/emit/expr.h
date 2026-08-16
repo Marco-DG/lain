@@ -147,14 +147,19 @@ void emit_expr(Expr *expr, int depth) {
   case EXPR_ARRAY_LITERAL: {
     char typeName[256];
     c_name_for_type(expr->type, typeName, sizeof typeName);
-    EMIT("(%s){ .data = { ", typeName);
+    // A SIMD vector target initializes directly `(Vec_N_T){ a, b, ... }` — it has
+    // no `.data` member (it is a GCC vector_size value, not a Fixed_ struct).
+    Type *lt = expr->type;
+    while (lt && lt->kind == TYPE_COMPTIME) lt = lt->element_type;
+    bool is_vec = lt && lt->kind == TYPE_VECTOR;
+    EMIT(is_vec ? "(%s){ " : "(%s){ .data = { ", typeName);
     bool first = true;
     for (ExprList *el = expr->as.array_literal_expr.elements; el; el = el->next) {
         if (!first) EMIT(", ");
         first = false;
         emit_expr(el->expr, depth);
     }
-    EMIT(" } }");
+    EMIT(is_vec ? " }" : " } }");
     break;
   }
 
@@ -1037,7 +1042,10 @@ void emit_expr(Expr *expr, int depth) {
                                  ix->target->type->kind == TYPE_ARRAY &&
                                  ix->target->type->array_len > 0 &&
                                  ix->target->kind != EXPR_MEMBER;
-          if (is_user_type_fixed_array(ix->target->type) || is_thin_ptr || is_native_fixed) {
+          // SIMD lane access: a vector is indexed directly `v[i]` (a GCC vector
+          // value, no `.data` member).
+          bool is_vector = ix->target->type && ix->target->type->kind == TYPE_VECTOR;
+          if (is_user_type_fixed_array(ix->target->type) || is_thin_ptr || is_native_fixed || is_vector) {
               EMIT("[");
           } else {
               EMIT(is_ptr ? "->data[" : ".data[");

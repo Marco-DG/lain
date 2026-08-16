@@ -36,6 +36,43 @@ typedef struct SliceTypeNode {
 // Head of our linked list of slice types
 static SliceTypeNode *emitted_slice_types = NULL;
 
+/* ------------------------- vector registry node -------------------------- */
+// SIMD vectors `Vec(N, T)` lower to a single GCC/Clang `vector_size` typedef.
+typedef struct VectorTypeNode {
+    char       *vecName;    // e.g. "Vec_4_i32"
+    char       *c_elem;     // C element type, e.g. "int32_t"
+    int         bytes;      // total vector size in bytes (N * sizeof(elem)) → vector_size(bytes)
+    struct VectorTypeNode *next;
+} VectorTypeNode;
+
+static VectorTypeNode *emitted_vector_types = NULL;
+
+static bool vector_type_already_emitted(const char *vecName) {
+    for (VectorTypeNode *n = emitted_vector_types; n; n = n->next)
+        if (strcmp(n->vecName, vecName) == 0) return true;
+    return false;
+}
+
+// Record a vector type for later emission; idempotent by name.
+static void record_vector_type(const char *vecName, const char *c_elem, int bytes) {
+    if (vector_type_already_emitted(vecName)) return;
+    VectorTypeNode *n = malloc(sizeof *n);
+    n->vecName = strdup(vecName);
+    n->c_elem  = strdup(c_elem);
+    n->bytes   = bytes;
+    n->next    = emitted_vector_types;
+    emitted_vector_types = n;
+}
+
+// Emit `typedef <elem> <name> __attribute__((vector_size(<bytes>)));` for each.
+// Must be flushed BEFORE slice typedefs (a slice may have a vector element type).
+static void emit_needed_vector_types(FILE *out) {
+    for (VectorTypeNode *n = emitted_vector_types; n; n = n->next)
+        fprintf(out, "typedef %s %s __attribute__((vector_size(%d)));\n",
+                n->c_elem, n->vecName, n->bytes);
+    if (emitted_vector_types) fprintf(out, "\n");
+}
+
 /* ------------------------ small helpers --------------------------------- */
 
 // check by canonical sliceName if already present
@@ -213,7 +250,8 @@ static void generate_lain_header(const char *filename) {
     fprintf(f, "#include <stdio.h> /* FILE */\n");
     fprintf(f, "#include <string.h> /* memcmp */\n\n");
 
-    // Emit all recorded slice types
+    // Emit all recorded vector then slice types (a slice element may be a vector)
+    emit_needed_vector_types(f);
     emit_needed_slice_types(f);
 
     fprintf(f, "#endif /* LAIN_H */\n");
