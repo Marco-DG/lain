@@ -1,0 +1,12 @@
+// A fixed-array (or struct) shared/mutable PARAM is already a pointer in C. When
+// it is forwarded as an argument to another call, the emitter must pass it
+// directly — taking its address again would double-pointer it (`Fixed**`),
+// reading garbage. Regression for that call-arg emission fix.
+func first(a u8[16]) u8 { return a[0] }
+func forward(a u8[16]) u8 { return first(a) }     // param forwarded to a call
+
+proc main() i32 {
+    var buf u8[16] = [i as u8 for i in 0..16]
+    buf[0] = 7
+    return forward(buf) as i32                     // 7, not garbage
+}

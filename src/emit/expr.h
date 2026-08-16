@@ -906,7 +906,22 @@ void emit_expr(Expr *expr, int depth) {
                    // block lifetime and decays to the required pointer.
                    ExprKind k = arg->expr->kind;
                    bool is_lvalue = (k == EXPR_IDENTIFIER || k == EXPR_MEMBER || k == EXPR_INDEX);
-                   if (is_lvalue) {
+                   // A non-primitive shared/mutable PARAM (fixed array, struct) is
+                   // ALREADY a pointer in C (`const T*`). Taking its address again
+                   // would double-pointer it — forward the identifier as-is.
+                   bool byptr_param = false;
+                   if (k == EXPR_IDENTIFIER && arg->expr->decl &&
+                       arg->expr->decl->kind == DECL_VARIABLE &&
+                       arg->expr->decl->as.variable_decl.is_parameter) {
+                       Type *pu = arg->expr->decl->as.variable_decl.type
+                                ? sema_unwrap_type(arg->expr->decl->as.variable_decl.type) : NULL;
+                       if (pu && !is_primitive_type(pu) &&
+                           (pu->mode == MODE_SHARED || pu->mode == MODE_MUTABLE))
+                           byptr_param = true;
+                   }
+                   if (byptr_param) {
+                       EMIT("%s", c_name_for_id(arg->expr->as.identifier_expr.id));
+                   } else if (is_lvalue) {
                        EMIT("&(");
                        emit_expr(arg->expr, depth);
                        EMIT(")");
