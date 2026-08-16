@@ -1,0 +1,52 @@
+// SIMD lexer core (P4, proof_licensed_performance.md §6). Hybrid: SIMD skips the
+// long whitespace runs (load 16 bytes → detect ws → movemask → ctz to the first
+// non-ws), scalar scans the short, dense token bodies.
+//
+// Safety split, exactly per the doctrine:
+//   • scalar reads `src[i]` are `in`-guarded, so VRA PROVES them (no checks emitted).
+//   • the SIMD whitespace loads sit in an `unsafe` block — the documented P1
+//     escape hatch — until P2b's padded `Source` makes them provably safe too.
+//
+// Buffer is a fixed `u8[4096]`; content length `n` must be ≤ 4096.
+
+func is_ws(c u8) bool    { return c == 32 or c == 9 or c == 10 or c == 13 }
+func is_alpha(c u8) bool { return (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95 }
+func is_digit(c u8) bool { return c >= 48 and c <= 57 }
+func is_alnum(c u8) bool { return is_alpha(c) or is_digit(c) }
+
+proc count_tokens(src u8[4096], n u32) u32 {
+    var count u32 = 0
+    var i     u32 = 0
+    while i < n {
+        // --- SIMD whitespace skip: jump whole 16-byte all-whitespace chunks ---
+        unsafe {
+            while i +% 16 <= n {
+                var v  u8x16 = @load(u8x16, src, i)
+                var ws u8x16 = (v == 32) | (v == 9) | (v == 10) | (v == 13)
+                var nonws u32 = (~@movemask(ws)) & (65535 as u32)     // 1s at non-ws lanes
+                if nonws != 0 {
+                    i = i +% (@ctz(nonws) as u32)                     // jump to first non-ws
+                    break
+                }
+                i = i +% 16                                          // all 16 ws — skip block
+            }
+        }
+        // scalar tail: finish skipping whitespace past the last full chunk (proven)
+        while i in src and i < n and is_ws(src[i]) { i = i +% 1 }
+        if i >= n { break }
+
+        // --- scalar token scan (all reads in-guarded) ---
+        if i in src {
+            var c u8 = src[i]
+            if is_alpha(c) {
+                while i in src and i < n and is_alnum(src[i]) { i = i +% 1 }
+            } else if is_digit(c) {
+                while i in src and i < n and is_digit(src[i]) { i = i +% 1 }
+            } else {
+                i = i +% 1                                            // single-char operator
+            }
+            count = count +% 1
+        }
+    }
+    return count
+}
