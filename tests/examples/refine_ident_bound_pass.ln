@@ -1,0 +1,6 @@
+// Parameter refinement with an IDENTIFIER bound (`x i32 < k`, k another param):
+// enforced at every call site, and now communicated into the function body as an
+// entry `if (x >= k) __builtin_unreachable();` hint (proof → hint). Sound by the
+// same call-site enforcement as literal-bound refinements.
+func pick(k i32, x i32 < k) i32 { return x }
+proc main() i32 { return pick(100, 42) }

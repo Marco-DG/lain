@@ -648,28 +648,39 @@ void emit_decl(Decl* decl, int depth) {
                 while (rp) {
                     if (rp->decl && rp->decl->kind == DECL_VARIABLE) {
                         ExprList *cs = rp->decl->as.variable_decl.constraints;
-                        const char *pname = c_name_for_id(rp->decl->as.variable_decl.name);
+                        // c_name_for_id reuses a static buffer — copy before the
+                        // bound (which may call it again for an identifier bound).
+                        char pname[160];
+                        snprintf(pname, sizeof pname, "%s", c_name_for_id(rp->decl->as.variable_decl.name));
                         for (ExprList *c = cs; c; c = c->next) {
                             Expr *ce = c->expr;
                             if (!ce || ce->kind != EXPR_BINARY) continue;
                             Expr *rhs = ce->as.binary_expr.right;
-                            if (!rhs || rhs->kind != EXPR_LITERAL) continue;
+                            if (!rhs) continue;
+                            // The bound is a literal (`x i32 >= 1`) OR another in-scope
+                            // identifier — another parameter (`x i32 < k`) or a top-level
+                            // constant. Every parameter is in scope in the body, so
+                            // referencing one by name is valid C.
+                            char bound[160];
+                            if (rhs->kind == EXPR_LITERAL)
+                                snprintf(bound, sizeof bound, "%lld", (long long)rhs->as.literal_expr.value);
+                            else if (rhs->kind == EXPR_IDENTIFIER)
+                                snprintf(bound, sizeof bound, "%s", c_name_for_id(rhs->as.identifier_expr.id));
+                            else
+                                continue;   // only literal or identifier bounds for now
                             TokenKind op = ce->as.binary_expr.op;
-                            long long val = (long long)rhs->as.literal_expr.value;
                             emit_indent(depth + 1);
-                            // Emit the complementary (impossible) branch:
-                            // param >= lo  →  if (param < lo)  __builtin_unreachable();
-                            // param <= hi  →  if (param > hi)  __builtin_unreachable();
-                            // param > lo   →  if (param <= lo) __builtin_unreachable();
-                            // param < hi   →  if (param >= hi) __builtin_unreachable();
-                            if (op == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL)       // >= val
-                                EMIT("if (%s < %lld) __builtin_unreachable();\n", pname, val);
-                            else if (op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL)   // <= val
-                                EMIT("if (%s > %lld) __builtin_unreachable();\n", pname, val);
-                            else if (op == TOKEN_ANGLE_BRACKET_RIGHT)        // > val
-                                EMIT("if (%s <= %lld) __builtin_unreachable();\n", pname, val);
-                            else if (op == TOKEN_ANGLE_BRACKET_LEFT)         // < val
-                                EMIT("if (%s >= %lld) __builtin_unreachable();\n", pname, val);
+                            // The constraint is enforced at every call site, so its
+                            // negation (the complementary branch) is unreachable:
+                            // param >= b → if (param < b); <= → >; > → <=; < → >=.
+                            if (op == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL)       // >= bound
+                                EMIT("if (%s < %s) __builtin_unreachable();\n", pname, bound);
+                            else if (op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL)   // <= bound
+                                EMIT("if (%s > %s) __builtin_unreachable();\n", pname, bound);
+                            else if (op == TOKEN_ANGLE_BRACKET_RIGHT)        // > bound
+                                EMIT("if (%s <= %s) __builtin_unreachable();\n", pname, bound);
+                            else if (op == TOKEN_ANGLE_BRACKET_LEFT)         // < bound
+                                EMIT("if (%s >= %s) __builtin_unreachable();\n", pname, bound);
                             emitted_any = true;
                         }
                     }
