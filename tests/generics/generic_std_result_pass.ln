@@ -1,7 +1,6 @@
 // Use std.result AND std.option together (no cross-module helper clash).
-import std.option
-import std.result
-
+import std.option.{Option, is_some, is_none, unwrap_or, map}
+import std.result.{Result, is_ok, is_err, ok_or}
 proc main() i32 {
     var ok  Result(i32, i32) = Result(i32, i32).Ok(7)
     var err Result(i32, i32) = Result(i32, i32).Err(99)

@@ -799,6 +799,25 @@ void sema_resolve_expr(Expr *e) {
         }
       }
 
+      // Glob retirement: a bare name from ANOTHER module is visible only if it was
+      // selectively imported (`import M.{name}`) or reached qualified (`M.name`).
+      // The whole `import M` grants qualified access, not bare names.
+      if (sym->is_global && sym->decl && current_module_path && sym->decl->defining_module
+          && !e->as.identifier_expr.via_qualifier
+          && !module_paths_equal(sym->decl->defining_module, current_module_path)
+          && !sel_import_visible(current_module_path, raw, (size_t)L)) {
+        const char *seg = strrchr(sym->decl->defining_module, '.');
+        seg = seg ? seg + 1 : sym->decl->defining_module;
+        fprintf(stderr, "[E105] Error Ln %li, Col %li: '%.*s' is defined in module '%s' — "
+                "import it (`import %s.{%.*s}`) or qualify it (`%s.%.*s`).\n",
+                e->line, e->col,
+                (int)e->as.identifier_expr.id->length, e->as.identifier_expr.id->name,
+                sym->decl->defining_module,
+                sym->decl->defining_module, (int)e->as.identifier_expr.id->length, e->as.identifier_expr.id->name,
+                seg, (int)e->as.identifier_expr.id->length, e->as.identifier_expr.id->name);
+        exit(1);
+      }
+
       if (sym->decl && (sym->decl->kind == DECL_STRUCT || sym->decl->kind == DECL_ENUM || sym->decl->kind == DECL_EXTERN_TYPE)) {
           // It's a user-defined type!
           e->kind = EXPR_TYPE;
@@ -930,6 +949,7 @@ void sema_resolve_expr(Expr *e) {
             Id *member = e->as.member_expr.member;
             e->kind = EXPR_IDENTIFIER;
             e->as.identifier_expr.id = member;
+            e->as.identifier_expr.via_qualifier = true;   // exempt from glob-retirement
             sema_resolve_expr(e);
             break;
         }

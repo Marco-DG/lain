@@ -2,8 +2,7 @@
 // it on every iteration is now accepted. The previous behaviour rejected this
 // pattern with [E006] even when the reassign leaves no live value to leak.
 
-import std.fs
-
+import std.fs.{File, open_file, close_file, write_file}
 proc main() i32 {
     var total = 0
     var i = 0

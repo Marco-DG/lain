@@ -1,6 +1,5 @@
 
-import std.c
-
+import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
 proc takes_sentinel_string(s *u8[:0]) {
     // Should have .len and .data
     var fmt1 = "Length: %d\n"

@@ -1,6 +1,5 @@
-import std.c
-import std.fs
-
+import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
+import std.fs.{File, open_file, close_file, write_file}
 proc main() i32 {
     var msg_open = "Opening file: test_output.txt\n"
     libc_printf(msg_open.data)

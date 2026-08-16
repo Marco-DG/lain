@@ -1,8 +1,7 @@
 // EXPECT: [E084]
 // Sprint 9 — Q-018: cannot call [private] func from another module
 
-import tests.stdlib.dummy_private
-
+import tests.stdlib.dummy_private.{internal_secret, public_api}
 proc main() i32 {
     return internal_secret()
 }

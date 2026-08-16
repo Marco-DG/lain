@@ -511,7 +511,10 @@ static bool mono_construct_generic_struct(Expr *call, Decl *tmpl) {
     callee->decl = inst;
     callee->type = ity;
     if (callee->kind == EXPR_TYPE) callee->as.type_expr.type_value = ity;
-    else                           callee->as.identifier_expr.id = inst->as.struct_decl.name;
+    else {
+        callee->as.identifier_expr.id = inst->as.struct_decl.name;
+        callee->as.identifier_expr.via_qualifier = true;  // synthesized instance: exempt from glob-retirement
+    }
     return true;
 }
 
@@ -678,6 +681,7 @@ static bool sema_monomorphize_call(Expr *call) {
 
     // Rewrite the call to target the concrete instance.
     callee->as.identifier_expr.id = inst_id;
+    callee->as.identifier_expr.via_qualifier = true;  // synthesized instance: exempt from glob-retirement
     callee->decl = inst;
     callee->type = NULL;
     call->as.call_expr.args = new_args;

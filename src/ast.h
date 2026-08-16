@@ -227,6 +227,7 @@ typedef struct {
 typedef struct {
     Id *module_name;   // contains "foo.bar"
     Id *alias;         // `import foo.bar as baz` → baz; else NULL (qualifier = last segment)
+    IdList *selected;  // `import foo.{a, b}` → [a, b] brought unqualified; NULL = whole (qualified only)
 } DeclImport;
 
 typedef struct {
@@ -460,6 +461,7 @@ typedef struct {
 
 typedef struct {
     Id*         id;   // Identifier name
+    bool        via_qualifier; // true if rewritten from `Module.name` (exempt from glob-retirement)
 } ExprIdentifier;
 
 typedef struct {
@@ -933,6 +935,7 @@ Decl* decl_import(Arena* arena, Id* module_name) {
     d->kind = DECL_IMPORT;
     d->as.import_decl.module_name = module_name;
     d->as.import_decl.alias = NULL;
+    d->as.import_decl.selected = NULL;
     return d;
 }
 
@@ -1123,6 +1126,7 @@ Expr *expr_identifier(Arena *arena, Id *id) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_IDENTIFIER;
     e->as.identifier_expr.id = id;
+    e->as.identifier_expr.via_qualifier = false;
     return e;
 }
 

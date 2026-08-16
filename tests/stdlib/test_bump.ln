@@ -1,9 +1,8 @@
 // Test std/bump.ln: stack-backed bump allocator.
 // Uses a local u8[256] as backing; no heap involved.
 
-import std.bump
-import std.c
-
+import std.bump.{BumpAlloc, bump_init, bump_alloc, bump_reset, bump_remaining, bump_used}
+import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
 proc main() i32 {
     var backing u8[256]
     var bump = bump_init(var backing)

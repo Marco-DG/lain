@@ -1,6 +1,5 @@
 
-import tests.stdlib.dummy
-
+import tests.stdlib.dummy.{dummy_val}
 proc main() i32 {
     if dummy_val() == 42 {
         return 0

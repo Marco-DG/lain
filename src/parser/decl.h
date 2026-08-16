@@ -1025,10 +1025,30 @@ Decl *parse_import_decl(Arena* arena, Parser* parser) {
     Token start = parser->token;
     parser_advance();
 
-    // Loop to collect dotted path
+    // Loop to collect dotted path; a `.{ … }` ends it with a selective list.
     Token end = start;
+    IdList *selected = NULL;
+    IdList **sel_tail = &selected;
+    bool has_selective = false;
     while (parser_match(TOKEN_DOT)) {
         parser_advance();  // consume dot
+        if (parser_match(TOKEN_L_BRACE)) {
+            // Selective import: `import foo.bar.{ a, b }` — a, b come in unqualified.
+            has_selective = true;
+            parser_advance();  // consume '{'
+            while (!parser_match(TOKEN_R_BRACE)) {
+                parser_expect(TOKEN_IDENTIFIER, "Expected a name in the import list");
+                Id *nm = id(arena, parser->token.length, parser->token.start);
+                parser_advance();
+                *sel_tail = id_list(arena, nm);
+                sel_tail = &(*sel_tail)->next;
+                if (parser_match(TOKEN_COMMA)) parser_advance();
+                else break;
+            }
+            parser_expect(TOKEN_R_BRACE, "Expected '}' to close the import list");
+            parser_advance();
+            break;
+        }
         parser_expect(TOKEN_IDENTIFIER, "Expected identifier after '.'");
         end = parser->token;
         parser_advance();
@@ -1039,6 +1059,7 @@ Decl *parse_import_decl(Arena* arena, Parser* parser) {
     Id* mod = id(arena, len, start.start);
 
     Decl *d = decl_import(arena, mod);
+    if (has_selective) d->as.import_decl.selected = selected;
     // Optional alias: `import foo.bar as baz` → qualified access via `baz.`
     if (parser_match(TOKEN_KEYWORD_AS)) {
         parser_advance();

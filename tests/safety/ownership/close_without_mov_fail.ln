@@ -3,8 +3,7 @@
 // Description: Should fail because variable 'f' is not declared linearly, 
 // so you cannot invoke functions that consume it (if close_file expects mut/mov).
 
-import std.fs
-
+import std.fs.{File, open_file, close_file, write_file}
 proc main() i32 {
     var path = "test.txt"
     var mode = "w"

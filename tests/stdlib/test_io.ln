@@ -1,5 +1,4 @@
-import std.io
-
+import std.io.{print, println}
 proc main() i32 {
     println("Hello World!")
     print("Partial line... ")

@@ -52,6 +52,46 @@ static bool qualifier_is_module(const char *name, size_t len) {
     return false;
 }
 
+// Registry of selective imports: (importer module, name) pairs — the names an
+// importer pulled in unqualified via `import M.{a, b}`. With the glob retired,
+// a bare cross-module name is visible ONLY if it appears here.
+typedef struct SelImportNode {
+    char *importer;   // importing module path (defining_module of the import site)
+    char *name;       // the unqualified name brought in
+    struct SelImportNode *next;
+} SelImportNode;
+static SelImportNode *sel_imports = NULL;
+
+static void register_sel_import(Arena *arena, const char *importer, Id *name) {
+    if (!importer || !name) return;
+    SelImportNode *n = arena_push_aligned(arena, SelImportNode);
+    size_t il = strlen(importer);
+    n->importer = arena_push_many(arena, char, (isize)il + 1);
+    memcpy(n->importer, importer, il + 1);
+    n->name = arena_push_many(arena, char, (isize)name->length + 1);
+    memcpy(n->name, name->name, (size_t)name->length); n->name[name->length] = '\0';
+    n->next = sel_imports; sel_imports = n;
+}
+// Compare two module paths treating '.' and '_' as equal — the dotted form
+// (`std.io`) and the C-sanitized form (`std_io`) name the same module.
+static bool module_paths_equal(const char *a, const char *b) {
+    if (!a || !b) return a == b;
+    for (; *a && *b; a++, b++) {
+        char ca = (*a == '.') ? '_' : *a;
+        char cb = (*b == '.') ? '_' : *b;
+        if (ca != cb) return false;
+    }
+    return *a == *b;
+}
+static bool sel_import_visible(const char *importer, const char *name, size_t len) {
+    if (!importer) return false;
+    for (SelImportNode *s = sel_imports; s; s = s->next)
+        if (strcmp(s->importer, importer) == 0 &&
+            strlen(s->name) == len && strncmp(s->name, name, len) == 0)
+            return true;
+    return false;
+}
+
 static bool module_already_loaded(const char *name) {
     for (ModuleNode *n = loaded_modules; n; n = n->next)
         if (strcmp(n->name, name) == 0)
@@ -180,6 +220,10 @@ static DeclList* load_module(Arena *file_arena,
                 if (dot) { seg = dot + 1; seglen = strlen(dot + 1); }
                 register_qualifier(ast_arena, seg, seglen);
             }
+            // Selective imports: `import M.{a, b}` brings a, b unqualified into
+            // the importing module (`modname`).
+            for (IdList *sn = cur->decl->as.import_decl.selected; sn; sn = sn->next)
+                register_sel_import(ast_arena, modname, sn->id);
 
             // recurse
             DeclList *child = load_module(file_arena, ast_arena, buf);

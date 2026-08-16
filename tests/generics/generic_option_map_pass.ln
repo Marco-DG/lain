@@ -1,6 +1,5 @@
 // Option.map composes generics with a (bare) function pointer — explicit & inferred.
-import std.option
-
+import std.option.{Option, is_some, is_none, unwrap_or, map}
 func triple(x i32) i32 {
     return x
 }

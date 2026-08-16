@@ -2,8 +2,7 @@
 // Test: double_close_fail.ln
 // Description: Tests that closing a linear variable twice results in a use-after-move error.
 
-import std.fs
-
+import std.fs.{File, open_file, close_file, write_file}
 proc main() i32 {
     var path = "test.txt"
     var mode = "w"

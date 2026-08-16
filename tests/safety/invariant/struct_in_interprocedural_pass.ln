@@ -1,8 +1,7 @@
 // Struct field invariant: interprocedural propagation.
 // When `l Lexer` is passed to a function, the callee also knows pos in text.
 
-import std.c
-
+import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
 type Lexer {
     text *u8[]
     pos  usize in text

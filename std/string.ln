@@ -3,4 +3,4 @@
 // Currently, extern declarations of strlen/strcmp conflict with C headers
 // because Lain emits *u8 as uint8_t* but C expects char*.
 
-import std.c
+import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}

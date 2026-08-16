@@ -1,6 +1,5 @@
 // Use the std.option library across a module boundary.
-import std.option
-
+import std.option.{Option, is_some, is_none, unwrap_or, map}
 proc main() i32 {
     var s Option(i32) = Option(i32).Some(9)
     var n Option(i32) = Option(i32).None

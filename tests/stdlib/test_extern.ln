@@ -4,8 +4,7 @@ extern proc free(ptr mov *void)
 extern proc exit(status i32)
 
 // Also test stdlib which uses extern
-import std.io
-
+import std.io.{print, println}
 proc main() i32 {
     println("Testing extern keyword...")
 
