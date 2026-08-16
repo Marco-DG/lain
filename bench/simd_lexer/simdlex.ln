@@ -9,6 +9,12 @@
 //
 // Buffer is a fixed `u8[4096]`; content length `n` must be ≤ 4096.
 
+// Token kinds — SoA output stores one of these per token (1 byte each).
+KIND_IDENT  u8 = 0
+KIND_NUMBER u8 = 1
+KIND_OP     u8 = 2
+KIND_STRING u8 = 3
+
 func is_ws(c u8) bool    { return c == 32 or c == 9 or c == 10 or c == 13 }
 func is_alpha(c u8) bool { return (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95 }
 func is_digit(c u8) bool { return c >= 48 and c <= 57 }
@@ -113,6 +119,64 @@ proc count_tokens(src u8[4096], n u32) u32 {
                 i = i +% 1                                            // single-char operator
             }
             count = count +% 1
+        }
+    }
+    return count
+}
+
+// Real tokenizer with SoA output (the Zig-style memory win): one KIND_* byte per
+// token in `kinds`, the token's start offset in `starts`, and NO length stored — a
+// token's length is the gap to the next start, or a cheap re-lex. Comments are
+// trivia (skipped, no token). Returns the token count; output caps at 1024 tokens.
+proc tokenize(src u8[4096], n u32, var kinds u8[1024], var starts u32[1024]) u32 {
+    var count u32 = 0
+    var i     u32 = 0
+    while i < n {
+        while i in src and i < n and is_ws(src[i]) { i = i +% 1 }
+        if i >= n { break }
+        if i in src {
+            var c u8 = src[i]
+            var start u32 = i
+            var j u32 = i +% 1
+            if c == 47 and j in src and j < n and src[j] == 47 {
+                i = scan_to(src, n, i +% 2, 10)              // line comment — skip
+            } else if c == 47 and j in src and j < n and src[j] == 42 {
+                i = i +% 2                                   // block comment — skip
+                var done bool = false
+                while i < n and !done {
+                    i = scan_to(src, n, i, 42)
+                    var k u32 = i +% 1
+                    if k in src and k < n and src[k] == 47 {
+                        i = i +% 2
+                        done = true
+                    } else if i >= n {
+                        done = true
+                    } else {
+                        i = i +% 1
+                    }
+                }
+            } else {
+                var kind u8 = KIND_OP
+                if c == 34 {
+                    i = scan_to(src, n, i +% 1, 34)
+                    if i in src and i < n { i = i +% 1 }
+                    kind = KIND_STRING
+                } else if is_alpha(c) {
+                    while i in src and i < n and is_alnum(src[i]) { i = i +% 1 }
+                    kind = KIND_IDENT
+                } else if is_digit(c) {
+                    while i in src and i < n and is_digit(src[i]) { i = i +% 1 }
+                    kind = KIND_NUMBER
+                } else {
+                    i = i +% 1
+                    kind = KIND_OP
+                }
+                if count in kinds and count in starts {      // SoA write, parallel arrays
+                    kinds[count] = kind
+                    starts[count] = start
+                    count = count +% 1
+                }
+            }
         }
     }
     return count

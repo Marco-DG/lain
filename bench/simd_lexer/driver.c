@@ -14,9 +14,13 @@
 #include <string.h>
 #include <time.h>
 
-typedef struct { uint8_t data[4096]; } Fixed_u8_4096;
+typedef struct { uint8_t  data[4096]; } Fixed_u8_4096;
+typedef struct { uint8_t  data[1024]; } Fixed_u8_1024;
+typedef struct { uint32_t data[1024]; } Fixed_u32_1024;
 extern uint32_t simdlex_count_tokens(const Fixed_u8_4096*, uint32_t);        /* naive */
 extern uint32_t simdlex_count_tokens_smart(const Fixed_u8_4096*, uint32_t);  /* corrected */
+/* SoA output: kinds[] (1B) + starts[] (4B), no length stored */
+extern uint32_t simdlex_tokenize(const Fixed_u8_4096*, uint32_t, Fixed_u8_1024*, Fixed_u32_1024*);
 
 /* string+comment-aware scalar reference — same token semantics as count_tokens_smart */
 static uint32_t ref_smart(const uint8_t *s, uint32_t n){
@@ -66,6 +70,19 @@ int main(void){
     check("block multi","x /* long\nmulti-line\ncomment */ y");
     check("function","func add(x i32, y i32) i32 { return x + y }");
     printf(fails?"  => %d MISMATCH\n":"  => ALL OK\n",fails);
+
+    printf("\nSoA tokenize (kinds[] 1B + starts[] 4B, NO length = 5B/token vs 8B AoS):\n");
+    {
+        const char *code = "foo + 42 \"hi\" bar // note\nx /* c */ y";
+        Fixed_u8_4096 s; memset(&s,0,sizeof s); uint32_t n=(uint32_t)strlen(code); memcpy(s.data,code,n);
+        static Fixed_u8_1024 kinds; static Fixed_u32_1024 starts;
+        static const char *KN[4]={"Ident","Number","Op","String"};
+        uint32_t cnt=simdlex_tokenize(&s,n,&kinds,&starts);
+        printf("  %u tokens:", cnt);
+        for(uint32_t t=0;t<cnt;t++) printf(" %s@%u", KN[kinds.data[t]], starts.data[t]);
+        printf("\n");
+    }
+
     printf("\nthroughput vs scalar (smart should match on dense, WIN on long runs):\n");
     bench("dense code","a+b*c-d/e=f(g,h,i)k;\n");
     bench("normal code","    var result = compute(alpha, beta) + gamma\n");

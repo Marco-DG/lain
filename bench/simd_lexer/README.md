@@ -30,6 +30,11 @@ Both are verified correct against scalar references (`run.sh` → `ALL OK`):
   **only on the long runs** — **string bodies, `//` line comments, and `/* … */`
   block comments (incl. multi-line)** — via `scan_to` = `@movemask`+`@ctz` to the
   terminator. A real language subset; SIMD on every long run.
+- `tokenize` — the real thing: **SoA output**, `kinds[]` (1 B/token) + `starts[]`
+  (4 B/token), **no length stored** (Zig-style — length is the gap to the next start,
+  or a cheap re-lex). 5 B/token vs 8 for `{kind,pos,len}` AoS, and the parser streams
+  `kinds[]` at 1 B/token — cache-optimal. The borrow checker proves `kinds`/`starts`/
+  `src` don't alias, so all three get `restrict`. `run.sh` prints a live token stream.
 
 Throughput (GB/s, `-O3 -march=native`, vs a scalar reference; small buffers, so
 dense/normal are ~parity within noise — the signal is the long-run rows):
