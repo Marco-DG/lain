@@ -376,6 +376,78 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
     }
 }
 
+// Union of two ranges (widen): the tightest range containing both.
+static Range range_join(Range a, Range b) {
+    if (!a.known || !b.known) return range_unknown();
+    return range_make(a.min < b.min ? a.min : b.min, a.max > b.max ? a.max : b.max);
+}
+
+// Recursion guard for body-level return inference (a function returning a call
+// to itself would loop). Small in-progress stack; a re-entered callee bails.
+#define RET_INFER_MAX 32
+static Decl *ret_in_progress[RET_INFER_MAX];
+static int   ret_in_progress_n = 0;
+static bool ret_infer_reentrant(Decl *d) {
+    for (int i = 0; i < ret_in_progress_n; i++) if (ret_in_progress[i] == d) return true;
+    return false;
+}
+
+// Join the ranges of every `return <expr>` in a statement list, recursing into
+// control flow. `*any` records that at least one return was seen; `*bail` is set
+// if any return range is unknown (⇒ the whole function's range is unknown).
+static void ret_collect(StmtList *body, RangeTable *t, Range *acc, bool *any, bool *bail) {
+    for (StmtList *sl = body; sl && !*bail; sl = sl->next) {
+        Stmt *s = sl->stmt;
+        if (!s) continue;
+        switch (s->kind) {
+            case STMT_RETURN:
+                if (!s->as.return_stmt.value) { *bail = true; return; }
+                {
+                    Range r = sema_eval_range(s->as.return_stmt.value, t);
+                    if (!r.known) { *bail = true; return; }
+                    *acc = *any ? range_join(*acc, r) : r;
+                    *any = true;
+                }
+                break;
+            case STMT_IF:
+                ret_collect(s->as.if_stmt.then_body, t, acc, any, bail);
+                ret_collect(s->as.if_stmt.else_branch, t, acc, any, bail);
+                break;
+            case STMT_MATCH:
+                for (StmtMatchCase *c = s->as.match_stmt.cases; c && !*bail; c = c->next)
+                    ret_collect(c->body, t, acc, any, bail);
+                break;
+            case STMT_UNSAFE: ret_collect(s->as.unsafe_stmt.body, t, acc, any, bail); break;
+            case STMT_FOR:    ret_collect(s->as.for_stmt.body, t, acc, any, bail);   break;
+            case STMT_WHILE:  ret_collect(s->as.while_stmt.body, t, acc, any, bail); break;
+            default: break;
+        }
+    }
+}
+
+// Infer a function's return range from its body — the join of its return
+// expressions, evaluated with narrow (≤16-bit) params seeded to their type
+// range. Tighter than the return type alone (`c & 0x0F` → [0,15], not [0,255]).
+static Range sema_range_infer_body(Decl *fn) {
+    if (!fn || fn->kind != DECL_FUNCTION || ret_infer_reentrant(fn) ||
+        ret_in_progress_n >= RET_INFER_MAX)
+        return range_unknown();
+    extern int type_integer_range(Type *ty, long long *lo, long long *hi);
+    RangeTable *t = range_table_new(sema_arena);
+    for (DeclList *p = fn->as.function_decl.params; p; p = p->next) {
+        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+        Type *pt = p->decl->as.variable_decl.type;
+        long long lo, hi;
+        if (pt && type_integer_range(pt, &lo, &hi) && lo >= -32768 && hi <= 65535)
+            range_set(t, p->decl->as.variable_decl.name, range_make(lo, hi));
+    }
+    ret_in_progress[ret_in_progress_n++] = fn;
+    Range acc = range_unknown(); bool any = false, bail = false;
+    ret_collect(fn->as.function_decl.body, t, &acc, &any, &bail);
+    ret_in_progress_n--;
+    return (any && !bail) ? acc : range_unknown();
+}
+
 static Range sema_range_from_return_constraints(Decl *callee_decl) {
     if (!callee_decl) return range_unknown();
     ExprList *rc = callee_decl->as.function_decl.return_constraints;
@@ -402,10 +474,13 @@ static Range sema_range_from_return_constraints(Decl *callee_decl) {
         }
     }
     if (refined) return r;
-    // No usable declared refinement — fall back to the return TYPE's range, but
-    // only for NARROW integer returns (u8/u16/i8/i16/bool). A wide full range
-    // would make ordinary caller arithmetic look overflowing (a false E086), so
-    // those stay unknown, exactly as before.
+    // No declared refinement. Try body-level inference (the join of the return
+    // expressions with narrow params seeded) — tighter than the type. Then fall
+    // back to the return TYPE's range, but only for NARROW integer returns
+    // (u8/u16/i8/i16/bool): a wide full range would make ordinary caller
+    // arithmetic look overflowing (a false E086), so those stay unknown.
+    Range body_r = sema_range_infer_body(callee_decl);
+    if (body_r.known) return body_r;
     Type *rt = callee_decl->as.function_decl.return_type;
     extern int type_integer_range(Type *ty, long long *lo, long long *hi);
     long long lo, hi;

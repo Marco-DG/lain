@@ -1,0 +1,12 @@
+// Body-level return inference: a function's return range is the join of its
+// return expressions (with narrow params seeded), which is tighter than the
+// return type. `nib` returns `c & 0x0F` ∈ [0,15], not just u8's [0,255] — so
+// using the result to index a u8[16] is provably in-bounds (no E085).
+extern proc libc_printf(fmt *u8, ...) i32
+NIB u8 = 0x0F
+LUT u8[16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+func nib(c u8) u8 { return c & NIB }
+proc main() i32 {
+    var v u8 = LUT[nib(0xF7)]
+    return v as i32 - 7
+}
