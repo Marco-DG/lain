@@ -2,17 +2,23 @@
 // License: MIT
 // 15/08/2025
 
-import token.{
-    Token
-    TokenKind
-}
+/* TODO: currently we treat src as null terminated string,
+    but getting the src lenght would be a single syscall.
+    known len would allow better vectorization
 
-import ctype.{
-    is_alpha
-    is_alnum
-    is_digit
-    is_space
-}
+    I could do:
+
+        type Lexer {            // 16 Bytes
+            src  *u8[len]
+            len   u32
+            pos   u32 in src    // Max file size is ~ 4 GB
+        }
+
+*/
+
+
+import token.{Token, TokenKind}
+import ctype.{is_alpha, is_alnum, is_digit, is_space}
 
 type Lexer {            // 16 Bytes
     src  *u8[:0]        // The file has to be null terminated
