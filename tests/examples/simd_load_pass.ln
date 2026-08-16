@@ -1,0 +1,10 @@
+// @load(T, ptr, off) reads sizeof(T) bytes at ptr+off into a vector (an unaligned
+// load; -O2 folds the memcpy to a single vmovdqu). Here: load 16 bytes from a
+// native array, compare, and count via the 16-wide SSE2 movemask (baseline on
+// x86-64, so no -mavx2 needed — harness-safe).
+proc main() i32 {
+    var buf u8[16] = [i as u8 for i in 0..16]
+    var v   u8x16 = @load(u8x16, buf, 0)
+    var bits u32  = @movemask(v == 3)      // exactly one byte equals 3 (index 3)
+    return @popcount(bits) as i32          // 1
+}

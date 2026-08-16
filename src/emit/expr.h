@@ -1484,6 +1484,16 @@ void emit_expr(Expr *expr, int depth) {
                     "Vec(16, u8) or Vec(32, u8) argument.\n", (long)expr->line, (long)expr->col);
             exit(1);
         }
+    } else if (bk == BUILTIN_LOAD) {
+        // Unaligned vector load: memcpy into a vector temp — correct for any
+        // alignment, and -O2 folds it to a single unaligned move (vmovdqu).
+        char vt[128];
+        c_name_for_type(expr->as.builtin_expr.vec_type, vt, sizeof vt);
+        EMIT("({ %s __lv; memcpy(&__lv, (const uint8_t*)(", vt);
+        emit_expr(expr->as.builtin_expr.arg, depth);   // ptr base
+        EMIT(") + (");
+        emit_expr(expr->as.builtin_expr.arg2, depth);  // byte offset
+        EMIT("), sizeof(__lv)); __lv; })");
     }
     break;
   }

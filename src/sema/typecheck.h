@@ -2560,6 +2560,11 @@ void sema_infer_expr(Expr *e) {
             u32_ty = type_simple(sema_arena, uid);
         }
         e->type = u32_ty;
+    } else if (bk == BUILTIN_LOAD) {
+        // @load(T, ptr, off): result type is the vector T.
+        if (e->as.builtin_expr.arg)  sema_infer_expr(e->as.builtin_expr.arg);
+        if (e->as.builtin_expr.arg2) sema_infer_expr(e->as.builtin_expr.arg2);
+        e->type = e->as.builtin_expr.vec_type;
     }
     break;
   }

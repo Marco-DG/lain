@@ -425,6 +425,23 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
             parser_expect(TOKEN_R_PAREN, "Expected ')' after '@assume_aligned' arguments");
             parser_advance(); // consume ')'
             return expr_builtin_assume_aligned(arena, ptr_arg, align_val);
+        } else if (len == 4 && strncmp(name, "load", 4) == 0) {
+            // @load(T, ptr, off) → read sizeof(T) bytes at ptr+off into a vector T.
+            parser_expect(TOKEN_L_PAREN, "Expected '(' after '@load'");
+            parser_advance(); // consume '('
+            Type *vt = parse_type(arena, parser);
+            parser_expect(TOKEN_COMMA, "Expected ',' after the vector type in '@load'");
+            parser_advance(); // consume ','
+            Expr *ptr = parse_expr(arena, parser);
+            parser_expect(TOKEN_COMMA, "Expected ',' after the pointer in '@load'");
+            parser_advance(); // consume ','
+            Expr *off = parse_expr(arena, parser);
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after '@load' arguments");
+            parser_advance(); // consume ')'
+            Expr *e = expr_builtin_arg(arena, BUILTIN_LOAD, ptr);
+            e->as.builtin_expr.vec_type = vt;
+            e->as.builtin_expr.arg2 = off;
+            return e;
         } else if ((len == 3 && strncmp(name, "ctz", 3) == 0) ||
                    (len == 3 && strncmp(name, "clz", 3) == 0) ||
                    (len == 8 && strncmp(name, "popcount", 8) == 0) ||

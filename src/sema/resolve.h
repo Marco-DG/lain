@@ -1090,6 +1090,12 @@ void sema_resolve_expr(Expr *e) {
             if (e->as.builtin_expr.arg)
                 sema_resolve_expr(e->as.builtin_expr.arg);
             break;
+        case BUILTIN_LOAD:
+            if (e->as.builtin_expr.arg)  sema_resolve_expr(e->as.builtin_expr.arg);
+            if (e->as.builtin_expr.arg2) sema_resolve_expr(e->as.builtin_expr.arg2);
+            if (e->as.builtin_expr.vec_type)
+                e->as.builtin_expr.vec_type = mono_resolve_type_apps(e->as.builtin_expr.vec_type);
+            break;
     }
     break;
   }
