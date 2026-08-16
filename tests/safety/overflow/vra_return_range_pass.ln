@@ -1,0 +1,10 @@
+// A function's NARROW return type (u8/u16/i8/i16) gives its call RESULT a known
+// range at the call site, so arithmetic on the result stays provable instead of
+// tripping a false E086. A `u8` result is ∈ [0,255], so `- 3` fits i32.
+extern proc libc_printf(fmt *u8, ...) i32
+MASK u8 = 0x0F
+func lo_nibble(c u8) u8 { return c & MASK }
+proc main() i32 {
+    var r i32 = lo_nibble(0xF3) as i32 - 3
+    return r
+}

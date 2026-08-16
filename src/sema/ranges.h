@@ -379,8 +379,7 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
 static Range sema_range_from_return_constraints(Decl *callee_decl) {
     if (!callee_decl) return range_unknown();
     ExprList *rc = callee_decl->as.function_decl.return_constraints;
-    if (!rc) return range_unknown();
-    // Seed with full int range; refine by each constraint on `result`.
+    // Seed with full int range; refine by each declared constraint on `result`.
     Range r = range_make(INT64_MIN, INT64_MAX);
     bool refined = false;
     for (ExprList *c = rc; c; c = c->next) {
@@ -402,7 +401,17 @@ static Range sema_range_from_return_constraints(Decl *callee_decl) {
             default: break;
         }
     }
-    return refined ? r : range_unknown();
+    if (refined) return r;
+    // No usable declared refinement — fall back to the return TYPE's range, but
+    // only for NARROW integer returns (u8/u16/i8/i16/bool). A wide full range
+    // would make ordinary caller arithmetic look overflowing (a false E086), so
+    // those stay unknown, exactly as before.
+    Type *rt = callee_decl->as.function_decl.return_type;
+    extern int type_integer_range(Type *ty, long long *lo, long long *hi);
+    long long lo, hi;
+    if (rt && type_integer_range(rt, &lo, &hi) && lo >= -32768 && hi <= 65535)
+        return range_make(lo, hi);
+    return range_unknown();
 }
 
 // Add or update a constraint: v1 - v2 <= max_diff
