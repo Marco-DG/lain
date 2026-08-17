@@ -1044,6 +1044,45 @@ static bool sema_is_in_guarded(Expr *index, Expr *container) {
     return false;
 }
 
+// True iff `e` syntactically references the variable `var` anywhere within it.
+static bool expr_references_id(Expr *e, Id *var) {
+    if (!e || !var) return false;
+    switch (e->kind) {
+        case EXPR_IDENTIFIER:
+            return e->as.identifier_expr.id &&
+                   e->as.identifier_expr.id->length == var->length &&
+                   strncmp(e->as.identifier_expr.id->name, var->name, (size_t)var->length) == 0;
+        case EXPR_BINARY:
+            return expr_references_id(e->as.binary_expr.left,  var) ||
+                   expr_references_id(e->as.binary_expr.right, var);
+        case EXPR_UNARY:
+            return expr_references_id(e->as.unary_expr.right, var);
+        case EXPR_MEMBER:
+            return expr_references_id(e->as.member_expr.target, var);
+        case EXPR_INDEX:
+            return expr_references_id(e->as.index_expr.target, var) ||
+                   expr_references_id(e->as.index_expr.index,  var);
+        case EXPR_CAST:
+            return expr_references_id(e->as.cast_expr.expr, var);
+        default:
+            return false;
+    }
+}
+
+// SOUNDNESS: mutating `var` makes any in-guard whose index OR container references
+// it stale — `while i in a { i = huge; a[i] }` must NOT keep the `i in a` guard and
+// read out of bounds. Unlink every such guard from the active list.
+static void sema_invalidate_in_guards(Id *var) {
+    InGuardEntry **pp = &sema_in_guards;
+    while (*pp) {
+        InGuardEntry *e = *pp;
+        if (expr_references_id(e->index, var) || expr_references_id(e->container, var))
+            *pp = e->next;              // unlink the stale guard
+        else
+            pp = &e->next;
+    }
+}
+
 // Push persistent InGuardEntries for each "field Type in container" annotation
 // in a struct definition. Call this when a variable or parameter of a struct
 // type enters scope. `var_name_id` is the variable/parameter name Id.
@@ -1797,6 +1836,12 @@ static void walk_stmt(Stmt *s) {
         case STMT_ASSIGN:
             sema_infer_expr(s->as.assign_stmt.expr);
             sema_infer_expr(s->as.assign_stmt.target);
+
+            // SOUNDNESS: reassigning an identifier invalidates any in-guard that
+            // references it (index or container), so a stale `i in a` cannot keep
+            // proving `a[i]` after `i` has changed.
+            if (s->as.assign_stmt.target->kind == EXPR_IDENTIFIER)
+                sema_invalidate_in_guards(s->as.assign_stmt.target->as.identifier_expr.id);
 
             // E121: struct field invariant violation check.
             // If LHS is `obj.field` and `field` has `in_field = container`,

@@ -1,0 +1,19 @@
+// EXPECT: [E085]
+// SOUNDNESS lock: an `in`-guard must NOT keep proving an access after the guarded
+// index is mutated in the SAME scope. `while i in a { i = huge; a[i] }` reassigns
+// `i` out of bounds, so the `i in a` guard is stale and `a[i]` must be rejected
+// (previously it silently emitted an out-of-bounds read).
+//
+// (Known remaining: a mutation in a NESTED scope — `if c { i = huge }` then a[i] in
+// the outer body — is not yet caught; needs control-flow-aware guard invalidation.)
+proc t(a u8[16]) u8 {
+    var i u32 = 0
+    var r u8 = 0
+    while i in a {
+        i = i +% 1000
+        r = a[i]
+        break
+    }
+    return r
+}
+proc main() i32 { return 0 }
