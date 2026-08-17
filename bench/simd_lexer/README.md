@@ -13,13 +13,22 @@ The hybrid lexer of the *proof-licensed performance* doctrine
 bash bench/simd_lexer/run.sh
 ```
 
-## Safety split (exactly per the doctrine)
+## Safety split (exactly per the doctrine) — and the safe code is the *natural* code
 
-- The scalar reads `src[i]` are **`in`-guarded**, so VRA *proves* them — no bounds
-  checks are emitted.
-- The SIMD whitespace loads sit in an **`unsafe`** block — the documented P1
-  escape hatch — until **P2b**'s padded `Source` (`readable ≥ len + 64`) makes
-  them provably safe too. Each such `unsafe` is a logged debt, not a silent one.
+- The scalar reads `src[i]` need **no `in`-guard**: the loop/branch bound `i < n`
+  — chained with the content refinement `n < 4097` on the `u8[4096]` buffer —
+  *proves* them. Lookahead reads are natural too: `... and j < n and src[j]`
+  proves `src[j]` because `&&` short-circuits (the compiler applies the `j < n`
+  conjunct before the read). VRA emits no bounds checks. The corrected lexer has
+  **zero `in`-guards on plain reads** — it reads exactly like ordinary C, and is
+  proven safe.
+- The SIMD scan loads (`scan_to`) are proven by a last-byte in-guard
+  `(i + 15) in src` — **zero `unsafe`, zero runtime checks**. (A fully branchless
+  padded-buffer tail — `while i < n { @load }` with `n < CAP-15` — now also proves
+  via constraint-chaining; `scan_to` keeps the last-byte guard because it scans an
+  unpadded buffer to `n`.)
+- The deprecated naive `count_tokens` keeps its `in`-guards and one `unsafe` block
+  (its `n` is unbounded) — the "before" form, standing next to the natural one.
 
 ## Status: two lexers, and a measurement that found the right architecture
 
