@@ -1,0 +1,17 @@
+// EXPECT: [E085]
+// SOUNDNESS lock (control-flow-aware): an `in`-guard must be invalidated when the
+// guarded variable is mutated in a NESTED scope, not just the same one. Here the
+// inner `if` moves `i` out of bounds; the outer `i in a` guard is stale, so `a[i]`
+// in the outer while-body must be rejected — a branch's scope-restore must not
+// re-enable a guard whose variable that branch assigns.
+proc t(a u8[16]) u8 {
+    var i u32 = 0
+    var r u8 = 0
+    while i in a {
+        if r == 0 { i = i +% 1000 }
+        r = a[i]
+        break
+    }
+    return r
+}
+proc main() i32 { return 0 }

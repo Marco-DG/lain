@@ -1083,6 +1083,49 @@ static void sema_invalidate_in_guards(Id *var) {
     }
 }
 
+// Does `body` (recursively) assign to any identifier that `guard` references? Used
+// to invalidate OUTER guards after a NESTED branch that may mutate the guarded
+// variable — the same-scope unlink above is undone by a branch's scope-restore.
+static bool stmtlist_assigns_referenced(struct StmtList *body, Expr *guard);
+static bool stmt_assigns_referenced(Stmt *s, Expr *guard) {
+    if (!s || !guard) return false;
+    switch (s->kind) {
+        case STMT_ASSIGN:
+            return s->as.assign_stmt.target &&
+                   s->as.assign_stmt.target->kind == EXPR_IDENTIFIER &&
+                   expr_references_id(guard, s->as.assign_stmt.target->as.identifier_expr.id);
+        case STMT_IF:
+            return stmtlist_assigns_referenced(s->as.if_stmt.then_body, guard) ||
+                   stmtlist_assigns_referenced(s->as.if_stmt.else_branch, guard);
+        case STMT_WHILE:
+            return stmtlist_assigns_referenced(s->as.while_stmt.body, guard);
+        case STMT_FOR:
+            return stmtlist_assigns_referenced(s->as.for_stmt.body, guard);
+        case STMT_UNSAFE:
+            return stmtlist_assigns_referenced(s->as.unsafe_stmt.body, guard);
+        default:
+            return false;
+    }
+}
+static bool stmtlist_assigns_referenced(struct StmtList *body, Expr *guard) {
+    for (struct StmtList *b = body; b; b = b->next)
+        if (stmt_assigns_referenced(b->stmt, guard)) return true;
+    return false;
+}
+// Invalidate every in-guard a nested `body` may have staled by assigning a variable
+// the guard references. Called after a branch/loop body's scope is restored.
+static void sema_invalidate_guards_for_body(struct StmtList *body) {
+    InGuardEntry **pp = &sema_in_guards;
+    while (*pp) {
+        InGuardEntry *e = *pp;
+        if (stmtlist_assigns_referenced(body, e->index) ||
+            stmtlist_assigns_referenced(body, e->container))
+            *pp = e->next;
+        else
+            pp = &e->next;
+    }
+}
+
 // Push persistent InGuardEntries for each "field Type in container" annotation
 // in a struct definition. Call this when a variable or parameter of a struct
 // type enters scope. `var_name_id` is the variable/parameter name Id.
@@ -1496,6 +1539,11 @@ static void walk_stmt(Stmt *s) {
                 sema_ranges->head = old_head;
                 sema_ranges->constraints = old_constraints;
             }
+            // SOUNDNESS: either branch may have mutated a guarded variable, and the
+            // scope restore above re-added the outer guards — re-invalidate any guard
+            // whose variable a branch assigns (`while i in a { if c { i = huge } a[i] }`).
+            sema_invalidate_guards_for_body(s->as.if_stmt.then_body);
+            sema_invalidate_guards_for_body(s->as.if_stmt.else_branch);
             break;
         }
         case STMT_FOR: {
@@ -1588,6 +1636,10 @@ static void walk_stmt(Stmt *s) {
 
             // Restore constraint scope: the symbolic bound only holds inside the body
             if (sema_ranges) sema_ranges->constraints = __for_old_constraints;
+
+            // SOUNDNESS: the loop body may have mutated an OUTER-guarded variable —
+            // invalidate any guard whose variable the body assigns.
+            sema_invalidate_guards_for_body(s->as.for_stmt.body);
 
             // Widen modified variables AFTER body
             if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
@@ -1832,6 +1884,9 @@ static void walk_stmt(Stmt *s) {
             // Widen modified variables AFTER body
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
 
+            // SOUNDNESS: the loop body may have mutated an OUTER-guarded variable —
+            // invalidate any guard whose variable the body assigns.
+            sema_invalidate_guards_for_body(s->as.while_stmt.body);
             break;
         case STMT_ASSIGN:
             sema_infer_expr(s->as.assign_stmt.expr);
