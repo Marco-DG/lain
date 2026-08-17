@@ -263,6 +263,58 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
         // len known but idx unknown: fall through to constraint proof
     }
 
+    // 4b. Constraint-chaining for arrays with a KNOWN len (fixed arrays, fixed
+    //     slices). A natural `while i < n { a[i] }` records the *constraint*
+    //     `i - n <= -1` plus n's *range*; chaining them gives i <= range(n).max-1,
+    //     which proves a[i] WITHOUT narrowing i's own range. Narrowing i's range
+    //     is what would make an unrelated `i + k` spuriously trip the overflow
+    //     check (over-rejection) — the constraint carries the loop bound while i's
+    //     range stays honest. Also handles `a[i + K]` (K literal), which is the
+    //     last-byte check `src[i+15]` a padded wide `@load` needs for a branchless
+    //     SIMD tail. Lower bound (idx >= 0) still comes from the interval/type.
+    if (len_range.known && ctx) {
+        extern int type_integer_range(Type *ty, long long *lo, long long *hi);
+        Id *base_id = NULL; int64_t off = 0; Type *base_ty = NULL;
+        if (index_expr->kind == EXPR_IDENTIFIER) {
+            base_id = index_expr->as.identifier_expr.id;
+            base_ty = index_expr->type;
+        } else if (index_expr->kind == EXPR_BINARY &&
+                   (index_expr->as.binary_expr.op == TOKEN_PLUS ||
+                    index_expr->as.binary_expr.op == TOKEN_PLUS_PERCENT) &&
+                   index_expr->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                   index_expr->as.binary_expr.right->kind == EXPR_LITERAL) {
+            base_id = index_expr->as.binary_expr.left->as.identifier_expr.id;
+            base_ty = index_expr->as.binary_expr.left->type;
+            off     = index_expr->as.binary_expr.right->as.literal_expr.value;
+        }
+        // Lower bound (base >= 0): from the VRA interval OR the base's unsigned
+        // type. The wrapping `i +% 1` loop counter has an unknown VRA range, but
+        // its u32 type still pins base >= 0 — and the constraint `i < n` (live at
+        // the loop guard, before the mutation) supplies the upper bound. off is a
+        // literal and must be >= 0 for `base + off >= 0` to hold without wraparound.
+        long long blo, bhi;
+        bool base_nonneg = (idx.known && idx.min >= 0) ||
+                           (base_ty && type_integer_range(base_ty, &blo, &bhi) && blo >= 0);
+        if (base_id && base_nonneg && off >= 0) {
+            // base + off <= need  (need = len-1 for deref, len for &one-past-end)
+            int64_t need = is_addr_of ? len_range.min : len_range.min - 1;
+            for (ConstraintEntry *ce = ctx->constraints; ce; ce = ce->next) {
+                if (ce->v1->length != base_id->length ||
+                    strncmp(ce->v1->name, base_id->name, base_id->length) != 0)
+                    continue;
+                Range vr = range_get(ctx, ce->v2);
+                if (!vr.known || vr.max >= INT64_MAX) continue;
+                // base - v <= max_diff  and  v <= vr.max  ⟹  base <= vr.max+max_diff
+                int64_t base_ub = sat_add_i64(vr.max, ce->max_diff);
+                if (sat_add_i64(base_ub, off) <= need) {
+                    BOUNDS_DBG("OK: constraint chain — base<=%ld, +%ld <= len-1=%ld",
+                               (long)base_ub, (long)off, (long)need);
+                    return; // proven safe via constraint chaining (no range narrowing)
+                }
+            }
+        }
+    }
+
     // 5. Constraint-based proof for dynamic slices (sized or plain).
     //    Looks for "idx - len_key <= -1" in the constraint table where len_key is
     //    the synthetic __len_PARAM entry that the for-loop injector adds.

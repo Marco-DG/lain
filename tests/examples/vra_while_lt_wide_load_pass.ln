@@ -1,0 +1,27 @@
+// A BRANCHLESS SIMD tail proves check-free. `while i < n` with `n < 4081` on a
+// u8[4096] buffer: the wide `@load(u8x16, src, i)` reads [i, i+16). Its last
+// byte `src[i+15]` is bounds-checked as a `base + K` index — VRA chains the
+// loop constraint `i - n <= -1` with `n < 4081`: i <= 4080, i+15 <= 4095 < 4096.
+// So the 16-byte load needs NO tail guard and NO runtime check — the padding
+// headroom (n <= CAP-15) is proven statically. Verified sound at runtime under
+// ASan+UBSan.
+proc count_spaces(src u8[4096], n u32 < 4081) u32 {
+    var i u32 = 0
+    var t u32 = 0
+    while i < n {
+        t = t +% (@popcount(@movemask(@load(u8x16, src, i) == 32) & (65535 as u32)) as u32)
+        i = i +% 16
+    }
+    return t
+}
+proc main() i32 {
+    var buf u8[4096]
+    var k u32 = 0
+    while k < 4096 {
+        buf[k] = 32
+        k = k +% 1
+    }
+    var spaces u32 = count_spaces(buf, 4080)
+    if spaces == 4080 { return 0 }
+    return 1
+}

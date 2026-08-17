@@ -1,0 +1,16 @@
+// EXPECT: [E085]
+// SOUNDNESS lock: constraint-chaining supplies only the UPPER bound (i < n). The
+// lower bound (i >= 0) must come from the index's unsigned type or its VRA range.
+// Here `i` is a SIGNED i32 seeded from a parameter, so it may be negative; the
+// chain proves i < n <= 4095 but cannot prove i >= 0, so `src[i]` must be
+// rejected. (Only an unsigned index or a VRA-proven non-negative one qualifies.)
+proc scan(src u8[4096], n i32 < 4096, istart i32) u8 {
+    var i i32 = istart
+    var r u8 = 0
+    while i < n {
+        r = src[i]
+        i = i +% 1
+    }
+    return r
+}
+proc main() i32 { return 0 }

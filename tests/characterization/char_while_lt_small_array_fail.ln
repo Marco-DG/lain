@@ -1,0 +1,15 @@
+// EXPECT: [E085]
+// SOUNDNESS lock: the chained bound must be checked against the ACTUAL array
+// length. Here `n < 4096` bounds `i` to < 4096, but `src` is only u8[100]. The
+// chain proves i <= 4094, which is NOT < 100, so `src[i]` must be rejected — the
+// proof compares base_ub against this array's len, not against n's bound.
+proc scan(src u8[100], n u32 < 4096) u8 {
+    var i u32 = 0
+    var r u8 = 0
+    while i < n {
+        r = src[i]
+        i = i +% 1
+    }
+    return r
+}
+proc main() i32 { return 0 }

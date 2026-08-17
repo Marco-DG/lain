@@ -1,0 +1,15 @@
+// EXPECT: [E085]
+// SOUNDNESS lock: constraint-chaining must NOT prove `src[i]` when the loop bound
+// `n` is unbounded. `i < n` gives i <= n-1, but with `n u32` unconstrained, n can
+// be 4 billion, so i can exceed the 4096-element buffer. The chain has no useful
+// upper bound (range(n).max is the full u32 range), so `src[i]` must be rejected.
+proc scan(src u8[4096], n u32) u8 {
+    var i u32 = 0
+    var r u8 = 0
+    while i < n {
+        r = src[i]
+        i = i +% 1
+    }
+    return r
+}
+proc main() i32 { return 0 }

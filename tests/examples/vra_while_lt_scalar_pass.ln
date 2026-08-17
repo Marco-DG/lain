@@ -1,0 +1,25 @@
+// A natural `while i < n { src[i] }` scalar scan proves check-free — no `in`
+// guard, no refinement on `i`. VRA records the *constraint* `i - n <= -1` from
+// the loop condition and chains it with `n`'s range (`n < 4096`): i <= n-1 <=
+// 4094 < 4096, so `src[i]` is in bounds. Crucially this does NOT narrow `i`'s
+// own range, so an ordinary `i +% 1`/`i +% k` never spuriously trips overflow.
+proc scan(src u8[4096], n u32 < 4096, term u8) u32 {
+    var i u32 = 0
+    while i < n {
+        if src[i] == term { return i }
+        i = i +% 1
+    }
+    return n
+}
+proc main() i32 {
+    var buf u8[4096]
+    var k u32 = 0
+    while k < 4096 {
+        buf[k] = 65
+        k = k +% 1
+    }
+    buf[100] = 90
+    var pos u32 = scan(buf, 4095, 90)
+    if pos == 100 { return 0 }
+    return 1
+}

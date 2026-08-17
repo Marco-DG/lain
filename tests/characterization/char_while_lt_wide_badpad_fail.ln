@@ -1,0 +1,16 @@
+// EXPECT: [E085]
+// SOUNDNESS lock: the wide `@load`'s last-byte check must reject insufficient
+// padding. With `n < 4096` (not < 4081), the chain gives i <= 4094, so the load's
+// last byte `src[i+15]` can reach index 4109 > 4095 — past the u8[4096] buffer.
+// The `base + 15` bounds check must reject this (a wide 16-byte SIMD tail needs
+// the CAP-15 headroom, `n < 4081`, to be branchless-safe).
+proc count_spaces(src u8[4096], n u32 < 4096) u32 {
+    var i u32 = 0
+    var t u32 = 0
+    while i < n {
+        t = t +% (@popcount(@movemask(@load(u8x16, src, i) == 32) & (65535 as u32)) as u32)
+        i = i +% 16
+    }
+    return t
+}
+proc main() i32 { return 0 }
