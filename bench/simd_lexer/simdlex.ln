@@ -17,7 +17,8 @@
 KIND_IDENT  u8 = 0
 KIND_NUMBER u8 = 1
 KIND_OP     u8 = 2
-KIND_STRING u8 = 3
+KIND_STRING  u8 = 3
+KIND_KEYWORD u8 = 4
 
 func is_ws(c u8) bool    { return c == 32 or c == 9 or c == 10 or c == 13 }
 func is_alpha(c u8) bool { return (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95 }
@@ -133,11 +134,55 @@ proc count_tokens(src u8[4096], n u32) u32 {
     return count
 }
 
+// Keyword recognition: match an identifier `src[start..start+len)` against a small
+// Lain keyword set. Reads are `in`-guarded per byte (compound guards), so no
+// refinement on `start` is needed and identifiers at the very buffer end correctly
+// fall through to KIND_IDENT. (A word-sized u64/SIMD compare is the P5 optimization,
+// gated on measurement.)
+func kw_kind(src u8[4096], start u32 < 4090, len u32) u8 {
+    if len == 2 {
+        var a u8 = src[start]
+        var b u8 = src[start + 1]
+        if a == 105 and b == 102 { return KIND_KEYWORD }                       // if
+    } else if len == 3 {
+        var a u8 = src[start]
+        var b u8 = src[start + 1]
+        var c u8 = src[start + 2]
+        if a == 102 and b == 111 and c == 114 { return KIND_KEYWORD }          // for
+        if a == 118 and b == 97  and c == 114 { return KIND_KEYWORD }          // var
+    } else if len == 4 {
+        var a u8 = src[start]
+        var b u8 = src[start + 1]
+        var c u8 = src[start + 2]
+        var d u8 = src[start + 3]
+        if a == 102 and b == 117 and c == 110 and d == 99  { return KIND_KEYWORD }  // func
+        if a == 112 and b == 114 and c == 111 and d == 99  { return KIND_KEYWORD }  // proc
+        if a == 101 and b == 108 and c == 115 and d == 101 { return KIND_KEYWORD }  // else
+        if a == 116 and b == 121 and c == 112 and d == 101 { return KIND_KEYWORD }  // type
+    } else if len == 5 {
+        var a u8 = src[start]
+        var b u8 = src[start + 1]
+        var c u8 = src[start + 2]
+        var d u8 = src[start + 3]
+        var e u8 = src[start + 4]
+        if a == 119 and b == 104 and c == 105 and d == 108 and e == 101 { return KIND_KEYWORD }  // while
+    } else if len == 6 {
+        var a u8 = src[start]
+        var b u8 = src[start + 1]
+        var c u8 = src[start + 2]
+        var d u8 = src[start + 3]
+        var e u8 = src[start + 4]
+        var f u8 = src[start + 5]
+        if a == 114 and b == 101 and c == 116 and d == 117 and e == 114 and f == 110 { return KIND_KEYWORD }  // return
+    }
+    return KIND_IDENT
+}
+
 // Real tokenizer with SoA output (the Zig-style memory win): one KIND_* byte per
 // token in `kinds`, the token's start offset in `starts`, and NO length stored — a
 // token's length is the gap to the next start, or a cheap re-lex. Comments are
 // trivia (skipped, no token). Returns the token count; output caps at 1024 tokens.
-proc tokenize(src u8[4096], n u32 < 4097, var kinds u8[1024], var starts u32[1024]) u32 {
+proc tokenize(src u8[4096], n u32 < 4090, var kinds u8[1024], var starts u32[1024]) u32 {
     var count u32 = 0
     var i     u32 = 0
     while i < n {
@@ -172,7 +217,7 @@ proc tokenize(src u8[4096], n u32 < 4097, var kinds u8[1024], var starts u32[102
                     kind = KIND_STRING
                 } else if is_alpha(c) {
                     while i in src and i < n and is_alnum(src[i]) { i = i +% 1 }
-                    kind = KIND_IDENT
+                    kind = kw_kind(src, start, i -% start)   // Keyword or Ident
                 } else if is_digit(c) {
                     while i in src and i < n and is_digit(src[i]) { i = i +% 1 }
                     kind = KIND_NUMBER

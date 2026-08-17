@@ -34,7 +34,10 @@ Both are verified correct against scalar references (`run.sh` → `ALL OK`):
   (4 B/token), **no length stored** (Zig-style — length is the gap to the next start,
   or a cheap re-lex). 5 B/token vs 8 for `{kind,pos,len}` AoS, and the parser streams
   `kinds[]` at 1 B/token — cache-optimal. The borrow checker proves `kinds`/`starts`/
-  `src` don't alias, so all three get `restrict`. `run.sh` prints a live token stream.
+  `src` don't alias, so all three get `restrict`. **Keyword recognition** (`kw_kind`):
+  identifiers are matched against `func`/`proc`/`if`/`else`/`for`/`var`/`while`/`type`/
+  `return` and tagged `KIND_KEYWORD` — scalar (short tokens), reads proven by a `start`
+  refinement. `run.sh` prints a live token stream distinguishing keywords from idents.
 
 Throughput (GB/s, `-O3 -march=native`, vs a scalar reference; small buffers, so
 dense/normal are ~parity within noise — the signal is the long-run rows):

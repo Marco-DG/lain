@@ -1,0 +1,24 @@
+// Keyword recognition: match an identifier's bytes against a keyword. The `start`
+// refinement (`< 4090`) lets VRA prove the fixed-offset reads `src[start + k]`
+// directly (start+k < 4095 < 4096) — no per-byte in-guards needed. Pure scalar
+// (keywords are short) — the measurement's lesson: don't SIMD the short tokens.
+KIND_IDENT u8 = 0
+KIND_KW    u8 = 1
+
+func kw(src u8[4096], start u32 < 4090, len u32) u8 {
+    if len == 2 {
+        if src[start] == 105 and src[start + 1] == 102 { return KIND_KW }        // "if"
+    } else if len == 4 {
+        if src[start] == 102 and src[start + 1] == 117 and src[start + 2] == 110 and src[start + 3] == 99 { return KIND_KW }
+    }
+    return KIND_IDENT
+}
+
+proc main() i32 {
+    var buf u8[4096] = [0 for x in 0..4096]
+    buf[0] = 102                                  // 'f'
+    buf[1] = 117                                  // 'u'
+    buf[2] = 110                                  // 'n'
+    buf[3] = 99                                   // 'c'
+    return kw(buf, 0, 4) as i32                   // "func" → KIND_KW (1)
+}

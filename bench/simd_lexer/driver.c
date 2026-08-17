@@ -73,14 +73,14 @@ int main(void){
 
     printf("\nSoA tokenize (kinds[] 1B + starts[] 4B, NO length = 5B/token vs 8B AoS):\n");
     {
-        const char *code = "foo + 42 \"hi\" bar // note\nx /* c */ y";
+        const char *code = "func add(x i32) i32 { return x + 1 } // done";
         Fixed_u8_4096 s; memset(&s,0,sizeof s); uint32_t n=(uint32_t)strlen(code); memcpy(s.data,code,n);
         static Fixed_u8_1024 kinds; static Fixed_u32_1024 starts;
-        static const char *KN[4]={"Ident","Number","Op","String"};
+        static const char *KN[5]={"Ident","Number","Op","String","Keyword"};
         uint32_t cnt=simdlex_tokenize(&s,n,&kinds,&starts);
         printf("  %u tokens:", cnt);
         for(uint32_t t=0;t<cnt;t++) printf(" %s@%u", KN[kinds.data[t]], starts.data[t]);
-        printf("\n");
+        printf("\n  (keywords func/return distinguished from identifiers)\n");
     }
 
     printf("\nthroughput vs scalar (smart should match on dense, WIN on long runs):\n");
