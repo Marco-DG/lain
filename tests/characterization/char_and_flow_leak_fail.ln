@@ -1,0 +1,12 @@
+// EXPECT: [E085]
+// SOUNDNESS lock: the within-`&&` constraint flow is SCOPED to the right operand.
+// A `j < n` conjunct proves `src[j]` only INSIDE the same `&&` — it must not leak
+// to a later, independent access. Here `src[j]` sits on its own line after the
+// `j < n and ...` expression ended, where `j < n` no longer holds, so it must be
+// rejected. (If the scope restore were missing, this would wrongly compile.)
+proc t(src u8[4096], n u32 < 4097, jj u32) u8 {
+    var j u32 = jj
+    var ok bool = j < n and jj == 0
+    return src[j]
+}
+proc main() i32 { return 0 }

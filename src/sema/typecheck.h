@@ -1824,7 +1824,21 @@ void sema_infer_expr(Expr *e) {
     if (e->as.binary_expr.op == TOKEN_KEYWORD_AND) {
         InGuardEntry *old_guards = sema_in_guards;
         sema_push_in_guards(e->as.binary_expr.left);
+        // Within-`&&` flow: also apply the LHS's relational constraints (e.g. the
+        // `j < n` in `j < n and src[j]`) before proving the RHS. Short-circuit &&
+        // guarantees the LHS holds whenever the RHS is evaluated, so the bounds
+        // prover may chain `j < n` with n's range to prove `src[j]` — no in-guard
+        // needed. SCOPED: the constraints/ranges the LHS adds are restored right
+        // after, so they never leak past this condition (soundness — a stale
+        // `j < n` outside the `&&` must not keep proving anything).
+        ConstraintEntry *old_cons = sema_ranges ? sema_ranges->constraints : NULL;
+        RangeEntry      *old_head = sema_ranges ? sema_ranges->head        : NULL;
+        if (sema_ranges) sema_apply_constraint(e->as.binary_expr.left, sema_ranges);
         sema_infer_expr(e->as.binary_expr.right);
+        if (sema_ranges) {
+            sema_ranges->constraints = old_cons;
+            sema_ranges->head        = old_head;
+        }
         sema_in_guards = old_guards;
     } else {
         sema_infer_expr(e->as.binary_expr.right);

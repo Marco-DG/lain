@@ -1,0 +1,27 @@
+// Within-`&&` flow: `A and B` short-circuits, so when B is evaluated A holds. The
+// compiler applies A's relational constraint before proving B's access, so a
+// natural peek `j < n and src[j] == X` proves `src[j]` with NO `in`-guard — the
+// `j < n` conjunct chains with `n < 4097` on the u8[4096] buffer. This is what
+// lets a lexer's lookahead read the next byte idiomatically.
+proc find_pair(src u8[4096], n u32 < 4097) u32 {
+    var i u32 = 0
+    while i < n {
+        var j u32 = i +% 1
+        if src[i] == 47 and j < n and src[j] == 47 { return i }   // "//" line comment
+        i = i +% 1
+    }
+    return n
+}
+proc main() i32 {
+    var buf u8[4096]
+    var k u32 = 0
+    while k < 4096 {
+        buf[k] = 65
+        k = k +% 1
+    }
+    buf[50] = 47
+    buf[51] = 47
+    var pos u32 = find_pair(buf, 4095)
+    if pos == 50 { return 0 }
+    return 1
+}
