@@ -1,0 +1,24 @@
+// P2b keystone: a wide SIMD @load is PROVEN safe via a last-byte in-guard —
+// `(i + 15) in src` proves the last byte of the 16-byte load is in bounds, and for
+// an unsigned `i` that plus contiguity proves the whole `[i, i+16)` load. NO
+// `unsafe`, NO runtime bounds check. The bounded `start`/`n` refinements (content ≤
+// capacity) keep `i + 15` overflow-free. 16-wide movemask = baseline SSE2.
+proc scan(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
+    var i u32 = start
+    while (i + 15) in src and i +% 16 <= n {
+        var hit u32 = @movemask(@load(u8x16, src, i) == term) & (65535 as u32)
+        if hit != 0 {
+            i = i +% (@ctz(hit) as u32)
+            break
+        }
+        i = i +% 16
+    }
+    while i in src and i < n and src[i] != term { i = i +% 1 }
+    return i
+}
+
+proc main() i32 {
+    var buf u8[4096] = [32 for x in 0..4096]
+    buf[50] = 42                              // a '*' at offset 50
+    return scan(buf, 100, 0, 42) as i32       // proven-safe SIMD scan finds it → 50
+}

@@ -2590,8 +2590,22 @@ void sema_infer_expr(Expr *e) {
                 Expr *off  = e->as.builtin_expr.arg2;
                 Expr *last = expr_binary(sema_arena, TOKEN_PLUS, off,
                                          expr_literal(sema_arena, L - 1));
-                sema_check_bounds(sema_ranges, off,  bt, e->as.builtin_expr.arg, false);
-                sema_check_bounds(sema_ranges, last, bt, e->as.builtin_expr.arg, false);
+                // P2b: a wide load is ALSO proven if its LAST byte is in-guarded —
+                // `(off + L-1) in buf`. For an UNSIGNED offset (off >= 0 by type),
+                // the last-byte guard plus contiguity proves the whole [off, off+L)
+                // in bounds with NO runtime check. So a SIMD scan loop
+                // `while (i + L-1) in buf { @load(...) ; i += L }` is proven safe,
+                // and its `unsafe` goes away.
+                extern int type_integer_range(Type *ty, long long *lo, long long *hi);
+                long long tlo, thi;
+                bool off_unsigned = off->type &&
+                                    type_integer_range(off->type, &tlo, &thi) && tlo >= 0;
+                if (off_unsigned && sema_is_in_guarded(last, e->as.builtin_expr.arg)) {
+                    /* proven via the last-byte in-guard — no check, no error */
+                } else {
+                    sema_check_bounds(sema_ranges, off,  bt, e->as.builtin_expr.arg, false);
+                    sema_check_bounds(sema_ranges, last, bt, e->as.builtin_expr.arg, false);
+                }
             }
         }
     }

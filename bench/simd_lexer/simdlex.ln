@@ -2,12 +2,16 @@
 // long whitespace runs (load 16 bytes → detect ws → movemask → ctz to the first
 // non-ws), scalar scans the short, dense token bodies.
 //
-// Safety split, exactly per the doctrine:
-//   • scalar reads `src[i]` are `in`-guarded, so VRA PROVES them (no checks emitted).
-//   • the SIMD whitespace loads sit in an `unsafe` block — the documented P1
-//     escape hatch — until P2b's padded `Source` makes them provably safe too.
+// Safety, exactly per the doctrine — NOW FULLY PROVEN (P2b):
+//   • scalar reads `src[i]` are `in`-guarded → VRA proves them (no checks emitted).
+//   • the SIMD scan loads (`scan_to`) are proven via a last-byte in-guard
+//     `(i + 15) in src` — ZERO `unsafe`, zero runtime checks. The corrected lexer
+//     (count_tokens_smart / tokenize) has no `unsafe` at all.
+//   • (the deprecated naive `count_tokens` below keeps one `unsafe` block, only to
+//     show the old per-token form the measurement rejected.)
 //
-// Buffer is a fixed `u8[4096]`; content length `n` must be ≤ 4096.
+// Buffer is a fixed `u8[4096]`; content length carries `n < 4097` (content ≤
+// capacity) — the refinement the callers thread so the wide loads are in-bounds.
 
 // Token kinds — SoA output stores one of these per token (1 byte each).
 KIND_IDENT  u8 = 0
@@ -22,17 +26,22 @@ func is_alnum(c u8) bool { return is_alpha(c) or is_digit(c) }
 
 // SIMD scan to the first byte == `term` at or after `start` (16 bytes at a time,
 // movemask + ctz). This is SIMD used the RIGHT way — on a genuinely-long run (a
-// string / comment body), where the per-invocation cost is amortized over many
-// bytes, unlike the per-token skip. Loads are the raw P1 primitive (unsafe);
-// P2b's padded Source will prove them.
-proc scan_to(src u8[4096], n u32, start u32, term u8) u32 {
+// string / comment body), amortized over many bytes.
+//
+// P2b: the loads are now PROVEN safe — NO `unsafe`. The loop guard `(i + 15) in src`
+// proves the last byte of the 16-byte load is in bounds; for an unsigned `i` that
+// plus contiguity proves the whole `[i, i+16)` load, at zero runtime cost. The
+// `i +% 16 <= n` bound keeps the SIMD path within the content (the scalar tail
+// finishes the final partial chunk).
+proc scan_to(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
     var i u32 = start
-    unsafe {
-        while i +% 16 <= n {
-            var hit u32 = @movemask(@load(u8x16, src, i) == term) & (65535 as u32)
-            if hit != 0 { i = i +% (@ctz(hit) as u32); break }
-            i = i +% 16
+    while (i + 15) in src and i +% 16 <= n {
+        var hit u32 = @movemask(@load(u8x16, src, i) == term) & (65535 as u32)
+        if hit != 0 {
+            i = i +% (@ctz(hit) as u32)
+            break
         }
+        i = i +% 16
     }
     while i in src and i < n and src[i] != term { i = i +% 1 }   // scalar tail (proven)
     return i
@@ -41,7 +50,7 @@ proc scan_to(src u8[4096], n u32, start u32, term u8) u32 {
 // CORRECTED lexer (per the measurement): a tight SCALAR core for the short, dense
 // tokens, and SIMD invoked ONLY on long runs (here: string bodies). Matches the
 // scalar core on dense code (no per-token SIMD tax) and beats it on long strings.
-proc count_tokens_smart(src u8[4096], n u32) u32 {
+proc count_tokens_smart(src u8[4096], n u32 < 4097) u32 {
     var count u32 = 0
     var i     u32 = 0
     while i < n {
@@ -128,7 +137,7 @@ proc count_tokens(src u8[4096], n u32) u32 {
 // token in `kinds`, the token's start offset in `starts`, and NO length stored — a
 // token's length is the gap to the next start, or a cheap re-lex. Comments are
 // trivia (skipped, no token). Returns the token count; output caps at 1024 tokens.
-proc tokenize(src u8[4096], n u32, var kinds u8[1024], var starts u32[1024]) u32 {
+proc tokenize(src u8[4096], n u32 < 4097, var kinds u8[1024], var starts u32[1024]) u32 {
     var count u32 = 0
     var i     u32 = 0
     while i < n {
