@@ -647,6 +647,12 @@ static bool expr_struct_equal(Expr *a, Expr *b) {
                            a->as.member_expr.member->length) == 0;
         case EXPR_LITERAL:
             return a->as.literal_expr.value == b->as.literal_expr.value;
+        case EXPR_BINARY:
+            // Structural equality of compound expressions (e.g. `i + 15`), so an
+            // in-guard `(i + 15) in arr` matches the access `arr[i + 15]`.
+            return a->as.binary_expr.op == b->as.binary_expr.op &&
+                   expr_struct_equal(a->as.binary_expr.left,  b->as.binary_expr.left) &&
+                   expr_struct_equal(a->as.binary_expr.right, b->as.binary_expr.right);
         default:
             return false;
     }

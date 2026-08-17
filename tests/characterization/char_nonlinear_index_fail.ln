@@ -1,9 +1,10 @@
 // EXPECT: [E085]
-// Lock: a non-linear index expression cannot be proven in bounds (Fourier-Motzkin
-// is linear). Inputs are bounded so the arithmetic itself is provably overflow-free
-// — the remaining failure is the non-linear bounds proof, not overflow.
+// Lock: a non-linear index expression cannot be proven in bounds STATICALLY
+// (Fourier-Motzkin is linear), and the arithmetic is provably overflow-free from
+// the input refinements — so the remaining failure is the non-linear bounds proof.
+// (A matching `in` runtime guard WOULD prove it soundly — see char_guarded_compound_index_pass;
+// the point here is the static path, with no guard.)
 func at(m i32[], cols i32 >= 0 and < 1000, r i32 >= 0 and < 1000, c i32 >= 0 and < 1000) i32 {
-    if r * cols + c in m { return m[r * cols + c] }
-    return 0
+    return m[r * cols + c]
 }
 proc main() i32 { return 0 }

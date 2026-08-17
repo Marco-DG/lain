@@ -1,0 +1,10 @@
+// Lock: an `in` runtime guard proves a COMPOUND index — `(i + 15) in m` guards
+// `m[i + 15]`. The `in` check is a runtime bounds test, sound regardless of the
+// index's shape or linearity; structural matching (expr_struct_equal over binary
+// exprs) connects the guard to the access. This is what lets P2b prove a wide SIMD
+// scan load via a last-byte guard `(i + width-1) in buf`.
+func tail(m i32[], i i32 >= 0 and < 1000) i32 {   // bounded so i+15 is overflow-free
+    if (i + 15) in m { return m[i + 15] }
+    return 0
+}
+proc main() i32 { return 0 }
