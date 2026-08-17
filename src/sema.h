@@ -1126,6 +1126,47 @@ static void sema_invalidate_guards_for_body(struct StmtList *body) {
     }
 }
 
+// SOUNDNESS (constraint counterpart of the in-guard unlink above): a relational
+// constraint `v1 - v2 <= k` — e.g. `i < n` recorded from a `while i < n` guard —
+// goes STALE the instant `v1` or `v2` is reassigned. The bounds prover chains
+// such a constraint with the endpoint's range to prove a fixed-array index, so a
+// stale `i < n` after `i = i +% 1000` would wrongly prove an out-of-range `a[i]`.
+// Unlink every constraint mentioning the mutated variable (matched by name, as
+// the constraint table stores non-interned Ids). Same-scope mutation site.
+static void sema_invalidate_constraints(Id *var) {
+    if (!sema_ranges || !var) return;
+    ConstraintEntry **pp = &sema_ranges->constraints;
+    while (*pp) {
+        ConstraintEntry *c = *pp;
+        bool hits =
+            (c->v1 && c->v1->length == var->length &&
+             strncmp(c->v1->name, var->name, (size_t)var->length) == 0) ||
+            (c->v2 && c->v2->length == var->length &&
+             strncmp(c->v2->name, var->name, (size_t)var->length) == 0);
+        if (hits) *pp = c->next;   // unlink the stale constraint
+        else      pp = &c->next;
+    }
+}
+// Invalidate constraints a nested `body` may have staled by assigning either
+// endpoint (mirrors sema_invalidate_guards_for_body; a branch's scope-restore
+// would otherwise re-expose a constraint the branch invalidated).
+static void sema_invalidate_constraints_for_body(struct StmtList *body) {
+    if (!sema_ranges) return;
+    Expr probe; memset(&probe, 0, sizeof probe); probe.kind = EXPR_IDENTIFIER;
+    ConstraintEntry **pp = &sema_ranges->constraints;
+    while (*pp) {
+        ConstraintEntry *c = *pp;
+        probe.as.identifier_expr.id = c->v1;
+        bool staled = c->v1 && stmtlist_assigns_referenced(body, &probe);
+        if (!staled && c->v2) {
+            probe.as.identifier_expr.id = c->v2;
+            staled = stmtlist_assigns_referenced(body, &probe);
+        }
+        if (staled) *pp = c->next;
+        else        pp = &c->next;
+    }
+}
+
 // Push persistent InGuardEntries for each "field Type in container" annotation
 // in a struct definition. Call this when a variable or parameter of a struct
 // type enters scope. `var_name_id` is the variable/parameter name Id.
@@ -1544,6 +1585,8 @@ static void walk_stmt(Stmt *s) {
             // whose variable a branch assigns (`while i in a { if c { i = huge } a[i] }`).
             sema_invalidate_guards_for_body(s->as.if_stmt.then_body);
             sema_invalidate_guards_for_body(s->as.if_stmt.else_branch);
+            sema_invalidate_constraints_for_body(s->as.if_stmt.then_body);
+            sema_invalidate_constraints_for_body(s->as.if_stmt.else_branch);
             break;
         }
         case STMT_FOR: {
@@ -1640,6 +1683,7 @@ static void walk_stmt(Stmt *s) {
             // SOUNDNESS: the loop body may have mutated an OUTER-guarded variable —
             // invalidate any guard whose variable the body assigns.
             sema_invalidate_guards_for_body(s->as.for_stmt.body);
+            sema_invalidate_constraints_for_body(s->as.for_stmt.body);
 
             // Widen modified variables AFTER body
             if (sema_ranges) sema_widen_loop(s->as.for_stmt.body, sema_ranges);
@@ -1887,6 +1931,7 @@ static void walk_stmt(Stmt *s) {
             // SOUNDNESS: the loop body may have mutated an OUTER-guarded variable —
             // invalidate any guard whose variable the body assigns.
             sema_invalidate_guards_for_body(s->as.while_stmt.body);
+            sema_invalidate_constraints_for_body(s->as.while_stmt.body);
             break;
         case STMT_ASSIGN:
             sema_infer_expr(s->as.assign_stmt.expr);
@@ -1894,9 +1939,13 @@ static void walk_stmt(Stmt *s) {
 
             // SOUNDNESS: reassigning an identifier invalidates any in-guard that
             // references it (index or container), so a stale `i in a` cannot keep
-            // proving `a[i]` after `i` has changed.
-            if (s->as.assign_stmt.target->kind == EXPR_IDENTIFIER)
+            // proving `a[i]` after `i` has changed. The same applies to a relational
+            // constraint (`i < n`): a stale one would let the bounds prover chain it
+            // to prove an out-of-range `a[i]` after `i` is mutated.
+            if (s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
                 sema_invalidate_in_guards(s->as.assign_stmt.target->as.identifier_expr.id);
+                sema_invalidate_constraints(s->as.assign_stmt.target->as.identifier_expr.id);
+            }
 
             // E121: struct field invariant violation check.
             // If LHS is `obj.field` and `field` has `in_field = container`,

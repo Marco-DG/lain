@@ -1,0 +1,16 @@
+// EXPECT: [E085]
+// SOUNDNESS lock (control-flow-aware): a chained loop constraint `i < n` must be
+// invalidated when `i` is mutated in a NESTED scope, not just the same one. The
+// inner `if` moves `i` out of range; a branch's scope-restore must not re-expose
+// the stale `i < n`, so `src[i]` in the while-body must be rejected.
+proc t(src u8[4096], n u32 < 4097) u8 {
+    var i u32 = 0
+    var r u8 = 0
+    while i < n {
+        if r == 0 { i = i +% 2000 }
+        r = src[i]
+        i = i +% 1
+    }
+    return r
+}
+proc main() i32 { return 0 }
