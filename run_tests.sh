@@ -39,9 +39,12 @@ GCC_BIN="${CC:-gcc}"
 GCC_ERR=""
 # Emitted C that gcc must reject-list — a TRACKED interop finding whose emitted C
 # doesn't compile (Lain still accepts it, exit 0). To fix during reconciliation:
-#   mem_smoke_pass  — `std/mem` `libc_malloc` binding conflicts with system `malloc`
-#                     (uint8_t*(uintptr_t) vs void*(size_t)). (§17/§20.)
-# (comptime_if's sentinel `*u8[:0]`→fat-slice interop bug is now FIXED — un-skipped.)
+#   mem_smoke_pass  — `std/mem` binds malloc/free as returning/taking `*u8`, but C's
+#                     are `void*`; with `-Dlibc_malloc=malloc` (+ <stdlib.h>) that
+#                     clashes. `usize`→`size_t` fixed the ARG; the correct fix for the
+#                     return is a `*void` binding + cast, BLOCKED by a linear-cast gap
+#                     (`libc_free(mov ptr as *void)` → [E003]: a `mov X as T` doesn't
+#                     register consuming X). Deeper fix. (§17/§20 + linearity.)
 GCC_CHECK_SKIP=(
   mem_smoke_pass
 )

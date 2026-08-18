@@ -117,3 +117,13 @@ the assertion, now findable by feature. Pre-reorg snapshot: tag `v0-pre-coherenc
   emitter's `*u8`→`const char*` hack only matched TYPE_SIMPLE elements, so a sentinel
   *slice* fell through. `comptime_if_pass` now gcc-compiles and is un-skipped.
 - **Remaining §17/§20**: `mem_smoke_pass` (`std/mem` malloc binding vs system malloc).
+
+## Reconciliation log — §2.2 integer types (sprint 3)
+
+- **FIXED**: `usize` → `size_t`, `isize` → `ptrdiff_t` (were `uintptr_t`/`intptr_t`).
+  Same width, but the C-idiomatic size/index types the spec §2.2.1 mandates — and
+  `size_t` matches libc signatures (fixed the `malloc` *arg* half of `mem_smoke`).
+- **`mem_smoke` refined** (still skipped): the remaining half is `*u8` vs C's `void*`
+  for malloc's return / free's arg. The C-correct fix is a `*void` binding + cast, but
+  it's blocked by a linear-cast gap — `libc_free(mov ptr as *void)` gives `[E003]`
+  (`mov X as T` parses `mov (X as T)`, so X isn't consumed). Separate deeper unit.

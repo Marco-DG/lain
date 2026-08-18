@@ -381,9 +381,12 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
       snprintf(base_name, sizeof(base_name),
                "%sint%d_t", parsed_sign == 'u' ? "u" : "", container);
     } else if (base->length == 5 && strncmp(base->name, "isize", 5) == 0) {
-      snprintf(base_name, sizeof(base_name), "intptr_t");
+      // Spec §2.2.1: isize ↔ ptrdiff_t, usize ↔ size_t (the idiomatic size/index
+      // types). Same width as {u,}intptr_t but the correct C types — and size_t
+      // matches libc size/malloc signatures, avoiding spurious interop conflicts.
+      snprintf(base_name, sizeof(base_name), "ptrdiff_t");
     } else if (base->length == 5 && strncmp(base->name, "usize", 5) == 0) {
-      snprintf(base_name, sizeof(base_name), "uintptr_t");
+      snprintf(base_name, sizeof(base_name), "size_t");
     } else if (base->length == 3 && strncmp(base->name, "int", 3) == 0) {
       // `int` is an alias of i32, documented for ergonomic use.
       snprintf(base_name, sizeof(base_name), "int32_t");
