@@ -150,3 +150,19 @@ the assertion, now findable by feature. Pre-reorg snapshot: tag `v0-pre-coherenc
   work — `mov binding` → `[E012]` ("no value type"), plain → `[E007]` (branch
   consistency). Non-linear payloads read fine. Needs linear-ADT destructuring; the
   regression test flips to `_pass` when it lands. (§15 + linearity.)
+
+## Reconciliation log — loose ends (sprint 6)
+
+- **§11 E006 gap filled**: `ownership/move_in_loop_fail` (consuming a linear var
+  declared outside a loop from inside it → [E006]).
+- **E087 re-homed**: the two dependent-length-mismatch tests moved `ownership/` →
+  `vra/bounds/` (`dependent_len_{cross_param,literal_bound}_fail`) — they're a length
+  check, not an ownership rule.
+- **Last uncoded error coded**: "direct ADT field access outside unsafe" → **[E125]**
+  (was a bare `sema error:`). Every rejection in the suite now carries an `[Exxx]`.
+- **`docs/` retired**: the stale markdown doc set (gitignored, last real edit
+  2026-05-07, and the source of the E007-vs-E016 disagreement) removed. `spec/` is
+  the single contract.
+- **New finding (annex drift)**: `spec/annexes/B-diagnostics.tex` documents codes only
+  up to ~E100 — E101–E125 (fnptr E122–E123, dep-length E087, ADT-access E125, …) are
+  emitted by the compiler but undocumented. Needs a dedicated annex-completion pass.

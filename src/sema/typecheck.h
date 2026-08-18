@@ -1044,7 +1044,7 @@ void sema_infer_expr(Expr *e) {
         Variant *v = lookup_adt_variant(adt_decl, e->as.member_expr.member);
         if (v) {
             if (!sema_in_unsafe_block) {
-                fprintf(stderr, "sema error Ln %li, Col %li: Direct ADT field access ('%.*s.%.*s') is only allowed inside an 'unsafe' block.\n",
+                fprintf(stderr, "[E125] Error Ln %li, Col %li: direct ADT field access ('%.*s.%.*s') is only allowed inside an 'unsafe' block — destructure with `case` instead.\n",
                         e->line, e->col,
                         (int)t->base_type->length, t->base_type->name,
                         (int)e->as.member_expr.member->length, e->as.member_expr.member->name);

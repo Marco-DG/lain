@@ -1,0 +1,13 @@
+// EXPECT: [E006]
+// spec §11: consuming a linear variable declared OUTSIDE a loop from INSIDE the loop
+// body is rejected — the loop may run more than once, which would double-consume.
+import std.mem.{mem_alloc, mem_free}
+proc t() {
+    var r = mem_alloc(8)
+    var i = 0
+    while i < 3 {
+        mem_free(mov r)
+        i = i +% 1
+    }
+}
+proc main() i32 { return 0 }
