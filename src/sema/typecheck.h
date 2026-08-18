@@ -1286,7 +1286,7 @@ void sema_infer_expr(Expr *e) {
             
             // Termination Analysis: Ban recursion in func
             if (callee->decl == current_function_decl) {
-                fprintf(stderr, "sema error: recursion is not allowed in pure function '%.*s' (to guarantee termination)\n",
+                fprintf(stderr, "[E011] Error: recursion is not allowed in pure function '%.*s' (a `func` must be total; recursion cannot guarantee termination).\n",
                         (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
                 exit(1);
             }
@@ -1377,12 +1377,12 @@ void sema_infer_expr(Expr *e) {
                     if (arr_len > 0 && idx_range.known) {
                         // Verify: idx >= 0 and idx < arr_len
                         if (idx_range.min < 0 || idx_range.max >= arr_len) {
-                            fprintf(stderr, "Error: Index out of bounds. Index range [%ld, %ld] not in [0, %ld).\n",
+                            fprintf(stderr, "[E085] bounds error: index range [%ld, %ld] is not within [0, %ld).\n",
                                     (long)idx_range.min, (long)idx_range.max, (long)arr_len);
                             exit(1);
                         }
                     } else if (idx_range.known && idx_range.min < 0) {
-                        fprintf(stderr, "Error: Index may be negative. Index range [%ld, %ld].\n",
+                        fprintf(stderr, "[E085] bounds error: index may be negative: range [%ld, %ld].\n",
                                 (long)idx_range.min, (long)idx_range.max);
                         exit(1);
                     }
@@ -2369,7 +2369,7 @@ void sema_infer_expr(Expr *e) {
         if (!sema_in_unsafe_block && ix && ix->kind == EXPR_LITERAL) {
             long long li = (long long)ix->as.literal_expr.value;
             if (li < 0 || li >= t->array_len) {
-                fprintf(stderr, "[VRA] Error Ln %li, Col %li: vector lane %lld is out of "
+                fprintf(stderr, "[E085] bounds error Ln %li, Col %li: vector lane %lld is out of "
                         "range for Vec(%ld, ...).\n",
                         (long)e->line, (long)e->col, li, (long)t->array_len);
                 diagnostic_show_line(e->line, e->col);

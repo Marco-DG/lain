@@ -1,3 +1,4 @@
+// EXPECT: [E011]
 // Test: Recursion in pure functions should be banned
 
 func factorial(n i32) i32 {

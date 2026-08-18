@@ -1,3 +1,4 @@
+// EXPECT: [E085]
 // Test: in keyword violation - should FAIL to compile
 // Passing an out-of-bounds index to a function with 'in' constraint
 

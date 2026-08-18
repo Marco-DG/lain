@@ -1,3 +1,4 @@
+// EXPECT: [E014]
 // Test for case exhaustiveness: should FAIL compilation
 // Case without else clause on integer (not exhaustive)
 

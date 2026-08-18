@@ -243,7 +243,7 @@ static bool sema_check_match_exhaustive(Stmt *match_stmt) {
 // Report non-exhaustive match error
 static void sema_report_nonexhaustive_match(Stmt *match_stmt) {
     (void)match_stmt;
-    fprintf(stderr, "sema error: non-exhaustive match - add an 'else:' case or cover all variants\n");
+    fprintf(stderr, "[E014] Error: non-exhaustive match - add an 'else:' case or cover all variants\n");
 }
 
 /*───────────────────────────────────────────────────────────────────╗

@@ -96,3 +96,15 @@ the assertion, now findable by feature. Pre-reorg snapshot: tag `v0-pre-coherenc
 - **Snapshot infra fixed**: the reorg moved `emit/` → `codegen/` but `run_tests.sh`
   hardcoded `tests/emit/*`, silently disabling 7 snapshot assertions. Handler now keys
   off the `.grep` sidecar (dir-independent); stale `tests_emit_` mangled prefixes updated.
+
+## Reconciliation log — §11 ownership + diagnostics (sprint 1)
+
+- **§11 conformance check**: spec E001–E008, E016 all have tests except **E006**
+  (move-in-loop) — gap to fill (compiler DOES emit it, linearity.h:490). `E010`
+  (dangling) lives in §19-memory, not §11 — spec is fine, just split. `E087`
+  (dependent-length mismatch) is mis-homed in `ownership/` → belongs in `vra/`/`types/`.
+- **Diagnostic-taxonomy consistency (fixed 5/6)**: uncoded rejections given codes —
+  constant-index & vector-lane bounds → `[E085]` (were bare `Error:` / `[VRA]`);
+  `non-exhaustive match` → `[E014]` (one site emitted it, one didn't); recursion-in-`func`
+  → `[E011]` (func-totality family). EXPECT tags added. **Remaining**: `types/unsafe_adt_fail`
+  — "direct ADT field access requires unsafe" still bare; needs a fresh code + annex entry.
