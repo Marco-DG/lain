@@ -368,7 +368,7 @@ in pointer types (\lain{*void}) for C interoperability (see
 \index{array type}
 
 \pnum
-An array type \lain{[T; N]} denotes a contiguous sequence of $N$ values of
+An array type \lain{T[N]} denotes a contiguous sequence of $N$ values of
 type~\lain{T}.  $N$ shall be a compile-time constant integer greater than
 zero (grammar: \gramref{array-type}).
 
@@ -389,15 +389,15 @@ padding}.
 \begin{constraint}
   Every array index expression shall satisfy
   $0 \leq \textit{idx} < \textit{arr.len}$.
-  An access for which value range analysis cannot prove this is a
-  constraint violation~(\diagcode{E014}).
+  An access for which value range analysis cannot prove this is an
+  out-of-bounds violation~(\diagcode{E085}).
 \end{constraint}
 
 \begin{example}
 \begin{laincode}
 var arr int[5] = [1, 2, 3, 4, 5]
 var x = arr[2]         // OK: 2 is statically in [0, 4]
-// var y = arr[5]      // [E014]: 5 >= arr.len
+// var y = arr[5]      // [E085]: 5 >= arr.len
 \end{laincode}
 \end{example}
 
@@ -406,10 +406,20 @@ var x = arr[2]         // OK: 2 is statically in [0, 4]
 \index{slice type}
 
 \pnum
-A slice type \lain{*T[]} is a reference to a contiguous sequence of values
+A slice type \lain{T[]} is a reference to a contiguous sequence of values
 of type~\lain{T} whose length is determined at runtime.  Its runtime
-representation is a pair \texttt{(ptr: *T, len: usize)}.  The \lain{*}
-prefix is mandatory: all view/reference types use \lain{*} consistently.
+representation is a \textit{fat} pair \texttt{(len: usize, data: *T)} --- a
+length followed by a data pointer, in that order.  Because a slice carries
+its own length it is \emph{not} a raw pointer, and so --- unlike the thin
+pointer forms below --- it takes \emph{no} \lain{*} prefix.
+
+\begin{note}
+  The spelling \lain{*T[]} is accepted as a synonym for \lain{T[]}: the two
+  denote the same fat-slice type and emit identical C.  The \lain{*}-prefixed
+  forms that carry no runtime length (\lain{*T[N]}, \lain{*T[:S]}, \lain{*T})
+  are \textit{thin} views; the bare bracket forms (\lain{T[]}, \lain{T[n]})
+  are fat.  \lain{T[]} is the canonical slice spelling.
+\end{note}
 
 \pnum
 The full family of reference-to-array types:
@@ -419,10 +429,10 @@ The full family of reference-to-array types:
 \toprule
 \textbf{Syntax} & \textbf{Semantics} & \textbf{Runtime cost} \\
 \midrule
-\lain{T[N]}      & inline array (N elements owned) & N $\times$ sizeof(T) \\
-\lain{*T[]}      & view, runtime length             & ptr + usize \\
-\lain{*T[N]}     & view, compile-time length        & ptr only \\
-\lain{*T[:S]}    & view, sentinel-terminated         & ptr only \\
+\lain{T[N]}      & inline array (N elements owned)   & N $\times$ sizeof(T) \\
+\lain{T[]}       & fat slice, runtime length         & usize + ptr \\
+\lain{*T[N]}     & thin view, compile-time length    & ptr only \\
+\lain{*T[:S]}    & thin view, sentinel-terminated    & ptr only \\
 \lain{*T}        & raw pointer (no length)           & ptr only \\
 \bottomrule
 \end{tabular}
@@ -438,7 +448,7 @@ A slice has two properties accessible via dot notation:
 \pnum
 A string literal of $N$ characters has static type \lain{Fixed\_u8\_{N+1}}
 (a null-terminated fixed-size array of $N{+}1$ bytes) and is implicitly
-coercible to \lain{*u8[]}.
+coercible to \lain{u8[]}.
 
 \subsection{Sized slice types}
 \label{sec:types.sized-slice}
@@ -455,10 +465,10 @@ declaration, not of the nominal type itself.  The syntax is:
 \toprule
 \textbf{Syntax} & \textbf{Meaning} \\
 \midrule
-\lain{*T[]}         & unsized dynamic slice (no length constraint) \\
-\lain{*T[n]}        & length exactly \lain{n}; \textit{n} is a size expression \\
-\lain{*T[>= n]}     & length $\geq$ \lain{n}; \textit{n} is a size expression \\
-\lain{*T[> n]}      & length $>$ \lain{n}; \textit{n} is a size expression \\
+\lain{T[]}          & unsized dynamic slice (no length constraint) \\
+\lain{T[n]}         & length exactly \lain{n}; \textit{n} is a size expression \\
+\lain{T[>= n]}      & length $\geq$ \lain{n}; \textit{n} is a size expression \\
+\lain{T[> n]}       & length $>$ \lain{n}; \textit{n} is a size expression \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -565,7 +575,7 @@ type Handle {
 
 type Session {
     mov h Handle            // OK: Handle is linear, mov required
-    name [u8]               // unrestricted field, no mov needed
+    name u8[]               // unrestricted field, no mov needed
 }
 
 // Ill-formed: missing mov on a linear field
@@ -697,8 +707,8 @@ The ownership modes for pointer types are:
 
 \begin{constraint}
   Dereferencing a pointer or taking the address of a variable shall occur
-  only inside an \lain{unsafe} block.  Pointer operations in safe code are
-  \illformed{}~(\diagcode{E012}).
+  only inside an \lain{unsafe} block.  Pointer dereference in safe code is
+  \illformed{}~(\diagcode{E060}).
 \end{constraint}
 
 \section{Constrained types}

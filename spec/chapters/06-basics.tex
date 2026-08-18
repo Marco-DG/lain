@@ -20,13 +20,21 @@ variables) or provides a body (for functions and procedures).  In Lain,
 every declaration at the local level is also a definition.
 
 \begin{constraint}
-  Use of an undeclared identifier is \illformed{}~(\diagcode{E013}).
+  Redeclaring a name already visible in the current or an enclosing scope
+  --- a duplicate parameter name, or a local that repeats or shadows an
+  outer binding --- is \illformed{}~(\diagcode{E013}).  Lain forbids
+  shadowing (\S\,\ref{sec:basics.scopes}).
+\end{constraint}
+
+\begin{constraint}
+  Use of an undeclared identifier is \illformed{}.
 \end{constraint}
 
 \begin{example}
 \begin{laincode}
-func f() int {
-    return x   // [E013]: x is not declared
+proc f() {
+    var x = 1
+    var x = 2   // [E013]: redeclaration of 'x' is forbidden
 }
 \end{laincode}
 \end{example}
@@ -54,14 +62,17 @@ can be used.  Lain has the following scope levels:
 \end{description}
 
 \pnum
-Scopes are \textit{lexically nested}.  A name in an inner scope may
-\textit{shadow} a name in an outer scope: within the inner scope, the inner
-name takes precedence.
+Scopes are \textit{lexically nested}.  Lain \emph{forbids shadowing}
+entirely: a declaration whose name is already visible in the current scope
+or in any enclosing scope --- a function parameter shadowed by a local, or a
+name redeclared in a nested block --- is \illformed{}~(\diagcode{E013}).
 
-\begin{note}
-  Shadowing is permitted but the reference implementation may issue a
-  warning.  Programs shall not rely on shadowing being silent.
-\end{note}
+\begin{rationale}
+  Disallowing shadowing removes a class of bugs in which an inner binding
+  silently captures a name the reader expects to denote an outer one.  Every
+  identifier in a function body therefore resolves to exactly one
+  declaration.
+\end{rationale}
 
 \pnum
 A conforming implementation shall support at least 64 levels of nested
@@ -82,12 +93,15 @@ The lookup algorithm is:
   \item If not found, search the module scope.
   \item If not found, search imported module scopes (in import order).
   \item If not found, attempt UFCS resolution (\S\,\ref{sec:12-functions}).
-  \item If still not found, the program is \illformed{}~(\diagcode{E013}).
+  \item If still not found, the identifier is undeclared and the program is
+        \illformed{}.
 \end{enumerate}
 
 \pnum
-When the same name is visible in multiple scopes, the innermost binding
-takes precedence (shadowing).
+Because shadowing is forbidden (\S\,\ref{sec:basics.scopes}), a name resolves
+to at most one declaration along the scope chain: a lookup that would find a
+second binding of the same name is rejected at the point of the redeclaration
+(\diagcode{E013}), not silently resolved by an innermost-wins rule.
 
 \section{Storage duration}
 \label{sec:basics.storage}

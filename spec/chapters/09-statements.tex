@@ -33,9 +33,8 @@ p Point = Point(1, 2)
 \end{laincode}
 
 \begin{constraint}
-  An immutable declaration requires an initializer expression.
-  The initializer shall not be \lain{undefined} (immutable bindings must
-  have a definite value).
+  An immutable declaration requires an initializer expression: an immutable
+  binding must have a definite value at its point of declaration.
 \end{constraint}
 
 \begin{constraint}
@@ -63,7 +62,8 @@ initializer.
 var counter i32 = 0
 counter = counter + 1       // OK: var is mutable
 
-var buf u8[256]              // OK: type present, defaults to undefined
+var buf u8[256]              // OK: type present; unassigned until written
+                            // (reading before a write is [E005])
 \end{laincode}
 
 \begin{constraint}
@@ -192,9 +192,13 @@ to the while semantics above, the implementation shall statically verify:
 \begin{enumerate}
   \item \textbf{Non-negativity} (\diagcode{E080}): the implementation shall
         prove that $M \geq 0$ whenever \textit{cond} is true.
-  \item \textbf{Variable dependency} (\diagcode{E081}): $M$ shall
-        reference at least one variable that is assigned in \textit{body}.
-        An $M$ that references no such variable would never decrease.
+  \item \textbf{Analyzable measure} (\diagcode{E081}): $M$ shall be in a form
+        from which the termination checker can extract the variables it
+        depends on.  A measure the checker cannot analyze at all is rejected
+        with \diagcode{E081}.  (A well-formed measure that merely fails to
+        stay non-negative or to decrease --- including a constant, or one
+        over variables the body never assigns --- is reported by
+        \diagcode{E080}.)
   \item \textbf{Strict decrease} (\diagcode{E082}): the implementation
         shall prove that every execution of \textit{body} strictly
         decreases the value of $M$.
@@ -258,12 +262,19 @@ caller.
   is \illformed{}~(\diagcode{E003}).
 \end{constraint}
 
+\pnum
+A \lain{return} expression may be prefixed with \lain{mov} or \lain{var}:
+\lain{return mov x} transfers ownership of \lain{x} explicitly, and
+\lain{return var x} returns a mutable borrow of \lain{x} (the pattern used by
+a \lain{func} whose return type is \lain{var T}).  Ownership transfer is also
+implicit from the function's declared return type, so a bare \lain{return x}
+suffices when that type is owned.
+
 \begin{constraint}
-  \textbf{Q-009.}
-  A return statement shall not be prefixed with \lain{mov} or \lain{var}.
-  The forms \lain{return mov x} and \lain{return var x} are
-  syntactically \illformed{}~(\diagcode{E100}).  Ownership transfer in
-  return position is implicit from the function's declared return type.
+  A \lain{return var x} (or \lain{return mov x}) that would escape a borrow of
+  a \emph{local} variable --- one whose storage does not outlive the call ---
+  is a dangling reference and is \illformed{}~(\diagcode{E010}).  Returning a
+  \lain{var} borrow tied to a \lain{var} parameter is permitted.
 \end{constraint}
 
 \section{Defer statement}

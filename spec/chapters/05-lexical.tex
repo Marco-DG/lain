@@ -143,12 +143,10 @@ used as user-defined identifiers.  The grammar production is
 \tok{in}          & Range iteration / bounds guard & \S\,\ref{sec:08-expressions} \\
 \tok{mov}         & Ownership transfer             & \S\,\ref{sec:11-ownership} \\
 \tok{or}          & Logical OR operator            & \S\,\ref{sec:08-expressions} \\
-\tok{panic}       & Abort builtin (function-call form) & \S\,\ref{sec:12-functions} \\
 \tok{proc}        & Procedure declaration          & \S\,\ref{sec:12-functions} \\
 \tok{return}      & Return statement               & \S\,\ref{sec:09-statements} \\
 \tok{true}        & Boolean literal                & \S\,\ref{sec:lex.literals} \\
 \tok{type}        & Type / struct / enum declaration & \S\,\ref{sec:10-declarations} \\
-\tok{undefined}   & Uninitialised-binding marker   & \S\,\ref{sec:09-statements} \\
 \tok{unsafe}      & Unsafe block                   & \S\,\ref{sec:18-unsafe} \\
 \tok{use}         & Local-scope import / alias     & \S\,\ref{sec:16-modules} \\
 \tok{var}         & Mutable binding / mutable borrow & \S\,\ref{sec:10-declarations} \\
@@ -230,14 +228,15 @@ is \lain{int}.
 
 \begin{constraint}
   An integer literal whose value does not fit in the type determined by
-  context is \illformed{}~(\diagcode{E100}).
+  context is \illformed{}~(\diagcode{E086}) --- it is diagnosed by the same
+  range mechanism that rejects arithmetic overflow (\S\,\ref{sec:vra.boundary}).
 \end{constraint}
 
 \begin{example}
 \begin{laincode}
 var a = 255         // int, value 255
 var b u8 = 255      // u8, value 255 -- OK
-var c u8 = 256      // [E100]: 256 does not fit in u8
+var c u8 = 256      // [E086]: 256 does not fit in u8
 var d = 0xFF        // int, value 255
 var e = 0b1111_0000 // int, value 240
 var f = 1_000_000   // int, value 1000000
@@ -308,7 +307,7 @@ double quotes.  Escape sequences (\S\,\ref{sec:lex.escape}) are permitted
 \pnum
 The type of a string literal of $N$ visible characters is
 \lain{Fixed_u8_}\textit{N}\texttt{+1} (an array of $N{+}1$ bytes,
-null-terminated).  This type is implicitly coercible to \lain{[u8]} (a
+null-terminated).  This type is implicitly coercible to \lain{u8[]} (a
 byte slice).
 
 \pnum
@@ -425,8 +424,7 @@ Annex~A.
 \endlastfoot
 \tok{and} & Logical AND (short-circuit) \\
 \tok{or}  & Logical OR (short-circuit) \\
-\tok{not} & Logical NOT (prefix) \\
-\tok{!}   & Logical NOT (alternate prefix form) \\
+\tok{!}   & Logical NOT (prefix) \\
 \end{longtable}
 
 \subsection{Bitwise operators}
@@ -528,7 +526,7 @@ context:
 \endhead
 \bottomrule
 \endlastfoot
-\tok{*} & Multiplication (binary)            & (future: pointer dereference) \\
+\tok{*} & Multiplication (binary)            & Pointer dereference (unary prefix, only in \tok{unsafe}) \\
 \tok{-} & Subtraction (binary)               & Negation (unary prefix) \\
 \tok{.} & Member access                      & Module path separator \\
 \tok{\&}& Borrowed match prefix              & Bitwise AND \\

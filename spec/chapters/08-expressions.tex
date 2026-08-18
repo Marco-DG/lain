@@ -34,7 +34,7 @@ precedence.  All operators listed on the same row have equal precedence.
 \bottomrule
 \endlastfoot
 1 (high) & \lain{()} \lain{[]} \lain{.}              & left  & (context-dependent) \\
-2        & unary \lain{-} \lain{!} \lain{not} \lain{mov} \lain{ref} \lain{mut} & right & (operand type) \\
+2        & unary \lain{-} \lain{!} \lain{mov}        & right & (operand type) \\
 3        & \lain{as}                                  & left  & target type \\
 4        & \lain{*} \lain{/} \lain{\%}                & left  & wider operand type \\
 5        & \lain{+} \lain{-}                          & left  & wider operand type \\
@@ -65,8 +65,8 @@ expression, a constructor expression, or a \lain{comptime} expression.
 variable.
 
 \begin{constraint}
-  The identifier shall be declared in scope
-  (\diagcode{E013}).
+  The identifier shall be declared in scope; use of an undeclared identifier
+  is \illformed{} (\S\,\ref{sec:basics.resolution}).
 \end{constraint}
 
 \begin{constraint}
@@ -127,11 +127,11 @@ The comparison operators \lain{==}, \lain{!=}, \lain{<}, \lain{>},
 \pnum
 \lain{and} and \lain{or} are short-circuit operators: the right operand
 is not evaluated if the result is determined by the left operand alone.
-\lain{not} and \lain{!} are prefix unary negation.  All yield \lain{bool}.
+\lain{!} is prefix unary negation.  All yield \lain{bool}.
 
 \begin{constraint}
-  Operands of \lain{and}, \lain{or}, \lain{not}, and \lain{!} shall have
-  type \lain{bool}.
+  Operands of \lain{and}, \lain{or}, and \lain{!} shall have type
+  \lain{bool}.
 \end{constraint}
 
 \section{Bitwise operators}
@@ -151,8 +151,9 @@ the left operand type.
 \begin{constraint}
   The shift amount (right operand of \lain{<<} and \lain{>>}) shall
   satisfy $0 \leq \mathit{shift} < N$ where $N$ is the bit width of the
-  left operand.  A shift amount outside this range is
-  \illformed{}~(\diagcode{E100}).
+  left operand.  A shift amount that value range analysis cannot prove to be
+  in range is \illformed{}~(\diagcode{E086}) --- the boundary mechanism
+  (\S\,\ref{sec:vra.boundary}) that also rejects arithmetic overflow.
 \end{constraint}
 
 \section{The \texttt{in} operator}
@@ -248,15 +249,18 @@ pointer & integer & Reinterpretation (\lain{unsafe} required) \\
 The source is placed in the Consumed state; any subsequent use of the
 source variable is \illformed{}~(\diagcode{E001}).  See \S\,\ref{sec:11-ownership}.
 
-\section{Borrow expressions (\texttt{ref}, \texttt{mut})}
+\section{Borrows at call sites}
 \label{sec:expr.borrow}
 \index{borrow expression}
 
 \pnum
-\lain{ref expr} creates a shared (read-only) borrow of \textit{expr}.
-\lain{mut expr} creates a mutable borrow of \textit{expr}.
-Both expressions are evaluated in argument contexts to pass values without
-transferring ownership.  See \S\,\ref{sec:11-ownership}.
+Lain has \emph{no} prefix borrow operator (no \lain{\&}, no \lain{ref}, no
+\lain{mut} expression form).  A value is borrowed simply by passing it to a
+function or procedure; the borrow \emph{mode} is written at the call site,
+matching the parameter's declared mode: nothing for a shared (read-only)
+borrow, \lain{var} for a mutable borrow, and \lain{mov} to transfer ownership
+(\S\,\ref{sec:expr.mov}).  See the call-site mode table in
+\S\,\ref{sec:expr.call} and the ownership rules in \S\,\ref{sec:11-ownership}.
 
 \section{Field access}
 \label{sec:expr.field}
@@ -286,7 +290,7 @@ The expression \lain{arr[idx]} accesses the element of array or slice
 \begin{constraint}
   The value range analysis shall prove $0 \leq \mathit{idx} < \mathit{arr.len}$
   at every index expression.  An index expression for which this cannot be
-  proved is \illformed{}~(\diagcode{E014}).  An \lain{in} guard
+  proved is \illformed{}~(\diagcode{E085}).  An \lain{in} guard
   (\S\,\ref{sec:expr.in}) or an \lain{unsafe} block suppresses this
   requirement.
 \end{constraint}
@@ -354,9 +358,9 @@ Argument ownership modes shall be given explicitly at the call site:
 \endhead
 \bottomrule
 \endlastfoot
-\lain{f(x)}     & shared borrow (default; parameter mode must be \lain{shared}) \\
-\lain{f(var x)} & mutable borrow (parameter mode must be \lain{var}) \\
-\lain{f(mov x)} & ownership transfer (parameter mode must be owned/\lain{mov}) \\
+\lain{f(x)}     & shared borrow (default; parameter declared with no mode keyword) \\
+\lain{f(var x)} & mutable borrow (parameter declared \lain{var}) \\
+\lain{f(mov x)} & ownership transfer (parameter declared \lain{mov}) \\
 \end{longtable}
 
 \begin{constraint}
