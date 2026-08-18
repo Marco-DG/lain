@@ -140,3 +140,13 @@ the assertion, now findable by feature. Pre-reorg snapshot: tag `v0-pre-coherenc
 - **`GCC_CHECK_SKIP` is now EMPTY** — every `_pass` test's emitted C is gcc-verified.
 - Surfaced (not fixed): `var *T` mutable-pointer params emit `T**` (double pointer);
   used `mov *void` for realloc instead. Same deeper emit bug noted in the #1 lexer work.
+
+## Reconciliation log — §15 Option(*T) crash (sprint 5)
+
+- **RESOLVED**: the old P0 "Option(*T) + `mov` in `match` crashes the compiler"
+  (`type_move(NULL)`) is FIXED — it now rejects cleanly, no segfault. Locked by
+  `match/niche/linear_adt_payload_mov_fail` (a crash would fail that test).
+- **New limitation (open)**: consuming a LINEAR ADT payload out of a `case` doesn't
+  work — `mov binding` → `[E012]` ("no value type"), plain → `[E007]` (branch
+  consistency). Non-linear payloads read fine. Needs linear-ADT destructuring; the
+  regression test flips to `_pass` when it lands. (§15 + linearity.)

@@ -1,0 +1,27 @@
+// EXPECT: [E012]
+// Locks the FIX of a former P0 compiler CRASH (type_move(NULL), old char README):
+// matching a linear ADT — a variant with a `mov *u8` payload — and `mov`-consuming
+// the binding in a `case` used to SEGFAULT the compiler. It now rejects CLEANLY with
+// [E012] (the case-payload binding has no owned value type yet). A crash or abort
+// would make this test fail — so it guards the no-crash fix.
+//
+// The [E012] itself marks a still-open limitation: consuming a LINEAR ADT payload
+// out of a `case` isn't supported (mov → [E012], plain → [E007]). When linear-ADT
+// destructuring lands, this flips to a _pass. Tracked in TRACEABILITY (§15).
+import std.mem.{mem_free}
+type Box {
+    Full {
+        ptr mov *u8
+    }
+    Empty
+}
+proc noop() {
+    var x = 0
+}
+proc t(b mov Box) {
+    case b {
+        Full(ptr): mem_free(mov ptr)
+        Empty: noop()
+    }
+}
+proc main() i32 { return 0 }
