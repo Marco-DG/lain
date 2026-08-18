@@ -1,3 +1,4 @@
+// EXPECT: [E011]
 // EXPECT: [E
 // `while` in `func` without `decreasing` measure must fail.
 

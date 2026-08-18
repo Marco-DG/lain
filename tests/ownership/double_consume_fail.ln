@@ -1,3 +1,4 @@
+// EXPECT: [E003]
 // EXPECT: [E
 // Linear value consumed twice. The struct is linear because it has a
 // `mov` field; consuming it twice must be a compile-time error.

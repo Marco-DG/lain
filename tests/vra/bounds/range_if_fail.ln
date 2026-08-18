@@ -1,3 +1,4 @@
+// EXPECT: [E012]
 func require_lt(a i32, b i32 > a) i32 {
     return 0
 }

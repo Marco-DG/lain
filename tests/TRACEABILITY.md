@@ -79,3 +79,20 @@ Tracked Tests↔Spec↔Compiler mismatches, for the chapter-by-chapter pass:
 behavior. The reorg co-located each with its feature and dropped the opaque prefix; the value is
 the assertion, now findable by feature. Pre-reorg snapshot: tag `v0-pre-coherence`.
 
+
+## Reconciliation backlog — additions (hygiene pass)
+
+- **Diagnostic-code inconsistency**: 6 `_fail` tests fail with an **un-coded** error
+  (a bare `sema error:`, `Error: Index out of bounds`, or `[VRA]` tag) instead of a
+  `[EXXX]` code, so they can't carry a `// EXPECT: [E…]`. The error taxonomy should be
+  uniform — every rejection gets a code. Affected:
+  `examples/simd_vec_lane_oob_fail` (bounds/vector → should be E085-family),
+  `functions/{func_self_recursion_fail, termination_fail}` (purity/termination),
+  `types/{exhaustive_fail, unsafe_adt_fail}` (match exhaustiveness; ADT access),
+  `vra/bounds/in_keyword_fail` (bounds → E085). Fix in reconciliation (§14-errors),
+  then add the EXPECT tags.
+- **Naming**: `stdlib/math_test_pass` overlaps `math_pass` + `math_smoke_pass` (3 math
+  tests) — review/merge in the pruning pass.
+- **Snapshot infra fixed**: the reorg moved `emit/` → `codegen/` but `run_tests.sh`
+  hardcoded `tests/emit/*`, silently disabling 7 snapshot assertions. Handler now keys
+  off the `.grep` sidecar (dir-independent); stale `tests_emit_` mangled prefixes updated.

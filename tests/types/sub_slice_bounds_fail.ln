@@ -1,3 +1,4 @@
+// EXPECT: [E085]
 // EXPECT: [VRA]
 // Sprint 4 / Q-003.B: sub-slice with upper bound out of range is a
 // compile error.

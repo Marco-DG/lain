@@ -1,3 +1,4 @@
+// EXPECT: [E085]
 // EXPECT: [VRA]
 // Sprint 3 — I-015 audit: post-if-join scoping for VRA range tightening.
 // VERIFIED: the checker correctly drops branch-only constraints at the join

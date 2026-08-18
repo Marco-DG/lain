@@ -4,7 +4,7 @@
 // read: return emits (*n) not bare n
 return (*n);
 // forwarding: var x forwarded raw, no double address-of
-tests_emit_var_prim_abi_write_int(x, val);
+tests_codegen_var_prim_abi_write_int(x, val);
 // var T params still get nonnull and restrict
 int32_t * restrict out
 int32_t * restrict n

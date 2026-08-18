@@ -1,3 +1,4 @@
+// EXPECT: [E060]
 // tests/safety/unsafe_fail_deref.ln
 // Test that pointer dereferencing fails outside unsafe blocks
 

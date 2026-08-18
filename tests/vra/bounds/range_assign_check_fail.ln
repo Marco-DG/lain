@@ -1,3 +1,4 @@
+// EXPECT: [E012]
 func require_pos(x i32 > 0) i32 {
     return 0
 }

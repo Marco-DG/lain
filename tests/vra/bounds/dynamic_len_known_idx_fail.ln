@@ -1,3 +1,4 @@
+// EXPECT: [E085]
 // F-040 regression test: dynamic-length slice with known index must be rejected.
 // Prior to fix: silent pass (potential buffer overflow).
 // After fix: [VRA] bounds error.

@@ -44,11 +44,11 @@ GCC_ERR=""
 #   comptime_if_pass  — `printf(fmt *u8[:0], …)`: a sentinel POINTER `*u8[:0]`
 #                       emits as a fat `Slice_u8_0` instead of a thin `const char*`,
 #                       conflicting with C's printf. (C-string interop; §17.)
-#   test_mem_pass     — `std/mem` `libc_malloc` binding conflicts with system
+#   mem_smoke_pass     — `std/mem` `libc_malloc` binding conflicts with system
 #                       `malloc` (uint8_t*(uintptr_t) vs void*(size_t)). (§17/§20.)
 GCC_CHECK_SKIP=(
   comptime_if_pass
-  test_mem_pass
+  mem_smoke_pass
 )
 
 # Returns 0 if the emitted C compiles (or the check is disabled/skipped),
@@ -161,7 +161,8 @@ run_emit_snapshot() {
 # Run all .ln files in tests/ (relative paths)
 while IFS= read -r file; do
     # emit/ tests are snapshot checks, not pass/fail compilation tests
-    if [[ "$file" == tests/emit/* ]]; then
+    if [[ -f "${file%.ln}.grep" ]]; then
+        # any test with a .grep sidecar is an emit snapshot, wherever it lives
         run_emit_snapshot "$file"
     else
         run_test "$file"

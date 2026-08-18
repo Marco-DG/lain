@@ -1,3 +1,4 @@
+// EXPECT: [E016]
 // Test: elif chains — FAIL case
 // Consuming a linear variable in only some branches must fail
 

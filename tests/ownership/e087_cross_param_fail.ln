@@ -1,3 +1,4 @@
+// EXPECT: [E087]
 // E087: passing arrays of different concrete lengths to i32[ref.len] param — FAIL
 // b *i32[a.len] but at call site a has 3 elems, b has 2 elems.
 

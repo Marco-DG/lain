@@ -1,3 +1,4 @@
+// EXPECT: [E011]
 // EXPECT: sema error
 // A pure `func` cannot call a side-effecting `proc`.
 

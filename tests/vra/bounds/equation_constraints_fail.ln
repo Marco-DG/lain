@@ -1,3 +1,4 @@
+// EXPECT: [E012]
 // Test: equation-style constraints - should FAIL to compile
 // Calling div with 0 should violate b != 0 constraint
 

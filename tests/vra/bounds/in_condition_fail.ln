@@ -1,3 +1,4 @@
+// EXPECT: [E085]
 // EXPECT: [VRA]
 // Test: array access with unknown index and unknown length should fail bounds check
 
