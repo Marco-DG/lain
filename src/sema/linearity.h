@@ -1870,6 +1870,36 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
             }
         }
 
+        // Dangling slice via range: `return local[lo..hi]` slices a LOCAL fixed
+        // array, producing a fat pointer whose `.data` points into stack memory
+        // freed at return (ASan: stack-use-after-return). The bare `return local`
+        // form is caught above; the `local[a..b]` slice form was not. A slice of a
+        // PARAMETER array/slice is fine — the caller owns that storage.
+        if (val && val->kind == EXPR_INDEX &&
+            val->as.index_expr.index && val->as.index_expr.index->kind == EXPR_RANGE) {
+            Expr *root = val->as.index_expr.target;
+            while (root) {
+                if (root->kind == EXPR_MEMBER) root = root->as.member_expr.target;
+                else if (root->kind == EXPR_INDEX) root = root->as.index_expr.target;
+                else break;
+            }
+            if (root && root->kind == EXPR_IDENTIFIER && !root->is_global) {
+                bool is_param = root->decl && root->decl->kind == DECL_VARIABLE &&
+                                root->decl->as.variable_decl.is_parameter;
+                Type *bt = root->type;
+                bool base_local_array = bt && bt->kind == TYPE_ARRAY && bt->array_len >= 0;
+                if (!is_param && base_local_array) {
+                    fprintf(stderr, "[E010] Error Ln %li, Col %li: cannot return a slice of local array '%.*s' — "
+                            "it is deallocated at function return (dangling slice). Slice a parameter or owned "
+                            "buffer instead, or return the array by value.\n",
+                            (long)s->line, (long)s->col,
+                            (int)root->as.identifier_expr.id->length, root->as.identifier_expr.id->name);
+                    diagnostic_show_line(s->line, s->col);
+                    exit(1);
+                }
+            }
+        }
+
         ltable_ensure_all_consumed(tbl);
         break;
     }

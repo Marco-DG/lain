@@ -1937,6 +1937,29 @@ static void walk_stmt(Stmt *s) {
             sema_infer_expr(s->as.assign_stmt.expr);
             sema_infer_expr(s->as.assign_stmt.target);
 
+            // COHERENCE (§2.9): a raw pointer `*T` is the unsafe/interop tool — it
+            // is not borrow-checked, and mutating a struct field through it in SAFE
+            // code silently emitted `const T*` C that gcc rejects. Writing a field
+            // through a pointer outside `unsafe` is rejected here, pointing at the
+            // idiomatic in-place mutation: a `var` (mutable borrow) parameter. (Index
+            // writes `out[i]=…` through sized array/slice OUTPUT params stay valid —
+            // only field writes `p.f=…` through a `*T` pointer are caught.)
+            if (!sema_in_unsafe_block &&
+                s->as.assign_stmt.target->kind == EXPR_MEMBER) {
+                Expr *base = s->as.assign_stmt.target->as.member_expr.target;
+                if (base && base->type && base->type->kind == TYPE_POINTER) {
+                    Id *bid = base->kind == EXPR_IDENTIFIER ? base->as.identifier_expr.id : NULL;
+                    fprintf(stderr, "[E009] Error Ln %li, Col %li: cannot mutate a field through a raw pointer "
+                            "`*T`%s%.*s%s in safe code — `*T` is the unsafe/interop tool and is not borrow-checked. "
+                            "For in-place mutation take a `var` (mutable borrow) parameter, e.g. `proc f(var x T)`, "
+                            "or wrap the write in an `unsafe` block.\n",
+                            s->line, s->col,
+                            bid ? " (`" : "", bid ? (int)bid->length : 0, bid ? bid->name : "", bid ? "`)" : "");
+                    diagnostic_show_line(s->line, s->col);
+                    exit(1);
+                }
+            }
+
             // SOUNDNESS: reassigning an identifier invalidates any in-guard that
             // references it (index or container), so a stale `i in a` cannot keep
             // proving `a[i]` after `i` has changed. The same applies to a relational

@@ -1,0 +1,15 @@
+// EXPECT: [E010]
+// SOUNDNESS: a slice of a LOCAL array borrows stack memory freed at return — a
+// dangling fat pointer (ASan: stack-use-after-return). The bare `return local`
+// form was caught; the `local[a..b]` slice form was not. Slice a parameter or an
+// owned buffer instead.
+proc make() u8[] {
+    var b u8[8]
+    var k u32 = 0
+    while k < 8 {
+        b[k] = 65
+        k = k +% 1
+    }
+    return b[0..8]
+}
+proc main() i32 { return 0 }

@@ -1,0 +1,12 @@
+// EXPECT: [E009]
+// COHERENCE (§2.9): a raw `*T` pointer is the unsafe/interop tool, not borrow-
+// checked. Mutating a struct field through it in SAFE code silently emitted
+// `const T*` C that gcc rejects. It is now rejected, pointing at the idiomatic
+// in-place mutation: a `var` (mutable borrow) parameter.
+type P {
+    x u32
+}
+proc bump(p *P) {
+    p.x = p.x +% 1
+}
+proc main() i32 { return 0 }
