@@ -102,11 +102,11 @@ output.
 \lain{int}         & \texttt{int}        & at least 32-bit \\
 \lain{f32}         & \texttt{float}      & IEEE 754 \\
 \lain{f64}         & \texttt{double}     & IEEE 754 \\
-\lain{bool}        & \texttt{int}        & \idbehav{0 or 1} \\
+\lain{bool}        & \texttt{\_Bool}     & C99 bool (1 byte); \idbehav{0 or 1} \\
 shared struct \lain{T} & \texttt{const T*} & \\
 \lain{var} struct \lain{T} & \texttt{T*}  & \\
 \lain{mov} struct \lain{T} & \texttt{T}   & by value \\
-\lain{[T]}         & \texttt{struct \{ T* data; size\_t len; \}} & fat pointer \\
+\lain{T[]}         & \texttt{struct \{ size\_t len; T* data; \}} & fat slice \\
 \lain{*T}          & \texttt{const T*}  & unsafe only \\
 \lain{var *T}      & \texttt{T*}        & unsafe only \\
 \end{longtable}
@@ -154,7 +154,7 @@ require an \lain{unsafe} block (see \S\,\ref{sec:18-unsafe}).
 \index{string interop}
 
 \pnum
-Lain strings (\lain{[u8]}) are byte slices, not null-terminated C strings.
+Lain strings (\lain{u8[]}) are byte slices, not null-terminated C strings.
 To pass a Lain string to a C function expecting \texttt{char*}, the
 \lain{.data} pointer must be extracted explicitly:
 

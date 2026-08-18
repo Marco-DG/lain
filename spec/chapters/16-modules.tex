@@ -12,14 +12,17 @@ organization and compilation.  All names declared at the top level of a
 source file are in that module's scope and are accessible from other
 modules that import the module.
 
-\section{Module declarations}
+\section{Module identity}
 \label{sec:mod.declaration}
 \index{module declaration}
 
 \pnum
-A top-level \lain{module path.name} declaration declares the module name
-for the current source file.  Module declarations are optional; if absent,
-the module name is \idbehav{derived from the file path by the implementation}.
+A module's identity is \idbehav{derived from its file path by the
+implementation}; there is \emph{no} \lain{module} declaration keyword (a
+leading \lain{module}~\dots{} line is \diagcode{E100}).  The reference
+implementation names a module by its path relative to the working directory,
+with directory separators mapped to dots --- so \texttt{std/io.ln} is the
+module \lain{std.io}.
 
 \section{Import declarations}
 \label{sec:mod.import}
@@ -29,6 +32,19 @@ the module name is \idbehav{derived from the file path by the implementation}.
 \lain{import module.path} makes the declarations of the named module
 available in the current source file.  The grammar production is
 \gramref{import-declaration} (Annex~A).
+
+\pnum
+\textbf{Selective import.}  \lain{import module.path.\{name1, name2, ...\}}
+brings only the listed names into scope rather than the whole module.  This is
+the form used throughout the standard library, e.g.\
+\lain{import std.mem.\{mem\_alloc, mem\_free\}} or
+\lain{import std.fs.\{File, open\_file, close\_file\}}.
+
+\pnum
+The \lain{use} statement (\S\,\ref{sec:lex.keywords}) provides a
+\emph{local-scope} import/alias inside a function body.  \idbehav{Its precise
+semantics are implementation-defined in this revision}; the standard library
+uses top-level \lain{import} rather than \lain{use}.
 
 \pnum
 \textbf{Path resolution}: a module path is converted to a file system path

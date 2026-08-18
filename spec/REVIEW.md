@@ -331,3 +331,53 @@ compiles:
 - `else` is the wildcard (`_` is not — `_:` → `[E014]`); enum/ADT all-variants
   exhaustiveness (no else) works; non-exhaustive → `E014`; `case &expr` mutation
   → `E004`; string patterns accepted; literal + range + comma-multi patterns.
+
+---
+
+## §16 Module system
+
+### FIXED (spec was wrong)
+1. **"top-level `module path.name` declaration"** — there is **no `module`
+   keyword** (`module foo.bar` → `[E100]`); module identity is derived from the
+   file path only. Retitled §16.2 "Module identity" and rewrote it.
+2. **Selective import undocumented** — `import module.path.{a, b}` is used
+   throughout the stdlib (`std.mem`, `std.fs`) but §16 only had whole-module
+   `import`. Added the selective form. Also noted the `use` statement (local-scope
+   alias, a real keyword, semantics impl-defined this revision, unused by stdlib).
+
+### Verified correct (no change)
+- Path resolution (dots→dirs + `.ln`, relative to cwd); dedup / circular-import
+  no-op; `[private]` → module-private → `E084`; std module paths.
+
+---
+
+## §17 C interoperability
+
+### FIXED (spec was wrong)
+1. **`bool` → `int`** — the compiler emits **`_Bool`** (C99 bool, 1 byte;
+   consistent with §07 "single byte"). Fixed.
+2. **`[T]` fat-pointer `struct { T* data; size_t len; }`** — two errors: prefix
+   bracket (→ `T[]`) and field order (the struct is **`{ size_t len; T* data; }`**
+   — len first, confirmed by emission). Fixed both.
+3. **"Lain strings (`[u8]`)"** — → `u8[]`.
+
+### Verified correct (no change)
+- `c_include`, `extern func`/`extern proc` (→ E011 from a `func`), the trust-
+  boundary note, struct/primitive ABI table, pointer casts → E012, `extern type`
+  opaque types (accepted).
+
+---
+
+## §18 Unsafe code
+
+### FIXED / improved
+1. **"Direct ADT field access"** — documented the concept but not the code or the
+   form. E125 fires on the **qualified** access `value.Variant.field` outside
+   `unsafe` (`tests/types/unsafe_adt_fail.ln`: `s.Circle.radius`). Added the form
+   + `E125`, and cited the codes on the other "disabled by unsafe" rows (deref
+   E060, casts E012, bounds E085).
+
+### Verified correct (no change)
+- unsafe enables deref / address-of / casts / direct-ADT / bounds-suppression;
+  does NOT disable ownership/borrow/type/div0/exhaustiveness/purity; UB list;
+  block borrow-scope; nesting.

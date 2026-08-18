@@ -34,8 +34,11 @@ Inside an \lain{unsafe} block, the following operations are permitted:
         storage of \lain{x}.
   \item \textbf{Pointer and integer casts}: \lain{p as *T},
         \lain{n as *T}, \lain{p as usize}, etc.
-  \item \textbf{Direct ADT field access}: accessing a field of an ADT
-        variant without going through a \lain{case} arm.
+  \item \textbf{Direct ADT field access}: reading a variant's field with the
+        qualified form \lain{value.Variant.field} without going through a
+        \lain{case} arm.  Outside \lain{unsafe} this is
+        \illformed{}~(\diagcode{E125}); the safe idiom is to destructure with
+        \lain{case}.
   \item \textbf{Bounds-check suppression}: array indexing inside an
         \lain{unsafe} block does not require a VRA proof (the
         programmer asserts the access is in bounds).
@@ -59,10 +62,10 @@ The following safety features remain active inside \lain{unsafe} blocks:
 \endhead
 \bottomrule
 \endlastfoot
-Pointer dereference                  & \textbf{Yes} \\
-Pointer/integer casts                & \textbf{Yes} \\
-Direct ADT field access              & \textbf{Yes} \\
-Bounds check requirement             & \textbf{Yes} \\
+Pointer dereference (\diagcode{E060})     & \textbf{Yes} \\
+Pointer/integer casts (\diagcode{E012})   & \textbf{Yes} \\
+Direct ADT field access (\diagcode{E125}) & \textbf{Yes} \\
+Bounds check requirement (\diagcode{E085}) & \textbf{Yes} \\
 Ownership tracking (\diagcode{E001}--\diagcode{E007}) & No \\
 Borrow checking (\diagcode{E004})    & No \\
 Move semantics                       & No \\
