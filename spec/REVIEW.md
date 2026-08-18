@@ -277,3 +277,57 @@ test oracles:
   non-negativity; E015 div-by-zero in the range table; E087 sized-slice
   call-site (provable violation, e.g. `pair_sum(single)`); E085 variable
   endpoints; the four VRA levels + Omega Test / Fourier-Motzkin description.
+
+---
+
+## §14 Generics and compile-time evaluation
+
+The chapter describes a fuller generics system than is built. Verified what
+compiles:
+
+### FIXED (spec presented planned features as working)
+- **Works** (kept): generic `func` with `type` params (`func max(T type, a T, b
+  T) T`) by inference *and* explicit type arg (`identity(i32, 42)`); generic
+  types `type Box(T type) = type { ... }` with instantiation `Box(i32)(v)`; E101
+  (CTFE calls a `proc`); `comptime if`.
+- **Planned, NOT yet implemented** (each now flagged; all currently `[E100]`):
+  compile-time *value* parameters / const generics (`comptime N int`,
+  `type Buf(comptime N usize)=…`); `func`-returning-`type`
+  (`func Option(T type) type`); `comptime { expr }` expression blocks.
+- Added an **implementation-status note** to §14.1 drawing the working/planned
+  line.
+- **§14.8 comptime recursion depth → `E014`** — `E014` is *non-exhaustive match*.
+  Reworded: the depth bound belongs to the not-yet-built comptime engine; no
+  depth diagnostic is emitted today.
+
+---
+
+## §15 Pattern matching
+
+### FIXED (spec was wrong / examples wouldn't build)
+1. **`type Color { Red, Green, Blue }`** (single-line, comma) and **§10
+   `type Direction { North, South, East, West }`** — single-line comma-separated
+   enum variants are **`[E100]`**; the compiler needs **one variant per line**
+   (matching the no-multi-statement-line rule). Rewrote both multi-line.
+   (ADT-variant *internal* fields may stay comma-inline — `Rectangle { w i32, h
+   i32 }` is fine; top-level struct fields may not.)
+2. **Range pattern `1..10` inclusivity** — the spec said "inclusive"; confirmed
+   by emission (`>= 1 && <= 10`). Added a note that `..` is **inclusive in a
+   pattern** but **exclusive** in expression ranges/sub-slices — a genuine
+   two-meanings-for-`..` wart (flagged as O-15.1).
+
+### GAP / limitation (compiler)
+- **G-15.1 — two boolean-literal arms don't parse.** `case b { true: … false: …
+  }` → `[E100]`. So §15's "bool: true and false covered, or else" is not
+  achievable via true+false; a `bool` match needs an `else` arm. Added a note;
+  the parser limitation is worth fixing (bool has exactly two values).
+
+### OPEN
+- **O-15.1 — `..` means inclusive in patterns, exclusive in expressions.**
+  Documented as-is; consider unifying (e.g. require `..=` for inclusive patterns)
+  — a compiler change.
+
+### Verified correct (no change)
+- `else` is the wildcard (`_` is not — `_:` → `[E014]`); enum/ADT all-variants
+  exhaustiveness (no else) works; non-exhaustive → `E014`; `case &expr` mutation
+  → `E004`; string patterns accepted; literal + range + comma-multi patterns.

@@ -16,6 +16,19 @@ Generic types and functions accept \textit{type parameters} (declared as
 and monomorphizes the result.  There is no type erasure and no runtime
 polymorphism.
 
+\begin{note}
+  \textbf{Implementation status.}  The reference compiler implements the
+  \emph{core} of this chapter and monomorphizes it: generic \lain{func}s with
+  \lain{type} parameters (bound by inference from a value argument or by an
+  explicit type argument), and generic types written
+  \lain{type Name(T type) = type \{ ... \}}.  The remaining constructs below are
+  \emph{planned} and not yet accepted --- compile-time \emph{value} parameters /
+  const generics (\lain{comptime N int}), \lain{comptime \{ ... \}} expression
+  blocks, and the \lain{func}-returning-\lain{type} spelling; each is flagged at
+  its section, and is presently reported as \diagcode{E100}.  (\lain{comptime if},
+  \S\,\ref{sec:gen.comptime-if}, \emph{is} available.)
+\end{note}
+
 \section{Type parameters}
 \label{sec:gen.type-params}
 \index{type parameter}
@@ -54,6 +67,12 @@ A parameter declared \lain{comptime name non-type} is a compile-time value
 parameter.  The argument shall be a constant expression of the declared type
 known at compile time.
 
+\begin{note}
+  \textbf{Planned (not yet implemented).}  Compile-time value parameters
+  (const generics) are not accepted by the reference compiler: a declaration
+  such as the one below is presently \diagcode{E100}.
+\end{note}
+
 \begin{laincode}
 type RingBuffer(T type, comptime N int) = type {
     items T[N]
@@ -90,6 +109,12 @@ var x = Option(int).Some(42)
 \pnum
 Type constructors may also be written as \lain{func} declarations returning
 \lain{type}:
+
+\begin{note}
+  \textbf{Planned (not yet implemented).}  The \lain{func}-returning-\lain{type}
+  spelling below is presently \diagcode{E100}; use the
+  \lain{type Name(T type) = type \{ ... \}} form above, which is accepted.
+\end{note}
 
 \begin{laincode}
 func Option(T type) type {
@@ -128,6 +153,13 @@ A \lain{comptime \{ expr \}} expression evaluates \textit{expr} at compile
 time.  The result is a compile-time constant that may be used as a type
 annotation, array size, or parameter constraint value.
 
+\begin{note}
+  \textbf{Planned (not yet implemented).}  \lain{comptime \{ ... \}} expression
+  blocks are not accepted by the reference compiler (presently
+  \diagcode{E100}).  The statement form \lain{comptime if}
+  (\S\,\ref{sec:gen.comptime-if}) \emph{is} available.
+\end{note}
+
 \begin{constraint}
   A \lain{comptime} expression shall be pure and terminating (i.e., it may
   only use \lain{func} calls and the constructs permitted in \lain{func}
@@ -155,10 +187,11 @@ compile-time boolean constant.
 \index{comptime recursion depth}
 
 \pnum
-The maximum depth of comptime function evaluation is
-\idbehav{the implementation's comptime evaluation depth limit; the
-reference implementation enforces a limit of 256}.  A comptime evaluation
-that exceeds this depth is \illformed{}~(\diagcode{E014}).
+The planned compile-time evaluation engine (\S\,\ref{sec:gen.comptime-params},
+\S\,\ref{sec:gen.comptime-block}) will bound the recursion depth of comptime
+function evaluation \idbehav{by an implementation-defined limit} and reject an
+evaluation that exceeds it.  Since that engine is not yet implemented, no depth
+diagnostic is currently emitted.
 
 \section{Mode preservation in generics}
 \label{sec:gen.mode-preserve}

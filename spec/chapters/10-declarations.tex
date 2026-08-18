@@ -110,7 +110,12 @@ associated fields, the type is an algebraic data type (ADT)
 (\S\,\ref{sec:types.adt}).
 
 \begin{laincode}
-type Direction { North, South, East, West }  // simple enum
+type Direction {              // simple enum (one variant per line)
+    North
+    South
+    East
+    West
+}
 
 type Shape {                                  // ADT
     Circle     { radius i32 }
