@@ -24,11 +24,11 @@ Diagnostic codes are divided into the following ranges:
 \endhead
 \bottomrule
 \endlastfoot
-\diagcode{E001}–\diagcode{E010}, \diagcode{E016} & Ownership and lifetime \\
-\diagcode{E011}–\diagcode{E015} & Purity, safety, and verification \\
-\diagcode{E014}                 & Compile-time evaluation \\
+\diagcode{E001}–\diagcode{E010}, \diagcode{E016}--\diagcode{E019} & Ownership and lifetime \\
+\diagcode{E011}–\diagcode{E015}, \diagcode{E060} & Purity, safety, and verification \\
 \diagcode{E080}–\diagcode{E082} & Bounded while verification \\
 \diagcode{E083}–\diagcode{E087} & Array/slice safety and integer boundaries \\
+\diagcode{E084}, \diagcode{E101}--\diagcode{E125} & Modules, attributes, generics, packing, ADT access \\
 \diagcode{E100}                 & Miscellaneous \\
 \diagcode{VRA}                  & Value range analysis \\
 \end{longtable}
@@ -79,23 +79,24 @@ Diagnostic codes are divided into the following ranges:
 
 \diagcode{E005}
   & \S\,\ref{sec:own.diag}
-  & \textit{cannot borrow '\texttt{x}' as shared; it is already mutably
-    borrowed} --- Issued when a shared borrow is requested while a
-    mutable borrow is active.
+  & \textit{use of uninitialized variable '\texttt{x}'} ---
+    Issued when a variable, struct field, or array element is read before
+    it has been initialized (definite-assignment analysis).
     \\[4pt]
 
 \diagcode{E006}
   & \S\,\ref{sec:own.diag}
-  & \textit{cannot copy linear type '\texttt{T}'} ---
-    Issued when assignment or argument passing implicitly copies a type
-    that has a \lain{mov}-mode field.
+  & \textit{cannot consume '\texttt{x}' inside a loop} ---
+    Issued when a linear variable or field is consumed inside a loop body
+    that may execute more than once.
     \\[4pt]
 
 \diagcode{E007}
-  & \S\,\ref{sec:own.modes}
-  & \textit{cannot assign through a shared reference '\texttt{x}'} ---
-    Issued when a write is attempted through a shared (non-\lain{var})
-    binding.
+  & \S\,\ref{sec:own.diag}
+  & \textit{moving linear value '\texttt{x}' requires an explicit
+    \lain{mov}} --- Issued when a linear value is passed to an owned
+    (\lain{mov}) parameter (or otherwise transferred) without the explicit
+    \lain{mov} keyword: an implicit move.
     \\[4pt]
 
 \diagcode{E010}
@@ -149,20 +150,20 @@ Diagnostic codes are divided into the following ranges:
     \\[4pt]
 
 \diagcode{E013}
-  & \S\,\ref{sec:basics.declarations}
-  & \textit{use of undeclared identifier '\texttt{x}'} ---
-    Issued when an identifier is referenced before its declaration in
-    scope.
+  & \S\,\ref{sec:basics.scopes}
+  & \textit{redeclaration or shadowing of '\texttt{x}' is forbidden} ---
+    Issued for a duplicate parameter name, a local that repeats or shadows
+    an outer binding, or a \lain{main} declared as \lain{func}.  (Lain
+    forbids shadowing; use of an \emph{undeclared} identifier is currently
+    undiagnosed --- \S\,\ref{sec:basics.resolution}.)
     \\[4pt]
 
 \diagcode{E014}
-  & \S\,\ref{sec:expr.index},
-    \S\,\ref{sec:13-vra}
-  & \textit{index '\texttt{i}' not proven in bounds of '\texttt{arr}'} ---
-    Issued when VRA cannot prove that an array index expression is
-    within $[0,\, n-1]$.  Also issued for non-exhaustive \lain{case}
-    expressions when combined with the exhaustiveness diagnostic (shared
-    code path).
+  & \S\,\ref{sec:match.exhaustiveness}
+  & \textit{non-exhaustive \lain{case}} ---
+    Issued when the arms of a \lain{case} do not cover all values of the
+    scrutinee type.  (An out-of-bounds \emph{index} is a different code,
+    \diagcode{E085}.)
     \\[4pt]
 
 \diagcode{E015}
@@ -170,31 +171,6 @@ Diagnostic codes are divided into the following ranges:
   & \textit{division by zero} ---
     Issued when VRA can prove statically that a division or modulo
     expression has a zero divisor.
-    \\[4pt]
-
-\end{longtable}
-
-% -------------------------------------------------------------------------
-\section*{Compile-time evaluation (\diagcode{E014})}
-% -------------------------------------------------------------------------
-
-\begin{longtable}{@{}p{1.5cm}p{3.5cm}p{7.5cm}@{}}
-\toprule
-\textbf{Code} & \textbf{Clause} & \textbf{Message and trigger} \\
-\midrule
-\endfirsthead
-\toprule
-\textbf{Code} & \textbf{Clause} & \textbf{Message and trigger} \\
-\midrule
-\endhead
-\bottomrule
-\endlastfoot
-
-\diagcode{E014}
-  & \S\,\ref{sec:gen.recursion-depth}
-  & \textit{comptime evaluation depth limit exceeded} ---
-    Issued when compile-time function evaluation recurses beyond the
-    implementation's depth limit (256 in the reference implementation).
     \\[4pt]
 
 \end{longtable}
@@ -224,9 +200,10 @@ Diagnostic codes are divided into the following ranges:
 
 \diagcode{E081}
   & \S\,\ref{sec:stmt.while.bounded}
-  & \textit{termination measure does not depend on a loop variable} ---
-    Issued when the \lain{decreasing} expression consists entirely of
-    compile-time constants and therefore cannot strictly decrease.
+  & \textit{cannot extract variables from termination measure} ---
+    Issued when the \lain{decreasing} expression is in a form the checker
+    cannot analyze.  (A constant or otherwise non-decreasing measure is
+    reported by \diagcode{E080}.)
     \\[4pt]
 
 \diagcode{E082}
@@ -258,9 +235,9 @@ Diagnostic codes are divided into the following ranges:
   & \S\,\ref{sec:05-lexical}, \S\,\ref{sec:07-types}
   & \textit{ill-formed token / semantic constraint violation} ---
     A catch-all code used for lexical and syntactic errors without a
-    dedicated code, including: missing semicolons (\S\,\ref{sec:lex.disambiguation}),
-    using \lain{==} on enum types (\S\,\ref{sec:types.enum}), and other
-    single-token syntactic errors.
+    dedicated code, including: an unexpected token, using \lain{==} on enum
+    types (\S\,\ref{sec:types.enum}), an empty or multi-character character
+    literal, a keyword used as an identifier, and a zero-field array size.
     \\[4pt]
 
 \end{longtable}
@@ -346,7 +323,8 @@ Diagnostic codes are divided into the following ranges:
 \section*{Additional diagnostics (\diagcode{E008}, \diagcode{E009}, \diagcode{E017}--\diagcode{E125})}
 
 The following diagnostics are emitted by the reference implementation and are
-normative. Full clause cross-references are pending an annex-completion pass.
+normative.  Each was verified against the compiler's diagnostic strings during
+the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 
 \begin{longtable}{@{}ll@{}}
 \toprule

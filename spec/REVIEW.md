@@ -419,3 +419,47 @@ compiles:
   `extern type FILE`) match `std/c.ln` (spec `int` = std `i32`, an alias);
   `close_file(mov {handle} File)` destructuring matches; `std.math`
   min/max/abs/clamp present (`abs` even carries the `i32 >= 0` return constraint).
+
+---
+
+## Annex A — Grammar summary (grammar.tex)
+
+Substantially stale (reflected older designs). FIXED:
+1. **`struct`/`enum` declaration productions** — those keywords don't exist
+   (`struct P {…}` → `[E100]`); Lain declares both with `type`. Replaced with
+   `struct-body`/`enum-body` under `type-declaration`.
+2. **`undefined` keyword** — removed (P3).
+3. **Mandatory-`*` slices** (`slice-type ::= "*" type "[]"…`) — `*` is optional
+   for fat slices; the star forms are thin/raw pointers. Restructured
+   `slice-type` (star optional) vs `pointer-type` (star + `[N]`/`[:S]`).
+4. **Bracket generics + `"comptime" identifier "type"` param** — type params are
+   `identifier "type"` in the ordinary param list; dropped the `[ … ]`
+   comptime-param bracket. Added generic `type Name(T type)` params, the
+   selective-import `.{…}` form, attributes, and the field-destructuring param.
+5. **Pattern grammar** — `_` is not the wildcard (`else` is); the match-arm was
+   missing its `:` and body; added range (`lit..lit`) and multi (`pattern-list`)
+   patterns; dropped the unused `_`/record-pattern forms.
+
+Kept (verified real): `str` type, `@` punctuator (SIMD builtins `@load`,
+`@movemask`, `@shuffle`, …), `mov`/`var` unary operators.
+
+## Annex B — Diagnostic codes
+
+The **original** tables carried the same wrong codes I found in §11 — now fixed
+against the compiler's fprintf strings + `_fail` oracles:
+- **E005** shared-borrow-conflict → **use of uninitialized**.
+- **E006** copy-linear → **consume-in-loop**.
+- **E007** assign-through-shared → **implicit move needs `mov`**.
+- **E013** undeclared → **redeclaration/shadowing** (+ undeclared-is-undiagnosed note).
+- **E014** index-bounds → **non-exhaustive `case` only** (removed the whole phantom
+  "Compile-time evaluation (E014)" section — E014 is not comptime-depth).
+- **E081** "constant measure" → **cannot extract variables from measure**.
+- **E100** dropped the false "missing semicolons" item (stray `;` is accepted).
+- Range table: removed `E014 = Compile-time`; added the E060 / E084 / E101–E125 rows.
+The **Additional diagnostics** table (E008/E009/E017–E125, added earlier this
+session) was re-verified against src and is correct.
+
+## Annexes C (rationale) & D (comparison)
+
+Pure design-rationale / language-comparison prose — no code examples, no
+diagnostic or type claims. No stale tokens found. No changes.

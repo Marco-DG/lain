@@ -39,7 +39,7 @@ keyword ::=
   | "for"    | "in"     | "case"   | "import" | "use"
   | "extern" | "c_include" | "unsafe" | "comptime" | "defer"
   | "true"   | "false"  | "and"    | "or"     | "as"
-  | "decreasing" | "undefined" | "continue" | "break"
+  | "decreasing" | "continue" | "break"
 \end{grammar}
 
 \subsection*{§5.7 Identifiers}
@@ -124,8 +124,11 @@ top-level-declaration ::=
   | extern-declaration
   | c-include-declaration
 
-import-declaration   ::= "import" qualified-identifier newline
-type-declaration     ::= "type" identifier ( "=" type | struct-body | enum-body )
+import-declaration   ::= "import" qualified-identifier [ "." "{" identifier { "," identifier } "}" ] newline
+type-declaration     ::= "type" identifier [ "(" type-param-list ")" ]
+                         ( "=" type | struct-body | enum-body )
+type-param-list      ::= type-param { "," type-param }
+type-param           ::= identifier "type"
 qualified-identifier ::= identifier { "." identifier }
 \end{grammar}
 
@@ -153,11 +156,11 @@ primitive-type   ::=
   | "bool"  | "str"   | "void"
 
 array-type       ::= type "[" integer-literal "]"
-slice-type       ::= "*" type "[]"
-                   | "*" type "[" ":" sentinel-literal "]"
-                   | "*" type "[" size-constraint "]"
-pointer-type     ::= "*" type
-                   | "*" type "[" integer-literal "]"
+slice-type       ::= [ "*" ] type "[]"                    % fat slice; "*" optional
+                   | [ "*" ] type "[" size-constraint "]" % sized fat slice
+pointer-type     ::= "*" type                             % raw pointer
+                   | "*" type "[" integer-literal "]"     % thin ptr + static length
+                   | "*" type "[" ":" sentinel-literal "]" % sentinel-terminated
 qualified-type   ::= ownership-qualifier type
 ownership-qualifier ::= "var" | "mov"
 user-defined-type ::= qualified-identifier
@@ -247,17 +250,20 @@ match-expression     ::=
     { match-arm }
     "}"
 
-match-arm            ::= pattern [ "if" expression ] block-expression
+match-arm            ::= ( pattern-list | "else" ) ":" arm-body
 
-pattern              ::=
-    "_"
-  | literal
-  | identifier
-  | qualified-identifier "(" [ pattern-list ] ")"
-  | qualified-identifier "{" [ field-pattern-list ] "}"
+arm-body             ::= expression newline | block-expression
 
 pattern-list         ::= pattern { "," pattern }
-field-pattern-list   ::= identifier ":" pattern { "," identifier ":" pattern }
+
+pattern              ::=
+    literal
+  | literal ".." literal                        % inclusive range pattern
+  | string-literal
+  | qualified-identifier                         % unit variant
+  | qualified-identifier "(" [ binding-list ] ")" % variant with bound fields
+
+binding-list         ::= identifier { "," identifier }
 
 constructor-expression ::=
     qualified-identifier "{" [ field-init-list ] "}"
@@ -335,38 +341,34 @@ comptime-if-statement ::=
 \label{gram:enum-declaration}
 \begin{grammar}
 function-declaration  ::=
-    "func" identifier
-    [ "[" comptime-param-list "]" ]
+    { attribute } "func" identifier
     "(" [ param-list ] ")" return-annotation
     block-statement
 
 procedure-declaration ::=
-    "proc" identifier
-    [ "[" comptime-param-list "]" ]
+    { attribute } "proc" identifier
     "(" [ param-list ] ")" return-annotation
     block-statement
+
+attribute            ::= "[" identifier [ "(" argument-list ")" ] "]" newline
 
 return-annotation    ::= type [ relational-op integer-literal ]
                        | ( empty )
 
 param-list           ::= param { "," param }
-param                ::= [ ownership-qualifier ] identifier type
-                       | "comptime" identifier "type"
+param                ::=
+    [ ownership-qualifier ] identifier type              % value parameter
+  | identifier "type"                                    % type parameter (generics)
+  | [ ownership-qualifier ] "{" identifier { "," identifier } "}" type
+                                                         % field-destructuring parameter
 
-comptime-param-list  ::= comptime-param { "," comptime-param }
-comptime-param       ::= identifier "type"
+struct-body          ::= "{" { field-declaration } "}"
+field-declaration    ::= [ "mov" ] identifier type newline
 
-struct-declaration   ::= "struct" identifier "{" { field-declaration } "}"
-field-declaration    ::= identifier type newline
-
-enum-declaration     ::= "enum" identifier "{" { variant-declaration } "}"
+enum-body            ::= "{" { variant-declaration } "}"
 variant-declaration  ::=
     identifier newline
-  | identifier "(" type-list ")" newline
   | identifier "{" field-declaration-list "}" newline
 
-type-list            ::= type { "," type }
 field-declaration-list ::= field-declaration { field-declaration }
-
-comptime-declaration ::= "comptime" block-statement
 \end{grammar}
