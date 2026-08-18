@@ -115,7 +115,10 @@ return type declares an invariant that the VRA shall enforce:
 
 \begin{constraint}
   A \lain{return} expression whose range cannot be proven to satisfy the
-  declared return constraint is \illformed{}~(\diagcode{E012}).
+  declared return constraint is \illformed{}~(\diagcode{E086}) --- the same
+  boundary mechanism (\S\,\ref{sec:vra.boundary}) that checks assignments and
+  narrowing conversions.  (A \emph{parameter}-constraint violation at a call
+  site is the distinct code \diagcode{E012}, above.)
 \end{constraint}
 
 \section{Interprocedural range propagation}
@@ -154,8 +157,12 @@ an unknown range.
 The following limitations are known and accepted:
 
 \begin{enumerate}
-  \item VRA does not track ranges of struct fields.  A struct field accessed
-        through a pointer always has an unknown range.
+  \item VRA does not track general integer value ranges of struct fields: a
+        field's value range is unknown (a field read through a pointer always
+        is).  Two narrower field properties \emph{are} tracked --- per-field
+        \emph{initialization} (definite assignment, \S\,\ref{sec:own.diag}) and
+        a struct field's \emph{slice length} within an \lain{and}-scope (to
+        prove indexing of a field slice).
   \item VRA does not track ranges across loop-carried dependences with
         non-linear measures.
   \item Integer overflow in VRA arithmetic uses saturating semantics; the
@@ -308,13 +315,13 @@ The cases checked are:
 
 \begin{example}
 \begin{laincode}
-func first(arr i32[> 0]) i32 { return arr[0] }
+func pair_sum(arr i32[>= 2]) i32 { return arr[0] + arr[1] }
 
 proc main() i32 {
-    var empty i32[0] = []
-    // first(empty)       // [E087]: len=0, requires > 0
     var one i32[1] = [42]
-    return first(one)     // OK: len=1 satisfies > 0
+    // pair_sum(one)        // [E087]: len 1 < required 2
+    var two i32[2] = [1, 2]
+    return pair_sum(two)    // OK: len 2 satisfies >= 2
 }
 \end{laincode}
 \end{example}
@@ -384,7 +391,7 @@ All four levels are polynomial time.  No SMT solver is used.
 \pnum
 When L1–L3 fail to discharge a bounds check, the implementation invokes
 the \textit{Omega Test}: a self-contained Fourier-Motzkin linear
-arithmetic prover (~280 LOC in \texttt{src/sema/omega.h}, no external
+arithmetic prover (roughly 410 lines in \texttt{src/sema/omega.h}, no external
 dependencies).
 
 \pnum

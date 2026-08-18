@@ -89,7 +89,7 @@ introduce effects.
 \end{constraint}
 
 \begin{note}
-  Generic functions (\lain{func} with \lain{comptime} parameters) are
+  Generic functions (\lain{func} with \lain{type} parameters) are
   excluded from mutual-recursion detection until they are monomorphized.
 \end{note}
 
@@ -139,12 +139,15 @@ desugared call is determined by the declared mode of the first parameter of
   \item Search for a function named \lain{f} whose first parameter type is
         compatible with the type of \lain{x}.
   \item If found, desugar the call.
-  \item If not found, emit \diagcode{E013} (undeclared identifier).
+  \item If no matching function is found, the call is unresolved.  (The
+        reference implementation does not yet emit a dedicated diagnostic for
+        an unresolved UFCS call --- it shares the undeclared-identifier gap
+        noted in \S\,\ref{sec:basics.resolution}.)
 \end{enumerate}
 
 \begin{example}
 \begin{laincode}
-func is_empty(s [u8]) bool { return s.len == 0 }
+func is_empty(s u8[]) bool { return s.len == 0 }
 
 var buf = "hello"
 var empty = buf.is_empty()   // desugars to: is_empty(buf)
@@ -186,18 +189,19 @@ A return statement has the form \lain{return <expr>}.  The mode of the
 returned value is determined by the function's declared return type and
 follows the same rules as call-site argument passing.
 
-\begin{constraint}
-  \textbf{Q-009.}
-  A return statement shall not be prefixed with \lain{mov} or \lain{var}.
-  The forms \lain{return mov x} and \lain{return var x} are
-  \illformed{}~(\diagcode{E100}).  If a future revision introduces
-  return-by-reference, it will require dedicated syntax.
-\end{constraint}
+\pnum
+A \lain{return} may be prefixed with \lain{mov} or \lain{var}:
+\lain{return mov x} makes the ownership transfer explicit, and
+\lain{return var x} returns a mutable borrow (the pattern for a \lain{func}
+whose declared return type is \lain{var T}).  When the return type is owned,
+a bare \lain{return expr} already moves \lain{expr}, so \lain{mov} is optional
+there.
 
 \begin{note}
-  When the function's declared return type is owned (e.g.\ \lain{mov T}),
-  the expression in \lain{return expr} is treated as a move of \lain{expr}.
-  No explicit \lain{mov} keyword is permitted in return position.
+  A \lain{return var x} / \lain{return mov x} that would escape a borrow of a
+  \emph{local} variable is a dangling reference (\diagcode{E010},
+  \S\,\ref{sec:stmt.return}).  This supersedes an earlier design (Q-009) in
+  which explicit \lain{mov}/\lain{var} in return position was rejected.
 \end{note}
 
 
@@ -234,7 +238,7 @@ termination), so it does not violate the purity of an enclosing
 
 \begin{example}
 \begin{laincode}
-func head(s [u8]) u8 {
+func head(s u8[]) u8 {
     if s.len == 0 {
         panic("empty slice")    // Never; satisfies the return type
     }

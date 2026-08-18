@@ -232,3 +232,48 @@ test oracles:
   move-while-borrowed, `E016` branch-inconsistency (incl. field-level) — all
   match. `var name T` primitive → by-pointer `T*` write-through; two-phase
   borrows; NLL last-use; `case &expr` borrowed match → E004 on mutation.
+
+---
+
+## §12 Functions and procedures
+
+### FIXED (spec was wrong)
+1. **§12.6 Q-009 duplicate** — same stale "`return mov x`/`return var x` → E100"
+   as §09; both are accepted. Replaced with the correct behavior + the E010
+   dangling rule (mirrors §09).
+2. **`func is_empty(s [u8])` and `func head(s [u8])`** — prefix bracket; → `u8[]`.
+3. **UFCS not-found → `E013`** — `E013` is redeclaration; and an unresolved UFCS
+   call is in fact *not* diagnosed (`x.nonexistent()` compiles — same undeclared
+   gap, G-06.1). Reworded step 4.
+4. **"Generic functions (`func` with `comptime` parameters)"** — type params, not
+   `comptime`. Fixed.
+
+### Verified correct (no change)
+- func/proc distinction table; purity → E011 (proc-call, unbounded-while,
+  recursion); UFCS ownership desugaring; ABI table; `panic` builtin (Never type,
+  abort, no defer/unwind); W130 (proc-could-be-func) and W120 exist.
+
+---
+
+## §13 Value range constraints (VRA)
+
+### FIXED (spec was wrong)
+1. **Return-constraint violation → `E012`** — actually **`E086`** (`func nz() int
+   >= 1 { return 0 }` → `[E086]`). The *parameter*-constraint violation at a call
+   site **is** `E012` (`f(0)` for `int>=1` → `[E012]`) — so the two were conflated.
+   Fixed the return-constraint constraint; noted the split.
+2. **"~280 LOC in src/sema/omega.h"** — the file is **414 lines**. Changed to
+   "roughly 410 lines".
+3. **Limitation "VRA does not track ranges of struct fields"** — over-broad since
+   the field-sensitive work (`bounds.h`/`ranges.h`/`linearity.h`): still true for
+   general field *value ranges*, but per-field initialization and member-path
+   *slice length* (within an `and`-scope) now are tracked. Refined.
+4. **Sized-slice example declared `var empty i32[0] = []`** — `i32[0]` is itself
+   rejected (zero-size array), so the example wouldn't build. Rewrote it around
+   `pair_sum(arr i32[>= 2])` with `i32[1]`/`i32[2]`.
+
+### Verified correct (no change)
+- Range-propagation table; conditional refinement; in-guard → measure
+  non-negativity; E015 div-by-zero in the range table; E087 sized-slice
+  call-site (provable violation, e.g. `pair_sum(single)`); E085 variable
+  endpoints; the four VRA levels + Omega Test / Fourier-Motzkin description.
