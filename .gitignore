@@ -122,3 +122,8 @@ handwritten/leetcode/*.c
 handwritten/leetcode/*.txt
 handwritten/leetcode/update_compiler.sh
 handwritten/main.ln
+
+# stray test build artifacts
+tests/**/out
+tests/**/out.c
+tests/**/lain.h
