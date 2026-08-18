@@ -1,0 +1,272 @@
+% 12-functions.tex — Clause 12: Functions and procedures
+\chapter{Functions and procedures}
+\label{sec:12-functions}
+\index{function}
+\index{procedure}
+
+\section{The func/proc distinction}
+\label{sec:fn.distinction}
+\index{func vs proc}
+
+\pnum
+Lain distinguishes between pure functions (\lain{func}) and side-effecting
+procedures (\lain{proc}).  This distinction is enforced statically and
+reflected in the type system.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Property} & \textbf{\lain{func}} & \textbf{\lain{proc}} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Property} & \textbf{\lain{func}} & \textbf{\lain{proc}} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+Side effects                      & forbidden          & allowed \\
+Unbounded \lain{while}            & forbidden          & allowed \\
+Bounded \lain{while decreasing}   & allowed            & allowed \\
+\lain{for} loops                  & allowed            & allowed \\
+Direct/indirect recursion         & forbidden          & allowed \\
+Calling \lain{proc}               & forbidden          & allowed \\
+Calling \lain{func}               & allowed            & allowed \\
+Global mutable state              & no access          & full access \\
+Termination guarantee             & yes                & no \\
+\end{longtable}
+
+\pnum
+A \lain{func} is referentially transparent: calling it with the same
+arguments always produces the same result.  Its evaluation has no
+observable effect on any state outside its own stack frame.
+
+\pnum
+Local mutation through a \lain{var T} parameter (exclusive mutable
+borrow) is permitted in a \lain{func}. The borrow checker guarantees
+no aliasing, so the mutation is observable only through the
+parameter binding itself; the function remains deterministic and
+referentially transparent (same input borrow $\Rightarrow$ same
+mutation pattern).
+
+\begin{example}
+\begin{laincode}
+type Counter { val i32 }
+
+func increment(var c Counter) {  // legal: mutation is local
+    c.val = c.val + 1
+}
+\end{laincode}
+\end{example}
+
+\pnum
+The compiler emits \diagcode{W130} when a \lain{proc} has no
+observable side effect — no calls to other \lain{proc} or
+\lain{extern proc}, no \lain{panic}, no mutable global access, no
+unbounded \lain{while}, no self-recursion — to suggest that it could
+be declared \lain{func}. This is a non-blocking warning; the
+programmer may keep it as \lain{proc} when future evolution will
+introduce effects.
+
+\section{Purity enforcement}
+\label{sec:fn.purity}
+\index{purity enforcement}
+
+\begin{constraint}
+  A \lain{func} that calls a \lain{proc} or \lain{extern proc} is
+  \illformed{}~(\diagcode{E011}).
+\end{constraint}
+
+\begin{constraint}
+  A \lain{func} that contains an unbounded \lain{while} loop (one without
+  a \lain{decreasing} measure) is \illformed{}~(\diagcode{E011}).
+\end{constraint}
+
+\begin{constraint}
+  A \lain{func} that calls itself directly, or that participates in a
+  mutual-recursion cycle, is \illformed{}~(\diagcode{E011}).  The
+  implementation shall detect mutual recursion by performing a depth-first
+  search on the call graph.
+\end{constraint}
+
+\begin{note}
+  Generic functions (\lain{func} with \lain{comptime} parameters) are
+  excluded from mutual-recursion detection until they are monomorphized.
+\end{note}
+
+\section{Termination analysis}
+\label{sec:fn.termination}
+\index{termination analysis}
+
+\pnum
+A \lain{func} is guaranteed to terminate because:
+\begin{enumerate}
+  \item all \lain{while} loops carry a verified termination measure;
+  \item \lain{for} loops iterate over finite ranges;
+  \item recursion is forbidden.
+\end{enumerate}
+
+\pnum
+No termination analysis is performed for \lain{proc}s.
+
+\section{Universal Function Call Syntax (UFCS)}
+\label{sec:fn.ufcs}
+\index{UFCS}
+
+\pnum
+An expression of the form \lain{x.f(args)} is desugared to \lain{f(x, args)}
+before name resolution, provided \lain{f} is not a declared field of
+\lain{x}'s type.  This is called Universal Function Call Syntax (UFCS).
+
+\pnum
+\textbf{UFCS ownership}: the ownership mode of the first argument in the
+desugared call is determined by the declared mode of the first parameter of
+\lain{f}:
+
+\begin{itemize}
+  \item If the first parameter is \lain{var}, the receiver is automatically
+        mutably borrowed: \lain{x.f()} desugars to \lain{f(var x)}.
+  \item If the first parameter is \lain{mov}, the receiver is automatically
+        moved: \lain{x.f()} desugars to \lain{f(mov x)}.
+  \item If the first parameter is shared (default), the receiver is shared:
+        \lain{x.f()} desugars to \lain{f(x)}.
+\end{itemize}
+
+\pnum
+\textbf{UFCS resolution algorithm}:
+\begin{enumerate}
+  \item Check if \lain{f} is a declared field of \lain{x}'s type.  If so,
+        this is a field access, not UFCS.
+  \item Search for a function named \lain{f} whose first parameter type is
+        compatible with the type of \lain{x}.
+  \item If found, desugar the call.
+  \item If not found, emit \diagcode{E013} (undeclared identifier).
+\end{enumerate}
+
+\begin{example}
+\begin{laincode}
+func is_empty(s [u8]) bool { return s.len == 0 }
+
+var buf = "hello"
+var empty = buf.is_empty()   // desugars to: is_empty(buf)
+\end{laincode}
+\end{example}
+
+\section{Calling conventions}
+\label{sec:fn.abi}
+\index{calling convention}
+
+\pnum
+The calling convention for Lain functions corresponds to the C99 calling
+convention of the target platform, as determined by the C compiler used for
+the translation output.  The parameter passing rules are:
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Lain parameter} & \textbf{C type} & \textbf{Semantics} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Lain parameter} & \textbf{C type} & \textbf{Semantics} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+shared struct \lain{T} & \texttt{const T*} & pointer to read-only copy \\
+\lain{var} struct \lain{T} & \texttt{T*}       & pointer, caller's copy \\
+\lain{mov} struct \lain{T} & \texttt{T}        & by value (bitwise copy) \\
+primitive any mode      & \texttt{T}        & by value \\
+\end{longtable}
+
+\section{Return values}
+\label{sec:fn.return}
+\index{return value}
+
+\pnum
+A return statement has the form \lain{return <expr>}.  The mode of the
+returned value is determined by the function's declared return type and
+follows the same rules as call-site argument passing.
+
+\begin{constraint}
+  \textbf{Q-009.}
+  A return statement shall not be prefixed with \lain{mov} or \lain{var}.
+  The forms \lain{return mov x} and \lain{return var x} are
+  \illformed{}~(\diagcode{E100}).  If a future revision introduces
+  return-by-reference, it will require dedicated syntax.
+\end{constraint}
+
+\begin{note}
+  When the function's declared return type is owned (e.g.\ \lain{mov T}),
+  the expression in \lain{return expr} is treated as a move of \lain{expr}.
+  No explicit \lain{mov} keyword is permitted in return position.
+\end{note}
+
+
+\section{The \texttt{panic} builtin}
+\label{sec:fn.panic}
+\index{panic}
+
+\pnum
+\lain{panic(msg)} is a builtin expression that terminates program
+execution immediately.  Its type is \textit{Never} (the bottom type:
+a subtype of every type).  Because it does not return, \lain{panic}
+may appear in any expression position---including as the body of a
+match arm whose declared type is otherwise unrelated.
+
+\pnum
+\lain{panic} may be called from both \lain{func} and \lain{proc}
+contexts.  The call is deterministic (same input yields the same
+termination), so it does not violate the purity of an enclosing
+\lain{func}.
+
+\begin{constraint}
+  \textbf{Q-014, S16.}
+  When \lain{panic} is executed, the program terminates immediately
+  via the platform abort primitive.  No \lain{defer} block is
+  executed.  No stack unwinding occurs.
+\end{constraint}
+
+\begin{note}
+  The reference implementation emits, for \lain{panic(msg)}, the
+  equivalent of
+  \texttt{fprintf(stderr, "panic: \%.*s\textbackslash{}n", ...) ; abort()}.
+  The message is written to the standard error stream before abort.
+\end{note}
+
+\begin{example}
+\begin{laincode}
+func head(s [u8]) u8 {
+    if s.len == 0 {
+        panic("empty slice")    // Never; satisfies the return type
+    }
+    return s[0]
+}
+\end{laincode}
+\end{example}
+
+\section{Function attributes}
+\label{sec:fn.attributes}
+\index{attribute}
+
+\pnum
+A function declaration may be prefixed with one or more attributes
+(\S\,\ref{sec:decl.attributes}).  The attributes applicable to
+functions in version~1.0 are:
+
+\begin{itemize}
+  \item \tok{[fast\_math]} --- enable fast floating-point optimizations
+        (FMA fusion, contraction) for the body of this function.  This
+        is an opt-out from the determinism guarantee (P4) and applies
+        only locally; functions without \tok{[fast\_math]} remain
+        bit-deterministic within their target platform.
+  \item \tok{[private]} --- module-private visibility
+        (\S\,\ref{sec:mod.visibility}).
+\end{itemize}
+
+\begin{note}
+  The reference implementation translates \tok{[fast\_math]} on a
+  function~$f$ to a pair of pragmas surrounding the body of $f$ in the
+  emitted C source, enabling \texttt{fp-contract=fast} for $f$ only.
+  The default (i.e., absence of \tok{[fast\_math]}) emits
+  \texttt{-ffp-contract=off} flags, providing deterministic floating
+  point within a single target platform and C compiler.
+\end{note}

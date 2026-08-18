@@ -1,0 +1,766 @@
+% 07-types.tex — Clause 7: Types
+\chapter{Types}
+\label{sec:07-types}
+\index{type}
+
+\pnum
+Lain is statically typed.  Every variable, expression, and parameter has a
+type determined at compile time.  There is no runtime type information
+(RTTI).  The grammar productions for types are in Annex~A (\gramref{type}).
+
+\section{Type taxonomy}
+\label{sec:types.taxonomy}
+\index{type!taxonomy}
+
+\pnum
+The types of Lain are organized as follows:
+
+\begin{itemize}
+  \item \textit{Primitive types}: integer, floating-point, boolean, void
+        (\S\,\ref{sec:types.primitive});
+  \item \textit{Array types}: fixed-size, compile-time-sized
+        (\S\,\ref{sec:types.array});
+  \item \textit{Slice types}: dynamically-sized views into contiguous memory,
+        including sized slice types with static length constraints
+        (\S\,\ref{sec:types.slice});
+  \item \textit{Struct types}: named product types (\S\,\ref{sec:types.struct});
+  \item \textit{Enum types}: simple enumerations (\S\,\ref{sec:types.enum});
+  \item \textit{ADT types}: sum types with associated data (\S\,\ref{sec:types.adt});
+  \item \textit{Pointer types}: raw memory addresses, unsafe only
+        (\S\,\ref{sec:types.pointer});
+  \item \textit{Constrained types}: types with value range annotations
+        (\S\,\ref{sec:types.constrained}).
+\end{itemize}
+
+\pnum
+Types are classified as \textit{linear} or \textit{unrestricted}.  Linear
+types must be consumed exactly once (see \S\,\ref{sec:11-ownership}).
+Unrestricted types may be used any number of times.
+
+\pnum
+All primitive types are unrestricted.  A struct type is linear if and only
+if at least one of its fields is of a linear type.  This property is
+transitive.
+
+\section{Primitive types}
+\label{sec:types.primitive}
+\index{primitive type}
+
+\subsection{Integer types}
+\label{sec:types.integer}
+\index{integer type}
+
+\pnum
+The integer types are listed below.  Sizes marked \textit{(platform)} are
+\idbehav{determined by the target platform as in the C99 standard}.
+
+\begin{longtable}{@{}lllll@{}}
+\toprule
+\textbf{Type} & \textbf{Signedness} & \textbf{Bit width} & \textbf{Range} & \textbf{C99 type} \\
+\midrule
+\endfirsthead
+\multicolumn{5}{l}{\textit{(continued)}}\\
+\toprule
+\textbf{Type} & \textbf{Signedness} & \textbf{Bit width} & \textbf{Range} & \textbf{C99 type} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\lain{u8}    & unsigned & 8    & $[0,\, 2^8-1]$       & \texttt{uint8\_t}  \\
+\lain{u16}   & unsigned & 16   & $[0,\, 2^{16}-1]$    & \texttt{uint16\_t} \\
+\lain{u32}   & unsigned & 32   & $[0,\, 2^{32}-1]$    & \texttt{uint32\_t} \\
+\lain{u64}   & unsigned & 64   & $[0,\, 2^{64}-1]$    & \texttt{uint64\_t} \\
+\lain{usize} & unsigned & (platform) & $[0,\, 2^N-1]$ & \texttt{size\_t}   \\
+\lain{i8}    & signed   & 8    & $[-2^7,\, 2^7-1]$    & \texttt{int8\_t}   \\
+\lain{i16}   & signed   & 16   & $[-2^{15},\, 2^{15}-1]$ & \texttt{int16\_t} \\
+\lain{i32}   & signed   & 32   & $[-2^{31},\, 2^{31}-1]$ & \texttt{int32\_t} \\
+\lain{i64}   & signed   & 64   & $[-2^{63},\, 2^{63}-1]$ & \texttt{int64\_t} \\
+\lain{isize} & signed   & (platform) & $[-2^{N-1},\, 2^{N-1}-1]$ & \texttt{ptrdiff\_t} \\
+\lain{int}   & signed   & 32 & $[-2^{31},\, 2^{31}-1]$ & \texttt{int32\_t} \\
+\end{longtable}
+
+\pnum
+\lain{int} is a documented alias of \lain{i32}, identical in every
+semantic respect (boundary checks, niche optimization, codegen). Use
+either spelling — \lain{int} when bit-width is incidental, \lain{i32}
+when explicit width matters.
+
+\pnum
+Generalized integer types \lain{iN}/\lain{uN} are admitted for any
+$N \in [1, 64]$. Hardware-aligned widths
+($N \in \{1, 8, 16, 32, 64\}$) map to standard C99 stdint types.
+Logical widths (other $N$) occupy the smallest hardware-aligned
+container that fits $N$ bits when standalone; in a \tok{[packed]}
+struct they occupy exactly $N$ bits.
+
+\pnum
+\lain{usize} and \lain{isize} are the platform-native unsigned and signed
+integer types whose width equals the pointer width.  Their exact width is
+\idbehav{the pointer width on the target platform}.
+
+\subsection{Hardware-aligned vs logical integer types}
+\label{sec:types.iN-categories}
+\index{integer type!hardware-aligned}
+\index{integer type!logical}
+
+\pnum
+The \lain{iN}/\lain{uN} types fall into two semantic categories:
+
+\textbf{Hardware-aligned} (\(N \in \{1, 2, 4, 8, 16, 32, 64\}\), with
+the common subset being \(\{8, 16, 32, 64\}\)): these correspond to
+fundamental C99 stdint widths (\texttt{uint8\_t}, \texttt{int32\_t},
+etc.). They are the canonical choice for C interop and for any context
+where exact storage size matters at the byte boundary.
+
+\textbf{Logical} (other \(N\)): these are \textit{bit-width quantities}.
+Their semantics are context-dependent:
+
+\begin{itemize}
+  \item \textbf{Standalone}: storage uses the smallest hardware-aligned
+        container fitting \(N\) bits (e.g., \lain{u12} maps to
+        \texttt{uint16\_t}). The natural range is
+        \([-2^{N-1},\,2^{N-1}-1]\) signed or \([0,\,2^N-1]\) unsigned.
+  \item \textbf{Inside a packed struct} (future feature,
+        \S\,\ref{sec:types.packed-future}): the type occupies exactly
+        \(N\) bits of storage with bit-exact layout.
+\end{itemize}
+
+\pnum
+\textbf{Distinction from refinement.}  Logical \lain{iN}/\lain{uN} types
+differ from a refinement constraint on \lain{int}:
+
+\begin{itemize}
+  \item \lain{int >= 0 and <= 7} declares an \lain{int} with a range
+        constraint. Storage is the \lain{int} default (\texttt{int32\_t});
+        bit-width is not specified.
+  \item \lain{u3} declares a 3-bit quantity. Standalone its range is
+        \([0, 7]\) and its storage is \texttt{uint8\_t}; in a packed
+        struct (future) it occupies exactly 3 bits.
+\end{itemize}
+
+The two forms are interchangeable when only the range matters; they
+differ when bit-exact storage layout matters.
+
+\begin{example}
+\begin{laincode}
+// Logical bit-width: 12-bit quantity, container = uint16_t.
+var x u12 = 4095
+
+// Refinement constraint on int: range [0, 4095], container = int32_t.
+var y int >= 0 and <= 4095 = 4095
+
+// Refinement type alias: a named refinement type (\S\,\ref{sec:types.alias-refinement}).
+type Pressure = int >= 0 and <= 1000
+var p Pressure = 500
+\end{laincode}
+\end{example}
+
+\subsection{Refinement type aliases}
+\label{sec:types.alias-refinement}
+\index{refinement type}
+\index{type alias!refinement}
+
+\pnum
+A type alias may carry a refinement constraint that narrows the underlying
+type's value range:
+
+\begin{laincode}
+type Percent = int >= 0 and <= 100
+type Pressure = int >= 0 and <= 1000
+type NonZero = int != 0
+\end{laincode}
+
+\pnum
+Variables declared with a refinement type alias inherit its constraint.
+Assignments whose source value range violates the alias constraint are
+\illformed{}~(\diagcode{E086}).
+
+\begin{example}
+\begin{laincode}
+type Percent = int >= 0 and <= 100
+
+proc main() int {
+    var ok Percent = 75              // [E086 not raised]: 75 fits [0,100]
+    // var bad Percent = 150         // [E086]: 150 > 100
+    return 0
+}
+\end{laincode}
+\end{example}
+
+\subsection{Packed structs}
+\label{sec:types.packed-future}
+\index{packed struct}
+\index{bitfield}
+
+\pnum
+The \tok{[packed]} attribute (\S\,\ref{sec:decl.attributes}) on a struct
+declaration enables bit-exact memory layout. Each \lain{iN}/\lain{uN}
+field occupies exactly \(N\) bits within a single scalar container.
+
+\begin{laincode}
+[packed]
+type GpioModer {
+    pin0 u2     // bit 0-1
+    pin1 u2     // bit 2-3
+    pin2 u2     // bit 4-5
+    pin3 u2     // bit 6-7
+}
+// total: 8 bits -> uint8_t container, bit-exact layout
+\end{laincode}
+
+\pnum
+\textbf{Layout rules}:
+\begin{itemize}
+  \item Fields are laid out in declaration order, starting at bit 0.
+  \item Each field occupies exactly its declared bit width.
+  \item Total bit width must be \(\leq 64\); container is the smallest
+        of \texttt{uint8\_t}, \texttt{uint16\_t}, \texttt{uint32\_t}, or
+        \texttt{uint64\_t} that fits the total.
+\end{itemize}
+
+\pnum
+\textbf{Access semantics}:
+\begin{itemize}
+  \item Construction: \lain{GpioModer(1, 2, 3, 0)} packs the four
+        2-bit fields into the container.
+  \item Read: \lain{r.pin1} extracts bits 2-3 via shift-and-mask.
+  \item Write: \lain{r.pin1 = v} updates bits 2-3, leaving other
+        fields unchanged.
+\end{itemize}
+
+\begin{constraint}
+  Inside a \tok{[packed]} struct, fields shall be \lain{iN}/\lain{uN}
+  types only. Nested structs, pointers, and slices are not permitted.
+  Violation is \illformed{}~(\diagcode{E121}).
+\end{constraint}
+
+\begin{constraint}
+  The total bit width of fields in a \tok{[packed]} struct shall not
+  exceed 64. Otherwise \illformed{}~(\diagcode{E121}).
+\end{constraint}
+
+\begin{note}
+  This feature targets embedded use cases: hardware registers,
+  packed network protocols, codec implementations. The reference
+  implementation emits a scalar typedef plus inline getter/setter
+  functions for each field.
+\end{note}
+
+\subsection{Integer rank and widening}
+\label{sec:types.rank}
+\index{integer rank}
+\index{integer widening}
+
+\pnum
+The integer types are partially ordered by \textit{rank}:
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Rank} & \textbf{Types} & \textbf{Bit width} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Rank} & \textbf{Types} & \textbf{Bit width} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+1 & \lain{u8}, \lain{i8}             & 8 \\
+2 & \lain{u16}, \lain{i16}           & 16 \\
+3 & \lain{u32}, \lain{i32}, \lain{int} & 32 \\
+4 & \lain{u64}, \lain{i64}           & 64 \\
+5 & \lain{usize}, \lain{isize}       & platform \\
+\end{longtable}
+
+\pnum
+\textbf{Implicit widening}: a value of a lower-rank integer type may be
+used where a higher-rank integer type is expected, without an explicit cast.
+The result type of a binary arithmetic or bitwise operation is the
+higher-rank operand type.
+
+\begin{example}
+\begin{laincode}
+var a u8  = 42
+var b int = a          // u8 -> int: implicit widening, OK
+var c = a + 1000       // u8 + int -> int (wider wins)
+\end{laincode}
+\end{example}
+
+\begin{constraint}
+  An implicit conversion from a higher-rank integer type to a lower-rank
+  integer type (narrowing) is \illformed{}.  Narrowing requires an explicit
+  \lain{as} cast (\S\,\ref{sec:08-expressions}).
+\end{constraint}
+
+\begin{constraint}
+  An implicit conversion between integer types and floating-point types is
+  \illformed{}.  Such conversions require an explicit \lain{as} cast.
+\end{constraint}
+
+\begin{constraint}
+  An implicit conversion between integer types and \lain{bool} is
+  \illformed{}.  Such conversions require an explicit \lain{as} cast.
+\end{constraint}
+
+\subsection{Floating-point types}
+\label{sec:types.float}
+\index{floating-point type}
+
+\pnum
+\lain{f32} and \lain{f64} are 32-bit and 64-bit floating-point types
+conforming to IEC~60559 (IEEE~754).  They correspond to C's \texttt{float}
+and \texttt{double} respectively.  \lain{float} is a documented alias
+of \lain{f32}.
+
+\pnum
+The default type of a floating-point literal is \lain{f64}
+(\S\,\ref{sec:lex.literals.float}).
+
+\pnum
+Arithmetic on \lain{f32} and \lain{f64} follows IEEE~754 semantics:
+overflow produces $\pm\infty$; the result of $0.0/0.0$ and similar
+operations is NaN.  These are defined behaviors in Lain.
+
+\subsection{Boolean type}
+\label{sec:types.bool}
+\index{boolean type}
+
+\pnum
+\lain{bool} has exactly two values: \lain{true} and \lain{false}.
+\lain{bool} is stored as a single byte; its exact representation is
+\idbehav{whether \lain{true} is 1 or any non-zero value}.
+
+\begin{constraint}
+  There are no implicit \textbf{value} conversions between \lain{bool}
+  and any integer type for general arithmetic or assignment.
+\end{constraint}
+
+\pnum
+The condition expression of \lain{if} and \lain{while} accepts either
+a value of type \lain{bool} or any integer type.  When an integer
+value is used in condition position, zero is treated as \lain{false}
+and any non-zero value is treated as \lain{true}.  This relaxation is
+ergonomic only and does not extend to other contexts.
+
+\begin{example}
+\begin{laincode}
+var n int = read_count()
+if n { ... }        // OK: integer in condition, non-zero is true
+var b bool = n      // [E100]: not a value conversion
+\end{laincode}
+\end{example}
+
+\subsection{The void type}
+\label{sec:types.void}
+\index{void type}
+
+\pnum
+\lain{void} represents the absence of a value.  It is used exclusively
+in pointer types (\lain{*void}) for C interoperability (see
+\S\,\ref{sec:17-interop}).
+
+\begin{constraint}
+  A variable declaration with type \lain{void} is \illformed{}.
+\end{constraint}
+
+\section{Array types}
+\label{sec:types.array}
+\index{array type}
+
+\pnum
+An array type \lain{[T; N]} denotes a contiguous sequence of $N$ values of
+type~\lain{T}.  $N$ shall be a compile-time constant integer greater than
+zero (grammar: \gramref{array-type}).
+
+\pnum
+The \texttt{.len} property of an array type yields $N$ as a compile-time
+constant of type \lain{int}.
+
+\pnum
+Array elements are laid out contiguously in memory in increasing index
+order, with element~0 at the base address.  The stride between elements is
+\idbehav{equal to \texttt{sizeof(T)} in C99, including any intra-element
+padding}.
+
+\begin{constraint}
+  An array size $N \leq 0$ is \illformed{}~(\diagcode{E100}).
+\end{constraint}
+
+\begin{constraint}
+  Every array index expression shall satisfy
+  $0 \leq \textit{idx} < \textit{arr.len}$.
+  An access for which value range analysis cannot prove this is a
+  constraint violation~(\diagcode{E014}).
+\end{constraint}
+
+\begin{example}
+\begin{laincode}
+var arr int[5] = [1, 2, 3, 4, 5]
+var x = arr[2]         // OK: 2 is statically in [0, 4]
+// var y = arr[5]      // [E014]: 5 >= arr.len
+\end{laincode}
+\end{example}
+
+\section{Slice types}
+\label{sec:types.slice}
+\index{slice type}
+
+\pnum
+A slice type \lain{*T[]} is a reference to a contiguous sequence of values
+of type~\lain{T} whose length is determined at runtime.  Its runtime
+representation is a pair \texttt{(ptr: *T, len: usize)}.  The \lain{*}
+prefix is mandatory: all view/reference types use \lain{*} consistently.
+
+\pnum
+The full family of reference-to-array types:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Syntax} & \textbf{Semantics} & \textbf{Runtime cost} \\
+\midrule
+\lain{T[N]}      & inline array (N elements owned) & N $\times$ sizeof(T) \\
+\lain{*T[]}      & view, runtime length             & ptr + usize \\
+\lain{*T[N]}     & view, compile-time length        & ptr only \\
+\lain{*T[:S]}    & view, sentinel-terminated         & ptr only \\
+\lain{*T}        & raw pointer (no length)           & ptr only \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+A slice has two properties accessible via dot notation:
+\begin{itemize}
+  \item \texttt{.len}: the number of elements, type \lain{usize};
+  \item \texttt{.data}: a pointer to the first element, type \lain{*T}.
+\end{itemize}
+
+\pnum
+A string literal of $N$ characters has static type \lain{Fixed\_u8\_{N+1}}
+(a null-terminated fixed-size array of $N{+}1$ bytes) and is implicitly
+coercible to \lain{*u8[]}.
+
+\subsection{Sized slice types}
+\label{sec:types.sized-slice}
+\index{sized slice type}
+\index{slice type!sized}
+
+\pnum
+A \textit{sized slice type} is a slice type annotated with a size constraint
+on its length.  The constraint is part of the parameter or variable
+declaration, not of the nominal type itself.  The syntax is:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Syntax} & \textbf{Meaning} \\
+\midrule
+\lain{*T[]}         & unsized dynamic slice (no length constraint) \\
+\lain{*T[n]}        & length exactly \lain{n}; \textit{n} is a size expression \\
+\lain{*T[>= n]}     & length $\geq$ \lain{n}; \textit{n} is a size expression \\
+\lain{*T[> n]}      & length $>$ \lain{n}; \textit{n} is a size expression \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\pnum
+A \textit{size expression} (\textit{size\_expr}) may be any of:
+
+\begin{itemize}
+  \item an integer literal (e.g., \lain{3}, \lain{0});
+  \item an identifier that names a numeric variable in scope (e.g., \lain{n});
+  \item a member expression of the form \lain{p.len}, where \lain{p} is a
+        slice or array parameter in scope (e.g., \lain{a.len}, \lain{src.len});
+  \item a binary arithmetic expression over the above
+        (e.g., \lain{a.len + b.len}, \lain{src.len - 1}).
+\end{itemize}
+
+\begin{example}
+\begin{laincode}
+// Exact-length constraint: out must have length == a.len + b.len
+func concat(a i32[], b i32[], out i32[a.len + b.len]) { ... }
+
+// Lower-bound constraint: arr must have at least n elements
+func first(arr i32[> 0]) i32 { return arr[0] }
+
+// Derived constraint using member .len
+func slide(src i32[], out i32[src.len - 1]) { ... }
+\end{laincode}
+\end{example}
+
+\pnum
+\textbf{Constraint semantics.}
+\begin{itemize}
+  \item \lain{T[expr]}: the value range analysis (VRA, \S\,\ref{sec:13-vra})
+        records the constraint \texttt{len == expr} and uses it to prove
+        subsequent bounds checks inside the function body.
+  \item \lain{T[>= expr]}: VRA records \texttt{len >= expr}.
+  \item \lain{T[> expr]}: VRA records \texttt{len > expr}, i.e.\ \texttt{len >= expr + 1}.
+\end{itemize}
+
+\pnum
+\textbf{Call-site verification.}
+At every call site, the compiler verifies that the argument satisfies the
+formal parameter's size constraint (\diagcode{E087}); see
+\S\,\ref{sec:vra.sized-slice-callsite}.
+
+\pnum
+\textbf{C ABI decomposition (Fase~7).}
+When a function parameter has a sized or unsized dynamic slice type, the
+compiler decomposes it into a pair of C parameters:
+
+\begin{itemize}
+  \item a length parameter \texttt{size\_t \_\_len\_NAME};
+  \item a data pointer \texttt{const T*} (shared) or \texttt{T* restrict} (mutable).
+\end{itemize}
+
+If the parameter's size expression is an arithmetic expression over other
+parameters' lengths (e.g., \lain{out i32[a.len + b.len]}), no
+\texttt{\_\_len\_out} parameter is emitted; the length is re-derived from
+\texttt{\_\_len\_a + \_\_len\_b} at every use site.
+
+\begin{example}
+\begin{laincode}
+// Source:
+proc vadd(var out i32[], a i32[out.len], b i32[out.len]) { ... }
+
+// C emission:
+// void vadd(size_t __len_out, int32_t * restrict out,
+//           const int32_t* a, const int32_t* b);
+\end{laincode}
+\end{example}
+
+\section{Struct types}
+\label{sec:types.struct}
+\index{struct type}
+
+\pnum
+A struct type groups named fields into a single named product type.  The
+grammar production is \gramref{struct-declaration} (Annex~A).
+
+\pnum
+Field order is the declaration order.  The memory layout of a struct is
+\idbehav{equal to the C99 struct layout, including compiler-inserted padding
+for alignment}.
+
+\pnum
+A struct type~$S$ is linear if at least one field of $S$ has a linear type
+(transitively).
+
+\begin{constraint}
+  \textbf{Q-008.}
+  Every field of a struct or enum variant whose declared type is linear
+  shall be annotated \lain{mov}.  Omitting \lain{mov} on a linear field
+  is \illformed{}~(\diagcode{E083}).  This requirement makes linearity
+  locally visible in the declaration: a reader of a struct definition
+  does not need to inspect the field's type definition to know whether
+  the struct is linear.
+\end{constraint}
+
+\begin{example}
+\begin{laincode}
+type Handle {
+    mov ptr *int            // explicit `mov` on linear field
+}
+
+type Session {
+    mov h Handle            // OK: Handle is linear, mov required
+    name [u8]               // unrestricted field, no mov needed
+}
+
+// Ill-formed: missing mov on a linear field
+type Bad {
+    h Handle                // [E083]
+}
+\end{laincode}
+\end{example}
+
+\pnum
+\textbf{Struct construction}: all fields shall be provided in declaration
+order.  The type of each argument shall be compatible with the declared
+field type (\S\,\ref{sec:types.compat}).
+
+\begin{constraint}
+  A struct constructor expression with a number of arguments different from
+  the number of fields is \illformed{}~(\diagcode{E100}).
+\end{constraint}
+
+\begin{constraint}
+  Writing to a field of a struct variable requires the variable to be
+  declared as \lain{var} (mutable).  Writing to an immutable binding's
+  field is \illformed{}.
+\end{constraint}
+
+\begin{constraint}
+  Using \lain{==} or \lain{!=} on a struct type is \illformed{}.
+  Field-by-field comparison must be performed explicitly.
+\end{constraint}
+
+\section{Enum types}
+\label{sec:types.enum}
+\index{enum type}
+
+\pnum
+An enum type is a type with a finite, named set of values.  Each variant
+carries no associated data.  The grammar production is
+\gramref{enum-declaration} (Annex~A).
+
+\pnum
+The underlying representation of an enum type is \idbehav{an integer type
+large enough to hold all variant tags; the reference implementation uses
+\texttt{int}}.
+
+\pnum
+Enum values are accessed as \lain{TypeName.VariantName}.
+
+\begin{constraint}
+  Using \lain{==} or \lain{!=} to compare enum values is \illformed{}.
+  Enum values shall be compared using \lain{case} pattern matching
+  (\S\,\ref{sec:15-match}).
+\end{constraint}
+
+\begin{note}
+  The constraint on \lain{==} for enums reflects that the underlying tag
+  representation is implementation-defined.  Pattern matching is always
+  sound.
+\end{note}
+
+\section{Algebraic data types (ADTs)}
+\label{sec:types.adt}
+\index{algebraic data type}
+
+\pnum
+An ADT is a sum type in which each variant may carry associated fields.
+A type declaration is classified as an ADT if at least one variant has
+fields.  The grammar production is \gramref{enum-declaration} (Annex~A,
+using the record-variant form).
+
+\pnum
+ADTs use a niche-based representation whenever a zero-cost encoding is
+available; otherwise they fall back to a tagged union (a tag field of
+implementation-defined integer type plus a union of variant payload
+structs).
+
+\begin{note}
+  \textbf{D-Niche aggressive multi-slot.}
+  When the variant payload admits a \textit{niche}---a bit pattern that
+  cannot occur in any valid value of the payload type---that niche is
+  used to encode tag-less variants.  Niche sources, in priority order:
+  zero-page pointer slots for pointers/slices; VRA-proven unused values
+  for constrained integers; bit patterns outside the declared variants
+  for \lain{bool} or small enums; niche of any recursive field. See
+  \S\,\ref{sec:mem.adt-layout} for the full algorithm.
+
+  If no niche or only a partial niche can be derived, the compiler
+  emits \diagcode{W120} (best-effort warning, never an error) and
+  falls back to a tag+union representation. The programmer may
+  resolve the warning by constraining the payload, by changing to a
+  payload type with larger sentinel space, or by accepting the tag
+  byte. See \S\,\ref{sec:mem.adt-layout} for the full layout
+  algorithm and target dependencies.
+\end{note}
+
+\pnum
+ADT values are constructed as \lain{TypeName.VariantName(args)} for
+variants with fields, or \lain{TypeName.VariantName} for unit variants.
+
+\pnum
+ADT values are destructured via \lain{case} pattern matching
+(\S\,\ref{sec:15-match}).
+
+\section{Pointer types}
+\label{sec:types.pointer}
+\index{pointer type}
+
+\pnum
+A pointer type \lain{*T} or \lain{const *T} is a raw memory address.
+Pointer operations require an \lain{unsafe} block (\S\,\ref{sec:18-unsafe}).
+
+\pnum
+The ownership modes for pointer types are:
+
+\begin{longtable}{@{}llll@{}}
+\toprule
+\textbf{Lain syntax} & \textbf{Mode} & \textbf{C99 type} & \textbf{Linear?} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Lain syntax} & \textbf{Mode} & \textbf{C99 type} & \textbf{Linear?} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\lain{*T}     & shared (read-only) & \texttt{const T*}  & no \\
+\lain{var *T} & mutable            & \texttt{T*}        & no \\
+\lain{mov *T} & owned              & \texttt{T*}        & yes \\
+\end{longtable}
+
+\begin{constraint}
+  Dereferencing a pointer or taking the address of a variable shall occur
+  only inside an \lain{unsafe} block.  Pointer operations in safe code are
+  \illformed{}~(\diagcode{E012}).
+\end{constraint}
+
+\section{Constrained types}
+\label{sec:types.constrained}
+\index{constrained type}
+
+\pnum
+A constrained type is a type annotated with a value range constraint:
+
+\begin{center}
+\textit{T} \textit{op} \textit{bound}
+\end{center}
+
+where \textit{op} $\in \{$\lain{>=}, \lain{<=}, \lain{>}, \lain{<},
+\lain{==}$\}$ and \textit{bound} is an integer literal.
+
+\pnum
+Constrained types are used in function return types and parameter types to
+declare value range invariants that the value range analysis
+(\S\,\ref{sec:13-vra}) shall enforce.
+
+\begin{example}
+\begin{laincode}
+func nonzero_divisor() int >= 1 {
+    return 42   // VRA verifies: 42 >= 1 holds
+}
+\end{laincode}
+\end{example}
+
+\pnum
+The constraint is part of the function signature, not the type system's
+nominal identity.  Two constrained types with the same base type are
+assignment-compatible.
+
+\section{Type compatibility and equivalence}
+\label{sec:types.compat}
+\index{type equivalence}
+\index{type compatibility}
+
+\pnum
+Lain uses \textbf{nominal type equivalence}: two types are the same if and
+only if they have the same declared name.
+
+\pnum
+Two types $T_1$ and $T_2$ are \textit{compatible} for an expression context
+if:
+\begin{itemize}
+  \item $T_1 = T_2$ (same nominal type), or
+  \item $T_1$ is an integer type of lower rank than $T_2$ (implicit
+        widening; \S\,\ref{sec:types.rank}).
+\end{itemize}
+
+\begin{constraint}
+  An expression of type $T_1$ used in a context requiring type $T_2$, where
+  $T_1$ and $T_2$ are not compatible, is \illformed{}.
+\end{constraint}
+
+\pnum
+The operators \lain{==} and \lain{!=} are defined for:
+\begin{itemize}
+  \item primitive numeric types;
+  \item \lain{bool};
+  \item pointer types.
+\end{itemize}
+They are not defined for struct types, array types, or enum types.

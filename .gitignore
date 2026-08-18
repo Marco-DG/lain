@@ -67,7 +67,9 @@ linkedin/
 # Directories ignored at user request
 compiler-doc/
 docs/
-spec/
+
+# spec/ SOURCES are tracked (the contract must be reviewable/diffable); only the
+# LaTeX build artifacts below are ignored.
 
 # LaTeX build artifacts (spec/)
 spec/**/*.aux

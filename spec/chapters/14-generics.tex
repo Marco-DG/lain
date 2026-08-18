@@ -1,0 +1,177 @@
+% 14-generics.tex — Clause 14: Generics and compile-time evaluation
+\chapter{Generics and compile-time evaluation}
+\label{sec:14-generics}
+\index{generics}
+\index{compile-time evaluation}
+\index{comptime}
+
+\section{Overview}
+\label{sec:gen.overview}
+
+\pnum
+Lain implements genericity through compile-time function evaluation (CTFE).
+Generic types and functions accept \textit{type parameters} (declared as
+\lain{name type}) or \textit{compile-time value parameters} (declared as
+\lain{comptime name non-type}).  The compiler evaluates them at compile time
+and monomorphizes the result.  There is no type erasure and no runtime
+polymorphism.
+
+\section{Type parameters}
+\label{sec:gen.type-params}
+\index{type parameter}
+
+\pnum
+A parameter declared \lain{name type} is a type parameter.  Types are
+implicitly compile-time — the \lain{comptime} keyword shall \emph{not}
+precede a type parameter.  At every call site, the argument shall be a type
+expression known at compile time.
+
+\begin{laincode}
+func identity(T type, x T) T {
+    return x
+}
+
+var n = identity(int, 42)       // T = int, monomorphized
+var s = identity(u8[:0], "hi")  // T = u8[:0], separate monomorphization
+\end{laincode}
+
+\pnum
+Type parameters are evaluated entirely at compile time; they produce
+no runtime code.
+
+\begin{constraint}
+  The \lain{comptime} keyword shall not appear before a parameter whose
+  type is \lain{type}.  \lain{func f(comptime T type)} is ill-formed;
+  write \lain{func f(T type)} instead.
+\end{constraint}
+
+\section{Compile-time value parameters}
+\label{sec:gen.comptime-params}
+\index{comptime parameter}
+
+\pnum
+A parameter declared \lain{comptime name non-type} is a compile-time value
+parameter.  The argument shall be a constant expression of the declared type
+known at compile time.
+
+\begin{laincode}
+type RingBuffer(T type, comptime N int) = type {
+    items T[N]
+    head  usize
+    tail  usize
+}
+\end{laincode}
+
+\begin{constraint}
+  A compile-time evaluation context (CTFE) shall not call a \lain{proc}
+  or an \lain{extern proc}; only \lain{func} calls are admissible. A
+  violation is \illformed{}~(\diagcode{E101}).
+\end{constraint}
+
+\section{Type as value}
+\label{sec:gen.type-value}
+\index{type as value}
+
+\pnum
+A \lain{func} with return type \lain{type} is a type constructor.  Its
+body shall consist only of expressions and statements that are evaluable
+at compile time.  The return value is a type that the caller may use in
+type annotations and variable declarations.
+
+\begin{laincode}
+type Option(T type) = type {
+    Some { value T }
+    None
+}
+
+var x = Option(int).Some(42)
+\end{laincode}
+
+\pnum
+Type constructors may also be written as \lain{func} declarations returning
+\lain{type}:
+
+\begin{laincode}
+func Option(T type) type {
+    return type {
+        Some { value T }
+        None
+    }
+}
+\end{laincode}
+
+\begin{constraint}
+  A function returning \lain{type} shall be declared as \lain{func} (not
+  \lain{proc}).
+\end{constraint}
+
+\section{Monomorphization}
+\label{sec:gen.monomorphization}
+\index{monomorphization}
+
+\pnum
+For each unique combination of comptime arguments at call sites, the
+implementation produces a separate instantiation of the function.  The
+name of each instantiation in the translation output is
+\idbehav{determined by the implementation}.
+
+\pnum
+Monomorphization is a compile-time-only operation; at runtime, each
+call site calls a specific, non-generic function.
+
+\section{Comptime expression blocks}
+\label{sec:gen.comptime-block}
+\index{comptime block}
+
+\pnum
+A \lain{comptime \{ expr \}} expression evaluates \textit{expr} at compile
+time.  The result is a compile-time constant that may be used as a type
+annotation, array size, or parameter constraint value.
+
+\begin{constraint}
+  A \lain{comptime} expression shall be pure and terminating (i.e., it may
+  only use \lain{func} calls and the constructs permitted in \lain{func}
+  bodies).
+\end{constraint}
+
+\section{Comptime if}
+\label{sec:gen.comptime-if}
+\index{comptime if}
+
+\pnum
+\lain{comptime if cond \{ ... \} else \{ ... \}} is a compile-time
+conditional.  Only the taken branch is type-checked and emitted; the other
+branch is entirely discarded.  \textit{cond} shall evaluate to a
+compile-time boolean constant.
+
+\begin{note}
+  \lain{comptime if} enables platform-specific code selection without
+  dead-code warnings.  It is the preferred way to write code that
+  varies based on compile-time parameters.
+\end{note}
+
+\section{Comptime recursion depth}
+\label{sec:gen.recursion-depth}
+\index{comptime recursion depth}
+
+\pnum
+The maximum depth of comptime function evaluation is
+\idbehav{the implementation's comptime evaluation depth limit; the
+reference implementation enforces a limit of 256}.  A comptime evaluation
+that exceeds this depth is \illformed{}~(\diagcode{E014}).
+
+\section{Mode preservation in generics}
+\label{sec:gen.mode-preserve}
+\index{mode preservation}
+
+\pnum
+When a type parameter \lain{T} is substituted with a concrete type, the
+ownership mode of the parameter is preserved.  If a parameter was declared
+\lain{var T}, and \lain{T} is substituted with a type that has mode
+\lain{shared} in its declaration, the substituted parameter retains the
+\lain{var} mode.
+
+\begin{note}
+  This rule ensures that mode annotations in generic functions behave
+  consistently regardless of the concrete type argument.
+\end{note}

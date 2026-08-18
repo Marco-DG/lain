@@ -1,0 +1,452 @@
+% 13-vra.tex — Clause 13: Value range constraints
+\chapter{Value range constraints}
+\label{sec:13-vra}
+\index{value range analysis (VRA)}
+\index{VRA}
+
+\section{Overview}
+\label{sec:vra.overview}
+
+\pnum
+Value Range Analysis (VRA) is a static analysis that tracks integer value
+ranges through a program using interval arithmetic.  It is used to:
+\begin{itemize}
+  \item eliminate array bounds checks (\S\,\ref{sec:types.array});
+  \item prove division-by-zero absence (\S\,\ref{sec:expr.arith});
+  \item verify parameter and return constraints (\S\,\ref{sec:vra.constraints});
+  \item prove in-guard safety (\S\,\ref{sec:expr.in}).
+\end{itemize}
+
+\pnum
+VRA is decidable and polynomial in program size.  No SMT solver is required.
+All analyses performed by a conforming implementation shall terminate.
+
+\section{Range representation}
+\label{sec:vra.range}
+\index{range representation}
+
+\pnum
+A value range is an interval $[\ell,\, u]$ where $\ell \leq u$.  The
+sentinels $-\infty$ and $+\infty$ represent the absence of a lower or upper
+bound, respectively.  A range may additionally be \textit{unknown} (no
+information available), in which case the interval is $(-\infty, +\infty)$.
+
+\section{Range propagation rules}
+\label{sec:vra.propagation}
+\index{range propagation}
+
+\pnum
+The following table defines the result range for binary arithmetic
+operations on intervals $[a,b]$ and $[c,d]$.  All arithmetic is
+saturating: overflow wraps to $\pm\infty$.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Operation} & \textbf{Result range} & \textbf{Notes} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Operation} & \textbf{Result range} & \textbf{Notes} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+$[a,b] + [c,d]$ & $[a+c,\; b+d]$ & saturating \\
+$[a,b] - [c,d]$ & $[a-d,\; b-c]$ & saturating \\
+$[a,b] \times [c,d]$ & $[\min(ac,ad,bc,bd),\;\max(ac,ad,bc,bd)]$ & saturating \\
+$[a,b] \div [c,d]$, $c > 0$ & $[a \div d,\; b \div c]$ & integer truncation \\
+$[a,b] \div [c,d]$, $0 \in [c,d]$ & \diagcode{E015} & division by zero \\
+$[a,b] \mathbin{\%} [c,d]$, $a \geq 0$, $c > 0$ & $[0,\; d-1]$ & \\
+$[a,b] \mathbin{\%} [c,d]$, otherwise & unknown & conservative \\
+\end{longtable}
+
+\section{Conditional refinement}
+\label{sec:vra.refinement}
+\index{conditional refinement}
+
+\pnum
+After an \lain{if x < N} test, the VRA refines the range of \lain{x}
+in the then-branch to $[\ell,\, N-1]$ and in the else-branch to $[N,\, u]$
+(where $[\ell, u]$ is the range before the test).
+
+\pnum
+At the join point after an \lain{if}/\lain{else}, the range is the union
+of the ranges from both branches.
+
+\pnum
+When conditions are chained with \lain{and}, refinements from the
+left operand are active when evaluating the right operand
+(\S\,\ref{sec:expr.in}).
+
+\section{In-guard semantics}
+\label{sec:vra.in-guard}
+\index{in guard!VRA semantics}
+
+\pnum
+An in-guard \lain{idx in arr} (\S\,\ref{sec:expr.in}) introduces the
+constraint $0 \leq \mathit{idx} < \mathit{arr.len}$ into the VRA's
+range environment.  Inside the guarded body, \lain{arr[idx]} is accepted
+without further proof.
+
+\pnum
+When \lain{idx in arr} is the condition of a \lain{while decreasing M}
+loop, the VRA infers that $\mathit{arr.len} - \mathit{idx} \geq 0$ (a
+valid non-negativity proof for the measure $\mathit{arr.len} - \mathit{idx}$).
+
+\section{Constraint annotations}
+\label{sec:vra.constraints}
+\index{constraint annotation}
+
+\pnum
+A constraint annotation of the form \lain{T op bound} on a parameter or
+return type declares an invariant that the VRA shall enforce:
+
+\begin{itemize}
+  \item \textbf{Parameter constraint}: at every call site, the VRA shall
+        prove that the argument satisfies the constraint.
+  \item \textbf{Return constraint}: at every \lain{return} statement, the
+        VRA shall prove that the return expression satisfies the constraint.
+\end{itemize}
+
+\begin{constraint}
+  A function call where the argument range cannot be proven to satisfy
+  a parameter constraint is \illformed{}~(\diagcode{E012}).
+\end{constraint}
+
+\begin{constraint}
+  A \lain{return} expression whose range cannot be proven to satisfy the
+  declared return constraint is \illformed{}~(\diagcode{E012}).
+\end{constraint}
+
+\section{Interprocedural range propagation}
+\label{sec:vra.interprocedural}
+\index{interprocedural VRA}
+
+\pnum
+When a call expression appears in a context where the VRA needs a range,
+it uses the callee's declared return constraint (if any) as a conservative
+approximation.
+
+\begin{example}
+\begin{laincode}
+func nonzero() int >= 1 { return 42 }
+
+func divide(a int) int {
+    return a / nonzero()   // divisor range known >= 1: no [E015]
+}
+\end{laincode}
+\end{example}
+
+\pnum
+When the callee has no declared return constraint, the call expression has
+an unknown range.
+
+\begin{note}
+  Interprocedural VRA is conservative: only declared constraints are used,
+  not body analysis.  This preserves decidability and ensures that changing
+  a function's body cannot silently affect its callers' safety proofs.
+\end{note}
+
+\section{Limits and known gaps}
+\label{sec:vra.limits}
+
+\pnum
+The following limitations are known and accepted:
+
+\begin{enumerate}
+  \item VRA does not track ranges of struct fields.  A struct field accessed
+        through a pointer always has an unknown range.
+  \item VRA does not track ranges across loop-carried dependences with
+        non-linear measures.
+  \item Integer overflow in VRA arithmetic uses saturating semantics; the
+        actual Lain program uses wrapping arithmetic.  Programs whose
+        correctness depends on integer overflow are not analyzed correctly
+        by VRA.
+  \item Floating-point values are not tracked by VRA.
+\end{enumerate}
+
+
+\section{Loop body affine recap}
+\label{sec:vra.affine}
+\index{affine loop body}
+
+\pnum
+For \lain{for V in start..end} loops whose body contains assignments of
+the form \lain{x = x + c} or \lain{x = x - c} with constant step~\(c\),
+the implementation computes the post-loop range of~\(x\) precisely:
+
+\begin{align*}
+  x_{\text{post}} \in [x_{\text{init}} + c \cdot n_{\min},\; x_{\text{init}} + c \cdot n_{\max}]
+\end{align*}
+
+where \(n_{\min}\), \(n_{\max}\) is the iteration count derived from the
+loop's range. This avoids the conservative widening that would otherwise
+mark \(x\) as unknown after the loop.
+
+\begin{example}
+\begin{laincode}
+var x = 0
+for i in 0..10 {
+    x = x + 1
+}
+// Post-loop: x is exactly 10 (range [10, 10]).
+\end{laincode}
+\end{example}
+
+\pnum
+Patterns not matching the affine form (mixed updates in branches,
+non-constant step, multiple variables updated together) fall back to
+the conservative widening (unknown post-loop range).
+
+\section{Overflow-at-boundary check}
+\label{sec:vra.boundary}
+\index{overflow check}
+
+\pnum
+The Phase 5 boundary check applies at every integer-type boundary
+where a value crosses into a narrower or different-domain target.
+The check sites are:
+\begin{itemize}
+  \item Variable declaration (\lain{var x T = expr}).
+  \item Assignment to identifier, field, or indexed element
+        (\lain{x = expr}, \lain{p.f = expr}, \lain{arr[i] = expr}).
+  \item Return value vs the function's declared return type.
+  \item Call argument vs the parameter's declared type.
+  \item Struct constructor field initialization.
+\end{itemize}
+
+\pnum
+At each site, if the source value's VRA range exceeds the target type's
+natural range, the program is \illformed{}~(\diagcode{E086}). The
+diagnostic offers four resolutions: widen the target, use a wrapping
+operator, use a saturating operator, or tighten input constraints so
+VRA can prove safety.
+
+\pnum
+The check is skipped:
+\begin{itemize}
+  \item Inside an \lain{unsafe} block;
+  \item When the source range is unbounded (the analysis cannot rule out
+        overflow without further information; the user must annotate);
+  \item For integer-literal sources (literals are polymorphic across
+        \lain{iN}/\lain{uN} and trusted to fit when written explicitly).
+\end{itemize}
+
+\pnum
+The wrapping/saturating operators (\tok{+\%}, \tok{*\%}, \tok{+|}, \tok{*|})
+produce a result whose range is automatically clamped to the LHS type's
+natural range, so they pass the boundary check unconditionally.
+
+\begin{example}
+\begin{laincode}
+var a u8 = 200
+var b u8 = 100
+// var bad u8 = a + b      // [E086]: range [300, 300] exceeds u8
+var w u8 = a +% b           // OK: wrapping clamps to [0, 255]
+var s u8 = a +| b           // OK: saturating clamps to [0, 255]
+\end{laincode}
+\end{example}
+
+\section{Sub-slice bounds}
+\label{sec:vra.subslice}
+\index{sub-slice}
+\index{slicing}
+
+\pnum
+A sub-slice expression \lain{arr[a..b]} produces a slice covering the
+half-open range $[a, b)$ of \lain{arr}.  The inferred type of the
+result is \lain{T[b-a]}, a sized slice
+(\S\,\ref{sec:types.sized-slice}) whose length is statically known.
+When both endpoints are compile-time integer literals, the compiler
+verifies $a \leq b$; if the check fails the program is
+\illformed{}~(\diagcode{E087}).
+
+\pnum
+When the endpoints are variables, each is range-checked against the
+container length (\diagcode{E085}, the standard bounds check). A
+runtime guarantee on the ordering of variable endpoints is not
+emitted at compile time; the programmer must establish it through
+refinement constraints or by limiting the range expression to
+literal bounds.
+
+\begin{example}
+\begin{laincode}
+var arr i32[10] = [0,1,2,3,4,5,6,7,8,9]
+var ok  = arr[2..5]    // type i32[3], half-open, length 3
+// var bad = arr[5..2] // [E087]: start 5 > end 2
+var empty = arr[3..3]  // OK: empty slice of length 0
+\end{laincode}
+\end{example}
+
+\section{Sized slice call-site verification}
+\label{sec:vra.sized-slice-callsite}
+\index{sized slice!call-site check}
+\index{E087}
+
+\pnum
+When a function parameter is declared with a sized slice type
+(\S\,\ref{sec:types.sized-slice}), the compiler verifies at every
+call site that the supplied argument satisfies the parameter's
+length constraint.  A proved violation is \illformed{}~(\diagcode{E087}).
+The check is conservative: it fires only when VRA can \emph{prove}
+the constraint is not met; it is silent when the constraint cannot
+be determined statically.
+
+\pnum
+The cases checked are:
+
+\begin{itemize}
+  \item \lain{T[>= k]} or \lain{T[> k]} with integer literal \lain{k}:
+        fires if the argument length's VRA upper bound is less than
+        the required minimum (\lain{>= k} requires $\mathit{len} \geq k$;
+        \lain{> k} requires $\mathit{len} \geq k+1$).
+  \item \lain{T[k]} (exact length, literal \lain{k}): fires if the
+        argument length's VRA range does not contain \lain{k}.
+  \item \lain{T[ref.len]} (cross-parameter equality): fires if both
+        sides have a concrete singleton VRA range and they differ.
+\end{itemize}
+
+\begin{example}
+\begin{laincode}
+func first(arr i32[> 0]) i32 { return arr[0] }
+
+proc main() i32 {
+    var empty i32[0] = []
+    // first(empty)       // [E087]: len=0, requires > 0
+    var one i32[1] = [42]
+    return first(one)     // OK: len=1 satisfies > 0
+}
+\end{laincode}
+\end{example}
+
+\pnum
+\textbf{Sized slice VRA entry.}
+At function entry, for each parameter \lain{name T[expr]} the compiler
+seeds the range table with the constraint derived from the size
+expression:
+
+\begin{itemize}
+  \item \lain{T[k]} (literal): \texttt{\_\_len\_name} $\in [k, k]$.
+  \item \lain{T[>= k]} (literal): \texttt{\_\_len\_name} $\in [k, +\infty)$.
+  \item \lain{T[> k]} (literal): \texttt{\_\_len\_name} $\in [k{+}1, +\infty)$.
+  \item \lain{T[a.len]} (member reference): difference constraint
+        \texttt{\_\_len\_name} $=$ \texttt{\_\_len\_a}.
+  \item \lain{T[a.len + b.len]} (arithmetic): constraints
+        \texttt{\_\_len\_a} $\leq$ \texttt{\_\_len\_name} and
+        \texttt{\_\_len\_b} $\leq$ \texttt{\_\_len\_name}.
+\end{itemize}
+
+These constraints are available to the VRA throughout the function body,
+enabling the Omega Test (\S\,\ref{sec:vra.omega}) to discharge complex
+indexing patterns.
+
+\section{VRA analysis levels}
+\label{sec:vra.levels}
+\index{VRA!analysis levels}
+
+\pnum
+Lain's VRA applies four escalating analysis levels at each bounds-check
+site.  The levels are tried in order; if one succeeds (the check is proved
+safe), the remaining levels are skipped.
+
+\begin{description}[leftmargin=2em]
+  \item[L1 — Interval arithmetic.]
+    Each variable is represented by an interval $[\ell, u]$.
+    The check passes if the interval of the index falls within
+    $[0, \mathit{arr.len} - 1]$ directly.
+
+  \item[L2 — Difference constraints.]
+    A system of difference constraints of the form
+    $x - y \leq c$ is maintained.  The check passes if the constraint
+    system can derive the required bound in one step.
+
+  \item[L3 — One-step bridge (transitivity).]
+    Two-hop transitivity: if $v_1 - X \leq a$ and $X - v_2 \leq b$
+    are both known, the checker derives $v_1 - v_2 \leq a + b$ without
+    running the full Fourier-Motzkin algorithm.  Handles patterns such
+    as \lain{i < src.len - 1} via the chain
+    $i < \mathit{src.len}$ and $\mathit{src.len} - 1 < \mathit{src.len}$.
+
+  \item[L4 — Fourier-Motzkin linear arithmetic (Omega Test).]
+    Full linear arithmetic elimination over all VRA variables.
+    See \S\,\ref{sec:vra.omega}.
+\end{description}
+
+\pnum
+All four levels are polynomial time.  No SMT solver is used.
+
+\section{Omega Test — Fourier-Motzkin prover (VRA level 4)}
+\label{sec:vra.omega}
+\index{Omega Test}
+\index{Fourier-Motzkin}
+\index{VRA!level 4}
+
+\pnum
+When L1–L3 fail to discharge a bounds check, the implementation invokes
+the \textit{Omega Test}: a self-contained Fourier-Motzkin linear
+arithmetic prover (~280 LOC in \texttt{src/sema/omega.h}, no external
+dependencies).
+
+\pnum
+\textbf{Proof method (proof by contradiction).}
+To prove $\mathit{index} < \mathit{bound}$:
+
+\begin{enumerate}
+  \item Decompose both expressions into linear forms
+        $\sum_i c_i \cdot x_i + k$ over named variables.
+        References to \lain{x.len} are mapped to the synthetic VRA
+        variable \texttt{\_\_len\_x}.
+  \item Form the negated query: $\mathit{bound} - \mathit{index} \leq 0$.
+  \item Extract all VRA range and difference constraints that mention
+        the variables appearing in the query.
+  \item Run Fourier-Motzkin variable elimination.  Each step crosses
+        upper-bound inequalities with lower-bound inequalities to
+        produce a system with one fewer variable.
+  \item If the resulting constant system contains an inequality
+        $0 \leq c$ with $c < 0$, the system is UNSAT: the negation
+        is impossible, so $\mathit{index} < \mathit{bound}$ always holds.
+\end{enumerate}
+
+\pnum
+The prover also supports non-negativity queries: to prove
+$\mathit{expr} \geq 0$, it shows that $\mathit{expr} \leq -1$, combined
+with VRA constraints, is UNSAT.
+
+\pnum
+\textbf{Example patterns proved by the Omega Test.}
+
+\begin{example}
+\begin{laincode}
+// concat: out[j + a.len] with j < b.len and out.len == a.len + b.len
+// FM eliminates j; the cross-pair (j < b.len, j >= b.len) gives 0 <= -1 (UNSAT).
+func concat(a i32[], b i32[], out i32[a.len + b.len]) {
+    for j in 0..b.len {
+        out[j + a.len] = b[j]   // proved safe by Omega
+    }
+}
+
+// reverse: out[n - i - 1] with n = arr.len and i < n
+// FM eliminates n and __len_arr; reduces to (i <= -1) AND (i >= 0) (UNSAT).
+func reverse(arr i32[], out i32[arr.len]) {
+    var n = arr.len
+    for i in 0..n {
+        out[n - i - 1] = arr[i]   // proved safe by Omega
+    }
+}
+\end{laincode}
+\end{example}
+
+\pnum
+\textbf{Equality propagation for local length aliases.}
+When the body contains \lain{var n = x.len}, the compiler registers the
+equality $n - \mathtt{\_\_len\_x} = 0$ (expressed as two difference
+constraints) so the Omega Test can cancel \lain{n} and
+\texttt{\_\_len\_x} in the same linear form.
+
+\pnum
+\textbf{Conservatism.}
+If the FM buffer overflows (more than 80 inequalities in the working
+system), the prover gives up and returns \textit{unknown}; the check
+then falls through to E085 as if L4 had not fired.  This bound is
+unreachable for the small systems (2--6 variables, 5--15 inequalities)
+typical of slice manipulation code.
