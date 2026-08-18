@@ -37,16 +37,10 @@ FAILED_TESTS=()
 LAIN_GCC_CHECK="${LAIN_GCC_CHECK:-1}"
 GCC_BIN="${CC:-gcc}"
 GCC_ERR=""
-# Emitted C that gcc must reject-list — a TRACKED interop finding whose emitted C
-# doesn't compile (Lain still accepts it, exit 0). To fix during reconciliation:
-#   mem_smoke_pass  — `std/mem` binds malloc/free as returning/taking `*u8`, but C's
-#                     are `void*`; with `-Dlibc_malloc=malloc` (+ <stdlib.h>) that
-#                     clashes. `usize`→`size_t` fixed the ARG; the correct fix for the
-#                     return is a `*void` binding + cast, BLOCKED by a linear-cast gap
-#                     (`libc_free(mov ptr as *void)` → [E003]: a `mov X as T` doesn't
-#                     register consuming X). Deeper fix. (§17/§20 + linearity.)
+# Emitted C that gcc must reject-list. EMPTY — every _pass test's emitted C now
+# compiles with gcc. (Keep it empty: a new entry means a real codegen/interop bug
+# to fix, not to skip.)
 GCC_CHECK_SKIP=(
-  mem_smoke_pass
 )
 
 # Returns 0 if the emitted C compiles (or the check is disabled/skipped),

@@ -1222,6 +1222,14 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         sema_check_expr_linearity(e->as.unary_expr.right, tbl, loop_depth);
         break;
 
+    case EXPR_CAST:
+        // A cast wraps its operand — recurse so a `mov` inside it registers the
+        // consumption. `mov x as T` parses as `(mov x) as T` = CAST(MOVE(x)); without
+        // this the inner MOVE was invisible and x was reported unconsumed [E003]
+        // (e.g. reinterpreting an owned `*u8` as `*void` for a libc free binding).
+        sema_check_expr_linearity(e->as.cast_expr.expr, tbl, loop_depth);
+        break;
+
     case EXPR_MATCH: {
         BorrowEntry *borrowed_match_entry_e = NULL;
         if (e->as.match_expr.value) {

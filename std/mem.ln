@@ -17,34 +17,31 @@ c_include "<stdlib.h>"
 
 // ── Raw C bindings ────────────────────────────────────────────────────────────
 
-// malloc: returns an owned raw pointer. Linear: MUST be freed.
-// WARNING: returns null on OOM; null-safety requires niche optimization (TODO).
-extern proc libc_malloc(size usize) mov *u8
+// Raw C bindings use C's exact types — malloc/calloc/realloc return `void*`,
+// free takes `void*` — so the emitted decls match <stdlib.h> (no conflict). The
+// safe wrappers below reinterpret to/from the owned `*u8` heap-pointer type.
+extern proc libc_malloc(size usize) mov *void
 
-// free: consumes the owned pointer. Matches libc free(3).
-extern proc libc_free(ptr mov *u8)
+extern proc libc_free(ptr mov *void)
 
-// calloc: allocate `count` elements of `size` bytes each, zero-initialized.
-extern proc libc_calloc(count usize, size usize) mov *u8
+extern proc libc_calloc(count usize, size usize) mov *void
 
-// realloc: resize a heap block. Takes a non-owning ptr (caller manages old ptr).
-// WARNING: on failure returns null; the original pointer is still valid.
-extern proc libc_realloc(ptr *u8, new_size usize) mov *u8
+extern proc libc_realloc(ptr mov *void, new_size usize) mov *void
 
 // ── Safe wrappers ─────────────────────────────────────────────────────────────
 
 // Allocate `size` bytes. The returned pointer is linear — caller must
 // pass it to mem_free (flagged as leak at compile time otherwise).
 proc mem_alloc(size usize) mov *u8 {
-    return libc_malloc(size)
+    unsafe { return libc_malloc(size) as *u8 }
 }
 
 // Free an owned heap pointer. Consumes the pointer: no use after this call.
 proc mem_free(ptr mov *u8) {
-    libc_free(mov ptr)
+    unsafe { libc_free(mov ptr as *void) }
 }
 
 // Allocate `size` zero-initialized bytes (via calloc).
 proc mem_alloc_zeroed(size usize) mov *u8 {
-    return libc_calloc(size, 1)
+    unsafe { return libc_calloc(size, 1) as *u8 }
 }

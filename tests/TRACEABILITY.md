@@ -127,3 +127,16 @@ the assertion, now findable by feature. Pre-reorg snapshot: tag `v0-pre-coherenc
   for malloc's return / free's arg. The C-correct fix is a `*void` binding + cast, but
   it's blocked by a linear-cast gap — `libc_free(mov ptr as *void)` gives `[E003]`
   (`mov X as T` parses `mov (X as T)`, so X isn't consumed). Separate deeper unit.
+
+## Reconciliation log — linear cast + §20 mem (sprint 4)
+
+- **FIXED (linearity)**: casting a moved value now registers the consumption. The
+  linearity walker had no `EXPR_CAST` case, so `mov x as T` (= `CAST(MOVE(x))`) left
+  `x` unconsumed → spurious `[E003]`. Added the recursion; suite green (no
+  over-consumption). Bonus: use-after-move THROUGH a cast is now caught too.
+- **FIXED (§20 std/mem)**: the malloc/free/calloc/realloc bindings now use C's exact
+  `void*` types (were `*u8`), matching `<stdlib.h>`; the safe wrappers reinterpret
+  to/from the owned `*u8` heap type in `unsafe`. `mem_smoke` emitted C gcc-compiles.
+- **`GCC_CHECK_SKIP` is now EMPTY** — every `_pass` test's emitted C is gcc-verified.
+- Surfaced (not fixed): `var *T` mutable-pointer params emit `T**` (double pointer);
+  used `mov *void` for realloc instead. Same deeper emit bug noted in the #1 lexer work.
