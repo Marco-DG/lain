@@ -381,3 +381,41 @@ compiles:
 - unsafe enables deref / address-of / casts / direct-ADT / bounds-suppression;
   does NOT disable ownership/borrow/type/div0/exhaustiveness/purity; UB list;
   block borrow-scope; nesting.
+
+---
+
+## §19 Memory model
+
+### FIXED (spec was wrong)
+1. **"Copying a linear type without `mov` → `E006`"** — `E006` is
+   consume-in-loop. An implicit copy/move of a linear value is `E007`
+   (\S11). Reworded + recoded.
+2. **"No out-of-bounds access → `E014`"** in the safety table — OOB is **`E085`**
+   (`E014` is non-exhaustive match). Fixed.
+3. **Slice `[T]` "Copy {data,len}"** — `T[]`, and the pair is `{len, data}`.
+
+### Verified correct (no change)
+- Storage durations; return-of-automatic-ref → E010; malloc/free ownership story
+  (E001 use-after-free, E002 double-free, E003 leak); enum codegen (tag struct
+  wrapper); niche/W120 fallback; `--target=<triple>` CLI flag is real
+  (`main.c`, `args.h`).
+
+---
+
+## §20 Standard library
+
+### FIXED (spec was wrong)
+1. **Stdlib string params typed `[u8]`** — the real signatures take **`*u8[:0]`**
+   (sentinel-terminated C strings), not a byte slice: `print`/`println`,
+   `open_file`/`write_file`, `try_open` (checked against `std/io.ln`, `std/fs.ln`).
+   Fixed all synopses + the print/println effect text (which referenced a
+   nonexistent `s.len`/`s.data` on a sentinel string).
+2. **`Option`/`Result` via `func … type { return type {…} }`** — that form is not
+   implemented (§14). Generic ADTs `type Name(T type) = type { … }` **do** compile
+   (verified), so rewrote both to that working form.
+
+### Verified correct (no change)
+- `std.c` externs (`printf`/`libc_printf`, `fopen`/`fclose`/`fputs`/`fgets`,
+  `extern type FILE`) match `std/c.ln` (spec `int` = std `i32`, an alias);
+  `close_file(mov {handle} File)` destructuring matches; `std.math`
+  min/max/abs/clamp present (`abs` even carries the `i32 >= 0` return constraint).

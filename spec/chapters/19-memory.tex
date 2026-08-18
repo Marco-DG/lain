@@ -163,13 +163,14 @@ Non-linear struct                             & Field-by-field copy & Allowed \\
 Linear struct (has \lain{mov} field)          & Forbidden & Requires \lain{mov} \\
 Non-linear array                              & Element-wise copy & Allowed \\
 Linear array                                  & Forbidden & Requires \lain{mov} \\
-Slice (\lain{[T]})                            & Copy \texttt{\{data, len\}} pair & Always allowed \\
+Slice (\lain{T[]})                            & Copy \texttt{\{len, data\}} pair & Always allowed \\
 Raw pointer (\lain{*T})                       & Copy address & Always allowed \\
 \end{longtable}
 
 \begin{constraint}
-  Copying a linear type without an explicit \lain{mov} expression is
-  \illformed{}~(\diagcode{E006}).
+  A linear value cannot be implicitly copied: transferring it (by assignment,
+  argument, or return) without an explicit \lain{mov} is an implicit move and is
+  \illformed{}~(\diagcode{E007}, \S\,\ref{sec:own.diag}).
 \end{constraint}
 
 \section{Object representation}
@@ -351,7 +352,7 @@ No use-after-free         & \diagcode{E001} (use-after-move) \\
 No double-free            & \diagcode{E002} (double-consume) \\
 No leak of linear values  & \diagcode{E003} (unconsumed at scope exit) \\
 No dangling references    & \diagcode{E010} (ref to automatic-duration object) \\
-No out-of-bounds access   & \diagcode{E014} (VRA proof failure) \\
+No out-of-bounds access   & \diagcode{E085} (VRA proof failure) \\
 No null-pointer deref     & No raw pointers in safe fragment \\
 No data races             & No concurrency in current version \\
 \end{longtable}

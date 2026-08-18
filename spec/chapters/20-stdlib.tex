@@ -133,11 +133,11 @@ The following C functions are declared in \lain{std.c}:
 \index{print}
 
 \begin{functionspec}{print}{std.io}
-\synopsis{proc print(s [u8])}
-\noindent\textit{Effect:} Writes the byte sequence
-\texttt{s.data[0..s.len-1]} to standard output.  No trailing newline
-is appended.\\
-\noindent\textit{Parameter \texttt{s}:} Shared borrow of a byte slice.
+\synopsis{proc print(s *u8[:0])}
+\noindent\textit{Effect:} Writes the null-terminated byte string \texttt{s}
+to standard output.  No trailing newline is appended.\\
+\noindent\textit{Parameter \texttt{s}:} Shared, null-terminated C string
+(\lain{*u8[:0]}).
 \end{functionspec}
 
 \subsection{\texttt{println}}
@@ -145,11 +145,11 @@ is appended.\\
 \index{println}
 
 \begin{functionspec}{println}{std.io}
-\synopsis{proc println(s [u8])}
-\noindent\textit{Effect:} Writes the byte sequence
-\texttt{s.data[0..s.len-1]} to standard output, followed by a newline
-character (\texttt{0x0A}).\\
-\noindent\textit{Parameter \texttt{s}:} Shared borrow of a byte slice.
+\synopsis{proc println(s *u8[:0])}
+\noindent\textit{Effect:} Writes the null-terminated byte string \texttt{s}
+to standard output, followed by a newline character (\texttt{0x0A}).\\
+\noindent\textit{Parameter \texttt{s}:} Shared, null-terminated C string
+(\lain{*u8[:0]}).
 \end{functionspec}
 
 \section{\texttt{std.fs} — File system}
@@ -185,7 +185,7 @@ type.  It must be consumed exactly once, typically by calling
 \index{open\_file}
 
 \begin{functionspec}{open\_file}{std.fs}
-\synopsis{proc open\_file(path [u8], mode [u8]) mov File}
+\synopsis{proc open\_file(path *u8[:0], mode *u8[:0]) mov File}
 \noindent\textit{Effect:} Opens the file at \texttt{path} with the access
 mode \texttt{mode} (C \texttt{fopen} semantics).  Returns an owned
 \lain{File} value.  The caller is responsible for closing the file by
@@ -219,7 +219,7 @@ it shall not be used after this point.
 \index{write\_file}
 
 \begin{functionspec}{write\_file}{std.fs}
-\synopsis{proc write\_file(f File, s [u8])}
+\synopsis{proc write\_file(f File, s *u8[:0])}
 \noindent\textit{Effect:} Writes the byte sequence \texttt{s} to the file
 \texttt{f} using C \texttt{fputs}.\\
 \noindent\textit{Parameter \texttt{f}:} Shared borrow of the file handle.\\
@@ -317,11 +317,9 @@ specification.
 \lain{Option(T)} is a type constructor for optional values:
 
 \begin{laincode}
-func Option(T type) type {
-    return type {
-        Some { value T }
-        None
-    }
+type Option(T type) = type {
+    Some { value T }
+    None
 }
 \end{laincode}
 
@@ -345,11 +343,9 @@ case x {
 \lain{Result(T, E)} is a type constructor for fallible computations:
 
 \begin{laincode}
-func Result(T type, E type) type {
-    return type {
-        Ok  { value T }
-        Err { error E }
-    }
+type Result(T type, E type) = type {
+    Ok  { value T }
+    Err { error E }
 }
 \end{laincode}
 
@@ -359,7 +355,7 @@ Usage:
 \begin{laincode}
 type FileResult = Result(File, int)
 
-proc try_open(path [u8]) FileResult {
+proc try_open(path *u8[:0]) FileResult {
     var f = open_file(path, "r")
     return FileResult.Ok(mov f)
 }
