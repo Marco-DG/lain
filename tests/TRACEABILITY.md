@@ -108,3 +108,12 @@ the assertion, now findable by feature. Pre-reorg snapshot: tag `v0-pre-coherenc
   `non-exhaustive match` → `[E014]` (one site emitted it, one didn't); recursion-in-`func`
   → `[E011]` (func-totality family). EXPECT tags added. **Remaining**: `types/unsafe_adt_fail`
   — "direct ADT field access requires unsafe" still bare; needs a fresh code + annex entry.
+
+## Reconciliation log — §17 C-string interop (sprint 2)
+
+- **FIXED**: a null-terminated `u8[:0]` (or `*u8[:0]`) at an extern C boundary now
+  emits a thin `const char*`/`char*`, not the fat `Slice_u8_0` struct. This was the
+  `comptime_if` finding (`printf(fmt *u8[:0], …)` conflicted with C's `printf`); the
+  emitter's `*u8`→`const char*` hack only matched TYPE_SIMPLE elements, so a sentinel
+  *slice* fell through. `comptime_if_pass` now gcc-compiles and is un-skipped.
+- **Remaining §17/§20**: `mem_smoke_pass` (`std/mem` malloc binding vs system malloc).

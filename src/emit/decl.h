@@ -458,6 +458,24 @@ void emit_decl(Decl* decl, int depth) {
                      } else {
                           Type *pt = param->decl->as.variable_decl.type;
                           const char *fname = c_name_for_id(decl->as.function_decl.name);
+                          // C-interop: a null-terminated `u8[:0]` (a C string) at an
+                          // extern boundary is a THIN `const char*`/`char*`, not the
+                          // fat `Slice_u8_0` struct. The `*u8`/`*char` hack below only
+                          // matches TYPE_SIMPLE elements, so a sentinel slice `u8[:0]`
+                          // (or `*u8[:0]`) slipped through and emitted the fat slice,
+                          // conflicting with C's `printf(const char*, …)`.
+                          Type *ptc = (pt->kind == TYPE_POINTER && pt->element_type)
+                                      ? pt->element_type : pt;
+                          bool is_cstr = ptc->kind == TYPE_SLICE && ptc->sentinel_str &&
+                                         ptc->element_type &&
+                                         ptc->element_type->kind == TYPE_SIMPLE &&
+                                         ptc->element_type->base_type &&
+                                         ptc->element_type->base_type->length == 2 &&
+                                         strncmp(ptc->element_type->base_type->name, "u8", 2) == 0;
+                          if (is_cstr) {
+                              EMIT((pt->mode == MODE_MUTABLE || pt->mode == MODE_OWNED)
+                                   ? "char *" : "const char *");
+                          } else
                           // Hack: force const char* for puts/printf
                           if (pt->kind == TYPE_POINTER && pt->element_type->kind == TYPE_SIMPLE &&
                               (

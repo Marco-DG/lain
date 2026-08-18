@@ -37,17 +37,12 @@ FAILED_TESTS=()
 LAIN_GCC_CHECK="${LAIN_GCC_CHECK:-1}"
 GCC_BIN="${CC:-gcc}"
 GCC_ERR=""
-# Emitted C that gcc must reject-list. These are TRACKED interop findings surfaced
-# when the suite reorg enforced `_pass` (an "other" test skips this gcc check, so
-# their broken emitted C went unnoticed). Lain still compiles them (exit 0); only
-# their emitted C fails gcc. To be fixed during the spec↔compiler reconciliation:
-#   comptime_if_pass  — `printf(fmt *u8[:0], …)`: a sentinel POINTER `*u8[:0]`
-#                       emits as a fat `Slice_u8_0` instead of a thin `const char*`,
-#                       conflicting with C's printf. (C-string interop; §17.)
-#   mem_smoke_pass     — `std/mem` `libc_malloc` binding conflicts with system
-#                       `malloc` (uint8_t*(uintptr_t) vs void*(size_t)). (§17/§20.)
+# Emitted C that gcc must reject-list — a TRACKED interop finding whose emitted C
+# doesn't compile (Lain still accepts it, exit 0). To fix during reconciliation:
+#   mem_smoke_pass  — `std/mem` `libc_malloc` binding conflicts with system `malloc`
+#                     (uint8_t*(uintptr_t) vs void*(size_t)). (§17/§20.)
+# (comptime_if's sentinel `*u8[:0]`→fat-slice interop bug is now FIXED — un-skipped.)
 GCC_CHECK_SKIP=(
-  comptime_if_pass
   mem_smoke_pass
 )
 
