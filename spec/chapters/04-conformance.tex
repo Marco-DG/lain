@@ -158,7 +158,9 @@ verify them.
 \begin{constraint}
   The constraints of the ownership and linearity system
   (\S\,\ref{sec:11-ownership}) are \emph{not} suspended inside
-  \lain{unsafe} blocks.  Only raw pointer operations and the bounds-check
-  requirement are relaxed.  An implementation shall continue to enforce
-  \diagcode{E001}--\diagcode{E005} inside \lain{unsafe} blocks.
+  \lain{unsafe} blocks.  Only raw pointer operations, direct ADT field
+  access, and the bounds-check requirement are relaxed.  An implementation
+  shall continue to enforce the ownership and linearity diagnostics
+  (\diagcode{E001}--\diagcode{E008} and \diagcode{E016}) inside
+  \lain{unsafe} blocks.
 \end{constraint}
