@@ -23,7 +23,7 @@ declaration are written one per line.
 
 \begin{laincode}
 [fast_math]
-func dot(a [f64], b [f64], n int) f64 { ... }
+func dot(a f64[], b f64[], n int) f64 { ... }
 
 [private]
 func internal_helper() int { ... }
@@ -92,9 +92,10 @@ type File {
 }
 \end{laincode}
 
-\begin{constraint}
-  A struct with zero fields is \illformed{}~(\diagcode{E100}).
-\end{constraint}
+\begin{note}
+  A struct with zero fields (a \textit{unit} struct, \lain{type Empty \{\}})
+  is permitted: it is a zero-sized marker type, constructed as \lain{Empty()}.
+\end{note}
 
 \section{Enum and ADT declarations}
 \label{sec:decl.enum}
@@ -129,8 +130,8 @@ side-effect-free callable.  Its grammar production is
 
 \pnum
 The signature consists of: the keyword \lain{func}, a name, an optional
-list of \lain{comptime} type parameters, a parameter list, and a return
-type annotation.
+list of type parameters (\S\,\ref{sec:14-generics}), a parameter list, and a
+return type annotation.
 
 \subsection{Parameters}
 \label{sec:decl.func.params}
@@ -162,8 +163,10 @@ mode determines how the argument is passed:
 \end{note}
 
 \pnum
-A parameter declared \lain{comptime name type} is a compile-time type
-parameter; it must be bound to a concrete type at every call site.
+A parameter whose declared type is the built-in \lain{type} --- written
+\lain{name type}, with no \lain{comptime} prefix --- is a compile-time type
+parameter; it is bound to a concrete type at every call site, by inference
+from a value argument or explicitly (\S\,\ref{sec:14-generics}).
 
 \subsection{Return type annotation}
 \label{sec:decl.func.return}
@@ -218,8 +221,11 @@ proc main() int { ... }
 \end{laincode}
 
 \begin{constraint}
-  A program without a \lain{proc main() int} definition is
-  \illformed{}~(\diagcode{E100}).
+  A complete \emph{program} shall define exactly one \lain{proc main() int} as
+  its entry point.  An individual module (translation unit) compiled on its own
+  --- e.g.\ a library --- need not define \lain{main}: the reference compiler
+  accepts a \lain{main}-less source file, and a program missing an entry point
+  is diagnosed when the translation outputs are linked.
 \end{constraint}
 
 \section{Extern declarations}
@@ -244,7 +250,12 @@ extern func strlen(s *u8) usize
 \label{sec:decl.comptime}
 \index{comptime declaration}
 
-\pnum
-A top-level \lain{comptime \{ ... \}} block is evaluated by the compiler
-before any runtime code is emitted.  It may define compile-time constants
-or trigger \lain{compileError} assertions.
+\begin{note}
+  Top-level \lain{comptime \{ ... \}} blocks --- evaluated by the compiler
+  before any runtime code is emitted, to define compile-time constants or
+  trigger \lain{compileError} assertions --- are a \emph{planned} feature not
+  yet accepted by the reference implementation (a top-level \lain{comptime}
+  block is presently \diagcode{E100}).  The \lain{comptime} keyword is
+  nonetheless reserved, and \lain{comptime if} (\S\,\ref{sec:stmt.comptime-if})
+  is available.
+\end{note}

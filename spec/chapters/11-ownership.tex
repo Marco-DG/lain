@@ -36,7 +36,9 @@ Owned   & \lain{mov name T} & \lain{f(mov x)} & transfers ownership; source beco
 \pnum
 Local variables declared with \lain{var name = expr} have mutable storage
 accessible within their scope; their ownership mode in the type system is
-Owned (they hold linear values that must be consumed at scope exit).
+Owned.  When the value is of a \emph{linear} type, an Owned local must be
+consumed before its scope exits (\diagcode{E003}); a local of an unrestricted
+type carries no such obligation.
 
 \section{Linear states}
 \label{sec:own.states}
@@ -85,13 +87,16 @@ Uninit      & read or \lain{mov}            & \illformed{} \\
 \index{ownership diagnostics}
 
 \begin{constraint}
-  Using a variable that is in the Consumed or Uninit state (reading its
-  value or transferring it with \lain{mov}) is \illformed{}~(\diagcode{E001}).
+  Using a variable, or a reference whose owner has been moved, after that
+  value has been transferred (use-after-move; the Consumed state) is
+  \illformed{}~(\diagcode{E001}).  Using a variable \emph{before} it is
+  initialized --- the Uninit state --- is a different diagnostic,
+  \diagcode{E005} (below).
 \end{constraint}
 
 \begin{constraint}
-  Transferring ownership of a variable that has already been transferred
-  (double-move) is \illformed{}~(\diagcode{E002}).
+  Consuming a struct field that has already been consumed (a double-consume
+  at field granularity) is \illformed{}~(\diagcode{E002}).
 \end{constraint}
 
 \begin{constraint}
@@ -107,19 +112,22 @@ Uninit      & read or \lain{mov}            & \illformed{} \\
 \end{constraint}
 
 \begin{constraint}
-  Attempting to move a variable that has an active borrow is
-  \illformed{}~(\diagcode{E005}).
+  Reading a variable, struct field, or array element before it has been
+  initialized (use of an uninitialized value; the Uninit state) is
+  \illformed{}~(\diagcode{E005}).  Definite-assignment analysis tracks
+  initialization per binding and per field.
 \end{constraint}
 
 \begin{constraint}
-  Moving a variable inside a loop body where the loop may execute more than
-  once is \illformed{}~(\diagcode{E006}).
+  Consuming a linear variable or field inside a loop body that may execute
+  more than once is \illformed{}~(\diagcode{E006}).
 \end{constraint}
 
 \begin{constraint}
-  If a linear variable is consumed in one branch of an \lain{if}/\lain{else}
-  chain but not in all branches, the program is
-  \illformed{}~(\diagcode{E007}).
+  Passing a linear value to an owned (\lain{mov}) parameter without the
+  explicit \lain{mov} keyword at the call site --- an implicit move --- is
+  \illformed{}~(\diagcode{E007}).  (Consuming a linear value on some branches
+  but not others is a separate diagnostic, \diagcode{E016}, below.)
 \end{constraint}
 
 \begin{constraint}

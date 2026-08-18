@@ -178,3 +178,57 @@ and reading the actual emitted diagnostic, not inferred.
   live-at-return; `E011` unbounded `while` in `func`; `E080`/`E082` decreasing;
   `comptime if` accepted; `for i in a..b` accepted; `var buf u8[256]` uninitialized
   local accepted (read-before-write is E005).
+
+---
+
+## §10 Declarations
+
+### FIXED (spec was wrong)
+1. **`func dot(a [f64], b [f64], …)`** — prefix bracket; fixed to `f64[]`.
+2. **`comptime` type parameters** — the syntax is `name type` (no `comptime`
+   prefix): `func max(T type, a T, b T) T` compiles; `func id(comptime T type,…)`
+   → `[E100]`. Fixed §10.4 signature prose and the type-parameter paragraph.
+3. **Zero-field struct → `E100`** — **accepted**: `type Empty {}` + `Empty()`
+   compile (exit 0). Replaced the constraint with a note that unit structs are
+   permitted.
+4. **"program without `proc main` → `E100`"** — a `main`-less file **compiles**
+   (exit 0): a module/library needs no `main`. Reworded — the requirement is on
+   the linked *program*, and a missing entry point surfaces at link.
+5. **Top-level `comptime { … }` declarations** — **not implemented** (a top-level
+   `comptime` block is `[E100]`). Marked as a planned feature (the keyword is
+   reserved; `comptime if` works).
+
+### Verified correct (no change)
+- Attributes: `[private]`, `[fast_math]` accepted; unknown `[bogus]` → `E103`;
+  empty `[]` → `E102`. Param ABI: shared struct → `const T*`; `extern func`
+  allowed. `mov name T` makes the param **linear** (must be consumed, `return
+  mov p`, else `E003`).
+
+---
+
+## §11 Ownership and linearity
+
+### FIXED (spec had the wrong diagnostic code on three rules)
+Verified against the actual `fprintf` strings in `src/` **and** the `_fail`
+test oracles:
+1. **`E005` = "move a variable with active borrow"** — **wrong.** `E005` is
+   **use of an uninitialized value** (`uninit_*`, `field_uninit_read`,
+   `uninit_scalar_read`, `array_uninit_element_read` — ~9 tests). Rewrote the
+   constraint. (Move-while-borrowed is `E008`, already stated separately.)
+2. **`E007` = "consumed in one branch but not all"** — **wrong** (that is
+   `E016`). `E007` is **implicit move: a linear value passed to a `mov` param
+   without the `mov` keyword** (`move_needs_mov_fail`, `close_without_mov_fail`).
+   Rewrote.
+3. **`E001` "Consumed *or Uninit* → E001"** — Uninit is `E005`, not `E001`.
+   Narrowed E001 to use-after-move (Consumed) and cross-referenced E005.
+4. **`E002` "double-move"** — the compiler's `E002` fires for a **field**
+   consumed twice ("field '…' was already consumed"); reworded to field-level
+   double-consume.
+5. **Var-locals "hold linear values that must be consumed"** — only *linear*
+   locals carry the E003 obligation; unrestricted locals don't. Clarified.
+
+### Verified correct (no change)
+- `E003` leak, `E004` borrow-aliasing, `E006` consume-in-loop, `E008`
+  move-while-borrowed, `E016` branch-inconsistency (incl. field-level) — all
+  match. `var name T` primitive → by-pointer `T*` write-through; two-phase
+  borrows; NLL last-use; `case &expr` borrowed match → E004 on mutation.
