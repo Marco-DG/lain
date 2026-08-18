@@ -1,0 +1,41 @@
+// A struct-field slice `l.src` (type u8[]) proves check-free reads via its OWN
+// length `l.src.len` — a param slice gets `__len_PARAM` seeded at entry, and now a
+// FIELD slice gets a length identity keyed off the member path, so a natural
+// `while i < l.src.len and P(l.src[i])` scan on a stateful struct (a lexer!) reads
+// with zero bounds checks. Sound by construction: the length key is created ONLY
+// inside the `&&` right operand and dropped immediately, so it can never persist
+// past the read and go stale. Verified at runtime under ASan.
+type Buf {
+    src u8[]
+    pos u32
+}
+func is_sp(c u8) bool { return c == 32 }
+func is_az(c u8) bool { return c >= 97 and c <= 122 }
+proc count_words(l *Buf) u32 {
+    var i u32 = 0
+    var words u32 = 0
+    while i < l.src.len {
+        while i < l.src.len and is_sp(l.src[i]) { i = i +% 1 }
+        if i < l.src.len and is_az(l.src[i]) {
+            words = words +% 1
+            while i < l.src.len and is_az(l.src[i]) { i = i +% 1 }
+        } else {
+            i = i +% 1
+        }
+    }
+    return words
+}
+proc main() i32 {
+    var b u8[16]
+    var k u32 = 0
+    while k < 16 {
+        b[k] = 97
+        k = k +% 1
+    }
+    b[5] = 32
+    b[11] = 32
+    var lx Buf = Buf(b[0..16], 0)
+    var w u32 = count_words(&lx)
+    if w == 3 { return 0 }
+    return 1
+}

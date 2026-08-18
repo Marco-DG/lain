@@ -1833,8 +1833,14 @@ void sema_infer_expr(Expr *e) {
         // `j < n` outside the `&&` must not keep proving anything).
         ConstraintEntry *old_cons = sema_ranges ? sema_ranges->constraints : NULL;
         RangeEntry      *old_head = sema_ranges ? sema_ranges->head        : NULL;
+        // Enable member-path length keys ONLY here: they're created for the LHS
+        // (`i < l.src.len`), used to prove the RHS read (`l.src[i]`), then dropped
+        // with the constraint-list restore below — so a struct-field slice length
+        // can never persist past this read and go stale (sound by construction).
+        bool old_mk = sema_mk_scoped; sema_mk_scoped = true;
         if (sema_ranges) sema_apply_constraint(e->as.binary_expr.left, sema_ranges);
         sema_infer_expr(e->as.binary_expr.right);
+        sema_mk_scoped = old_mk;
         if (sema_ranges) {
             sema_ranges->constraints = old_cons;
             sema_ranges->head        = old_head;

@@ -1,0 +1,21 @@
+// EXPECT: [E085]
+// SOUNDNESS lock: the struct-field-slice length proof is created ONLY inside an
+// `&&` right operand (scoped), never persisted into a loop/branch body. So a read
+// in the BODY — where the index may have been mutated out of range — must NOT
+// prove. Here `i = i +% 1000` moves i past `l.src.len`, and `l.src[i]` in the body
+// (not guarded by an `i < l.src.len and …` in the same expression) must be rejected.
+type Buf {
+    src u8[]
+    pos u32
+}
+proc t(l *Buf) u8 {
+    var i u32 = 0
+    var r u8 = 0
+    while i < l.src.len {
+        i = i +% 1000
+        r = l.src[i]
+        i = i +% 1
+    }
+    return r
+}
+proc main() i32 { return 0 }

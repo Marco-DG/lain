@@ -1,0 +1,14 @@
+// EXPECT: [E085]
+// SOUNDNESS lock: the length key is per member-path. A bound on `l.a.len` must NOT
+// prove a read of a DIFFERENT slice `l.b` — their length keys ("__mk_l.a.len" vs
+// "__mk_l.b.len") differ, so `i < l.a.len and l.b[i]` cannot license `l.b[i]`
+// (which could be longer than `l.a`).
+type Two {
+    a u8[]
+    b u8[]
+}
+proc t(l *Two, i u32) u8 {
+    if i < l.a.len and l.b[i] == 0 { return 1 }
+    return 0
+}
+proc main() i32 { return 0 }

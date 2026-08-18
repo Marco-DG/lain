@@ -442,6 +442,34 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
         if (proved) return;
     }
 
+    // 5b. STRUCT-FIELD (member-path) slice: `l.src[i]` proven by a live `i < l.src.len`
+    //     constraint. A param slice gets `__len_PARAM` seeded at entry; a field
+    //     slice doesn't, so `sema_apply_constraint` keyed the length off the path
+    //     ("__mk_l.src.len") when it saw `i < l.src.len`. Rebuild the SAME key from
+    //     the indexed slice and look for the constraint. This is what lets a stateful
+    //     lexer `while i < l.src.len and is_space(l.src[i])` prove — no `in`-guard.
+    if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
+        index_expr->kind == EXPR_IDENTIFIER &&
+        array_expr && array_expr->kind == EXPR_MEMBER) {
+        Id *idx_id = index_expr->as.identifier_expr.id;
+        char key[256];
+        int base = member_len_key(array_expr, key, (int)sizeof key);   // "__mk_l.src"
+        if (base > 0 && base + 4 < (int)sizeof key) {
+            memcpy(key + base, ".len", 4);                             // "__mk_l.src.len"
+            int klen = base + 4;
+            for (ConstraintEntry *ce = ctx->constraints; ce; ce = ce->next) {
+                if (ce->max_diff <= -1 && ce->v1 && ce->v2 &&
+                    (int)ce->v1->length == (int)idx_id->length &&
+                    strncmp(ce->v1->name, idx_id->name, (size_t)idx_id->length) == 0 &&
+                    (int)ce->v2->length == klen &&
+                    strncmp(ce->v2->name, key, (size_t)klen) == 0) {
+                    BOUNDS_DBG("OK: member-path slice via `%.*s` constraint", klen, key);
+                    return;   // proven: i < l.src.len
+                }
+            }
+        }
+    }
+
     // 5.4. Division/modulo monotonicity proofs.
     //
     // Division:  arr[i / d]  with literal d >= 1.

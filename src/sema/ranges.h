@@ -604,6 +604,66 @@ static Id *range_member_len_id(RangeTable *t, Expr *member) {
     return NULL;
 }
 
+// Canonicalize a pure identifier/member access path (`a`, `l.src`, `x.y.z`) to a
+// stable string. Returns bytes written (excluding NUL), or -1 if the expr is not
+// a pure path (it contains a call, index, arithmetic, …). This is what gives a
+// STRUCT-FIELD slice a stable VRA length identity — a param slice gets
+// `__len_PARAM` seeded at entry, but `l.src` is a field, so `l.src.len` and
+// `l.src[i]` need a shared key derived from the path to connect.
+static int member_path_key(Expr *e, char *buf, int cap) {
+    if (!e || cap <= 1) return -1;
+    if (e->kind == EXPR_IDENTIFIER) {
+        Id *id = e->as.identifier_expr.id;
+        if (!id || (int)id->length + 1 > cap) return -1;
+        memcpy(buf, id->name, id->length);
+        return (int)id->length;
+    }
+    if (e->kind == EXPR_MEMBER) {
+        int n = member_path_key(e->as.member_expr.target, buf, cap);
+        if (n < 0) return -1;
+        Id *m = e->as.member_expr.member;
+        if (!m || n + 1 + (int)m->length + 1 > cap) return -1;
+        buf[n++] = '.';
+        memcpy(buf + n, m->name, m->length);
+        return n + (int)m->length;
+    }
+    return -1;
+}
+
+// Reuse or arena-create a synthetic Id with the given name, so the constraint
+// side and the bounds side name the same length key (the constraint table
+// compares Ids by name, not pointer).
+static Id *member_key_id(RangeTable *t, const char *key, int klen) {
+    for (ConstraintEntry *c = t->constraints; c; c = c->next) {
+        if (c->v1 && (int)c->v1->length == klen && strncmp(c->v1->name, key, (size_t)klen) == 0) return c->v1;
+        if (c->v2 && (int)c->v2->length == klen && strncmp(c->v2->name, key, (size_t)klen) == 0) return c->v2;
+    }
+    char *stored = arena_push_many(t->arena, char, klen);
+    memcpy(stored, key, (size_t)klen);
+    Id *id = arena_push_aligned(t->arena, Id);
+    id->length = klen; id->name = stored;
+    return id;
+}
+
+// Member-path length constraints ("__mk_<path>") are only SOUND while the slice the
+// path names can't have been mutated. To guarantee that with zero staleness risk,
+// they are added ONLY inside a short-circuit `&&`'s right operand — where the
+// left `i < l.src.len` was just evaluated and no write can intervene before the
+// `l.src[i]` read — and are scoped away immediately after. This flag, set by the
+// within-`&&` flow, is the gate: a persisted `i < l.src.len` (a bare while/if
+// condition) does NOT create one, so it can never outlive the read and go stale.
+static bool sema_mk_scoped = false;
+
+// The length key for a member-path RHS bound (`l.src.len`, `l.len`): "__mk_" + path.
+// Returns key length or -1. Shared by the constraint side (`i < <path>`) and the
+// bounds side (which builds the SAME string from the indexed slice's length path).
+static int member_len_key(Expr *path, char *out, int cap) {
+    if (cap < 6) return -1;
+    memcpy(out, "__mk_", 5);
+    int n = member_path_key(path, out + 5, cap - 5);
+    return n < 0 ? -1 : n + 5;
+}
+
 static void sema_apply_constraint(Expr *cond, RangeTable *t) {
     if (!cond || !t) return;
 
@@ -725,6 +785,17 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
         else if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_MEMBER) {
             Id *v1 = lhs->as.identifier_expr.id;
             Id *v2 = range_member_len_id(t, rhs);
+            // Member-PATH bound (`i < l.src.len`, `i < l.len`): no `__len_PARAM`
+            // was seeded (it's a struct field, not a param), so key a synthetic
+            // length Id off the canonical path. The bounds check rebuilds the SAME
+            // key from the indexed slice, so `l.src[i]` proves. (Sound because the
+            // within-`&&` flow scopes this to the immediate read; a persisted
+            // constraint is invalidated when the index or the path is reassigned.)
+            if (!v2 && sema_mk_scoped) {
+                char key[256];
+                int klen = member_len_key(rhs, key, (int)sizeof key);
+                if (klen > 0) v2 = member_key_id(t, key, klen);
+            }
             if (v2) {
                 switch (op) {
                     case TOKEN_ANGLE_BRACKET_LEFT:        constraint_add(t, v1, v2, -1); break; // x < len
