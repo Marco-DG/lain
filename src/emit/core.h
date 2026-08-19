@@ -287,6 +287,16 @@ static bool is_dynarray_param_decl(Decl *d) {
     return t && t->kind == TYPE_ARRAY && t->array_len == -1;
 }
 
+// A local `var a T[n]` VLA: an OWNED native stack array (a real `T a[n]`), not
+// a sized-slice view. Like a native fixed array it decays to a bare pointer and
+// indexes natively; its `.len` is the size expression `n`.
+static bool is_vla_local_decl(Decl *d) {
+    if (!d || d->kind != DECL_VARIABLE) return false;
+    if (d->as.variable_decl.is_parameter) return false;
+    Type *t = d->as.variable_decl.type;
+    return t && t->is_vla;
+}
+
 // A dynamic-array param carries its length in a runtime `__len_PARAM` argument
 // UNLESS it has a CONCRETE size binding (size_relop '==', e.g. i32[n],
 // i32[out.len], i32[m+n] — there the length IS that expression). A pure size

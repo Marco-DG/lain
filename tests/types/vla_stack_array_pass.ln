@@ -1,0 +1,15 @@
+// spec: §7 — `var a T[n]` with a runtime length and no initializer is a real
+// stack array (a C VLA `T a[n]`), NOT a slice: native indexing and `a.len == n`.
+// (Safe bounded indexing needs a VRA length proof; raw indexing is in `unsafe`.)
+proc fill(n usize) usize {
+    var a u8[n]
+    var i usize = 0
+    while i < n decreasing n - i {
+        unsafe { a[i] = 1 }
+        i = i + 1
+    }
+    return a.len
+}
+proc main() i32 {
+    return fill(4) as i32
+}

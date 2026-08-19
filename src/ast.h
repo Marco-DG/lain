@@ -72,6 +72,13 @@ typedef struct Type {
     struct Expr *size_expr;
     TokenKind    size_relop;
 
+    /* A local `var a T[n]` with a runtime length and NO initializer is an
+       OWNED stack array (a VLA), realized in C as `T a[n]` with native
+       indexing — distinct from a sized-slice VIEW (a parameter, or an
+       initialized `var s = arr[a..b]`), which stays a fat `{len,ptr}`. Set only
+       by the var-declaration parser. */
+    bool         is_vla;
+
     const char* sentinel_str;
     isize       sentinel_len;
     bool        sentinel_is_string;
@@ -1013,6 +1020,13 @@ Stmt *stmt_var(Arena *arena, Id *name, Type* type, Expr *expr) {
     s->as.var_stmt.type = type;
     s->as.var_stmt.is_mutable = false; // default
     s->as.var_stmt.in_expr = NULL; // default: no pointer invariant
+    // A local `var a T[n]` with a runtime length and NO initializer is an owned
+    // stack array (VLA), not a sized-slice view. Mark the type so codegen emits
+    // a native `T a[n]` and indexes it natively.
+    if (!expr && type && type->kind == TYPE_ARRAY && type->array_len < 0
+        && type->size_expr != NULL) {
+        type->is_vla = true;
+    }
     return s;
 }
 

@@ -440,6 +440,19 @@ void emit_expr(Expr *expr, int depth) {
   case EXPR_MEMBER: {
     ExprMember *m = &expr->as.member_expr;
 
+    // Local VLA (`T a[n]`): `.len` is the runtime size expression `n`, `.data`
+    // is the array itself (decays to a pointer).
+    if (m->target && m->member && m->target->type && m->target->type->is_vla) {
+        if (m->member->length == 3 && strncmp(m->member->name, "len", 3) == 0) {
+            emit_expr(m->target->type->size_expr, 0);
+            break;
+        }
+        if (m->member->length == 4 && strncmp(m->member->name, "data", 4) == 0) {
+            emit_expr(m->target, 0);
+            break;
+        }
+    }
+
     // Native fixed array (`int32_t arr[N]`): `.len` is the compile-time count and
     // `.data` is the array itself (decays to a pointer). A native array has no
     // struct fields, so a bare `.member` would be invalid C.
@@ -994,6 +1007,7 @@ void emit_expr(Expr *expr, int depth) {
         // whether typed TYPE_SLICE or a dynamic-array LOCAL (array_len < 0, not
         // a param) — is a Slice_ struct and needs `.data`/`->data`.
         bool decays = dynarray ||
+                      (tt && tt->is_vla) ||
                       (tt && tt->kind == TYPE_ARRAY && tt->array_len > 0) ||
                       (tt && tt->kind == TYPE_POINTER);
         emit_expr(ix->target, 0);
@@ -1034,9 +1048,11 @@ void emit_expr(Expr *expr, int depth) {
           is_ptr = true;
       }
     
-      // Fase 7: dynamic array params are raw pointers — index directly
-      if (ix->target->kind == EXPR_IDENTIFIER && ix->target->decl &&
-          is_dynarray_param_decl(ix->target->decl)) {
+      // Dynamic-array params (raw pointers) and local VLAs (native `T a[n]`
+      // arrays) are both indexed directly, `a[i]`.
+      if (ix->target->kind == EXPR_IDENTIFIER &&
+          ((ix->target->decl && is_dynarray_param_decl(ix->target->decl)) ||
+           (ix->target->type && ix->target->type->is_vla))) {
           emit_expr(ix->target, 0);
           EMIT("[");
           emit_expr(ix->index, 0);
