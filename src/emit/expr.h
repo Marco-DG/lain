@@ -192,6 +192,25 @@ void emit_expr(Expr *expr, int depth) {
   }
 
   case EXPR_IDENTIFIER: {
+    // G-06.1 — undeclared-identifier check, at the final codegen stage. By now
+    // every genuine reference is bound: a global carries is_global (and a
+    // mangled name / decl), a local carries an inferred type, `panic` and type
+    // names carry a type (or become a different node kind). An EXPR_IDENTIFIER
+    // that reaches here with NO type, NO decl, and is NOT global — and has a real
+    // source location — is a genuinely undeclared name that would otherwise emit
+    // a bare C token the C compiler rejects (a broken-C hole). Diagnosing here,
+    // after all resolution/monomorphization/UFCS is complete, avoids the
+    // re-resolution false positives that make the resolver fallback unusable.
+    if (expr->line > 0 && expr->type == NULL && expr->decl == NULL &&
+        !expr->is_global && !emit_suppress_undeclared &&
+        !emit_name_is_binding(expr->as.identifier_expr.id->name,
+                              (int)expr->as.identifier_expr.id->length)) {
+        fprintf(stderr, "[E106] Error Ln %li, Col %li: use of undeclared identifier '%.*s'.\n",
+                expr->line, expr->col,
+                (int)expr->as.identifier_expr.id->length,
+                expr->as.identifier_expr.id->name);
+        exit(1);
+    }
     // var T primitive param in value context: the C representation is T*, so we
     // must dereference to get/write the value. Structs are exempt because they
     // are always accessed through EXPR_MEMBER which already emits '->'.
@@ -444,7 +463,9 @@ void emit_expr(Expr *expr, int depth) {
     // is the array itself (decays to a pointer).
     if (m->target && m->member && m->target->type && m->target->type->is_vla) {
         if (m->member->length == 3 && strncmp(m->member->name, "len", 3) == 0) {
-            emit_expr(m->target->type->size_expr, 0);
+            bool __sv = emit_suppress_undeclared; emit_suppress_undeclared = true;
+            emit_expr(m->target->type->size_expr, 0);  // size expr is a type, not a value
+            emit_suppress_undeclared = __sv;
             break;
         }
         if (m->member->length == 4 && strncmp(m->member->name, "data", 4) == 0) {
@@ -1180,6 +1201,7 @@ void emit_expr(Expr *expr, int depth) {
 
     bool first_clause = true;
     for (ExprMatchCase *c = expr->as.match_expr.cases; c; c = c->next) {
+        int __xsaved_bd = emit_binding_depth;  // restore after this arm's body
         emit_indent(depth + 1);
         if (c->patterns) {
             EMIT(first_clause ? "if (" : "else if (");
@@ -1405,6 +1427,7 @@ void emit_expr(Expr *expr, int depth) {
                             }
                         }
                         if (is_sub_variant) { arg = arg->next; field = field->next; continue; }
+                        emit_push_binding(vn->name, (int)vn->length);
 
                         Type *ft = field->decl->as.variable_decl.type;
                         char fty[256]; c_name_for_type(ft, fty, sizeof fty);
@@ -1447,9 +1470,10 @@ void emit_expr(Expr *expr, int depth) {
         
         emit_indent(depth + 1);
         EMIT("}\n");
+        emit_binding_depth = __xsaved_bd;   // bindings leave scope with the arm
         first_clause = false;
     }
-    
+
     emit_indent(depth + 1);
     EMIT("__result%d;\n", __match_id);
     emit_indent(depth);

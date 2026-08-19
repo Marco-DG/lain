@@ -287,6 +287,34 @@ static bool is_dynarray_param_decl(Decl *d) {
     return t && t->kind == TYPE_ARRAY && t->array_len == -1;
 }
 
+// Case-arm payload bindings currently in scope during codegen. A binding
+// (`case s { Some(v): … v … }`) is a NULL-typed local that isn't tracked in the
+// symbol table, so the undeclared-identifier check (emit/expr.h EXPR_IDENTIFIER)
+// would otherwise mistake it for a typo. The match emit pushes each arm's
+// binding names here for the duration of that arm's body.
+static const char *emit_binding_name[256];
+static int         emit_binding_len[256];
+static int         emit_binding_depth = 0;
+static bool emit_name_is_binding(const char *name, int len) {
+    for (int i = 0; i < emit_binding_depth; i++)
+        if (emit_binding_len[i] == len &&
+            strncmp(emit_binding_name[i], name, len) == 0) return true;
+    return false;
+}
+static void emit_push_binding(const char *name, int len) {
+    if (emit_binding_depth < 256) {
+        emit_binding_name[emit_binding_depth] = name;
+        emit_binding_len[emit_binding_depth]  = len;
+        emit_binding_depth++;
+    }
+}
+
+// Suppress the undeclared-identifier check while emitting expressions that live
+// inside a TYPE rather than a value position (e.g. a VLA's size expression
+// `u8[n]`): those identifiers reference real declarations but are not resolved
+// as value nodes, so they carry no type and would otherwise be mis-flagged.
+static bool emit_suppress_undeclared = false;
+
 // A local `var a T[n]` VLA: an OWNED native stack array (a real `T a[n]`), not
 // a sized-slice view. Like a native fixed array it decays to a bare pointer and
 // indexes natively; its `.len` is the size expression `n`.

@@ -1,0 +1,8 @@
+// EXPECT: [E106]
+// spec: §6.1/§6.3 — use of an undeclared identifier is ill-formed. `zzz` is not
+// declared anywhere; it used to pass straight through to the emitted C and be
+// rejected only by the C compiler (a broken-C hole). Caught at codegen now.
+func f() i32 {
+    return zzz
+}
+proc main() i32 { return 0 }

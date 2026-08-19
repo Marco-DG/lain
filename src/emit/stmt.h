@@ -52,7 +52,9 @@ void emit_stmt(Stmt *stmt, int depth) {
         c_name_for_type(ty_var->element_type, elem_c, sizeof elem_c);
         if (emit_const) EMIT("const ");
         EMIT("%s %s[", elem_c, c_name_for_id(v));
-        emit_expr(ty_var->size_expr, depth);
+        bool __sv = emit_suppress_undeclared; emit_suppress_undeclared = true;
+        emit_expr(ty_var->size_expr, depth);   // size expr is a type, not a value
+        emit_suppress_undeclared = __sv;
         EMIT("]");
       } else if (is_fixed_array) {
         char elem_c[256];
@@ -646,7 +648,8 @@ void emit_stmt(Stmt *stmt, int depth) {
 
       // 4) body
       EMIT("{\n");
-      
+      int __saved_bd = emit_binding_depth;  // restore after this arm's body
+
       // Emit bindings for ADT patterns
       // We assume the first pattern dictates the bindings for the block
       if (is_adt && c->patterns && c->patterns->expr->kind == EXPR_CALL) {
@@ -696,6 +699,7 @@ void emit_stmt(Stmt *stmt, int depth) {
                           }
                       }
                       if (is_sub_variant) { arg = arg->next; field = field->next; continue; }
+                      emit_push_binding(var_name->name, (int)var_name->length);
 
                       Type *ft = field->decl->as.variable_decl.type;
                       char fty[256];
@@ -732,6 +736,7 @@ void emit_stmt(Stmt *stmt, int depth) {
       if (group->body) {
         emit_stmt_list(group->body, depth + 1);
       }
+      emit_binding_depth = __saved_bd;   // bindings leave scope with the arm
       emit_indent(depth);
       EMIT("}\n");
 

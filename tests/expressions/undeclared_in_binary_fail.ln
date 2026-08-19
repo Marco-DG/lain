@@ -1,0 +1,7 @@
+// EXPECT: [E106]
+// spec: §6.3 — an undeclared name is caught in ANY position, including an
+// operand of a larger expression (not just a bare return).
+proc main() i32 {
+    var x = 5
+    return x + missing
+}
