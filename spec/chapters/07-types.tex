@@ -376,6 +376,18 @@ zero (grammar: \gramref{array-type}).
 The \texttt{.len} property of an array type yields $N$ as a compile-time
 constant of type \lain{int}.
 
+\begin{note}
+  \textbf{Runtime-length local arrays (VLAs).}  A \emph{local} declaration
+  \lain{var a T[n]} whose length \lain{n} is a runtime value and which has no
+  initializer is an owned, runtime-sized stack array (emitted as a C
+  variable-length array \texttt{T a[n]}), with \lain{a.len == n} and native
+  bounds-checked indexing.  It is distinct from a sized-slice \emph{view} of the
+  same spelling: a parameter \lain{f(a T[n])}, or an \emph{initialized} local
+  \lain{var s = arr[i..j]}, is a borrowed \lain{\{len, data\}} slice, not owned
+  storage.  Indexing a VLA under a proven guard (\lain{i < n}) needs no
+  \lain{unsafe}; an index VRA cannot bound is \diagcode{E085} as for any array.
+\end{note}
+
 \pnum
 Array elements are laid out contiguously in memory in increasing index
 order, with element~0 at the base address.  The stride between elements is
