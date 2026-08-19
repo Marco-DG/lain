@@ -283,13 +283,13 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             // Either way the result fits in the LHS type, so we clamp.
             extern int type_integer_range(Type *t, long long *lo, long long *hi);
             TokenKind op = e->as.binary_expr.op;
-            // Wrapping/saturating/checked: the result is bounded to the LHS type
-            // (a checked op traps rather than exceed it), so clamp the range.
+            // Wrapping/saturating clamp the result to the LHS type. Checked ops
+            // (+?/-?/*?) are NOT clamped here: if they don't trap, the result is
+            // the exact arithmetic value, so they keep the precise computed range
+            // (handled by the normal +/-/* range path below).
             bool is_wrap_or_sat = (op == TOKEN_PLUS_PERCENT  || op == TOKEN_MINUS_PERCENT
                                 || op == TOKEN_ASTERISK_PERCENT || op == TOKEN_PLUS_PIPE
-                                || op == TOKEN_MINUS_PIPE || op == TOKEN_ASTERISK_PIPE
-                                || op == TOKEN_PLUS_QUESTION || op == TOKEN_MINUS_QUESTION
-                                || op == TOKEN_ASTERISK_QUESTION);
+                                || op == TOKEN_MINUS_PIPE || op == TOKEN_ASTERISK_PIPE);
             if (is_wrap_or_sat && e->as.binary_expr.left && e->as.binary_expr.left->type) {
                 long long lo, hi;
                 if (type_integer_range(e->as.binary_expr.left->type, &lo, &hi)) {
@@ -319,9 +319,12 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             }
 
             switch (op) {
-                case TOKEN_PLUS:            return range_add(l, r);
-                case TOKEN_MINUS:           return range_sub(l, r);
-                case TOKEN_ASTERISK:        return range_mul(l, r);
+                case TOKEN_PLUS:
+                case TOKEN_PLUS_QUESTION:   return range_add(l, r);   // +? == + if it doesn't trap
+                case TOKEN_MINUS:
+                case TOKEN_MINUS_QUESTION:  return range_sub(l, r);
+                case TOKEN_ASTERISK:
+                case TOKEN_ASTERISK_QUESTION: return range_mul(l, r);
                 case TOKEN_SLASH:           return range_div(l, r);
                 case TOKEN_PERCENT:         return range_mod(l, r);
                 case TOKEN_AMPERSAND:       return range_bitand(l, r);
