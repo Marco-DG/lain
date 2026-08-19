@@ -855,6 +855,33 @@ static bool callsite_len_precond_proven(Expr *lhs_arg, Expr *rhs_len, TokenKind 
     return false;
 }
 
+// Argument-refinement reflexivity (fail-closed precondition support): a callee
+// precondition `arg OP <literal>` is discharged when the argument is an
+// IMMUTABLE binding — a non-`var` parameter/local, so its declared refinement
+// cannot have been invalidated by reassignment — whose OWN declared constraints
+// include the same `OP <same literal>`. This lets an already-refined value
+// forward into a same-refinement callee (e.g. `n != 0` passed to a `!= 0`
+// parameter) without a redundant, unprovable-by-interval check — refinement
+// subtyping in miniature (the S3 relation, specialized to a literal bound so the
+// constraint denotes the same thing in caller and callee scope). Sound and
+// conservative: exact op + exact literal only; anything else falls through to
+// the normal prove-or-reject.
+static bool arg_refinement_discharges(Expr *arg, TokenKind need_op, Expr *need_rhs) {
+    if (!arg || arg->kind != EXPR_IDENTIFIER || !arg->decl) return false;
+    if (arg->decl->kind != DECL_VARIABLE) return false;
+    if (arg->decl->as.variable_decl.is_mutable) return false;   // `var` may be reassigned
+    if (!need_rhs || need_rhs->kind != EXPR_LITERAL) return false;
+    int64_t want = need_rhs->as.literal_expr.value;
+    for (ExprList *c = arg->decl->as.variable_decl.constraints; c; c = c->next) {
+        if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+        if (c->expr->as.binary_expr.op != need_op) continue;
+        Expr *r = c->expr->as.binary_expr.right;
+        if (r && r->kind == EXPR_LITERAL && r->as.literal_expr.value == want)
+            return true;
+    }
+    return false;
+}
+
 // P2/S3: THE scalar/pointer boundary conversion check — one call for "a value
 // of static type `from` (VRA range r, source expr src_expr) flows into a slot
 // of type `to`". Consolidates the boundary policy, in call order:
@@ -1629,19 +1656,28 @@ void sema_infer_expr(Expr *e) {
                                         token_kind_to_str(c->expr->as.binary_expr.op));
                                 diagnostic_show_line(temp.line, temp.col);
                                 exit(1);
-                            } else if (result == -1) {
-                                // KNOWN FAIL-OPEN (P1, tracked in PATH_FORWARD.md): a
-                                // non-`.len` precondition that VRA cannot prove is
-                                // currently ACCEPTED, so e.g. a forwarded `b != 0`
-                                // divisor can divide by zero. Making this fail-closed is
-                                // sound but first needs two VRA precision fixes, else it
-                                // over-rejects provable code: (1) propagate a parameter's
-                                // OWN refinement as a usable fact (so `n != 0` forwards),
-                                // and (2) seed arithmetic difference constraints (so
-                                // `x = y + 1` proves `y < x` — see range_linear_pass).
-                                // The `.len` bounds precondition IS fail-closed above
-                                // (callsite_len_precond_proven) — that one is a
-                                // memory-safety hole and needs no new VRA precision.
+                            } else if (result == -1 && sema_walk_phase &&
+                                       !arg_refinement_discharges(lhs_arg,
+                                               c->expr->as.binary_expr.op, rhs_arg)) {
+                                // P2/S3 (fail-CLOSED): an UNPROVEN non-`.len` precondition
+                                // is a rejection, not a pass — otherwise the callee runs
+                                // check-free on an assumption the caller never discharged
+                                // (e.g. a forwarded `b != 0` divisor -> division by zero,
+                                // which the callee emits as a raw `a / b`). Gate on the
+                                // walk phase so we don't false-positive before VRA is
+                                // populated. The argument's own immutable refinement can
+                                // still discharge it (arg_refinement_discharges); range
+                                // and difference-constraint proofs are handled by
+                                // sema_check_condition above (result == 1).
+                                fprintf(stderr, "[E012] Error Ln %li, Col %li: Constraint violation. "
+                                        "Argument cannot be proven to satisfy the '%s' refinement. "
+                                        "Constrain the argument (a literal, a bounded local, an "
+                                        "`if`/loop guard, or a matching parameter refinement) so VRA "
+                                        "can discharge it.\n",
+                                        (long)temp.line, (long)temp.col,
+                                        token_kind_to_str(c->expr->as.binary_expr.op));
+                                diagnostic_show_line(temp.line, temp.col);
+                                exit(1);
                             }
                         }
                     }

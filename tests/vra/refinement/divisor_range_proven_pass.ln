@@ -1,0 +1,6 @@
+// The fail-closed general precondition branch must NOT over-reject: a divisor
+// whose VRA range excludes zero (`n >= 1 and < 50`) proves `n != 0` and forwards
+// with no runtime check.
+func need_nz(b i32 != 0) i32 { return 100 / b }
+proc test(n i32 >= 1 and < 50) i32 { return need_nz(n) }
+proc main() i32 { return 0 }

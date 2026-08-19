@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// P1 soundness (fail-open -> fail-closed for the general precondition branch): a
+// forwarded, unproven `b != 0` divisor was previously ACCEPTED, and the callee
+// emits a raw `a / b` (check-free on the assumed refinement) -> runtime division
+// by zero. The caller must now prove `x != 0`; an unconstrained `x` is rejected.
+func need_nz(b i32 != 0) i32 { return 100 / b }
+proc fwd(x i32) i32 { return need_nz(x) }
+proc main() i32 { return 0 }
