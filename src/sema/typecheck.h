@@ -111,6 +111,30 @@ static void reject_float_int_mismatch(Type *from, Type *to, isize line, isize co
     }
 }
 
+// P2/S2: the refinement interval carried ON a type. Reads the cached `refine`
+// field; if empty, derives it from a refinement alias's constraints (`type Small
+// = i32 >= 0 and <= 9`) and CACHES it on the node — the type-level home of the
+// value-range refinement, dual-written with the alias-constraint machinery. The
+// canonical `refine` field is what a later subsumption relation (S3) and the
+// LLVM `!range` lowering will read, instead of a name-keyed side lookup.
+static ExprList *alias_constraints_for(Type *t);   // defined below (needs sema_lookup)
+static Refinement type_refine_interval(Type *t) {
+    Refinement none = { false, 0, 0 };
+    if (!t) return none;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t) return none;
+    if (t->refine.known) return t->refine;
+    ExprList *cs = alias_constraints_for(t);
+    if (cs) {
+        Range r = range_from_refinement_constraints(cs);
+        if (r.known) {
+            t->refine.known = true; t->refine.lo = r.min; t->refine.hi = r.max;
+            return t->refine;
+        }
+    }
+    return none;
+}
+
 // Q-002 Phase 5 helpers: range of a sized integer type and fit check.
 // Returns 1 if t has a known fixed-width integer range; sets *out_lo/*out_hi.
 // Handles iN/uN with N ∈ [1, 64] plus legacy `int` (treated as i32).
@@ -144,6 +168,17 @@ int type_integer_range(Type *t, long long *out_lo, long long *out_hi) {
     if (len == 3 && memcmp(n, "int", 3) == 0) {
         *out_lo = -2147483648LL;
         *out_hi =  2147483647LL;
+        return 1;
+    }
+    // P2/S2: a refinement alias (`type Small = i32 >= 0 and <= 9`) has no builtin
+    // width, but its refinement interval IS its integer range — read it from the
+    // type. Additive: this path previously returned 0 (unknown), so callers that
+    // fell back to a rank/permissive comparison now get the tighter, sound range
+    // that already travels with the type.
+    Refinement rf = type_refine_interval(t);
+    if (rf.known) {
+        *out_lo = rf.lo;
+        *out_hi = rf.hi;
         return 1;
     }
     return 0;

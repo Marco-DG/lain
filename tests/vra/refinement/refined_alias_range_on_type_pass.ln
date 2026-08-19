@@ -1,0 +1,9 @@
+// P2/S2 (refinement-on-type): a refinement alias's interval now lives ON the
+// type (Type.refine, cached by type_refine_interval) and is returned by
+// type_integer_range — previously that query returned "unknown" for an alias.
+// Here `Pos = i32 >= 1 and <= 9` carries [1,9] on its type, which excludes 0 and
+// so discharges the `!= 0` divisor precondition with no runtime check.
+type Pos = i32 >= 1 and <= 9
+func d(a i32, b i32 != 0) i32 { return a / b }
+proc f(n Pos) i32 { return d(100, n) }
+proc main() i32 { return 0 }

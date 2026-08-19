@@ -52,6 +52,18 @@ typedef enum {
     TYPE_VECTOR,    // SIMD vector `Vec(N, T)`: N lanes of element type T
 } TypeKind;
 
+/* P2/S2: the value-range refinement carried ON a type — the interval component
+   of a refinement predicate {ν : τ | lo ≤ ν ≤ hi}. `known == false` is ⊤ (no
+   refinement / the type's full width). This is the first piece of the canonical
+   refinement that will absorb the name-keyed VRA facts (relational/difference
+   constraints follow later); during the migration it is DUAL-WRITTEN alongside
+   the existing RangeTable / alias-constraint machinery, so removing it changes
+   nothing yet — it only makes the fact travel WITH the type. */
+typedef struct Refinement {
+    bool    known;      // false ⇒ ⊤ (no interval refinement)
+    int64_t lo, hi;     // inclusive bounds when known
+} Refinement;
+
 typedef struct Type {
     TypeKind kind;
     OwnershipMode mode;         // Ownership semantics (owned/shared/mutable)
@@ -111,6 +123,11 @@ typedef struct Type {
        and `i32` all share one canon. NULL only on Types built without a
        constructor — core_identical() falls back to pointer identity there. */
     struct Type *canon;
+
+    /* P2/S2: value-range refinement carried on the type (interval component of
+       {ν:τ | P(ν)}). Populated (dual-write) from refinement aliases / param
+       constraints / inferred ranges; ⊤ (known=false) by default. */
+    Refinement refine;
 
     struct Variant* variant; // For TYPE_VARIANT
 } Type;
