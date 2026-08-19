@@ -180,6 +180,37 @@ static Range sema_range_from_return_constraints(Decl *callee_decl);
 // Build a range from a refinement/field constraint list, where each entry is
 // `<var> <relop> LITERAL` (the field-invariant form). Lets a refined struct field
 // carry its invariant to use sites (e.g. `a[b.v]` with `v i32 >= 0 and <= 3`).
+// P2/S3 (one source of truth): apply ONE interval constraint `ν op val`
+// (op ∈ >, >=, <, <=, ==) to a range in place, tightening it. Returns true iff
+// `op` is an interval op (so callers can track "did anything refine?"). `!=` is
+// deliberately NOT handled here — it is not an interval, and each caller applies
+// its own disequality policy (the alias-interval derivation drops it; the
+// RangeTable seeding tightens a matching boundary). Shared by
+// range_from_refinement_constraints and sema_apply_constraint, which each had
+// their own identical copy of this switch.
+static bool range_tighten_interval(Range *r, TokenKind op, int64_t val) {
+    switch (op) {
+        case TOKEN_ANGLE_BRACKET_RIGHT:       if (val + 1 > r->min) r->min = val + 1; return true;
+        case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (val     > r->min) r->min = val;     return true;
+        case TOKEN_ANGLE_BRACKET_LEFT:        if (val - 1 < r->max) r->max = val - 1; return true;
+        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (val     < r->max) r->max = val;     return true;
+        case TOKEN_EQUAL_EQUAL:               r->min = val; r->max = val;             return true;
+        default:                              return false;
+    }
+}
+
+// Mirror a relational operator across its operands (`val op x` ⟺ `x flip(op) val`),
+// so a literal-on-the-left constraint reuses the identifier-on-the-left mapping.
+static TokenKind relop_flip(TokenKind op) {
+    switch (op) {
+        case TOKEN_ANGLE_BRACKET_LEFT:        return TOKEN_ANGLE_BRACKET_RIGHT;
+        case TOKEN_ANGLE_BRACKET_RIGHT:       return TOKEN_ANGLE_BRACKET_LEFT;
+        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  return TOKEN_ANGLE_BRACKET_RIGHT_EQUAL;
+        case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: return TOKEN_ANGLE_BRACKET_LEFT_EQUAL;
+        default:                              return op;   // ==, != are symmetric
+    }
+}
+
 static Range range_from_refinement_constraints(ExprList *constraints) {
     if (!constraints) return range_unknown();
     Range r = range_make(INT64_MIN, INT64_MAX);
@@ -189,14 +220,8 @@ static Range range_from_refinement_constraints(ExprList *constraints) {
         Expr *rhs = c->expr->as.binary_expr.right;
         if (!rhs || rhs->kind != EXPR_LITERAL) continue;
         int64_t k = (int64_t)rhs->as.literal_expr.value;
-        switch (c->expr->as.binary_expr.op) {
-            case TOKEN_ANGLE_BRACKET_RIGHT:       if (k+1 > r.min) r.min = k+1; refined = true; break;
-            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (k   > r.min) r.min = k;   refined = true; break;
-            case TOKEN_ANGLE_BRACKET_LEFT:        if (k-1 < r.max) r.max = k-1; refined = true; break;
-            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (k   < r.max) r.max = k;   refined = true; break;
-            case TOKEN_EQUAL_EQUAL:               r.min = k; r.max = k;         refined = true; break;
-            default: break;
-        }
+        // `!=` is dropped here (returns false) — unchanged behavior.
+        if (range_tighten_interval(&r, c->expr->as.binary_expr.op, k)) refined = true;
     }
     return refined ? r : range_unknown();
 }
@@ -694,66 +719,22 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
                 r = (Range){INT64_MIN, INT64_MAX, true};
             }
 
-            switch (op) {
-                case TOKEN_ANGLE_BRACKET_RIGHT: // x > val -> min = val + 1
-                    if (val + 1 > r.min) r.min = val + 1;
-                    break;
-                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: // x >= val -> min = val
-                    if (val > r.min) r.min = val;
-                    break;
-                case TOKEN_ANGLE_BRACKET_LEFT: // x < val -> max = val - 1
-                    if (val - 1 < r.max) r.max = val - 1;
-                    break;
-                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL: // x <= val -> max = val
-                    if (val < r.max) r.max = val;
-                    break;
-                case TOKEN_EQUAL_EQUAL: // x == val -> min = val, max = val
-                    r.min = val;
-                    r.max = val;
-                    break;
-                case TOKEN_BANG_EQUAL: {
-                    // != can tighten range at the boundaries
-                    if (val == r.min && val == r.max) {
-                        // Range is exactly [val, val] and we require != val → contradiction
-                        r.min = 1; r.max = 0; // empty range (will fail checks)
-                    } else if (val == r.min) {
-                        r.min = val + 1; // exclude the lower bound
-                    } else if (val == r.max) {
-                        r.max = val - 1; // exclude the upper bound
-                    }
-                    // Interior != cannot be represented as a single interval — conservative
-                    break;
-                }
-                default: break;
+            // Interval ops via the shared mapping; `!=` tightens a boundary.
+            if (!range_tighten_interval(&r, op, val) && op == TOKEN_BANG_EQUAL) {
+                if (val == r.min && val == r.max) { r.min = 1; r.max = 0; } // empty (contradiction)
+                else if (val == r.min) r.min = val + 1;                     // exclude lower bound
+                else if (val == r.max) r.max = val - 1;                     // exclude upper bound
+                // Interior `!=` is conservative (single interval can't express a hole).
             }
             range_set(t, var, r);
         }
-        // Handle literal on LHS: 10 < x  <=>  x > 10
+        // Handle literal on LHS: 10 < x  <=>  x > 10 (flip the op, reuse the mapping).
         else if (lhs->kind == EXPR_LITERAL && rhs->kind == EXPR_IDENTIFIER) {
             Id *var = rhs->as.identifier_expr.id;
             int64_t val = lhs->as.literal_expr.value;
             Range r = range_get(t, var);
             if (!r.known) r = (Range){INT64_MIN, INT64_MAX, true};
-
-            switch (op) {
-                case TOKEN_ANGLE_BRACKET_RIGHT: // val > x  <=>  x < val
-                    if (val - 1 < r.max) r.max = val - 1;
-                    break;
-                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: // val >= x <=> x <= val
-                    if (val < r.max) r.max = val;
-                    break;
-                case TOKEN_ANGLE_BRACKET_LEFT: // val < x   <=> x > val
-                    if (val + 1 > r.min) r.min = val + 1;
-                    break;
-                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL: // val <= x  <=> x >= val
-                    if (val > r.min) r.min = val;
-                    break;
-                case TOKEN_EQUAL_EQUAL:
-                    r.min = val;
-                    r.max = val;
-                    break;
-                default: break;
-            }
+            range_tighten_interval(&r, relop_flip(op), val);
             range_set(t, var, r);
         }
         // Handle Identifier vs Identifier: x < y
