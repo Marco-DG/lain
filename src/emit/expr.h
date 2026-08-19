@@ -1141,9 +1141,37 @@ void emit_expr(Expr *expr, int depth) {
   case EXPR_CAST: {
     char tybuf[256];
     c_name_for_type(expr->as.cast_expr.target_type, tybuf, sizeof tybuf);
-    EMIT("((%s)(", tybuf);
-    emit_expr(expr->as.cast_expr.expr, depth);
-    EMIT("))");
+    CastKind ck = expr->as.cast_expr.kind;
+    Type *src_ty = expr->as.cast_expr.expr ? expr->as.cast_expr.expr->type : NULL;
+    long long lo, hi;
+    bool tgt_int = type_integer_range(expr->as.cast_expr.target_type, &lo, &hi);
+
+    // F3.5 as? / as| need to compare the source value against the target range.
+    // The sign-safe test is a ROUNDTRIP: v fits T iff (SRC)(T)v == v AND the signs
+    // agree — this handles every width/signedness combination without the
+    // signed/unsigned comparison pitfalls of a direct `v < LO || v > HI`.
+    if ((ck == CAST_CHECKED || ck == CAST_SATURATING) && tgt_int && src_ty &&
+        is_integer_type(src_ty)) {
+      char sty[256];
+      c_name_for_type(src_ty, sty, sizeof sty);
+      EMIT("({ %s __cv = (", sty);
+      emit_expr(expr->as.cast_expr.expr, depth);
+      EMIT("); %s __t = (%s)__cv; ", tybuf, tybuf);
+      EMIT("(__cv == (%s)__t && ((__cv < 0) == (__t < 0))) ? __t : ", sty);
+      if (ck == CAST_CHECKED) {
+        EMIT("(fprintf(stderr, \"panic: value out of range for cast to %s\\n\"), abort(), (%s)0); })",
+             tybuf, tybuf);
+      } else { // CAST_SATURATING: clamp toward the exceeded bound.
+        EMIT("(__cv > 0 ? (%s)(%lldLL) : (%s)(%lldLL)); })", tybuf, hi, tybuf, lo);
+      }
+    } else {
+      // as (PROVEN) and as% (WRAPPING): a plain modular narrowing cast. (Also the
+      // fallback for non-integer targets.) PROVEN is where the future strict
+      // boundary check applies; WRAPPING opts out of it explicitly.
+      EMIT("((%s)(", tybuf);
+      emit_expr(expr->as.cast_expr.expr, depth);
+      EMIT("))");
+    }
     break;
   }
 

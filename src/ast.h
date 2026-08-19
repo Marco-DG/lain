@@ -487,9 +487,23 @@ typedef struct {
     Expr*       expr;
 } ExprMut; // New
 
+// F3.5 tiered casts: the policy for an out-of-range narrowing.
+//   as   (PROVEN)     — must be proven to fit; a plain reinterpret in C.
+//   as?  (CHECKED)    — runtime bounds check, traps (abort) on overflow.
+//   as%  (WRAPPING)   — modular truncation (the C narrowing cast; -fwrapv-safe).
+//   as|  (SATURATING) — clamp to the target type's [min,max].
+// PROVEN must be 0 so a zero-initialized ExprCast defaults to the plain cast.
+typedef enum {
+    CAST_PROVEN = 0,
+    CAST_CHECKED,
+    CAST_WRAPPING,
+    CAST_SATURATING,
+} CastKind;
+
 typedef struct {
     Expr*       expr;        // expression being cast
     Type*       target_type; // target type
+    CastKind    kind;        // F3.5: as / as? / as% / as|
 } ExprCast;
 
 

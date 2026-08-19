@@ -30,8 +30,16 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
     // Handle postfix `as` cast immediately after the initial operand
     if (parser_match(TOKEN_KEYWORD_AS)) {
         parser_advance();
+        // F3.5 tier marker immediately after `as` (before the type). `?T`/`|`-union
+        // never start a type here (`?T` is retired; a union `|` only follows a type),
+        // so this is unambiguous.
+        CastKind ck = CAST_PROVEN;
+        if      (parser_match(TOKEN_QUESTION)) { ck = CAST_CHECKED;    parser_advance(); }
+        else if (parser_match(TOKEN_PERCENT))  { ck = CAST_WRAPPING;   parser_advance(); }
+        else if (parser_match(TOKEN_PIPE))     { ck = CAST_SATURATING; parser_advance(); }
         Type *target = parse_type(arena, parser);
         left = expr_cast(arena, left, target);
+        left->as.cast_expr.kind = ck;
     }
 
     while (true) {

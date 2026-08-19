@@ -1,0 +1,4 @@
+// as? emits a runtime check that traps on overflow:
+panic: value out of range for cast to uint8_t
+// as| emits a saturating clamp to the target max (255 for u8):
+(uint8_t)(255LL)
