@@ -1,0 +1,6 @@
+// The fail-closed `in`-field check must NOT over-reject: forwarding an index that
+// is provably in range (here `p < t.len` rides the caller's signature) discharges
+// the `pos in text` invariant relationally, with no runtime bounds check.
+func at(text u8[], pos usize in text) u8 { return text[pos] }
+proc run(t u8[], p usize < t.len) u8 { return at(t, p) }
+proc main() i32 { return 0 }

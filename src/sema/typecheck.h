@@ -1541,28 +1541,44 @@ void sema_infer_expr(Expr *e) {
                     arr_param_idx++;
                 }
                 
-                if (idx_arg && arr_arg) {
-                    // Get the range of the index argument
+                (void)arr_type;
+                if (idx_arg && arr_arg && sema_walk_phase) {
+                    // P2/S3 (fail-CLOSED): the `in <arr>` invariant is 0 <= idx <
+                    // arr.len. idx >= 0 holds for a usize; prove idx < arr.len at the
+                    // CALL site — interval for a fixed array, or difference-constraint
+                    // for a symbolic slice / guarded index — else reject. The old
+                    // check only fired for a known-constant length AND a known index
+                    // range, so an unbounded/symbolic forward was an unchecked
+                    // out-of-bounds read inside the callee (ASan-confirmed). Reuses the
+                    // same prover as the `i < a.len` refinement. Walk-phase-gated so it
+                    // cannot false-positive before VRA is populated.
                     Range idx_range = sema_eval_range(idx_arg, sema_ranges);
-                    
-                    // Get the array length (from type or expression)
-                    int64_t arr_len = -1;
-                    if (arr_arg->type && arr_arg->type->kind == TYPE_ARRAY && arr_arg->type->array_len >= 0) {
-                        arr_len = arr_arg->type->array_len;
-                    } else if (arr_type && arr_type->kind == TYPE_ARRAY && arr_type->array_len >= 0) {
-                        arr_len = arr_type->array_len;
-                    }
-                    
-                    if (arr_len > 0 && idx_range.known) {
-                        // Verify: idx >= 0 and idx < arr_len
-                        if (idx_range.min < 0 || idx_range.max >= arr_len) {
-                            fprintf(stderr, "[E085] bounds error: index range [%ld, %ld] is not within [0, %ld).\n",
-                                    (long)idx_range.min, (long)idx_range.max, (long)arr_len);
-                            exit(1);
-                        }
-                    } else if (idx_range.known && idx_range.min < 0) {
-                        fprintf(stderr, "[E085] bounds error: index may be negative: range [%ld, %ld].\n",
+                    if (idx_range.known && idx_range.min < 0) {
+                        fprintf(stderr, "[E085] Error Ln %li, Col %li: index may be negative: range [%ld, %ld].\n",
+                                (long)idx_arg->line, (long)idx_arg->col,
                                 (long)idx_range.min, (long)idx_range.max);
+                        diagnostic_show_line(idx_arg->line, idx_arg->col);
+                        exit(1);
+                    }
+                    // Synthetic `arr_name.len` member for the shared prover.
+                    Id *lm = arena_push_aligned(sema_arena, Id);
+                    lm->name = "len"; lm->length = 3;
+                    Expr *aid = arena_push_aligned(sema_arena, Expr);
+                    aid->kind = EXPR_IDENTIFIER; aid->as.identifier_expr.id = arr_name;
+                    Expr *lenE = arena_push_aligned(sema_arena, Expr);
+                    lenE->kind = EXPR_MEMBER;
+                    lenE->as.member_expr.target = aid;
+                    lenE->as.member_expr.member = lm;
+                    if (!callsite_len_precond_proven(idx_arg, lenE,
+                                TOKEN_ANGLE_BRACKET_LEFT, params, e->as.call_expr.args)) {
+                        fprintf(stderr, "[E085] Error Ln %li, Col %li: index argument cannot be proven "
+                            "within the bounds of '%.*s' (the `in %.*s` invariant). Constrain the index "
+                            "(a literal, a bounded local, an `if`/loop guard, or a matching parameter "
+                            "refinement) so VRA can discharge it.\n",
+                            (long)idx_arg->line, (long)idx_arg->col,
+                            (int)arr_name->length, arr_name->name,
+                            (int)arr_name->length, arr_name->name);
+                        diagnostic_show_line(idx_arg->line, idx_arg->col);
                         exit(1);
                     }
                 }
