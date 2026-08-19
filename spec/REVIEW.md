@@ -463,3 +463,34 @@ session) was re-verified against src and is correct.
 
 Pure design-rationale / language-comparison prose — no code examples, no
 diagnostic or type claims. No stale tokens found. No changes.
+
+---
+
+## Resolutions (compiler fixes applied after the review)
+
+The author reviewed the flagged gaps/opens and directed fixes. Applied (commit
+4cf3748, suite 448/448):
+
+- **G-05.1 semicolons** → RESOLVED as a language decision: `;` is a legal
+  same-line statement separator (spec §5.4/§9 updated); the compiler already
+  behaved this way, so this was a spec change.
+- **G-05.2 unknown escapes** → FIXED: the parser now rejects an unrecognized
+  string escape (`[E100]`), matching §5.9.6.
+- **O-07.1 slice `T[]` vs `*T[]`** → RESOLVED: `T[]` is canonical; the `*` on a
+  fat slice is now an error (kept for `*T`, `*T[N]`, `*T[:S]`).
+- **G-15.1 bool match** → FIXED: `case b { true: … false: … }` parses and is
+  exhaustive (no `else` needed); the §15 limitation note was removed.
+- **O-15.1 range-pattern `..`** → RESOLVED: `a..b` is now exclusive and `a..=b`
+  inclusive in patterns, matching expression ranges (§15 updated). A latent
+  broken-C bug (control-char range bound emitted as a raw char) was fixed too.
+
+### Still OPEN
+- **G-06.1 undeclared identifiers** → attempted, then reverted. An error at the
+  resolver's "unresolved identifier" fallback is not viable: that fallback is
+  legitimately reached by UFCS desugaring (fresh callee nodes), condition
+  re-inference, the VRA/bounds walk, generic monomorphization, and synthetic
+  clones — so it false-positives on valid code, and the guards needed to exclude
+  those also suppress genuine errors. Recommended as a separate effort at a point
+  where resolution is final (e.g. a codegen-time check that an emitted identifier
+  has a binding), not at the resolver fallback. The broken-C hole remains, but is
+  not exercised by any `_pass` test.

@@ -92,15 +92,19 @@ significant: they act as statement terminators in contexts where a statement
 may follow (see \S\,\ref{sec:09-statements}).  Multiple consecutive line
 feeds are treated as a single statement boundary.
 
-\begin{constraint}
-  A semicolon (\tok{;}) shall not appear in a Lain source file.  If one is
-  present, the implementation shall emit~\diagcode{E100}.
-\end{constraint}
+\pnum
+A semicolon (\tok{;}) may be used as a statement separator, equivalent to a
+line feed.  Its purpose is to place more than one statement or declaration on a
+single line; a newline is the normal terminator, and no semicolon is needed at
+the end of a line.  Two statements on one line without a separator are
+ill-formed~(\diagcode{E100}).
 
 \begin{rationale}
-  Newlines as statement terminators eliminate the class of bugs caused by
-  missing or accidental semicolons.  They also prevent multi-statement lines,
-  keeping statement boundaries unambiguous.
+  Newlines as the primary terminator eliminate the class of bugs caused by
+  \emph{missing} terminators.  A semicolon is available only when the programmer
+  deliberately wants several statements on one line (e.g.\ \lain{a = 1; b = 2}),
+  making a multi-statement line an explicit, opt-in choice rather than something
+  that can happen by accident.
 \end{rationale}
 
 \section{Keywords}

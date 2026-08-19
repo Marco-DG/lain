@@ -49,11 +49,11 @@ The following pattern forms are supported:
     \lain{Circle(r): ...} binds the radius to \lain{r}.
 
   \item[Range pattern]
-    Matches an \emph{inclusive} range of integer or character values:
-    \lain{1..10:} matches 1 through 10.  Note that \lain{..} is
-    \emph{inclusive} in a range \emph{pattern}, whereas the same token is
-    \emph{exclusive} (half-open) in an expression range and a sub-slice
-    (\S\,\ref{sec:lex.operators}, \S\,\ref{sec:expr.subslice}).
+    Matches a range of integer or character values.  Consistent with expression
+    ranges and sub-slices (\S\,\ref{sec:lex.operators}, \S\,\ref{sec:expr.subslice}),
+    \lain{a..b} is \emph{exclusive} of the upper bound and \lain{a..=b} is
+    \emph{inclusive}: \lain{1..10:} matches 1 through 9, and \lain{1..=10:}
+    matches 1 through 10.
 
   \item[Multi-pattern (OR)]
     A comma-separated list of patterns on a single arm:
@@ -90,13 +90,6 @@ Integer  & \lain{else} arm always required \\
   A non-exhaustive \lain{case} expression is
   \illformed{}~(\diagcode{E014}).
 \end{constraint}
-
-\begin{note}
-  \textbf{Implementation limitation.}  The reference compiler does not currently
-  parse two boolean-literal arms in one \lain{case} (a \lain{true:} arm followed
-  by a \lain{false:} arm is \diagcode{E100}).  Exhaustively matching a \lain{bool}
-  therefore requires an \lain{else} arm (e.g.\ \lain{true:} \dots\ \lain{else:}).
-\end{note}
 
 \begin{example}
 \begin{laincode}
