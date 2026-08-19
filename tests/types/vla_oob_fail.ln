@@ -1,0 +1,8 @@
+// EXPECT: [E085]
+// spec: §7 — a VLA `var a u8[n]` is bounds-checked like any array: an index the
+// VRA can't prove in range (here `a[3]` when `n` could be < 4) is rejected.
+proc bad(n usize) i32 {
+    var a u8[n]
+    return a[3] as i32
+}
+proc main() i32 { return 0 }
