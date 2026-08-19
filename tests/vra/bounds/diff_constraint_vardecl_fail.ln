@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// Soundness guard for the var-decl difference-constraint seeding: `var hi = lo + 1`
+// does NOT prove `hi < a.len` (when lo == a.len-1, hi == a.len is out of bounds),
+// so the forwarded check(a, hi) must be rejected — the seeding proves only true
+// relations, and the call-site precondition stays fail-closed.
+func check(a i32[], hi usize < a.len) i32 { return a[hi] }
+proc test(a i32[], lo usize < a.len) i32 {
+    var hi = lo + 1
+    return check(a, hi)
+}
+proc main() i32 { return 0 }

@@ -1,0 +1,12 @@
+// VRA precision (S4 groundwork): `var x = y (± k)` for a plain identifier y now
+// seeds the difference constraint x = y ± k (previously only `x.len ± k` did).
+// Here `var hi = lo` + the param refinement `lo < a.len` proves `hi < a.len`
+// through the fail-CLOSED call-site precondition path (via the constraint bridge
+// hi=lo, lo<__len_a  =>  hi<__len_a) — so the forwarded check(a, hi) is accepted
+// with NO runtime bounds check. If the seeding regresses, this fails E012.
+func check(a i32[], hi usize < a.len) i32 { return a[hi] }
+proc test(a i32[], lo usize < a.len) i32 {
+    var hi = lo
+    return check(a, hi)
+}
+proc main() i32 { return 0 }

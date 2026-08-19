@@ -1436,6 +1436,52 @@ static void walk_stmt(Stmt *s) {
                     }
                 }
 
+                // var x = y ± k  (y a plain local/param identifier, NOT .len):
+                // seed the difference constraint x = y ± k so a later `y < x` /
+                // `x > y` is provable. Mirrors the x.len case above and the
+                // STMT_ASSIGN path (`x = y + c`); without it `var x = y + 1` could
+                // not discharge a `b < a` precondition (range_linear_pass proved
+                // only via the general-branch fail-open). Sound: a var-decl is a
+                // fresh name (no stale constraint on it), and a later reassignment
+                // of x or y invalidates the constraint (sema_invalidate_constraints).
+                {
+                    Expr *init = s->as.var_stmt.expr;
+                    Id   *n_id = s->as.var_stmt.name;
+                    Id      *vref   = NULL;
+                    int64_t  vdelta = 0;
+                    if (init && init->kind == EXPR_BINARY &&
+                        (init->as.binary_expr.op == TOKEN_PLUS ||
+                         init->as.binary_expr.op == TOKEN_MINUS) &&
+                        init->as.binary_expr.left &&
+                        init->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                        init->as.binary_expr.right &&
+                        init->as.binary_expr.right->kind == EXPR_LITERAL) {
+                        /* var x = y + k  /  var x = y - k */
+                        vref   = init->as.binary_expr.left->as.identifier_expr.id;
+                        int64_t k = (int64_t)init->as.binary_expr.right->as.literal_expr.value;
+                        vdelta = (init->as.binary_expr.op == TOKEN_PLUS) ? k : -k;
+                    } else if (init && init->kind == EXPR_BINARY &&
+                               init->as.binary_expr.op == TOKEN_PLUS &&
+                               init->as.binary_expr.left &&
+                               init->as.binary_expr.left->kind == EXPR_LITERAL &&
+                               init->as.binary_expr.right &&
+                               init->as.binary_expr.right->kind == EXPR_IDENTIFIER) {
+                        /* var x = k + y */
+                        vref   = init->as.binary_expr.right->as.identifier_expr.id;
+                        vdelta = (int64_t)init->as.binary_expr.left->as.literal_expr.value;
+                    } else if (init && init->kind == EXPR_IDENTIFIER) {
+                        /* var x = y */
+                        vref = init->as.identifier_expr.id; vdelta = 0;
+                    }
+                    if (vref && n_id && sema_ranges &&
+                        !(vref->length == n_id->length &&
+                          memcmp(vref->name, n_id->name, (size_t)vref->length) == 0)) {
+                        /* x = y + delta  ↔  x - y ≤ delta ; y - x ≤ -delta */
+                        constraint_add(sema_ranges, n_id, vref,  vdelta);
+                        constraint_add(sema_ranges, vref, n_id, -vdelta);
+                    }
+                }
+
                 // Register __len_VAR for local sized-slice variables (e.g. var s = arr[lo..hi]).
                 // This lets subsequent accesses s[i] use the constraint/interval prover.
                 Type *sv_ty = s->as.var_stmt.type;
