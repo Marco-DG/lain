@@ -1,0 +1,12 @@
+// F3.5 checked operators: a +? b / a -? b / a *? b keep the OPERAND type and
+// TRAP (abort) on overflow via the overflow builtins — the arithmetic analog of
+// `as?`, and the explicit "keep this width, but abort if it overflows"
+// complement to Path-F's auto-widening (`+` widens; `+?` stays + traps).
+proc main() i32 {
+    var a i32 = 10
+    var b i32 = 3
+    var s = a +? b
+    var d = a -? b
+    var p = a *? b
+    return s + d + p
+}

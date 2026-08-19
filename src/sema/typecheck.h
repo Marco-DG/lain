@@ -2362,9 +2362,13 @@ void sema_infer_expr(Expr *e) {
             // to that type). Overflow on plain ops is caught at the
             // assignment boundary by Phase 5 (E086).
             TokenKind aop = e->as.binary_expr.op;
+            // Ops with an EXPLICIT overflow policy keep the operand type (they do
+            // not Path-F-widen): wrapping (%), saturating (|), and checked (?).
             bool is_wrap_or_sat = (aop == TOKEN_PLUS_PERCENT  || aop == TOKEN_MINUS_PERCENT
                                 || aop == TOKEN_ASTERISK_PERCENT || aop == TOKEN_PLUS_PIPE
-                                || aop == TOKEN_MINUS_PIPE || aop == TOKEN_ASTERISK_PIPE);
+                                || aop == TOKEN_MINUS_PIPE || aop == TOKEN_ASTERISK_PIPE
+                                || aop == TOKEN_PLUS_QUESTION || aop == TOKEN_MINUS_QUESTION
+                                || aop == TOKEN_ASTERISK_QUESTION);
             if (is_wrap_or_sat && lt && is_integer_type(lt)) {
                 e->type = lt;
             } else if (lt && rt && is_integer_type(lt) && is_integer_type(rt)) {

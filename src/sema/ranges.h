@@ -283,9 +283,13 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             // Either way the result fits in the LHS type, so we clamp.
             extern int type_integer_range(Type *t, long long *lo, long long *hi);
             TokenKind op = e->as.binary_expr.op;
+            // Wrapping/saturating/checked: the result is bounded to the LHS type
+            // (a checked op traps rather than exceed it), so clamp the range.
             bool is_wrap_or_sat = (op == TOKEN_PLUS_PERCENT  || op == TOKEN_MINUS_PERCENT
                                 || op == TOKEN_ASTERISK_PERCENT || op == TOKEN_PLUS_PIPE
-                                || op == TOKEN_MINUS_PIPE || op == TOKEN_ASTERISK_PIPE);
+                                || op == TOKEN_MINUS_PIPE || op == TOKEN_ASTERISK_PIPE
+                                || op == TOKEN_PLUS_QUESTION || op == TOKEN_MINUS_QUESTION
+                                || op == TOKEN_ASTERISK_QUESTION);
             if (is_wrap_or_sat && e->as.binary_expr.left && e->as.binary_expr.left->type) {
                 long long lo, hi;
                 if (type_integer_range(e->as.binary_expr.left->type, &lo, &hi)) {

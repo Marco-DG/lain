@@ -411,6 +411,21 @@ void emit_expr(Expr *expr, int depth) {
       emit_expr(expr->as.binary_expr.right, depth);
       EMIT(")) )");
       EMIT(" )");
+    } else if (expr->as.binary_expr.op == TOKEN_PLUS_QUESTION
+            || expr->as.binary_expr.op == TOKEN_MINUS_QUESTION
+            || expr->as.binary_expr.op == TOKEN_ASTERISK_QUESTION) {
+      // F3.5 checked ops: compute at the operand type and TRAP on overflow via the
+      // GCC/Clang overflow builtins (no Path-F widening — an explicit "keep this
+      // width, but abort if it overflows"). Post-LLVM: @llvm.sadd.with.overflow.
+      const char *bi = (expr->as.binary_expr.op == TOKEN_PLUS_QUESTION)  ? "__builtin_add_overflow"
+                     : (expr->as.binary_expr.op == TOKEN_MINUS_QUESTION) ? "__builtin_sub_overflow"
+                                                                         : "__builtin_mul_overflow";
+      char rty[256]; c_name_for_type(expr->type, rty, sizeof rty);
+      EMIT("({ %s __r; if (%s(", rty, bi);
+      emit_expr(expr->as.binary_expr.left, depth);
+      EMIT(", ");
+      emit_expr(expr->as.binary_expr.right, depth);
+      EMIT(", &__r)) { fprintf(stderr, \"panic: integer overflow in checked operation\\n\"); abort(); } __r; })");
     } else {
       // Pointer subtraction ptr1 - ptr2 → (uintptr_t)(ptr1 - ptr2)
       // This gives the element offset (ptrdiff_t cast to usize).

@@ -249,6 +249,7 @@ Token lexer_next(Lexer* lexer) {
                     case '=':           RETURN_TOKEN(TOKEN_ASTERISK_EQUAL);
                     case '%':           RETURN_TOKEN(TOKEN_ASTERISK_PERCENT);
                     case '|':           RETURN_TOKEN(TOKEN_ASTERISK_PIPE);
+                    case '?':           RETURN_TOKEN(TOKEN_ASTERISK_QUESTION);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_ASTERISK);
                 }
@@ -331,6 +332,7 @@ Token lexer_next(Lexer* lexer) {
                     case '=':           RETURN_TOKEN(TOKEN_PLUS_EQUAL);
                     case '%':           RETURN_TOKEN(TOKEN_PLUS_PERCENT);
                     case '|':           RETURN_TOKEN(TOKEN_PLUS_PIPE);
+                    case '?':           RETURN_TOKEN(TOKEN_PLUS_QUESTION);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_PLUS);
                 }
@@ -341,6 +343,7 @@ Token lexer_next(Lexer* lexer) {
                     case '=':           RETURN_TOKEN(TOKEN_MINUS_EQUAL);
                     case '%':           RETURN_TOKEN(TOKEN_MINUS_PERCENT);
                     case '|':           RETURN_TOKEN(TOKEN_MINUS_PIPE);
+                    case '?':           RETURN_TOKEN(TOKEN_MINUS_QUESTION);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_MINUS);
                 }
