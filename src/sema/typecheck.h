@@ -703,50 +703,48 @@ static ExprList *alias_constraints_for(Type *t) {
     return NULL;
 }
 
-// P2/S4: enforce a refinement-type-alias's constraints on a value whose VRA
-// range is r flowing into a slot of type `to`. A refinement alias
-// (`type Pct = i32 >= 0 and <= 100`) stores its constraints on its
-// DECL_TYPE_ALIAS; check the value's range against each literal-bounded
-// constraint and exit with E086 on violation. No-op for non-alias types,
-// unknown range, or inside unsafe. Because this rides inside check_conversion,
-// refinement aliases become sound at EVERY boundary (param, return, assignment,
-// var-decl) — previously only the initial var-decl was checked.
+// P2/S3 (unification): enforce a refinement-type-alias's refinement on a value
+// whose VRA range is r flowing into a slot of type `to`. This is the boundary
+// half of the subsumption relation `r ⊑ refine(to)`. The INTERVAL component is
+// now read from the type itself (`type_refine_interval`, the S2 `refine` field)
+// rather than re-derived from a private op→bound switch — one source of truth,
+// shared with `type_integer_range`. Only the DISEQUALITY residual (`!= k`), which
+// an interval cannot represent, is still read from the alias's constraint list.
+// No-op for non-alias types, unknown range, or inside unsafe. Riding inside
+// check_conversion, this makes refinement aliases sound at EVERY boundary.
 static void check_type_alias_constraints(Type *to, Range r, isize line, isize col,
                                          const char *ctx, const char *label) {
     if (sema_in_unsafe_block || !r.known) return;
     if (!to || to->kind != TYPE_SIMPLE || !to->base_type) return;
     if ((size_t)to->base_type->length >= 256) return;
-    char tnam[256];
-    memcpy(tnam, to->base_type->name, to->base_type->length);
-    tnam[to->base_type->length] = '\0';
-    extern Symbol *sema_lookup(const char *name);
-    Symbol *tsym = sema_lookup(tnam);
-    if (!tsym || !tsym->decl || tsym->decl->kind != DECL_TYPE_ALIAS ||
-        !tsym->decl->as.type_alias_decl.constraints) return;
-    for (ExprList *c = tsym->decl->as.type_alias_decl.constraints; c; c = c->next) {
+
+    // Interval refinement — the single relation, read from the type's `refine`.
+    Refinement rf = type_refine_interval(to);
+    bool interval_ok = !rf.known || (r.min >= rf.lo && r.max <= rf.hi);
+
+    // Disequality residual (`x != k`): not expressible as an interval, so read it
+    // from the alias constraints directly. `r` satisfies `!= k` iff it excludes k.
+    bool diseq_ok = true;
+    ExprList *cs = alias_constraints_for(to);
+    for (ExprList *c = cs; c; c = c->next) {
         if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
-        TokenKind op = c->expr->as.binary_expr.op;
+        if (c->expr->as.binary_expr.op != TOKEN_BANG_EQUAL) continue;
         Expr *rhs = c->expr->as.binary_expr.right;
-        if (!rhs || rhs->kind != EXPR_LITERAL) continue;   // only literal-bounded constraints
+        if (!rhs || rhs->kind != EXPR_LITERAL) continue;
         long long k = rhs->as.literal_expr.value;
-        bool fits = true;
-        switch (op) {
-            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  fits = (r.max <= k); break;  // <=
-            case TOKEN_ANGLE_BRACKET_LEFT:        fits = (r.max <  k); break;  // <
-            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: fits = (r.min >= k); break;  // >=
-            case TOKEN_ANGLE_BRACKET_RIGHT:       fits = (r.min >  k); break;  // >
-            case TOKEN_EQUAL_EQUAL:               fits = (r.min == k && r.max == k); break;
-            case TOKEN_BANG_EQUAL:                fits = (r.min > k || r.max < k); break;
-            default: fits = true; break;
-        }
-        if (!fits) {
-            fprintf(stderr, "[E086] Error Ln %li, Col %li: %s '%s' violates refinement "
-                "constraint of type alias '%s': value range [%lld, %lld] does not satisfy it.\n",
-                (long)line, (long)col, ctx, label ? label : "", tnam,
-                (long long)r.min, (long long)r.max);
-            diagnostic_show_line(line, col);
-            exit(1);
-        }
+        if (!(r.min > k || r.max < k)) { diseq_ok = false; break; }
+    }
+
+    if (!interval_ok || !diseq_ok) {
+        char tnam[256];
+        memcpy(tnam, to->base_type->name, to->base_type->length);
+        tnam[to->base_type->length] = '\0';
+        fprintf(stderr, "[E086] Error Ln %li, Col %li: %s '%s' violates refinement "
+            "constraint of type alias '%s': value range [%lld, %lld] does not satisfy it.\n",
+            (long)line, (long)col, ctx, label ? label : "", tnam,
+            (long long)r.min, (long long)r.max);
+        diagnostic_show_line(line, col);
+        exit(1);
     }
 }
 
