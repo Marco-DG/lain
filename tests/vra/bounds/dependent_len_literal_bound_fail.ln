@@ -1,8 +1,8 @@
 // EXPECT: [E087]
-// E087: passing 1-element array to *i32[>= 2] param — FAIL
+// E087: passing 1-element array to i32[>= 2] param — FAIL
 // The argument has length 1, violating the >= 2 constraint.
 
-func pair_sum(arr *i32[>= 2]) i32 {
+func pair_sum(arr i32[>= 2]) i32 {
     return arr[0] + arr[1]
 }
 

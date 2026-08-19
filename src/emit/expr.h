@@ -1191,10 +1191,13 @@ void emit_expr(Expr *expr, int depth) {
                     break;
                   }
                   case EXPR_RANGE: {
-                    char lo = p->expr->as.range_expr.start->as.char_expr.value;
-                    char hi = p->expr->as.range_expr.end->as.char_expr.value;
-                    EMIT("(__match%d >= '%c' && __match%d <= '%c')", __match_id, lo,
-                         __match_id, hi);
+                    // Numeric byte bounds (not raw '%c') to avoid broken C for
+                    // control-char bounds. `..` exclusive, `..=` inclusive.
+                    int lo = (unsigned char)p->expr->as.range_expr.start->as.char_expr.value;
+                    int hi = (unsigned char)p->expr->as.range_expr.end->as.char_expr.value;
+                    const char *up = p->expr->as.range_expr.inclusive ? "<=" : "<";
+                    EMIT("(__match%d >= %d && __match%d %s %d)", __match_id, lo,
+                         __match_id, up, hi);
                     break;
                   }
                   case EXPR_CALL: {

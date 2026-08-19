@@ -24,7 +24,7 @@ type BumpAlloc {
 
 // Initialise from a mutable byte slice.
 // The caller owns the backing memory; BumpAlloc only borrows the pointer.
-func bump_init(buf var *u8[]) BumpAlloc {
+func bump_init(buf var u8[]) BumpAlloc {
     var a BumpAlloc
     a.data = buf.data
     a.cap  = buf.len

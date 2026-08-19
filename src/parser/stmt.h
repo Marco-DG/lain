@@ -664,10 +664,12 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
             bool stop_for_header = false;
             TokenKind cur = parser->token.kind;
 
-            // allow numeric literals, char/string, identifiers or `else`
+            // allow numeric literals, char/string, bool literals, identifiers or `else`
             if (cur == TOKEN_NUMBER
             || cur == TOKEN_CHAR_LITERAL
             || cur == TOKEN_STRING_LITERAL
+            || cur == TOKEN_KEYWORD_TRUE
+            || cur == TOKEN_KEYWORD_FALSE
             || cur == TOKEN_IDENTIFIER
             || cur == TOKEN_KEYWORD_ELSE)
             {

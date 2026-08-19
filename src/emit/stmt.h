@@ -606,10 +606,14 @@ void emit_stmt(Stmt *stmt, int depth) {
                     break;
                   }
                   case EXPR_RANGE: {
-                    char lo = pat->expr->as.range_expr.start->as.char_expr.value;
-                    char hi = pat->expr->as.range_expr.end->as.char_expr.value;
-                    EMIT("(__match%d >= '%c' && __match%d <= '%c')", __match_id, lo,
-                         __match_id, hi);
+                    // Emit the numeric byte value (not a raw '%c') so control-char
+                    // bounds don't produce broken C. `..` is exclusive of the
+                    // upper bound, `..=` inclusive (spec §8.16 / §15.3).
+                    int lo = (unsigned char)pat->expr->as.range_expr.start->as.char_expr.value;
+                    int hi = (unsigned char)pat->expr->as.range_expr.end->as.char_expr.value;
+                    const char *up = pat->expr->as.range_expr.inclusive ? "<=" : "<";
+                    EMIT("(__match%d >= %d && __match%d %s %d)", __match_id, lo,
+                         __match_id, up, hi);
                     break;
                   }
                   default: {

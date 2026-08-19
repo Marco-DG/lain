@@ -1,0 +1,7 @@
+// spec: §5.4 / §9 — a semicolon is a statement separator, used to place several
+// statements on one line. A newline is the normal terminator (no trailing `;`
+// needed). Two statements on one line WITHOUT a separator are [E100].
+proc main() i32 {
+    var x = 5; var y = 6; var z = x + y
+    return z
+}

@@ -4,7 +4,7 @@ proc main() i32 {
     var arr u8[5] = [10, 20, 0, 0, 0]
     libc_printf("arr[0]=%d, arr[1]=%d\n", arr[0], arr[1])
     
-    // var slice *u8[] = arr // Commented out as implicit cast might not be supported yet
+    // var slice u8[] = arr // Commented out as implicit cast might not be supported yet
     // printf("slice[0]=%d\n", slice[0])
     
     return 0

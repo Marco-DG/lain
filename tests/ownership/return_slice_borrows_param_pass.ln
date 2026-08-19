@@ -2,7 +2,7 @@
 // pointer-bearing parameter. After the result is no longer used (NLL),
 // the parameter can be consumed/mutated again.
 
-func tail_of(s *u8[]) *u8[] {
+func tail_of(s u8[]) u8[] {
     return s
 }
 

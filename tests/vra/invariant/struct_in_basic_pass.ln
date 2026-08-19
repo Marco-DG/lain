@@ -3,7 +3,7 @@
 
 import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
 type Lexer {
-    text *u8[]
+    text u8[]
     pos  usize in text
 }
 

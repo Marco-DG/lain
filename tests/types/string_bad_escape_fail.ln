@@ -1,0 +1,8 @@
+// EXPECT: [E100]
+// spec: §5.9.6 — a backslash not followed by a recognized escape character
+// (n t r 0 \ " ' x) is an unrecognized escape sequence and is ill-formed.
+// Regression: `\q` used to pass through silently to the emitted C.
+proc main() i32 {
+    var s = "bad\qescape"
+    return 0
+}

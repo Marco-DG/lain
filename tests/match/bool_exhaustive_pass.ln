@@ -1,0 +1,10 @@
+// spec: §15.4 — a `bool` scrutinee is exhaustively covered by `true` and
+// `false` arms (no `else` required). Regression: a `false:` arm following a
+// `true:` arm used to fail to parse ([E100]).
+proc pick(b bool) i32 {
+    case b {
+        true:  return 1
+        false: return 0
+    }
+}
+proc main() i32 { return pick(true) }

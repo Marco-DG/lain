@@ -1,0 +1,11 @@
+// spec: §15.3 — a range pattern `a..b` is EXCLUSIVE of b (matching expression
+// ranges), while `a..=b` is inclusive. The emit snapshot below locks it:
+// 1..10 must compile to `< 10` and 11..=20 to `<= 20`.
+proc classify(x i32) i32 {
+    case x {
+        1..10:   return 1
+        11..=20: return 2
+        else:    return 0
+    }
+}
+proc main() i32 { return 0 }

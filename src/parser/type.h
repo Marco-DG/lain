@@ -109,10 +109,19 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
     }
 
     Type *inner = parse_type_core(arena, parser);
-    // *T[] and *T[:S] collapse: the * is syntactic (these are already reference types).
-    // *T[N] (fixed) keeps the TYPE_POINTER wrapper.
-    if ((inner->kind == TYPE_ARRAY && inner->array_len < 0) || inner->kind == TYPE_SLICE) {
-        return inner;  // collapse *T[] and *T[:S]
+    // A fat slice (T[], T[n], T[>= n], ...) carries its own length, so it is
+    // not a raw pointer and takes no `*`. The `*` prefix is valid only before a
+    // thin/raw type: *T (raw pointer), *T[N] (fixed-length view), *T[:S]
+    // (sentinel-terminated). Reject a redundant `*` on a fat slice; `*T[]` and
+    // `T[]` used to be silent synonyms.
+    if (inner->kind == TYPE_ARRAY && inner->array_len < 0) {
+        parser_error("'*' is not allowed before a fat slice: write it as 'T[]' "
+                     "(a slice carries its length and is not a raw pointer). "
+                     "'*' is only for '*T', '*T[N]', and '*T[:S]'.");
+    }
+    // *T[:S] sentinel: the * is syntactic; collapse to the slice type.
+    if (inner->kind == TYPE_SLICE) {
+        return inner;
     }
     return type_pointer(arena, inner);
   }

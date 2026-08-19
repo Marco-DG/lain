@@ -1,5 +1,5 @@
 // Test: in keyword for index bounds - should compile successfully
-// func get(arr *i32[], i i32 in arr) means i is always a valid index
+// func get(arr i32[], i i32 in arr) means i is always a valid index
 
 func get(arr i32[10], i i32 in arr) i32 {
     return arr[i]  // Always safe - compiler knows i ∈ [0, 9]

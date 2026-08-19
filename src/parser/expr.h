@@ -218,6 +218,19 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
     else if (parser_match(TOKEN_STRING_LITERAL)) {  // New branch for strings
         const char* str = parser->token.start;
         isize len = parser->token.length;
+        // Validate escape sequences (spec §5.9.6): a backslash not followed by
+        // one of the recognized escape characters is ill-formed. The raw lexeme
+        // includes the surrounding quotes, so scan the interior [1, len-1).
+        for (isize i = 1; i + 1 < len; i++) {
+            if (str[i] == '\\') {
+                char e = str[i + 1];
+                if (e != 'n' && e != 't' && e != 'r' && e != '0' &&
+                    e != '\\' && e != '"' && e != '\'' && e != 'x') {
+                    parser_error("unknown escape sequence in string literal");
+                }
+                i++;  // consume the escaped character
+            }
+        }
         parser_advance();
         return expr_string(arena, str, len);
     }
@@ -317,9 +330,15 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
     }
     else if (parser_match(TOKEN_IDENTIFIER)) {
         // 1) get the base identifier
+        isize id_line = parser->line, id_col = parser->column;
         Id *identifier = id(arena, parser->token.length, parser->token.start);
         parser_advance();
         Expr *expr = expr_identifier(arena, identifier);
+        // Record the source location so diagnostics (e.g. E106 undeclared) can
+        // point at the identifier; without this, operands of larger expressions
+        // were left at line 0 and slipped past the real-location check.
+        expr->line = id_line;
+        expr->col  = id_col;
     
         // Single postfix loop: handles .field, (call), [index] in any order.
         // Supports chained expressions like p.data[i].val or f(x)[0].name.

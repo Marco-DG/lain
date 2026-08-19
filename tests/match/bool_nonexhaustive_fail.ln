@@ -1,0 +1,9 @@
+// EXPECT: [E014]
+// spec: §15.4 — a `bool` match with only `true` (and no `false`, no `else`)
+// is non-exhaustive.
+proc pick(b bool) i32 {
+    case b {
+        true: return 1
+    }
+}
+proc main() i32 { return 0 }
