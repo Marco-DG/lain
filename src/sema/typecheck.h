@@ -283,8 +283,18 @@ static void reject_lossy_int_conversion(Type *from, Type *to, Range r,
     if (from && from->arith_widened) return;
     if (!is_integer_type(from) || !is_integer_type(to)) return;
     long long flo, fhi, tlo, thi;
-    if (!type_integer_range(from, &flo, &fhi)) return;   // usize/isize source: don't judge
+    if (!type_integer_range(from, &flo, &fhi)) {
+        // usize/isize source has no fixed width, but narrowing it to a fixed-width
+        // target can still lose data (a length can exceed i32). Judge it with a
+        // conservative platform range so the narrowing is not silently accepted;
+        // usize -> i64/u64 stays a safe widening, usize -> i32 needs proof or a cast.
+        bool from_unsigned = from->base_type && from->base_type->length >= 1 &&
+                             from->base_type->name[0] == 'u';
+        flo = from_unsigned ? 0 : LLONG_MIN;
+        fhi = LLONG_MAX;
+    }
     if (!type_integer_range(to,   &tlo, &thi)) return;   // usize/isize target: don't judge
+    if (flo >= tlo && fhi <= thi) return;                // statically safe widening
     if (flo >= tlo && fhi <= thi) return;                // statically safe widening
     if (range_proves_int_fit(r, to)) return;             // VRA proved the narrowing safe
     const char *fn = (from->base_type) ? from->base_type->name : "?";

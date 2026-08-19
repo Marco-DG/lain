@@ -1,0 +1,9 @@
+// usize -> i64/u64 is a widening (usize fits the 64-bit target), so it is allowed
+// with no cast. The escape for a real narrowing is an explicit cast tier
+// (`a as i32`, `a as? i32`, ...).
+proc f(a usize) i64 {
+    var x i64 = a
+    var y u64 = a
+    return x
+}
+proc main() i32 { return 0 }
