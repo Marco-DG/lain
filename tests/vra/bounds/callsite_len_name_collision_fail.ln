@@ -1,0 +1,13 @@
+// EXPECT: [E012]
+// P0 soundness (name-keyed VRA leak): a parameter refinement's difference
+// constraint (`get`'s `i < arr.len` -> `i - __len_a <= -1`) must NOT leak by
+// name into a later function whose parameters happen to share those names.
+// `run` has same-named params `a`/`i` but NO refinement, so forwarding `get(a, i)`
+// is unproven and must be rejected. Before the per-function fact-table isolation
+// fix, this leaked and `run(arr, 5)` read a[5] out of bounds (ASan-confirmed).
+func get(a i32[], i usize < a.len) i32 { return a[i] }
+proc run(a i32[], i usize) i32 { return get(a, i) }
+proc main() i32 {
+    var arr i32[3] = [1, 2, 3]
+    return run(arr, 5)
+}

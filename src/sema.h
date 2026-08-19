@@ -2801,6 +2801,19 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
 
         sema_clear_locals();
 
+        // P0 soundness (name-keyed leak): capture the VRA fact-table state BEFORE
+        // this function seeds its parameter refinements, so those constraints are
+        // rolled back before the next function. `sema_ranges` is a single shared
+        // table; seeding (`i < a.len` -> `i - __len_a <= -1`) happens in the param
+        // loop and during resolve, and the old snapshot was taken at the walk —
+        // TOO LATE, so a param refinement leaked by name into a later same-named
+        // parameter and let its `a[i]` read out of bounds (confirmed via ASan).
+        // range_set/constraint_add prepend, so resetting head/constraints fully
+        // isolates. (Facts are still live through this function's walk below,
+        // which runs before the restore.)
+        RangeEntry *__fn_pre_head = sema_ranges ? sema_ranges->head : NULL;
+        ConstraintEntry *__fn_pre_cons = sema_ranges ? sema_ranges->constraints : NULL;
+
         // Reject duplicate parameter names (ambiguous — C would redefine the
         // symbol; the second shadows the first with no diagnostic otherwise).
         for (DeclList *pa = d->as.function_decl.params; pa; pa = pa->next) {
@@ -3220,17 +3233,18 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         // Snapshot sema_ranges state so any constraints added during walk
         // (e.g. by post-`if then-returns` propagation) don't leak to the
         // next function's resolve.
-        RangeEntry *__fn_old_head = sema_ranges ? sema_ranges->head : NULL;
-        ConstraintEntry *__fn_old_cons = sema_ranges ? sema_ranges->constraints : NULL;
         InGuardEntry *__fn_old_guards = sema_in_guards;
         NarrowEntry *__fn_old_narrows = sema_narrows;
         sema_walk_phase = true;
         for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next)
             walk_stmt(sl->stmt);
         sema_walk_phase = false;
+        // Restore to the PRE-function baseline (captured before param seeding, so
+        // this function's parameter refinements + resolve/walk facts are all
+        // rolled back — no leak into the next same-named function).
         if (sema_ranges) {
-            sema_ranges->head = __fn_old_head;
-            sema_ranges->constraints = __fn_old_cons;
+            sema_ranges->head = __fn_pre_head;
+            sema_ranges->constraints = __fn_pre_cons;
         }
         sema_in_guards = __fn_old_guards;
         sema_narrows = __fn_old_narrows;

@@ -365,16 +365,83 @@ static bool is_pointer_bearing(Type *t) {
 // Conservative: returns true for same simple type, integer widening,
 // pointer-to-same-element, or if either operand has no inferred type.
 // Returns false on clear mismatches (int vs bool, struct A vs struct B, etc.).
-// P2/Stage0: do two types share the same canonical CORE (same base type modulo
-// ownership mode / refinement)? Total across qualifiers via the interned canon
-// pointer (mov i32, var i32, i32 all share it). Falls through (false) when canon
-// is unset, so callers proceed to their structural check — behavior-preserving.
-static bool core_identical(Type *a, Type *b) {
+// P2/S1: sound, TOTAL structural core identity — do two types denote the same
+// canonical CORE (mode- and refinement-stripped)? The interned `canon` pointer
+// is an O(1) fast-path: it is set only to a structurally-identical representative,
+// so canon-equal ⇒ core-identical, soundly (mov i32, var i32, i32 all share it).
+// When canon is unset or unequal we fall back to a structural, mode-agnostic
+// comparison that reads the CURRENT fields — so it stays correct even after an
+// in-place mode change (EXPR_ADDR) or generic substitution (which mutate a node
+// after construction and would otherwise leave a dedup'd canon stale). Never
+// compares ownership mode; sized arrays are core-identical only by node identity
+// (their size is a refinement, discharged separately).
+static bool core_identical_depth(Type *a, Type *b, int depth) {
     if (a == b) return true;
     if (!a || !b) return false;
-    if (a->canon && b->canon) return a->canon == b->canon;
-    return false;
+    if (depth > 32) return false;                       // cycle/blowup guard
+    while (a && a->kind == TYPE_COMPTIME) a = a->element_type;
+    while (b && b->kind == TYPE_COMPTIME) b = b->element_type;
+    if (a == b) return true;
+    if (!a || !b) return false;
+    if (a->canon && b->canon && a->canon == b->canon) return true;   // O(1) sound fast-path
+    if (a->kind != b->kind) return false;
+    switch (a->kind) {
+        case TYPE_SIMPLE: {
+            if (!a->base_type || !b->base_type) return false;
+            if (!id_bytes_equal(a->base_type, b->base_type)) return false;
+            // Generic applications: Vec(i32) and Vec(u8) share a name, differ in args.
+            if ((a->type_args == NULL) != (b->type_args == NULL)) return false;
+            TypeList *pa = a->type_args, *pb = b->type_args;
+            while (pa && pb) {
+                if (!core_identical_depth(pa->type, pb->type, depth + 1)) return false;
+                pa = pa->next; pb = pb->next;
+            }
+            return pa == NULL && pb == NULL;
+        }
+        case TYPE_POINTER:
+            return core_identical_depth(a->element_type, b->element_type, depth + 1);
+        case TYPE_ARRAY:
+            if (a->size_expr || b->size_expr) return false;  // sized cores: same-node identity only
+            if (a->array_len != b->array_len) return false;
+            return core_identical_depth(a->element_type, b->element_type, depth + 1);
+        case TYPE_VECTOR:
+            if (a->array_len != b->array_len) return false;  // lane count
+            return core_identical_depth(a->element_type, b->element_type, depth + 1);
+        case TYPE_SLICE:
+            if (a->sentinel_is_string != b->sentinel_is_string) return false;
+            if (a->sentinel_len != b->sentinel_len) return false;
+            if ((a->sentinel_str == NULL) != (b->sentinel_str == NULL)) return false;
+            if (a->sentinel_str && b->sentinel_str &&
+                memcmp(a->sentinel_str, b->sentinel_str, (size_t)a->sentinel_len) != 0) return false;
+            return core_identical_depth(a->element_type, b->element_type, depth + 1);
+        case TYPE_UNION: {
+            if (!core_identical_depth(a->element_type, b->element_type, depth + 1)) return false;
+            IdList *ma = a->union_markers, *mb = b->union_markers;
+            while (ma && mb) {
+                if (!id_bytes_equal(ma->id, mb->id)) return false;
+                ma = ma->next; mb = mb->next;
+            }
+            return ma == NULL && mb == NULL;
+        }
+        case TYPE_FUNC: {
+            if (a->func_is_total != b->func_is_total) return false;
+            if (!core_identical_depth(a->element_type, b->element_type, depth + 1)) return false; // return (NULL=void)
+            TypeList *pa = a->func_params, *pb = b->func_params;
+            while (pa && pb) {
+                if (!core_identical_depth(pa->type, pb->type, depth + 1)) return false;
+                pa = pa->next; pb = pb->next;
+            }
+            return pa == NULL && pb == NULL;
+        }
+        case TYPE_META:
+            return true;                                 // every `type` meta is one core
+        case TYPE_VARIANT:
+            return a->variant == b->variant;
+        default:
+            return false;
+    }
 }
+static bool core_identical(Type *a, Type *b) { return core_identical_depth(a, b, 0); }
 
 // A scalar `as`-castable type: integer, float, or bool. `as` converts only
 // between these (and raw pointers inside unsafe); casting an aggregate
@@ -701,6 +768,91 @@ static Range eval_callsite_size_range(Expr *se, DeclList *params, ExprList *args
         }
     }
     return range_unknown();
+}
+
+// Companion to eval_callsite_size_range: for a callee `param.len` at the call
+// site, return the ACTUAL array argument's `__len_` difference variable Id (or
+// NULL). Mirrors the identifier branch above but yields the synthetic Id so a
+// precondition can be discharged relationally (difference constraints), not just
+// by interval — this is what lets a forwarded/guarded `i < a.len` prove without a
+// concrete numeric length.
+static Id *callsite_len_id(Expr *se, DeclList *params, ExprList *args) {
+    if (!se || se->kind != EXPR_MEMBER || !se->as.member_expr.member ||
+        se->as.member_expr.member->length != 3 ||
+        strncmp(se->as.member_expr.member->name, "len", 3) != 0 ||
+        !se->as.member_expr.target || se->as.member_expr.target->kind != EXPR_IDENTIFIER ||
+        !sema_ranges)
+        return NULL;
+    Id *rid = se->as.member_expr.target->as.identifier_expr.id;
+    int rpi = 0; Expr *ref_arg = NULL;
+    for (DeclList *rp = params; rp; rp = rp->next, rpi++) {
+        if (rp->decl->kind != DECL_VARIABLE) continue;
+        Id *rpn = rp->decl->as.variable_decl.name;
+        if (rpn && rpn->length == rid->length &&
+            strncmp(rpn->name, rid->name, rpn->length) == 0) {
+            int ri = 0;
+            for (ExprList *ra = args; ra; ra = ra->next)
+                if (ri++ == rpi) { ref_arg = ra->expr; break; }
+            break;
+        }
+    }
+    if (!ref_arg || ref_arg->kind != EXPR_IDENTIFIER) return NULL;
+    Id *aid = ref_arg->as.identifier_expr.id;
+    char lk[272]; int lklen = 6 + (int)aid->length;
+    if (lklen >= (int)sizeof(lk)) return NULL;
+    memcpy(lk, "__len_", 6); memcpy(lk + 6, aid->name, aid->length);
+    for (RangeEntry *re = sema_ranges->head; re; re = re->next)
+        if (re->var && re->var->length == lklen && strncmp(re->var->name, lk, lklen) == 0)
+            return re->var;
+    return NULL;
+}
+
+// Fail-CLOSED precondition proof for a relational parameter refinement
+// `arg OP param.len` (the bounds-carrying case of `i usize < a.len`). Returns
+// true only when the constraint is PROVEN at the call site — otherwise the
+// caller rejects, because an unproven `i < a.len` becomes an unchecked
+// out-of-bounds `a[i]` inside the callee. Proof is either:
+//   (1) interval — the argument's VRA range vs the actual array's length range
+//       (covers fixed arrays / concrete indices), or
+//   (2) relational — a difference constraint `arg - __len_actual` (covers
+//       symbolic slice lengths, forwarded param refinements, and `if`/loop
+//       guards, which all seed the difference constraint).
+static bool callsite_len_precond_proven(Expr *lhs_arg, Expr *rhs_len, TokenKind op,
+                                        DeclList *params, ExprList *args) {
+    Range lr   = lhs_arg ? sema_eval_range(lhs_arg, sema_ranges) : range_unknown();
+    Range lenr = eval_callsite_size_range(rhs_len, params, args);
+    if (lr.known && lenr.known) {
+        switch (op) {
+            case TOKEN_ANGLE_BRACKET_LEFT:        if (lr.max <  lenr.min) return true; break;
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (lr.max <= lenr.min) return true; break;
+            case TOKEN_ANGLE_BRACKET_RIGHT:       if (lr.min >  lenr.max) return true; break;
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (lr.min >= lenr.max) return true; break;
+            default: break;
+        }
+    }
+    if (lhs_arg && lhs_arg->kind == EXPR_IDENTIFIER && sema_ranges) {
+        Id *argid = lhs_arg->as.identifier_expr.id;
+        Id *lenid = callsite_len_id(rhs_len, params, args);
+        if (argid && lenid) {
+            bool found = false; int64_t diff = 0;
+            switch (op) {
+                case TOKEN_ANGLE_BRACKET_LEFT:        // arg < len  ⇐  arg - len <= -1
+                    diff = constraint_get_diff(sema_ranges, argid, lenid, &found);
+                    if (found && diff <= -1) return true; break;
+                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  // arg <= len ⇐  arg - len <= 0
+                    diff = constraint_get_diff(sema_ranges, argid, lenid, &found);
+                    if (found && diff <= 0) return true; break;
+                case TOKEN_ANGLE_BRACKET_RIGHT:       // arg > len  ⇐  len - arg <= -1
+                    diff = constraint_get_diff(sema_ranges, lenid, argid, &found);
+                    if (found && diff <= -1) return true; break;
+                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: // arg >= len ⇐  len - arg <= 0
+                    diff = constraint_get_diff(sema_ranges, lenid, argid, &found);
+                    if (found && diff <= 0) return true; break;
+                default: break;
+            }
+        }
+    }
+    return false;
 }
 
 // P2/S3: THE scalar/pointer boundary conversion check — one call for "a value
@@ -1426,32 +1578,33 @@ void sema_infer_expr(Expr *e) {
                                        rhs_expr->as.member_expr.member &&
                                        rhs_expr->as.member_expr.member->length == 3 &&
                                        strncmp(rhs_expr->as.member_expr.member->name, "len", 3) == 0) {
-                                // G8: `param.len` RHS — check the passed value against the
-                                // referenced argument's actual length at the CALL site,
-                                // directly by range (sema_check_condition can't evaluate a
-                                // local fixed array's `.len`). Otherwise `i < a.len` would
-                                // be an unchecked precondition -> OOB inside the callee.
-                                Range lr = lhs_arg ? sema_eval_range(lhs_arg, sema_ranges) : range_unknown();
-                                Range lenr = eval_callsite_size_range(rhs_expr, params, e->as.call_expr.args);
-                                if (lr.known && lenr.known) {
-                                    bool violated = false;
-                                    switch (c->expr->as.binary_expr.op) {
-                                        case TOKEN_ANGLE_BRACKET_LEFT:        violated = (lr.min >= lenr.max); break;
-                                        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  violated = (lr.min >  lenr.max); break;
-                                        case TOKEN_ANGLE_BRACKET_RIGHT:       violated = (lr.max <= lenr.min); break;
-                                        case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: violated = (lr.max <  lenr.min); break;
-                                        default: break;
-                                    }
-                                    if (violated) {
-                                        isize el = lhs_arg ? lhs_arg->line : e->line;
-                                        isize ec = lhs_arg ? lhs_arg->col  : e->col;
-                                        fprintf(stderr, "[E012] Error Ln %li, Col %li: Constraint violation. "
-                                            "Argument does not satisfy '%s' constraint.\n",
-                                            (long)el, (long)ec,
-                                            token_kind_to_str(c->expr->as.binary_expr.op));
-                                        diagnostic_show_line(el, ec);
-                                        exit(1);
-                                    }
+                                // G8 / P2-S3 (fail-CLOSED): `param.len` RHS — the passed
+                                // value must be PROVEN to satisfy `arg OP arg_array.len`
+                                // at the CALL site, else the callee's `a[i]` is an
+                                // unchecked out-of-bounds read (confirmed OOB via ASan on
+                                // an unbounded index). Proof is interval OR relational
+                                // (see callsite_len_precond_proven). Gate on the walk
+                                // phase: during resolve/infer the VRA table isn't built,
+                                // so a fail-closed check there would false-positive; the
+                                // walk phase is the final pass before emit, so an unproven
+                                // precondition there is genuinely unproven.
+                                if (sema_walk_phase &&
+                                    !callsite_len_precond_proven(lhs_arg, rhs_expr,
+                                            c->expr->as.binary_expr.op,
+                                            params, e->as.call_expr.args)) {
+                                    isize el = lhs_arg ? lhs_arg->line : e->line;
+                                    isize ec = lhs_arg ? lhs_arg->col  : e->col;
+                                    fprintf(stderr, "[E012] Error Ln %li, Col %li: Constraint violation. "
+                                        "Argument cannot be proven to satisfy the '%s' refinement "
+                                        "'%.*s'. Constrain the argument (a literal, a bounded local, "
+                                        "an `if`/loop guard, or a matching parameter refinement) so "
+                                        "VRA can discharge it.\n",
+                                        (long)el, (long)ec,
+                                        token_kind_to_str(c->expr->as.binary_expr.op),
+                                        (int)rhs_expr->as.member_expr.target->as.identifier_expr.id->length,
+                                        rhs_expr->as.member_expr.target->as.identifier_expr.id->name);
+                                    diagnostic_show_line(el, ec);
+                                    exit(1);
                                 }
                                 continue;  // handled directly; skip the sema_check_condition path
                             } else {
@@ -1477,7 +1630,18 @@ void sema_infer_expr(Expr *e) {
                                 diagnostic_show_line(temp.line, temp.col);
                                 exit(1);
                             } else if (result == -1) {
-                                // check safety policy
+                                // KNOWN FAIL-OPEN (P1, tracked in PATH_FORWARD.md): a
+                                // non-`.len` precondition that VRA cannot prove is
+                                // currently ACCEPTED, so e.g. a forwarded `b != 0`
+                                // divisor can divide by zero. Making this fail-closed is
+                                // sound but first needs two VRA precision fixes, else it
+                                // over-rejects provable code: (1) propagate a parameter's
+                                // OWN refinement as a usable fact (so `n != 0` forwards),
+                                // and (2) seed arithmetic difference constraints (so
+                                // `x = y + 1` proves `y < x` — see range_linear_pass).
+                                // The `.len` bounds precondition IS fail-closed above
+                                // (callsite_len_precond_proven) — that one is a
+                                // memory-safety hole and needs no new VRA precision.
                             }
                         }
                     }

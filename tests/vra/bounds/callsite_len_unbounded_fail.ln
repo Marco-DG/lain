@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// P0 soundness (fail-open -> fail-closed): a `.len` parameter precondition
+// `i usize < a.len` must be PROVEN at the call site, not merely "not provably
+// violated". Passing an UNBOUNDED index (a free usize parameter) was previously
+// accepted and emitted an out-of-bounds `a[i]` (confirmed via AddressSanitizer:
+// stack-buffer-overflow). It must be rejected: the caller cannot prove k < arr.len.
+func get(a i32[], i usize < a.len) i32 { return a[i] }
+proc run(k usize) i32 {
+    var arr i32[3] = [10, 20, 30]
+    return get(arr, k)
+}
+proc main() i32 { return 0 }

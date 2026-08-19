@@ -1,0 +1,7 @@
+// Guard against over-rejection after the fact-table isolation fix: when the
+// forwarding function DOES carry the matching refinement (`i < a.len`), the
+// forwarded call still proves via the function's OWN (freshly-seeded) constraint
+// — even though a same-named `get` also exists. No leak, but no over-reject either.
+func get(a i32[], i usize < a.len) i32 { return a[i] }
+proc run(a i32[], i usize < a.len) i32 { return get(a, i) }
+proc main() i32 { return 0 }

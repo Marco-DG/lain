@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// Fail-closed for SYMBOLIC slice lengths too: forwarding an unrefined index `j`
+// into a `< arr.len` precondition cannot be proven (j is unconstrained), so it
+// must be rejected. Distinct parameter names avoid the name-keyed range-table
+// collision, so the rejection is genuinely from the unproven precondition.
+func get(arr i32[], idx usize < arr.len) i32 { return arr[idx] }
+proc fwd(xs i32[], j usize) i32 { return get(xs, j) }
+proc main() i32 { return 0 }

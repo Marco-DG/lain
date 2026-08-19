@@ -1,0 +1,7 @@
+// The fail-closed precondition check must NOT over-reject: a genuinely PROVEN
+// precondition still passes. `fwd`'s own refinement `j < xs.len` rides its
+// signature and discharges the forwarded `get(xs, j)` precondition relationally
+// (via the difference constraint j - __len_xs <= -1), with no runtime check.
+func get(arr i32[], idx usize < arr.len) i32 { return arr[idx] }
+proc fwd(xs i32[], j usize < xs.len) i32 { return get(xs, j) }
+proc main() i32 { return 0 }
