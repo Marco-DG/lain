@@ -207,7 +207,25 @@ while l.pos in l.src and (l.src[l.pos] as int) != '"' {
 
 \pnum
 The expression \lain{expr as T} explicitly converts the value of
-\textit{expr} to type \lain{T}.  The following casts are permitted:
+\textit{expr} to type \lain{T}.  A narrowing integer cast carries an
+\emph{overflow policy} chosen by the cast tier
+(\S\,\ref{sec:types.overflow}):
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Tier} & \textbf{Form} & \textbf{On a value outside \lain{T}} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+proven     & \lain{as}  & narrows only if VRA proves it fits, else \diagcode{E086} \\
+checked    & \lain{as?} & run-time bounds check; \lain{panic} (abort) on overflow \\
+wrapping   & \lain{as\%}& two's-complement modular truncation \\
+saturating & \lain{as|} & clamp to the minimum or maximum of \lain{T} \\
+\end{longtable}
+
+\pnum
+The following casts are permitted:
 
 \begin{longtable}{@{}lll@{}}
 \toprule

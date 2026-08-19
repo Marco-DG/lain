@@ -275,22 +275,70 @@ The integer types are partially ordered by \textit{rank}:
 \pnum
 \textbf{Implicit widening}: a value of a lower-rank integer type may be
 used where a higher-rank integer type is expected, without an explicit cast.
-The result type of a binary arithmetic or bitwise operation is the
-higher-rank operand type.
+
+\pnum
+\textbf{Result type of arithmetic (auto-widening)}.  The result type of a plain
+\lain{+}, \lain{-}, or \lain{*} is \emph{wide enough to hold every representable
+result}, so the operation itself cannot overflow: \lain{+}/\lain{-} widen by one
+bit (with a sign bit when an unsigned operand feeds a signed result) and \lain{*}
+sums the operand widths --- e.g. \lain{u8 + u8} yields \lain{u9}, \lain{u8 - u8}
+yields \lain{i10}, \lain{i32 + i32} yields \lain{i33}, and \lain{i32 * i32} yields
+\lain{i64}.  When the required width would exceed 64 bits (the \lain{i128}
+ceiling), the result type is the higher-rank operand and the operation is subject
+to the overflow diagnostic below.  The other binary operators (\lain{/}, \lain{\%},
+\lain{\&}, \lain{|}, \lain{\^}, \lain{<<}, \lain{>>}) yield the higher-rank operand
+type.  Overflow therefore becomes possible only at a \emph{narrowing}
+(\S\,\ref{sec:types.overflow}).
 
 \begin{example}
 \begin{laincode}
 var a u8  = 42
 var b int = a          // u8 -> int: implicit widening, OK
-var c = a + 1000       // u8 + int -> int (wider wins)
+var c = a + a          // u8 + u8 -> u9 (holds 0..510; cannot overflow)
+var d = c as u8        // narrowing back to u8 is checked (see below)
 \end{laincode}
 \end{example}
 
 \begin{constraint}
-  An implicit conversion from a higher-rank integer type to a lower-rank
-  integer type (narrowing) is \illformed{}.  Narrowing requires an explicit
-  \lain{as} cast (\S\,\ref{sec:08-expressions}).
+  An implicit conversion from an integer type to one that cannot represent every
+  value of the source --- a narrowing, or a signedness change --- is
+  \illformed{}\ unless value-range analysis proves it fits
+  (\S\,\ref{sec:13-vra}).  Such a conversion otherwise requires an explicit cast
+  tier (\lain{as}, \lain{as?}, \lain{as\%}, or \lain{as|};
+  \S\,\ref{sec:expr.cast}).
 \end{constraint}
+
+\subsection{Integer overflow}
+\label{sec:types.overflow}
+\index{integer overflow}
+
+\pnum
+Because \lain{+}, \lain{-}, and \lain{*} auto-widen (\S\,\ref{sec:types.rank}),
+overflow cannot occur at the operation.  It can occur only when a value flows
+into a type that cannot hold it --- a \emph{narrowing} at an assignment, return,
+argument, or explicit cast.  A narrowing whose value range is not proven to fit
+the target is \illformed{}~(\diagcode{E086}); the programmer resolves it by
+proving the range, widening the target, or choosing an explicit overflow policy:
+
+\begin{longtable}{@{}ll@{}}
+\toprule
+\textbf{Policy} & \textbf{Form} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+proven (default)     & \lain{x as T}\quad(narrows only if proven, else \diagcode{E086}) \\
+checked (traps)      & \lain{x as? T},\quad \lain{a +? b}, \lain{a -? b}, \lain{a *? b} \\
+wrapping (modular)   & \lain{x as\% T},\quad \lain{a +\% b}, \lain{a -\% b}, \lain{a *\% b} \\
+saturating (clamp)   & \lain{x as| T},\quad \lain{a +| b}, \lain{a -| b}, \lain{a *| b} \\
+\end{longtable}
+
+\pnum
+A checked form performs a run-time bounds check and terminates the program
+(\lain{panic}) on overflow.  A wrapping form uses two's-complement modular
+arithmetic.  A saturating form clamps to the target type's minimum or maximum.
+The checked and wrapping/saturating \emph{operators} keep the operand type (they
+do not auto-widen).
 
 \begin{constraint}
   An implicit conversion between integer types and floating-point types is

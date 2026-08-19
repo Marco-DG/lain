@@ -390,7 +390,16 @@ Annex~A.
 \tok{*}  & Multiplication \\
 \tok{/}  & Division \\
 \tok{\%} & Modulo (remainder) \\
+\tok{+?} \tok{-?} \tok{*?} & Checked add/sub/mul (\lain{panic} on overflow) \\
+\tok{+\%} \tok{-\%} \tok{*\%} & Wrapping add/sub/mul (modular) \\
+\tok{+|} \tok{-|} \tok{*|} & Saturating add/sub/mul (clamp) \\
 \end{longtable}
+
+\pnum
+The plain \tok{+}, \tok{-}, \tok{*} auto-widen their result so they cannot
+overflow (\S\,\ref{sec:types.rank}); the \tok{?}/\tok{\%}/\tok{|} variants keep
+the operand type and select an explicit overflow policy
+(\S\,\ref{sec:types.overflow}).
 
 \subsection{Comparison operators}
 

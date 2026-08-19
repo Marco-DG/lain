@@ -225,9 +225,11 @@ The check sites are:
 \pnum
 At each site, if the source value's VRA range exceeds the target type's
 natural range, the program is \illformed{}~(\diagcode{E086}). The
-diagnostic offers four resolutions: widen the target, use a wrapping
-operator, use a saturating operator, or tighten input constraints so
-VRA can prove safety.
+diagnostic offers these resolutions: widen the target; choose an explicit
+overflow policy via a cast tier or operator --- checked (\lain{as?},
+\lain{+?}), wrapping (\lain{as\%}, \lain{+\%}), or saturating (\lain{as|},
+\lain{+|}); or tighten input constraints so VRA can prove safety
+(\S\,\ref{sec:types.overflow}).
 
 \pnum
 The check is skipped:
