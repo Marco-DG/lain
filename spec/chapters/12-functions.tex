@@ -139,10 +139,10 @@ desugared call is determined by the declared mode of the first parameter of
   \item Search for a function named \lain{f} whose first parameter type is
         compatible with the type of \lain{x}.
   \item If found, desugar the call.
-  \item If no matching function is found, the call is unresolved.  (The
-        reference implementation does not yet emit a dedicated diagnostic for
-        an unresolved UFCS call --- it shares the undeclared-identifier gap
-        noted in \S\,\ref{sec:basics.resolution}.)
+  \item If no matching function is found, the call is unresolved and the
+        program is \illformed{} (an unresolved receiver or callee is reported;
+        a bare undeclared identifier is \diagcode{E106},
+        \S\,\ref{sec:basics.resolution}).
 \end{enumerate}
 
 \begin{example}

@@ -27,7 +27,11 @@ every declaration at the local level is also a definition.
 \end{constraint}
 
 \begin{constraint}
-  Use of an undeclared identifier is \illformed{}.
+  Use of an undeclared identifier is \illformed{}~(\diagcode{E106}).  The
+  reference implementation issues this diagnostic when the translation output is
+  generated --- after name resolution, monomorphization, and UFCS desugaring are
+  complete --- so that a name still unbound at that point is unambiguously
+  undeclared.
 \end{constraint}
 
 \begin{example}
@@ -94,7 +98,7 @@ The lookup algorithm is:
   \item If not found, search imported module scopes (in import order).
   \item If not found, attempt UFCS resolution (\S\,\ref{sec:12-functions}).
   \item If still not found, the identifier is undeclared and the program is
-        \illformed{}.
+        \illformed{}~(\diagcode{E106}).
 \end{enumerate}
 
 \pnum

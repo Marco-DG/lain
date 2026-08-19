@@ -484,13 +484,15 @@ The author reviewed the flagged gaps/opens and directed fixes. Applied (commit
   inclusive in patterns, matching expression ranges (§15 updated). A latent
   broken-C bug (control-char range bound emitted as a raw char) was fixed too.
 
-### Still OPEN
-- **G-06.1 undeclared identifiers** → attempted, then reverted. An error at the
-  resolver's "unresolved identifier" fallback is not viable: that fallback is
-  legitimately reached by UFCS desugaring (fresh callee nodes), condition
-  re-inference, the VRA/bounds walk, generic monomorphization, and synthetic
-  clones — so it false-positives on valid code, and the guards needed to exclude
-  those also suppress genuine errors. Recommended as a separate effort at a point
-  where resolution is final (e.g. a codegen-time check that an emitted identifier
-  has a binding), not at the resolver fallback. The broken-C hole remains, but is
-  not exercised by any `_pass` test.
+### Resolved after the review
+- **G-06.1 undeclared identifiers** → **RESOLVED** (`E106`, commit dc1c5a0). A
+  first attempt at the resolver's "unresolved identifier" fallback was reverted —
+  that fallback is legitimately reached by UFCS desugaring, condition re-inference,
+  the VRA/bounds walk, monomorphization, and synthetic clones, so it false-positives.
+  The working fix is a **codegen-time check** (emit/expr.h EXPR\_IDENTIFIER): by
+  then all resolution/monomorphization/UFCS is complete, so a node still with no
+  type, no decl, and not global — at a real source location — is a genuine typo.
+  Two valid-but-untyped cases are excluded: case-arm payload bindings (a per-arm
+  name scope) and identifiers inside a TYPE (a VLA size expression). Undeclared is
+  now caught in every position (return / operand / arg / assignment / condition);
+  all valid constructs still compile. The broken-C hole is closed.
