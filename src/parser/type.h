@@ -109,19 +109,16 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
     }
 
     Type *inner = parse_type_core(arena, parser);
-    // A fat slice (T[], T[n], T[>= n], ...) carries its own length, so it is
-    // not a raw pointer and takes no `*`. The `*` prefix is valid only before a
-    // thin/raw type: *T (raw pointer), *T[N] (fixed-length view), *T[:S]
-    // (sentinel-terminated). Reject a redundant `*` on a fat slice; `*T[]` and
-    // `T[]` used to be silent synonyms.
-    if (inner->kind == TYPE_ARRAY && inner->array_len < 0) {
-        parser_error("'*' is not allowed before a fat slice: write it as 'T[]' "
-                     "(a slice carries its length and is not a raw pointer). "
-                     "'*' is only for '*T', '*T[N]', and '*T[:S]'.");
-    }
-    // *T[:S] sentinel: the * is syntactic; collapse to the slice type.
-    if (inner->kind == TYPE_SLICE) {
-        return inner;
+    // `*` is a RAW POINTER, and only that. Arrays and slices are always passed
+    // by reference, so they never take a `*`: a fixed array is `T[N]`, a slice
+    // `T[]` / `T[n]` / `T[>= n]`, a sentinel string `T[:S]`. The `*` belongs
+    // solely to raw pointers: `*T`, `**T`, `*void`, and function pointers
+    // (handled above). Reject `*` before any array or slice type.
+    if (inner->kind == TYPE_ARRAY || inner->kind == TYPE_SLICE) {
+        parser_error("'*' is not allowed before an array or slice type. "
+                     "Arrays and slices are always by reference: write 'T[N]', "
+                     "'T[]', or 'T[:S]' without '*'. '*' is only for raw pointers "
+                     "('*T', '*void', function pointers).");
     }
     return type_pointer(arena, inner);
   }

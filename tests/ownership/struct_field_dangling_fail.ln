@@ -3,7 +3,7 @@
 // field borrows from a local variable produces a dangling reference.
 
 type Lexer {
-    text *u8[:0]
+    text u8[:0]
     cursor i32
 }
 

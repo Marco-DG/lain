@@ -1,0 +1,5 @@
+// EXPECT: [E100]
+// spec: §7.5 — a sentinel string is `T[:S]`, always by reference, no `*`.
+// `*u8[:0]` (the old C-string spelling) is now rejected; write `u8[:0]`.
+proc f(s *u8[:0]) i32 { return 0 }
+proc main() i32 { return 0 }

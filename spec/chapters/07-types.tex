@@ -409,34 +409,47 @@ var x = arr[2]         // OK: 2 is statically in [0, 4]
 A slice type \lain{T[]} is a reference to a contiguous sequence of values
 of type~\lain{T} whose length is determined at runtime.  Its runtime
 representation is a \textit{fat} pair \texttt{(len: usize, data: *T)} --- a
-length followed by a data pointer, in that order.  Because a slice carries
-its own length it is \emph{not} a raw pointer, and so --- unlike the thin
-pointer forms below --- it takes \emph{no} \lain{*} prefix.
+length followed by a data pointer.
 
-\begin{note}
-  The spelling \lain{*T[]} is accepted as a synonym for \lain{T[]}: the two
-  denote the same fat-slice type and emit identical C.  The \lain{*}-prefixed
-  forms that carry no runtime length (\lain{*T[N]}, \lain{*T[:S]}, \lain{*T})
-  are \textit{thin} views; the bare bracket forms (\lain{T[]}, \lain{T[n]})
-  are fat.  \lain{T[]} is the canonical slice spelling.
-\end{note}
+\begin{constraint}
+  \textbf{The \lain{*} rule.}  A \lain{*} prefix denotes a \emph{raw pointer},
+  and only that.  Arrays and slices are always passed by reference, so they
+  never carry a \lain{*}: a slice is \lain{T[]}, a sized slice \lain{T[n]}, a
+  fixed array \lain{T[N]}, a sentinel string \lain{T[:S]}.  A \lain{*} is
+  permitted only before a non-array, non-slice type --- \lain{*T}, \lain{**T},
+  \lain{*void}, and function-pointer types (\S\,\ref{sec:17-interop}).  A
+  \lain{*} before any bracket form is \illformed{}~(\diagcode{E100}).
+\end{constraint}
 
 \pnum
-The full family of reference-to-array types:
+The reference/pointer type family and its C mapping (parameter position):
 
 \begin{center}
-\begin{tabular}{@{}lll@{}}
+\begin{tabular}{@{}llll@{}}
 \toprule
-\textbf{Syntax} & \textbf{Semantics} & \textbf{Runtime cost} \\
+\textbf{Lain} & \textbf{What it is} & \textbf{C parameter} & \textbf{Cost} \\
 \midrule
-\lain{T[N]}      & inline array (N elements owned)   & N $\times$ sizeof(T) \\
-\lain{T[]}       & fat slice, runtime length         & usize + ptr \\
-\lain{*T[N]}     & thin view, compile-time length    & ptr only \\
-\lain{*T[:S]}    & thin view, sentinel-terminated    & ptr only \\
-\lain{*T}        & raw pointer (no length)           & ptr only \\
+\lain{u8}     & scalar             & \texttt{uint8\_t} (by value)       & 1 word \\
+\lain{T[N]}   & inline fixed array & \texttt{const Fixed\_T\_N*}        & N$\times$sizeof(T) \\
+\lain{T[]}    & fat slice          & \texttt{size\_t \_\_len, const T*} & 2 words \\
+\lain{T[n]}   & sized slice        & \texttt{size\_t, const T*}         & 2 words \\
+\lain{T[:S]}  & sentinel string    & \texttt{struct \{ T* data; \}}     & 1 word \\
+\lain{*T}     & raw pointer        & \texttt{const T*}                  & 1 word \\
+\lain{*void}  & opaque C pointer   & \texttt{const void*}               & 1 word \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\begin{note}
+  A \lain{*} in the emitted C has \emph{two} independent sources: (1) a \lain{*}
+  written in the Lain type, which is a raw pointer; and (2) the implicit
+  by-reference passing of an \emph{aggregate} (array, slice, struct) parameter
+  --- a hidden \texttt{const T*} that is part of the calling convention, not the
+  type.  The same aggregate is a plain value as a local (\lain{var p Point}
+  emits \texttt{Point p}) but a pointer as a parameter (\texttt{const Point*}).
+  This is why an aggregate type carries no \lain{*} even though it is passed as a
+  pointer: the \lain{*} names raw pointers, not the borrow.
+\end{note}
 
 \pnum
 A slice has two properties accessible via dot notation:

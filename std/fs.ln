@@ -9,7 +9,7 @@ type File {
 // failure so a File never holds a null handle — a defined abort instead of UB.
 // The null check reads the owned pointer, so it lives in an `unsafe` block; the
 // pointer is still consumed on the success path by File(raw).
-proc open_file(path *u8[:0], mode *u8[:0]) mov File {
+proc open_file(path u8[:0], mode u8[:0]) mov File {
     var raw = fopen(path.data, mode.data)
     unsafe {
         if raw == 0 { panic("open_file: could not open file") }
@@ -21,6 +21,6 @@ proc close_file(mov {handle} File) {
     fclose(mov handle)
 }
 
-proc write_file(f File, s *u8[:0]) {
+proc write_file(f File, s u8[:0]) {
     fputs(s.data, f.handle)
 }

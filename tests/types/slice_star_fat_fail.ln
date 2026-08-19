@@ -1,8 +1,8 @@
 // EXPECT: [E100]
-// spec: §7.5 — a fat slice carries its own length and is not a raw pointer, so
-// it takes no `*`. `*T[]` (and `*T[n]`, `*T[>= n]`) used to be silent synonyms
-// of `T[]`; the `*` is now rejected. It stays valid only for `*T`, `*T[N]`
-// (fixed length), and `*T[:S]` (sentinel string).
+// spec: §7.5 — `*` is a RAW POINTER and only that. Arrays and slices are always
+// passed by reference, so they never take a `*`: write `T[]`, `T[n]`, `T[N]`, or
+// `T[:S]` with no `*`. `*` is reserved for raw pointers (`*T`, `*void`, function
+// pointers). Here `*u8[]` (a `*` before a slice) is rejected.
 proc f(s *u8[]) usize {
     return s.len
 }
