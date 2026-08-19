@@ -1,0 +1,13 @@
+// F3.5 Path-F: `a - b` on i32 inputs widens to i33 and is computed in int64_t,
+// so the old "a - b overflows int before the cast" UB is fixed by construction.
+// The `as u32` is now the programmer's EXPLICIT truncation choice (a-b can be
+// negative and wraps). The safe alternatives are `as? u32` (traps on a value
+// outside u32, e.g. negative) or `as| u32` (clamps to 0). This replaces the old
+// model that rejected the whole expression.
+func gap(a i32, b i32) u32 {
+    return (a - b) as u32
+}
+proc main() i32 {
+    var _ = gap(5, 10)
+    return 0
+}

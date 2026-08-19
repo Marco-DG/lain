@@ -275,6 +275,12 @@ static void reject_lossy_int_conversion(Type *from, Type *to, Range r,
                                         const char *ctx, const char *label) {
     if (sema_in_unsafe_block) return;
     if (from == to) return;                              // interned identity: same type
+    // F3.5 Path-F: a widened arithmetic result narrowing back to an operand-width
+    // type is judged by the window policy (check_value_fits_type, already called
+    // at this boundary) — which still catches a KNOWN overflow — not the
+    // fail-closed lossy check. Keeps `x = x + 1` ergonomic; a genuine truncation
+    // of a non-widened value (`i32 -> i8`) is unaffected.
+    if (from && from->arith_widened) return;
     if (!is_integer_type(from) || !is_integer_type(to)) return;
     long long flo, fhi, tlo, thi;
     if (!type_integer_range(from, &flo, &fhi)) return;   // usize/isize source: don't judge
@@ -326,6 +332,51 @@ int integer_rank(Type *t) {
 
 static Type *wider_integer_type(Type *a, Type *b) {
     return integer_rank(a) >= integer_rank(b) ? a : b;
+}
+
+// F3.5 Path-F: build a fresh iN/uN Lain type by width (the interned constructor
+// dedups). `id()` does not copy the name bytes, so the buffer is arena-owned.
+static Type *make_int_type(int width, bool is_signed) {
+    char buf[8];
+    int n = snprintf(buf, sizeof buf, "%c%d", is_signed ? 'i' : 'u', width);
+    char *stored = arena_push_many(sema_arena, char, (isize)n);
+    memcpy(stored, buf, (size_t)n);
+    return type_simple(sema_arena, id(sema_arena, (isize)n, stored));
+}
+
+// F3.5 Path-F: the result type of `a <op> b` is WIDE ENOUGH to hold every value,
+// so `+ - *` cannot overflow at the operation — overflow becomes possible only at
+// a *narrowing* (checked there, with the cast tiers as the escape). Widths use a
+// closed formula (no range arithmetic, so no long-long overflow): add/sub grow by
+// one bit (plus a sign bit when an unsigned operand feeds a signed result);
+// multiply sums the operand widths. Beyond 64 bits (the i128 ceiling) we fall
+// back to max(operands) and the op-level overflow check still guards it. Platform
+// types (usize/isize) and non-fixed-width operands are not widened.
+static Type *path_f_result_type(Type *a, Type *b, TokenKind op) {
+    int wa, wb; bool sa, sb;
+    if (!parse_iN_uN(a, &wa, &sa) || !parse_iN_uN(b, &wb, &sb))
+        return wider_integer_type(a, b);
+    bool rsigned = (op == TOKEN_MINUS) || sa || sb;
+    int w;
+    if (op == TOKEN_ASTERISK) {
+        w = wa + wb;                                   // product: sum of widths
+    } else { // + or -
+        if (rsigned) {
+            int ea = sa ? wa : wa + 1;                 // unsigned operand needs +1 bit signed
+            int eb = sb ? wb : wb + 1;
+            w = (ea > eb ? ea : eb) + 1;               // +1 for carry/borrow
+        } else {
+            w = (wa > wb ? wa : wb) + 1;
+        }
+    }
+    if (w > 64) return wider_integer_type(a, b);       // ceiling: op-level check guards
+    if (w < 1) w = 1;
+    // Fresh per-occurrence node (not the interned core) so the Path-F marker does
+    // not pollute every iN; canon still points to the interned core.
+    Type *t = arena_push_aligned(sema_arena, Type);
+    *t = *make_int_type(w, rsigned);
+    t->arith_widened = true;
+    return t;
 }
 
 // (Q-002 Phase 4 paradigm_b_result_type was reverted.
@@ -2317,7 +2368,13 @@ void sema_infer_expr(Expr *e) {
             if (is_wrap_or_sat && lt && is_integer_type(lt)) {
                 e->type = lt;
             } else if (lt && rt && is_integer_type(lt) && is_integer_type(rt)) {
-                e->type = wider_integer_type(lt, rt);
+                // F3.5 Path-F: +,-,* widen to a type that holds the result (no
+                // op-level overflow); other ops (/, %, &, |, ^, <<, >>) keep the
+                // max-operand rule (their result already fits the wider operand).
+                if (aop == TOKEN_PLUS || aop == TOKEN_MINUS || aop == TOKEN_ASTERISK)
+                    e->type = path_f_result_type(lt, rt, aop);
+                else
+                    e->type = wider_integer_type(lt, rt);
             } else {
                 bool l_flt = lt && is_float_type(lt), r_flt = rt && is_float_type(rt);
                 bool l_int = lt && is_integer_type(lt), r_int = rt && is_integer_type(rt);

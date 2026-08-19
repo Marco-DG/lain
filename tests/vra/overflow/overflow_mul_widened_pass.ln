@@ -1,0 +1,9 @@
+// F3.5 Path-F: i32 * i32 widens to i64 (computed in int64_t), which holds the
+// product — no op-level overflow. `var c = a * b` infers c : i64. To keep the
+// result in i32 you narrow explicitly (`as`/`as?`/`as%`), which is checked.
+proc main() i32 {
+    var a i32 = 100000
+    var b i32 = 100000
+    var c = a * b
+    return 0
+}

@@ -129,6 +129,15 @@ typedef struct Type {
        constraints / inferred ranges; ⊤ (known=false) by default. */
     Refinement refine;
 
+    /* F3.5 Path-F: set on the (fresh, per-occurrence) result type of a widened
+       `+`/`-`/`*` — e.g. i32+i32 -> i33. It marks a CONSERVATIVE widening whose
+       narrowing back to an operand-width type is judged by the window policy
+       (check_value_fits_type — still catches a KNOWN overflow) rather than the
+       fail-closed lossy-narrowing check, so idiomatic `x = x + 1` / `s = s + v`
+       stay ergonomic while a genuine truncation (`i32 -> i8`) is still rejected.
+       Stripped when the value is bound to a variable (it becomes a real iN). */
+    bool arith_widened;
+
     struct Variant* variant; // For TYPE_VARIANT
 } Type;
 

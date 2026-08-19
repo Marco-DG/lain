@@ -434,6 +434,18 @@ void emit_expr(Expr *expr, int depth) {
           Expr *lhs = expr->as.binary_expr.left;
           Expr *rhs = expr->as.binary_expr.right;
           TokenKind op = expr->as.binary_expr.op;
+          // F3.5 Path-F: a widened +,-,* must be COMPUTED in its (wide) result
+          // type — otherwise C integer promotion evaluates it in `int` and
+          // overflows before the store (u16*u16 -> UB; i32+i32 -> lost carry).
+          // Cast both operands to the result C type so the arithmetic is wide.
+          if (expr->type && expr->type->arith_widened &&
+              (op == TOKEN_PLUS || op == TOKEN_MINUS || op == TOKEN_ASTERISK)) {
+              char rty[256]; c_name_for_type(expr->type, rty, sizeof rty);
+              EMIT("((%s)(", rty); emit_expr(lhs, depth);
+              EMIT(") %s (%s)(", token_kind_to_str(op), rty);
+              emit_expr(rhs, depth); EMIT("))");
+              break;
+          }
           // Left child: needs parens only when it binds looser than the current op.
           if (c_prec_of_expr(lhs) < prec) { EMIT("("); emit_expr(lhs, depth); EMIT(")"); }
           else emit_expr(lhs, depth);

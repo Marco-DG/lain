@@ -1,0 +1,12 @@
+// F3.5 Path-F: u16 * u16 now widens to u32 and is COMPUTED in u32
+// (`(uint32_t)a * (uint32_t)b`), so the old C-integer-promotion UB (65535*65535
+// overflowing int) is fixed by construction — UBSan-clean. No store to u16, no
+// overflow: the result type holds every product. (Overflow only appears if you
+// narrow the u32 back to u16, which is checked there.)
+func big(a u16, b u16) bool {
+    return a * b > 1000000000
+}
+proc main() i32 {
+    var r = big(65535, 65535)
+    return 0
+}

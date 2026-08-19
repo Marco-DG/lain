@@ -1,0 +1,9 @@
+// F3.5 Path-F: `a + b` widens to i33, so it cannot overflow at the operation —
+// arithmetic in a condition is fine. (Overflow becomes possible only at a
+// NARROWING, which is checked there; see u8_add_fail.) This replaces the old
+// model where the op itself was prove-or-reject.
+func check(a i32, b i32) i32 {
+    if a + b > 100 { return 1 }
+    return 0
+}
+proc main() i32 { return 0 }
