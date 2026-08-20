@@ -17,6 +17,7 @@ typedef struct
     bool        no_w130;           // --no-w130: suppress proc-could-be-func warning
     bool        no_line_directives; // --no-line-directives: suppress #line in emitted C
     bool        dump_niche;         // --dump-niche: print enum niche layout decisions
+    bool        dump_effects;       // --dump-effects: print each function's inferred effect row
     const char* target_triple;      // --target=<triple>, NULL = host
 } Args;
 
@@ -28,6 +29,7 @@ static void _args_help(void)
     printf("  --dump-ast            Print the AST after parsing\n");
     printf("  --no-line-directives  Suppress #line directives in emitted C\n");
     printf("  --dump-niche          Print niche layout decision for every enum\n");
+    printf("  --dump-effects        Print each function's inferred effect row (F3.3)\n");
     printf("  -o <file>             Set output C file (default: out.c)\n");
     printf("  --target=<triple>     Cross-compile target. Supported:\n");
     printf("                          x86_64-linux-gnu, aarch64-linux-gnu,\n");
@@ -52,6 +54,8 @@ static Args args_parse(int argc, char** argv)
             args.no_line_directives = true;
         } else if (strcmp(argv[i], "--dump-niche") == 0) {
             args.dump_niche = true;
+        } else if (strcmp(argv[i], "--dump-effects") == 0) {
+            args.dump_effects = true;
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             args.output_file = argv[++i];
         } else if (strncmp(argv[i], "--target=", 9) == 0) {

@@ -115,6 +115,7 @@ bool sema_in_unsafe_block = false;
 bool sema_walk_phase = false;
 bool sema_addr_of_context = false; // set by EXPR_ADDR to relax &arr[len] in bounds check
 bool sema_dump_niche = false;      // set by main from args.dump_niche (D-Niche re-land)
+bool sema_dump_effects = false;    // set by main from args.dump_effects (F3.3 effect row)
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Union (`T | markers`) construction coercion                      │
@@ -2509,6 +2510,128 @@ static void proc_w130_visit_stmt(Stmt *s) {
     }
 }
 
+/*──────────────────────────────────────────────────────────────────╗
+│ F3.3 effect inference (DIRECT effects; E1)                        │
+│ Generalizes the W130 walker from a boolean "has effects" to the   │
+│ EffectSet bitset. Unlike W130 it never early-returns — it unions  │
+│ every effect. Transitive callee propagation is E2.                │
+╚──────────────────────────────────────────────────────────────────*/
+static EffectSet g_eff_acc;
+static Decl     *g_eff_self;
+static void eff_visit_expr(Expr *e);
+static void eff_visit_stmt(Stmt *s);
+static void eff_visit_list(StmtList *l) { for (; l; l = l->next) eff_visit_stmt(l->stmt); }
+
+static void eff_visit_expr(Expr *e) {
+    if (!e) return;
+    switch (e->kind) {
+        case EXPR_CALL: {
+            Expr *callee = e->as.call_expr.callee;
+            if (callee && callee->kind == EXPR_IDENTIFIER && callee->as.identifier_expr.id &&
+                callee->as.identifier_expr.id->length == 5 &&
+                memcmp(callee->as.identifier_expr.id->name, "panic", 5) == 0) {
+                g_eff_acc |= EFFECT_RAISES;
+            } else if (callee && callee->decl) {
+                DeclKind k = callee->decl->kind;
+                if (k == DECL_PROCEDURE || k == DECL_EXTERN_PROCEDURE) g_eff_acc |= EFFECT_IO;
+                if (callee->decl == g_eff_self) g_eff_acc |= EFFECT_DIVERGE;  // self-recursion
+            }
+            eff_visit_expr(callee);
+            for (ExprList *a = e->as.call_expr.args; a; a = a->next) eff_visit_expr(a->expr);
+            break;
+        }
+        case EXPR_IDENTIFIER:
+            if (e->is_global && e->decl && e->decl->kind == DECL_VARIABLE &&
+                e->decl->as.variable_decl.is_mutable) g_eff_acc |= EFFECT_WRITE;
+            break;
+        case EXPR_BINARY: eff_visit_expr(e->as.binary_expr.left); eff_visit_expr(e->as.binary_expr.right); break;
+        case EXPR_UNARY:  eff_visit_expr(e->as.unary_expr.right); break;
+        case EXPR_MEMBER: eff_visit_expr(e->as.member_expr.target); break;
+        case EXPR_INDEX:  eff_visit_expr(e->as.index_expr.target); eff_visit_expr(e->as.index_expr.index); break;
+        case EXPR_RANGE:  eff_visit_expr(e->as.range_expr.start); eff_visit_expr(e->as.range_expr.end); break;
+        case EXPR_MOVE:   eff_visit_expr(e->as.move_expr.expr); break;
+        case EXPR_MUT:    eff_visit_expr(e->as.mut_expr.expr); break;
+        case EXPR_CAST:   eff_visit_expr(e->as.cast_expr.expr); break;
+        case EXPR_MATCH:
+            eff_visit_expr(e->as.match_expr.value);
+            for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
+                for (ExprList *p = c->patterns; p; p = p->next) eff_visit_expr(p->expr);
+                eff_visit_expr(c->body);
+            }
+            break;
+        case EXPR_ARRAY_LITERAL:
+            for (ExprList *el = e->as.array_literal_expr.elements; el; el = el->next) eff_visit_expr(el->expr);
+            break;
+        default: break;
+    }
+}
+
+static void eff_visit_stmt(Stmt *s) {
+    if (!s) return;
+    switch (s->kind) {
+        case STMT_VAR: eff_visit_expr(s->as.var_stmt.expr); break;
+        case STMT_ASSIGN:
+            eff_visit_expr(s->as.assign_stmt.target);
+            eff_visit_expr(s->as.assign_stmt.expr);
+            break;
+        case STMT_EXPR:   eff_visit_expr(s->as.expr_stmt.expr); break;
+        case STMT_RETURN: eff_visit_expr(s->as.return_stmt.value); break;
+        case STMT_IF:
+            eff_visit_expr(s->as.if_stmt.cond);
+            eff_visit_list(s->as.if_stmt.then_body);
+            eff_visit_list(s->as.if_stmt.else_branch);
+            break;
+        case STMT_FOR:
+            eff_visit_expr(s->as.for_stmt.iterable);
+            eff_visit_list(s->as.for_stmt.body);
+            break;
+        case STMT_WHILE:
+            if (!s->as.while_stmt.measure) g_eff_acc |= EFFECT_DIVERGE;  // unbounded while
+            eff_visit_expr(s->as.while_stmt.cond);
+            if (s->as.while_stmt.measure) eff_visit_expr(s->as.while_stmt.measure);
+            eff_visit_list(s->as.while_stmt.body);
+            break;
+        case STMT_MATCH:
+            eff_visit_expr(s->as.match_stmt.value);
+            for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) eff_visit_list(c->body);
+            break;
+        case STMT_UNSAFE: eff_visit_list(s->as.unsafe_stmt.body); break;
+        case STMT_DEFER:  eff_visit_stmt(s->as.defer_stmt.stmt); break;
+        default: break;
+    }
+}
+
+// Direct effect set of a function's body (E1). A `var` (MODE_MUTABLE) parameter is
+// a caller-visible write channel, so it contributes EFFECT_WRITE up front.
+static EffectSet effect_infer_direct(Decl *d) {
+    if (!d || (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE)) return 0;
+    EffectSet saved = g_eff_acc; Decl *saved_self = g_eff_self;
+    g_eff_acc = 0; g_eff_self = d;
+    for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
+        if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type &&
+            p->decl->as.variable_decl.type->mode == MODE_MUTABLE) { g_eff_acc |= EFFECT_WRITE; break; }
+    }
+    eff_visit_list(d->as.function_decl.body);
+    EffectSet result = g_eff_acc;
+    g_eff_acc = saved; g_eff_self = saved_self;
+    return result;
+}
+
+// F3.3 --dump-effects: print a function's inferred effect row.
+static void sema_print_effects(Decl *d) {
+    Id *n = d->as.function_decl.name;
+    const char *kind = (d->kind == DECL_FUNCTION) ? "func" : "proc";
+    EffectSet e = d->as.function_decl.effects;
+    fprintf(stderr, "[effects] %s %.*s : {", kind, n ? (int)n->length : 1, n ? n->name : "?");
+    const char *sep = "";
+    if (e & EFFECT_WRITE)   { fprintf(stderr, "%sWrite",   sep); sep = ", "; }
+    if (e & EFFECT_DIVERGE) { fprintf(stderr, "%sDiverge", sep); sep = ", "; }
+    if (e & EFFECT_RAISES)  { fprintf(stderr, "%sRaises",  sep); sep = ", "; }
+    if (e & EFFECT_IO)      { fprintf(stderr, "%sIO",      sep); sep = ", "; }
+    if (e & EFFECT_ALLOC)   { fprintf(stderr, "%sAlloc",   sep); sep = ", "; }
+    fprintf(stderr, "}%s\n", e == 0 ? "  (pure & total)" : "");
+}
+
 static bool sema_w130_silent = false;  // suppress for stdlib if needed
 
 static void sema_check_proc_eligibility(Decl *d) {
@@ -3328,10 +3451,15 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // indirect cycles (f -> g -> f) that break the P4 termination guarantee.
     sema_check_no_mutual_recursion(decls);
 
-    // 4) W130: every `proc` whose body has no side effect could be `func`.
-    // Run AFTER per-function resolve so Expr.decl is populated everywhere.
+    // 4) W130 + F3.3 effect inference. Run AFTER per-function resolve so Expr.decl
+    //    is populated everywhere (needed for callee-kind effect detection).
     for (DeclList *dl = decls; dl; dl = dl->next) {
-        if (dl->decl && dl->decl->kind == DECL_PROCEDURE) {
+        if (!dl->decl) continue;
+        if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
+            dl->decl->as.function_decl.effects = effect_infer_direct(dl->decl);
+            if (sema_dump_effects) sema_print_effects(dl->decl);
+        }
+        if (dl->decl->kind == DECL_PROCEDURE) {
             sema_check_proc_eligibility(dl->decl);
         }
     }

@@ -242,6 +242,20 @@ typedef struct StructDecl {
     DeclList* type_params;  // generic params `type Vec(T type){...}` (NULL = non-generic)
 } DeclStruct;
 
+// F3.3 effect row: the closed lattice of effects a function may have, inferred and
+// propagated by set inclusion (callee.effects ⊆ caller.effects). This unifies the
+// three analyses Lain runs separately — W130 (has-effects), the emit const/pure
+// classification, and func/proc + termination — into one artifact. A `func` is
+// exactly a function whose effects avoid IO and Diverge (pure + total).
+typedef enum {
+    EFFECT_WRITE   = 1 << 0,  // writes caller-visible memory (a var param or mutable global)
+    EFFECT_DIVERGE = 1 << 1,  // may not terminate: unbounded `while` or recursion
+    EFFECT_RAISES  = 1 << 2,  // `panic` (later: propagates an error value)
+    EFFECT_IO      = 1 << 3,  // calls a `proc` / `extern proc` (external side effects)
+    EFFECT_ALLOC   = 1 << 4,  // allocates from an Arena
+} Effect;
+typedef unsigned EffectSet;
+
 typedef struct {
     Id*         name;           // Function name
     DeclList*   params;         // Parameters (linked list or array)
@@ -256,6 +270,8 @@ typedef struct {
     bool        is_hot;         // @hot:      GCC optimizes aggressively, prefers inline
     bool        is_allocator;   // @allocator: return ptr doesn't alias any existing ptr
     bool        is_noreturn;    // @noreturn:  function never returns (exit, panic, etc.)
+    EffectSet   effects;        // F3.3: inferred effect set (0 = pure & total)
+    bool        effects_done;   // memoization guard for transitive inference (E2)
 } DeclFunction;
 
 typedef struct {

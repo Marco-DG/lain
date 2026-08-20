@@ -65,6 +65,7 @@ int main(int argc, char **argv) {
     target_init_for(args.target_triple);
     sema_w130_silent = args.no_w130;
     sema_dump_niche = args.dump_niche;
+    sema_dump_effects = args.dump_effects;
 
     // C.1 fix: if the user passed an **absolute** path, chdir to its directory
     // so import-based module resolution keeps working. Relative paths are left

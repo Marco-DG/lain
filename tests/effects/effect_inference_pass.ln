@@ -1,0 +1,28 @@
+// F3.3 effect row (E1): direct-effect inference. Each function's effect set is
+// computed (--dump-effects surfaces it): pure_add {} pure&total, with_panic
+// {Raises}, mutates {Write}, does_io {IO}, diverges {Diverge}. This test locks
+// that the effect pass does not break compilation of the effect-bearing forms.
+extern proc print(s u8[])
+func pure_add(a i32, b i32) i64 {
+    return a + b
+}
+func with_panic(a i32) i32 {
+    if a < 0 {
+        panic("neg")
+    }
+    return a
+}
+func mutates(var c i32) {
+    c = c +% 1
+}
+proc does_io() {
+    print("hi")
+}
+proc diverges(n i32) i32 {
+    var i = 0
+    while i < n {
+        i = i +% 1
+    }
+    return i
+}
+proc main() i32 { return 0 }
