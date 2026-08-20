@@ -26,8 +26,12 @@ Expr *parse_expr(Arena* arena, Parser* parser)
     // in the statement parser after a brace block, never mid-expression.
     while (parser_match(TOKEN_KEYWORD_ELSE)) {
         parser_advance();
+        // `else return X` — on failure, return X from the enclosing function.
+        bool is_ret = false;
+        if (parser_match(TOKEN_KEYWORD_RETURN)) { is_ret = true; parser_advance(); }
         Expr *arm = parse_binary_expr(arena, parser, 0);
-        result = expr_else(arena, result, arm, expr_is_panic_call(arm));
+        result = expr_else(arena, result, arm, !is_ret && expr_is_panic_call(arm));
+        result->as.else_expr.arm_is_return = is_ret;
     }
 
     if (result) {

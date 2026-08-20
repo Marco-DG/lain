@@ -2948,6 +2948,12 @@ void sema_infer_expr(Expr *e) {
     if (op) op->checked_ok = true;   // this `else` handles it (if it is a checked op)
     sema_infer_expr(op);
     if (e->as.else_expr.arm) sema_infer_expr(e->as.else_expr.arm);
+    // `else return X`: X is a return value — coerce it to the enclosing return type
+    // (a bare marker → the return union's constructor), exactly as a `return` does.
+    if (e->as.else_expr.arm_is_return && sema_walk_phase && current_return_type && e->as.else_expr.arm) {
+        sema_union_coerce(&e->as.else_expr.arm, current_return_type);
+        sema_infer_expr(e->as.else_expr.arm);
+    }
     // Q1 inline-checked recovery: `a +? b else X` / `x as? T else X`. The operand
     // is a checked op (value type T, never a union); on overflow/out-of-range the
     // value is the arm. Result type is T — no union is materialized.

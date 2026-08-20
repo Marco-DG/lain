@@ -105,6 +105,16 @@ static int c_prec_of_expr(Expr *e) {
     }
 }
 
+// Flush all pending defers (LIFO) — the cleanup a `return` runs — for a
+// propagate-return emitted inside a statement-expression (`try`, `else return`).
+// Suppress #line directives so they never land mid-expression.
+static void emit_flush_defers(int depth) {
+    const char *saved = emit_source_filename;
+    emit_source_filename = NULL;
+    for (int i = emit_defer_count - 1; i >= 0; i--) emit_stmt(emit_defer_stack[i], depth);
+    emit_source_filename = saved;
+}
+
 // Emit an expression at given indent‐depth
 void emit_expr(Expr *expr, int depth);
 
@@ -1600,15 +1610,7 @@ void emit_expr(Expr *expr, int depth) {
             if (op_ptr) EMIT("(uintptr_t)__try%d == %lldULL", id, s);
             else        EMIT("__try%d == (%s)%lldLL", id, op_cty, s);
             EMIT(") { ");
-            // Flush pending defers before the propagate-return, exactly as a
-            // STMT_RETURN does — but inside a statement-expression, so suppress the
-            // `#line` directives emit_stmt would otherwise inject mid-expression.
-            {
-                const char *__saved_src = emit_source_filename;
-                emit_source_filename = NULL;
-                for (int i = emit_defer_count - 1; i >= 0; i--) emit_stmt(emit_defer_stack[i], depth);
-                emit_source_filename = __saved_src;
-            }
+            emit_flush_defers(depth);   // cleanup on the propagate-return path
             if (same_enum) EMIT("return __try%d; } ", id);   // identical layout: same bits
             else           EMIT("return %s_%.*s(); } ", ret_ty, (int)v->name->length, v->name->name);
         }
@@ -1625,6 +1627,7 @@ void emit_expr(Expr *expr, int depth) {
     Decl *opU = expr->as.else_expr.operand_enum;
     Expr *arm = expr->as.else_expr.arm;
     bool is_panic = expr->as.else_expr.is_panic;
+    bool arm_ret  = expr->as.else_expr.arm_is_return;  // `else return X` — propagate
     static int __else_cnt = 0; int id = __else_cnt++;
 
     // Q1 inline-checked recovery: `a +? b else X` / `x as? T else X`. The checked
@@ -1641,8 +1644,9 @@ void emit_expr(Expr *expr, int depth) {
             EMIT(", ");
             emit_expr(op->as.binary_expr.right, depth);
             EMIT(", &__r)) { ");
-            if (is_panic) { emit_expr(arm, depth); EMIT("; "); }
-            else          { EMIT("__r = "); emit_expr(arm, depth); EMIT("; "); }
+            if (arm_ret)       { emit_flush_defers(depth); EMIT("return "); emit_expr(arm, depth); EMIT("; "); }
+            else if (is_panic) { emit_expr(arm, depth); EMIT("; "); }
+            else               { EMIT("__r = "); emit_expr(arm, depth); EMIT("; "); }
             EMIT("} __r; })");
         } else {   // EXPR_CAST as? — roundtrip test, arm is the out-of-range value
             char tybuf[256]; c_name_for_type(op->as.cast_expr.target_type, tybuf, sizeof tybuf);
@@ -1650,10 +1654,15 @@ void emit_expr(Expr *expr, int depth) {
             char sty[256]; c_name_for_type(src_ty, sty, sizeof sty);
             EMIT("({ %s __cv = (", sty);
             emit_expr(op->as.cast_expr.expr, depth);
-            EMIT("); %s __t = (%s)__cv; (__cv == (%s)__t && ((__cv < 0) == (__t < 0))) ? __t : (%s)(",
-                 tybuf, tybuf, sty, tybuf);
-            emit_expr(arm, depth);
-            EMIT("); })");
+            EMIT("); %s __t = (%s)__cv; ", tybuf, tybuf);
+            if (arm_ret) {   // statement form: return on out-of-range
+                EMIT("if (!(__cv == (%s)__t && ((__cv < 0) == (__t < 0)))) { ", sty);
+                emit_flush_defers(depth); EMIT("return "); emit_expr(arm, depth); EMIT("; } __t; })");
+            } else {
+                EMIT("(__cv == (%s)__t && ((__cv < 0) == (__t < 0))) ? __t : (%s)(", sty, tybuf);
+                emit_expr(arm, depth);
+                EMIT("); })");
+            }
         }
         break;
     }
@@ -1679,8 +1688,9 @@ void emit_expr(Expr *expr, int depth) {
     }
     if (first) EMIT("0");   // markerless union (unreachable) → never the fallback
     EMIT(") { ");
-    if (is_panic) { emit_expr(arm, depth); EMIT("; "); }
-    else          { EMIT("__elsev%d = ", id); emit_expr(arm, depth); EMIT("; "); }
+    if (arm_ret)       { emit_flush_defers(depth); EMIT("return "); emit_expr(arm, depth); EMIT("; "); }
+    else if (is_panic) { emit_expr(arm, depth); EMIT("; "); }
+    else               { EMIT("__elsev%d = ", id); emit_expr(arm, depth); EMIT("; "); }
     EMIT("} else { __elsev%d = (%s)__else%d; } __elsev%d; })", id, pay_cty, id, id);
     break;
   }

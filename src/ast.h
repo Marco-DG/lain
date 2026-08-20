@@ -614,6 +614,10 @@ typedef struct {
     struct Expr *arm;
     struct Decl *operand_enum;
     bool         is_panic;
+    bool         arm_is_return;  // `else return X` — on failure, `return X` from the
+                                 // enclosing function (X coerced to its return type).
+                                 // The propagation bridge: map a failure to your own
+                                 // union marker without materializing `T | Overflow`.
 } ExprElse;
 
 typedef struct {

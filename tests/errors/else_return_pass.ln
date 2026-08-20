@@ -1,0 +1,31 @@
+// F3.4: `else return X` — the propagation bridge. On failure, `return X` from the
+// enclosing function (X coerced to its return type, defers flushed). Lets a
+// checked op's overflow leave as YOUR own niche-able marker (no `i32 | Overflow`
+// materialized), and remaps one union's marker into another's.
+extern proc libc_printf(fmt *u8, ...) i32
+func compute(a i32, b i32, s *u8) *u8 | TooBig {
+    p = a *? b else return TooBig
+    if p > 100 { return s }
+    return s
+}
+func inner(fail bool, s *u8) *u8 | NotFound {
+    if fail { return NotFound }
+    return s
+}
+func outer(fail bool, s *u8) *u8 | Denied {
+    v = inner(fail, s) else return Denied
+    return v
+}
+proc main() i32 {
+    var r *u8 | TooBig = compute(2000000000, 2000000000, "ok")
+    case r {
+        TooBig: libc_printf("TooBig\n")
+        else:   libc_printf("%s\n", r)
+    }
+    var o *u8 | Denied = outer(true, "x")
+    case o {
+        Denied: libc_printf("Denied\n")
+        else:   libc_printf("%s\n", o)
+    }
+    return 0
+}
