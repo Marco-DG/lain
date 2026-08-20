@@ -111,6 +111,10 @@ static bool emit_fixed_string_init(Type *ty, Expr *rhs, int depth) {
 // Forward declare emit_expr
 struct Expr;
 void emit_expr(struct Expr *expr, int depth);
+// Forward declare emit_stmt so EXPR_TRY (emit/expr.h) can flush pending defers on
+// its propagate-`return` path — the same cleanup a STMT_RETURN runs.
+struct Stmt;
+void emit_stmt(struct Stmt *stmt, int depth);
 
 static bool emit_slice_coercion(Type *target, Expr *source, int depth) {
     if (!target || !source) return false;

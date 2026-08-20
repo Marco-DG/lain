@@ -1,0 +1,16 @@
+// F3.4: a chain of `try`s — each narrows to its payload and propagates its own
+// markers; the return union must list every marker any `try` can raise.
+func open_it(p *u8, f bool) *u8 | NotFound {
+    if f { return NotFound }
+    return p
+}
+func parse_it(p *u8, f bool) *u8 | ParseErr {
+    if f { return ParseErr }
+    return p
+}
+func load(p *u8, f1 bool, f2 bool) *u8 | NotFound | ParseErr {
+    a = try open_it(p, f1)
+    b = try parse_it(a, f2)
+    return b
+}
+proc main() i32 { return 0 }

@@ -1,0 +1,20 @@
+// F3.4: pending `defer`s run on `try`'s propagate-return path — linear cleanup
+// on the error-unwind edge, exactly as an explicit `return` would do.
+extern proc libc_printf(fmt *u8, ...) i32
+func step(p *u8, fail bool) *u8 | NotFound {
+    if fail { return NotFound }
+    return p
+}
+proc work(p *u8, fail bool) *u8 | NotFound {
+    defer libc_printf("cleanup\n")
+    f = try step(p, fail)
+    return f
+}
+proc main() i32 {
+    var r *u8 | NotFound = work("p", true)
+    case r {
+        NotFound: libc_printf("nf\n")
+        else:     libc_printf("ok\n")
+    }
+    return 0
+}

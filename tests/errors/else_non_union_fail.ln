@@ -1,0 +1,7 @@
+// EXPECT: [E066]
+// `else` requires a union on its left — a plain i32 has no marker to fall back from.
+func f(x i32) i32 {
+    y = x else 0
+    return y
+}
+proc main() i32 { return 0 }

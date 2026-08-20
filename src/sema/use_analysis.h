@@ -143,6 +143,15 @@ static void use_walk_expr(Expr *e, UseTable *t, int stmt_idx) {
         use_walk_expr(e->as.cast_expr.expr, t, stmt_idx);
         break;
 
+    case EXPR_TRY:
+        use_walk_expr(e->as.try_expr.operand, t, stmt_idx);
+        break;
+
+    case EXPR_ELSE:
+        use_walk_expr(e->as.else_expr.operand, t, stmt_idx);
+        use_walk_expr(e->as.else_expr.arm, t, stmt_idx);
+        break;
+
     default:
         // Literals etc. — no identifiers
         break;

@@ -1,0 +1,16 @@
+// F3.4: `expr else fallback` yields the payload on success, or the fallback
+// value (of the payload type) when the operand is any marker.
+extern proc libc_printf(fmt *u8, ...) i32
+func open_it(p *u8, fail bool) *u8 | NotFound | Denied {
+    if fail { return NotFound }
+    return p
+}
+func pick(p *u8, fail bool, fb *u8) *u8 {
+    v = open_it(p, fail) else fb
+    return v
+}
+proc main() i32 {
+    libc_printf("%s\n", pick("x", true, "DEFAULT"))
+    libc_printf("%s\n", pick("REAL", false, "DEFAULT"))
+    return 0
+}

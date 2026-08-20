@@ -204,6 +204,13 @@ Expr *clone_expr(Arena *arena, Expr *e) {
         case EXPR_DEREF:
             new_e->as.deref_expr.expr = clone_expr(arena, e->as.deref_expr.expr);
             break;
+        case EXPR_TRY:
+            new_e->as.try_expr.operand = clone_expr(arena, e->as.try_expr.operand);
+            break;
+        case EXPR_ELSE:
+            new_e->as.else_expr.operand = clone_expr(arena, e->as.else_expr.operand);
+            new_e->as.else_expr.arm     = clone_expr(arena, e->as.else_expr.arm);
+            break;
         case EXPR_MOVE:
             new_e->as.move_expr.expr = clone_expr(arena, e->as.move_expr.expr);
             break;

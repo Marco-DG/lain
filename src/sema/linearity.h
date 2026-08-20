@@ -1230,6 +1230,18 @@ static void sema_check_expr_linearity(Expr *e, LTable *tbl, int loop_depth) {
         sema_check_expr_linearity(e->as.cast_expr.expr, tbl, loop_depth);
         break;
 
+    case EXPR_TRY:
+        // `try e` consumes its union operand and yields the payload. The marker
+        // path is a `return` (defers run in emit), so it carries the same linear
+        // obligation as any return — recurse so a `mov` inside registers.
+        sema_check_expr_linearity(e->as.try_expr.operand, tbl, loop_depth);
+        break;
+
+    case EXPR_ELSE:
+        sema_check_expr_linearity(e->as.else_expr.operand, tbl, loop_depth);
+        sema_check_expr_linearity(e->as.else_expr.arm, tbl, loop_depth);
+        break;
+
     case EXPR_MATCH: {
         BorrowEntry *borrowed_match_entry_e = NULL;
         if (e->as.match_expr.value) {

@@ -1,0 +1,20 @@
+// F3.4: `try` on a non-pointer (bool-payload) union. Markers sit at integer
+// sentinels of the payload, so the marker test is `== (T)sentinel`, not a
+// pointer compare — exercises the POOL_BOOL/POOL_INTEGER emit path.
+extern proc libc_printf(fmt *u8, ...) i32
+func f(b bool, fail bool) bool | Nope {
+    if fail { return Nope }
+    return b
+}
+func g(b bool, fail bool) bool | Nope {
+    x = try f(b, fail)
+    return x
+}
+proc main() i32 {
+    var r bool | Nope = g(true, true)
+    case r {
+        Nope: libc_printf("nope\n")
+        else: libc_printf("v=%d\n", r)
+    }
+    return 0
+}

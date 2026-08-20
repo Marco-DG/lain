@@ -1,0 +1,20 @@
+// F3.4: `try` propagates a union's markers to an IDENTICAL enclosing return
+// union. Same lowered enum on both sides → the marker returns with the same bits.
+extern proc libc_printf(fmt *u8, ...) i32
+func open_it(p *u8, fail bool) *u8 | NotFound | Denied {
+    if fail { return NotFound }
+    return p
+}
+func read_cfg(p *u8, fail bool) *u8 | NotFound | Denied {
+    f = try open_it(p, fail)
+    return f
+}
+proc main() i32 {
+    var r *u8 | NotFound | Denied = read_cfg("f", false)
+    case r {
+        NotFound: libc_printf("nf\n")
+        Denied:   libc_printf("dn\n")
+        else:     libc_printf("ok=%s\n", r)
+    }
+    return 0
+}

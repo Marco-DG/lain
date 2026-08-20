@@ -1,0 +1,12 @@
+// F3.4: `try` widens a marker into a SUPERSET return union. The operand enum
+// (`*u8 | NotFound`) differs from the return enum (`*u8 | NotFound | ParseErr`),
+// so the marker is re-encoded through the return union's own constructor.
+func open_it(p *u8, fail bool) *u8 | NotFound {
+    if fail { return NotFound }
+    return p
+}
+func read_cfg(p *u8, fail bool) *u8 | NotFound | ParseErr {
+    f = try open_it(p, fail)
+    return f
+}
+proc main() i32 { return 0 }

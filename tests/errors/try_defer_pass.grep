@@ -1,0 +1,2 @@
+libc_printf("cleanup\n");
+return __try

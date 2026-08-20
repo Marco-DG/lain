@@ -177,6 +177,19 @@ void expr_print_ast(Expr *expr, int depth) {
             expr_print_ast(expr->as.cast_expr.expr, depth+2);
             break;
 
+        case EXPR_TRY:
+            printf("Try:\n");
+            expr_print_ast(expr->as.try_expr.operand, depth+1);
+            break;
+
+        case EXPR_ELSE:
+            printf("Else%s:\n", expr->as.else_expr.is_panic ? " (panic)" : "");
+            indent(depth+1); printf("Operand:\n");
+            expr_print_ast(expr->as.else_expr.operand, depth+2);
+            indent(depth+1); printf("Arm:\n");
+            expr_print_ast(expr->as.else_expr.arm, depth+2);
+            break;
+
         case EXPR_MATCH:
             printf("Match Expression:\n");
             indent(depth+1);

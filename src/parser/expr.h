@@ -11,11 +11,25 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence);
 Expr *parse_unary_expr(Arena *arena, Parser *parser);
 Expr *parse_primary_expr(Arena *arena, Parser *parser);
 
+// `x else panic(...)` detection — defined below parse_unary_expr, used by parse_expr.
+static bool expr_is_panic_call(Expr *e);
+
 Expr *parse_expr(Arena* arena, Parser* parser)
 {
     isize expr_line = parser->line;
     isize expr_col  = parser->column;
     Expr *result = parse_binary_expr(arena, parser, 0);
+
+    // Postfix `else <arm>` — the recoverable-error handler. Lowest precedence, so
+    // `a + b else c` is `(a + b) else c`. A trailing `else` in expression position
+    // always belongs to the expression: `if`/`else` statement attachment happens
+    // in the statement parser after a brace block, never mid-expression.
+    while (parser_match(TOKEN_KEYWORD_ELSE)) {
+        parser_advance();
+        Expr *arm = parse_binary_expr(arena, parser, 0);
+        result = expr_else(arena, result, arm, expr_is_panic_call(arm));
+    }
+
     if (result) {
         result->line = expr_line;
         result->col  = expr_col;
@@ -101,8 +115,26 @@ Expr *parse_unary_expr(Arena* arena, Parser* parser)
         Expr *right = parse_unary_expr(arena, parser);
         return expr_mut(arena, right);
     }
-    
+
+    // try <expr> — propagate a `T | markers` union's markers to the enclosing
+    // return. Binds tighter than binary ops so `try f() + 1` is `(try f()) + 1`.
+    if (parser_match(TOKEN_KEYWORD_TRY)) {
+        parser_advance();
+        Expr *right = parse_unary_expr(arena, parser);
+        return expr_try(arena, right);
+    }
+
     return parse_primary_expr(arena, parser);
+}
+
+// Is `e` a call to the `panic` builtin? Used to tag `x else panic(...)`, whose
+// arm aborts and therefore need not yield a value of the payload type.
+static bool expr_is_panic_call(Expr *e) {
+    if (!e || e->kind != EXPR_CALL) return false;
+    Expr *c = e->as.call_expr.callee;
+    return c && c->kind == EXPR_IDENTIFIER &&
+           c->as.identifier_expr.id->length == 5 &&
+           strncmp(c->as.identifier_expr.id->name, "panic", 5) == 0;
 }
 
 // literals, identifiers, and parenthesized expressions

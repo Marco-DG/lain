@@ -96,6 +96,7 @@ typedef enum {
     TOKEN_KEYWORD_WHILE,
     TOKEN_KEYWORD_DEFER,
     TOKEN_KEYWORD_DECREASING,
+    TOKEN_KEYWORD_TRY,     // try <expr> — propagate a union's markers to the enclosing return
 } TokenKind;
 
 typedef struct {
@@ -120,6 +121,7 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             if (strncmp(lexeme, "use", 3) == 0)         return TOKEN_KEYWORD_USE;
             if (strncmp(lexeme, "and", 3) == 0)         return TOKEN_KEYWORD_AND;
             if (strncmp(lexeme, "nil", 3) == 0)         return TOKEN_KEYWORD_NIL;
+            if (strncmp(lexeme, "try", 3) == 0)         return TOKEN_KEYWORD_TRY;
             break;
         case 4:
             if (strncmp(lexeme, "type", 4) == 0)        return TOKEN_KEYWORD_TYPE;
@@ -240,6 +242,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_KEYWORD_COMPTIME:            return "TOKEN_KEYWORD_COMPTIME";
         case TOKEN_KEYWORD_C_INCLUDE:           return "TOKEN_KEYWORD_C_INCLUDE";
         case TOKEN_KEYWORD_TRUE:                return "TOKEN_KEYWORD_TRUE";
+        case TOKEN_KEYWORD_TRY:                 return "TOKEN_KEYWORD_TRY";
         case TOKEN_KEYWORD_NIL:                 return "TOKEN_KEYWORD_NIL";
         case TOKEN_KEYWORD_FALSE:               return "TOKEN_KEYWORD_FALSE";
         case TOKEN_KEYWORD_DECREASING:          return "TOKEN_KEYWORD_DECREASING";

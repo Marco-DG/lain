@@ -458,6 +458,10 @@ typedef enum {
     EXPR_BUILTIN,
     EXPR_ADDR,   // &lvalue — address of an element
     EXPR_DEREF,  // *ptr   — dereference a pointer (safe when ptr in arr proven)
+    EXPR_TRY,    // try <expr> — if a `T | markers` value is a marker, return it from
+                 // the enclosing function; otherwise the expression is the value T.
+    EXPR_ELSE,   // <expr> else <arm> — if a marker, evaluate <arm> (a fallback value
+                 // or `panic`); otherwise the value T. The recoverable-error handler.
 } ExprKind;
 
 typedef enum {
@@ -590,6 +594,28 @@ typedef struct {
     bool is_borrowed;  // true for `case &expr { ... }` — non-consuming match
 } ExprMatch;
 
+// `try <operand>` — F3.4 error propagation. `operand` has a `T | markers` union
+// type; when it is a marker, the enclosing function returns that marker (widened
+// into its own return union); otherwise the expression's value is the payload T.
+// `operand_enum`/`return_enum` are the lowered niche enums, resolved by sema so
+// emit can test the marker sentinels and re-encode the propagated marker.
+typedef struct {
+    struct Expr *operand;
+    struct Decl *operand_enum;   // the `T | markers` union enum of `operand`
+    struct Decl *return_enum;    // the enclosing function's return union enum
+} ExprTry;
+
+// `<operand> else <arm>` — F3.4 recoverable handling. When `operand` is a marker,
+// the expression's value is `arm` (a fallback value of type T, or `panic`, which
+// aborts); otherwise it is the payload T. `is_panic` marks `else panic(...)`,
+// whose arm never yields a value (it aborts), so no T-typed result is required.
+typedef struct {
+    struct Expr *operand;
+    struct Expr *arm;
+    struct Decl *operand_enum;
+    bool         is_panic;
+} ExprElse;
+
 typedef struct {
     Type *type_value; // The resolved type
 } ExprType;
@@ -642,6 +668,8 @@ typedef struct Expr {
         ExprAnonEnum    anon_enum_expr;
         ExprArrayLiteral array_literal_expr;
         ExprArrayComprehension array_comprehension_expr;
+        ExprTry         try_expr;
+        ExprElse        else_expr;
         ExprBuiltin     builtin_expr;
         ExprAddr        addr_expr;
         ExprDeref       deref_expr;
@@ -1346,6 +1374,22 @@ Expr *expr_deref(Arena *arena, Expr *expr) {
     Expr *e = arena_push_aligned(arena, Expr);
     e->kind = EXPR_DEREF;
     e->as.deref_expr.expr = expr;
+    return e;
+}
+
+Expr *expr_try(Arena *arena, Expr *operand) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_TRY;
+    e->as.try_expr.operand = operand;
+    return e;
+}
+
+Expr *expr_else(Arena *arena, Expr *operand, Expr *arm, bool is_panic) {
+    Expr *e = arena_push_aligned(arena, Expr);
+    e->kind = EXPR_ELSE;
+    e->as.else_expr.operand  = operand;
+    e->as.else_expr.arm      = arm;
+    e->as.else_expr.is_panic = is_panic;
     return e;
 }
 

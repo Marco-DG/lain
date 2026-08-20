@@ -1,0 +1,11 @@
+// EXPECT: [E065]
+// `try` may raise Denied, but the enclosing return union omits it — fail-closed.
+func open_it(p *u8, fail bool) *u8 | NotFound | Denied {
+    if fail { return NotFound }
+    return p
+}
+func read_cfg(p *u8, fail bool) *u8 | NotFound {
+    f = try open_it(p, fail)
+    return f
+}
+proc main() i32 { return 0 }

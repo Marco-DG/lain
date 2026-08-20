@@ -1,0 +1,12 @@
+// F3.4: `expr else panic(...)` is the one sanctioned bridge from a recoverable
+// value error to the unrecoverable abort channel. Aborts on a marker.
+extern proc libc_printf(fmt *u8, ...) i32
+func open_it(p *u8, fail bool) *u8 | NotFound | Denied {
+    if fail { return NotFound }
+    return p
+}
+proc main() i32 {
+    z = open_it("z", false) else panic("must exist")
+    libc_printf("%s\n", z)
+    return 0
+}

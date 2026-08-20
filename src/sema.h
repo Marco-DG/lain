@@ -78,6 +78,11 @@ static void sema_union_coerce(Expr **slot, Type *target);
 // can narrow a proven-present union to its value type.
 static Type *union_payload_type(Type *t);
 
+// The lowered anonymous enum backing a `T | markers` union type (or NULL).
+// Forward-declared so the `try`/`else` inference in typecheck.h can enumerate a
+// union's markers for the ⊆ propagation check and stash the enum for emit.
+static Decl *find_union_enum(Type *t);
+
 // L3: pointer monotone table — pointers whose upper bound is dead inside while loops.
 // When p is monotone non-increasing and was initialized at a valid index into arr,
 // the upper-bound check `p < arr + arr_len` is always true → dead code in emit.
@@ -2442,6 +2447,8 @@ static void proc_w130_visit_expr(Expr *e) {
         case EXPR_MOVE: proc_w130_visit_expr(e->as.move_expr.expr); break;
         case EXPR_MUT:  proc_w130_visit_expr(e->as.mut_expr.expr); break;
         case EXPR_CAST: proc_w130_visit_expr(e->as.cast_expr.expr); break;
+        case EXPR_TRY:  proc_w130_visit_expr(e->as.try_expr.operand); break;
+        case EXPR_ELSE: proc_w130_visit_expr(e->as.else_expr.operand); proc_w130_visit_expr(e->as.else_expr.arm); break;
         case EXPR_MATCH:
             proc_w130_visit_expr(e->as.match_expr.value);
             for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
@@ -2555,6 +2562,10 @@ static void eff_visit_expr(Expr *e) {
         case EXPR_MOVE:   eff_visit_expr(e->as.move_expr.expr); break;
         case EXPR_MUT:    eff_visit_expr(e->as.mut_expr.expr); break;
         case EXPR_CAST:   eff_visit_expr(e->as.cast_expr.expr); break;
+        // try/else add no effect of their own (a recoverable error is a value,
+        // not an effect — F3.4); just recurse so the operand/arm's effects count.
+        case EXPR_TRY:    eff_visit_expr(e->as.try_expr.operand); break;
+        case EXPR_ELSE:   eff_visit_expr(e->as.else_expr.operand); eff_visit_expr(e->as.else_expr.arm); break;
         case EXPR_MATCH:
             eff_visit_expr(e->as.match_expr.value);
             for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {

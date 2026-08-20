@@ -2878,6 +2878,71 @@ void sema_infer_expr(Expr *e) {
     break;
   }
 
+  case EXPR_TRY: {
+    // `try op` — op must be a `T | markers` union. The expression's value is the
+    // payload T; on a marker, the enclosing function returns that marker. F3.4.
+    Expr *op = e->as.try_expr.operand;
+    sema_infer_expr(op);
+    Type *pay = op ? union_payload_type(op->type) : NULL;
+    if (!pay) {
+        fprintf(stderr, "[E066] Error Ln %li, Col %li: `try` requires a `T | markers` union value "
+                "(nothing to propagate otherwise).\n", (long)e->line, (long)e->col);
+        diagnostic_show_line(e->line, e->col);
+        exit(1);
+    }
+    e->type = pay;
+    // The ⊆ propagation law is checked in the walk phase, where the enclosing
+    // function's return type (current_return_type) is established. Every marker
+    // `op` can produce must be a member of the return union — else fail-closed.
+    if (sema_walk_phase) {
+        Decl *opU  = find_union_enum(op->type);
+        Decl *retU = find_union_enum(current_return_type);
+        e->as.try_expr.operand_enum = opU;
+        e->as.try_expr.return_enum  = retU;
+        if (opU) for (Variant *v = opU->as.enum_decl.variants; v; v = v->next) {
+            if (v->fields) continue;                 // skip the `__payload` variant
+            bool in_ret = false;
+            if (retU) for (Variant *w = retU->as.enum_decl.variants; w; w = w->next) {
+                if (w->fields) continue;
+                if (w->name->length == v->name->length &&
+                    memcmp(w->name->name, v->name->name, (size_t)v->name->length) == 0) { in_ret = true; break; }
+            }
+            if (!in_ret) {
+                fprintf(stderr, "[E065] Error Ln %li, Col %li: `try` may propagate marker `%.*s`, "
+                        "but it is not in the enclosing function's return union. Add `| %.*s` to the "
+                        "return type, or handle it with `case`.\n",
+                        (long)e->line, (long)e->col,
+                        (int)v->name->length, v->name->name, (int)v->name->length, v->name->name);
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
+        }
+    }
+    break;
+  }
+
+  case EXPR_ELSE: {
+    // `op else arm` — op must be a union; on a marker, the value is `arm` (a
+    // fallback of type T, or `panic`); otherwise the payload T. F3.4.
+    Expr *op = e->as.else_expr.operand;
+    sema_infer_expr(op);
+    if (e->as.else_expr.arm) sema_infer_expr(e->as.else_expr.arm);
+    Type *pay = op ? union_payload_type(op->type) : NULL;
+    if (!pay) {
+        fprintf(stderr, "[E066] Error Ln %li, Col %li: `else` requires a `T | markers` union value "
+                "on its left (there is nothing to fall back from otherwise).\n", (long)e->line, (long)e->col);
+        diagnostic_show_line(e->line, e->col);
+        exit(1);
+    }
+    e->type = pay;
+    if (sema_walk_phase) e->as.else_expr.operand_enum = find_union_enum(op->type);
+    // NOTE (follow-up): the non-panic arm should be conversion-checked against the
+    // payload T for a clean [E012]/[E086] here. Deferred: check_conversion needs
+    // sema_ranges (not visible at this include depth) to admit fitting literals
+    // like `else 0`; a gross mismatch is still caught downstream by the C compiler.
+    break;
+  }
+
   case EXPR_BUILTIN: {
     BuiltinKind bk = e->as.builtin_expr.builtin_kind;
     if ((bk == BUILTIN_LIKELY || bk == BUILTIN_UNLIKELY) && e->as.builtin_expr.arg) {

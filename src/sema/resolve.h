@@ -1019,6 +1019,15 @@ void sema_resolve_expr(Expr *e) {
     sema_resolve_expr(e->as.deref_expr.expr);
     break;
 
+  case EXPR_TRY:
+    sema_resolve_expr(e->as.try_expr.operand);
+    break;
+
+  case EXPR_ELSE:
+    sema_resolve_expr(e->as.else_expr.operand);
+    sema_resolve_expr(e->as.else_expr.arm);
+    break;
+
   case EXPR_MOVE:
     sema_resolve_expr(e->as.move_expr.expr);
     break;

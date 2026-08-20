@@ -1563,6 +1563,97 @@ void emit_expr(Expr *expr, int depth) {
     break;
   }
 
+  case EXPR_TRY: {
+    // `try op` — a GCC statement-expression over the niche-lowered union. A niche
+    // union is a bare scalar (a pointer/int whose out-of-range values are marker
+    // sentinels), so: bind op once; test each marker sentinel; on a hit, flush
+    // pending defers (the same cleanup a `return` runs) and return that marker
+    // re-encoded into the enclosing return union via its constructor; otherwise
+    // the statement-expression's value is the payload.
+    Expr *op   = expr->as.try_expr.operand;
+    Decl *opU  = expr->as.try_expr.operand_enum;
+    Decl *retU = expr->as.try_expr.return_enum;
+    static int __try_cnt = 0; int id = __try_cnt++;
+
+    // The operand's type may still be a raw TYPE_UNION at emit time, which
+    // c_name_for_type can't name — take the C typedef from the lowered enum. Each
+    // c_name_for_id call reuses a static buffer, so copy out immediately.
+    char op_cty[256] = {0};
+    if (opU) strncpy(op_cty, c_name_for_id(opU->as.enum_decl.type_name), sizeof op_cty - 1);
+    char ret_ty[256] = {0};   // return union typedef — marker ctors are `<typedef>_<M>()`
+    if (retU) strncpy(ret_ty, c_name_for_id(retU->as.enum_decl.type_name), sizeof ret_ty - 1);
+    char pay_cty[256]; c_name_for_type(expr->type, pay_cty, sizeof pay_cty);
+
+    NicheLayout Lop = {0};
+    bool op_niche = opU && enum_is_zero_cost_niche(opU, &Lop);
+    bool op_ptr   = Lop.pool.kind == POOL_POINTER;
+    bool same_enum = (opU && opU == retU);
+
+    EMIT("({ %s __try%d = ", op_cty, id);
+    emit_expr(op, depth);
+    EMIT("; ");
+    if (op_niche) {
+        for (Variant *v = opU->as.enum_decl.variants; v; v = v->next) {
+            if (v->fields) continue;   // skip the `__payload` variant
+            long long s = niche_sentinel_for_variant(&opU->as.enum_decl, v, &Lop);
+            EMIT("if (");
+            if (op_ptr) EMIT("(uintptr_t)__try%d == %lldULL", id, s);
+            else        EMIT("__try%d == (%s)%lldLL", id, op_cty, s);
+            EMIT(") { ");
+            // Flush pending defers before the propagate-return, exactly as a
+            // STMT_RETURN does — but inside a statement-expression, so suppress the
+            // `#line` directives emit_stmt would otherwise inject mid-expression.
+            {
+                const char *__saved_src = emit_source_filename;
+                emit_source_filename = NULL;
+                for (int i = emit_defer_count - 1; i >= 0; i--) emit_stmt(emit_defer_stack[i], depth);
+                emit_source_filename = __saved_src;
+            }
+            if (same_enum) EMIT("return __try%d; } ", id);   // identical layout: same bits
+            else           EMIT("return %s_%.*s(); } ", ret_ty, (int)v->name->length, v->name->name);
+        }
+    }
+    EMIT("(%s)__try%d; })", pay_cty, id);
+    break;
+  }
+
+  case EXPR_ELSE: {
+    // `op else arm` — like `try` but a marker is handled locally: the value is
+    // `arm` (a fallback of the payload type, or `panic` which aborts) instead of
+    // being propagated. No enclosing-return dependency.
+    Expr *op  = expr->as.else_expr.operand;
+    Decl *opU = expr->as.else_expr.operand_enum;
+    Expr *arm = expr->as.else_expr.arm;
+    bool is_panic = expr->as.else_expr.is_panic;
+    static int __else_cnt = 0; int id = __else_cnt++;
+    char op_cty[256] = {0};
+    if (opU) strncpy(op_cty, c_name_for_id(opU->as.enum_decl.type_name), sizeof op_cty - 1);
+    char pay_cty[256]; c_name_for_type(expr->type, pay_cty, sizeof pay_cty);
+
+    NicheLayout Lop = {0};
+    bool op_niche = opU && enum_is_zero_cost_niche(opU, &Lop);
+    bool op_ptr   = Lop.pool.kind == POOL_POINTER;
+
+    EMIT("({ %s __else%d = ", op_cty, id);
+    emit_expr(op, depth);
+    EMIT("; %s __elsev%d; if (", pay_cty, id);
+    bool first = true;
+    if (op_niche) for (Variant *v = opU->as.enum_decl.variants; v; v = v->next) {
+        if (v->fields) continue;
+        long long s = niche_sentinel_for_variant(&opU->as.enum_decl, v, &Lop);
+        if (!first) EMIT(" || ");
+        first = false;
+        if (op_ptr) EMIT("(uintptr_t)__else%d == %lldULL", id, s);
+        else        EMIT("__else%d == (%s)%lldLL", id, op_cty, s);
+    }
+    if (first) EMIT("0");   // markerless union (unreachable) → never the fallback
+    EMIT(") { ");
+    if (is_panic) { emit_expr(arm, depth); EMIT("; "); }
+    else          { EMIT("__elsev%d = ", id); emit_expr(arm, depth); EMIT("; "); }
+    EMIT("} else { __elsev%d = (%s)__else%d; } __elsev%d; })", id, pay_cty, id, id);
+    break;
+  }
+
   case EXPR_BUILTIN: {
     BuiltinKind bk = expr->as.builtin_expr.builtin_kind;
     if (bk == BUILTIN_LIKELY || bk == BUILTIN_UNLIKELY) {

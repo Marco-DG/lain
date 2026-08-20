@@ -1,0 +1,7 @@
+// EXPECT: [E066]
+// `try` requires a `T | markers` union — nothing to propagate from a plain i32.
+func f(x i32) i32 {
+    y = try x
+    return y
+}
+proc main() i32 { return 0 }
