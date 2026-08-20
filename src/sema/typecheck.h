@@ -1224,6 +1224,21 @@ static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col) {
     }
 }
 
+// Fail-closed check for a value-fallback `else` arm: it must convert to the
+// result type (the payload T, or a checked op's value type). A `panic` arm
+// aborts and an `else return` arm targets the enclosing return type, so both are
+// exempt — they're validated elsewhere.
+static void check_else_arm(Expr *e, Type *result_ty) {
+    if (!sema_walk_phase) return;
+    if (e->as.else_expr.is_panic || e->as.else_expr.arm_is_return) return;
+    Expr *arm = e->as.else_expr.arm;
+    if (!arm || !arm->type || !result_ty) return;
+    Range r = (arm->kind == EXPR_LITERAL)
+              ? (Range){ arm->as.literal_expr.value, arm->as.literal_expr.value, true }
+              : (sema_ranges ? sema_eval_range(arm, sema_ranges) : range_unknown());
+    check_conversion(arm->type, result_ty, r, arm, arm->line, arm->col, "else fallback value", "else");
+}
+
 void sema_infer_expr(Expr *e) {
   if (!e) return;
 // (removed debug print)
@@ -2959,6 +2974,7 @@ void sema_infer_expr(Expr *e) {
     // value is the arm. Result type is T — no union is materialized.
     if (expr_is_checked_op(op)) {
         e->type = op->type;
+        check_else_arm(e, op->type);
         break;
     }
     Type *pay = op ? union_payload_type(op->type) : NULL;
@@ -2971,10 +2987,7 @@ void sema_infer_expr(Expr *e) {
     }
     e->type = pay;
     if (sema_walk_phase) e->as.else_expr.operand_enum = find_union_enum(op->type);
-    // NOTE (follow-up): the non-panic arm should be conversion-checked against the
-    // payload T for a clean [E012]/[E086] here. Deferred: check_conversion needs
-    // sema_ranges (not visible at this include depth) to admit fitting literals
-    // like `else 0`; a gross mismatch is still caught downstream by the C compiler.
+    check_else_arm(e, pay);
     break;
   }
 
