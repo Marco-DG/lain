@@ -1,14 +1,14 @@
 // F3.5 tiered casts: as / as% / as? / as| all parse, type-check, and emit.
 //   as  (proven)     -> plain modular truncation (future: strict prove-or-reject)
 //   as% (wrapping)   -> plain modular truncation, explicit opt-out
-//   as? (checked)    -> runtime bounds check, traps (abort) on overflow
+//   as? (checked)    -> runtime bounds check, handled inline by `else` (F3.4/Q1)
 //   as| (saturating) -> clamp to the target type's [min, max]
 // v = 42 is in-range for u8, so this also runs correctly if executed.
 proc main() i32 {
     var v i32 = 42
     var p = v as u8
     var w = v as% u8
-    var c = v as? u8
+    var c = v as? u8 else panic("out of range")
     var s = v as| u8
     return (p as i32) + (w as i32) + (c as i32) + (s as i32)
 }

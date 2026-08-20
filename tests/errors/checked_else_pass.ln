@@ -1,0 +1,16 @@
+// F3.4/Q1: checked ops are recoverable inline via `else` — no materialized union
+// (zero-cost preserved). `+?`/`as?` compute; on overflow/out-of-range the value
+// is the arm (a fallback, or `panic` for the explicit abort bridge).
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var a i32 = 2000000000
+    s = a +? a else 0
+    libc_printf("%d\n", s)
+    var big i32 = 300
+    n = big as? u8 else 255
+    libc_printf("%d\n", n)
+    var ok i32 = 7
+    p = ok *? ok else panic("overflow")
+    libc_printf("%d\n", p)
+    return 0
+}

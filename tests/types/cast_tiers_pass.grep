@@ -1,4 +1,4 @@
-// as? emits a runtime check that traps on overflow:
-panic: value out of range for cast to uint8_t
+// as? is handled inline by `else`; on out-of-range it runs the arm (here panic):
+panic: out of range
 // as| emits a saturating clamp to the target max (255 for u8):
 (uint8_t)(255LL)

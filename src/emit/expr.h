@@ -1626,6 +1626,37 @@ void emit_expr(Expr *expr, int depth) {
     Expr *arm = expr->as.else_expr.arm;
     bool is_panic = expr->as.else_expr.is_panic;
     static int __else_cnt = 0; int id = __else_cnt++;
+
+    // Q1 inline-checked recovery: `a +? b else X` / `x as? T else X`. The checked
+    // op computes inline; on overflow/out-of-range the value is the arm (or the
+    // arm aborts, for `else panic`). No union is materialized.
+    if (expr_is_checked_op(op)) {
+        if (op->kind == EXPR_BINARY) {
+            char rty[256]; c_name_for_type(op->type, rty, sizeof rty);
+            const char *bi = (op->as.binary_expr.op == TOKEN_PLUS_QUESTION)  ? "__builtin_add_overflow"
+                           : (op->as.binary_expr.op == TOKEN_MINUS_QUESTION) ? "__builtin_sub_overflow"
+                                                                             : "__builtin_mul_overflow";
+            EMIT("({ %s __r; if (%s(", rty, bi);
+            emit_expr(op->as.binary_expr.left, depth);
+            EMIT(", ");
+            emit_expr(op->as.binary_expr.right, depth);
+            EMIT(", &__r)) { ");
+            if (is_panic) { emit_expr(arm, depth); EMIT("; "); }
+            else          { EMIT("__r = "); emit_expr(arm, depth); EMIT("; "); }
+            EMIT("} __r; })");
+        } else {   // EXPR_CAST as? — roundtrip test, arm is the out-of-range value
+            char tybuf[256]; c_name_for_type(op->as.cast_expr.target_type, tybuf, sizeof tybuf);
+            Type *src_ty = op->as.cast_expr.expr ? op->as.cast_expr.expr->type : NULL;
+            char sty[256]; c_name_for_type(src_ty, sty, sizeof sty);
+            EMIT("({ %s __cv = (", sty);
+            emit_expr(op->as.cast_expr.expr, depth);
+            EMIT("); %s __t = (%s)__cv; (__cv == (%s)__t && ((__cv < 0) == (__t < 0))) ? __t : (%s)(",
+                 tybuf, tybuf, sty, tybuf);
+            emit_expr(arm, depth);
+            EMIT("); })");
+        }
+        break;
+    }
     char op_cty[256] = {0};
     if (opU) strncpy(op_cty, c_name_for_id(opU->as.enum_decl.type_name), sizeof op_cty - 1);
     char pay_cty[256]; c_name_for_type(expr->type, pay_cty, sizeof pay_cty);

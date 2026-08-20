@@ -363,6 +363,37 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             }
             return src;
         }
+        case EXPR_ELSE: {
+            // `op else arm`: value is op's success value, or arm on failure. For a
+            // checked op, sema_eval_range(op) is the arithmetic/cast range; `else
+            // panic` aborts (only op contributes), otherwise union with the arm.
+            Range opr = sema_eval_range(e->as.else_expr.operand, t);
+            Range res;
+            if (e->as.else_expr.is_panic) {
+                res = opr;
+            } else {
+                Range armr = sema_eval_range(e->as.else_expr.arm, t);
+                res = (opr.known && armr.known)
+                    ? range_make(opr.min < armr.min ? opr.min : armr.min,
+                                 opr.max > armr.max ? opr.max : armr.max)
+                    : range_unknown();
+            }
+            // Both branches yield a value of the result type T, so a checked op's
+            // mathematical overflow (which the arm handles) can't inflate the range
+            // past T — intersect with T's range.
+            extern int type_integer_range(Type *ty, long long *lo, long long *hi);
+            long long tlo, thi;
+            if (e->type && type_integer_range(e->type, &tlo, &thi)) {
+                if (!res.known) return range_make(tlo, thi);
+                long long mn = res.min < tlo ? tlo : res.min;
+                long long mx = res.max > thi ? thi : res.max;
+                return (mn > mx) ? range_make(tlo, thi) : range_make(mn, mx);
+            }
+            return res;
+        }
+        case EXPR_TRY:
+            // The value is a union's payload; its numeric range is not tracked.
+            return range_unknown();
         case EXPR_CALL: {
             // B.2: interprocedural VRA via return_constraints.
             Decl *callee_decl = e->as.call_expr.callee ? e->as.call_expr.callee->decl : NULL;

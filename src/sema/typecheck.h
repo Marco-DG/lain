@@ -2381,6 +2381,17 @@ void sema_infer_expr(Expr *e) {
                                 || aop == TOKEN_ASTERISK_QUESTION);
             if (is_wrap_or_sat && lt && is_integer_type(lt)) {
                 e->type = lt;
+                // Q1: a checked op (`+?`/`-?`/`*?`) must be handled inline by `else`
+                // — a bare one would abort implicitly, and abort is explicit-only.
+                // The enclosing `else` sets checked_ok before this runs.
+                if (sema_walk_phase && !e->checked_ok &&
+                    (aop == TOKEN_PLUS_QUESTION || aop == TOKEN_MINUS_QUESTION || aop == TOKEN_ASTERISK_QUESTION)) {
+                    fprintf(stderr, "[E067] Error Ln %li, Col %li: a checked operator (`+?`/`-?`/`*?`) must be "
+                            "handled with `else` — e.g. `a +? b else panic(\"overflow\")` or `else <fallback>`. "
+                            "A bare checked op has no overflow policy.\n", (long)e->line, (long)e->col);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
             } else if (lt && rt && is_integer_type(lt) && is_integer_type(rt)) {
                 // F3.5 Path-F: +,-,* widen to a type that holds the result (no
                 // op-level overflow); other ops (/, %, &, |, ^, <<, >>) keep the
@@ -2769,6 +2780,15 @@ void sema_infer_expr(Expr *e) {
 
   case EXPR_CAST: {
     sema_infer_expr(e->as.cast_expr.expr);
+    // Q1: a checked cast (`as?`) must be handled inline by `else` — a bare one
+    // aborts implicitly on out-of-range, and abort is explicit-only.
+    if (sema_walk_phase && !e->checked_ok && e->as.cast_expr.kind == CAST_CHECKED) {
+        fprintf(stderr, "[E067] Error Ln %li, Col %li: a checked cast (`as?`) must be handled with "
+                "`else` — e.g. `x as? u8 else panic(\"out of range\")` or `else <fallback>`.\n",
+                (long)e->line, (long)e->col);
+        diagnostic_show_line(e->line, e->col);
+        exit(1);
+    }
     // F-028: basic cast validity — pointer-related casts require `unsafe`.
     Type *src = e->as.cast_expr.expr ? e->as.cast_expr.expr->type : NULL;
     Type *tgt = e->as.cast_expr.target_type;
@@ -2925,12 +2945,21 @@ void sema_infer_expr(Expr *e) {
     // `op else arm` — op must be a union; on a marker, the value is `arm` (a
     // fallback of type T, or `panic`); otherwise the payload T. F3.4.
     Expr *op = e->as.else_expr.operand;
+    if (op) op->checked_ok = true;   // this `else` handles it (if it is a checked op)
     sema_infer_expr(op);
     if (e->as.else_expr.arm) sema_infer_expr(e->as.else_expr.arm);
+    // Q1 inline-checked recovery: `a +? b else X` / `x as? T else X`. The operand
+    // is a checked op (value type T, never a union); on overflow/out-of-range the
+    // value is the arm. Result type is T — no union is materialized.
+    if (expr_is_checked_op(op)) {
+        e->type = op->type;
+        break;
+    }
     Type *pay = op ? union_payload_type(op->type) : NULL;
     if (!pay) {
         fprintf(stderr, "[E066] Error Ln %li, Col %li: `else` requires a `T | markers` union value "
-                "on its left (there is nothing to fall back from otherwise).\n", (long)e->line, (long)e->col);
+                "or a checked op (`+?`/`as?`) on its left (nothing to fall back from otherwise).\n",
+                (long)e->line, (long)e->col);
         diagnostic_show_line(e->line, e->col);
         exit(1);
     }

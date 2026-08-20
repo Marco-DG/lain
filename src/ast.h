@@ -677,6 +677,9 @@ typedef struct Expr {
     Type *type;
     Decl *decl;      // The declaration this expression refers to (if any)
     bool  is_global; // True if this refers to a global symbol
+    bool  checked_ok; // Q1: a checked op (`+?`/`as?`) that IS handled by an
+                      // enclosing `else` — set top-down before inference; a bare
+                      // checked op leaves it false and is rejected (must handle).
 } Expr;
 
 /*──────────────────────────────────────────────────────────────────╗
@@ -1375,6 +1378,20 @@ Expr *expr_deref(Arena *arena, Expr *expr) {
     e->kind = EXPR_DEREF;
     e->as.deref_expr.expr = expr;
     return e;
+}
+
+// A checked-arithmetic (`+?`/`-?`/`*?`) or checked-cast (`as?`) expression.
+// F3.4/Q1: these are recoverable but do NOT materialize a `T | Overflow` union
+// (that would be niche-less, violating zero-cost). They must be handled inline
+// by `else` (fallback/`panic`) at the operator — the value type is T throughout.
+static inline bool expr_is_checked_op(Expr *e) {
+    if (!e) return false;
+    if (e->kind == EXPR_BINARY) {
+        TokenKind o = e->as.binary_expr.op;
+        return o == TOKEN_PLUS_QUESTION || o == TOKEN_MINUS_QUESTION || o == TOKEN_ASTERISK_QUESTION;
+    }
+    if (e->kind == EXPR_CAST) return e->as.cast_expr.kind == CAST_CHECKED;
+    return false;
 }
 
 Expr *expr_try(Arena *arena, Expr *operand) {
