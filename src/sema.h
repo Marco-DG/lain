@@ -2607,8 +2607,10 @@ static void eff_visit_stmt(Stmt *s) {
 // E2: the TRANSITIVE effect set of a function — its direct effects unioned with
 // every callee's effects — memoized on the decl. An `extern func` is trusted pure
 // ({}), an `extern proc` is opaque (IO), and a recursion cycle yields Diverge via
-// the in-progress guard. A `var` (MODE_MUTABLE) parameter is a caller-visible
-// write channel, so it contributes EFFECT_WRITE up front.
+// the in-progress guard. EFFECT_WRITE is reserved for mutation of mutable GLOBAL
+// state (a hidden side effect); mutation of a `var` parameter is NOT an effect —
+// it is declared in the signature, exclusive, and referentially transparent
+// (spec §12), so a `func` that only mutates a var param is pure & total.
 static EffectSet effect_full(Decl *d) {
     if (!d) return 0;
     if (d->kind == DECL_EXTERN_FUNCTION) return 0;             // trusted pure (I-016)
@@ -2620,10 +2622,6 @@ static EffectSet effect_full(Decl *d) {
 
     EffectSet saved = g_eff_acc; Decl *saved_self = g_eff_self;
     g_eff_acc = 0; g_eff_self = d;
-    for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
-        if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.type &&
-            p->decl->as.variable_decl.type->mode == MODE_MUTABLE) { g_eff_acc |= EFFECT_WRITE; break; }
-    }
     eff_visit_list(d->as.function_decl.body);
     EffectSet result = g_eff_acc;
     g_eff_acc = saved; g_eff_self = saved_self;
@@ -3473,8 +3471,21 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (!dl->decl) continue;
         if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
-            effect_full(dl->decl);   // transitive; memoized + stored on the decl
+            EffectSet ef = effect_full(dl->decl);   // transitive; memoized + stored
             if (sema_dump_effects) sema_print_effects(dl->decl);
+            // E3 (consistency net): a `func` is pure (no IO) and total (no
+            // Diverge). If the effect row infers either, its guarantees are
+            // violated — a hole the func checks (E011) should already catch.
+            if (dl->decl->kind == DECL_FUNCTION && (ef & (EFFECT_IO | EFFECT_DIVERGE))) {
+                Id *n = dl->decl->as.function_decl.name;
+                fprintf(stderr, "[E011] Error Ln %li, Col %li: `func` '%.*s' has a forbidden "
+                    "effect (%s) — a func must be pure and total. Declare it `proc`.\n",
+                    (long)dl->decl->line, (long)dl->decl->col,
+                    n ? (int)n->length : 1, n ? n->name : "?",
+                    (ef & EFFECT_IO) ? "IO" : "Diverge");
+                diagnostic_show_line(dl->decl->line, dl->decl->col);
+                exit(1);
+            }
         }
         if (dl->decl->kind == DECL_PROCEDURE) {
             sema_check_proc_eligibility(dl->decl);

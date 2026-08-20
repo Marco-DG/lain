@@ -248,7 +248,8 @@ typedef struct StructDecl {
 // classification, and func/proc + termination — into one artifact. A `func` is
 // exactly a function whose effects avoid IO and Diverge (pure + total).
 typedef enum {
-    EFFECT_WRITE   = 1 << 0,  // writes caller-visible memory (a var param or mutable global)
+    EFFECT_WRITE   = 1 << 0,  // writes mutable GLOBAL state (a hidden side effect; a var-param
+                              //   mutation is declared/exclusive, not an effect)
     EFFECT_DIVERGE = 1 << 1,  // may not terminate: unbounded `while` or recursion
     EFFECT_RAISES  = 1 << 2,  // `panic` (later: propagates an error value)
     EFFECT_IO      = 1 << 3,  // calls a `proc` / `extern proc` (external side effects)
