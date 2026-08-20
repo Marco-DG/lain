@@ -2521,6 +2521,7 @@ static Decl     *g_eff_self;
 static void eff_visit_expr(Expr *e);
 static void eff_visit_stmt(Stmt *s);
 static void eff_visit_list(StmtList *l) { for (; l; l = l->next) eff_visit_stmt(l->stmt); }
+static EffectSet effect_full(Decl *d);   // E2: transitive, memoized
 
 static void eff_visit_expr(Expr *e) {
     if (!e) return;
@@ -2532,9 +2533,11 @@ static void eff_visit_expr(Expr *e) {
                 memcmp(callee->as.identifier_expr.id->name, "panic", 5) == 0) {
                 g_eff_acc |= EFFECT_RAISES;
             } else if (callee && callee->decl) {
-                DeclKind k = callee->decl->kind;
-                if (k == DECL_PROCEDURE || k == DECL_EXTERN_PROCEDURE) g_eff_acc |= EFFECT_IO;
-                if (callee->decl == g_eff_self) g_eff_acc |= EFFECT_DIVERGE;  // self-recursion
+                // E2: a call carries the callee's WHOLE effect set (transitive).
+                // effect_full resolves extern func -> {}, extern proc -> IO,
+                // func/proc -> their inferred effects, and a recursion cycle ->
+                // Diverge (via the in-progress guard).
+                g_eff_acc |= effect_full(callee->decl);
             }
             eff_visit_expr(callee);
             for (ExprList *a = e->as.call_expr.args; a; a = a->next) eff_visit_expr(a->expr);
@@ -2601,10 +2604,20 @@ static void eff_visit_stmt(Stmt *s) {
     }
 }
 
-// Direct effect set of a function's body (E1). A `var` (MODE_MUTABLE) parameter is
-// a caller-visible write channel, so it contributes EFFECT_WRITE up front.
-static EffectSet effect_infer_direct(Decl *d) {
-    if (!d || (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE)) return 0;
+// E2: the TRANSITIVE effect set of a function — its direct effects unioned with
+// every callee's effects — memoized on the decl. An `extern func` is trusted pure
+// ({}), an `extern proc` is opaque (IO), and a recursion cycle yields Diverge via
+// the in-progress guard. A `var` (MODE_MUTABLE) parameter is a caller-visible
+// write channel, so it contributes EFFECT_WRITE up front.
+static EffectSet effect_full(Decl *d) {
+    if (!d) return 0;
+    if (d->kind == DECL_EXTERN_FUNCTION) return 0;             // trusted pure (I-016)
+    if (d->kind == DECL_EXTERN_PROCEDURE) return EFFECT_IO;    // opaque external effect
+    if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE) return 0;
+    if (d->as.function_decl.effects_done) return d->as.function_decl.effects;
+    if (d->as.function_decl.effects_in_progress) return EFFECT_DIVERGE;  // recursion cycle
+    d->as.function_decl.effects_in_progress = true;
+
     EffectSet saved = g_eff_acc; Decl *saved_self = g_eff_self;
     g_eff_acc = 0; g_eff_self = d;
     for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
@@ -2614,6 +2627,10 @@ static EffectSet effect_infer_direct(Decl *d) {
     eff_visit_list(d->as.function_decl.body);
     EffectSet result = g_eff_acc;
     g_eff_acc = saved; g_eff_self = saved_self;
+
+    d->as.function_decl.effects = result;
+    d->as.function_decl.effects_done = true;
+    d->as.function_decl.effects_in_progress = false;
     return result;
 }
 
@@ -3456,7 +3473,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (!dl->decl) continue;
         if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
-            dl->decl->as.function_decl.effects = effect_infer_direct(dl->decl);
+            effect_full(dl->decl);   // transitive; memoized + stored on the decl
             if (sema_dump_effects) sema_print_effects(dl->decl);
         }
         if (dl->decl->kind == DECL_PROCEDURE) {

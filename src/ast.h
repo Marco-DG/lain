@@ -271,7 +271,8 @@ typedef struct {
     bool        is_allocator;   // @allocator: return ptr doesn't alias any existing ptr
     bool        is_noreturn;    // @noreturn:  function never returns (exit, panic, etc.)
     EffectSet   effects;        // F3.3: inferred effect set (0 = pure & total)
-    bool        effects_done;   // memoization guard for transitive inference (E2)
+    bool        effects_done;   // memoization: transitive effects computed
+    bool        effects_in_progress; // cycle guard: on the current inference stack
 } DeclFunction;
 
 typedef struct {
