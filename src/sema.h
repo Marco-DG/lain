@@ -1253,12 +1253,17 @@ static void walk_stmt(Stmt *s) {
             // Infer variable type from initializer if missing
             if (!s->as.var_stmt.type && s->as.var_stmt.expr) {
                 // Strip MODE_MUTABLE from inferred type: `var x = var_param`
-                // gives x the VALUE type, not the reference type.
+                // gives x the VALUE type, not the reference type. Also strip the
+                // on-type refinement: a variable's type is its declared capacity,
+                // not the initializer's interval (`var i = 1` is an i32, not {ν=1}
+                // — else a later `i = 9` would "violate" it). The init value's
+                // range still travels via the range table.
                 Type *inferred = s->as.var_stmt.expr->type;
-                if (inferred && inferred->mode == MODE_MUTABLE) {
+                if (inferred && (inferred->mode == MODE_MUTABLE || inferred->refine.known)) {
                     Type *stripped = arena_push_aligned(sema_arena, Type);
                     *stripped = *inferred;
-                    stripped->mode = MODE_SHARED;
+                    if (stripped->mode == MODE_MUTABLE) stripped->mode = MODE_SHARED;
+                    stripped->refine.known = false;
                     inferred = stripped;
                 }
                 s->as.var_stmt.type = inferred;

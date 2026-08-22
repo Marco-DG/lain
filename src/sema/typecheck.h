@@ -813,14 +813,16 @@ static void check_type_alias_constraints(Type *to, Range r, isize line, isize co
     if (!to || to->kind != TYPE_SIMPLE || !to->base_type) return;
     if ((size_t)to->base_type->length >= 256) return;
 
-    // Interval refinement — the single relation, read from the type's `refine`.
-    Refinement rf = type_refine_interval(to);
-    bool interval_ok = !rf.known || (r.min >= rf.lo && r.max <= rf.hi);
+    // The target's interval CONSTRAINT comes from its refinement-ALIAS definition,
+    // not the raw `refine` field — which now also carries a value's known interval
+    // (a literal's [k,k]) that must NOT be mistaken for a constraint on the target.
+    ExprList *cs = alias_constraints_for(to);
+    Range crange = cs ? range_from_refinement_constraints(cs) : range_unknown();
+    bool interval_ok = !crange.known || (r.min >= crange.min && r.max <= crange.max);
 
     // Disequality residual (`x != k`): not expressible as an interval, so read it
     // from the alias constraints directly. `r` satisfies `!= k` iff it excludes k.
     bool diseq_ok = true;
-    ExprList *cs = alias_constraints_for(to);
     for (ExprList *c = cs; c; c = c->next) {
         if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
         if (c->expr->as.binary_expr.op != TOKEN_BANG_EQUAL) continue;
@@ -2681,9 +2683,19 @@ void sema_infer_expr(Expr *e) {
     break;
   }
 
-  case EXPR_LITERAL:
-    e->type = get_builtin_i32_type();
+  case EXPR_LITERAL: {
+    // Keystone: an integer literal carries its exact value as its type's interval
+    // ({ν:i32 | ν=k}), so a boundary can prove `k <: Digit` by subsumption without
+    // consulting the name-keyed range table. A fresh copy — never mutate the shared
+    // builtin. core_identical still sees plain i32 (refinement stripped).
+    Type *base = get_builtin_i32_type();
+    Type *lt = arena_push_aligned(sema_arena, Type);
+    *lt = *base;
+    lt->refine.known = true;
+    lt->refine.lo = lt->refine.hi = (int64_t)e->as.literal_expr.value;
+    e->type = lt;
     break;
+  }
 
   case EXPR_CHAR:
     e->type = get_builtin_u8_type();
