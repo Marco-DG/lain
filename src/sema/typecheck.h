@@ -643,6 +643,40 @@ static Type *resolve_type_alias(Type *t) {
     return t;
 }
 
+// ── Canonical-type keystone (K1) ─────────────────────────────────────────────
+// The best-known CONSTANT interval for a type — the {lo,hi} of {ν:τ | lo≤ν≤hi}.
+// Reads the on-type refinement / a refinement alias's constraints; failing that,
+// an integer type is bounded by its own full range. ⊤ (known=false) otherwise.
+// This is the single reader `type_subsumes` (and, later, VRA) consult in place of
+// the name-keyed range table.
+static Refinement type_interval(Type *t) {
+    Refinement iv = type_refine_interval(t);         // refine field or alias constraints
+    if (iv.known) return iv;
+    Type *u = t;
+    while (u && u->kind == TYPE_COMPTIME) u = u->element_type;
+    long long lo, hi;
+    if (u && type_integer_range(u, &lo, &hi)) {
+        Refinement r = { true, lo, hi };             // an integer type's own range
+        return r;
+    }
+    return iv;                                        // ⊤ — unknown/unbounded
+}
+
+// Subsumption `sub <: sup`: a value of `sub` is safely usable where `sup` is
+// expected. True iff they share a core (mode/refinement stripped, aliases peeled)
+// AND sub's interval ⊆ sup's. The single relation that (K3) will decide every
+// boundary — replacing the scattered fits-checks. Sound: only accepts when the
+// interval containment is proven.
+static bool type_subsumes(Type *sub, Type *sup) {
+    if (!sub || !sup) return false;
+    if (!core_identical(resolve_type_alias(sub), resolve_type_alias(sup))) return false;
+    Refinement a = type_interval(sub);
+    Refinement b = type_interval(sup);
+    if (!b.known) return true;                        // sup is ⊤ → anything of this core fits
+    if (!a.known) return false;                       // sub unbounded, sup bounded → not proven
+    return a.lo >= b.lo && a.hi <= b.hi;              // [a] ⊆ [b]
+}
+
 // Strict structural type equality (NO widening, NO decay). Used where variance
 // is unsound — the element types behind a pointer/slice/array must match
 // invariantly (so *i32 is NOT interchangeable with *u8).
@@ -1016,6 +1050,22 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     reject_lossy_int_conversion(from, to, r, line, col, ctx, label);
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
     check_type_alias_constraints(to, r, line, col, ctx, label);
+
+    // K2 dual-run (measurement only, behind LAIN_KEYSTONE_DUALRUN — zero behavior
+    // change). Reaching here means the r-based checks ACCEPTED. On a same-core
+    // conversion, does the on-type subsumption relation agree? A "gap" is a case
+    // the name-keyed range accepts but subsumption cannot yet prove — i.e. where
+    // the interval still lives in the range table, not on the value's type. The
+    // count of gaps is the size of the remaining per-value on-type migration (K5).
+    if (getenv("LAIN_KEYSTONE_DUALRUN") &&
+        core_identical(resolve_type_alias(from), resolve_type_alias(to)) &&
+        !type_subsumes(from, to)) {
+        char fb[96], tb[96];
+        type_describe(from, fb, sizeof fb); type_describe(to, tb, sizeof tb);
+        fprintf(stderr, "[keystone-gap] same-core accept but !subsumes: %s -> %s "
+                "(r=[%lld,%lld]) — interval not yet on the type\n",
+                fb, tb, (long long)r.min, (long long)r.max);
+    }
 }
 
 // P2/S3: reject a type-confused comparison (==, !=, <, <=, >, >=). Comparing a
