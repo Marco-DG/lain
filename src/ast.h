@@ -149,6 +149,8 @@ typedef struct Type {
 typedef struct IdList {
     Id*       id;
     IdList*   next;
+    struct DeclList *fields;  // F3.4 payload markers: a union marker `Err{a T, ...}`
+                              // carries these fields (NULL for a nullary marker).
 } IdList;
 
 typedef struct ExprList {

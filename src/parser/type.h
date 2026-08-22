@@ -59,7 +59,28 @@ Type *parse_type(Arena *arena, Parser *parser) {
       Id *m = id(arena, parser->token.length, parser->token.start);
       parser_advance();
       IdList *node = arena_push_aligned(arena, IdList);
-      node->id = m; node->next = NULL;
+      node->id = m; node->next = NULL; node->fields = NULL;
+      // F3.4 payload marker: `Marker(field type, ...)` — data-carrying error.
+      // Parens (not braces) avoid ambiguity with a following block `{`, and match
+      // the construction syntax `Marker(v)`.
+      if (parser_match(TOKEN_L_PAREN)) {
+        parser_advance();  // consume '('
+        DeclList **ft = &node->fields;
+        while (!parser_match(TOKEN_R_PAREN) && !parser_match(TOKEN_EOF)) {
+          parser_skip_eol();
+          if (parser_match(TOKEN_R_PAREN)) break;
+          parser_expect(TOKEN_IDENTIFIER, "Expected marker field name");
+          Id *fname = id(arena, parser->token.length, parser->token.start);
+          parser_advance();
+          Type *ftype = parse_type(arena, parser);
+          *ft = decl_list(arena, decl_variable(arena, fname, ftype));
+          ft = &(*ft)->next;
+          if (parser_match(TOKEN_COMMA)) parser_advance();
+          else if (!parser_match(TOKEN_R_PAREN)) parser_skip_eol();
+        }
+        parser_expect(TOKEN_R_PAREN, "Expected ')' after marker fields");
+        parser_advance();
+      }
       *mt = node; mt = &node->next;
     }
     t = type_union(arena, t, markers);

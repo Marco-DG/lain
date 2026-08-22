@@ -1,0 +1,22 @@
+// F3.4: data-carrying (payload) markers. `Marker(field type, ...)` declares an
+// error that carries data; niche-less unions fall back to a tag-byte struct
+// (K discussion: worst case ties C). Construct with `Marker(v)`, destructure in
+// `case` with `Marker(x)`, and the `else` arm extracts the value payload.
+extern proc libc_printf(fmt *u8, ...) i32
+func f(x i32, fail bool) i32 | ParseErr(line i32) {
+    if fail { return ParseErr(42) }
+    return x
+}
+proc main() i32 {
+    var r i32 | ParseErr(line i32) = f(7, true)
+    case r {
+        ParseErr(line): libc_printf("err line=%d\n", line)
+        else:           libc_printf("ok=%d\n", r)
+    }
+    var r2 i32 | ParseErr(line i32) = f(7, false)
+    case r2 {
+        ParseErr(line): libc_printf("bad\n")
+        else:           libc_printf("ok=%d\n", r2)
+    }
+    return 0
+}

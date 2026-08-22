@@ -650,6 +650,24 @@ void emit_stmt(Stmt *stmt, int depth) {
       EMIT("{\n");
       int __saved_bd = emit_binding_depth;  // restore after this arm's body
 
+      // Tag-byte union `else` arm: shadow the scrutinee identifier with the
+      // extracted payload (`.data.__payload.__v`). A niche union's scrutinee is
+      // already the bare value, so it needs no shadow.
+      if (!c->patterns && !match_use_niche && is_adt && adt_decl &&
+          adt_decl->as.enum_decl.is_union && scrut && scrut->kind == EXPR_IDENTIFIER) {
+          Variant *pv = NULL;
+          for (Variant *v = adt_decl->as.enum_decl.variants; v; v = v->next)
+              if (v->fields && v->name->length == 9 &&
+                  memcmp(v->name->name, "__payload", 9) == 0) { pv = v; break; }
+          if (pv && pv->fields && pv->fields->decl) {
+              char pcty[256];
+              c_name_for_type(pv->fields->decl->as.variable_decl.type, pcty, sizeof pcty);
+              const char *sn = c_name_for_id(scrut->as.identifier_expr.id);
+              emit_indent(depth + 1);
+              EMIT("%s %s = __match%d.data.__payload.__v;\n", pcty, sn, __match_id);
+          }
+      }
+
       // Emit bindings for ADT patterns
       // We assume the first pattern dictates the bindings for the block
       if (is_adt && c->patterns && c->patterns->expr->kind == EXPR_CALL) {

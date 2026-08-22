@@ -205,9 +205,36 @@ static void sema_union_coerce(Expr **slot, Type *target) {
     Decl *U = find_union_enum(target);
     if (!U) return;
     Expr *e = *slot;
+    Type *uty = type_simple(sema_arena, U->as.enum_decl.type_name);
+    // Payload-marker construction: `Marker(args)` where Marker is a fielded variant
+    // of U (not the internal `__payload`) → rewrite to U.Marker(args). Placed before
+    // the guards so a bare-marker call, however it resolved, is normalized to the
+    // canonical constructor (consistent naming with the enum's own definition).
+    if (e->kind == EXPR_CALL && e->as.call_expr.callee &&
+        e->as.call_expr.callee->kind == EXPR_IDENTIFIER) {
+        // The resolver has already mangled the callee to `<module>_<enum>_<Marker>`
+        // (module-prefixed), which mismatches the synthetic enum's unprefixed
+        // constructor def. Match a fielded marker by the `_<Marker>` suffix and
+        // re-build the call as U.Marker(args) — the same expr_member path the
+        // nullary markers use, which emits the unprefixed, def-consistent name.
+        Id *cn = e->as.call_expr.callee->as.identifier_expr.id;
+        for (Variant *v = U->as.enum_decl.variants; v; v = v->next) {
+            if (!v->fields) continue;
+            if (v->name->length == 9 && memcmp(v->name->name, "__payload", 9) == 0) continue;
+            isize vl = v->name->length;
+            if (cn->length > vl && cn->name[cn->length - vl - 1] == '_' &&
+                memcmp(cn->name + cn->length - vl, v->name->name, (size_t)vl) == 0) {
+                Expr *tgt = expr_type(sema_arena, uty); tgt->decl = U;
+                Expr *pw = expr_member(sema_arena, tgt, v->name);
+                Expr *call = expr_call(sema_arena, pw, e->as.call_expr.args);
+                sema_infer_expr(call);
+                *slot = call;
+                return;
+            }
+        }
+    }
     if (e->type && core_identical(e->type, target)) return;   // already exactly this union
     if (e->type && find_union_enum(e->type)) return;          // already SOME union value — don't re-wrap
-    Type *uty = type_simple(sema_arena, U->as.enum_decl.type_name);
     Id *marker = union_match_marker(U, e);
     if (marker) {                                             // bare marker → U.marker
         Expr *tgt = expr_type(sema_arena, uty); tgt->decl = U;   // member handler keys on target->decl

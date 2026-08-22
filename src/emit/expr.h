@@ -1445,6 +1445,23 @@ void emit_expr(Expr *expr, int depth) {
             EMIT(") {\n");
         } else {
             EMIT(first_clause ? "if (1) {\n" : "else {\n");
+            // Tag-byte union: the `else` arm provably covers the value, so shadow
+            // the scrutinee identifier with the extracted payload. (For a niche
+            // union the scrutinee IS the bare value, so no shadow is needed.)
+            if (!xmatch_use_niche && xmatch_adt && xmatch_adt->is_union &&
+                expr->as.match_expr.value->kind == EXPR_IDENTIFIER) {
+                Variant *pv = NULL;
+                for (Variant *v = xmatch_adt->variants; v; v = v->next)
+                    if (v->fields && v->name->length == 9 &&
+                        memcmp(v->name->name, "__payload", 9) == 0) { pv = v; break; }
+                if (pv && pv->fields && pv->fields->decl) {
+                    char pcty[256];
+                    c_name_for_type(pv->fields->decl->as.variable_decl.type, pcty, sizeof pcty);
+                    const char *sn = c_name_for_id(expr->as.match_expr.value->as.identifier_expr.id);
+                    emit_indent(depth + 2);
+                    EMIT("%s %s = __match%d.data.__payload.__v;\n", pcty, sn, __match_id);
+                }
+            }
         }
 
         // Bind ADT payload variables for this arm before the value is emitted:
@@ -1604,7 +1621,7 @@ void emit_expr(Expr *expr, int depth) {
     EMIT("; ");
     if (op_niche) {
         for (Variant *v = opU->as.enum_decl.variants; v; v = v->next) {
-            if (v->fields) continue;   // skip the `__payload` variant
+            if (v->fields) continue;   // skip the `__payload` variant (nullary markers only)
             long long s = niche_sentinel_for_variant(&opU->as.enum_decl, v, &Lop);
             EMIT("if (");
             if (op_ptr) EMIT("(uintptr_t)__try%d == %lldULL", id, s);
@@ -1614,8 +1631,38 @@ void emit_expr(Expr *expr, int depth) {
             if (same_enum) EMIT("return __try%d; } ", id);   // identical layout: same bits
             else           EMIT("return %s_%.*s(); } ", ret_ty, (int)v->name->length, v->name->name);
         }
+        EMIT("(%s)__try%d; })", pay_cty, id);
+    } else if (opU) {
+        // Tag-byte union: markers discriminate on `.tag`; the value is
+        // `.data.__payload.__v`. On propagate, same enum returns the whole struct
+        // (payload included); a different enum re-encodes via its constructor,
+        // forwarding a payload marker's fields.
+        for (Variant *v = opU->as.enum_decl.variants; v; v = v->next) {
+            if (v->fields && v->name->length == 9 &&
+                memcmp(v->name->name, "__payload", 9) == 0) continue;   // skip __payload
+            EMIT("if (__try%d.tag == %s_Tag_%.*s) { ", id, op_cty,
+                 (int)v->name->length, v->name->name);
+            emit_flush_defers(depth);
+            if (same_enum) {
+                EMIT("return __try%d; } ", id);
+            } else if (!v->fields) {
+                EMIT("return %s_%.*s(); } ", ret_ty, (int)v->name->length, v->name->name);
+            } else {
+                EMIT("return %s_%.*s(", ret_ty, (int)v->name->length, v->name->name);
+                bool first = true;
+                for (DeclList *f = v->fields; f; f = f->next) {
+                    if (!first) EMIT(", ");
+                    first = false;
+                    EMIT("__try%d.data.%.*s.%.*s", id, (int)v->name->length, v->name->name,
+                         (int)f->decl->as.variable_decl.name->length, f->decl->as.variable_decl.name->name);
+                }
+                EMIT("); } ");
+            }
+        }
+        EMIT("__try%d.data.__payload.__v; })", id);
+    } else {
+        EMIT("(%s)__try%d; })", pay_cty, id);
     }
-    EMIT("(%s)__try%d; })", pay_cty, id);
     break;
   }
 
@@ -1678,20 +1725,33 @@ void emit_expr(Expr *expr, int depth) {
     emit_expr(op, depth);
     EMIT("; %s __elsev%d; if (", pay_cty, id);
     bool first = true;
-    if (op_niche) for (Variant *v = opU->as.enum_decl.variants; v; v = v->next) {
-        if (v->fields) continue;
-        long long s = niche_sentinel_for_variant(&opU->as.enum_decl, v, &Lop);
-        if (!first) EMIT(" || ");
-        first = false;
-        if (op_ptr) EMIT("(uintptr_t)__else%d == %lldULL", id, s);
-        else        EMIT("__else%d == (%s)%lldLL", id, op_cty, s);
+    if (op_niche) {
+        for (Variant *v = opU->as.enum_decl.variants; v; v = v->next) {
+            if (v->fields) continue;
+            long long s = niche_sentinel_for_variant(&opU->as.enum_decl, v, &Lop);
+            if (!first) EMIT(" || ");
+            first = false;
+            if (op_ptr) EMIT("(uintptr_t)__else%d == %lldULL", id, s);
+            else        EMIT("__else%d == (%s)%lldLL", id, op_cty, s);
+        }
+    } else if (opU) {   // tag-byte union: any non-`__payload` tag is a marker
+        for (Variant *v = opU->as.enum_decl.variants; v; v = v->next) {
+            if (v->fields && v->name->length == 9 &&
+                memcmp(v->name->name, "__payload", 9) == 0) continue;
+            if (!first) EMIT(" || ");
+            first = false;
+            EMIT("__else%d.tag == %s_Tag_%.*s", id, op_cty, (int)v->name->length, v->name->name);
+        }
     }
     if (first) EMIT("0");   // markerless union (unreachable) → never the fallback
     EMIT(") { ");
     if (arm_ret)       { emit_flush_defers(depth); EMIT("return "); emit_expr(arm, depth); EMIT("; "); }
     else if (is_panic) { emit_expr(arm, depth); EMIT("; "); }
     else               { EMIT("__elsev%d = ", id); emit_expr(arm, depth); EMIT("; "); }
-    EMIT("} else { __elsev%d = (%s)__else%d; } __elsev%d; })", id, pay_cty, id, id);
+    EMIT("} else { __elsev%d = ", id);
+    if (op_niche || !opU) EMIT("(%s)__else%d", pay_cty, id);
+    else                  EMIT("__else%d.data.__payload.__v", id);   // tag-byte payload
+    EMIT("; } __elsev%d; })", id);
     break;
   }
 

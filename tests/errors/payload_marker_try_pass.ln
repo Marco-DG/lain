@@ -1,0 +1,21 @@
+// F3.4: `try` propagates a payload marker (with its data) through a tag-byte
+// union; `else return` remaps it. Mixed nullary + payload markers coexist.
+extern proc libc_printf(fmt *u8, ...) i32
+func step(x i32, mode i32) i32 | NotFound | ParseErr(line i32) {
+    if mode == 1 { return NotFound }
+    if mode == 2 { return ParseErr(99) }
+    return x
+}
+func chain(x i32, mode i32) i32 | NotFound | ParseErr(line i32) {
+    v = try step(x, mode)
+    return v
+}
+proc main() i32 {
+    var r i32 | NotFound | ParseErr(line i32) = chain(5, 2)
+    case r {
+        NotFound:       libc_printf("nf\n")
+        ParseErr(line): libc_printf("line=%d\n", line)
+        else:           libc_printf("val=%d\n", r)
+    }
+    return 0
+}

@@ -343,9 +343,17 @@ static Type *union_lower(Type *u) {
     char nb[256]; int off = 0;
     char vb[128]; mono_mangle_type(value, vb, sizeof vb);
     off += snprintf(nb + off, sizeof nb - (size_t)off, "__U_%s", vb);
-    int nmark = 0;
+    int nmark = 0; bool has_payload_marker = false;
     for (IdList *m = u->union_markers; m; m = m->next) {
         off += snprintf(nb + off, sizeof nb - (size_t)off, "_%.*s", (int)m->id->length, m->id->name);
+        // Payload markers mangle their field types too, so `E{line u32}` and
+        // `E{col u16}` are distinct unions (no dedup collision).
+        for (DeclList *f = m->fields; f; f = f->next) {
+            if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
+            has_payload_marker = true;
+            char fb[128]; mono_mangle_type(f->decl->as.variable_decl.type, fb, sizeof fb);
+            off += snprintf(nb + off, sizeof nb - (size_t)off, "_%s", fb);
+        }
         nmark++;
     }
     Symbol *ex = sema_lookup(nb);
@@ -366,7 +374,7 @@ static Type *union_lower(Type *u) {
     Variant *tail = pv;
     for (IdList *m = u->union_markers; m; m = m->next) {
         Variant *mv = arena_push_aligned(sema_arena, Variant);
-        mv->name = m->id; mv->fields = NULL; mv->next = NULL;
+        mv->name = m->id; mv->fields = m->fields; mv->next = NULL;   // payload fields (or NULL)
         tail->next = mv; tail = mv;
     }
 
@@ -383,8 +391,11 @@ static Type *union_lower(Type *u) {
     DeclList *tl = sema_decls; while (tl && tl->next) tl = tl->next;
     if (tl) tl->next = node; else sema_decls = node;
 
-    // Zero-cost mandatory: the markers must fit the value's niche, else reject.
-    if (!niche_enum_is_zero_cost(&ed->as.enum_decl)) {
+    // Zero-cost: nullary-marker unions are niche-mandatory (E064 if they don't
+    // fit — the naked-niche promise for the simple case). A PAYLOAD marker carries
+    // data that must be stored somewhere, so a payload-carrying union may fall back
+    // to a tag-byte struct when the niche overlay doesn't fit (worst case ties C).
+    if (!has_payload_marker && !niche_enum_is_zero_cost(&ed->as.enum_decl)) {
         char vd[128]; type_describe(value, vd, sizeof vd);
         fprintf(stderr, "[E064] Error: the union `%s | ...` cannot be zero-cost — '%s' has no "
                 "spare bit-patterns for its %d marker(s). Give the value type niche room "
