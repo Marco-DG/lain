@@ -677,6 +677,26 @@ static bool type_subsumes(Type *sub, Type *sup) {
     return a.lo >= b.lo && a.hi <= b.hi;              // [a] ⊆ [b]
 }
 
+// value_subsumes: the boundary form of subsumption. The SOURCE value's interval is
+// the tighter of its type's on-type refinement and its VRA range `r` (the fact the
+// name-keyed table currently supplies). Same core AND that interval ⊆ the target's.
+// True ⟹ the value provably fits `to` — the scattered numeric same-core checks
+// (check_value_fits / reject_lossy / reject_float_int / reject_incompatible) would
+// all accept. (The disequality residual `!= k` is NOT an interval — the caller
+// still discharges it separately.)
+static bool value_subsumes(Type *from, Range r, Type *to) {
+    if (!from || !to) return false;
+    if (!core_identical(resolve_type_alias(from), resolve_type_alias(to))) return false;
+    // The target's CONSTRAINT comes from type_integer_range — an alias's bounds, or
+    // a plain type's full range — NEVER a stray `refine` (which may be a leaked
+    // value-interval, not a constraint the target imposes). The authoritative
+    // SOURCE interval is the VRA range `r` (the fact the name table supplies today).
+    long long tlo, thi;
+    if (!type_integer_range(to, &tlo, &thi)) return true;   // target has no integer bound → ⊤
+    if (!r.known) return false;                             // value range unknown → not proven
+    return r.min >= tlo && r.max <= thi;                    // r ⊆ target constraint
+}
+
 // Strict structural type equality (NO widening, NO decay). Used where variance
 // is unsound — the element types behind a pointer/slice/array must match
 // invariantly (so *i32 is NOT interchangeable with *u8).
@@ -1047,6 +1067,17 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
             diagnostic_show_line(line, col); exit(1);
         }
     }
+    // K3 flip: the same-core numeric boundary is decided by ONE relation. When the
+    // value's range provably fits the target's constraint (same core, r ⊆ target),
+    // the scattered same-core checks (fits / lossy / float-int / incompatible) would
+    // all accept — so route through subsumption and only discharge the disequality
+    // residual (`!= k`, not an interval). Behavior-preserving: a false verdict (incl.
+    // cross-core, unknown range) falls through to the full checks below.
+    if (value_subsumes(from, r, to)) {
+        check_type_alias_constraints(to, r, line, col, ctx, label);
+        return;
+    }
+
     check_value_fits_type(r, to, line, col, ctx, label);
     reject_float_int_mismatch(from, to, line, col, ctx, label);
     reject_lossy_int_conversion(from, to, r, line, col, ctx, label);
@@ -1061,11 +1092,11 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     // count of gaps is the size of the remaining per-value on-type migration (K5).
     if (getenv("LAIN_KEYSTONE_DUALRUN") &&
         core_identical(resolve_type_alias(from), resolve_type_alias(to)) &&
-        !type_subsumes(from, to)) {
+        !value_subsumes(from, r, to)) {
         char fb[96], tb[96];
         type_describe(from, fb, sizeof fb); type_describe(to, tb, sizeof tb);
-        fprintf(stderr, "[keystone-gap] same-core accept but !subsumes: %s -> %s "
-                "(r=[%lld,%lld]) — interval not yet on the type\n",
+        fprintf(stderr, "[keystone-fallthrough] %s -> %s (r=[%lld,%lld]) — not proven by "
+                "subsumption (unknown range / permissive accept), handled by fallback checks\n",
                 fb, tb, (long long)r.min, (long long)r.max);
     }
 }
