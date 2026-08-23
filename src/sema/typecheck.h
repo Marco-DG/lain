@@ -677,30 +677,22 @@ static bool type_subsumes(Type *sub, Type *sup) {
     return a.lo >= b.lo && a.hi <= b.hi;              // [a] ⊆ [b]
 }
 
-// value_subsumes: the boundary form of subsumption. The SOURCE value's interval is
-// the tighter of its type's on-type refinement and its VRA range `r` (the fact the
-// name-keyed table currently supplies). Same core AND that interval ⊆ the target's.
-// True ⟹ the value provably fits `to` — the scattered numeric same-core checks
-// (check_value_fits / reject_lossy / reject_float_int / reject_incompatible) would
-// all accept. (The disequality residual `!= k` is NOT an interval — the caller
-// still discharges it separately.)
-static bool value_subsumes(Type *from, Range r, Type *to) {
+// The unified numeric-boundary relation: integer→integer, does the value provably
+// fit the target? Source interval = the SOURCE type's own constraint (alias bounds
+// / range, sound since enforced) tightened by the VRA range `r`; target constraint
+// = type_integer_range(to) (never a stray refine). No core requirement — this
+// decides SAME-core refinement narrowing AND CROSS-core narrowing/widening with the
+// one relation. Non-integer either side ⟹ false (falls through to the type/float/
+// pointer/aggregate checks). `r ⊆ target` is exactly what the scattered numeric
+// checks verify, so a true verdict is behavior-preserving.
+static bool value_fits(Type *from, Range r, Type *to) {
     if (!from || !to) return false;
-    if (!core_identical(resolve_type_alias(from), resolve_type_alias(to))) return false;
-    // Target CONSTRAINT: type_integer_range — an alias's bounds or a plain type's
-    // full range — NEVER a stray `refine` (a leaked value-interval is not a target
-    // constraint). Source interval: the SOURCE's OWN type constraint (its alias
-    // bounds / range, always sound since enforced) tightened by the VRA range `r`.
-    // So a refinement-alias-typed value proves its boundary FROM THE TYPE even when
-    // the name-keyed range is unknown — a step off the name table.
-    long long tlo, thi;
-    if (!type_integer_range(to, &tlo, &thi)) return true;   // target has no integer bound → ⊤
-    long long slo = -9223372036854775807LL - 1, shi = 9223372036854775807LL;
-    long long flo, fhi;
-    if (type_integer_range(from, &flo, &fhi)) { slo = flo; shi = fhi; }
+    long long tlo, thi, flo, fhi;
+    if (!type_integer_range(to,   &tlo, &thi)) return false;   // target not an integer type
+    if (!type_integer_range(from, &flo, &fhi)) return false;   // source not an integer type
+    long long slo = flo, shi = fhi;
     if (r.known) { if (r.min > slo) slo = r.min; if (r.max < shi) shi = r.max; }
-    if (slo == -9223372036854775807LL - 1 && shi == 9223372036854775807LL) return false;
-    return slo >= tlo && shi <= thi;                        // source interval ⊆ target constraint
+    return slo >= tlo && shi <= thi;                           // source interval ⊆ target range
 }
 
 // Strict structural type equality (NO widening, NO decay). Used where variance
@@ -1073,13 +1065,14 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
             diagnostic_show_line(line, col); exit(1);
         }
     }
-    // K3 flip: the same-core numeric boundary is decided by ONE relation. When the
-    // value's range provably fits the target's constraint (same core, r ⊆ target),
-    // the scattered same-core checks (fits / lossy / float-int / incompatible) would
-    // all accept — so route through subsumption and only discharge the disequality
-    // residual (`!= k`, not an interval). Behavior-preserving: a false verdict (incl.
-    // cross-core, unknown range) falls through to the full checks below.
-    if (value_subsumes(from, r, to)) {
+    // Keystone flip: EVERY integer numeric boundary — same-core refinement narrowing
+    // AND cross-core narrowing/widening — is decided by ONE relation. When the value
+    // provably fits the target (source interval ⊆ target range), the scattered checks
+    // (fits / lossy / float-int / incompatible) would all accept, so route through
+    // `value_fits` and only discharge the disequality residual (`!= k`, not an
+    // interval). Behavior-preserving: a false verdict (non-integer, unknown/unfitting
+    // range) falls through to the full checks below.
+    if (value_fits(from, r, to)) {
         check_type_alias_constraints(to, r, line, col, ctx, label);
         return;
     }
@@ -1090,20 +1083,21 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
     check_type_alias_constraints(to, r, line, col, ctx, label);
 
-    // K2 dual-run (measurement only, behind LAIN_KEYSTONE_DUALRUN — zero behavior
-    // change). Reaching here means the r-based checks ACCEPTED. On a same-core
-    // conversion, does the on-type subsumption relation agree? A "gap" is a case
-    // the name-keyed range accepts but subsumption cannot yet prove — i.e. where
-    // the interval still lives in the range table, not on the value's type. The
-    // count of gaps is the size of the remaining per-value on-type migration (K5).
-    if (getenv("LAIN_KEYSTONE_DUALRUN") &&
-        core_identical(resolve_type_alias(from), resolve_type_alias(to)) &&
-        !value_subsumes(from, r, to)) {
-        char fb[96], tb[96];
-        type_describe(from, fb, sizeof fb); type_describe(to, tb, sizeof tb);
-        fprintf(stderr, "[keystone-fallthrough] %s -> %s (r=[%lld,%lld]) — not proven by "
-                "subsumption (unknown range / permissive accept), handled by fallback checks\n",
-                fb, tb, (long long)r.min, (long long)r.max);
+    // Dual-run (measurement only, behind LAIN_KEYSTONE_DUALRUN — zero behavior
+    // change). Reaching here means the scattered checks ACCEPTED an integer→integer
+    // conversion that `value_fits` could NOT prove — a fall-through where the value's
+    // range is unknown (a permissive accept) rather than proven. The count is the
+    // residual reliance on the name table's permissiveness (the type-based-VRA gap).
+    if (getenv("LAIN_KEYSTONE_DUALRUN")) {
+        long long a, b, c, d;
+        if (type_integer_range(from, &a, &b) && type_integer_range(to, &c, &d) &&
+            !value_fits(from, r, to)) {
+            char fb[96], tb[96];
+            type_describe(from, fb, sizeof fb); type_describe(to, tb, sizeof tb);
+            fprintf(stderr, "[keystone-fallthrough] %s -> %s (r=[%lld,%lld]) — accepted "
+                    "permissively (range unknown), not proven by value_fits\n",
+                    fb, tb, (long long)r.min, (long long)r.max);
+        }
     }
 }
 
