@@ -2479,9 +2479,25 @@ void sema_infer_expr(Expr *e) {
                 // F3.5 Path-F: +,-,* widen to a type that holds the result (no
                 // op-level overflow); other ops (/, %, &, |, ^, <<, >>) keep the
                 // max-operand rule (their result already fits the wider operand).
-                if (aop == TOKEN_PLUS || aop == TOKEN_MINUS || aop == TOKEN_ASTERISK)
+                if (aop == TOKEN_PLUS || aop == TOKEN_MINUS || aop == TOKEN_ASTERISK) {
                     e->type = path_f_result_type(lt, rt, aop);
-                else
+                    // Keystone rung 2: propagate the interval through +,-,* by
+                    // interval arithmetic on the operands' intervals, so the result
+                    // carries a tight on-type range for the next boundary. The
+                    // result type is fresh (Path-F), so setting refine is safe.
+                    Refinement li = type_interval(lt), ri = type_interval(rt);
+                    if (li.known && ri.known && e->type && !e->type->refine.known) {
+                        Range a = range_make(li.lo, li.hi), b = range_make(ri.lo, ri.hi);
+                        Range res = (aop == TOKEN_PLUS)  ? range_add(a, b)
+                                  : (aop == TOKEN_MINUS) ? range_sub(a, b)
+                                                         : range_mul(a, b);
+                        if (res.known) {
+                            e->type->refine.known = true;
+                            e->type->refine.lo = res.min;
+                            e->type->refine.hi = res.max;
+                        }
+                    }
+                } else
                     e->type = wider_integer_type(lt, rt);
             } else {
                 bool l_flt = lt && is_float_type(lt), r_flt = rt && is_float_type(rt);
