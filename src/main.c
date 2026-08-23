@@ -16,6 +16,7 @@
 #include "args.h"
 #include "target.h"
 #include "sema.h"
+#include "emit_llvm.h"
 
 void expr_print_ast(Expr *expr, int depth);
 void stmt_print_ast(Stmt *stmt, int depth);
@@ -111,7 +112,12 @@ int main(int argc, char **argv) {
     // sema = resolve identifiers → you’d call:
     sema_resolve_module(program, modname, &_sema_arena);
 
-    // then code-gen:
+    // then code-gen: proof-carrying LLVM-IR (Phase 1 seam) or the portable C target.
+    if (args.emit_llvm) {
+        emit_llvm(program, args.output_file);
+        sema_destroy();
+        return 0;
+    }
     emit_source_filename = args.no_line_directives ? NULL : args.filename;
     emit(program, 0, args.output_file);
 

@@ -18,6 +18,7 @@ typedef struct
     bool        no_line_directives; // --no-line-directives: suppress #line in emitted C
     bool        dump_niche;         // --dump-niche: print enum niche layout decisions
     bool        dump_effects;       // --dump-effects: print each function's inferred effect row
+    bool        emit_llvm;          // --emit-llvm: lower to proof-carrying LLVM-IR (Phase 1 seam)
     const char* target_triple;      // --target=<triple>, NULL = host
 } Args;
 
@@ -56,6 +57,8 @@ static Args args_parse(int argc, char** argv)
             args.dump_niche = true;
         } else if (strcmp(argv[i], "--dump-effects") == 0) {
             args.dump_effects = true;
+        } else if (strcmp(argv[i], "--emit-llvm") == 0) {
+            args.emit_llvm = true;
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             args.output_file = argv[++i];
         } else if (strncmp(argv[i], "--target=", 9) == 0) {
