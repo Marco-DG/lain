@@ -1308,6 +1308,22 @@ void sema_infer_expr(Expr *e) {
             exit(1);
         }
     }
+    // Keystone rung 1: a use of a variable/param whose declared constraints have a
+    // CONSTANT bound (`x i32 < 9`, `>= 0 and <= 100`) carries that interval on its
+    // type, so a boundary proves `x <: Digit` by subsumption. Relational bounds
+    // (`x < k`) yield no constant interval and stay in the range table. Sound: the
+    // declared constraint is enforced at every assignment, so it always holds. A
+    // fresh copy — never mutate the decl's stored type.
+    if (e->decl && e->decl->kind == DECL_VARIABLE && e->type && !e->type->refine.known &&
+        e->decl->as.variable_decl.constraints) {
+        Range cr = range_from_refinement_constraints(e->decl->as.variable_decl.constraints);
+        if (cr.known) {
+            Type *rt = arena_push_aligned(sema_arena, Type);
+            *rt = *e->type;
+            rt->refine.known = true; rt->refine.lo = cr.min; rt->refine.hi = cr.max;
+            e->type = rt;
+        }
+    }
     break;
 
 // ...
