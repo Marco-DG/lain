@@ -1,0 +1,7 @@
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var big i32 = 999
+    var n u8 = big as? u8 else 255
+    libc_printf("%d\n", n as i32)
+    return 0
+}

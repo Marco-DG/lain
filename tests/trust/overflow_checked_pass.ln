@@ -1,0 +1,8 @@
+// TRUST: a +? b else fallback — on overflow the recovery runs (no UB, no trap).
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var a i32 = 2000000000
+    var s i32 = a +? a else 0
+    libc_printf("%d\n", s)
+    return 0
+}

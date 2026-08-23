@@ -1,0 +1,7 @@
+// TRUST: fixed-array element reads at both edges (index 0 and len-1).
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var a = [10, 20, 30, 40, 50]
+    libc_printf("%d %d\n", a[0], a[4])
+    return 0
+}

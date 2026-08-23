@@ -1,0 +1,8 @@
+extern proc libc_printf(fmt *u8, ...) i32
+func count(data u8[:0]) i32 {
+    return data.len as i32
+}
+proc main() i32 {
+    libc_printf("%d\n", count("hello"))
+    return 0
+}

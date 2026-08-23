@@ -1,0 +1,17 @@
+extern proc libc_printf(fmt *u8, ...) i32
+type Color {
+    Red
+    Green
+    Blue
+}
+func name(c Color) i32 {
+    return case c {
+        Red:   1
+        Green: 2
+        Blue:  3
+    }
+}
+proc main() i32 {
+    libc_printf("%d\n", name(Color.Green))
+    return 0
+}

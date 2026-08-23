@@ -1,0 +1,13 @@
+// TRUST: buf[i % 2] — literal divisor (no div-by-zero), result [0,1] < len 2.
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var buf = [65, 66]
+    var acc = 0
+    var i = 0
+    while i < 5 decreasing 5 - i {
+        acc = acc + buf[i % 2]
+        i += 1
+    }
+    libc_printf("%d\n", acc)
+    return 0
+}

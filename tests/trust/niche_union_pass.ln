@@ -1,0 +1,14 @@
+// TRUST: niche-optimized `*u8 | NotFound` round-trips the value bit-exactly.
+extern proc libc_printf(fmt *u8, ...) i32
+func pick(p *u8, miss bool) *u8 | NotFound {
+    if miss { return NotFound }
+    return p
+}
+proc main() i32 {
+    var r *u8 | NotFound = pick("OK", false)
+    case r {
+        NotFound: libc_printf("miss\n")
+        else:     libc_printf("%s\n", r)
+    }
+    return 0
+}

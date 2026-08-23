@@ -1,0 +1,9 @@
+extern proc libc_printf(fmt *u8, ...) i32
+func get(a i32[], i usize < a.len) i32 {
+    return a[i]
+}
+proc main() i32 {
+    var arr = [10, 20, 30]
+    libc_printf("%d\n", get(arr, 2))
+    return 0
+}

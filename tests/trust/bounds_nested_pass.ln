@@ -1,0 +1,16 @@
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var m = [1, 2, 3, 4, 5, 6]
+    var s = 0
+    var r = 0
+    while r < 2 decreasing 2 - r {
+        var c = 0
+        while c < 3 decreasing 3 - c {
+            s = s + m[r * 3 + c]
+            c += 1
+        }
+        r += 1
+    }
+    libc_printf("%d\n", s)
+    return 0
+}

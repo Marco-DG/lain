@@ -1,0 +1,14 @@
+// TRUST: data-carrying marker round-trips its payload through the tag-byte union.
+extern proc libc_printf(fmt *u8, ...) i32
+func parse(x i32, bad bool) i32 | ParseErr(line i32) {
+    if bad { return ParseErr(1234) }
+    return x
+}
+proc main() i32 {
+    var r i32 | ParseErr(line i32) = parse(7, true)
+    case r {
+        ParseErr(line): libc_printf("%d\n", line)
+        else:           libc_printf("ok\n")
+    }
+    return 0
+}

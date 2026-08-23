@@ -1,0 +1,14 @@
+type Small = i32 >= 0 and <= 9
+extern proc libc_printf(fmt *u8, ...) i32
+func classify(n Small, miss bool) Small | TooBig {
+    if miss { return TooBig }
+    return n
+}
+proc main() i32 {
+    var r Small | TooBig = classify(7, false)
+    case r {
+        TooBig: libc_printf("big\n")
+        else:   libc_printf("%d\n", r)
+    }
+    return 0
+}

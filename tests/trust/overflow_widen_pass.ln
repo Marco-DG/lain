@@ -1,0 +1,10 @@
+// TRUST: a*b widens (i32*i32 computed wide) so no signed-overflow UB; result
+// narrowed only where proven. UBSan would trap a silent i32 overflow.
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var a i32 = 100000
+    var b i32 = 20000
+    var p i64 = a * b
+    libc_printf("%lld\n", p)
+    return 0
+}

@@ -976,7 +976,17 @@ void emit_expr(Expr *expr, int depth) {
                    // it in a compound-literal array, which is an lvalue with
                    // block lifetime and decays to the required pointer.
                    ExprKind k = arg->expr->kind;
-                   bool is_lvalue = (k == EXPR_IDENTIFIER || k == EXPR_MEMBER || k == EXPR_INDEX);
+                   // A `Type.Variant` member access is a CONSTRUCTOR call (an
+                   // rvalue that emits `Type_Variant(...)`), not a field lvalue —
+                   // `&` of it is illegal C. Route it through the rvalue path below.
+                   bool ctor_member = false;
+                   if (k == EXPR_MEMBER) {
+                       Expr *mt = arg->expr->as.member_expr.target;
+                       if (mt && (mt->kind == EXPR_TYPE ||
+                                  (mt->decl && (mt->decl->kind == DECL_ENUM || mt->decl->kind == DECL_STRUCT))))
+                           ctor_member = true;
+                   }
+                   bool is_lvalue = (k == EXPR_IDENTIFIER || (k == EXPR_MEMBER && !ctor_member) || k == EXPR_INDEX);
                    // A non-primitive shared/mutable PARAM (fixed array, struct) is
                    // ALREADY a pointer in C (`const T*`). Taking its address again
                    // would double-pointer it — forward the identifier as-is.

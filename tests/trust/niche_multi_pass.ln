@@ -1,0 +1,15 @@
+extern proc libc_printf(fmt *u8, ...) i32
+func lookup(p *u8, k i32) *u8 | NotFound | Denied {
+    if k == 1 { return NotFound }
+    if k == 2 { return Denied }
+    return p
+}
+proc main() i32 {
+    var r *u8 | NotFound | Denied = lookup("V", 2)
+    case r {
+        NotFound: libc_printf("nf\n")
+        Denied:   libc_printf("denied\n")
+        else:     libc_printf("%s\n", r)
+    }
+    return 0
+}

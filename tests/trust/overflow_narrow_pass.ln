@@ -1,0 +1,8 @@
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var a u16 = 60000
+    var b u16 = 60000
+    var p u32 = a * b
+    libc_printf("%u\n", p)
+    return 0
+}
