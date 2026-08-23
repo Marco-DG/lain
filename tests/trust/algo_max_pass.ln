@@ -1,0 +1,16 @@
+// TRUST: a real mini-algorithm exercising bounds + comparison + accumulation.
+extern proc libc_printf(fmt *u8, ...) i32
+func find_max(data u8[:0]) i32 {
+    var mx = 0
+    var i = 0
+    while i in data decreasing data.len - i {
+        var v = data[i] as i32
+        if v > mx { mx = v }
+        i += 1
+    }
+    return mx
+}
+proc main() i32 {
+    libc_printf("%d\n", find_max("hello"))
+    return 0
+}

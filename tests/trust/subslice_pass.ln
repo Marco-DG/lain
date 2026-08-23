@@ -1,0 +1,9 @@
+// TRUST: sub-slice bounds/offset codegen (historical bug area). s = xs[1..4]
+// must address xs[1..3]; s[2] reading past would be an ASan OOB.
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var xs = [10, 20, 30, 40, 50]
+    var s = xs[1..4]
+    libc_printf("%d %d\n", s[0], s[2])
+    return 0
+}

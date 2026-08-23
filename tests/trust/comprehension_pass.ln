@@ -1,0 +1,7 @@
+// TRUST: array comprehension fills exactly n elements; edge reads in-bounds.
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var a u8[8] = [i as u8 for i in 0..8]
+    libc_printf("%d %d\n", a[0] as i32, a[7] as i32)
+    return 0
+}
