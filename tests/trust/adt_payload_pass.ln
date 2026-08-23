@@ -1,0 +1,13 @@
+extern proc libc_printf(fmt *u8, ...) i32
+type Shape {
+    Circle { radius i32 }
+    Rectangle { width i32, height i32 }
+}
+proc main() i32 {
+    var r = Shape.Rectangle(6, 7)
+    case r {
+        Circle(rad):     libc_printf("c %d\n", rad)
+        Rectangle(w, h): libc_printf("r %d\n", w * h)
+    }
+    return 0
+}

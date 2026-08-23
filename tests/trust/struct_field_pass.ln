@@ -1,0 +1,13 @@
+extern proc libc_printf(fmt *u8, ...) i32
+type Point {
+    x i32
+    y i32
+}
+proc main() i32 {
+    var p Point
+    p.x = 3
+    p.y = 4
+    p.x = p.x + 10
+    libc_printf("%d %d\n", p.x, p.y)
+    return 0
+}
