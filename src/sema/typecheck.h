@@ -687,14 +687,20 @@ static bool type_subsumes(Type *sub, Type *sup) {
 static bool value_subsumes(Type *from, Range r, Type *to) {
     if (!from || !to) return false;
     if (!core_identical(resolve_type_alias(from), resolve_type_alias(to))) return false;
-    // The target's CONSTRAINT comes from type_integer_range — an alias's bounds, or
-    // a plain type's full range — NEVER a stray `refine` (which may be a leaked
-    // value-interval, not a constraint the target imposes). The authoritative
-    // SOURCE interval is the VRA range `r` (the fact the name table supplies today).
+    // Target CONSTRAINT: type_integer_range — an alias's bounds or a plain type's
+    // full range — NEVER a stray `refine` (a leaked value-interval is not a target
+    // constraint). Source interval: the SOURCE's OWN type constraint (its alias
+    // bounds / range, always sound since enforced) tightened by the VRA range `r`.
+    // So a refinement-alias-typed value proves its boundary FROM THE TYPE even when
+    // the name-keyed range is unknown — a step off the name table.
     long long tlo, thi;
     if (!type_integer_range(to, &tlo, &thi)) return true;   // target has no integer bound → ⊤
-    if (!r.known) return false;                             // value range unknown → not proven
-    return r.min >= tlo && r.max <= thi;                    // r ⊆ target constraint
+    long long slo = -9223372036854775807LL - 1, shi = 9223372036854775807LL;
+    long long flo, fhi;
+    if (type_integer_range(from, &flo, &fhi)) { slo = flo; shi = fhi; }
+    if (r.known) { if (r.min > slo) slo = r.min; if (r.max < shi) shi = r.max; }
+    if (slo == -9223372036854775807LL - 1 && shi == 9223372036854775807LL) return false;
+    return slo >= tlo && shi <= thi;                        // source interval ⊆ target constraint
 }
 
 // Strict structural type equality (NO widening, NO decay). Used where variance
