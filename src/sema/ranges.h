@@ -443,6 +443,15 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                     }
                 }
             }
+            // Known-length string/slice literal: `.len` is the compile-time count
+            // stored in array_len (a string literal is a sentinel slice of known
+            // length). Lets `while i < s.len { s[i] }` prove the index in bounds.
+            if (mem->length == 3 && strncmp(mem->name, "len", 3) == 0 && tgt->type) {
+                Type *tt = tgt->type;
+                while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
+                if (tt && tt->kind == TYPE_SLICE && tt->array_len > 0)
+                    return range_const(tt->array_len);
+            }
             // Refined struct field read: `b.v` where field v has an invariant
             // (`v i32 >= 0 and <= 3`). Seed its declared range so use sites can use
             // it (the invariant was previously only checked at construction).

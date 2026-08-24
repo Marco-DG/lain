@@ -928,7 +928,11 @@ void emit_stmt(Stmt *stmt, int depth) {
         } else {
             emit_expr(lhs, depth);
             EMIT(" = ");
-            emit_expr(rhs, depth);
+            // `s = "…"` where s is a slice: lower the string literal to a terminated
+            // Slice compound literal, not a bare `char *` (gcc rejects the mismatch).
+            if (!(rhs->kind == EXPR_STRING && rhs->type &&
+                  rhs->type->kind == TYPE_SLICE && emit_slice_coercion(rhs->type, rhs, depth)))
+                emit_expr(rhs, depth);
             EMIT(";\n");
         }
       }
