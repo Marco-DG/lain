@@ -1307,6 +1307,78 @@ static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col) {
     }
 }
 
+// ── Call-site aliasing check (soundness of emitted `restrict`) ───────────────
+// A reference parameter (array/slice/pointer) is lowered to C with `restrict`,
+// which promises it does not alias. That promise is UNSOUND unless enforced at the
+// call site: if the same array is passed to two parameters and at least one MUTATES
+// it, a store through one restrict pointer aliases the other → undefined behaviour
+// (and, under -O3, a real miscompile). This reinstates the exclusive-borrow the
+// codegen assumes: reject such calls. (Two read-only references may alias — no
+// write, no hazard — e.g. `dot(a, a)`.)
+static bool sema_expr_rooted_at(Expr *e, Id *pn) {
+    while (e) {
+        if (e->kind == EXPR_IDENTIFIER)
+            return e->as.identifier_expr.id && e->as.identifier_expr.id->length == pn->length &&
+                   memcmp(e->as.identifier_expr.id->name, pn->name, (size_t)pn->length) == 0;
+        else if (e->kind == EXPR_INDEX)  e = e->as.index_expr.target;
+        else if (e->kind == EXPR_MEMBER) e = e->as.member_expr.target;
+        else if (e->kind == EXPR_DEREF)  e = e->as.deref_expr.expr;
+        else return false;
+    }
+    return false;
+}
+static bool sema_body_writes_id(StmtList *body, Id *pn) {
+    for (StmtList *b = body; b; b = b->next) {
+        Stmt *s = b->stmt; if (!s) continue;
+        switch (s->kind) {
+            case STMT_ASSIGN: if (sema_expr_rooted_at(s->as.assign_stmt.target, pn)) return true; break;
+            case STMT_IF:     if (sema_body_writes_id(s->as.if_stmt.then_body, pn) ||
+                                  sema_body_writes_id(s->as.if_stmt.else_branch, pn)) return true; break;
+            case STMT_WHILE:  if (sema_body_writes_id(s->as.while_stmt.body, pn)) return true; break;
+            case STMT_FOR:    if (sema_body_writes_id(s->as.for_stmt.body, pn)) return true; break;
+            default: break;
+        }
+    }
+    return false;
+}
+static void check_call_aliasing(Decl *callee, ExprList *args, isize line, isize col) {
+    if (!callee || (callee->kind != DECL_FUNCTION && callee->kind != DECL_PROCEDURE)) return;
+    DeclList *params = callee->as.function_decl.params;
+    StmtList *body   = callee->as.function_decl.body;
+    Id  *ids[64]; bool wr[64]; int n = 0;
+    ExprList *a = args; DeclList *p = params;
+    while (a && p && n < 64) {
+        Decl *pv = p->decl;
+        Id *aid = (a->expr && a->expr->kind == EXPR_IDENTIFIER) ? a->expr->as.identifier_expr.id : NULL;
+        ids[n] = NULL; wr[n] = false;
+        if (pv && pv->kind == DECL_VARIABLE && aid) {
+            Type *pt = pv->as.variable_decl.type;
+            if (pt && (pt->kind == TYPE_ARRAY || pt->kind == TYPE_SLICE || pt->kind == TYPE_POINTER)) {
+                ids[n] = aid;
+                wr[n]  = (pt->mode == MODE_MUTABLE) ||
+                         sema_body_writes_id(body, pv->as.variable_decl.name);
+            }
+        }
+        n++; a = a->next; p = p->next;
+    }
+    for (int i = 0; i < n; i++) {
+        if (!ids[i]) continue;
+        for (int j = i + 1; j < n; j++) {
+            if (!ids[j]) continue;
+            if (ids[i]->length == ids[j]->length &&
+                memcmp(ids[i]->name, ids[j]->name, (size_t)ids[i]->length) == 0 && (wr[i] || wr[j])) {
+                fprintf(stderr, "[E087] Error Ln %li, Col %li: array '%.*s' is passed to two parameters "
+                        "of the same call, at least one of which mutates it. The callee borrows its "
+                        "reference parameters as non-aliasing (they lower to `restrict`); aliasing a "
+                        "mutated one is undefined behaviour. Pass distinct arrays.\n",
+                        (long)line, (long)col, (int)ids[i]->length, ids[i]->name);
+                diagnostic_show_line(line, col);
+                exit(1);
+            }
+        }
+    }
+}
+
 // Fail-closed check for a value-fallback `else` arm: it must convert to the
 // result type (the payload T, or a checked op's value type). A `panic` arm
 // aborts and an `else return` arm targets the enclosing return type, so both are
@@ -1500,6 +1572,10 @@ void sema_infer_expr(Expr *e) {
       Decl *cd = e->as.call_expr.callee->decl;
       bool callee_is_direct_fn = cd && (cd->kind == DECL_FUNCTION || cd->kind == DECL_PROCEDURE ||
                                         cd->kind == DECL_EXTERN_FUNCTION || cd->kind == DECL_EXTERN_PROCEDURE);
+      // Soundness of the emitted `restrict`: a mutated reference parameter must not
+      // be aliased by another argument (exclusive borrow). Walk-gated, direct calls.
+      if (sema_walk_phase && cd && (cd->kind == DECL_FUNCTION || cd->kind == DECL_PROCEDURE))
+          check_call_aliasing(cd, e->as.call_expr.args, e->line, e->col);
       Type *fnty = e->as.call_expr.callee->type;
       if (!callee_is_direct_fn && fnty && fnty->kind == TYPE_FUNC) {
         TypeList *pt = fnty->func_params;

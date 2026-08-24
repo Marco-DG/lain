@@ -1,0 +1,15 @@
+// EXPECT: [E087]
+// Passing the same array to two params, one of which mutates it, would violate the
+// non-aliasing (`restrict`) the codegen assumes — undefined behaviour. Must reject.
+proc vadd(n usize, dst i32[n], src i32[n]) {
+    var i usize = 0
+    while i < n decreasing n - i {
+        dst[i] = dst[i] + src[i]
+        i += 1
+    }
+}
+proc main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    vadd(4, a, a)
+    return 0
+}

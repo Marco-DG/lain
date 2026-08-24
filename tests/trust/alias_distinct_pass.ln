@@ -1,0 +1,16 @@
+// TRUST: distinct arrays into restrict'd params — sound, and the result is correct.
+extern proc libc_printf(fmt *u8, ...) i32
+proc vadd(n usize, dst i32[n], src i32[n]) {
+    var i usize = 0
+    while i < n decreasing n - i {
+        dst[i] = dst[i] + src[i]
+        i += 1
+    }
+}
+proc main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var b i32[4] = [10, 20, 30, 40]
+    vadd(4, a, b)
+    libc_printf("%d %d %d %d\n", a[0], a[1], a[2], a[3])
+    return 0
+}
