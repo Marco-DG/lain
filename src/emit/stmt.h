@@ -105,6 +105,35 @@ void emit_stmt(Stmt *stmt, int depth) {
       // 5) terminate
       EMIT(";\n");
 
+      // O-004 [decl-range]: if this var's TYPE is a refined integer narrower than
+      // its base representation (a `Weight = i32 0..255` alias, or the refined
+      // RETURN type of the callee flowing into an inferred var), emit the bound as
+      // __builtin_unreachable. This is the caller-side dual of the parameter range
+      // hint (emit/decl.h): it carries the proven range across a NON-INLINED call
+      // boundary, where the C optimiser would otherwise lose it (gcc only re-derives
+      // a callee's return range when it inlines the body). Sound by construction:
+      // the value was proved to fit ty_var — the callee's return-type check when it
+      // is a refined return, or the assignment conversion check for an explicit
+      // `var w Weight = e`. For a mutable var reassigned later the assume simply
+      // stops applying at the reassignment; never unsound (every store to a refined
+      // var is itself range-checked). Only fires with an initializer present.
+      if (stmt->as.var_stmt.expr &&
+          stmt->as.var_stmt.expr->kind != EXPR_ARRAY_COMPREHENSION && ty_var) {
+          extern int type_integer_range(Type *t, long long *lo, long long *hi);
+          extern Type *resolve_type_alias(Type *t);
+          long long lo, hi, blo, bhi;
+          if (type_integer_range(ty_var, &lo, &hi)) {
+              Type *base = resolve_type_alias(ty_var);
+              if (base && base != ty_var && type_integer_range(base, &blo, &bhi) &&
+                  (lo > blo || hi < bhi)) {
+                  char vn[256]; snprintf(vn, sizeof vn, "%s", c_name_for_id(v));
+                  emit_indent(depth);
+                  EMIT("if (%s < %lldLL || %s > %lldLL) __builtin_unreachable();\n",
+                       vn, lo, vn, hi);
+              }
+          }
+      }
+
       // 5b) array comprehension: `T a[N];` above, now the fill loop
       //     `for (i32 idx = lo; idx < hi; idx++) a[idx - lo] = body;`
       if (stmt->as.var_stmt.expr && stmt->as.var_stmt.expr->kind == EXPR_ARRAY_COMPREHENSION) {

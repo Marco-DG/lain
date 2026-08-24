@@ -1,0 +1,17 @@
+// TRUST: a refined-return value flows into a var that carries a range hint
+// (O-004). The hint asserts w in 0..255; the value must actually be in range or
+// ASan/the oracle catches a miscompile. clamp(300)->255, clamp(-9)->0, clamp(70)->70.
+extern proc libc_printf(fmt *u8, ...) i32
+type Weight = i32 >= 0 and <= 255
+func clamp(x i32) Weight {
+    if x < 0 { return 0 }
+    if x > 255 { return 255 }
+    return x
+}
+proc main() i32 {
+    var a = clamp(300)
+    var b = clamp(0 - 9)
+    var c = clamp(70)
+    libc_printf("%d %d %d\n", a, b, c)
+    return 0
+}
