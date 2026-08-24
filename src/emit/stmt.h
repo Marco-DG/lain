@@ -74,9 +74,17 @@ void emit_stmt(Stmt *stmt, int depth) {
         EMIT(" %s", c_name_for_id(v));
       }
   
+      // Whole fixed-array copy-init `var a i32[4] = b`: C forbids `T a[N] = b`
+      // ("invalid initializer") — emit a bare decl `T a[N];` here, then memcpy
+      // below (value-array copy semantics). Scoped to an array-lvalue RHS.
+      Expr *vinit0 = stmt->as.var_stmt.expr;
+      bool whole_arr_copy_init = is_fixed_array && vinit0 &&
+          (vinit0->kind == EXPR_IDENTIFIER || vinit0->kind == EXPR_MEMBER);
+
       // 4) optional initializer (NULL = a bare `var x T`, emitted as raw `T x;`;
       //    an array comprehension is lowered to a fill loop after the decl below)
-      if (stmt->as.var_stmt.expr && stmt->as.var_stmt.expr->kind != EXPR_ARRAY_COMPREHENSION) {
+      if (stmt->as.var_stmt.expr && stmt->as.var_stmt.expr->kind != EXPR_ARRAY_COMPREHENSION
+          && !whole_arr_copy_init) {
         EMIT(" = ");
   
         // centralized helper: emits compound byte array literal for fixed-like types
@@ -104,6 +112,15 @@ void emit_stmt(Stmt *stmt, int depth) {
   
       // 5) terminate
       EMIT(";\n");
+
+      // Whole fixed-array copy-init: `T a[N];` was emitted above; copy now.
+      if (whole_arr_copy_init) {
+          char vnc[256]; snprintf(vnc, sizeof vnc, "%s", c_name_for_id(v));
+          emit_indent(depth);
+          EMIT("memcpy(%s, ", vnc);
+          emit_expr(vinit0, depth);
+          EMIT(", sizeof(%s));\n", vnc);
+      }
 
       // O-004 [decl-range]: if this var's TYPE is a refined integer narrower than
       // its base representation (a `Weight = i32 0..255` alias, or the refined
@@ -889,10 +906,26 @@ void emit_stmt(Stmt *stmt, int depth) {
         // This makes the cost of bit-shift+mask visible at the call site.
         // Normal assignment with indent
         emit_indent(depth);
-        emit_expr(lhs, depth);
-        EMIT(" = ");
-        emit_expr(rhs, depth);
-        EMIT(";\n");
+        // Whole fixed-array copy: C forbids `a = b` on array types ("assignment to
+        // expression with array type"). Lain's arrays are value types, so `a = b`
+        // means copy — emit memcpy. Scoped to an array-lvalue RHS (identifier or
+        // member decays to a pointer); element/scalar assignments are unaffected.
+        Type *lt_arr = lhs->type;
+        if (lt_arr && lt_arr->kind == TYPE_ARRAY && lt_arr->array_len > 0 &&
+            (rhs->kind == EXPR_IDENTIFIER || rhs->kind == EXPR_MEMBER)) {
+            EMIT("memcpy(");
+            emit_expr(lhs, depth);
+            EMIT(", ");
+            emit_expr(rhs, depth);
+            EMIT(", sizeof(");
+            emit_expr(lhs, depth);
+            EMIT("));\n");
+        } else {
+            emit_expr(lhs, depth);
+            EMIT(" = ");
+            emit_expr(rhs, depth);
+            EMIT(";\n");
+        }
       }
       break;
     }
