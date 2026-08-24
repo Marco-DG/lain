@@ -443,9 +443,12 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                     }
                 }
             }
-            // Known-length string/slice literal: `.len` is the compile-time count
-            // stored in array_len (a string literal is a sentinel slice of known
-            // length). Lets `while i < s.len { s[i] }` prove the index in bounds.
+            // Fixed-length string/slice `.len` is the compile-time count in
+            // array_len. SOUND because a fixed-length binding (`var s = "abcd"`,
+            // array_len=4) may only be reassigned another length-4 string (E090) —
+            // its length never diverges from array_len. (A DYNAMIC `u8[:0]` has
+            // array_len 0, so this does not fire and `.len` stays runtime.) Lets
+            // `if i < s.len { s[i] }` and `s[k]` prove in bounds.
             if (mem->length == 3 && strncmp(mem->name, "len", 3) == 0 && tgt->type) {
                 Type *tt = tgt->type;
                 while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;

@@ -1,0 +1,10 @@
+// EXPECT: [E090]
+// An inferred string binding is FIXED-length (its length is in the type, and
+// bounds proofs trust it). Reassigning a different-length string would make the
+// type's length diverge from the value — `s[3]` after `s="xy"` is an OOB. Reject;
+// declare `u8[:0]` for a variable-length string.
+proc main() i32 {
+    var s = "abcd"
+    s = "xy"
+    return s[3] as i32
+}

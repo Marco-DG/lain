@@ -1080,6 +1080,33 @@ static void reject_sentinel_fabrication(Type *from, Type *to, Expr *src_expr,
     exit(1);
 }
 
+// A string literal is a FIXED-length sentinel type `[N:0]u8` (Zig): its length N
+// lives in the TYPE (array_len), and bounds proofs trust it (`s[2]`, `i < s.len`).
+// So an inferred `var s = "abcd"` is length-4 and may only be reassigned another
+// length-4 string — assigning a different length would make the type's array_len
+// diverge from the runtime value, an OOB (`var s="abcd"; s="xy"; s[3]`). Reject the
+// mismatch (matching the old fixed-array behaviour). Coercion INTO a DYNAMIC slice
+// (`u8[:0]`, array_len 0 — declared explicitly for a variable-length string) is
+// unaffected: the target keeps no compile-time length, so bounds use the runtime
+// `.len` instead.
+static void reject_fixed_string_length_mismatch(Type *from, Type *to,
+                                                isize line, isize col) {
+    if (!from || !to) return;
+    Type *f = resolve_type_alias(from);
+    Type *t = resolve_type_alias(to);
+    if (!f || !t) return;
+    if (t->kind == TYPE_SLICE && t->array_len > 0 &&
+        f->kind == TYPE_SLICE && f->array_len > 0 &&
+        f->array_len != t->array_len) {
+        fprintf(stderr, "[E090] Error Ln %li, Col %li: cannot assign a length-%ld string to a "
+                "length-%ld string. An inferred string binding is fixed-length; declare it "
+                "`u8[:0]` for a variable-length string.\n",
+                (long)line, (long)col, (long)f->array_len, (long)t->array_len);
+        diagnostic_show_line(line, col);
+        exit(1);
+    }
+}
+
 // source expr where available (enables the null-literal idiom, 0 -> *T); NULL
 // is fine (that sub-check simply won't fire).
 static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
@@ -1122,6 +1149,7 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     reject_lossy_int_conversion(from, to, r, line, col, ctx, label);
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
     reject_sentinel_fabrication(from, to, src_expr, line, col, ctx);
+    reject_fixed_string_length_mismatch(from, to, line, col);
     check_type_alias_constraints(to, r, line, col, ctx, label);
 
     // Dual-run (measurement only, behind LAIN_KEYSTONE_DUALRUN — zero behavior
