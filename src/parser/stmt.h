@@ -206,6 +206,7 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         && !parser_match(TOKEN_SLASH_EQUAL) && !parser_match(TOKEN_PERCENT_EQUAL)
         && !parser_match(TOKEN_AMPERSAND_EQUAL) && !parser_match(TOKEN_PIPE_EQUAL)
         && !parser_match(TOKEN_CARET_EQUAL)
+        && !parser_match(TOKEN_SHIFT_LEFT_EQUAL) && !parser_match(TOKEN_SHIFT_RIGHT_EQUAL)
         && !parser_match(TOKEN_EOL) && !parser_match(TOKEN_EOF)
         && !parser_match(TOKEN_R_BRACE) && !parser_match(TOKEN_SEMICOLON)) {
         Id *name = lhs->as.identifier_expr.id;
@@ -231,6 +232,8 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         case TOKEN_AMPERSAND_EQUAL:
         case TOKEN_PIPE_EQUAL:
         case TOKEN_CARET_EQUAL:
+        case TOKEN_SHIFT_LEFT_EQUAL:
+        case TOKEN_SHIFT_RIGHT_EQUAL:
             is_assign = true;
             break;
         default:
@@ -253,6 +256,8 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
                 case TOKEN_AMPERSAND_EQUAL: binop = TOKEN_AMPERSAND; break;
                 case TOKEN_PIPE_EQUAL:      binop = TOKEN_PIPE;      break;
                 case TOKEN_CARET_EQUAL:     binop = TOKEN_CARET;     break;
+                case TOKEN_SHIFT_LEFT_EQUAL:  binop = TOKEN_SHIFT_LEFT;  break;
+                case TOKEN_SHIFT_RIGHT_EQUAL: binop = TOKEN_SHIFT_RIGHT; break;
                 default:                    binop = TOKEN_PLUS;      break;
             }
             rhs = expr_binary(arena, binop, lhs, rhs);
@@ -413,6 +418,8 @@ Stmt *parse_assign_stmt(Arena *arena, Parser *parser) {
         case TOKEN_AMPERSAND_EQUAL:
         case TOKEN_PIPE_EQUAL:
         case TOKEN_CARET_EQUAL:
+        case TOKEN_SHIFT_LEFT_EQUAL:
+        case TOKEN_SHIFT_RIGHT_EQUAL:
             break;
         default:
             parser_error("Expected assignment operator (=, +=, -=, ...)");
@@ -435,6 +442,8 @@ Stmt *parse_assign_stmt(Arena *arena, Parser *parser) {
             case TOKEN_AMPERSAND_EQUAL: binop = TOKEN_AMPERSAND; break;
             case TOKEN_PIPE_EQUAL:      binop = TOKEN_PIPE;      break;
             case TOKEN_CARET_EQUAL:     binop = TOKEN_CARET;     break;
+            case TOKEN_SHIFT_LEFT_EQUAL:  binop = TOKEN_SHIFT_LEFT;  break;
+            case TOKEN_SHIFT_RIGHT_EQUAL: binop = TOKEN_SHIFT_RIGHT; break;
             default:                    binop = TOKEN_PLUS;      break; // never here
         }
         rhs = expr_binary(arena, binop, lhs_expr, rhs);

@@ -212,7 +212,8 @@ Token lexer_next(Lexer* lexer) {
             case STATE_ANGLE_BRACKET_LEFT:
                 switch (c) {
                     case '=':           RETURN_TOKEN(TOKEN_ANGLE_BRACKET_LEFT_EQUAL);
-                    case '<':           RETURN_TOKEN(TOKEN_SHIFT_LEFT);
+                    case '<':           if (*lexer->current == '=') { lexer->current++; RETURN_TOKEN(TOKEN_SHIFT_LEFT_EQUAL); }
+                                        RETURN_TOKEN(TOKEN_SHIFT_LEFT);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_ANGLE_BRACKET_LEFT);
                 }
@@ -221,7 +222,8 @@ Token lexer_next(Lexer* lexer) {
             case STATE_ANGLE_BRACKET_RIGHT:
                 switch (c) {
                     case '=':           RETURN_TOKEN(TOKEN_ANGLE_BRACKET_RIGHT_EQUAL);
-                    case '>':           RETURN_TOKEN(TOKEN_SHIFT_RIGHT);
+                    case '>':           if (*lexer->current == '=') { lexer->current++; RETURN_TOKEN(TOKEN_SHIFT_RIGHT_EQUAL); }
+                                        RETURN_TOKEN(TOKEN_SHIFT_RIGHT);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_ANGLE_BRACKET_RIGHT);
                 }

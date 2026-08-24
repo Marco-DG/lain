@@ -1,0 +1,10 @@
+// C-parity: shift compound-assignment `<<=` and `>>=` (were unlexed → parse error).
+// Desugar to `x = x << n` / `x = x >> n`, like the other compound-assign ops.
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var x u32 = 3
+    x <<= 4
+    x >>= 1
+    libc_printf("%u\n", x)
+    return 0
+}
