@@ -1341,20 +1341,54 @@ static bool sema_body_writes_id(StmtList *body, Id *pn) {
     }
     return false;
 }
+// Root identifier of a reference-arg expression: walks index/member/deref chains
+// so `a`, `a[i]`, `a[0..4]`, `a.f`, `*a` all report root `a`. This is what the E087
+// aliasing check must key on — NOT a bare identifier, or a sub-slice/element/field
+// expression sneaks an alias of a mutated array past the check (`vadd(4, a, a[0..4])`
+// lowered `src` to `a+0`, aliasing the `restrict` `dst`, a silent -O3 miscompile).
+static Id *sema_expr_root_id(Expr *e) {
+    while (e) {
+        if (e->kind == EXPR_IDENTIFIER) return e->as.identifier_expr.id;
+        else if (e->kind == EXPR_INDEX)  e = e->as.index_expr.target;
+        else if (e->kind == EXPR_MEMBER) e = e->as.member_expr.target;
+        else if (e->kind == EXPR_DEREF)  e = e->as.deref_expr.expr;
+        else return NULL;
+    }
+    return NULL;
+}
+// If `e` is `root[lo..hi]` with COMPILE-TIME-CONSTANT bounds, report the half-open
+// span [*lo,*hi) and return true. Otherwise return false — an unknown/whole-object
+// span, which must be treated as "covers everything" (conservative: may alias).
+// Two args over the same root are safe to pass to restrict'd params ONLY when both
+// spans are constant and disjoint (`a[0..4]` vs `a[4..8]`) — never rejecting that
+// correct code, while still catching every possibly-overlapping pair.
+static bool sema_arg_const_span(Expr *e, long long *lo, long long *hi) {
+    if (e && e->kind == EXPR_INDEX && e->as.index_expr.index &&
+        e->as.index_expr.index->kind == EXPR_RANGE) {
+        ExprRange *r = &e->as.index_expr.index->as.range_expr;
+        if (r->start && r->start->kind == EXPR_LITERAL &&
+            r->end   && r->end->kind   == EXPR_LITERAL) {
+            *lo = (long long)r->start->as.literal_expr.value;
+            *hi = (long long)r->end->as.literal_expr.value + (r->inclusive ? 1 : 0);
+            return true;
+        }
+    }
+    return false;
+}
 static void check_call_aliasing(Decl *callee, ExprList *args, isize line, isize col) {
     if (!callee || (callee->kind != DECL_FUNCTION && callee->kind != DECL_PROCEDURE)) return;
     DeclList *params = callee->as.function_decl.params;
     StmtList *body   = callee->as.function_decl.body;
-    Id  *ids[64]; bool wr[64]; int n = 0;
+    Id  *ids[64]; bool wr[64]; Expr *aex[64]; int n = 0;
     ExprList *a = args; DeclList *p = params;
     while (a && p && n < 64) {
         Decl *pv = p->decl;
-        Id *aid = (a->expr && a->expr->kind == EXPR_IDENTIFIER) ? a->expr->as.identifier_expr.id : NULL;
-        ids[n] = NULL; wr[n] = false;
-        if (pv && pv->kind == DECL_VARIABLE && aid) {
+        Id *root = a->expr ? sema_expr_root_id(a->expr) : NULL;
+        ids[n] = NULL; wr[n] = false; aex[n] = a->expr;
+        if (pv && pv->kind == DECL_VARIABLE && root) {
             Type *pt = pv->as.variable_decl.type;
             if (pt && (pt->kind == TYPE_ARRAY || pt->kind == TYPE_SLICE || pt->kind == TYPE_POINTER)) {
-                ids[n] = aid;
+                ids[n] = root;
                 wr[n]  = (pt->mode == MODE_MUTABLE) ||
                          sema_body_writes_id(body, pv->as.variable_decl.name);
             }
@@ -1365,16 +1399,24 @@ static void check_call_aliasing(Decl *callee, ExprList *args, isize line, isize 
         if (!ids[i]) continue;
         for (int j = i + 1; j < n; j++) {
             if (!ids[j]) continue;
-            if (ids[i]->length == ids[j]->length &&
-                memcmp(ids[i]->name, ids[j]->name, (size_t)ids[i]->length) == 0 && (wr[i] || wr[j])) {
-                fprintf(stderr, "[E087] Error Ln %li, Col %li: array '%.*s' is passed to two parameters "
-                        "of the same call, at least one of which mutates it. The callee borrows its "
-                        "reference parameters as non-aliasing (they lower to `restrict`); aliasing a "
-                        "mutated one is undefined behaviour. Pass distinct arrays.\n",
-                        (long)line, (long)col, (int)ids[i]->length, ids[i]->name);
-                diagnostic_show_line(line, col);
-                exit(1);
-            }
+            if (ids[i]->length != ids[j]->length ||
+                memcmp(ids[i]->name, ids[j]->name, (size_t)ids[i]->length) != 0 ||
+                !(wr[i] || wr[j]))
+                continue;
+            // Same root, at least one mutated → possible alias. Exempt only when
+            // both args are constant, disjoint sub-ranges of that root.
+            long long ilo, ihi, jlo, jhi;
+            bool ispan = sema_arg_const_span(aex[i], &ilo, &ihi);
+            bool jspan = sema_arg_const_span(aex[j], &jlo, &jhi);
+            if (ispan && jspan && (ihi <= jlo || jhi <= ilo)) continue;
+            fprintf(stderr, "[E087] Error Ln %li, Col %li: array '%.*s' reaches two parameters "
+                    "of the same call (directly or via a slice/element/field), at least one of "
+                    "which mutates it. The callee borrows its reference parameters as non-aliasing "
+                    "(they lower to `restrict`); aliasing a mutated one is undefined behaviour. "
+                    "Pass distinct arrays, or provably-disjoint constant sub-slices.\n",
+                    (long)line, (long)col, (int)ids[i]->length, ids[i]->name);
+            diagnostic_show_line(line, col);
+            exit(1);
         }
     }
 }
