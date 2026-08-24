@@ -129,3 +129,4 @@ handwritten/main.ln
 tests/**/out
 tests/**/out.c
 tests/**/lain.h
+fuzz_bugs/
