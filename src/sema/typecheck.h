@@ -1040,6 +1040,39 @@ static bool arg_refinement_discharges(Expr *arg, TokenKind need_op, Expr *need_r
 //   5. refinement-type-alias constraints                      [E086]
 // Each sub-check exits on violation. This is the boundary-level precursor to
 // the full `subsumes(from, to, range)` relation (P2/S2). Callers pass the
+// Sentinel discipline (partial — the worst case). A sentinel-terminated type
+// `u8[:0]` promises `.data` has a trailing sentinel, which is what makes `.data`
+// safe for a NUL-scanning C API (`printf "%s"`, `open`, `strlen`). Coercing an
+// arbitrary FIXED array `u8[N]` — general bytes with definitely no terminator —
+// into `u8[:0]` fabricates that promise: a buffer OVERREAD (potentially leaking
+// arbitrary memory) the moment `.data` reaches such an API. Reject it.
+//
+// Scoped to TYPE_ARRAY sources only. String LITERALS are exempt (the emitter
+// terminates them into a fresh buffer), and string-literal-derived VALUES are a
+// distinct TYPE_SLICE encoding not yet caught here — closing that fully requires
+// making string literals genuinely sentinel-terminated first (see the
+// sentinel-string-design memo). `unsafe` opts out.
+static void reject_sentinel_fabrication(Type *from, Type *to, Expr *src_expr,
+                                        isize line, isize col, const char *ctx) {
+    if (sema_in_unsafe_block) return;
+    if (!from || !to) return;
+    Type *f = resolve_type_alias(from);
+    Type *t = resolve_type_alias(to);
+    if (!f || !t) return;
+    bool to_sentinel = (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) && t->sentinel_str != NULL;
+    if (!to_sentinel) return;
+    if (f->kind != TYPE_ARRAY) return;                 // only a general fixed array
+    if (src_expr && src_expr->kind == EXPR_STRING) return;
+    char tb[128]; type_describe(t, tb, sizeof tb);
+    fprintf(stderr, "[E089] Error Ln %li, Col %li: cannot use a fixed array as the "
+            "sentinel-terminated type '%s'%s%s: it has no trailing sentinel, so a C API that "
+            "scans for one (printf \"%%s\", open, strlen, …) would read past the buffer. Pass a "
+            "string literal or a value already of a matching sentinel-terminated type.\n",
+            (long)line, (long)col, tb, ctx ? " for " : "", ctx ? ctx : "");
+    diagnostic_show_line(line, col);
+    exit(1);
+}
+
 // source expr where available (enables the null-literal idiom, 0 -> *T); NULL
 // is fine (that sub-check simply won't fire).
 static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
@@ -1081,6 +1114,7 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     reject_float_int_mismatch(from, to, line, col, ctx, label);
     reject_lossy_int_conversion(from, to, r, line, col, ctx, label);
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
+    reject_sentinel_fabrication(from, to, src_expr, line, col, ctx);
     check_type_alias_constraints(to, r, line, col, ctx, label);
 
     // Dual-run (measurement only, behind LAIN_KEYSTONE_DUALRUN — zero behavior
