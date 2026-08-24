@@ -1,0 +1,13 @@
+// EXPECT: [E082]
+// Soundness: a variable step whose VRA range includes 0 (`m` could be 0) does NOT
+// guarantee progress — the loop may never terminate — so it MUST be rejected. The
+// VRA-backed step rule requires a STRICT >= 1 lower bound.
+proc main() i32 {
+    var n usize = 10
+    var i usize = 0
+    var m usize = 0
+    while i < n decreasing n - i {
+        i = i + m
+    }
+    return i as i32
+}

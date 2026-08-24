@@ -1,0 +1,14 @@
+// VRA-backed termination: a loop-invariant variable step proven >= 1 makes the
+// measure strictly decrease, so `i = i + k` (k a variable, k>=1, unmodified in
+// the loop) is accepted — not just literal-constant steps.
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var n usize = 10
+    var i usize = 0
+    var k usize = 2
+    while i < n decreasing n - i {
+        i = i + k
+    }
+    libc_printf("%d\n", i as i32)
+    return 0
+}

@@ -851,6 +851,31 @@ static int measure_find_var(Expr *target, MeasureVar *vars, int nvar) {
 
 // Determine direction: does `target = rhs` increase (+1) or decrease (-1) target?
 // Only handles: target = target + K, target = target - K, K + target  (K literal > 0)
+// The while body currently under termination analysis — set by
+// sema_verify_bounded_while so assignment_direction can ask "is this step
+// expression loop-invariant?" (no variable it reads is assigned in the body).
+static StmtList *g_term_loop_body = NULL;
+
+// A step expression is loop-invariant if every identifier it reads is unmodified
+// anywhere in the loop body: then its VRA range at loop entry is valid on EVERY
+// iteration, which is what makes a VRA-derived step sign sound. Conservative:
+// only literals, identifiers, and arithmetic over them count (calls, indexing,
+// and member access are treated as non-invariant).
+static bool expr_is_loop_invariant(Expr *e, StmtList *body) {
+    if (!e) return true;
+    switch (e->kind) {
+        case EXPR_LITERAL:    return true;
+        case EXPR_IDENTIFIER: return !sema_body_writes_id(body, e->as.identifier_expr.id);
+        case EXPR_BINARY:     return expr_is_loop_invariant(e->as.binary_expr.left,  body) &&
+                                     expr_is_loop_invariant(e->as.binary_expr.right, body);
+        case EXPR_UNARY:      return expr_is_loop_invariant(e->as.unary_expr.right, body);
+        default:              return false;
+    }
+}
+
+// Direction a measure variable moves on `target = rhs`: +1 increases, -1
+// decreases, 0 unknown. The caller multiplies by the variable's polarity to
+// decide whether the MEASURE decreased.
 static int assignment_direction(Expr *target, Expr *rhs) {
     if (!rhs || rhs->kind != EXPR_BINARY) return 0;
 
@@ -871,6 +896,24 @@ static int assignment_direction(Expr *target, Expr *rhs) {
         int64_t k = left->as.literal_expr.value;
         if (k > 0) return +1;
         if (k < 0) return -1;
+    }
+
+    // VRA-backed step: `target = target ± E` (or `E + target`) where E is a
+    // LOOP-INVARIANT expression VRA proves strictly signed (|E| >= 1). Sound:
+    // an invariant E holds its entry range every iteration, and a strict step
+    // forces strict monotonicity. Extends the frontier from constant steps to
+    // variable/computed steps like `i = i + k` (k proven >= 1), which the
+    // syntactic patterns above reject. A step whose range straddles 0 (could be
+    // a no-op) or that reads a body-mutated variable falls through to 0.
+    if (op == TOKEN_PLUS || op == TOKEN_MINUS) {
+        Expr *step = NULL;
+        if (expr_struct_equal(left, target))                        step = right;
+        else if (op == TOKEN_PLUS && expr_struct_equal(right, target)) step = left;
+        if (step && g_term_loop_body && expr_is_loop_invariant(step, g_term_loop_body)) {
+            Range r = sema_eval_range(step, sema_ranges);
+            if (r.known && r.min >= 1) return (op == TOKEN_PLUS) ? +1 : -1;
+            if (r.known && r.max <= -1) return (op == TOKEN_PLUS) ? -1 : +1;
+        }
     }
 
     return 0;
@@ -972,7 +1015,9 @@ static void sema_verify_bounded_while(Stmt *s) {
         exit(1);
     }
 
+    g_term_loop_body = s->as.while_stmt.body;   // for invariant-step VRA queries
     int result = measure_scan_body(s->as.while_stmt.body, vars, nvar);
+    g_term_loop_body = NULL;
     if (result <= 0) {
         fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify that the termination measure "
                 "strictly decreases on each iteration.\n"
