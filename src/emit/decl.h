@@ -397,6 +397,18 @@ static void emit_param_type(Type *t, bool with_restrict, bool written) {
         Type tmp = *t;
         tmp.mode = MODE_SHARED;
         c_name_for_type(&tmp, base_name, sizeof(base_name));
+    } else if (written) {
+        // A raw pointer param whose pointee the body WRITES (`*p = …`, in unsafe)
+        // must emit a NON-const pointee `T *`, not `const T *`, or gcc rejects the
+        // store ("assignment of read-only location") — a broken-C fail-open. This
+        // is emit-only: the pointer stays MODE_SHARED in the type system (so the
+        // borrow checker and 525-test semantics are unchanged); only the C output
+        // drops const for the written case. (A global mutable-pointer default
+        // breaks 106 tests; the writable-pointer *type* is separate future work —
+        // see the raw-pointer-write-gap note.)
+        Type tmp = *t;
+        tmp.mode = MODE_MUTABLE;
+        c_name_for_type(&tmp, base_name, sizeof(base_name));
     } else {
         c_name_for_type(t, base_name, sizeof(base_name));
     }

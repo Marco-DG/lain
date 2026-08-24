@@ -1,0 +1,14 @@
+// A raw-pointer parameter whose pointee is written in the body (`*p = …`, inside
+// unsafe) must emit a NON-const `int32_t *`, not `const int32_t *` — else gcc
+// rejects the store ("assignment of read-only location"). Emit-only: the pointer
+// stays MODE_SHARED in the type system; only the C output drops const when written.
+extern proc libc_printf(fmt *u8, ...) i32
+proc bump(p *i32) {
+    unsafe { *p = *p + 1 }
+}
+proc main() i32 {
+    var x i32 = 41
+    bump(&x)
+    libc_printf("%d\n", x)
+    return 0
+}
