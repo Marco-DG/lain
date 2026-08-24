@@ -842,6 +842,11 @@ void emit_stmt(Stmt *stmt, int depth) {
             Id *pn = rv->decl->as.variable_decl.name;
             EMIT("(%s){ .len = __len_%.*s, .data = %.*s }",
                  sbuf, (int)pn->length, pn->name, (int)pn->length, pn->name);
+        } else if (rv->kind == EXPR_STRING && rv->type &&
+                   emit_slice_coercion(rv->type, rv, depth)) {
+            // `return "…"` for a slice return type: lower the string literal to a
+            // `(Slice_u8_N){ .len, .data={…,0} }` compound literal, not a bare
+            // `char *` (which gcc rejects against the Slice_<T> struct return).
         } else {
             emit_expr(rv, depth);
         }

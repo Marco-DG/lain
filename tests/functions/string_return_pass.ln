@@ -1,0 +1,11 @@
+// `return "…"` from a `u8[:0]` function lowers the string literal to a terminated
+// Slice_u8_N compound literal (not a bare char*, which gcc rejects), and `.data`
+// stays NUL-terminated for C interop.
+extern proc libc_printf(fmt *u8, ...) i32
+func greeting() u8[:0] {
+    return "hi there"
+}
+proc main() i32 {
+    libc_printf("[%s]\n", greeting().data)
+    return 0
+}
