@@ -488,6 +488,11 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
 
         /* --- Separator handling (robust ordering) --- */
 
+        /* 0) a closing brace ends the list: allow a final field/variant with no
+              trailing separator, so single-line `{ Red, Green, Blue }` parses (the
+              last item is followed directly by `}`, not by a comma or newline). */
+        if (parser_match(TOKEN_R_BRACE)) break;
+
         /* 1) explicit comma -> eat it and continue (then skip any newlines) */
         if (parser_match(TOKEN_COMMA)) {
             parser_advance();

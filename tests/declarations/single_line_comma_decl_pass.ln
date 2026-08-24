@@ -1,0 +1,17 @@
+// A final field/variant directly before `}` (no trailing comma or newline) must
+// parse — enables the common single-line `type T { a, b, c }` style. Previously
+// the last item hit "Expected ',' or newline" because the separator handler did
+// not treat `}` as a terminator.
+type Color { Red, Green, Blue }
+type Point { x i32, y i32 }
+proc main() i32 {
+    var c = Color.Blue
+    var p = Point(3, 4)
+    var n = 0
+    case c {
+        Red: n = 1
+        Green: n = 2
+        Blue: n = 3
+    }
+    return n + p.x + p.y
+}
