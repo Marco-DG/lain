@@ -225,10 +225,23 @@ for ((it=0; it<N; it++)); do
         unsound=$((unsound+1)); cp "$src" "$BUGDIR/unsound_${it}.ln"
         echo "⚠ UNSOUND PROOF ($g): $(grep -m1 -E 'runtime error|ERROR' "$TDIR/san.err")"; continue
     fi
+    # OPTIMIZATION DIFFERENTIAL: -O0 vs -O3. Every proof Lain lowers to a C
+    # annotation — a range `__builtin_unreachable`, a `restrict`, a `const`/`pure`
+    # — is UB if the proof is WRONG, and it is UB the optimizer EXPLOITS. Such a
+    # miscompile is invisible to ASan (no OOB) and shows only as -O0 (no
+    # exploitation) diverging from -O3 (full exploitation). This catches unsound
+    # ANNOTATIONS, the class the -O1 sanitizer run above cannot see.
+    $CC -O0 $DEFS -o "$TDIR/o0" "$TDIR/f.c" 2>/dev/null && o0="$("$TDIR/o0" 2>/dev/null)"
+    $CC -O3 -march=native $DEFS -o "$TDIR/o3" "$TDIR/f.c" 2>/dev/null && o3="$("$TDIR/o3" 2>/dev/null)"
+    if [[ "$o0" != "$o3" ]]; then
+        miscompile=$((miscompile+1)); cp "$src" "$BUGDIR/optdiff_${it}.ln"
+        echo "⚠ OPT-DIFFERENTIAL ($g): -O0=[$o0] -O3=[$o3] — an unsound annotation?"; continue
+    fi
     # differential oracle: a wrong-but-not-UB result is a MISCOMPILE the sanitizer misses
-    if [[ -n "$EXPECT" && "$out" != "$EXPECT" ]]; then
+    # (compare the UNOPTIMIZED output — ground truth — against the computed oracle).
+    if [[ -n "$EXPECT" && "$o0" != "$EXPECT" ]]; then
         miscompile=$((miscompile+1)); cp "$src" "$BUGDIR/miscompile_${it}.ln"
-        echo "⚠ MISCOMPILE ($g): expected [$EXPECT] got [$out]"; continue
+        echo "⚠ MISCOMPILE ($g): expected [$EXPECT] got [$o0]"; continue
     fi
 done
 
