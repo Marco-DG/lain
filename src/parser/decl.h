@@ -661,17 +661,20 @@ Decl *parse_var_decl(Arena* arena, Parser* parser)
     Id *var_name = id(arena, parser->token.length, parser->token.start);
     parser_advance();
 
-    Type *var_type = parse_type(arena, parser);
+    // The type is OPTIONAL: `NAME = expr` infers it from the initializer, exactly
+    // like an in-function immutable binding `x = expr`. `NAME TYPE = expr` still
+    // works when an explicit type is wanted. (Without this, top-level constants
+    // required a type while in-function ones did not — an inconsistency.)
+    Type *var_type = parser_match(TOKEN_EQUAL) ? NULL : parse_type(arena, parser);
     Decl *d = decl_variable(arena, var_name, var_type);
     d->line = line;
     d->col = col;
-    // A top-level binding is a compile-time constant, so it must have a value:
-    // `NAME TYPE = expr`.
+    // A top-level binding is a compile-time constant, so it must have a value.
     if (parser_match(TOKEN_EQUAL)) {
         parser_advance();
         d->as.variable_decl.init = parse_expr(arena, parser);
     } else {
-        parser_error("a top-level constant must have a value — write `NAME T = value`.");
+        parser_error("a top-level constant must have a value — write `NAME = value` or `NAME T = value`.");
     }
     return d;
 }
