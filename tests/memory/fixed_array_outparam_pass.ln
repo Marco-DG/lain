@@ -1,0 +1,11 @@
+// A written fixed-size array parameter is a mutable output ref (like `dst i32[n]`),
+// NOT a const borrow: it must emit a non-const pointer or gcc rejects the write
+// ("assignment of read-only location"). Verifies the write propagates to the caller.
+proc set0(dst i32[3], v i32) {
+    dst[0] = v
+}
+proc main() i32 {
+    var a i32[3] = [1, 2, 3]
+    set0(a, 99)
+    return a[0]
+}

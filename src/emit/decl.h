@@ -9,7 +9,7 @@ static void emit_forward_decl(Decl *decl, int depth);
 // Emit a list of declarations (the whole program)
 void emit_decl_list(DeclList *decls, int depth);
 
-static void emit_param_type(Type *t, bool with_restrict); // Forward for use in forward decl
+static void emit_param_type(Type *t, bool with_restrict, bool written); // Forward for use in forward decl
 
 // D-Niche: compute the C backing type for a niche-optimized enum (multi ->
 // primary field; pure-empty -> int32_t; bool payload -> uint8_t; else the
@@ -341,7 +341,7 @@ static void emit_forward_decl(Decl *decl, int depth) {
                     EMIT(", ");
                 }
                 if (param->decl->kind == DECL_DESTRUCT) {
-                    emit_param_type(param->decl->as.destruct_decl.type, true);
+                    emit_param_type(param->decl->as.destruct_decl.type, true, false);
                 } else {
                     Type *pt = param->decl->as.variable_decl.type;
                     Id   *pn = param->decl->as.variable_decl.name;
@@ -356,7 +356,7 @@ static void emit_forward_decl(Decl *decl, int depth) {
                         else
                             EMIT("const %s * restrict", elem_buf);
                     } else {
-                        emit_param_type(pt, true);
+                        emit_param_type(pt, true, emit_param_is_written(decl, param->decl));
                     }
                 }
                 first = 0;
@@ -369,7 +369,7 @@ static void emit_forward_decl(Decl *decl, int depth) {
     }
 }
 
-static void emit_param_type(Type *t, bool with_restrict) {
+static void emit_param_type(Type *t, bool with_restrict, bool written) {
     if (!t) return;
 
     // Function-pointer parameter → abstract C declarator `R (*)(P..)`.
@@ -405,18 +405,24 @@ static void emit_param_type(Type *t, bool with_restrict) {
     if (original_mode == MODE_OWNED) {
         // mov T -> pass by value (T)
         EMIT("%s", base_name);
-    } else if (original_mode == MODE_MUTABLE) {
-        // mut T -> pass as mutable pointer.
-        // with_restrict=true for Lain functions: the borrow checker has
-        // already proven at every call site that no two mut parameters alias,
-        // so `restrict` is a sound annotation and enables SIMD vectorization.
+    } else if (original_mode == MODE_MUTABLE ||
+               (original_mode == MODE_SHARED && !is_primitive_type(t) && written)) {
+        // mut T -> pass as mutable pointer. ALSO: a shared reference the body writes
+        // THROUGH — Lain treats a written reference parameter (e.g. a fixed-size
+        // output array `dst i32[3]`, or a struct param mutated via `p.f=…`) as a
+        // mutable output ref, exactly like the dynamic-array `dst i32[n]` path. It
+        // must NOT be `const`, or gcc rejects the emitted write ("assignment of
+        // read-only location") — a broken-C fail-open.
+        // with_restrict=true for Lain functions: the borrow checker (and E087 at
+        // every call site) has proven no two written reference params alias, so
+        // `restrict` is sound and enables SIMD vectorization.
         if (with_restrict) {
             EMIT("%s * restrict", base_name);
         } else {
             EMIT("%s *", base_name);
         }
     } else {
-        // Shared Reference (MODE_SHARED)
+        // Shared Reference (MODE_SHARED), read-only
         if (is_primitive_type(t)) {
             EMIT("%s", base_name);  // Pass by value for primitives
         } else {
@@ -453,7 +459,7 @@ void emit_decl(Decl* decl, int depth) {
                  while (param) {
                      if (!first) EMIT(", ");
                      if (param->decl->kind == DECL_DESTRUCT) {
-                          emit_param_type(param->decl->as.destruct_decl.type, false);
+                          emit_param_type(param->decl->as.destruct_decl.type, false, false);
                           EMIT(" _destruct_param_");
                      } else {
                           Type *pt = param->decl->as.variable_decl.type;
@@ -504,7 +510,7 @@ void emit_decl(Decl* decl, int depth) {
                                   }
                               }
                           } else {
-                              emit_param_type(pt, false);
+                              emit_param_type(pt, false, false);
                           }
                           EMIT(" %.*s",
                                (int)param->decl->as.variable_decl.name->length,
@@ -617,7 +623,7 @@ void emit_decl(Decl* decl, int depth) {
                     
                     if (param->decl->kind == DECL_DESTRUCT) {
                         // Emit: Type _param_N
-                        emit_param_type(param->decl->as.destruct_decl.type, true);
+                        emit_param_type(param->decl->as.destruct_decl.type, true, false);
                         EMIT(" _param_%d", param_idx);
                     } else {
                         Type *pt = param->decl->as.variable_decl.type;
@@ -642,7 +648,7 @@ void emit_decl(Decl* decl, int depth) {
                             EMIT("%s", fb);
                         } else {
                             // Use emit_param_type to print parameter type.
-                            emit_param_type(pt, true);
+                            emit_param_type(pt, true, emit_param_is_written(decl, param->decl));
                             EMIT(" %.*s", (int)pn->length, pn->name);
                         }
                     }
