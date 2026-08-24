@@ -1,0 +1,12 @@
+// EXPECT: [E082]
+// Soundness: for a SIGNED n, `n = n / 2` moves toward zero — an INCREASE when n is
+// negative — so the halving rule must not fire; the measure decrease is unproven.
+proc main() i32 {
+    var n i32 = 64
+    var c = 0
+    while n > 0 decreasing n {
+        n = n / 2
+        c += 1
+    }
+    return c
+}

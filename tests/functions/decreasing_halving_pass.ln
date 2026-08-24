@@ -1,0 +1,14 @@
+// VRA/type-backed termination: `n = n / 2` on an unsigned n, in a loop whose
+// guard keeps n >= 1 (`while n > 0`), strictly decreases the measure — the
+// canonical divide-and-conquer loop is now proven to terminate.
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var n usize = 64
+    var c = 0
+    while n > 0 decreasing n {
+        n = n / 2
+        c += 1
+    }
+    libc_printf("%d\n", c)
+    return 0
+}

@@ -851,10 +851,39 @@ static int measure_find_var(Expr *target, MeasureVar *vars, int nvar) {
 
 // Determine direction: does `target = rhs` increase (+1) or decrease (-1) target?
 // Only handles: target = target + K, target = target - K, K + target  (K literal > 0)
-// The while body currently under termination analysis — set by
+// The while body + condition currently under termination analysis — set by
 // sema_verify_bounded_while so assignment_direction can ask "is this step
-// expression loop-invariant?" (no variable it reads is assigned in the body).
+// expression loop-invariant?" and "does the loop guard keep v >= 1?".
 static StmtList *g_term_loop_body = NULL;
+static Expr     *g_term_loop_cond = NULL;
+
+// True if t is an UNSIGNED integer type (uN or usize) — hence provably >= 0.
+static bool term_type_is_unsigned(Type *t) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
+    const char *n = t->base_type->name; isize len = t->base_type->length;
+    if (len == 5 && memcmp(n, "usize", 5) == 0) return true;
+    int bits; bool sgn;
+    if (parse_iN_uN(t, &bits, &sgn)) return !sgn;
+    return false;
+}
+
+// True if the loop condition guarantees `v >= 1` at body entry: a clause
+// `L < v` (v >= L+1 >= 1 for L>=0) or `L <= v` (v >= 1 for L>=1). Used to make
+// `v = v / D` a sound strict decrease. Splits `and` and inspects each clause.
+static bool cond_implies_ge1(Expr *cond, Expr *v) {
+    if (!cond) return false;
+    if (cond->kind == EXPR_BINARY && cond->as.binary_expr.op == TOKEN_KEYWORD_AND)
+        return cond_implies_ge1(cond->as.binary_expr.left,  v) ||
+               cond_implies_ge1(cond->as.binary_expr.right, v);
+    MeasureCmp c;
+    if (measure_extract_cmp(cond, v, &c) && c.hi && expr_struct_equal(c.hi, v) &&
+        c.lo && c.lo->kind == EXPR_LITERAL) {
+        int64_t L = c.lo->as.literal_expr.value;
+        if (c.strict  && L >= 0) return true;   // L <  v  =>  v >= L+1 >= 1
+        if (!c.strict && L >= 1) return true;   // L <= v  =>  v >= 1
+    }
+    return false;
+}
 
 // A step expression is loop-invariant if every identifier it reads is unmodified
 // anywhere in the loop body: then its VRA range at loop entry is valid on EVERY
@@ -914,6 +943,18 @@ static int assignment_direction(Expr *target, Expr *rhs) {
             if (r.known && r.min >= 1) return (op == TOKEN_PLUS) ? +1 : -1;
             if (r.known && r.max <= -1) return (op == TOKEN_PLUS) ? -1 : +1;
         }
+    }
+
+    // Halving: `v = v / D` (D >= 2 literal) strictly DECREASES an unsigned v that
+    // is >= 1. Sound only when (a) v is UNSIGNED — for a signed v, v/D moves toward
+    // zero, an INCREASE for negatives — and (b) the loop guard keeps v >= 1 at body
+    // entry (else v could stick at 0, e.g. `while v != 5`). Captures the canonical
+    // divide-and-conquer loop `while n > 0 decreasing n { n = n / 2 }`.
+    if (op == TOKEN_SLASH && expr_struct_equal(left, target) &&
+        right->kind == EXPR_LITERAL && right->as.literal_expr.value >= 2 &&
+        term_type_is_unsigned(target->type) &&
+        g_term_loop_cond && cond_implies_ge1(g_term_loop_cond, target)) {
+        return -1;
     }
 
     return 0;
@@ -1016,8 +1057,10 @@ static void sema_verify_bounded_while(Stmt *s) {
     }
 
     g_term_loop_body = s->as.while_stmt.body;   // for invariant-step VRA queries
+    g_term_loop_cond = cond;                     // for halving's v>=1 guard check
     int result = measure_scan_body(s->as.while_stmt.body, vars, nvar);
     g_term_loop_body = NULL;
+    g_term_loop_cond = NULL;
     if (result <= 0) {
         fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify that the termination measure "
                 "strictly decreases on each iteration.\n"
