@@ -1,0 +1,11 @@
+// EXPECT: [E088]
+// Returning a fixed-size array by value is not supported — must be rejected
+// cleanly, not emitted as broken C (Fixed_T_N struct return vs array mismatch).
+func ident(x i32[4]) i32[4] {
+    return x
+}
+proc main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var b i32[4] = ident(a)
+    return b[2]
+}

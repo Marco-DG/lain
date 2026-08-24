@@ -183,6 +183,23 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
             diagnostic_show_line(d->line, d->col);
             exit(1);
         }
+
+        // Returning a FIXED-size array by value (`func f() i32[4]`) is not yet
+        // supported and, left unchecked, emits broken C: the Fixed_T_N struct
+        // return mismatches the `return <array/ptr>` expression, and the caller's
+        // `int32_t b[4] = f()` array-initializer is illegal in C. Reject cleanly
+        // (fail-closed) instead. Slice returns (`i32[n]`, array_len == -1, emitted
+        // as a Slice_<T> struct) and `var` output parameters are the supported
+        // ways to hand back array data.
+        if ((d->kind == DECL_FUNCTION || d->kind == DECL_PROCEDURE) &&
+            rt && rt->kind == TYPE_ARRAY && rt->array_len > 0) {
+            fprintf(stderr, "[E088] Error Ln %li, Col %li: '%.*s' returns a fixed-size array "
+                    "by value, which is not supported. Return a slice ('T[n]') or write the "
+                    "result through a 'var' output parameter instead.\n",
+                    d->line, d->col, (int)id->length, id->name);
+            diagnostic_show_line(d->line, d->col);
+            exit(1);
+        }
   
         char *rawf = malloc(id->length + 1);
         memcpy(rawf, id->name, id->length);
