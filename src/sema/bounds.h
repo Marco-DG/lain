@@ -145,8 +145,8 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
         Range len_range = range_unknown();
         if (array_type->kind == TYPE_ARRAY && array_type->array_len >= 0) {
             len_range = range_const(array_type->array_len);
-        } else if (array_type->kind == TYPE_SLICE && array_type->sentinel_len > 0) {
-            len_range = range_const(array_type->sentinel_len);
+        } else if (array_type->kind == TYPE_SLICE && array_type->array_len > 0) {
+            len_range = range_const(array_type->array_len);   // known-length (string literal)
         } else if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
                    array_type->size_expr) {
             // Sized slice — the result of another `a[lo..hi]` carries
@@ -196,9 +196,9 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
     Range len_range = range_unknown();
     if (array_type->kind == TYPE_ARRAY && array_type->array_len >= 0) {
         len_range = range_const(array_type->array_len);
-    } else if (array_type->kind == TYPE_SLICE && array_type->sentinel_len > 0) {
+    } else if (array_type->kind == TYPE_SLICE && array_type->array_len > 0) {
         // Known fixed-size slice (e.g. string literal)
-        len_range = range_const(array_type->sentinel_len);
+        len_range = range_const(array_type->array_len);   // known-length (string literal)
     } else if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
                array_type->size_expr) {
         // Sized slice: evaluate the size expression via VRA.

@@ -1,0 +1,7 @@
+// EXPECT: [E089]
+// A plain (non-terminated) slice cannot be coerced to a sentinel-terminated
+// `u8[:0]` — the trailing NUL isn't guaranteed, so a C scanner would overread.
+extern proc libc_printf(fmt *u8, ...) i32
+proc show(msg u8[:0]) { libc_printf("%s\n", msg.data) }
+proc take(s u8[]) { show(s) }
+proc main() i32 { return 0 }

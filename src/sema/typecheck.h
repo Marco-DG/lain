@@ -1040,18 +1040,17 @@ static bool arg_refinement_discharges(Expr *arg, TokenKind need_op, Expr *need_r
 //   5. refinement-type-alias constraints                      [E086]
 // Each sub-check exits on violation. This is the boundary-level precursor to
 // the full `subsumes(from, to, range)` relation (P2/S2). Callers pass the
-// Sentinel discipline (partial — the worst case). A sentinel-terminated type
-// `u8[:0]` promises `.data` has a trailing sentinel, which is what makes `.data`
-// safe for a NUL-scanning C API (`printf "%s"`, `open`, `strlen`). Coercing an
-// arbitrary FIXED array `u8[N]` — general bytes with definitely no terminator —
-// into `u8[:0]` fabricates that promise: a buffer OVERREAD (potentially leaking
-// arbitrary memory) the moment `.data` reaches such an API. Reject it.
-//
-// Scoped to TYPE_ARRAY sources only. String LITERALS are exempt (the emitter
-// terminates them into a fresh buffer), and string-literal-derived VALUES are a
-// distinct TYPE_SLICE encoding not yet caught here — closing that fully requires
-// making string literals genuinely sentinel-terminated first (see the
-// sentinel-string-design memo). `unsafe` opts out.
+// Zig-style sentinel discipline. A sentinel-terminated type `u8[:0]` promises its
+// `.data` ends in the sentinel, which is what makes `.data` safe to hand to a
+// NUL-scanning C API (`printf "%s"`, `open`, `strlen`). A value may LOSE that
+// guarantee (a `u8[:0]` used as a plain `u8[]`) but may never GAIN one it lacks:
+// coercing a non-terminated value — a general fixed `u8[N]`, a plain slice `u8[]`
+// — into `u8[:0]` fabricates a terminator that is not in the backing storage, a
+// buffer OVERREAD (potentially leaking memory) the moment `.data` reaches such an
+// API. Reject it. Exempt: a source already carrying the SAME sentinel (string
+// literals and string-literal-derived values ARE sentinel-terminated — Zig's
+// `[N:0]u8`), a string/char LITERAL (terminated into a fresh buffer by the
+// emitter), and `unsafe`.
 static void reject_sentinel_fabrication(Type *from, Type *to, Expr *src_expr,
                                         isize line, isize col, const char *ctx) {
     if (sema_in_unsafe_block) return;
@@ -1061,13 +1060,21 @@ static void reject_sentinel_fabrication(Type *from, Type *to, Expr *src_expr,
     if (!f || !t) return;
     bool to_sentinel = (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) && t->sentinel_str != NULL;
     if (!to_sentinel) return;
-    if (f->kind != TYPE_ARRAY) return;                 // only a general fixed array
+    // Source already carries the SAME sentinel → safe (sentinel → sentinel). String
+    // literals and string-literal-derived values are sentinel-terminated, so they
+    // pass here; a plain `u8[]` slice or a general fixed `u8[N]` does not.
+    if ((f->kind == TYPE_ARRAY || f->kind == TYPE_SLICE) && f->sentinel_str &&
+        f->sentinel_len == t->sentinel_len &&
+        memcmp(f->sentinel_str, t->sentinel_str, (size_t)t->sentinel_len) == 0)
+        return;
+    // A string/char literal is terminated into a fresh buffer by the emitter.
     if (src_expr && src_expr->kind == EXPR_STRING) return;
     char tb[128]; type_describe(t, tb, sizeof tb);
-    fprintf(stderr, "[E089] Error Ln %li, Col %li: cannot use a fixed array as the "
-            "sentinel-terminated type '%s'%s%s: it has no trailing sentinel, so a C API that "
-            "scans for one (printf \"%%s\", open, strlen, …) would read past the buffer. Pass a "
-            "string literal or a value already of a matching sentinel-terminated type.\n",
+    fprintf(stderr, "[E089] Error Ln %li, Col %li: cannot use a non-terminated value as the "
+            "sentinel-terminated type '%s'%s%s: its trailing sentinel is not guaranteed present, "
+            "so a C API that scans for one (printf \"%%s\", open, strlen, …) would read past the "
+            "buffer. Pass a string literal or a value already of a matching sentinel-terminated "
+            "type.\n",
             (long)line, (long)col, tb, ctx ? " for " : "", ctx ? ctx : "");
     diagnostic_show_line(line, col);
     exit(1);
@@ -2844,10 +2851,16 @@ void sema_infer_expr(Expr *e) {
     slice_ty->mode = MODE_SHARED;  // string literals are shared by default
     slice_ty->element_type = elem;
 
-    // FIXED-LENGTH: no sentinel data, just record the length
-    slice_ty->sentinel_str = NULL;
-    slice_ty->sentinel_len = (isize)L;
+    // A string literal is a SENTINEL-TERMINATED slice of KNOWN length (Zig's
+    // `[N:0]u8`): its backing buffer carries a trailing NUL, so `.data` is safe to
+    // hand to a C API that scans for it. The compile-time length L lives in
+    // array_len (sentinel_len is the sentinel's own length, "0" → 1); this is what
+    // untangles the old overload where sentinel_len meant BOTH the string length
+    // and the sentinel length.
+    slice_ty->sentinel_str       = "0";
+    slice_ty->sentinel_len       = 1;
     slice_ty->sentinel_is_string = false;
+    slice_ty->array_len          = (isize)L;
 
     e->type = slice_ty;
     break;
