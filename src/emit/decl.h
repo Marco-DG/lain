@@ -701,6 +701,28 @@ void emit_decl(Decl* decl, int depth) {
                                 EMIT("if (%s >= %s) __builtin_unreachable();\n", pname, bound);
                             emitted_any = true;
                         }
+                        // Alias-refined type (`p Pct` where `Pct = i32 0..100`): the
+                        // refinement lives on the TYPE, not the param's inline
+                        // constraints, so the loop above misses it. Carry it as the
+                        // same zero-cost range hint — this is the one proof (value
+                        // range) the C target was still dropping. Proof -> hint, so
+                        // gcc/clang fold the dead branches (e.g. scale: 3 insns -> 2).
+                        {
+                            extern int type_integer_range(Type *t, long long *lo, long long *hi);
+                            extern Type *resolve_type_alias(Type *t);
+                            Type *pt = rp->decl->as.variable_decl.type;
+                            long long lo, hi, blo, bhi;
+                            if (pt && type_integer_range(pt, &lo, &hi)) {
+                                Type *base = resolve_type_alias(pt);
+                                if (base && base != pt && type_integer_range(base, &blo, &bhi) &&
+                                    (lo > blo || hi < bhi)) {
+                                    emit_indent(depth + 1);
+                                    EMIT("if (%s < %lldLL || %s > %lldLL) __builtin_unreachable();\n",
+                                         pname, lo, pname, hi);
+                                    emitted_any = true;
+                                }
+                            }
+                        }
                     }
                     rp = rp->next;
                 }
