@@ -40,9 +40,12 @@ pick() { local a=("$@"); echo "${a[$((RANDOM % ${#a[@]}))]}"; }
 big() { echo $(( (RANDOM<<15 | RANDOM) * ( (RANDOM%2)?1:-1 ) )); }  # ~wide signed
 
 # ── generators: each echoes a full program that Lain SHOULD prove safe ──────────
-gen_modbounds() {   # buf[i % N] in a loop — VRA modulo-bounds proof
-    local n=$(r 12 2) steps=$(r 40 1) i vals=""
-    for ((i=0;i<n;i++)); do vals+="$(r 90 65)"; ((i<n-1)) && vals+=", "; done
+gen_modbounds() {   # buf[i % N] in a loop — VRA modulo-bounds proof; sum oracle
+    local n=$(r 12 2) steps=$(r 40 1) i vals="" acc=0
+    local -a arr=()
+    for ((i=0;i<n;i++)); do local v=$(r 90 65); arr[i]=$v; vals+="$v"; ((i<n-1)) && vals+=", "; done
+    for ((i=0;i<steps;i++)); do acc=$((acc + arr[i % n])); done
+    EXPECT="$acc"
     cat <<EOF
 extern proc libc_printf(fmt *u8, ...) i32
 proc main() i32 {
@@ -58,9 +61,10 @@ proc main() i32 {
 }
 EOF
 }
-gen_scanbounds() {  # forward scan to exact len — off-by-one → ASan OOB
-    local n=$(r 16 1) i vals=""
-    for ((i=0;i<n;i++)); do vals+="$(r 120 1)"; ((i<n-1)) && vals+=", "; done
+gen_scanbounds() {  # forward scan to exact len — off-by-one → ASan OOB; sum oracle
+    local n=$(r 16 1) i vals="" sum=0 v
+    for ((i=0;i<n;i++)); do v=$(r 120 1); sum=$((sum+v)); vals+="$v"; ((i<n-1)) && vals+=", "; done
+    EXPECT="$sum"
     cat <<EOF
 extern proc libc_printf(fmt *u8, ...) i32
 proc main() i32 {
@@ -76,8 +80,9 @@ proc main() i32 {
 }
 EOF
 }
-gen_widen() {       # Path-F widening: i32*i32 must compute wide (no i32 UB)
+gen_widen() {       # Path-F widening: i32*i32 must compute wide (no i32 UB); oracle
     local a=$(big) b=$(big)
+    EXPECT="$((a*b)) $((a+b))"
     cat <<EOF
 extern proc libc_printf(fmt *u8, ...) i32
 proc main() i32 {
@@ -199,9 +204,10 @@ EOF
 GENS=(gen_modbounds gen_scanbounds gen_widen gen_checked gen_narrow gen_niche \
       gen_modmismatch gen_offset gen_subidx gen_slicefn)
 
-acc=0 rej=0 crash=0 brokenc=0 unsound=0
+acc=0 rej=0 crash=0 brokenc=0 unsound=0 miscompile=0
 for ((it=0; it<N; it++)); do
     g="${GENS[$((RANDOM % ${#GENS[@]}))]}"
+    EXPECT=""                                   # oracle (set by deterministic gens)
     src="$TDIR/f.ln"; "$g" > "$src"
     "$LAIN" "$src" -o "$TDIR/f.c" >/dev/null 2>"$TDIR/lain.err"; rc=$?
     if (( rc >= 128 )); then
@@ -214,16 +220,21 @@ for ((it=0; it<N; it++)); do
         brokenc=$((brokenc+1)); cp "$src" "$BUGDIR/brokenc_${it}.ln"; cp "$TDIR/f.c" "$BUGDIR/brokenc_${it}.c"
         echo "BROKEN-C ($g): $(grep -m1 error: "$TDIR/gcc.err")"; continue
     fi
-    "$TDIR/f" >/dev/null 2>"$TDIR/san.err"; prc=$?
+    out="$("$TDIR/f" 2>"$TDIR/san.err")"; prc=$?
     if grep -qE "runtime error|Sanitizer|SUMMARY:" "$TDIR/san.err" || (( prc >= 128 )); then
         unsound=$((unsound+1)); cp "$src" "$BUGDIR/unsound_${it}.ln"
         echo "⚠ UNSOUND PROOF ($g): $(grep -m1 -E 'runtime error|ERROR' "$TDIR/san.err")"; continue
+    fi
+    # differential oracle: a wrong-but-not-UB result is a MISCOMPILE the sanitizer misses
+    if [[ -n "$EXPECT" && "$out" != "$EXPECT" ]]; then
+        miscompile=$((miscompile+1)); cp "$src" "$BUGDIR/miscompile_${it}.ln"
+        echo "⚠ MISCOMPILE ($g): expected [$EXPECT] got [$out]"; continue
     fi
 done
 
 echo "=============================================================="
 echo "FUZZ $N iters:  accepted=$acc  rejected=$rej"
-echo "  bugs:  crashes=$crash  broken-C=$brokenc  UNSOUND=$unsound"
+echo "  bugs:  crashes=$crash  broken-C=$brokenc  UNSOUND=$unsound  miscompile=$miscompile"
 echo "=============================================================="
-(( crash + brokenc + unsound > 0 )) && { echo "repro programs in fuzz_bugs/"; exit 1; }
+(( crash + brokenc + unsound + miscompile > 0 )) && { echo "repro programs in fuzz_bugs/"; exit 1; }
 exit 0
