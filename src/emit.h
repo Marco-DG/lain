@@ -81,15 +81,33 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     }
     EMIT("\n");
 
-    // Emit top-level constants BEFORE any function, so function bodies (and later
-    // constants like a lookup table) can reference them. `static const` — a
-    // module-scoped compile-time constant, folded by the C compiler.
+    // (Top-level constants are emitted LATER — inside the body, after the slice/
+    // array typedefs — so a constant of a slice type like `G u8[:0] = "hi"` sees
+    // its Slice_<T> typedef. They still precede all function DEFINITIONS, so
+    // function bodies can reference them.)
+
+    // Emit the body (function forward decls + definitions) into a temp file so
+    // that every slice/array type it references gets recorded before we decide
+    // which typedefs to emit. Fall back to writing directly if tmpfile() fails.
+    FILE *body = tmpfile();
+    output_file = body ? body : real_out;
+
+    // Emit forward declarations for all functions and procedures
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (decl_is_generic_template(dl->decl)) continue;   // templates: only instances are emitted
+        if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
+            emit_forward_decl(dl->decl, 0);
+        }
+    }
+    EMIT("\n");
+
+    // Top-level constants — in the body (spliced AFTER the slice/array typedefs),
+    // BEFORE all function definitions. `static const` for `NAME T = expr`; `static`
+    // for a `var NAME T` mutable global.
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (!dl->decl || dl->decl->kind != DECL_VARIABLE) continue;
         Decl *d = dl->decl;
         Type *ty = d->as.variable_decl.type;
-        // A bare `NAME T = expr` is an immutable compile-time constant (`static
-        // const`); a `var NAME T` is a mutable global (`static`, no const).
         const char *cst = d->as.variable_decl.is_mutable ? "static " : "static const ";
         char nm[256]; snprintf(nm, sizeof nm, "%s", c_name_for_id(d->as.variable_decl.name));
         if (ty && ty->kind == TYPE_ARRAY && ty->array_len > 0) {
@@ -111,7 +129,9 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
                     emit_expr(el->expr, 0);
                 }
                 EMIT(" }");
-            } else {
+            } else if (!emit_slice_coercion(ty, init, 0)) {
+                // slice-typed const from a string/array literal -> {.data,.len};
+                // otherwise the raw expression.
                 emit_expr(init, 0);
             }
         }
@@ -119,20 +139,6 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     }
     EMIT("\n");
 
-    // Emit the body (function forward decls + definitions) into a temp file so
-    // that every slice/array type it references gets recorded before we decide
-    // which typedefs to emit. Fall back to writing directly if tmpfile() fails.
-    FILE *body = tmpfile();
-    output_file = body ? body : real_out;
-
-    // Emit forward declarations for all functions and procedures
-    for (DeclList *dl = decls; dl; dl = dl->next) {
-        if (decl_is_generic_template(dl->decl)) continue;   // templates: only instances are emitted
-        if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
-            emit_forward_decl(dl->decl, 0);
-        }
-    }
-    EMIT("\n");
     emit_decl_list_topo(decls, depth);
     // Emit Fixed_<UserType>_N typedefs that depend on user-defined struct types
     // (complete type required for arrays) — after all struct definitions.
