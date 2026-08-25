@@ -399,7 +399,7 @@ static Type *union_lower(Type *u) {
         char vd[128]; type_describe(value, vd, sizeof vd);
         fprintf(stderr, "[E064] Error: the union `%s | ...` cannot be zero-cost — '%s' has no "
                 "spare bit-patterns for its %d marker(s). Give the value type niche room "
-                "(a refinement like `u8 where < 200`, a pointer, or a slice), or use fewer markers.\n",
+                "(a refinement like `u8 < 200`, a pointer, or a slice), or use fewer markers.\n",
                 vd, vd, nmark);
         exit(1);
     }
