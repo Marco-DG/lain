@@ -99,6 +99,17 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
   if (parser_match(TOKEN_ASTERISK)) {
     parser_advance();
 
+    // `*var T` — a WRITABLE raw pointer (pointer to a MUTABLE T), reusing `var`,
+    // Lain's mutability keyword. `*T` is const-pointee (emits `const T*`, read-only);
+    // `*var T` is mutable-pointee (emits `T*`), so `*p = …` is allowed in `unsafe`.
+    // Consume `var` HERE so the pointee parsed below is plain T, not a mutable-borrow
+    // wrapper (which used to mis-lower `*var i32` to a `const int32_t**` double ptr).
+    bool ptr_mutable = false;
+    if (parser_match(TOKEN_KEYWORD_VAR)) {
+        parser_advance();
+        ptr_mutable = true;
+    }
+
     // *func(P..)R / *proc(P..)R — non-capturing function-pointer type.
     // `func` encodes totality (provably terminating); `proc` may diverge.
     if (parser_match(TOKEN_KEYWORD_FUNC) || parser_match(TOKEN_KEYWORD_PROC)) {
@@ -141,7 +152,11 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
                      "'T[]', or 'T[:S]' without '*'. '*' is only for raw pointers "
                      "('*T', '*void', function pointers).");
     }
-    return type_pointer(arena, inner);
+    {
+        Type *pt = type_pointer(arena, inner);
+        if (ptr_mutable) pt->pointee_mutable = true;   // `*var T` → writable pointee (non-const)
+        return pt;
+    }
   }
   
   if (parser_match(TOKEN_KEYWORD_MOV)) {

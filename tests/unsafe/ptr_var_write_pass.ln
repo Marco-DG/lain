@@ -1,0 +1,17 @@
+// `*var T` is a WRITABLE raw pointer (mutable pointee → `T*`, not `const T*`), the
+// explicit counterpart of read-only `*T`. Writing through it (in unsafe) is valid
+// for BOTH a parameter and a local — closing the raw-pointer-write gap.
+extern proc libc_printf(fmt *u8, ...) i32
+proc bump(p *var i32) {
+    unsafe { *p = *p + 1 }
+}
+proc main() i32 {
+    var x i32 = 10
+    bump(&x)
+    unsafe {
+        var q = &x as *var i32
+        *q = *q + 100
+    }
+    libc_printf("%d\n", x)
+    return 0
+}

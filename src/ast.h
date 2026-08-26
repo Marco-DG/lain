@@ -95,6 +95,12 @@ typedef struct Type {
     isize       sentinel_len;
     bool        sentinel_is_string;
 
+    /* TYPE_POINTER only: `*var T` sets this — the POINTEE is mutable, so the C type
+       is `T*` (not `const T*`). Purely a const-ness flag on the raw pointer; it does
+       NOT change mode (stays MODE_SHARED: a raw pointer is by-value, single-deref),
+       so it does not perturb borrow/deref/param lowering the way MODE_MUTABLE would. */
+    bool        pointee_mutable;
+
     /* TYPE_FUNC (non-capturing function pointer, `*func(P..)R` / `*proc(P..)R`):
        func_params = ordered parameter types; element_type = return type (NULL = void);
        func_is_total = true for `func` (provably terminating), false for `proc`. */

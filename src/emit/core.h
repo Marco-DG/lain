@@ -496,7 +496,7 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
         t->element_type->array_len >= 0) {
         char elem[256];
         c_name_for_type(t->element_type->element_type, elem, sizeof elem);
-        if (t->mode == MODE_MUTABLE || t->mode == MODE_OWNED)
+        if (t->mode == MODE_MUTABLE || t->mode == MODE_OWNED || t->pointee_mutable)
             snprintf(out, cap, "%s *", elem);
         else
             snprintf(out, cap, "const %s *", elem);
@@ -506,8 +506,9 @@ void c_name_for_type(Type *t, char *out, size_t cap) {
     char tgt[256];
     c_name_for_type(t->element_type, tgt, sizeof tgt);
 
-    // Check mode for const correctness
-    if (t->mode == MODE_MUTABLE || t->mode == MODE_OWNED) {
+    // Check mode for const correctness. `*var T` (pointee_mutable) is writable-pointee
+    // → non-const `T*`, exactly like a mut/owned pointer; plain `*T` stays `const T*`.
+    if (t->mode == MODE_MUTABLE || t->mode == MODE_OWNED || t->pointee_mutable) {
         snprintf(out, cap, "%s *", tgt);
     } else {
         // Shared pointer -> const T *
