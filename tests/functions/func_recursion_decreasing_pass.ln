@@ -1,0 +1,17 @@
+// A `func` (total) may recurse when it declares a `decreasing <measure>`: each
+// self-call must strictly decrease the well-founded measure — the same
+// termination discipline as a loop's `decreasing` clause. fib (n-1, n-2) and a
+// halving descent (n/2) both qualify.
+extern proc libc_printf(fmt *u8, ...) i32
+func fib(n i32) i32 decreasing n {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+func depth(n usize) usize decreasing n {
+    if n < 1 { return 0 }
+    return 1 + depth(n / 2)
+}
+proc main() i32 {
+    libc_printf("%d %d\n", fib(10), depth(16) as i32)
+    return 0
+}

@@ -1505,6 +1505,72 @@ static void check_else_arm(Expr *e, Type *result_ty) {
     check_conversion(arm->type, result_ty, r, arm, arm->line, arm->col, "else fallback value", "else");
 }
 
+// `func f(...) decreasing m` permits recursion iff every self-call strictly
+// decreases the well-founded measure m. For a single-parameter measure, prove at
+// the call site (a) the matching argument < m (strict descent) and (b) m >= 0
+// (well-founded, so descent bottoms out) via VRA. A non-decreasing or
+// unbounded-below call is rejected, keeping `func` total. Runs after the call's
+// args are inferred so their ranges (from enclosing guards) are available.
+static void check_recursion_measure(Decl *fn, Expr *call) {
+    if (!sema_walk_phase || !sema_ranges) return;
+    Expr *m = fn->as.function_decl.decreasing_measure;
+    if (!m) return;
+    if (m->kind != EXPR_IDENTIFIER) {
+        fprintf(stderr, "[E091] Error Ln %li, Col %li: a `decreasing` measure on a recursive "
+                "`func` must currently be a single parameter (e.g. `decreasing n`).\n",
+                (long)call->line, (long)call->col);
+        diagnostic_show_line(call->line, call->col); exit(1);
+    }
+    Id *mvar = m->as.identifier_expr.id;
+    int idx = 0, found = -1;
+    for (DeclList *p = fn->as.function_decl.params; p; p = p->next, idx++) {
+        if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.name &&
+            p->decl->as.variable_decl.name->length == mvar->length &&
+            memcmp(p->decl->as.variable_decl.name->name, mvar->name, (size_t)mvar->length) == 0) {
+            found = idx; break;
+        }
+    }
+    if (found < 0) {
+        fprintf(stderr, "[E091] Error Ln %li, Col %li: `decreasing` measure '%.*s' must be a "
+                "parameter of the function.\n", (long)call->line, (long)call->col,
+                (int)mvar->length, mvar->name);
+        diagnostic_show_line(call->line, call->col); exit(1);
+    }
+    Expr *arg = NULL; int i = 0;
+    for (ExprList *a = call->as.call_expr.args; a; a = a->next, i++)
+        if (i == found) { arg = a->expr; break; }
+    if (!arg) return;   // arity mismatch reported elsewhere
+    // (a) strict descent, detected SYNTACTICALLY relative to the measure `m` (an
+    // interval subtraction `arg - m` loses the shared-`m` correlation and can't
+    // prove `(n-1) - n = -1`). Mirrors the loop measure's assignment_direction:
+    //   m - K  (K >= 1)  |  m + K (K <= -1)  |  m / D (D >= 2, m >= 1)  → strictly < m.
+    bool strict = false;
+    if (arg->kind == EXPR_BINARY && expr_struct_equal(arg->as.binary_expr.left, m)) {
+        TokenKind op = arg->as.binary_expr.op;
+        Range rr = sema_eval_range(arg->as.binary_expr.right, sema_ranges);
+        if (op == TOKEN_MINUS && rr.known && rr.min >= 1)       strict = true;
+        else if (op == TOKEN_PLUS && rr.known && rr.max <= -1)  strict = true;
+        else if (op == TOKEN_SLASH && rr.known && rr.min >= 2) {
+            Range mr0 = sema_eval_range(m, sema_ranges);
+            if (mr0.known && mr0.min >= 1) strict = true;       // halving, m >= 1
+        }
+    }
+    // (b) well-founded: m provably >= 0 at the call site.
+    Range mr = sema_eval_range(m, sema_ranges);
+    bool wellfounded = mr.known && mr.min >= 0;
+    if (!strict || !wellfounded) {
+        fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify the recursion in `func` "
+                "'%.*s' terminates. The `decreasing %.*s` measure must be provably >= 0 and "
+                "strictly smaller in every self-call. %s\n",
+                (long)call->line, (long)call->col,
+                (int)fn->as.function_decl.name->length, fn->as.function_decl.name->name,
+                (int)mvar->length, mvar->name,
+                !strict ? "This call does not make it strictly smaller."
+                        : "It is not provably non-negative here — guard the base case (e.g. `if n < 1 { … }` before recursing) or use an unsigned measure.");
+        diagnostic_show_line(call->line, call->col); exit(1);
+    }
+}
+
 void sema_infer_expr(Expr *e) {
   if (!e) return;
 // (removed debug print)
@@ -1858,9 +1924,13 @@ void sema_infer_expr(Expr *e) {
                 exit(1);
             }
             
-            // Termination Analysis: Ban recursion in func
-            if (callee->decl == current_function_decl) {
-                fprintf(stderr, "[E011] Error: recursion is not allowed in pure function '%.*s' (a `func` must be total; recursion cannot guarantee termination).\n",
+            // Termination Analysis: recursion in `func` is banned UNLESS the
+            // function carries a `decreasing <measure>` clause — then it is allowed
+            // and each self-call is verified to strictly decrease the measure
+            // (check_recursion_measure, after the args below are inferred).
+            if (callee->decl == current_function_decl &&
+                !current_function_decl->as.function_decl.decreasing_measure) {
+                fprintf(stderr, "[E011] Error: recursion is not allowed in pure function '%.*s' (a `func` must be total; recursion cannot guarantee termination). Add a `decreasing <measure>` clause to permit it.\n",
                         (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
                 exit(1);
             }
@@ -1870,7 +1940,17 @@ void sema_infer_expr(Expr *e) {
     for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
       sema_infer_expr(a->expr);
     }
-    
+
+    // Recursion in a `func` with a `decreasing` measure: verify this self-call
+    // strictly decreases the (well-founded) measure. Args are inferred above so
+    // their VRA ranges (from enclosing guards) are available.
+    if (sema_walk_phase && current_function_decl &&
+        current_function_decl->kind == DECL_FUNCTION &&
+        e->as.call_expr.callee && e->as.call_expr.callee->decl == current_function_decl &&
+        current_function_decl->as.function_decl.decreasing_measure) {
+        check_recursion_measure(current_function_decl, e);
+    }
+
     // Argument count check — skip extern functions (may be variadic like printf)
     {
         Decl *cd = e->as.call_expr.callee->decl;

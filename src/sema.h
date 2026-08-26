@@ -2748,7 +2748,11 @@ static EffectSet effect_full(Decl *d) {
     if (d->kind == DECL_EXTERN_PROCEDURE) return EFFECT_IO;    // opaque external effect
     if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE) return 0;
     if (d->as.function_decl.effects_done) return d->as.function_decl.effects;
-    if (d->as.function_decl.effects_in_progress) return EFFECT_DIVERGE;  // recursion cycle
+    if (d->as.function_decl.effects_in_progress)
+        // Recursion cycle → Diverge, UNLESS a `func` carries a `decreasing`
+        // measure: its termination is verified per self-call (check_recursion_
+        // measure), so the cycle contributes no Diverge and `func` stays total.
+        return d->as.function_decl.decreasing_measure ? (EffectSet)0 : EFFECT_DIVERGE;
     d->as.function_decl.effects_in_progress = true;
 
     EffectSet saved = g_eff_acc; Decl *saved_self = g_eff_self;
@@ -3012,6 +3016,13 @@ static void sema_check_no_mutual_recursion(DeclList *decls) {
             continue;
         }
         if (mrec_found_cycle_start == d) {
+            // A SELF-recursion (fib → fib) carrying a `decreasing <measure>` clause
+            // is permitted — its termination is verified per call site in
+            // typecheck.h (check_recursion_measure). Only report genuine
+            // multi-function cycles here (measure descent across a mutual cycle is
+            // not yet supported).
+            if (d->as.function_decl.decreasing_measure && mrec_found_cycle_end == d)
+                continue;
             fprintf(stderr,
                     "[E011] Error Ln %li, Col %li: pure function '%.*s' participates in mutual recursion (via '%.*s'). "
                     "Mutual recursion breaks the termination guarantee of 'func'.\n",

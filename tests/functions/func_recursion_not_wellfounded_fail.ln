@@ -1,0 +1,9 @@
+// EXPECT: [E082]
+// The measure decreases but is NOT well-founded: `n` is signed and the base case
+// `n == 0` does not catch negatives, so `bad(-1)` recurses forever. The `>= 0`
+// requirement rejects it (guard `n < 1`, or use an unsigned measure).
+func bad(n i32) i32 decreasing n {
+    if n == 0 { return 0 }
+    return bad(n - 1)
+}
+proc main() i32 { return bad(3) }

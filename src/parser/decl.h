@@ -897,6 +897,15 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     // - Parameters: func div(a int, b int != 0) int
     // - Return: func abs(x int) int >= 0
 
+    // Optional `decreasing <measure>` clause — permits recursion in a `func`
+    // (which is otherwise total and recursion-free): each self-call must strictly
+    // decrease this well-founded measure. Same keyword as the loop measure.
+    Expr *decreasing_measure = NULL;
+    if (parser_match(TOKEN_KEYWORD_DECREASING)) {
+        parser_advance();
+        decreasing_measure = parse_expr(arena, parser);
+    }
+
     // function body
     parser_expect(TOKEN_L_BRACE, "Expected '{' after signature");
     parser_advance();
@@ -913,6 +922,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
         d = decl_function(arena, func_name, params, ret_type, body, false, false);
     }
     d->as.function_decl.return_constraints = return_constraints;
+    d->as.function_decl.decreasing_measure = decreasing_measure;
     return d;
 }
 

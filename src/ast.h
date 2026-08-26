@@ -273,6 +273,9 @@ typedef struct {
     ExprList*   pre_contracts;  // New: pre-conditions (requires/pre)
     ExprList*   post_contracts; // New: post-conditions (ensures/post)
     ExprList*   return_constraints; // Equation-style: func f() int >= 0
+    struct Expr* decreasing_measure; // `func f(...) R decreasing <measure>`: permits
+                                     // recursion — each self-call must strictly decrease
+                                     // this well-founded (>=0) measure. NULL = no recursion.
     bool        is_extern;      // true for “extern func”
     bool        is_variadic;    // true for “...”
     bool        is_cold;        // @cold:     GCC moves to .text.cold, pessimizes branch
