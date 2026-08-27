@@ -1,0 +1,11 @@
+// VRA correlated-division range: `m - m/D` shares the same `m`, so it is provably a
+// bounded fraction of m — for m in [0,200), m - m/2 <= 100. Evaluating the operands
+// independently would over-approximate to ~200 and reject the index. Proves the
+// correlation is tracked (plain `a[m]` here would NOT prove — m can be 199).
+proc probe(m usize, a i32[128]) i32 {
+    if m < 200 {
+        return a[m - m / 2]
+    }
+    return 0
+}
+proc main() i32 { return 0 }

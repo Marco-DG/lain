@@ -318,6 +318,36 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                 }
             }
 
+            // Correlated `X - X/D` and `X/D - X` (D >= 2 literal, X >= 0). X and
+            // X/D share the SAME X, so evaluating the operands independently
+            // (range_sub) loses the correlation and grossly over-approximates.
+            // f(X) = X - X/D is non-decreasing for X >= 0 (each +1 to X raises X/D
+            // by 0 or 1), so over X in [xlo,xhi] it is [xlo - xlo/D, xhi - xhi/D].
+            // This is what proves `(hi-lo) - (hi-lo)/2 >= 1` (the binary-search
+            // measure decrease) and, generally, that a value minus its Dth part
+            // stays a positive fraction of itself.
+            if (op == TOKEN_MINUS) {
+                Expr *LE = e->as.binary_expr.left, *RE = e->as.binary_expr.right;
+                // X - X/D  (l is range of X)
+                if (l.known && l.min >= 0 && RE && RE->kind == EXPR_BINARY &&
+                    RE->as.binary_expr.op == TOKEN_SLASH &&
+                    RE->as.binary_expr.right && RE->as.binary_expr.right->kind == EXPR_LITERAL &&
+                    RE->as.binary_expr.right->as.literal_expr.value >= 2 &&
+                    expr_struct_equal(RE->as.binary_expr.left, LE)) {
+                    int64_t D = RE->as.binary_expr.right->as.literal_expr.value;
+                    return range_make(l.min - l.min / D, l.max - l.max / D);
+                }
+                // X/D - X  (r is range of X) = -(X - X/D)
+                if (r.known && r.min >= 0 && LE && LE->kind == EXPR_BINARY &&
+                    LE->as.binary_expr.op == TOKEN_SLASH &&
+                    LE->as.binary_expr.right && LE->as.binary_expr.right->kind == EXPR_LITERAL &&
+                    LE->as.binary_expr.right->as.literal_expr.value >= 2 &&
+                    expr_struct_equal(LE->as.binary_expr.left, RE)) {
+                    int64_t D = LE->as.binary_expr.right->as.literal_expr.value;
+                    return range_make(-(r.max - r.max / D), -(r.min - r.min / D));
+                }
+            }
+
             switch (op) {
                 case TOKEN_PLUS:
                 case TOKEN_PLUS_QUESTION:   return range_add(l, r);   // +? == + if it doesn't trap
