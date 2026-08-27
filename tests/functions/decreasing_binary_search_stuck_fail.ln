@@ -1,0 +1,14 @@
+// EXPECT: [E082]
+// Soundness: `lo = mid` (no +1) makes no progress at hi-lo == 1 (mid == lo), so the
+// measure sticks at 1 forever. The normalizer evaluates the step at the BINDING M=1
+// (not the entry value) and rejects it.
+proc descend(flag bool) i32 {
+    var lo usize = 0
+    var hi usize = 64
+    while lo < hi decreasing hi - lo {
+        var mid usize = lo + (hi - lo) / 2
+        if flag { lo = mid } else { hi = mid }
+    }
+    return lo as i32
+}
+proc main() i32 { return 0 }

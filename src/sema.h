@@ -857,6 +857,129 @@ static int measure_find_var(Expr *target, MeasureVar *vars, int nvar) {
 static StmtList *g_term_loop_body = NULL;
 static Expr     *g_term_loop_cond = NULL;
 
+// For a difference measure `A - B` (e.g. `hi - lo`), the two variables and the
+// loop's body-local single-assignment defs (e.g. `var mid = lo + (hi-lo)/2`), so a
+// measure-var assignment `hi = mid` / `lo = mid+1` can be understood by
+// substituting mid. Set by sema_verify_bounded_while.
+static Id *g_term_measure_a = NULL;   // the `+` variable of `A - B`
+static Id *g_term_measure_b = NULL;   // the `-` variable
+static Expr *g_term_measure_expr = NULL;
+#define MAX_TERM_DEFS 16
+static struct { Id *var; Expr *def; } g_term_defs[MAX_TERM_DEFS];
+static int g_term_ndefs = 0;
+
+// Substitute the recorded body-local defs into e (one level). Returns e unchanged
+// when nothing applies. Uses sema_arena for rebuilt binary nodes.
+static Expr *term_subst_locals(Expr *e) {
+    if (!e) return e;
+    if (e->kind == EXPR_IDENTIFIER) {
+        Id *id = e->as.identifier_expr.id;
+        for (int i = 0; i < g_term_ndefs; i++)
+            if (g_term_defs[i].var->length == id->length &&
+                memcmp(g_term_defs[i].var->name, id->name, (size_t)id->length) == 0)
+                return g_term_defs[i].def;
+        return e;
+    }
+    if (e->kind == EXPR_BINARY) {
+        Expr *l = term_subst_locals(e->as.binary_expr.left);
+        Expr *r = term_subst_locals(e->as.binary_expr.right);
+        if (l == e->as.binary_expr.left && r == e->as.binary_expr.right) return e;
+        return expr_binary(sema_arena, e->as.binary_expr.op, l, r);
+    }
+    return e;
+}
+
+// A linear form over the measure vars A, B plus a single `(A-B)/D` div-atom and a
+// constant: value = ca*A + cb*B + cdiv*((A-B)/D) + k.  ok=false if e contains any
+// term outside this shape (a different variable, a non-(A-B) division, a product…).
+typedef struct { bool ok; int64_t ca, cb, cdiv, d, k; } TermLin;
+static bool term_id_is(Expr *e, Id *v) {
+    return e && e->kind == EXPR_IDENTIFIER &&
+           e->as.identifier_expr.id->length == v->length &&
+           memcmp(e->as.identifier_expr.id->name, v->name, (size_t)v->length) == 0;
+}
+static TermLin term_lin(Expr *e, Id *A, Id *B) {
+    TermLin z = { true, 0,0,0,0,0 };
+    if (!e) { z.ok = false; return z; }
+    switch (e->kind) {
+        case EXPR_LITERAL: z.k = (int64_t)e->as.literal_expr.value; return z;
+        case EXPR_IDENTIFIER:
+            if (term_id_is(e, A)) { z.ca = 1; return z; }
+            if (term_id_is(e, B)) { z.cb = 1; return z; }
+            z.ok = false; return z;
+        case EXPR_BINARY: {
+            TokenKind op = e->as.binary_expr.op;
+            if (op == TOKEN_PLUS || op == TOKEN_MINUS) {
+                TermLin l = term_lin(e->as.binary_expr.left, A, B);
+                TermLin r = term_lin(e->as.binary_expr.right, A, B);
+                if (!l.ok || !r.ok) { z.ok = false; return z; }
+                int64_t s = (op == TOKEN_MINUS) ? -1 : 1;
+                if (l.d && r.d && l.d != r.d) { z.ok = false; return z; }  // 2 different div-atoms
+                z.d = l.d ? l.d : r.d;
+                z.ca = l.ca + s*r.ca; z.cb = l.cb + s*r.cb;
+                z.cdiv = l.cdiv + s*r.cdiv; z.k = l.k + s*r.k;
+                return z;
+            }
+            if (op == TOKEN_SLASH && e->as.binary_expr.right &&
+                e->as.binary_expr.right->kind == EXPR_LITERAL &&
+                e->as.binary_expr.right->as.literal_expr.value >= 2) {
+                Expr *num = e->as.binary_expr.left;
+                if (num && num->kind == EXPR_BINARY && num->as.binary_expr.op == TOKEN_MINUS &&
+                    term_id_is(num->as.binary_expr.left, A) &&
+                    term_id_is(num->as.binary_expr.right, B)) {
+                    z.cdiv = 1; z.d = (int64_t)e->as.binary_expr.right->as.literal_expr.value;
+                    return z;
+                }
+            }
+            z.ok = false; return z;
+        }
+        default: z.ok = false; return z;
+    }
+}
+
+// Direction (`+1` up / `-1` down / `0` unknown) that the measure variable `target`
+// moves on `target = rhs`, for a DIFFERENCE measure A-B, via body-local
+// substitution + linear normalization. `rhs - target` is linearized to
+// g(M) = ca*M + cdiv*(M/D) + k  (only when ca == -cb, i.e. the A/B part collapses to
+// a multiple of M = A-B). g is monotone in M for the shapes that arise; evaluate it
+// over M's proven range and, if strictly signed, that IS target's direction. This
+// is what proves binary search: `hi=mid` (mid=lo+(hi-lo)/2) → g = M/2 - M <= -1;
+// `lo=mid+1` → g = M/2 + 1 >= 1. SOUND & FAIL-CLOSED: any mismatch returns 0.
+static int measure_diff_direction(Expr *target, Expr *rhs) {
+    if (!g_term_measure_a || !g_term_measure_b || !g_term_measure_expr || !sema_ranges) return 0;
+    if (!(term_id_is(target, g_term_measure_a) || term_id_is(target, g_term_measure_b))) return 0;
+    Expr *rs = term_subst_locals(rhs);
+    Expr *diff = expr_binary(sema_arena, TOKEN_MINUS, rs, target);  // change in target
+    TermLin lf = term_lin(diff, g_term_measure_a, g_term_measure_b);
+    if (!lf.ok || lf.ca != -lf.cb) return 0;      // must collapse to a function of M
+    // M = A - B ranges over [1, M_max] WHILE the loop runs: the loop must have a
+    // STRICT cond `B < A` (so M >= 1) — and M DESCENDS to 1 before exit, where a
+    // division-based step is smallest. Evaluating at the entry M would be UNSOUND
+    // (it accepts `lo = mid`, which makes no progress at M=1). So M=1 is the binding
+    // case; require the strict-cond guarantee, then check g there.
+    {
+        MeasureCmp c;
+        if (!measure_extract_cmp(g_term_loop_cond, g_term_measure_expr, &c) || !c.strict ||
+            !term_id_is(c.lo, g_term_measure_b) || !term_id_is(c.hi, g_term_measure_a))
+            return 0;   // cannot justify M >= 1 during the loop
+    }
+    Range Me = sema_eval_range(g_term_measure_expr, sema_ranges);
+    int64_t Mmax = (Me.known && Me.max >= 1) ? Me.max : (int64_t)1 << 40;
+    int64_t D = lf.d ? lf.d : 1;
+    int64_t g1 = lf.ca*1    + lf.cdiv*(1 / D)    + lf.k;   // g at the binding M=1
+    int64_t gM = lf.ca*Mmax + lf.cdiv*(Mmax / D) + lf.k;   // g at the far end
+    // Per-+1-of-M step lies in [ca+min(0,cdiv), ca+max(0,cdiv)] (floor(M/D) rises by 0/1).
+    int64_t dmin = lf.ca + (lf.cdiv < 0 ? lf.cdiv : 0);
+    int64_t dmax = lf.ca + (lf.cdiv > 0 ? lf.cdiv : 0);
+    int64_t glo, ghi;
+    if (dmin >= 0)      { glo = g1; ghi = gM; }   // non-decreasing in M → min at M=1
+    else if (dmax <= 0) { glo = gM; ghi = g1; }   // non-increasing in M → max at M=1
+    else return 0;                                 // not monotone → give up
+    if (glo >= 1)  return +1;                       // target strictly increases (all M>=1)
+    if (ghi <= -1) return -1;                       // target strictly decreases (all M>=1)
+    return 0;
+}
+
 // True if t is an UNSIGNED integer type (uN or usize) — hence provably >= 0.
 static bool term_type_is_unsigned(Type *t) {
     if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
@@ -906,7 +1029,10 @@ static bool expr_is_loop_invariant(Expr *e, StmtList *body) {
 // decreases, 0 unknown. The caller multiplies by the variable's polarity to
 // decide whether the MEASURE decreased.
 static int assignment_direction(Expr *target, Expr *rhs) {
-    if (!rhs || rhs->kind != EXPR_BINARY) return 0;
+    if (!rhs) return 0;
+    // A bare identifier rhs (`hi = mid`) has no syntactic direction — only the
+    // difference-measure path (substitute mid, normalize) can decide it.
+    if (rhs->kind != EXPR_BINARY) return measure_diff_direction(target, rhs);
 
     TokenKind op  = rhs->as.binary_expr.op;
     Expr *left    = rhs->as.binary_expr.left;
@@ -956,6 +1082,10 @@ static int assignment_direction(Expr *target, Expr *rhs) {
         g_term_loop_cond && cond_implies_ge1(g_term_loop_cond, target)) {
         return -1;
     }
+
+    // Difference-measure descent via body-local substitution + linear normalization
+    // (binary search: `hi = mid` / `lo = mid+1` with `mid = lo + (hi-lo)/2`).
+    { int d = measure_diff_direction(target, rhs); if (d) return d; }
 
     return 0;
 }
@@ -1058,9 +1188,31 @@ static void sema_verify_bounded_while(Stmt *s) {
 
     g_term_loop_body = s->as.while_stmt.body;   // for invariant-step VRA queries
     g_term_loop_cond = cond;                     // for halving's v>=1 guard check
+
+    // For a difference measure `A - B` (both plain identifiers), record A, B and the
+    // body's top-level single-assignment locals (`var mid = …`) so a measure-var
+    // assignment can be understood by substituting them (binary-search descent).
+    g_term_measure_a = g_term_measure_b = NULL; g_term_measure_expr = NULL; g_term_ndefs = 0;
+    if (measure->kind == EXPR_BINARY && measure->as.binary_expr.op == TOKEN_MINUS &&
+        measure->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+        measure->as.binary_expr.right->kind == EXPR_IDENTIFIER) {
+        g_term_measure_a = measure->as.binary_expr.left->as.identifier_expr.id;
+        g_term_measure_b = measure->as.binary_expr.right->as.identifier_expr.id;
+        g_term_measure_expr = measure;
+        for (StmtList *b = s->as.while_stmt.body; b && g_term_ndefs < MAX_TERM_DEFS; b = b->next) {
+            Stmt *st = b->stmt;
+            if (st && st->kind == STMT_VAR && st->as.var_stmt.name && st->as.var_stmt.expr) {
+                g_term_defs[g_term_ndefs].var = st->as.var_stmt.name;
+                g_term_defs[g_term_ndefs].def = st->as.var_stmt.expr;
+                g_term_ndefs++;
+            }
+        }
+    }
+
     int result = measure_scan_body(s->as.while_stmt.body, vars, nvar);
     g_term_loop_body = NULL;
     g_term_loop_cond = NULL;
+    g_term_measure_a = g_term_measure_b = NULL; g_term_measure_expr = NULL; g_term_ndefs = 0;
     if (result <= 0) {
         fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify that the termination measure "
                 "strictly decreases on each iteration.\n"
