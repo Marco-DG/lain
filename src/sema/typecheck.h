@@ -687,6 +687,13 @@ static bool type_subsumes(Type *sub, Type *sup) {
 // checks verify, so a true verdict is behavior-preserving.
 static bool value_fits(Type *from, Range r, Type *to) {
     if (!from || !to) return false;
+    // Peel comptime wrappers, as type_interval does — otherwise a comptime-wrapped
+    // integer (e.g. a literal's `comptime i64`) reads as "not an integer" and the
+    // boundary needlessly falls through to the permissive name-keyed path even for
+    // a trivially-fitting value like 0.
+    while (from && from->kind == TYPE_COMPTIME) from = from->element_type;
+    while (to   && to->kind   == TYPE_COMPTIME) to   = to->element_type;
+    if (!from || !to) return false;
     long long tlo, thi, flo, fhi;
     if (!type_integer_range(to,   &tlo, &thi)) return false;   // target not an integer type
     if (!type_integer_range(from, &flo, &fhi)) return false;   // source not an integer type
@@ -1219,9 +1226,23 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
             !value_fits(from, r, to)) {
             char fb[96], tb[96];
             type_describe(from, fb, sizeof fb); type_describe(to, tb, sizeof tb);
-            fprintf(stderr, "[keystone-fallthrough] %s -> %s (r=[%lld,%lld]) — accepted "
-                    "permissively (range unknown), not proven by value_fits\n",
-                    fb, tb, (long long)r.min, (long long)r.max);
+            // Audit 2026-08-27: the whole residual is the arith-widened narrowing
+            // path (i33/i34/i64 result of +/* narrowed to the declared type) with
+            // an UNKNOWN result range — the deliberate overflow-ergonomics accept
+            // (`x = x + 1` must compile). Sound (no UB/mem-unsafety; the KNOWN-range
+            // overflow still rejects). Report range accurately so it is not mistaken
+            // for a proven-small accept.
+            bool eff_unbounded = !r.known ||
+                r.min <= LLONG_MIN + 4096 || r.max >= LLONG_MAX - 4096;
+            if (!eff_unbounded)
+                fprintf(stderr, "[keystone-fallthrough] %s -> %s (r=[%lld,%lld] BOUNDED) — "
+                        "a genuinely-bounded value the permissive path accepted but "
+                        "value_fits could not prove — INVESTIGATE\n",
+                        fb, tb, (long long)r.min, (long long)r.max);
+            else
+                fprintf(stderr, "[keystone-fallthrough] %s -> %s (range effectively unbounded) — "
+                        "arith-widened narrowing, permissive accept (overflow-ergonomics)\n",
+                        fb, tb);
         }
     }
 }
