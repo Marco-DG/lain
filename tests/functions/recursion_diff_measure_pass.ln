@@ -1,0 +1,24 @@
+// Recursive `func` with a DIFFERENCE measure `decreasing hi - lo`: binary-search
+// recursion (and divide-and-conquer generally). Each self-call passes new bounds;
+// `bsearch(mid+1, hi)` and `bsearch(lo, mid)` both strictly shrink hi - lo (mid is
+// substituted, the change linearizes to -M/2 - 1 <= -1), and the `lo < hi` guard
+// makes it well-founded (M >= 1). Proven total => valid in a pure func.
+func bsearch(a i32[8], lo usize, hi usize, target i32) i32 decreasing hi - lo {
+    if lo < hi {
+        var mid usize = lo + (hi - lo) / 2
+        if mid < 8 {
+            if a[mid] == target {
+                return mid as i32
+            }
+            if a[mid] < target {
+                return bsearch(a, mid + 1, hi, target)
+            }
+            return bsearch(a, lo, mid, target)
+        }
+    }
+    return 0 - 1
+}
+proc main() i32 {
+    var a i32[8] = [1, 3, 5, 7, 9, 11, 13, 15]
+    return bsearch(a, 0, 8, 7)
+}

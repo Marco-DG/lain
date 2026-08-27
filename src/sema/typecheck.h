@@ -1619,8 +1619,13 @@ static void check_recursion_measure(Decl *fn, Expr *call) {
     Expr *m = fn->as.function_decl.decreasing_measure;
     if (!m) return;
     if (m->kind != EXPR_IDENTIFIER) {
+        // A difference measure `hi - lo` (two params) is verified by the term-
+        // linearization machinery (binary-search recursion). Returns false only
+        // when the measure is not a two-identifier difference — then E091 stands.
+        if (verify_recursion_expr_measure(fn, call)) return;
         fprintf(stderr, "[E091] Error Ln %li, Col %li: a `decreasing` measure on a recursive "
-                "`func` must currently be a single parameter (e.g. `decreasing n`).\n",
+                "`func` must be a single parameter (e.g. `decreasing n`) or a difference of two "
+                "parameters (e.g. `decreasing hi - lo`).\n",
                 (long)call->line, (long)call->col);
         diagnostic_show_line(call->line, call->col); exit(1);
     }

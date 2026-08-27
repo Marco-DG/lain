@@ -1,0 +1,10 @@
+// EXPECT: [E082]
+// SOUNDNESS: a self-call that does NOT shrink the difference measure is not proven
+// terminating. Here `f(lo, hi + 1)` INCREASES hi - lo.
+func f(lo usize, hi usize) i32 decreasing hi - lo {
+    if lo < hi {
+        return f(lo, hi + 1)
+    }
+    return 0
+}
+proc main() i32 { return 0 }

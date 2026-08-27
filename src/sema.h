@@ -103,6 +103,13 @@ typedef struct PtrInitIdxEntry {
 } PtrInitIdxEntry;
 static PtrInitIdxEntry *sema_ptr_init_idx = NULL;
 
+// Recursive-func DIFFERENCE measure (`decreasing hi - lo`): defined in sema.h below
+// (after the term-linearization machinery), forward-declared here so typecheck.h's
+// check_recursion_measure can call it. Returns true if it PROVED termination for an
+// `A - B` measure (or exited with E082 when it is `A - B` but unproven); returns
+// false when the measure is not a two-identifier difference (caller emits E091).
+static bool verify_recursion_expr_measure(Decl *fn, Expr *call);
+
 #include "sema/scope.h"
 #include "sema/resolve.h"
 #include "sema/typecheck.h"
@@ -1336,6 +1343,89 @@ static int assignment_direction(Expr *target, Expr *rhs) {
     { int d = measure_diff_direction(target, rhs); if (d) return d; }
 
     return 0;
+}
+
+// Recursively collect single-assignment body-local defs (`var mid = …`) into
+// g_term_defs, descending into if/else — a recursive func's `mid` is nested under
+// the `if lo < hi` guard, unlike a while body's top-level defs.
+static void term_collect_defs_rec(StmtList *body) {
+    for (StmtList *b = body; b && g_term_ndefs < MAX_TERM_DEFS; b = b->next) {
+        Stmt *st = b->stmt; if (!st) continue;
+        if (st->kind == STMT_VAR && st->as.var_stmt.name && st->as.var_stmt.expr) {
+            g_term_defs[g_term_ndefs].var = st->as.var_stmt.name;
+            g_term_defs[g_term_ndefs].def = st->as.var_stmt.expr;
+            g_term_ndefs++;
+        } else if (st->kind == STMT_IF) {
+            term_collect_defs_rec(st->as.if_stmt.then_body);
+            term_collect_defs_rec(st->as.if_stmt.else_branch);
+        }
+    }
+}
+
+// Recursive-func DIFFERENCE measure `hi - lo` (see forward decl at the top). Each
+// self-call passes new args; the new measure is `argA - argB` (with body-locals
+// like `mid` substituted). STRICT decrease = its change `(argA-argB) - (A-B)`
+// linearizes to a function of M = A-B that is <= -1 for all M >= 1; WELL-FOUNDED =
+// M >= 0 at the call site (the guard `lo < hi` gives M >= 1, so both hold). Reuses
+// the same term_lin / g(M) evaluation that proves the while-loop binary search.
+static bool verify_recursion_expr_measure(Decl *fn, Expr *call) {
+    Expr *m = fn->as.function_decl.decreasing_measure;
+    if (!m || m->kind != EXPR_BINARY || m->as.binary_expr.op != TOKEN_MINUS ||
+        m->as.binary_expr.left->kind  != EXPR_IDENTIFIER ||
+        m->as.binary_expr.right->kind != EXPR_IDENTIFIER)
+        return false;   // not a two-identifier difference → caller emits E091
+    Id *A = m->as.binary_expr.left->as.identifier_expr.id;
+    Id *B = m->as.binary_expr.right->as.identifier_expr.id;
+
+    // Map the A/B params to this call's argument expressions (by parameter position).
+    Expr *argA = NULL, *argB = NULL; int idx = 0;
+    for (DeclList *p = fn->as.function_decl.params; p; p = p->next, idx++) {
+        if (!p->decl || p->decl->kind != DECL_VARIABLE || !p->decl->as.variable_decl.name) continue;
+        Id *pn = p->decl->as.variable_decl.name;
+        Expr *arg = NULL; int i = 0;
+        for (ExprList *a = call->as.call_expr.args; a; a = a->next, i++) if (i == idx) { arg = a->expr; break; }
+        if (pn->length == A->length && memcmp(pn->name, A->name, (size_t)A->length) == 0) argA = arg;
+        if (pn->length == B->length && memcmp(pn->name, B->name, (size_t)B->length) == 0) argB = arg;
+    }
+    if (!argA || !argB) return false;   // measure vars are not both params → E091
+
+    // Set the difference-measure globals; collect body-local defs (mid).
+    Id *sa = g_term_measure_a, *sb = g_term_measure_b; Expr *se = g_term_measure_expr; int snd = g_term_ndefs;
+    g_term_measure_a = A; g_term_measure_b = B; g_term_measure_expr = m; g_term_ndefs = 0;
+    term_collect_defs_rec(fn->as.function_decl.body);
+
+    // delta = (argA - argB) - (A - B), substitute body-locals, linearize over A,B.
+    Expr *newm  = expr_binary(sema_arena, TOKEN_MINUS, argA, argB);
+    Expr *delta = expr_binary(sema_arena, TOKEN_MINUS, newm, m);
+    TermLin lf  = term_lin(term_subst_locals(delta), A, B);
+    Range Me = sema_eval_range(m, sema_ranges);
+    bool wellfounded = Me.known && Me.min >= 0;
+    bool strict = false;
+    if (lf.ok && lf.ca == -lf.cb && Me.known && Me.min >= 1) {   // guard gives M >= 1
+        int64_t Mmax = Me.max >= 1 ? Me.max : ((int64_t)1 << 40);
+        int64_t D = lf.d ? lf.d : 1;
+        int64_t g1 = lf.ca * 1    + lf.cdiv * (1 / D)    + lf.k;
+        int64_t gM = lf.ca * Mmax + lf.cdiv * (Mmax / D) + lf.k;
+        int64_t dmin = lf.ca + (lf.cdiv < 0 ? lf.cdiv : 0);
+        int64_t dmax = lf.ca + (lf.cdiv > 0 ? lf.cdiv : 0);
+        int64_t ghi = (dmin >= 0) ? gM : (dmax <= 0) ? g1 : 1;   // max of g over M>=1
+        if (ghi <= -1) strict = true;
+    }
+
+    g_term_measure_a = sa; g_term_measure_b = sb; g_term_measure_expr = se; g_term_ndefs = snd;
+
+    if (!strict || !wellfounded) {
+        fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify the recursion in `func` "
+                "'%.*s' terminates. The `decreasing %.*s - %.*s` measure must be provably >= 0 "
+                "and strictly smaller in every self-call.%s\n",
+                (long)call->line, (long)call->col,
+                (int)fn->as.function_decl.name->length, fn->as.function_decl.name->name,
+                (int)A->length, A->name, (int)B->length, B->name,
+                !strict ? " This call does not make it strictly smaller."
+                        : " It is not provably non-negative here (guard the base case, e.g. `if lo < hi { … }`).");
+        diagnostic_show_line(call->line, call->col); exit(1);
+    }
+    return true;
 }
 
 // Scan a block: does the measure strictly decrease on EVERY path?
