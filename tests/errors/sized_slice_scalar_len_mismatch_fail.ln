@@ -1,0 +1,18 @@
+// EXPECT: [E087]
+// SOUNDNESS: a sized-slice param `a i32[n]` (scalar length param) must have its
+// argument's length verified at the call site. Passing a length-4 array with n=10
+// would let `a[i]` under `i<n` read out of bounds — rejected (was a real OOB hole:
+// eval_callsite_size_range didn't resolve a bare identifier size).
+proc sum(a i32[n], n usize) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < n decreasing n - i {
+        s = s +% a[i]
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 {
+    var m i32[4] = [1, 2, 3, 4]
+    return sum(m, 10)
+}

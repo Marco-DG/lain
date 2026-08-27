@@ -961,6 +961,27 @@ static void check_type_alias_constraints(Type *to, Range r, isize line, isize co
 static Range eval_callsite_size_range(Expr *se, DeclList *params, ExprList *args) {
     if (!se) return range_unknown();
     if (se->kind == EXPR_LITERAL) return range_const(se->as.literal_expr.value);
+    // `i32[n]`: the size is the VALUE of the scalar param `n`. Map `n` to its call
+    // argument and evaluate that arg's range. Without this, a sized-slice param
+    // `a i32[n]` was NEVER length-checked at the call site — `sum(a[4], 10)` (n = 10
+    // on a length-4 array) compiled and read out of bounds (a memory-safety hole).
+    if (se->kind == EXPR_IDENTIFIER) {
+        Id *nid = se->as.identifier_expr.id;
+        int npi = 0; Expr *narg = NULL;
+        for (DeclList *rp = params; rp; rp = rp->next, npi++) {
+            if (rp->decl->kind != DECL_VARIABLE) continue;
+            Id *rpn = rp->decl->as.variable_decl.name;
+            if (rpn && rpn->length == nid->length &&
+                strncmp(rpn->name, nid->name, rpn->length) == 0) {
+                int ri = 0;
+                for (ExprList *ra = args; ra; ra = ra->next)
+                    if (ri++ == npi) { narg = ra->expr; break; }
+                break;
+            }
+        }
+        if (narg && sema_ranges) return sema_eval_range(narg, sema_ranges);
+        return range_unknown();
+    }
     if (se->kind == EXPR_MEMBER && se->as.member_expr.member &&
         se->as.member_expr.member->length == 3 &&
         strncmp(se->as.member_expr.member->name, "len", 3) == 0 &&
