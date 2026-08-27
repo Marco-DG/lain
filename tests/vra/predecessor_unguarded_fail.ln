@@ -1,0 +1,13 @@
+// EXPECT: [E085]
+// SOUNDNESS: a NEGATIVE-offset index needs its lower bound proven. `a[i-1]` under
+// only `i < n` (no `i > 0`) can underflow at i=0 — rejected, not proven.
+proc f(a i32[n], n usize) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < n decreasing n - i {
+        s = s +% a[i - 1]
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 { return 0 }

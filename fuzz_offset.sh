@@ -15,18 +15,29 @@ sizes=(6 8 12 16)
 
 for ((i=0; i<N; i++)); do
     sz=${sizes[$((RANDOM % ${#sizes[@]}))]}
-    K=$((RANDOM % 4))        # guard slack: i < n - K
-    M=$((RANDOM % 4))        # index offset: a[i + M]
     src="$SC/t_$i.ln"
+    if [ $((RANDOM % 2)) -eq 0 ]; then
+        # PLUS: `while i < n - K { a[i + M] }` — safe iff M <= K (i+M <= n-1).
+        K=$((RANDOM % 4)); M=$((RANDOM % 4))
+        body="    var i usize = 0
+    while i < n - $K decreasing n - $K - i {
+        s = s +% a[i + $M]
+        i = i + 1
+    }"
+    else
+        # MINUS: `var i = S; while i < n { a[i - M] }` — safe iff S >= M (i-M >= 0).
+        M=$((RANDOM % 4)); S=$((RANDOM % 4))
+        body="    var i usize = $S
+    while i < n decreasing n - i {
+        s = s +% a[i - $M]
+        i = i + 1
+    }"
+    fi
     cat > "$src" <<EOF
 extern proc libc_printf(fmt *u8, ...) i32
 proc scan(a i32[n], n usize) i32 {
     var s i32 = 0
-    var i usize = 0
-    while i < n - $K decreasing n - $K - i {
-        s = s +% a[i + $M]
-        i = i + 1
-    }
+$body
     return s
 }
 proc main() i32 {

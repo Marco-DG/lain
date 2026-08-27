@@ -319,9 +319,30 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
     //    Looks for "idx - len_key <= -1" in the constraint table where len_key is
     //    the synthetic __len_PARAM entry that the for-loop injector adds.
     //    This proves idx < arr.len even when the actual length is unknown at compile time.
-    if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1 &&
-        index_expr->kind == EXPR_IDENTIFIER) {
-        Id *idx_id = index_expr->as.identifier_expr.id;
+    if (array_type->kind == TYPE_ARRAY && array_type->array_len == -1) {
+        // Accept a bare index `i`, or an OFFSET index `i + k` / `i - k` (k literal).
+        // `(i + off) < len` shifts every constraint threshold by -off: proving
+        // `i - len <= -1 - off`. This lets a predecessor `a[j-1]` (j proven < len
+        // via a chain) and a successor `a[i+1]` prove over a dynamic slice.
+        Id *idx_id = NULL; int64_t off = 0;
+        if (index_expr->kind == EXPR_IDENTIFIER) {
+            idx_id = index_expr->as.identifier_expr.id;
+        } else if (index_expr->kind == EXPR_BINARY &&
+                   (index_expr->as.binary_expr.op == TOKEN_PLUS ||
+                    index_expr->as.binary_expr.op == TOKEN_MINUS) &&
+                   index_expr->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                   index_expr->as.binary_expr.right->kind == EXPR_LITERAL) {
+            idx_id = index_expr->as.binary_expr.left->as.identifier_expr.id;
+            off    = index_expr->as.binary_expr.right->as.literal_expr.value;
+            if (index_expr->as.binary_expr.op == TOKEN_MINUS) off = -off;
+        }
+        // SOUNDNESS: a negative offset needs `base + off >= 0` (lower bound). Require
+        // the index's OWN range proven non-negative (from the guard / omega step
+        // above, which set idx.min = 0 when it proved it). A non-negative offset is
+        // fine — an unsigned base is >= 0, so base+off >= 0.
+        bool lower_ok = (off >= 0) || (idx.known && idx.min >= 0);
+        int64_t thr0 = -1 - off;   // the base threshold `i - len <= thr0`
+      if (idx_id && lower_ok) {
 
         // Determine the effective length key to look up in the constraint table.
         //   size_expr == EXPR_MEMBER(ref.len) → key = __len_ref
@@ -345,7 +366,7 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
                         strncmp(ce->v1->name, idx_id->name, idx_id->length) == 0 &&
                         ce->v2->length == klen &&
                         strncmp(ce->v2->name, key, klen) == 0 &&
-                        ce->max_diff <= -1) {
+                        ce->max_diff <= thr0) {
                         BOUNDS_DBG("OK: %.*s < %.*s.len via constraint",
                                    (int)idx_id->length, idx_id->name,
                                    (int)ref_id->length, ref_id->name);
@@ -361,7 +382,7 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
             Id *n_id = array_type->size_expr->as.identifier_expr.id;
             bool found = false;
             int64_t diff = constraint_get_diff(ctx, idx_id, n_id, &found);
-            if (found && diff <= -1) {
+            if (found && diff <= thr0) {
                 BOUNDS_DBG("OK: %.*s < n via constraint",
                            (int)idx_id->length, idx_id->name);
                 proved = true;
@@ -399,13 +420,13 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
             } while(0)
             if (bop == TOKEN_PLUS) {
                 // out i32[a.len + b.len]: idx < a.len OR idx < b.len → idx < out.len
-                TRY_MEMBER_LEN(blhs, -1);
-                TRY_MEMBER_LEN(brhs, -1);
+                TRY_MEMBER_LEN(blhs, thr0);
+                TRY_MEMBER_LEN(brhs, thr0);
             } else if (bop == TOKEN_MINUS && brhs->kind == EXPR_LITERAL) {
-                // out i32[src.len - k]: need idx - __len_src <= -(k+1)
+                // out i32[src.len - k]: need idx - __len_src <= -(k+1) (shifted by -off)
                 // (bridge: i-__len_out<=-1, __len_out-__len_src<=-k → i-__len_src<=-(k+1))
                 int64_t k = brhs->as.literal_expr.value;
-                TRY_MEMBER_LEN(blhs, -(k + 1));
+                TRY_MEMBER_LEN(blhs, -(k + 1) - off);
             }
             #undef TRY_MEMBER_LEN
         } else {
@@ -429,7 +450,7 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
                     if (arr_len_id) {
                         bool gd_found = false;
                         int64_t gd = constraint_get_diff(ctx, idx_id, arr_len_id, &gd_found);
-                        if (gd_found && gd <= -1) {
+                        if (gd_found && gd <= thr0) {
                             BOUNDS_DBG("OK: %.*s < %.*s.len via constraint (bridge)",
                                        (int)idx_id->length, idx_id->name,
                                        (int)arr_id->length, arr_id->name);
@@ -440,6 +461,7 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
             }
         }
         if (proved) return;
+      }
     }
 
     // 5b. STRUCT-FIELD (member-path) slice: `l.src[i]` proven by a live `i < l.src.len`
