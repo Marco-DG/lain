@@ -87,6 +87,34 @@ static void bounds_expr_str(Expr *e, char *buf, int n) {
     }
 }
 
+// Recognize a flattened 2D index `a[i*w + j]` over an array sized `h*w`, under the
+// active guards `i < h` and `j < w`. Then `i*w+j <= (h-1)*w+(w-1) = h*w-1 < h*w =
+// len(a)` — IN BOUNDS; and `i*w < h*w = len(a)`, a valid usize, so `i*w` CANNOT
+// OVERFLOW. (len(a) == h*w is a sized-slice precondition, PROVABLE mismatches caught
+// by the E087 call-site check — same trust model as `a[n]`.) Returns the `i*w` node.
+static bool bounds_recognize_2d(Type *arr_ty, Expr *index, RangeTable *ctx, Expr **out_rowbase) {
+    if (out_rowbase) *out_rowbase = NULL;
+    if (!arr_ty || !index || !ctx) return false;
+    Expr *sz = arr_ty->size_expr;
+    if (!sz || sz->kind != EXPR_BINARY || sz->as.binary_expr.op != TOKEN_ASTERISK) return false;
+    Expr *hE = sz->as.binary_expr.left, *wE = sz->as.binary_expr.right;
+    if (index->kind != EXPR_BINARY || index->as.binary_expr.op != TOKEN_PLUS) return false;
+    Expr *rowbase = index->as.binary_expr.left, *jE = index->as.binary_expr.right;
+    if (!rowbase || rowbase->kind != EXPR_BINARY || rowbase->as.binary_expr.op != TOKEN_ASTERISK)
+        return false;
+    Expr *iE = rowbase->as.binary_expr.left, *wE2 = rowbase->as.binary_expr.right;
+    if (!expr_struct_equal(wE2, wE)) return false;
+    if (!iE || iE->kind != EXPR_IDENTIFIER || !hE || hE->kind != EXPR_IDENTIFIER ||
+        !jE || jE->kind != EXPR_IDENTIFIER || !wE || wE->kind != EXPR_IDENTIFIER) return false;
+    bool f1 = false, f2 = false;
+    int64_t d1 = constraint_get_diff(ctx, iE->as.identifier_expr.id, hE->as.identifier_expr.id, &f1);
+    int64_t d2 = constraint_get_diff(ctx, jE->as.identifier_expr.id, wE->as.identifier_expr.id, &f2);
+    if (!(f1 && d1 <= -1)) return false;
+    if (!(f2 && d2 <= -1)) return false;
+    if (out_rowbase) *out_rowbase = rowbase;
+    return true;
+}
+
 /* Emit a standard E085 header + source snippet + context lines, then exit(1). */
 static void bounds_error(
     const char *kind,       /* short one-line description */
@@ -126,6 +154,9 @@ static void bounds_error(
 // for constraint-based proof when the array has no size_expr annotation).
 static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_type, Expr *array_expr, bool is_addr_of) {
     if (!index_expr || !array_type) return;
+
+    // Flattened 2D index `a[i*w+j]` over `a[h*w]` (i<h, j<w): i*w+j < h*w = len.
+    if (!is_addr_of && ctx && bounds_recognize_2d(array_type, index_expr, ctx, NULL)) return;
 
     // Sprint 4 / Q-003.B: range index `arr[a..b]` bounds check.
     // Verify: a >= 0 AND b <= arr.len (semi-open interval [a, b)).

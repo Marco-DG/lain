@@ -1,0 +1,22 @@
+// Symbolic (runtime-dimension) 2D indexing: `a[i*w + j]` over a matrix sized `h*w`
+// under `i < h`, `j < w`, compiles CHECK-FREE. The flattened index proves in bounds
+// (`i*w+j <= h*w-1 < h*w = len`) AND the intermediate `i*w` cannot overflow (`i*w <
+// h*w = len`, a valid usize). `len == h*w` is a sized-slice precondition whose
+// PROVABLE mismatches are caught by the E087 call-site check (same model as `a[n]`).
+proc msum(a i32[h * w], h usize, w usize) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < h decreasing h - i {
+        var j usize = 0
+        while j < w decreasing w - j {
+            s = s +% a[i * w + j]
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 {
+    var m i32[12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    return msum(m, 3, 4)
+}

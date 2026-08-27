@@ -695,6 +695,9 @@ typedef struct Expr {
     bool  checked_ok; // Q1: a checked op (`+?`/`as?`) that IS handled by an
                       // enclosing `else` — set top-down before inference; a bare
                       // checked op leaves it false and is rejected (must handle).
+    bool  idx2d_ovf_ok; // `i*w` row-base of a recognized 2D index `a[i*w+j]` over
+                        // `a[h*w]` (i<h,j<w): i*w < h*w = len(a), so it cannot
+                        // overflow — the `*` overflow check skips it.
 } Expr;
 
 /*──────────────────────────────────────────────────────────────────╗

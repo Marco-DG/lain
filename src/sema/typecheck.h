@@ -3032,7 +3032,7 @@ void sema_infer_expr(Expr *e) {
             // MISSED (silent unsigned wrap). Compute the exact product range in
             // 128-bit and check it directly. (i32*i32 is already caught by the
             // i64 range, so this only adds the wide/unsigned cases.)
-            if (aop2 == TOKEN_ASTERISK) {
+            if (aop2 == TOKEN_ASTERISK && !e->idx2d_ovf_ok) {
                 Range lrg = sema_eval_range(e->as.binary_expr.left, sema_ranges);
                 Range rrg = sema_eval_range(e->as.binary_expr.right, sema_ranges);
                 if (!op_product_fits(lrg, rrg, check_ty)) {
@@ -3216,6 +3216,14 @@ void sema_infer_expr(Expr *e) {
 
   case EXPR_INDEX: {
     sema_infer_expr(e->as.index_expr.target);
+    // 2D flat-index overflow exemption: recognize `a[i*w+j]` over `a[h*w]` BEFORE
+    // inferring the index (the `i*w` overflow fires during that inference).
+    if (sema_walk_phase && sema_ranges && e->as.index_expr.target->type) {
+        Type *_at = sema_unwrap_type(e->as.index_expr.target->type);
+        Expr *_rb = NULL;
+        if (_at && bounds_recognize_2d(_at, e->as.index_expr.index, sema_ranges, &_rb) && _rb)
+            _rb->idx2d_ovf_ok = true;
+    }
     // Capture and clear the addr-of flag before inferring the index sub-expression
     // so that nested array accesses within the index are NOT treated as addr-of.
     bool _is_addr_of = sema_addr_of_context;
