@@ -1,0 +1,19 @@
+// TRUST: per-field linearity proves single-ownership of a struct's heap resource.
+// `Res` owns a linear pointer field; `rfree` destructures to consume+free it exactly
+// once, `rtouch` derefs it through a shared borrow while it is still live. Under ASan
+// a double-free / use-after-free (were the per-field linear proof unsound) would trap.
+// It compiles ⇒ ownership proven ⇒ runtime must be clean.
+extern proc libc_printf(fmt *u8, ...) i32
+extern proc libc_calloc(n usize, size usize) mov *void
+extern proc libc_free(ptr mov *void)
+type Res { mov h *u8 }
+proc rmake() Res { unsafe { return Res(libc_calloc(1, 4) as *u8) } }
+proc rfree(mov {h} Res) { unsafe { libc_free(mov h as *void) } }
+proc rtouch(r Res) u8 { unsafe { return *r.h } }
+proc main() i32 {
+    var r = rmake()
+    var x = rtouch(r)
+    rfree(mov r)
+    libc_printf("struct-field-freed-once %d\n", x as i32)
+    return 0
+}
