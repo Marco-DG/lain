@@ -2603,23 +2603,71 @@ void sema_infer_expr(Expr *e) {
         }
     }
 
-    // Shift by a constant amount that is negative or >= the bit width of the
-    // left operand is undefined behavior (gcc: "shift count >= width of type").
-    {
+    // Shift by an amount that is negative or >= the bit width of the left operand
+    // is undefined behavior (gcc: "shift count >= width of type"). Prove-or-reject:
+    // the shift amount must be PROVEN in [0, width-1] — by a literal or by VRA —
+    // else reject. A variable amount whose range is unknown or reaches the width
+    // was previously accepted and was UB at runtime. `unsafe` opts out.
+    if (!sema_in_unsafe_block) {
         TokenKind sop = e->as.binary_expr.op;
         if (sop == TOKEN_SHIFT_LEFT || sop == TOKEN_SHIFT_RIGHT) {
             Expr *lhs = e->as.binary_expr.left;
             Expr *rhs = e->as.binary_expr.right;
             int bits; bool sgn;
-            if (rhs && rhs->kind == EXPR_LITERAL && lhs && lhs->type &&
-                parse_iN_uN(lhs->type, &bits, &sgn)) {
-                long long n = rhs->as.literal_expr.value;
-                if (n < 0 || n >= bits) {
-                    fprintf(stderr, "[E086] Error Ln %li, Col %li: shift amount %lld is out of "
-                        "range for a %d-bit operand (valid range 0..%d).\n",
-                        (long)e->line, (long)e->col, n, bits, bits - 1);
-                    diagnostic_show_line(e->line, e->col);
-                    exit(1);
+            if (rhs && lhs && lhs->type && parse_iN_uN(lhs->type, &bits, &sgn)) {
+                if (rhs->kind == EXPR_LITERAL) {
+                    long long n = rhs->as.literal_expr.value;
+                    if (n < 0 || n >= bits) {
+                        fprintf(stderr, "[E086] Error Ln %li, Col %li: shift amount %lld is out of "
+                            "range for a %d-bit operand (valid range 0..%d).\n",
+                            (long)e->line, (long)e->col, n, bits, bits - 1);
+                        diagnostic_show_line(e->line, e->col);
+                        exit(1);
+                    }
+                } else if (sema_walk_phase && sema_ranges) {
+                    Range sr = sema_eval_range(rhs, sema_ranges);
+                    if (!sr.known || sr.min < 0 || sr.max >= bits) {
+                        if (!sr.known)
+                            fprintf(stderr, "[E086] Error Ln %li, Col %li: shift amount is not proven "
+                                "in range for a %d-bit operand (valid 0..%d) — its range is unknown. "
+                                "Constrain or guard it, or wrap the shift in an `unsafe` block.\n",
+                                (long)e->line, (long)e->col, bits, bits - 1);
+                        else
+                            fprintf(stderr, "[E086] Error Ln %li, Col %li: shift amount range [%ld, %ld] "
+                                "is out of range for a %d-bit operand (valid 0..%d). Constrain or guard "
+                                "it, or wrap the shift in an `unsafe` block.\n",
+                                (long)e->line, (long)e->col, (long)sr.min, (long)sr.max, bits, bits - 1);
+                        diagnostic_show_line(e->line, e->col);
+                        exit(1);
+                    }
+                }
+            }
+            // Signed left-shift OVERFLOW: `x << n` on a signed operand is `x * 2^n`,
+            // and shifting a set bit into/through the sign bit is UB (e.g.
+            // `1i32 << 31`). Treat it like `*` overflow — prove the result fits the
+            // type, else reject (unsigned operands, wrapping, or `unsafe` opt out).
+            if (sop == TOKEN_SHIFT_LEFT && lhs && lhs->type &&
+                parse_iN_uN(lhs->type, &bits, &sgn) && sgn &&
+                sema_walk_phase && sema_ranges) {
+                Range xr = sema_eval_range(lhs, sema_ranges);
+                Range nr = (rhs && rhs->kind == EXPR_LITERAL)
+                             ? range_make(rhs->as.literal_expr.value, rhs->as.literal_expr.value)
+                             : sema_eval_range(rhs, sema_ranges);
+                long long tlo, thi;
+                if (xr.known && nr.known && nr.min >= 0 && nr.max < 63 &&
+                    type_integer_range(lhs->type, &tlo, &thi)) {
+                    __int128 p2max = (__int128)1 << nr.max;
+                    __int128 c1 = (__int128)xr.min * p2max, c2 = (__int128)xr.max * p2max;
+                    __int128 pmin = c1 < c2 ? c1 : c2;
+                    __int128 pmax = c1 > c2 ? c1 : c2;
+                    if (pmin < (__int128)tlo || pmax > (__int128)thi) {
+                        fprintf(stderr, "[E086] Error Ln %li, Col %li: signed left shift may overflow — "
+                            "the shifted value can exceed the operand type's range (UB, e.g. `1 << 31`). "
+                            "Use an unsigned operand, a wrapping op, constrain the value, or `unsafe`.\n",
+                            (long)e->line, (long)e->col);
+                        diagnostic_show_line(e->line, e->col);
+                        exit(1);
+                    }
                 }
             }
         }

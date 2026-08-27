@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// Signed left-shift overflow: `1i32 << 31` shifts a bit into the sign bit — UB in
+// C even though the amount (31) is < width. Treated like `*` overflow: the shifted
+// value must provably fit the operand type. Use an unsigned operand or `unsafe`.
+proc f() i32 {
+    var x i32 = 1
+    return x << 31
+}
+proc main() i32 { return 0 }

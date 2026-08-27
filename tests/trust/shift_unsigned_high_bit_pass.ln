@@ -1,0 +1,7 @@
+// The same shift on an UNSIGNED operand is fully defined (no signed-overflow UB):
+// `1u32 << 31` = 2^31 fits u32, so it is accepted check-free.
+proc f() u32 {
+    var x u32 = 1
+    return x << 31
+}
+proc main() i32 { return 0 }

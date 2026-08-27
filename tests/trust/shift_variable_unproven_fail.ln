@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// Shift prove-or-reject: a variable shift amount not proven in [0, width-1] was
+// accepted and UB at runtime ("shift exponent too large"). Now rejected unless
+// proven — guard, constrain, or `unsafe`.
+proc f(x i32, n i32) i32 {
+    return x << n
+}
+proc main() i32 { return 0 }
