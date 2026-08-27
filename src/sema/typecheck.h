@@ -695,6 +695,62 @@ static bool value_fits(Type *from, Range r, Type *to) {
     return slo >= tlo && shi <= thi;                           // source interval ⊆ target range
 }
 
+// ── Operation-precondition proof predicates (S4-lite) ────────────────────────
+// Each operation whose safety depends on its operands' VALUES (division needs a
+// nonzero divisor; a shift needs an in-range amount; …) states that precondition
+// as ONE reusable predicate over the SAME proven interval the keystone reads —
+// rather than an inline snippet re-derived per operation. A new operator's rule
+// is then a single call, not a bespoke block, and every precondition of the same
+// shape shares one proof path. Call sites keep their own diagnostics.
+
+// Is `operand` proven NONZERO? True iff VRA proves its range excludes 0, a live
+// `!= 0` guard marker covers it, or it is a variable with a `!= 0` constraint.
+static bool op_proven_nonzero(Expr *operand) {
+    if (!operand) return false;
+    Range r = sema_eval_range(operand, sema_ranges);
+    if (r.known && (r.min > 0 || r.max < 0)) return true;
+    if (operand->kind == EXPR_IDENTIFIER &&
+        constraint_has_nonzero(sema_ranges, operand->as.identifier_expr.id))
+        return true;
+    if (operand->kind == EXPR_IDENTIFIER) {
+        Decl *d = operand->decl;
+        if (d && d->kind == DECL_VARIABLE && d->as.variable_decl.constraints) {
+            for (ExprList *c = d->as.variable_decl.constraints; c; c = c->next) {
+                if (c->expr->kind == EXPR_BINARY &&
+                    c->expr->as.binary_expr.op == TOKEN_BANG_EQUAL &&
+                    c->expr->as.binary_expr.right->kind == EXPR_LITERAL &&
+                    c->expr->as.binary_expr.right->as.literal_expr.value == 0)
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Is `operand`'s proven interval ⊆ [lo, hi]? `*out` returns the interval so the
+// caller can shape its diagnostic (unknown vs out-of-range).
+static bool op_proven_in_range(Expr *operand, int64_t lo, int64_t hi, Range *out) {
+    Range r = operand ? sema_eval_range(operand, sema_ranges) : range_unknown();
+    if (out) *out = r;
+    return r.known && r.min >= lo && r.max <= hi;
+}
+
+// Does the exact product interval of `a` × `b` fit `ty`'s integer range? Computed
+// in 128-bit so a genuinely-overflowing wide product is not masked by i64
+// saturation. Shared by `*` overflow and left-shift overflow (`x << n` = x·2^n).
+// Returns true (don't reject) when either operand range or the target is unknown.
+static bool op_product_fits(Range a, Range b, Type *ty) {
+    long long tlo, thi;
+    if (!a.known || !b.known || !type_integer_range(ty, &tlo, &thi)) return true;
+    __int128 c1 = (__int128)a.min * b.min, c2 = (__int128)a.min * b.max;
+    __int128 c3 = (__int128)a.max * b.min, c4 = (__int128)a.max * b.max;
+    __int128 pmin = c1, pmax = c1;
+    if (c2 < pmin) pmin = c2; if (c2 > pmax) pmax = c2;
+    if (c3 < pmin) pmin = c3; if (c3 > pmax) pmax = c3;
+    if (c4 < pmin) pmin = c4; if (c4 > pmax) pmax = c4;
+    return pmin >= (__int128)tlo && pmax <= (__int128)thi;
+}
+
 // Strict structural type equality (NO widening, NO decay). Used where variance
 // is unsound — the element types behind a pointer/slice/array must match
 // invariantly (so *i32 is NOT interchangeable with *u8).
@@ -2625,8 +2681,8 @@ void sema_infer_expr(Expr *e) {
                         exit(1);
                     }
                 } else if (sema_walk_phase && sema_ranges) {
-                    Range sr = sema_eval_range(rhs, sema_ranges);
-                    if (!sr.known || sr.min < 0 || sr.max >= bits) {
+                    Range sr;
+                    if (!op_proven_in_range(rhs, 0, bits - 1, &sr)) {
                         if (!sr.known)
                             fprintf(stderr, "[E086] Error Ln %li, Col %li: shift amount is not proven "
                                 "in range for a %d-bit operand (valid 0..%d) — its range is unknown. "
@@ -2653,14 +2709,12 @@ void sema_infer_expr(Expr *e) {
                 Range nr = (rhs && rhs->kind == EXPR_LITERAL)
                              ? range_make(rhs->as.literal_expr.value, rhs->as.literal_expr.value)
                              : sema_eval_range(rhs, sema_ranges);
-                long long tlo, thi;
-                if (xr.known && nr.known && nr.min >= 0 && nr.max < 63 &&
-                    type_integer_range(lhs->type, &tlo, &thi)) {
-                    __int128 p2max = (__int128)1 << nr.max;
-                    __int128 c1 = (__int128)xr.min * p2max, c2 = (__int128)xr.max * p2max;
-                    __int128 pmin = c1 < c2 ? c1 : c2;
-                    __int128 pmax = c1 > c2 ? c1 : c2;
-                    if (pmin < (__int128)tlo || pmax > (__int128)thi) {
+                // `x << n` = x · 2^n; the extreme magnitudes are all at n = nr.max,
+                // so checking the product against a 2^nr.max multiplier bounds the
+                // whole result set. Reuses the shared wide-product overflow proof.
+                if (xr.known && nr.known && nr.min >= 0 && nr.max < 63) {
+                    int64_t p2max = (int64_t)1 << nr.max;
+                    if (!op_product_fits(xr, range_make(p2max, p2max), lhs->type)) {
                         fprintf(stderr, "[E086] Error Ln %li, Col %li: signed left shift may overflow — "
                             "the shifted value can exceed the operand type's range (UB, e.g. `1 << 31`). "
                             "Use an unsigned operand, a wrapping op, constrain the value, or `unsafe`.\n",
@@ -2686,30 +2740,7 @@ void sema_infer_expr(Expr *e) {
             lhs && lhs->type && is_integer_type(lhs->type)) {
             Range rhs_range = sema_eval_range(e->as.binary_expr.right, sema_ranges);
 
-            // Proven nonzero: VRA range excludes zero, or a `!= 0` constraint.
-            bool proven_nonzero = false;
-            if (rhs_range.known && (rhs_range.min > 0 || rhs_range.max < 0))
-                proven_nonzero = true;
-            // A live `if d != 0` guard (an interval can't express the 0-hole).
-            if (!proven_nonzero && e->as.binary_expr.right->kind == EXPR_IDENTIFIER &&
-                constraint_has_nonzero(sema_ranges, e->as.binary_expr.right->as.identifier_expr.id))
-                proven_nonzero = true;
-            if (!proven_nonzero && e->as.binary_expr.right->kind == EXPR_IDENTIFIER) {
-                Decl *rhs_decl = e->as.binary_expr.right->decl;
-                if (rhs_decl && rhs_decl->kind == DECL_VARIABLE && rhs_decl->as.variable_decl.constraints) {
-                    for (ExprList *c = rhs_decl->as.variable_decl.constraints; c; c = c->next) {
-                        if (c->expr->kind == EXPR_BINARY &&
-                            c->expr->as.binary_expr.op == TOKEN_BANG_EQUAL &&
-                            c->expr->as.binary_expr.right->kind == EXPR_LITERAL &&
-                            c->expr->as.binary_expr.right->as.literal_expr.value == 0) {
-                            proven_nonzero = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (!proven_nonzero) {
+            if (!op_proven_nonzero(e->as.binary_expr.right)) {
                 if (!rhs_range.known)
                     fprintf(stderr, "[E015] Error Ln %li, Col %li: division/modulo by a divisor "
                         "that is not proven nonzero (its range is unknown). Guard it (`if d != 0`), "
@@ -2931,27 +2962,13 @@ void sema_infer_expr(Expr *e) {
             if (aop2 == TOKEN_ASTERISK) {
                 Range lrg = sema_eval_range(e->as.binary_expr.left, sema_ranges);
                 Range rrg = sema_eval_range(e->as.binary_expr.right, sema_ranges);
-                long long tlo, thi;
-                if (lrg.known && rrg.known && type_integer_range(check_ty, &tlo, &thi)) {
-                    __int128 c1 = (__int128)lrg.min * (__int128)rrg.min;
-                    __int128 c2 = (__int128)lrg.min * (__int128)rrg.max;
-                    __int128 c3 = (__int128)lrg.max * (__int128)rrg.min;
-                    __int128 c4 = (__int128)lrg.max * (__int128)rrg.max;
-                    __int128 pmin = c1, pmax = c1;
-                    if (c2 < pmin) pmin = c2;
-                    if (c2 > pmax) pmax = c2;
-                    if (c3 < pmin) pmin = c3;
-                    if (c3 > pmax) pmax = c3;
-                    if (c4 < pmin) pmin = c4;
-                    if (c4 > pmax) pmax = c4;
-                    if (pmin < (__int128)tlo || pmax > (__int128)thi) {
-                        fprintf(stderr, "[E086] Error Ln %li, Col %li: multiplication would "
-                            "overflow target type — the product range exceeds the type's range. "
-                            "Use a wrapping (*%%) or saturating (*|) operator, widen the type, or "
-                            "constrain the operands.\n", dl, dc);
-                        diagnostic_show_line(dl, dc);
-                        exit(1);
-                    }
+                if (!op_product_fits(lrg, rrg, check_ty)) {
+                    fprintf(stderr, "[E086] Error Ln %li, Col %li: multiplication would "
+                        "overflow target type — the product range exceeds the type's range. "
+                        "Use a wrapping (*%%) or saturating (*|) operator, widen the type, or "
+                        "constrain the operands.\n", dl, dc);
+                    diagnostic_show_line(dl, dc);
+                    exit(1);
                 }
             }
             check_value_fits_type(rr, check_ty, dl, dc, "arithmetic result of", "");
