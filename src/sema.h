@@ -1297,6 +1297,17 @@ static int assignment_direction(Expr *target, Expr *rhs) {
         return -1;
     }
 
+    // Modulo: `v = X % v` strictly DECREASES an unsigned v >= 1 — the remainder
+    // `X % v` lies in [0, v-1] < v. The canonical Euclid GCD loop
+    // `while b > 0 decreasing b { b = a % b }`. Sound: v unsigned (remainder is
+    // non-negative), and the guard keeps v >= 1 (a modulo-by-zero is separately
+    // rejected). The divisor must be the measure itself (`X % v`, not `v % X`).
+    if (op == TOKEN_PERCENT && expr_struct_equal(right, target) &&
+        term_type_is_unsigned(target->type) &&
+        g_term_loop_cond && cond_implies_ge1(g_term_loop_cond, target)) {
+        return -1;
+    }
+
     // Difference-measure descent via body-local substitution + linear normalization
     // (binary search: `hi = mid` / `lo = mid+1` with `mid = lo + (hi-lo)/2`).
     { int d = measure_diff_direction(target, rhs); if (d) return d; }

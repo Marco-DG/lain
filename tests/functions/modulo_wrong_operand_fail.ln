@@ -1,0 +1,11 @@
+// EXPECT: [E082]
+// SOUNDNESS: only `X % v` (v the divisor) decreases v. `b = b % a` (b the DIVIDEND)
+// is not < b in general, so termination is not proven.
+func f(a usize, b0 usize) usize {
+    var b usize = b0
+    while b > 0 decreasing b {
+        b = b % a
+    }
+    return b
+}
+proc main() i32 { return 0 }

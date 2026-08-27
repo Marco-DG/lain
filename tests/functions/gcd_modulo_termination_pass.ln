@@ -1,0 +1,16 @@
+// Termination: `b = X % b` strictly decreases an unsigned measure b >= 1 (the
+// remainder is in [0, b-1] < b), so the Euclid GCD loop is provably terminating —
+// and thus valid in a pure `func`. Divisor must be the measure itself.
+func gcd(a0 usize, b0 usize) usize {
+    var a usize = a0
+    var b usize = b0
+    while b > 0 decreasing b {
+        var t usize = b
+        b = a % b
+        a = t
+    }
+    return a
+}
+proc main() i32 {
+    return gcd(48, 36) as i32
+}
