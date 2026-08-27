@@ -1,0 +1,17 @@
+// VRA `i < n / D` guard (D>=1): for a non-negative n, `n/D <= n`, so this implies
+// `i < n` — enough to prove the two-pointer reverse (`a[i]` and `a[n-1-i]`) under
+// `while i < n / 2`. A ubiquitous in-place algorithm, now check-free.
+proc rev(var a i32[n], n usize) {
+    var i usize = 0
+    while i < n / 2 decreasing n / 2 - i {
+        var t i32 = a[i]
+        a[i] = a[n - 1 - i]
+        a[n - 1 - i] = t
+        i = i + 1
+    }
+}
+proc main() i32 {
+    var a i32[5] = [1, 2, 3, 4, 5]
+    rev(var a, 5)
+    return a[0]
+}

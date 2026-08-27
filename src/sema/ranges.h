@@ -960,6 +960,24 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
                 default: break;
             }
         }
+        // Identifier vs (Identifier / literal): `i < n / D` (D >= 1). For a
+        // NON-NEGATIVE n, `n / D <= n`, so this implies the (weaker but useful)
+        // `i < n` — enough to prove the two-pointer body `a[i]` / `a[n-1-i]` under
+        // `while i < n / 2`. Gated on n proven >= 0 (for a signed negative n,
+        // `n / D > n`, so the implication would be UNSOUND).
+        else if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_BINARY &&
+                 rhs->as.binary_expr.op == TOKEN_SLASH &&
+                 rhs->as.binary_expr.left && rhs->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                 rhs->as.binary_expr.right && rhs->as.binary_expr.right->kind == EXPR_LITERAL &&
+                 rhs->as.binary_expr.right->as.literal_expr.value >= 1) {
+            Id *v1 = lhs->as.identifier_expr.id;
+            Id *v2 = rhs->as.binary_expr.left->as.identifier_expr.id;   // n
+            Range nr = range_get(t, v2);
+            if (nr.known && nr.min >= 0) {
+                if (op == TOKEN_ANGLE_BRACKET_LEFT)            constraint_add(t, v1, v2, -1);
+                else if (op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL) constraint_add(t, v1, v2, 0);
+            }
+        }
         // VRA: Identifier vs member(.len): x < arr.len (narrows i against length)
         else if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_MEMBER) {
             Id *v1 = lhs->as.identifier_expr.id;
