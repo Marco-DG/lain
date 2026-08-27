@@ -1,0 +1,15 @@
+// Termination: a measure `n - i` is non-negative under an OFFSET condition
+// `i + 1 < n` (=> n - i >= 2 > 0), so `while i + 1 < n decreasing n - i` is total.
+// Array rotate-left (shift + wrap) now compiles check-free.
+proc rotate(var a i32[n], n usize) {
+    if n > 0 {
+        var first i32 = a[0]
+        var i usize = 0
+        while i + 1 < n decreasing n - i {
+            a[i] = a[i + 1]
+            i = i + 1
+        }
+        a[n - 1] = first
+    }
+}
+proc main() i32 { return 0 }

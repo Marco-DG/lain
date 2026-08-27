@@ -1000,6 +1000,18 @@ static bool sema_verify_measure_nonneg(Expr *cond, Expr *measure) {
             expr_struct_equal(measure->as.binary_expr.right, cmp.lo)) {
             return true;
         }
+        // Offset condition: measure = hi - base, cond = (base + K) < hi (K literal).
+        // Then hi - base > K, so hi - base >= K + 1 >= 0 when K >= -1. Covers the
+        // common `while i + 1 < n decreasing n - i` (n - i >= 2 > 0).
+        if (cmp.strict && cmp.lo && cmp.lo->kind == EXPR_BINARY &&
+            (cmp.lo->as.binary_expr.op == TOKEN_PLUS || cmp.lo->as.binary_expr.op == TOKEN_MINUS) &&
+            cmp.lo->as.binary_expr.right && cmp.lo->as.binary_expr.right->kind == EXPR_LITERAL &&
+            expr_struct_equal(measure->as.binary_expr.left, cmp.hi) &&
+            expr_struct_equal(measure->as.binary_expr.right, cmp.lo->as.binary_expr.left)) {
+            int64_t K = cmp.lo->as.binary_expr.right->as.literal_expr.value;
+            if (cmp.lo->as.binary_expr.op == TOKEN_MINUS) K = -K;   // cond lo == base + K
+            if (K >= -1) return true;                              // hi - base >= K+1 >= 0
+        }
     }
 
     // Pattern: measure is a single variable/expr that equals hi, and lo is literal >= 0
