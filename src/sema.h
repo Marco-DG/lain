@@ -1308,6 +1308,17 @@ static int assignment_direction(Expr *target, Expr *rhs) {
         return -1;
     }
 
+    // Right shift: `v = v >> C` (C >= 1 literal) is `v / 2^C`, which strictly
+    // DECREASES an unsigned v >= 1. The canonical bit-iteration loop
+    // `while x > 0 decreasing x { x = x >> 1 }` (popcount, binary digits). Same
+    // soundness as halving: unsigned v, guard keeps v >= 1.
+    if (op == TOKEN_SHIFT_RIGHT && expr_struct_equal(left, target) &&
+        right->kind == EXPR_LITERAL && right->as.literal_expr.value >= 1 &&
+        term_type_is_unsigned(target->type) &&
+        g_term_loop_cond && cond_implies_ge1(g_term_loop_cond, target)) {
+        return -1;
+    }
+
     // Difference-measure descent via body-local substitution + linear normalization
     // (binary search: `hi = mid` / `lo = mid+1` with `mid = lo + (hi-lo)/2`).
     { int d = measure_diff_direction(target, rhs); if (d) return d; }
