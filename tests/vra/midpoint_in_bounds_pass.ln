@@ -1,0 +1,12 @@
+// VRA midpoint bound: `A + (B-A)/D` (D>=2) lies in [A, B], and in [A, B-1] when
+// A < B. So a binary-search-style midpoint index is provably in bounds when the
+// endpoints are: with `lo < hi < 100`, `mid = lo + (hi-lo)/2 < hi < 100` proves
+// (evaluating the operands independently would over-approximate to ~lo+hi).
+proc probe(lo usize, hi usize, a i32[100]) i32 {
+    if lo < hi and hi < 100 {
+        var mid usize = lo + (hi - lo) / 2
+        return a[mid]
+    }
+    return 0
+}
+proc main() i32 { return 0 }

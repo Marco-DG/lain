@@ -348,6 +348,29 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                 }
             }
 
+            // Correlated MIDPOINT `A + (B - A)/D` (D >= 2 literal): the value lies in
+            // [A, B] and, when A < B, in [A, B-1]. So its range is bounded ABOVE by B
+            // (strictly, B-1, if A<B) — not the naive range_add of A and (B-A)/D which
+            // loses the correlation and over-approximates to ~A+B. This proves the
+            // binary-search index in bounds: `mid = lo + (hi-lo)/2 < hi <= len`.
+            if (op == TOKEN_PLUS) {
+                Expr *AE = e->as.binary_expr.left, *DV = e->as.binary_expr.right;
+                if (DV && DV->kind == EXPR_BINARY && DV->as.binary_expr.op == TOKEN_SLASH &&
+                    DV->as.binary_expr.right && DV->as.binary_expr.right->kind == EXPR_LITERAL &&
+                    DV->as.binary_expr.right->as.literal_expr.value >= 2 &&
+                    DV->as.binary_expr.left && DV->as.binary_expr.left->kind == EXPR_BINARY &&
+                    DV->as.binary_expr.left->as.binary_expr.op == TOKEN_MINUS &&
+                    expr_struct_equal(DV->as.binary_expr.left->as.binary_expr.right, AE)) {
+                    Range Ar = l;  // range of A (left operand)
+                    Range Br = sema_eval_range(DV->as.binary_expr.left->as.binary_expr.left, t); // B
+                    if (Ar.known && Br.known && Ar.min >= 0) {
+                        Range BmA = sema_eval_range(DV->as.binary_expr.left, t);  // B - A
+                        int64_t fmax = (BmA.known && BmA.min >= 1) ? Br.max - 1 : Br.max;
+                        if (fmax >= Ar.min) return range_make(Ar.min, fmax);
+                    }
+                }
+            }
+
             switch (op) {
                 case TOKEN_PLUS:
                 case TOKEN_PLUS_QUESTION:   return range_add(l, r);   // +? == + if it doesn't trap
