@@ -3,7 +3,10 @@ type Vec {
     x i32
     y i32
 }
-func dot(a Vec, b Vec) i32 { return a.x * b.x + a.y * b.y }
+// `*%`/`+%`: an i32 product narrowed back to i32 is truncation-prone (now
+// rejected); wrapping makes the overflow policy explicit. This test is about
+// two simultaneous shared borrows of `v` in one call, not the arithmetic.
+func dot(a Vec, b Vec) i32 { return a.x *% b.x +% a.y *% b.y }
 proc main() i32 {
     var v = Vec(1, 2)
     var d = dot(v, v)

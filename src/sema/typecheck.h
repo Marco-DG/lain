@@ -270,7 +270,31 @@ static bool range_proves_int_fit(Range r, Type *to) {
 // effectively unbounded — slipped past check_value_fits_type silently
 // (e.g. `func f(a i32) i8 { return a }` truncated with no diagnostic).
 // usize/isize (platform-dependent width) are left to other checks.
-static void reject_lossy_int_conversion(Type *from, Type *to, Range r,
+// True if `e`'s value is produced (transitively through +/- and casts/unary) by a
+// plain `*`. A multiplication narrowed back to a smaller type is the truncation-
+// prone case (`i32*i32 -> i64 -> i32`), so it must NOT take the ergonomic arith-
+// widened bypass — it faces the range-based lossy check (accepted only if the
+// value's range proves it fits). Additive chains (`x = x + 1`), array reads
+// (`sq[7]` — the product was already bound away), and the wrapping/saturating `*%`
+// / `*|` escapes are opaque here and keep the ergonomic bypass.
+static bool expr_contains_arith_mul(Expr *e) {
+    if (!e) return false;
+    switch (e->kind) {
+        case EXPR_BINARY: {
+            TokenKind op = e->as.binary_expr.op;
+            if (op == TOKEN_ASTERISK) return true;
+            if (op == TOKEN_PLUS || op == TOKEN_MINUS)
+                return expr_contains_arith_mul(e->as.binary_expr.left) ||
+                       expr_contains_arith_mul(e->as.binary_expr.right);
+            return false;
+        }
+        case EXPR_UNARY: return expr_contains_arith_mul(e->as.unary_expr.right);
+        case EXPR_CAST:  return expr_contains_arith_mul(e->as.cast_expr.expr);
+        default:         return false;
+    }
+}
+
+static void reject_lossy_int_conversion(Type *from, Type *to, Range r, Expr *src_expr,
                                         isize line, isize col,
                                         const char *ctx, const char *label) {
     if (sema_in_unsafe_block) return;
@@ -279,8 +303,10 @@ static void reject_lossy_int_conversion(Type *from, Type *to, Range r,
     // type is judged by the window policy (check_value_fits_type, already called
     // at this boundary) — which still catches a KNOWN overflow — not the
     // fail-closed lossy check. Keeps `x = x + 1` ergonomic; a genuine truncation
-    // of a non-widened value (`i32 -> i8`) is unaffected.
-    if (from && from->arith_widened) return;
+    // of a non-widened value (`i32 -> i8`) is unaffected. EXCEPT a product: a
+    // multiplication narrowed back down is truncation-prone (`dot`, `v.x*factor`),
+    // so it does NOT get the bypass — it must prove its range fits (below).
+    if (from && from->arith_widened && !expr_contains_arith_mul(src_expr)) return;
     if (!is_integer_type(from) || !is_integer_type(to)) return;
     long long flo, fhi, tlo, thi;
     if (!type_integer_range(from, &flo, &fhi)) {
@@ -1209,7 +1235,7 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
 
     check_value_fits_type(r, to, line, col, ctx, label);
     reject_float_int_mismatch(from, to, line, col, ctx, label);
-    reject_lossy_int_conversion(from, to, r, line, col, ctx, label);
+    reject_lossy_int_conversion(from, to, r, src_expr, line, col, ctx, label);
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
     reject_sentinel_fabrication(from, to, src_expr, line, col, ctx);
     reject_fixed_string_length_mismatch(from, to, line, col);

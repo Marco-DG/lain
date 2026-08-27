@@ -6,13 +6,16 @@ type Vec2 {
     y i32
 }
 
+// Wrapping ops (`*%`/`+%`) keep the i32 result and make the overflow policy
+// explicit: plain `a.x * b.x` narrowed back to i32 is truncation-prone and now
+// rejected (prove-or-reject); this ABI test only cares about the pointer lowering.
 func dot(a Vec2, b Vec2) i32 {
-    return a.x * b.x + a.y * b.y
+    return a.x *% b.x +% a.y *% b.y
 }
 
 func scale(var v Vec2, factor i32) {
-    v.x = v.x * factor
-    v.y = v.y * factor
+    v.x = v.x *% factor
+    v.y = v.y *% factor
 }
 
 // var T return: borrow checker proves non-null -> returns_nonnull emitted

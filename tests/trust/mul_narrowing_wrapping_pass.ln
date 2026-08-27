@@ -1,0 +1,6 @@
+// The wrapping `*%` / `+%` operators are the explicit escape: they keep the i32
+// result (no widening, no narrowing check) and define overflow as wraparound.
+func dot(a i32, b i32, c i32, d i32) i32 {
+    return a *% b +% c *% d
+}
+proc main() i32 { return 0 }

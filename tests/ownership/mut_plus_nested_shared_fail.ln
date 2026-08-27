@@ -5,7 +5,10 @@ type Vec {
     y i32
 }
 func length(v Vec) i32 { return v.x }
-proc scale(var v Vec, factor i32) { v.x = v.x * factor }
+// `*%` (wrapping): a plain i32 product narrowed back to i32 is now rejected as
+// truncation-prone, which would preempt the E004 this test targets — wrapping
+// makes the arithmetic valid so the aliasing violation is what surfaces.
+proc scale(var v Vec, factor i32) { v.x = v.x *% factor }
 proc main() i32 {
     var v = Vec(2, 3)
     scale(var v, length(v))

@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// Strict multiplicative narrowing: an i32*i32 product (widened to i64) narrowed
+// back to i32 with an UNPROVABLE range silently truncates large results. Now
+// rejected (prove-or-reject) — unlike additive `x = x + 1`, a product narrowed
+// down is the truncation-prone case. Escapes: wrapping `*%`, wider return, or a
+// range constraint. Detected by the source expression containing a `*`, so it
+// does not leak through array/struct storage (a bound `[i*i …]` stays fine).
+type Vec {
+    x i32
+    y i32
+}
+func dot(a Vec, b Vec) i32 {
+    return a.x * b.x + a.y * b.y
+}
+proc main() i32 { return 0 }

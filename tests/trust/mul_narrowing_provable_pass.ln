@@ -1,0 +1,6 @@
+// A product whose range PROVES it fits the target still compiles check-free:
+// `(a%10)*(b%10)` is in [0,81] ⊆ i32. Only UNPROVABLE mul-narrowing rejects.
+func clamp_prod(a i32, b i32) i32 {
+    return (a % 10) * (b % 10)
+}
+proc main() i32 { return 0 }
