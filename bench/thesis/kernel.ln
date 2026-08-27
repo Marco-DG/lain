@@ -1,0 +1,15 @@
+// The benchmarked kernel, in Lain — proves it compiles CHECK-FREE (no bounds check
+// on a[j], no overflow check), which is why bench.c's variant (A) is faithful to
+// Lain's output. `j = idx[i] & 4095` is provably in [0,4095] ⊂ [0,4096); the
+// products/accumulation use wrapping (defined) arithmetic.
+proc kernel(a i32[4096], b i32[4096], idx u32[4096]) i64 {
+    var acc i64 = 0
+    var i usize = 0
+    while i < 4096 decreasing 4096 - i {
+        var j usize = (idx[i] & 4095) as usize
+        acc = acc +% ((a[j] *% b[i]) as i64)
+        i = i + 1
+    }
+    return acc
+}
+proc main() i32 { return 0 }
