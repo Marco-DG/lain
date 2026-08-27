@@ -1,0 +1,12 @@
+// EXPECT: [E086]
+// Overflow prove-or-reject now covers usize/isize: `x - 1` at x = 0 underflows
+// the unsigned type to SIZE_MAX. Previously parse_iN_uN did not recognize
+// `usize`, so type_integer_range returned "no range" and EVERY overflow/
+// underflow check on usize was silently skipped. Now usize carries a range
+// (lower bound 0), so the sub-zero result is rejected.
+proc main() i32 {
+    var x usize = 0
+    var y usize = x - 1
+    libc_printf("%zu\n", y)
+    return 0
+}

@@ -1,0 +1,12 @@
+// A usize subtraction whose result VRA proves is non-negative stays ergonomic:
+// under `n > 0` the value `n - 1` is in [0, …], so it is accepted with no cast.
+// (Only genuinely-underflowing subtractions — see usize_underflow_fail — reject.)
+proc dec(n usize) usize {
+    if n > 0 {
+        return n - 1
+    }
+    return 0
+}
+proc main() i32 {
+    return dec(4) as i32
+}

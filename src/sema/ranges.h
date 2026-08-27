@@ -527,6 +527,13 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                 while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
                 if (tt && tt->kind == TYPE_SLICE && tt->array_len > 0)
                     return range_const(tt->array_len);
+                // A slice/array `.len` is a non-negative count even when the exact
+                // value is a runtime length: give it a nonneg range so a widening
+                // conversion to an unsigned/wider type (`return a.len` into a usize)
+                // is provably safe, rather than falling to `unknown` and tripping
+                // the signed→unsigned narrowing check (E086).
+                if (tt && (tt->kind == TYPE_SLICE || tt->kind == TYPE_ARRAY))
+                    return range_make(0, INT64_MAX);
             }
             // Refined struct field read: `b.v` where field v has an invariant
             // (`v i32 >= 0 and <= 3`). Seed its declared range so use sites can use

@@ -741,6 +741,17 @@ static void ast_parse_int_width(const char *n, isize len, signed char *w, bool *
             v = v * 10 + (n[k] - '0');
         }
         if (ok && v >= 1 && v <= 64) { *w = (signed char)v; *sgn = (n[0] == 'i'); }
+        return;
+    }
+    // `usize`/`isize` are the pointer-width integers (size_t / ptrdiff_t). Treat
+    // them as 64-bit for range purposes: the LOWER bound (0 for usize) is what
+    // makes unsigned underflow (`x - 1` at x = 0) provable, and is correct for
+    // any unsigned width; the upper bound matches u64/i64 as used elsewhere.
+    // Without this, parse_iN_uN failed on usize → type_integer_range returned
+    // "no range" → every overflow/underflow check on usize was skipped.
+    if (n && len == 5) {
+        if      (memcmp(n, "usize", 5) == 0) { *w = 64; *sgn = false; }
+        else if (memcmp(n, "isize", 5) == 0) { *w = 64; *sgn = true;  }
     }
 }
 
