@@ -1983,6 +1983,38 @@ static void walk_stmt(Stmt *s) {
 
                 range_set(sema_ranges, s->as.var_stmt.name, r);
 
+                // Seed a synthetic __len_<name> entry for a LOCAL dynamic-slice
+                // variable, mirroring the __len_PARAM seeding for slice parameters.
+                // This lets the canonical scan `while i < s.len { s[i] }` (and an
+                // `if i < s.len` guard) prove in-bounds for a slice bound to a LOCAL
+                // — e.g. `var s = borrow(arr)` or `var s = arr[a..b]` — not only for
+                // slice parameters. `i < s.len ⟹ s[i] in bounds` holds by definition
+                // of `.len` for any slice, so the guard→index chain is sound; the
+                // entry is symbolic ([0, INT64_MAX]) and re-narrowed per guard, and
+                // mutation invalidation drops it on reassignment like any other.
+                if (sema_ranges && s->as.var_stmt.type &&
+                    s->as.var_stmt.type->kind == TYPE_ARRAY &&
+                    s->as.var_stmt.type->array_len == -1 &&
+                    s->as.var_stmt.name && s->as.var_stmt.name->length > 0) {
+                    Id *vn = s->as.var_stmt.name;
+                    char lenkey[272]; int lklen = 6 + (int)vn->length;
+                    if (lklen < (int)sizeof(lenkey)) {
+                        memcpy(lenkey, "__len_", 6);
+                        memcpy(lenkey + 6, vn->name, vn->length);
+                        Id *existing = NULL;
+                        for (RangeEntry *re = sema_ranges->head; re; re = re->next)
+                            if (re->var && re->var->length == lklen &&
+                                strncmp(re->var->name, lenkey, lklen) == 0) { existing = re->var; break; }
+                        if (!existing) {
+                            char *stored = arena_push_many(sema_ranges->arena, char, lklen);
+                            memcpy(stored, lenkey, lklen);
+                            Id *len_id = arena_push_aligned(sema_ranges->arena, Id);
+                            len_id->length = lklen; len_id->name = stored;
+                            range_set(sema_ranges, len_id, range_make(0, INT64_MAX));
+                        }
+                    }
+                }
+
                 // If the initializer is x.len or x.len ± k, register the equality
                 // (or affine relationship) between n and __len_x as difference constraints
                 // so the Omega Test can cancel terms like (n - i - 1 < n).
@@ -2675,8 +2707,23 @@ static void walk_stmt(Stmt *s) {
             // constraint (`i < n`): a stale one would let the bounds prover chain it
             // to prove an out-of-range `a[i]` after `i` is mutated.
             if (s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
-                sema_invalidate_in_guards(s->as.assign_stmt.target->as.identifier_expr.id);
-                sema_invalidate_constraints(s->as.assign_stmt.target->as.identifier_expr.id);
+                Id *tgt = s->as.assign_stmt.target->as.identifier_expr.id;
+                sema_invalidate_in_guards(tgt);
+                sema_invalidate_constraints(tgt);
+                // SOUNDNESS: reassigning a slice local `s` changes its length, so any
+                // `i < s.len` guard captured as `i - __len_s <= -1` is now stale.
+                // Drop constraints on the synthetic __len_s too, else `s[i]` could keep
+                // proving in-bounds against the OLD length after `s = <shorter slice>`
+                // (a real OOB the local __len_ seeding would otherwise admit).
+                if (tgt && tgt->length > 0) {
+                    char lk[272]; int lkl = 6 + (int)tgt->length;
+                    if (lkl < (int)sizeof(lk)) {
+                        memcpy(lk, "__len_", 6);
+                        memcpy(lk + 6, tgt->name, tgt->length);
+                        Id lid; lid.name = lk; lid.length = lkl;
+                        sema_invalidate_constraints(&lid);
+                    }
+                }
             }
 
             // E121: struct field invariant violation check.

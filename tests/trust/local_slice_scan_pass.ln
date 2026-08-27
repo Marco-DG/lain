@@ -1,0 +1,21 @@
+// TRUST: the canonical check-free scan `while i < s.len { s[i] }` proves in-bounds
+// for a slice bound to a LOCAL (not only a slice parameter) — `var s = borrow(arr)`.
+// The __len_s seeding for local slices makes `i < s.len ⟹ s[i]` provable; under ASan
+// an out-of-bounds read (were the proof unsound) would trap. Self-checking: exit 0.
+func borrow(a i32[]) i32[] {
+    return a
+}
+proc main() i32 {
+    var arr i32[4] = [10, 20, 30, 40]
+    var s = borrow(arr)
+    var sum i32 = 0
+    var i usize = 0
+    while i < s.len decreasing s.len - i {
+        sum = sum + s[i]
+        i = i + 1
+    }
+    if sum == 100 {
+        return 0
+    }
+    return 1
+}

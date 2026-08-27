@@ -1,0 +1,20 @@
+// EXPECT: [E085]
+// SOUNDNESS guard for the local-slice __len_ seeding: a `i < s.len` guard captured
+// against one slice must NOT keep proving `s[i]` after `s` is reassigned to a SHORTER
+// slice. Here `9 < s.len` holds for the len-10 slice, but after `s = borrow(small)`
+// (len 3) the index `s[9]` is out of bounds — reassignment must invalidate the stale
+// __len_s constraint so this is rejected, not miscompiled into an OOB read.
+func borrow(a i32[]) i32[] {
+    return a
+}
+proc main() i32 {
+    var big i32[10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    var small i32[3] = [1, 2, 3]
+    var s = borrow(big)
+    var i usize = 9
+    if i < s.len {
+        s = borrow(small)
+        return s[i]
+    }
+    return 0
+}
