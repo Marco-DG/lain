@@ -1,0 +1,8 @@
+// EXPECT: [E085]
+// SOUNDNESS: the mask bound must not over-prove — `idx & 4095` is in [0,4095], which
+// is OUT OF BOUNDS for a[100]. Rejected, not miscompiled.
+proc f(a i32[100], idx u32[16]) i32 {
+    var j usize = (idx[0] & 4095) as usize
+    return a[j]
+}
+proc main() i32 { return 0 }

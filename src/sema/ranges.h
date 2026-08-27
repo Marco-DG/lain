@@ -113,8 +113,17 @@ static Range range_mod(Range a, Range b) {
 // either operand — [0, min(max_x, max_y)]. This is what makes masked reads like
 // `CTYPE[c] & FLAG` provably small. Negative operands (two's complement) bail.
 static Range range_bitand(Range a, Range b) {
-    if (!a.known || !b.known || a.min < 0 || b.min < 0) return range_unknown();
-    return range_make(0, a.max < b.max ? a.max : b.max);
+    // `x & y` with a non-negative operand `y` lies in [0, y.max] for ANY x: the AND
+    // can only clear bits, and a non-negative y has its sign bit clear, so the
+    // result is non-negative and no larger than y. So EITHER operand being known
+    // non-negative caps the result — even if the other is unknown. This proves the
+    // ubiquitous power-of-two mask idiom `idx & (N-1)` in bounds regardless of idx's
+    // range (e.g. a gather `a[idx[i] & 4095]` over a[4096]).
+    int64_t cap = 0; bool have = false;
+    if (b.known && b.min >= 0)                 { cap = b.max; have = true; }
+    if (a.known && a.min >= 0 && (!have || a.max < cap)) { cap = a.max; have = true; }
+    if (have) return range_make(0, cap);
+    return range_unknown();
 }
 // Bitwise OR on non-negative operands: `x | y` ≥ max(x, y) ≥ max(min_x, min_y),
 // and `x | y` ≤ x + y ≤ max_x + max_y. Loose but safe (exact for single values).
