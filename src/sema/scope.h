@@ -17,6 +17,35 @@ static char *arena_strdup(Arena *a, const char *s) {
     return copy;
 }
 
+// A builtin type name (iN/uN for N∈[1,64], plus the named scalars/aliases) is a
+// first-class type-VALUE in Lain (`Vec(i32)`, `max(i32, …)`) and is resolved by
+// the identifier-fallback in resolve.h, never entered in the symbol table. Binding
+// such a name as a variable/parameter therefore cannot shadow the type: any later
+// read of the name resolves back to the type-value and emits broken C
+// ("unhandled expression type"). Reject the binding cleanly instead — like `end`,
+// a reserved type name is not a legal identifier to bind.
+static bool is_reserved_type_name(const char *raw) {
+    size_t rl = strlen(raw);
+    if (rl >= 2 && rl <= 3 && (raw[0] == 'i' || raw[0] == 'u')) {
+        int bits = 0; bool all_digits = true;
+        for (size_t k = 1; k < rl; k++) {
+            if (raw[k] < '0' || raw[k] > '9') { all_digits = false; break; }
+            bits = bits * 10 + (raw[k] - '0');
+        }
+        if (all_digits && bits >= 1 && bits <= 64) return true;
+    }
+    // Exactly the names the resolve.h identifier-fallback rewrites to a type-value
+    // (empirically the set that miscompiles when bound and later read). usize/isize/
+    // void/char are NOT rewritten there — they bind and read correctly — so binding
+    // them stays legal; `type` is already a reserved keyword rejected at parse time.
+    static const char *names[] = {
+        "int", "float", "bool", "string", "f32", "f64", NULL
+    };
+    for (int i = 0; names[i]; i++)
+        if (strcmp(raw, names[i]) == 0) return true;
+    return false;
+}
+
 /*
   A two‐table symbol‐scope implementation:
 

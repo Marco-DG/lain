@@ -1,0 +1,9 @@
+// EXPECT: [E013]
+// A builtin type name cannot be used as a parameter name either — reading it in
+// the body would resolve to the type-value and emit broken C. Reject cleanly.
+proc f(u8 i32) i32 {
+    return u8
+}
+proc main() i32 {
+    return f(1)
+}

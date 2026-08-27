@@ -1,0 +1,12 @@
+// Names that merely resemble type names but are NOT the reserved builtin types
+// must remain legal identifiers — the type-name reject must not over-fire.
+// `usize`/`isize` bind and read correctly (they are not rewritten by the
+// identifier fallback), and digit-suffixed names like `x1`/`i0`/`u99` are fine.
+proc main() i32 {
+    var usize i32 = 3
+    var isize i32 = usize + 1
+    var x1 i32 = isize
+    var i0 i32 = x1
+    var u99 i32 = i0
+    return u99 - 6
+}

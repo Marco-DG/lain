@@ -3804,6 +3804,14 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 memcpy(rawp, pid->name, L);
                 rawp[L] = '\0';
 
+                if (is_reserved_type_name(rawp)) {
+                    fprintf(stderr, "[E013] Error Ln %li, Col %li: '%s' is a builtin type "
+                            "name and cannot be used as a parameter name.\n",
+                            p->decl->line, p->decl->col, rawp);
+                    diagnostic_show_line(p->decl->line, p->decl->col);
+                    exit(1);
+                }
+
                 sema_insert_local(rawp, rawp, pty, p->decl, false);
 
                 // Seed the VRA range of every fixed-width integer parameter with

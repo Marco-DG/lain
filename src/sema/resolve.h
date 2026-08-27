@@ -497,6 +497,13 @@ void sema_resolve_stmt(Stmt *s) {
         exit(1);
     }
 
+    if (is_reserved_type_name(raw)) {
+        fprintf(stderr, "[E013] Error Ln %li, Col %li: '%s' is a builtin type name and "
+                "cannot be used as a variable name.\n", s->line, s->col, raw);
+        diagnostic_show_line(s->line, s->col);
+        exit(1);
+    }
+
     const char *cname = raw;
     sema_insert_local(raw, cname, ty, NULL, s->as.var_stmt.is_mutable);
     break;
@@ -548,6 +555,11 @@ void sema_resolve_stmt(Stmt *s) {
       size_t li = len_i < cap_i ? len_i : cap_i;
       memcpy(raw_i, id_i->name, li);
       raw_i[li] = '\0';
+      if (is_reserved_type_name(raw_i)) {
+          fprintf(stderr, "[E013] Error Ln %li, Col %li: '%s' is a builtin type name and "
+                  "cannot be used as a loop variable.\n", s->line, s->col, raw_i);
+          diagnostic_show_line(s->line, s->col); exit(1);
+      }
       sema_insert_local(raw_i, raw_i, idx_ty, NULL, false);
       // Range Analysis: Set range for loop index
       if (sema_ranges && it->kind == EXPR_RANGE) {
@@ -564,6 +576,11 @@ void sema_resolve_stmt(Stmt *s) {
       size_t lc = len_c < cap_c ? len_c : cap_c;
       memcpy(raw_c, id_c->name, lc);
       raw_c[lc] = '\0';
+      if (is_reserved_type_name(raw_c)) {
+          fprintf(stderr, "[E013] Error Ln %li, Col %li: '%s' is a builtin type name and "
+                  "cannot be used as a loop variable.\n", s->line, s->col, raw_c);
+          diagnostic_show_line(s->line, s->col); exit(1);
+      }
       sema_insert_local(raw_c, raw_c, val_ty, NULL, false);
     }
 
@@ -1085,6 +1102,11 @@ void sema_resolve_expr(Expr *e) {
         size_t li = (ix->length < 0) ? 0 : (size_t)ix->length;
         if (li > sizeof(raw) - 1) li = sizeof(raw) - 1;
         memcpy(raw, ix->name, li); raw[li] = '\0';
+        if (is_reserved_type_name(raw)) {
+            fprintf(stderr, "[E013] Error Ln %li, Col %li: '%s' is a builtin type name and "
+                    "cannot be used as a comprehension variable.\n", e->line, e->col, raw);
+            exit(1);
+        }
         sema_insert_local(raw, raw, get_builtin_i32_type(), NULL, false);
     }
     sema_resolve_expr(e->as.array_comprehension_expr.body);

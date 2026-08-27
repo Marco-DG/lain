@@ -1,0 +1,11 @@
+// EXPECT: [E013]
+// A builtin type name (iN/uN, int/float/bool/string/f32/f64) is a first-class
+// type-VALUE in Lain and is resolved by the identifier fallback, never entered in
+// the symbol table. Binding it as a variable cannot shadow the type: a later read
+// resolves back to the type and formerly emitted broken C ("unhandled expression
+// type") with NO diagnostic. Must reject the binding cleanly instead.
+proc main() i32 {
+    var i32 usize = 0
+    var y usize = i32
+    return 0
+}

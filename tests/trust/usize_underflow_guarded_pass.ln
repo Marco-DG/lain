@@ -8,5 +8,11 @@ proc dec(n usize) usize {
     return 0
 }
 proc main() i32 {
-    return dec(4) as i32
+    // self-checking: dec(4) == 3, dec(0) == 0. Exit 0 on success.
+    if dec(4) == 3 {
+        if dec(0) == 0 {
+            return 0
+        }
+    }
+    return 1
 }
