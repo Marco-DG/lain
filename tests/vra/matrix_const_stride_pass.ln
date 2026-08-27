@@ -1,0 +1,18 @@
+// Fixed-size 2D indexing is check-free: `a[i*W + j]` over `a[H*W]` with H,W COMPILE-TIME
+// constants and guards `i < H`, `j < W`. The stride W is constant so `i*W` is a bounded
+// linear expression (no overflow) and `i*W+j < H*W` proves. (Symbolic dimensions a[h*w]
+// are the nonlinear frontier — still rejected.)
+proc sum(a i32[64]) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < 8 decreasing 8 - i {
+        var j usize = 0
+        while j < 8 decreasing 8 - j {
+            s = s +% a[i * 8 + j]
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 { return 0 }
