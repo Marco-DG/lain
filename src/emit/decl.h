@@ -201,6 +201,22 @@ static bool func_writes_through_param(Decl *decl) {
     return false;
 }
 
+// Q-019 gate: a func earns __attribute__((const/pure)) ONLY if it has NO observable
+// side effect. The structural gates below exclude the var/output/fnptr param write
+// channels; the INFERRED EFFECT ROW additionally excludes a func that can `panic`
+// (EFFECT_RAISES). A panicking func aborts — an OBSERVABLE effect — and const/pure
+// let gcc ELIDE the call when its result is unused, silently dropping the abort (a
+// confirmed -O0/-O3 miscompile: `checked(-1)` runs past its panic at -O0). Requiring
+// the effect row EMPTY is the sound, effect-driven condition: IO/Diverge cannot occur
+// in a func (E3/E011), and Write/Alloc are effects too. This is where the F3.3 effect
+// row becomes load-bearing for codegen soundness.
+static bool func_pureconst_ok(Decl *decl) {
+    return decl->kind == DECL_FUNCTION && decl->as.function_decl.return_type &&
+           !func_has_var_param(decl) && !func_writes_through_param(decl) &&
+           !func_has_fnptr_param(decl) &&
+           decl->as.function_decl.effects == 0;
+}
+
 // O-001 [access]: for each TYPE_ARRAY param whose size_expr is a simple
 // EXPR_IDENTIFIER referencing another param, emit
 //   __attribute__((access(read_only|read_write, ptr_idx, size_idx)))
@@ -295,9 +311,7 @@ static void emit_forward_decl(Decl *decl, int depth) {
         // __attribute__((pure)). Both enable LICM/CSE; const is stronger.
         // A func that writes through a pointer param (sized output param) has a
         // side effect and qualifies for neither.
-        if (decl->kind == DECL_FUNCTION && decl->as.function_decl.return_type &&
-            !func_has_var_param(decl) && !func_writes_through_param(decl) &&
-            !func_has_fnptr_param(decl)) {
+        if (func_pureconst_ok(decl)) {
             if (func_all_params_by_value(decl))
                 EMIT("__attribute__((const)) ");
             else
@@ -587,9 +601,7 @@ void emit_decl(Decl* decl, int depth) {
             // when all params are by value (no pointer args → no indirect reads),
             // or __attribute__((pure)) otherwise. Both allow LICM/CSE; const is
             // the stronger guarantee and allows hoisting even when memory changes.
-            if (decl->kind == DECL_FUNCTION && !is_main && decl->as.function_decl.return_type &&
-                !func_has_var_param(decl) && !func_writes_through_param(decl) &&
-                !func_has_fnptr_param(decl)) {
+            if (func_pureconst_ok(decl) && !is_main) {
                 if (func_all_params_by_value(decl))
                     EMIT("__attribute__((const)) ");
                 else

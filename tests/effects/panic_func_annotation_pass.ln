@@ -1,0 +1,17 @@
+// A `func` that can `panic` has an OBSERVABLE effect (abort) and must NOT get
+// __attribute__((const/pure)) — those let gcc elide an unused-result call and drop
+// the abort (a confirmed -O0/-O3 miscompile). The gate is the inferred effect row
+// (EFFECT_RAISES). A genuinely pure func in the same program still gets const.
+// (The negative — no const on `may_panic` — is enforced executably by fuzz_annot.sh.)
+func pure_id(a i32) i32 {
+    return a
+}
+func may_panic(x i32) i32 {
+    if x < 0 {
+        panic("neg")
+    }
+    return x
+}
+proc main() i32 {
+    return pure_id(2) + may_panic(4)
+}
