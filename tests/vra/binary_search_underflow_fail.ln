@@ -1,0 +1,16 @@
+// EXPECT: [E085]
+// SOUNDNESS: `hi = mid - 1` on usize underflows to SIZE_MAX when mid = 0
+// (lo=0, hi=1 gives mid=0). The invariant engine models arithmetic over signed
+// intervals; an unsigned-underflowing subtraction is abstracted to unknown
+// rather than the misleading small negative range, so no bogus bound on `hi`
+// survives and `a[mid]` cannot be proven in bounds — rejected, not miscompiled.
+proc bad(a i32[8], target i32) usize {
+    var lo usize = 0
+    var hi usize = 8
+    while lo < hi decreasing hi - lo {
+        var mid usize = lo + (hi - lo) / 2
+        if a[mid] < target { lo = mid + 1 } else { hi = mid - 1 }
+    }
+    return lo
+}
+proc main() i32 { return 0 }

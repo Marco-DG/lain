@@ -1,0 +1,21 @@
+// Inductive loop-invariant VRA: a full binary search proves `a[mid]` in bounds
+// INSIDE the loop. The blanket loop-widen discards lo/hi; the invariant engine
+// recovers the verified `0 <= lo < hi <= len` (lo starts 0 and only rises to
+// mid+1<=hi; hi starts len and only drops to mid<hi; the guard keeps lo<hi), so
+// `mid = lo + (hi-lo)/2 < hi <= len` and the index is check-free. Terminates via
+// the `hi - lo` measure.
+proc bsearch(a i32[8], target i32) usize {
+    var lo usize = 0
+    var hi usize = 8
+    while lo < hi decreasing hi - lo {
+        var mid usize = lo + (hi - lo) / 2
+        if a[mid] < target { lo = mid + 1 } else { hi = mid }
+    }
+    return lo
+}
+proc main() i32 {
+    var arr i32[8] = [1, 3, 5, 7, 9, 11, 13, 15]
+    var idx usize = bsearch(arr, 7)
+    libc_printf("idx=%zu\n", idx)
+    return 0
+}

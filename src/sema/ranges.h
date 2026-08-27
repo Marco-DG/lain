@@ -144,6 +144,9 @@ typedef struct {
     Arena *arena;
 } RangeTable;
 
+// Forward decl: difference-constraint lookup, used by sema_eval_range (defined below).
+static int64_t constraint_get_diff(RangeTable *t, Id *v1, Id *v2, bool *found);
+
 static RangeTable *range_table_new(Arena *arena) {
     RangeTable *t = arena_push_aligned(arena, RangeTable);
     t->head = NULL;
@@ -345,6 +348,23 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                     expr_struct_equal(LE->as.binary_expr.left, RE)) {
                     int64_t D = LE->as.binary_expr.right->as.literal_expr.value;
                     return range_make(-(r.max - r.max / D), -(r.min - r.min / D));
+                }
+                // v1 - v2 where a difference constraint relates them: `v1 < v2`
+                // records v1 - v2 <= -1, so `v2 - v1 >= 1`. The naive range_sub of two
+                // independent intervals loses this; consult the constraint graph to
+                // tighten. Upper: v1 - v2 <= (v1-v2 constraint). Lower: v1 - v2 >=
+                // -(v2-v1 constraint). This makes `hi - lo` prove >= 1 under a live
+                // `lo < hi` guard, the linchpin for the midpoint index bound in a loop.
+                if (LE && LE->kind == EXPR_IDENTIFIER && RE && RE->kind == EXPR_IDENTIFIER) {
+                    Range base = range_sub(l, r);
+                    Id *a = LE->as.identifier_expr.id, *b = RE->as.identifier_expr.id;
+                    bool fu = false, fl = false;
+                    int64_t up = constraint_get_diff(t, a, b, &fu);   // a - b <= up
+                    int64_t lo2 = constraint_get_diff(t, b, a, &fl);  // b - a <= lo2 => a-b >= -lo2
+                    if (!base.known) base = (Range){INT64_MIN, INT64_MAX, true};
+                    if (fu && up < base.max) base.max = up;
+                    if (fl && -lo2 > base.min) base.min = -lo2;
+                    if (base.min <= base.max) return base;
                 }
             }
 

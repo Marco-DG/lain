@@ -658,6 +658,179 @@ static void sema_widen_loop(StmtList *body, RangeTable *t) {
 }
 
 /*─────────────────────────────────────────────────────────────────────────────╗
+│ Inductive loop-invariant bounds (VRA)                                         │
+│                                                                               │
+│ The blanket widen-to-unknown (sema_widen_loop) discards the range of every    │
+│ variable a loop body assigns. For a var whose bound is actually an INDUCTIVE  │
+│ INVARIANT — preserved by every path through the body under the guard — that   │
+│ is needlessly imprecise. Binary search is the canonical case: `hi` starts at  │
+│ `len` and every `hi = mid` keeps `hi <= len`; `lo` starts at 0 and stays      │
+│ `>= 0`; the guard keeps `lo < hi`. Recovering `0 <= lo < hi <= len` is what   │
+│ lets the midpoint index `a[lo+(hi-lo)/2]` prove in bounds inside the loop.    │
+│                                                                               │
+│ Method (sound, fail-closed): abstract-interpret the body over intervals from  │
+│ a candidate invariant, widen the candidate by joining the one-step image, and │
+│ VERIFY it is inductive (body(C ∧ guard) ⊆ C). Only a verified invariant is    │
+│ applied (intersected with the widened range); anything unproven stays widened │
+│ to unknown. Bounded iterations. The executor models only assignment, local    │
+│ var-decls, and if/else joins; ANY other statement bails the whole var set, so │
+│ no unmodeled mutation can silently over-tighten a range.                      │
+╚─────────────────────────────────────────────────────────────────────────────*/
+#define LIV_MAX_VARS 16
+
+// Collect (dedup) the identifiers a body assigns — top-level + nested branches.
+static void liv_collect(StmtList *body, Id **vars, int *n, int max) {
+    for (StmtList *l = body; l; l = l->next) {
+        Stmt *s = l->stmt; if (!s) continue;
+        switch (s->kind) {
+            case STMT_ASSIGN:
+                if (s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
+                    Id *v = s->as.assign_stmt.target->as.identifier_expr.id;
+                    bool seen = false;
+                    for (int i = 0; i < *n; i++) if (vars[i] == v) seen = true;
+                    if (!seen && *n < max) vars[(*n)++] = v;
+                }
+                break;
+            case STMT_IF:
+                liv_collect(s->as.if_stmt.then_body, vars, n, max);
+                liv_collect(s->as.if_stmt.else_branch, vars, n, max);
+                break;
+            case STMT_FOR:   liv_collect(s->as.for_stmt.body, vars, n, max); break;
+            case STMT_WHILE: liv_collect(s->as.while_stmt.body, vars, n, max); break;
+            case STMT_MATCH:
+                for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next)
+                    liv_collect(c->body, vars, n, max);
+                break;
+            default: break;
+        }
+    }
+}
+
+static bool liv_exec(StmtList *body, RangeTable *t, Id **vars, int nv);
+
+// The executor models arithmetic over SIGNED intervals, but loop-index vars are
+// unsigned (usize). An unsigned SUBTRACTION that underflows (`mid - 1` at
+// mid = 0) wraps to a huge value — yet the signed model shows a small negative
+// range `[-1, …]`, which would fool the invariant into thinking the var stays
+// bounded (a real stack-buffer-underflow was fuzzed out this way). Any computed
+// range that dips below 0 signals a possible unsigned wrap: abstract it to
+// unknown. This can only make the invariant HARDER to prove (bail → stay
+// widened → the index reject stands), never over-tighten — so it is sound for
+// signed vars too (at worst a precision loss). Overflow ABOVE (wrap of an
+// addition) makes the model show a LARGE max, which rejects the index anyway.
+static Range liv_clamp(Range r) {
+    if (!r.known || r.min < 0) return range_unknown();
+    return r;
+}
+
+// Execute one if/else, joining the two branch outcomes for each tracked var.
+// The range table is push-based: saving/restoring head+constraints pops every
+// change since, so each branch runs from the same clean prestate.
+static bool liv_exec_if(Stmt *s, RangeTable *t, Id **vars, int nv) {
+    Range pre[LIV_MAX_VARS];
+    for (int i = 0; i < nv; i++) pre[i] = range_get(t, vars[i]);
+    RangeEntry *h0 = t->head; ConstraintEntry *c0 = t->constraints;
+
+    // THEN branch (guard refines).
+    sema_apply_constraint(s->as.if_stmt.cond, t);
+    if (!liv_exec(s->as.if_stmt.then_body, t, vars, nv)) return false;
+    Range thenR[LIV_MAX_VARS];
+    for (int i = 0; i < nv; i++) thenR[i] = range_get(t, vars[i]);
+    t->head = h0; t->constraints = c0;   // reset to prestate
+
+    // ELSE branch (negated guard); absent else = vars unchanged (prestate).
+    Range elseR[LIV_MAX_VARS];
+    if (s->as.if_stmt.else_branch) {
+        sema_apply_negated_constraint(s->as.if_stmt.cond, t);
+        if (!liv_exec(s->as.if_stmt.else_branch, t, vars, nv)) return false;
+        for (int i = 0; i < nv; i++) elseR[i] = range_get(t, vars[i]);
+        t->head = h0; t->constraints = c0;
+    } else {
+        for (int i = 0; i < nv; i++) elseR[i] = pre[i];
+    }
+
+    for (int i = 0; i < nv; i++)
+        range_set(t, vars[i], range_join(thenR[i], elseR[i]));
+    return true;
+}
+
+// Abstract-interpret a body over intervals. Returns false (bail) on any
+// statement the executor does not model, so an unmodeled mutation of a tracked
+// var can never be silently ignored.
+static bool liv_exec(StmtList *body, RangeTable *t, Id **vars, int nv) {
+    for (StmtList *l = body; l; l = l->next) {
+        Stmt *s = l->stmt; if (!s) continue;
+        switch (s->kind) {
+            case STMT_ASSIGN: {
+                Expr *tg = s->as.assign_stmt.target;
+                if (tg->kind != EXPR_IDENTIFIER) return false; // unmodeled target
+                range_set(t, tg->as.identifier_expr.id,
+                          liv_clamp(sema_eval_range(s->as.assign_stmt.expr, t)));
+                break;
+            }
+            case STMT_VAR:
+                if (s->as.var_stmt.name && s->as.var_stmt.expr)
+                    range_set(t, s->as.var_stmt.name,
+                              liv_clamp(sema_eval_range(s->as.var_stmt.expr, t)));
+                break;
+            case STMT_IF:
+                if (!liv_exec_if(s, t, vars, nv)) return false;
+                break;
+            default:
+                return false; // any other construct → bail (sound)
+        }
+    }
+    return true;
+}
+
+// Compute a verified inductive invariant for the loop vars and TIGHTEN their
+// (already-widened) ranges in `t`. No-op unless every tracked var's invariant
+// is proven inductive; only tightens, never loosens.
+static void sema_apply_loop_invariant(StmtList *body, Expr *cond, RangeTable *t,
+                                      Id **vars, Range *entry, int nv) {
+    if (nv <= 0 || nv > LIV_MAX_VARS) return;
+    Range C[LIV_MAX_VARS];
+    for (int i = 0; i < nv; i++) {
+        if (!entry[i].known) return;   // no seed → give up (stay widened)
+        C[i] = entry[i];
+    }
+
+    const int K = 6;
+    bool inductive = false;
+    for (int iter = 0; iter < K && !inductive; iter++) {
+        RangeEntry *h0 = t->head; ConstraintEntry *c0 = t->constraints;
+        for (int i = 0; i < nv; i++) range_set(t, vars[i], C[i]);
+        if (cond) sema_apply_constraint(cond, t);
+        bool ok = liv_exec(body, t, vars, nv);
+        Range R[LIV_MAX_VARS];
+        if (ok) for (int i = 0; i < nv; i++) R[i] = range_get(t, vars[i]);
+        t->head = h0; t->constraints = c0;   // restore
+        if (!ok) return;
+
+        bool sub = true;
+        for (int i = 0; i < nv; i++) {
+            if (!R[i].known || R[i].min < C[i].min || R[i].max > C[i].max) { sub = false; break; }
+        }
+        if (sub) { inductive = true; break; }
+        for (int i = 0; i < nv; i++) {
+            if (!R[i].known) return;         // widened to unknown → useless, bail
+            C[i] = range_join(C[i], R[i]);
+        }
+    }
+    if (!inductive) return;
+
+    for (int i = 0; i < nv; i++) {
+        Range cur = range_get(t, vars[i]);
+        Range nw = C[i];
+        if (cur.known) {
+            if (cur.min > nw.min) nw.min = cur.min;
+            if (cur.max < nw.max) nw.max = cur.max;
+        }
+        if (nw.min <= nw.max) range_set(t, vars[i], nw);
+    }
+}
+
+/*─────────────────────────────────────────────────────────────────────────────╗
 │ Bounded-while termination verification                                       │
 │ Self-contained: does NOT use VRA range table (which can't track struct fields)│
 ╚─────────────────────────────────────────────────────────────────────────────*/
@@ -2195,8 +2368,26 @@ static void walk_stmt(Stmt *s) {
                 l3_mark_dead_lower_bounds(s->as.while_stmt.cond,
                                           s->as.while_stmt.body);
 
+            // Inductive-invariant recovery: snapshot the entry range of every
+            // var the body assigns BEFORE widening, so sema_apply_loop_invariant
+            // can seed its candidate from the pre-loop value.
+            Id   *liv_vars[LIV_MAX_VARS]; int liv_n = 0;
+            Range liv_entry[LIV_MAX_VARS];
+            if (sema_ranges) {
+                liv_collect(s->as.while_stmt.body, liv_vars, &liv_n, LIV_MAX_VARS);
+                for (int i = 0; i < liv_n; i++)
+                    liv_entry[i] = range_get(sema_ranges, liv_vars[i]);
+            }
+
             // Widen modified variables BEFORE body (conservative)
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
+
+            // Inductive invariant: recover verified bounds the blanket widen
+            // discarded (binary search: `0 <= lo < hi <= len`). Only tightens,
+            // and only when the invariant is proven inductive — else no-op.
+            if (sema_ranges)
+                sema_apply_loop_invariant(s->as.while_stmt.body, s->as.while_stmt.cond,
+                                          sema_ranges, liv_vars, liv_entry, liv_n);
 
             // L3 apply: re-establish monotone bounds after widen.
             // Non-increasing vars: upper bound = initial max (preserved throughout).
