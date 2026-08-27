@@ -1,0 +1,11 @@
+// VRA symmetric offset guard: `i + k < n` (offset on the LHS — `if o + 1 < k`, a very
+// common write-pair / lookahead guard) is captured as `i - n <= -1 - k`, proving both
+// `out[o]` (o < k) and `out[o+1]` (o+1 < k) in bounds. Complements the RHS form `i < n-k`.
+proc write_pair(var out i32[k], k usize, o0 usize) {
+    var o usize = o0
+    if o + 1 < k {
+        out[o] = 1
+        out[o + 1] = 2
+    }
+}
+proc main() i32 { return 0 }

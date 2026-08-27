@@ -960,6 +960,28 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
                 default: break;
             }
         }
+        // (Identifier ± literal) vs Identifier: the SYMMETRIC offset-on-the-LHS guard
+        // `i + k < n` (very common — `if o + 1 < k`, `while i + 1 < n`):
+        //   i + k <  n  <=>  i - n <= -1 - k
+        //   i + k <= n  <=>  i - n <= -k
+        //   i + k >  n  <=>  n - i <= k - 1
+        //   i + k >= n  <=>  n - i <= k
+        else if (lhs->kind == EXPR_BINARY && rhs->kind == EXPR_IDENTIFIER &&
+                 (lhs->as.binary_expr.op == TOKEN_PLUS || lhs->as.binary_expr.op == TOKEN_MINUS) &&
+                 lhs->as.binary_expr.left && lhs->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                 lhs->as.binary_expr.right && lhs->as.binary_expr.right->kind == EXPR_LITERAL) {
+            Id *v1 = lhs->as.binary_expr.left->as.identifier_expr.id;    // i
+            Id *v2 = rhs->as.identifier_expr.id;                         // n
+            int64_t k = lhs->as.binary_expr.right->as.literal_expr.value;
+            if (lhs->as.binary_expr.op == TOKEN_MINUS) k = -k;          // lhs == i + k
+            switch (op) {
+                case TOKEN_ANGLE_BRACKET_LEFT:        constraint_add(t, v1, v2, -1 - k); break;
+                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  constraint_add(t, v1, v2, -k);     break;
+                case TOKEN_ANGLE_BRACKET_RIGHT:       constraint_add(t, v2, v1, k - 1);  break;
+                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: constraint_add(t, v2, v1, k);      break;
+                default: break;
+            }
+        }
         // Identifier vs (Identifier / literal): `i < n / D` (D >= 1). For a
         // NON-NEGATIVE n, `n / D <= n`, so this implies the (weaker but useful)
         // `i < n` — enough to prove the two-pointer body `a[i]` / `a[n-1-i]` under
