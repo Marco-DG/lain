@@ -1,0 +1,16 @@
+// General loop bounds: a reverse index `a[(len-1) - i]` under `i < len` is proven
+// in bounds — (len-1)-i ranges over [0, len-1] as i runs [0, len-1]. Complements the
+// forward-index cases; exercised broadly by fuzz_loop.sh.
+proc run(a i32[8]) i32 {
+    var i usize = 0
+    var s i32 = 0
+    while i < 8 decreasing 8 - i {
+        s = s + a[7 - i]
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 {
+    var arr i32[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+    return run(arr)
+}
