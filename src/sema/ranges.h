@@ -1070,8 +1070,27 @@ static void sema_apply_negated_constraint(Expr *cond, RangeTable *t) {
                 case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: // !(x >= y) <=> x < y <=> x - y <= -1
                     constraint_add(t, v1, v2, -1);
                     break;
-                // Equality negation is hard for ranges/DBM (disjunction)
+                case TOKEN_BANG_EQUAL: // !(x != y) <=> x == y  (EASY: the equality)
+                    constraint_add(t, v1, v2, 0);
+                    constraint_add(t, v2, v1, 0);
+                    break;
+                // `==` negation (=> !=, a disjunction) is genuinely hard for a DBM.
                 default: break;
+            }
+        }
+        // Negated `a.len != b.len` (=> a.len == b.len): the ubiquitous length-equality
+        // guard `if a.len != b.len { return }`, which lets `b[i]` prove under `i <
+        // a.len` (i < a.len == b.len). Resolve BOTH `.len` members to their length Ids
+        // and record the equality. (`==` negation of members is skipped — disjunction.)
+        else if (op == TOKEN_BANG_EQUAL &&
+                 lhs->kind == EXPR_MEMBER && rhs->kind == EXPR_MEMBER) {
+            Id *la = range_member_len_id(t, lhs);
+            Id *lb = range_member_len_id(t, rhs);
+            if (!la && sema_mk_scoped) { char k[256]; int kl = member_len_key(lhs, k, (int)sizeof k); if (kl > 0) la = member_key_id(t, k, kl); }
+            if (!lb && sema_mk_scoped) { char k[256]; int kl = member_len_key(rhs, k, (int)sizeof k); if (kl > 0) lb = member_key_id(t, k, kl); }
+            if (la && lb) {
+                constraint_add(t, la, lb, 0);
+                constraint_add(t, lb, la, 0);
             }
         }
         // VRA: negated Identifier vs member(.len): e.g. `if i >= arr.len { return }`

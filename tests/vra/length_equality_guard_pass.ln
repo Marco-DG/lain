@@ -1,0 +1,17 @@
+// VRA: the length-equality guard `if a.len != b.len { return }` records `a.len ==
+// b.len` (the EASY negation of `!=`), so `b[i]` proves under `i < a.len` (i < a.len ==
+// b.len). The ubiquitous memcmp / string-equality pattern is now check-free.
+func streq(a u8[], b u8[]) i32 {
+    if a.len != b.len {
+        return 0
+    }
+    var i usize = 0
+    while i < a.len decreasing a.len - i {
+        if a[i] != b[i] {
+            return 0
+        }
+        i = i + 1
+    }
+    return 1
+}
+proc main() i32 { return 0 }
