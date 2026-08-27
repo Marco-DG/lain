@@ -1,0 +1,10 @@
+// A live `if d != 0` guard proves the divisor nonzero even though the interval
+// lattice cannot express a hole at 0 — tracked as a dedicated nonzero marker
+// scoped to the guarded branch.
+proc f(x i32, d i32) i32 {
+    if d != 0 {
+        return x / d
+    }
+    return 0
+}
+proc main() i32 { return 0 }

@@ -1,0 +1,9 @@
+// The common early-return guard: after `if d == 0 { return }`, the negated fact
+// `d != 0` carries to the rest of the function, so the later divide proves safe.
+proc f(x i32, d i32) i32 {
+    if d == 0 {
+        return -1
+    }
+    return x / d
+}
+proc main() i32 { return 0 }

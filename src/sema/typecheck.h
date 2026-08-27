@@ -2625,27 +2625,32 @@ void sema_infer_expr(Expr *e) {
         }
     }
 
-    // Division/modulo by zero check in pure func (must be total).
-    // Parameter constraints (e.g., `b int != 0`) guarantee safety.
-    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
+    // Division/modulo prove-or-reject (ALL contexts, func AND proc): the divisor
+    // must be PROVEN nonzero, else the divide can trap (SIGFPE) at runtime — a bare
+    // `x / d` on an unproven `d` is a safety fail-open. Consistent with the overflow
+    // prove-or-reject policy; `unsafe` opts out. A divisor is proven by VRA (range
+    // excludes 0) or a `!= 0` refinement/param constraint. This also rejects a
+    // PROVABLE signed TYPE_MIN / -1 — the one signed-division overflow that is UB.
+    if (!sema_in_unsafe_block && sema_walk_phase && sema_ranges) {
         TokenKind op = e->as.binary_expr.op;
-        if (op == TOKEN_SLASH || op == TOKEN_PERCENT) {
+        Expr *lhs = e->as.binary_expr.left;
+        if ((op == TOKEN_SLASH || op == TOKEN_PERCENT) &&
+            lhs && lhs->type && is_integer_type(lhs->type)) {
             Range rhs_range = sema_eval_range(e->as.binary_expr.right, sema_ranges);
-            
-            // Check if divisor is provably non-zero
+
+            // Proven nonzero: VRA range excludes zero, or a `!= 0` constraint.
             bool proven_nonzero = false;
-            
-            // Case 1: VRA proves range excludes zero
-            if (rhs_range.known && (rhs_range.min > 0 || rhs_range.max < 0)) {
+            if (rhs_range.known && (rhs_range.min > 0 || rhs_range.max < 0))
                 proven_nonzero = true;
-            }
-            
-            // Case 2: Divisor is a parameter with `!= 0` constraint
+            // A live `if d != 0` guard (an interval can't express the 0-hole).
+            if (!proven_nonzero && e->as.binary_expr.right->kind == EXPR_IDENTIFIER &&
+                constraint_has_nonzero(sema_ranges, e->as.binary_expr.right->as.identifier_expr.id))
+                proven_nonzero = true;
             if (!proven_nonzero && e->as.binary_expr.right->kind == EXPR_IDENTIFIER) {
                 Decl *rhs_decl = e->as.binary_expr.right->decl;
                 if (rhs_decl && rhs_decl->kind == DECL_VARIABLE && rhs_decl->as.variable_decl.constraints) {
                     for (ExprList *c = rhs_decl->as.variable_decl.constraints; c; c = c->next) {
-                        if (c->expr->kind == EXPR_BINARY && 
+                        if (c->expr->kind == EXPR_BINARY &&
                             c->expr->as.binary_expr.op == TOKEN_BANG_EQUAL &&
                             c->expr->as.binary_expr.right->kind == EXPR_LITERAL &&
                             c->expr->as.binary_expr.right->as.literal_expr.value == 0) {
@@ -2655,22 +2660,37 @@ void sema_infer_expr(Expr *e) {
                     }
                 }
             }
-            
+
             if (!proven_nonzero) {
-                if (!rhs_range.known) {
-                    fprintf(stderr, "[E015] Error Ln %li, Col %li: potential division by zero in pure function '%.*s'. "
-                            "The divisor's range is unknown. Use a constraint (e.g., `b int != 0`) to prove safety.\n",
-                            (long)e->line, (long)e->col,
-                            (int)current_function_decl->as.function_decl.name->length,
-                            current_function_decl->as.function_decl.name->name);
-                } else {
-                    fprintf(stderr, "[E015] Error Ln %li, Col %li: potential division by zero in pure function '%.*s'. "
-                            "Divisor range [%ld, %ld] includes zero. Use a constraint (e.g., `b int != 0`) to prove safety.\n",
-                            (long)e->line, (long)e->col,
-                            (int)current_function_decl->as.function_decl.name->length,
-                            current_function_decl->as.function_decl.name->name,
-                            (long)rhs_range.min, (long)rhs_range.max);
-                }
+                if (!rhs_range.known)
+                    fprintf(stderr, "[E015] Error Ln %li, Col %li: division/modulo by a divisor "
+                        "that is not proven nonzero (its range is unknown). Guard it (`if d != 0`), "
+                        "constrain it (`d int != 0`), or wrap the divide in an `unsafe` block.\n",
+                        (long)e->line, (long)e->col);
+                else
+                    fprintf(stderr, "[E015] Error Ln %li, Col %li: division/modulo by a divisor "
+                        "whose range [%ld, %ld] includes zero. Guard it (`if d != 0`), constrain "
+                        "it (`d int != 0`), or wrap the divide in an `unsafe` block.\n",
+                        (long)e->line, (long)e->col, (long)rhs_range.min, (long)rhs_range.max);
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
+
+            // Provable signed TYPE_MIN / -1 (UB): the divisor is provably EXACTLY
+            // -1 and the dividend's range reaches the type minimum. Requiring the
+            // divisor to be exactly -1 (not merely "could be -1") keeps ordinary
+            // signed division by a `!= 0` divisor usable — only a literal/proven
+            // `/ -1` over a possibly-TYPE_MIN dividend is the clear, provable UB.
+            int bits; bool sgn; long long tlo, thi;
+            Range lhs_range = sema_eval_range(lhs, sema_ranges);
+            if (parse_iN_uN(lhs->type, &bits, &sgn) && sgn &&
+                type_integer_range(lhs->type, &tlo, &thi) &&
+                lhs_range.known && lhs_range.min <= tlo &&
+                rhs_range.known && rhs_range.min == -1 && rhs_range.max == -1) {
+                fprintf(stderr, "[E086] Error Ln %li, Col %li: signed division may overflow — "
+                    "TYPE_MIN / -1 is undefined. Constrain the divisor (e.g. `d > 0`) or the "
+                    "dividend, or wrap the divide in an `unsafe` block.\n",
+                    (long)e->line, (long)e->col);
                 diagnostic_show_line(e->line, e->col);
                 exit(1);
             }

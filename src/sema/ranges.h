@@ -135,6 +135,7 @@ typedef struct ConstraintEntry {
     Id *v1;
     Id *v2;
     int64_t max_diff;
+    bool nonzero;   // true = the fact "v1 != 0" (v2 unused); NOT a difference bound
     struct ConstraintEntry *next;
 } ConstraintEntry;
 
@@ -676,6 +677,7 @@ static void constraint_add(RangeTable *t, Id *v1, Id *v2, int64_t max_diff) {
     
     // Check if we already have a tighter constraint visible
     for (ConstraintEntry *c = t->constraints; c; c = c->next) {
+        if (c->nonzero) continue;   // nonzero markers hold no v2 difference
         if (c->v1->length == v1->length && strncmp(c->v1->name, v1->name, v1->length) == 0 &&
             c->v2->length == v2->length && strncmp(c->v2->name, v2->name, v2->length) == 0) {
             if (c->max_diff <= max_diff) {
@@ -694,8 +696,35 @@ static void constraint_add(RangeTable *t, Id *v1, Id *v2, int64_t max_diff) {
     c->v1 = v1;
     c->v2 = v2;
     c->max_diff = max_diff;
+    c->nonzero = false;
     c->next = t->constraints;
     t->constraints = c;
+}
+
+// Record the flow fact "v1 != 0" (from an `if v != 0` guard). The interval
+// lattice cannot express a hole at 0 in a full range, so this is tracked as a
+// dedicated marker rather than a range narrowing. Rides the constraint list, so
+// it is scoped by the if/while save-restore and invalidated on reassignment.
+static void constraint_add_nonzero(RangeTable *t, Id *v1) {
+    if (!t || !v1) return;
+    ConstraintEntry *c = arena_push_aligned(t->arena, ConstraintEntry);
+    c->v1 = v1;
+    c->v2 = v1;          // self, so any v2-deref scan stays valid (guarded anyway)
+    c->max_diff = 0;
+    c->nonzero = true;
+    c->next = t->constraints;
+    t->constraints = c;
+}
+
+// Is `v1` known nonzero via a live `!= 0` marker?
+static bool constraint_has_nonzero(RangeTable *t, Id *v1) {
+    if (!t || !v1) return false;
+    for (ConstraintEntry *c = t->constraints; c; c = c->next) {
+        if (c->nonzero && c->v1->length == v1->length &&
+            strncmp(c->v1->name, v1->name, v1->length) == 0)
+            return true;
+    }
+    return false;
 }
 
 // Get known max difference: v1 - v2 <= ?
@@ -707,6 +736,7 @@ static int64_t constraint_get_diff(RangeTable *t, Id *v1, Id *v2, bool *found) {
     if (!t || !v1 || !v2) { *found = false; return 0; }
     // Direct check
     for (ConstraintEntry *c = t->constraints; c; c = c->next) {
+        if (c->nonzero) continue;
         if (c->v1->length == v1->length && strncmp(c->v1->name, v1->name, v1->length) == 0 &&
             c->v2->length == v2->length && strncmp(c->v2->name, v2->name, v2->length) == 0) {
             *found = true;
@@ -717,9 +747,11 @@ static int64_t constraint_get_diff(RangeTable *t, Id *v1, Id *v2, bool *found) {
     int64_t best = INT64_MAX;
     bool bridge = false;
     for (ConstraintEntry *c1 = t->constraints; c1; c1 = c1->next) {
+        if (c1->nonzero) continue;
         if (c1->v1->length != v1->length ||
             strncmp(c1->v1->name, v1->name, v1->length) != 0) continue;
         for (ConstraintEntry *c2 = t->constraints; c2; c2 = c2->next) {
+            if (c2->nonzero) continue;
             if (c2->v1->length != c1->v2->length ||
                 strncmp(c2->v1->name, c1->v2->name, c1->v2->length) != 0) continue;
             if (c2->v2->length != v2->length ||
@@ -857,6 +889,9 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
                 // Interior `!=` is conservative (single interval can't express a hole).
             }
             range_set(t, var, r);
+            // `v != 0` cannot be expressed as an interval hole, but the division
+            // prover needs it: record it as a dedicated nonzero marker.
+            if (op == TOKEN_BANG_EQUAL && val == 0) constraint_add_nonzero(t, var);
         }
         // Handle literal on LHS: 10 < x  <=>  x > 10 (flip the op, reuse the mapping).
         else if (lhs->kind == EXPR_LITERAL && rhs->kind == EXPR_IDENTIFIER) {
@@ -866,6 +901,7 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
             if (!r.known) r = (Range){INT64_MIN, INT64_MAX, true};
             range_tighten_interval(&r, relop_flip(op), val);
             range_set(t, var, r);
+            if (op == TOKEN_BANG_EQUAL && val == 0) constraint_add_nonzero(t, var);
         }
         // Handle Identifier vs Identifier: x < y
         else if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_IDENTIFIER) {
@@ -1003,6 +1039,9 @@ static void sema_apply_negated_constraint(Expr *cond, RangeTable *t) {
                 default: break;
             }
             range_set(t, var, r);
+            // !(d == 0) <=> d != 0: register the nonzero marker so the common
+            // early-return guard `if d == 0 { return } … x / d` proves safe.
+            if (op == TOKEN_EQUAL_EQUAL && val == 0) constraint_add_nonzero(t, var);
         }
     }
 }

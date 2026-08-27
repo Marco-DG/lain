@@ -1,0 +1,12 @@
+// EXPECT: [E015]
+// SOUNDNESS: the `d != 0` marker is invalidated when d is reassigned. After
+// `d = 0` the divide must NOT stay "proven nonzero".
+proc f(x i32, d0 i32) i32 {
+    var d = d0
+    if d != 0 {
+        d = 0
+        return x / d
+    }
+    return 0
+}
+proc main() i32 { return 0 }

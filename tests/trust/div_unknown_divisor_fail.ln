@@ -1,0 +1,9 @@
+// EXPECT: [E015]
+// Division prove-or-reject (all contexts): a bare `x / d` on a divisor not proven
+// nonzero is a safety fail-open (SIGFPE at runtime). Previously only pure `func`s
+// were checked; a `proc` accepted this and crashed. Now rejected — guard, constrain,
+// or `unsafe`.
+proc f(x i32, d i32) i32 {
+    return x / d
+}
+proc main() i32 { return 0 }
