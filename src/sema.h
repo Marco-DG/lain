@@ -297,6 +297,47 @@ static void l3_scan_affine(StmtList *body, Id **vars, long long *steps,
     }
 }
 
+// L3 MASK invariant: a variable whose EVERY assignment in the loop body is
+// `v = X & C` (C a non-negative literal mask) is invariantly in [0, C] after any
+// assignment — the masked ring-index / open-addressing idiom (`h = (h + 1) & 63`).
+// A var with ANY non-masked assignment is EXCLUDED (excl[i]=true): the invariant
+// can no longer be guaranteed. caps[i] holds the max mask seen.
+static void l3_scan_masked(StmtList *body, Id **vars, int64_t *caps, bool *excl,
+                           int *n, int max) {
+    for (StmtList *b = body; b; b = b->next) {
+        Stmt *s = b->stmt; if (!s) continue;
+        if (s->kind == STMT_ASSIGN && s->as.assign_stmt.target &&
+            s->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
+            Id *v = s->as.assign_stmt.target->as.identifier_expr.id;
+            Expr *rhs = s->as.assign_stmt.expr;
+            int64_t cap = -1;   // -1 = this assignment is NOT a `& const` mask
+            if (rhs && rhs->kind == EXPR_BINARY && rhs->as.binary_expr.op == TOKEN_AMPERSAND) {
+                Expr *l = rhs->as.binary_expr.left, *r = rhs->as.binary_expr.right;
+                if (r && r->kind == EXPR_LITERAL && r->as.literal_expr.value >= 0)
+                    cap = r->as.literal_expr.value;
+                else if (l && l->kind == EXPR_LITERAL && l->as.literal_expr.value >= 0)
+                    cap = l->as.literal_expr.value;
+            }
+            int idx = -1;
+            for (int i = 0; i < *n; i++)
+                if (vars[i] && vars[i]->length == v->length &&
+                    memcmp(vars[i]->name, v->name, v->length) == 0) { idx = i; break; }
+            if (idx < 0) {
+                if (*n < max) { idx = (*n)++; vars[idx] = v; caps[idx] = cap; excl[idx] = (cap < 0); }
+            } else if (cap < 0) {
+                excl[idx] = true;                        // a non-masked assignment
+            } else if (cap > caps[idx]) {
+                caps[idx] = cap;                         // widen to the largest mask
+            }
+        } else if (s->kind == STMT_IF) {
+            l3_scan_masked(s->as.if_stmt.then_body, vars, caps, excl, n, max);
+            l3_scan_masked(s->as.if_stmt.else_branch, vars, caps, excl, n, max);
+        } else if (s->kind == STMT_WHILE) {
+            l3_scan_masked(s->as.while_stmt.body, vars, caps, excl, n, max);
+        }
+    }
+}
+
 // L3: check if ptr_id is ONLY decremented at the top level of body (not in if/else).
 // Unconditionally decremented pointers decrement every iteration, not conditionally.
 static bool l3_is_unconditional_decrement(StmtList *body, Id *pid) {
@@ -2379,6 +2420,19 @@ static void walk_stmt(Stmt *s) {
                     liv_entry[i] = range_get(sema_ranges, liv_vars[i]);
             }
 
+            // L3 mask-invariant: a var assigned ONLY `v = X & C` stays in [0, C].
+            // Snapshot the entry range before widening — the invariant holds only if
+            // the entry value is already within [0, C] (else the top-of-loop use
+            // precedes the first mask). The masked ring index `h = (h+1) & 63`.
+            Id   *msk_vars[MAX_AFFINE_L3]; int64_t msk_caps[MAX_AFFINE_L3];
+            bool  msk_excl[MAX_AFFINE_L3]; Range msk_entry[MAX_AFFINE_L3]; int n_msk = 0;
+            if (sema_ranges) {
+                l3_scan_masked(s->as.while_stmt.body, msk_vars, msk_caps, msk_excl,
+                               &n_msk, MAX_AFFINE_L3);
+                for (int i = 0; i < n_msk; i++)
+                    msk_entry[i] = range_get(sema_ranges, msk_vars[i]);
+            }
+
             // Widen modified variables BEFORE body (conservative)
             if (sema_ranges) sema_widen_loop(s->as.while_stmt.body, sema_ranges);
 
@@ -2388,6 +2442,22 @@ static void walk_stmt(Stmt *s) {
             if (sema_ranges)
                 sema_apply_loop_invariant(s->as.while_stmt.body, s->as.while_stmt.cond,
                                           sema_ranges, liv_vars, liv_entry, liv_n);
+
+            // L3 mask apply: re-establish [0, C] for a masked var after widen, but
+            // ONLY if its entry value was already in [0, C] (soundness: the top-of-
+            // loop use in the first iteration precedes that iteration's mask).
+            if (sema_ranges) {
+                for (int i = 0; i < n_msk; i++) {
+                    if (msk_excl[i] || msk_caps[i] < 0) continue;
+                    if (!msk_entry[i].known || msk_entry[i].min < 0 ||
+                        msk_entry[i].max > msk_caps[i]) continue;
+                    Range cur = range_get(sema_ranges, msk_vars[i]);
+                    Range r = range_make(0, msk_caps[i]);
+                    if (cur.known) { if (cur.min > r.min) r.min = cur.min;
+                                     if (cur.max < r.max) r.max = cur.max; }
+                    if (r.min <= r.max) range_set(sema_ranges, msk_vars[i], r);
+                }
+            }
 
             // L3 apply: re-establish monotone bounds after widen.
             // Non-increasing vars: upper bound = initial max (preserved throughout).

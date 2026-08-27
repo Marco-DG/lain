@@ -1,0 +1,21 @@
+// L3 mask-invariant: a var assigned only `h = X & C` (C a non-negative mask) is
+// invariantly in [0, C]. The masked ring / open-addressing index `h = (h+1) & 63`
+// keeps h in [0,63], so `table[h]` over table[64] proves check-free — a hash-probe
+// insert with no bounds checks. (Gated on the entry value being masked too.)
+proc insert(var table i32[64], key i32, h0 usize) {
+    var h usize = h0 & 63
+    var tries usize = 0
+    while tries < 64 decreasing 64 - tries {
+        if table[h] == 0 {
+            table[h] = key
+            return
+        }
+        h = (h + 1) & 63
+        tries = tries + 1
+    }
+}
+proc main() i32 {
+    var t i32[64] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+    insert(var t, 42, 4294967295)
+    return t[63]
+}

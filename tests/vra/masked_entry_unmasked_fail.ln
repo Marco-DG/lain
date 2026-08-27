@@ -1,0 +1,14 @@
+// EXPECT: [E085]
+// SOUNDNESS: the mask-invariant holds only if the ENTRY value is already in [0,C] —
+// the first-iteration `table[h]` runs BEFORE that iteration's mask. Here h enters
+// unmasked (h0, up to usize-max), so the top-of-loop `table[h]` is not proven.
+proc f(var table i32[64], h0 usize) {
+    var h usize = h0
+    var k usize = 0
+    while k < 64 decreasing 64 - k {
+        table[h] = 1
+        h = (h + 1) & 63
+        k = k + 1
+    }
+}
+proc main() i32 { return 0 }
