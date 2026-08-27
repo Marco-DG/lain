@@ -1,0 +1,14 @@
+// VRA symbolic-offset guard: `while i < n - 1` is captured as `i - n <= -2`, so the
+// sliding-window index `a[i+1]` proves in bounds over a runtime-length array `a[n]`
+// ((i+1) - n = (i-n)+1 <= -1). The ubiquitous sliding-window / two-element idiom is
+// now check-free.
+proc sw(a i32[n], n usize) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < n - 1 decreasing n - 1 - i {
+        s = s +% (a[i] +% a[i + 1])
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 { return 0 }

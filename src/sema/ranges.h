@@ -937,6 +937,29 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
                 default: break;
             }
         }
+        // Identifier vs (Identifier ± literal): fold the offset into the difference
+        // constraint, so a SYMBOLIC-OFFSET guard is captured (the sliding-window /
+        // two-pointer idiom over a runtime length):
+        //   i <  n + k  <=>  i - n <= k - 1       (k = -1 for `i < n - 1`)
+        //   i <= n + k  <=>  i - n <= k
+        //   i >  n + k  <=>  n - i <= -k - 1
+        //   i >= n + k  <=>  n - i <= -k
+        else if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_BINARY &&
+                 (rhs->as.binary_expr.op == TOKEN_PLUS || rhs->as.binary_expr.op == TOKEN_MINUS) &&
+                 rhs->as.binary_expr.left && rhs->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                 rhs->as.binary_expr.right && rhs->as.binary_expr.right->kind == EXPR_LITERAL) {
+            Id *v1 = lhs->as.identifier_expr.id;
+            Id *v2 = rhs->as.binary_expr.left->as.identifier_expr.id;   // n
+            int64_t k = rhs->as.binary_expr.right->as.literal_expr.value;
+            if (rhs->as.binary_expr.op == TOKEN_MINUS) k = -k;          // rhs == n + k
+            switch (op) {
+                case TOKEN_ANGLE_BRACKET_LEFT:        constraint_add(t, v1, v2, k - 1);  break;
+                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  constraint_add(t, v1, v2, k);      break;
+                case TOKEN_ANGLE_BRACKET_RIGHT:       constraint_add(t, v2, v1, -k - 1); break;
+                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: constraint_add(t, v2, v1, -k);     break;
+                default: break;
+            }
+        }
         // VRA: Identifier vs member(.len): x < arr.len (narrows i against length)
         else if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_MEMBER) {
             Id *v1 = lhs->as.identifier_expr.id;

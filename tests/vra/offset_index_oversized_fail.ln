@@ -1,0 +1,13 @@
+// EXPECT: [E085]
+// SOUNDNESS: the offset-guard capture must not over-prove — under `i < n - 1`, the
+// index `a[i+2]` reaches n (i can be n-2, i+2 = n), out of bounds. Rejected.
+proc f(a i32[n], n usize) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < n - 1 decreasing n - 1 - i {
+        s = s +% a[i + 2]
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 { return 0 }
