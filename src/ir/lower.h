@@ -101,6 +101,36 @@ static Decl *ir_find_struct_decl(LowerCtx *c, Id *name) {
     }
     return NULL;
 }
+// A type alias `type Name = <base> [refinement…]` by (bare) name.
+static Decl *ir_find_type_alias(LowerCtx *c, Id *name) {
+    if (!name) return NULL;
+    for (DeclList *d = c->globals; d; d = d->next) {
+        Decl *dc = d->decl;
+        if (!dc || dc->kind != DECL_TYPE_ALIAS) continue;
+        Id *dn = dc->as.type_alias_decl.name;
+        if (dn && dn->length == name->length &&
+            strncmp(dn->name, name->name, (size_t)name->length) == 0) return dc;
+    }
+    return NULL;
+}
+// The alias's *runtime* base type — the leftmost leaf of the RHS (refinement
+// constraints like `!= 0` are for the VRA, not the representation).
+static IrType *ir_lower_type(LowerCtx *c, Type *t);              // fwd
+static bool ir_name_int(const char *nm, int len, int *bits, bool *sgn);  // fwd
+static IrType *ir_resolve_alias_base(LowerCtx *c, Decl *ad) {
+    Expr *rhs = ad->as.type_alias_decl.expr;
+    while (rhs && rhs->kind == EXPR_BINARY) rhs = rhs->as.binary_expr.left;  // leftmost leaf
+    if (!rhs) return NULL;
+    if (rhs->kind == EXPR_TYPE && rhs->as.type_expr.type_value)   // sema-resolved base type
+        return ir_lower_type(c, rhs->as.type_expr.type_value);
+    if (rhs->kind == EXPR_IDENTIFIER) {
+        Id *nm = rhs->as.identifier_expr.id; int b; bool s;
+        if (nm->length==4 && strncmp(nm->name,"bool",4)==0) return ir_type_bool(c->a);
+        if (ir_name_int(nm->name, (int)nm->length, &b, &s)) return ir_type_int(c->a, b, s);
+    }
+    if (rhs->type) return ir_lower_type(c, rhs->type);           // any other resolved expr
+    return NULL;
+}
 // Index of field `m` in an IRT_STRUCT (uses the IR type's own field table — no AST).
 static int ir_field_index(IrType *st, Id *m, IrType **fty) {
     if (!st || st->kind != IRT_STRUCT || !m) return -1;
@@ -138,6 +168,14 @@ static IrType *ir_lower_type(LowerCtx *c, Type *t) {
                 int b; bool s;
                 if (t->int_width_cache>0) return ir_type_int(c->a, t->int_width_cache, t->int_signed_cache);
                 if (ir_name_int(nm,len,&b,&s)) return ir_type_int(c->a, b, s);
+            }
+            // a type alias → its runtime base type (refinements are the VRA's concern)
+            Decl *ad = ir_find_type_alias(c, t->base_type);
+            if (ad && c->const_depth < 32) {
+                c->const_depth++;
+                IrType *r = ir_resolve_alias_base(c, ad);
+                c->const_depth--;
+                if (r) return r;
             }
             // a named struct → a self-contained IRT_STRUCT (lowered field table)
             Decl *sd = ir_find_struct_decl(c, t->base_type);

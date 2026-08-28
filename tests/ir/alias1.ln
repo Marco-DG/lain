@@ -1,0 +1,9 @@
+type Small = i32 <= 100
+func inc(n Small) i32 { return n + 1 }
+proc main() i32 {
+    var s Small = 41
+    if inc(s) == 42 {
+        return 0
+    }
+    return 1
+}
