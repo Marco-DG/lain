@@ -274,6 +274,56 @@ static void ir_lower_return_ensures(LowerCtx *c, Decl *callee, IrValue *v, IrIns
     }
 }
 
+// Resolve a contract RHS at a call site, substituting a callee param name for the
+// matching call argument: a literal (typed `ty`), `m` → the arg for m, `a.len` →
+// slice_len(arg for a).
+static IrValue *ir_resolve_contract_rhs(LowerCtx *c, Decl *callee, IrInstr *call, Expr *rhs, IrType *ty) {
+    if (!rhs) return NULL;
+    if (rhs->kind==EXPR_LITERAL) return ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, ty);
+    Id *nm=NULL; bool is_len=false;
+    if (rhs->kind==EXPR_IDENTIFIER) nm=rhs->as.identifier_expr.id;
+    else if (rhs->kind==EXPR_MEMBER && rhs->as.member_expr.member && rhs->as.member_expr.member->length==3
+             && strncmp(rhs->as.member_expr.member->name,"len",3)==0
+             && rhs->as.member_expr.target && rhs->as.member_expr.target->kind==EXPR_IDENTIFIER) {
+        nm=rhs->as.member_expr.target->as.identifier_expr.id; is_len=true;
+    }
+    if (!nm) return NULL;
+    int idx=0;
+    for (DeclList *p=callee->as.function_decl.params; p; p=p->next, idx++) {
+        if (!p->decl || p->decl->kind!=DECL_VARIABLE) continue;
+        Id *pn=p->decl->as.variable_decl.name;
+        if (pn && pn->length==nm->length && strncmp(pn->name,nm->name,(size_t)pn->length)==0) {
+            if (idx >= call->n_operands) return NULL;
+            IrValue *av = call->operands[idx];
+            if (is_len) return (av && av->type && av->type->kind==IRT_SLICE) ? ir_slice_len(c->f,c->cur,av) : NULL;
+            return av;
+        }
+    }
+    return NULL;
+}
+// B2 (requires): a callee's param refinements become call-site `assert`s the CALLER
+// must discharge — closing the contract soundly (the callee's entry `assume` is then
+// justified). Reported as VRA_PRECOND (a distinct obligation class).
+static void ir_lower_call_requires(LowerCtx *c, Decl *callee, IrInstr *call) {
+    if (!callee || callee->kind==DECL_STRUCT) return;
+    int idx=0;
+    for (DeclList *p=callee->as.function_decl.params; p; p=p->next, idx++) {
+        if (!p->decl || p->decl->kind!=DECL_VARIABLE) continue;
+        if (idx >= call->n_operands) break;
+        IrValue *arg = call->operands[idx];
+        if (!arg || !arg->type || arg->type->kind!=IRT_INT) continue;
+        for (ExprList *cn=p->decl->as.variable_decl.constraints; cn; cn=cn->next) {
+            Expr *con=cn->expr;
+            if (!con || con->kind!=EXPR_BINARY) continue;
+            IrCmp cmp;
+            if (!ir_tok_cmp(con->as.binary_expr.op, arg->type->is_signed, &cmp)) continue;
+            IrValue *rv = ir_resolve_contract_rhs(c, callee, call, con->as.binary_expr.right, arg->type);
+            if (rv && rv->type && rv->type->kind==IRT_INT)
+                ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, arg, rv));
+        }
+    }
+}
+
 // map an AST binary token to an IR op given signedness; returns true if arithmetic/bitwise.
 static bool ir_bin_op(TokenKind t, bool sgn, IrOp *op, IrWrapMode *wrap) {
     *wrap = IR_WRAP_CHECK;
@@ -497,6 +547,7 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 ins->operands[i] = av;
                 if (pp) pp = pp->next;
             }
+            ir_lower_call_requires(c, callee, ins);   // contracts: prove the callee's preconditions
             ir_emit(c->cur, ins);
             if (ins->result) ir_lower_return_ensures(c, callee, ins->result, ins);  // contracts: learn the ensures
             return ins->result ? ins->result : ir_const_int(c->f,c->cur,0,ir_type_int(c->a,32,true));

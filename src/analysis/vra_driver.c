@@ -58,7 +58,9 @@ int main(int argc, char **argv) {
                 VraCheck *c=&V->checks[i]; total++;
                 if(c->ok) proven++;
                 const char *what = c->kind==VRA_BOUNDS?"index bounds"
-                                 : c->kind==VRA_OVERFLOW?"arith overflow" : "div-by-zero";
+                                 : c->kind==VRA_OVERFLOW?"arith overflow"
+                                 : c->kind==VRA_DIVZERO?"div-by-zero"
+                                 : c->kind==VRA_PRECOND?"call precond" : "termination";
                 printf("  %-8.*s  %-14s @ %lld:%lld  %s\n",
                     (int)f->name->length, f->name->name, what,
                     (long long)c->line,(long long)c->col,

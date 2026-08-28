@@ -106,6 +106,13 @@ void ir_assume(IrFunc *f, IrBlock *b, IrValue *cond) {
     ins->operands[0] = cond;
     ir_emit(b, ins);
 }
+// `assert(cond)` — cond (a bool) is an OBLIGATION the analysis must discharge here
+// (a precondition, a user assert). No result.
+void ir_assert(IrFunc *f, IrBlock *b, IrValue *cond) {
+    IrInstr *ins = ir_instr(f, IR_ASSERT, NULL, 1);
+    ins->operands[0] = cond;
+    ir_emit(b, ins);
+}
 IrValue *ir_icmp(IrFunc *f, IrBlock *b, IrCmp c, IrValue *x, IrValue *y) {
     IrInstr *ins = ir_instr(f, IR_ICMP, ir_type_bool(f->arena), 2);
     ins->aux.cmp = c; ins->operands[0] = x; ins->operands[1] = y;

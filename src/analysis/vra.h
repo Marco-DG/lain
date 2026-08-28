@@ -19,7 +19,7 @@
 #include <stdlib.h>
 
 // One discharged (or not) proof obligation.
-typedef enum { VRA_BOUNDS, VRA_OVERFLOW, VRA_DIVZERO, VRA_TERMINATION } VraCheckKind;
+typedef enum { VRA_BOUNDS, VRA_OVERFLOW, VRA_DIVZERO, VRA_TERMINATION, VRA_PRECOND } VraCheckKind;
 typedef struct {
     VraCheckKind kind;
     IrInstr *at;
@@ -332,6 +332,30 @@ static void vra_check_subslice(Vra *V, Octagon *W, IrInstr *ms) {
     vra_add_check(V, c);
 }
 
+// Does `a cmp b` hold in the (closed) octagon? The discharge dual of refine.
+static bool vra_icmp_holds(Octagon *W, int a, int b, IrCmp cmp) {
+    int64_t ab = oct_get(W, oct_pos(b), oct_pos(a));   // bound on a − b
+    int64_t ba = oct_get(W, oct_pos(a), oct_pos(b));   // bound on b − a
+    switch (cmp) {
+        case IR_CMP_SLT: case IR_CMP_ULT: return ab <= -1;
+        case IR_CMP_SLE: case IR_CMP_ULE: return ab <= 0;
+        case IR_CMP_SGT: case IR_CMP_UGT: return ba <= -1;
+        case IR_CMP_SGE: case IR_CMP_UGE: return ba <= 0;
+        case IR_CMP_EQ:  return ab <= 0 && ba <= 0;
+        case IR_CMP_NE:  return ab <= -1 || ba <= -1;
+        default: return false;
+    }
+}
+// Discharge an IR_ASSERT (its operand is a bool; when an icmp, check it holds).
+static void vra_check_assert(Vra *V, Octagon *W, IrInstr *ins) {
+    if (ins->n_operands<1) return;
+    IrInstr *ic = V->def[ins->operands[0]->id];
+    if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return;
+    VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_PRECOND; c.at=ins; c.line=ins->line; c.col=ins->col;
+    c.ok = vra_icmp_holds(W, ic->operands[0]->id, ic->operands[1]->id, ic->aux.cmp);
+    vra_add_check(V, c);
+}
+
 // ── termination consumer (a func must have only terminating loops) ───────────
 static bool vra_is_scalar_cell(Vra *V, int v) {
     IrInstr *d=(v>=0&&v<V->nvar)?V->def[v]:NULL;
@@ -449,6 +473,7 @@ static Vra *vra_analyze(IrFunc *f) {
             switch (ins->op) {
                 case IR_ELEM_PTR: oct_close(&W); vra_check_elem(V,&W,ins); break;
                 case IR_MAKE_SLICE: oct_close(&W); vra_check_subslice(V,&W,ins); break;
+                case IR_ASSERT: oct_close(&W); vra_check_assert(V,&W,ins); break;
                 case IR_ADD: case IR_SUB: case IR_MUL: oct_close(&W); vra_check_overflow(V,&W,ins); break;
                 case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: oct_close(&W); vra_check_divzero(V,&W,ins); break;
                 default: break;
