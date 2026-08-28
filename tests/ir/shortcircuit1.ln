@@ -1,0 +1,18 @@
+proc check(a i32[], i usize) i32 {
+    var hit i32 = 0
+    if i < a.len and a[i] == 2 {
+        hit = 1
+    }
+    return hit
+}
+proc main() i32 {
+    var a i32[3] = [1, 2, 3]
+    var x i32 = check(a, 1)
+    var y i32 = check(a, 5)
+    if x == 1 {
+        if y == 0 {
+            return 0
+        }
+    }
+    return 1
+}

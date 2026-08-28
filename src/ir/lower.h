@@ -322,6 +322,22 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 else len = ir_slice_len(c->f, c->cur, ir_lower_expr(c, R));
                 return ir_icmp(c->f, c->cur, IR_CMP_ULT, a, len);
             }
+            // Short-circuit `and` / `or`: the right operand must NOT be evaluated when
+            // the left already decides the result (correctness — it may guard a deref/
+            // index), so this needs real control flow, not a bitwise op. The br_cond on
+            // the left's condition also lets the octagon refine the eval-right block.
+            if (e->as.binary_expr.op==TOKEN_KEYWORD_AND || e->as.binary_expr.op==TOKEN_KEYWORD_OR) {
+                bool is_and = (e->as.binary_expr.op==TOKEN_KEYWORD_AND);
+                IrType *bt = ir_type_bool(c->a);
+                IrValue *rcell = ir_alloca(c->f, c->cur, bt);
+                IrValue *xa = ir_lower_expr(c, L);
+                IrBlock *evb=ir_new_block(c->f), *sk=ir_new_block(c->f), *jn=ir_new_block(c->f);
+                if (is_and) ir_set_br_cond(c->cur, xa, evb, sk);   // and: eval R only if L true
+                else        ir_set_br_cond(c->cur, xa, sk, evb);   // or:  eval R only if L false
+                c->cur = evb; ir_store(c->f, c->cur, rcell, ir_lower_expr(c, R)); ir_set_br(c->cur, jn);
+                c->cur = sk;  ir_store(c->f, c->cur, rcell, ir_const_int(c->f,c->cur,is_and?0:1,bt)); ir_set_br(c->cur, jn);
+                c->cur = jn;  return ir_load(c->f, c->cur, rcell, bt);
+            }
             // Signedness comes from the OPERANDS, not e->type: a comparison's result
             // type is bool, so deriving from it would mistag every `i < len` as signed.
             Type *sty = (L->type && L->type->kind==TYPE_SIMPLE && L->type->int_width_cache>0) ? L->type
@@ -336,9 +352,9 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 c->cur->instrs_tail->wrap = wrap;
                 return r;
             }
-            // `and`/`or` (logical) — non-short-circuit lowering for pure operands (TODO: CFG).
-            IrValue *r = ir_binop(c->f,c->cur,IR_AND,x,y,ir_type_bool(c->a));
-            return r;
+            // an unhandled binary operator — infaithful, so fail closed.
+            c->f->incomplete = true;
+            return ir_binop(c->f,c->cur,IR_AND,x,y,ir_type_bool(c->a));
         }
         case EXPR_UNARY: {
             IrValue *x = ir_lower_expr(c, e->as.unary_expr.right);
