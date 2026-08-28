@@ -213,6 +213,23 @@ static bool div_proven(bool guarded) {
     Vra *V=vra_analyze(f); bool ok=find_any(V,VRA_DIVZERO)&&find_ok(V,VRA_DIVZERO); vra_free(V); return ok;
 }
 
+// termination: `i=0; while i <cmp> B { i = i + step }`.
+static bool loop_terminates(int step, IrCmp cmp, int bound) {
+    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *islot=ir_alloca(f,e,i32);
+    ir_store(f,e,islot,ir_const_int(f,e,0,i32)); ir_set_br(e,head);
+    IrValue *iv=ir_load(f,head,islot,i32);
+    ir_set_br_cond(head, ir_icmp(f,head,cmp,iv,ir_const_int(f,head,bound,i32)), body, ex);
+    IrValue *iv3=ir_load(f,body,islot,i32);
+    ir_store(f,body,islot,ir_binop(f,body,IR_ADD,iv3,ir_const_int(f,body,step,i32),i32));
+    ir_set_br(body,head); ir_set_ret(ex,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool term=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_TERMINATION) term=V->checks[i].ok;
+    vra_free(V); return term;
+}
+
 int main(void) {
     A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*256);
 
@@ -238,6 +255,11 @@ int main(void) {
     vra_expect("mask a[x & 7] over a[8]  (0..7 < 8)",        mask_index_proven(7,8),  true);
     vra_expect("mask a[x & 15] over a[8] (0..15 escapes)",   mask_index_proven(15,8), false);
     vra_expect("reverse a[(N-1)-i] over a[10]  (i<10)",       reverse_fixed_proven(10), true);
+    // TERMINATION — a func's loops must drain their bound.
+    vra_expect("terminates: i+=1 while i<8",                  loop_terminates(1,IR_CMP_SLT,8),  true);
+    vra_expect("terminates: i+=2 while i<=8",                 loop_terminates(2,IR_CMP_SLE,8),  true);
+    vra_expect("NON-term: i+=0 while i<8 (stuck)",            loop_terminates(0,IR_CMP_SLT,8),  false);
+    vra_expect("NON-term: i-=1 while i<8 (diverges)",         loop_terminates(-1,IR_CMP_SLT,8), false);
 
     if (failures==0) printf("VRA: all soundness+precision expectations met\n");
     else             printf("VRA: %d WRONG results\n", failures);

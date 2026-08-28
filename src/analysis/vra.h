@@ -19,7 +19,7 @@
 #include <stdlib.h>
 
 // One discharged (or not) proof obligation.
-typedef enum { VRA_BOUNDS, VRA_OVERFLOW, VRA_DIVZERO } VraCheckKind;
+typedef enum { VRA_BOUNDS, VRA_OVERFLOW, VRA_DIVZERO, VRA_TERMINATION } VraCheckKind;
 typedef struct {
     VraCheckKind kind;
     IrInstr *at;
@@ -38,6 +38,7 @@ typedef struct {
     int64_t **in;       // in[bid] : entry octagon storage (NULL = unreached)
     bool    *reached;
     IrInstr **def;      // def[val id] = producing instruction (NULL for params)
+    int     *defblk;    // defblk[val id] = id of the block defining it (-1 = param)
     int64_t *cval; bool *cknown;   // constant values (from IR_CONST)
     int     *slicelen;  // slice value id → its canonical length var (−1 = none)
     VraCheck *checks; int nchecks, cap_checks;
@@ -57,11 +58,11 @@ static bool vra_is_slice_cell(Vra *V, int v) {
 // var is its make_slice length operand or its first slice_len read; it is propagated
 // through a slice local's store/load so `s = a[lo..hi]; s[k]` knows len(s).
 static void vra_prepass(Vra *V) {
-    for (int i=0;i<V->nvar;i++){ V->def[i]=NULL; V->cknown[i]=false; V->slicelen[i]=-1; }
+    for (int i=0;i<V->nvar;i++){ V->def[i]=NULL; V->defblk[i]=-1; V->cknown[i]=false; V->slicelen[i]=-1; }
     // first: def sites + constants (needed to classify slice cells below)
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
-            if (ins->result) V->def[ins->result->id] = ins;
+            if (ins->result){ V->def[ins->result->id]=ins; V->defblk[ins->result->id]=b->id; }
             if (ins->op==IR_CONST && ins->result){ V->cknown[ins->result->id]=true; V->cval[ins->result->id]=ins->aux.imm; }
         }
     int *cell_len = malloc(V->nvar*sizeof(int));
@@ -285,6 +286,60 @@ static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins) {
     vra_add_check(V, c);
 }
 
+// ── termination consumer (a func must have only terminating loops) ───────────
+static bool vra_is_scalar_cell(Vra *V, int v) {
+    IrInstr *d=(v>=0&&v<V->nvar)?V->def[v]:NULL;
+    return d && d->op==IR_ALLOCA && d->aux.alloca_ty &&
+           d->aux.alloca_ty->kind!=IRT_ARRAY && d->aux.alloca_ty->kind!=IRT_SLICE;
+}
+// A guard bound is loop-invariant if it is a parameter, a constant, a slice length,
+// or defined in a block strictly above the loop header (structured CFG order).
+static bool vra_loop_invariant(Vra *V, IrValue *val, int Hid) {
+    IrInstr *d=V->def[val->id];
+    if (!d) return true;
+    if (d->op==IR_CONST || d->op==IR_SLICE_LEN) return true;
+    return V->defblk[val->id]>=0 && V->defblk[val->id] < Hid;
+}
+// A structured while-loop terminates if its guard variable is a memory cell updated
+// by EXACTLY ONE well-formed step `cell = load(cell) ± c` whose direction drains the
+// loop-invariant bound (rise toward an upper bound / fall toward a lower one). The
+// "exactly one store" rule is conservative: any other write to the cell ⇒ not proven.
+static bool vra_loop_terminates(Vra *V, IrBlock *H) {
+    if (H->term.kind != IR_TERM_BR_COND) return false;
+    IrInstr *ic = V->def[H->term.cond->id];
+    if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
+    IrCmp p = ic->aux.cmp;
+    for (int side=0; side<2; side++) {
+        IrValue *ivv=ic->operands[side], *bnd=ic->operands[side^1];
+        IrInstr *ivd=V->def[ivv->id];
+        if (!ivd || ivd->op!=IR_LOAD || ivd->n_operands<1) continue;
+        int cell=ivd->operands[0]->id;
+        if (!vra_is_scalar_cell(V,cell)) continue;
+        if (!vra_loop_invariant(V,bnd,H->id)) continue;
+        int64_t step=0; int nstore=0, nupd=0;
+        for (IrBlock *b=V->f->blocks; b; b=b->next) {
+            if (b->id < H->id) continue;                       // above the loop region
+            for (IrInstr *s=b->instrs; s; s=s->next) {
+                if (s->op!=IR_STORE || s->n_operands<2 || s->operands[0]->id!=cell) continue;
+                nstore++;
+                IrInstr *vd=V->def[s->operands[1]->id];
+                if (vd && (vd->op==IR_ADD||vd->op==IR_SUB) && vd->n_operands>=2) {
+                    IrInstr *ld=V->def[vd->operands[0]->id]; int c=vd->operands[1]->id;
+                    if (ld && ld->op==IR_LOAD && ld->operands[0]->id==cell && V->cknown[c]) {
+                        step = (vd->op==IR_ADD)? V->cval[c] : -V->cval[c]; nupd++;
+                    }
+                }
+            }
+        }
+        if (nstore!=1 || nupd!=1) continue;
+        bool lt=(p==IR_CMP_SLT||p==IR_CMP_ULT||p==IR_CMP_SLE||p==IR_CMP_ULE);
+        bool gt=(p==IR_CMP_SGT||p==IR_CMP_UGT||p==IR_CMP_SGE||p==IR_CMP_UGE);
+        if (lt && step>0) return true;
+        if (gt && step<0) return true;
+    }
+    return false;
+}
+
 // ── the fixpoint over the CFG ────────────────────────────────────────────────
 static Vra *vra_analyze(IrFunc *f) {
     Vra *V = calloc(1, sizeof *V);
@@ -292,7 +347,7 @@ static Vra *vra_analyze(IrFunc *f) {
     int dim=2*V->nvar; V->dsz=dim*dim;
     int nb=f->next_block_id;
     V->in=calloc(nb,sizeof(int64_t*)); V->reached=calloc(nb,sizeof(bool));
-    V->def=calloc(V->nvar,sizeof(IrInstr*));
+    V->def=calloc(V->nvar,sizeof(IrInstr*)); V->defblk=calloc(V->nvar,sizeof(int));
     V->cval=calloc(V->nvar,sizeof(int64_t)); V->cknown=calloc(V->nvar,sizeof(bool));
     V->slicelen=calloc(V->nvar,sizeof(int));
     vra_prepass(V);
@@ -354,13 +409,19 @@ static Vra *vra_analyze(IrFunc *f) {
             vra_transfer_instr(V,&W,ins);
         }
     }
+    // one termination obligation per loop header (a func must clear all of them)
+    for (IrBlock *b=f->blocks; b; b=b->next) {
+        if (!b->is_loop_header) continue;
+        VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
+        vra_add_check(V, c);
+    }
     free(W_m); free(T_m); free(J_m); free(D_m);
     return V;
 }
 static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
-    free(V->in); free(V->reached); free(V->def); free(V->cval); free(V->cknown);
+    free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
     free(V->slicelen); free(V->checks); free(V);
 }
 

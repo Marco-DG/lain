@@ -54,14 +54,14 @@ static IrFunc *gen(Spec *s) {
 // ── concrete interpreter of the SAME IR (ground truth) ───────────────────────
 // Returns true iff, over the real execution, the site `ep` never went out of
 // bounds of its array. Deterministic program ⇒ one execution covering all iters.
-static bool concrete_inbounds(IrFunc *f, IrInstr *ep) {
+static bool concrete_run(IrFunc *f, IrInstr *ep, int limit, bool *halted) {
     int64_t *val=calloc(f->next_value_id,sizeof(int64_t));
     int64_t *cell=calloc(f->next_value_id,sizeof(int64_t));   // alloca id → content
     IrInstr **def=calloc(f->next_value_id,sizeof(IrInstr*));
     for (IrBlock *b=f->blocks;b;b=b->next) for (IrInstr *i=b->instrs;i;i=i->next) if(i->result) def[i->result->id]=i;
     bool ok=true;
     IrBlock *b=f->entry; int steps=0;
-    while (b && steps++<2000000) {
+    while (b && steps++<limit) {
         for (IrInstr *i=b->instrs;i;i=i->next) {
             int r = i->result?i->result->id:-1;
             switch (i->op) {
@@ -99,6 +99,7 @@ static bool concrete_inbounds(IrFunc *f, IrInstr *ep) {
             default: b=NULL; break;
         }
     }
+    if (halted) *halted = (b==NULL);   // reached a terminator/return, not the step cap
     free(val); free(cell); free(def);
     return ok;
 }
@@ -119,7 +120,7 @@ int main(void) {
         s.idx_c = rand()%16;
         s.cmp = (rand()%2)?IR_CMP_SLT:IR_CMP_SLE;
         IrFunc *f=gen(&s);
-        bool csafe=concrete_inbounds(f, s.ep);
+        bool csafe=concrete_run(f, s.ep, 2000000, NULL);
         Vra *V=vra_analyze(f);
         bool vproven=false; for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_BOUNDS && V->checks[i].at==s.ep) vproven=V->checks[i].ok;
         vra_free(V);
@@ -157,7 +158,28 @@ int main(void) {
     }
     printf("overflow-range: %d trials | not-over-approximating: %d\n", ov_trials, ov_bad);
 
-    int bad = unsound + ov_bad + (proven!=proven_and_safe);
+    // ── phase 3: termination soundness ───────────────────────────────────────
+    // The VRA must only call a loop terminating if it actually halts. Generate
+    // loops with step ∈ {0,1,2} (step 0 ⇒ potential infinite) and check
+    // VRA-terminates ⟹ concrete run reaches a return within a generous budget.
+    int tr_trials=100000, tr_unsound=0, tr_proven=0;
+    for (int t=0;t<tr_trials;t++) {
+        if ((t & 0x3ff)==0) A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
+        Spec s; s.N=1+rand()%12; s.init=rand()%4; s.bound=rand()%(s.N+3);
+        s.step=rand()%3; s.idx_kind=0; s.idx_c=0; s.cmp=(rand()%2)?IR_CMP_SLT:IR_CMP_SLE;
+        IrFunc *f=gen(&s);
+        bool halted=false; concrete_run(f, s.ep, 100000, &halted);
+        Vra *V=vra_analyze(f);
+        bool vterm=false; for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_TERMINATION) vterm=V->checks[i].ok;
+        vra_free(V);
+        if (vterm) tr_proven++;
+        if (vterm && !halted){ tr_unsound++;
+            if (tr_unsound<=5) printf("TERM-UNSOUND: step=%d init=%d bound=%d cmp=%s — VRA said terminates, ran forever\n",
+                s.step,s.init,s.bound, s.cmp==IR_CMP_SLT?"<":"<="); }
+    }
+    printf("termination: %d trials | VRA-proven-terminating %d | UNSOUND %d\n", tr_trials, tr_proven, tr_unsound);
+
+    int bad = unsound + ov_bad + tr_unsound + (proven!=proven_and_safe);
     printf(bad==0 ? "\nSOUND: every VRA proof matched concrete ground truth.\n"
                   : "\n*** UNSOUNDNESS DETECTED ***\n");
     return bad?1:0;
