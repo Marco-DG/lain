@@ -237,7 +237,16 @@ static Vra *vra_analyze(IrFunc *f) {
     int64_t *W_m=malloc(V->dsz*8), *T_m=malloc(V->dsz*8), *J_m=malloc(V->dsz*8), *D_m=malloc(V->dsz*8);
     Octagon W={V->nvar,dim,W_m}, T={V->nvar,dim,T_m}, J={V->nvar,dim,J_m}, D={V->nvar,dim,D_m};
 
-    { Octagon E={V->nvar,dim,V->in[f->entry->id]}; oct_init_top(&E,V->nvar,E.m); }
+    { Octagon E={V->nvar,dim,V->in[f->entry->id]}; oct_init_top(&E,V->nvar,E.m);
+      // seed each integer parameter's type interval (a usize is ≥ 0, etc.). Skip a
+      // bound whose doubled DBM entry would overflow (e.g. u64's ~2^63 upper).
+      for (IrParam *p=f->params; p; p=p->next) {
+          int64_t tlo,thi;
+          if (!irtype_int_range(p->value->type,&tlo,&thi)) continue;
+          if (tlo > -OCT_INF/2) oct_add_lb(&E, p->value->id, tlo);
+          if (thi <  OCT_INF/2) oct_add_ub(&E, p->value->id, thi);
+      }
+    }
     V->reached[f->entry->id]=true;
 
     bool changed=true; int sweeps=0;

@@ -110,6 +110,30 @@ static bool sliding_window_proven(void) {
     vra_free(V); return proven;
 }
 
+// TWO-POINTER relational: a[i] under `i ≤ j` and `j < a.len`. Neither guard alone
+// bounds i by len; only the octagon's transitive closure (i ≤ j ≤ len−1) does.
+//   func f(a i32[], i usize, j usize) { if i<=j { if j<a.len { a[i] } } }
+static bool two_pointer_proven(void) {
+    IrFunc *f = ir_func_new(&A, nm("tp"), ir_type_int(&A,32,true), IR_FUNC_PROC);
+    IrType *usize=ir_type_int(&A,64,false), *i32=ir_type_int(&A,32,true);
+    IrValue *a=ir_add_param(f, slice_i32(), nm("a"));
+    IrValue *i=ir_add_param(f, usize, nm("i"));
+    IrValue *j=ir_add_param(f, usize, nm("j"));
+    IrBlock *e=f->entry, *b1=ir_new_block(f), *b2=ir_new_block(f), *ex=ir_new_block(f);
+    IrValue *c1=ir_icmp(f,e,IR_CMP_ULE,i,j);      // i <= j
+    ir_set_br_cond(e,c1,b1,ex);
+    IrValue *L=ir_slice_len(f,b1,a);
+    IrValue *c2=ir_icmp(f,b1,IR_CMP_ULT,j,L);     // j < len
+    ir_set_br_cond(b1,c2,b2,ex);
+    IrValue *data=ir_slice_data(f,b2,a,i32);
+    ir_elem_ptr(f,b2,data,i,i32);                 // prove i < len via i<=j<len
+    ir_set_ret(b2,NULL); ir_set_ret(ex,NULL);
+    ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f);
+    bool proven=false; for(int k=0;k<V->nchecks;k++) if(V->checks[k].kind==VRA_BOUNDS) proven=V->checks[k].ok;
+    vra_free(V); return proven;
+}
+
 static bool find_ok(Vra *V, VraCheckKind k){ for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==k) return V->checks[i].ok; return false; }
 static bool find_any(Vra *V, VraCheckKind k){ for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==k) return true; return false; }
 
@@ -169,8 +193,9 @@ int main(void) {
     // DIV-BY-ZERO — prove when the divisor is provably nonzero, else refuse.
     vra_expect("i32 a/b under guard b>0   (b≠0)",           div_proven(true),  true);
     vra_expect("i32 a/b unguarded         (b may be 0)",    div_proven(false), false);
-    // RELATIONAL frontier — the old engine REJECTS this; octagons prove it.
+    // RELATIONAL frontier — octagons crack these; intervals/recognizers struggle.
     vra_expect("sliding window a[i+1] under i+1<a.len",     sliding_window_proven(), true);
+    vra_expect("two-pointer a[i] under i<=j & j<a.len",     two_pointer_proven(),    true);
 
     if (failures==0) printf("VRA: all soundness+precision expectations met\n");
     else             printf("VRA: %d WRONG results\n", failures);
