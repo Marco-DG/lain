@@ -228,6 +228,24 @@ static bool ir_tok_cmp(TokenKind op, bool sgn, IrCmp *out) {
     }
 }
 
+// B4-lite (dependent lengths): a slice/dynamic-array param whose type carries a length
+// constraint `i32[m]` / `i32[>= n]` / `i32[out.len]` becomes an entry
+// `assume(slice_len(p) relop <expr>)` — connecting the runtime length to the symbol.
+// Run AFTER all params are in scope so the length expr (another param) resolves.
+static void ir_lower_slice_len_refinement(LowerCtx *c, IrValue *pv, Type *pty) {
+    if (!pv || !pty || pty->kind!=TYPE_ARRAY || pty->array_len>=0 || !pty->size_expr) return;
+    IrValue *L  = ir_slice_len(c->f, c->cur, pv);
+    IrValue *rv = ir_lower_expr(c, pty->size_expr);
+    if (!rv || !rv->type || rv->type->kind!=IRT_INT) return;
+    if (pty->size_relop == TOKEN_EQUAL_EQUAL) {           // len == expr
+        ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULE, L, rv));
+        ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_UGE, L, rv));
+    } else { IrCmp cmp;
+        if (ir_tok_cmp(pty->size_relop, false, &cmp))     // len relop expr (len is usize)
+            ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, L, rv));
+    }
+}
+
 // B2 (contracts): a callee's return refinement `result OP rhs` (`func f(..) usize <= m`)
 // becomes a post-call `assume(v OP <that>)` — the caller LEARNS the ensures. rhs may be a
 // constant or one of the callee's params, resolved to the matching call argument.
@@ -760,6 +778,15 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
             IrValue *pv = ir_add_param(f, pt, pin);
             ir_env_add(&cc, pnm, NULL, pv);
             ir_lower_param_refinements(&cc, pv, pty, p->decl);   // refinements → entry assumes
+        }
+    }
+    // second pass (all params now in scope): dependent-length constraints `i32[m]`
+    for (DeclList *p = fn->as.function_decl.params; p; p = p->next) {
+        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+        Type *pty = p->decl->as.variable_decl.type;
+        if (pty && pty->kind==TYPE_ARRAY && pty->array_len<0 && pty->size_expr) {
+            IrLocal *l = ir_env_find(&cc, p->decl->as.variable_decl.name);
+            if (l && l->param) ir_lower_slice_len_refinement(&cc, l->param, pty);
         }
     }
     ir_lower_stmts(&cc, fn->as.function_decl.body);
