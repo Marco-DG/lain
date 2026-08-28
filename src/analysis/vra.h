@@ -179,10 +179,13 @@ static void vra_add_check(Vra *V, VraCheck c) {
 static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
     if (ins->n_operands<2) return;
     int idx = ins->operands[1]->id;
-    IrInstr *bd = V->def[ins->operands[0]->id];
+    IrValue *base = ins->operands[0];
+    IrInstr *bd = V->def[base->id];
     int64_t clen=-1; int lenvar=-1;
     if (bd && bd->op==IR_ALLOCA && bd->aux.alloca_ty && bd->aux.alloca_ty->kind==IRT_ARRAY)
-        clen = bd->aux.alloca_ty->array_len;
+        clen = bd->aux.alloca_ty->array_len;                          // local fixed array
+    else if (base->type && base->type->kind==IRT_ARRAY)
+        clen = base->type->array_len;                                // fixed-array value (e.g. a param)
     else if (bd && bd->op==IR_SLICE_DATA && bd->n_operands>=1) {
         int s = bd->operands[0]->id; if (V->slicelen[s]>=0) lenvar=V->slicelen[s];
     }
