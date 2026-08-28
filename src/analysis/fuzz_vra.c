@@ -126,10 +126,33 @@ int main(void) {
                 s.N,s.init,s.bound,s.step,s.idx_kind,s.idx_c, s.cmp==IR_CMP_SLT?"<":"<=");
         }
     }
-    printf("\nfuzz_vra: %d trials | concrete-safe %d | VRA-proven %d (all also safe: %d) | UNSOUND %d\n",
+    printf("bounds: %d trials | concrete-safe %d | VRA-proven %d (all also safe: %d) | UNSOUND %d\n",
            trials, safe, proven, proven_and_safe, unsound);
-    printf(proven==proven_and_safe && unsound==0
-           ? "SOUND: every VRA proof matched concrete ground truth.\n"
-           : "*** UNSOUNDNESS DETECTED ***\n");
-    return unsound?1:0;
+
+    // ── phase 2: overflow-range soundness ────────────────────────────────────
+    // vra_arith_range must OVER-approximate { a OP b : a∈[alo,ahi], b∈[blo,bhi] },
+    // so the overflow fit-check can never call an escaping op "in range".
+    int ov_trials=300000, ov_bad=0;
+    for (int t=0;t<ov_trials;t++) {
+        int alo=(rand()%41)-20, ahi=alo+rand()%21;
+        int blo=(rand()%41)-20, bhi=blo+rand()%21;
+        IrOp op = (IrOp)(IR_ADD + rand()%3);   // ADD, SUB, MUL are consecutive
+        __int128 rlo,rhi; vra_arith_range(op, alo,ahi, blo,bhi, &rlo,&rhi);
+        __int128 tmin=(__int128)1<<100, tmax=-((__int128)1<<100);
+        for (int a=alo;a<=ahi;a++) for (int b=blo;b<=bhi;b++) {
+            __int128 v = op==IR_ADD? (__int128)a+b : op==IR_SUB? (__int128)a-b : (__int128)a*b;
+            if (v<tmin) tmin=v; if (v>tmax) tmax=v;
+        }
+        if (!(rlo<=tmin && rhi>=tmax)) {   // abstract range failed to contain the real one
+            ov_bad++;
+            if (ov_bad<=5) printf("OV-UNSOUND: op=%d a∈[%d,%d] b∈[%d,%d] abstract=[%lld,%lld] real=[%lld,%lld]\n",
+                op,alo,ahi,blo,bhi,(long long)rlo,(long long)rhi,(long long)tmin,(long long)tmax);
+        }
+    }
+    printf("overflow-range: %d trials | not-over-approximating: %d\n", ov_trials, ov_bad);
+
+    int bad = unsound + ov_bad + (proven!=proven_and_safe);
+    printf(bad==0 ? "\nSOUND: every VRA proof matched concrete ground truth.\n"
+                  : "\n*** UNSOUNDNESS DETECTED ***\n");
+    return bad?1:0;
 }
