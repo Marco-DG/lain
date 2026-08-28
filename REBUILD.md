@@ -83,8 +83,10 @@ C  (or LLVM IR later)
 - [x] **0.1 Compiler-architecture doc.** → `design/architecture.md`. Target pipeline,
       module layout (`src/ir/`, `src/analysis/`), old↔new coexistence + `--engine` selector +
       `diff_engines.sh` differential strategy, keep/rebuild/retire boundaries, non-goals.
-- [ ] **0.2 IR spec.** The typed SSA/CFG IR: types, SSA values, instruction set, basic
-      blocks, CFG, functions; AST→IR lowering sketch; IR→C lowering sketch. The keystone.
+- [x] **0.2 IR spec.** → `design/ir.md`. Types, SSA values + memory model (alloca/load/store
+      → mem2reg), instruction set, terminators (`br_cond` = the guard), CFG/functions/module,
+      AST→IR lowering per construct (if→φ-join, while→back-edge header, match→switch,
+      break/continue→edges), IR→C backend, worked example. The keystone.
 - [ ] **0.3 VRA / octagon design (spec annex).** Domain representation (DBM over ±vars),
       closure, join/meet, widening, projection; transfer functions per IR instruction; loop
       fixpoint; the soundness invariant (what "range/relation of x" *means* = over-approx);
