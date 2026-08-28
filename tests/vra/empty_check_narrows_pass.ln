@@ -1,0 +1,25 @@
+// The unsigned empty-check `if n == 0 { return }` narrows n to [1, …] on the
+// fall-through, so `a[0]` (and the whole `a[i]` scan) proves in-bounds with no extra
+// guard — the negation of `n == 0` is `n != 0`, which for an unsigned n tightens the
+// range at its lower boundary. Self-checking: amax of [3,9,2,7,5] == 9 → exit 0.
+func amax(a i32[n], n usize) i32 {
+    if n == 0 {
+        return 0
+    }
+    var m = a[0]
+    var i usize = 1
+    while i < n {
+        if a[i] > m {
+            m = a[i]
+        }
+        i = i + 1
+    }
+    return m
+}
+proc main() i32 {
+    var a i32[5] = [3, 9, 2, 7, 5]
+    if amax(a, 5) == 9 {
+        return 0
+    }
+    return 1
+}

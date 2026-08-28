@@ -1127,6 +1127,14 @@ static void sema_apply_negated_constraint(Expr *cond, RangeTable *t) {
                 case TOKEN_ANGLE_BRACKET_LEFT_EQUAL: // !(x <= val) <=> x > val
                     if (val + 1 > r.min) r.min = val + 1;
                     break;
+                case TOKEN_EQUAL_EQUAL: // !(x == val) <=> x != val
+                    // A disequality carves a single point out of the range; that
+                    // stays one interval only when the point is AT a boundary.
+                    // The dominant case is the unsigned empty-check `if n == 0 {
+                    // return } … a[0]` — n's range [0, hi] tightens to [1, hi].
+                    if (val == r.min && r.min < r.max) r.min = val + 1;
+                    else if (val == r.max && r.max > r.min) r.max = val - 1;
+                    break;
                 default: break;
             }
             range_set(t, var, r);

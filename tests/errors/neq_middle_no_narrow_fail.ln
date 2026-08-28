@@ -1,0 +1,15 @@
+// EXPECT: [E085]
+// SOUNDNESS: `x != v` only narrows the range when v is AT a boundary. A signed `x`
+// guarded by `if x == 0 { return }` still spans [MIN, -1] ∪ [1, MAX] — 0 is in the
+// middle — so `a[x]` is NOT provably in bounds and must be rejected (x could be huge
+// or negative). Only the boundary case (unsigned n != 0 → n >= 1) narrows.
+func f(a i32[n], n usize, x i32) i32 {
+    if x == 0 {
+        return 0
+    }
+    return a[x]
+}
+proc main() i32 {
+    var a i32[3] = [1, 2, 3]
+    return f(a, 3, 1)
+}
