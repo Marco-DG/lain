@@ -74,6 +74,42 @@ static bool unguarded_param_proven(int alen) {
     return found && proven;
 }
 
+static IrType *slice_i32(void){ IrType *t=ir_type_new(&A,IRT_SLICE); t->elem=ir_type_int(&A,32,true); return t; }
+
+// The RELATIONAL frontier the old engine REJECTS: sliding window a[i+1] under a
+// guard `i+1 < a.len`. Intervals can't relate i+1 to len; octagons can. Build it
+// by hand (sema would exit on the reject) and confirm the new engine PROVES it.
+//   func f(a i32[]) { i=0; while i+1 < a.len { a[i+1]; i=i+1 } }
+static bool sliding_window_proven(void) {
+    IrFunc *f = ir_func_new(&A, nm("win"), ir_type_int(&A,32,true), IR_FUNC_PROC);
+    IrType *usize=ir_type_int(&A,64,false), *i32=ir_type_int(&A,32,true);
+    IrValue *a = ir_add_param(f, slice_i32(), nm("a"));
+    IrBlock *entry=f->entry, *head=ir_new_block(f), *body=ir_new_block(f), *exit=ir_new_block(f);
+    IrValue *islot=ir_alloca(f, entry, usize);
+    ir_store(f, entry, islot, ir_const_int(f,entry,0,usize));
+    ir_set_br(entry, head);
+    // head: (i+1) < a.len ?
+    IrValue *iv=ir_load(f,head,islot,usize);
+    IrValue *ip1=ir_binop(f,head,IR_ADD,iv,ir_const_int(f,head,1,usize),usize);
+    IrValue *L=ir_slice_len(f,head,a);
+    IrValue *cmp=ir_icmp(f,head,IR_CMP_ULT,ip1,L);
+    ir_set_br_cond(head,cmp,body,exit);
+    // body: a[i+1] ; i=i+1
+    IrValue *iv2=ir_load(f,body,islot,usize);
+    IrValue *idx=ir_binop(f,body,IR_ADD,iv2,ir_const_int(f,body,1,usize),usize);
+    IrValue *data=ir_slice_data(f,body,a,i32);
+    ir_elem_ptr(f,body,data,idx,i32);              // bounds obligation: idx < len(a)
+    IrValue *iv3=ir_load(f,body,islot,usize);
+    IrValue *ni=ir_binop(f,body,IR_ADD,iv3,ir_const_int(f,body,1,usize),usize);
+    ir_store(f,body,islot,ni);
+    ir_set_br(body,head);
+    ir_set_ret(exit,NULL);
+    ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f);
+    bool proven=false; for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_BOUNDS) proven=V->checks[i].ok;
+    vra_free(V); return proven;
+}
+
 static bool find_ok(Vra *V, VraCheckKind k){ for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==k) return V->checks[i].ok; return false; }
 static bool find_any(Vra *V, VraCheckKind k){ for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==k) return true; return false; }
 
@@ -133,6 +169,8 @@ int main(void) {
     // DIV-BY-ZERO — prove when the divisor is provably nonzero, else refuse.
     vra_expect("i32 a/b under guard b>0   (b≠0)",           div_proven(true),  true);
     vra_expect("i32 a/b unguarded         (b may be 0)",    div_proven(false), false);
+    // RELATIONAL frontier — the old engine REJECTS this; octagons prove it.
+    vra_expect("sliding window a[i+1] under i+1<a.len",     sliding_window_proven(), true);
 
     if (failures==0) printf("VRA: all soundness+precision expectations met\n");
     else             printf("VRA: %d WRONG results\n", failures);
