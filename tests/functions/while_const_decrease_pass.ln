@@ -1,0 +1,22 @@
+// A guarded reset-to-floor decreases the measure: `while j > 0 { … j = 0 }` sets j
+// to a constant strictly below its guard-implied lower bound (j >= 1), so the measure
+// `j` (inferred) strictly falls. This is the insertion-sort inner-scan early-exit
+// idiom. Soundness: a reset that is NOT below the floor (`j = 5` under `j > 0`) does
+// not decrease and is rejected (see while_const_decrease_fail).
+func scan(n usize) usize {
+    var j = n
+    var steps usize = 0
+    while j > 0 {
+        steps = steps + 1
+        if j > 3 {
+            j = j - 1
+        } else {
+            j = 0
+        }
+    }
+    return steps
+}
+proc main() i32 {
+    if scan(10) == 8 { return 0 }
+    return 1
+}

@@ -1,0 +1,12 @@
+// EXPECT: [E082]
+// A constant reset that is NOT strictly below the guard-implied floor does not
+// decrease the measure: `while j > 0 { j = 5 }` keeps j at 5 forever (5 is not < the
+// floor j >= 1), so termination cannot be proven and must be rejected.
+func spin(n usize) usize {
+    var j = n
+    while j > 0 decreasing j {
+        j = 5
+    }
+    return j
+}
+proc main() i32 { return 0 }

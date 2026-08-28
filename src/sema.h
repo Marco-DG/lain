@@ -1241,6 +1241,31 @@ static bool cond_implies_ge1(Expr *cond, Expr *v) {
     return false;
 }
 
+// If the loop condition implies a constant lower bound on `v` (`v > L` → v >= L+1,
+// `v >= L` → v >= L), report the tightest such bound in *out_min. Handles AND-chains
+// by taking the max. Used to prove that assigning a constant strictly below that
+// bound (`j = 0` under `while j > 0`) decreases the measure.
+static bool cond_target_min(Expr *cond, Expr *v, int64_t *out_min) {
+    if (!cond) return false;
+    if (cond->kind == EXPR_BINARY && cond->as.binary_expr.op == TOKEN_KEYWORD_AND) {
+        int64_t a = 0, b = 0;
+        bool ha = cond_target_min(cond->as.binary_expr.left,  v, &a);
+        bool hb = cond_target_min(cond->as.binary_expr.right, v, &b);
+        if (ha && hb) { *out_min = a > b ? a : b; return true; }
+        if (ha) { *out_min = a; return true; }
+        if (hb) { *out_min = b; return true; }
+        return false;
+    }
+    MeasureCmp c;
+    if (measure_extract_cmp(cond, v, &c) && c.hi && expr_struct_equal(c.hi, v) &&
+        c.lo && c.lo->kind == EXPR_LITERAL) {
+        int64_t L = c.lo->as.literal_expr.value;
+        *out_min = c.strict ? L + 1 : L;   // L < v => v >= L+1 ; L <= v => v >= L
+        return true;
+    }
+    return false;
+}
+
 // A step expression is loop-invariant if every identifier it reads is unmodified
 // anywhere in the loop body: then its VRA range at loop entry is valid on EVERY
 // iteration, which is what makes a VRA-derived step sign sound. Conservative:
@@ -1263,6 +1288,16 @@ static bool expr_is_loop_invariant(Expr *e, StmtList *body) {
 // decide whether the MEASURE decreased.
 static int assignment_direction(Expr *target, Expr *rhs) {
     if (!rhs) return 0;
+    // target = C (literal): a strict DECREASE when the loop guard forces target
+    // strictly above C at body entry (`while j > 0 { … j = 0 }` — the insertion-sort
+    // inner-scan early-exit idiom, and any guarded reset-to-floor). Sound: if the
+    // guard implies target >= m and C < m, then C < target on every iteration, so the
+    // measure strictly falls. Only proves decrease (a constant can't prove increase).
+    if (rhs->kind == EXPR_LITERAL && g_term_loop_cond) {
+        int64_t m;
+        if (cond_target_min(g_term_loop_cond, target, &m) &&
+            rhs->as.literal_expr.value < m) return -1;
+    }
     // A bare identifier rhs (`hi = mid`) has no syntactic direction — only the
     // difference-measure path (substitute mid, normalize) can decide it.
     if (rhs->kind != EXPR_BINARY) return measure_diff_direction(target, rhs);
