@@ -178,9 +178,11 @@ typedef struct IrFunc {
     IrType    *ret_type;
     IrBlock   *entry;
     IrBlock   *blocks;      // all blocks (list); entry is first
+    IrBlock   *blocks_tail; // O(1) append
     int32_t    next_value_id;
     int32_t    next_block_id;
     Decl      *src_decl;    // originating AST decl (effects, return refinement, etc.)
+    Arena     *arena;       // where this function's IR is allocated
     struct IrFunc *next;
 } IrFunc;
 

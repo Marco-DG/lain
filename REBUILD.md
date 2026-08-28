@@ -113,16 +113,18 @@ C  (or LLVM IR later)
 
 ## Phase 1 — IR foundation (the keystone)  ⟶ deliverable: faithful IR pipeline
 
-- [~] **1.1 IR data structures** (`src/ir/ir.h`): **first draft landed + compiles** —
-      IrType, IrValue (SSA id = identity), IrInstr (opcodes incl. slice_len/elem_ptr,
-      wrap-mode, aux union), IrTerm (br/br_cond/switch/ret), IrBlock (φ + body + preds +
-      loop-header flag), IrFunc/IrModule. Builders declared; definitions + dumper land with
-      lowering (1.2). Not wired into main.c yet.
+- [x] **1.1 IR data structures + builders** (`src/ir/ir.h`, `src/ir/build.h`): IrType,
+      IrValue (SSA id = identity), IrInstr (slice_len/elem_ptr/wrap-mode/aux), IrTerm, IrBlock
+      (φ + body + preds + loop-header flag), IrFunc/IrModule; builder + convenience-emitter
+      definitions; `ir_finalize_cfg` (predecessors + back-edge loop-header detection).
+      **Validated** by `src/ir/test_ir.c` (hand-built `maxi` branch + `count` loop → correct
+      SSA-form dump; loop header auto-detected). Not wired into main.c; old engine green.
 - [ ] **1.2 AST → IR lowering** (`src/ir/lower.h`): reuse name-resolution + typecheck to
       produce *typed* IR with a CFG; build SSA (or staged form).
 - [ ] **1.3 IR → C backend** (`src/ir/emit_c.h`): trivial, faithful lowering.
 - [ ] **1.4 Pipeline wiring:** `--engine=ir` (or `LAIN_IR=1`) selects the new path end-to-end.
-- [ ] **1.5 IR dumper + round-trip sanity** on representative programs.
+- [~] **1.5 IR dumper** (`src/ir/dump.h`): readable SSA-form printer done + validated on
+      hand-built IR. Round-trip on real *parsed* programs comes with lowering (1.2).
 - [ ] **1.6 GATE:** every `*_pass` test compiles through the new pipeline and the emitted C
       runs identically (trust + fuzzer executables pass). `*_fail` rejection is deferred to
       Phase 2 (no analysis yet). Corpus faithfulness proven.
@@ -186,6 +188,7 @@ C  (or LLVM IR later)
 ---
 
 ## STATUS LOG (update every session — newest first)
+- **2026-08-28 (4)** — Phase 1: IR construction API + dumper DONE + validated (`src/ir/build.h`, `dump.h`, `test_ir.c` — hand-built branch + loop dump correctly, loop-header auto-detected). 1.1 complete, 1.5 dumper done. Next: **1.2 AST→IR lowering** (`src/ir/lower.h`) wired to the frontend (parse+typecheck→typed AST→lower→dump), then 1.3 IR→C. Old engine green (610).
 - **2026-08-28 (3)** — Phase 0 complete; **Phase 1 STARTED**: `src/ir/ir.h` first draft (IR data structures) landed + compiles standalone. Next: 1.2 AST→IR lowering + builder defs + dumper.
 - **2026-08-28 (2)** — **PHASE 0 COMPLETE.** All design docs done: 0.1 architecture, 0.2 ir,
   0.3 vra-octagon, 0.4 recognizer-catalog (validates the thesis: 70 recognizers → ~50 fall
