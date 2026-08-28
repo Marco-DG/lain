@@ -78,6 +78,34 @@ When conditions are chained with \lain{and}, refinements from the
 left operand are active when evaluating the right operand
 (\S\,\ref{sec:expr.in}).
 
+\pnum
+\textbf{Equality and disequality.}  A test \lain{x == v} refines \lain{x} to
+the point range $[v, v]$ in the then-branch.  A disequality (the else-branch,
+or an explicit \lain{x != v}) refines \lain{x} only when $v$ lies \emph{at a
+boundary} of the range $[\ell, u]$ --- to $[v+1, u]$ when $v = \ell$, or to
+$[\ell, v-1]$ when $v = u$ --- since removing an interior point cannot be
+expressed as a single interval.  In particular an unsigned \lain{n} guarded
+by \lain{if n == 0 \{ return \}} is refined to $[1, u]$ on the fall-through,
+so a subsequent \lain{a[0]} on a length-\lain{n} slice is in bounds.
+
+\pnum
+\textbf{Early-return refinement.}  When an \lain{if} whose then-branch exits
+the enclosing scope (via \lain{return}, and provided no \lain{break} escapes)
+has condition \textit{C}, the code that follows the \lain{if} is reached only
+when \textit{C} is false; the VRA therefore refines with $\lnot\textit{C}$
+for the remainder of the scope.  Likewise, after a \lain{while cond \{ … \}}
+loop whose body contains no \lain{break} at that loop's level, the VRA
+assumes $\lnot\mathit{cond}$, since the loop exits only when the condition
+fails (e.g.\ after \lain{while j > 0 \{ … \}}, \lain{j} is refined to $0$).
+
+\pnum
+\textbf{Length guards.}  A guard on a slice or array length --- \lain{i <
+a.len}, and also \lain{a.len > 0}, \lain{a.len >= k}, \lain{a.len != 0} ---
+refines the underlying length.  For a fixed array \lain{a T[N]} the length is
+the constant $N$; for a sized slice \lain{a T[n]} it is the size parameter
+\lain{n}.  Thus \lain{if a.len > 0 \{ a[0] \}} is accepted exactly as
+\lain{if n > 0 \{ a[0] \}} would be.
+
 \section{In-guard semantics}
 \label{sec:vra.in-guard}
 \index{in guard!VRA semantics}

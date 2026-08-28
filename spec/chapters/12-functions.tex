@@ -28,7 +28,8 @@ Side effects                      & forbidden          & allowed \\
 Unbounded \lain{while}            & forbidden          & allowed \\
 Bounded \lain{while decreasing}   & allowed            & allowed \\
 \lain{for} loops                  & allowed            & allowed \\
-Direct/indirect recursion         & forbidden          & allowed \\
+Direct recursion (with measure)   & allowed            & allowed \\
+Mutual recursion                  & forbidden          & allowed \\
 Calling \lain{proc}               & forbidden          & allowed \\
 Calling \lain{func}               & allowed            & allowed \\
 Global mutable state              & no access          & full access \\
@@ -77,15 +78,26 @@ introduce effects.
 \end{constraint}
 
 \begin{constraint}
-  A \lain{func} that contains an unbounded \lain{while} loop (one without
-  a \lain{decreasing} measure) is \illformed{}~(\diagcode{E011}).
+  A \lain{func} that contains a \lain{while} loop whose termination the
+  implementation can neither verify from an explicit \lain{decreasing} measure
+  nor establish by inferring one (\S\,\ref{sec:stmt.while.infer}) is
+  \illformed{}~(\diagcode{E011}).
 \end{constraint}
 
 \begin{constraint}
-  A \lain{func} that calls itself directly, or that participates in a
-  mutual-recursion cycle, is \illformed{}~(\diagcode{E011}).  The
-  implementation shall detect mutual recursion by performing a depth-first
-  search on the call graph.
+  A \lain{func} that calls itself directly is permitted only if it carries a
+  well-founded \lain{decreasing} measure --- supplied explicitly or inferred
+  by the implementation (\S\,\ref{sec:fn.termination}).  A directly-recursive
+  \lain{func} with no measure and none inferable is
+  \illformed{}~(\diagcode{E011}); one whose measure is malformed is reported
+  \diagcode{E091}, and one whose measure is not provably decreasing and
+  non-negative at every self-call is reported \diagcode{E082}.
+\end{constraint}
+
+\begin{constraint}
+  A \lain{func} that participates in a \emph{mutual}-recursion cycle is
+  \illformed{}~(\diagcode{E011}).  The implementation shall detect mutual
+  recursion by performing a depth-first search on the call graph.
 \end{constraint}
 
 \begin{note}
@@ -100,10 +112,23 @@ introduce effects.
 \pnum
 A \lain{func} is guaranteed to terminate because:
 \begin{enumerate}
-  \item all \lain{while} loops carry a verified termination measure;
+  \item every \lain{while} loop carries a verified termination measure,
+        supplied explicitly or inferred (\S\,\ref{sec:stmt.while.infer});
   \item \lain{for} loops iterate over finite ranges;
-  \item recursion is forbidden.
+  \item every direct self-call strictly decreases a well-founded measure,
+        and mutual recursion is forbidden.
 \end{enumerate}
+
+\pnum
+\textbf{Recursion measure.}  The measure for a directly-recursive \lain{func}
+is a parameter (\lain{decreasing n}) or a difference of two parameters
+(\lain{decreasing hi - lo}).  When omitted, the implementation attempts to
+infer a single parameter that strictly decreases in \emph{every} self-call
+(each self-call passes it a syntactically smaller argument, such as
+\lain{n - 1} or \lain{n / 2}).  Each self-call is then verified to make the
+measure strictly smaller and to keep it non-negative (a base case); a call
+that does neither is reported \diagcode{E082}.  Inference never accepts a
+recursion an explicit measure could not.
 
 \pnum
 No termination analysis is performed for \lain{proc}s.

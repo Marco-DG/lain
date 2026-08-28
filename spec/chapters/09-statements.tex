@@ -167,8 +167,10 @@ of a variable from the enclosing scope, the program is
 true, executes \textit{body}.
 
 \begin{constraint}
-  An unbounded \lain{while} loop (one without a \lain{decreasing} measure)
-  shall not appear inside a \lain{func}.  Such use is
+  A \lain{while} loop inside a \lain{func} shall be bounded: it shall carry a
+  \lain{decreasing} measure, or the implementation shall be able to infer one
+  from its condition (\S\,\ref{sec:stmt.while.infer}).  A loop for which no
+  measure is present and none can be inferred is
   \illformed{}~(\diagcode{E011}).
 \end{constraint}
 
@@ -202,7 +204,12 @@ to the while semantics above, the implementation shall statically verify:
         \diagcode{E080}.)
   \item \textbf{Strict decrease} (\diagcode{E082}): the implementation
         shall prove that every execution of \textit{body} strictly
-        decreases the value of $M$.
+        decreases the value of $M$, \emph{except} along paths that leave the
+        loop via \lain{break} or \lain{return}.  A branch that unconditionally
+        exits the loop never iterates again, so it is exempt from the decrease
+        requirement; only paths that loop back need decrease $M$.  (A
+        \lain{continue} re-evaluates \textit{cond} and thus loops back, so it
+        is \emph{not} an exit.)
 \end{enumerate}
 
 \pnum
@@ -224,16 +231,47 @@ The following patterns are accepted by the standard verification algorithm:
 \bottomrule
 \endlastfoot
 \lain{i < n}    & \lain{n - i}      & $i$ increases $\Rightarrow$ measure decreases \\
+\lain{i <= n}   & \lain{n - i}      & $i$ increases toward the inclusive bound \\
 \lain{n > 0}    & \lain{n}          & $n$ decreases directly \\
+\lain{i > k}    & \lain{i - k}      & $i$ decreases toward $k$ \\
 \lain{a < b}    & \lain{b - a}      & either $a$ increases or $b$ decreases \\
 \lain{i in arr} & \lain{arr.len - i}& \lain{in} implies $i < \texttt{arr.len}$ \\
 \end{longtable}
+
+\pnum
+Beyond the syntactic patterns above, the standard verification algorithm
+also accepts a measure variable that is set to a constant provably below the
+loop's guaranteed lower bound (e.g.\ \lain{j = 0} inside \lain{while j > 0}),
+and unsigned measures driven by \lain{v = X \% v}, \lain{v = v / D}, or
+\lain{v = v >> C}.
+
+\subsection{Measure inference}
+\label{sec:stmt.while.infer}
+\index{measure inference}
+
+\pnum
+The \lain{decreasing} clause \emph{may be omitted}.  When it is, and the loop
+appears in a context that requires termination (a \lain{func} body), the
+implementation shall attempt to \emph{infer} a measure from \textit{cond}
+using the correspondences above: a relational condition \lain{i < n},
+\lain{i <= n}, \lain{i > k}, or \lain{i >= k} yields the candidate
+\lain{n - i} (respectively \lain{i - k}); a two-variable bound \lain{lo < hi}
+yields \lain{hi - lo}.  A pointer condition \lain{p in arr} yields the
+pointer-offset measure.
+
+\pnum
+An inferred measure is subject to the \emph{identical} verification as an
+explicit one (non-negativity, analyzability, strict decrease).  If no
+candidate can be inferred, or the candidate fails verification, the loop is
+\illformed{}~(\diagcode{E011}): the programmer shall then supply an explicit
+\lain{decreasing} clause or restructure the loop.  Inference is therefore a
+convenience only; it never accepts a loop that an explicit measure could not.
 
 \begin{example}
 \begin{laincode}
 func count(n int) int {
     var i = 0
-    while i < n decreasing n - i {
+    while i < n {          // measure `n - i` is inferred
         i = i + 1
     }
     return i
@@ -242,10 +280,12 @@ func count(n int) int {
 \end{example}
 
 \begin{rationale}
-  The \lain{decreasing} keyword bridges the gap between pure functions
-  (which must terminate) and the common pattern of finite-input state
-  machines (lexers, parsers) that are provably terminating.  The programmer
-  states the termination argument; the compiler verifies it.
+  Bounded loops bridge the gap between pure functions (which must terminate)
+  and the common pattern of finite-input state machines (lexers, parsers)
+  that are provably terminating.  For the overwhelmingly common counting and
+  scanning loops the measure is mechanical, so it is inferred; the
+  \lain{decreasing} keyword remains available to state a termination argument
+  the compiler cannot infer, which it then verifies.
 \end{rationale}
 
 \section{Return statement}
