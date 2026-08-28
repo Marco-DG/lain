@@ -76,6 +76,22 @@ static bool unguarded_param_proven(int alen) {
 
 static IrType *slice_i32(void){ IrType *t=ir_type_new(&A,IRT_SLICE); t->elem=ir_type_int(&A,32,true); return t; }
 
+// MASK idiom: a[ x & MASK ] for an unconstrained x. Provable iff MASK < alen
+// (x & MASK ∈ [0,MASK] for any x when MASK ≥ 0).
+static bool mask_index_proven(int mask, int alen) {
+    IrFunc *f=ir_func_new(&A,nm("mk"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+    IrType *u32=ir_type_int(&A,32,false), *i32=ir_type_int(&A,32,true);
+    IrValue *x=ir_add_param(f,u32,nm("x"));
+    IrBlock *e=f->entry;
+    IrValue *a=ir_alloca_array(f,e,arr_i32(alen));
+    IrValue *idx=ir_binop(f,e,IR_AND,x,ir_const_int(f,e,mask,u32),u32);
+    ir_elem_ptr(f,e,a,idx,i32);
+    ir_set_ret(e,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool ok=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_BOUNDS) ok=V->checks[i].ok;
+    vra_free(V); return ok;
+}
+
 // The RELATIONAL frontier the old engine REJECTS: sliding window a[i+1] under a
 // guard `i+1 < a.len`. Intervals can't relate i+1 to len; octagons can. Build it
 // by hand (sema would exit on the reject) and confirm the new engine PROVES it.
@@ -196,6 +212,9 @@ int main(void) {
     // RELATIONAL frontier — octagons crack these; intervals/recognizers struggle.
     vra_expect("sliding window a[i+1] under i+1<a.len",     sliding_window_proven(), true);
     vra_expect("two-pointer a[i] under i<=j & j<a.len",     two_pointer_proven(),    true);
+    // MASK idiom — nonlinear transfer: x & (N-1) ∈ [0,N-1] for ANY x.
+    vra_expect("mask a[x & 7] over a[8]  (0..7 < 8)",        mask_index_proven(7,8),  true);
+    vra_expect("mask a[x & 15] over a[8] (0..15 escapes)",   mask_index_proven(15,8), false);
 
     if (failures==0) printf("VRA: all soundness+precision expectations met\n");
     else             printf("VRA: %d WRONG results\n", failures);

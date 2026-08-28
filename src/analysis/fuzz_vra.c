@@ -39,6 +39,8 @@ static IrFunc *gen(Spec *s) {
     IrValue *iv2=ir_load(f,body,islot,i32), *idx=iv2;
     if (s->idx_kind==1) idx=ir_binop(f,body,IR_ADD,iv2,ir_const_int(f,body,s->idx_c,i32),i32);
     else if (s->idx_kind==2) idx=ir_binop(f,body,IR_SUB,iv2,ir_const_int(f,body,s->idx_c,i32),i32);
+    else if (s->idx_kind==3) idx=ir_binop(f,body,IR_AND,iv2,ir_const_int(f,body,s->idx_c,i32),i32);
+    else if (s->idx_kind==4) idx=ir_binop(f,body,IR_UREM,iv2,ir_const_int(f,body,s->idx_c?s->idx_c:1,i32),i32);
     ir_elem_ptr(f,body,a,idx,i32);
     s->ep = body->instrs_tail;                 // the elem_ptr INSTRUCTION we just emitted
     IrValue *iv3=ir_load(f,body,islot,i32);
@@ -69,6 +71,9 @@ static bool concrete_inbounds(IrFunc *f, IrInstr *ep) {
                 case IR_ADD: val[r]=val[i->operands[0]->id]+val[i->operands[1]->id]; break;
                 case IR_SUB: val[r]=val[i->operands[0]->id]-val[i->operands[1]->id]; break;
                 case IR_MUL: val[r]=val[i->operands[0]->id]*val[i->operands[1]->id]; break;
+                case IR_AND: val[r]=val[i->operands[0]->id]&val[i->operands[1]->id]; break;
+                case IR_UREM:{ int64_t d=val[i->operands[1]->id]; val[r]= d? (int64_t)((uint64_t)val[i->operands[0]->id]%(uint64_t)d):0; } break;
+                case IR_SREM:{ int64_t d=val[i->operands[1]->id]; val[r]= d? val[i->operands[0]->id]%d:0; } break;
                 case IR_ICMP: {
                     int64_t x=val[i->operands[0]->id],y=val[i->operands[1]->id]; int64_t rr=0;
                     switch(i->aux.cmp){ case IR_CMP_EQ:rr=x==y;break; case IR_CMP_NE:rr=x!=y;break;
@@ -109,8 +114,8 @@ int main(void) {
         s.init = rand()%4;
         s.bound = rand()%(s.N+3);
         s.step = 1+rand()%3;
-        s.idx_kind = rand()%3;
-        s.idx_c = rand()%4;
+        s.idx_kind = rand()%5;          // i, i+c, i-c, i&c, i%c
+        s.idx_c = rand()%16;
         s.cmp = (rand()%2)?IR_CMP_SLT:IR_CMP_SLE;
         IrFunc *f=gen(&s);
         bool csafe=concrete_inbounds(f, s.ep);

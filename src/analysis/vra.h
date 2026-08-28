@@ -126,6 +126,37 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             // else: two-variable result — not octagon-expressible, left free
             break;
         }
+        case IR_AND: {   // x & c  with c ≥ 0 constant  ⇒  0 ≤ r ≤ c   (mask idiom c=N−1)
+            if (r<0) break;
+            int a=ins->operands[0]->id, b=ins->operands[1]->id;
+            oct_forget(W, r);
+            if      (V->cknown[b] && V->cval[b]>=0){ oct_add_lb(W,r,0); oct_add_ub(W,r,V->cval[b]); }
+            else if (V->cknown[a] && V->cval[a]>=0){ oct_add_lb(W,r,0); oct_add_ub(W,r,V->cval[a]); }
+            break;
+        }
+        case IR_UREM: {  // x % c  (unsigned)  with c > 0 constant  ⇒  0 ≤ r ≤ c−1
+            if (r<0) break;
+            int b=ins->operands[1]->id; oct_forget(W, r);
+            if (V->cknown[b] && V->cval[b]>0){ oct_add_lb(W,r,0); oct_add_ub(W,r,V->cval[b]-1); }
+            break;
+        }
+        case IR_SREM: {  // signed a % c  ⇒  −(c−1) ≤ r ≤ c−1 (tighter to [0,c−1] if a≥0)
+            if (r<0) break;
+            int a=ins->operands[0]->id, b=ins->operands[1]->id; oct_forget(W, r);
+            if (V->cknown[b] && V->cval[b]>0){
+                int64_t c=V->cval[b];
+                int64_t alo,ahi; bool hl,hh; oct_interval(W,a,&alo,&hl,&ahi,&hh);
+                oct_add_lb(W,r, (hl&&alo>=0)?0:-(c-1)); oct_add_ub(W,r,c-1);
+            }
+            break;
+        }
+        case IR_LSHR: {  // x >> k  (logical) of a non-negative x is in [0, x]
+            if (r<0) break;
+            int a=ins->operands[0]->id; oct_forget(W,r);
+            int64_t alo,ahi; bool hl,hh; oct_interval(W,a,&alo,&hl,&ahi,&hh);
+            if (hl&&alo>=0){ oct_add_lb(W,r,0); if(hh) oct_add_ub(W,r,ahi); }  // 0 ≤ r ≤ a
+            break;
+        }
         case IR_SLICE_LEN: {
             if (r<0) break;
             oct_forget(W, r); oct_add_lb(W, r, 0);                 // a length is ≥ 0
