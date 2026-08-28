@@ -232,10 +232,25 @@ static bool ir_tok_cmp(TokenKind op, bool sgn, IrCmp *out) {
 // constraint `i32[m]` / `i32[>= n]` / `i32[out.len]` becomes an entry
 // `assume(slice_len(p) relop <expr>)` — connecting the runtime length to the symbol.
 // Run AFTER all params are in scope so the length expr (another param) resolves.
+// Lower a refinement RHS robustly — the refinement/size exprs are NOT type-checked by
+// sema (they come through untyped), so a literal gets the fallback type and `x.len` is
+// resolved by the LOWERED value's IR kind, never the (missing) AST type.
+static IrValue *ir_lower_refinement_rhs(LowerCtx *c, Expr *rhs, IrType *fallback_ty) {
+    if (!rhs) return NULL;
+    if (rhs->kind==EXPR_LITERAL)
+        return ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, fallback_ty);
+    if (rhs->kind==EXPR_MEMBER && rhs->as.member_expr.member && rhs->as.member_expr.member->length==3
+        && strncmp(rhs->as.member_expr.member->name,"len",3)==0) {
+        IrValue *tv = ir_lower_expr(c, rhs->as.member_expr.target);
+        return (tv && tv->type && tv->type->kind==IRT_SLICE) ? ir_slice_len(c->f, c->cur, tv) : NULL;
+    }
+    return ir_lower_expr(c, rhs);
+}
+
 static void ir_lower_slice_len_refinement(LowerCtx *c, IrValue *pv, Type *pty) {
     if (!pv || !pty || pty->kind!=TYPE_ARRAY || pty->array_len>=0 || !pty->size_expr) return;
     IrValue *L  = ir_slice_len(c->f, c->cur, pv);
-    IrValue *rv = ir_lower_expr(c, pty->size_expr);
+    IrValue *rv = ir_lower_refinement_rhs(c, pty->size_expr, ir_type_int(c->a,64,false));
     if (!rv || !rv->type || rv->type->kind!=IRT_INT) return;
     if (pty->size_relop == TOKEN_EQUAL_EQUAL) {           // len == expr
         ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULE, L, rv));
@@ -787,19 +802,7 @@ static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl
         Expr *rhs = con->as.binary_expr.right;
         IrCmp cmp;
         if (!ir_tok_cmp(con->as.binary_expr.op, sgn, &cmp)) continue;   // skip == / !=
-        // resolve the RHS: a literal (the constraint expr is untyped, so give it the
-        // param's type), a length `a.len`, or another param `m`.
-        IrValue *rv = NULL;
-        if (rhs && rhs->kind==EXPR_LITERAL) {
-            rv = ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, pv->type);
-        } else if (rhs && rhs->kind==EXPR_MEMBER && rhs->as.member_expr.member
-                && rhs->as.member_expr.member->length==3
-                && strncmp(rhs->as.member_expr.member->name,"len",3)==0) {
-            IrValue *tv = ir_lower_expr(c, rhs->as.member_expr.target);   // a
-            if (tv && tv->type && tv->type->kind==IRT_SLICE) rv = ir_slice_len(c->f, c->cur, tv);
-        } else if (rhs) {
-            rv = ir_lower_expr(c, rhs);
-        }
+        IrValue *rv = ir_lower_refinement_rhs(c, rhs, pv->type);   // literal / a.len / param
         if (rv && rv->type && rv->type->kind==IRT_INT)
             ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, pv, rv));
     }
