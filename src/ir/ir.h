@@ -90,6 +90,7 @@ typedef enum {
     IR_MAKE_SLICE,          // op[0] = data, op[1] = len
     IR_SUBSLICE,            // op[0] = slice, op[1] = lo, op[2] = hi
     IR_ARRAY_NEW,           // op[0..] = elements
+    IR_STR_CONST,           // aux.str : static string literal bytes ; result : *u8
     IR_STRUCT_NEW,          // op[0..] = fields ; aux.struct_decl
     // calls
     IR_CALL,                // aux.callee : Decl ; op[0..] = args
@@ -129,6 +130,7 @@ typedef struct IrInstr {
         int32_t     field_idx;  // IR_FIELD_PTR
         Decl       *callee;     // IR_CALL
         Decl       *struct_decl;// IR_STRUCT_NEW
+        struct { const char *bytes; int32_t len; } str;  // IR_STR_CONST
     } aux;
     IrPhiArg  *phi_args;    // IR_PHI
     bool       unchecked;   // ELEM_PTR / arithmetic inside an `unsafe` block

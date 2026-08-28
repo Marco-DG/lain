@@ -35,6 +35,7 @@ static const char *ir_op_name(IrOp op) {
         case IR_SLICE_LEN: return "slice_len"; case IR_SLICE_DATA: return "slice_data";
         case IR_MAKE_SLICE: return "make_slice"; case IR_SUBSLICE: return "subslice";
         case IR_ARRAY_NEW: return "array_new"; case IR_STRUCT_NEW: return "struct_new";
+        case IR_STR_CONST: return "str_const";
         case IR_CALL: return "call"; case IR_PHI: return "phi";
     }
     return "??";

@@ -135,6 +135,14 @@ IrValue *ir_slice_data(IrFunc *f, IrBlock *b, IrValue *slice, IrType *elem) {
     ir_emit(b, ins);
     return ins->result;
 }
+// A string literal's bytes — result is *u8 pointing at static storage.
+IrValue *ir_str_const(IrFunc *f, IrBlock *b, const char *bytes, int32_t len) {
+    IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = ir_type_int(f->arena, 8, false);
+    IrInstr *ins = ir_instr(f, IR_STR_CONST, pt, 0);
+    ins->aux.str.bytes = bytes; ins->aux.str.len = len;
+    ir_emit(b, ins);
+    return ins->result;
+}
 // Build a slice value {data, len} — for array→slice decay and sub-slicing.
 IrValue *ir_make_slice(IrFunc *f, IrBlock *b, IrValue *data, IrValue *len, IrType *elem) {
     IrType *st = ir_type_new(f->arena, IRT_SLICE); st->elem = elem;

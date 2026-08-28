@@ -63,6 +63,19 @@ static const char *ir_arith_c(IrOp op) {
         case IR_SHL:return "<<"; case IR_LSHR: case IR_ASHR:return ">>"; default:return "+"; }
 }
 
+// emit bytes as a C string literal (3-digit octal for anything unsafe, so a
+// following digit can never extend the escape)
+static void ir_emit_cstr(const char *s, int len, FILE *o) {
+    fputc('"', o);
+    for (int i=0;i<len;i++) {
+        unsigned char ch = (unsigned char)s[i];
+        if (ch=='"' || ch=='\\') { fputc('\\', o); fputc(ch, o); }
+        else if (ch>=0x20 && ch<=0x7e) fputc(ch, o);
+        else fprintf(o, "\\%03o", ch);
+    }
+    fputc('"', o);
+}
+
 static void ir_emit_instr_c(IrInstr *i, FILE *o) {
     switch (i->op) {
         case IR_CONST:  fprintf(o, "  v%d = %lld;\n", i->result->id, (long long)i->aux.imm); break;
@@ -79,6 +92,8 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
         case IR_SLICE_DATA: fprintf(o, "  v%d = v%d.data;\n", i->result->id, i->operands[0]->id); break;
         case IR_MAKE_SLICE: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
                             fprintf(o, "){ v%d, v%d };\n", i->operands[0]->id, i->operands[1]->id); break;
+        case IR_STR_CONST:  fprintf(o, "  v%d = (uint8_t*)", i->result->id);
+                            ir_emit_cstr(i->aux.str.bytes, i->aux.str.len, o); fputs(";\n", o); break;
         case IR_ICMP:   fprintf(o, "  v%d = (v%d %s v%d);\n", i->result->id,
                                 i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id); break;
         case IR_NEG:    fprintf(o, "  v%d = -v%d;\n", i->result->id, i->operands[0]->id); break;

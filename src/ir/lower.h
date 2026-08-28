@@ -156,6 +156,18 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
     switch (e->kind) {
         case EXPR_LITERAL:
             return ir_const_int(c->f, c->cur, e->as.literal_expr.value, ty);
+        case EXPR_CHAR:
+            return ir_const_int(c->f, c->cur, e->as.char_expr.value, ty);
+        case EXPR_STRING: {
+            IrValue *data = ir_str_const(c->f, c->cur, e->as.string_expr.value,
+                                         (int32_t)e->as.string_expr.length);
+            if (ty && ty->kind == IRT_SLICE) {   // u8[:0] context → a fat {data,len}
+                IrValue *ln = ir_const_int(c->f, c->cur, e->as.string_expr.length,
+                                           ir_type_int(c->a,64,false));
+                return ir_make_slice(c->f, c->cur, data, ln, ty->elem);
+            }
+            return data;   // fixed u8[N:0] / pointer context: the data pointer
+        }
         case EXPR_IDENTIFIER: {
             IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
             if (l && l->param) return l->param;
