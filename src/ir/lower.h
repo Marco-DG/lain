@@ -217,6 +217,45 @@ static IrType *ir_lower_type(LowerCtx *c, Type *t) {
 static IrValue *ir_lower_expr(LowerCtx *c, Expr *e);
 static void     ir_lower_stmts(LowerCtx *c, StmtList *body);
 
+// map an AST comparison token to an IrCmp given signedness. false ⇒ not a comparison.
+static bool ir_tok_cmp(TokenKind op, bool sgn, IrCmp *out) {
+    switch (op) {
+        case TOKEN_ANGLE_BRACKET_LEFT:        *out = sgn?IR_CMP_SLT:IR_CMP_ULT; return true;
+        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  *out = sgn?IR_CMP_SLE:IR_CMP_ULE; return true;
+        case TOKEN_ANGLE_BRACKET_RIGHT:       *out = sgn?IR_CMP_SGT:IR_CMP_UGT; return true;
+        case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: *out = sgn?IR_CMP_SGE:IR_CMP_UGE; return true;
+        default: return false;
+    }
+}
+
+// B2 (contracts): a callee's return refinement `result OP rhs` (`func f(..) usize <= m`)
+// becomes a post-call `assume(v OP <that>)` — the caller LEARNS the ensures. rhs may be a
+// constant or one of the callee's params, resolved to the matching call argument.
+static void ir_lower_return_ensures(LowerCtx *c, Decl *callee, IrValue *v, IrInstr *call) {
+    if (!callee || callee->kind==DECL_STRUCT || !v || !v->type || v->type->kind!=IRT_INT) return;
+    for (ExprList *rc = callee->as.function_decl.return_constraints; rc; rc = rc->next) {
+        Expr *con = rc->expr;
+        if (!con || con->kind!=EXPR_BINARY) continue;
+        Expr *rhs = con->as.binary_expr.right;
+        IrValue *rv = NULL;
+        if (rhs && rhs->kind==EXPR_LITERAL) rv = ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, v->type);
+        else if (rhs && rhs->kind==EXPR_IDENTIFIER) {
+            int idx=0; Id *rn=rhs->as.identifier_expr.id;
+            for (DeclList *p=callee->as.function_decl.params; p; p=p->next, idx++) {
+                if (!p->decl || p->decl->kind!=DECL_VARIABLE) continue;
+                Id *pn=p->decl->as.variable_decl.name;
+                if (pn && rn && pn->length==rn->length && strncmp(pn->name,rn->name,(size_t)pn->length)==0) {
+                    if (idx < call->n_operands) rv = call->operands[idx];
+                    break;
+                }
+            }
+        }
+        IrCmp cmp;
+        if (rv && ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp))
+            ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, v, rv));
+    }
+}
+
 // map an AST binary token to an IR op given signedness; returns true if arithmetic/bitwise.
 static bool ir_bin_op(TokenKind t, bool sgn, IrOp *op, IrWrapMode *wrap) {
     *wrap = IR_WRAP_CHECK;
@@ -441,6 +480,7 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 if (pp) pp = pp->next;
             }
             ir_emit(c->cur, ins);
+            if (ins->result) ir_lower_return_ensures(c, callee, ins->result, ins);  // contracts: learn the ensures
             return ins->result ? ins->result : ir_const_int(c->f,c->cur,0,ir_type_int(c->a,32,true));
         }
         case EXPR_CAST: {
