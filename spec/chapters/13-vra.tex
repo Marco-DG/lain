@@ -8,28 +8,67 @@
 \label{sec:vra.overview}
 
 \pnum
-Value Range Analysis (VRA) is a static analysis that tracks integer value
-ranges through a program using interval arithmetic.  It is used to:
+Value Range Analysis (VRA) is the static analysis that establishes, at every
+program point, sound facts about the integer values --- and the relationships
+between values --- that may arise at run time.  It is the mechanism by which a
+conforming implementation discharges the language's compile-time proof
+obligations, and thereby its safety guarantees and check-free code generation.
+It is used to:
 \begin{itemize}
-  \item eliminate array bounds checks (\S\,\ref{sec:types.array});
-  \item prove division-by-zero absence (\S\,\ref{sec:expr.arith});
-  \item verify parameter and return constraints (\S\,\ref{sec:vra.constraints});
-  \item prove in-guard safety (\S\,\ref{sec:expr.in}).
+  \item prove array and slice accesses in bounds (\S\,\ref{sec:types.array});
+  \item prove the absence of division/modulo by zero (\S\,\ref{sec:expr.arith});
+  \item prove the absence of arithmetic overflow at a checked operation
+        (\S\,\ref{sec:vra.boundary});
+  \item verify parameter and return refinements, and propagate a return
+        refinement to call sites (\S\,\ref{sec:vra.constraints});
+  \item establish the loop and recursion facts that make termination measures
+        provable (\S\,\ref{sec:fn.termination}).
 \end{itemize}
 
 \pnum
-VRA is decidable and polynomial in program size.  No SMT solver is required.
-All analyses performed by a conforming implementation shall terminate.
+\textbf{This clause specifies the \emph{contract} of the VRA --- what a
+conforming implementation shall guarantee --- not the abstract domain or
+algorithm used to achieve it.}  The domain and algorithm are an implementation
+concern; the reference design (a relational abstract interpreter over the
+octagon domain, run as a fixpoint over a control-flow graph) is given in the
+companion VRA design annex.  Any analysis satisfying the contract below
+conforms, whether it reasons with intervals, difference bounds, octagons, or a
+stronger relational domain.
 
-\section{Range representation}
+\begin{constraint}
+  \textbf{Soundness.}
+  The VRA shall compute, at each program point, an \emph{over-approximation} of
+  the set of concrete states reachable there: every state that can occur at run
+  time shall be admitted by the analysis result at that point.  Consequently a
+  proof obligation the VRA reports as \emph{discharged} holds on every
+  execution --- an accepted access is in bounds, an accepted operation does not
+  overflow or divide by zero, and a verified refinement holds for every result.
+  A proof obligation the implementation cannot discharge shall be reported as an
+  error, never silently assumed (\emph{prove-or-reject}).
+\end{constraint}
+
+\begin{constraint}
+  \textbf{Determinism and decidability.}
+  The VRA shall be deterministic and shall terminate on every input, in time
+  polynomial in program size.  No general SMT, Presburger, or unbounded search
+  procedure is required or permitted in the analysis core; a conforming
+  implementation reaches its verdict by a decidable, terminating computation.
+\end{constraint}
+
+\section{What the analysis tracks}
 \label{sec:vra.range}
 \index{range representation}
 
 \pnum
-A value range is an interval $[\ell,\, u]$ where $\ell \leq u$.  The
-sentinels $-\infty$ and $+\infty$ represent the absence of a lower or upper
-bound, respectively.  A range may additionally be \textit{unknown} (no
-information available), in which case the interval is $(-\infty, +\infty)$.
+The analysis maintains, at each program point, a sound over-approximation of
+each live integer value's possible values and --- for a relational
+implementation --- of the relationships between values (for example
+$i < \mathit{len}$, $\mathit{lo} \leq \mathit{hi}$, or $o = i + j$).  The
+per-value component is an interval $[\ell,\, u]$ (with $-\infty$, $+\infty$ for
+an absent bound, and \textit{unknown} $= (-\infty, +\infty)$); the relational
+component, when present, records linear relations among values.  The concrete
+representation is implementation-defined; only the soundness contract above is
+normative.
 
 \section{Range propagation rules}
 \label{sec:vra.propagation}

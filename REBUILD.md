@@ -99,11 +99,17 @@ C  (or LLVM IR later)
       recovery — liv/affine/bounded-counter/clamp-join/post-loop), ~9 (b) small nonlinear
       transfer cases (mask/div/mod/shift/movemask/popcount), 1 (c) nonlinear lemma
       (flattened-2D).** The pile is proven redundant, then deleted. This is the Phase-2.8 gate.
-- [ ] **0.5 Normative spec contract.** Rewrite `spec/chapters/13-vra.tex` to state the
-      *guarantee* abstractly (accepted ⇒ safe; refinement semantics), decoupled from the
-      algorithm. Point to the design annex.
-- [ ] **0.6 Review checkpoint.** Plan + docs coherent; domain decision (octagon, packing,
-      ℤ+overflow) locked. Commit.
+- [x] **0.5 Normative spec contract.** `spec/chapters/13-vra.tex` Overview rewritten to the
+      abstract *contract*: normative Soundness (over-approximation ⇒ accepted-is-safe;
+      prove-or-reject) + Determinism/decidability (poly-time, no SMT) constraints, explicitly
+      decoupled from the domain/algorithm, pointing to the design. Spec recompiles clean.
+      *(Full VRA design ANNEX deferred to end of Phase 2 — written from the real engine, per
+      "docs track reality"; `design/vra-octagon.md` is the design home until then.)*
+- [x] **0.6 Review + lock.** Docs cross-consistent (architecture→ir→vra-octagon→catalog).
+      **Domain decision locked (see log):** stage a fully-*closed difference-bound* domain
+      first (covers ~all current recognizers), then add the octagon `+`-family for the
+      relational frontier (merge/interleave `i+j<len`); ℤ + separate overflow obligation;
+      variable packing mandatory; CFG + join first, SSA/mem2reg as a follow-up.
 
 ## Phase 1 — IR foundation (the keystone)  ⟶ deliverable: faithful IR pipeline
 
@@ -158,7 +164,13 @@ C  (or LLVM IR later)
   must not fork; the frontend/language are fine; coexistence needs one repo.)
 - 2026-08-28 — **Target domain = octagons + variable packing, over ℤ with overflow split,
   fixpoint over a typed SSA/CFG IR.** (Staging: clean closed DBM first is acceptable.)
-- 2026-08-28 — **Spec split:** contract in spec ch.13; octagon design in a spec annex.
+- 2026-08-28 — **Spec split:** contract in spec ch.13 (done); octagon design annex written
+  from the real engine at end of Phase 2 (`design/vra-octagon.md` is the interim home).
+- 2026-08-28 — **Domain staging locked (0.6):** closed **difference-bound** domain first
+  (subset: `vᵢ − vⱼ ≤ c`; the recognizer catalog shows ~all current cases are DBM-only), then
+  generalize to full **octagons** (`±vᵢ ± vⱼ ≤ c`) for the relational frontier (merge/interleave
+  `i+j<len`). CFG + domain-join at merges first; SSA/mem2reg a precision follow-up. This
+  de-risks the fixpoint engine bring-up while keeping the octagon endpoint.
 
 ## Risks & mitigations
 - *Rewrite death-march* → phased, corpus-gated, coexistence + differential testing.
@@ -171,9 +183,11 @@ C  (or LLVM IR later)
 ---
 
 ## STATUS LOG (update every session — newest first)
-- **2026-08-28** — Plan + the three core design docs **done**: 0.1 `design/architecture.md`,
-  0.2 `design/ir.md`, 0.3 `design/vra-octagon.md`. Current phase: **Phase 0**. Next: **0.4
-  recognizer catalog** (enumerate the ~70 special-cases in `src/sema/ranges.h`+`bounds.h`,
-  classify a/b/c per vra-octagon §8 — this is the Phase-2 acceptance checklist), then 0.5 spec
-  contract rewrite (ch.13) + promote vra-octagon to a spec annex, then 0.6 review + lock the
-  domain decision. Old engine unchanged and green (suite 610, trust 40, fuzzers clean).
+- **2026-08-28 (2)** — **PHASE 0 COMPLETE.** All design docs done: 0.1 architecture, 0.2 ir,
+  0.3 vra-octagon, 0.4 recognizer-catalog (validates the thesis: 70 recognizers → ~50 fall
+  out / ~9 transfer / 1 lemma), 0.5 spec ch.13 contract (abstract, decoupled), 0.6 domain
+  staging locked (closed-DBM first → octagons). **Next: PHASE 1 — the IR foundation.** Start
+  1.1 `src/ir/ir.h` (IR data structures per `design/ir.md`), then 1.2 AST→IR lowering, 1.3
+  IR→C, 1.4 `--engine=ir` selector, 1.6 GATE: every `*_pass` round-trips through the new
+  pipeline. Old engine unchanged and green (suite 610, trust 40, fuzzers clean).
+- **2026-08-28 (1)** — Plan + three core design docs (0.1–0.3) done.
