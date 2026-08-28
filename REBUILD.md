@@ -113,8 +113,11 @@ C  (or LLVM IR later)
 
 ## Phase 1 — IR foundation (the keystone)  ⟶ deliverable: faithful IR pipeline
 
-- [ ] **1.1 IR data structures** (`src/ir/ir.h`): types, values (SSA), instructions,
-      basic blocks, CFG, functions, printer/dumper.
+- [~] **1.1 IR data structures** (`src/ir/ir.h`): **first draft landed + compiles** —
+      IrType, IrValue (SSA id = identity), IrInstr (opcodes incl. slice_len/elem_ptr,
+      wrap-mode, aux union), IrTerm (br/br_cond/switch/ret), IrBlock (φ + body + preds +
+      loop-header flag), IrFunc/IrModule. Builders declared; definitions + dumper land with
+      lowering (1.2). Not wired into main.c yet.
 - [ ] **1.2 AST → IR lowering** (`src/ir/lower.h`): reuse name-resolution + typecheck to
       produce *typed* IR with a CFG; build SSA (or staged form).
 - [ ] **1.3 IR → C backend** (`src/ir/emit_c.h`): trivial, faithful lowering.
@@ -183,6 +186,7 @@ C  (or LLVM IR later)
 ---
 
 ## STATUS LOG (update every session — newest first)
+- **2026-08-28 (3)** — Phase 0 complete; **Phase 1 STARTED**: `src/ir/ir.h` first draft (IR data structures) landed + compiles standalone. Next: 1.2 AST→IR lowering + builder defs + dumper.
 - **2026-08-28 (2)** — **PHASE 0 COMPLETE.** All design docs done: 0.1 architecture, 0.2 ir,
   0.3 vra-octagon, 0.4 recognizer-catalog (validates the thesis: 70 recognizers → ~50 fall
   out / ~9 transfer / 1 lemma), 0.5 spec ch.13 contract (abstract, decoupled), 0.6 domain
