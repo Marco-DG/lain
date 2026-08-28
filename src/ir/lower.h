@@ -32,6 +32,12 @@ typedef struct {
     IrBlock  *loop_head, *loop_exit;
     DeclList *globals;     // module top-level decls (for global-constant references)
     int       const_depth; // recursion guard for cyclic constant initializers
+    // struct-type memo: cache the IrType per struct decl so a self-referential
+    // field (a pointer back to the struct) returns the in-progress node instead of
+    // recursing forever.
+    Decl     *scache_decl[64];
+    IrType   *scache_type[64];
+    int       scache_n;
 } LowerCtx;
 
 // A block's terminator is "set" once lowering has given it one. A freshly-memset
@@ -77,10 +83,36 @@ static Decl *ir_find_global_const(LowerCtx *c, Id *name) {
     return NULL;
 }
 // "aggregate" here = decays to an element-base pointer read directly from its slot
-// (a fixed array). A SLICE is a first-class fat value living in a normal slot
-// (alloca + load/store by value); a STRUCT will be handled when fields land.
+// (a fixed array). A SLICE and a STRUCT are first-class values living in a normal
+// slot (alloca + load/store by value); their fields/elements are reached by GEP.
 static bool ir_type_is_agg(IrType *t) {
     return t && t->kind==IRT_ARRAY;
+}
+
+// A module-level struct declaration by (bare) name.
+static Decl *ir_find_struct_decl(LowerCtx *c, Id *name) {
+    if (!name) return NULL;
+    for (DeclList *d = c->globals; d; d = d->next) {
+        Decl *dc = d->decl;
+        if (!dc || dc->kind != DECL_STRUCT) continue;
+        Id *dn = dc->as.struct_decl.name;
+        if (dn && dn->length == name->length &&
+            strncmp(dn->name, name->name, (size_t)name->length) == 0) return dc;
+    }
+    return NULL;
+}
+// Index of field `m` in an IRT_STRUCT (uses the IR type's own field table — no AST).
+static int ir_field_index(IrType *st, Id *m, IrType **fty) {
+    if (!st || st->kind != IRT_STRUCT || !m) return -1;
+    for (int i = 0; i < st->n_fields; i++) {
+        Id *fn = st->field_names[i];
+        if (fn && fn->length == m->length &&
+            strncmp(fn->name, m->name, (size_t)m->length) == 0) {
+            if (fty) *fty = st->fields[i];
+            return i;
+        }
+    }
+    return -1;
 }
 
 // ── type bridge: AST Type → IrType (core cases) ──────────────────────────────
@@ -107,7 +139,27 @@ static IrType *ir_lower_type(LowerCtx *c, Type *t) {
                 if (t->int_width_cache>0) return ir_type_int(c->a, t->int_width_cache, t->int_signed_cache);
                 if (ir_name_int(nm,len,&b,&s)) return ir_type_int(c->a, b, s);
             }
-            return ir_type_new(c->a, IRT_STRUCT);   // named struct/enum/alias (opaque for now)
+            // a named struct → a self-contained IRT_STRUCT (lowered field table)
+            Decl *sd = ir_find_struct_decl(c, t->base_type);
+            if (sd) {
+                for (int i=0;i<c->scache_n;i++) if (c->scache_decl[i]==sd) return c->scache_type[i];
+                IrType *r = ir_type_new(c->a, IRT_STRUCT); r->struct_decl = sd;
+                if (c->scache_n < 64) { c->scache_decl[c->scache_n]=sd;
+                                        c->scache_type[c->scache_n]=r; c->scache_n++; }
+                int nf=0; for (DeclList *fl=sd->as.struct_decl.fields; fl; fl=fl->next)
+                    if (fl->decl && fl->decl->kind==DECL_VARIABLE) nf++;
+                r->n_fields = nf;
+                r->fields       = arena_push_many_aligned(c->a, IrType*, nf>0?nf:1);
+                r->field_names  = arena_push_many_aligned(c->a, Id*,     nf>0?nf:1);
+                int i=0; for (DeclList *fl=sd->as.struct_decl.fields; fl; fl=fl->next) {
+                    if (!fl->decl || fl->decl->kind!=DECL_VARIABLE) continue;
+                    r->fields[i]      = ir_lower_type(c, fl->decl->as.variable_decl.type);
+                    r->field_names[i] = fl->decl->as.variable_decl.name;
+                    i++;
+                }
+                return r;
+            }
+            return ir_type_new(c->a, IRT_STRUCT);   // unresolved named type — opaque
         }
         case TYPE_ARRAY: {
             IrType *el = ir_lower_type(c, t->element_type);
@@ -173,7 +225,14 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
         c->cur->instrs_tail->unchecked = c->unsafe;   // elem_ptr just emitted
         return p;
     }
-    // member / other lvalues: not yet lowered — placeholder slot
+    if (e->kind == EXPR_MEMBER) {
+        IrValue *base = ir_lower_addr(c, e->as.member_expr.target);   // struct address
+        IrType  *sty  = ir_lower_type(c, e->as.member_expr.target->type);
+        IrType  *fty  = NULL;
+        int idx = ir_field_index(sty, e->as.member_expr.member, &fty);
+        if (idx >= 0) return ir_field_ptr(c->f, c->cur, base, idx, fty);
+    }
+    // other lvalues: not yet lowered — placeholder slot
     return ir_alloca(c->f, c->cur, ir_lower_type(c, e->type));
 }
 
@@ -261,16 +320,36 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
         }
         case EXPR_MEMBER: {
             Id *m = e->as.member_expr.member;
+            Expr *tgt = e->as.member_expr.target;
+            Type *tst = tgt ? tgt->type : NULL;
             if (m && m->length==3 && strncmp(m->name,"len",3)==0) {
-                IrValue *s = ir_lower_expr(c, e->as.member_expr.target);
-                return ir_slice_len(c->f, c->cur, s);
+                if (tst && tst->kind==TYPE_ARRAY && tst->array_len>=0)
+                    return ir_const_int(c->f, c->cur, tst->array_len, ty);   // fixed array .len = N
+                if (tst && (tst->kind==TYPE_SLICE || tst->kind==TYPE_ARRAY)) {
+                    IrValue *s = ir_lower_expr(c, tgt);
+                    return ir_slice_len(c->f, c->cur, s);
+                }
             }
-            // struct field read — placeholder (field index lowering TODO)
+            // struct field read: load through the field address
+            IrType *sty = ir_lower_type(c, tst);
+            IrType *fty = NULL;
+            if (ir_field_index(sty, m, &fty) >= 0) {
+                IrValue *addr = ir_lower_addr(c, e);
+                return ir_load(c->f, c->cur, addr, fty ? fty : ty);
+            }
             return ir_const_int(c->f, c->cur, 0, ty);
         }
         case EXPR_CALL: {
             Decl *callee = e->as.call_expr.callee ? e->as.call_expr.callee->decl : NULL;
             int n=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next) n++;
+            // `Point(1, 2)` is struct construction, not a call: build a struct value
+            // from the positional field args (in declaration order).
+            if (callee && callee->kind == DECL_STRUCT && ty && ty->kind==IRT_STRUCT) {
+                IrValue **fs = arena_push_many_aligned(c->a, IrValue*, n>0?n:1);
+                int k=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next,k++)
+                    fs[k] = ir_lower_expr(c, a->expr);
+                return ir_struct_new(c->f, c->cur, ty, fs, n);
+            }
             IrInstr *ins = ir_instr(c->f, IR_CALL, (e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT) ? ty : NULL, n);
             ins->aux.callee = callee;
             DeclList *pp = callee ? callee->as.function_decl.params : NULL;
@@ -297,6 +376,20 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             IrInstr *ins = ir_instr(c->f, IR_CAST, ir_lower_type(c, e->as.cast_expr.target_type), 1);
             ins->operands[0]=x; ins->aux.cast_kind=IR_CAST_BITCAST; ir_emit(c->cur,ins);
             return ins->result;
+        }
+        case EXPR_MOVE:                                 // ownership transfer: value unchanged
+            return ir_lower_expr(c, e->as.move_expr.expr);
+        case EXPR_MUT: {                                // `var lv`: a mutable borrow
+            Expr *inner = e->as.mut_expr.expr;
+            IrType *it = inner ? ir_lower_type(c, inner->type) : NULL;
+            if (it && it->kind==IRT_STRUCT) return ir_lower_addr(c, inner);  // pass its address
+            return ir_lower_expr(c, inner);
+        }
+        case EXPR_ADDR:                                 // &lvalue
+            return ir_lower_addr(c, e->as.addr_expr.expr);
+        case EXPR_DEREF: {                              // *ptr
+            IrValue *p = ir_lower_expr(c, e->as.deref_expr.expr);
+            return ir_load(c->f, c->cur, p, ty);
         }
         default:
             return ir_const_int(c->f, c->cur, 0, ty);   // unhandled expr → placeholder
@@ -389,9 +482,25 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     f->ret_type = ir_lower_type(&cc, fn->as.function_decl.return_type);
     for (DeclList *p = fn->as.function_decl.params; p; p = p->next) {
         if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
-        IrType *pt = ir_lower_type(&cc, p->decl->as.variable_decl.type);
-        IrValue *pv = ir_add_param(f, pt, p->decl->as.variable_decl.name);
-        ir_env_add(&cc, p->decl->as.variable_decl.name, NULL, pv);
+        Type   *pty = p->decl->as.variable_decl.type;
+        IrType *pt  = ir_lower_type(&cc, pty);
+        Id     *pnm = p->decl->as.variable_decl.name;
+        if (pt->kind == IRT_STRUCT && pty && pty->mode == MODE_MUTABLE) {
+            // a `var` struct param is a mutable borrow — a pointer to the caller's
+            // storage, so field writes propagate. The pointer *is* the slot.
+            IrType *ptr = ir_type_new(cc.a, IRT_PTR); ptr->elem = pt; ptr->ptr_mut = true;
+            IrValue *pv = ir_add_param(f, ptr, pnm);
+            ir_env_add(&cc, pnm, pv, NULL);
+        } else if (pt->kind == IRT_STRUCT) {
+            // a by-value struct param: materialize to a slot so its fields address
+            IrValue *pv = ir_add_param(f, pt, pnm);
+            IrValue *slot = ir_alloca(f, cc.cur, pt);
+            ir_store(f, cc.cur, slot, pv);
+            ir_env_add(&cc, pnm, slot, NULL);
+        } else {
+            IrValue *pv = ir_add_param(f, pt, pnm);
+            ir_env_add(&cc, pnm, NULL, pv);
+        }
     }
     ir_lower_stmts(&cc, fn->as.function_decl.body);
     if (!ir_is_set_term(cc.cur))

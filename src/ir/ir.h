@@ -44,8 +44,12 @@ typedef struct IrType {
     bool  ptr_mut;          // *var T
     bool  slice_sentinel;   // u8[:0]
     int64_t array_len;      // IRT_ARRAY fixed length (>= 0)
-    // IRT_STRUCT
-    Decl *struct_decl;      // the declaring struct
+    // IRT_STRUCT — self-contained: carries its lowered field types + names so the
+    // backend never re-touches the AST.
+    Decl *struct_decl;      // the declaring struct (identity / C name source)
+    struct IrType **fields; // lowered field types, in declaration order
+    Id  **field_names;      // field names (for the C typedef)
+    int   n_fields;
 } IrType;
 
 // The integer interval [lo,hi] implied by an IRT_INT type — seeds the numeric domain

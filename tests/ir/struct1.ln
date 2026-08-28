@@ -1,0 +1,12 @@
+type Vec {
+    x i32
+    y i32
+}
+func dot(a Vec, b Vec) i32 { return a.x *% b.x +% a.y *% b.y }
+proc main() i32 {
+    var v = Vec(3, 4)
+    if dot(v, v) == 25 {
+        return 0
+    }
+    return 1
+}

@@ -23,6 +23,9 @@ static int ir_slice_tag(const IrType *e, char *buf, int n) {
         case IRT_BOOL:  return snprintf(buf, n, "b");
         case IRT_PTR:   { int k=snprintf(buf,n,"p"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
         case IRT_SLICE: { int k=snprintf(buf,n,"s"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
+        case IRT_STRUCT:if (e->struct_decl) { Id *nm=e->struct_decl->as.struct_decl.name;
+                            return snprintf(buf, n, "%.*s", (int)nm->length, nm->name); }
+                        return snprintf(buf, n, "v");
         default:        return snprintf(buf, n, "v");
     }
 }
@@ -34,8 +37,13 @@ static void ir_ctype(const IrType *t, FILE *o) {
         case IRT_BOOL: fputs("_Bool", o); break;
         case IRT_PTR:  ir_ctype(t->elem, o); fputc('*', o); break;
         case IRT_SLICE:{ char tag[128]; ir_slice_tag(t->elem, tag, sizeof tag); fprintf(o, "Slice_%s", tag); } break;
+        case IRT_STRUCT:
+            if (t->struct_decl) { Id *n = t->struct_decl->as.struct_decl.name;
+                                  fprintf(o, "%.*s", (int)n->length, n->name); }
+            else fputs("void*", o);
+            break;
         case IRT_UNIT: case IRT_NEVER: fputs("void", o); break;
-        default:       fputs("void*", o); break;   // by-value array (rare)/struct — later
+        default:       fputs("void*", o); break;   // by-value array (rare) — later
     }
 }
 
@@ -86,6 +94,15 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             break;
         case IR_ELEM_PTR: fprintf(o, "  v%d = &v%d[v%d];\n", i->result->id,
                                   i->operands[0]->id, i->operands[1]->id); break;
+        case IR_FIELD_PTR: {   // base is a struct pointer; name the field from its type
+            IrType *st = i->operands[0]->type ? i->operands[0]->type->elem : NULL;
+            Id *fn = (st && st->kind==IRT_STRUCT && i->aux.field_idx < st->n_fields)
+                     ? st->field_names[i->aux.field_idx] : NULL;
+            if (fn) fprintf(o, "  v%d = &v%d->%.*s;\n", i->result->id, i->operands[0]->id,
+                            (int)fn->length, fn->name);
+            else    fprintf(o, "  v%d = &v%d->f%d;\n", i->result->id, i->operands[0]->id, i->aux.field_idx);
+            break;
+        }
         case IR_LOAD:   fprintf(o, "  v%d = *v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_STORE:  fprintf(o, "  *v%d = v%d;\n", i->operands[0]->id, i->operands[1]->id); break;
         case IR_SLICE_LEN:  fprintf(o, "  v%d = v%d.len;\n",  i->result->id, i->operands[0]->id); break;
@@ -94,6 +111,10 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                             fprintf(o, "){ v%d, v%d };\n", i->operands[0]->id, i->operands[1]->id); break;
         case IR_STR_CONST:  fprintf(o, "  v%d = (uint8_t*)", i->result->id);
                             ir_emit_cstr(i->aux.str.bytes, i->aux.str.len, o); fputs(";\n", o); break;
+        case IR_STRUCT_NEW: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
+                            fputs("){ ", o);
+                            for (int k=0;k<i->n_operands;k++){ if(k)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
+                            fputs(" };\n", o); break;
         case IR_ICMP:   fprintf(o, "  v%d = (v%d %s v%d);\n", i->result->id,
                                 i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id); break;
         case IR_NEG:    fprintf(o, "  v%d = -v%d;\n", i->result->id, i->operands[0]->id); break;
@@ -183,31 +204,77 @@ static void ir_emit_proto_c(IrFunc *f, FILE *o) {
     fputs(");\n", o);
 }
 
-// Emit one `typedef struct { T* data; size_t len; } Slice_<tag>;` per distinct
-// slice type used anywhere in the module (params, returns, locals, make_slice).
-static void ir_emit_slice_typedefs(IrFunc *funcs, FILE *o, Arena *a) {
-    char seen[64][128]; int nseen = 0;
+// A set of the composite types the module needs C declarations for, gathered
+// transitively so a struct that appears only as a slice element / pointer pointee
+// / another struct's field is still declared.
+typedef struct { IrType *structs[256]; int n_struct; IrType *slices[256]; int n_slice; } IrTypeSet;
+static bool ir_ts_struct_seen(IrTypeSet *ts, Decl *sd) {
+    for (int i=0;i<ts->n_struct;i++) if (ts->structs[i]->struct_decl==sd) return true; return false;
+}
+static bool ir_ts_slice_seen(IrTypeSet *ts, IrType *sl) {
+    char a[128]; ir_slice_tag(sl->elem, a, sizeof a);
+    for (int i=0;i<ts->n_slice;i++){ char b[128]; ir_slice_tag(ts->slices[i]->elem,b,sizeof b);
+        if (strcmp(a,b)==0) return true; } return false;
+}
+static void ir_ts_visit(IrTypeSet *ts, IrType *t) {
+    if (!t) return;
+    switch (t->kind) {
+        case IRT_PTR: case IRT_ARRAY: ir_ts_visit(ts, t->elem); break;
+        case IRT_SLICE:
+            ir_ts_visit(ts, t->elem);                         // element first (dependency)
+            if (!ir_ts_slice_seen(ts, t) && ts->n_slice<256) ts->slices[ts->n_slice++]=t;
+            break;
+        case IRT_STRUCT:
+            if (t->struct_decl && !ir_ts_struct_seen(ts, t->struct_decl) && ts->n_struct<256) {
+                ts->structs[ts->n_struct++]=t;               // add before fields so cycles stop
+                for (int i=0;i<t->n_fields;i++) ir_ts_visit(ts, t->fields[i]);
+            }
+            break;
+        default: break;
+    }
+}
+static void ir_emit_one_slice(IrType *sl, FILE *o) {
+    char tag[128]; ir_slice_tag(sl->elem, tag, sizeof tag);
+    fputs("typedef struct { ", o); ir_ctype(sl->elem, o);
+    fprintf(o, "* data; size_t len; } Slice_%s;\n", tag);
+}
+static void ir_emit_one_struct_body(IrType *st, FILE *o) {
+    Id *nm = st->struct_decl->as.struct_decl.name;
+    fprintf(o, "struct %.*s { ", (int)nm->length, nm->name);
+    for (int fi=0; fi<st->n_fields; fi++) {
+        IrType *ft = st->fields[fi]; Id *fn = st->field_names[fi];
+        if (ft && ft->kind==IRT_ARRAY) {   // an inline fixed-array field
+            ir_ctype(ft->elem, o);
+            fprintf(o, " %.*s[%lld]; ", fn?(int)fn->length:0, fn?fn->name:"", (long long)ft->array_len);
+        } else {
+            ir_ctype(ft, o);
+            if (fn) fprintf(o, " %.*s; ", (int)fn->length, fn->name);
+            else    fprintf(o, " f%d; ", fi);
+        }
+    }
+    fputs("};\n", o);
+}
+// Forward-declare every struct, then slices (which only need the struct *pointer*),
+// then the full struct bodies in reverse discovery order (a by-value nested struct
+// is discovered after its container, so reverse puts the inner one first).
+static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
+    IrTypeSet ts = {0};
     for (IrFunc *f=funcs; f; f=f->next) {
         IrValTab vt = { arena_push_many_aligned(a, IrValue*, f->next_value_id), f->next_value_id };
         for (int k=0;k<vt.n;k++) vt.v[k]=NULL;
         ir_collect_vals(f, &vt);
-        for (int id=0; id<vt.n; id++) {
-            IrValue *v = vt.v[id];
-            if (!v || !v->type || v->type->kind != IRT_SLICE) continue;
-            char tag[128]; ir_slice_tag(v->type->elem, tag, sizeof tag);
-            bool dup=false; for (int s=0;s<nseen;s++) if (strcmp(seen[s],tag)==0){dup=true;break;}
-            if (dup || nseen>=64) continue;
-            strncpy(seen[nseen], tag, sizeof seen[0]); seen[nseen][sizeof seen[0]-1]=0; nseen++;
-            fputs("typedef struct { ", o); ir_ctype(v->type->elem, o);
-            fprintf(o, "* data; size_t len; } Slice_%s;\n", tag);
-        }
+        for (int id=0; id<vt.n; id++) if (vt.v[id]) ir_ts_visit(&ts, vt.v[id]->type);
     }
-    if (nseen) fputc('\n', o);
+    for (int i=0;i<ts.n_struct;i++){ Id *nm=ts.structs[i]->struct_decl->as.struct_decl.name;
+        fprintf(o, "typedef struct %.*s %.*s;\n", (int)nm->length, nm->name, (int)nm->length, nm->name); }
+    for (int i=0;i<ts.n_slice;i++) ir_emit_one_slice(ts.slices[i], o);
+    for (int i=ts.n_struct-1;i>=0;i--) ir_emit_one_struct_body(ts.structs[i], o);
+    if (ts.n_struct || ts.n_slice) fputc('\n', o);
 }
 
 void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
     fputs("#include <stdint.h>\n#include <stddef.h>\n\n", o);
-    ir_emit_slice_typedefs(funcs, o, a);
+    ir_emit_type_decls(funcs, o, a);
     for (IrFunc *f=funcs; f; f=f->next) ir_emit_proto_c(f, o);
     fputc('\n', o);
     for (IrFunc *f=funcs; f; f=f->next) ir_emit_func_c(f, o, a);

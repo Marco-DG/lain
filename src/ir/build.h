@@ -151,6 +151,22 @@ IrValue *ir_make_slice(IrFunc *f, IrBlock *b, IrValue *data, IrValue *len, IrTyp
     ir_emit(b, ins);
     return ins->result;
 }
+// Construct a struct value from its fields, in declaration order.
+IrValue *ir_struct_new(IrFunc *f, IrBlock *b, IrType *sty, IrValue **fields, int n) {
+    IrInstr *ins = ir_instr(f, IR_STRUCT_NEW, sty, n);
+    for (int i=0;i<n;i++) ins->operands[i] = fields[i];
+    ins->aux.struct_decl = sty ? sty->struct_decl : NULL;
+    ir_emit(b, ins);
+    return ins->result;
+}
+// Address of struct field #idx (base is the struct's address).
+IrValue *ir_field_ptr(IrFunc *f, IrBlock *b, IrValue *base, int idx, IrType *fty) {
+    IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = fty;
+    IrInstr *ins = ir_instr(f, IR_FIELD_PTR, pt, 1);
+    ins->operands[0] = base; ins->aux.field_idx = idx;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_elem_ptr(IrFunc *f, IrBlock *b, IrValue *base, IrValue *idx, IrType *elem) {
     IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = elem;
     IrInstr *ins = ir_instr(f, IR_ELEM_PTR, pt, 2);
