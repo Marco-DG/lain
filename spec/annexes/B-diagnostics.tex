@@ -137,9 +137,11 @@ Diagnostic codes are divided into the following ranges:
 \diagcode{E011}
   & \S\,\ref{sec:fn.purity}
   & \textit{impure operation in pure function '\texttt{f}'} ---
-    Issued when a \lain{func} body contains a call to a \lain{proc}, an
-    unbounded \lain{while} without a \lain{decreasing} measure, or a
-    direct/mutual recursion without a measure.
+    Issued when a \lain{func} body contains a call to a \lain{proc}; a
+    \lain{while} loop whose measure is neither given nor inferable; a direct
+    self-recursion for which no measure can be inferred; or any mutual
+    recursion.  (A direct recursion \emph{with} a well-founded measure is
+    permitted; a present-but-failing measure is \diagcode{E082}/\diagcode{E091}.)
     \\[4pt]
 
 \diagcode{E012}
@@ -153,9 +155,10 @@ Diagnostic codes are divided into the following ranges:
   & \S\,\ref{sec:basics.scopes}
   & \textit{redeclaration or shadowing of '\texttt{x}' is forbidden} ---
     Issued for a duplicate parameter name, a local that repeats or shadows
-    an outer binding, or a \lain{main} declared as \lain{func}.  (Lain
-    forbids shadowing; use of an \emph{undeclared} identifier is currently
-    undiagnosed --- \S\,\ref{sec:basics.resolution}.)
+    an outer binding, a \lain{main} declared as \lain{func}, or a binding
+    (variable, parameter, or loop variable) whose name is a builtin type
+    (\lain{i32}, \lain{u8}, \lain{bool}, \ldots): a type name denotes a
+    first-class type value and cannot also name a binding.
     \\[4pt]
 
 \diagcode{E014}
@@ -207,10 +210,20 @@ Diagnostic codes are divided into the following ranges:
     \\[4pt]
 
 \diagcode{E082}
-  & \S\,\ref{sec:stmt.while.bounded}
-  & \textit{termination measure not proven to decrease in loop body} ---
-    Issued when the compiler cannot verify that every execution of the
-    loop body strictly decreases the measure by at least 1.
+  & \S\,\ref{sec:stmt.while.bounded}, \S\,\ref{sec:fn.termination}
+  & \textit{termination measure not proven to decrease} ---
+    Issued when the compiler cannot verify that every looping-back path
+    through the loop body strictly decreases the measure by at least 1
+    (paths that \lain{break}/\lain{return} out are exempt), or that every
+    self-call of a directly-recursive \lain{func} makes its measure strictly
+    smaller and keeps it non-negative.
+    \\[4pt]
+
+\diagcode{E091}
+  & \S\,\ref{sec:fn.termination}
+  & \textit{malformed recursion measure} ---
+    Issued when a directly-recursive \lain{func}'s \lain{decreasing} measure
+    is not a parameter or a difference of two parameters.
     \\[4pt]
 
 \end{longtable}
