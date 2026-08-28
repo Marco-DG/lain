@@ -48,18 +48,42 @@ static int vra_var(IrValue *v) { return v ? v->id : -1; }
 static bool vra_is_int(IrValue *v){ return v && v->type &&
         (v->type->kind==IRT_INT || v->type->kind==IRT_BOOL); }
 
-// pre-pass: def sites, constants, canonical slice-length vars
+// is value id `v` a slice-typed alloca cell?
+static bool vra_is_slice_cell(Vra *V, int v) {
+    IrInstr *d = (v>=0 && v<V->nvar) ? V->def[v] : NULL;
+    return d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_SLICE;
+}
+// pre-pass: def sites, constants, and canonical slice-length vars. A slice's length
+// var is its make_slice length operand or its first slice_len read; it is propagated
+// through a slice local's store/load so `s = a[lo..hi]; s[k]` knows len(s).
 static void vra_prepass(Vra *V) {
     for (int i=0;i<V->nvar;i++){ V->def[i]=NULL; V->cknown[i]=false; V->slicelen[i]=-1; }
+    // first: def sites + constants (needed to classify slice cells below)
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (ins->result) V->def[ins->result->id] = ins;
-            if (ins->op==IR_CONST && ins->result) { V->cknown[ins->result->id]=true; V->cval[ins->result->id]=ins->aux.imm; }
-            if (ins->op==IR_SLICE_LEN && ins->result && ins->n_operands>=1) {
-                int s = ins->operands[0]->id;
-                if (V->slicelen[s]<0) V->slicelen[s] = ins->result->id;   // first len read is canonical
+            if (ins->op==IR_CONST && ins->result){ V->cknown[ins->result->id]=true; V->cval[ins->result->id]=ins->aux.imm; }
+        }
+    int *cell_len = malloc(V->nvar*sizeof(int));
+    for (int i=0;i<V->nvar;i++) cell_len[i]=-1;
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op==IR_MAKE_SLICE && ins->result && ins->n_operands>=2)
+                V->slicelen[ins->result->id] = ins->operands[1]->id;      // {data,len}: len is the length var
+            else if (ins->op==IR_SLICE_LEN && ins->result && ins->n_operands>=1) {
+                int s=ins->operands[0]->id;
+                if (V->slicelen[s]<0) V->slicelen[s]=ins->result->id;     // first len read is canonical
+            }
+            else if (ins->op==IR_STORE && ins->n_operands>=2) {
+                int cell=ins->operands[0]->id, v=ins->operands[1]->id;
+                if (vra_is_slice_cell(V,cell) && V->slicelen[v]>=0) cell_len[cell]=V->slicelen[v];
+            }
+            else if (ins->op==IR_LOAD && ins->result && ins->n_operands>=1) {
+                int cell=ins->operands[0]->id;
+                if (vra_is_slice_cell(V,cell) && cell_len[cell]>=0) V->slicelen[ins->result->id]=cell_len[cell];
             }
         }
+    free(cell_len);
 }
 
 // copy `src == dst` (equal values) into octagon o
