@@ -705,6 +705,35 @@ static void sema_widen_loop(StmtList *body, RangeTable *t) {
     }
 }
 
+// Does `body` contain a `break` that targets the CURRENT loop level? A break inside
+// a nested while/for breaks that inner loop, so it does not affect this loop's exit
+// condition — those are skipped. (A `continue` re-checks the condition, so it is
+// harmless too.) Used to decide whether the negated loop condition may be assumed
+// after the loop: with no such break, the loop exits only when the condition is false.
+static bool stmts_have_toplevel_break(StmtList *body);
+static bool stmt_has_toplevel_break(Stmt *s) {
+    if (!s) return false;
+    switch (s->kind) {
+        case STMT_BREAK: return true;
+        case STMT_IF:
+            return stmts_have_toplevel_break(s->as.if_stmt.then_body) ||
+                   stmts_have_toplevel_break(s->as.if_stmt.else_branch);
+        case STMT_MATCH:
+            for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next)
+                if (stmts_have_toplevel_break(c->body)) return true;
+            return false;
+        case STMT_UNSAFE: return stmts_have_toplevel_break(s->as.unsafe_stmt.body);
+        // Nested loops capture their own break — do not descend.
+        case STMT_WHILE: case STMT_FOR: return false;
+        default: return false;
+    }
+}
+static bool stmts_have_toplevel_break(StmtList *body) {
+    for (; body; body = body->next)
+        if (stmt_has_toplevel_break(body->stmt)) return true;
+    return false;
+}
+
 /*─────────────────────────────────────────────────────────────────────────────╗
 │ Inductive loop-invariant bounds (VRA)                                         │
 │                                                                               │
@@ -2764,6 +2793,16 @@ static void walk_stmt(Stmt *s) {
             // invalidate any guard whose variable the body assigns.
             sema_invalidate_guards_for_body(s->as.while_stmt.body);
             sema_invalidate_constraints_for_body(s->as.while_stmt.body);
+
+            // After the loop, the condition is FALSE — the loop ran until it failed.
+            // Apply the negated condition to the continuation so a post-loop use knows
+            // the exit state (`while j > 0 { … }` ends at j == 0, so `a[j]` == `a[0]`).
+            // Sound only with no `break` at this loop level (a break can leave the loop
+            // with the condition still true); widening above already reset the loop
+            // vars, so this refines that sound over-approximation, never loosens it.
+            if (sema_ranges && !stmts_have_toplevel_break(s->as.while_stmt.body)) {
+                sema_apply_negated_constraint(s->as.while_stmt.cond, sema_ranges);
+            }
             break;
         case STMT_ASSIGN:
             sema_infer_expr(s->as.assign_stmt.expr);

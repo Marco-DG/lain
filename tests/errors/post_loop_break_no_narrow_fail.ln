@@ -1,0 +1,20 @@
+// EXPECT: [E085]
+// SOUNDNESS: the negated loop condition may be assumed after the loop ONLY when no
+// `break` can leave it early. Here the loop can `break` with j still > 0, so j is NOT
+// provably 0 afterwards and `a[j]` (which could then read out of bounds — j up to
+// n-1 but the array logic doesn't guarantee j < n post-break) must be rejected.
+func f(a i32[n], n usize) i32 {
+    if n == 0 { return 0 }
+    var j = n
+    while j > 0 {
+        if a[j - 1] > 100 {
+            break
+        }
+        j = j - 1
+    }
+    return a[j]
+}
+proc main() i32 {
+    var a i32[3] = [1, 2, 3]
+    return f(a, 3)
+}

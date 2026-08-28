@@ -1,0 +1,19 @@
+// After a `while cond` loop with no `break`, the condition is FALSE — the loop ran
+// until it failed. `while j > 0 { j = j - 1 }` therefore ends with j == 0 (usize),
+// so a post-loop `a[j]` is `a[0]` and proves in bounds with no extra guard. This is
+// the shift-and-insert tail write of insertion sort. Self-checking: exit 0.
+func last_to_first(a i32[n], n usize) i32 {
+    if n == 0 { return 0 }
+    var j = n - 1
+    while j > 0 {
+        j = j - 1
+    }
+    return a[j]
+}
+proc main() i32 {
+    var a i32[3] = [7, 8, 9]
+    if last_to_first(a, 3) == 7 {
+        return 0
+    }
+    return 1
+}
