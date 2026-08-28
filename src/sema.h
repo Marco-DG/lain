@@ -2411,6 +2411,47 @@ static void walk_stmt(Stmt *s) {
             sema_invalidate_guards_for_body(s->as.if_stmt.else_branch);
             sema_invalidate_constraints_for_body(s->as.if_stmt.then_body);
             sema_invalidate_constraints_for_body(s->as.if_stmt.else_branch);
+
+            // One-armed clamp `if x <relop> C { x = D }`: the walk above restored the
+            // pre-if state, discarding both paths, so a defensive clamp
+            // (`if x > MAX { x = MAX }`) left x wide afterward. Recover x's post-if
+            // range as the JOIN of the then-path (x = D) and the fall-through (x under
+            // the negated guard). Sound: a union over-approximates both paths.
+            if (sema_ranges && !then_returns && s->as.if_stmt.else_branch == NULL) {
+                Expr *c = s->as.if_stmt.cond;
+                StmtList *tb = s->as.if_stmt.then_body;
+                if (c && c->kind == EXPR_BINARY &&
+                    c->as.binary_expr.left && c->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                    c->as.binary_expr.right && c->as.binary_expr.right->kind == EXPR_LITERAL &&
+                    tb && tb->next == NULL && tb->stmt && tb->stmt->kind == STMT_ASSIGN &&
+                    tb->stmt->as.assign_stmt.target &&
+                    tb->stmt->as.assign_stmt.target->kind == EXPR_IDENTIFIER &&
+                    tb->stmt->as.assign_stmt.expr &&
+                    tb->stmt->as.assign_stmt.expr->kind == EXPR_LITERAL) {
+                    Id *xv = c->as.binary_expr.left->as.identifier_expr.id;
+                    Id *tv = tb->stmt->as.assign_stmt.target->as.identifier_expr.id;
+                    if (xv && tv && xv->length == tv->length &&
+                        strncmp(xv->name, tv->name, (size_t)xv->length) == 0) {
+                        TokenKind op = c->as.binary_expr.op;
+                        int64_t C = c->as.binary_expr.right->as.literal_expr.value;
+                        int64_t D = tb->stmt->as.assign_stmt.expr->as.literal_expr.value;
+                        Range el = range_get(sema_ranges, xv);
+                        if (!el.known) el = (Range){INT64_MIN, INT64_MAX, true};
+                        switch (op) {   // el := x under !(x op C)
+                            case TOKEN_ANGLE_BRACKET_RIGHT:       if (C   < el.max) el.max = C;   break;
+                            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (C-1 < el.max) el.max = C-1; break;
+                            case TOKEN_ANGLE_BRACKET_LEFT:        if (C   > el.min) el.min = C;   break;
+                            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (C+1 > el.min) el.min = C+1; break;
+                            default: el.known = false; break;
+                        }
+                        if (el.known && el.min <= el.max) {
+                            int64_t lo = D < el.min ? D : el.min;
+                            int64_t hi = D > el.max ? D : el.max;
+                            range_set(sema_ranges, xv, range_make(lo, hi));
+                        }
+                    }
+                }
+            }
             break;
         }
         case STMT_FOR: {

@@ -1,0 +1,13 @@
+// EXPECT: [E085]
+// SOUNDNESS: the clamp join is a real union, not a blanket narrowing. `if x < 63 { x =
+// 63 }` leaves the fall-through path with x >= 63 (possibly huge, since `seed` spans the
+// whole type range), so the join is [63, ...] and `a[x]` is NOT provably in bounds.
+func use_bad(seed usize) i32 {
+    var a i32[64] = [0 for z in 0..64]
+    var x = seed
+    if x < 63 {
+        x = 63
+    }
+    return a[x]
+}
+proc main() i32 { return use_bad(5) }

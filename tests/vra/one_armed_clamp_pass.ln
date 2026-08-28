@@ -1,0 +1,17 @@
+// The ubiquitous defensive clamp `if x > MAX { x = MAX }` establishes x <= MAX on the
+// fall-through: the one-armed if is a JOIN of the then-path (x = MAX) and the negated
+// guard (x <= MAX), so a subsequent `a[x]` proves in bounds. Previously the if-walk
+// restored the pre-if range and the clamp was lost. `seed` carries only its type range
+// [0, USIZE_MAX] inside the function, so the clamp is genuinely needed.
+func use_clamped(seed usize) i32 {
+    var a i32[64] = [0 for z in 0..64]
+    var x = seed
+    if x > 63 {
+        x = 63
+    }
+    return a[x]
+}
+proc main() i32 {
+    if use_clamped(5) == 0 { return 0 }
+    return 1
+}

@@ -1,0 +1,126 @@
+// TRUST: a recursive-descent calculator (tokenize -> parse -> evaluate) for
+// `12 + 34 * (5 - 6)` = -22. A dogfooding integration test: mutual recursion
+// (expr/term/factor as procs), operator precedence, parentheses, a fixed token
+// buffer sliced to its valid count via a clamp, and `var pos` cursor threading.
+// Compiles gcc-clean, runs ASan-clean, self-checking.
+extern proc libc_printf(fmt *u8, ...) i32
+type Token {
+    kind i32
+    value i32
+}
+func is_digit(c u8) bool { return c >= 48 and c <= 57 }
+
+proc tokenize(src u8[], var out Token[m], m usize) usize {
+    var n usize = 0
+    var i usize = 0
+    while i < src.len {
+        var c = src[i]
+        if c == 32 {
+            i = i + 1
+        } else {
+            if is_digit(c) {
+                var val i32 = 0
+                while i < src.len {
+                    if is_digit(src[i]) {
+                        val = val *% 10 +% (src[i] as i32 -% 48)
+                        i = i + 1
+                    } else {
+                        break
+                    }
+                }
+                if n < m {
+                    out[n].kind = 0
+                    out[n].value = val
+                    n = n + 1
+                }
+            } else {
+                var k i32 = 0
+                if c == 43 { k = 1 }
+                if c == 45 { k = 2 }
+                if c == 42 { k = 3 }
+                if c == 47 { k = 4 }
+                if c == 40 { k = 5 }
+                if c == 41 { k = 6 }
+                if n < m {
+                    out[n].kind = k
+                    out[n].value = 0
+                    n = n + 1
+                }
+                i = i + 1
+            }
+        }
+    }
+    return n
+}
+
+proc parse_factor(toks Token[], var pos usize) i32 {
+    if pos >= toks.len { return 0 }
+    var t = toks[pos]
+    if t.kind == 0 {
+        pos = pos + 1
+        return t.value
+    }
+    if t.kind == 5 {
+        pos = pos + 1
+        var inner = parse_expr(toks, var pos)
+        if pos < toks.len and toks[pos].kind == 6 {
+            pos = pos + 1
+        }
+        return inner
+    }
+    return 0
+}
+
+proc parse_term(toks Token[], var pos usize) i32 {
+    var left = parse_factor(toks, var pos)
+    while pos < toks.len {
+        var k = toks[pos].kind
+        if k == 3 {
+            pos = pos + 1
+            left = left *% parse_factor(toks, var pos)
+        } else if k == 4 {
+            pos = pos + 1
+            var d = parse_factor(toks, var pos)
+            if d != 0 {
+                left = left / d
+            }
+        } else {
+            break
+        }
+    }
+    return left
+}
+
+proc parse_expr(toks Token[], var pos usize) i32 {
+    var left = parse_term(toks, var pos)
+    while pos < toks.len {
+        var k = toks[pos].kind
+        if k == 1 {
+            pos = pos + 1
+            left = left +% parse_term(toks, var pos)
+        } else if k == 2 {
+            pos = pos + 1
+            left = left -% parse_term(toks, var pos)
+        } else {
+            break
+        }
+    }
+    return left
+}
+
+proc main() i32 {
+    var src = "12 + 34 * (5 - 6)"
+    var toks Token[64] = [Token(0, 0) for x in 0..64]
+    var count = tokenize(src, var toks, 64)
+    if count > 64 {
+        count = 64
+    }
+    var view = toks[0..count]
+    var pos usize = 0
+    var result = parse_expr(view, var pos)
+    // 12 + 34 * (5 - 6) = 12 - 34 = -22
+    if result == 0 - 22 {
+        return 0
+    }
+    return 1
+}
