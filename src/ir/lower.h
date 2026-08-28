@@ -398,6 +398,53 @@ static bool ir_cmp_op(TokenKind t, bool sgn, IrCmp *c) {
     }
 }
 
+// Recursively resolve a callee-scope length expression at a CALL SITE into caller values —
+// each callee param name is substituted by the matching call argument (ident / `x.len` via
+// ir_resolve_contract_rhs; +/-/* recurse). NULL if any leaf is unresolvable → fail-closed:
+// no call-site length assert is emitted, so the callee's entry length-assume goes unlicensed
+// and the chain simply won't fully verify (sound: we never trust an unproven length).
+static IrValue *ir_resolve_len_expr(LowerCtx *c, Decl *callee, IrInstr *call, Expr *e, IrType *ty) {
+    if (!e) return NULL;
+    if (e->kind==EXPR_BINARY) {
+        IrOp op; IrWrapMode wrap;
+        if (!ir_bin_op(e->as.binary_expr.op, false, &op, &wrap)) return NULL;
+        IrValue *l = ir_resolve_len_expr(c, callee, call, e->as.binary_expr.left, ty);
+        IrValue *r = ir_resolve_len_expr(c, callee, call, e->as.binary_expr.right, ty);
+        if (!l || !r) return NULL;
+        return ir_binop(c->f, c->cur, op, l, r, ty);
+    }
+    return ir_resolve_contract_rhs(c, callee, call, e, ty);   // literal / param ident / x.len
+}
+
+// C (dependent-length requires — the soundness dual of ir_lower_slice_len_refinement): at a
+// call, for each callee param declared as a sized slice `T[expr]`, assert
+// `len(arg) relop resolve(expr)` (equality ⇒ both directions, matching the entry assume).
+// This licenses the callee's entry `assume(len == expr)`; without it the callee would trust
+// that the caller passed a correctly-sized buffer — a front-end that let a short slice
+// through would make the callee prove a false `out[i]` bound. Fail-closed if unresolvable.
+static void ir_lower_call_slice_len_requires(LowerCtx *c, Decl *callee, IrInstr *call) {
+    if (!callee || callee->kind==DECL_STRUCT) return;
+    int idx=0;
+    for (DeclList *p=callee->as.function_decl.params; p; p=p->next, idx++) {
+        if (!p->decl || p->decl->kind!=DECL_VARIABLE) continue;
+        if (idx >= call->n_operands) break;
+        Type *pty = p->decl->as.variable_decl.type;
+        if (!pty || pty->kind!=TYPE_ARRAY || pty->array_len>=0 || !pty->size_expr) continue;
+        IrValue *arg = call->operands[idx];
+        if (!arg || !arg->type || arg->type->kind!=IRT_SLICE) continue;
+        IrValue *L  = ir_slice_len(c->f, c->cur, arg);
+        IrValue *rv = ir_resolve_len_expr(c, callee, call, pty->size_expr, ir_type_int(c->a,64,false));
+        if (!rv || !rv->type || rv->type->kind!=IRT_INT) continue;  // fail-closed
+        if (pty->size_relop == TOKEN_EQUAL_EQUAL) {                 // len == expr ⇒ both dirs
+            ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_UGE, L, rv));
+            ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULE, L, rv));
+        } else { IrCmp cmp;
+            if (ir_tok_cmp(pty->size_relop, false, &cmp))
+                ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, L, rv));
+        }
+    }
+}
+
 // address of an lvalue (identifier slot / index / member) — for assignment + index.
 static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
     if (e->kind == EXPR_IDENTIFIER) {
@@ -592,7 +639,8 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 ins->operands[i] = av;
                 if (pp) pp = pp->next;
             }
-            ir_lower_call_requires(c, callee, ins);   // contracts: prove the callee's preconditions
+            ir_lower_call_requires(c, callee, ins);   // contracts: prove the callee's scalar preconditions
+            ir_lower_call_slice_len_requires(c, callee, ins);  // …and its sized-slice length preconditions
             ir_emit(c->cur, ins);
             if (ins->result) ir_lower_return_ensures(c, callee, ins->result, ins);  // contracts: learn the ensures
             return ins->result ? ins->result : ir_const_int(c->f,c->cur,0,ir_type_int(c->a,32,true));
