@@ -22,7 +22,7 @@ static IrType *arr_i(int n){ IrType *t=ir_type_new(&A,IRT_ARRAY); t->elem=ir_typ
 
 // ── the generated shape ──────────────────────────────────────────────────────
 //   var a i32[N]; var i = INIT; while i <CMP> BOUND { a[ IDX(i) ]; i = i + STEP }
-// IDX(i) ∈ { i, i+C, i-C }.  All constants small; i stays well within int64.
+// IDX(i) ∈ { i, i+C, i-C, i&C, i%C, C-i }.  All constants small; i within int64.
 typedef struct { int N, init, bound, step, idx_kind, idx_c; IrCmp cmp; IrInstr *ep; } Spec;
 
 static IrFunc *gen(Spec *s) {
@@ -41,6 +41,7 @@ static IrFunc *gen(Spec *s) {
     else if (s->idx_kind==2) idx=ir_binop(f,body,IR_SUB,iv2,ir_const_int(f,body,s->idx_c,i32),i32);
     else if (s->idx_kind==3) idx=ir_binop(f,body,IR_AND,iv2,ir_const_int(f,body,s->idx_c,i32),i32);
     else if (s->idx_kind==4) idx=ir_binop(f,body,IR_UREM,iv2,ir_const_int(f,body,s->idx_c?s->idx_c:1,i32),i32);
+    else if (s->idx_kind==5) idx=ir_binop(f,body,IR_SUB,ir_const_int(f,body,s->idx_c,i32),iv2,i32);  // c - i
     ir_elem_ptr(f,body,a,idx,i32);
     s->ep = body->instrs_tail;                 // the elem_ptr INSTRUCTION we just emitted
     IrValue *iv3=ir_load(f,body,islot,i32);
@@ -114,7 +115,7 @@ int main(void) {
         s.init = rand()%4;
         s.bound = rand()%(s.N+3);
         s.step = 1+rand()%3;
-        s.idx_kind = rand()%5;          // i, i+c, i-c, i&c, i%c
+        s.idx_kind = rand()%6;          // i, i+c, i-c, i&c, i%c
         s.idx_c = rand()%16;
         s.cmp = (rand()%2)?IR_CMP_SLT:IR_CMP_SLE;
         IrFunc *f=gen(&s);

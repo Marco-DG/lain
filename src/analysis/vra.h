@@ -118,12 +118,19 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
         case IR_ADD: case IR_SUB: {
             if (r<0) break;
             int a=ins->operands[0]->id, b=ins->operands[1]->id;
-            bool ac=V->cknown[a], bc=V->cknown[b];
+            bool ac=V->cknown[a], bc=V->cknown[b], isadd=(ins->op==IR_ADD);
             oct_forget(W, r);
-            if (ins->op==IR_ADD && bc)      { oct_add_diff_le(W,r,a,V->cval[b]); oct_add_diff_le(W,a,r,-V->cval[b]); }
-            else if (ins->op==IR_ADD && ac) { oct_add_diff_le(W,r,b,V->cval[a]); oct_add_diff_le(W,b,r,-V->cval[a]); }
-            else if (ins->op==IR_SUB && bc) { oct_add_diff_le(W,r,a,-V->cval[b]); oct_add_diff_le(W,a,r,V->cval[b]); }
-            // else: two-variable result — not octagon-expressible, left free
+            if (isadd && bc)      { oct_add_diff_le(W,r,a,V->cval[b]); oct_add_diff_le(W,a,r,-V->cval[b]); }   // r=a+c (exact)
+            else if (isadd && ac) { oct_add_diff_le(W,r,b,V->cval[a]); oct_add_diff_le(W,b,r,-V->cval[a]); }
+            else if (!isadd && bc){ oct_add_diff_le(W,r,a,-V->cval[b]); oct_add_diff_le(W,a,r,V->cval[b]); }   // r=a-c (exact)
+            else if (!isadd && ac){ int64_t c=V->cval[a]; oct_add_sum_le(W,r,b,c); oct_add_negsum_le(W,r,b,-c); } // r=c-b ⇒ r+b=c
+            else {
+                // two-variable: sound difference bounds from the second operand's interval
+                //   r=a+b, b∈[blo,bhi] ⇒ a+blo ≤ r ≤ a+bhi ;  r=a-b ⇒ a-bhi ≤ r ≤ a-blo
+                int64_t blo,bhi; bool hl,hh; oct_interval(W,b,&blo,&hl,&bhi,&hh);
+                if (isadd) { if (hh) oct_add_diff_le(W,r,a,bhi); if (hl) oct_add_diff_le(W,a,r,-blo); }
+                else       { if (hl) oct_add_diff_le(W,r,a,-blo); if (hh) oct_add_diff_le(W,a,r,bhi); }
+            }
             break;
         }
         case IR_AND: {   // x & c  with c ≥ 0 constant  ⇒  0 ≤ r ≤ c   (mask idiom c=N−1)

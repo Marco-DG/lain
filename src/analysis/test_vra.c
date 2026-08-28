@@ -57,6 +57,28 @@ static bool counted_loop_proven(IrCmp cmp, int64_t bound, int alen) {
     return found && proven;
 }
 
+// REVERSE over a fixed array: `i=0; while i<N { a[(N-1)-i]; i+=1 }`. The index is
+// const − i (a sum relation r+i=N-1); with i∈[0,N-1] the octagon gets r∈[0,N-1].
+static bool reverse_fixed_proven(int N) {
+    IrFunc *f=ir_func_new(&A,nm("rv"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *a=ir_alloca_array(f,e,arr_i32(N)), *islot=ir_alloca(f,e,i32);
+    ir_store(f,e,islot,ir_const_int(f,e,0,i32)); ir_set_br(e,head);
+    IrValue *iv=ir_load(f,head,islot,i32);
+    IrValue *cmp=ir_icmp(f,head,IR_CMP_SLT,iv,ir_const_int(f,head,N,i32));
+    ir_set_br_cond(head,cmp,body,ex);
+    IrValue *iv2=ir_load(f,body,islot,i32);
+    IrValue *idx=ir_binop(f,body,IR_SUB,ir_const_int(f,body,N-1,i32),iv2,i32);  // (N-1) - i
+    ir_elem_ptr(f,body,a,idx,i32);
+    IrValue *iv3=ir_load(f,body,islot,i32);
+    ir_store(f,body,islot,ir_binop(f,body,IR_ADD,iv3,ir_const_int(f,body,1,i32),i32));
+    ir_set_br(body,head); ir_set_ret(ex,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool ok=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_BOUNDS) ok=V->checks[i].ok;
+    vra_free(V); return ok;
+}
+
 // Build `a[i]=0` with `i` an unconstrained parameter over a length-`alen` array.
 static bool unguarded_param_proven(int alen) {
     IrFunc *f = ir_func_new(&A, nm("g"), ir_type_int(&A,32,true), IR_FUNC_PROC);
@@ -215,6 +237,7 @@ int main(void) {
     // MASK idiom — nonlinear transfer: x & (N-1) ∈ [0,N-1] for ANY x.
     vra_expect("mask a[x & 7] over a[8]  (0..7 < 8)",        mask_index_proven(7,8),  true);
     vra_expect("mask a[x & 15] over a[8] (0..15 escapes)",   mask_index_proven(15,8), false);
+    vra_expect("reverse a[(N-1)-i] over a[10]  (i<10)",       reverse_fixed_proven(10), true);
 
     if (failures==0) printf("VRA: all soundness+precision expectations met\n");
     else             printf("VRA: %d WRONG results\n", failures);
