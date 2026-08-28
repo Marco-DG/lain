@@ -26,6 +26,7 @@ typedef struct {
     IrFunc   *f;
     IrBlock  *cur;         // block currently being filled
     Arena    *a;
+    Decl     *fdecl;       // the function being lowered (for its own return ensures)
     IrLocal  *locals;
     bool      unsafe;      // inside an `unsafe` block (elem_ptr etc. become unchecked)
     // innermost loop targets, for break/continue
@@ -286,6 +287,32 @@ static void ir_lower_return_ensures(LowerCtx *c, Decl *callee, IrValue *v, IrIns
         IrCmp cmp;
         if (rv && ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp))
             ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, v, rv));
+    }
+}
+
+// B2 (ensures, CALLEE side — the soundness dual of ir_lower_return_ensures): at each
+// `return e` in a function declaring `result OP rhs`, emit `assert(e OP rhs)`. The callee
+// must PROVE its own postcondition; only that discharge licenses the caller's post-call
+// `assume`. Without this, the caller would trust a front-end ensures the IR never checks —
+// a lying/sketchy front-end could then prove a false bound from the returned value. rhs is
+// a literal or one of the callee's own params (scalar, in scope).
+static void ir_lower_return_ensures_assert(LowerCtx *c, IrValue *v) {
+    Decl *fn = c->fdecl;
+    if (!fn || fn->kind==DECL_STRUCT || !v || !v->type || v->type->kind!=IRT_INT) return;
+    for (ExprList *rc = fn->as.function_decl.return_constraints; rc; rc = rc->next) {
+        Expr *con = rc->expr;
+        if (!con || con->kind!=EXPR_BINARY) continue;
+        Expr *rhs = con->as.binary_expr.right;
+        IrValue *rv = NULL;
+        if (rhs && rhs->kind==EXPR_LITERAL) rv = ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, v->type);
+        else if (rhs && rhs->kind==EXPR_IDENTIFIER) {
+            IrLocal *l = ir_env_find(c, rhs->as.identifier_expr.id);
+            rv = (l && l->param) ? l->param : NULL;   // scalar param only (fail-closed otherwise)
+        }
+        IrCmp cmp;
+        if (rv && rv->type && rv->type->kind==IRT_INT &&
+            ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp))
+            ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, v, rv));
     }
 }
 
@@ -653,9 +680,12 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             break;
         }
         case STMT_EXPR: (void)ir_lower_expr(c, s->as.expr_stmt.expr); break;
-        case STMT_RETURN:
-            ir_set_ret(c->cur, s->as.return_stmt.value ? ir_lower_expr(c, s->as.return_stmt.value) : NULL);
+        case STMT_RETURN: {
+            IrValue *rv = s->as.return_stmt.value ? ir_lower_expr(c, s->as.return_stmt.value) : NULL;
+            if (rv) ir_lower_return_ensures_assert(c, rv);   // callee proves its own ensures
+            ir_set_ret(c->cur, rv);
             break;
+        }
         case STMT_IF: {
             IrValue *cond = ir_lower_expr(c, s->as.if_stmt.cond);
             IrBlock *tb = ir_new_block(c->f), *jb = ir_new_block(c->f);
@@ -818,6 +848,7 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     IrFunc *f = ir_func_new(a, fnm ? ir_intern(a, fnm->name, fnm->length) : NULL,
                             NULL, fn->kind==DECL_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
     f->src_decl = fn;   // opaque provenance (void*) — the IR never derefs it
+    cc.fdecl = fn;      // for callee-side return-ensures asserts
     cc.f = f; cc.cur = f->entry;
     f->ret_type = ir_lower_type(&cc, fn->as.function_decl.return_type);
     for (DeclList *p = fn->as.function_decl.params; p; p = p->next) {
