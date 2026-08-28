@@ -135,7 +135,7 @@ static IrType *ir_resolve_alias_base(LowerCtx *c, Decl *ad) {
 static int ir_field_index(IrType *st, Id *m, IrType **fty) {
     if (!st || st->kind != IRT_STRUCT || !m) return -1;
     for (int i = 0; i < st->n_fields; i++) {
-        Id *fn = st->field_names[i];
+        IrName *fn = st->field_names[i];   // IR-owned; compare against the AST member id
         if (fn && fn->length == m->length &&
             strncmp(fn->name, m->name, (size_t)m->length) == 0) {
             if (fty) *fty = st->fields[i];
@@ -181,18 +181,21 @@ static IrType *ir_lower_type(LowerCtx *c, Type *t) {
             Decl *sd = ir_find_struct_decl(c, t->base_type);
             if (sd) {
                 for (int i=0;i<c->scache_n;i++) if (c->scache_decl[i]==sd) return c->scache_type[i];
-                IrType *r = ir_type_new(c->a, IRT_STRUCT); r->struct_decl = sd;
+                IrType *r = ir_type_new(c->a, IRT_STRUCT);
+                Id *snm = sd->as.struct_decl.name;                    // intern the struct name
+                if (snm) r->sname = ir_intern(c->a, snm->name, snm->length);
                 if (c->scache_n < 64) { c->scache_decl[c->scache_n]=sd;
                                         c->scache_type[c->scache_n]=r; c->scache_n++; }
                 int nf=0; for (DeclList *fl=sd->as.struct_decl.fields; fl; fl=fl->next)
                     if (fl->decl && fl->decl->kind==DECL_VARIABLE) nf++;
                 r->n_fields = nf;
                 r->fields       = arena_push_many_aligned(c->a, IrType*, nf>0?nf:1);
-                r->field_names  = arena_push_many_aligned(c->a, Id*,     nf>0?nf:1);
+                r->field_names  = arena_push_many_aligned(c->a, IrName*, nf>0?nf:1);
                 int i=0; for (DeclList *fl=sd->as.struct_decl.fields; fl; fl=fl->next) {
                     if (!fl->decl || fl->decl->kind!=DECL_VARIABLE) continue;
                     r->fields[i]      = ir_lower_type(c, fl->decl->as.variable_decl.type);
-                    r->field_names[i] = fl->decl->as.variable_decl.name;
+                    Id *fnm = fl->decl->as.variable_decl.name;
+                    r->field_names[i] = fnm ? ir_intern(c->a, fnm->name, fnm->length) : NULL;
                     i++;
                 }
                 return r;
@@ -419,7 +422,8 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 return ir_struct_new(c->f, c->cur, ty, fs, n);
             }
             IrInstr *ins = ir_instr(c->f, IR_CALL, (e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT) ? ty : NULL, n);
-            ins->aux.callee = callee;
+            Id *cnm = callee ? callee->as.function_decl.name : NULL;   // intern the callee name
+            ins->aux.callee = cnm ? ir_intern(c->a, cnm->name, cnm->length) : NULL;
             DeclList *pp = callee ? callee->as.function_decl.params : NULL;
             int i=0;
             for (ExprList *a=e->as.call_expr.args; a; a=a->next,i++) {
@@ -688,9 +692,10 @@ static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl
 // ── entry: lower one function ────────────────────────────────────────────────
 IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     IrType tmp; LowerCtx cc = {0}; cc.a = a; cc.globals = globals; (void)tmp;
-    IrFunc *f = ir_func_new(a, fn->as.function_decl.name,
+    Id *fnm = fn->as.function_decl.name;
+    IrFunc *f = ir_func_new(a, fnm ? ir_intern(a, fnm->name, fnm->length) : NULL,
                             NULL, fn->kind==DECL_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
-    f->src_decl = fn;
+    f->src_decl = fn;   // opaque provenance (void*) — the IR never derefs it
     cc.f = f; cc.cur = f->entry;
     f->ret_type = ir_lower_type(&cc, fn->as.function_decl.return_type);
     for (DeclList *p = fn->as.function_decl.params; p; p = p->next) {
@@ -698,20 +703,21 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         Type   *pty = p->decl->as.variable_decl.type;
         IrType *pt  = ir_lower_type(&cc, pty);
         Id     *pnm = p->decl->as.variable_decl.name;
+        IrName *pin = pnm ? ir_intern(a, pnm->name, pnm->length) : NULL;   // IR-owned param name
         if (pt->kind == IRT_STRUCT && pty && pty->mode == MODE_MUTABLE) {
             // a `var` struct param is a mutable borrow — a pointer to the caller's
             // storage, so field writes propagate. The pointer *is* the slot.
             IrType *ptr = ir_type_new(cc.a, IRT_PTR); ptr->elem = pt; ptr->ptr_mut = true;
-            IrValue *pv = ir_add_param(f, ptr, pnm);
+            IrValue *pv = ir_add_param(f, ptr, pin);
             ir_env_add(&cc, pnm, pv, NULL);
         } else if (pt->kind == IRT_STRUCT) {
             // a by-value struct param: materialize to a slot so its fields address
-            IrValue *pv = ir_add_param(f, pt, pnm);
+            IrValue *pv = ir_add_param(f, pt, pin);
             IrValue *slot = ir_alloca(f, cc.cur, pt);
             ir_store(f, cc.cur, slot, pv);
             ir_env_add(&cc, pnm, slot, NULL);
         } else {
-            IrValue *pv = ir_add_param(f, pt, pnm);
+            IrValue *pv = ir_add_param(f, pt, pin);
             ir_env_add(&cc, pnm, NULL, pv);
             ir_lower_param_refinements(&cc, pv, pty, p->decl);   // refinements → entry assumes
         }

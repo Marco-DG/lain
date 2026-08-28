@@ -236,17 +236,17 @@ of A vs B is flexible but both precede porting analyses. Corpus green + fuzz-sou
 checkpoint (same ground rules).
 
 **Move A — sever the AST dependency (coherence).** Litmus test gates the whole move.
-- [ ] **A1 IR-owned types.** `IrType` carries its own struct descriptor (interned name +
+- [x] **A1 IR-owned types.** `IrType` carries its own struct descriptor (interned name +
       copied field types/offsets); drop `struct_decl: Decl*` as an identity/name source. Give
       every scalar/aggregate a self-contained C-ABI layout (size/align) so the backend needs no
       AST.
-- [ ] **A2 IR-owned symbols.** Replace `IrInstr.aux.callee: Decl*` with an interned IR function
+- [x] **A2 IR-owned symbols.** Replace `IrInstr.aux.callee: Decl*` with an interned IR function
       symbol (name + `IrFuncSig`). Callee identity is an IR concept.
-- [ ] **A3 IR-owned literals/provenance.** `aux.str.bytes` → interned IR string pool. Every
+- [x] **A3 IR-owned literals/provenance.** (`src_decl`→opaque `void*`; names interned) `aux.str.bytes` → interned IR string pool. Every
       node keeps only `{line, col, interned-name?}` provenance — never a live AST pointer.
-- [ ] **A4 No AST tokens in the IR.** Verify no residual `TokenKind`/AST enums in `ir.h`
+- [x] **A4 No AST tokens in the IR.** Verify no residual `TokenKind`/AST enums in `ir.h`
       (binops/cmps are already `IrOp`/`IrCmp` — audit).
-- [ ] **A5 GATE (litmus):** `src/ir/*.h` and `src/analysis/*.{h,c}` compile with **neither
+- [x] **A5 GATE (litmus) ✓ PASSES:** `src/ir/*.h` and `src/analysis/*.{h,c}` compile with **neither
       `ast.h` nor `token.h` included**. Lowering (`lower.h`) is the ONLY AST-aware unit — it is
       the front-end→IR *adapter*, not part of the IR.
 
@@ -325,6 +325,7 @@ share. Lives in `src/ir/pred.h`; spec annex documents it.
 ---
 
 ## STATUS LOG (update every session — newest first)
+- **2026-08-28 (32)** — **★ PHASE 2.9 MOVE A COMPLETE — the IR is SOVEREIGN (litmus PASSES).** `src/ir/*` and `src/analysis/*` now compile with **zero front-end headers** (proven: preprocessed litmus TU pulls in no `src/ast.h`/`token.h`/`lexer.h`/`parser.h`). ir.h imports only `def.h`+`arena.h`. Introduced **`IrName`** (IR-owned, **interned** — bytes copied, so the AST is freeable at runtime too); replaced `IrType.struct_decl:Decl*`→`sname:IrName*`, `field_names:Id**`→`IrName**`, `aux.callee:Decl*`→`IrName*` (function name), `aux.struct_decl` dropped, `IrFunc.name:Id*`→`IrName*`, `IrFunc.src_decl:Decl*`→opaque `void*`, `IrModule.types`→opaque. lower.h is the SOLE AST↔IR adapter (interns via `ir_intern`). `test_vra.c`/`fuzz_vra.c` are now themselves AST-free (pure IR+analysis). Caught one field-order bug (`ir_field_index` read `field_names` as `Id*` — different layout → struct field reads returned 0). Verified: gate 15/15, struct round-trips, reject 0-false, **fuzzer 600k trials 0-unsound**, corpus 625, accept-side 465/563. The soundness authority now stands on its own.
 - **2026-08-28 (31)** — **Phase 2.9 B1 STARTED — the verification `assume` node, and the first AST leak SEVERED.** Added `IR_ASSUME`/`IR_ASSERT` (op[0] = a bool that holds / must be discharged). Param refinements now lower to **entry `assume(icmp(param, const, op))` nodes** (`ir_lower_param_refinements` — lowering is the AST adapter, the IR then owns the fact). The VRA's transfer consumes `IR_ASSUME` by refining the octagon (reusing guard-refinement), and **the `f->src_decl` read is DELETED** (with the AST-reading `vra_seed_constraint`). `vra_while_lt_scalar` still 5/5 — but now the refinement is `assume %3` visible in the IR dump, not fished from the parse tree. `assume`/`assert` emit as no-op runtime code. Corpus 625, gate 15/15, reject 0-false. This is the pattern the whole verification layer follows: front-end fact → IR assume/assert → analysis consumes IR, never AST.
 - **2026-08-28 (30)** — **★ MAJOR REFRAME: IR SOVEREIGNTY (user-directed).** Committed the thesis that **Lain-IR is the semantic + soundness AUTHORITY** — a total, self-contained, verification-native IR that is simultaneously the codegen substrate; front-end and backend are replaceable clients. See the new "★ THE REFRAME" section + **Phase 2.9** (Move A: sever the AST dependency, litmus = `src/{ir,analysis}/*` compile without `ast.h`/`token.h`; Move B: `assume`/`assert`/`requires`/`ensures` + `opaque`/havoc replacing `incomplete` + refinements/regions as first-class IR type structure). Reorder: **2.9 BEFORE Phase 3** (porting borrow/linearity onto a still-AST-leaking IR would spread the coupling). Precedent noted: closest are Rust MIR, CompCert, Viper/Boogie; LLVM is the opposite (UB-exploiting). The `f->src_decl` refinement-seeding leak (added this session) is exhibit A of the coupling to remove. STARTING execution now with B1 (`IR_ASSUME` + refinements-as-assumes).
 - **2026-08-28 (29)** — **Param refinement constraints seeded into the entry octagon.** A refined param `n u32 < 4096` (or `i usize < 4`, `start u32 < 4090`) carries its constraint on the AST decl; the VRA now walks `f->src_decl`'s params alongside the IR params and seeds each `param OP <const>` into the entry octagon. So `src[i]` under `i < n` with `n < 4096 = src.len` proves — `vra_while_lt_scalar` 2/3 → **5/5**. Sound relative to the old engine (which enforces the precondition at call sites; a self-hosting replacement will need call-site precondition checks too, a Phase-3 item). Accept-side **454→465/563**, fully-proven **43→47**; reject-side **0 false proofs**.

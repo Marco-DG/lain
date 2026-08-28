@@ -7,14 +7,15 @@
 //   gcc -std=c99 -o /tmp/test_vra src/analysis/test_vra.c -I src && /tmp/test_vra
 #include "utils/common/def.h"
 #include "utils/arena.h"
-#include "ast.h"
+#include "utils/common/system/memory.h"
+/* no ast.h — this is a pure IR+analysis test (sovereignty) */
 #include "ir/ir.h"
 #include "ir/build.h"
 #include "analysis/vra.h"
 #include <stdio.h>
 
 static Arena A;
-static Id *nm(const char *s){ Id *i=arena_push_aligned(&A,Id); i->name=(char*)s; i->length=(isize)strlen(s); return i; }
+static IrName *nm(const char *s){ return ir_intern(&A, s, (isize)strlen(s)); }
 static IrType *arr_i32(int n){ IrType *t=ir_type_new(&A,IRT_ARRAY); t->elem=ir_type_int(&A,32,true); t->array_len=n; return t; }
 
 static int failures=0;

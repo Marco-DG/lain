@@ -14,7 +14,16 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../ast.h"   // Id, Arena, arena_push_*, Decl (callee), Type (bridge during lowering)
+#include "../utils/common/def.h"   // isize
+#include "../utils/arena.h"        // Arena, arena_push_*
+// SOVEREIGNTY: the IR imports NO front-end header (ast.h / token.h). It owns its
+// names (IrName, interned) and every fact it needs. lower.h is the sole AST↔IR
+// adapter. Litmus (Phase 2.9 A5): src/ir/* and src/analysis/* compile without ast.h.
+
+// An IR-owned interned name — the bytes are copied into the IR arena, so the AST is
+// freeable once lowering is done. Same field shape as the old Id (`name`,`length`)
+// to keep call sites stable.
+typedef struct IrName { char *name; isize length; } IrName;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types (design/ir.md §2). A fresh, analysis-facing type; the AST Type is bridged
@@ -46,9 +55,9 @@ typedef struct IrType {
     int64_t array_len;      // IRT_ARRAY fixed length (>= 0)
     // IRT_STRUCT — self-contained: carries its lowered field types + names so the
     // backend never re-touches the AST.
-    Decl *struct_decl;      // the declaring struct (identity / C name source)
+    IrName *sname;          // struct name (identity + C typedef name) — IR-owned
     struct IrType **fields; // lowered field types, in declaration order
-    Id  **field_names;      // field names (for the C typedef)
+    IrName **field_names;   // field names (for the C typedef)
     int   n_fields;
 } IrType;
 
@@ -67,7 +76,7 @@ typedef struct IrValue {
     // provenance (for debugging / back-mapping diagnostics to source)
     isize     line, col;
     // optional source name (diagnostics only — NEVER used as an analysis key)
-    Id       *src_name;
+    IrName   *src_name;
 } IrValue;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,8 +144,7 @@ typedef struct IrInstr {
         IrCastKind  cast_kind;  // IR_CAST
         IrType     *alloca_ty;  // IR_ALLOCA
         int32_t     field_idx;  // IR_FIELD_PTR
-        Decl       *callee;     // IR_CALL
-        Decl       *struct_decl;// IR_STRUCT_NEW
+        IrName     *callee;     // IR_CALL — the callee's name (IR-owned)
         struct { const char *bytes; int32_t len; } str;  // IR_STR_CONST
     } aux;
     IrPhiArg  *phi_args;    // IR_PHI
@@ -181,7 +189,7 @@ typedef struct IrParam { IrValue *value; struct IrParam *next; } IrParam;
 typedef enum { IR_FUNC_PURE, IR_FUNC_PROC } IrFuncKind;
 
 typedef struct IrFunc {
-    Id        *name;
+    IrName    *name;
     IrFuncKind kind;
     IrParam   *params;      // parameter values
     IrType    *ret_type;
@@ -190,7 +198,7 @@ typedef struct IrFunc {
     IrBlock   *blocks_tail; // O(1) append
     int32_t    next_value_id;
     int32_t    next_block_id;
-    Decl      *src_decl;    // originating AST decl (effects, return refinement, etc.)
+    void      *src_decl;    // OPAQUE provenance handle (front-end's; the IR never derefs it)
     bool       incomplete;  // lowering dropped/placeholder'd a construct ⇒ the IR is
                             // NOT faithful, so no analysis may claim a proof over it
     Arena     *arena;       // where this function's IR is allocated
@@ -199,7 +207,8 @@ typedef struct IrFunc {
 
 typedef struct IrModule {
     IrFunc  *funcs;
-    DeclList *types;        // struct/enum/extern-type decls (shared with the AST)
+    void    *types;         // TODO(2.9): IR-OWNED type table (struct/enum descriptors);
+                            // opaque for now — IrModule is not yet wired.
     Arena   *arena;
 } IrModule;
 

@@ -10,6 +10,16 @@
 #include <limits.h>
 #include "ir.h"
 
+// Intern a name into the IR arena (copies the bytes — the AST is then freeable).
+IrName *ir_intern(Arena *a, const char *s, isize len) {
+    IrName *n = arena_push_aligned(a, IrName);
+    char *buf = arena_push_many(a, char, len+1);
+    if (len>0) memcpy(buf, s, (size_t)len);
+    buf[len] = 0;
+    n->name = buf; n->length = len;
+    return n;
+}
+
 // ── types ────────────────────────────────────────────────────────────────────
 static IrType *ir_type_new(Arena *a, IrTypeKind k) {
     IrType *t = arena_push_aligned(a, IrType);
@@ -163,8 +173,7 @@ IrValue *ir_make_slice(IrFunc *f, IrBlock *b, IrValue *data, IrValue *len, IrTyp
 IrValue *ir_struct_new(IrFunc *f, IrBlock *b, IrType *sty, IrValue **fields, int n) {
     IrInstr *ins = ir_instr(f, IR_STRUCT_NEW, sty, n);
     for (int i=0;i<n;i++) ins->operands[i] = fields[i];
-    ins->aux.struct_decl = sty ? sty->struct_decl : NULL;
-    ir_emit(b, ins);
+    ir_emit(b, ins);   // the struct's name lives on the result type (sty->sname)
     return ins->result;
 }
 // Address of struct field #idx (base is the struct's address).
@@ -196,14 +205,14 @@ void ir_set_ret(IrBlock *b, IrValue *v /*NULL for unit*/) {
 void ir_set_unreachable(IrBlock *b) { b->term.kind = IR_TERM_UNREACHABLE; }
 
 // ── functions ────────────────────────────────────────────────────────────────
-IrFunc *ir_func_new(Arena *a, Id *name, IrType *ret, IrFuncKind kind) {
+IrFunc *ir_func_new(Arena *a, IrName *name, IrType *ret, IrFuncKind kind) {
     IrFunc *f = arena_push_aligned(a, IrFunc);
     memset(f, 0, sizeof *f);
     f->arena = a; f->name = name; f->ret_type = ret; f->kind = kind;
     f->entry = ir_new_block(f);
     return f;
 }
-IrValue *ir_add_param(IrFunc *f, IrType *t, Id *src_name) {
+IrValue *ir_add_param(IrFunc *f, IrType *t, IrName *src_name) {
     IrValue *v = ir_new_value(f, t);
     v->src_name = src_name;
     IrParam *p = arena_push_aligned(f->arena, IrParam);

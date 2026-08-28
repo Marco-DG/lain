@@ -66,8 +66,7 @@ static void ir_dump_instr(const IrInstr *ins, FILE *o) {
     fputc(' ', o);
     if (ins->op == IR_CONST) { fprintf(o, "%lld", (long long)ins->aux.imm); }
     else if (ins->op == IR_CALL) {
-        if (ins->aux.callee) fprintf(o, "@%.*s", (int)ins->aux.callee->as.function_decl.name->length,
-                                     ins->aux.callee->as.function_decl.name->name);
+        if (ins->aux.callee) fprintf(o, "@%.*s", (int)ins->aux.callee->length, ins->aux.callee->name);
         fputc('(', o);
         for (int i = 0; i < ins->n_operands; i++) { if (i) fputs(", ", o); ir_dump_val(ins->operands[i], o); }
         fputc(')', o);
