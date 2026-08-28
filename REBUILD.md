@@ -93,10 +93,12 @@ C  (or LLVM IR later)
       consumers (bounds/overflow/div/refinement); variable packing (mandatory); ℤ+overflow
       split; the nonlinear escape-hatch (catalogued lemmas, not recognizers); §8 maps the ~70
       current recognizers to (a) falls-out / (b) small transfer case / (c) nonlinear lemma.
-- [ ] **0.4 Recognizer catalog.** Table of *every* current special-case (mask, modulo, 2D,
-      offset, `.len`, bounded-counter, clamp-join, post-loop negation, return refinements, …)
-      → how it falls out of octagons natively, OR flag it as a deliberate domain extension.
-      This becomes the Phase-2 acceptance checklist.
+- [x] **0.4 Recognizer catalog.** → `design/recognizer-catalog.md`. All ~60 special-cases in
+      `ranges.h`/`bounds.h`/`sema.h` enumerated + classified. **Result: ~50 (a) fall out of the
+      octagon+CFG fixpoint (incl. the entire `__len_`/name-key machinery and ALL loop-invariant
+      recovery — liv/affine/bounded-counter/clamp-join/post-loop), ~9 (b) small nonlinear
+      transfer cases (mask/div/mod/shift/movemask/popcount), 1 (c) nonlinear lemma
+      (flattened-2D).** The pile is proven redundant, then deleted. This is the Phase-2.8 gate.
 - [ ] **0.5 Normative spec contract.** Rewrite `spec/chapters/13-vra.tex` to state the
       *guarantee* abstractly (accepted ⇒ safe; refinement semantics), decoupled from the
       algorithm. Point to the design annex.
