@@ -728,22 +728,29 @@ static void ir_lower_stmts(LowerCtx *c, StmtList *body) {
 // then owns it; no analysis re-reads the AST. (Sovereignty: lowering is the adapter.)
 static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl *pdecl) {
     if (!pv || !pv->type || pv->type->kind != IRT_INT || !pdecl) return;
-    bool sgn = !(pty && pty->kind==TYPE_SIMPLE && pty->int_width_cache>0 && !pty->int_signed_cache);
+    (void)pty;
+    bool sgn = pv->type->is_signed;
     for (ExprList *cn = pdecl->as.variable_decl.constraints; cn; cn = cn->next) {
         Expr *con = cn->expr;
         if (!con || con->kind != EXPR_BINARY) continue;
         Expr *rhs = con->as.binary_expr.right;
-        if (!rhs || rhs->kind != EXPR_LITERAL) continue;   // constant RHS only (for now)
         IrCmp cmp;
-        switch (con->as.binary_expr.op) {
-            case TOKEN_ANGLE_BRACKET_LEFT:        cmp = sgn?IR_CMP_SLT:IR_CMP_ULT; break;
-            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  cmp = sgn?IR_CMP_SLE:IR_CMP_ULE; break;
-            case TOKEN_ANGLE_BRACKET_RIGHT:       cmp = sgn?IR_CMP_SGT:IR_CMP_UGT; break;
-            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: cmp = sgn?IR_CMP_SGE:IR_CMP_UGE; break;
-            default: continue;   // == / != — skip for now
+        if (!ir_tok_cmp(con->as.binary_expr.op, sgn, &cmp)) continue;   // skip == / !=
+        // resolve the RHS: a literal (the constraint expr is untyped, so give it the
+        // param's type), a length `a.len`, or another param `m`.
+        IrValue *rv = NULL;
+        if (rhs && rhs->kind==EXPR_LITERAL) {
+            rv = ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, pv->type);
+        } else if (rhs && rhs->kind==EXPR_MEMBER && rhs->as.member_expr.member
+                && rhs->as.member_expr.member->length==3
+                && strncmp(rhs->as.member_expr.member->name,"len",3)==0) {
+            IrValue *tv = ir_lower_expr(c, rhs->as.member_expr.target);   // a
+            if (tv && tv->type && tv->type->kind==IRT_SLICE) rv = ir_slice_len(c->f, c->cur, tv);
+        } else if (rhs) {
+            rv = ir_lower_expr(c, rhs);
         }
-        IrValue *rv = ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, pv->type);
-        ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, pv, rv));
+        if (rv && rv->type && rv->type->kind==IRT_INT)
+            ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, pv, rv));
     }
 }
 
@@ -777,17 +784,19 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         } else {
             IrValue *pv = ir_add_param(f, pt, pin);
             ir_env_add(&cc, pnm, NULL, pv);
-            ir_lower_param_refinements(&cc, pv, pty, p->decl);   // refinements → entry assumes
         }
     }
-    // second pass (all params now in scope): dependent-length constraints `i32[m]`
+    // second pass (all params now in scope, so RHS `m`/`a.len` resolve): scalar refinements
+    // (`n < 4096`, `i < a.len`) and dependent-length constraints (`out i32[m]`) → entry assumes.
     for (DeclList *p = fn->as.function_decl.params; p; p = p->next) {
         if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
         Type *pty = p->decl->as.variable_decl.type;
-        if (pty && pty->kind==TYPE_ARRAY && pty->array_len<0 && pty->size_expr) {
-            IrLocal *l = ir_env_find(&cc, p->decl->as.variable_decl.name);
-            if (l && l->param) ir_lower_slice_len_refinement(&cc, l->param, pty);
-        }
+        IrLocal *l = ir_env_find(&cc, p->decl->as.variable_decl.name);
+        IrValue *pv = l ? l->param : NULL;
+        if (pv && pv->type && pv->type->kind==IRT_INT)
+            ir_lower_param_refinements(&cc, pv, pty, p->decl);
+        if (pv && pty && pty->kind==TYPE_ARRAY && pty->array_len<0 && pty->size_expr)
+            ir_lower_slice_len_refinement(&cc, pv, pty);
     }
     ir_lower_stmts(&cc, fn->as.function_decl.body);
     if (!ir_is_set_term(cc.cur))
