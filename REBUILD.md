@@ -287,6 +287,17 @@ share. Lives in `src/ir/pred.h`; spec annex documents it.
 - [ ] **3.5 GATE:** full parity across the corpus + fuzzers; make IR pipeline the default;
       delete `src/sema/`; update docs.
 
+## Phase 2.95 — Documentation deliverables (SCHEDULED, write FROM the stable engine)
+- [ ] **Lain-IR spec** (`spec/` chapter + annex, normative) and **thesis** (`.tex`, expository)
+      — one sovereign, verification-native IR. Outline + gating in
+      `internal/design/IR_THESIS_SPEC_PLAN.md`. Write at end of 2.9 (IR feature-stable),
+      refresh after Phase 3. Rule: docs track reality — never ahead of the code.
+- [ ] **Front-end limits log** — `internal/design/lain_language_limits.md` (running): the
+      surface language is lagging the IR's expressiveness (refinements far weaker than the
+      assume/assert layer; no source `assume`/`assert`; refinement exprs untyped; narrow
+      dependent lengths; coarse effects). Input to a future FRONT-END REWORK. Accumulate; the
+      north star is "anything the IR can verify, the language should be able to state."
+
 ## Phase 4 — Backend & beyond  ⟶ deliverable: leverage the clean IR
 
 - [ ] **4.1 Better C emission / IR-level optimization** (the recognizers become real opts).
