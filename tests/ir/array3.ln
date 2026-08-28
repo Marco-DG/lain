@@ -1,0 +1,9 @@
+proc main() i32 {
+    var a i32[4] = [0, 0, 0, 0]
+    var i i32 = 0
+    while i < 4 {
+        a[i] = i
+        i = i + 1
+    }
+    return a[3] - 3
+}

@@ -101,6 +101,15 @@ IrValue *ir_alloca(IrFunc *f, IrBlock *b, IrType *slot_ty) {
     ir_emit(b, ins);
     return ins->result;
 }
+// A fixed-array local: the alloca decays to an element pointer (result type *elem),
+// while aux.alloca_ty records the ARRAY type so the backend declares `elem slot[N]`.
+IrValue *ir_alloca_array(IrFunc *f, IrBlock *b, IrType *arr_ty) {
+    IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = arr_ty->elem;
+    IrInstr *ins = ir_instr(f, IR_ALLOCA, pt, 0);
+    ins->aux.alloca_ty = arr_ty;   // IRT_ARRAY(elem, N)
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_load(IrFunc *f, IrBlock *b, IrValue *addr, IrType *t) {
     IrInstr *ins = ir_instr(f, IR_LOAD, t, 1);
     ins->operands[0] = addr;

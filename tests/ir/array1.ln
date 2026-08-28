@@ -1,0 +1,4 @@
+proc main() i32 {
+    var a i32[4] = [10, 20, 30, 40]
+    return a[0] - 10
+}

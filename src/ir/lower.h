@@ -15,8 +15,10 @@
 // ── local environment (the name→storage map — the AST/IR boundary) ───────────
 typedef struct IrLocal {
     Id      *name;
-    IrValue *slot;        // alloca address for a local (load/store)
+    IrValue *slot;        // alloca address for a scalar local (load/store), OR the
+                          // element-base pointer for an aggregate local
     IrValue *param;       // param value (read directly; NULL if it's a slot local)
+    bool     aggregate;   // array/slice/struct: `slot` is the base, read it directly
     struct IrLocal *next;
 } IrLocal;
 
@@ -44,7 +46,11 @@ static IrLocal *ir_env_find(LowerCtx *c, Id *name) {
 }
 static void ir_env_add(LowerCtx *c, Id *name, IrValue *slot, IrValue *param) {
     IrLocal *l = arena_push_aligned(c->a, IrLocal);
-    l->name = name; l->slot = slot; l->param = param; l->next = c->locals; c->locals = l;
+    l->name = name; l->slot = slot; l->param = param; l->aggregate = false;
+    l->next = c->locals; c->locals = l;
+}
+static bool ir_type_is_agg(IrType *t) {
+    return t && (t->kind==IRT_ARRAY || t->kind==IRT_SLICE || t->kind==IRT_STRUCT);
 }
 
 // ── type bridge: AST Type → IrType (core cases) ──────────────────────────────
@@ -148,6 +154,7 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
         case EXPR_IDENTIFIER: {
             IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
             if (l && l->param) return l->param;
+            if (l && l->aggregate) return l->slot;   // array/slice base pointer, read directly
             if (l && l->slot)  return ir_load(c->f, c->cur, l->slot,
                                               l->slot->type->elem ? l->slot->type->elem : ty);
             return ir_const_int(c->f, c->cur, 0, ty);   // unresolved (e.g. global) — placeholder
@@ -212,6 +219,24 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             IrType *slot_ty = s->as.var_stmt.type ? ir_lower_type(c, s->as.var_stmt.type)
                             : (s->as.var_stmt.expr ? ir_lower_type(c, s->as.var_stmt.expr->type)
                                                    : ir_type_int(c->a,32,true));
+            if (ir_type_is_agg(slot_ty)) {
+                IrValue *agg = slot_ty->kind==IRT_ARRAY ? ir_alloca_array(c->f, c->cur, slot_ty)
+                                                        : ir_alloca(c->f, c->cur, slot_ty);
+                IrLocal *l = arena_push_aligned(c->a, IrLocal);
+                l->name = s->as.var_stmt.name; l->slot = agg; l->param = NULL;
+                l->aggregate = true; l->next = c->locals; c->locals = l;
+                // array-literal initializer: store each element at its index
+                Expr *init = s->as.var_stmt.expr;
+                if (init && init->kind == EXPR_ARRAY_LITERAL && slot_ty->kind==IRT_ARRAY) {
+                    int k = 0;
+                    for (ExprList *el = init->as.array_literal_expr.elements; el; el = el->next, k++) {
+                        IrValue *idx = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,64,false));
+                        IrValue *p   = ir_elem_ptr(c->f, c->cur, agg, idx, slot_ty->elem);
+                        ir_store(c->f, c->cur, p, ir_lower_expr(c, el->expr));
+                    }
+                }
+                break;
+            }
             IrValue *slot = ir_alloca(c->f, c->cur, slot_ty);
             if (s->as.var_stmt.expr) ir_store(c->f, c->cur, slot, ir_lower_expr(c, s->as.var_stmt.expr));
             ir_env_add(c, s->as.var_stmt.name, slot, NULL);

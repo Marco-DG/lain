@@ -53,7 +53,13 @@ static const char *ir_arith_c(IrOp op) {
 static void ir_emit_instr_c(IrInstr *i, FILE *o) {
     switch (i->op) {
         case IR_CONST:  fprintf(o, "  v%d = %lld;\n", i->result->id, (long long)i->aux.imm); break;
-        case IR_ALLOCA: fprintf(o, "  v%d = &slot%d;\n", i->result->id, i->result->id); break;
+        case IR_ALLOCA: // array decays to its element base; scalar takes the slot address
+            if (i->aux.alloca_ty && i->aux.alloca_ty->kind==IRT_ARRAY)
+                 fprintf(o, "  v%d = slot%d;\n",  i->result->id, i->result->id);
+            else fprintf(o, "  v%d = &slot%d;\n", i->result->id, i->result->id);
+            break;
+        case IR_ELEM_PTR: fprintf(o, "  v%d = &v%d[v%d];\n", i->result->id,
+                                  i->operands[0]->id, i->operands[1]->id); break;
         case IR_LOAD:   fprintf(o, "  v%d = *v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_STORE:  fprintf(o, "  *v%d = v%d;\n", i->operands[0]->id, i->operands[1]->id); break;
         case IR_ICMP:   fprintf(o, "  v%d = (v%d %s v%d);\n", i->result->id,
@@ -93,18 +99,30 @@ static void ir_emit_func_c(IrFunc *f, FILE *o, Arena *a) {
         fputc(')', o);
     }
     fputs(" {\n", o);
-    // declare all non-param values at the top + alloca slots
+    // declare all non-param values at the top, plus a backing slot for each alloca
     IrValTab vt = { arena_push_many_aligned(a, IrValue*, f->next_value_id), f->next_value_id };
-    for (int k=0;k<vt.n;k++) vt.v[k]=NULL;
+    IrType **alloca_ty = arena_push_many_aligned(a, IrType*, f->next_value_id);
+    for (int k=0;k<vt.n;k++){ vt.v[k]=NULL; alloca_ty[k]=NULL; }
     ir_collect_vals(f, &vt);
+    for (IrBlock *b=f->blocks; b; b=b->next)
+        for (IrInstr *i=b->instrs; i; i=i->next)
+            if (i->op==IR_ALLOCA && i->result) alloca_ty[i->result->id] = i->aux.alloca_ty;
     bool param[4096] = {0};
     for (IrParam *p=f->params; p; p=p->next) if (p->value->id < 4096) param[p->value->id]=true;
     for (int id=0; id<vt.n; id++) {
         IrValue *v = vt.v[id];
         if (!v || (id<4096 && param[id])) continue;
-        fputs("  ", o); ir_ctype(v->type, o); fprintf(o, " v%d;\n", id);
-        if (v->type && v->type->kind==IRT_PTR) {   // alloca slot backing the pointer
-            fputs("  ", o); ir_ctype(v->type->elem, o); fprintf(o, " slot%d;\n", id);
+        IrType *at = alloca_ty[id];
+        if (at) {   // alloca result: declare the slot + its element/scalar pointer
+            if (at->kind==IRT_ARRAY) {
+                fputs("  ", o); ir_ctype(at->elem, o); fprintf(o, " slot%d[%lld];\n", id, (long long)at->array_len);
+                fputs("  ", o); ir_ctype(at->elem, o); fprintf(o, "* v%d;\n", id);
+            } else {
+                fputs("  ", o); ir_ctype(at, o); fprintf(o, " slot%d;\n", id);
+                fputs("  ", o); ir_ctype(at, o); fprintf(o, "* v%d;\n", id);
+            }
+        } else {
+            fputs("  ", o); ir_ctype(v->type, o); fprintf(o, " v%d;\n", id);
         }
     }
     // blocks
