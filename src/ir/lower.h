@@ -517,10 +517,13 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             if (m && m->length==3 && strncmp(m->name,"len",3)==0) {
                 if (tst && tst->kind==TYPE_ARRAY && tst->array_len>=0)
                     return ir_const_int(c->f, c->cur, tst->array_len, ty);   // fixed array .len = N
-                if (tst && (tst->kind==TYPE_SLICE || tst->kind==TYPE_ARRAY)) {
-                    IrValue *s = ir_lower_expr(c, tgt);
-                    return ir_slice_len(c->f, c->cur, s);
-                }
+                // otherwise decide by the LOWERED target's IR type — robust to untyped
+                // refinement/size exprs (e.g. `src.len - 1` in `i32[src.len - 1]`).
+                IrValue *s = ir_lower_expr(c, tgt);
+                if (s && s->type && s->type->kind==IRT_SLICE) return ir_slice_len(c->f, c->cur, s);
+                if (s && s->type && s->type->kind==IRT_ARRAY)
+                    return ir_const_int(c->f, c->cur, s->type->array_len, ty);
+                // (fall through: a struct field literally named `len`)
             }
             // struct field read: load through the field address
             IrType *sty = ir_lower_type(c, tst);
