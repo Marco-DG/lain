@@ -88,6 +88,14 @@ IrValue *ir_binop(IrFunc *f, IrBlock *b, IrOp op, IrValue *x, IrValue *y, IrType
     ir_emit(b, ins);
     return ins->result;
 }
+// `assume(cond)` — cond (a bool) holds from here on. No result. The verification
+// substrate: guards, param refinements, and callee ensures all become assumes, so
+// analyses read facts from the IR, never from the AST.
+void ir_assume(IrFunc *f, IrBlock *b, IrValue *cond) {
+    IrInstr *ins = ir_instr(f, IR_ASSUME, NULL, 1);
+    ins->operands[0] = cond;
+    ir_emit(b, ins);
+}
 IrValue *ir_icmp(IrFunc *f, IrBlock *b, IrCmp c, IrValue *x, IrValue *y) {
     IrInstr *ins = ir_instr(f, IR_ICMP, ir_type_bool(f->arena), 2);
     ins->aux.cmp = c; ins->operands[0] = x; ins->operands[1] = y;

@@ -103,6 +103,7 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             else    fprintf(o, "  v%d = &v%d->f%d;\n", i->result->id, i->operands[0]->id, i->aux.field_idx);
             break;
         }
+        case IR_ASSUME: case IR_ASSERT: break;   // verification-only; no runtime code
         case IR_LOAD:   fprintf(o, "  v%d = *v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_STORE:  fprintf(o, "  *v%d = v%d;\n", i->operands[0]->id, i->operands[1]->id); break;
         case IR_SLICE_LEN:  fprintf(o, "  v%d = v%d.len;\n",  i->result->id, i->operands[0]->id); break;

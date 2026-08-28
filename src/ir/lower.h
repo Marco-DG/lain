@@ -661,6 +661,30 @@ static void ir_lower_stmts(LowerCtx *c, StmtList *body) {
     for (StmtList *b = body; b && !ir_is_set_term(c->cur); b = b->next) ir_lower_stmt(c, b->stmt);
 }
 
+// Emit `assume(param OP const)` for a scalar param's refinement (`n u32 < 4096`).
+// This is where a front-end refinement ENTERS the IR as a verifiable fact — the IR
+// then owns it; no analysis re-reads the AST. (Sovereignty: lowering is the adapter.)
+static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl *pdecl) {
+    if (!pv || !pv->type || pv->type->kind != IRT_INT || !pdecl) return;
+    bool sgn = !(pty && pty->kind==TYPE_SIMPLE && pty->int_width_cache>0 && !pty->int_signed_cache);
+    for (ExprList *cn = pdecl->as.variable_decl.constraints; cn; cn = cn->next) {
+        Expr *con = cn->expr;
+        if (!con || con->kind != EXPR_BINARY) continue;
+        Expr *rhs = con->as.binary_expr.right;
+        if (!rhs || rhs->kind != EXPR_LITERAL) continue;   // constant RHS only (for now)
+        IrCmp cmp;
+        switch (con->as.binary_expr.op) {
+            case TOKEN_ANGLE_BRACKET_LEFT:        cmp = sgn?IR_CMP_SLT:IR_CMP_ULT; break;
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  cmp = sgn?IR_CMP_SLE:IR_CMP_ULE; break;
+            case TOKEN_ANGLE_BRACKET_RIGHT:       cmp = sgn?IR_CMP_SGT:IR_CMP_UGT; break;
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: cmp = sgn?IR_CMP_SGE:IR_CMP_UGE; break;
+            default: continue;   // == / != — skip for now
+        }
+        IrValue *rv = ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, pv->type);
+        ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, pv, rv));
+    }
+}
+
 // ── entry: lower one function ────────────────────────────────────────────────
 IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     IrType tmp; LowerCtx cc = {0}; cc.a = a; cc.globals = globals; (void)tmp;
@@ -689,6 +713,7 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         } else {
             IrValue *pv = ir_add_param(f, pt, pnm);
             ir_env_add(&cc, pnm, NULL, pv);
+            ir_lower_param_refinements(&cc, pv, pty, p->decl);   // refinements → entry assumes
         }
     }
     ir_lower_stmts(&cc, fn->as.function_decl.body);
