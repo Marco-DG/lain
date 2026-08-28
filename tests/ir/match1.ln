@@ -1,0 +1,22 @@
+proc classify(n i32) i32 {
+    var r i32 = 0
+    case n {
+        0: r = 100
+        1: r = 200
+        else: r = 300
+    }
+    return r
+}
+proc main() i32 {
+    var a i32 = classify(0)
+    var b i32 = classify(1)
+    var c i32 = classify(5)
+    if a == 100 {
+        if b == 200 {
+            if c == 300 {
+                return 0
+            }
+        }
+    }
+    return 1
+}

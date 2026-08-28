@@ -575,10 +575,49 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             c->loop_head=oh; c->loop_exit=oe; c->cur = exit;
             break;
         }
+        case STMT_MATCH: {
+            // Integer/char match on literal + range patterns, lowered to an if-chain.
+            // Enum/ADT matches need tag+payload modeling ⇒ fail closed until then.
+            Expr *val = s->as.match_stmt.value;
+            Type *vt = val ? val->type : NULL;
+            if (!(vt && vt->kind==TYPE_SIMPLE && vt->int_width_cache>0)) { c->f->incomplete=true; break; }
+            IrValue *v = ir_lower_expr(c, val);
+            IrBlock *join = ir_new_block(c->f);
+            StmtMatchCase *elsec = NULL;
+            for (StmtMatchCase *cs = s->as.match_stmt.cases; cs; cs = cs->next) {
+                if (!cs->patterns) { elsec = cs; continue; }
+                IrBlock *body = ir_new_block(c->f);
+                for (ExprList *p = cs->patterns; p; p = p->next) {   // OR of this case's patterns
+                    Expr *pe = p->expr;
+                    IrBlock *nxt = ir_new_block(c->f);
+                    if (pe->kind == EXPR_RANGE) {
+                        Expr *loe=pe->as.range_expr.start, *hie=pe->as.range_expr.end;
+                        IrBlock *hitest = ir_new_block(c->f);
+                        if (loe){ IrValue *ge=ir_icmp(c->f,c->cur,IR_CMP_SGE,v,ir_lower_expr(c,loe)); ir_set_br_cond(c->cur,ge,hitest,nxt); }
+                        else ir_set_br(c->cur, hitest);
+                        c->cur = hitest;
+                        if (hie){ IrCmp cc=pe->as.range_expr.inclusive?IR_CMP_SLE:IR_CMP_SLT; IrValue *le=ir_icmp(c->f,c->cur,cc,v,ir_lower_expr(c,hie)); ir_set_br_cond(c->cur,le,body,nxt); }
+                        else ir_set_br(c->cur, body);
+                    } else {
+                        IrValue *eq=ir_icmp(c->f,c->cur,IR_CMP_EQ,v,ir_lower_expr(c,pe));
+                        ir_set_br_cond(c->cur,eq,body,nxt);
+                    }
+                    c->cur = nxt;
+                }
+                IrBlock *ftblk = c->cur;   // where control lands if no pattern matched
+                c->cur = body; ir_lower_stmts(c, cs->body);
+                if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
+                c->cur = ftblk;
+            }
+            if (elsec) ir_lower_stmts(c, elsec->body);
+            if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
+            c->cur = join;
+            break;
+        }
         case STMT_BREAK:    if (c->loop_exit) ir_set_br(c->cur, c->loop_exit); break;
         case STMT_CONTINUE: if (c->loop_head) ir_set_br(c->cur, c->loop_head); break;
         case STMT_UNSAFE: { bool o=c->unsafe; c->unsafe=true; ir_lower_stmts(c, s->as.unsafe_stmt.body); c->unsafe=o; break; }
-        default: c->f->incomplete = true; break;   // match/defer/use — TODO (fail closed)
+        default: c->f->incomplete = true; break;   // enum-match/defer/use — TODO (fail closed)
     }
 }
 static void ir_lower_stmts(LowerCtx *c, StmtList *body) {
