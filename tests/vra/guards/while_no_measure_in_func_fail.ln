@@ -1,11 +1,17 @@
 // EXPECT: [E011]
-// EXPECT: [E
-// `while` in `func` without `decreasing` measure must fail.
+// A `while` in a `func` needs a termination measure. The measure is inferred from a
+// relational condition (`i < n` → `n - i`), but a NON-relational condition like a
+// bare boolean flag gives the inference nothing to work with, so it must still be
+// rejected (add an explicit `decreasing` measure or use `proc`).
 
 func bad_loop(n i32) i32 {
     var i i32 = 0
-    while i < n {     // missing decreasing measure
+    var go bool = true
+    while go {
         i = i + 1
+        if i >= n {
+            go = false
+        }
     }
     return i
 }

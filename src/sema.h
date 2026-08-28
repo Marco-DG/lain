@@ -1498,13 +1498,19 @@ static int measure_scan_body(StmtList *body, MeasureVar *vars, int nvar) {
 }
 
 // Top-level verification for a bounded while loop
-static void sema_verify_bounded_while(Stmt *s) {
+// Verify a bounded `while` has a valid termination measure. When `emit` is true,
+// a failed check prints its diagnostic and exits (the explicit-`decreasing` path).
+// When `emit` is false, it returns false silently instead — this lets the auto-
+// inference synthesize a candidate measure, try it, and fall back cleanly if the
+// candidate does not hold. Returns true iff the measure is verified.
+static bool sema_verify_bounded_while_impl(Stmt *s, bool emit) {
     Expr *cond    = s->as.while_stmt.cond;
     Expr *measure = s->as.while_stmt.measure;
-    if (!measure) return;
+    if (!measure) return true;
 
     // Check 1: condition implies measure >= 0
     if (!sema_verify_measure_nonneg(cond, measure)) {
+        if (!emit) return false;
         fprintf(stderr, "[E080] Error Ln %li, Col %li: cannot verify that the termination measure "
                 "is non-negative when the loop condition holds.\n"
                 "  Hint: use 'while a < b : b - a { ... }' so the condition implies the measure is positive.\n",
@@ -1517,6 +1523,7 @@ static void sema_verify_bounded_while(Stmt *s) {
     MeasureVar vars[MAX_MEASURE_VARS];
     int nvar = measure_extract_vars(measure, vars, MAX_MEASURE_VARS);
     if (nvar == 0) {
+        if (!emit) return false;
         fprintf(stderr, "[E081] Error Ln %li, Col %li: cannot extract variables from termination measure.\n"
                 "  Hint: the measure must reference identifiers or struct fields.\n",
                 s->line, s->col);
@@ -1552,6 +1559,7 @@ static void sema_verify_bounded_while(Stmt *s) {
     g_term_loop_cond = NULL;
     g_term_measure_a = g_term_measure_b = NULL; g_term_measure_expr = NULL; g_term_ndefs = 0;
     if (result <= 0) {
+        if (!emit) return false;
         fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify that the termination measure "
                 "strictly decreases on each iteration.\n"
                 "  Hint: the loop body must contain an assignment that decreases the measure "
@@ -1560,6 +1568,39 @@ static void sema_verify_bounded_while(Stmt *s) {
         diagnostic_show_line(s->line, s->col);
         exit(1);
     }
+    return true;
+}
+static void sema_verify_bounded_while(Stmt *s) { (void)sema_verify_bounded_while_impl(s, true); }
+
+// Synthesize a termination measure from a relational loop condition `L OP R`:
+//   L <  R  or  L <= R   →   R - L   (L rises toward R)
+//   L >  R  or  L >= R   →   L - R   (L falls toward R)
+// Returns the measure Expr (arena-allocated) or NULL if the condition is not a
+// single relational comparison. The caller must still VERIFY the candidate — a
+// wrong monotonic direction (or an unchanged var) makes it fail to decrease, so a
+// synthesized-but-unverifiable measure is discarded (no soundness risk: the same
+// decrease/non-negativity checks gate it exactly as an explicit `decreasing`).
+static Expr *synth_measure_from_cond(Expr *cond, isize line, isize col) {
+    if (!cond || cond->kind != EXPR_BINARY) return NULL;
+    TokenKind op = cond->as.binary_expr.op;
+    Expr *lo = NULL, *hi = NULL;   // measure = hi - lo
+    switch (op) {
+        case TOKEN_ANGLE_BRACKET_LEFT:        // L < R
+        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  // L <= R
+            lo = cond->as.binary_expr.left;  hi = cond->as.binary_expr.right; break;
+        case TOKEN_ANGLE_BRACKET_RIGHT:       // L > R
+        case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: // L >= R
+            lo = cond->as.binary_expr.right; hi = cond->as.binary_expr.left;  break;
+        default: return NULL;
+    }
+    Expr *m = arena_push_aligned(sema_arena, Expr);
+    memset(m, 0, sizeof(Expr));
+    m->kind = EXPR_BINARY;
+    m->as.binary_expr.op = TOKEN_MINUS;
+    m->as.binary_expr.left  = hi;
+    m->as.binary_expr.right = lo;
+    m->line = line; m->col = col;
+    return m;
 }
 
 /*─────────────────────────────────────────────────────────────────────────────╗
@@ -2529,15 +2570,30 @@ static void walk_stmt(Stmt *s) {
                 if (synth_measure) {
                     s->as.while_stmt.measure = synth_measure;
                 } else {
-                    // No pointer decrements found: emit E011
-                    fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination "
-                            "measure are not allowed in pure function '%.*s'. "
-                            "Add 'decreasing <measure>' or use 'proc'.\n",
-                            s->line, s->col,
-                            (int)current_function_decl->as.function_decl.name->length,
-                            current_function_decl->as.function_decl.name->name);
-                    diagnostic_show_line(s->line, s->col);
-                    exit(1);
+                    // No pointer measure — try a SCALAR measure inferred from a
+                    // relational condition (`i < n` → `n - i`, etc.). Verify it
+                    // silently; keep it only if it provably decreases and stays
+                    // non-negative (same gate as an explicit `decreasing`). This is
+                    // the ergonomic win: the ubiquitous counting loop needs no clause.
+                    Expr *cand = synth_measure_from_cond(s->as.while_stmt.cond, s->line, s->col);
+                    bool ok = false;
+                    if (cand) {
+                        s->as.while_stmt.measure = cand;
+                        sema_infer_expr(cand);
+                        ok = sema_verify_bounded_while_impl(s, false);
+                        if (!ok) s->as.while_stmt.measure = NULL;  // discard; not provable
+                    }
+                    if (!ok) {
+                        // Not inferable: emit E011 (add explicit `decreasing` or use proc).
+                        fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination "
+                                "measure are not allowed in pure function '%.*s'. "
+                                "Add 'decreasing <measure>' or use 'proc'.\n",
+                                s->line, s->col,
+                                (int)current_function_decl->as.function_decl.name->length,
+                                current_function_decl->as.function_decl.name->name);
+                        diagnostic_show_line(s->line, s->col);
+                        exit(1);
+                    }
                 }
             }
 

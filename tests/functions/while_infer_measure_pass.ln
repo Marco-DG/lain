@@ -1,0 +1,45 @@
+// The termination measure is INFERRED from the loop condition, so the ubiquitous
+// counting loop needs no explicit `decreasing` clause in a pure `func`:
+//   while i < n   → measure n - i   (i rises toward n)
+//   while i > 0   → measure i       (i falls toward 0)
+//   while lo < hi → measure hi - lo (two-variable bound)
+// Each is verified exactly like an explicit measure (provably >= 0 and strictly
+// decreasing), so a non-terminating loop is still rejected — see while_in_func_fail.
+func up(n i32) i32 {
+    var s = 0
+    var i = 0
+    while i < n {
+        s = s + i
+        i = i + 1
+    }
+    return s
+}
+func down(n i32) i32 {
+    var s = 0
+    var i = n
+    while i > 0 {
+        s = s + i
+        i = i - 1
+    }
+    return s
+}
+func span(lo i32, hi i32) i32 {
+    var c = 0
+    var l = lo
+    while l < hi {
+        c = c + 1
+        l = l + 1
+    }
+    return c
+}
+proc main() i32 {
+    // up(5)=10, down(5)=15, span(2,7)=5  → 10+15+5 = 30; return 0 on success
+    if up(5) == 10 {
+        if down(5) == 15 {
+            if span(2, 7) == 5 {
+                return 0
+            }
+        }
+    }
+    return 1
+}

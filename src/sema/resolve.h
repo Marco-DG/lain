@@ -719,21 +719,30 @@ void sema_resolve_stmt(Stmt *s) {
     // monotone pointer decrement pattern.
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         if (!s->as.while_stmt.measure) {
-            // Structural scan: any `expr in expr` in condition → defer to walk phase
-            bool has_in_cond = false;
+            // Structural scan: an `expr in expr` guard OR a relational comparison
+            // (`i < n`, `i >= k`, …) in the condition → defer to the walk phase,
+            // which auto-synthesizes and verifies a measure (`n - i` etc.). Only a
+            // condition with no such shape (e.g. `while true`, `while flag`) is
+            // genuinely un-inferable and rejected early.
+            bool deferrable = false;
             {
                 Expr *stk[16]; int top = 0; stk[top++] = s->as.while_stmt.cond;
                 while (top > 0) {
                     Expr *e = stk[--top];
                     if (!e || e->kind != EXPR_BINARY) continue;
-                    if (e->as.binary_expr.op == TOKEN_KEYWORD_IN) { has_in_cond = true; break; }
-                    if (e->as.binary_expr.op == TOKEN_KEYWORD_AND && top < 14) {
+                    TokenKind op = e->as.binary_expr.op;
+                    if (op == TOKEN_KEYWORD_IN ||
+                        op == TOKEN_ANGLE_BRACKET_LEFT || op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL ||
+                        op == TOKEN_ANGLE_BRACKET_RIGHT || op == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL) {
+                        deferrable = true; break;
+                    }
+                    if (op == TOKEN_KEYWORD_AND && top < 14) {
                         stk[top++] = e->as.binary_expr.left;
                         stk[top++] = e->as.binary_expr.right;
                     }
                 }
             }
-            if (!has_in_cond) {
+            if (!deferrable) {
                 fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination measure "
                         "are not allowed in pure function '%.*s'. "
                         "Add 'decreasing <measure>' or use 'proc'.\n",
@@ -743,7 +752,7 @@ void sema_resolve_stmt(Stmt *s) {
                 diagnostic_show_line(s->line, s->col);
                 exit(1);
             }
-            // has_in_cond: defer — walk phase will auto-infer or emit E011
+            // deferrable: the walk phase auto-infers + verifies the measure, or emits E011
         }
     }
     // Resolve condition, measure, and body
