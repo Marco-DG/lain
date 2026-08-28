@@ -1,0 +1,23 @@
+// The canonical "fill up to capacity, return the count" idiom: a counter `n`
+// incremented by 1 only inside `if n < m` satisfies the invariant n <= m, which is
+// recovered after the loop so `return n` proves the `usize <= m` refinement. This is
+// what lets `tokenize(src, buf, cap) usize <= cap` be sliced `buf[0..count]` with no
+// defensive clamp.
+proc fill(var out i32[m], m usize) usize <= m {
+    var n usize = 0
+    var i usize = 0
+    while i < 100 decreasing 100 - i {
+        if n < m {
+            out[n] = i as i32
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return n
+}
+proc main() i32 {
+    var buf i32[16] = [0 for z in 0..16]
+    var count = fill(var buf, 16)
+    var view = buf[0..count]   // count <= 16 = buf.len, no clamp needed
+    return view.len as i32 - view.len as i32
+}

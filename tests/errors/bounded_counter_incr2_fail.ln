@@ -1,0 +1,17 @@
+// EXPECT: [E086]
+// SOUNDNESS of the bounded-counter invariant: it holds only for an increment of
+// EXACTLY 1 under `if n < m` (n < m => n+1 <= m). An increment of 2 can overshoot
+// (n = m-1 < m, then n = m+1 > m), so `n <= m` is NOT established and `return n`
+// cannot satisfy the `<= m` refinement.
+proc fill(var out i32[m], m usize) usize <= m {
+    var n usize = 0
+    var i usize = 0
+    while i < 100 decreasing 100 - i {
+        if n < m {
+            n = n + 2
+        }
+        i = i + 1
+    }
+    return n
+}
+proc main() i32 { return 0 }

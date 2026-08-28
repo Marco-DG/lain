@@ -9,7 +9,7 @@ type Token {
     value i32
 }
 func is_digit(c u8) bool { return c >= 48 and c <= 57 }
-proc tokenize(src u8[], var out Token[m], m usize) usize {
+proc tokenize(src u8[], var out Token[m], m usize) usize <= m {
     var n usize = 0
     var i usize = 0
     while i < src.len {

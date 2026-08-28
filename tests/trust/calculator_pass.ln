@@ -10,7 +10,7 @@ type Token {
 }
 func is_digit(c u8) bool { return c >= 48 and c <= 57 }
 
-proc tokenize(src u8[], var out Token[m], m usize) usize {
+proc tokenize(src u8[], var out Token[m], m usize) usize <= m {
     var n usize = 0
     var i usize = 0
     while i < src.len {
@@ -111,10 +111,7 @@ proc parse_expr(toks Token[], var pos usize) i32 {
 proc main() i32 {
     var src = "12 + 34 * (5 - 6)"
     var toks Token[64] = [Token(0, 0) for x in 0..64]
-    var count = tokenize(src, var toks, 64)
-    if count > 64 {
-        count = 64
-    }
+    var count = tokenize(src, var toks, 64)   // count <= 64 by the return refinement
     var view = toks[0..count]
     var pos usize = 0
     var result = parse_expr(view, var pos)

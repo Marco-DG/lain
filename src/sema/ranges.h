@@ -189,6 +189,10 @@ static Range range_get(RangeTable *t, Id *var) {
 // B.2 forward declare: derive a Range from a callee's return_constraints
 // so that call expressions can participate in VRA.
 static Range sema_range_from_return_constraints(Decl *callee_decl);
+// Like the above, but for a specific call site: a return refinement stated over a
+// PARAMETER (`result <op> m`) is resolved by substituting that call's actual argument.
+static Range sema_range_from_call(Expr *call, RangeTable *t);
+static bool range_ids_equal(Id *a, Id *b);
 
 // Build a range from a refinement/field constraint list, where each entry is
 // `<var> <relop> LITERAL` (the field-invariant form). Lets a refined struct field
@@ -482,7 +486,7 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             Decl *callee_decl = e->as.call_expr.callee ? e->as.call_expr.callee->decl : NULL;
             if (callee_decl && (callee_decl->kind == DECL_FUNCTION ||
                                 callee_decl->kind == DECL_PROCEDURE)) {
-                return sema_range_from_return_constraints(callee_decl);
+                return sema_range_from_call(e, t);
             }
             return range_unknown();
         }
@@ -673,6 +677,64 @@ static Range sema_range_from_return_constraints(Decl *callee_decl) {
     if (rt && type_integer_range(rt, &lo, &hi) && lo >= -32768 && hi <= 65535)
         return range_make(lo, hi);
     return range_unknown();
+}
+
+static Range sema_range_from_call(Expr *call, RangeTable *t) {
+    Decl *cd = (call && call->as.call_expr.callee) ? call->as.call_expr.callee->decl : NULL;
+    if (!cd) return range_unknown();
+    // First, resolve any PARAMETER-stated refinement (`result <op> m`) by substituting
+    // the actual argument at m's position. This bounds the call's result by a value the
+    // caller knows (`tokenize(src, buf, 64) usize <= m` ⇒ result <= 64), removing the
+    // need for a defensive clamp. Literal refinements + body inference are handled by
+    // sema_range_from_return_constraints below. Seed from the return TYPE so an unsigned
+    // result keeps its `>= 0` lower bound (else `<= m` alone would leave min = INT_MIN).
+    Range r = range_make(INT64_MIN, INT64_MAX);
+    {
+        extern int type_integer_range(Type *ty, long long *lo, long long *hi);
+        Type *rt = cd->as.function_decl.return_type;
+        long long tlo, thi;
+        if (rt && type_integer_range(rt, &tlo, &thi)) r = range_make(tlo, thi);
+    }
+    bool refined = false;
+    for (ExprList *c = cd->as.function_decl.return_constraints; c; c = c->next) {
+        if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+        Expr *lhs = c->expr->as.binary_expr.left, *rhs = c->expr->as.binary_expr.right;
+        if (!lhs || lhs->kind != EXPR_IDENTIFIER) continue;
+        if (lhs->as.identifier_expr.id->length != 6 ||
+            strncmp(lhs->as.identifier_expr.id->name, "result", 6) != 0) continue;
+        if (!rhs || rhs->kind != EXPR_IDENTIFIER) continue;   // only PARAM RHS here
+        // locate the parameter position by name
+        Id *pn = rhs->as.identifier_expr.id;
+        int pidx = 0, found = -1;
+        for (DeclList *p = cd->as.function_decl.params; p; p = p->next, pidx++) {
+            if (p->decl && p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.name &&
+                range_ids_equal(p->decl->as.variable_decl.name, pn)) { found = pidx; break; }
+        }
+        if (found < 0) continue;
+        // fetch the matching call argument and evaluate its range in the caller's env
+        Expr *arg = NULL; int ai = 0;
+        for (ExprList *a = call->as.call_expr.args; a; a = a->next, ai++)
+            if (ai == found) { arg = a->expr; break; }
+        if (!arg) continue;
+        Range ar = sema_eval_range(arg, t);
+        if (!ar.known) continue;
+        switch (c->expr->as.binary_expr.op) {
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (ar.max     < r.max) r.max = ar.max;     refined = true; break; // result <= m <= ar.max
+            case TOKEN_ANGLE_BRACKET_LEFT:        if (ar.max - 1 < r.max) r.max = ar.max - 1; refined = true; break; // result <  m
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (ar.min     > r.min) r.min = ar.min;     refined = true; break; // result >= m
+            case TOKEN_ANGLE_BRACKET_RIGHT:       if (ar.min + 1 > r.min) r.min = ar.min + 1; refined = true; break; // result >  m
+            case TOKEN_EQUAL_EQUAL:               r = ar;                                     refined = true; break;
+            default: break;
+        }
+    }
+    // Combine with the literal-refinement / body-inference range (intersection).
+    Range base = sema_range_from_return_constraints(cd);
+    if (refined && base.known) {
+        int64_t mn = r.min > base.min ? r.min : base.min;
+        int64_t mx = r.max < base.max ? r.max : base.max;
+        if (mn <= mx) return range_make(mn, mx);
+    }
+    return refined ? r : base;
 }
 
 // Add or update a constraint: v1 - v2 <= max_diff
@@ -1349,6 +1411,65 @@ static int sema_check_post_condition(Expr *cond, Range result_range, RangeTable 
         }
 
         return sema_compare_ranges(l, r, cond->as.binary_expr.op);
+    }
+    return -1;
+}
+
+// Prove a PARAMETRIC return refinement `result <op> p` (p a parameter identifier)
+// for the returned expression `ret`. Returns 1 iff provably satisfied, else -1.
+// Handles the exact syntactic forms (`return p`, `return p - k`, `return p + k`) and
+// falls back to the difference-constraint graph for `return v` (an identifier bound
+// to p by an in-scope constraint, e.g. a counter proven `v <= p`). This is what lets
+// a return refinement be stated in terms of an input parameter, not just a literal.
+static bool range_ids_equal(Id *a, Id *b) {
+    return a && b && a->length == b->length &&
+           strncmp(a->name, b->name, (size_t)a->length) == 0;
+}
+static int return_proves_param_relop(Expr *ret, TokenKind op, Id *p, RangeTable *t) {
+    if (!ret || !p) return -1;
+    // `return p` : result == p.
+    bool ret_is_p = (ret->kind == EXPR_IDENTIFIER &&
+                     range_ids_equal(ret->as.identifier_expr.id, p));
+    if (ret_is_p) {
+        switch (op) {
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  // result <= p
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: // result >= p
+            case TOKEN_EQUAL_EQUAL:               // result == p
+                return 1;
+            default: return -1;                   // < / > not provable from equality
+        }
+    }
+    // `return p +/- k` (k a non-negative literal).
+    if (ret->kind == EXPR_BINARY && ret->as.binary_expr.left &&
+        ret->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+        range_ids_equal(ret->as.binary_expr.left->as.identifier_expr.id, p) &&
+        ret->as.binary_expr.right && ret->as.binary_expr.right->kind == EXPR_LITERAL) {
+        int64_t k = ret->as.binary_expr.right->as.literal_expr.value;
+        TokenKind ao = ret->as.binary_expr.op;
+        if (ao == TOKEN_MINUS && k >= 0) {         // result = p - k  (<= p, and < p if k>=1)
+            if (op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL) return 1;
+            if (op == TOKEN_ANGLE_BRACKET_LEFT && k >= 1) return 1;
+        }
+        if (ao == TOKEN_PLUS && k >= 0) {          // result = p + k  (>= p, and > p if k>=1)
+            if (op == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL) return 1;
+            if (op == TOKEN_ANGLE_BRACKET_RIGHT && k >= 1) return 1;
+        }
+        return -1;
+    }
+    // `return v` where the constraint graph relates v and p.
+    if (ret->kind == EXPR_IDENTIFIER) {
+        Id *v = ret->as.identifier_expr.id;
+        bool f1 = false, f2 = false;
+        int64_t vp = constraint_get_diff(t, v, p, &f1);   // v - p <= vp
+        int64_t pv = constraint_get_diff(t, p, v, &f2);   // p - v <= pv
+        switch (op) {
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (f1 && vp <= 0) return 1; break; // v <= p
+            case TOKEN_ANGLE_BRACKET_LEFT:        if (f1 && vp <= -1) return 1; break; // v <  p
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (f2 && pv <= 0) return 1; break; // v >= p
+            case TOKEN_ANGLE_BRACKET_RIGHT:       if (f2 && pv <= -1) return 1; break; // v >  p
+            case TOKEN_EQUAL_EQUAL: if (f1 && f2 && vp <= 0 && pv <= 0) return 1; break;
+            default: break;
+        }
     }
     return -1;
 }

@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// A return refinement is TRUSTED by every caller, so the body must provably satisfy
+// it. `return m + 1` cannot satisfy `<= m` and must be rejected — otherwise callers'
+// bounds proofs would rest on a lie.
+func bad(m usize) usize <= m {
+    return m + 1
+}
+proc main() i32 { return 0 }

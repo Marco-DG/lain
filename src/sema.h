@@ -1950,6 +1950,84 @@ static void sema_push_struct_field_guards(Id *var_name_id, Type *var_ty) {
     }
 }
 
+/* ── Bounded-counter recognition ─────────────────────────────────────────────
+   A variable incremented by exactly 1 ONLY inside an `if v < B` guard, and
+   assigned nowhere else, satisfies the loop invariant v <= B (v < B ⟹ v+1 <= B).
+   Recovering it after a loop lets the canonical "fill a buffer up to capacity,
+   return the count" idiom prove `return n` <= m. Sound because: every write to v is
+   the guarded +1 (so v never exceeds B in the loop), given v <= B on entry. */
+#define BC_MAX 8
+typedef struct { Id *v; Id *b; bool disq; } BCEntry;
+static BCEntry *bc_find(BCEntry *e, int n, Id *v) {
+    for (int i = 0; i < n; i++)
+        if (e[i].v && v && e[i].v->length == v->length &&
+            strncmp(e[i].v->name, v->name, (size_t)v->length) == 0) return &e[i];
+    return NULL;
+}
+static void bc_note(BCEntry *e, int *n, Id *v, Id *b) {   // b==NULL ⇒ disqualify
+    BCEntry *slot = bc_find(e, *n, v);
+    if (!slot) {
+        if (*n >= BC_MAX) return;
+        slot = &e[(*n)++]; slot->v = v; slot->b = NULL; slot->disq = false;
+    }
+    if (!b) { slot->disq = true; return; }
+    if (slot->b == NULL && !slot->disq) slot->b = b;
+    else if (slot->b && !(slot->b->length == b->length &&
+             strncmp(slot->b->name, b->name, (size_t)b->length) == 0))
+        slot->disq = true;   // bounded by two different things — give up
+}
+// Scan `body` for counter writes; `gv/gb` are the active `x < Y` guards (nguard deep).
+static void bc_scan(StmtList *body, Id **gv, Id **gb, int nguard, BCEntry *e, int *n) {
+    for (StmtList *l = body; l; l = l->next) {
+        Stmt *s = l->stmt; if (!s) continue;
+        switch (s->kind) {
+        case STMT_ASSIGN: {
+            Expr *tgt = s->as.assign_stmt.target, *rhs = s->as.assign_stmt.expr;
+            if (tgt && tgt->kind == EXPR_IDENTIFIER) {
+                Id *v = tgt->as.identifier_expr.id;
+                // is rhs exactly `v + 1`?
+                bool incr1 = rhs && rhs->kind == EXPR_BINARY &&
+                    rhs->as.binary_expr.op == TOKEN_PLUS &&
+                    rhs->as.binary_expr.left && rhs->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                    rhs->as.binary_expr.left->as.identifier_expr.id->length == v->length &&
+                    strncmp(rhs->as.binary_expr.left->as.identifier_expr.id->name, v->name, (size_t)v->length) == 0 &&
+                    rhs->as.binary_expr.right && rhs->as.binary_expr.right->kind == EXPR_LITERAL &&
+                    rhs->as.binary_expr.right->as.literal_expr.value == 1;
+                if (incr1) {
+                    Id *b = NULL;   // find an active guard `v < b`
+                    for (int g = 0; g < nguard; g++)
+                        if (gv[g] && gv[g]->length == v->length &&
+                            strncmp(gv[g]->name, v->name, (size_t)v->length) == 0) { b = gb[g]; break; }
+                    bc_note(e, n, v, b);   // b==NULL if unguarded ⇒ disqualify
+                } else {
+                    bc_note(e, n, v, NULL);   // any other write disqualifies
+                }
+            }
+            break;
+        }
+        case STMT_IF: {
+            Expr *c = s->as.if_stmt.cond;
+            bool pushed = false;
+            if (c && c->kind == EXPR_BINARY && c->as.binary_expr.op == TOKEN_ANGLE_BRACKET_LEFT &&
+                c->as.binary_expr.left && c->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                c->as.binary_expr.right && c->as.binary_expr.right->kind == EXPR_IDENTIFIER &&
+                nguard < BC_MAX) {
+                gv[nguard] = c->as.binary_expr.left->as.identifier_expr.id;
+                gb[nguard] = c->as.binary_expr.right->as.identifier_expr.id;
+                pushed = true;
+            }
+            bc_scan(s->as.if_stmt.then_body, gv, gb, nguard + (pushed ? 1 : 0), e, n);
+            bc_scan(s->as.if_stmt.else_branch, gv, gb, nguard, e, n);
+            break;
+        }
+        case STMT_WHILE: bc_scan(s->as.while_stmt.body, gv, gb, nguard, e, n); break;
+        case STMT_FOR:   bc_scan(s->as.for_stmt.body, gv, gb, nguard, e, n); break;
+        case STMT_UNSAFE: bc_scan(s->as.unsafe_stmt.body, gv, gb, nguard, e, n); break;
+        default: break;
+        }
+    }
+}
+
 /* walk_stmt: type inference + range analysis walk over a single statement.
    Formerly a GCC nested function inside sema_resolve_module; refactored to
    file-level static for C99/Clang/MSVC portability. */
@@ -2606,8 +2684,21 @@ static void walk_stmt(Stmt *s) {
             #undef MAX_AFFINE
             break;
         }
-        case STMT_WHILE:
+        case STMT_WHILE: {
             sema_infer_expr(s->as.while_stmt.cond);
+
+            // Bounded-counter capture: find guarded +1 counters and their PRE-LOOP
+            // ranges now, before any widening, so v <= B can be re-established after.
+            BCEntry bc_ents[BC_MAX]; int bc_n = 0;
+            Range bc_vpre[BC_MAX]; Range bc_bpre[BC_MAX];
+            if (sema_ranges) {
+                Id *gv[BC_MAX]; Id *gb[BC_MAX];
+                bc_scan(s->as.while_stmt.body, gv, gb, 0, bc_ents, &bc_n);
+                for (int k = 0; k < bc_n; k++) {
+                    bc_vpre[k] = bc_ents[k].v ? range_get(sema_ranges, bc_ents[k].v) : range_unknown();
+                    bc_bpre[k] = bc_ents[k].b ? range_get(sema_ranges, bc_ents[k].b) : range_unknown();
+                }
+            }
 
             // Auto-infer `decreasing` when measure is absent and all conditions are
             // pointer-in-arr guards (p in arr) or backward pointer guards (p > arr_ptr).
@@ -2869,7 +2960,22 @@ static void walk_stmt(Stmt *s) {
             if (sema_ranges && !stmts_have_toplevel_break(s->as.while_stmt.body)) {
                 sema_apply_negated_constraint(s->as.while_stmt.cond, sema_ranges);
             }
+
+            // Re-establish v <= B for each clean bounded counter (guarded +1, no other
+            // write) whose pre-loop value provably satisfied v <= B. The invariant
+            // survived every iteration, so the widening above was too coarse.
+            if (sema_ranges) {
+                for (int k = 0; k < bc_n; k++) {
+                    if (bc_ents[k].disq || !bc_ents[k].b || !bc_ents[k].v) continue;
+                    // entry condition: v_pre <= B_pre (else the guard never runs and v
+                    // could exceed B). Requires both bounds known and v.max <= B.min.
+                    if (!bc_vpre[k].known || !bc_bpre[k].known) continue;
+                    if (bc_vpre[k].max > bc_bpre[k].min) continue;
+                    constraint_add(sema_ranges, bc_ents[k].v, bc_ents[k].b, 0); // v - B <= 0
+                }
+            }
             break;
+        }
         case STMT_ASSIGN:
             sema_infer_expr(s->as.assign_stmt.expr);
             sema_infer_expr(s->as.assign_stmt.target);
@@ -3148,7 +3254,28 @@ static void walk_stmt(Stmt *s) {
                 Range ret_range = sema_eval_range(s->as.return_stmt.value, sema_ranges);
                 
                 for (ExprList *rc = current_function_decl->as.function_decl.return_constraints; rc; rc = rc->next) {
-                    int result = sema_check_post_condition(rc->expr, ret_range, sema_ranges);
+                    int result;
+                    // A refinement stated over a PARAMETER (`result <op> m`) cannot be
+                    // checked by comparing independent ranges — that loses the fact that
+                    // `result` IS the returned expression. Prove it against the returned
+                    // expression directly (syntactic p/p±k, or the constraint graph).
+                    Expr *rce = rc->expr;
+                    Expr *rrhs = (rce && rce->kind == EXPR_BINARY) ? rce->as.binary_expr.right : NULL;
+                    bool param_rhs = rrhs && rrhs->kind == EXPR_IDENTIFIER &&
+                        !(rrhs->as.identifier_expr.id->length == 6 &&
+                          strncmp(rrhs->as.identifier_expr.id->name, "result", 6) == 0);
+                    if (param_rhs) {
+                        // Prove the p-correlated forms (return p, p±k, v with v<=p);
+                        // fall back to the range comparison for a literal / bounded
+                        // return (`return 0` under `<= m`, sound via ranges).
+                        result = return_proves_param_relop(s->as.return_stmt.value,
+                                     rce->as.binary_expr.op,
+                                     rrhs->as.identifier_expr.id, sema_ranges);
+                        if (result != 1)
+                            result = sema_check_post_condition(rc->expr, ret_range, sema_ranges);
+                    } else {
+                        result = sema_check_post_condition(rc->expr, ret_range, sema_ranges);
+                    }
                     // PROVE-OR-REJECT: the compiler TRUSTS a return refinement to
                     // narrow every caller's VRA, so the body must PROVABLY satisfy
                     // it. `result == 1` means proven; 0 (violated) or -1 (unknown,
