@@ -9,6 +9,11 @@ void emit_stmt(Stmt *stmt, int depth);
 // Emit a list of statements (e.g. function body)
 void emit_stmt_list(StmtList *stmts, int depth);
 
+// One-shot: suppress the leading `#line` directive for the NEXT emit_stmt. Set by the
+// `else if` inlining, where the nested `if` follows `} else ` on the same line — a
+// `#line` there would be `} else #line …`, a stray `#` gcc rejects.
+static bool emit_skip_line_directive = false;
+
 void emit_stmt(Stmt *stmt, int depth) {
   if (!stmt)
     return;
@@ -18,9 +23,10 @@ void emit_stmt(Stmt *stmt, int depth) {
     return;
   }
   // Emit #line directive for source-level debugging
-  if (stmt->line > 0 && emit_source_filename) {
+  if (stmt->line > 0 && emit_source_filename && !emit_skip_line_directive) {
     EMIT("#line %ld \"%s\"\n", (long)stmt->line, emit_source_filename);
   }
+  emit_skip_line_directive = false;   // consume the one-shot
   switch (stmt->kind) {
     case STMT_VAR: {
       // 1) indent
@@ -374,7 +380,9 @@ void emit_stmt(Stmt *stmt, int depth) {
         EMIT(" else ");
         // NOTE: we call emit_stmt on the nested STMT_IF with the same `depth`
         //       so that it emits "if (…) { … }" without adding a newline
-        //       before.
+        //       before. Suppress its leading `#line` — inlined after `} else `,
+        //       a directive there would produce `} else #line …` (stray `#`).
+        emit_skip_line_directive = true;
         emit_stmt(else_pl->stmt, depth);
       } else {
         // plain "else"

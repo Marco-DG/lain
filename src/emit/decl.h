@@ -238,6 +238,21 @@ static void emit_access_attributes(Decl *decl) {
         pnames[nparams] = pname_bufs[nparams];
         nparams++;
     }
+    // Map each source param (by DeclList position) to its 1-based position in the
+    // EMITTED signature, which injects a `size_t __len_X` before every dynamic-array
+    // param that carries a runtime length. gcc access() indices are over the emitted
+    // params, so using the source index put the attribute on the wrong argument
+    // (e.g. tagging a preceding `const` slice read_write → gcc error).
+    int emit_pos[MAX_PARAMS]; int epos = 1; int ei = 0;
+    for (DeclList *p = params; p && ei < MAX_PARAMS; p = p->next, ei++) {
+        Type *pt = (p->decl && p->decl->kind == DECL_VARIABLE)
+                       ? p->decl->as.variable_decl.type : NULL;
+        if (pt && pt->kind == TYPE_ARRAY && pt->array_len == -1 &&
+            dynarray_param_has_runtime_len(pt))
+            epos++;   // the injected __len_ param precedes this param's pointer
+        emit_pos[ei] = epos;
+        epos++;
+    }
     int pidx = 0;
     for (DeclList *p = params; p; p = p->next, pidx++) {
         if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
@@ -276,8 +291,11 @@ static void emit_access_attributes(Decl *decl) {
         // assume it is never stored to (miscompilation), so honor actual writes.
         const char *mode = (pt->mode == MODE_MUTABLE || emit_param_is_written(decl, p->decl))
                            ? "read_write" : "read_only";
-        // GCC access indices are 1-based
-        EMIT("__attribute__((access(%s, %d, %d))) ", mode, pidx + 1, sidx + 1);
+        // GCC access indices are over the EMITTED params (1-based) — use the map so
+        // injected __len_ params don't shift the attribute onto the wrong argument.
+        int pe = (pidx < MAX_PARAMS) ? emit_pos[pidx] : pidx + 1;
+        int se = (sidx < MAX_PARAMS) ? emit_pos[sidx] : sidx + 1;
+        EMIT("__attribute__((access(%s, %d, %d))) ", mode, pe, se);
     }
     #undef MAX_PARAMS
 }

@@ -1,0 +1,64 @@
+// TRUST: a real tokenizer for `12 + 34 * 5` — a dogfooding integration test that
+// exercises, together, several fixes: the scan `while … { if adv { i+1 } else { break }}`
+// (break-branch measure exemption), a fixed-array `.len` guard on the token buffer,
+// `} else { if … }` codegen (the `else if` inlining that emitted a stray `#line`), and
+// the access() attribute indices for a slice-input + struct-array-output proc (which the
+// injected __len_ param shifted). Compiles gcc-clean and runs ASan-clean; self-checking.
+type Token {
+    kind i32
+    value i32
+}
+func is_digit(c u8) bool { return c >= 48 and c <= 57 }
+proc tokenize(src u8[], var out Token[m], m usize) usize {
+    var n usize = 0
+    var i usize = 0
+    while i < src.len {
+        var c = src[i]
+        if c == 32 {
+            i = i + 1
+        } else {
+            if is_digit(c) {
+                var val i32 = 0
+                while i < src.len {
+                    if is_digit(src[i]) {
+                        val = val *% 10 +% (src[i] as i32 -% 48)
+                        i = i + 1
+                    } else {
+                        break
+                    }
+                }
+                if n < m {
+                    out[n].kind = 0
+                    out[n].value = val
+                    n = n + 1
+                }
+            } else {
+                var k i32 = 0
+                if c == 43 { k = 1 }
+                if c == 45 { k = 2 }
+                if c == 42 { k = 3 }
+                if n < m {
+                    out[n].kind = k
+                    out[n].value = 0
+                    n = n + 1
+                }
+                i = i + 1
+            }
+        }
+    }
+    return n
+}
+proc main() i32 {
+    var src = "12 + 34 * 5"
+    var toks Token[16] = [Token(0, 0) for x in 0..16]
+    var count = tokenize(src, var toks, 16)
+    // expect 5 tokens: num(12) plus num(34) star num(5)
+    if count != 5 { return 1 }
+    if toks[0].kind != 0 { return 2 }
+    if toks[0].value != 12 { return 3 }
+    if toks[1].kind != 1 { return 4 }
+    if toks[2].value != 34 { return 5 }
+    if toks[3].kind != 3 { return 6 }
+    if toks[4].value != 5 { return 7 }
+    return 0
+}

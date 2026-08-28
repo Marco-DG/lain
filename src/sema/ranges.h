@@ -801,6 +801,24 @@ static Id *member_len_size_var(Expr *member) {
     return NULL;
 }
 
+// For a `.len` member whose target has a COMPILE-TIME-known length (a fixed array
+// `T[N]` or a fixed-length slice like a string literal), return that constant N.
+// Lets a guard `i < arr.len` narrow i by the constant just as `i < N` would — the
+// dynamic-slice path (member_len_size_var) has no constant to offer.
+static bool member_len_const(Expr *member, int64_t *out) {
+    if (!member || member->kind != EXPR_MEMBER ||
+        !member->as.member_expr.member ||
+        member->as.member_expr.member->length != 3 ||
+        strncmp(member->as.member_expr.member->name, "len", 3) != 0)
+        return false;
+    Expr *tgt = member->as.member_expr.target;
+    if (!tgt || !tgt->type) return false;
+    Type *ty = tgt->type;
+    if (ty->kind == TYPE_ARRAY && ty->array_len >= 0) { *out = ty->array_len; return true; }
+    if (ty->kind == TYPE_SLICE && ty->array_len > 0) { *out = ty->array_len; return true; }
+    return false;
+}
+
 static Id *range_member_len_id(RangeTable *t, Expr *member) {
     if (!t || !member || member->kind != EXPR_MEMBER ||
         !member->as.member_expr.member ||
@@ -1053,6 +1071,18 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
         // VRA: Identifier vs member(.len): x < arr.len (narrows i against length)
         else if (lhs->kind == EXPR_IDENTIFIER && rhs->kind == EXPR_MEMBER) {
             Id *v1 = lhs->as.identifier_expr.id;
+            // `i < arr.len` for a FIXED array (constant length): narrow i's interval
+            // by the constant directly — the __len_ difference machinery only serves
+            // dynamic slices, so a fixed `arr[i]` under `while i < arr.len` used to
+            // fail. Now it proves exactly as `i < N` does.
+            int64_t clen;
+            if (member_len_const(rhs, &clen)) {
+                Range r = range_get(t, v1);
+                if (!r.known) r = (Range){INT64_MIN, INT64_MAX, true};
+                range_tighten_interval(&r, op, clen);
+                range_set(t, v1, r);
+                return;
+            }
             Id *v2 = range_member_len_id(t, rhs);
             // Member-PATH bound (`i < l.src.len`, `i < l.len`): no `__len_PARAM`
             // was seeded (it's a struct field, not a param), so key a synthetic
