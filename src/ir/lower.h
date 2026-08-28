@@ -236,6 +236,26 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             IrInstr *ins=ir_instr(c->f,IR_BNOT,ty,1); ins->operands[0]=x; ir_emit(c->cur,ins); return ins->result;
         }
         case EXPR_INDEX: {
+            Expr *idxe = e->as.index_expr.index;
+            if (idxe && idxe->kind == EXPR_RANGE) {   // subslice: xs[lo..hi] → a slice value
+                IrType *u64t  = ir_type_int(c->a,64,false);
+                IrValue *tv   = ir_lower_expr(c, e->as.index_expr.target);
+                IrType  *selem= (ty && ty->elem) ? ty->elem : ir_type_int(c->a,8,false);
+                bool src_slice= tv->type && tv->type->kind==IRT_SLICE;
+                IrValue *srclen = src_slice ? ir_slice_len(c->f,c->cur,tv)
+                    : (e->as.index_expr.target->type && e->as.index_expr.target->type->kind==TYPE_ARRAY
+                        ? ir_const_int(c->f,c->cur, e->as.index_expr.target->type->array_len, u64t) : NULL);
+                IrValue *data0= src_slice ? ir_slice_data(c->f,c->cur,tv,selem) : tv;
+                IrValue *lo   = idxe->as.range_expr.start ? ir_lower_expr(c, idxe->as.range_expr.start)
+                                                          : ir_const_int(c->f,c->cur,0,u64t);
+                IrValue *hi   = idxe->as.range_expr.end   ? ir_lower_expr(c, idxe->as.range_expr.end)
+                              : (srclen ? srclen : ir_const_int(c->f,c->cur,0,u64t));
+                IrValue *nd   = ir_elem_ptr(c->f,c->cur, data0, lo, selem);
+                IrValue *len  = ir_binop(c->f,c->cur, IR_SUB, hi, lo, u64t);
+                if (idxe->as.range_expr.inclusive)
+                    len = ir_binop(c->f,c->cur, IR_ADD, len, ir_const_int(c->f,c->cur,1,u64t), u64t);
+                return ir_make_slice(c->f,c->cur, nd, len, selem);
+            }
             IrValue *addr = ir_lower_addr(c, e);
             return ir_load(c->f, c->cur, addr, ty);
         }

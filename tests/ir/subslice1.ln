@@ -1,0 +1,8 @@
+proc main() i32 {
+    var xs i32[5] = [10, 20, 30, 40, 50]
+    var s = xs[1..4]
+    if s[0] + s[2] == 60 {
+        return 0
+    }
+    return 1
+}
