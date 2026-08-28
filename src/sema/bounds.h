@@ -152,8 +152,17 @@ static void bounds_error(
 // Check if an index access is within bounds.
 // array_expr is the expression being indexed (used to identify the array by name
 // for constraint-based proof when the array has no size_expr annotation).
+// Clean-core rebuild seam (default OFF — the legacy engine's behavior is unchanged
+// unless a tool explicitly sets this). When on, the legacy bounds check is skipped so
+// type resolution proceeds WITHOUT exit(1), letting the new IR-based VRA analyze the
+// program — including ones the legacy engine rejects, which is how the reject-side of
+// the differential (src/analysis/vra.h, vra_driver.c) runs. Setting it never weakens
+// safety: the new VRA does the bounds proving instead.
+bool g_vra_suppress_bounds = false;
+
 static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_type, Expr *array_expr, bool is_addr_of) {
     if (!index_expr || !array_type) return;
+    if (g_vra_suppress_bounds) return;   // deferred to the new IR-based VRA
 
     // Flattened 2D index `a[i*w+j]` over `a[h*w]` (i<h, j<w): i*w+j < h*w = len.
     if (!is_addr_of && ctx && bounds_recognize_2d(array_type, index_expr, ctx, NULL)) return;

@@ -188,6 +188,8 @@ typedef struct IrFunc {
     int32_t    next_value_id;
     int32_t    next_block_id;
     Decl      *src_decl;    // originating AST decl (effects, return refinement, etc.)
+    bool       incomplete;  // lowering dropped/placeholder'd a construct ⇒ the IR is
+                            // NOT faithful, so no analysis may claim a proof over it
     Arena     *arena;       // where this function's IR is allocated
     struct IrFunc *next;
 } IrFunc;

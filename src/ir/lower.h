@@ -270,7 +270,8 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
         int idx = ir_field_index(sty, e->as.member_expr.member, &fty);
         if (idx >= 0) return ir_field_ptr(c->f, c->cur, base, idx, fty);
     }
-    // other lvalues: not yet lowered — placeholder slot
+    // other lvalues: not yet lowered — infaithful placeholder slot
+    c->f->incomplete = true;
     return ir_alloca(c->f, c->cur, ir_lower_type(c, e->type));
 }
 
@@ -305,7 +306,8 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                          IrValue *v = ir_lower_expr(c, g->as.variable_decl.init);
                          c->const_depth--; return v; }
             }
-            return ir_const_int(c->f, c->cur, 0, ty);   // truly unresolved — placeholder
+            c->f->incomplete = true;                     // truly unresolved (e.g. global array)
+            return ir_const_int(c->f, c->cur, 0, ty);
         }
         case EXPR_BINARY: {
             Expr *L=e->as.binary_expr.left, *R=e->as.binary_expr.right;
@@ -375,6 +377,7 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 IrValue *addr = ir_lower_addr(c, e);
                 return ir_load(c->f, c->cur, addr, fty ? fty : ty);
             }
+            c->f->incomplete = true;                     // unresolved member access
             return ir_const_int(c->f, c->cur, 0, ty);
         }
         case EXPR_CALL: {
@@ -430,7 +433,8 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             return ir_load(c->f, c->cur, p, ty);
         }
         default:
-            return ir_const_int(c->f, c->cur, 0, ty);   // unhandled expr → placeholder
+            c->f->incomplete = true;                     // unhandled expr → infaithful placeholder
+            return ir_const_int(c->f, c->cur, 0, ty);
     }
 }
 
@@ -503,7 +507,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
         case STMT_BREAK:    if (c->loop_exit) ir_set_br(c->cur, c->loop_exit); break;
         case STMT_CONTINUE: if (c->loop_head) ir_set_br(c->cur, c->loop_head); break;
         case STMT_UNSAFE: { bool o=c->unsafe; c->unsafe=true; ir_lower_stmts(c, s->as.unsafe_stmt.body); c->unsafe=o; break; }
-        default: break;   // for/match/defer/use — TODO
+        default: c->f->incomplete = true; break;   // for/match/defer/use — TODO (fail closed)
     }
 }
 static void ir_lower_stmts(LowerCtx *c, StmtList *body) {

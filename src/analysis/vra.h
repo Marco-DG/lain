@@ -41,6 +41,8 @@ typedef struct {
     int     *defblk;    // defblk[val id] = id of the block defining it (-1 = param)
     int64_t *cval; bool *cknown;   // constant values (from IR_CONST)
     int     *slicelen;  // slice value id → its canonical length var (−1 = none)
+    bool    *subslice_gep;  // elem_ptr result feeding a make_slice (a subslice start,
+                            // not an element access — checked by the make_slice instead)
     VraCheck *checks; int nchecks, cap_checks;
 } Vra;
 
@@ -58,7 +60,7 @@ static bool vra_is_slice_cell(Vra *V, int v) {
 // var is its make_slice length operand or its first slice_len read; it is propagated
 // through a slice local's store/load so `s = a[lo..hi]; s[k]` knows len(s).
 static void vra_prepass(Vra *V) {
-    for (int i=0;i<V->nvar;i++){ V->def[i]=NULL; V->defblk[i]=-1; V->cknown[i]=false; V->slicelen[i]=-1; }
+    for (int i=0;i<V->nvar;i++){ V->def[i]=NULL; V->defblk[i]=-1; V->cknown[i]=false; V->slicelen[i]=-1; V->subslice_gep[i]=false; }
     // first: def sites + constants (needed to classify slice cells below)
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
@@ -69,8 +71,11 @@ static void vra_prepass(Vra *V) {
     for (int i=0;i<V->nvar;i++) cell_len[i]=-1;
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
-            if (ins->op==IR_MAKE_SLICE && ins->result && ins->n_operands>=2)
+            if (ins->op==IR_MAKE_SLICE && ins->result && ins->n_operands>=2) {
                 V->slicelen[ins->result->id] = ins->operands[1]->id;      // {data,len}: len is the length var
+                IrInstr *dd = V->def[ins->operands[0]->id];               // subslice start (vs array→slice decay)
+                if (dd && dd->op==IR_ELEM_PTR) V->subslice_gep[ins->operands[0]->id] = true;
+            }
             else if (ins->op==IR_SLICE_LEN && ins->result && ins->n_operands>=1) {
                 int s=ins->operands[0]->id;
                 if (V->slicelen[s]<0) V->slicelen[s]=ins->result->id;     // first len read is canonical
@@ -217,6 +222,7 @@ static void vra_add_check(Vra *V, VraCheck c) {
 }
 static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
     if (ins->n_operands<2) return;
+    if (ins->result && V->subslice_gep[ins->result->id]) return;  // a subslice start — the make_slice checks it
     int idx = ins->operands[1]->id;
     IrValue *base = ins->operands[0];
     IrInstr *bd = V->def[base->id];
@@ -286,6 +292,33 @@ static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins) {
     vra_add_check(V, c);
 }
 
+// A subslice `src[lo..hi]` lowered to make_slice(elem_ptr(src_data,lo), hi−lo) is in
+// bounds iff 0 ≤ lo AND hi ≤ len(src). (The start elem_ptr is NOT an element access,
+// so it is skipped in vra_check_elem; the real obligation is checked here.)
+static void vra_check_subslice(Vra *V, Octagon *W, IrInstr *ms) {
+    if (ms->n_operands<2) return;
+    IrInstr *ndd = V->def[ms->operands[0]->id];
+    if (!ndd || ndd->op!=IR_ELEM_PTR || ndd->n_operands<2) return;    // array→slice decay, not a subslice
+    int lo = ndd->operands[1]->id;
+    IrInstr *bd = V->def[ndd->operands[0]->id];
+    int64_t clen=-1; int lenvar=-1;
+    if (bd && bd->op==IR_ALLOCA && bd->aux.alloca_ty && bd->aux.alloca_ty->kind==IRT_ARRAY) clen=bd->aux.alloca_ty->array_len;
+    else if (bd && bd->op==IR_SLICE_DATA && bd->n_operands>=1){ int s=bd->operands[0]->id; if(V->slicelen[s]>=0) lenvar=V->slicelen[s]; }
+    int hi=-1;
+    IrInstr *lend = V->def[ms->operands[1]->id];
+    if (lend && lend->op==IR_SUB && lend->n_operands>=2 && lend->operands[1]->id==lo) hi=lend->operands[0]->id; // len = hi − lo
+    VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_BOUNDS; c.at=ms; c.line=ms->line; c.col=ms->col;
+    int64_t llo,lhi; bool lhl,lhh; oct_interval(W,lo,&llo,&lhl,&lhi,&lhh);
+    c.lo_ok = lhl && llo>=0;                                          // 0 ≤ lo
+    c.has_len = (clen>=0 || lenvar>=0);
+    if (hi<0) c.hi_ok=false;                                          // couldn't recover hi ⇒ conservative
+    else if (clen>=0){ int64_t hl,hh_; bool a,bb; oct_interval(W,hi,&hl,&a,&hh_,&bb); c.hi_ok = bb && hh_<=clen; } // hi ≤ N
+    else if (lenvar>=0) c.hi_ok = oct_get(W, oct_pos(lenvar), oct_pos(hi)) <= 0;   // hi − len ≤ 0
+    else c.hi_ok=false;
+    c.ok = c.lo_ok && c.hi_ok;
+    vra_add_check(V, c);
+}
+
 // ── termination consumer (a func must have only terminating loops) ───────────
 static bool vra_is_scalar_cell(Vra *V, int v) {
     IrInstr *d=(v>=0&&v<V->nvar)?V->def[v]:NULL;
@@ -349,7 +382,7 @@ static Vra *vra_analyze(IrFunc *f) {
     V->in=calloc(nb,sizeof(int64_t*)); V->reached=calloc(nb,sizeof(bool));
     V->def=calloc(V->nvar,sizeof(IrInstr*)); V->defblk=calloc(V->nvar,sizeof(int));
     V->cval=calloc(V->nvar,sizeof(int64_t)); V->cknown=calloc(V->nvar,sizeof(bool));
-    V->slicelen=calloc(V->nvar,sizeof(int));
+    V->slicelen=calloc(V->nvar,sizeof(int)); V->subslice_gep=calloc(V->nvar,sizeof(bool));
     vra_prepass(V);
     for (int i=0;i<nb;i++) V->in[i]=malloc(V->dsz*sizeof(int64_t));
 
@@ -402,6 +435,7 @@ static Vra *vra_analyze(IrFunc *f) {
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             switch (ins->op) {
                 case IR_ELEM_PTR: oct_close(&W); vra_check_elem(V,&W,ins); break;
+                case IR_MAKE_SLICE: oct_close(&W); vra_check_subslice(V,&W,ins); break;
                 case IR_ADD: case IR_SUB: case IR_MUL: oct_close(&W); vra_check_overflow(V,&W,ins); break;
                 case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: oct_close(&W); vra_check_divzero(V,&W,ins); break;
                 default: break;
@@ -415,6 +449,9 @@ static Vra *vra_analyze(IrFunc *f) {
         VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
         vra_add_check(V, c);
     }
+    // fail closed: if lowering was infaithful (a dropped/placeholder'd construct), no
+    // proof over this IR is trustworthy — the dropped code could change a checked value.
+    if (f->incomplete) for (int i=0;i<V->nchecks;i++) V->checks[i].ok=false;
     free(W_m); free(T_m); free(J_m); free(D_m);
     return V;
 }
@@ -422,7 +459,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->checks); free(V);
+    free(V->slicelen); free(V->subslice_gep); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H

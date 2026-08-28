@@ -29,8 +29,9 @@ static char *drv_modname(Arena *a, const char *path) {
 }
 
 int main(int argc, char **argv) {
-    if (argc<2){ fprintf(stderr,"usage: %s <file.ln> [--dump]\n", argv[0]); return 2; }
-    bool dump = (argc>=3 && strcmp(argv[2],"--dump")==0);
+    if (argc<2){ fprintf(stderr,"usage: %s <file.ln> [--dump] [--suppress]\n", argv[0]); return 2; }
+    bool dump=false, suppress=false;
+    for (int k=2;k<argc;k++){ if(!strcmp(argv[k],"--dump"))dump=true; if(!strcmp(argv[k],"--suppress"))suppress=true; }
     Arena fa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena aa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -43,6 +44,7 @@ int main(int argc, char **argv) {
     char *mod=drv_modname(&aa,path);
     DeclList *prog=load_module(&fa,&aa,mod);
     if(!prog){ fprintf(stderr,"load failed\n"); return 1; }
+    g_vra_suppress_bounds = suppress;   // analyze even legacy-rejected programs (reject-side)
     sema_resolve_module(prog,mod,&sa);
 
     int total=0, proven=0;
