@@ -127,7 +127,12 @@ C  (or LLVM IR later)
       `tests/ir/sum_maxi.ln` to a correct CFG (loop header auto-detected; ℤ-widened `i33`
       add results — the overflow-split model). TODO: for/match/structs/strings/short-circuit
       and-or/slices-fully → grow toward the 1.6 gate.
-- [ ] **1.3 IR → C backend** (`src/ir/emit_c.h`): trivial, faithful lowering.
+- [~] **1.3 IR → C backend** (`src/ir/emit_c.h`): **scalar core round-trips END-TO-END.**
+      Blocks→labels+gotos; SSA values→C locals declared at function top; alloca/load/store→
+      real slot pointers (C compiler optimizes away); int/bool + arithmetic/cmp/call/cast/
+      branch. `lower_driver.c --emit-c` emits a module; `tests/ir/sum_maxi.ln` lowered →
+      emitted C → gcc → **runs correctly (sum(5)==10, exit 0)** through the whole NEW pipeline.
+      Arrays/slices/structs/strings (fat-pointer repr) grow next.
 - [ ] **1.4 Pipeline wiring:** `--engine=ir` (or `LAIN_IR=1`) selects the new path end-to-end.
 - [~] **1.5 IR dumper** (`src/ir/dump.h`): readable SSA-form printer done + validated on
       hand-built IR. Round-trip on real *parsed* programs comes with lowering (1.2).
@@ -199,6 +204,7 @@ C  (or LLVM IR later)
 ---
 
 ## STATUS LOG (update every session — newest first)
+- **2026-08-28 (6)** — **END-TO-END: a real program round-trips the whole NEW middle-end+backend and RUNS CORRECTLY.** `src/ir/emit_c.h` (IR→C, scalar core) + `lower_driver.c --emit-c`: `tests/ir/sum_maxi.ln` → lower → emit C → gcc → exit 0 (sum(5)==10). Scalar core of Phase 1 (1.1-1.3) done. Next: grow lowering+backend coverage (arrays/slices/structs/strings) toward the 1.6 gate. Old engine green (611).
 - **2026-08-28 (5)** — **Phase 1.2 lowering WORKS** end-to-end: `src/ir/lower.h` + `lower_driver.c` lower a real parsed+typechecked program (`tests/ir/sum_maxi.ln`) to a correct CFG (loop header detected; ℤ-widened adds). Core subset done; grow coverage next (for/match/structs/strings). Old engine green (611).
 - **2026-08-28 (4)** — Phase 1: IR construction API + dumper DONE + validated (`src/ir/build.h`, `dump.h`, `test_ir.c` — hand-built branch + loop dump correctly, loop-header auto-detected). 1.1 complete, 1.5 dumper done. Next: **1.2 AST→IR lowering** (`src/ir/lower.h`) wired to the frontend (parse+typecheck→typed AST→lower→dump), then 1.3 IR→C. Old engine green (610).
 - **2026-08-28 (3)** — Phase 0 complete; **Phase 1 STARTED**: `src/ir/ir.h` first draft (IR data structures) landed + compiles standalone. Next: 1.2 AST→IR lowering + builder defs + dumper.

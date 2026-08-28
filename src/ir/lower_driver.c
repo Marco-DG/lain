@@ -21,6 +21,7 @@
 #include "sema.h"
 #include "ir/lower.h"
 #include "ir/dump.h"
+#include "ir/emit_c.h"
 
 // module name = basename without ".ln" (mirrors main.c's private helper)
 static char *drv_modname(Arena *a, const char *path) {
@@ -53,14 +54,17 @@ int main(int argc, char **argv) {
     if (!program) { fprintf(stderr, "load failed: %s\n", modname); return 1; }
     sema_resolve_module(program, modname, &sema_arena);
 
+    bool emit_c = (argc >= 3 && strcmp(argv[2], "--emit-c") == 0);
+    IrFunc *head = NULL, *tail = NULL;
     for (DeclList *d = program; d; d = d->next) {
         if (!d->decl) continue;
         if ((d->decl->kind == DECL_FUNCTION || d->decl->kind == DECL_PROCEDURE)
             && d->decl->as.function_decl.body) {
             IrFunc *f = ir_lower_function(d->decl, &ir_arena);
-            ir_dump_func(f, stdout);
-            fputc('\n', stdout);
+            if (!head) head = tail = f; else { tail->next = f; tail = f; }
+            if (!emit_c) { ir_dump_func(f, stdout); fputc('\n', stdout); }
         }
     }
+    if (emit_c) ir_emit_module_c(head, stdout, &ir_arena);
     return 0;
 }
