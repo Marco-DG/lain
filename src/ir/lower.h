@@ -23,13 +23,15 @@ typedef struct IrLocal {
 } IrLocal;
 
 typedef struct {
-    IrFunc  *f;
-    IrBlock *cur;         // block currently being filled
-    Arena   *a;
-    IrLocal *locals;
-    bool     unsafe;      // inside an `unsafe` block (elem_ptr etc. become unchecked)
+    IrFunc   *f;
+    IrBlock  *cur;         // block currently being filled
+    Arena    *a;
+    IrLocal  *locals;
+    bool      unsafe;      // inside an `unsafe` block (elem_ptr etc. become unchecked)
     // innermost loop targets, for break/continue
-    IrBlock *loop_head, *loop_exit;
+    IrBlock  *loop_head, *loop_exit;
+    DeclList *globals;     // module top-level decls (for global-constant references)
+    int       const_depth; // recursion guard for cyclic constant initializers
 } LowerCtx;
 
 // A block's terminator is "set" once lowering has given it one. A freshly-memset
@@ -48,6 +50,31 @@ static void ir_env_add(LowerCtx *c, Id *name, IrValue *slot, IrValue *param) {
     IrLocal *l = arena_push_aligned(c->a, IrLocal);
     l->name = name; l->slot = slot; l->param = param; l->aggregate = false;
     l->next = c->locals; c->locals = l;
+}
+// A module-level immutable constant `NAME T = expr` (scalar) referenced by name.
+// sema qualifies a reference as `<defining_module>_<name>` (Q-018), while the decl
+// keeps the bare name — so match both the bare and the module-qualified spelling.
+static Decl *ir_find_global_const(LowerCtx *c, Id *name) {
+    if (!name) return NULL;
+    for (DeclList *d = c->globals; d; d = d->next) {
+        Decl *dc = d->decl;
+        if (!dc || dc->kind != DECL_VARIABLE) continue;
+        if (!dc->as.variable_decl.init || dc->as.variable_decl.is_mutable) continue;
+        Id *dn = dc->as.variable_decl.name;
+        if (!dn) continue;
+        if (dn->length == name->length &&
+            strncmp(dn->name, name->name, (size_t)name->length) == 0)
+            return dc;                                   // bare match
+        const char *mod = dc->defining_module;           // `<mod>_<name>` match
+        if (mod) {
+            size_t ml = strlen(mod);
+            if ((size_t)name->length == ml + 1 + (size_t)dn->length &&
+                strncmp(name->name, mod, ml) == 0 && name->name[ml] == '_' &&
+                strncmp(name->name + ml + 1, dn->name, (size_t)dn->length) == 0)
+                return dc;
+        }
+    }
+    return NULL;
 }
 // "aggregate" here = decays to an element-base pointer read directly from its slot
 // (a fixed array). A SLICE is a first-class fat value living in a normal slot
@@ -174,7 +201,14 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             if (l && l->aggregate) return l->slot;   // array/slice base pointer, read directly
             if (l && l->slot)  return ir_load(c->f, c->cur, l->slot,
                                               l->slot->type->elem ? l->slot->type->elem : ty);
-            return ir_const_int(c->f, c->cur, 0, ty);   // unresolved (e.g. global) — placeholder
+            // not a local/param: a module-level constant folds to its initializer
+            if (c->const_depth < 32) {
+                Decl *g = ir_find_global_const(c, e->as.identifier_expr.id);
+                if (g) { c->const_depth++;
+                         IrValue *v = ir_lower_expr(c, g->as.variable_decl.init);
+                         c->const_depth--; return v; }
+            }
+            return ir_const_int(c->f, c->cur, 0, ty);   // truly unresolved — placeholder
         }
         case EXPR_BINARY: {
             Expr *L=e->as.binary_expr.left, *R=e->as.binary_expr.right;
@@ -326,8 +360,8 @@ static void ir_lower_stmts(LowerCtx *c, StmtList *body) {
 }
 
 // ── entry: lower one function ────────────────────────────────────────────────
-IrFunc *ir_lower_function(Decl *fn, Arena *a) {
-    IrType tmp; LowerCtx cc = {0}; cc.a = a; (void)tmp;
+IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
+    IrType tmp; LowerCtx cc = {0}; cc.a = a; cc.globals = globals; (void)tmp;
     IrFunc *f = ir_func_new(a, fn->as.function_decl.name,
                             NULL, fn->kind==DECL_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
     f->src_decl = fn;

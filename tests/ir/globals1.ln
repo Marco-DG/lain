@@ -1,0 +1,9 @@
+MAX = 100
+MIN = 5
+STEP = MAX / MIN
+proc main() i32 {
+    if MAX - MIN + STEP == 115 {
+        return 0
+    }
+    return 1
+}

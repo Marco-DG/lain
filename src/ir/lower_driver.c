@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
         if (!d->decl) continue;
         if ((d->decl->kind == DECL_FUNCTION || d->decl->kind == DECL_PROCEDURE)
             && d->decl->as.function_decl.body) {
-            IrFunc *f = ir_lower_function(d->decl, &ir_arena);
+            IrFunc *f = ir_lower_function(d->decl, program, &ir_arena);
             if (!head) head = tail = f; else { tail->next = f; tail = f; }
             if (!emit_c) { ir_dump_func(f, stdout); fputc('\n', stdout); }
         }
