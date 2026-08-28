@@ -471,6 +471,27 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                         IrValue *p   = ir_elem_ptr(c->f, c->cur, agg, idx, slot_ty->elem);
                         ir_store(c->f, c->cur, p, ir_lower_expr(c, el->expr));
                     }
+                } else if (init && init->kind == EXPR_ARRAY_COMPREHENSION && slot_ty->kind==IRT_ARRAY) {
+                    // [ body for i in range ] ⇒ i=lo; while i<hi { agg[i]=body; i+=1 }
+                    Expr *rng=init->as.array_comprehension_expr.range, *bod=init->as.array_comprehension_expr.body;
+                    IrType *ity=ir_type_int(c->a,64,false);
+                    bool isr = rng && rng->kind==EXPR_RANGE;
+                    IrValue *icell=ir_alloca(c->f,c->cur,ity);
+                    ir_store(c->f,c->cur,icell, (isr&&rng->as.range_expr.start)?ir_lower_expr(c,rng->as.range_expr.start):ir_const_int(c->f,c->cur,0,ity));
+                    ir_env_add(c, init->as.array_comprehension_expr.idx, icell, NULL);
+                    IrBlock *head=ir_new_block(c->f),*bb=ir_new_block(c->f),*ex=ir_new_block(c->f);
+                    ir_set_br(c->cur,head); c->cur=head;
+                    IrValue *iv=ir_load(c->f,head,icell,ity);
+                    IrValue *hi=(isr&&rng->as.range_expr.end)?ir_lower_expr(c,rng->as.range_expr.end):ir_const_int(c->f,head,slot_ty->array_len,ity);
+                    ir_set_br_cond(head, ir_icmp(c->f,head,(isr&&rng->as.range_expr.inclusive)?IR_CMP_ULE:IR_CMP_ULT,iv,hi), bb, ex);
+                    c->cur=bb;
+                    IrValue *iv2=ir_load(c->f,bb,icell,ity);
+                    ir_store(c->f,bb, ir_elem_ptr(c->f,bb,agg,iv2,slot_ty->elem), ir_lower_expr(c,bod));
+                    IrValue *ci=ir_load(c->f,c->cur,icell,ity);
+                    ir_store(c->f,c->cur,icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,ity),ity));
+                    ir_set_br(c->cur,head); c->cur=ex;
+                } else if (init) {
+                    c->f->incomplete = true;   // some other aggregate init we don't model — fail closed
                 }
                 break;
             }

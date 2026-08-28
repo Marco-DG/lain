@@ -1,0 +1,11 @@
+proc main() i32 {
+    var a i32[5] = [i as i32 for i in 0..5]
+    var s i32 = 0
+    for v in a {
+        s = s + v
+    }
+    if s == 10 {
+        return 0
+    }
+    return 1
+}
