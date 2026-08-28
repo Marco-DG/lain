@@ -504,10 +504,70 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             c->cur = exit;
             break;
         }
+        case STMT_FOR: {
+            Expr *it = s->as.for_stmt.iterable;
+            Id *vn = s->as.for_stmt.value_name, *xn = s->as.for_stmt.index_name;
+            IrType *usz = ir_type_int(c->a, 64, false);
+            if (it && it->kind == EXPR_RANGE) {
+                // for i in lo..hi { body }  ⇒  i=lo; while i <(=) hi { body; i=i+1 }
+                Expr *lo_e=it->as.range_expr.start, *hi_e=it->as.range_expr.end;
+                IrType *ity = lo_e ? ir_lower_type(c, lo_e->type) : usz;
+                if (!ity || ity->kind!=IRT_INT) ity = usz;
+                IrValue *icell = ir_alloca(c->f, c->cur, ity);
+                ir_store(c->f, c->cur, icell, lo_e ? ir_lower_expr(c, lo_e) : ir_const_int(c->f,c->cur,0,ity));
+                ir_env_add(c, vn, icell, NULL);                 // i reads/writes its cell
+                IrBlock *head=ir_new_block(c->f), *body=ir_new_block(c->f), *exit=ir_new_block(c->f);
+                ir_set_br(c->cur, head); c->cur = head;
+                IrValue *iv = ir_load(c->f, head, icell, ity);
+                IrValue *hi = hi_e ? ir_lower_expr(c, hi_e) : ir_const_int(c->f,head,0,ity);
+                IrValue *cond = ir_icmp(c->f, head, it->as.range_expr.inclusive?IR_CMP_ULE:IR_CMP_ULT, iv, hi);
+                ir_set_br_cond(head, cond, body, exit);
+                IrBlock *oh=c->loop_head, *oe=c->loop_exit; c->loop_head=head; c->loop_exit=exit;
+                c->cur = body; ir_lower_stmts(c, s->as.for_stmt.body);
+                if (!ir_is_set_term(c->cur)) {
+                    IrValue *ci = ir_load(c->f, c->cur, icell, ity);
+                    ir_store(c->f, c->cur, icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,ity),ity));
+                    ir_set_br(c->cur, head);
+                }
+                c->loop_head=oh; c->loop_exit=oe; c->cur = exit;
+                break;
+            }
+            // for v in arr { body }  ⇒  i=0; while i<arr.len { v=arr[i]; body; i=i+1 }
+            IrValue *av = ir_lower_expr(c, it);
+            IrType  *aty = it ? ir_lower_type(c, it->type) : NULL;
+            IrType  *elem = aty && aty->elem ? aty->elem : ir_type_int(c->a,32,true);
+            bool is_slice = av->type && av->type->kind==IRT_SLICE;
+            int64_t alen = (it && it->type && it->type->kind==TYPE_ARRAY) ? it->type->array_len : -1;
+            IrValue *icell = ir_alloca(c->f, c->cur, usz);
+            ir_store(c->f, c->cur, icell, ir_const_int(c->f,c->cur,0,usz));
+            IrValue *vcell = ir_alloca(c->f, c->cur, elem);
+            ir_env_add(c, vn, vcell, NULL);
+            if (xn) ir_env_add(c, xn, icell, NULL);
+            IrBlock *head=ir_new_block(c->f), *body=ir_new_block(c->f), *exit=ir_new_block(c->f);
+            ir_set_br(c->cur, head); c->cur = head;
+            IrValue *iv = ir_load(c->f, head, icell, usz);
+            IrValue *len = is_slice ? ir_slice_len(c->f, head, av)
+                         : ir_const_int(c->f, head, alen>=0?alen:0, usz);
+            ir_set_br_cond(head, ir_icmp(c->f,head,IR_CMP_ULT,iv,len), body, exit);
+            IrBlock *oh=c->loop_head, *oe=c->loop_exit; c->loop_head=head; c->loop_exit=exit;
+            c->cur = body;
+            IrValue *iv2 = ir_load(c->f, body, icell, usz);
+            IrValue *dat = is_slice ? ir_slice_data(c->f, body, av, elem) : av;
+            IrValue *ep  = ir_elem_ptr(c->f, body, dat, iv2, elem);
+            ir_store(c->f, body, vcell, ir_load(c->f, body, ep, elem));   // v = arr[i]
+            ir_lower_stmts(c, s->as.for_stmt.body);
+            if (!ir_is_set_term(c->cur)) {
+                IrValue *ci = ir_load(c->f, c->cur, icell, usz);
+                ir_store(c->f, c->cur, icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,usz),usz));
+                ir_set_br(c->cur, head);
+            }
+            c->loop_head=oh; c->loop_exit=oe; c->cur = exit;
+            break;
+        }
         case STMT_BREAK:    if (c->loop_exit) ir_set_br(c->cur, c->loop_exit); break;
         case STMT_CONTINUE: if (c->loop_head) ir_set_br(c->cur, c->loop_head); break;
         case STMT_UNSAFE: { bool o=c->unsafe; c->unsafe=true; ir_lower_stmts(c, s->as.unsafe_stmt.body); c->unsafe=o; break; }
-        default: c->f->incomplete = true; break;   // for/match/defer/use — TODO (fail closed)
+        default: c->f->incomplete = true; break;   // match/defer/use — TODO (fail closed)
     }
 }
 static void ir_lower_stmts(LowerCtx *c, StmtList *body) {
