@@ -1,0 +1,25 @@
+// The ubiquitous scan `while … { if advance { i = i + 1 } else { break } }` — the
+// measure (n - i, inferred) decreases only on the CONTINUING branch; the `break`
+// branch leaves the loop and is exempt from the decrease requirement. Uses wrapping
+// `*%`/`+%` so the parse can't overflow (orthogonal concern). Self-checking: exit 0.
+func is_digit(c u8) bool { return c >= 48 and c <= 57 }
+func scan_number(s u8[], i usize) i32 {
+    var val i32 = 0
+    var j = i
+    while j < s.len {
+        if is_digit(s[j]) {
+            val = val *% 10 +% (s[j] as i32 -% 48)
+            j = j + 1
+        } else {
+            break
+        }
+    }
+    return val
+}
+proc main() i32 {
+    var src = "42x"
+    if scan_number(src, 0) == 42 {
+        return 0
+    }
+    return 1
+}

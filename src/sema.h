@@ -1496,6 +1496,23 @@ static bool verify_recursion_expr_measure(Decl *fn, Expr *call) {
 // Returns: +1 if the block guarantees a decrease on all paths & none increase,
 //          -1 if some path changes the measure the wrong way (conflict),
 //           0 if no conflict but not every path is guaranteed to decrease.
+// Does `body` ALWAYS leave the loop (its last statement breaks or returns, or is an
+// if whose both branches leave)? Such a path never loops back, so it is exempt from
+// the "measure must strictly decrease" requirement. (A `continue` re-checks the
+// condition and DOES loop back, so it is not an exit.)
+static bool branch_exits_loop(StmtList *body) {
+    if (!body) return false;
+    StmtList *last = body;
+    while (last->next) last = last->next;
+    Stmt *s = last->stmt;
+    if (!s) return false;
+    if (s->kind == STMT_BREAK || s->kind == STMT_RETURN) return true;
+    if (s->kind == STMT_IF)
+        return branch_exits_loop(s->as.if_stmt.then_body) &&
+               branch_exits_loop(s->as.if_stmt.else_branch);
+    return false;
+}
+
 static int measure_scan_body(StmtList *body, MeasureVar *vars, int nvar) {
     bool found_decrease = false;
     for (StmtList *l = body; l; l = l->next) {
@@ -1514,14 +1531,22 @@ static int measure_scan_body(StmtList *body, MeasureVar *vars, int nvar) {
                 break;
             }
             case STMT_IF: {
-                // Soundness: the measure must decrease on EVERY path, so an `if`
-                // guarantees a decrease only if BOTH branches decrease. A missing
-                // `else` scans to 0, so a one-armed `if` never guarantees it.
+                // Soundness: the measure must strictly decrease on every path that
+                // LOOPS BACK. A branch that leaves the loop (break/return) never loops
+                // back, so it is exempt — the ubiquitous scan `while … { if adv { i =
+                // i+1 } else { break } }` decreases on its only continuing path. A
+                // missing `else` is fall-through (continues, no change) so it still
+                // requires the then branch alone to guarantee nothing → not a decrease.
                 int rt = measure_scan_body(s->as.if_stmt.then_body, vars, nvar);
                 if (rt < 0) return -1;
                 int re = measure_scan_body(s->as.if_stmt.else_branch, vars, nvar);
                 if (re < 0) return -1;
-                if (rt > 0 && re > 0) found_decrease = true;
+                bool then_ok = (rt > 0) || branch_exits_loop(s->as.if_stmt.then_body);
+                bool else_ok = (re > 0) || branch_exits_loop(s->as.if_stmt.else_branch);
+                // Guarantee a decrease when every continuing path through the if
+                // decreased AND at least one branch actually decreased (so this isn't
+                // a degenerate both-exit if that merely terminates without a measure).
+                if (then_ok && else_ok && (rt > 0 || re > 0)) found_decrease = true;
                 break;
             }
             case STMT_WHILE: {
