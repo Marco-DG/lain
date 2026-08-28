@@ -1,0 +1,17 @@
+func sum(a i32[]) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < a.len {
+        s = s + a[i]
+        i = i + 1
+    }
+    return s
+}
+
+proc main() i32 {
+    var arr i32[4] = [10, 20, 30, 40]
+    if sum(arr) == 100 {
+        return 0
+    }
+    return 1
+}

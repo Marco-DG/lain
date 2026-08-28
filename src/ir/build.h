@@ -127,6 +127,22 @@ IrValue *ir_slice_len(IrFunc *f, IrBlock *b, IrValue *slice) {
     ir_emit(b, ins);
     return ins->result;
 }
+// Extract the data pointer from a slice (result type *elem).
+IrValue *ir_slice_data(IrFunc *f, IrBlock *b, IrValue *slice, IrType *elem) {
+    IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = elem;
+    IrInstr *ins = ir_instr(f, IR_SLICE_DATA, pt, 1);
+    ins->operands[0] = slice;
+    ir_emit(b, ins);
+    return ins->result;
+}
+// Build a slice value {data, len} — for array→slice decay and sub-slicing.
+IrValue *ir_make_slice(IrFunc *f, IrBlock *b, IrValue *data, IrValue *len, IrType *elem) {
+    IrType *st = ir_type_new(f->arena, IRT_SLICE); st->elem = elem;
+    IrInstr *ins = ir_instr(f, IR_MAKE_SLICE, st, 2);
+    ins->operands[0] = data; ins->operands[1] = len;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_elem_ptr(IrFunc *f, IrBlock *b, IrValue *base, IrValue *idx, IrType *elem) {
     IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = elem;
     IrInstr *ins = ir_instr(f, IR_ELEM_PTR, pt, 2);

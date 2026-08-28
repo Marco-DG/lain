@@ -49,8 +49,11 @@ static void ir_env_add(LowerCtx *c, Id *name, IrValue *slot, IrValue *param) {
     l->name = name; l->slot = slot; l->param = param; l->aggregate = false;
     l->next = c->locals; c->locals = l;
 }
+// "aggregate" here = decays to an element-base pointer read directly from its slot
+// (a fixed array). A SLICE is a first-class fat value living in a normal slot
+// (alloca + load/store by value); a STRUCT will be handled when fields land.
 static bool ir_type_is_agg(IrType *t) {
-    return t && (t->kind==IRT_ARRAY || t->kind==IRT_SLICE || t->kind==IRT_STRUCT);
+    return t && t->kind==IRT_ARRAY;
 }
 
 // ── type bridge: AST Type → IrType (core cases) ──────────────────────────────
@@ -136,6 +139,8 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
         IrValue *base = ir_lower_expr(c, e->as.index_expr.target);
         IrValue *idx  = ir_lower_expr(c, e->as.index_expr.index);
         IrType  *elem = ir_lower_type(c, e->type);
+        if (base->type && base->type->kind == IRT_SLICE)
+            base = ir_slice_data(c->f, c->cur, base, elem);   // index through .data
         IrValue *p = ir_elem_ptr(c->f, c->cur, base, idx, elem);
         p->line = e->line; p->col = e->col;
         c->cur->instrs_tail->unchecked = c->unsafe;   // elem_ptr just emitted
@@ -161,7 +166,12 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
         }
         case EXPR_BINARY: {
             Expr *L=e->as.binary_expr.left, *R=e->as.binary_expr.right;
-            bool sgn = !(e->type && e->type->kind==TYPE_SIMPLE && e->type->int_width_cache>0 && !e->type->int_signed_cache);
+            // Signedness comes from the OPERANDS, not e->type: a comparison's result
+            // type is bool, so deriving from it would mistag every `i < len` as signed.
+            Type *sty = (L->type && L->type->kind==TYPE_SIMPLE && L->type->int_width_cache>0) ? L->type
+                      : (R->type && R->type->kind==TYPE_SIMPLE && R->type->int_width_cache>0) ? R->type
+                      : e->type;
+            bool sgn = !(sty && sty->kind==TYPE_SIMPLE && sty->int_width_cache>0 && !sty->int_signed_cache);
             IrValue *x = ir_lower_expr(c,L), *y = ir_lower_expr(c,R);
             IrOp op; IrWrapMode wrap; IrCmp cmp;
             if (ir_cmp_op(e->as.binary_expr.op, sgn, &cmp)) return ir_icmp(c->f,c->cur,cmp,x,y);
@@ -197,7 +207,22 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             int n=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next) n++;
             IrInstr *ins = ir_instr(c->f, IR_CALL, (e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT) ? ty : NULL, n);
             ins->aux.callee = callee;
-            int i=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next,i++) ins->operands[i]=ir_lower_expr(c,a->expr);
+            DeclList *pp = callee ? callee->as.function_decl.params : NULL;
+            int i=0;
+            for (ExprList *a=e->as.call_expr.args; a; a=a->next,i++) {
+                IrValue *av = ir_lower_expr(c, a->expr);
+                // a fixed array decays to a slice when the callee expects one
+                if (pp && pp->decl && pp->decl->kind==DECL_VARIABLE) {
+                    IrType *ptype = ir_lower_type(c, pp->decl->as.variable_decl.type);
+                    if (ptype && ptype->kind==IRT_SLICE && av->type && av->type->kind==IRT_PTR) {
+                        int64_t ne = (a->expr->type && a->expr->type->kind==TYPE_ARRAY) ? a->expr->type->array_len : 0;
+                        IrValue *ln = ir_const_int(c->f, c->cur, ne, ir_type_int(c->a,64,false));
+                        av = ir_make_slice(c->f, c->cur, av, ln, ptype->elem);
+                    }
+                }
+                ins->operands[i] = av;
+                if (pp) pp = pp->next;
+            }
             ir_emit(c->cur, ins);
             return ins->result ? ins->result : ir_const_int(c->f,c->cur,0,ir_type_int(c->a,32,true));
         }

@@ -15,14 +15,27 @@
 // round a non-standard integer width up to a standard C width
 static int ir_c_stdbits(int bits) { return bits<=8?8 : bits<=16?16 : bits<=32?32 : 64; }
 
+// mangle a slice element type into a valid C identifier suffix (for Slice_<tag>)
+static int ir_slice_tag(const IrType *e, char *buf, int n) {
+    if (n <= 1 || !e) { if (n>0) buf[0]=0; return 0; }
+    switch (e->kind) {
+        case IRT_INT:   return snprintf(buf, n, "%c%d", e->is_signed?'i':'u', e->bits);
+        case IRT_BOOL:  return snprintf(buf, n, "b");
+        case IRT_PTR:   { int k=snprintf(buf,n,"p"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
+        case IRT_SLICE: { int k=snprintf(buf,n,"s"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
+        default:        return snprintf(buf, n, "v");
+    }
+}
+
 static void ir_ctype(const IrType *t, FILE *o) {
     if (!t) { fputs("void", o); return; }
     switch (t->kind) {
         case IRT_INT:  fprintf(o, "%sint%d_t", t->is_signed?"":"u", ir_c_stdbits(t->bits)); break;
         case IRT_BOOL: fputs("_Bool", o); break;
         case IRT_PTR:  ir_ctype(t->elem, o); fputc('*', o); break;
+        case IRT_SLICE:{ char tag[128]; ir_slice_tag(t->elem, tag, sizeof tag); fprintf(o, "Slice_%s", tag); } break;
         case IRT_UNIT: case IRT_NEVER: fputs("void", o); break;
-        default:       fputs("void*", o); break;   // slice/array/struct — later phases
+        default:       fputs("void*", o); break;   // by-value array (rare)/struct — later
     }
 }
 
@@ -62,6 +75,10 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                                   i->operands[0]->id, i->operands[1]->id); break;
         case IR_LOAD:   fprintf(o, "  v%d = *v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_STORE:  fprintf(o, "  *v%d = v%d;\n", i->operands[0]->id, i->operands[1]->id); break;
+        case IR_SLICE_LEN:  fprintf(o, "  v%d = v%d.len;\n",  i->result->id, i->operands[0]->id); break;
+        case IR_SLICE_DATA: fprintf(o, "  v%d = v%d.data;\n", i->result->id, i->operands[0]->id); break;
+        case IR_MAKE_SLICE: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
+                            fprintf(o, "){ v%d, v%d };\n", i->operands[0]->id, i->operands[1]->id); break;
         case IR_ICMP:   fprintf(o, "  v%d = (v%d %s v%d);\n", i->result->id,
                                 i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id); break;
         case IR_NEG:    fprintf(o, "  v%d = -v%d;\n", i->result->id, i->operands[0]->id); break;
@@ -151,8 +168,31 @@ static void ir_emit_proto_c(IrFunc *f, FILE *o) {
     fputs(");\n", o);
 }
 
+// Emit one `typedef struct { T* data; size_t len; } Slice_<tag>;` per distinct
+// slice type used anywhere in the module (params, returns, locals, make_slice).
+static void ir_emit_slice_typedefs(IrFunc *funcs, FILE *o, Arena *a) {
+    char seen[64][128]; int nseen = 0;
+    for (IrFunc *f=funcs; f; f=f->next) {
+        IrValTab vt = { arena_push_many_aligned(a, IrValue*, f->next_value_id), f->next_value_id };
+        for (int k=0;k<vt.n;k++) vt.v[k]=NULL;
+        ir_collect_vals(f, &vt);
+        for (int id=0; id<vt.n; id++) {
+            IrValue *v = vt.v[id];
+            if (!v || !v->type || v->type->kind != IRT_SLICE) continue;
+            char tag[128]; ir_slice_tag(v->type->elem, tag, sizeof tag);
+            bool dup=false; for (int s=0;s<nseen;s++) if (strcmp(seen[s],tag)==0){dup=true;break;}
+            if (dup || nseen>=64) continue;
+            strncpy(seen[nseen], tag, sizeof seen[0]); seen[nseen][sizeof seen[0]-1]=0; nseen++;
+            fputs("typedef struct { ", o); ir_ctype(v->type->elem, o);
+            fprintf(o, "* data; size_t len; } Slice_%s;\n", tag);
+        }
+    }
+    if (nseen) fputc('\n', o);
+}
+
 void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
     fputs("#include <stdint.h>\n#include <stddef.h>\n\n", o);
+    ir_emit_slice_typedefs(funcs, o, a);
     for (IrFunc *f=funcs; f; f=f->next) ir_emit_proto_c(f, o);
     fputc('\n', o);
     for (IrFunc *f=funcs; f; f=f->next) ir_emit_func_c(f, o, a);
