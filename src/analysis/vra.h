@@ -381,6 +381,22 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
     return false;
 }
 
+// Seed a param refinement constraint `param OP <const>` (e.g. `n u32 < 4096`) into
+// the entry octagon. A non-constant RHS (e.g. `i < a.len`) is left to flow/guards.
+static void vra_seed_constraint(Octagon *E, int var, Expr *con) {
+    if (!con || con->kind != EXPR_BINARY) return;
+    Expr *rhs = con->as.binary_expr.right;
+    if (!rhs || rhs->kind != EXPR_LITERAL) return;
+    int64_t rv = rhs->as.literal_expr.value;
+    switch (con->as.binary_expr.op) {
+        case TOKEN_ANGLE_BRACKET_LEFT:        oct_add_ub(E, var, rv-1); break;   // <
+        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  oct_add_ub(E, var, rv);   break;   // <=
+        case TOKEN_ANGLE_BRACKET_RIGHT:       oct_add_lb(E, var, rv+1); break;   // >
+        case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: oct_add_lb(E, var, rv);   break;   // >=
+        default: break;                                                          // == / != skipped
+    }
+}
+
 // ── the fixpoint over the CFG ────────────────────────────────────────────────
 static Vra *vra_analyze(IrFunc *f) {
     Vra *V = calloc(1, sizeof *V);
@@ -401,11 +417,19 @@ static Vra *vra_analyze(IrFunc *f) {
     { Octagon E={V->nvar,dim,V->in[f->entry->id]}; oct_init_top(&E,V->nvar,E.m);
       // seed each integer parameter's type interval (a usize is ≥ 0, etc.). Skip a
       // bound whose doubled DBM entry would overflow (e.g. u64's ~2^63 upper).
+      DeclList *ap = f->src_decl ? f->src_decl->as.function_decl.params : NULL;
       for (IrParam *p=f->params; p; p=p->next) {
           int64_t tlo,thi;
-          if (!irtype_int_range(p->value->type,&tlo,&thi)) continue;
-          if (tlo > -OCT_INF/2) oct_add_lb(&E, p->value->id, tlo);
-          if (thi <  OCT_INF/2) oct_add_ub(&E, p->value->id, thi);
+          if (irtype_int_range(p->value->type,&tlo,&thi)) {
+              if (tlo > -OCT_INF/2) oct_add_lb(&E, p->value->id, tlo);
+              if (thi <  OCT_INF/2) oct_add_ub(&E, p->value->id, thi);
+          }
+          while (ap && (!ap->decl || ap->decl->kind!=DECL_VARIABLE)) ap = ap->next;
+          if (ap && ap->decl) {   // seed `param OP const` refinements from the AST decl
+              for (ExprList *cn = ap->decl->as.variable_decl.constraints; cn; cn = cn->next)
+                  vra_seed_constraint(&E, p->value->id, cn->expr);
+              ap = ap->next;
+          }
       }
     }
     V->reached[f->entry->id]=true;
