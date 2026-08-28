@@ -87,10 +87,12 @@ C  (or LLVM IR later)
       → mem2reg), instruction set, terminators (`br_cond` = the guard), CFG/functions/module,
       AST→IR lowering per construct (if→φ-join, while→back-edge header, match→switch,
       break/continue→edges), IR→C backend, worked example. The keystone.
-- [ ] **0.3 VRA / octagon design (spec annex).** Domain representation (DBM over ±vars),
-      closure, join/meet, widening, projection; transfer functions per IR instruction; loop
-      fixpoint; the soundness invariant (what "range/relation of x" *means* = over-approx);
-      variable packing; ℤ + overflow split.
+- [x] **0.3 VRA / octagon design.** → `design/vra-octagon.md` (→ spec annex at 0.5). Octagon
+      domain (DBM over ±dims), closure/join/meet/widening/projection; the γ-invariant as the
+      soundness yardstick; transfer functions per IR instr; CFG fixpoint + widening at headers;
+      consumers (bounds/overflow/div/refinement); variable packing (mandatory); ℤ+overflow
+      split; the nonlinear escape-hatch (catalogued lemmas, not recognizers); §8 maps the ~70
+      current recognizers to (a) falls-out / (b) small transfer case / (c) nonlinear lemma.
 - [ ] **0.4 Recognizer catalog.** Table of *every* current special-case (mask, modulo, 2D,
       offset, `.len`, bounded-counter, clamp-join, post-loop negation, return refinements, …)
       → how it falls out of octagons natively, OR flag it as a deliberate domain extension.
@@ -167,7 +169,9 @@ C  (or LLVM IR later)
 ---
 
 ## STATUS LOG (update every session — newest first)
-- **2026-08-28** — Plan created; **0.1 done** (`design/architecture.md`). Current phase:
-  **Phase 0**. Next: 0.2 IR spec (`design/ir.md`), then 0.3 VRA/octagon design annex, 0.4
-  recognizer catalog, 0.5 spec contract. Old engine unchanged and green (suite 610, trust 40,
-  fuzzers clean).
+- **2026-08-28** — Plan + the three core design docs **done**: 0.1 `design/architecture.md`,
+  0.2 `design/ir.md`, 0.3 `design/vra-octagon.md`. Current phase: **Phase 0**. Next: **0.4
+  recognizer catalog** (enumerate the ~70 special-cases in `src/sema/ranges.h`+`bounds.h`,
+  classify a/b/c per vra-octagon §8 — this is the Phase-2 acceptance checklist), then 0.5 spec
+  contract rewrite (ch.13) + promote vra-octagon to a spec annex, then 0.6 review + lock the
+  domain decision. Old engine unchanged and green (suite 610, trust 40, fuzzers clean).
