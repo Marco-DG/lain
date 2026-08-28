@@ -781,6 +781,26 @@ static int64_t constraint_get_diff(RangeTable *t, Id *v1, Id *v2, bool *found) {
 // seeding populates `__len_PARAM`). Returns NULL when not a `.len` member or no
 // such Id exists yet (conservative — the caller simply adds no constraint).
 // Enables `if i < arr.len` / `while i < arr.len` to narrow i against the length.
+// For a `.len` member on a sized-slice value (`a i32[n]`, array_len == -1 with an
+// identifier size-expr), return that size-expr's Id — the variable whose range the
+// bounds checker reads as the length. Lets a `.len` guard narrow the length directly.
+// NULL when the target is not such a slice (fixed arrays carry a constant length; a
+// struct-field slice has no scalar length variable).
+static Id *member_len_size_var(Expr *member) {
+    if (!member || member->kind != EXPR_MEMBER ||
+        !member->as.member_expr.member ||
+        member->as.member_expr.member->length != 3 ||
+        strncmp(member->as.member_expr.member->name, "len", 3) != 0)
+        return NULL;
+    Expr *tgt = member->as.member_expr.target;
+    if (!tgt || !tgt->type) return NULL;
+    Type *ty = tgt->type;
+    if (ty->kind == TYPE_ARRAY && ty->array_len == -1 && ty->size_expr &&
+        ty->size_expr->kind == EXPR_IDENTIFIER)
+        return ty->size_expr->as.identifier_expr.id;
+    return NULL;
+}
+
 static Id *range_member_len_id(RangeTable *t, Expr *member) {
     if (!t || !member || member->kind != EXPR_MEMBER ||
         !member->as.member_expr.member ||
@@ -875,6 +895,36 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
             sema_apply_constraint(lhs, t);
             sema_apply_constraint(rhs, t);
             return;
+        }
+
+        // A `.len` guard on a sized slice narrows the LENGTH: for `a i32[n]` the
+        // length IS n (the size-expr), whose range the bounds checker reads. So a
+        // non-emptiness guard `if a.len > 0 { a[0] }` (and `a.len >= 1`, `a.len != 0`,
+        // `k < a.len` etc.) should tighten n's range just as `if n > 0` does — closing
+        // the gap where the natural `.len`-based guard was rejected while the scalar
+        // form was accepted. member_len_size_var() resolves `a.len` → n.
+        {
+            Id *lv = (lhs->kind == EXPR_MEMBER) ? member_len_size_var(lhs) : NULL;
+            Id *rv = (rhs->kind == EXPR_MEMBER) ? member_len_size_var(rhs) : NULL;
+            if (lv && rhs->kind == EXPR_LITERAL) {
+                int64_t val = rhs->as.literal_expr.value;
+                Range r = range_get(t, lv);
+                if (!r.known) r = (Range){0, INT64_MAX, true};  // a length is >= 0
+                if (!range_tighten_interval(&r, op, val) && op == TOKEN_BANG_EQUAL) {
+                    if (val == r.min && r.min < r.max) r.min = val + 1;
+                    else if (val == r.max && r.max > r.min) r.max = val - 1;
+                }
+                range_set(t, lv, r);
+                return;
+            }
+            if (rv && lhs->kind == EXPR_LITERAL) {
+                int64_t val = lhs->as.literal_expr.value;
+                Range r = range_get(t, rv);
+                if (!r.known) r = (Range){0, INT64_MAX, true};
+                range_tighten_interval(&r, relop_flip(op), val);
+                range_set(t, rv, r);
+                return;
+            }
         }
 
         // Normalize: ensure LHS is identifier, RHS is literal

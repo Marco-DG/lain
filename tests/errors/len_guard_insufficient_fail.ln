@@ -1,0 +1,14 @@
+// EXPECT: [E085]
+// SOUNDNESS: a `.len` guard narrows the length only as far as it states. `a.len > 5`
+// proves length >= 6, so a[3] is fine but a[10] is NOT — the index reaches past the
+// guaranteed length and must still be rejected.
+func f(a i32[n], n usize) i32 {
+    if a.len > 5 {
+        return a[10]
+    }
+    return 0
+}
+proc main() i32 {
+    var a i32[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    return f(a, 8)
+}

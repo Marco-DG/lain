@@ -637,8 +637,36 @@ static void sema_check_bounds(RangeTable *ctx, Expr *index_expr, Type *array_typ
                          index_expr, array_expr, idx, len_range,
                          "use `for i in 0..arr.len`, a parameter constraint, or an `in` guard");
         } else {
+            // Both ranges known but the access is unproven. The most common (and
+            // most confusing) shape is an in-range index on a slice whose length
+            // could be too small — `a[0]` / `a[k]` on a maybe-empty `a[n]`. Point at
+            // the concrete guard rather than a bare "out of bounds".
+            char ehint[256] = "";
+            char aname[64] = "the array";
+            char iname[96] = "the index";
+            if (array_expr) bounds_expr_str(array_expr, aname, sizeof aname);
+            if (index_expr) bounds_expr_str(index_expr, iname, sizeof iname);
+            if (idx.min >= 0 && idx.max < len_range.max && len_range.min <= idx.max) {
+                // Would be in bounds for a long-enough array: the gap is the length.
+                if (idx.max == 0)
+                    snprintf(ehint, sizeof ehint,
+                        "`%s` may be empty (length can be %lld) — guard the access with "
+                        "`if %s.len > 0 { ... }`, or require a non-empty array",
+                        aname, (long long)len_range.min, aname);
+                else
+                    snprintf(ehint, sizeof ehint,
+                        "`%s` may be too short (length can be as low as %lld, but the index "
+                        "reaches %lld) — guard with `if %s < %s.len { ... }`",
+                        aname, (long long)len_range.min, (long long)idx.max,
+                        iname, aname);
+            } else if (idx.min >= len_range.max) {
+                snprintf(ehint, sizeof ehint,
+                    "the index is at least %lld but `%s` has length at most %lld — it is "
+                    "always past the end",
+                    (long long)idx.min, aname, (long long)len_range.max);
+            }
             bounds_error("index out of bounds",
-                         index_expr, array_expr, idx, len_range, NULL);
+                         index_expr, array_expr, idx, len_range, ehint[0] ? ehint : NULL);
         }
     } else {
         bounds_error("cannot prove index is within bounds for dynamic-length array",
