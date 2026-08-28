@@ -311,6 +311,17 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
         }
         case EXPR_BINARY: {
             Expr *L=e->as.binary_expr.left, *R=e->as.binary_expr.right;
+            // `i in container` — a valid-index guard: 0 ≤ i < container.len. Lowered to
+            // `i < len` (the ≥ 0 half comes from i's type/flow); this makes it a real
+            // icmp so guard refinement and the termination check both engage.
+            if (e->as.binary_expr.op == TOKEN_KEYWORD_IN) {
+                IrValue *a = ir_lower_expr(c, L);
+                IrValue *len;
+                if (R->type && R->type->kind==TYPE_ARRAY && R->type->array_len>=0)
+                    len = ir_const_int(c->f, c->cur, R->type->array_len, ir_type_int(c->a,64,false));
+                else len = ir_slice_len(c->f, c->cur, ir_lower_expr(c, R));
+                return ir_icmp(c->f, c->cur, IR_CMP_ULT, a, len);
+            }
             // Signedness comes from the OPERANDS, not e->type: a comparison's result
             // type is bool, so deriving from it would mistag every `i < len` as signed.
             Type *sty = (L->type && L->type->kind==TYPE_SIMPLE && L->type->int_width_cache>0) ? L->type

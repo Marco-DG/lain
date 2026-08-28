@@ -1,0 +1,16 @@
+proc total(data i32[]) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i in data {
+        s = s + data[i]
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 {
+    var a i32[4] = [10, 20, 30, 40]
+    if total(a) == 100 {
+        return 0
+    }
+    return 1
+}
