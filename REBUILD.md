@@ -119,8 +119,14 @@ C  (or LLVM IR later)
       definitions; `ir_finalize_cfg` (predecessors + back-edge loop-header detection).
       **Validated** by `src/ir/test_ir.c` (hand-built `maxi` branch + `count` loop → correct
       SSA-form dump; loop header auto-detected). Not wired into main.c; old engine green.
-- [ ] **1.2 AST → IR lowering** (`src/ir/lower.h`): reuse name-resolution + typecheck to
-      produce *typed* IR with a CFG; build SSA (or staged form).
+- [~] **1.2 AST → IR lowering** (`src/ir/lower.h`): **core subset WORKS end-to-end on real
+      programs.** Type bridge (AST Type→IrType), expressions (literal/ident/binary/unary/
+      call/index/member.len/cast), statements (var/assign/if-else/while/return/expr/break/
+      continue/unsafe) → memory-form IR (alloca/load/store); `src/ir/lower_driver.c` reuses
+      the frontend (load_module+sema_resolve_module→typed AST→lower→dump) and lowers
+      `tests/ir/sum_maxi.ln` to a correct CFG (loop header auto-detected; ℤ-widened `i33`
+      add results — the overflow-split model). TODO: for/match/structs/strings/short-circuit
+      and-or/slices-fully → grow toward the 1.6 gate.
 - [ ] **1.3 IR → C backend** (`src/ir/emit_c.h`): trivial, faithful lowering.
 - [ ] **1.4 Pipeline wiring:** `--engine=ir` (or `LAIN_IR=1`) selects the new path end-to-end.
 - [~] **1.5 IR dumper** (`src/ir/dump.h`): readable SSA-form printer done + validated on
@@ -171,6 +177,11 @@ C  (or LLVM IR later)
   fixpoint over a typed SSA/CFG IR.** (Staging: clean closed DBM first is acceptable.)
 - 2026-08-28 — **Spec split:** contract in spec ch.13 (done); octagon design annex written
   from the real engine at end of Phase 2 (`design/vra-octagon.md` is the interim home).
+- 2026-08-28 — **AST is NOT rewritten (scope boundary).** A tagged-union parse tree is the
+  right shape; the parser is kept. Its only real smell is analysis state bolted onto nodes
+  (`l3_*_dead` on ExprBinary; `refine`/`canon`/`int_width_cache`/`arith_widened` on Type) —
+  those die with `src/sema/` in Phase 3, and lowering already bridges AST Type → fresh IrType
+  so the fatness stops mattering. Optional cheap follow-up: slim the Type struct in Phase 3.
 - 2026-08-28 — **Domain staging locked (0.6):** closed **difference-bound** domain first
   (subset: `vᵢ − vⱼ ≤ c`; the recognizer catalog shows ~all current cases are DBM-only), then
   generalize to full **octagons** (`±vᵢ ± vⱼ ≤ c`) for the relational frontier (merge/interleave
@@ -188,6 +199,7 @@ C  (or LLVM IR later)
 ---
 
 ## STATUS LOG (update every session — newest first)
+- **2026-08-28 (5)** — **Phase 1.2 lowering WORKS** end-to-end: `src/ir/lower.h` + `lower_driver.c` lower a real parsed+typechecked program (`tests/ir/sum_maxi.ln`) to a correct CFG (loop header detected; ℤ-widened adds). Core subset done; grow coverage next (for/match/structs/strings). Old engine green (611).
 - **2026-08-28 (4)** — Phase 1: IR construction API + dumper DONE + validated (`src/ir/build.h`, `dump.h`, `test_ir.c` — hand-built branch + loop dump correctly, loop-header auto-detected). 1.1 complete, 1.5 dumper done. Next: **1.2 AST→IR lowering** (`src/ir/lower.h`) wired to the frontend (parse+typecheck→typed AST→lower→dump), then 1.3 IR→C. Old engine green (610).
 - **2026-08-28 (3)** — Phase 0 complete; **Phase 1 STARTED**: `src/ir/ir.h` first draft (IR data structures) landed + compiles standalone. Next: 1.2 AST→IR lowering + builder defs + dumper.
 - **2026-08-28 (2)** — **PHASE 0 COMPLETE.** All design docs done: 0.1 architecture, 0.2 ir,
