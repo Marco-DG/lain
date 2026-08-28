@@ -80,8 +80,9 @@ C  (or LLVM IR later)
 
 ## Phase 0 — Blueprint (the design, where we commit)  ⟶ deliverable: docs
 
-- [ ] **0.1 Compiler-architecture doc.** Target pipeline, module layout (`src/ir/`,
-      `src/analysis/`), old↔new coexistence + build flag, differential-test strategy, phasing.
+- [x] **0.1 Compiler-architecture doc.** → `design/architecture.md`. Target pipeline,
+      module layout (`src/ir/`, `src/analysis/`), old↔new coexistence + `--engine` selector +
+      `diff_engines.sh` differential strategy, keep/rebuild/retire boundaries, non-goals.
 - [ ] **0.2 IR spec.** The typed SSA/CFG IR: types, SSA values, instruction set, basic
       blocks, CFG, functions; AST→IR lowering sketch; IR→C lowering sketch. The keystone.
 - [ ] **0.3 VRA / octagon design (spec annex).** Domain representation (DBM over ±vars),
@@ -164,6 +165,7 @@ C  (or LLVM IR later)
 ---
 
 ## STATUS LOG (update every session — newest first)
-- **2026-08-28** — Plan created. Current phase: **Phase 0**. Next: 0.1 compiler-architecture
-  doc, then 0.2 IR spec, 0.3 VRA/octagon design, 0.4 recognizer catalog. Nothing built yet;
-  old engine unchanged and green (suite 610, trust 40, fuzzers clean).
+- **2026-08-28** — Plan created; **0.1 done** (`design/architecture.md`). Current phase:
+  **Phase 0**. Next: 0.2 IR spec (`design/ir.md`), then 0.3 VRA/octagon design annex, 0.4
+  recognizer catalog, 0.5 spec contract. Old engine unchanged and green (suite 610, trust 40,
+  fuzzers clean).
