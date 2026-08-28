@@ -213,6 +213,32 @@ static bool div_proven(bool guarded) {
     Vra *V=vra_analyze(f); bool ok=find_any(V,VRA_DIVZERO)&&find_ok(V,VRA_DIVZERO); vra_free(V); return ok;
 }
 
+// NESTED loops: `i=0; while i<N { j=0; while j<N { a[j]; j+=1 } i+=1 }` — two loop
+// headers, two induction cells. Confirms the multi-header fixpoint proves a[j].
+static bool nested_loop_proven(int N) {
+    IrFunc *f=ir_func_new(&A,nm("ns"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrBlock *e=f->entry,*oh=ir_new_block(f),*ii=ir_new_block(f),*ih=ir_new_block(f),
+            *ib=ir_new_block(f),*ol=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *a=ir_alloca_array(f,e,arr_i32(N)), *is=ir_alloca(f,e,i32), *js=ir_alloca(f,e,i32);
+    ir_store(f,e,is,ir_const_int(f,e,0,i32)); ir_set_br(e,oh);
+    IrValue *iv=ir_load(f,oh,is,i32);
+    ir_set_br_cond(oh, ir_icmp(f,oh,IR_CMP_SLT,iv,ir_const_int(f,oh,N,i32)), ii, ex);
+    ir_store(f,ii,js,ir_const_int(f,ii,0,i32)); ir_set_br(ii,ih);
+    IrValue *jv=ir_load(f,ih,js,i32);
+    ir_set_br_cond(ih, ir_icmp(f,ih,IR_CMP_SLT,jv,ir_const_int(f,ih,N,i32)), ib, ol);
+    IrValue *jv2=ir_load(f,ib,js,i32);
+    ir_elem_ptr(f,ib,a,jv2,i32);                       // prove j < N
+    ir_store(f,ib,js,ir_binop(f,ib,IR_ADD,ir_load(f,ib,js,i32),ir_const_int(f,ib,1,i32),i32));
+    ir_set_br(ib,ih);
+    ir_store(f,ol,is,ir_binop(f,ol,IR_ADD,ir_load(f,ol,is,i32),ir_const_int(f,ol,1,i32),i32));
+    ir_set_br(ol,oh);
+    ir_set_ret(ex,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool ok=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_BOUNDS) ok=V->checks[i].ok;
+    vra_free(V); return ok;
+}
+
 // termination: `i=0; while i <cmp> B { i = i + step }`.
 static bool loop_terminates(int step, IrCmp cmp, int bound) {
     IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PROC);
@@ -255,6 +281,7 @@ int main(void) {
     vra_expect("mask a[x & 7] over a[8]  (0..7 < 8)",        mask_index_proven(7,8),  true);
     vra_expect("mask a[x & 15] over a[8] (0..15 escapes)",   mask_index_proven(15,8), false);
     vra_expect("reverse a[(N-1)-i] over a[10]  (i<10)",       reverse_fixed_proven(10), true);
+    vra_expect("nested loops: a[j] under j<N (2 headers)",    nested_loop_proven(10),   true);
     // TERMINATION — a func's loops must drain their bound.
     vra_expect("terminates: i+=1 while i<8",                  loop_terminates(1,IR_CMP_SLT,8),  true);
     vra_expect("terminates: i+=2 while i<=8",                 loop_terminates(2,IR_CMP_SLE,8),  true);
