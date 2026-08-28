@@ -54,17 +54,17 @@ int main(int argc, char **argv) {
             Vra *V=vra_analyze(f);
             for (int i=0;i<V->nchecks;i++){
                 VraCheck *c=&V->checks[i]; total++;
-                bool ok=c->lo_ok && c->hi_ok;
-                if(ok) proven++;
-                printf("  %-8.*s  index @ %lld:%lld  %s  (0≤idx:%s  idx<len:%s  len-known:%s)\n",
-                    (int)f->name->length, f->name->name,
+                if(c->ok) proven++;
+                const char *what = c->kind==VRA_BOUNDS?"index bounds"
+                                 : c->kind==VRA_OVERFLOW?"arith overflow" : "div-by-zero";
+                printf("  %-8.*s  %-14s @ %lld:%lld  %s\n",
+                    (int)f->name->length, f->name->name, what,
                     (long long)c->line,(long long)c->col,
-                    ok?"PROVEN check-free":"NOT proven",
-                    c->lo_ok?"yes":"no", c->hi_ok?"yes":"no", c->has_len?"yes":"no");
+                    c->ok?"PROVEN check-free":"NOT proven");
             }
             vra_free(V);
         }
     }
-    printf("%d/%d index sites proven check-free\n", proven, total);
+    printf("%d/%d proof obligations discharged check-free\n", proven, total);
     return 0;
 }

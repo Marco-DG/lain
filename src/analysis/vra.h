@@ -18,9 +18,13 @@
 #include "ir/ir.h"
 #include <stdlib.h>
 
-// One discharged (or not) proof obligation at an index site.
+// One discharged (or not) proof obligation.
+typedef enum { VRA_BOUNDS, VRA_OVERFLOW, VRA_DIVZERO } VraCheckKind;
 typedef struct {
-    IrInstr *at;        // the IR_ELEM_PTR
+    VraCheckKind kind;
+    IrInstr *at;
+    bool     ok;        // discharged: the access/op is provably safe (check-free)
+    // bounds detail
     bool     lo_ok;     // proved idx ≥ 0
     bool     hi_ok;     // proved idx < len
     bool     has_len;   // a length was found at all
@@ -159,12 +163,60 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
         int s = bd->operands[0]->id; if (V->slicelen[s]>=0) lenvar=V->slicelen[s];
     }
     int64_t lo,hi; bool hl,hh; oct_interval(W, idx, &lo,&hl,&hi,&hh);
-    VraCheck c; c.at=ins; c.line=ins->line; c.col=ins->col;
+    VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_BOUNDS; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.lo_ok = hl && lo>=0;
     c.has_len = (clen>=0 || lenvar>=0);
     if (clen>=0)        c.hi_ok = hh && hi <= clen-1;
     else if (lenvar>=0) c.hi_ok = oct_get(W, oct_pos(lenvar), oct_pos(idx)) <= -1;  // idx − len ≤ −1
     else                c.hi_ok = false;
+    c.ok = c.lo_ok && c.hi_ok;
+    vra_add_check(V, c);
+}
+
+// The ℤ range of a value = its type interval, tightened by the octagon.
+static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) {
+    int64_t tlo=INT64_MIN, thi=INT64_MAX; (void)V;
+    irtype_int_range(v->type, &tlo, &thi);
+    int64_t olo,ohi; bool hl,hh; oct_interval(W, v->id, &olo,&hl,&ohi,&hh);
+    if (hl && olo>tlo) tlo=olo;
+    if (hh && ohi<thi) thi=ohi;
+    *lo=tlo; *hi=thi;
+}
+// 128-bit range combine so i64/usize arithmetic can't wrap the checker itself.
+static void vra_arith_range(IrOp op, int64_t alo,int64_t ahi, int64_t blo,int64_t bhi,
+                            __int128 *rlo, __int128 *rhi) {
+    __int128 al=alo,ah=ahi,bl=blo,bh=bhi;
+    if (op==IR_ADD){ *rlo=al+bl; *rhi=ah+bh; }
+    else if (op==IR_SUB){ *rlo=al-bh; *rhi=ah-bl; }
+    else { // MUL: min/max over the four corners
+        __int128 c1=al*bl,c2=al*bh,c3=ah*bl,c4=ah*bh;
+        __int128 lo=c1,hi=c1;
+        if(c2<lo)lo=c2; if(c3<lo)lo=c3; if(c4<lo)lo=c4;
+        if(c2>hi)hi=c2; if(c3>hi)hi=c3; if(c4>hi)hi=c4;
+        *rlo=lo; *rhi=hi;
+    }
+}
+// Overflow obligation: a CHECK-mode +,−,× on two same-typed integers must land
+// back inside that type. The octagon reasons in ℤ; here we compare the ℤ result
+// range against the operand type's interval (design §2.6).
+static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
+    if (ins->wrap != IR_WRAP_CHECK) return;                 // .wrap/.sat skip the obligation
+    if (ins->n_operands<2) return;
+    IrValue *a=ins->operands[0], *b=ins->operands[1];
+    int64_t tlo,thi;
+    if (!irtype_int_range(a->type, &tlo, &thi)) return;     // target = the operand type
+    int64_t alo,ahi,blo,bhi; vra_range(V,W,a,&alo,&ahi); vra_range(V,W,b,&blo,&bhi);
+    __int128 rlo,rhi; vra_arith_range(ins->op, alo,ahi, blo,bhi, &rlo,&rhi);
+    VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_OVERFLOW; c.at=ins; c.line=ins->line; c.col=ins->col;
+    c.ok = (rlo >= (__int128)tlo) && (rhi <= (__int128)thi);
+    vra_add_check(V, c);
+}
+// Division/remainder: the divisor must be provably non-zero.
+static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins) {
+    if (ins->n_operands<2) return;
+    int64_t lo,hi; vra_range(V,W,ins->operands[1],&lo,&hi);
+    VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_DIVZERO; c.at=ins; c.line=ins->line; c.col=ins->col;
+    c.ok = (lo>0) || (hi<0);                                // 0 ∉ [lo,hi]
     vra_add_check(V, c);
 }
 
@@ -219,7 +271,12 @@ static Vra *vra_analyze(IrFunc *f) {
         if (!V->reached[b->id]) continue;
         memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->nvar; W.dim=dim; oct_close(&W);
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
-            if (ins->op==IR_ELEM_PTR){ oct_close(&W); vra_check_elem(V,&W,ins); }
+            switch (ins->op) {
+                case IR_ELEM_PTR: oct_close(&W); vra_check_elem(V,&W,ins); break;
+                case IR_ADD: case IR_SUB: case IR_MUL: oct_close(&W); vra_check_overflow(V,&W,ins); break;
+                case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: oct_close(&W); vra_check_divzero(V,&W,ins); break;
+                default: break;
+            }
             vra_transfer_instr(V,&W,ins);
         }
     }

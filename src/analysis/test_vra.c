@@ -51,9 +51,10 @@ static bool counted_loop_proven(IrCmp cmp, int64_t bound, int alen) {
     ir_finalize_cfg(f);
 
     Vra *V=vra_analyze(f);
-    bool proven = V->nchecks==1 && V->checks[0].lo_ok && V->checks[0].hi_ok;
+    bool proven=false, found=false;
+    for (int i=0;i<V->nchecks;i++) if (V->checks[i].kind==VRA_BOUNDS){ proven=V->checks[i].ok; found=true; }
     vra_free(V);
-    return proven;
+    return found && proven;
 }
 
 // Build `a[i]=0` with `i` an unconstrained parameter over a length-`alen` array.
@@ -67,9 +68,51 @@ static bool unguarded_param_proven(int alen) {
     ir_set_ret(e, NULL);
     ir_finalize_cfg(f);
     Vra *V=vra_analyze(f);
-    bool proven = V->nchecks==1 && V->checks[0].lo_ok && V->checks[0].hi_ok;
+    bool proven=false, found=false;
+    for (int i=0;i<V->nchecks;i++) if (V->checks[i].kind==VRA_BOUNDS){ proven=V->checks[i].ok; found=true; }
     vra_free(V);
-    return proven;
+    return found && proven;
+}
+
+static bool find_ok(Vra *V, VraCheckKind k){ for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==k) return V->checks[i].ok; return false; }
+static bool find_any(Vra *V, VraCheckKind k){ for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==k) return true; return false; }
+
+// `x + x` for a u8 param, optionally under an `x < 100` guard. Overflow-proven iff
+// the guard bounds x enough that x+x fits u8.
+static bool add_overflow_proven(bool guarded) {
+    IrFunc *f = ir_func_new(&A, nm("ov"), ir_type_int(&A,8,false), IR_FUNC_PROC);
+    IrType *u8=ir_type_int(&A,8,false);
+    IrValue *x = ir_add_param(f, u8, nm("x"));
+    IrBlock *e=f->entry;
+    IrBlock *body = guarded ? ir_new_block(f) : e;
+    if (guarded) {
+        IrValue *c=ir_const_int(f,e,100,u8);
+        IrValue *cmp=ir_icmp(f,e,IR_CMP_ULT,x,c);
+        IrBlock *els=ir_new_block(f);
+        ir_set_br_cond(e, cmp, body, els);
+        ir_set_ret(els, NULL);
+    }
+    ir_binop(f, body, IR_ADD, x, x, u8);      // overflow obligation here
+    ir_set_ret(body, NULL);
+    ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool ok=find_any(V,VRA_OVERFLOW)&&find_ok(V,VRA_OVERFLOW); vra_free(V); return ok;
+}
+// `a / b` for i32 params, optionally under a `b > 0` guard.
+static bool div_proven(bool guarded) {
+    IrFunc *f = ir_func_new(&A, nm("dv"), ir_type_int(&A,32,true), IR_FUNC_PROC);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrValue *a=ir_add_param(f,i32,nm("a")), *b=ir_add_param(f,i32,nm("b"));
+    IrBlock *e=f->entry, *body = guarded?ir_new_block(f):e;
+    if (guarded) {
+        IrValue *z=ir_const_int(f,e,0,i32);
+        IrValue *cmp=ir_icmp(f,e,IR_CMP_SGT,b,z);      // b > 0
+        IrBlock *els=ir_new_block(f);
+        ir_set_br_cond(e,cmp,body,els); ir_set_ret(els,NULL);
+    }
+    ir_binop(f, body, IR_SDIV, a, b, i32);     // div-by-zero obligation here
+    ir_set_ret(body, NULL);
+    ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool ok=find_any(V,VRA_DIVZERO)&&find_ok(V,VRA_DIVZERO); vra_free(V); return ok;
 }
 
 int main(void) {
@@ -83,6 +126,13 @@ int main(void) {
     vra_expect("off-by-one   i <= 8  over a[8]  (i hits 8)", counted_loop_proven(IR_CMP_ULE, 8, 8), false);
     vra_expect("over-bound   i < 16 over a[8]  (i hits 8..15)", counted_loop_proven(IR_CMP_ULT, 16, 8), false);
     vra_expect("unguarded param index  a[i], i:param, a[4]",   unguarded_param_proven(4), false);
+
+    // OVERFLOW (design §2.6) — prove when the range fits, refuse when it can wrap.
+    vra_expect("u8 x+x under guard x<100  (≤198 fits u8)",  add_overflow_proven(true),  true);
+    vra_expect("u8 x+x unguarded          (≤510 wraps u8)", add_overflow_proven(false), false);
+    // DIV-BY-ZERO — prove when the divisor is provably nonzero, else refuse.
+    vra_expect("i32 a/b under guard b>0   (b≠0)",           div_proven(true),  true);
+    vra_expect("i32 a/b unguarded         (b may be 0)",    div_proven(false), false);
 
     if (failures==0) printf("VRA: all soundness+precision expectations met\n");
     else             printf("VRA: %d WRONG results\n", failures);
