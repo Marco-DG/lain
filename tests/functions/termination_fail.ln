@@ -1,11 +1,14 @@
 // EXPECT: [E011]
-// Test: Recursion in pure functions should be banned
-
-func factorial(n i32) i32 {
+// Recursion in a `func` is permitted only when it is provably total. The measure is
+// inferred from a strictly-descending parameter (see recursion_infer_measure_pass),
+// but here the self-call passes the SAME argument `n` — nothing descends — so no
+// measure can be inferred and the recursion (which plainly does not terminate) is
+// rejected.
+func spin(n i32) i32 {
     if n <= 1 { return 1 }
-    return n * factorial(n - 1) // ERROR: Recursion not allowed in pure function
+    return spin(n)
 }
 
 proc main() i32 {
-    return factorial(5)
+    return spin(5)
 }

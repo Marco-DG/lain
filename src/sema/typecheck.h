@@ -1629,6 +1629,116 @@ static void check_else_arm(Expr *e, Type *result_ty) {
     check_conversion(arm->type, result_ty, r, arm, arm->line, arm->col, "else fallback value", "else");
 }
 
+// ── Recursion-measure INFERENCE ─────────────────────────────────────────────
+// Collect every self-call (a call whose callee resolves to `fn`) reachable in the
+// body, so the inference can require a candidate parameter to descend in ALL of
+// them. Completeness is not a soundness requirement — check_recursion_measure still
+// verifies each self-call at walk time — but a thorough scan avoids proposing a
+// parameter that some unscanned call would violate.
+#define MAX_SELF_CALLS 64
+static void collect_self_calls_e(Expr *e, Decl *fn, Expr **out, int *n);
+static void collect_self_calls_s(Stmt *s, Decl *fn, Expr **out, int *n);
+static void collect_self_calls_list(StmtList *b, Decl *fn, Expr **out, int *n) {
+    for (; b; b = b->next) collect_self_calls_s(b->stmt, fn, out, n);
+}
+static void collect_self_calls_e(Expr *e, Decl *fn, Expr **out, int *n) {
+    if (!e || *n >= MAX_SELF_CALLS) return;
+    switch (e->kind) {
+    case EXPR_CALL:
+        if (e->as.call_expr.callee && e->as.call_expr.callee->decl == fn && *n < MAX_SELF_CALLS)
+            out[(*n)++] = e;
+        for (ExprList *a = e->as.call_expr.args; a; a = a->next)
+            collect_self_calls_e(a->expr, fn, out, n);
+        break;
+    case EXPR_BINARY:
+        collect_self_calls_e(e->as.binary_expr.left, fn, out, n);
+        collect_self_calls_e(e->as.binary_expr.right, fn, out, n); break;
+    case EXPR_UNARY:  collect_self_calls_e(e->as.unary_expr.right, fn, out, n); break;
+    case EXPR_INDEX:
+        collect_self_calls_e(e->as.index_expr.target, fn, out, n);
+        collect_self_calls_e(e->as.index_expr.index, fn, out, n); break;
+    case EXPR_MEMBER: collect_self_calls_e(e->as.member_expr.target, fn, out, n); break;
+    case EXPR_CAST:   collect_self_calls_e(e->as.cast_expr.expr, fn, out, n); break;
+    case EXPR_ADDR:   collect_self_calls_e(e->as.addr_expr.expr, fn, out, n); break;
+    case EXPR_MATCH:
+        collect_self_calls_e(e->as.match_expr.value, fn, out, n);
+        for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next)
+            collect_self_calls_e(c->body, fn, out, n); break;
+    case EXPR_ARRAY_LITERAL:
+        for (ExprList *el = e->as.array_literal_expr.elements; el; el = el->next)
+            collect_self_calls_e(el->expr, fn, out, n); break;
+    default: break;
+    }
+}
+static void collect_self_calls_s(Stmt *s, Decl *fn, Expr **out, int *n) {
+    if (!s || *n >= MAX_SELF_CALLS) return;
+    switch (s->kind) {
+    case STMT_RETURN: collect_self_calls_e(s->as.return_stmt.value, fn, out, n); break;
+    case STMT_VAR:    collect_self_calls_e(s->as.var_stmt.expr, fn, out, n); break;
+    case STMT_ASSIGN: collect_self_calls_e(s->as.assign_stmt.target, fn, out, n);
+                      collect_self_calls_e(s->as.assign_stmt.expr, fn, out, n); break;
+    case STMT_EXPR:   collect_self_calls_e(s->as.expr_stmt.expr, fn, out, n); break;
+    case STMT_IF:     collect_self_calls_e(s->as.if_stmt.cond, fn, out, n);
+                      collect_self_calls_list(s->as.if_stmt.then_body, fn, out, n);
+                      collect_self_calls_list(s->as.if_stmt.else_branch, fn, out, n); break;
+    case STMT_WHILE:  collect_self_calls_e(s->as.while_stmt.cond, fn, out, n);
+                      collect_self_calls_list(s->as.while_stmt.body, fn, out, n); break;
+    case STMT_FOR:    collect_self_calls_list(s->as.for_stmt.body, fn, out, n); break;
+    case STMT_MATCH:  collect_self_calls_e(s->as.match_stmt.value, fn, out, n);
+                      for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next)
+                          collect_self_calls_list(c->body, fn, out, n); break;
+    case STMT_UNSAFE: collect_self_calls_list(s->as.unsafe_stmt.body, fn, out, n); break;
+    default: break;
+    }
+}
+
+// Propose a single-parameter termination measure for a recursive `func` that has no
+// explicit `decreasing` clause: an integer parameter `p` is a candidate iff EVERY
+// self-call passes a SYNTACTICALLY strictly-smaller argument in p's position
+// (`p - K` with K>=1, or `p / D` with D>=2). Returns a synthesized identifier Expr
+// naming that parameter, or NULL. This only PROPOSES the measure the user could have
+// written — check_recursion_measure still fully verifies strict descent AND
+// well-foundedness (>= 0, i.e. a real base case) at each self-call, so inference
+// never relaxes the totality proof; it only removes the ceremony for the common case.
+static Expr *infer_recursion_measure(Decl *fn) {
+    Expr *calls[MAX_SELF_CALLS]; int ncalls = 0;
+    collect_self_calls_list(fn->as.function_decl.body, fn, calls, &ncalls);
+    if (ncalls == 0) return NULL;
+    int idx = 0;
+    for (DeclList *p = fn->as.function_decl.params; p; p = p->next, idx++) {
+        Decl *pd = p->decl;
+        if (!pd || pd->kind != DECL_VARIABLE || !pd->as.variable_decl.name) continue;
+        if (!pd->as.variable_decl.type || !is_integer_type(pd->as.variable_decl.type)) continue;
+        bool all_descend = true;
+        for (int c = 0; c < ncalls && all_descend; c++) {
+            Expr *arg = NULL; int i = 0;
+            for (ExprList *a = calls[c]->as.call_expr.args; a; a = a->next, i++)
+                if (i == idx) { arg = a->expr; break; }
+            bool ok = false;
+            if (arg && arg->kind == EXPR_BINARY && arg->as.binary_expr.left &&
+                arg->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
+                arg->as.binary_expr.left->decl == pd) {
+                TokenKind op = arg->as.binary_expr.op;
+                Expr *r = arg->as.binary_expr.right;
+                if (r && r->kind == EXPR_LITERAL) {
+                    if (op == TOKEN_MINUS && r->as.literal_expr.value >= 1) ok = true;
+                    else if (op == TOKEN_SLASH && r->as.literal_expr.value >= 2) ok = true;
+                }
+            }
+            if (!ok) all_descend = false;
+        }
+        if (all_descend) {
+            Expr *m = arena_push_aligned(sema_arena, Expr);
+            memset(m, 0, sizeof(Expr));
+            m->kind = EXPR_IDENTIFIER;
+            m->as.identifier_expr.id = pd->as.variable_decl.name;
+            m->line = fn->line; m->col = fn->col;
+            return m;
+        }
+    }
+    return NULL;
+}
+
 // `func f(...) decreasing m` permits recursion iff every self-call strictly
 // decreases the well-founded measure m. For a single-parameter measure, prove at
 // the call site (a) the matching argument < m (strict descent) and (b) m >= 0
@@ -2059,9 +2169,18 @@ void sema_infer_expr(Expr *e) {
             // (check_recursion_measure, after the args below are inferred).
             if (callee->decl == current_function_decl &&
                 !current_function_decl->as.function_decl.decreasing_measure) {
-                fprintf(stderr, "[E011] Error: recursion is not allowed in pure function '%.*s' (a `func` must be total; recursion cannot guarantee termination). Add a `decreasing <measure>` clause to permit it.\n",
-                        (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
-                exit(1);
+                // Try to INFER the measure from the self-calls (a parameter that
+                // strictly descends in all of them). If found, install it and let
+                // check_recursion_measure verify it fully below; if not, the loop
+                // truly can't be shown total → E011 (add explicit `decreasing`).
+                Expr *inferred = infer_recursion_measure(current_function_decl);
+                if (inferred) {
+                    current_function_decl->as.function_decl.decreasing_measure = inferred;
+                } else {
+                    fprintf(stderr, "[E011] Error: recursion is not allowed in pure function '%.*s' (a `func` must be total; recursion cannot guarantee termination). Add a `decreasing <measure>` clause to permit it.\n",
+                            (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
+                    exit(1);
+                }
             }
         }
     }

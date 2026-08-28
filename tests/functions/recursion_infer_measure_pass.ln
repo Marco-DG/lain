@@ -1,0 +1,25 @@
+// The recursion termination measure is INFERRED from the self-calls: a parameter
+// that strictly descends (`n - K` or `n / D`) in every self-call, with a base case,
+// needs no explicit `decreasing` clause in a pure `func`.
+//   fib: two self-calls fib(n-1), fib(n-2)  → measure n
+//   cnt: halving cnt(n / 2)                 → measure n
+// Each is verified exactly like an explicit measure (strictly smaller AND provably
+// >= 0 at every call), so non-descending / base-case-less recursion still rejects
+// (see termination_fail, func_recursion_no_clause_fail).
+func fib(n i32) i32 {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+func cnt(n i32) i32 {
+    if n <= 0 { return 0 }
+    return 1 + cnt(n / 2)
+}
+proc main() i32 {
+    // fib(10) == 55, cnt(16) == 5  → exit 0 on success
+    if fib(10) == 55 {
+        if cnt(16) == 5 {
+            return 0
+        }
+    }
+    return 1
+}

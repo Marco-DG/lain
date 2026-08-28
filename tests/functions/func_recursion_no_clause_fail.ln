@@ -1,7 +1,11 @@
 // EXPECT: [E011]
-// A `func` without a `decreasing` clause still forbids recursion (must be total).
+// Recursion in a `func` is allowed when a termination measure can be INFERRED — a
+// parameter that strictly descends in every self-call with a base case (see
+// recursion_infer_measure_pass). Here the argument grows (`n + 1`), so no parameter
+// descends and no measure can be inferred: the recursion is not provably total and
+// must be rejected (add an explicit `decreasing` clause, or it genuinely diverges).
 func f(n usize) usize {
     if n < 1 { return 0 }
-    return f(n - 1)
+    return f(n + 1)
 }
 proc main() i32 { return f(3) as i32 }
