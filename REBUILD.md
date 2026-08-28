@@ -58,6 +58,60 @@ checked IR
 C  (or LLVM IR later)
 ```
 
+## ★ THE REFRAME — IR SOVEREIGNTY (adopted 2026-08-28, user-directed)
+
+A major clarification of the endgoal, and arguably the most important decision in the
+whole rebuild. **The Lain-IR is the semantic and soundness AUTHORITY of the system.** It
+does not depend on the front-end; the front-end (present or reworked) and the backend
+(emit-C now, LLVM/native later) are *replaceable clients* of it.
+
+> The IR depends on nothing. Everything — every front-end, every backend, every analysis —
+> depends on the IR. A program's meaning (its concretization γ) is definable from the IR
+> ALONE, with the AST already freed.
+
+**What Lain-IR IS: a full VERIFICATION IR that is also the codegen substrate.** One IR,
+simultaneously:
+- **semantic authority** — total, self-contained, precise meaning (no "incomplete" escape
+  hatch; unknowns are *modeled* as `opaque`/havoc with a declared effect footprint, so the
+  IR is always total AND sound);
+- **verification substrate** — VRA (numeric: bounds/overflow/div/termination), borrow/region
+  (memory safety), linearity/ownership (resource safety), effects (purity/termination/errors)
+  are ALL IR passes reading IR facts, unified by an **`assume` / `assert` / `requires` /
+  `ensures`** layer + a rich type lattice (refinements, regions, linearity, effects). Each
+  safety analysis is a *consumer* discharging one class of assertions;
+- **codegen substrate** — lowers to C now, LLVM/native later.
+
+**Precedent (why this is ambitious but not unprecedented).** LLVM IR is the *opposite* of
+this: it exploits UB (`undef`/`poison`) as an optimization license — its ecosystem grew
+Alive2/Vellvm to cope. The nearest precedents are **Rust MIR** (borrow-checks on the
+mid-level IR — closest single analogue), **CompCert** (machine-checked IR semantics), and the
+verification-IR family **Boogie / Why3 / Viper** (+ refinement types: LiquidHaskell / Flux /
+RefinedC). The novel part is the FUSION — those traditions are normally separate (MIR isn't
+refinement-level; Viper isn't the codegen path; LLVM is codegen but UB-exploiting). Lain-IR
+is one IR that is *both*.
+
+**Two axes of the goal (keep distinct):**
+1. **Coherence / independence** (engineering): the IR carries its own types, layout, symbols,
+   refinements, effects; imports no front-end header. *Litmus test:* `src/ir/*` and
+   `src/analysis/*` compile against `ir.h` alone (no `ast.h` / `token.h`). This is where
+   "soundness independent of the front-end" is won — the IR becomes the soundness authority,
+   catching unsoundness even when a (reworked) front-end emits it.
+2. **Semantic + verification ceiling** (power): the IR spans the full domain — Turing control,
+   a refinement/interval type lattice, an effect lattice, an explicit memory/aliasing/region
+   model, first-class assume/assert/contracts. The octagon is *one* domain over it; polyhedra,
+   congruences, separation logic can be added without touching the IR. The "intricate
+   specializations" (SIMD, dependent lengths, `a[n-1-i]`) are mostly **holes in the IR's
+   primitive set**, not real specializations — add the primitive and they become ordinary.
+
+**Sequencing consequence (reorders the plan):** do the sovereignty work (Move A + B below)
+*BEFORE* porting the remaining analyses (old Phase 3). Porting borrow/linearity while the IR
+still leaks to the AST would make every ported pass inherit the coupling. Fix the substrate
+first. See **Phase 2.9** for the tracklist.
+
+*Caveat we accept:* "independent" ≠ "ignores the front-end" — the IR still DEFINES the
+contract the front-end must meet (the builder API is that interface); the dependency points
+inward to the IR.
+
 ### Key design decisions (finalize in Phase 0, record in the docs)
 - **Numeric domain: octagons** (`±x ± y ≤ c`) — a superset of difference-bounds (`x−y ≤ c`),
   the relational power that cracks the deferred frontier (merge `o=i+j`, Lomuto `i≤j`,
@@ -175,7 +229,56 @@ C  (or LLVM IR later)
 - [ ] **2.8 GATE:** new engine passes the ENTIRE suite (pass + fail) and all fuzzers, and
       *dominates* the old (⊇ accepts, ⊇ sound rejects). Then it can become default for VRA.
 
+## ★ Phase 2.9 — IR SOVEREIGNTY (the keystone; do this BEFORE Phase 3)
+
+Make the IR the total, self-contained, verification-native authority. Two moves; the ORDER
+of A vs B is flexible but both precede porting analyses. Corpus green + fuzz-sound at every
+checkpoint (same ground rules).
+
+**Move A — sever the AST dependency (coherence).** Litmus test gates the whole move.
+- [ ] **A1 IR-owned types.** `IrType` carries its own struct descriptor (interned name +
+      copied field types/offsets); drop `struct_decl: Decl*` as an identity/name source. Give
+      every scalar/aggregate a self-contained C-ABI layout (size/align) so the backend needs no
+      AST.
+- [ ] **A2 IR-owned symbols.** Replace `IrInstr.aux.callee: Decl*` with an interned IR function
+      symbol (name + `IrFuncSig`). Callee identity is an IR concept.
+- [ ] **A3 IR-owned literals/provenance.** `aux.str.bytes` → interned IR string pool. Every
+      node keeps only `{line, col, interned-name?}` provenance — never a live AST pointer.
+- [ ] **A4 No AST tokens in the IR.** Verify no residual `TokenKind`/AST enums in `ir.h`
+      (binops/cmps are already `IrOp`/`IrCmp` — audit).
+- [ ] **A5 GATE (litmus):** `src/ir/*.h` and `src/analysis/*.{h,c}` compile with **neither
+      `ast.h` nor `token.h` included**. Lowering (`lower.h`) is the ONLY AST-aware unit — it is
+      the front-end→IR *adapter*, not part of the IR.
+
+**Move B — verification-native IR (power + soundness).**
+- [ ] **B1 `IR_ASSUME` / `IR_ASSERT`** over an IR-owned predicate (linear-arith to start:
+      `±x±y ≤ c`, `x==y`, `x≠0`; extensible). Guard refinement → `assume` on the taken edge;
+      each obligation (bounds/overflow/div) → `assert`. The VRA becomes: propagate octagons,
+      *consume* `assume`, *discharge* `assert`. **This deletes the `f->src_decl` refinement leak
+      the VRA currently has** (refinements become entry `assume`s emitted at lowering).
+- [ ] **B2 Function contracts** `requires`/`ensures` on `IrFunc` (IR predicates). Call site:
+      callee.requires ⇒ `assert` before the call; callee.ensures ⇒ `assume` after. Gives
+      interprocedural bounds/refinements *soundly* (call-site precondition checking) — the piece
+      the accept-side survey currently assumes the old engine enforces.
+- [ ] **B3 `IR_OPAQUE` / havoc** with a declared read/write/effect footprint — **retire
+      `incomplete`.** Lowering becomes a TOTAL function into an always-sound IR; a not-yet-modeled
+      construct is a conservative opaque op, not a suppressed-proof function. True niche ops
+      (some SIMD intrinsics) land here with declared effects.
+- [ ] **B4 Refinements as first-class IR type structure** (interval/predicate on `IrType`) — the
+      canonical-type keystone. VRA reads them from the IR type, never the AST. Unlocks dependent
+      lengths (a symbolic-length slice with a *named* length identity) and the `i < a.len` class.
+- [ ] **B5 Region + linearity qualifiers as IR type/fact structure** (prep for the borrow &
+      linearity passes: lifetimes, mutability, use-once). No analysis yet — just the substrate.
+- [ ] **B6 GATE:** VRA re-pointed to assume/assert/contracts; `f->src_decl` reads gone;
+      accept+reject differentials ≥ current; fuzz 0-unsound.
+
+**Predicate language (design item, write the annex):** a small IR-OWNED typed predicate AST —
+linear arithmetic + equalities/disequalities now; aliasing/separation predicates for borrow;
+use/linearity predicates. This is the lingua franca the assume/assert layer and every analysis
+share. Lives in `src/ir/pred.h`; spec annex documents it.
+
 ## Phase 3 — Port the remaining analyses  ⟶ deliverable: retire `src/sema/`
+      (now: every analysis reads IR + the assume/assert/contract layer — NO AST)
 
 - [ ] **3.1 Borrow / region** checker as an IR pass (CFG-based, NLL falls out).
 - [ ] **3.2 Linearity / ownership** as an IR pass.
@@ -222,6 +325,7 @@ C  (or LLVM IR later)
 ---
 
 ## STATUS LOG (update every session — newest first)
+- **2026-08-28 (30)** — **★ MAJOR REFRAME: IR SOVEREIGNTY (user-directed).** Committed the thesis that **Lain-IR is the semantic + soundness AUTHORITY** — a total, self-contained, verification-native IR that is simultaneously the codegen substrate; front-end and backend are replaceable clients. See the new "★ THE REFRAME" section + **Phase 2.9** (Move A: sever the AST dependency, litmus = `src/{ir,analysis}/*` compile without `ast.h`/`token.h`; Move B: `assume`/`assert`/`requires`/`ensures` + `opaque`/havoc replacing `incomplete` + refinements/regions as first-class IR type structure). Reorder: **2.9 BEFORE Phase 3** (porting borrow/linearity onto a still-AST-leaking IR would spread the coupling). Precedent noted: closest are Rust MIR, CompCert, Viper/Boogie; LLVM is the opposite (UB-exploiting). The `f->src_decl` refinement-seeding leak (added this session) is exhibit A of the coupling to remove. STARTING execution now with B1 (`IR_ASSUME` + refinements-as-assumes).
 - **2026-08-28 (29)** — **Param refinement constraints seeded into the entry octagon.** A refined param `n u32 < 4096` (or `i usize < 4`, `start u32 < 4090`) carries its constraint on the AST decl; the VRA now walks `f->src_decl`'s params alongside the IR params and seeds each `param OP <const>` into the entry octagon. So `src[i]` under `i < n` with `n < 4096 = src.len` proves — `vra_while_lt_scalar` 2/3 → **5/5**. Sound relative to the old engine (which enforces the precondition at call sites; a self-hosting replacement will need call-site precondition checks too, a Phase-3 item). Accept-side **454→465/563**, fully-proven **43→47**; reject-side **0 false proofs**.
 - **2026-08-28 (28)** — **Short-circuit `and`/`or` — a real miscompile fixed, and guard-indexed accesses now prove.** The lowering evaluated BOTH operands (`x & y`), which is wrong when the right operand guards a deref/index (`p != null and p.x`, `i < len and a[i]` would touch `p.x`/`a[i]` unconditionally → OOB/crash). Now lowered with real control flow (a bool result-cell; the right operand's block is entered only when the left doesn't already decide). Bonus: the `br_cond` on the left condition lets the octagon refine the eval-right block, so `i < a.len and a[i]…` PROVES `a[i]` in the guard. Self-checking `shortcircuit1.ln`: `check(a,5)` must NOT touch `a[5]` (short-circuit) → runs exit 0; VRA proves the guarded `a[i]`. Unknown binary ops now fail-closed. Corpus **625**, gate **15/15**, reject-side **0 false proofs**.
 - **2026-08-28 (27)** — **Variable-divisor `÷`/`%` transfers — the wrap-around index `a[i % n]`.** Extended the modulo transfer beyond a constant divisor: `x % b` ⇒ `0 ≤ r < b` (relative), and added `x / b` ⇒ `0 ≤ r ≤ x`. Sound by the standard assume-defined-execution rule — `b = 0` is a separately-flagged div-by-zero, so any execution reaching past the op has `b > 0`, and closure soundly derives `b ≥ 1` and `r < b`. This proves the ring-buffer idiom `buf[i % buf.len]` and `a[i / k]`: **mod_index 14/16→15/19, div_index 4/5→6/9**. Fuzzer still 0-unsound (its const modulo divisor is always ≥ 1). Old corpus **624**.
