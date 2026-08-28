@@ -147,10 +147,18 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             else if (V->cknown[a] && V->cval[a]>=0){ oct_add_lb(W,r,0); oct_add_ub(W,r,V->cval[a]); }
             break;
         }
-        case IR_UREM: {  // x % c  (unsigned)  with c > 0 constant  ⇒  0 ≤ r ≤ c−1
+        case IR_UDIV: {  // x / b  — in any defined exec (b > 0, x ≥ 0)  ⇒  0 ≤ r ≤ x
             if (r<0) break;
+            int a=ins->operands[0]->id; oct_forget(W, r);
+            oct_add_lb(W,r,0); oct_add_diff_le(W,r,a,0);   // r ≥ 0, r ≤ x
+            break;
+        }
+        case IR_UREM: {  // x % b  (unsigned)  ⇒  0 ≤ r < b   (b > 0 in any defined exec;
+            if (r<0) break;                                 // b = 0 is a separate div-by-zero)
             int b=ins->operands[1]->id; oct_forget(W, r);
-            if (V->cknown[b] && V->cval[b]>0){ oct_add_lb(W,r,0); oct_add_ub(W,r,V->cval[b]-1); }
+            oct_add_lb(W, r, 0);
+            if (V->cknown[b] && V->cval[b]>0) oct_add_ub(W, r, V->cval[b]-1);  // absolute ≤ c−1
+            else oct_add_diff_le(W, r, b, -1);                                 // relative r < b
             break;
         }
         case IR_SREM: {  // signed a % c  ⇒  −(c−1) ≤ r ≤ c−1 (tighter to [0,c−1] if a≥0)
