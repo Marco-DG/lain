@@ -8,7 +8,7 @@
 set -u
 cd "$(dirname "$0")"
 fail=0
-for t in test_vra test_linearity test_borrow; do
+for t in test_vra test_place test_linearity test_borrow; do
     if ! gcc -std=c99 -o "/tmp/$t" "src/analysis/$t.c" -I src 2>/dev/null; then
         echo "BUILD FAILED: $t"; fail=1; continue
     fi
