@@ -69,20 +69,23 @@ tests/ownership/mut_plus_nested_shared_fail.ln            NEW-ACCEPTS  new-more-
 tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-more-precise
 
 # ── new-incomplete-borrow ─────────────────────────────────────────────────────
-# Re-judged individually; each of these the OLD ENGINE HAS RIGHT and the new one genuinely
-# misses. What they need is LIVENESS REGIONS for loans created OUTSIDE a call argument
-# (design §1.3) — today a loan is created only by a call argument, so a *direct* write
-# (`data.value = 99`) or a *direct* address-taking (`var ref = var data.value`) while a
-# borrow is live is invisible:
-#   cross_stmt_borrow_write, direct_var_borrow  — direct STORE / address-of vs a live loan
-#   block_scope, elif_borrow                    — a linear value leaked on one branch
-#   borrow_fail, match_borrow_mut, reborrow     — conflict/reborrow chains (phase B)
-#   coarg_alias_subslice                        — needs subslice range disjointness (phase D)
-#   struct_field_dangling                       — a field borrowing a string-literal local
+# The LOAN-SITE generalisation closed 3 (cross_stmt_borrow_write, owner_reassign,
+# direct_var_borrow). Loans had only ever been created AND checked at call arguments, so the
+# conflict rule (design §1.4) was silently restricted to calls. It is over ACCESSES:
+#   • a loan is also created by a DIRECT address-of whose result is PARKED IN A SLOT
+#     (`var ref = var d.value`) — requiring the slot is what separates a borrow from ordinary
+#     field/element access, so `a[i] = v` does not conflict with itself
+#   • a conflict is also raised by a DIRECT STORE to an overlapping place inside the region
+#     (`d.value = 99`, and whole-owner reassignment `d = D(99)`)
+#
+# What remains is NOT one cluster — the old engine reports these under four different codes,
+# and only match_borrow_mut is a borrow conflict at all:
+#   match_borrow_mut  E004 — a real conflict, through a `case` binding (phase B: reborrows)
+#   struct_field_dangling  E010 — escape through a struct field holding a string-literal local
+#   block_scope  E003, elif_borrow  E016 — LEAK/consistency on one branch, not borrows;
+#     they sit in this section only because that is where they were first triaged.
 tests/ownership/block_scope_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/borrow_fail.ln                            NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/cross_stmt_borrow_write_fail.ln           NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/direct_var_borrow_fail.ln                 NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/elif_borrow_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
 tests/types/match_borrow_mut_fail.ln                      NEW-ACCEPTS  new-incomplete-borrow
 # escape analysis exists but misses this shape (field borrows a string-literal local)

@@ -224,27 +224,55 @@ static Borrow *borrow_analyze(IrFunc *f) { return borrow_analyze_mod(f, NULL); }
 static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
     BorSeq s; bor_linearize(f, &s);
     for (int k=0;k<s.n;k++) {
-        IrInstr *call = s.ins[k];
-        if (call->op != IR_CALL || !call->result) continue;
-        IrFunc *callee = bor_find_func(mod, call->aux.callee);
-        if (!callee || !callee->ret_borrows) continue;   // the return must BORROW a parameter
-        // Loans on every place passed to a parameter the RETURN may borrow from. The mask is
-        // inferred from the callee's body, so `pick(var a, var b) var i32` charges the loan to
-        // the parameter actually returned — and to both only when the body returns either.
-        uint64_t want = bor_ret_borrow_mask(callee);
+        IrInstr *ins = s.ins[k];
+        if (!ins->result) continue;
         IrPlace src[8]; int nsrc = 0;
-        for (int a=0;a<call->n_operands && nsrc<8;a++) {
-            if (a < 64 && !((want>>a)&1u)) continue;
-            IrPlace p; bool m;
-            if (bor_arg_loan(B, callee, a, call->operands[a], &p, &m)) src[nsrc++] = p;
-        }
+        if (ins->op == IR_CALL) {
+            IrFunc *callee = bor_find_func(mod, ins->aux.callee);
+            if (!callee || !callee->ret_borrows) continue;  // the return must BORROW a parameter
+            // Loans on every place passed to a parameter the RETURN may borrow from. The mask
+            // is inferred from the callee's body, so `pick(var a, var b) var i32` charges the
+            // loan to the parameter actually returned — and to both only if it returns either.
+            uint64_t want = bor_ret_borrow_mask(callee);
+            for (int a=0;a<ins->n_operands && nsrc<8;a++) {
+                if (a < 64 && !((want>>a)&1u)) continue;
+                IrPlace p; bool m;
+                if (bor_arg_loan(B, callee, a, ins->operands[a], &p, &m)) src[nsrc++] = p;
+            }
+        } else if (ins->op == IR_FIELD_PTR || ins->op == IR_ELEM_PTR) {
+            // A DIRECT borrow: `var ref = var d.value` takes an address and PARKS IT IN A
+            // SLOT, so the loan outlives the statement exactly like a returned reference.
+            // Requiring the address to be stored into a slot is what separates a borrow from
+            // ordinary field/element access: `a[i] = v` and `x = d.value` feed the address
+            // straight to a store/load and create no lasting loan (treating every elem_ptr as
+            // a loan would make `a[i] = v` conflict with itself).
+            if (!bor_result_slot(&s, k, ins->result)) continue;
+            IrPlace p = ir_place_of(B->def, B->nvar, ins->result);
+            if (!p.valid || p.base_kind != IRPB_LOCAL) continue;
+            src[nsrc++] = p;
+        } else continue;
         if (!nsrc) continue;
-        IrValue *slot = bor_result_slot(&s, k, call->result);
-        int last = bor_last_use(&s, k, call->result, slot);
+        IrValue *slot = bor_result_slot(&s, k, ins->result);
+        int last = bor_last_use(&s, k, ins->result, slot);
         if (last < 0) continue;                       // reference never used ⇒ no live region
-        // any conflicting borrow of an overlapping place inside (k, last]
+        // any conflicting ACCESS of an overlapping place inside (k, last]
         for (int j=k+1;j<=last;j++) {
             IrInstr *other = s.ins[j];
+            // A DIRECT WRITE conflicts with a live loan just as a second borrow does — the
+            // conflict rule (design §1.4) is over ACCESSES, not over calls. Loans were only
+            // ever created and checked at call arguments, so `r = get_ref(var d); d.value = 99`
+            // and whole-owner reassignment `d = D(99)` were both invisible.
+            //
+            // The store that CREATES the carrier (`store ref, <the borrow>`) targets the
+            // carrier slot, not the borrowed place, so it cannot self-conflict; and a write
+            // THROUGH the reference roots at the carrier for the same reason.
+            if (other->op == IR_STORE && other->n_operands>=1 && other->operands[0]) {
+                IrPlace t = ir_place_of(B->def, B->nvar, other->operands[0]);
+                if (!(slot && t.base_kind==IRPB_LOCAL && t.base_id==slot->id))
+                    for (int q=0;q<nsrc;q++)
+                        if (ir_place_overlaps(&src[q], &t)) { bor_add(B, other->line, other->col, 4); return; }
+                continue;
+            }
             if (other->op != IR_CALL) continue;
             IrFunc *oc = bor_find_func(mod, other->aux.callee);
             if (!oc) continue;
