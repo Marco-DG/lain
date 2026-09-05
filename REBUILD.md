@@ -280,10 +280,22 @@ share. Lives in `src/ir/pred.h`; spec annex documents it.
 ## Phase 3 — Port the remaining analyses  ⟶ deliverable: retire `src/sema/`
       (now: every analysis reads IR + the assume/assert/contract layer — NO AST)
 
-- [~] **3.1 Borrow / region** checker as an IR pass (0bf7efa) — CORE done: dangling-reference
-      escape analysis (a return whose provenance roots in a local alloca). test_borrow.c 4/4;
-      0 false-pos across 340 pass programs. TODO: NLL region lifetimes, two-phase borrows,
-      load/store-indirect escapes.
+- [~] **3.1 Borrow / region** — **DECISION (session 52): BUILD a real NLL-class borrow checker,
+      do NOT port the old one.** The old checker (~2.1 kLOC) is a known-weaker ceiling
+      (two-phase only for direct-read args ⇒ `v.push(v.len())` rejected, E004); porting it
+      would enshrine that ceiling and contradict IR sovereignty. Our IR is MIR-shaped, which
+      is exactly where NLL belongs. **Full model in `internal/design/borrow_checker_design.md`.**
+      Done so far (0bf7efa, 6019a08): dangling-return escape analysis (incl. struct-by-value
+      fields), test_borrow.c 6/6, 0 false-pos across 340 pass programs — this becomes the
+      degenerate case of the region rule.
+      Sub-phases: **A** places+overlap, loans, liveness regions, the conflict rule (subsumes
+      the ~12-test conflict cluster AND unifies move/leak as `Move` accesses); **B** two-phase
+      borrows + reborrow chains (GAINS `v.push(v.len())` — a capability the old engine lacks);
+      **C** cross-function via elision defaults + a language proposal for lifetimes;
+      **D** ★ numeric-aided disjointness — query the octagon for `i ≠ j` / range-disjointness
+      so `a[i]` vs `a[j]` and `a[0..k]` vs `a[k..n]` are provably disjoint: **a safe
+      `split_at_mut` with no `unsafe`, which Rust structurally cannot do.**
+      Requires the REAL B5 (places, loans, region vars, borrow kinds — design §8).
 - [~] **3.2 Linearity / ownership** as an IR pass (2558562, 53d6e8c) — E001 use-after-move +
       E002 double-move (forward may-move CFG dataflow; `mov`→`IR_CONSUME`, store re-inits) +
       **E003 leak** (owned ptr/slice live at return) + **B5 linear substrate** (IrType.linear,
@@ -294,8 +306,35 @@ share. Lives in `src/ir/pred.h`; spec annex documents it.
       alone + call-graph fixpoint; `ir_lower_module` (bodies + extern stubs). Differential vs
       old `effect_full`: 0/362 drop an observable effect; DIVERGE 72× more precise (semantic).
 - [ ] **3.4 Termination / measure** as IR analysis (loop + recursion, via the fixpoint).
-- [ ] **3.5 GATE:** full parity across the corpus + fuzzers; make IR pipeline the default;
-      delete `src/sema/`; update docs.
+- [ ] **3.5 GATE:** ~~full parity~~ → **ADJUDICATED DIVERGENCE** across the corpus + fuzzers;
+      make IR pipeline the default; delete `src/sema/`; update docs.
+      **The parity criterion was a structural mistake** (see `critical_retrospective.md` §2):
+      "0 findings on programs the old engine accepts" *forbids the new engine from ever being
+      stronger* — a better checker fails it by construction. Replace with: every divergence
+      CLASSIFIED as `old-unsound` (win, add a fail-test) / `new-over-strict` (bug, fix) /
+      `new-more-precise` (win, add a pass-test) / `new-unsound` (must be empty). Gate passes
+      when the UNADJUDICATED set is empty, not when divergence is zero.
+
+### ★ CORRECTIVE BACKLOG (from `internal/design/critical_retrospective.md`, session 52)
+Each is a self-inflicted debt found by auditing the rebuild against its own goal:
+- [ ] **C1 Rework the gate to adjudicated divergence** (`phase3_differential.sh`). Blocks 3.1
+      and 3.5 — a stronger checker cannot land under the current criterion. *Do first.*
+- [ ] **C2 `fuzz_ir_codegen.sh`** — execution-differential fuzzer for the NEW pipeline
+      (compile through BOTH, diff behaviour). All 14 existing fuzzers test only the OLD
+      pipeline; that blind spot hid a real miscompile (scalar `var` param by value, 41≠42).
+      **Must exist before the IR pipeline is ever made authoritative.**
+- [ ] **C3 Measure + retire `incomplete`** — every survey number is silently conditioned on
+      "among functions we modelled". Report incomplete-coverage alongside each metric, then
+      do B3 (`opaque`/havoc with declared footprints). A total IR cannot have an untracked
+      "gave up here" bit.
+- [ ] **C4 Promote S2 (rank-N strided regions) ABOVE further VRA tuning** — the memory model
+      was starved while the numeric domain was fed; S2 makes 2D trivial by construction and
+      supplies the places/disjointness the borrow checker needs.
+- [ ] **C5 Redesign the effect lattice** — 3.3 shipped a bit-for-bit port of the old
+      `EffectSet`; the plan's own "one effect row" (reads/writes/raises/diverges + region
+      footprints) is unmet. Re-derive it, don't inherit it.
+- [ ] **C6 Type lattice as infrastructure** — refinements still live in ad-hoc side-maps
+      (`slicelen`) instead of on `IrType`; B4/B5 deferrals have compounded every phase.
       **MEASURED GAP (session 51)** — the `--reject` seam (`g_suppress_ownership`) finally lets
       the new passes run on programs the old engine exit()s on, so reject-parity is now
       measurable: **ownership fail-tests CAUGHT 9 / 39**. The 30 missed need rules the old
@@ -356,6 +395,7 @@ share. Lives in `src/ir/pred.h`; spec annex documents it.
 ---
 
 ## STATUS LOG (update every session — newest first)
+- **2026-08-29 (52)** — **★★ STRATEGIC DECISION (user-directed): BUILD a real NLL borrow checker, don't port — plus a CRITICAL RETROSPECTIVE.** The 9/39 measurement made the choice concrete: porting the old ~2.1 kLOC checker would spend a multi-session build reproducing a *known-weaker ceiling* (two-phase only for direct-read args ⇒ `v.push(v.len())` rejected) and would enshrine the front-end's ad-hoc ownership rules as the IR's ceiling — the exact over-fit the sovereignty audit exists to prevent. Our IR is MIR-shaped, which is where NLL belongs. **Two new design docs:** (1) `internal/design/borrow_checker_design.md` — the committed model: places+overlap, loans, liveness regions (=NLL), the single conflict rule that subsumes the whole conflict/reborrow/loop cluster AND unifies move/leak as `Move` accesses, two-phase borrows, cross-function elision, drop/defer as accesses, phases A–D. **★ Its §4 is the project's most defensible "beyond Rust" claim: Rust CANNOT distinguish `a[i]` from `a[j]` (why `split_at_mut` needs unsafe); we can query the octagon for `i≠j` / range-disjointness on the SAME IR ⇒ a safe `split_at_mut`, proven not asserted.** (2) `internal/design/critical_retrospective.md` — an honest audit of our own failures, whose through-line is: **we optimised against the incumbent instead of against the goal.** Findings became a tracked **CORRECTIVE BACKLOG** (C1–C6): the parity gate is a *structural mistake* (it forbids being stronger — replace with adjudicated divergence, C1, blocks everything); no execution-differential fuzzer exists for the NEW pipeline (C2 — that blind spot hid the scalar-`var` miscompile); `incomplete` is an unmeasured escape hatch conditioning every survey number (C3); the memory model was starved while the numeric domain was fed (C4 — promote S2 above VRA tuning); the effect lattice was inherited not designed (C5); the type lattice deferrals compounded every phase (C6). Also logged the flagship language gap: **no lifetime syntax** (`lain_language_limits.md` §6b) — cross-function borrow precision is capped until the front-end can state what the IR can verify.
 - **2026-08-29 (51)** — **★ Endgame push: reject-parity MEASURED + a real MISCOMPILE fixed.** Pushing at 3.5 required reject-parity, which required the new ownership passes to RUN on programs the old engine exit()s on. Added the suppression seam `g_suppress_ownership` (mirrors bounds.h's `g_vra_suppress_bounds`) standing down resolve.h's dangling-return check + linearity.h's checker; set ONLY by the differential driver (`--reject`), never the compiler. **That immediately exposed a genuine MISCOMPILE in the new pipeline:** EXPR_MUT took the ADDRESS only for structs, so a scalar `var x` param travelled BY VALUE and the callee's writes were lost — `proc bump(var x i32){x=x+%1}` gave **41 instead of 42** under the new codegen. Fixed with `ir_mut_by_address()` (a mutable borrow of a COPIED type — struct or scalar — travels as an address; slice/array/ptr already share data) applied to BOTH the param lowering and the EXPR_MUT argument. New codegen now 42. **Honest endgame measurement: ownership fail-tests CAUGHT 9/39.** The 30 missed need NLL conflicting/reborrow/loop borrows, defer semantics, move variants, co-arg aliasing — i.e. 3.5 is a multi-session build of a real borrow checker, not a finishing touch. Verified after the lowering change: gate 15/15, corpus 625, VRA 523/563 & 73 fully proven (unchanged), reject 0 PROVED-ALL, IR unit tests pass, parity gate HOLDS, fuzz_trust 0-miscompile, fuzz_linear 0-unsound.
 - **2026-08-29 (50)** — **Phase 3 PARITY GATE (reproducible) + it caught a real crash.** New `phase3_differential.sh` (the Phase 3 analog of vra_survey.sh): over the corpus it asserts (A) linearity+borrow raise 0 findings on old-accepted pass programs (no over-rejection) and (B) the effect row drops 0 observable effects. Building it immediately exposed a **pre-existing new-lowering CRASH** (segfault) on INDIRECT calls: `f(x)` through a fn-pointer variable has a DECL_VARIABLE callee, but the call lowering read `callee->as.function_decl` (wrong-union deref). Fixed: null a DECL_VARIABLE callee (a DECL_STRUCT callee stays — it's a constructor); hardened linearity.h vs NULL operands. Gate now: **PARITY HOLDS (0 FP / 0 dropped effects over 340 pass programs)**. No regression: gate 15/15, corpus 625, reject 0 PROVED-ALL, test_vra 19/19, test_linearity 9/9, test_borrow 4/4. The three Phase 3 analysis cores are now locked behind a reproducible parity gate — future refinements (E016, per-field, NLL lifetimes, recursion-termination) are safe to land against it, then 3.5 (authoritative + delete src/sema).
 - **2026-08-29 (49)** — **★ Phase 3.1 borrow CORE — all THREE analyses now sovereign on the IR.** `analysis/borrow.h`: the dangling-reference core via escape analysis — a `return` whose pointer/slice provenance roots in a local IR_ALLOCA (traced back through elem_ptr/field_ptr/slice_data/make_slice) is a stack use-after-return. A param is a pointer value (caller's storage), not an alloca ⇒ safe; heap/global/loaded roots stop the walk (conservatively safe). test_borrow.c 4/4 (`return &local` + `&local.field` fire; param/loaded pointer quiet). **0 false positives across all 340 clean-loading pass programs** (linearity + borrow together). Pure analysis, no lowering/codegen change ⇒ corpus 625 / gate 15/15 / VRA untouched. **Phase 3 status: 3.3 effects ✓ full, 3.2 linearity ✓ (E001/E002/E003+B5), 3.1 borrow ✓ core** — the three memory-/resource-safety analyses are ported off the AST, each sovereign + unit-tested + 0-FP-differential. Remaining for full parity: 3.1 NLL lifetimes/two-phase, 3.2 E016/per-field, 3.4 recursion-termination, then 3.5 gate + delete src/sema.
