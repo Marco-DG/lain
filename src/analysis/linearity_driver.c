@@ -30,8 +30,12 @@ static char *drv_modname(Arena *a, const char *path) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) { fprintf(stderr,"usage: %s <file.ln> [--quiet]\n",argv[0]); return 2; }
-    bool quiet = (argc>=3 && strcmp(argv[2],"--quiet")==0);
+    if (argc < 2) { fprintf(stderr,"usage: %s <file.ln> [--quiet] [--reject]\n",argv[0]); return 2; }
+    bool quiet=false, reject=false;
+    for (int i=2;i<argc;i++){ if(!strcmp(argv[i],"--quiet")) quiet=true; else if(!strcmp(argv[i],"--reject")) reject=true; }
+    // --reject: stand the LEGACY ownership checks down so sema completes on a program it
+    // would exit() on, letting us measure whether the NEW passes catch the same violation.
+    g_suppress_ownership = reject;
     Arena fa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena aa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);

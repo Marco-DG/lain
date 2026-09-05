@@ -118,6 +118,17 @@ static Decl *ir_find_type_alias(LowerCtx *c, Id *name) {
 // constraints like `!= 0` are for the VRA, not the representation).
 static IrType *ir_lower_type(LowerCtx *c, Type *t);              // fwd
 static IrType *ir_lower_type_impl(LowerCtx *c, Type *t);        // fwd (wrapped for the linear bit)
+
+// Does a mutable borrow (`var x`) of this type have to travel as an ADDRESS for writes to
+// reach the caller's storage? Yes for types that are COPIED (struct, scalar); no for a
+// slice/array/pointer, which already carries a shared data pointer.
+static bool ir_mut_by_address(const IrType *t) {
+    if (!t) return false;
+    switch (t->kind) {
+        case IRT_STRUCT: case IRT_INT: case IRT_BOOL: case IRT_FLOAT: return true;
+        default: return false;   // slice / array / ptr / unit — already reference-like
+    }
+}
 static bool ir_name_int(const char *nm, int len, int *bits, bool *sgn);  // fwd
 static IrType *ir_resolve_alias_base(LowerCtx *c, Decl *ad) {
     Expr *rhs = ad->as.type_alias_decl.expr;
@@ -696,7 +707,9 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
         case EXPR_MUT: {                                // `var lv`: a mutable borrow
             Expr *inner = e->as.mut_expr.expr;
             IrType *it = inner ? ir_lower_type(c, inner->type) : NULL;
-            if (it && it->kind==IRT_STRUCT) return ir_lower_addr(c, inner);  // pass its address
+            // a COPIED type (struct or scalar) must travel as its ADDRESS or the callee's
+            // writes are lost; a slice/array/ptr already shares its data, so pass the value.
+            if (ir_mut_by_address(it)) return ir_lower_addr(c, inner);
             return ir_lower_expr(c, inner);
         }
         case EXPR_ADDR:                                 // &lvalue
@@ -975,9 +988,10 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         IrType *pt  = ir_lower_type(&cc, pty);
         Id     *pnm = p->decl->as.variable_decl.name;
         IrName *pin = pnm ? ir_intern(a, pnm->name, pnm->length) : NULL;   // IR-owned param name
-        if (pt->kind == IRT_STRUCT && pty && pty->mode == MODE_MUTABLE) {
-            // a `var` struct param is a mutable borrow — a pointer to the caller's
-            // storage, so field writes propagate. The pointer *is* the slot.
+        if (ir_mut_by_address(pt) && pty && pty->mode == MODE_MUTABLE) {
+            // a `var` param of a COPIED type (struct or scalar) is a mutable borrow — a
+            // pointer to the caller's storage, so writes propagate. The pointer *is* the
+            // slot. (A slice/array/pointer already shares its data, so it stays by value.)
             IrType *ptr = ir_type_new(cc.a, IRT_PTR); ptr->elem = pt; ptr->ptr_mut = true;
             IrValue *pv = ir_add_param(f, ptr, pin);
             ir_env_add(&cc, pnm, pv, NULL);

@@ -110,6 +110,12 @@ static PtrInitIdxEntry *sema_ptr_init_idx = NULL;
 // false when the measure is not a two-identifier difference (caller emits E091).
 static bool verify_recursion_expr_measure(Decl *fn, Expr *call);
 
+// Suppression seam for the LEGACY ownership checks (mirrors g_vra_suppress_bounds in
+// bounds.h). When set, resolve.h's dangling-return check and linearity.h's whole checker
+// stand down, so the Phase 3 differential can measure the NEW IR linearity/borrow passes on
+// programs the old engine would exit() on. Set ONLY by that driver — never in the compiler.
+bool g_suppress_ownership = false;
+
 #include "sema/scope.h"
 #include "sema/resolve.h"
 #include "sema/typecheck.h"

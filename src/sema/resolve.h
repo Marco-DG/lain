@@ -684,7 +684,7 @@ void sema_resolve_stmt(Stmt *s) {
             if (root->decl && root->decl->kind == DECL_VARIABLE) {
                 is_param = root->decl->as.variable_decl.is_parameter;
             }
-            if (!is_param) {
+            if (!is_param && !g_suppress_ownership) {   // seam: deferred to the new IR borrow pass
                 fprintf(stderr, "[E010] Error Ln %li, Col %li: Returning a mutable reference ('var') to a local variable is forbidden (dangling pointer)\n", s->line, s->col);
                 diagnostic_show_line(s->line, s->col);
                 exit(1);

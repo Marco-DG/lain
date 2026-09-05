@@ -2078,6 +2078,7 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
 /* ---------- public entry: check one function ---------- */
 
 static void sema_check_function_linearity(Decl *d) {
+    if (g_suppress_ownership) return;                 // deferred to the new IR ownership passes
     if (!d || (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE)) return;
 
     LTable *tbl = ltable_new(sema_arena);
