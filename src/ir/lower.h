@@ -39,6 +39,15 @@ typedef struct {
     Decl     *scache_decl[64];
     IrType   *scache_type[64];
     int       scache_n;
+    // `defer` stack. Lain's defer is FUNCTION-scoped (the old backend keeps one stack per
+    // function and flushes it in reverse at every return and at the end) — so lowering
+    // records the statements here and REPLAYS them at each exit. Without this, defer was
+    // simply dropped and the whole function marked `incomplete`, which made a deferred
+    // consumption invisible: `defer drop(mov r); drop(mov r)` is a double free that no
+    // analysis could see because the function was never analysed.
+    Stmt     *defers[64];
+    int       ndefers;
+    bool      in_defer;    // guard: a defer's own body must not re-register defers
 } LowerCtx;
 
 // A block's terminator is "set" once lowering has given it one. A freshly-memset
@@ -750,6 +759,18 @@ static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) 
     ir_set_br_cond(c->cur, ir_lower_expr(c, cond), tb, fb);
 }
 
+static void ir_lower_stmt(LowerCtx *c, Stmt *s);
+// Replay the pending `defer` bodies in REVERSE registration order. The stack is not popped:
+// an early return runs the defers registered SO FAR, and a later exit runs them too — one
+// dynamic execution reaches exactly one exit, so replaying at each is faithful, and it is
+// what makes `defer drop(mov r); drop(mov r)` visible as the double consume it is.
+static void ir_lower_flush_defers(LowerCtx *c) {
+    if (c->in_defer) return;
+    c->in_defer = true;
+    for (int i = c->ndefers - 1; i >= 0; i--) ir_lower_stmt(c, c->defers[i]);
+    c->in_defer = false;
+}
+
 static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
     if (!s || ir_is_set_term(c->cur)) return;   // dead code after a terminator
     switch (s->kind) {
@@ -835,7 +856,19 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             break;
         }
         case STMT_EXPR: (void)ir_lower_expr(c, s->as.expr_stmt.expr); break;
+        case STMT_DEFER:
+            // Recorded, not emitted: the body runs at every exit, in reverse order.
+            if (!c->in_defer && c->ndefers < 64) c->defers[c->ndefers++] = s->as.defer_stmt.stmt;
+            else if (c->ndefers >= 64) c->f->incomplete = true;   // more than we model ⇒ fail closed
+            break;
         case STMT_RETURN: {
+            // ORDER MATTERS, and it is not Go's. Lain runs the deferred statements BEFORE
+            // evaluating the return expression, so a defer CAN change what is returned:
+            //     var acc = 0; defer acc = acc+1; defer acc = acc*10; acc = 5; return acc
+            // yields 51, not 5. (Go copies the return value first and would give 5.) Verified
+            // against the old backend, which emits the defers then `return acc;` — computing
+            // the value first made the new pipeline return 5, a silent miscompile.
+            ir_lower_flush_defers(c);
             IrValue *rv = s->as.return_stmt.value ? ir_lower_expr(c, s->as.return_stmt.value) : NULL;
             if (rv) ir_lower_return_ensures_assert(c, rv);   // callee proves its own ensures
             ir_set_ret(c->cur, rv);
@@ -969,7 +1002,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
         case STMT_BREAK:    if (c->loop_exit) ir_set_br(c->cur, c->loop_exit); break;
         case STMT_CONTINUE: if (c->loop_head) ir_set_br(c->cur, c->loop_head); break;
         case STMT_UNSAFE: { bool o=c->unsafe; c->unsafe=true; ir_lower_stmts(c, s->as.unsafe_stmt.body); c->unsafe=o; break; }
-        default: c->f->incomplete = true; break;   // enum-match/defer/use — TODO (fail closed)
+        default: c->f->incomplete = true; break;   // enum-match/use — TODO (fail closed)
     }
 }
 static void ir_lower_stmts(LowerCtx *c, StmtList *body) {
@@ -1068,8 +1101,10 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     { Type *rt = fn->as.function_decl.return_type;
       if (rt && rt->mode == MODE_MUTABLE) f->ret_borrows = true; }
     ir_lower_stmts(&cc, fn->as.function_decl.body);
-    if (!ir_is_set_term(cc.cur))
-        ir_set_ret(cc.cur, NULL);   // implicit unit return / end of proc
+    if (!ir_is_set_term(cc.cur)) {
+        ir_lower_flush_defers(&cc);   // falling off the end is an exit too
+        ir_set_ret(cc.cur, NULL);     // implicit unit return / end of proc
+    }
     ir_finalize_cfg(f);
     return f;
 }

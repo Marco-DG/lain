@@ -171,7 +171,51 @@ EOF
     esac
 }
 
-GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit)
+gen_defer() {             # `defer` ORDER — reverse registration, and it runs BEFORE the
+    # return expression is evaluated (so a defer can change what is returned; that is Lain's
+    # rule, not Go's). Lowering defer at all is new, and both halves are easy to get wrong.
+    local a=$(r 30 1) b=$(r 9 2) k=$(r 3)
+    case $k in
+      0) cat <<EOF
+proc main() i32 {
+    var acc = $a
+    defer acc = acc +% $b
+    defer acc = acc *% 3
+    acc = acc +% 1
+    return acc %% 251
+}
+EOF
+      ;;
+      1) cat <<EOF
+proc main() i32 {
+    var acc = $a
+    var i = 0
+    defer acc = acc +% 7
+    while i < $b decreasing $b - i {
+        acc = acc +% i
+        i += 1
+    }
+    return acc %% 251
+}
+EOF
+      ;;
+      *) cat <<EOF
+proc pick(n i32) i32 {
+    var acc = n
+    defer acc = acc *% 2
+    if n > $b {
+        return acc %% 251
+    }
+    acc = acc +% $a
+    return acc %% 251
+}
+proc main() i32 { return pick($a) }
+EOF
+      ;;
+    esac
+}
+
+GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit gen_defer)
 
 run_pipeline() {  # $1=c-file $2=bin -> prints "<exit>|<stdout>"
     "$CC" -o "$2" "$1" $DEFS -w -O0 2>/dev/null || { echo "BUILDFAIL"; return; }

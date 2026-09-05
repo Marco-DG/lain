@@ -118,12 +118,10 @@ tests/types/match_borrow_mut_fail.ln                      NEW-ACCEPTS  new-incom
 tests/ownership/consume_before_return_fail.ln             NEW-ACCEPTS  new-incomplete-linearity
 tests/ownership/rich_diagnostics_fail.ln                  NEW-ACCEPTS  new-incomplete-linearity
 #
-# (b) DEFER. `defer drop(mov r)` commits r's single consumption at scope exit; consuming
-#     again (or deferring twice) is a double free. The IR does not model scope-exit edges,
-#     so neither is visible. Needs defer lowered as a real CFG edge — an IR completeness
-#     item, not an analysis one.
-tests/ownership/defer_double_consume_fail.ln              NEW-ACCEPTS  new-incomplete-linearity
-tests/ownership/defer_double_defer_fail.ln                NEW-ACCEPTS  new-incomplete-linearity
+# (b) DEFER — CLOSED. It was never an analysis gap: `defer` was not lowered at all, so the
+#     whole function was marked `incomplete` and never analysed. Lowering now records the
+#     statements and REPLAYS them in reverse at each exit (Lain's defer is function-scoped),
+#     which makes both double-consumptions visible to the ordinary move analysis.
 #
 # (c) MISCLASSIFIED — `owner_reassign` is a BORROW error (E004), not a linearity one: a
 #     whole-owner STORE while a loan is live. Same root cause as cross_stmt_borrow_write /
