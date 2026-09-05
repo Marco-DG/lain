@@ -9,6 +9,10 @@
 #   new-more-precise       new accepts, and new is RIGHT      (a WIN)
 #   new-incomplete-<area>  new accepts because that analysis is NOT BUILT YET (tracked gap)
 #   new-unsound            new accepts, and new is WRONG      (HARD FAIL — never allowed)
+#   front-end-policy       a rule about how the SOURCE IS SPELLED, not what it MEANS —
+#                          correctly the front end's job, NOT a gap to close in the IR.
+#                          The test: would a second front-end (safe-C, Fortran) have this
+#                          rule at all? If not, it is surface policy and stays put at 3.5.
 
 # ── definite assignment: 8 of the original 15 are now CAUGHT by analysis/definite_init.h
 # (Stage III item 3.0). The 7 below remain, in three precise sub-gaps:
@@ -85,15 +89,37 @@ tests/types/match_borrow_mut_fail.ln                      NEW-ACCEPTS  new-incom
 tests/ownership/struct_field_dangling_fail.ln             NEW-ACCEPTS  new-incomplete-borrow
 
 # ── new-incomplete-linearity ──────────────────────────────────────────────────
-# Move/consume rules beyond the E001/E002/E003 core: defer semantics, implicit-move
-# detection, owner reassignment, per-field linear state. Fold into the borrow framework
-# as `Move` accesses (design §2) rather than a separate pass.
+# MOVE-ON-ASSIGN closed 3 of these (move_then_use, linear_copy_double_free,
+# struct_linear_field): reading a LINEAR value out of its slot into another slot is a
+# transfer, not a copy. What remains splits into three precise sub-gaps:
+#
+# (a) OWNED-vs-BORROWED bindings. `consume_before_return` (an owned `mov` param never
+#     consumed) and `rich_diagnostics` (an unconsumed linear STRUCT local) both need the
+#     leak check to cover more than owned ptr/slice. Widening it naively to every linear
+#     slot produced 4 FALSE POSITIVES — all in shared-borrow callees (`get_id(r Resource)`,
+#     `rtouch(r Res)`), whose param home-slot has a linear TYPE but is not OWNED.
+#     ⇒ this is an IR EXPRESSIVENESS gap, not an analysis bug: IrType.linear says the type
+#       is linear, but ownership is a property of the BINDING (Rust `T` vs `&T`, Lain
+#       `mov r R` vs `r R`). Needs an owns-bit on the place. Tracked as C7.
 tests/ownership/consume_before_return_fail.ln             NEW-ACCEPTS  new-incomplete-linearity
+tests/ownership/rich_diagnostics_fail.ln                  NEW-ACCEPTS  new-incomplete-linearity
+#
+# (b) DEFER. `defer drop(mov r)` commits r's single consumption at scope exit; consuming
+#     again (or deferring twice) is a double free. The IR does not model scope-exit edges,
+#     so neither is visible. Needs defer lowered as a real CFG edge — an IR completeness
+#     item, not an analysis one.
 tests/ownership/defer_double_consume_fail.ln              NEW-ACCEPTS  new-incomplete-linearity
 tests/ownership/defer_double_defer_fail.ln                NEW-ACCEPTS  new-incomplete-linearity
-tests/ownership/linear_copy_double_free_fail.ln           NEW-ACCEPTS  new-incomplete-linearity
-tests/ownership/move_needs_mov_fail.ln                    NEW-ACCEPTS  new-incomplete-linearity
-tests/ownership/move_then_use_fail.ln                     NEW-ACCEPTS  new-incomplete-linearity
+#
+# (c) MISCLASSIFIED — `owner_reassign` is a BORROW error (E004), not a linearity one: a
+#     whole-owner STORE while a loan is live. Same root cause as cross_stmt_borrow_write /
+#     direct_var_borrow — loans are created only at call arguments, so a direct store is
+#     invisible. Fixed by the same change; kept here only so the count is honest.
 tests/ownership/owner_reassign_fail.ln                    NEW-ACCEPTS  new-incomplete-linearity
-tests/ownership/rich_diagnostics_fail.ln                  NEW-ACCEPTS  new-incomplete-linearity
-tests/ownership/struct_linear_field_fail.ln               NEW-ACCEPTS  new-incomplete-linearity
+
+# ── front-end policy: NOT the IR's job ────────────────────────────────────────
+# A rule about how the SOURCE must be spelled, not about what the program MEANS. The IR
+# records that a move happened; whether the surface syntax was required to write `mov` is
+# a front-end concern, and a second front-end (safe-C, Fortran) would not have the rule at
+# all. These stay in the front end at Stage 3.5 rather than being ported.
+tests/ownership/move_needs_mov_fail.ln                    NEW-ACCEPTS  front-end-policy

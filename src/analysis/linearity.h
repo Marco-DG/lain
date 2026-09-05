@@ -27,7 +27,9 @@ typedef struct {
     IrFunc     *f;
     int         nvar, nb;
     bool      **in;         // in[block][slot] = maybe-moved on entry
-    bool       *linsl;      // linsl[slot] = the slot holds a LINEAR (must-consume) value
+    bool       *linsl;      // linsl[slot] = the slot holds a LEAK-relevant resource (owned ptr/slice)
+    bool       *movesl;     // movesl[slot] = the slot holds a LINEAR value (move-tracked)
+    IrInstr   **def;        // def[value] = the instruction defining it
     LinFinding *finds; int nfinds, cap;
 } Lin;
 
@@ -46,6 +48,24 @@ static void lin_run_block(Lin *L, IrBlock *b, bool *st, bool report) {
                 IrValue *o1 = ins->n_operands>=2 ? ins->operands[1] : NULL;
                 if (report && o1 && o1->id>=0 && o1->id<L->nvar && st[o1->id])   // value read is a use
                     lin_add(L, o1->id, ins->line, ins->col, 1);
+                // MOVE-ON-ASSIGN. `var q = p` where p is LINEAR is a move, not a copy: the
+                // resource has one owner, so reading it out of its slot into another slot
+                // transfers it. This is an IR-level rule over IrType.linear, not a Lain one —
+                // C++ move semantics, Rust affine types and Lain `mov` all agree that copying
+                // a non-copyable value moves it. Without it `var q = p; free(p); free(q)` is a
+                // double free the pass cannot see (it was a real P0 hole, ASan-confirmed).
+                //
+                // Guarded on !st[src]: `var q = mov p` lowers to load;consume;store, so the
+                // slot is ALREADY moved here and re-flagging it would be a spurious E002. A
+                // genuine second read (`var r = p`) is caught at its own LOAD by the moved-use
+                // check below, which is the more precise report anyway.
+                if (o1 && o1->id>=0 && o1->id<L->nvar) {
+                    IrInstr *d = L->def[o1->id];
+                    if (d && d->op==IR_LOAD && d->n_operands>=1 && d->operands[0]) {
+                        int src = d->operands[0]->id;
+                        if (src>=0 && src<L->nvar && L->movesl[src] && !st[src]) st[src] = true;
+                    }
+                }
                 if (o0->id>=0 && o0->id<L->nvar) st[o0->id] = false;
             }
             continue;
@@ -70,15 +90,24 @@ static Lin *lin_analyze(IrFunc *f) {
     L->f=f; L->nvar = f->next_value_id>0?f->next_value_id:1; L->nb = f->next_block_id;
     L->in = calloc(L->nb,sizeof(bool*));
     for (int i=0;i<L->nb;i++) L->in[i]=calloc(L->nvar,sizeof(bool));
-    L->linsl = calloc(L->nvar,sizeof(bool));
-    // A leak-relevant slot owns a RESOURCE that must be freed: an owned pointer or slice.
-    // (An owned struct that is merely move-tracked but trivially droppable is NOT a leak;
-    // a struct that transitively owns a resource needs per-field tracking — deferred.)
+    L->linsl  = calloc(L->nvar,sizeof(bool));
+    L->movesl = calloc(L->nvar,sizeof(bool));
+    L->def    = calloc(L->nvar,sizeof(IrInstr*));
+    // Two DISTINCT sets, conflated at first and worth keeping apart:
+    //   movesl — every LINEAR slot. Move-tracked: reading it out is a transfer of ownership.
+    //   linsl  — the leak-relevant subset that owns a RESOURCE needing release (owned ptr or
+    //            slice). An owned struct that is move-tracked but trivially droppable is not
+    //            a leak; one that transitively owns a resource needs per-field tracking.
     for (IrBlock *b=f->blocks; b; b=b->next)
-        for (IrInstr *ins=b->instrs; ins; ins=ins->next)
-            if (ins->op==IR_ALLOCA && ins->result && ins->aux.alloca_ty && ins->aux.alloca_ty->linear
-                && (ins->aux.alloca_ty->kind==IRT_PTR || ins->aux.alloca_ty->kind==IRT_SLICE))
-                L->linsl[ins->result->id] = true;
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->result && ins->result->id>=0 && ins->result->id<L->nvar)
+                L->def[ins->result->id] = ins;
+            if (ins->op==IR_ALLOCA && ins->result && ins->aux.alloca_ty && ins->aux.alloca_ty->linear) {
+                L->movesl[ins->result->id] = true;
+                if (ins->aux.alloca_ty->kind==IRT_PTR || ins->aux.alloca_ty->kind==IRT_SLICE)
+                    L->linsl[ins->result->id] = true;
+            }
+        }
     bool *out = malloc(L->nvar), *tmp = malloc(L->nvar);
 
     // forward MAY fixpoint: in[succ] |= transfer(in[pred])
@@ -115,6 +144,6 @@ static Lin *lin_analyze(IrFunc *f) {
     free(out); free(tmp);
     return L;
 }
-static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in); free(L->linsl); free(L->finds); free(L); }
+static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in); free(L->linsl); free(L->movesl); free(L->def); free(L->finds); free(L); }
 
 #endif // LAIN_LINEARITY_H

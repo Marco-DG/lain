@@ -86,6 +86,40 @@ int main(void){
       ir_alloca(f,e,i32); ir_set_ret(e,NULL);
       lin_expect("non-linear drop is fine", count(f,3), 0); }
 
+    // MOVE-ON-ASSIGN: `var q = p` on a LINEAR slot transfers ownership. Without this,
+    // `var q = p; free(p); free(q)` is an invisible double free (a real P0 hole).
+    { IrType *lp = ir_type_new(&A,IRT_PTR); lp->elem=i32; lp->linear = true;
+      // p = linear; q = p;  then USE p  →  E001 use-after-move
+      { IrFunc *f=ir_func_new(&A,nm("moveassign"),i32,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *p=ir_alloca(f,e,lp), *q=ir_alloca(f,e,lp);
+        ir_store(f,e,q, ir_load(f,e,p,lp));            // var q = p   ⇒ moves p
+        ir_load(f,e,p,lp);                             // read p again
+        ir_set_ret(e,NULL);
+        lin_expect("var q = p then use p fires E001", count(f,1), 1); }
+      // p = linear; q = p;  and p NOT touched again  →  no use-after-move
+      { IrFunc *f=ir_func_new(&A,nm("moveonce"),i32,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *p=ir_alloca(f,e,lp), *q=ir_alloca(f,e,lp);
+        ir_store(f,e,q, ir_load(f,e,p,lp));
+        ir_set_ret(e,NULL);
+        lin_expect("var q = p alone is not a use", count(f,1), 0); }
+      // `var q = mov p` — load;consume;store. The explicit consume must NOT be double-counted
+      // by move-on-assign into a spurious E002.
+      { IrFunc *f=ir_func_new(&A,nm("movexplicit"),i32,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *p=ir_alloca(f,e,lp), *q=ir_alloca(f,e,lp);
+        IrValue *v=ir_load(f,e,p,lp);
+        ir_consume(f,e,p);                             // the explicit `mov`
+        ir_store(f,e,q,v);
+        ir_set_ret(e,NULL);
+        lin_expect("explicit mov is not double-counted", count(f,2), 0); }
+      // a NON-linear slot copies freely
+      { IrFunc *f=ir_func_new(&A,nm("copyok"),i32,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *p=ir_alloca(f,e,i32), *q=ir_alloca(f,e,i32);
+        ir_store(f,e,q, ir_load(f,e,p,i32));
+        ir_load(f,e,p,i32);
+        ir_set_ret(e,NULL);
+        lin_expect("non-linear copy is not a move", count(f,1), 0); }
+    }
+
     printf(failures? "LINEARITY: %d WRONG\n" : "LINEARITY: all expectations met\n", failures);
     return failures?1:0;
 }
