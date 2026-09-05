@@ -113,6 +113,13 @@ void ir_assert(IrFunc *f, IrBlock *b, IrValue *cond) {
     ins->operands[0] = cond;
     ir_emit(b, ins);
 }
+// `consume(slot)` — Phase 3.2: `mov x` invalidates x's storage; op[0] is the moved-from
+// slot. The linearity pass reads it; codegen ignores it. No result.
+void ir_consume(IrFunc *f, IrBlock *b, IrValue *slot) {
+    IrInstr *ins = ir_instr(f, IR_CONSUME, NULL, 1);
+    ins->operands[0] = slot;
+    ir_emit(b, ins);
+}
 IrValue *ir_icmp(IrFunc *f, IrBlock *b, IrCmp c, IrValue *x, IrValue *y) {
     IrInstr *ins = ir_instr(f, IR_ICMP, ir_type_bool(f->arena), 2);
     ins->aux.cmp = c; ins->operands[0] = x; ins->operands[1] = y;

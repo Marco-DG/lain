@@ -110,6 +110,9 @@ typedef enum {
     // verification layer (Phase 2.9 — the assume/assert substrate)
     IR_ASSUME,              // op[0] = a bool that HOLDS here (guard/refinement/precondition)
     IR_ASSERT,              // op[0] = a bool the analysis must DISCHARGE (obligation)
+    // linearity (Phase 3.2) — `mov x` invalidates x's storage here; the source becomes
+    // moved-from. op[0] = the consumed slot/value. A no-op at run time (codegen ignores it).
+    IR_CONSUME,
     // SSA merge
     IR_PHI,                 // phi_args : (value, block) pairs
 } IrOp;

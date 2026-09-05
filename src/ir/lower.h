@@ -671,8 +671,15 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             ins->operands[0]=x; ins->aux.cast_kind=IR_CAST_BITCAST; ir_emit(c->cur,ins);
             return ins->result;
         }
-        case EXPR_MOVE:                                 // ownership transfer: value unchanged
-            return ir_lower_expr(c, e->as.move_expr.expr);
+        case EXPR_MOVE: {                               // `mov x`: read the value, then INVALIDATE
+            Expr *src = e->as.move_expr.expr;            // the source slot (linearity: use-after-move)
+            IrValue *v = ir_lower_expr(c, src);
+            if (src && src->kind==EXPR_IDENTIFIER) {
+                IrLocal *l = ir_env_find(c, src->as.identifier_expr.id);
+                if (l && l->slot) ir_consume(c->f, c->cur, l->slot);   // slot is now moved-from
+            }
+            return v;
+        }
         case EXPR_MUT: {                                // `var lv`: a mutable borrow
             Expr *inner = e->as.mut_expr.expr;
             IrType *it = inner ? ir_lower_type(c, inner->type) : NULL;
