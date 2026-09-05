@@ -188,9 +188,24 @@ typedef struct IrParam { IrValue *value; struct IrParam *next; } IrParam;
 
 typedef enum { IR_FUNC_PURE, IR_FUNC_PROC } IrFuncKind;
 
+// Effect row (Phase 3.3 / audit finding F1 — the general effect LATTICE that replaces the
+// PURE/PROC binary as the semantic authority on side effects). A function is pure & total
+// iff its set is empty; a `func` is exactly one whose effects avoid IO and DIVERGE. Computed
+// by an IR pass (analysis/effects.h) and propagated callee ⊆ caller. Language-neutral: any
+// front-end's function lowers to a footprint over these bits.
+typedef enum {
+    IR_EFFECT_WRITE   = 1 << 0,  // writes mutable GLOBAL state (a var-param write is NOT this)
+    IR_EFFECT_DIVERGE = 1 << 1,  // may not terminate (unbounded loop / non-well-founded recursion)
+    IR_EFFECT_RAISES  = 1 << 2,  // may panic / abort
+    IR_EFFECT_IO      = 1 << 3,  // external side effects (calls a proc / extern proc)
+    IR_EFFECT_ALLOC   = 1 << 4,  // allocates
+} IrEffectBit;
+typedef unsigned IrEffect;
+
 typedef struct IrFunc {
     IrName    *name;
     IrFuncKind kind;
+    bool       is_extern;   // declaration only (no body) — a trusted boundary
     IrParam   *params;      // parameter values
     IrType    *ret_type;
     IrBlock   *entry;
@@ -201,6 +216,9 @@ typedef struct IrFunc {
     void      *src_decl;    // OPAQUE provenance handle (front-end's; the IR never derefs it)
     bool       incomplete;  // lowering dropped/placeholder'd a construct ⇒ the IR is
                             // NOT faithful, so no analysis may claim a proof over it
+    // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
+    IrEffect   effects;
+    bool       effects_done, effects_in_progress;
     Arena     *arena;       // where this function's IR is allocated
     struct IrFunc *next;
 } IrFunc;

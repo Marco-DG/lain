@@ -640,6 +640,8 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             }
             IrInstr *ins = ir_instr(c->f, IR_CALL, (e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT) ? ty : NULL, n);
             Id *cnm = callee ? callee->as.function_decl.name : NULL;   // intern the callee name
+            if (!cnm && e->as.call_expr.callee && e->as.call_expr.callee->kind==EXPR_IDENTIFIER)
+                cnm = e->as.call_expr.callee->as.identifier_expr.id;   // declless builtin (e.g. `panic`)
             ins->aux.callee = cnm ? ir_intern(c->a, cnm->name, cnm->length) : NULL;
             DeclList *pp = callee ? callee->as.function_decl.params : NULL;
             int i=0;
@@ -987,6 +989,29 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         ir_set_ret(cc.cur, NULL);   // implicit unit return / end of proc
     ir_finalize_cfg(f);
     return f;
+}
+
+// Lower a whole program to a module IrFunc list: every func/proc body, PLUS a
+// declaration-only stub (is_extern, no body) for each extern func/proc so an
+// interprocedural pass (effects, and later borrow/linearity) can classify calls to them
+// WITHOUT consulting the AST — the module is self-contained. Returns the list head.
+static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
+    IrFunc *head=NULL, *tail=NULL;
+    for (DeclList *d = program; d; d = d->next) {
+        if (!d->decl) continue;
+        IrFunc *f = NULL;
+        DeclKind k = d->decl->kind;
+        if ((k==DECL_FUNCTION || k==DECL_PROCEDURE) && d->decl->as.function_decl.body) {
+            f = ir_lower_function(d->decl, program, a);
+        } else if (k==DECL_EXTERN_FUNCTION || k==DECL_EXTERN_PROCEDURE) {
+            Id *nm = d->decl->as.function_decl.name;
+            f = ir_func_new(a, nm ? ir_intern(a, nm->name, nm->length) : NULL, NULL,
+                            k==DECL_EXTERN_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
+            f->is_extern = true; f->src_decl = d->decl;
+        }
+        if (f) { if (!head) head=tail=f; else { tail->next=f; tail=f; } }
+    }
+    return head;
 }
 
 #endif // LAIN_IR_LOWER_H
