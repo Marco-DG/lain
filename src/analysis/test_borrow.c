@@ -54,6 +54,26 @@ int main(void){
       ir_set_ret(e, loaded);
       bexpect("return loaded pointer not flagged", nfind(f), 0); }
 
+    // 5) return a struct BY VALUE whose pointer field borrows a local  →  dangling (E010)
+    { IrType *st=ir_type_new(&A,IRT_STRUCT); st->n_fields=1;
+      st->fields=arena_push_many_aligned(&A,IrType*,1); st->fields[0]=pi32;
+      IrFunc *f=ir_func_new(&A,nm("sret"),st,IR_FUNC_PROC); IrBlock *e=f->entry;
+      IrValue *loc=ir_alloca(f,e,i32);                 // a local
+      IrValue **fs=arena_push_many_aligned(&A,IrValue*,1); fs[0]=loc;   // field = &local
+      IrValue *sn=ir_struct_new(f,e,st,fs,1);
+      ir_set_ret(e, sn);
+      bexpect("return struct borrowing local fires E010", nfind(f), 1); }
+
+    // 6) return a struct whose pointer field is a PARAM  →  fine
+    { IrType *st=ir_type_new(&A,IRT_STRUCT); st->n_fields=1;
+      st->fields=arena_push_many_aligned(&A,IrType*,1); st->fields[0]=pi32;
+      IrFunc *f=ir_func_new(&A,nm("sok"),st,IR_FUNC_PROC);
+      IrValue *p=ir_add_param(f, pi32, nm("p")); IrBlock *e=f->entry;
+      IrValue **fs=arena_push_many_aligned(&A,IrValue*,1); fs[0]=p;     // field = a param pointer
+      IrValue *sn=ir_struct_new(f,e,st,fs,1);
+      ir_set_ret(e, sn);
+      bexpect("return struct borrowing param is fine", nfind(f), 0); }
+
     printf(failures? "BORROW: %d WRONG\n" : "BORROW: all expectations met\n", failures);
     return failures?1:0;
 }

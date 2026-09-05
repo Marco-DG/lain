@@ -47,8 +47,19 @@ static Borrow *borrow_analyze(IrFunc *f) {
     for (IrBlock *b=f->blocks;b;b=b->next) {
         if (b->term.kind!=IR_TERM_RET || !b->term.cond) continue;
         IrValue *rv = b->term.cond;
-        if (rv->type && (rv->type->kind==IRT_PTR || rv->type->kind==IRT_SLICE)
-            && bor_roots_local(B->def, B->nvar, rv)) {
+        bool dangles = false;
+        if (rv->type && (rv->type->kind==IRT_PTR || rv->type->kind==IRT_SLICE))
+            dangles = bor_roots_local(B->def, B->nvar, rv);         // return a local reference
+        else if (rv->type && rv->type->kind==IRT_STRUCT) {         // return a struct that BORROWS a
+            IrInstr *d = B->def[rv->id];                            // local through a pointer/slice field
+            if (d && d->op==IR_STRUCT_NEW)
+                for (int k=0;k<d->n_operands && !dangles;k++) {
+                    IrValue *fv = d->operands[k];
+                    if (fv && fv->type && (fv->type->kind==IRT_PTR || fv->type->kind==IRT_SLICE))
+                        dangles = bor_roots_local(B->def, B->nvar, fv);
+                }
+        }
+        if (dangles) {
             if (B->nfinds==B->cap){ B->cap=B->cap?B->cap*2:4; B->finds=realloc(B->finds,B->cap*sizeof*B->finds); }
             B->finds[B->nfinds++] = (BorrowFinding){rv->line, rv->col};
         }
