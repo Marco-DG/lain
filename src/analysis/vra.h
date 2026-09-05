@@ -143,9 +143,20 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             else {
                 // two-variable: sound difference bounds from the second operand's interval
                 //   r=a+b, b∈[blo,bhi] ⇒ a+blo ≤ r ≤ a+bhi ;  r=a-b ⇒ a-bhi ≤ r ≤ a-blo
+                if (!isadd) oct_close(W);   // materialize the a↔b relation before reading it
                 int64_t blo,bhi; bool hl,hh; oct_interval(W,b,&blo,&hl,&bhi,&hh);
                 if (isadd) { if (hh) oct_add_diff_le(W,r,a,bhi); if (hl) oct_add_diff_le(W,a,r,-blo); }
-                else       { if (hl) oct_add_diff_le(W,r,a,-blo); if (hh) oct_add_diff_le(W,a,r,bhi); }
+                else {
+                    if (hl) oct_add_diff_le(W,r,a,-blo); if (hh) oct_add_diff_le(W,a,r,bhi);
+                    // RELATIONAL r = a − b: transfer the octagon's OWN a↔b difference to r
+                    // exactly (intervals miss it when the bound is symbolic). This proves the
+                    // reverse index `a[L−i−1]`: from `i ≤ L` the octagon already holds, r=L−i
+                    // gets r ≥ 0 (no underflow) and r < L.  a−b ≤ ub ⇒ r ≤ ub ; b−a ≤ lbe ⇒ r ≥ −lbe.
+                    int64_t ub  = oct_get(W, oct_pos(b), oct_pos(a));   // bound on a − b
+                    int64_t lbe = oct_get(W, oct_pos(a), oct_pos(b));   // bound on b − a
+                    if (ub  < OCT_INF) oct_add_ub(W, r, ub);
+                    if (lbe < OCT_INF) oct_add_lb(W, r, -lbe);
+                }
             }
             break;
         }
@@ -320,6 +331,14 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     if (!irtype_int_range(a->type, &tlo, &thi)) return;     // target = the operand type
     int64_t alo,ahi,blo,bhi; vra_range(V,W,a,&alo,&ahi); vra_range(V,W,b,&blo,&bhi);
     __int128 rlo,rhi; vra_arith_range(ins->op, alo,ahi, blo,bhi, &rlo,&rhi);
+    // for SUB, refine with the octagon's OWN a−b relation (W is closed here) — this proves
+    // `L − i ≥ 0` (no underflow) from `i ≤ L`, which operand intervals miss when symbolic.
+    if (ins->op==IR_SUB) {
+        int64_t abu = oct_get(W, oct_pos(b->id), oct_pos(a->id));   // a − b ≤ abu
+        int64_t bau = oct_get(W, oct_pos(a->id), oct_pos(b->id));   // b − a ≤ bau ⇒ a − b ≥ −bau
+        if (abu < OCT_INF && (__int128)abu < rhi) rhi = abu;
+        if (bau < OCT_INF && -(__int128)bau > rlo) rlo = -(__int128)bau;
+    }
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_OVERFLOW; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.ok = (rlo >= (__int128)tlo) && (rhi <= (__int128)thi);
     vra_add_check(V, c);
