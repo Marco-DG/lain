@@ -319,7 +319,7 @@ share. Lives in `src/ir/pred.h`; spec annex documents it.
 Each is a self-inflicted debt found by auditing the rebuild against its own goal:
 - [ ] **C1 Rework the gate to adjudicated divergence** (`phase3_differential.sh`). Blocks 3.1
       and 3.5 — a stronger checker cannot land under the current criterion. *Do first.*
-- [ ] **C2 `fuzz_ir_codegen.sh`** — execution-differential fuzzer for the NEW pipeline
+- [x] **C2 `fuzz_ir_codegen.sh`** ✓ (teeth-verified: catches the scalar-var miscompile 4/40 when reverted; 200/200 clean with the fix) — execution-differential fuzzer for the NEW pipeline
       (compile through BOTH, diff behaviour). All 14 existing fuzzers test only the OLD
       pipeline; that blind spot hid a real miscompile (scalar `var` param by value, 41≠42).
       **Must exist before the IR pipeline is ever made authoritative.**
@@ -406,9 +406,9 @@ The endeavour is complete when ALL of these hold simultaneously:
 ## E2. Phase order (dependency-correct; each ends green)
 
 ### ▸ STAGE I — Unblock (do first, small, gates everything)
-- [ ] **C1 adjudicated-divergence gate** — rework `phase3_differential.sh`. *Blocks all of
+- [x] **C1 adjudicated-divergence gate** ✓ (3654003) — rework `phase3_differential.sh`. *Blocks all of
       Stage II.* Without it a stronger engine cannot land.
-- [ ] **C2 `fuzz_ir_codegen.sh`** — execution-differential fuzzer for the NEW pipeline.
+- [x] **C2 `fuzz_ir_codegen.sh`** ✓ (teeth-verified: catches the scalar-var miscompile 4/40 when reverted; 200/200 clean with the fix) — execution-differential fuzzer for the NEW pipeline.
       *Blocks E0.3/E0.7* (never make the IR authoritative without it).
 - [ ] **C3 measure `incomplete`** — report coverage beside every metric. *Blocks E0.1.*
 
