@@ -81,15 +81,17 @@ tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-more-
 # What remains is NOT one cluster — the old engine reports these under four different codes,
 # and only match_borrow_mut is a borrow conflict at all:
 #   match_borrow_mut  E004 — a real conflict, through a `case` binding (phase B: reborrows)
-#   struct_field_dangling  E010 — escape through a struct field holding a string-literal local
 #   block_scope  E003, elif_borrow  E016 — LEAK/consistency on one branch, not borrows;
 #     they sit in this section only because that is where they were first triaged.
+#   borrow_fail  E008 — a distinct code again; re-triage before attacking.
+# struct_field_dangling is CLOSED: two fixes, both found by taking it seriously rather than
+# filing it. Lowering now gives a mutable string binding its OWN storage (which also fixed a
+# real segfault — see CORPUS_CORRECTIONS/commit b56aa24), so the slice honestly roots in an
+# alloca; and escape analysis follows provenance through a LOAD from a singly-stored slot.
 tests/ownership/block_scope_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/borrow_fail.ln                            NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/elif_borrow_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
 tests/types/match_borrow_mut_fail.ln                      NEW-ACCEPTS  new-incomplete-borrow
-# escape analysis exists but misses this shape (field borrows a string-literal local)
-tests/ownership/struct_field_dangling_fail.ln             NEW-ACCEPTS  new-incomplete-borrow
 
 # ── new-incomplete-linearity ──────────────────────────────────────────────────
 # MOVE-ON-ASSIGN closed 3 of these (move_then_use, linear_copy_double_free,

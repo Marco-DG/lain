@@ -37,7 +37,17 @@ static IrFunc *bor_find_func(IrFunc *mod, const IrName *n) {
 
 // Does v's provenance root in a LOCAL alloca? (⇒ returning it dangles.) Follows only the
 // address-forming ops; a load/call/param/global root stops the walk (conservatively safe).
-static bool bor_roots_local(IrInstr **def, int nvar, IrValue *v) {
+// The single value ever stored into `slot`, or NULL if it is written zero or many times.
+static IrValue *bor_unique_store_value(IrFunc *f, IrValue *slot) {
+    if (!f || !slot) return NULL;
+    IrValue *found = NULL; int n = 0;
+    for (IrBlock *b=f->blocks; b; b=b->next)
+        for (IrInstr *i=b->instrs; i; i=i->next)
+            if (i->op==IR_STORE && i->n_operands>=2 && i->operands[0]==slot) { found = i->operands[1]; n++; }
+    return n==1 ? found : NULL;
+}
+
+static bool bor_roots_local(IrFunc *f, IrInstr **def, int nvar, IrValue *v) {
     for (int guard=0; v && v->id>=0 && v->id<nvar && guard<100000; guard++) {
         IrInstr *d = def[v->id];
         if (!d) return false;                             // param / φ with no single def
@@ -46,7 +56,20 @@ static bool bor_roots_local(IrInstr **def, int nvar, IrValue *v) {
             case IR_ELEM_PTR: case IR_FIELD_PTR:
             case IR_SLICE_DATA: case IR_MAKE_SLICE:
                 v = d->n_operands>=1 ? d->operands[0] : NULL; break;       // provenance = base/data
-            default: return false;                        // load/call/… — not a known local
+            case IR_LOAD: {
+                // A load launders provenance in general — but when the slot it reads is
+                // written EXACTLY ONCE, the loaded value is that stored value and provenance
+                // survives. This is what makes the escaping-local case visible at all:
+                // `var local = "hello"; return Lexer(local, 0)` LOADS the slice out of
+                // local's slot before it enters the struct, and stopping at the load reported
+                // nothing. (Reading a slot written from a PARAMETER still roots at the param,
+                // so this adds no false positives — it follows the value, not the slot.)
+                IrValue *addr = d->n_operands>=1 ? d->operands[0] : NULL;
+                IrValue *stored = bor_unique_store_value(f, addr);
+                if (!stored) return false;
+                v = stored; break;
+            }
+            default: return false;                        // call/… — not a known local
         }
     }
     return false;
@@ -298,14 +321,14 @@ static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
         IrValue *rv = b->term.cond;
         bool dangles = false;
         if (rv->type && (rv->type->kind==IRT_PTR || rv->type->kind==IRT_SLICE))
-            dangles = bor_roots_local(B->def, B->nvar, rv);         // return a local reference
+            dangles = bor_roots_local(f, B->def, B->nvar, rv);         // return a local reference
         else if (rv->type && rv->type->kind==IRT_STRUCT) {         // return a struct that BORROWS a
             IrInstr *d = B->def[rv->id];                            // local through a pointer/slice field
             if (d && d->op==IR_STRUCT_NEW)
                 for (int k=0;k<d->n_operands && !dangles;k++) {
                     IrValue *fv = d->operands[k];
                     if (fv && fv->type && (fv->type->kind==IRT_PTR || fv->type->kind==IRT_SLICE))
-                        dangles = bor_roots_local(B->def, B->nvar, fv);
+                        dangles = bor_roots_local(f, B->def, B->nvar, fv);
                 }
         }
         if (dangles) bor_add(B, rv->line, rv->col, 10);

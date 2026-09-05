@@ -74,6 +74,28 @@ int main(void){
       ir_set_ret(e, sn);
       bexpect("return struct borrowing param is fine", nfind(f), 0); }
 
+    // 6b) provenance through a LOAD from a singly-stored slot. `var local = <a local buffer>;
+    // return S(local)` loads the value out of local's slot before it enters the struct, and
+    // stopping at the load reported nothing. Following the unique store recovers it — while a
+    // slot written from a PARAMETER still roots at the param, so no false positive.
+    { IrType *st=ir_type_new(&A,IRT_STRUCT); st->n_fields=1;
+      st->fields=arena_push_many_aligned(&A,IrType*,1); st->fields[0]=pi32;
+      { IrFunc *f=ir_func_new(&A,nm("viaslot"),st,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *buf=ir_alloca(f,e,i32);                    // the escaping local
+        IrValue *cell=ir_alloca(f,e,pi32);                  // `var local = &buf`
+        ir_store(f,e,cell,buf);
+        IrValue **fs=arena_push_many_aligned(&A,IrValue*,1); fs[0]=ir_load(f,e,cell,pi32);
+        ir_set_ret(e, ir_struct_new(f,e,st,fs,1));
+        bexpect("escape through a loaded slot fires E010", nfind(f), 1); }
+      { IrFunc *f=ir_func_new(&A,nm("viaslotparam"),st,IR_FUNC_PROC);
+        IrValue *p=ir_add_param(f,pi32,nm("p")); IrBlock *e=f->entry;
+        IrValue *cell=ir_alloca(f,e,pi32);
+        ir_store(f,e,cell,p);                                // the slot holds a PARAM pointer
+        IrValue **fs=arena_push_many_aligned(&A,IrValue*,1); fs[0]=ir_load(f,e,cell,pi32);
+        ir_set_ret(e, ir_struct_new(f,e,st,fs,1));
+        bexpect("loaded slot holding a param is fine", nfind(f), 0); }
+    }
+
     // 7) RET-BORROW SOURCE INFERENCE (design §5). The source of a returned reference must be
     // read off the BODY, not guessed from the signature. `pick(var a, var b) var i32` may
     // return either; the old syntactic rule ("first mutable reference param") mis-attributed
