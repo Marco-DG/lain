@@ -790,7 +790,35 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 break;
             }
             IrValue *slot = ir_alloca(c->f, c->cur, slot_ty);
-            if (s->as.var_stmt.expr) ir_store(c->f, c->cur, slot, ir_lower_expr(c, s->as.var_stmt.expr));
+            Expr *vinit = s->as.var_stmt.expr;
+            // `var s = "hello"` — a MUTABLE binding initialised from a string literal needs
+            // its OWN writable storage. IR_STR_CONST points at IMMUTABLE STATIC bytes (that
+            // is the primitive's meaning, and the emitter honours it as a C string literal),
+            // so binding a writable slice straight to it is a lie: the first `s[0] = c`
+            // faulted. Materialise the copy the source semantics ask for.
+            //
+            // Two things fall out. The slice now roots in an ALLOCA, so escape analysis sees
+            // the truth when one is returned; and an IMMUTABLE binding still points at the
+            // static bytes, costing nothing — which is the right default under a
+            // performance-first design law.
+            if (vinit && vinit->kind == EXPR_STRING && s->as.var_stmt.is_mutable
+                && slot_ty->kind == IRT_SLICE) {
+                int32_t n = (int32_t)vinit->as.string_expr.length;
+                const char *bytes = vinit->as.string_expr.value;
+                IrType *u8t = ir_type_int(c->a, 8, false);
+                IrType *arr = ir_type_new(c->a, IRT_ARRAY); arr->elem = u8t; arr->array_len = n+1;
+                IrValue *buf = ir_alloca_array(c->f, c->cur, arr);
+                IrType *idxt = ir_type_int(c->a, 64, false);
+                for (int32_t k = 0; k <= n; k++) {         // includes the NUL sentinel
+                    IrValue *ix = ir_const_int(c->f, c->cur, k, idxt);
+                    ir_store(c->f, c->cur, ir_elem_ptr(c->f, c->cur, buf, ix, u8t),
+                             ir_const_int(c->f, c->cur, k<n ? (unsigned char)bytes[k] : 0, u8t));
+                }
+                IrValue *ln = ir_const_int(c->f, c->cur, n, idxt);
+                ir_store(c->f, c->cur, slot, ir_make_slice(c->f, c->cur, buf, ln, u8t));
+            } else if (vinit) {
+                ir_store(c->f, c->cur, slot, ir_lower_expr(c, vinit));
+            }
             ir_env_add(c, s->as.var_stmt.name, slot, NULL);
             break;
         }

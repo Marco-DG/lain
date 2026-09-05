@@ -127,7 +127,51 @@ proc main() i32 {
 }
 EOF
 }
-GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith)
+gen_strlit() {            # string literals: STORAGE DURATION of the literal's bytes.
+    # The class that hid a real segfault — the new emitter gave a MUTABLE binding a pointer
+    # to a read-only C string literal, so the first write faulted. Mutation and escape pull
+    # in opposite directions (writable wants a copy, escaping wants static), so generate
+    # both: a mutated local, and a literal read through a call.
+    local k=$(r 4) c=$(( $(r 60) + 65 ))
+    case $k in
+      0) cat <<EOF
+proc main() i32 {
+    var s = "hello"
+    s[0] = $c
+    return s[0] as i32
+}
+EOF
+      ;;
+      1) cat <<EOF
+proc main() i32 {
+    var s = "abcdef"
+    s[1] = $c
+    s[2] = s[1]
+    return (s[2] as i32) %% 251
+}
+EOF
+      ;;
+      2) cat <<EOF
+func first(s u8[:0]) i32 { if s.len > 0 { return s[0] as i32 } return 0 }
+proc main() i32 {
+    t = "world"
+    return first(t) %% 251
+}
+EOF
+      ;;
+      *) cat <<EOF
+proc main() i32 {
+    var s = "xyz"
+    var n = s.len as i32
+    s[0] = $c
+    return (n *% 7 +% (s[0] as i32)) %% 251
+}
+EOF
+      ;;
+    esac
+}
+
+GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit)
 
 run_pipeline() {  # $1=c-file $2=bin -> prints "<exit>|<stdout>"
     "$CC" -o "$2" "$1" $DEFS -w -O0 2>/dev/null || { echo "BUILDFAIL"; return; }
