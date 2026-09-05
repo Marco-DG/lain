@@ -143,6 +143,43 @@ int main(void){
         lin_expect("owned struct with no resource is fine", count(f,3), 0); }
     }
 
+    // PER-FIELD linear state + the opaque fail-closed rule.
+    { IrType *lp = ir_type_new(&A,IRT_PTR); lp->elem=i32; lp->linear=true;
+      IrType *res = ir_type_new(&A,IRT_STRUCT); res->n_fields=2; res->linear=true;
+      res->fields=arena_push_many_aligned(&A,IrType*,2); res->fields[0]=lp; res->fields[1]=i32;
+      // consuming the one LINEAR FIELD discharges the struct — `return mov r.handle`
+      { IrFunc *f=ir_func_new(&A,nm("fieldconsume"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *s=ir_alloca(f,e,res);
+        ir_consume(f,e, ir_field_ptr(f,e,s,0,lp));       // mov r.<linear field>
+        ir_set_ret(e,NULL);
+        lin_expect("consuming the linear field discharges", count(f,3), 0); }
+      // consuming only the NON-linear field does not
+      { IrFunc *f=ir_func_new(&A,nm("wrongfield"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *s=ir_alloca(f,e,res);
+        ir_consume(f,e, ir_field_ptr(f,e,s,1,i32));
+        ir_set_ret(e,NULL);
+        lin_expect("consuming a plain field does not", count(f,3), 1); }
+      // consuming the SAME field twice is a double move
+      { IrFunc *f=ir_func_new(&A,nm("twicefield"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *s=ir_alloca(f,e,res);
+        ir_consume(f,e, ir_field_ptr(f,e,s,0,lp));
+        ir_consume(f,e, ir_field_ptr(f,e,s,0,lp));
+        ir_set_ret(e,NULL);
+        lin_expect("consuming one field twice is E002", count(f,2), 1); }
+      // distinct fields are independent — no double move
+      { IrFunc *f=ir_func_new(&A,nm("twofields"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *s=ir_alloca(f,e,res);
+        ir_consume(f,e, ir_field_ptr(f,e,s,0,lp));
+        ir_consume(f,e, ir_field_ptr(f,e,s,1,i32));
+        ir_set_ret(e,NULL);
+        lin_expect("distinct fields are independent", count(f,2), 0); }
+      // an OPAQUE linear struct (a cross-module type: no visible fields) fails CLOSED
+      { IrType *op = ir_type_new(&A,IRT_STRUCT); op->n_fields=0; op->linear=true;
+        IrFunc *f=ir_func_new(&A,nm("opaqueleak"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        ir_alloca(f,e,op); ir_set_ret(e,NULL);
+        lin_expect("opaque linear struct leaks (fail closed)", count(f,3), 1); }
+    }
+
     printf(failures? "LINEARITY: %d WRONG\n" : "LINEARITY: all expectations met\n", failures);
     return failures?1:0;
 }

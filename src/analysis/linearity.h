@@ -18,18 +18,22 @@
 #define LAIN_LINEARITY_H
 
 #include "../ir/ir.h"
+#include "../ir/place.h"
 #include <stdlib.h>
 #include <string.h>
+
+#define LIN_WHOLE_BIT 63u
 
 typedef struct { int slot; isize line, col; int code; } LinFinding;  // 1=E001, 2=E002, 3=E003 leak
 
 typedef struct {
     IrFunc     *f;
     int         nvar, nb;
-    bool      **in;         // in[block][slot] = maybe-moved on entry
+    uint64_t  **in;         // in[block][slot] = consumption mask (bit63 whole, bits0..62 fields)
     bool       *linsl;      // linsl[slot] = the slot holds a LEAK-relevant resource (owned ptr/slice)
     bool       *movesl;     // movesl[slot] = the slot holds a LINEAR value (move-tracked)
     IrInstr   **def;        // def[value] = the instruction defining it
+    IrType    **slot_ty;    // element type per tracked slot (for the "all linear fields" rule)
     LinFinding *finds; int nfinds, cap;
 } Lin;
 
@@ -47,9 +51,16 @@ typedef struct {
 static bool lin_has_release_obligation(const IrType *t, int depth) {
     if (!t || depth > 8) return false;
     if ((t->kind==IRT_PTR || t->kind==IRT_SLICE) && t->linear) return true;
-    if (t->kind==IRT_STRUCT)
+    if (t->kind==IRT_STRUCT) {
+        // An OPAQUE linear struct — no visible fields, because a cross-module type lowers
+        // without them — must be assumed to own a resource. Concluding "owns nothing" about a
+        // type we cannot SEE is a fail-OPEN, and it silently exempted every std handle:
+        // `std/fs.ln`'s `File { mov handle *FILE }` reaches this pass with n_fields == 0, so
+        // an unclosed file was not a leak. For a leak check the safe direction is to report.
+        if (t->n_fields <= 0 || !t->fields) return t->linear;
         for (int i=0;i<t->n_fields;i++)
-            if (t->fields && lin_has_release_obligation(t->fields[i], depth+1)) return true;
+            if (lin_has_release_obligation(t->fields[i], depth+1)) return true;
+    }
     if (t->kind==IRT_ARRAY) return lin_has_release_obligation(t->elem, depth+1);
     return false;
 }
@@ -59,9 +70,34 @@ static void lin_add(Lin *L, int slot, isize line, isize col, int code) {
     L->finds[L->nfinds++] = (LinFinding){slot,line,col,code};
 }
 
-// Apply one block's instructions to `st` (moved[]) — the transfer function. When `report`,
-// flag a use/double-move against the running state (used only in the final sweep).
-static void lin_run_block(Lin *L, IrBlock *b, bool *st, bool report) {
+// Is a slot's obligation discharged under mask `m`? Either the whole value was consumed, or
+// every LINEAR field of it was — `consume(r mov Resource) { return mov r.handle }` discharges
+// the struct by consuming its only linear field, which the corpus requires to be accepted.
+static bool lin_discharged(const Lin *L, int slot, uint64_t m) {
+    if ((m >> LIN_WHOLE_BIT) & 1u) return true;
+    IrType *t = (slot>=0 && slot<L->nvar) ? L->slot_ty[slot] : NULL;
+    if (!t || t->kind != IRT_STRUCT || t->n_fields <= 0 || t->n_fields >= 63 || !t->fields) return false;
+    uint64_t need = 0; bool any = false;
+    for (int i=0;i<t->n_fields;i++)
+        if (t->fields[i] && t->fields[i]->linear) { need |= (1ull<<i); any = true; }
+    return any && (m & need) == need;
+}
+
+// The place a consume/store names, as (slot, bit). bit = LIN_WHOLE_BIT for the whole value,
+// or the field index for a depth-1 field. Returns -1 for anything it cannot resolve.
+static int lin_place_of(Lin *L, IrValue *addr, unsigned *bit) {
+    IrPlace p = ir_place_of(L->def, L->nvar, addr);
+    if (!p.valid || p.base_kind==IRPB_DEREF) return -1;
+    if (p.nproj == 0) { *bit = LIN_WHOLE_BIT; return p.base_id; }
+    if (p.proj[0].kind == IRPJ_FIELD && p.proj[0].field >= 0 && p.proj[0].field < 63) {
+        *bit = (unsigned)p.proj[0].field; return p.base_id;
+    }
+    return -1;                                   // indexed / deeper — not tracked per element
+}
+
+// Apply one block's instructions to `st` (consumption masks) — the transfer function. When
+// `report`, flag a use/double-move against the running state (used only in the final sweep).
+static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
     for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
         IrValue *o0 = ins->n_operands>=1 ? ins->operands[0] : NULL;
         if (ins->op==IR_STORE) {                         // store re-initializes the target slot
@@ -84,17 +120,20 @@ static void lin_run_block(Lin *L, IrBlock *b, bool *st, bool report) {
                     IrInstr *d = L->def[o1->id];
                     if (d && d->op==IR_LOAD && d->n_operands>=1 && d->operands[0]) {
                         int src = d->operands[0]->id;
-                        if (src>=0 && src<L->nvar && L->movesl[src] && !st[src]) st[src] = true;
+                        if (src>=0 && src<L->nvar && L->movesl[src] && !st[src])
+                            st[src] = (1ull<<LIN_WHOLE_BIT);
                     }
                 }
-                if (o0->id>=0 && o0->id<L->nvar) st[o0->id] = false;
+                { unsigned bit; int sl = lin_place_of(L, o0, &bit);      // a store RE-INITIALISES
+                  if (sl>=0) { if (bit==LIN_WHOLE_BIT) st[sl] = 0; else st[sl] &= ~(1ull<<bit); } }
             }
             continue;
         }
-        if (ins->op==IR_CONSUME) {                       // `mov` — mark moved (double-move if already)
-            if (o0 && o0->id>=0 && o0->id<L->nvar) {
-                if (report && st[o0->id]) lin_add(L, o0->id, ins->line, ins->col, 2);
-                st[o0->id] = true;
+        if (ins->op==IR_CONSUME) {                       // `mov` — consume the PLACE it names
+            unsigned bit; int sl = o0 ? lin_place_of(L, o0, &bit) : -1;
+            if (sl>=0 && sl<L->nvar) {
+                if (report && ((st[sl]>>bit)&1u)) lin_add(L, sl, ins->line, ins->col, 2);
+                st[sl] |= (1ull<<bit);
             }
             continue;
         }
@@ -109,11 +148,12 @@ static void lin_run_block(Lin *L, IrBlock *b, bool *st, bool report) {
 static Lin *lin_analyze(IrFunc *f) {
     Lin *L = calloc(1,sizeof *L);
     L->f=f; L->nvar = f->next_value_id>0?f->next_value_id:1; L->nb = f->next_block_id;
-    L->in = calloc(L->nb,sizeof(bool*));
-    for (int i=0;i<L->nb;i++) L->in[i]=calloc(L->nvar,sizeof(bool));
+    L->in = calloc(L->nb,sizeof(uint64_t*));
+    for (int i=0;i<L->nb;i++) L->in[i]=calloc(L->nvar,sizeof(uint64_t));
     L->linsl  = calloc(L->nvar,sizeof(bool));
     L->movesl = calloc(L->nvar,sizeof(bool));
     L->def    = calloc(L->nvar,sizeof(IrInstr*));
+    L->slot_ty= calloc(L->nvar,sizeof(IrType*));
     // Two DISTINCT sets, conflated at first and worth keeping apart:
     //   movesl — every LINEAR slot. Move-tracked: reading it out is a transfer of ownership.
     //   linsl  — the leak-relevant subset: linear AND OWNED by this binding, so this function
@@ -126,6 +166,7 @@ static Lin *lin_analyze(IrFunc *f) {
                 L->def[ins->result->id] = ins;
             if (ins->op==IR_ALLOCA && ins->result && ins->aux.alloca_ty && ins->aux.alloca_ty->linear) {
                 L->movesl[ins->result->id] = true;
+                L->slot_ty[ins->result->id] = ins->aux.alloca_ty;
                 if (ins->result->owns && lin_has_release_obligation(ins->aux.alloca_ty,0))
                     L->linsl[ins->result->id] = true;
             }
@@ -150,14 +191,14 @@ static Lin *lin_analyze(IrFunc *f) {
         L->movesl[pv->id] = true;
         L->linsl[pv->id]  = true;
     }
-    bool *out = malloc(L->nvar), *tmp = malloc(L->nvar);
+    uint64_t *out = malloc(L->nvar*sizeof(uint64_t)), *tmp = malloc(L->nvar*sizeof(uint64_t));
 
     // forward MAY fixpoint: in[succ] |= transfer(in[pred])
     bool changed=true; int sweeps=0;
     while (changed && sweeps++ < 1000) {
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
-            memcpy(tmp, L->in[b->id], L->nvar); lin_run_block(L, b, tmp, false);  // out = transfer(in)
+            memcpy(tmp, L->in[b->id], L->nvar*sizeof(uint64_t)); lin_run_block(L, b, tmp, false);  // out = transfer(in)
             IrBlock *succ[3]={0,0,0}; int ns=0;
             switch (b->term.kind) {
                 case IR_TERM_BR:      succ[ns++]=b->term.a; break;
@@ -167,8 +208,8 @@ static Lin *lin_analyze(IrFunc *f) {
                 default: break;
             }
             for (int k=0;k<ns;k++){ IrBlock *s=succ[k]; if(!s) continue;
-                bool *si=L->in[s->id];
-                for (int v=0;v<L->nvar;v++) if (tmp[v] && !si[v]){ si[v]=true; changed=true; }
+                uint64_t *si=L->in[s->id];
+                for (int v=0;v<L->nvar;v++) if ((si[v]|tmp[v]) != si[v]){ si[v]|=tmp[v]; changed=true; }
             }
         }
     }
@@ -180,8 +221,8 @@ static Lin *lin_analyze(IrFunc *f) {
     // MAY ∧ ¬MUST is exactly "consumed on some branches but not others" — E016, the
     // inconsistent linear state that a discipline without implicit drop must reject. It was
     // invisible because the leak check asked only ¬MAY ("never consumed anywhere").
-    bool **inmust = calloc(L->nb,sizeof(bool*));
-    for (int i=0;i<L->nb;i++) inmust[i]=calloc(L->nvar,sizeof(bool));
+    uint64_t **inmust = calloc(L->nb,sizeof(uint64_t*));
+    for (int i=0;i<L->nb;i++) inmust[i]=calloc(L->nvar,sizeof(uint64_t));
     bool *seen = calloc(L->nb,sizeof(bool));
     seen[f->entry->id] = true;
     changed=true; sweeps=0;
@@ -189,7 +230,7 @@ static Lin *lin_analyze(IrFunc *f) {
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             if (!seen[b->id]) continue;
-            memcpy(tmp, inmust[b->id], L->nvar); lin_run_block(L, b, tmp, false);
+            memcpy(tmp, inmust[b->id], L->nvar*sizeof(uint64_t)); lin_run_block(L, b, tmp, false);
             IrBlock *succ[3]={0,0,0}; int ns=0;
             switch (b->term.kind) {
                 case IR_TERM_BR:      succ[ns++]=b->term.a; break;
@@ -199,26 +240,27 @@ static Lin *lin_analyze(IrFunc *f) {
                 default: break;
             }
             for (int k=0;k<ns;k++){ IrBlock *s=succ[k]; if(!s) continue;
-                if (!seen[s->id]) { memcpy(inmust[s->id],tmp,L->nvar); seen[s->id]=true; changed=true; continue; }
-                bool *si=inmust[s->id];
-                for (int v=0;v<L->nvar;v++) if (si[v] && !tmp[v]){ si[v]=false; changed=true; }
+                if (!seen[s->id]) { memcpy(inmust[s->id],tmp,L->nvar*sizeof(uint64_t)); seen[s->id]=true; changed=true; continue; }
+                uint64_t *si=inmust[s->id];
+                for (int v=0;v<L->nvar;v++) if ((si[v]&tmp[v]) != si[v]){ si[v]&=tmp[v]; changed=true; }
             }
         }
     }
-    bool *must = malloc(L->nvar);
+    uint64_t *must = malloc(L->nvar*sizeof(uint64_t));
     // reporting sweep: replay each block from its converged in-state
     for (IrBlock *b=f->blocks; b; b=b->next) {
-        memcpy(out, L->in[b->id], L->nvar);
+        memcpy(out, L->in[b->id], L->nvar*sizeof(uint64_t));
         lin_run_block(L, b, out, true);
         if (b->term.kind==IR_TERM_RET) {
-            memcpy(must, inmust[b->id], L->nvar);
+            memcpy(must, inmust[b->id], L->nvar*sizeof(uint64_t));
             if (seen[b->id]) lin_run_block(L, b, must, false);
             for (int s=0;s<L->nvar;s++) {
                 isize ln = b->term.cond?b->term.cond->line:0, cl = b->term.cond?b->term.cond->col:0;
                 // E003 leak: never consumed on ANY path, and a resource would be lost.
-                if (L->linsl[s] && !out[s]) { lin_add(L, s, ln, cl, 3); continue; }
+                if (L->linsl[s] && !lin_discharged(L,s,out[s])) { lin_add(L, s, ln, cl, 3); continue; }
                 // E016: consumed on some paths, not others — the state is not well-defined.
-                if (L->movesl[s] && out[s] && seen[b->id] && !must[s]) lin_add(L, s, ln, cl, 16);
+                if (L->movesl[s] && lin_discharged(L,s,out[s]) && seen[b->id]
+                    && !lin_discharged(L,s,must[s])) lin_add(L, s, ln, cl, 16);
             }
         }
     }
@@ -227,6 +269,6 @@ static Lin *lin_analyze(IrFunc *f) {
     free(out); free(tmp);
     return L;
 }
-static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in); free(L->linsl); free(L->movesl); free(L->def); free(L->finds); free(L); }
+static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in); free(L->slot_ty); free(L->linsl); free(L->movesl); free(L->def); free(L->finds); free(L); }
 
 #endif // LAIN_LINEARITY_H

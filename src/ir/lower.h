@@ -696,11 +696,18 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             return ins->result;
         }
         case EXPR_MOVE: {                               // `mov x`: read the value, then INVALIDATE
-            Expr *src = e->as.move_expr.expr;            // the source slot (linearity: use-after-move)
+            Expr *src = e->as.move_expr.expr;            // the source PLACE (linearity)
             IrValue *v = ir_lower_expr(c, src);
             if (src && src->kind==EXPR_IDENTIFIER) {
                 IrLocal *l = ir_env_find(c, src->as.identifier_expr.id);
                 if (l && l->slot) ir_consume(c->f, c->cur, l->slot);   // slot is now moved-from
+            } else if (src && (src->kind==EXPR_MEMBER || src->kind==EXPR_INDEX)) {
+                // `mov r.handle` consumes a FIELD, and emitting nothing for it lost the fact
+                // entirely — the struct then looked unconsumed at every return. A move
+                // consumes the PLACE it names, whatever its depth; the place lattice is what
+                // relates `r.handle` back to `r` (per-field linear state, design §2).
+                IrValue *a = ir_lower_addr(c, src);
+                if (a) ir_consume(c->f, c->cur, a);
             }
             return v;
         }
