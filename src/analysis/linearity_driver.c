@@ -19,6 +19,7 @@
 #include "sema.h"
 #include "ir/lower.h"
 #include "analysis/linearity.h"
+#include "analysis/borrow.h"
 
 static char *drv_modname(Arena *a, const char *path) {
     const char *p = path;
@@ -59,6 +60,12 @@ int main(int argc, char **argv) {
                 f->name?(int)f->name->length:1, f->name?f->name->name:"?", msg, L->finds[i].slot);
         }
         lin_free(L);
+        Borrow *B = borrow_analyze(f);
+        for (int i=0;i<B->nfinds;i++) { total++;
+            fprintf(stderr,"[E-borrow dangling] %.*s: returns a reference into a local\n",
+                f->name?(int)f->name->length:1, f->name?f->name->name:"?");
+        }
+        borrow_free(B);
     }
     if (!quiet) fprintf(stdout,"linearity: %d finding(s) %s\n", total, total?"(REJECT)":"(accept)");
     return total ? 1 : 0;
