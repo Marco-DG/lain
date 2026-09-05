@@ -689,6 +689,25 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
     }
 }
 
+// Lower a boolean condition as a branch cur→tb (true) / cur→fb (false), expanding
+// short-circuit `and`/`or` into NESTED guards. This keeps the octagon refining BOTH
+// operands along the taken path — a materialized bool cell (the expression lowering of
+// `A and B`) hides the numeric refinement from the analysis, so `if a<n and b<n {arr[a]}`
+// wouldn't prove. (Guard context only; the expression form still uses the bool cell.)
+static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) {
+    if (cond && cond->kind==EXPR_BINARY &&
+        (cond->as.binary_expr.op==TOKEN_KEYWORD_AND || cond->as.binary_expr.op==TOKEN_KEYWORD_OR)) {
+        bool is_and = cond->as.binary_expr.op==TOKEN_KEYWORD_AND;
+        IrBlock *mid = ir_new_block(c->f);
+        if (is_and) ir_lower_cond_br(c, cond->as.binary_expr.left, mid, fb);  // A false ⇒ short-circuit to fb
+        else        ir_lower_cond_br(c, cond->as.binary_expr.left, tb, mid);  // A true  ⇒ short-circuit to tb
+        c->cur = mid;
+        ir_lower_cond_br(c, cond->as.binary_expr.right, tb, fb);
+        return;
+    }
+    ir_set_br_cond(c->cur, ir_lower_expr(c, cond), tb, fb);
+}
+
 static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
     if (!s || ir_is_set_term(c->cur)) return;   // dead code after a terminator
     switch (s->kind) {
@@ -753,10 +772,9 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             break;
         }
         case STMT_IF: {
-            IrValue *cond = ir_lower_expr(c, s->as.if_stmt.cond);
             IrBlock *tb = ir_new_block(c->f), *jb = ir_new_block(c->f);
             IrBlock *eb = s->as.if_stmt.else_branch ? ir_new_block(c->f) : jb;
-            ir_set_br_cond(c->cur, cond, tb, eb);
+            ir_lower_cond_br(c, s->as.if_stmt.cond, tb, eb);   // expands `and`/`or` (refinement-preserving)
             c->cur = tb; ir_lower_stmts(c, s->as.if_stmt.then_body);
             if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, jb);
             if (s->as.if_stmt.else_branch) {
