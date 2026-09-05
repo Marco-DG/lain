@@ -365,6 +365,113 @@ Each is a self-inflicted debt found by auditing the rebuild against its own goal
 
 ---
 
+# ★★ THE COMPLETE ENDGAME — master tracklist to the god-like language/IR/compiler
+> Added session 53. **This section is AUTHORITATIVE for sequencing.** Everything above is the
+> rebuild (Phases 0–4); everything here carries it to the actual end state. `GRAIL_PLAN.md`
+> uses a DIFFERENT, older Phase 0–4 numbering for the *language* grail — it is retained for
+> its rationale but **superseded for sequencing by this section**. When lost, read this.
+
+## E0. What "done" means (the acceptance definition — no hand-waving)
+The endeavour is complete when ALL of these hold simultaneously:
+1. **Total IR** — no `incomplete` escape hatch; every construct modelled (`opaque`/havoc with
+   declared footprints). Coverage measured, not assumed.
+2. **Sovereign** — `src/{ir,analysis}/*` compile with zero front-end headers (structural, A5
+   ✓) AND no primitive encodes front-end-specific policy (semantic litmus, audit ✓ — re-run
+   whenever the lattice grows).
+3. **Dominating** — for every corpus program the new engine's verdict is ≥ the old engine's:
+   never unsound, never over-strict, strictly more precise on a measured set. `src/sema/`
+   deleted.
+4. **Maximal-power analyses** — numeric (relational + the nonlinear frontier), memory safety
+   (NLL-class + numeric-aided disjointness), resource (linearity), effects (a designed
+   lattice), termination (loops + recursion).
+5. **Rich type lattice** — refinements, regions/lifetimes, linearity, effects carried ON
+   types, not side-tables.
+6. **Multi-language** — at least one non-Lain front-end lowers to the IR and gets the same
+   guarantees, proving the sovereignty claim empirically.
+7. **Proof-exploiting backend** — checks the IR proved away are absent from the emitted code;
+   an LLVM/native seam exists.
+8. **The language can state what the IR can verify** — lifetimes, refinements, assume/assert,
+   effects are all expressible.
+9. **Formal spine** — normative spec + thesis, written FROM the implementation.
+
+## E1. Invariants that hold at EVERY step (violating one is a bug, not a tradeoff)
+- **Corpus green** (`run_tests.sh` 625) and **behavioural gate green** (`diff_engines.sh`).
+- **Never unsound**: the reject direction is checked before the accept direction.
+- **Fail-closed** on anything unmodelled.
+- **Every injected `assume` is paid for by a discharged `assert`** (the dual invariant).
+- **Adjudicated divergence, never parity** (C1) — the gate must permit being *stronger*.
+- **Design before code** for any new IR facility; apply the semantic-independence litmus.
+- **Docs track reality** — never write the spec ahead of the engine.
+
+## E2. Phase order (dependency-correct; each ends green)
+
+### ▸ STAGE I — Unblock (do first, small, gates everything)
+- [ ] **C1 adjudicated-divergence gate** — rework `phase3_differential.sh`. *Blocks all of
+      Stage II.* Without it a stronger engine cannot land.
+- [ ] **C2 `fuzz_ir_codegen.sh`** — execution-differential fuzzer for the NEW pipeline.
+      *Blocks E0.3/E0.7* (never make the IR authoritative without it).
+- [ ] **C3 measure `incomplete`** — report coverage beside every metric. *Blocks E0.1.*
+
+### ▸ STAGE II — The IR core reaches full power
+- [ ] **S2 rank-N strided regions** (audit finding; C4) — memory model with rank/stride/
+      extent. Serves Fortran generality + makes 2D trivial + supplies the borrow checker's
+      places. **Pull forward: it is a prerequisite, not a precision tweak.**
+- [ ] **B5-real: places, loans, region vars, borrow kinds** (`borrow_checker_design.md` §8).
+- [ ] **B4: refinements ON `IrType`** (C6) — retire the ad-hoc `slicelen` side-map.
+- [ ] **B3: `opaque`/havoc with declared footprints** — retires `incomplete` (E0.1).
+- [ ] **C5: redesign the effect lattice** — reads/writes/raises/diverges + region footprints;
+      re-derive, don't inherit.
+
+### ▸ STAGE III — Analyses to maximal power
+- [ ] **3.1-A/B/C/D borrow checker** (`borrow_checker_design.md`) — NLL core → two-phase →
+      cross-fn elision → **★ numeric-aided disjointness (beyond Rust: safe `split_at_mut`)**.
+- [ ] **3.2 linearity completed** — folded INTO the borrow framework as `Move` accesses
+      (E016/per-field fall out of the place lattice).
+- [ ] **3.4 termination** — recursion measures on the IR; closes the DIVERGE-vs-measure gap.
+- [ ] **VRA frontier** — nonlinear/symbolic 2D via S2; the accumulation-overflow honesty pass.
+- [ ] **3.5 GATE + DELETE `src/sema/`** — the rebuild's finish line (E0.3).
+
+### ▸ STAGE IV — The backend earns the proofs
+- [ ] **4.1/4.3** proof-exploiting C emission (checks proved away are *absent*), niche/SIMD/
+      annotations re-expressed on the IR.
+- [ ] **4.2 LLVM/native seam** on the sovereign IR (E0.7).
+
+### ▸ STAGE V — The language catches up to the IR
+- [ ] **F1 lifetimes/regions syntax** (`lain_language_limits.md` §6b) — the flagship gap;
+      unblocks cross-function borrow precision.
+- [ ] **F2 refinement/predicate syntax** — arbitrary linear-arith predicates, relational
+      preconditions, `assume`/`assert` statements (limits §1, §2).
+- [ ] **F3 effect annotations** — expose the designed lattice (limits §6).
+- [ ] **F4 type-check refinement exprs** (limits §3 — a real sema bug, fix regardless).
+- [ ] **F5 front-end rework proper** — lexer/parser/AST, if the above justify it.
+
+### ▸ STAGE VI — Prove the sovereignty claim empirically
+- [ ] **M1 a second front-end** — a safe-C (or safe-Fortran) subset lowering to the IR and
+      getting the SAME guarantees. This is the only real proof of E0.6; until then
+      sovereignty is an argument, not a demonstration.
+- [ ] **M2 adversarial re-audit** — re-run the semantic-independence litmus against Fortran +
+      Rust once the lattice is complete.
+
+### ▸ STAGE VII — The formal spine
+- [ ] **D1 normative spec** (`spec/` chapter + annex) — grammar, static/dynamic semantics,
+      the assume/assert contract, per-pass soundness statements.
+- [ ] **D2 thesis** (`.tex`) — the argument, the octagon, the methodology, the results, and
+      the comparison (LLVM / MIR / CompCert / Viper). Outline in `IR_THESIS_SPEC_PLAN.md`.
+- [ ] **D3 (stretch) machine-checked core** — the domain's γ-soundness in a proof assistant.
+
+## E3. Navigation (for a long session — read this when lost)
+| question | file |
+|---|---|
+| what do I do next? | **this section**, top unchecked box in the earliest open stage |
+| why does the IR look like this? | `ir_semantic_independence.md` (+ the REFRAME above) |
+| how does the borrow checker work? | `borrow_checker_design.md` |
+| what did we get wrong? | `critical_retrospective.md` |
+| what can't the language say? | `lain_language_limits.md` |
+| what's the state of everything? | STATUS LOG (bottom of this file), newest first |
+| how do I validate a change? | E1 invariants + `run_ir_tests.sh` + `phase3_differential.sh` |
+
+---
+
 ## Key decisions log
 - 2026-08-28 — **Rebuild in-place, same repo, new core beside old.** Reuse frontend + corpus;
   differential bring-up; no big-bang. (Decision rationale: the corpus is the safety net and
