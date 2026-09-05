@@ -226,6 +226,13 @@ typedef struct IrFunc {
     // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
     IrEffect   effects;
     bool       effects_done, effects_in_progress;
+    // B5 region info: does the RETURN borrow from a parameter? Lain has no lifetime syntax,
+    // so this is filled by ELISION at lowering (borrow_checker_design.md §5): a function
+    // returning a reference borrows from its reference parameter. Without it the borrow
+    // relationship is invisible to the checker — `r = get_ref(var d)` looks like a plain
+    // value and the loan on `d` cannot be tracked across statements.
+    bool       ret_borrows;        // the returned reference borrows from a parameter
+    int32_t    ret_borrow_param;   // which one (index); -1 = unknown/all reference params
     Arena     *arena;       // where this function's IR is allocated
     struct IrFunc *next;
 } IrFunc;

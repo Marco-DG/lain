@@ -43,16 +43,11 @@ tests/memory/field_nested_whole_fail.ln                   NEW-ACCEPTS  new-incom
 # internal/design/borrow_checker_design.md §1.4 once Stage III 3.1-A lands.
 tests/ownership/block_scope_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/borrow_fail.ln                            NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/cross_stmt_borrow_fail.ln                 NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/cross_stmt_borrow_write_fail.ln           NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/direct_var_borrow_fail.ln                 NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/elif_borrow_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/mut_plus_nested_shared_fail.ln            NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/nll_loop_borrow_fail.ln                   NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/nll_still_active_fail.ln                  NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/reborrow_fail.ln                          NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/reborrow_same_stmt_fail.ln                NEW-ACCEPTS  new-incomplete-borrow
 tests/types/match_borrow_mut_fail.ln                      NEW-ACCEPTS  new-incomplete-borrow
 # escape analysis exists but misses this shape (field borrows a string-literal local)
 tests/ownership/struct_field_dangling_fail.ln             NEW-ACCEPTS  new-incomplete-borrow

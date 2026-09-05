@@ -101,8 +101,91 @@ static void bor_check_call(Borrow *B, IrFunc *mod, IrInstr *call) {
             }
 }
 
+// ── phase A2: loans that outlive their statement (liveness regions) ──────────
+// A call that takes a MUTABLE borrow and RETURNS a reference hands the caller a reference
+// derived from that borrow (Rust would say the return borrows from the reference parameter
+// — lifetime elision). The loan therefore stays live as long as the returned reference is
+// live, not just for the call. Any conflicting borrow of an overlapping place inside that
+// window is an error — this is the `r = get_ref(var d); read_data(d); use(r)` family.
+//
+// Region = the span from the creating call to the carrier's LAST USE. The carrier is the
+// result value, plus the slot it is stored into (`var r = get_ref(var d)`), so loads of
+// that slot extend the region. Straight-line spans are exact; branches are approximated by
+// instruction order, which can only ever be *narrower or equal* here because a use on any
+// path still extends the window — and the gate verifies no over-rejection.
+#define BOR_MAX_INSTR 4096
+typedef struct { IrInstr *ins[BOR_MAX_INSTR]; int n; } BorSeq;
+
+static void bor_linearize(IrFunc *f, BorSeq *s) {
+    s->n = 0;
+    for (IrBlock *b=f->blocks;b;b=b->next)
+        for (IrInstr *i=b->instrs;i;i=i->next)
+            if (s->n < BOR_MAX_INSTR) s->ins[s->n++] = i;
+}
+// last index at which `val` (or a load of `slot`) is used; -1 if never
+static int bor_last_use(BorSeq *s, int from, IrValue *val, IrValue *slot) {
+    int last = -1;
+    for (int k=from+1;k<s->n;k++) {
+        IrInstr *i = s->ins[k];
+        bool used = false;
+        for (int o=0; o<i->n_operands && !used; o++) {
+            IrValue *op = i->operands[o]; if (!op) continue;
+            // ANY mention keeps the reference alive: a LOAD of the slot, but equally an
+            // ADDRESS use — `consume_ref(var ref)` passes the slot itself, which is exactly
+            // how these tests keep the borrow live, and only counting loads missed it.
+            if ((val && op==val) || (slot && op==slot)) used = true;
+        }
+        if (used) last = k;
+    }
+    return last;
+}
+// the slot a call result is immediately stored into, if any (`var r = call(...)`)
+static IrValue *bor_result_slot(BorSeq *s, int at, IrValue *res) {
+    if (!res) return NULL;
+    for (int k=at+1;k<s->n && k<=at+4;k++) {
+        IrInstr *i = s->ins[k];
+        if (i->op==IR_STORE && i->n_operands>=2 && i->operands[1]==res) return i->operands[0];
+    }
+    return NULL;
+}
+
 static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod);
 static Borrow *borrow_analyze(IrFunc *f) { return borrow_analyze_mod(f, NULL); }
+
+static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
+    BorSeq s; bor_linearize(f, &s);
+    for (int k=0;k<s.n;k++) {
+        IrInstr *call = s.ins[k];
+        if (call->op != IR_CALL || !call->result) continue;
+        IrFunc *callee = bor_find_func(mod, call->aux.callee);
+        if (!callee || !callee->ret_borrows) continue;   // the return must BORROW a parameter
+        // the loan is on the place passed to the elided parameter
+        IrPlace src; bool found=false;
+        int want = callee->ret_borrow_param;
+        for (int a=0;a<call->n_operands;a++) {
+            if (want >= 0 && a != want) continue;
+            IrPlace p; bool m;
+            if (bor_arg_loan(B, callee, a, call->operands[a], &p, &m) && (m || want>=0)) { src=p; found=true; break; }
+        }
+        if (!found) continue;
+        IrValue *slot = bor_result_slot(&s, k, call->result);
+        int last = bor_last_use(&s, k, call->result, slot);
+        if (last < 0) continue;                       // reference never used ⇒ no live region
+        // any conflicting borrow of an overlapping place inside (k, last]
+        for (int j=k+1;j<=last;j++) {
+            IrInstr *other = s.ins[j];
+            if (other->op != IR_CALL) continue;
+            IrFunc *oc = bor_find_func(mod, other->aux.callee);
+            if (!oc) continue;
+            for (int a=0;a<other->n_operands;a++) {
+                IrPlace p; bool m;
+                if (!bor_arg_loan(B, oc, a, other->operands[a], &p, &m)) continue;
+                if (slot && other->op==IR_CALL && p.base_kind==IRPB_LOCAL && p.base_id==slot->id) continue; // using the ref itself
+                if (ir_place_overlaps(&src, &p)) { bor_add(B, other->line, other->col, 4); return; }
+            }
+        }
+    }
+}
 
 static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
     Borrow *B = calloc(1,sizeof *B); B->f=f;
@@ -127,6 +210,8 @@ static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
         }
         if (dangles) bor_add(B, rv->line, rv->col, 10);
     }
+    // phase A2: loans that outlive their statement
+    if (mod) bor_check_regions(B, mod, f);
     // phase A: conflicting co-argument borrows at each call
     if (mod)
         for (IrBlock *b=f->blocks;b;b=b->next)
