@@ -50,6 +50,15 @@ typedef struct {
     bool      in_defer;    // guard: a defer's own body must not re-register defers
 } LowerCtx;
 
+// Mark the function unfaithful, WITH A REASON. `incomplete` suppresses every proof over the
+// function, so an unlabelled one is an unmeasured escape hatch conditioning every survey
+// number (backlog C3). First reason wins: it is the first construct that defeated lowering.
+static void ir_incomplete(LowerCtx *c, const char *why) {
+    if (!c || !c->f) return;
+    c->f->incomplete = true;
+    if (!c->f->incomplete_why) c->f->incomplete_why = why;
+}
+
 // A block's terminator is "set" once lowering has given it one. A freshly-memset
 // block has kind==IR_TERM_BR (0) with a==NULL, which is the unset sentinel.
 static bool ir_is_set_term(IrBlock *b) {
@@ -99,15 +108,30 @@ static bool ir_type_is_agg(IrType *t) {
     return t && t->kind==IRT_ARRAY;
 }
 
-// A module-level struct declaration by (bare) name.
+// A module-level struct declaration by name. Sema QUALIFIES a cross-module reference as
+// `<defining_module>_<Name>` while the declaration keeps its bare name, so a bare-only match
+// silently failed for every imported type — `std/fs.ln`'s `File` lowered to an OPAQUE struct
+// with no fields. That is not a cosmetic loss: field access on it cannot resolve (the largest
+// single cause of `incomplete`), and every field-sensitive analysis is blinded (it is what
+// exempted std handles from leak checking until the pass was taught to fail closed on an
+// opaque linear struct). ir_find_global_const already had to learn this; so does this.
 static Decl *ir_find_struct_decl(LowerCtx *c, Id *name) {
     if (!name) return NULL;
     for (DeclList *d = c->globals; d; d = d->next) {
         Decl *dc = d->decl;
         if (!dc || dc->kind != DECL_STRUCT) continue;
         Id *dn = dc->as.struct_decl.name;
-        if (dn && dn->length == name->length &&
-            strncmp(dn->name, name->name, (size_t)name->length) == 0) return dc;
+        if (!dn) continue;
+        if (dn->length == name->length &&
+            strncmp(dn->name, name->name, (size_t)name->length) == 0) return dc;  // bare
+        const char *mod = dc->defining_module;                                    // `<mod>_<Name>`
+        if (mod) {
+            size_t ml = strlen(mod);
+            if ((size_t)name->length == ml + 1 + (size_t)dn->length &&
+                strncmp(name->name, mod, ml) == 0 && name->name[ml] == '_' &&
+                strncmp(name->name + ml + 1, dn->name, (size_t)dn->length) == 0)
+                return dc;
+        }
     }
     return NULL;
 }
@@ -517,7 +541,7 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
         if (idx >= 0) return ir_field_ptr(c->f, c->cur, base, idx, fty);
     }
     // other lvalues: not yet lowered — infaithful placeholder slot
-    c->f->incomplete = true;
+    ir_incomplete(c, "unlowered-lvalue");
     return ir_alloca(c->f, c->cur, ir_lower_type(c, e->type));
 }
 
@@ -552,7 +576,7 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                          IrValue *v = ir_lower_expr(c, g->as.variable_decl.init);
                          c->const_depth--; return v; }
             }
-            c->f->incomplete = true;                     // truly unresolved (e.g. global array)
+            ir_incomplete(c, "unresolved-global");   // e.g. a global array
             return ir_const_int(c->f, c->cur, 0, ty);
         }
         case EXPR_BINARY: {
@@ -599,7 +623,7 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 return r;
             }
             // an unhandled binary operator — infaithful, so fail closed.
-            c->f->incomplete = true;
+            ir_incomplete(c, "unhandled-binop");
             return ir_binop(c->f,c->cur,IR_AND,x,y,ir_type_bool(c->a));
         }
         case EXPR_UNARY: {
@@ -653,7 +677,7 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 IrValue *addr = ir_lower_addr(c, e);
                 return ir_load(c->f, c->cur, addr, fty ? fty : ty);
             }
-            c->f->incomplete = true;                     // unresolved member access
+            ir_incomplete(c, "unresolved-member");
             return ir_const_int(c->f, c->cur, 0, ty);
         }
         case EXPR_CALL: {
@@ -735,7 +759,7 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             return ir_load(c->f, c->cur, p, ty);
         }
         default:
-            c->f->incomplete = true;                     // unhandled expr → infaithful placeholder
+            ir_incomplete(c, "unhandled-expr");   // infaithful placeholder
             return ir_const_int(c->f, c->cur, 0, ty);
     }
 }
@@ -813,7 +837,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                     ir_store(c->f,c->cur,icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,ity),ity));
                     ir_set_br(c->cur,head); c->cur=ex;
                 } else if (init) {
-                    c->f->incomplete = true;   // some other aggregate init we don't model — fail closed
+                    ir_incomplete(c, "aggregate-init");   // an init shape we don't model — fail closed
                 }
                 break;
             }
@@ -859,7 +883,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
         case STMT_DEFER:
             // Recorded, not emitted: the body runs at every exit, in reverse order.
             if (!c->in_defer && c->ndefers < 64) c->defers[c->ndefers++] = s->as.defer_stmt.stmt;
-            else if (c->ndefers >= 64) c->f->incomplete = true;   // more than we model ⇒ fail closed
+            else if (c->ndefers >= 64) ir_incomplete(c, "defer-overflow");
             break;
         case STMT_RETURN: {
             // ORDER MATTERS, and it is not Go's. Lain runs the deferred statements BEFORE
@@ -965,7 +989,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             // Enum/ADT matches need tag+payload modeling ⇒ fail closed until then.
             Expr *val = s->as.match_stmt.value;
             Type *vt = val ? val->type : NULL;
-            if (!(vt && vt->kind==TYPE_SIMPLE && vt->int_width_cache>0)) { c->f->incomplete=true; break; }
+            if (!(vt && vt->kind==TYPE_SIMPLE && vt->int_width_cache>0)) { ir_incomplete(c,"enum-match"); break; }
             IrValue *v = ir_lower_expr(c, val);
             IrBlock *join = ir_new_block(c->f);
             StmtMatchCase *elsec = NULL;
@@ -1002,7 +1026,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
         case STMT_BREAK:    if (c->loop_exit) ir_set_br(c->cur, c->loop_exit); break;
         case STMT_CONTINUE: if (c->loop_head) ir_set_br(c->cur, c->loop_head); break;
         case STMT_UNSAFE: { bool o=c->unsafe; c->unsafe=true; ir_lower_stmts(c, s->as.unsafe_stmt.body); c->unsafe=o; break; }
-        default: c->f->incomplete = true; break;   // enum-match/use — TODO (fail closed)
+        default: ir_incomplete(c, "unhandled-stmt"); break;   // enum-match/use — TODO (fail closed)
     }
 }
 static void ir_lower_stmts(LowerCtx *c, StmtList *body) {

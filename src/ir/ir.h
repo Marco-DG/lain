@@ -232,7 +232,12 @@ typedef struct IrFunc {
     int32_t    next_value_id;
     int32_t    next_block_id;
     void      *src_decl;    // OPAQUE provenance handle (front-end's; the IR never derefs it)
-    bool       incomplete;  // lowering dropped/placeholder'd a construct ⇒ the IR is
+    bool       incomplete;
+    // WHY this function could not be lowered faithfully — a static string, first reason wins.
+    // `incomplete` suppresses every proof over the function, so an UNLABELLED one is an
+    // unmeasured escape hatch silently conditioning every survey number (backlog C3). The
+    // label makes the remaining gap a ranked work list instead of a single opaque count.
+    const char *incomplete_why;  // lowering dropped/placeholder'd a construct ⇒ the IR is
                             // NOT faithful, so no analysis may claim a proof over it
     // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
     IrEffect   effects;
