@@ -33,12 +33,16 @@ tests/memory/field_nested_uninit_fail.ln                  NEW-ACCEPTS  new-incom
 tests/memory/field_nested_whole_fail.ln                   NEW-ACCEPTS  new-incomplete-definite-assignment
 
 # ── new-incomplete-borrow ─────────────────────────────────────────────────────
+# Phase A (co-argument conflicts at one call) is IN and closed 4 of these. What remains
+# needs LIVENESS REGIONS (design §1.3): a loan created at one statement and still live at a
+# later one — cross_stmt_borrow, reborrow, nll_still_active, nll_loop_borrow, block_scope,
+# elif_borrow, direct_var_borrow, multi_var_param, mut_plus_nested_shared, borrow_fail,
+# match_borrow_mut, coarg_alias_subslice (needs subslice range disjointness), plus
+# struct_field_dangling (a field borrowing a string-literal local).
 # The conflicting/reborrow/NLL-loop/aliasing cluster. Subsumed by the ONE conflict rule in
 # internal/design/borrow_checker_design.md §1.4 once Stage III 3.1-A lands.
 tests/ownership/block_scope_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/borrow_conflict_fail.ln                   NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/borrow_fail.ln                            NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/coarg_alias_member_fail.ln                NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/cross_stmt_borrow_fail.ln                 NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/cross_stmt_borrow_write_fail.ln           NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/direct_var_borrow_fail.ln                 NEW-ACCEPTS  new-incomplete-borrow
@@ -49,9 +53,7 @@ tests/ownership/nll_loop_borrow_fail.ln                   NEW-ACCEPTS  new-incom
 tests/ownership/nll_still_active_fail.ln                  NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/reborrow_fail.ln                          NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/reborrow_same_stmt_fail.ln                NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/recv_plus_shared_fail.ln                  NEW-ACCEPTS  new-incomplete-borrow
 tests/types/match_borrow_mut_fail.ln                      NEW-ACCEPTS  new-incomplete-borrow
-tests/vra/refinement/aggregate_member_alias_fail.ln       NEW-ACCEPTS  new-incomplete-borrow
 # escape analysis exists but misses this shape (field borrows a string-literal local)
 tests/ownership/struct_field_dangling_fail.ln             NEW-ACCEPTS  new-incomplete-borrow
 

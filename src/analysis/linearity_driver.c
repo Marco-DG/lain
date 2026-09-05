@@ -72,10 +72,13 @@ int main(int argc, char **argv) {
                 D->finds[i].code==5?"read of an uninitialised place":"read of a partially-initialised aggregate");
         }
         di_free(D);
-        Borrow *B = borrow_analyze(f);
+        Borrow *B = borrow_analyze_mod(f, m);
         for (int i=0;i<B->nfinds;i++) { total++;
-            fprintf(stderr,"[E-borrow dangling] %.*s: returns a reference into a local\n",
-                f->name?(int)f->name->length:1, f->name?f->name->name:"?");
+            fprintf(stderr,"[%s] %.*s: %s\n",
+                B->finds[i].code==10?"E010 dangling":"E004 borrow-conflict",
+                f->name?(int)f->name->length:1, f->name?f->name->name:"?",
+                B->finds[i].code==10?"returns a reference into a local"
+                                    :"conflicting borrows of the same place at one call");
         }
         borrow_free(B);
     }
