@@ -638,6 +638,10 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
         }
         case EXPR_CALL: {
             Decl *callee = e->as.call_expr.callee ? e->as.call_expr.callee->decl : NULL;
+            // an INDIRECT call (through a fn-pointer VARIABLE) has a non-function callee decl:
+            // null it so we don't read `.function_decl` off a variable_decl (a wrong-union
+            // crash). A DECL_STRUCT callee is a constructor, handled just below — leave it.
+            if (callee && callee->kind==DECL_VARIABLE) callee = NULL;
             int n=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next) n++;
             // `Point(1, 2)` is struct construction, not a call: build a struct value
             // from the positional field args (in declaration order).

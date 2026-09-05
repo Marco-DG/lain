@@ -40,29 +40,27 @@ static void lin_add(Lin *L, int slot, isize line, isize col, int code) {
 // flag a use/double-move against the running state (used only in the final sweep).
 static void lin_run_block(Lin *L, IrBlock *b, bool *st, bool report) {
     for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+        IrValue *o0 = ins->n_operands>=1 ? ins->operands[0] : NULL;
         if (ins->op==IR_STORE) {                         // store re-initializes the target slot
-            if (ins->n_operands>=1) {
-                int tgt = ins->operands[0]->id;
-                if (report && ins->n_operands>=2 && st[ins->operands[1]->id])   // value read is a use
-                    lin_add(L, ins->operands[1]->id, ins->line, ins->col, 1);
-                if (tgt>=0 && tgt<L->nvar) st[tgt] = false;
+            if (o0) {
+                IrValue *o1 = ins->n_operands>=2 ? ins->operands[1] : NULL;
+                if (report && o1 && o1->id>=0 && o1->id<L->nvar && st[o1->id])   // value read is a use
+                    lin_add(L, o1->id, ins->line, ins->col, 1);
+                if (o0->id>=0 && o0->id<L->nvar) st[o0->id] = false;
             }
             continue;
         }
         if (ins->op==IR_CONSUME) {                       // `mov` — mark moved (double-move if already)
-            if (ins->n_operands>=1) {
-                int s = ins->operands[0]->id;
-                if (s>=0 && s<L->nvar) {
-                    if (report && st[s]) lin_add(L, s, ins->line, ins->col, 2);
-                    st[s] = true;
-                }
+            if (o0 && o0->id>=0 && o0->id<L->nvar) {
+                if (report && st[o0->id]) lin_add(L, o0->id, ins->line, ins->col, 2);
+                st[o0->id] = true;
             }
             continue;
         }
         if (report)                                      // any other reference to a moved slot = use
             for (int k=0;k<ins->n_operands;k++) {
-                int s = ins->operands[k]->id;
-                if (s>=0 && s<L->nvar && st[s]) lin_add(L, s, ins->line, ins->col, 1);
+                IrValue *ok = ins->operands[k];
+                if (ok && ok->id>=0 && ok->id<L->nvar && st[ok->id]) lin_add(L, ok->id, ins->line, ins->col, 1);
             }
     }
 }
