@@ -93,6 +93,13 @@ static void vra_prepass(Vra *V) {
 }
 
 // copy `src == dst` (equal values) into octagon o
+// c*x, but only if it stays within the octagon's usable range (oct_add_* doubles the
+// bound internally, so keep well inside OCT_INF). Returns false ⇒ leave that side unbounded.
+static bool vra_safe_scale(int64_t c, int64_t x, int64_t *out) {
+    __int128 p = (__int128)c * (__int128)x;
+    if (p > (__int128)(OCT_INF/2) || p < -(__int128)(OCT_INF/2)) return false;
+    *out = (int64_t)p; return true;
+}
 static void vra_assign_copy(Octagon *o, int dst, int src) {
     oct_close(o);                      // materialize src's transitive bounds BEFORE the copy
     oct_forget(o, dst);                // (so dst inherits them; this is where a loop invariant
@@ -139,6 +146,24 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 int64_t blo,bhi; bool hl,hh; oct_interval(W,b,&blo,&hl,&bhi,&hh);
                 if (isadd) { if (hh) oct_add_diff_le(W,r,a,bhi); if (hl) oct_add_diff_le(W,a,r,-blo); }
                 else       { if (hl) oct_add_diff_le(W,r,a,-blo); if (hh) oct_add_diff_le(W,a,r,bhi); }
+            }
+            break;
+        }
+        case IR_MUL: {   // r = x * c  (one operand constant) — sound interval scaling.
+            if (r<0) break;                              // enables the const-stride 2D index
+            int a=ins->operands[0]->id, b=ins->operands[1]->id;   // a[i*W + j], W constant
+            bool ac=V->cknown[a], bc=V->cknown[b];
+            oct_forget(W, r);
+            if (ac && bc) { int64_t v; if (vra_safe_scale(V->cval[a],V->cval[b],&v)) oct_add_const(W,r,v); break; }
+            int xv=-1; int64_t c=0;
+            if (bc) { c=V->cval[b]; xv=a; } else if (ac) { c=V->cval[a]; xv=b; }
+            if (xv>=0) {
+                int64_t xlo,xhi,v; bool hl,hh; oct_interval(W, xv, &xlo,&hl,&xhi,&hh);
+                if (c==0) oct_add_const(W,r,0);
+                else if (c>0) { if (hl && vra_safe_scale(c,xlo,&v)) oct_add_lb(W,r,v);   // monotone
+                                if (hh && vra_safe_scale(c,xhi,&v)) oct_add_ub(W,r,v); }
+                else          { if (hh && vra_safe_scale(c,xhi,&v)) oct_add_lb(W,r,v);   // c<0: flip
+                                if (hl && vra_safe_scale(c,xlo,&v)) oct_add_ub(W,r,v); }
             }
             break;
         }
