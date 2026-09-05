@@ -17,12 +17,9 @@
 # ── definite assignment: 8 of the original 15 are now CAUGHT by analysis/definite_init.h
 # (Stage III item 3.0). The 7 below remain, in three precise sub-gaps:
 #
-# (a) undeclared identifiers — the old engine reports these through its linearity pass, but
-#     they are a RESOLVE-level concern, not a dataflow one. The new pipeline still uses the
-#     old resolver, so this is arguably not the IR's job at all; revisit at 3.5.
-tests/declarations/undeclared_identifier_fail.ln          NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/declarations/var_mandatory_fail.ln                  NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/expressions/undeclared_in_binary_fail.ln            NEW-ACCEPTS  new-incomplete-definite-assignment
+# (a) MOVED to front-end-policy (below) after judging them individually — they were filed
+#     here because the old engine happens to report them through its linearity pass, not
+#     because they are dataflow questions.
 #
 # (b) per-ELEMENT array init — a MUST-analysis cannot prove a loop covers 0..len, so arrays
 #     are deliberately untracked (tracking them produced 8 false positives). Closing this
@@ -31,10 +28,12 @@ tests/expressions/undeclared_in_binary_fail.ln            NEW-ACCEPTS  new-incom
 tests/memory/array_comprehension_expr_position_fail.ln    NEW-ACCEPTS  new-incomplete-definite-assignment
 tests/memory/array_uninit_element_read_fail.ln            NEW-ACCEPTS  new-incomplete-definite-assignment
 #
-# (c) NESTED field paths (x.a.b) — di tracks a depth-1 field mask per base; nested
-#     aggregates need a path trie over the place lattice.
-tests/memory/field_nested_uninit_fail.ln                  NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/memory/field_nested_whole_fail.ln                   NEW-ACCEPTS  new-incomplete-definite-assignment
+# (c) NESTED field paths — CLOSED, and it was a FAIL-OPEN, not merely imprecision: a depth-2
+#     write (`p.a.y = 1`) marked the whole PARENT field initialised, so reading the still-unset
+#     `p.a.x` reported nothing at all. The state is now DI_W words per base — a top mask plus
+#     submasks for depth-1 fields — and a parent field becomes initialised only once every one
+#     of its leaves is. Both codes now match the corpus exactly (E005 for an unset leaf, E019
+#     for reading a partially-initialised aggregate).
 
 # ── new-more-precise: THE CORPUS IS WRONG HERE ────────────────────────────────
 # Two fail-tests encode an OLD-ENGINE LIMITATION as a required rejection. Both programs are
@@ -135,3 +134,17 @@ tests/ownership/owner_reassign_fail.ln                    NEW-ACCEPTS  new-incom
 # a front-end concern, and a second front-end (safe-C, Fortran) would not have the rule at
 # all. These stay in the front end at Stage 3.5 rather than being ported.
 tests/ownership/move_needs_mov_fail.ln                    NEW-ACCEPTS  front-end-policy
+#
+# NAME RESOLUTION (E106). `return zzz` / `x + missing`. The IR has NO NAMES — a value is an
+# SSA id with a defining instruction — so a well-formed IR cannot even represent an
+# undeclared reference, and no IR analysis can be written that catches this. It is resolved
+# before lowering and stays there at 3.5 (resolution is not what gets deleted; the ANALYSES
+# are). Every front end has this rule and every one of them enforces it before its IR.
+tests/declarations/undeclared_identifier_fail.ln          NEW-ACCEPTS  front-end-policy
+tests/expressions/undeclared_in_binary_fail.ln            NEW-ACCEPTS  front-end-policy
+#
+# CALL-SITE SPELLING (E017). `bump(a)` where `bump(var v Vec)` — passing to a mutable
+# parameter requires an explicit `var` at the call site. The exact dual of E007: the IR
+# records that a mutable borrow is taken, and it IS taken here; whether the source had to
+# say so is surface policy. safe-C and Fortran would not have the rule.
+tests/declarations/var_mandatory_fail.ln                  NEW-ACCEPTS  front-end-policy

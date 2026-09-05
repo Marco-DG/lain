@@ -25,6 +25,14 @@
 #include <string.h>
 
 #define DI_WHOLE_BIT 63u
+// Depth-2 paths. The state per tracked base is DI_W words: word 0 is the top mask (bit63 =
+// the whole value, bits 0..62 = depth-1 fields fully initialised), and words 1..DI_SUBF are
+// SUBMASKS for depth-1 fields 0..DI_SUBF-1. Without them a nested write was treated as
+// initialising its whole parent — `p.a.y = 1` marked all of `p.a` set, so reading the still
+// -uninitialised `p.a.x` reported nothing. That is a FAIL-OPEN on the one thing this pass
+// exists to catch, so the depth the analysis models has to reach the depth programs write at.
+#define DI_SUBF 8u
+#define DI_W    (1u + DI_SUBF)
 
 typedef struct { int base; isize line, col; int code; } DiFinding;   // 5 = E005, 19 = E019
 
@@ -32,7 +40,7 @@ typedef struct {
     IrFunc    *f;
     int        nvar, nb;
     IrInstr  **def;
-    uint64_t **in;        // in[block][base] = init mask (bit63 = whole, bits0..62 = fields)
+    uint64_t **in;        // in[block][base*DI_W + w] — see DI_W above
     bool      *tracked;   // tracked[v] = v is a local alloca we track
     IrType   **alloca_ty; // element type per tracked base (for the "all fields" rule)
     DiFinding *finds; int nfinds, cap;
@@ -45,34 +53,69 @@ static void di_add(Di *D, int base, isize line, isize col, int code) {
 static bool di_is_whole(uint64_t m){ return (m >> DI_WHOLE_BIT) & 1u; }
 
 // mark a place initialised in `st`; promote to whole when every field is covered
+// promote: a struct whose every field is initialised is wholly initialised
+static void di_promote(Di *D, uint64_t *st, int b) {
+    IrType *t = D->alloca_ty[b];
+    if (t && t->kind==IRT_STRUCT && t->n_fields>0 && t->n_fields<63) {
+        uint64_t all = (1ull<<t->n_fields)-1u;
+        if ((st[b*DI_W] & all) == all) st[b*DI_W] |= (1ull<<DI_WHOLE_BIT);
+    }
+}
 static void di_mark_init(Di *D, uint64_t *st, const IrPlace *p) {
     if (!p->valid || p->base_kind!=IRPB_LOCAL) return;
     int b = p->base_id; if (b<0 || b>=D->nvar || !D->tracked[b]) return;
-    if (p->nproj == 0) { st[b] |= (1ull<<DI_WHOLE_BIT); return; }          // whole store
+    if (p->nproj == 0) { st[b*DI_W] |= (1ull<<DI_WHOLE_BIT); return; }      // whole store
     if (p->proj[0].kind == IRPJ_FIELD) {
         int fi = p->proj[0].field;
-        if (fi>=0 && fi<63) st[b] |= (1ull<<fi);
-        IrType *t = D->alloca_ty[b];
-        if (t && t->kind==IRT_STRUCT && t->n_fields>0 && t->n_fields<63) {
-            uint64_t all = (t->n_fields==63)?~0ull:((1ull<<t->n_fields)-1u);
-            if ((st[b] & all) == all) st[b] |= (1ull<<DI_WHOLE_BIT);        // every field written
+        if (fi<0 || fi>=63) { st[b*DI_W] |= (1ull<<DI_WHOLE_BIT); return; } // beyond the mask
+        bool nested = (p->nproj >= 2 && p->proj[1].kind == IRPJ_FIELD);
+        if (!nested) {                                                      // p.f = v
+            st[b*DI_W] |= (1ull<<fi);
+            if ((unsigned)fi < DI_SUBF) st[b*DI_W + 1 + fi] |= (1ull<<DI_WHOLE_BIT);
+            di_promote(D, st, b);
+            return;
         }
+        // p.f.g = v — initialises ONLY the leaf. The parent field becomes initialised when
+        // every one of ITS fields is, which is what separates this from the old behaviour.
+        if ((unsigned)fi >= DI_SUBF) { st[b*DI_W] |= (1ull<<fi); di_promote(D,st,b); return; }
+        int gi = p->proj[1].field;
+        if (gi<0 || gi>=63) { st[b*DI_W] |= (1ull<<fi); di_promote(D,st,b); return; }
+        uint64_t *sub = &st[b*DI_W + 1 + fi];
+        *sub |= (1ull<<gi);
+        IrType *t = D->alloca_ty[b];
+        IrType *ft = (t && t->kind==IRT_STRUCT && fi<t->n_fields && t->fields) ? t->fields[fi] : NULL;
+        if (ft && ft->kind==IRT_STRUCT && ft->n_fields>0 && ft->n_fields<63) {
+            uint64_t all = (1ull<<ft->n_fields)-1u;
+            if ((*sub & all) == all) { *sub |= (1ull<<DI_WHOLE_BIT); st[b*DI_W] |= (1ull<<fi); }
+        } else { st[b*DI_W] |= (1ull<<fi); }      // parent's shape unknown ⇒ keep old behaviour
+        di_promote(D, st, b);
         return;
     }
     // an INDEXED store initialises an unknown element — conservatively treat the aggregate
     // as initialised (we do not track per-element state; flagging would false-positive).
-    st[b] |= (1ull<<DI_WHOLE_BIT);
+    st[b*DI_W] |= (1ull<<DI_WHOLE_BIT);
 }
 
 // is the place readable (initialised) under `st`?  returns 0 = ok, 5 = E005, 19 = E019
 static int di_check_read(Di *D, const uint64_t *st, const IrPlace *p) {
     if (!p->valid || p->base_kind!=IRPB_LOCAL) return 0;                    // params/derefs: fine
     int b = p->base_id; if (b<0 || b>=D->nvar || !D->tracked[b]) return 0;
-    uint64_t m = st[b];
+    uint64_t m = st[b*DI_W];
     if (di_is_whole(m)) return 0;
     if (p->nproj>0 && p->proj[0].kind==IRPJ_FIELD) {
         int fi = p->proj[0].field;
-        if (fi>=0 && fi<63 && (m & (1ull<<fi))) return 0;                   // that field is set
+        if (fi<0 || fi>=63) return (m != 0) ? 19 : 5;
+        if (m & (1ull<<fi)) return 0;                                       // that field is set
+        // p.f.g — the leaf may be set even though the parent field is not yet complete
+        if (p->nproj>=2 && p->proj[1].kind==IRPJ_FIELD && (unsigned)fi<DI_SUBF) {
+            uint64_t sub = st[b*DI_W + 1 + fi];
+            int gi = p->proj[1].field;
+            if (di_is_whole(sub)) return 0;
+            if (gi>=0 && gi<63 && (sub & (1ull<<gi))) return 0;
+            return 5;   // THIS leaf is unset — E005; E019 is for reading a partial aggregate
+        }
+        // reading the parent field WHOLE while only some of its leaves are set ⇒ partial
+        if ((unsigned)fi<DI_SUBF && st[b*DI_W + 1 + fi] != 0) return 19;
         return (m != 0) ? 19 : 5;                                           // partial vs none
     }
     return (m != 0) ? 19 : 5;   // reading the whole aggregate: partial ⇒ E019, else E005
@@ -120,9 +163,10 @@ static Di *di_analyze(IrFunc *f) {
             }
         }
     D->in = calloc(D->nb,sizeof(uint64_t*));
-    for (int i=0;i<D->nb;i++) D->in[i]=calloc(D->nvar,sizeof(uint64_t));
+    for (int i=0;i<D->nb;i++) D->in[i]=calloc((size_t)D->nvar*DI_W,sizeof(uint64_t));
     bool *seen = calloc(D->nb,sizeof(bool));
-    uint64_t *cur = malloc(D->nvar*sizeof(uint64_t));
+    size_t DIN = (size_t)D->nvar*DI_W;
+    uint64_t *cur = malloc(DIN*sizeof(uint64_t));
 
     // MUST fixpoint: in[succ] = INTERSECTION over preds of out[pred]
     bool changed=true; int sweeps=0;
@@ -131,7 +175,7 @@ static Di *di_analyze(IrFunc *f) {
         changed=false;
         for (IrBlock *b=f->blocks;b;b=b->next) {
             if (!seen[b->id]) continue;
-            memcpy(cur, D->in[b->id], D->nvar*sizeof(uint64_t));
+            memcpy(cur, D->in[b->id], DIN*sizeof(uint64_t));
             di_run_block(D,b,cur,false);
             IrBlock *succ[3]={0,0,0}; int ns=0;
             switch (b->term.kind) {
@@ -142,8 +186,8 @@ static Di *di_analyze(IrFunc *f) {
                 default: break;
             }
             for (int k=0;k<ns;k++){ IrBlock *s=succ[k]; if(!s) continue;
-                if (!seen[s->id]) { memcpy(D->in[s->id],cur,D->nvar*sizeof(uint64_t)); seen[s->id]=true; changed=true; continue; }
-                for (int v=0;v<D->nvar;v++) {
+                if (!seen[s->id]) { memcpy(D->in[s->id],cur,DIN*sizeof(uint64_t)); seen[s->id]=true; changed=true; continue; }
+                for (size_t v=0;v<DIN;v++) {
                     uint64_t merged = D->in[s->id][v] & cur[v];       // INTERSECTION (must-init)
                     if (merged != D->in[s->id][v]) { D->in[s->id][v]=merged; changed=true; }
                 }
@@ -152,7 +196,7 @@ static Di *di_analyze(IrFunc *f) {
     }
     for (IrBlock *b=f->blocks;b;b=b->next) {                                  // reporting sweep
         if (!seen[b->id]) continue;
-        memcpy(cur, D->in[b->id], D->nvar*sizeof(uint64_t));
+        memcpy(cur, D->in[b->id], DIN*sizeof(uint64_t));
         di_run_block(D,b,cur,true);
     }
     free(cur); free(seen);
