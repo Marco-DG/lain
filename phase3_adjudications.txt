@@ -32,22 +32,54 @@ tests/memory/array_uninit_element_read_fail.ln            NEW-ACCEPTS  new-incom
 tests/memory/field_nested_uninit_fail.ln                  NEW-ACCEPTS  new-incomplete-definite-assignment
 tests/memory/field_nested_whole_fail.ln                   NEW-ACCEPTS  new-incomplete-definite-assignment
 
+# ── new-more-precise: THE CORPUS IS WRONG HERE ────────────────────────────────
+# Two fail-tests encode an OLD-ENGINE LIMITATION as a required rejection. Both programs are
+# SAFE; a correct NLL checker accepts them. They were found by re-judging every "gap" on its
+# merits instead of assuming the old engine was right — the bias the C1 gate was built to
+# expose, and which I had nonetheless applied to all 25 divergences at first.
+#
+# (1) mut_plus_nested_shared_fail: `scale(var v, length(v))` — the canonical TWO-PHASE
+#     borrow, i.e. `v.push(v.len())`. `length(v)` completes during argument evaluation,
+#     before `scale` writes; there is no aliasing, and the hoisted form (`f = length(v);
+#     scale(var v, f)`) compiles and runs identically. The corpus CONTRADICTS ITSELF: the
+#     same pattern is REQUIRED TO PASS by tests/ownership/two_phase_borrow_pass.ln
+#     (`push_n(var v, v.cap)`). The only difference is that the shared read goes through a
+#     call rather than a field access — precisely the old engine's documented blind spot
+#     ("two-phase covers direct-read args, NOT nested-call args"). The new engine accepts by
+#     construction: a by-value `i32` argument is a COPY, and a copy is not a loan.
+#     ⇒ at 3.5 this test INVERTS to a pass-test.
+#
+# (2) multi_var_param_fail: `var ref = pick_x(var da, var db)` then `read_data(db)`, where
+#     `pick_x(var a, var b) var i32` returns `var a.x`. The test asserts db "is still
+#     borrowed by ref" — FALSE. Only the returned reference's loan outlives the call, and it
+#     roots in `a`; db's mutable borrow ends at return. Rust accepts the analogue
+#     (`fn pick<'a>(a:&'a mut D, b:&mut D)->&'a mut i32`). The old engine over-rejects by
+#     assuming a returned reference borrows EVERY reference parameter.
+#     ⇒ at 3.5 this test INVERTS to a pass-test.
+#
+# Judging (2) is what exposed a REAL UNSOUNDNESS in the new engine (now fixed): the borrow
+# source was GUESSED from the signature ("first mutable reference param"), so `return var b.x`
+# charged the loan to `a` and lost every conflict on `b`. It is now INFERRED from the body
+# (bor_ret_borrow_mask). Doubting the corpus found a bug in the checker, not just the corpus.
+tests/ownership/mut_plus_nested_shared_fail.ln            NEW-ACCEPTS  new-more-precise
+tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-more-precise
+
 # ── new-incomplete-borrow ─────────────────────────────────────────────────────
-# Phase A (co-argument conflicts at one call) is IN and closed 4 of these. What remains
-# needs LIVENESS REGIONS (design §1.3): a loan created at one statement and still live at a
-# later one — cross_stmt_borrow, reborrow, nll_still_active, nll_loop_borrow, block_scope,
-# elif_borrow, direct_var_borrow, multi_var_param, mut_plus_nested_shared, borrow_fail,
-# match_borrow_mut, coarg_alias_subslice (needs subslice range disjointness), plus
-# struct_field_dangling (a field borrowing a string-literal local).
-# The conflicting/reborrow/NLL-loop/aliasing cluster. Subsumed by the ONE conflict rule in
-# internal/design/borrow_checker_design.md §1.4 once Stage III 3.1-A lands.
+# Re-judged individually; each of these the OLD ENGINE HAS RIGHT and the new one genuinely
+# misses. What they need is LIVENESS REGIONS for loans created OUTSIDE a call argument
+# (design §1.3) — today a loan is created only by a call argument, so a *direct* write
+# (`data.value = 99`) or a *direct* address-taking (`var ref = var data.value`) while a
+# borrow is live is invisible:
+#   cross_stmt_borrow_write, direct_var_borrow  — direct STORE / address-of vs a live loan
+#   block_scope, elif_borrow                    — a linear value leaked on one branch
+#   borrow_fail, match_borrow_mut, reborrow     — conflict/reborrow chains (phase B)
+#   coarg_alias_subslice                        — needs subslice range disjointness (phase D)
+#   struct_field_dangling                       — a field borrowing a string-literal local
 tests/ownership/block_scope_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/borrow_fail.ln                            NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/cross_stmt_borrow_write_fail.ln           NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/direct_var_borrow_fail.ln                 NEW-ACCEPTS  new-incomplete-borrow
 tests/ownership/elif_borrow_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-incomplete-borrow
-tests/ownership/mut_plus_nested_shared_fail.ln            NEW-ACCEPTS  new-incomplete-borrow
 tests/types/match_borrow_mut_fail.ln                      NEW-ACCEPTS  new-incomplete-borrow
 # escape analysis exists but misses this shape (field borrows a string-literal local)
 tests/ownership/struct_field_dangling_fail.ln             NEW-ACCEPTS  new-incomplete-borrow

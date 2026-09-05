@@ -226,13 +226,19 @@ typedef struct IrFunc {
     // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
     IrEffect   effects;
     bool       effects_done, effects_in_progress;
-    // B5 region info: does the RETURN borrow from a parameter? Lain has no lifetime syntax,
-    // so this is filled by ELISION at lowering (borrow_checker_design.md §5): a function
-    // returning a reference borrows from its reference parameter. Without it the borrow
-    // relationship is invisible to the checker — `r = get_ref(var d)` looks like a plain
-    // value and the loan on `d` cannot be tracked across statements.
-    bool       ret_borrows;        // the returned reference borrows from a parameter
-    int32_t    ret_borrow_param;   // which one (index); -1 = unknown/all reference params
+    // B5 region info: does the RETURN borrow from a parameter, and from WHICH? Lain has no
+    // lifetime syntax, so the relationship must be recovered, or `r = get_ref(var d)` looks
+    // like a plain value and the loan on `d` is invisible across statements.
+    //
+    // `ret_borrows` is a SIGNATURE fact (the return type is a reference) — set at lowering.
+    // The SOURCE is a BODY fact and is INFERRED by analysis/borrow.h, never guessed from the
+    // signature: `pick(var a, var b) var i32` may return either, and picking "the first
+    // mutable param" mis-attributes the loan for `return var b.x`, silently losing every
+    // conflict on `b`. Rust cannot infer this and rejects such a signature outright ("missing
+    // lifetime specifier"); being whole-program, we read it off the returns instead.
+    bool       ret_borrows;          // the returned reference borrows from a parameter
+    uint64_t   ret_borrow_mask;      // bit i = it may borrow from param i (0 with the flag set
+    bool       ret_borrow_mask_done; // is impossible: the fallback is every reference param)
     Arena     *arena;       // where this function's IR is allocated
     struct IrFunc *next;
 } IrFunc;

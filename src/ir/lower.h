@@ -1018,26 +1018,11 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         if (pv && pty && pty->kind==TYPE_ARRAY && pty->array_len<0 && pty->size_expr)
             ir_lower_slice_len_refinement(&cc, pv, pty);
     }
-    // B5 elision: if the return type is a REFERENCE (`var T`), the returned reference
-    // borrows from a reference parameter. Lain has no lifetime syntax, so apply Rust-style
-    // elision (design §5): prefer the sole mutable reference param, else the first
-    // reference param. Without this the borrow is invisible across statements.
+    // B5: record only the SIGNATURE fact — this function returns a reference, so its result
+    // borrows something of the caller's. WHICH parameter is a body fact, inferred later by
+    // analysis/borrow.h (see IrFunc.ret_borrow_mask). Lowering does not analyse.
     { Type *rt = fn->as.function_decl.return_type;
-      if (rt && rt->mode == MODE_MUTABLE) {
-          f->ret_borrows = true; f->ret_borrow_param = -1;
-          int idx = 0, first_ref = -1, first_mut = -1;
-          for (DeclList *p = fn->as.function_decl.params; p; p = p->next, idx++) {
-              if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
-              Type *pty = p->decl->as.variable_decl.type; if (!pty) continue;
-              IrType *pt = ir_lower_type(&cc, pty);
-              bool is_ref = pt && (pt->kind==IRT_PTR || pt->kind==IRT_STRUCT || pt->kind==IRT_SLICE);
-              if (!is_ref) continue;
-              if (first_ref < 0) first_ref = idx;
-              if (pty->mode == MODE_MUTABLE && first_mut < 0) first_mut = idx;
-          }
-          f->ret_borrow_param = (first_mut >= 0) ? first_mut : first_ref;
-      }
-    }
+      if (rt && rt->mode == MODE_MUTABLE) f->ret_borrows = true; }
     ir_lower_stmts(&cc, fn->as.function_decl.body);
     if (!ir_is_set_term(cc.cur))
         ir_set_ret(cc.cur, NULL);   // implicit unit return / end of proc

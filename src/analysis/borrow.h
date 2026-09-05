@@ -149,6 +149,75 @@ static IrValue *bor_result_slot(BorSeq *s, int at, IrValue *res) {
     return NULL;
 }
 
+// ── which PARAMETER does a returned reference borrow from? (design §5) ───────────────────
+// INFERRED from the body, never guessed from the signature. `pick(var a, var b) var i32` may
+// return either parameter; the old syntactic rule ("the first mutable reference param") is
+// UNSOUND for `return var b.x` — the loan is charged to `a` and every conflict on `b` goes
+// unreported. Rooting each returned reference to its parameter is exact where it succeeds,
+// and falls back to *every* reference parameter (sound, over-strict) where it does not.
+//
+// This is strictly stronger than Rust, which cannot infer a body fact across the signature
+// boundary and so rejects the ambiguous signature outright ("missing lifetime specifier").
+
+// provenance walk to the ROOT value: a parameter (no defining instruction) or a local slot.
+// Same edge set as bor_roots_local — address-forming ops only, so provenance is not laundered
+// through a load or a call.
+static IrValue *bor_root_value(IrInstr **def, int nvar, IrValue *v) {
+    for (int guard=0; v && v->id>=0 && v->id<nvar && guard<100000; guard++) {
+        IrInstr *d = def[v->id];
+        if (!d) return v;                                  // no def ⇒ a parameter: the root
+        switch (d->op) {
+            case IR_ALLOCA: return v;                      // a local stack slot: the root
+            case IR_ELEM_PTR: case IR_FIELD_PTR:
+            case IR_SLICE_DATA: case IR_MAKE_SLICE:
+                v = d->n_operands>=1 ? d->operands[0] : NULL; break;
+            default: return NULL;                          // opaque provenance
+        }
+    }
+    return NULL;
+}
+static int bor_param_index(IrFunc *f, IrValue *v) {
+    int idx = 0;
+    for (IrParam *p = f->params; p; p = p->next, idx++)
+        if (p->value == v) return idx;
+    return -1;
+}
+static uint64_t bor_all_ref_params(IrFunc *f) {
+    uint64_t m = 0; int idx = 0;
+    for (IrParam *p = f->params; p; p = p->next, idx++) {
+        IrType *t = p->value ? p->value->type : NULL;
+        if (idx < 64 && t && (t->kind==IRT_PTR || t->kind==IRT_STRUCT || t->kind==IRT_SLICE))
+            m |= (1ull<<idx);
+    }
+    return m;
+}
+static uint64_t bor_ret_borrow_mask(IrFunc *f) {
+    if (!f->ret_borrows) return 0;
+    if (f->ret_borrow_mask_done) return f->ret_borrow_mask;
+    f->ret_borrow_mask_done = true;
+    int nvar = f->next_value_id>0?f->next_value_id:1;
+    IrInstr **def = calloc(nvar,sizeof(IrInstr*));
+    if (!def) { f->ret_borrow_mask = bor_all_ref_params(f); return f->ret_borrow_mask; }
+    for (IrBlock *b=f->blocks;b;b=b->next)
+        for (IrInstr *i=b->instrs;i;i=i->next)
+            if (i->result && i->result->id>=0 && i->result->id<nvar) def[i->result->id]=i;
+    uint64_t mask = 0; bool opaque = false;
+    for (IrBlock *b=f->blocks;b;b=b->next) {
+        if (b->term.kind!=IR_TERM_RET || !b->term.cond) continue;
+        IrValue *root = bor_root_value(def, nvar, b->term.cond);
+        if (!root) { opaque = true; continue; }                    // cannot attribute
+        int pi = bor_param_index(f, root);
+        if (pi >= 0) { if (pi < 64) mask |= (1ull<<pi); else opaque = true; continue; }
+        IrInstr *d = (root->id>=0 && root->id<nvar) ? def[root->id] : NULL;
+        if (d && d->op==IR_ALLOCA) continue;   // roots in a LOCAL ⇒ the dangling case (code 10),
+        opaque = true;                          // reported separately; it lends no parameter
+    }
+    free(def);
+    if (opaque) mask |= bor_all_ref_params(f);   // sound fallback: assume it borrows them all
+    f->ret_borrow_mask = mask;
+    return mask;
+}
+
 static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod);
 static Borrow *borrow_analyze(IrFunc *f) { return borrow_analyze_mod(f, NULL); }
 
@@ -159,15 +228,17 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
         if (call->op != IR_CALL || !call->result) continue;
         IrFunc *callee = bor_find_func(mod, call->aux.callee);
         if (!callee || !callee->ret_borrows) continue;   // the return must BORROW a parameter
-        // the loan is on the place passed to the elided parameter
-        IrPlace src; bool found=false;
-        int want = callee->ret_borrow_param;
-        for (int a=0;a<call->n_operands;a++) {
-            if (want >= 0 && a != want) continue;
+        // Loans on every place passed to a parameter the RETURN may borrow from. The mask is
+        // inferred from the callee's body, so `pick(var a, var b) var i32` charges the loan to
+        // the parameter actually returned — and to both only when the body returns either.
+        uint64_t want = bor_ret_borrow_mask(callee);
+        IrPlace src[8]; int nsrc = 0;
+        for (int a=0;a<call->n_operands && nsrc<8;a++) {
+            if (a < 64 && !((want>>a)&1u)) continue;
             IrPlace p; bool m;
-            if (bor_arg_loan(B, callee, a, call->operands[a], &p, &m) && (m || want>=0)) { src=p; found=true; break; }
+            if (bor_arg_loan(B, callee, a, call->operands[a], &p, &m)) src[nsrc++] = p;
         }
-        if (!found) continue;
+        if (!nsrc) continue;
         IrValue *slot = bor_result_slot(&s, k, call->result);
         int last = bor_last_use(&s, k, call->result, slot);
         if (last < 0) continue;                       // reference never used ⇒ no live region
@@ -181,7 +252,8 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
                 IrPlace p; bool m;
                 if (!bor_arg_loan(B, oc, a, other->operands[a], &p, &m)) continue;
                 if (slot && other->op==IR_CALL && p.base_kind==IRPB_LOCAL && p.base_id==slot->id) continue; // using the ref itself
-                if (ir_place_overlaps(&src, &p)) { bor_add(B, other->line, other->col, 4); return; }
+                for (int q=0;q<nsrc;q++)
+                    if (ir_place_overlaps(&src[q], &p)) { bor_add(B, other->line, other->col, 4); return; }
             }
         }
     }
