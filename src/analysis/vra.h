@@ -94,10 +94,11 @@ static void vra_prepass(Vra *V) {
 
 // copy `src == dst` (equal values) into octagon o
 static void vra_assign_copy(Octagon *o, int dst, int src) {
-    oct_forget(o, dst);
-    oct_add_diff_le(o, dst, src, 0);   // dst − src ≤ 0
-    oct_add_diff_le(o, src, dst, 0);   // src − dst ≤ 0  ⇒ dst = src
-}
+    oct_close(o);                      // materialize src's transitive bounds BEFORE the copy
+    oct_forget(o, dst);                // (so dst inherits them; this is where a loop invariant
+    oct_add_diff_le(o, dst, src, 0);   //  is carried through a memory-cell load). Copies are
+    oct_add_diff_le(o, src, dst, 0);   //  infrequent (loads/casts/lengths), so O(dim^3) here
+}                                      //  is fine — unlike per-instruction forget-closes.
 
 static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir);  // fwd
 
@@ -247,7 +248,9 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
     else if (bd && bd->op==IR_SLICE_DATA && bd->n_operands>=1) {
         int s = bd->operands[0]->id; if (V->slicelen[s]>=0) lenvar=V->slicelen[s];
     }
-    int64_t lo,hi; bool hl,hh; oct_interval(W, idx, &lo,&hl,&hi,&hh);
+    int64_t lo,hi; bool hl,hh;
+    if (V->cknown[idx]) { lo=hi=V->cval[idx]; hl=hh=true; }   // constant index — no octagon needed
+    else oct_interval(W, idx, &lo,&hl,&hi,&hh);
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_BOUNDS; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.lo_ok = hl && lo>=0;
     c.has_len = (clen>=0 || lenvar>=0);
@@ -464,14 +467,25 @@ static Vra *vra_analyze(IrFunc *f) {
             }
         }
     }
-
     // final pass: discharge index obligations against the converged in-states
     for (IrBlock *b=f->blocks; b; b=b->next) {
         if (!V->reached[b->id]) continue;
         memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->nvar; W.dim=dim; oct_close(&W);
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             switch (ins->op) {
-                case IR_ELEM_PTR: oct_close(&W); vra_check_elem(V,&W,ins); break;
+                // a constant index into a FIXED array is fully decidable from constants
+                // (index + compile-time length), so skip the O(dim^3) close — this saves a
+                // large array literal `[0,…]` (N const-index stores) from N closes. A slice
+                // base still needs closure for its (relational) length, so don't skip there.
+                case IR_ELEM_PTR: {
+                    bool cidx = ins->n_operands>=2 && V->cknown[ins->operands[1]->id];
+                    IrValue *eb = ins->n_operands>=1 ? ins->operands[0] : NULL;
+                    IrInstr *ebd = eb ? V->def[eb->id] : NULL;
+                    bool fixed = (ebd && ebd->op==IR_ALLOCA && ebd->aux.alloca_ty && ebd->aux.alloca_ty->kind==IRT_ARRAY)
+                               || (eb && eb->type && eb->type->kind==IRT_ARRAY);
+                    if (!(cidx && fixed)) oct_close(&W);
+                    vra_check_elem(V,&W,ins); break;
+                }
                 case IR_MAKE_SLICE: oct_close(&W); vra_check_subslice(V,&W,ins); break;
                 case IR_ASSERT: oct_close(&W); vra_check_assert(V,&W,ins); break;
                 case IR_ADD: case IR_SUB: case IR_MUL: oct_close(&W); vra_check_overflow(V,&W,ins); break;

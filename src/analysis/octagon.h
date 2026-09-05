@@ -152,7 +152,13 @@ static bool oct_leq(const Octagon *a, const Octagon *b) {
 // forget v — drop everything known about v (both its dimensions → ⊤ rows/cols).
 // Close first so facts *implied* through v survive among the other variables.
 static void oct_forget(Octagon *o, int v) {
-    oct_close(o);
+    // NB: no pre-close. Forgetting without closing is SOUND (it can only lose implied
+    // constraints, never invent one) and — as used here, always on a FRESH SSA result
+    // being (re)defined — it is also LOSSLESS: a fresh id has no prior constraints for a
+    // close to materialize. Closing here was O(dim^3) PER INSTRUCTION (via the per-transfer
+    // forget), which made large functions (e.g. a 64-elem array literal, dim≈400) take
+    // ~20s. Closure that checks/propagation actually need still happens at block boundaries
+    // (the fixpoint's per-block closes) and before every obligation (the final pass).
     int p=oct_pos(v), n=oct_neg(v);
     for (int k=0;k<o->dim;k++) {
         *oct_at(o,p,k)=OCT_INF; *oct_at(o,k,p)=OCT_INF;
