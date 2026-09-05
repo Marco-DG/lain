@@ -20,6 +20,7 @@
 #include "ir/lower.h"
 #include "analysis/linearity.h"
 #include "analysis/borrow.h"
+#include "analysis/definite_init.h"
 
 static char *drv_modname(Arena *a, const char *path) {
     const char *p = path;
@@ -64,6 +65,13 @@ int main(int argc, char **argv) {
                 f->name?(int)f->name->length:1, f->name?f->name->name:"?", msg, L->finds[i].slot);
         }
         lin_free(L);
+        Di *D = di_analyze(f);
+        for (int i=0;i<D->nfinds;i++) { total++;
+            fprintf(stderr,"[%s] %.*s: %s\n", D->finds[i].code==5?"E005 uninitialized":"E019 partial-init",
+                f->name?(int)f->name->length:1, f->name?f->name->name:"?",
+                D->finds[i].code==5?"read of an uninitialised place":"read of a partially-initialised aggregate");
+        }
+        di_free(D);
         Borrow *B = borrow_analyze(f);
         for (int i=0;i<B->nfinds;i++) { total++;
             fprintf(stderr,"[E-borrow dangling] %.*s: returns a reference into a local\n",

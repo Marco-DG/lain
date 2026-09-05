@@ -10,26 +10,27 @@
 #   new-incomplete-<area>  new accepts because that analysis is NOT BUILT YET (tracked gap)
 #   new-unsound            new accepts, and new is WRONG      (HARD FAIL — never allowed)
 
-# ── new-incomplete-definite-assignment ────────────────────────────────────────
-# The OLD linearity.h also implements DEFINITE ASSIGNMENT (E005 use-of-uninitialized,
-# E019 partial-init). Suppressing it for the differential removes those too. The new IR
-# has NO definite-assignment analysis — a whole missing pass the plan had not accounted
-# for (added to the endgame tracklist, Stage III). Not unsound: we simply don't check yet.
+# ── definite assignment: 8 of the original 15 are now CAUGHT by analysis/definite_init.h
+# (Stage III item 3.0). The 7 below remain, in three precise sub-gaps:
+#
+# (a) undeclared identifiers — the old engine reports these through its linearity pass, but
+#     they are a RESOLVE-level concern, not a dataflow one. The new pipeline still uses the
+#     old resolver, so this is arguably not the IR's job at all; revisit at 3.5.
 tests/declarations/undeclared_identifier_fail.ln          NEW-ACCEPTS  new-incomplete-definite-assignment
 tests/declarations/var_mandatory_fail.ln                  NEW-ACCEPTS  new-incomplete-definite-assignment
 tests/expressions/undeclared_in_binary_fail.ln            NEW-ACCEPTS  new-incomplete-definite-assignment
+#
+# (b) per-ELEMENT array init — a MUST-analysis cannot prove a loop covers 0..len, so arrays
+#     are deliberately untracked (tracking them produced 8 false positives). Closing this
+#     needs the numeric domain to prove the fill loop is total — a natural Stage III-D use
+#     of the same VRA bridge that gives us a[i] vs a[j] disjointness.
 tests/memory/array_comprehension_expr_position_fail.ln    NEW-ACCEPTS  new-incomplete-definite-assignment
 tests/memory/array_uninit_element_read_fail.ln            NEW-ACCEPTS  new-incomplete-definite-assignment
+#
+# (c) NESTED field paths (x.a.b) — di tracks a depth-1 field mask per base; nested
+#     aggregates need a path trie over the place lattice.
 tests/memory/field_nested_uninit_fail.ln                  NEW-ACCEPTS  new-incomplete-definite-assignment
 tests/memory/field_nested_whole_fail.ln                   NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/memory/field_partial_use_fail.ln                    NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/memory/field_uninit_read_fail.ln                    NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/memory/uninit_basic_fail.ln                         NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/memory/uninit_fail.ln                               NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/memory/uninit_if_fail.ln                            NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/memory/uninit_partial_assign_fail.ln                NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/memory/uninit_scalar_read_fail.ln                   NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/ownership/outparam_uninit_fail.ln                   NEW-ACCEPTS  new-incomplete-definite-assignment
 
 # ── new-incomplete-borrow ─────────────────────────────────────────────────────
 # The conflicting/reborrow/NLL-loop/aliasing cluster. Subsumed by the ONE conflict rule in
