@@ -567,12 +567,15 @@ static Vra *vra_analyze(IrFunc *f) {
             vra_transfer_instr(V,&W,ins);
         }
     }
-    // one termination obligation per loop header (a func must clear all of them)
-    for (IrBlock *b=f->blocks; b; b=b->next) {
-        if (!b->is_loop_header) continue;
-        VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
-        vra_add_check(V, c);
-    }
+    // one termination obligation per loop header — but ONLY for a `func` (totality is a
+    // func requirement; a `proc` may loop forever, e.g. an event loop). Emitting it for
+    // procs was spuriously marking terminating procs "partially proven".
+    if (f->kind == IR_FUNC_PURE)
+        for (IrBlock *b=f->blocks; b; b=b->next) {
+            if (!b->is_loop_header) continue;
+            VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
+            vra_add_check(V, c);
+        }
     // fail closed: if lowering was infaithful (a dropped/placeholder'd construct), no
     // proof over this IR is trustworthy — the dropped code could change a checked value.
     if (f->incomplete) for (int i=0;i<V->nchecks;i++) V->checks[i].ok=false;

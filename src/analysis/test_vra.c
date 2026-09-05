@@ -242,7 +242,7 @@ static bool nested_loop_proven(int N) {
 
 // termination: `i=0; while i <cmp> B { i = i + step }`.
 static bool loop_terminates(int step, IrCmp cmp, int bound) {
-    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PURE);  // termination is a func property
     IrType *i32=ir_type_int(&A,32,true);
     IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f),*ex=ir_new_block(f);
     IrValue *islot=ir_alloca(f,e,i32);
