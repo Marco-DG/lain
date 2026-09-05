@@ -410,7 +410,13 @@ The endeavour is complete when ALL of these hold simultaneously:
       Stage II.* Without it a stronger engine cannot land.
 - [x] **C2 `fuzz_ir_codegen.sh`** ✓ (teeth-verified: catches the scalar-var miscompile 4/40 when reverted; 200/200 clean with the fix) — execution-differential fuzzer for the NEW pipeline.
       *Blocks E0.3/E0.7* (never make the IR authoritative without it).
-- [ ] **C3 measure `incomplete`** — report coverage beside every metric. *Blocks E0.1.*
+- [x] **C3 measure `incomplete`** ✓ — `ir_coverage.sh`. **MEASURED: 82% (533/648 functions;
+      115 incomplete)** — every metric reported so far (523/563 bounds, 73 fully proven, the
+      340-program 0-FP scan) is conditioned on that denominator. The gap is CONCENTRATED and
+      actionable: **error handling (`try`/`else`/propagate), enums+match+niche, and `defer`**
+      — i.e. the "IR is BEHIND the language" gaps (`lain_language_limits.md` §7). Feeds
+      Stage II B3 directly: model them (ADTs, error unions, defer) or give them declared
+      `opaque` footprints; either way `incomplete` must reach 0.
 
 ### ▸ STAGE II — The IR core reaches full power
 - [ ] **S2 rank-N strided regions** (audit finding; C4) — memory model with rank/stride/

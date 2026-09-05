@@ -54,7 +54,11 @@ int main(int argc, char **argv) {
     if (!program) { fprintf(stderr, "load failed: %s\n", modname); return 1; }
     sema_resolve_module(program, modname, &sema_arena);
 
-    bool emit_c = (argc >= 3 && strcmp(argv[2], "--emit-c") == 0);
+    bool emit_c   = (argc >= 3 && strcmp(argv[2], "--emit-c") == 0);
+    // C3: report how much of the program the IR actually MODELS. `incomplete` silently
+    // excludes a function from every proof, so every metric is conditioned on this number.
+    bool coverage = (argc >= 3 && strcmp(argv[2], "--coverage") == 0);
+    int n_total = 0, n_incomplete = 0;
     IrFunc *head = NULL, *tail = NULL;
     for (DeclList *d = program; d; d = d->next) {
         if (!d->decl) continue;
@@ -62,9 +66,11 @@ int main(int argc, char **argv) {
             && d->decl->as.function_decl.body) {
             IrFunc *f = ir_lower_function(d->decl, program, &ir_arena);
             if (!head) head = tail = f; else { tail->next = f; tail = f; }
-            if (!emit_c) { ir_dump_func(f, stdout); fputc('\n', stdout); }
+            n_total++; if (f->incomplete) n_incomplete++;
+            if (!emit_c && !coverage) { ir_dump_func(f, stdout); fputc('\n', stdout); }
         }
     }
+    if (coverage) { printf("coverage %d %d\n", n_incomplete, n_total); return 0; }
     if (emit_c) ir_emit_module_c(head, stdout, &ir_arena);
     return 0;
 }
