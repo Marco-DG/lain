@@ -363,6 +363,24 @@ static void ir_lower_call_requires(LowerCtx *c, Decl *callee, IrInstr *call) {
             if (rv && rv->type && rv->type->kind==IRT_INT)
                 ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, arg, rv));
         }
+        // in_field dual: callee `pos in text` ⇒ assert arg_pos < len(arg_text) (licenses the
+        // callee's entry `assume(pos < len(text))`, closing the contract soundly).
+        Id *inf = p->decl->as.variable_decl.in_field;
+        if (inf) {
+            int jdx=0;
+            for (DeclList *q=callee->as.function_decl.params; q; q=q->next, jdx++) {
+                if (!q->decl || q->decl->kind!=DECL_VARIABLE) continue;
+                Id *qn=q->decl->as.variable_decl.name;
+                if (qn && qn->length==inf->length && strncmp(qn->name,inf->name,(size_t)qn->length)==0) {
+                    if (jdx < call->n_operands) {
+                        IrValue *aarr = call->operands[jdx];
+                        if (aarr && aarr->type && aarr->type->kind==IRT_SLICE)
+                            ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, arg, ir_slice_len(c->f,c->cur,aarr)));
+                    }
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -886,6 +904,18 @@ static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl
         IrValue *rv = ir_lower_refinement_rhs(c, rhs, pv->type);   // literal / a.len / param
         if (rv && rv->type && rv->type->kind==IRT_INT)
             ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, pv, rv));
+    }
+    // `pos usize in text` — a valid-index refinement (pos < len(text)). in_field names the
+    // array param; the ≥0 half is pv's usize type. (Call-site dual in ir_lower_call_requires.)
+    Id *inf = pdecl->as.variable_decl.in_field;
+    if (inf) {
+        IrLocal *la = ir_env_find(c, inf);
+        IrValue *av = la ? (la->param ? la->param : la->slot) : NULL;
+        IrValue *len = NULL;
+        if (av && av->type && av->type->kind==IRT_SLICE) len = ir_slice_len(c->f, c->cur, av);
+        else if (av && av->type && av->type->kind==IRT_ARRAY)
+            len = ir_const_int(c->f, c->cur, av->type->array_len, ir_type_int(c->a,64,false));
+        if (len) ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, pv, len));
     }
 }
 
