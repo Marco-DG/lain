@@ -467,6 +467,25 @@ static Vra *vra_analyze(IrFunc *f) {
     }
     V->reached[f->entry->id]=true;
 
+    // Per-loop-header set of cells MODIFIED inside the loop (for selective widening — an
+    // outer induction var, invariant in an inner loop, must not be widened at the inner
+    // header). Loop body ≈ block-id range [H, max back-edge-source id]; Lain's CFG is
+    // structured, so a natural loop is a contiguous id range. A `store %c,_` modifies %c.
+    char **loopmod = calloc(nb, sizeof(char*));
+    for (IrBlock *H=f->blocks; H; H=H->next) {
+        if (!H->is_loop_header) continue;
+        int himax=H->id;
+        for (IrEdge *e=H->preds; e; e=e->next) if (e->block->id > himax) himax=e->block->id;
+        char *mod = calloc(V->nvar,1);
+        for (IrBlock *b=f->blocks; b; b=b->next) {
+            if (b->id < H->id || b->id > himax) continue;
+            for (IrInstr *ins=b->instrs; ins; ins=ins->next)
+                if (ins->op==IR_STORE && ins->n_operands>=1 && ins->operands[0]->id < V->nvar)
+                    mod[ins->operands[0]->id]=1;
+        }
+        loopmod[H->id]=mod;
+    }
+
     bool changed=true; int sweeps=0;
     while (changed && sweeps++ < 1000) {
         changed=false;
@@ -487,7 +506,7 @@ static Vra *vra_analyze(IrFunc *f) {
                 if (!V->reached[s->id]) { memcpy(V->in[s->id],T_m,V->dsz*8); V->reached[s->id]=true; changed=true; continue; }
                 Octagon In={V->nvar,dim,V->in[s->id]};
                 oct_join(&J,&In,&T);
-                if (s->is_loop_header){ oct_widen(&D,&In,&J); memcpy(J_m,D_m,V->dsz*8); }
+                if (s->is_loop_header){ oct_widen_sel(&D,&In,&J,loopmod[s->id]); memcpy(J_m,D_m,V->dsz*8); }
                 if (!oct_leq(&J,&In)){ memcpy(V->in[s->id],J_m,V->dsz*8); changed=true; }
             }
         }
@@ -529,6 +548,8 @@ static Vra *vra_analyze(IrFunc *f) {
     // fail closed: if lowering was infaithful (a dropped/placeholder'd construct), no
     // proof over this IR is trustworthy — the dropped code could change a checked value.
     if (f->incomplete) for (int i=0;i<V->nchecks;i++) V->checks[i].ok=false;
+    for (int i=0;i<nb;i++) if (loopmod[i]) free(loopmod[i]);
+    free(loopmod);
     free(W_m); free(T_m); free(J_m); free(D_m);
     return V;
 }

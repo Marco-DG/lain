@@ -141,6 +141,21 @@ static void oct_widen(Octagon *dst, const Octagon *a, const Octagon *b) {
         }
 }
 // Order ⊑ — a ⊑ b (a tighter) iff entrywise a ≤ b (operands closed).
+// Selective widening: widen only entries touching a variable MODIFIED inside the loop
+// (mod[v]); for an entry between two loop-invariant variables keep the join `b`. This is
+// what stops an outer-loop induction var (invariant in the inner loop, but growing 0..k
+// across outer iterations) from being wrongly blown to +∞ at an inner header. Sound: a
+// var genuinely modified in the loop is still widened, so termination holds; an invariant
+// var's join stabilizes on its own. `mod` NULL ⇒ widen everything (standard widening).
+static void oct_widen_sel(Octagon *dst, const Octagon *a, const Octagon *b, const char *mod) {
+    dst->nvar=a->nvar; dst->dim=a->dim;
+    for (int i=0;i<a->dim;i++)
+        for (int j=0;j<a->dim;j++) {
+            int64_t av=oct_get(a,i,j), bv=oct_get(b,i,j);
+            bool widen = !mod || mod[i/2] || mod[j/2];   // DBM index i ↔ var i/2
+            *oct_at(dst,i,j) = widen ? ((bv <= av) ? av : OCT_INF) : bv;
+        }
+}
 static bool oct_leq(const Octagon *a, const Octagon *b) {
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++)
