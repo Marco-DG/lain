@@ -21,12 +21,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct { int slot; isize line, col; int code; } LinFinding;  // code: 1=E001, 2=E002
+typedef struct { int slot; isize line, col; int code; } LinFinding;  // 1=E001, 2=E002, 3=E003 leak
 
 typedef struct {
     IrFunc     *f;
     int         nvar, nb;
     bool      **in;         // in[block][slot] = maybe-moved on entry
+    bool       *linsl;      // linsl[slot] = the slot holds a LINEAR (must-consume) value
     LinFinding *finds; int nfinds, cap;
 } Lin;
 
@@ -71,6 +72,15 @@ static Lin *lin_analyze(IrFunc *f) {
     L->f=f; L->nvar = f->next_value_id>0?f->next_value_id:1; L->nb = f->next_block_id;
     L->in = calloc(L->nb,sizeof(bool*));
     for (int i=0;i<L->nb;i++) L->in[i]=calloc(L->nvar,sizeof(bool));
+    L->linsl = calloc(L->nvar,sizeof(bool));
+    // A leak-relevant slot owns a RESOURCE that must be freed: an owned pointer or slice.
+    // (An owned struct that is merely move-tracked but trivially droppable is NOT a leak;
+    // a struct that transitively owns a resource needs per-field tracking — deferred.)
+    for (IrBlock *b=f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next)
+            if (ins->op==IR_ALLOCA && ins->result && ins->aux.alloca_ty && ins->aux.alloca_ty->linear
+                && (ins->aux.alloca_ty->kind==IRT_PTR || ins->aux.alloca_ty->kind==IRT_SLICE))
+                L->linsl[ins->result->id] = true;
     bool *out = malloc(L->nvar), *tmp = malloc(L->nvar);
 
     // forward MAY fixpoint: in[succ] |= transfer(in[pred])
@@ -97,10 +107,16 @@ static Lin *lin_analyze(IrFunc *f) {
     for (IrBlock *b=f->blocks; b; b=b->next) {
         memcpy(out, L->in[b->id], L->nvar);
         lin_run_block(L, b, out, true);
+        // E003 leak: a linear slot still LIVE (not consumed) when the function returns.
+        // `return mov x` consumes x first, so a returned resource is not flagged.
+        if (b->term.kind==IR_TERM_RET)
+            for (int s=0;s<L->nvar;s++)
+                if (L->linsl[s] && !out[s]) lin_add(L, s, b->term.cond?b->term.cond->line:0,
+                                                    b->term.cond?b->term.cond->col:0, 3);
     }
     free(out); free(tmp);
     return L;
 }
-static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in); free(L->finds); free(L); }
+static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in); free(L->linsl); free(L->finds); free(L); }
 
 #endif // LAIN_LINEARITY_H

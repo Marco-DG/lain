@@ -51,10 +51,12 @@ int main(int argc, char **argv) {
         if (f->is_extern || f->incomplete) continue;   // can't judge an unfaithful lowering
         Lin *L = lin_analyze(f);
         for (int i=0;i<L->nfinds;i++) { total++;
-            fprintf(stderr,"[%s] %.*s: %s (slot %%%d)\n",
-                L->finds[i].code==1?"E001 use-after-move":"E002 double-move",
-                f->name?(int)f->name->length:1, f->name?f->name->name:"?",
-                L->finds[i].code==1?"use of moved value":"moved twice", L->finds[i].slot);
+            const char *tag = L->finds[i].code==1?"E001 use-after-move"
+                            : L->finds[i].code==2?"E002 double-move":"E003 leak";
+            const char *msg = L->finds[i].code==1?"use of moved value"
+                            : L->finds[i].code==2?"moved twice":"linear value not consumed";
+            fprintf(stderr,"[%s] %.*s: %s (slot %%%d)\n", tag,
+                f->name?(int)f->name->length:1, f->name?f->name->name:"?", msg, L->finds[i].slot);
         }
         lin_free(L);
     }

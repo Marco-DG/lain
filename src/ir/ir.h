@@ -53,6 +53,10 @@ typedef struct IrType {
     bool  ptr_mut;          // *var T
     bool  slice_sentinel;   // u8[:0]
     int64_t array_len;      // IRT_ARRAY fixed length (>= 0)
+    // linearity/multiplicity qualifier (Phase 3.2 / B5 substrate) — a value of a `linear`
+    // type must be consumed exactly once (an owned resource: `mov`d, freed, or returned).
+    // Language-neutral: Lain's owned modes and Rust's affine owners both lower to this.
+    bool  linear;
     // IRT_STRUCT — self-contained: carries its lowered field types + names so the
     // backend never re-touches the AST.
     IrName *sname;          // struct name (identity + C typedef name) — IR-owned

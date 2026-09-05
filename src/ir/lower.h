@@ -117,6 +117,7 @@ static Decl *ir_find_type_alias(LowerCtx *c, Id *name) {
 // The alias's *runtime* base type — the leftmost leaf of the RHS (refinement
 // constraints like `!= 0` are for the VRA, not the representation).
 static IrType *ir_lower_type(LowerCtx *c, Type *t);              // fwd
+static IrType *ir_lower_type_impl(LowerCtx *c, Type *t);        // fwd (wrapped for the linear bit)
 static bool ir_name_int(const char *nm, int len, int *bits, bool *sgn);  // fwd
 static IrType *ir_resolve_alias_base(LowerCtx *c, Decl *ad) {
     Expr *rhs = ad->as.type_alias_decl.expr;
@@ -159,7 +160,15 @@ static bool ir_name_int(const char *nm, int len, int *bits, bool *sgn) {
         if ((int)strlen(al[i].n)==len && strncmp(nm,al[i].n,len)==0){ *bits=al[i].b; *sgn=al[i].s; return true; }
     return false;
 }
+// B5: tag the lowered type with the linearity qualifier (sema_type_is_linear is the
+// front-end's linearity oracle; the fact is carried on the IR type so the linearity pass
+// reads it WITHOUT the AST). Wrapper over the real lowering so every return path is tagged.
 static IrType *ir_lower_type(LowerCtx *c, Type *t) {
+    IrType *r = ir_lower_type_impl(c, t);
+    if (r && t && sema_type_is_linear(t)) r->linear = true;
+    return r;
+}
+static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
     if (!t) return ir_type_new(c->a, IRT_UNIT);
     switch (t->kind) {
         case TYPE_SIMPLE: {

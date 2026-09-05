@@ -69,6 +69,23 @@ int main(void){
       ir_set_ret(e,NULL);
       lin_expect("never-moved stays clean", count(f,1)+count(f,2), 0); }
 
+    IrType *owned_ptr = ir_type_new(&A,IRT_PTR); owned_ptr->elem=i32; owned_ptr->linear=true;
+
+    // 6) owned-ptr slot, never consumed, function returns  →  leak (E003)
+    { IrFunc *f=ir_func_new(&A,nm("leak"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+      ir_alloca(f,e,owned_ptr); ir_set_ret(e,NULL);
+      lin_expect("owned resource dropped → E003 leak", count(f,3), 1); }
+
+    // 7) owned-ptr slot consumed via mov before return  →  no leak
+    { IrFunc *f=ir_func_new(&A,nm("moved"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+      IrValue *s=ir_alloca(f,e,owned_ptr); ir_consume(f,e,s); ir_set_ret(e,NULL);
+      lin_expect("owned resource moved → no leak", count(f,3), 0); }
+
+    // 8) a plain (non-linear) i32 slot dropped  →  NOT a leak
+    { IrFunc *f=ir_func_new(&A,nm("noleak"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+      ir_alloca(f,e,i32); ir_set_ret(e,NULL);
+      lin_expect("non-linear drop is fine", count(f,3), 0); }
+
     printf(failures? "LINEARITY: %d WRONG\n" : "LINEARITY: all expectations met\n", failures);
     return failures?1:0;
 }
