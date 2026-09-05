@@ -33,6 +33,27 @@ typedef struct {
     LinFinding *finds; int nfinds, cap;
 } Lin;
 
+// Does a value of this type carry a RELEASE OBLIGATION — i.e. does it (transitively) own a
+// resource that someone must hand back? This is the leak question, and it is NOT the same as
+// linearity. `Counter{ value i32 }` bound by `mov` is linear (exactly one owner) but owns
+// nothing releasable: dropping it leaks no memory, so reporting E003 on it is an
+// over-rejection. `Res{ mov h *u8 }` does own one.
+//
+// Language-neutral: this is "has a non-trivial destructor" (C++) / "impl Drop" (Rust). The
+// IR's job is the FACT — an owned value dies unconsumed here. Whether that is an ERROR or a
+// site for an implicit drop is the front end's policy, and front ends differ: Rust and C++
+// insert the drop, a strict linear discipline rejects. We report only where a resource would
+// actually be lost, which is the intersection every front end agrees is a bug.
+static bool lin_has_release_obligation(const IrType *t, int depth) {
+    if (!t || depth > 8) return false;
+    if ((t->kind==IRT_PTR || t->kind==IRT_SLICE) && t->linear) return true;
+    if (t->kind==IRT_STRUCT)
+        for (int i=0;i<t->n_fields;i++)
+            if (t->fields && lin_has_release_obligation(t->fields[i], depth+1)) return true;
+    if (t->kind==IRT_ARRAY) return lin_has_release_obligation(t->elem, depth+1);
+    return false;
+}
+
 static void lin_add(Lin *L, int slot, isize line, isize col, int code) {
     if (L->nfinds==L->cap){ L->cap = L->cap?L->cap*2:8; L->finds=realloc(L->finds,L->cap*sizeof*L->finds); }
     L->finds[L->nfinds++] = (LinFinding){slot,line,col,code};
@@ -95,19 +116,40 @@ static Lin *lin_analyze(IrFunc *f) {
     L->def    = calloc(L->nvar,sizeof(IrInstr*));
     // Two DISTINCT sets, conflated at first and worth keeping apart:
     //   movesl — every LINEAR slot. Move-tracked: reading it out is a transfer of ownership.
-    //   linsl  — the leak-relevant subset that owns a RESOURCE needing release (owned ptr or
-    //            slice). An owned struct that is move-tracked but trivially droppable is not
-    //            a leak; one that transitively owns a resource needs per-field tracking.
+    //   linsl  — the leak-relevant subset: linear AND OWNED by this binding, so this function
+    //            is the one obliged to consume it. A borrowed binding of the same linear type
+    //            (`get_id(r Resource)`) releases nothing and must not be reported — keying on
+    //            the type alone reported a leak in every shared-borrow callee.
     for (IrBlock *b=f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (ins->result && ins->result->id>=0 && ins->result->id<L->nvar)
                 L->def[ins->result->id] = ins;
             if (ins->op==IR_ALLOCA && ins->result && ins->aux.alloca_ty && ins->aux.alloca_ty->linear) {
                 L->movesl[ins->result->id] = true;
-                if (ins->aux.alloca_ty->kind==IRT_PTR || ins->aux.alloca_ty->kind==IRT_SLICE)
+                if (ins->result->owns && lin_has_release_obligation(ins->aux.alloca_ty,0))
                     L->linsl[ins->result->id] = true;
             }
         }
+    // An OWNED parameter (`mov r R`) is a resource the callee must consume before returning.
+    // Track it only when it has NO HOME SLOT: a struct param is materialised as
+    // `%s = alloca; store %s, %p`, and `mov r` consumes the SLOT, not the incoming value —
+    // tracking both reported the same resource twice and flagged a correctly-consumed
+    // parameter as leaked.
+    for (IrParam *p=f->params; p; p=p->next) {
+        IrValue *pv = p->value;
+        if (!pv || !pv->owns || !pv->type || !pv->type->linear) continue;
+        if (!lin_has_release_obligation(pv->type,0)) continue;   // nothing to release ⇒ no leak
+        if (pv->id<0 || pv->id>=L->nvar) continue;
+        bool has_home = false;
+        for (IrBlock *b=f->blocks; b && !has_home; b=b->next)
+            for (IrInstr *i=b->instrs; i; i=i->next)
+                if (i->op==IR_STORE && i->n_operands>=2 && i->operands[1]==pv
+                    && i->operands[0] && L->def[i->operands[0]->id]
+                    && L->def[i->operands[0]->id]->op==IR_ALLOCA) { has_home = true; break; }
+        if (has_home) continue;                       // the home slot carries the obligation
+        L->movesl[pv->id] = true;
+        L->linsl[pv->id]  = true;
+    }
     bool *out = malloc(L->nvar), *tmp = malloc(L->nvar);
 
     // forward MAY fixpoint: in[succ] |= transfer(in[pred])

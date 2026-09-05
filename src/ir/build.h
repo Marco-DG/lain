@@ -130,7 +130,8 @@ IrValue *ir_alloca(IrFunc *f, IrBlock *b, IrType *slot_ty) {
     IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = slot_ty; pt->ptr_mut = true;
     IrInstr *ins = ir_instr(f, IR_ALLOCA, pt, 0);
     ins->aux.alloca_ty = slot_ty;
-    ir_emit(b, ins);
+    ins->result->owns = true;    // a local slot OWNS its contents by default; the borrow
+    ir_emit(b, ins);             // bindings (param home slots) clear it explicitly
     return ins->result;
 }
 // A fixed-array local: the alloca decays to an element pointer (result type *elem),

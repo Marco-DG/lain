@@ -988,21 +988,30 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         IrType *pt  = ir_lower_type(&cc, pty);
         Id     *pnm = p->decl->as.variable_decl.name;
         IrName *pin = pnm ? ir_intern(a, pnm->name, pnm->length) : NULL;   // IR-owned param name
+        // OWNERSHIP of the binding (IrValue.owns): a parameter owns its argument only when
+        // the declaration transfers it. A borrow — shared or mutable — does not, and must
+        // never be leak-checked or consumed by the callee. This is the declared mode, the
+        // same category of front-end fact as the type itself; what the IR does with it is
+        // decided by analysis, not asked of the front end.
+        bool p_owns = pty && pty->mode == MODE_OWNED;
         if (ir_mut_by_address(pt) && pty && pty->mode == MODE_MUTABLE) {
             // a `var` param of a COPIED type (struct or scalar) is a mutable borrow — a
             // pointer to the caller's storage, so writes propagate. The pointer *is* the
             // slot. (A slice/array/pointer already shares its data, so it stays by value.)
             IrType *ptr = ir_type_new(cc.a, IRT_PTR); ptr->elem = pt; ptr->ptr_mut = true;
             IrValue *pv = ir_add_param(f, ptr, pin);
+            pv->owns = false;                       // a mutable borrow never owns
             ir_env_add(&cc, pnm, pv, NULL);
         } else if (pt->kind == IRT_STRUCT) {
             // a by-value struct param: materialize to a slot so its fields address
             IrValue *pv = ir_add_param(f, pt, pin);
             IrValue *slot = ir_alloca(f, cc.cur, pt);
+            pv->owns = slot->owns = p_owns;         // the home slot inherits the binding's mode
             ir_store(f, cc.cur, slot, pv);
             ir_env_add(&cc, pnm, slot, NULL);
         } else {
             IrValue *pv = ir_add_param(f, pt, pin);
+            pv->owns = p_owns;
             ir_env_add(&cc, pnm, NULL, pv);
         }
     }

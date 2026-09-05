@@ -120,6 +120,29 @@ int main(void){
         lin_expect("non-linear copy is not a move", count(f,1), 0); }
     }
 
+    // OWNERSHIP vs LINEARITY (IrValue.owns). The same linear type appears in an OWNING and a
+    // BORROWING binding; only the owner can leak it. Keying the leak check on the type alone
+    // reported a leak in every shared-borrow callee.
+    { IrType *lp = ir_type_new(&A,IRT_PTR); lp->elem=i32; lp->linear=true;
+      // a struct that OWNS a linear pointer field, never consumed  →  E003
+      IrType *res = ir_type_new(&A,IRT_STRUCT); res->n_fields=1; res->linear=true;
+      res->fields=arena_push_many_aligned(&A,IrType*,1); res->fields[0]=lp;
+      { IrFunc *f=ir_func_new(&A,nm("structleak"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        ir_alloca(f,e,res); ir_set_ret(e,NULL);
+        lin_expect("struct owning a resource leaks", count(f,3), 1); }
+      // the SAME type in a BORROWED binding  →  not a leak (the callee owes nothing)
+      { IrFunc *f=ir_func_new(&A,nm("structborrow"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *s=ir_alloca(f,e,res); s->owns = false;      // a shared-borrow param home slot
+        ir_set_ret(e,NULL);
+        lin_expect("borrowed binding never leaks", count(f,3), 0); }
+      // an OWNED linear struct with NOTHING releasable  →  not a leak (no obligation)
+      { IrType *plain = ir_type_new(&A,IRT_STRUCT); plain->n_fields=1; plain->linear=true;
+        plain->fields=arena_push_many_aligned(&A,IrType*,1); plain->fields[0]=i32;
+        IrFunc *f=ir_func_new(&A,nm("plainowned"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        ir_alloca(f,e,plain); ir_set_ret(e,NULL);
+        lin_expect("owned struct with no resource is fine", count(f,3), 0); }
+    }
+
     printf(failures? "LINEARITY: %d WRONG\n" : "LINEARITY: all expectations met\n", failures);
     return failures?1:0;
 }

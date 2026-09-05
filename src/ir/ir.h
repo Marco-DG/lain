@@ -77,6 +77,17 @@ bool irtype_int_range(const IrType *t, int64_t *lo, int64_t *hi);
 typedef struct IrValue {
     int32_t   id;           // dense, unique within a function; the identity
     IrType   *type;
+    // OWNERSHIP of a place (an alloca or a parameter). Distinct from IrType.linear, and the
+    // distinction is load-bearing: `linear` says the TYPE must be handled linearly (exactly
+    // one consumer), `owns` says whether THIS BINDING is that consumer. The same linear type
+    // appears in both roles — Lain `mov r R` vs `r R`, Rust `T` vs `&T`, C++ `T` vs
+    // `const T&`, Swift `consuming` vs `borrowing` — so ownership cannot live on the type.
+    //
+    // Conflating them is not merely imprecise: leak-checking every slot of linear type
+    // reports a "leak" in every shared-borrow callee, which is where the naive widening
+    // produced 4 false positives. A borrowed binding must NOT be consumed and releases
+    // nothing when it dies.
+    bool      owns;
     // provenance (for debugging / back-mapping diagnostics to source)
     isize     line, col;
     // optional source name (diagnostics only — NEVER used as an analysis key)

@@ -100,6 +100,47 @@ doing something Rust declines to do.
 
 ---
 
+## C-3 · unconsumed owned values — the old engine is **inconsistent**, side not yet settled
+
+Not an inversion (yet); recorded because the corpus demands *both* answers for the same
+program shape, so at least one of these tests is wrong and the pair must be settled together.
+
+| corpus test | shape | old engine |
+|---|---|---|
+| `tests/ownership/borrow_pass.ln` | `var fc = take_counter(mov cnt)`, never consumed | **accept** |
+| `tests/ownership/rich_diagnostics_fail.ln` | `var r = Resource(42)`, never consumed | **E003** |
+
+Both bind an owned struct of one `i32` and never consume it. Reduced to a minimal pair and
+run through the old engine directly:
+
+```lain
+type R { id i32 }
+var r = R(42)                    // → E003
+var r = make(mov seed)           // → ACCEPT     (same type, same non-consumption)
+```
+
+The discriminator is not the value, it is **how the local was initialised**: a constructor
+gives the local `MODE_OWNED`, a call result does not. Ownership there is an artifact of
+inference, not a property of the binding — the "facts keyed by name, no canonical type"
+incoherence, surfacing in the linear checker.
+
+**Position taken.** The new engine reports a leak only where a resource would actually be
+lost — `lin_has_release_obligation`: does the type transitively own an owned pointer or
+slice ("non-trivial destructor" in C++, `impl Drop` in Rust). Under that rule `borrow_pass`
+is right to accept and `rich_diagnostics_fail` over-rejects. This keeps the corpus green and
+is strictly *more* capable than the rule it replaced: leak-tracking previously covered only
+`ptr`/`slice` slots, so a **struct owning a heap pointer, never freed, was silently missed**
+— a real leak with no corpus test over it, now caught by construction.
+
+The deeper point is a separation the IR should keep: the IR's job is the FACT *"an owned
+value dies unconsumed here."* Whether that is an **error** (strict linear discipline) or a
+**site for an implicit drop** (Rust, C++, Swift) is front-end policy, and front ends
+genuinely differ. Reporting only where a resource is lost is the intersection all of them
+call a bug. Settling `consume_before_return_fail` and `rich_diagnostics_fail` means Lain
+deciding its own policy — deferred to Stage V, when the language catches up to the IR.
+
+---
+
 ## Switchover procedure (Stage 3.5)
 
 1. Invert each entry: rename `*_fail.ln` → `*_pass.ln`, drop the `// EXPECT:` line, add a

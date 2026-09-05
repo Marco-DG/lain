@@ -93,14 +93,18 @@ tests/ownership/struct_field_dangling_fail.ln             NEW-ACCEPTS  new-incom
 # struct_linear_field): reading a LINEAR value out of its slot into another slot is a
 # transfer, not a copy. What remains splits into three precise sub-gaps:
 #
-# (a) OWNED-vs-BORROWED bindings. `consume_before_return` (an owned `mov` param never
-#     consumed) and `rich_diagnostics` (an unconsumed linear STRUCT local) both need the
-#     leak check to cover more than owned ptr/slice. Widening it naively to every linear
-#     slot produced 4 FALSE POSITIVES — all in shared-borrow callees (`get_id(r Resource)`,
-#     `rtouch(r Res)`), whose param home-slot has a linear TYPE but is not OWNED.
-#     ⇒ this is an IR EXPRESSIVENESS gap, not an analysis bug: IrType.linear says the type
-#       is linear, but ownership is a property of the BINDING (Rust `T` vs `&T`, Lain
-#       `mov r R` vs `r R`). Needs an owns-bit on the place. Tracked as C7.
+# (a) UNCONSUMED OWNED VALUES — the old engine is INCONSISTENT here, so these are not
+#     straightforward gaps. See CORPUS_CORRECTIONS.md C-3: borrow_pass REQUIRES an
+#     unconsumed owned `Counter{i32}` to be ACCEPTED while rich_diagnostics REQUIRES an
+#     unconsumed owned `Resource{i32}` to be REJECTED — same shape, opposite verdicts, the
+#     discriminator being how the local was initialised (a constructor infers MODE_OWNED, a
+#     call result does not) rather than anything about the value.
+#     C7 (the owns-bit) is now DONE: IrValue.owns separates the binding's ownership from the
+#     type's linearity, which is what made the 4 shared-borrow false positives go away. The
+#     leak rule is now `owned AND has a release obligation` (transitively owns a ptr/slice —
+#     "non-trivial destructor"), which also CAUGHT A CLASS THE OLD NARROWING MISSED: a struct
+#     owning a heap pointer, never freed, was untracked because only ptr/slice slots were.
+#     What remains is a POLICY question (error vs implicit drop), deferred to Stage V.
 tests/ownership/consume_before_return_fail.ln             NEW-ACCEPTS  new-incomplete-linearity
 tests/ownership/rich_diagnostics_fail.ln                  NEW-ACCEPTS  new-incomplete-linearity
 #
