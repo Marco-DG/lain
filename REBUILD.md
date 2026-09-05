@@ -329,9 +329,16 @@ Each is a self-inflicted debt found by auditing the rebuild against its own goal
       **432/535 functions (80%) faithful**. RETIRING it is still open (B3 opaque/havoc).
       **★ The ranking is now the lowering work list, and it is dominated by ONE feature:**
       - **ENUMS ≈ 42/103 (41%)** — 37 `unresolved-member` are mostly enum VARIANT references
-        (NotFound/None/Permission/Red…), plus 14 `enum-match`. Needs tag+payload modelling:
-        an IR representation for a discriminated union, variant construction, and `case` on
-        the tag. **This is the single highest-leverage lowering item left.**
+        (NotFound/None/Permission/Red…), plus 14 `enum-match`. **This is the single
+        highest-leverage lowering item left, and it is DESIGNED but not built:**
+        `internal/design/ir_sum_types.md`. The decision that matters: the IR models a TAGGED
+        SUM (`IRT_SUM` + `IR_SUM_NEW`/`IR_SUM_TAG`/`IR_SUM_PAYLOAD`), and the old backend's
+        NICHE ENCODING (`*u8|NotFound|Denied` is literally a pointer with markers at 0 and 8)
+        stays a BACKEND layout choice. Modelling the niche in the IR would make a sum
+        indistinguishable from a pointer with a strange range — destroying the very
+        discrimination the analyses need, and repeating the exact
+        representation-standing-in-for-semantics mistake found twice this session (string
+        storage duration, ownership-vs-linearity). Expected payoff: incomplete 103 → ~61.
       - 35 `unhandled-expr` (the long tail: SIMD, fn-pointers, error monads)
       - 7 `unhandled-binop`, 4 `unresolved-global` (global arrays), 3 `unlowered-lvalue`,
         2 `aggregate-init`, 1 `unhandled-stmt`
