@@ -1,0 +1,69 @@
+# phase3_adjudications.txt — the ledger of ACCOUNTED-FOR divergences between the new
+# sovereign IR analyses and the old AST engine. Read by phase3_differential.sh (C1).
+#
+# format:  <path>  <divergence>  <classification>   # note
+#
+# classifications:
+#   old-unsound            new rejects, and new is RIGHT      (a WIN — add a fail-test)
+#   new-over-strict        new rejects, and new is WRONG      (a BUG to fix)
+#   new-more-precise       new accepts, and new is RIGHT      (a WIN)
+#   new-incomplete-<area>  new accepts because that analysis is NOT BUILT YET (tracked gap)
+#   new-unsound            new accepts, and new is WRONG      (HARD FAIL — never allowed)
+
+# ── new-incomplete-definite-assignment ────────────────────────────────────────
+# The OLD linearity.h also implements DEFINITE ASSIGNMENT (E005 use-of-uninitialized,
+# E019 partial-init). Suppressing it for the differential removes those too. The new IR
+# has NO definite-assignment analysis — a whole missing pass the plan had not accounted
+# for (added to the endgame tracklist, Stage III). Not unsound: we simply don't check yet.
+tests/declarations/undeclared_identifier_fail.ln          NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/declarations/var_mandatory_fail.ln                  NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/expressions/undeclared_in_binary_fail.ln            NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/array_comprehension_expr_position_fail.ln    NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/array_uninit_element_read_fail.ln            NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/field_nested_uninit_fail.ln                  NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/field_nested_whole_fail.ln                   NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/field_partial_use_fail.ln                    NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/field_uninit_read_fail.ln                    NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/uninit_basic_fail.ln                         NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/uninit_fail.ln                               NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/uninit_if_fail.ln                            NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/uninit_partial_assign_fail.ln                NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/memory/uninit_scalar_read_fail.ln                   NEW-ACCEPTS  new-incomplete-definite-assignment
+tests/ownership/outparam_uninit_fail.ln                   NEW-ACCEPTS  new-incomplete-definite-assignment
+
+# ── new-incomplete-borrow ─────────────────────────────────────────────────────
+# The conflicting/reborrow/NLL-loop/aliasing cluster. Subsumed by the ONE conflict rule in
+# internal/design/borrow_checker_design.md §1.4 once Stage III 3.1-A lands.
+tests/ownership/block_scope_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/borrow_conflict_fail.ln                   NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/borrow_fail.ln                            NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/coarg_alias_member_fail.ln                NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/cross_stmt_borrow_fail.ln                 NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/cross_stmt_borrow_write_fail.ln           NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/direct_var_borrow_fail.ln                 NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/elif_borrow_fail.ln                       NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/mut_plus_nested_shared_fail.ln            NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/nll_loop_borrow_fail.ln                   NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/nll_still_active_fail.ln                  NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/reborrow_fail.ln                          NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/reborrow_same_stmt_fail.ln                NEW-ACCEPTS  new-incomplete-borrow
+tests/ownership/recv_plus_shared_fail.ln                  NEW-ACCEPTS  new-incomplete-borrow
+tests/types/match_borrow_mut_fail.ln                      NEW-ACCEPTS  new-incomplete-borrow
+tests/vra/refinement/aggregate_member_alias_fail.ln       NEW-ACCEPTS  new-incomplete-borrow
+# escape analysis exists but misses this shape (field borrows a string-literal local)
+tests/ownership/struct_field_dangling_fail.ln             NEW-ACCEPTS  new-incomplete-borrow
+
+# ── new-incomplete-linearity ──────────────────────────────────────────────────
+# Move/consume rules beyond the E001/E002/E003 core: defer semantics, implicit-move
+# detection, owner reassignment, per-field linear state. Fold into the borrow framework
+# as `Move` accesses (design §2) rather than a separate pass.
+tests/ownership/consume_before_return_fail.ln             NEW-ACCEPTS  new-incomplete-linearity
+tests/ownership/defer_double_consume_fail.ln              NEW-ACCEPTS  new-incomplete-linearity
+tests/ownership/defer_double_defer_fail.ln                NEW-ACCEPTS  new-incomplete-linearity
+tests/ownership/linear_copy_double_free_fail.ln           NEW-ACCEPTS  new-incomplete-linearity
+tests/ownership/move_needs_mov_fail.ln                    NEW-ACCEPTS  new-incomplete-linearity
+tests/ownership/move_then_use_fail.ln                     NEW-ACCEPTS  new-incomplete-linearity
+tests/ownership/owner_reassign_fail.ln                    NEW-ACCEPTS  new-incomplete-linearity
+tests/ownership/rich_diagnostics_fail.ln                  NEW-ACCEPTS  new-incomplete-linearity
+tests/ownership/struct_linear_field_fail.ln               NEW-ACCEPTS  new-incomplete-linearity

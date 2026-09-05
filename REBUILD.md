@@ -423,6 +423,12 @@ The endeavour is complete when ALL of these hold simultaneously:
       re-derive, don't inherit.
 
 ### ▸ STAGE III — Analyses to maximal power
+- [ ] **3.0 DEFINITE ASSIGNMENT** (E005 use-of-uninitialized, E019 partial-init).
+      **A whole analysis the plan had MISSED** — surfaced by the C1 gate (15 divergences):
+      the old `linearity.h` quietly implements it alongside ownership, so "port linearity"
+      silently meant "port two analyses". A forward must-init dataflow over the CFG with
+      per-place init state — shares the place lattice with the borrow checker, so build it
+      on the same substrate (design §1.1), not as a third bespoke pass.
 - [ ] **3.1-A/B/C/D borrow checker** (`borrow_checker_design.md`) — NLL core → two-phase →
       cross-fn elision → **★ numeric-aided disjointness (beyond Rust: safe `split_at_mut`)**.
 - [ ] **3.2 linearity completed** — folded INTO the borrow framework as `Move` accesses

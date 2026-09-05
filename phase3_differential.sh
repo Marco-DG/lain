@@ -1,41 +1,82 @@
 #!/usr/bin/env bash
-# phase3_differential.sh — the Phase 3 parity gate. Runs the new sovereign IR analyses
-# (effects, linearity, borrow) against the old AST engine over the corpus and asserts the
-# two soundness directions that make them safe to eventually make authoritative (3.5):
+# phase3_differential.sh — the Phase 3 gate, on ADJUDICATED DIVERGENCE (corrective C1).
 #
-#   A. no-over-rejection : on every program the OLD engine ACCEPTS (a *_pass file that loads
-#      cleanly), the new linearity+borrow passes must raise 0 findings. A single finding
-#      here is a false positive — the new engine rejecting valid code.
-#   B. effect soundness  : the new effect row must never DROP an observable effect
-#      (Write/IO/Raises) the old engine reports (Diverge may differ — the new VRA is more
-#      precise). effects_driver.c already encodes this; we just tally UNSOUND lines.
+# The previous criterion ("0 findings on programs the old engine accepts") was a STRUCTURAL
+# MISTAKE: it forbids the new engine from ever being STRONGER than the old one — a better
+# checker fails it by construction (see internal/design/critical_retrospective.md §2).
 #
-# Detection (the passes actually FIRE on violations) is proven by the hand-built IR unit
-# tests test_linearity.c / test_borrow.c, because the old sema exit()s on the fail-tests
-# before the new passes could run — so the corpus can only measure direction A here.
+# The gate now COMPARES VERDICTS and requires every difference to be CLASSIFIED:
 #
-#   bash phase3_differential.sh        # exit 0 = parity holds
+#   *_pass.ln  (old ACCEPTS)   new finds violations  ⇒ NEW-REJECTS divergence
+#   *_fail.ln  (old REJECTS)   new finds nothing     ⇒ NEW-ACCEPTS divergence
+#
+# Each divergence must appear in phase3_adjudications.txt with one of:
+#   old-unsound            new rejects and is RIGHT      → a WIN (add a fail-test)
+#   new-over-strict        new rejects and is WRONG      → a BUG to fix
+#   new-more-precise       new accepts and is RIGHT      → a WIN (e.g. v.push(v.len()))
+#   new-incomplete-<area>  new accepts because that analysis ISN'T BUILT YET → tracked gap
+#   new-unsound            new accepts and is WRONG      → HARD FAIL, must never appear
+#
+# PASS ⟺ no UNADJUDICATED divergence and no `new-unsound`. Divergence itself is allowed —
+# that is the whole point: it is how a stronger engine is permitted to land.
+#
+#   bash phase3_differential.sh            # exit 0 = gate holds
+#   bash phase3_differential.sh --list     # print divergences in ledger format (to triage)
 set -u
 cd "$(dirname "$0")"
+LEDGER=phase3_adjudications.txt
 LINDRV=/tmp/lindrv EFFDRV=/tmp/effdrv
+LIST=0; [ "${1:-}" = "--list" ] && LIST=1
+
 gcc -std=c99 -o "$LINDRV" src/analysis/linearity_driver.c -I src 2>/dev/null || { echo "build lindrv failed"; exit 2; }
 gcc -std=c99 -o "$EFFDRV" src/analysis/effects_driver.c   -I src 2>/dev/null || { echo "build effdrv failed"; exit 2; }
 
-fp=0 fp_files="" scanned=0 uns=0
+# classification for a path, from the ledger ("" if unadjudicated)
+adjudication() { grep -E "^[[:space:]]*$1[[:space:]]" "$LEDGER" 2>/dev/null | awk '{print $3}' | head -1; }
+
+agree=0 skipped=0 unadj=0 unsound=0 eff_uns=0
+declare -A cls_count
+unadj_lines=""
+
 while IFS= read -r f; do
-    case "$f" in *_fail.ln) continue;; esac
-    "$LINDRV" "$f" 2>&1 >/dev/null | grep -q "Cannot open" && continue     # skip driver module-path misses
-    scanned=$((scanned+1))
-    "$LINDRV" "$f" --quiet >/dev/null 2>/dev/null || { fp=$((fp+1)); fp_files="$fp_files $f"; }
-    u=$("$EFFDRV" "$f" 2>&1 | grep -cE "^UNSOUND ")
-    uns=$((uns+u))
+    case "$f" in *_fail.ln) expect_reject=1;; *) expect_reject=0;; esac
+    if [ $expect_reject -eq 1 ]; then out=$("$LINDRV" "$f" --reject 2>&1); else out=$("$LINDRV" "$f" 2>&1); fi
+    echo "$out" | grep -q "Cannot open" && { skipped=$((skipped+1)); continue; }
+    # the summary line only prints if our driver actually RAN (sema didn't exit first)
+    n=$(echo "$out" | sed -n 's/^linearity: \([0-9]*\) finding.*/\1/p' | head -1)
+    [ -z "$n" ] && { skipped=$((skipped+1)); continue; }   # old engine rejected for another reason
+
+    if   [ $expect_reject -eq 0 ] && [ "$n" -gt 0 ]; then div="NEW-REJECTS"
+    elif [ $expect_reject -eq 1 ] && [ "$n" -eq 0 ]; then div="NEW-ACCEPTS"
+    else agree=$((agree+1)); continue; fi
+
+    c=$(adjudication "$f")
+    if [ -z "$c" ]; then
+        unadj=$((unadj+1)); unadj_lines="$unadj_lines\n$f  $div  UNADJUDICATED"
+        [ $LIST -eq 1 ] && printf '%s  %s  <classify-me>\n' "$f" "$div"
+    else
+        cls_count[$c]=$(( ${cls_count[$c]:-0} + 1 ))
+        [ "$c" = "new-unsound" ] && unsound=$((unsound+1))
+    fi
+done < <(find tests -name '*.ln' -type f | sort)
+
+# effect soundness (unchanged: the new effect row must never DROP an observable effect)
+while IFS= read -r f; do
+    eff_uns=$(( eff_uns + $("$EFFDRV" "$f" 2>&1 | grep -cE "^UNSOUND ") ))
 done < <(find tests -name '*_pass.ln' | sort)
 
+[ $LIST -eq 1 ] && exit 0
 echo "=================================================================="
-echo "Phase 3 differential (new sovereign IR analyses vs old AST engine)"
-echo "  A. linearity+borrow false positives (must be 0): $fp   over $scanned pass-programs"
-echo "  B. effect observable-effect drops   (must be 0): $uns"
+echo "Phase 3 gate — ADJUDICATED DIVERGENCE (new sovereign IR vs old engine)"
+echo "  verdicts agree            : $agree"
+echo "  skipped (non-ownership)   : $skipped"
+for k in "${!cls_count[@]}"; do printf '  %-24s: %s\n' "$k" "${cls_count[$k]}"; done
+echo "  UNADJUDICATED             : $unadj      (must be 0)"
+echo "  new-unsound               : $unsound      (must be 0)"
+echo "  effect observable-drops   : $eff_uns      (must be 0)"
 echo "=================================================================="
-[ -n "$fp_files" ] && { echo "false-positive files:"; for x in $fp_files; do echo "  $x"; done; }
-[ "$fp" -eq 0 ] && [ "$uns" -eq 0 ] && { echo "PARITY HOLDS (0 false positives, 0 dropped effects)"; exit 0; }
-echo "PARITY BROKEN"; exit 1
+[ $unadj -gt 0 ] && { printf 'unadjudicated divergences:%b\n' "$unadj_lines"; echo "→ classify each in $LEDGER (or run --list)"; }
+if [ $unadj -eq 0 ] && [ $unsound -eq 0 ] && [ $eff_uns -eq 0 ]; then
+    echo "GATE HOLDS — every divergence is accounted for"; exit 0
+fi
+echo "GATE BROKEN"; exit 1
