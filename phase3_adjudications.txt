@@ -81,9 +81,18 @@ tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-more-
 # What remains is NOT one cluster — the old engine reports these under four different codes,
 # and only match_borrow_mut is a borrow conflict at all:
 #   match_borrow_mut  E004 — a real conflict, through a `case` binding (phase B: reborrows)
-#   block_scope  E003, elif_borrow  E016 — LEAK/consistency on one branch, not borrows;
-#     they sit in this section only because that is where they were first triaged.
-#   borrow_fail  E008 — a distinct code again; re-triage before attacking.
+# borrow_fail and elif_borrow are now CLOSED too — a MOVE is an access (a consuming parameter
+# invalidates the place, so it conflicts with any overlapping one), and a second MUST-moved
+# lattice (intersection merge) beside the MAY one gives E016 = "moved on some paths, not all".
+# TWO remain, and neither is a co-argument conflict:
+#   block_scope  E003 — `mov x File` never consumed. Blocked on PER-FIELD linear state: the
+#     leak rule cannot simply cover every owned linear slot, because `consume(r mov Resource)
+#     { return mov r.handle }` discharges the struct's obligation by consuming its FIELD, and
+#     flagging the slot is a false positive (tests/ownership/field_consume_pass requires
+#     exactly this). Needs a consumption MASK per slot, like definite_init's field mask.
+#   match_borrow_mut  E004 — `case &x { 42: x = 99 }`. The scrutinee borrow is live for the
+#     whole match CONSTRUCT, which is a scoped region rather than a last-use one; loans are
+#     currently created only where an address is parked in a slot.
 # struct_field_dangling is CLOSED: two fixes, both found by taking it seriously rather than
 # filing it. Lowering now gives a mutable string binding its OWN storage (which also fixed a
 # real segfault — see CORPUS_CORRECTIONS/commit b56aa24), so the slice honestly roots in an

@@ -58,9 +58,12 @@ int main(int argc, char **argv) {
         Lin *L = lin_analyze(f);
         for (int i=0;i<L->nfinds;i++) { total++;
             const char *tag = L->finds[i].code==1?"E001 use-after-move"
-                            : L->finds[i].code==2?"E002 double-move":"E003 leak";
+                            : L->finds[i].code==2?"E002 double-move"
+                            : L->finds[i].code==16?"E016 inconsistent":"E003 leak";
             const char *msg = L->finds[i].code==1?"use of moved value"
-                            : L->finds[i].code==2?"moved twice":"linear value not consumed";
+                            : L->finds[i].code==2?"moved twice"
+                            : L->finds[i].code==16?"consumed on some paths but not others"
+                            : "linear value not consumed";
             fprintf(stderr,"[%s] %.*s: %s (slot %%%d)\n", tag,
                 f->name?(int)f->name->length:1, f->name?f->name->name:"?", msg, L->finds[i].slot);
         }

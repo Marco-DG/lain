@@ -98,8 +98,16 @@ static bool bor_arg_loan(Borrow *B, IrFunc *callee, int k, IrValue *arg, IrPlace
     // mutable borrow is merely RESERVED while the copy is read). An aggregate parameter
     // (ptr / struct / slice) IS a live reference for the call's duration.
     bool is_borrow = (pt->kind==IRT_PTR || pt->kind==IRT_STRUCT || pt->kind==IRT_SLICE);
-    if (!is_borrow) return false;
-    if (pt->kind==IRT_PTR && pt->ptr_mut) *is_mut = true;
+    // A MOVE is an access too, and the strongest one: `conflict(res, mov res)` reads res
+    // through one parameter while consuming it through another, leaving the first looking at
+    // a moved-from value. Folding moves into the borrow framework as an access (design §2)
+    // rather than a separate pass is what makes one conflict rule cover it — a consuming
+    // parameter invalidates the place, so it conflicts with any overlapping access, exactly
+    // as a mutable borrow does. This also makes a `mov` of a SCALAR a tracked access, which
+    // a by-value copy is not.
+    bool is_move = (p && p->value && p->value->owns);
+    if (!is_borrow && !is_move) return false;
+    if (is_move || (pt->kind==IRT_PTR && pt->ptr_mut)) *is_mut = true;
     IrInstr *d = (arg->id>=0 && arg->id<B->nvar) ? B->def[arg->id] : NULL;
     IrPlace pl = (d && d->op==IR_LOAD && d->n_operands>=1)
                ? ir_place_of(B->def, B->nvar, d->operands[0])   // by-value read of a place

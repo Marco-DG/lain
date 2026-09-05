@@ -172,17 +172,58 @@ static Lin *lin_analyze(IrFunc *f) {
             }
         }
     }
+    // A second, MUST fixpoint over the SAME transfer function, differing only in the merge:
+    // INTERSECTION instead of union. The two lattices answer different questions and the pass
+    // needs both — asking one of them twice is what left conditional consumption invisible.
+    //   MAY  (union)        moved on SOME path   ⇒ a later use is a use-after-move (E001/E002)
+    //   MUST (intersection) moved on EVERY path  ⇒ the obligation is discharged
+    // MAY ∧ ¬MUST is exactly "consumed on some branches but not others" — E016, the
+    // inconsistent linear state that a discipline without implicit drop must reject. It was
+    // invisible because the leak check asked only ¬MAY ("never consumed anywhere").
+    bool **inmust = calloc(L->nb,sizeof(bool*));
+    for (int i=0;i<L->nb;i++) inmust[i]=calloc(L->nvar,sizeof(bool));
+    bool *seen = calloc(L->nb,sizeof(bool));
+    seen[f->entry->id] = true;
+    changed=true; sweeps=0;
+    while (changed && sweeps++ < 1000) {
+        changed=false;
+        for (IrBlock *b=f->blocks; b; b=b->next) {
+            if (!seen[b->id]) continue;
+            memcpy(tmp, inmust[b->id], L->nvar); lin_run_block(L, b, tmp, false);
+            IrBlock *succ[3]={0,0,0}; int ns=0;
+            switch (b->term.kind) {
+                case IR_TERM_BR:      succ[ns++]=b->term.a; break;
+                case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
+                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                default: break;
+            }
+            for (int k=0;k<ns;k++){ IrBlock *s=succ[k]; if(!s) continue;
+                if (!seen[s->id]) { memcpy(inmust[s->id],tmp,L->nvar); seen[s->id]=true; changed=true; continue; }
+                bool *si=inmust[s->id];
+                for (int v=0;v<L->nvar;v++) if (si[v] && !tmp[v]){ si[v]=false; changed=true; }
+            }
+        }
+    }
+    bool *must = malloc(L->nvar);
     // reporting sweep: replay each block from its converged in-state
     for (IrBlock *b=f->blocks; b; b=b->next) {
         memcpy(out, L->in[b->id], L->nvar);
         lin_run_block(L, b, out, true);
-        // E003 leak: a linear slot still LIVE (not consumed) when the function returns.
-        // `return mov x` consumes x first, so a returned resource is not flagged.
-        if (b->term.kind==IR_TERM_RET)
-            for (int s=0;s<L->nvar;s++)
-                if (L->linsl[s] && !out[s]) lin_add(L, s, b->term.cond?b->term.cond->line:0,
-                                                    b->term.cond?b->term.cond->col:0, 3);
+        if (b->term.kind==IR_TERM_RET) {
+            memcpy(must, inmust[b->id], L->nvar);
+            if (seen[b->id]) lin_run_block(L, b, must, false);
+            for (int s=0;s<L->nvar;s++) {
+                isize ln = b->term.cond?b->term.cond->line:0, cl = b->term.cond?b->term.cond->col:0;
+                // E003 leak: never consumed on ANY path, and a resource would be lost.
+                if (L->linsl[s] && !out[s]) { lin_add(L, s, ln, cl, 3); continue; }
+                // E016: consumed on some paths, not others — the state is not well-defined.
+                if (L->movesl[s] && out[s] && seen[b->id] && !must[s]) lin_add(L, s, ln, cl, 16);
+            }
+        }
     }
+    for (int i=0;i<L->nb;i++) free(inmust[i]);
+    free(inmust); free(seen); free(must);
     free(out); free(tmp);
     return L;
 }
