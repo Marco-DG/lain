@@ -785,6 +785,17 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
     if (e->kind == EXPR_IDENTIFIER) {
         IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
         if (l && l->slot) return l->slot;
+        // A binding that is a VALUE with no home slot — a match-arm payload (`case s { Pt(p):
+        // ... p.x ... }`) or a by-value parameter — still needs an address when a field is
+        // read off it. It had none, so `p.x` lowered to a field of an OPAQUE null and the
+        // emitted C dereferenced NULL: three ADT tests SEGFAULTED. Materialise a temporary,
+        // which is the ordinary C rule for a temporary's lifetime and is already what the
+        // rvalue path below does. Such a binding is immutable, so nothing is lost by copying.
+        if (l && l->param && l->param->type) {
+            IrValue *tmp = ir_alloca(c->f, c->cur, l->param->type);
+            ir_store(c->f, c->cur, tmp, l->param);
+            return tmp;
+        }
     }
     // `*p` as an LVALUE: the address IS the pointer. Without this every `*p = v` produced an
     // OPAQUE placeholder and the write was silently LOST — `unsafe { *q = *q + 100 }` computed
