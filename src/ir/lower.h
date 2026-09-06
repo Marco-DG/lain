@@ -371,6 +371,16 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
     // carries T, one empty variant per marker. The LAYOUT — a tagged pair, or the old
     // backend's niche where markers are out-of-range values of T — is deliberately not
     // recorded, exactly as for a named enum: that is the backend's choice, not the IR's.
+    if (t->kind == TYPE_FUNC) {
+        IrType *ft = ir_type_new(c->a, IRT_FUNC);
+        ft->elem = t->element_type ? ir_lower_type(c, t->element_type) : NULL;
+        int n = 0; for (TypeList *p = t->func_params; p; p = p->next) n++;
+        ft->n_fields = n;
+        ft->fields = arena_push_many_aligned(c->a, IrType*, n > 0 ? n : 1);
+        int k = 0; for (TypeList *p = t->func_params; p; p = p->next, k++)
+            ft->fields[k] = ir_lower_type(c, p->type);
+        return ft;
+    }
     if (t->kind == TYPE_VECTOR) {
         IrType *v = ir_type_new(c->a, IRT_VECTOR);
         v->elem = ir_lower_type(c, t->element_type);
@@ -1054,6 +1064,16 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                     if (st && st->kind==IRT_SUM) return ir_sum_new(c->f, c->cur, st, k, NULL, 0);
                 }
             }
+            // A function NAME used as a VALUE — `var f *func(i32,i32) i32 = choose`. It is
+            // neither a local nor a constant, and with no case here it became an OPAQUE
+            // unknown, so the pointer was never actually stored.
+            if (e->decl && (e->decl->kind==DECL_FUNCTION || e->decl->kind==DECL_PROCEDURE
+                         || e->decl->kind==DECL_EXTERN_FUNCTION || e->decl->kind==DECL_EXTERN_PROCEDURE)) {
+                Id *fnm = e->decl->as.function_decl.name;
+                if (fnm) return ir_func_ref(c->f, c->cur,
+                                            ir_intern(c->a, fnm->name, fnm->length),
+                                            ty && ty->kind==IRT_FUNC ? ty : ir_type_new(c->a, IRT_FUNC));
+            }
             // not a local/param: a module-level constant folds to its initializer
             if (c->const_depth < 32) {
                 Decl *g = ir_find_global_const(c, e->as.identifier_expr.id);
@@ -1231,7 +1251,16 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             // an INDIRECT call (through a fn-pointer VARIABLE) has a non-function callee decl:
             // null it so we don't read `.function_decl` off a variable_decl (a wrong-union
             // crash). A DECL_STRUCT callee is a constructor, handled just below — leave it.
-            if (callee && callee->kind==DECL_VARIABLE) callee = NULL;
+            // A call through a fn-pointer VARIABLE names no function. It used to null the
+            // callee decl and then fall back to the identifier's name, so the emitted C called
+            // a function that does not exist; the analyses, meanwhile, resolved that name to
+            // nothing and silently treated the call as unknown — right answer, wrong reason.
+            // Detected from the callee's TYPE, not its decl: a local fn-pointer has no decl
+            // attached at the call site, so keying on DECL_VARIABLE missed every real case.
+            Expr *cx = e->as.call_expr.callee;
+            bool indirect = (callee && callee->kind==DECL_VARIABLE)
+                         || (cx && cx->type && cx->type->kind==TYPE_FUNC);
+            if (indirect) callee = NULL;
             int n=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next) n++;
             // `Point(1, 2)` is struct construction, not a call: build a struct value
             // from the positional field args (in declaration order).
@@ -1278,13 +1307,18 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                     return ir_sum_new(c->f, c->cur, ty, k, fs, n);
                 }
             }
-            IrInstr *ins = ir_instr(c->f, IR_CALL, (e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT) ? ty : NULL, n);
+            IrValue *fnv = indirect ? ir_lower_expr(c, e->as.call_expr.callee) : NULL;
+            IrInstr *ins = ir_instr(c->f, IR_CALL,
+                                    (e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT) ? ty : NULL,
+                                    indirect ? n + 1 : n);
             Id *cnm = callee ? callee->as.function_decl.name : NULL;   // intern the callee name
-            if (!cnm && e->as.call_expr.callee && e->as.call_expr.callee->kind==EXPR_IDENTIFIER)
+            if (!indirect && !cnm && e->as.call_expr.callee && e->as.call_expr.callee->kind==EXPR_IDENTIFIER)
                 cnm = e->as.call_expr.callee->as.identifier_expr.id;   // declless builtin (e.g. `panic`)
-            ins->aux.callee = cnm ? ir_intern(c->a, cnm->name, cnm->length) : NULL;
+            ins->aux.callee = (!indirect && cnm) ? ir_intern(c->a, cnm->name, cnm->length) : NULL;
+            if (indirect) ins->operands[0] = fnv;
             DeclList *pp = callee ? callee->as.function_decl.params : NULL;
             int i=0;
+            if (indirect) i = 1;                       // operand 0 is the callee value
             for (ExprList *a=e->as.call_expr.args; a; a=a->next,i++) {
                 IrValue *av = ir_lower_expr(c, a->expr);
                 // a fixed array decays to a slice when the callee expects one

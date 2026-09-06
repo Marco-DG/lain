@@ -40,6 +40,18 @@ static void ir_ctype(const IrType *t, FILE *o) {
         case IRT_INT:  fprintf(o, "%sint%d_t", t->is_signed?"":"u", ir_c_stdbits(t->bits)); break;
         case IRT_BOOL: fputs("_Bool", o); break;
         case IRT_FLOAT: fputs(t->float_bits==32 ? "float" : "double", o); break;
+        case IRT_FUNC: {     // the function-pointer typedef declared in ir_emit_type_decls.
+            // Named from the SIGNATURE rather than a counter, so two independent mentions of
+            // the same type produce the same name without sharing state.
+            char b[192]; int k = snprintf(b, sizeof b, "Fn_");
+            k += ir_slice_tag(t->elem, b+k, (int)sizeof b - k);
+            for (int i2=0;i2<t->n_fields;i2++) {
+                k += snprintf(b+k, sizeof b - (size_t)k, "_");
+                k += ir_slice_tag(t->fields[i2], b+k, (int)sizeof b - k);
+            }
+            fputs(b, o);
+            break;
+        }
         case IRT_VECTOR: {   // the GCC/Clang vector_size typedef declared in ir_emit_type_decls
             char tag[64]; ir_slice_tag(t->elem, tag, sizeof tag);
             fprintf(o, "Vec_%d_%s", (int)t->array_len, tag);
@@ -191,6 +203,8 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             fputs(" };\n", o);
             break;
         }
+        case IR_FUNC_REF: fprintf(o, "  v%d = %.*s;\n", i->result->id,
+                                  (int)i->aux.callee->length, i->aux.callee->name); break;
         case IR_STRUCT_NEW: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
                             fputs("){ ", o);
                             for (int k=0;k<i->n_operands;k++){ if(k)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
@@ -204,9 +218,12 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
         case IR_CALL: {
             fputs("  ", o);
             if (i->result) fprintf(o, "v%d = ", i->result->id);
+            // INDIRECT (no name): operand 0 is the callee value and the rest are arguments.
+            int a0 = 0;
             if (i->aux.callee) fprintf(o, "%.*s", (int)i->aux.callee->length, i->aux.callee->name);
+            else if (i->n_operands >= 1) { fprintf(o, "v%d", i->operands[0]->id); a0 = 1; }
             fputc('(', o);
-            for (int k=0;k<i->n_operands;k++){ if(k)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
+            for (int k=a0;k<i->n_operands;k++){ if(k>a0)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
             fputs(");\n", o);
             break;
         }
@@ -290,7 +307,8 @@ static void ir_emit_proto_c(IrFunc *f, FILE *o) {
 // transitively so a struct that appears only as a slice element / pointer pointee
 // / another struct's field is still declared.
 typedef struct { IrType *structs[256]; int n_struct; IrType *slices[256]; int n_slice;
-                 IrType *vecs[64];     int n_vec; } IrTypeSet;
+                 IrType *vecs[64];     int n_vec;
+                 IrType *fns[64];      int n_fn; } IrTypeSet;
 static bool ir_name_eq(const IrName *a, const IrName *b) {
     return a && b && a->length==b->length && memcmp(a->name,b->name,(size_t)a->length)==0;
 }
@@ -307,6 +325,23 @@ static void ir_ts_visit(IrTypeSet *ts, IrType *t) {
     if (!t) return;
     switch (t->kind) {
         case IRT_PTR: case IRT_ARRAY: ir_ts_visit(ts, t->elem); break;
+        case IRT_FUNC: {     // one typedef per distinct signature
+            char mine[192]; { int k = snprintf(mine,sizeof mine,"Fn_");
+                k += ir_slice_tag(t->elem, mine+k, (int)sizeof mine - k);
+                for (int i2=0;i2<t->n_fields;i2++) { k += snprintf(mine+k,sizeof mine-(size_t)k,"_");
+                    k += ir_slice_tag(t->fields[i2], mine+k, (int)sizeof mine - k); } }
+            for (int i2=0;i2<ts->n_fn;i2++) {
+                char other[192]; { IrType *f2=ts->fns[i2]; int k = snprintf(other,sizeof other,"Fn_");
+                    k += ir_slice_tag(f2->elem, other+k, (int)sizeof other - k);
+                    for (int j=0;j<f2->n_fields;j++) { k += snprintf(other+k,sizeof other-(size_t)k,"_");
+                        k += ir_slice_tag(f2->fields[j], other+k, (int)sizeof other - k); } }
+                if (strcmp(mine, other)==0) return;
+            }
+            ir_ts_visit(ts, t->elem);
+            for (int i2=0;i2<t->n_fields;i2++) ir_ts_visit(ts, t->fields[i2]);
+            if (ts->n_fn < 64) ts->fns[ts->n_fn++] = t;
+            break;
+        }
         case IRT_VECTOR: {   // one vector_size typedef per (lanes, lane type)
             for (int i=0;i<ts->n_vec;i++)
                 if (ts->vecs[i]->array_len==t->array_len && ts->vecs[i]->elem
@@ -429,6 +464,16 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     }
     for (int i=0;i<ts.n_struct;i++){ IrName *nm=ts.structs[i]->sname;
         fprintf(o, "typedef struct %.*s %.*s;\n", (int)nm->length, nm->name, (int)nm->length, nm->name); }
+    for (int i=0;i<ts.n_fn;i++) {          // function-pointer typedefs
+        IrType *ft = ts.fns[i];
+        fputs("typedef ", o);
+        if (ft->elem) ir_ctype(ft->elem, o); else fputs("void", o);
+        fputs(" (*", o); ir_ctype(ft, o); fputs(")(", o);
+        for (int k=0;k<ft->n_fields;k++) { if (k) fputs(", ", o); ir_ctype(ft->fields[k], o); }
+        if (!ft->n_fields) fputs("void", o);
+        fputs(");\n", o);
+    }
+    if (ts.n_fn) fputc('\n', o);
     // SIMD vectors first: they are primitives, and a slice or struct may contain one.
     for (int i=0;i<ts.n_vec;i++) {
         IrType *v = ts.vecs[i];

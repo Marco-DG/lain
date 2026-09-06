@@ -117,6 +117,12 @@ IrValue *ir_const_float(IrFunc *f, IrBlock *b, double v, IrType *t) {
     ir_emit(b, ins);
     return ins->result;
 }
+IrValue *ir_func_ref(IrFunc *f, IrBlock *b, IrName *name, IrType *ft) {
+    IrInstr *ins = ir_instr(f, IR_FUNC_REF, ft, 0);
+    ins->aux.callee = name;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_binop(IrFunc *f, IrBlock *b, IrOp op, IrValue *x, IrValue *y, IrType *t) {
     IrInstr *ins = ir_instr(f, op, t, 2);
     ins->operands[0] = x; ins->operands[1] = y;

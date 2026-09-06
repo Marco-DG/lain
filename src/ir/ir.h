@@ -33,6 +33,11 @@ typedef enum {
     IRT_INT,        // iN / uN, usize/isize — carries width + signedness
     IRT_BOOL,       // i1 truth value
     IRT_FLOAT,      // f32 / f64 (opaque to the numeric domain, for now)
+    IRT_FUNC,       // a non-capturing FUNCTION POINTER. `elem` = return type (NULL = void),
+                    // `fields[0..n_fields)` = parameter types. Values of this type are the
+                    // only ones a call can reach INDIRECTLY, which is why the type has to
+                    // exist: without it an indirect call is unattributable and every analysis
+                    // has to assume the worst about the whole program.
     IRT_VECTOR,     // SIMD `Vec(N, T)` — N lanes of T. `elem` = lane type, `array_len` = N.
                     // A plain Copy value: no linearity, register-resident. The LAYOUT (a
                     // vector_size typedef, or N scalars) is the backend's, exactly as for a
@@ -162,7 +167,13 @@ typedef enum {
                             // Well-defined ONLY where the tag is known to be `variant`, which
                             // the CFG already establishes — no extra machinery needed.
     // calls
-    IR_CALL,                // aux.callee : Decl ; op[0..] = args
+    IR_FUNC_REF,            // aux.callee = a function's name ; result : IRT_FUNC. Naming a
+                            // function without calling it — what `var f *func(..) = choose`
+                            // stores. Without it the initializer had no value at all.
+    IR_CALL,                // DIRECT:   aux.callee = the name ; op[0..] = args
+                            // INDIRECT: aux.callee = NULL      ; op[0] = the callee VALUE,
+                            //           op[1..] = args. A call through a pointer names no
+                            //           function, so every analysis must treat it as opaque.
     // ── S2: the MEMORY MODEL — a rank-N strided region ──────────────────────
     // Declares that a flat region has a SHAPE: operand 0 is the base (array/slice), and
     // operands 1..n are its EXTENTS, outermost first. Strides are row-major and derived
