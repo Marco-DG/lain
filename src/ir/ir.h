@@ -54,6 +54,21 @@ typedef struct IrType {
     bool  ptr_mut;          // *var T
     bool  slice_sentinel;   // u8[:0]
     int64_t array_len;      // IRT_ARRAY fixed length (>= 0)
+    // ── B4: a STATIC REFINEMENT carried ON the type ─────────────────────────
+    // The interval a value of this type is known to inhabit, tighter than its width allows.
+    // `type Small = u8 < 200` is a property of the TYPE, not of any one value, so it belongs
+    // here — and every analysis reading the type gets it, with no side-map and no assume.
+    //
+    // The distinction that makes this the right home (and why IR_SHAPE's extents are NOT
+    // here): a static interval is the same for every value of the type, while a slice's
+    // length or a region's extents are per-value runtime quantities. Type-level facts on the
+    // type; value-level facts in the IR.
+    //
+    // Without it, resolving an alias to its base DISCARDED the constraint: `n Small` was
+    // indistinguishable from `n u8`, so `a[n]` over `a[200]` did not prove — while the SAME
+    // constraint written on the parameter did, because that path goes through the assumes.
+    bool    has_refine;
+    int64_t refine_lo, refine_hi;
     // linearity/multiplicity qualifier (Phase 3.2 / B5 substrate) — a value of a `linear`
     // type must be consumed exactly once (an owned resource: `mov`d, freed, or returned).
     // Language-neutral: Lain's owned modes and Rust's affine owners both lower to this.

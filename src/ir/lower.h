@@ -246,6 +246,40 @@ static IrType *ir_resolve_alias_base(LowerCtx *c, Decl *ad) {
     if (rhs->type) return ir_lower_type(c, rhs->type);           // any other resolved expr
     return NULL;
 }
+// B4: copy `base` and narrow it by the alias's literal relational constraints. Only literal
+// RHS bounds are type-level: a constraint against another identifier is per-VALUE and stays
+// in the assume channel where it belongs.
+static IrType *ir_refine_int_type(LowerCtx *c, IrType *base, Decl *ad) {
+    if (!ad || ad->kind != DECL_TYPE_ALIAS) return base;
+    int64_t lo, hi;
+    if (!irtype_int_range(base, &lo, &hi)) return base;
+    int64_t nlo = lo, nhi = hi; bool got = false;
+    // The constraints hang off the DECL, not the RHS expression — sema resolves the RHS to
+    // an EXPR_TYPE and files the relational clauses separately (alias_constraints_for reads
+    // the same list). Walking the expression found nothing at all.
+    for (ExprList *cn = ad->as.type_alias_decl.constraints; cn; cn = cn->next) {
+        Expr *e = cn->expr;
+        {
+            if (!e || e->kind != EXPR_BINARY) continue;
+            Expr *r = e->as.binary_expr.right;
+            if (!r || r->kind != EXPR_LITERAL) continue;
+            int64_t k = (int64_t)r->as.literal_expr.value;
+            switch (e->as.binary_expr.op) {
+                case TOKEN_ANGLE_BRACKET_LEFT:        if (k-1 < nhi) { nhi = k-1; got = true; } break;
+                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (k   < nhi) { nhi = k;   got = true; } break;
+                case TOKEN_ANGLE_BRACKET_RIGHT:       if (k+1 > nlo) { nlo = k+1; got = true; } break;
+                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (k   > nlo) { nlo = k;   got = true; } break;
+                default: break;
+            }
+        }
+    }
+    if (!got || nlo > nhi) return base;
+    IrType *r = ir_type_new(c->a, IRT_INT);
+    *r = *base;
+    r->has_refine = true; r->refine_lo = nlo; r->refine_hi = nhi;
+    return r;
+}
+
 // Index of field `m` in an IRT_STRUCT (uses the IR type's own field table — no AST).
 static int ir_field_index(IrType *st, Id *m, IrType **fty) {
     if (!st || st->kind != IRT_STRUCT || !m) return -1;
@@ -298,6 +332,10 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
                 c->const_depth++;
                 IrType *r = ir_resolve_alias_base(c, ad);
                 c->const_depth--;
+                // B4: the alias's CONSTRAINT is a property of the type — carry it, do not
+                // discard it. `type Small = u8 < 200` was resolving to a bare `u8`, so a
+                // value of type Small was indistinguishable from any other u8.
+                if (r && r->kind == IRT_INT) r = ir_refine_int_type(c, r, ad);
                 if (r) return r;
             }
             // a named ENUM → a self-contained IRT_SUM (variant table). Payload-carrying

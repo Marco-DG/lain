@@ -297,6 +297,33 @@ int main(void) {
     vra_expect("sliding window a[i+1] under i+1<a.len",     sliding_window_proven(), true);
     vra_expect("two-pointer a[i] under i<=j & j<a.len",     two_pointer_proven(),    true);
     // MASK idiom — nonlinear transfer: x & (N-1) ∈ [0,N-1] for ANY x.
+    // ── B4: a STATIC REFINEMENT on the TYPE ────────────────────────────────────────────
+    // `type Small = u8 < 200` is a property of the TYPE, so every value of it inherits the
+    // interval with no assume and no side-map. Resolving the alias to its base DISCARDED it,
+    // making `n Small` indistinguishable from `n u8`. The negative case matters equally: the
+    // refinement must not prove an access the interval does not cover.
+    { IrType *u8r = ir_type_int(&A,8,false);
+      u8r->has_refine = true; u8r->refine_lo = 0; u8r->refine_hi = 199;
+      IrType *u8p = ir_type_int(&A,8,false);          // the same width, NO refinement
+      struct { const char *what; IrType *ty; int alen; bool want; } cs[] = {
+          { "refined u8<200 indexes a[200]  PROVES",       u8r, 200, true  },
+          { "refined u8<200 indexes a[150]  refused",      u8r, 150, false },
+          { "PLAIN u8 indexes a[200]        refused",      u8p, 200, false },
+      };
+      for (unsigned t=0;t<sizeof cs/sizeof cs[0];t++) {
+        IrFunc *f=ir_func_new(&A,nm("ref"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+        IrValue *n=ir_add_param(f,cs[t].ty,nm("n"));
+        IrBlock *e=f->entry;
+        IrValue *a=ir_alloca_array(f,e,arr_i32(cs[t].alen));
+        ir_elem_ptr(f,e,a,n,ir_type_int(&A,32,true));
+        ir_set_ret(e,NULL); ir_finalize_cfg(f);
+        Vra *V=vra_analyze(f); bool ok=false;
+        for(int k=0;k<V->nchecks;k++) if(V->checks[k].kind==VRA_BOUNDS) ok=V->checks[k].ok;
+        vra_free(V);
+        vra_expect(cs[t].what, ok, cs[t].want);
+      }
+    }
+
     // ── S2: rank-N strided regions ─────────────────────────────────────────────────────
     // `a[i*w + j]` over a region declared `i32[h*w]`. The FLAT obligation
     // `i*w + j < h*w` is NONLINEAR and no octagon can express it; with the shape it FACTORS
