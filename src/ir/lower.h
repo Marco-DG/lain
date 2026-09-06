@@ -91,6 +91,26 @@ static void ir_env_add(LowerCtx *c, Id *name, IrValue *slot, IrValue *param) {
 // A module-level immutable constant `NAME T = expr` (scalar) referenced by name.
 // sema qualifies a reference as `<defining_module>_<name>` (Q-018), while the decl
 // keeps the bare name — so match both the bare and the module-qualified spelling.
+// Does `name` begin with the MANGLED form of module path `mod`, followed by '_'? Sema
+// qualifies a cross-module reference as `<module>_<name>` with every separator flattened to
+// '_' (`tests/_tmp/glob` → `tests__tmp_glob`), while `defining_module` keeps the raw path. A
+// literal strncmp therefore never matched for any module whose path contains a separator —
+// which is every one of them — so a module-level constant silently fell through to an OPAQUE
+// read: `func nib(c u8) u8 { return c & NIB }` had an unknown operand and could prove nothing.
+static bool ir_mod_prefix(const char *mod, const Id *name, size_t *out_ml) {
+    if (!mod || !name) return false;
+    size_t i = 0;
+    for (; mod[i]; i++) {
+        if ((size_t)name->length <= i) return false;
+        char a = mod[i], b = name->name[i];
+        if (a=='/' || a=='\\' || a=='.' || a=='-') a = '_';
+        if (a != b) return false;
+    }
+    if ((size_t)name->length <= i || name->name[i] != '_') return false;
+    *out_ml = i;
+    return true;
+}
+
 static Decl *ir_find_global_const(LowerCtx *c, Id *name) {
     if (!name) return NULL;
     for (DeclList *d = c->globals; d; d = d->next) {
@@ -102,14 +122,11 @@ static Decl *ir_find_global_const(LowerCtx *c, Id *name) {
         if (dn->length == name->length &&
             strncmp(dn->name, name->name, (size_t)name->length) == 0)
             return dc;                                   // bare match
-        const char *mod = dc->defining_module;           // `<mod>_<name>` match
-        if (mod) {
-            size_t ml = strlen(mod);
-            if ((size_t)name->length == ml + 1 + (size_t)dn->length &&
-                strncmp(name->name, mod, ml) == 0 && name->name[ml] == '_' &&
-                strncmp(name->name + ml + 1, dn->name, (size_t)dn->length) == 0)
-                return dc;
-        }
+        size_t ml;                                       // `<mod>_<name>` match
+        if (ir_mod_prefix(dc->defining_module, name, &ml) &&
+            (size_t)name->length == ml + 1 + (size_t)dn->length &&
+            strncmp(name->name + ml + 1, dn->name, (size_t)dn->length) == 0)
+            return dc;
     }
     return NULL;
 }
@@ -136,14 +153,11 @@ static Decl *ir_find_struct_decl(LowerCtx *c, Id *name) {
         if (!dn) continue;
         if (dn->length == name->length &&
             strncmp(dn->name, name->name, (size_t)name->length) == 0) return dc;  // bare
-        const char *mod = dc->defining_module;                                    // `<mod>_<Name>`
-        if (mod) {
-            size_t ml = strlen(mod);
-            if ((size_t)name->length == ml + 1 + (size_t)dn->length &&
-                strncmp(name->name, mod, ml) == 0 && name->name[ml] == '_' &&
-                strncmp(name->name + ml + 1, dn->name, (size_t)dn->length) == 0)
-                return dc;
-        }
+        size_t ml;                                                                // `<mod>_<Name>`
+        if (ir_mod_prefix(dc->defining_module, name, &ml) &&
+            (size_t)name->length == ml + 1 + (size_t)dn->length &&
+            strncmp(name->name + ml + 1, dn->name, (size_t)dn->length) == 0)
+            return dc;
     }
     return NULL;
 }
@@ -157,14 +171,11 @@ static Decl *ir_find_enum_decl(LowerCtx *c, Id *name) {
         if (!dn) continue;
         if (dn->length == name->length &&
             strncmp(dn->name, name->name, (size_t)name->length) == 0) return dc;
-        const char *mod = dc->defining_module;
-        if (mod) {
-            size_t ml = strlen(mod);
-            if ((size_t)name->length == ml + 1 + (size_t)dn->length &&
-                strncmp(name->name, mod, ml) == 0 && name->name[ml] == '_' &&
-                strncmp(name->name + ml + 1, dn->name, (size_t)dn->length) == 0)
-                return dc;
-        }
+        size_t ml;
+        if (ir_mod_prefix(dc->defining_module, name, &ml) &&
+            (size_t)name->length == ml + 1 + (size_t)dn->length &&
+            strncmp(name->name + ml + 1, dn->name, (size_t)dn->length) == 0)
+            return dc;
     }
     return NULL;
 }

@@ -432,6 +432,74 @@ int main(void) {
     vra_expect("NON-term: i+=0 while i<8 (stuck)",            loop_terminates(0,IR_CMP_SLT,8),  false);
     vra_expect("NON-term: i-=1 while i<8 (diverges)",         loop_terminates(-1,IR_CMP_SLT,8), false);
 
+
+    // ── INFERRED RETURN RANGES ────────────────────────────────────────────────────────
+    // A call's result used to be FORGOTTEN, so an index computed by a helper could never be
+    // proven. The range now comes from the callee's body. Both directions matter: a callee
+    // that really does bound its result must PROVE, and one that does not must NOT — the
+    // failure mode here is a removed bounds check.
+    {
+        IrType *u8t = ir_type_int(&A,8,false);
+        // callee: `func g(c u8) u8 { return c & MASK }`  (MASK=15 ⇒ result in [0,15])
+        // caller: `proc caller() { a[g(200)] }` over a[16]
+        // `mask` < 0 builds the UNBOUNDED callee `return c`, which must not prove.
+        struct { int mask; int alen; bool want; const char *what; } cases[] = {
+            { 15, 16, true,  "a[g(x)] where g returns x & 15, a[16]" },
+            { 15,  8, false, "...same g, but a[8] — 15 is out of range" },
+            { -1, 16, false, "a[g(x)] where g returns x unmasked (0..255)" },
+        };
+        for (unsigned k=0; k<sizeof cases/sizeof *cases; k++) {
+            IrFunc *g = ir_func_new(&A, nm("g"), u8t, IR_FUNC_PURE);
+            IrValue *c = ir_add_param(g, u8t, nm("c"));
+            IrValue *rv = c;
+            if (cases[k].mask >= 0)
+                rv = ir_binop(g, g->entry, IR_AND, c, ir_const_int(g,g->entry,cases[k].mask,u8t), u8t);
+            ir_set_ret(g->entry, rv);
+
+            IrFunc *f = ir_func_new(&A, nm("caller"), ir_type_int(&A,32,true), IR_FUNC_PROC);
+            IrValue *a = ir_alloca_array(f, f->entry, arr_i32(cases[k].alen));
+            IrInstr *call = ir_instr(f, IR_CALL, u8t, 1);
+            call->aux.callee = g->name;
+            call->operands[0] = ir_const_int(f,f->entry,200,u8t);
+            ir_emit(f->entry, call);
+            ir_elem_ptr(f, f->entry, a, call->result, ir_type_int(&A,32,true));
+            ir_set_ret(f->entry, NULL);
+
+            f->next = g; vra_mod = f;              // the module the callee is looked up in
+            g->ret_range_state = 0;                // fresh query per case
+            Vra *V = vra_analyze(f);
+            bool ok=false; for (int i=0;i<V->nchecks;i++) if (V->checks[i].kind==VRA_BOUNDS) ok=V->checks[i].ok;
+            vra_free(V); vra_mod = NULL;
+            vra_expect(cases[k].what, ok, cases[k].want);
+        }
+
+        // A self-recursive callee must terminate the query rather than recurse forever, and
+        // must not invent a range: `state == 1` (in progress) falls back to nothing known.
+        {
+            IrFunc *g = ir_func_new(&A, nm("rec"), u8t, IR_FUNC_PURE);
+            IrValue *c = ir_add_param(g, u8t, nm("c"));
+            IrInstr *self = ir_instr(g, IR_CALL, u8t, 1);
+            self->aux.callee = g->name; self->operands[0] = c;
+            ir_emit(g->entry, self);
+            ir_set_ret(g->entry, self->result);
+
+            IrFunc *f = ir_func_new(&A, nm("caller2"), ir_type_int(&A,32,true), IR_FUNC_PROC);
+            IrValue *a = ir_alloca_array(f, f->entry, arr_i32(4));
+            IrInstr *call = ir_instr(f, IR_CALL, u8t, 1);
+            call->aux.callee = g->name;
+            call->operands[0] = ir_const_int(f,f->entry,200,u8t);
+            ir_emit(f->entry, call);
+            ir_elem_ptr(f, f->entry, a, call->result, ir_type_int(&A,32,true));
+            ir_set_ret(f->entry, NULL);
+
+            f->next = g; vra_mod = f; g->ret_range_state = 0;
+            Vra *V = vra_analyze(f);               // must return, not spin
+            bool ok=false; for (int i=0;i<V->nchecks;i++) if (V->checks[i].kind==VRA_BOUNDS) ok=V->checks[i].ok;
+            vra_free(V); vra_mod = NULL;
+            vra_expect("a recursive callee terminates and proves nothing", ok, false);
+        }
+    }
+
     if (failures==0) printf("VRA: all soundness+precision expectations met\n");
     else             printf("VRA: %d WRONG results\n", failures);
     return failures?1:0;

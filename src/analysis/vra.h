@@ -164,6 +164,27 @@ static void vra_assign_copy(Octagon *o, int dst, int src) {
 
 static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir);  // fwd
 static void vra_free(Vra *V);                                                    // fwd (phase D)
+
+// ── INFERRED RETURN RANGES ───────────────────────────────────────────────────────────────
+// A call's result was simply FORGOTTEN, so `LUT[nib(c)]` could not be proven even though
+// `func nib(c u8) u8 { return c & 0x0F }` can only return 0..15. The range is read off the
+// callee's BODY, exactly as the borrow mask is: analyse the callee, union the interval of
+// every returned value, memoize on the IrFunc.
+//
+// Soundness. The callee is analysed with its parameters at their declared intervals and its
+// entry assumes in force, so the interval holds for every legal call — which is the same
+// contract the caller is separately required to satisfy. A recursive query returns nothing
+// rather than a fixpoint over itself: `state == 1` falls back to the type interval.
+static IrFunc *vra_mod = NULL;   // module for callee lookup; NULL disables the query
+static IrFunc *vra_find_func(const IrName *n) {
+    if (!n || !vra_mod) return NULL;
+    // by CONTENT — ir_intern allocates a fresh IrName per call despite its name
+    for (IrFunc *g=vra_mod; g; g=g->next)
+        if (g->name && g->name->length==n->length && memcmp(g->name->name,n->name,(size_t)n->length)==0)
+            return g;
+    return NULL;
+}
+static bool vra_ret_range(IrFunc *g, int64_t *lo, int64_t *hi);
 static int  vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out);        // fwd (S2)
 static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx);            // fwd (S2)
 
@@ -339,14 +360,24 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) oct_forget(W, cell);
             if (r>=0) oct_forget(W, r);
             break;
-        case IR_CALL:
+        case IR_CALL: {
             // A call may write through any address it was given, and the octagon's memory
             // cells are exactly the scalar allocas — so every ESCAPED cell must be forgotten.
             // Without this the analysis kept a stale value across `bump(var i)` and proved an
             // out-of-bounds `a[i]` check-free.
             for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) oct_forget(W, cell);
-            if (r>=0) oct_forget(W, r);
+            if (r>=0) {
+                oct_forget(W, r);
+                // ...but the RESULT is not unknown: the callee's body bounds it.
+                int64_t rlo, rhi;
+                if (ins->result && ins->result->type
+                    && vra_ret_range(vra_find_func(ins->aux.callee), &rlo, &rhi)) {
+                    if (rlo > -OCT_INF/2) oct_add_lb(W, r, rlo);
+                    if (rhi <  OCT_INF/2) oct_add_ub(W, r, rhi);
+                }
+            }
             break;
+        }
         default:
             if (r>=0) oct_forget(W, r);   // conservative: result becomes unknown
             break;
@@ -772,6 +803,26 @@ static Vra *vra_analyze(IrFunc *f) {
             VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
             vra_add_check(V, c);
         }
+    // RETURN RANGE: union the interval of every returned value, read from that block's
+    // converged state replayed to its terminator. Only for a faithfully lowered function —
+    // an `incomplete` body could return anything.
+    if (f->ret_type && !f->incomplete) {
+        int64_t rlo=INT64_MAX, rhi=INT64_MIN; bool any=false, all=true;
+        for (IrBlock *b=f->blocks; b; b=b->next) {
+            if (b->term.kind!=IR_TERM_RET) continue;
+            if (!b->term.cond) { all=false; continue; }
+            if (!V->reached[b->id]) continue;          // unreachable: contributes nothing
+            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->nvar; W.dim=dim;
+            for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
+            oct_close(&W);
+            int64_t lo,hi; vra_range(V,&W,b->term.cond,&lo,&hi);
+            if (lo<rlo) rlo=lo;
+            if (hi>rhi) rhi=hi;
+            any=true;
+        }
+        if (any && all && rlo<=rhi) { f->ret_range_lo=rlo; f->ret_range_hi=rhi; f->ret_range_state=2; }
+        else f->ret_range_state=3;                     // analysed, nothing usable
+    } else if (f->ret_type) f->ret_range_state=3;
     // fail closed: if lowering was infaithful (a dropped/placeholder'd construct), no
     // proof over this IR is trustworthy — the dropped code could change a checked value.
     if (f->incomplete) for (int i=0;i<V->nchecks;i++) V->checks[i].ok=false;
@@ -779,6 +830,21 @@ static Vra *vra_analyze(IrFunc *f) {
     free(loopmod);
     free(W_m); free(T_m); free(J_m); free(D_m);
     return V;
+}
+
+static bool vra_ret_range(IrFunc *g, int64_t *lo, int64_t *hi) {
+    if (!g || g->is_extern || !g->ret_type) return false;
+    if (g->ret_range_state==1) return false;      // recursive query — no fixpoint over itself
+    if (g->ret_range_state==3) return false;      // analysed, nothing usable
+    if (g->ret_range_state==0) {
+        g->ret_range_state = 1;                   // mark in-progress BEFORE recursing
+        Vra *sub = vra_analyze(g);                // sets state to 2 or 3 as a side effect
+        vra_free(sub);
+        if (g->ret_range_state==1) g->ret_range_state=3;   // defensive: never leave it pending
+    }
+    if (g->ret_range_state!=2) return false;
+    *lo=g->ret_range_lo; *hi=g->ret_range_hi;
+    return true;
 }
 // ── borrow phase D: the NUMERIC DISJOINTNESS bridge (design §4) ─────────────────────────
 //

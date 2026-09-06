@@ -358,6 +358,14 @@ typedef struct IrFunc {
     bool       ret_borrows;          // the returned reference borrows from a parameter
     uint64_t   ret_borrow_mask;      // bit i = it may borrow from param i (0 with the flag set
     bool       ret_borrow_mask_done; // is impossible: the fallback is every reference param)
+
+    // INFERRED RETURN RANGE (the numeric analogue of ret_borrow_mask): what interval the
+    // callee's result provably lies in, taken from its body rather than its type. Without it
+    // a call's result is unknown and `LUT[nib(c)]` cannot be proven, though `nib` returns
+    // `c & 0x0F` and can only be 0..15. Memoized because the query is per call site.
+    //   0 = not computed, 1 = computation in progress (recursive: fall back), 2 = done
+    int8_t   ret_range_state;
+    int64_t  ret_range_lo, ret_range_hi;
     Arena     *arena;       // where this function's IR is allocated
     struct IrFunc *next;
 } IrFunc;

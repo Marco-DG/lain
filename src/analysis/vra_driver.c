@@ -48,10 +48,14 @@ int main(int argc, char **argv) {
     sema_resolve_module(prog,mod,&sa);
 
     int total=0, proven=0;
-    for (DeclList *d=prog; d; d=d->next) {
-        if(!d->decl) continue;
-        if((d->decl->kind==DECL_FUNCTION||d->decl->kind==DECL_PROCEDURE) && d->decl->as.function_decl.body){
-            IrFunc *f=ir_lower_function(d->decl, prog, &ia);
+    // Lower the whole MODULE, not one function at a time: a call's result range is read off
+    // the callee's body, so the callee has to exist. (Same function set — ir_lower_module
+    // lowers every body in the program, plus extern stubs, which are skipped below.)
+    IrFunc *irmod = ir_lower_module(prog, &ia);
+    vra_mod = irmod;
+    for (IrFunc *f=irmod; f; f=f->next) {
+        {
+            if (f->is_extern) continue;
             if (dump){ ir_dump_func(f, stdout); fputc('\n', stdout); }
             Vra *V=vra_analyze(f);
             for (int i=0;i<V->nchecks;i++){
