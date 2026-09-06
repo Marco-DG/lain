@@ -68,16 +68,15 @@ int main(int argc, char **argv) {
     // excludes a function from every proof, so every metric is conditioned on this number.
     bool coverage = (argc >= 3 && strcmp(argv[2], "--coverage") == 0);
     int n_total = 0, n_incomplete = 0;
-    IrFunc *head = NULL, *tail = NULL;
-    for (DeclList *d = program; d; d = d->next) {
-        if (!d->decl) continue;
-        if ((d->decl->kind == DECL_FUNCTION || d->decl->kind == DECL_PROCEDURE)
-            && d->decl->as.function_decl.body) {
-            IrFunc *f = ir_lower_function(d->decl, program, &ir_arena);
-            if (!head) head = tail = f; else { tail->next = f; tail = f; }
-            n_total++; if (f->incomplete) n_incomplete++;
-            if (!emit_c && !coverage) { ir_dump_func(f, stdout); fputc('\n', stdout); }
-        }
+    // Use ir_lower_module, not a hand-rolled loop over bodies: this one dropped every EXTERN
+    // declaration, so the emitted C called printf and friends with no prototype in scope —
+    // an implicit declaration, and the single largest cause of the new backend failing to
+    // build the corpus at all.
+    IrFunc *head = ir_lower_module(program, &ir_arena);
+    for (IrFunc *f = head; f; f = f->next) {
+        if (f->is_extern) continue;
+        n_total++; if (f->incomplete) n_incomplete++;
+        if (!emit_c && !coverage) { ir_dump_func(f, stdout); fputc('\n', stdout); }
     }
     if (coverage) { printf("coverage %d %d\n", n_incomplete, n_total); return 0; }
     if (emit_c) ir_emit_module_c(head, stdout, &ir_arena);

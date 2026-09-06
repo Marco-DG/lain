@@ -325,6 +325,10 @@ typedef struct IrFunc {
     IrName    *name;
     IrFuncKind kind;
     bool       is_extern;   // declaration only (no body) — a trusted boundary
+    bool       is_variadic; // `...` — a C-style variadic boundary (printf and friends). The
+                            // IR must carry it or the emitter cannot declare the function at
+                            // all, and every call to one becomes an implicit-declaration
+                            // error in the generated C.
     IrParam   *params;      // parameter values
     IrType    *ret_type;
     IrBlock   *entry;

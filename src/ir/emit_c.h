@@ -86,8 +86,11 @@ static void ir_emit_cstr(const char *s, int len, FILE *o) {
     for (int i=0;i<len;i++) {
         unsigned char ch = (unsigned char)s[i];
         if (ch=='"' || ch=='\\') { fputc('\\', o); fputc(ch, o); }
+        else if (ch=='\n') fputs("\\n", o);
+        else if (ch=='\t') fputs("\\t", o);
+        else if (ch=='\r') fputs("\\r", o);
         else if (ch>=0x20 && ch<=0x7e) fputc(ch, o);
-        else fprintf(o, "\\%03o", ch);
+        else fprintf(o, "\\%03o", ch);   // 3 digits: never ambiguous next to a digit
     }
     fputc('"', o);
 }
@@ -263,7 +266,10 @@ static void ir_emit_proto_c(IrFunc *f, FILE *o) {
     if (f->name->length==4 && strncmp(f->name->name,"main",4)==0) return;
     ir_ctype(f->ret_type, o); fprintf(o, " %.*s(", (int)f->name->length, f->name->name);
     int k=0; for (IrParam *p=f->params; p; p=p->next,k++){ if(k)fputs(", ",o); ir_ctype(p->value->type,o); }
-    if (!f->params) fputs("void", o);
+    // `...` — without it every call to printf and friends is an implicit declaration, and the
+    // generated C does not compile at all.
+    if (f->is_variadic) fputs(k ? ", ..." : "...", o);
+    else if (!f->params) fputs("void", o);
     fputs(");\n", o);
 }
 
@@ -418,7 +424,8 @@ void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
     ir_emit_type_decls(funcs, o, a);
     for (IrFunc *f=funcs; f; f=f->next) ir_emit_proto_c(f, o);
     fputc('\n', o);
-    for (IrFunc *f=funcs; f; f=f->next) ir_emit_func_c(f, o, a);
+    // An EXTERN has no body: emitting one would define printf locally and collide with libc.
+    for (IrFunc *f=funcs; f; f=f->next) if (!f->is_extern) ir_emit_func_c(f, o, a);
 }
 
 #endif // LAIN_IR_EMIT_C_H

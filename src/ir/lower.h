@@ -1035,6 +1035,13 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                         IrValue *ln = ir_const_int(c->f, c->cur, ne, ir_type_int(c->a,64,false));
                         av = ir_make_slice(c->f, c->cur, av, ln, ptype->elem);
                     }
+                    // ...and the REVERSE decay, which was missing: a parameter declared `*u8`
+                    // given a string literal got the whole SLICE by value. `libc_printf("x")`
+                    // passed a two-word struct where a pointer was expected, which is not just
+                    // a type error in the emitted C but the wrong thing at the ABI. Pass the
+                    // data pointer, which is what the declared type asks for.
+                    else if (ptype && ptype->kind==IRT_PTR && av->type && av->type->kind==IRT_SLICE)
+                        av = ir_slice_data(c->f, c->cur, av, ptype->elem ? ptype->elem : av->type->elem);
                 }
                 ins->operands[i] = av;
                 if (pp) pp = pp->next;
@@ -1600,6 +1607,21 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
             f = ir_func_new(a, nm ? ir_intern(a, nm->name, nm->length) : NULL, NULL,
                             k==DECL_EXTERN_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
             f->is_extern = true; f->src_decl = d->decl;
+            f->is_variadic = d->decl->as.function_decl.is_variadic;
+            // An extern was lowered as a NAME and nothing else — no return type, no
+            // parameters. Analyses that ask what a call transfers got no answer, and the new
+            // emitter could not declare it, so every call to one was an implicit declaration
+            // in the generated C: 102 of the corpus's 141 backend build failures, one cause.
+            { LowerCtx ec = {0}; ec.a = a; ec.globals = program; ec.f = f; ec.cur = f->entry;
+              f->ret_type = ir_lower_type(&ec, d->decl->as.function_decl.return_type);
+              for (DeclList *p = d->decl->as.function_decl.params; p; p = p->next) {
+                  if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+                  Type *pty = p->decl->as.variable_decl.type;
+                  Id   *pnm = p->decl->as.variable_decl.name;
+                  IrValue *pv = ir_add_param(f, ir_lower_type(&ec, pty),
+                                             pnm ? ir_intern(a, pnm->name, pnm->length) : NULL);
+                  pv->owns = pty && pty->mode == MODE_OWNED;
+              } }
         }
         if (f) { if (!head) head=tail=f; else { tail->next=f; tail=f; } }
     }

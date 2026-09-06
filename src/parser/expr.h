@@ -275,8 +275,43 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
                 i++;  // consume the escaped character
             }
         }
-        parser_advance();
-        return expr_string(arena, str, len);
+        // DECODE the escapes into the bytes the string actually denotes. They were stored
+        // RAW, so `"ok\n"` was nine bytes with a literal backslash in it: `.len` was wrong
+        // for every string containing an escape, and the only reason the output looked right
+        // is that the old emitter pastes the raw text into a C literal and lets the C
+        // compiler decode it — which the new backend, correctly escaping what it is given,
+        // does not do. The IR should hold the real bytes.
+        { char *dec = arena_push_many(arena, char, len + 1); isize dn = 0;
+          for (isize i = 0; i < len; i++) {
+              if (str[i] != '\\' || i + 1 >= len) { dec[dn++] = str[i]; continue; }
+              char e = str[++i];
+              switch (e) {
+                  case 'n':  dec[dn++] = '\n'; break;
+                  case 't':  dec[dn++] = '\t'; break;
+                  case 'r':  dec[dn++] = '\r'; break;
+                  case '0':  dec[dn++] = '\0'; break;
+                  case '\\': dec[dn++] = '\\'; break;
+                  case '"':  dec[dn++] = '"';  break;
+                  case '\'': dec[dn++] = '\''; break;
+                  case 'x': {                    // \xHH
+                      int v = 0, k = 0;
+                      while (k < 2 && i + 1 < len) {
+                          char h = str[i+1];
+                          int d = (h>='0'&&h<='9') ? h-'0'
+                                : (h>='a'&&h<='f') ? h-'a'+10
+                                : (h>='A'&&h<='F') ? h-'A'+10 : -1;
+                          if (d < 0) break;
+                          v = v*16 + d; i++; k++;
+                      }
+                      dec[dn++] = (char)v; break;
+                  }
+                  default: dec[dn++] = '\\'; dec[dn++] = e; break;   // validated above
+              }
+          }
+          dec[dn] = 0;
+          parser_advance();
+          return expr_string(arena, dec, dn);
+        }
     }
     else if (parser_match(TOKEN_CHAR_LITERAL)) {
         // raw token looks like  'x'  or  '\n'  or  '\x1B'

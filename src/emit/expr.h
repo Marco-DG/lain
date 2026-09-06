@@ -177,10 +177,24 @@ void emit_expr(Expr *expr, int depth) {
     EMIT("%.17g", expr->as.float_expr.value);
     break;
 
-  case EXPR_STRING:
-    EMIT("\"%.*s\"", (int)expr->as.string_expr.length,
-         expr->as.string_expr.value);
+  case EXPR_STRING: {
+    // The literal now holds DECODED bytes, so it must be RE-ESCAPED on the way into C —
+    // pasting a real newline into a C string literal does not compile.
+    const unsigned char *sb = (const unsigned char*)expr->as.string_expr.value;
+    isize sl = expr->as.string_expr.length;
+    EMIT("\"");
+    for (isize si = 0; si < sl; si++) {
+        unsigned char ch = sb[si];
+        if (ch=='"' || ch=='\\')      EMIT("\\%c", ch);
+        else if (ch=='\n')            EMIT("\\n");
+        else if (ch=='\t')            EMIT("\\t");
+        else if (ch=='\r')            EMIT("\\r");
+        else if (ch>=0x20 && ch<=0x7e) EMIT("%c", ch);
+        else                           EMIT("\\%03o", ch);   // 3 digits: never ambiguous
+    }
+    EMIT("\"");
     break;
+  }
 
   case EXPR_ARRAY_COMPREHENSION:
     // First cut: comprehensions are lowered only in a `var` initializer (a fill
