@@ -909,7 +909,35 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 // exactly as an ordinary `return` does — `defer { cleanup() }` before a failing
                 // `try` was simply skipped.
                 ir_lower_flush_defers(c);
-                ir_set_ret(c->cur, uv);                    // propagate the marker unchanged
+                IrType *rt = c->f->ret_type;
+                if (rt && rt->kind==IRT_SUM && rt != uv->type) {
+                    // WIDENING. `try` inside a function returning a wider union must RE-ENCODE
+                    // the marker: `*u8 | NotFound` propagating into `*u8 | NotFound | ParseErr`
+                    // is the same marker at a different variant index. Returning the narrow sum
+                    // unchanged is a type error in the emitted C and a lie in the IR. The tag
+                    // is dynamic, so the mapping is a chain of tag tests — one per marker the
+                    // narrow union has, matched to the wide union BY NAME.
+                    IrValue *tg = ir_sum_tag(c->f, c->cur, uv);
+                    for (int k = 1; k < uv->type->n_fields; k++) {
+                        IrName *mn = uv->type->field_names[k];
+                        int w = -1;
+                        for (int j = 1; j < rt->n_fields && mn; j++) {
+                            IrName *wn = rt->field_names[j];
+                            if (wn && wn->length==mn->length
+                                && strncmp(wn->name, mn->name, (size_t)mn->length)==0) { w = j; break; }
+                        }
+                        if (w < 0) continue;
+                        IrBlock *hit = ir_new_block(c->f), *nxt = ir_new_block(c->f);
+                        IrValue *kc = ir_const_int(c->f, c->cur, k, tg->type);
+                        ir_set_br_cond(c->cur, ir_icmp(c->f,c->cur,IR_CMP_EQ,tg,kc), hit, nxt);
+                        c->cur = hit;
+                        ir_set_ret(c->cur, ir_sum_new(c->f, c->cur, rt, w, NULL, 0));
+                        c->cur = nxt;
+                    }
+                    ir_set_unreachable(c->cur);     // the tag was a marker: one arm always hits
+                } else {
+                    ir_set_ret(c->cur, uv);                // same union: propagate unchanged
+                }
             } else if (e->as.else_expr.arm_is_return) {
                 IrValue *rv = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
                 ir_lower_flush_defers(c);

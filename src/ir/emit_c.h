@@ -284,7 +284,17 @@ static void ir_emit_func_c(IrFunc *f, FILE *o, Arena *a) {
                                           b->term.cond->id, b->term.a->id, b->term.b->id); break;
             case IR_TERM_RET:     if (b->term.cond) fprintf(o, "  return v%d;\n", b->term.cond->id);
                                   else fputs(is_main ? "  return 0;\n" : "  return;\n", o); break;
-            case IR_TERM_UNREACHABLE: fputs("  return 0;\n", o); break;
+            case IR_TERM_UNREACHABLE:
+                // Unreachable, but C still needs a well-typed exit: `return 0` is a type error
+                // the moment the function returns a struct or a union. A zero compound literal
+                // is valid for any type and never executes.
+                if (is_main || !f->ret_type || f->ret_type->kind==IRT_UNIT || f->ret_type->kind==IRT_NEVER)
+                    fputs(is_main ? "  return 0;\n" : "  return;\n", o);
+                else if (f->ret_type->kind==IRT_INT || f->ret_type->kind==IRT_BOOL
+                      || f->ret_type->kind==IRT_PTR || f->ret_type->kind==IRT_FUNC)
+                    fputs("  return 0;\n", o);
+                else { fputs("  return (", o); ir_ctype(f->ret_type, o); fputs("){0};\n", o); }
+                break;
             default: break;
         }
     }
