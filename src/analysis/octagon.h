@@ -37,17 +37,39 @@ typedef struct {
     int64_t *m;      // dim×dim, row-major; m[i*dim+j]
 } Octagon;
 
+// ── VARIABLE PACKING (rebuild item 2.2) ──────────────────────────────────────
+// The octagon's cost is cubic in its dimension and its storage quadratic, and the dimension
+// was 2 x EVERY SSA VALUE IN THE FUNCTION — including every element pointer, slice, struct
+// and unit, none of which can ever appear in a numeric relation. A 128-element array literal
+// gave dim 645, a 3.3 MB matrix PER BLOCK, and a closure of 268M steps.
+//
+// `oct_map` translates a VALUE id to its packed slot, or −1 for a value that has none. Every
+// caller reaches the matrix through oct_pos/oct_neg, so doing it here covers all ~127 call
+// sites at once; an unmapped value yields −1 and every accessor treats that as ⊤ (unknown),
+// which is exactly the right answer for a value the domain does not track.
+static const int *oct_map = NULL;      // NULL = identity (unit tests build raw octagons)
+static inline int oct_slot(int i) { return oct_map ? oct_map[i] : i; }
+
 // ── dimension helpers ────────────────────────────────────────────────────────
-static inline int oct_pos(int i) { return 2*i;   }
-static inline int oct_neg(int i) { return 2*i+1; }
+static inline int oct_pos(int i) { int s = oct_slot(i); return s<0 ? -1 : 2*s;   }
+static inline int oct_neg(int i) { int s = oct_slot(i); return s<0 ? -1 : 2*s+1; }
 static inline int oct_bar(int d) { return d ^ 1; }   // switch +/−
 static inline int64_t oct_min64(int64_t a, int64_t b) { return a<b?a:b; }
 static inline int64_t oct_max64(int64_t a, int64_t b) { return a>b?a:b; }
 // floor division toward −∞ (C's / truncates toward 0)
 static inline int64_t oct_fdiv2(int64_t a) { return a>=0 ? a/2 : -((-a+1)/2); }
 
-static inline int64_t *oct_at(Octagon *o, int i, int j) { return &o->m[(size_t)i*o->dim + j]; }
-static inline int64_t  oct_get(const Octagon *o, int i, int j) { return o->m[(size_t)i*o->dim + j]; }
+// An UNMAPPED dimension (−1) reads as ⊤ and absorbs writes: the domain simply does not
+// track that value, which is sound in both directions.
+static int64_t oct_sink;
+static inline int64_t *oct_at(Octagon *o, int i, int j) {
+    if (i<0 || j<0) { oct_sink = OCT_INF; return &oct_sink; }
+    return &o->m[(size_t)i*o->dim + j];
+}
+static inline int64_t  oct_get(const Octagon *o, int i, int j) {
+    if (i<0 || j<0) return OCT_INF;
+    return o->m[(size_t)i*o->dim + j];
+}
 
 // ── construction ─────────────────────────────────────────────────────────────
 // ⊤ (no constraints): all +∞ off the diagonal, 0 on it.
@@ -83,13 +105,37 @@ static void oct_add_negsum_le(Octagon *o, int a, int b, int64_t c){ oct_tighten(
 // ── closure ──────────────────────────────────────────────────────────────────
 // Shortest-path (Floyd–Warshall) closure over the 2n dimensions, then Miné's
 // strong (integer-tight) step folding unary coherence in. Sound and idempotent.
+// ACTIVE SET. The closure is O(dim^3) and `dim` is 2 x (every SSA value in the function),
+// but the overwhelming majority of those dimensions are entirely unconstrained: an element
+// pointer, a struct, a slice, a value already forgotten. A dimension whose row AND column
+// are ⊤ off the diagonal can neither relax another pair (m[i][k] + m[k][j] is ⊤ through it)
+// nor be relaxed itself (every path into it is ⊤), so skipping it changes no result.
+//
+// This is not a micro-optimisation. A 128-element array literal made the closure 645^3 and
+// the analysis took THIRTY SECONDS on one small program — the new engine cannot become the
+// authoritative middle-end at that cost, and nothing had measured it because the corpus's
+// programs are small. Restricting the loops to the active set is exact, not approximate.
+static int *oct_active_scratch = NULL; static int oct_active_cap = 0;
 static void oct_close(Octagon *o) {
     int d = o->dim;
-    for (int k=0;k<d;k++)
-        for (int i=0;i<d;i++) {
+    if (oct_active_cap < d) {
+        oct_active_scratch = (int*)realloc(oct_active_scratch, (size_t)d*sizeof(int));
+        oct_active_cap = d;
+    }
+    int *act = oct_active_scratch, na = 0;
+    for (int x=0; x<d; x++) {
+        bool any = false;
+        for (int y=0; y<d && !any; y++) {
+            if (y==x) continue;
+            if (oct_get(o,x,y) < OCT_INF || oct_get(o,y,x) < OCT_INF) any = true;
+        }
+        if (any) act[na++] = x;
+    }
+    for (int ka=0;ka<na;ka++) { int k=act[ka];
+        for (int ia=0;ia<na;ia++) { int i=act[ia];
             int64_t ik = oct_get(o,i,k);
             if (ik >= OCT_INF) continue;
-            for (int j=0;j<d;j++) {
+            for (int ja=0;ja<na;ja++) { int j=act[ja];
                 int64_t kj = oct_get(o,k,j);
                 if (kj >= OCT_INF) continue;
                 int64_t s = ik + kj;
@@ -97,16 +143,21 @@ static void oct_close(Octagon *o) {
                 if (s < *ij) *ij = s;
             }
         }
+    }
     // strong closure: v_i and v_j both bounded ⇒ tighten their difference using
     // the doubled unary entries. m[i][j] ≤ ⌊m[i][bar i]/2⌋ + ⌊m[bar j][j]/2⌋.
-    for (int i=0;i<d;i++)
-        for (int j=0;j<d;j++) {
-            int64_t a = oct_get(o,i,oct_bar(i)), b = oct_get(o,oct_bar(j),j);
-            if (a >= OCT_INF || b >= OCT_INF) continue;
+    // A ⊤ dimension has no unary bound, so the active set applies here too.
+    for (int ia=0;ia<na;ia++) { int i=act[ia];
+        int64_t a = oct_get(o,i,oct_bar(i));
+        if (a >= OCT_INF) continue;
+        for (int ja=0;ja<na;ja++) { int j=act[ja];
+            int64_t b = oct_get(o,oct_bar(j),j);
+            if (b >= OCT_INF) continue;
             int64_t s = oct_fdiv2(a) + oct_fdiv2(b);
             int64_t *ij = oct_at(o,i,j);
             if (s < *ij) *ij = s;
         }
+    }
 }
 
 // ⊥ test — a variable's own dimension shows a negative self-distance.
@@ -167,6 +218,7 @@ static bool oct_leq(const Octagon *a, const Octagon *b) {
 // forget v — drop everything known about v (both its dimensions → ⊤ rows/cols).
 // Close first so facts *implied* through v survive among the other variables.
 static void oct_forget(Octagon *o, int v) {
+    if (oct_slot(v) < 0) return;                 // untracked: nothing to forget
     // NB: no pre-close. Forgetting without closing is SOUND (it can only lose implied
     // constraints, never invent one) and — as used here, always on a FRESH SSA result
     // being (re)defined — it is also LOSSLESS: a fresh id has no prior constraints for a

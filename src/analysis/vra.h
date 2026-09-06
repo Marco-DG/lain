@@ -37,6 +37,8 @@ typedef struct {
 typedef struct {
     IrFunc  *f;
     int      nvar;      // = next_value_id
+    int     *odim;      // VARIABLE PACKING (2.2): value id → octagon slot, or −1 (untracked)
+    int      noct;      // number of packed slots — the octagon's real variable count
     int      dsz;       // octagon storage per block = dim*dim
     int64_t **in;       // in[bid] : entry octagon storage (NULL = unreached)
     bool    *reached;
@@ -155,12 +157,57 @@ static bool vra_safe_scale(int64_t c, int64_t x, int64_t *out) {
     if (p > (__int128)(OCT_INF/2) || p < -(__int128)(OCT_INF/2)) return false;
     *out = (int64_t)p; return true;
 }
-static void vra_assign_copy(Octagon *o, int dst, int src) {
+static void vra_interval(Vra *V, const Octagon *W, int id, int64_t *lo, bool *hl, int64_t *hi, bool *hh); // fwd
+static void vra_add_diff_le(Vra *V, Octagon *W, int a, int b, int64_t c);                                 // fwd
+static int64_t vra_diff_ub(Vra *V, const Octagon *W, int a, int b);                                       // fwd
+
+static void vra_assign_copy(Vra *V, Octagon *o, int dst, int src) {
+    // A CONSTANT source has no dimension to copy from — it lives in the constant table — so
+    // the copy must state its value directly. Without this `var i usize = 0` reached its slot
+    // carrying nothing at all, and with it every loop counter in the corpus: this one line is
+    // ten of the fifty obligations in the calculator program.
+    if (src>=0 && src<V->nvar && V->cknown[src]) {
+        oct_forget(o, dst); oct_add_const(o, dst, V->cval[src]); return;
+    }
     oct_close(o);                      // materialize src's transitive bounds BEFORE the copy
     oct_forget(o, dst);                // (so dst inherits them; this is where a loop invariant
-    oct_add_diff_le(o, dst, src, 0);   //  is carried through a memory-cell load). Copies are
-    oct_add_diff_le(o, src, dst, 0);   //  infrequent (loads/casts/lengths), so O(dim^3) here
+    vra_add_diff_le(V, o, dst, src, 0);//  is carried through a memory-cell load). Copies are
+    vra_add_diff_le(V, o, src, dst, 0);//  infrequent (loads/casts/lengths), so O(dim^3) here
 }                                      //  is fine — unlike per-instruction forget-closes.
+
+// A constant has no octagon dimension (see the packing note), so every interval read must
+// consult the constant table first. This is not a workaround: the exact value is strictly
+// better information than any interval the domain could hold.
+static void vra_interval(Vra *V, const Octagon *W, int id,
+                         int64_t *lo, bool *hl, int64_t *hi, bool *hh) {
+    if (id>=0 && id<V->nvar && V->cknown[id]) { *lo=*hi=V->cval[id]; *hl=*hh=true; return; }
+    oct_interval(W, id, lo, hl, hi, hh);
+}
+
+// ── the constant table IS the domain for constants ───────────────────────────────────────
+// With constants packed out of the octagon, every RELATIONAL site has to consult the table
+// too, or the relation is silently lost: `idx − len ≤ −1` against a fixed array's constant
+// length is the bounds check itself. These two are the only way the rest of the file should
+// state or read a difference.
+//
+// Both are strictly more precise than the octagon form they replace — an exact value beats
+// any interval, and an absolute bound needs no closure step to become usable.
+static int64_t vra_diff_ub(Vra *V, const Octagon *W, int a, int b) {   // upper bound on a − b
+    bool ac = (a>=0 && a<V->nvar && V->cknown[a]), bc = (b>=0 && b<V->nvar && V->cknown[b]);
+    if (ac && bc) return V->cval[a] - V->cval[b];
+    int64_t lo,hi; bool hl,hh;
+    if (ac) { vra_interval(V,W,b,&lo,&hl,&hi,&hh); return hl ? V->cval[a]-lo : OCT_INF; }
+    if (bc) { vra_interval(V,W,a,&lo,&hl,&hi,&hh); return hh ? hi-V->cval[b] : OCT_INF; }
+    return oct_get(W, oct_pos(b), oct_pos(a));
+}
+static void vra_add_diff_le(Vra *V, Octagon *W, int a, int b, int64_t c) {   // a − b ≤ c
+    if (c >= OCT_INF) return;
+    bool ac = (a>=0 && a<V->nvar && V->cknown[a]), bc = (b>=0 && b<V->nvar && V->cknown[b]);
+    if (ac && bc) return;                                  // both known: nothing to record
+    if (bc)      oct_add_ub(W, a, V->cval[b] + c);         // a ≤ const + c
+    else if (ac) oct_add_lb(W, b, V->cval[a] - c);         // b ≥ const − c
+    else         oct_add_diff_le(W, a, b, c);
+}
 
 static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir);  // fwd
 static void vra_free(Vra *V);                                                    // fwd (phase D)
@@ -199,15 +246,15 @@ static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx);           
 //                                                    sound because x − x/D is nondecreasing
 //                                                    (a step of 1 in x moves it by 0 or 1)
 //   xlo/D ≤ r ≤ xhi/D       the interval, which `r ≤ x` alone does not give
-static void vra_div_facts(Octagon *W, int r, int a, int64_t D, int64_t alo, bool hl, int64_t ahi, bool hh) {
+static void vra_div_facts(Vra *V, Octagon *W, int r, int a, int64_t D, int64_t alo, bool hl, int64_t ahi, bool hh) {
     if (D < 1) return;
     oct_add_lb(W, r, 0);
-    oct_add_diff_le(W, r, a, 0);                        // r ≤ x
+    vra_add_diff_le(V,W, r, a, 0);                        // r ≤ x
     if (hl && alo >= 0) oct_add_lb(W, r, alo / D);
     if (hh && ahi >= 0) oct_add_ub(W, r, ahi / D);
     if (D >= 2) {
-        if (hl && alo >= 1) oct_add_diff_le(W, r, a, -1);          // r ≤ x − 1
-        if (hh && ahi >= 0) oct_add_diff_le(W, a, r, ahi - ahi/D); // x − r ≤ max(x − x/D)
+        if (hl && alo >= 1) vra_add_diff_le(V,W, r, a, -1);          // r ≤ x − 1
+        if (hh && ahi >= 0) vra_add_diff_le(V,W, a, r, ahi - ahi/D); // x − r ≤ max(x − x/D)
     }
 }
 
@@ -229,10 +276,10 @@ static void vra_add_via_diff(Vra *V, Octagon *W, int r, int a, int q) {
         if (dd->operands[1]->id != a) continue;         // d = B − a, the same a we are adding to
         int B = dd->operands[0]->id;
         if (B == r || B < 0 || B >= V->nvar) continue;
-        int64_t c = oct_get(W, oct_pos(d), oct_pos(q)); // q − d ≤ c   ⇒   r − B ≤ c
-        if (c < OCT_INF) oct_add_diff_le(W, r, B, c);
-        int64_t c2 = oct_get(W, oct_pos(q), oct_pos(d)); // d − q ≤ c2  ⇒   B − r ≤ c2
-        if (c2 < OCT_INF) oct_add_diff_le(W, B, r, c2);
+        int64_t c = vra_diff_ub(V, W, q, d); // q − d ≤ c   ⇒   r − B ≤ c
+        if (c < OCT_INF) vra_add_diff_le(V,W, r, B, c);
+        int64_t c2 = vra_diff_ub(V, W, d, q); // d − q ≤ c2  ⇒   B − r ≤ c2
+        if (c2 < OCT_INF) vra_add_diff_le(V,W, B, r, c2);
     }
 }
 
@@ -246,7 +293,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (r<0) break;
             IrInstr *d = ins->n_operands? V->def[ins->operands[0]->id] : NULL;
             if (d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
-                vra_assign_copy(W, r, ins->operands[0]->id);   // scalar cell → value
+                vra_assign_copy(V, W, r, ins->operands[0]->id);   // scalar cell → value
             else oct_forget(W, r);                             // array elem / unknown
             break;
         }
@@ -254,7 +301,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (ins->n_operands<2) break;
             IrInstr *d = V->def[ins->operands[0]->id];
             if (d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
-                vra_assign_copy(W, ins->operands[0]->id, ins->operands[1]->id);  // value → cell
+                vra_assign_copy(V, W, ins->operands[0]->id, ins->operands[1]->id);  // value → cell
             break;
         }
         case IR_ADD: case IR_SUB: {
@@ -262,26 +309,26 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             int a=ins->operands[0]->id, b=ins->operands[1]->id;
             bool ac=V->cknown[a], bc=V->cknown[b], isadd=(ins->op==IR_ADD);
             oct_forget(W, r);
-            if (isadd && bc)      { oct_add_diff_le(W,r,a,V->cval[b]); oct_add_diff_le(W,a,r,-V->cval[b]); }   // r=a+c (exact)
-            else if (isadd && ac) { oct_add_diff_le(W,r,b,V->cval[a]); oct_add_diff_le(W,b,r,-V->cval[a]); }
-            else if (!isadd && bc){ oct_add_diff_le(W,r,a,-V->cval[b]); oct_add_diff_le(W,a,r,V->cval[b]); }   // r=a-c (exact)
+            if (isadd && bc)      { vra_add_diff_le(V,W,r,a,V->cval[b]); vra_add_diff_le(V,W,a,r,-V->cval[b]); }   // r=a+c (exact)
+            else if (isadd && ac) { vra_add_diff_le(V,W,r,b,V->cval[a]); vra_add_diff_le(V,W,b,r,-V->cval[a]); }
+            else if (!isadd && bc){ vra_add_diff_le(V,W,r,a,-V->cval[b]); vra_add_diff_le(V,W,a,r,V->cval[b]); }   // r=a-c (exact)
             else if (!isadd && ac){ int64_t c=V->cval[a]; oct_add_sum_le(W,r,b,c); oct_add_negsum_le(W,r,b,-c); } // r=c-b ⇒ r+b=c
             else {
                 // two-variable: sound difference bounds from the second operand's interval
                 //   r=a+b, b∈[blo,bhi] ⇒ a+blo ≤ r ≤ a+bhi ;  r=a-b ⇒ a-bhi ≤ r ≤ a-blo
                 oct_close(W);   // materialize the a↔b (and q↔d) relations before reading them
-                int64_t blo,bhi; bool hl,hh; oct_interval(W,b,&blo,&hl,&bhi,&hh);
-                if (isadd) { if (hh) oct_add_diff_le(W,r,a,bhi); if (hl) oct_add_diff_le(W,a,r,-blo);
+                int64_t blo,bhi; bool hl,hh; vra_interval(V, W,b,&blo,&hl,&bhi,&hh);
+                if (isadd) { if (hh) vra_add_diff_le(V,W,r,a,bhi); if (hl) vra_add_diff_le(V,W,a,r,-blo);
                              vra_add_via_diff(V,W,r,a,b);      // r = a + b where b is bounded vs (B − a)
                              vra_add_via_diff(V,W,r,b,a); }    // ...and symmetrically
                 else {
-                    if (hl) oct_add_diff_le(W,r,a,-blo); if (hh) oct_add_diff_le(W,a,r,bhi);
+                    if (hl) vra_add_diff_le(V,W,r,a,-blo); if (hh) vra_add_diff_le(V,W,a,r,bhi);
                     // RELATIONAL r = a − b: transfer the octagon's OWN a↔b difference to r
                     // exactly (intervals miss it when the bound is symbolic). This proves the
                     // reverse index `a[L−i−1]`: from `i ≤ L` the octagon already holds, r=L−i
                     // gets r ≥ 0 (no underflow) and r < L.  a−b ≤ ub ⇒ r ≤ ub ; b−a ≤ lbe ⇒ r ≥ −lbe.
-                    int64_t ub  = oct_get(W, oct_pos(b), oct_pos(a));   // bound on a − b
-                    int64_t lbe = oct_get(W, oct_pos(a), oct_pos(b));   // bound on b − a
+                    int64_t ub  = vra_diff_ub(V, W, a, b);   // bound on a − b
+                    int64_t lbe = vra_diff_ub(V, W, b, a);   // bound on b − a
                     if (ub  < OCT_INF) oct_add_ub(W, r, ub);
                     if (lbe < OCT_INF) oct_add_lb(W, r, -lbe);
                 }
@@ -306,15 +353,15 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 int e0=-1, lenv = vra_shape_len_for_stride(V, stride, &e0);
                 if (lenv < 0 || e0 < 0) continue;
                 int64_t ilo,ihi,slo,shi; bool ihl,ihh,shl,shh;
-                oct_interval(W, iv, &ilo,&ihl,&ihi,&ihh);
-                oct_interval(W, stride, &slo,&shl,&shi,&shh);
-                bool i_lt_e0 = oct_get(W, oct_pos(e0), oct_pos(iv)) <= -1;
-                if (i_lt_e0 && ihl && ilo>=0 && shl && slo>=0) oct_add_diff_le(W, r, lenv, 0);
+                vra_interval(V, W, iv, &ilo,&ihl,&ihi,&ihh);
+                vra_interval(V, W, stride, &slo,&shl,&shi,&shh);
+                bool i_lt_e0 = vra_diff_ub(V, W, iv, e0) <= -1;
+                if (i_lt_e0 && ihl && ilo>=0 && shl && slo>=0) vra_add_diff_le(V,W, r, lenv, 0);
             }
             int xv=-1; int64_t c=0;
             if (bc) { c=V->cval[b]; xv=a; } else if (ac) { c=V->cval[a]; xv=b; }
             if (xv>=0) {
-                int64_t xlo,xhi,v; bool hl,hh; oct_interval(W, xv, &xlo,&hl,&xhi,&hh);
+                int64_t xlo,xhi,v; bool hl,hh; vra_interval(V, W, xv, &xlo,&hl,&xhi,&hh);
                 if (c==0) oct_add_const(W,r,0);
                 else if (c>0) { if (hl && vra_safe_scale(c,xlo,&v)) oct_add_lb(W,r,v);   // monotone
                                 if (hh && vra_safe_scale(c,xhi,&v)) oct_add_ub(W,r,v); }
@@ -346,19 +393,19 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (r<0) break;
             int a=ins->operands[0]->id, b=ins->operands[1]->id;
             oct_close(W);                                  // the dividend's interval, relationally
-            int64_t alo,ahi; bool hl,hh; oct_interval(W,a,&alo,&hl,&ahi,&hh);
+            int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
             oct_forget(W, r);
-            vra_div_facts(W, r, a, (V->cknown[b] && V->cval[b]>0) ? V->cval[b] : 1, alo,hl,ahi,hh);
+            vra_div_facts(V, W, r, a, (V->cknown[b] && V->cval[b]>0) ? V->cval[b] : 1, alo,hl,ahi,hh);
             break;
         }
         case IR_SDIV: {  // signed x / c — for x ≥ 0 and c > 0 (the common index idiom
             if (r<0) break;                                 // `i / 2`) it is exactly udiv.
             int a=ins->operands[0]->id, b=ins->operands[1]->id;
             oct_close(W);
-            int64_t alo,ahi; bool hl,hh; oct_interval(W,a,&alo,&hl,&ahi,&hh);
+            int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
             oct_forget(W, r);
             if (hl && alo>=0 && V->cknown[b] && V->cval[b]>0)
-                vra_div_facts(W, r, a, V->cval[b], alo,hl,ahi,hh);
+                vra_div_facts(V, W, r, a, V->cval[b], alo,hl,ahi,hh);
             break;
         }
         case IR_UREM: {  // x % b  (unsigned)  ⇒  0 ≤ r < b   (b > 0 in any defined exec;
@@ -366,25 +413,25 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             int b=ins->operands[1]->id; oct_forget(W, r);
             oct_add_lb(W, r, 0);
             if (V->cknown[b] && V->cval[b]>0) oct_add_ub(W, r, V->cval[b]-1);  // absolute ≤ c−1
-            else oct_add_diff_le(W, r, b, -1);                                 // relative r < b
+            else vra_add_diff_le(V,W, r, b, -1);                                 // relative r < b
             break;
         }
         case IR_SREM: {  // signed a % c  ⇒  −(c−1) ≤ r ≤ c−1 (tighter to [0,c−1] if a≥0)
             if (r<0) break;
             int a=ins->operands[0]->id, b=ins->operands[1]->id; oct_forget(W, r);
-            int64_t alo,ahi; bool hl,hh; oct_interval(W,a,&alo,&hl,&ahi,&hh);
+            int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
             if (V->cknown[b] && V->cval[b]>0){
                 int64_t c=V->cval[b];
                 oct_add_lb(W,r, (hl&&alo>=0)?0:-(c-1)); oct_add_ub(W,r,c-1);
             } else if (hl && alo>=0) {                     // non-const divisor, a ≥ 0, b > 0 in
-                oct_add_lb(W,r,0); oct_add_diff_le(W,r,b,-1);   // any defined exec ⇒ 0 ≤ r < b
+                oct_add_lb(W,r,0); vra_add_diff_le(V,W,r,b,-1);   // any defined exec ⇒ 0 ≤ r < b
             }
             break;
         }
         case IR_LSHR: {  // x >> k  (logical) of a non-negative x is in [0, x]
             if (r<0) break;
             int a=ins->operands[0]->id; oct_forget(W,r);
-            int64_t alo,ahi; bool hl,hh; oct_interval(W,a,&alo,&hl,&ahi,&hh);
+            int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
             if (hl&&alo>=0){ oct_add_lb(W,r,0); if(hh) oct_add_ub(W,r,ahi); }  // 0 ≤ r ≤ a
             break;
         }
@@ -392,13 +439,13 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (r<0) break;
             oct_forget(W, r); oct_add_lb(W, r, 0);                 // a length is ≥ 0
             int s = ins->operands[0]->id, canon = V->slicelen[s];
-            if (canon>=0 && canon!=r) vra_assign_copy(W, r, canon); // all len reads agree
+            if (canon>=0 && canon!=r) vra_assign_copy(V, W, r, canon); // all len reads agree
             break;
         }
         case IR_CAST:
             if (r>=0){ // treat as a copy (widenings preserve value; a narrowing that
                        // changes it would be a separate proven-safe obligation)
-                if (vra_is_int(ins->result) && ins->n_operands) vra_assign_copy(W, r, ins->operands[0]->id);
+                if (vra_is_int(ins->result) && ins->n_operands) vra_assign_copy(V, W, r, ins->operands[0]->id);
                 else oct_forget(W, r);
             }
             break;
@@ -455,11 +502,25 @@ static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir) {
         bool nl=ge, nle=gt, ng=le, nge=lt, neq=ne, nne=eq;
         lt=nl; le=nle; gt=ng; ge=nge; eq=neq; ne=nne;
     }
-    if (lt) oct_add_diff_le(W,a,b,-1);        // a − b ≤ −1
-    else if (le) oct_add_diff_le(W,a,b,0);    // a − b ≤ 0
-    else if (gt) oct_add_diff_le(W,b,a,-1);   // b − a ≤ −1
-    else if (ge) oct_add_diff_le(W,b,a,0);    // b − a ≤ 0
-    else if (eq){ oct_add_diff_le(W,a,b,0); oct_add_diff_le(W,b,a,0); }
+    // When one side is a CONSTANT, state an ABSOLUTE bound rather than a difference against
+    // its dimension — a constant has none (it lives in the constant table), so the relational
+    // form would silently drop the guard entirely and `i < 100` would constrain nothing.
+    // The absolute form is also the stronger fact: it needs no closure step to be usable.
+    bool ac = (a>=0 && a<V->nvar && V->cknown[a]), bc = (b>=0 && b<V->nvar && V->cknown[b]);
+    if (bc && !ac) { int64_t c=V->cval[b];
+        if (lt) oct_add_ub(W,a,c-1); else if (le) oct_add_ub(W,a,c);
+        else if (gt) oct_add_lb(W,a,c+1); else if (ge) oct_add_lb(W,a,c);
+        else if (eq) oct_add_const(W,a,c);
+    } else if (ac && !bc) { int64_t c=V->cval[a];
+        if (lt) oct_add_lb(W,b,c+1); else if (le) oct_add_lb(W,b,c);
+        else if (gt) oct_add_ub(W,b,c-1); else if (ge) oct_add_ub(W,b,c);
+        else if (eq) oct_add_const(W,b,c);
+    }
+    else if (lt) vra_add_diff_le(V,W,a,b,-1);   // a − b ≤ −1
+    else if (le) vra_add_diff_le(V,W,a,b,0);    // a − b ≤ 0
+    else if (gt) vra_add_diff_le(V,W,b,a,-1);   // b − a ≤ −1
+    else if (ge) vra_add_diff_le(V,W,b,a,0);    // b − a ≤ 0
+    else if (eq){ vra_add_diff_le(V,W,a,b,0); vra_add_diff_le(V,W,b,a,0); }
     (void)ne;                                 // a≠b is not an octagon constraint
 }
 
@@ -513,12 +574,12 @@ static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx) {
         if (i_id < 0) continue;
         int j_id = jv->id;
         // i < e0  and  j < e1, both as octagon differences (x − y ≤ −1)
-        bool i_ok = oct_get(W, oct_pos(e0), oct_pos(i_id)) <= -1;
-        bool j_ok = oct_get(W, oct_pos(e1), oct_pos(j_id)) <= -1;
+        bool i_ok = vra_diff_ub(V, W, i_id, e0) <= -1;
+        bool j_ok = vra_diff_ub(V, W, j_id, e1) <= -1;
         // and both non-negative (usize gives this, but check the octagon too)
         int64_t ilo,ihi,jlo,jhi; bool ihl,ihh,jhl,jhh;
-        oct_interval(W, i_id, &ilo,&ihl,&ihi,&ihh);
-        oct_interval(W, j_id, &jlo,&jhl,&jhi,&jhh);
+        vra_interval(V, W, i_id, &ilo,&ihl,&ihi,&ihh);
+        vra_interval(V, W, j_id, &jlo,&jhl,&jhi,&jhh);
         bool nonneg = (ihl && ilo>=0) && (jhl && jlo>=0);
         if (i_ok && j_ok && nonneg) return true;
     }
@@ -543,12 +604,12 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
     }
     int64_t lo,hi; bool hl,hh;
     if (V->cknown[idx]) { lo=hi=V->cval[idx]; hl=hh=true; }   // constant index — no octagon needed
-    else oct_interval(W, idx, &lo,&hl,&hi,&hh);
+    else vra_interval(V, W, idx, &lo,&hl,&hi,&hh);
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_BOUNDS; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.lo_ok = hl && lo>=0;
     c.has_len = (clen>=0 || lenvar>=0);
     if (clen>=0)        c.hi_ok = hh && hi <= clen-1;
-    else if (lenvar>=0) c.hi_ok = oct_get(W, oct_pos(lenvar), oct_pos(idx)) <= -1;  // idx − len ≤ −1
+    else if (lenvar>=0) c.hi_ok = vra_diff_ub(V, W, idx, lenvar) <= -1;  // idx − len ≤ −1
     else                c.hi_ok = false;
     // S2: if the flat check failed, try FACTORING the index against the region's shape.
     if (!c.hi_ok && shape_base>=0 && vra_factor_shape(V, W, shape_base, idx)) {
@@ -560,9 +621,14 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
 
 // The ℤ range of a value = its type interval, tightened by the octagon.
 static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) {
+    // A CONSTANT's value is exact in the constant table, so it needs no octagon dimension at
+    // all — and it is the single biggest consumer of them: a 128-element array literal is 128
+    // constants, every one of them a fully constrained (hence "active") dimension driving the
+    // cubic closure. Reading it here instead is both faster and more precise than an interval.
+    if (v && v->id>=0 && v->id<V->nvar && V->cknown[v->id]) { *lo=*hi=V->cval[v->id]; return; }
     int64_t tlo=INT64_MIN, thi=INT64_MAX; (void)V;
     irtype_int_range(v->type, &tlo, &thi);
-    int64_t olo,ohi; bool hl,hh; oct_interval(W, v->id, &olo,&hl,&ohi,&hh);
+    int64_t olo,ohi; bool hl,hh; vra_interval(V, W, v->id, &olo,&hl,&ohi,&hh);
     if (hl && olo>tlo) tlo=olo;
     if (hh && ohi<thi) thi=ohi;
     *lo=tlo; *hi=thi;
@@ -595,8 +661,8 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     // for SUB, refine with the octagon's OWN a−b relation (W is closed here) — this proves
     // `L − i ≥ 0` (no underflow) from `i ≤ L`, which operand intervals miss when symbolic.
     if (ins->op==IR_SUB) {
-        int64_t abu = oct_get(W, oct_pos(b->id), oct_pos(a->id));   // a − b ≤ abu
-        int64_t bau = oct_get(W, oct_pos(a->id), oct_pos(b->id));   // b − a ≤ bau ⇒ a − b ≥ −bau
+        int64_t abu = vra_diff_ub(V, W, a->id, b->id);   // a − b ≤ abu
+        int64_t bau = vra_diff_ub(V, W, b->id, a->id);   // b − a ≤ bau ⇒ a − b ≥ −bau
         if (abu < OCT_INF && (__int128)abu < rhi) rhi = abu;
         if (bau < OCT_INF && -(__int128)bau > rlo) rlo = -(__int128)bau;
     }
@@ -616,9 +682,9 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
                 int e0=-1, lenv = vra_shape_len_for_stride(V, stride, &e0);
                 if (lenv < 0 || e0 < 0) continue;
                 int64_t ilo2,ihi2,slo2,shi2; bool ihl2,ihh2,shl2,shh2;
-                oct_interval(W, iv, &ilo2,&ihl2,&ihi2,&ihh2);
-                oct_interval(W, stride, &slo2,&shl2,&shi2,&shh2);
-                if (oct_get(W, oct_pos(e0), oct_pos(iv)) <= -1 && ihl2 && ilo2>=0
+                vra_interval(V, W, iv, &ilo2,&ihl2,&ihi2,&ihh2);
+                vra_interval(V, W, stride, &slo2,&shl2,&shi2,&shh2);
+                if (vra_diff_ub(V, W, iv, e0) <= -1 && ihl2 && ilo2>=0
                     && shl2 && slo2>=0) c.ok = true;      // ≤ len, a valid value of the type
             }
         } else if (V->def[ins->result ? ins->result->id : 0]) {
@@ -656,21 +722,21 @@ static void vra_check_subslice(Vra *V, Octagon *W, IrInstr *ms) {
     IrInstr *lend = V->def[ms->operands[1]->id];
     if (lend && lend->op==IR_SUB && lend->n_operands>=2 && lend->operands[1]->id==lo) hi=lend->operands[0]->id; // len = hi − lo
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_BOUNDS; c.at=ms; c.line=ms->line; c.col=ms->col;
-    int64_t llo,lhi; bool lhl,lhh; oct_interval(W,lo,&llo,&lhl,&lhi,&lhh);
+    int64_t llo,lhi; bool lhl,lhh; vra_interval(V, W,lo,&llo,&lhl,&lhi,&lhh);
     c.lo_ok = lhl && llo>=0;                                          // 0 ≤ lo
     c.has_len = (clen>=0 || lenvar>=0);
     if (hi<0) c.hi_ok=false;                                          // couldn't recover hi ⇒ conservative
-    else if (clen>=0){ int64_t hl,hh_; bool a,bb; oct_interval(W,hi,&hl,&a,&hh_,&bb); c.hi_ok = bb && hh_<=clen; } // hi ≤ N
-    else if (lenvar>=0) c.hi_ok = oct_get(W, oct_pos(lenvar), oct_pos(hi)) <= 0;   // hi − len ≤ 0
+    else if (clen>=0){ int64_t hl,hh_; bool a,bb; vra_interval(V, W,hi,&hl,&a,&hh_,&bb); c.hi_ok = bb && hh_<=clen; } // hi ≤ N
+    else if (lenvar>=0) c.hi_ok = vra_diff_ub(V, W, hi, lenvar) <= 0;   // hi − len ≤ 0
     else c.hi_ok=false;
     c.ok = c.lo_ok && c.hi_ok;
     vra_add_check(V, c);
 }
 
 // Does `a cmp b` hold in the (closed) octagon? The discharge dual of refine.
-static bool vra_icmp_holds(Octagon *W, int a, int b, IrCmp cmp) {
-    int64_t ab = oct_get(W, oct_pos(b), oct_pos(a));   // bound on a − b
-    int64_t ba = oct_get(W, oct_pos(a), oct_pos(b));   // bound on b − a
+static bool vra_icmp_holds(Vra *V, Octagon *W, int a, int b, IrCmp cmp) {
+    int64_t ab = vra_diff_ub(V, W, a, b);   // bound on a − b
+    int64_t ba = vra_diff_ub(V, W, b, a);   // bound on b − a
     switch (cmp) {
         case IR_CMP_SLT: case IR_CMP_ULT: return ab <= -1;
         case IR_CMP_SLE: case IR_CMP_ULE: return ab <= 0;
@@ -687,7 +753,7 @@ static void vra_check_assert(Vra *V, Octagon *W, IrInstr *ins) {
     IrInstr *ic = V->def[ins->operands[0]->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return;
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_PRECOND; c.at=ins; c.line=ins->line; c.col=ins->col;
-    c.ok = vra_icmp_holds(W, ic->operands[0]->id, ic->operands[1]->id, ic->aux.cmp);
+    c.ok = vra_icmp_holds(V, W, ic->operands[0]->id, ic->operands[1]->id, ic->aux.cmp);
     vra_add_check(V, c);
 }
 
@@ -749,7 +815,38 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
 static Vra *vra_analyze(IrFunc *f) {
     Vra *V = calloc(1, sizeof *V);
     V->f=f; V->nvar = f->next_value_id>0 ? f->next_value_id : 1;
-    int dim=2*V->nvar; V->dsz=dim*dim;
+    // ── VARIABLE PACKING (2.2). Only values that can appear in a numeric relation get an
+    // octagon dimension. An element pointer, a slice, a struct, a unit never can, and giving
+    // them one cost cubically: a 128-element array literal reached dim 645 and a 3.3 MB
+    // matrix per block. Scalar ALLOCAs are kept despite being pointers — the domain models
+    // one as a memory CELL, which is exactly a tracked numeric variable.
+    V->odim = malloc((size_t)V->nvar*sizeof(int));
+    for (int i=0;i<V->nvar;i++) V->odim[i] = -1;
+    V->noct = 0;
+    for (IrParam *p=f->params; p; p=p->next)
+        if (p->value && p->value->id>=0 && p->value->id<V->nvar && p->value->type
+            && (p->value->type->kind==IRT_INT || p->value->type->kind==IRT_BOOL))
+            V->odim[p->value->id] = V->noct++;
+    for (IrBlock *b=f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            IrValue *rv = ins->result;
+            if (!rv || rv->id<0 || rv->id>=V->nvar || V->odim[rv->id]>=0) continue;
+            bool keep;
+            if (ins->op==IR_ALLOCA)
+                keep = ins->aux.alloca_ty && ins->aux.alloca_ty->kind!=IRT_ARRAY;  // scalar cell
+            else if (ins->op==IR_CONST)
+                keep = false;                      // exact in cval/cknown; see vra_range
+            else
+                keep = rv->type && (rv->type->kind==IRT_INT || rv->type->kind==IRT_BOOL);
+            if (keep) V->odim[rv->id] = V->noct++;
+        }
+    if (V->noct == 0) V->noct = 1;                 // never size the matrix to zero
+    int dim=2*V->noct; V->dsz=dim*dim;
+    // The map is a global the octagon accessors consult, and vra_analyze RECURSES (a call's
+    // return range is read by analysing the callee), so the caller's map must be restored on
+    // the way out or its values would translate through the callee's packing.
+    const int *oct_map_saved = oct_map;
+    oct_map = V->odim;
     int nb=f->next_block_id;
     V->in=calloc(nb,sizeof(int64_t*)); V->reached=calloc(nb,sizeof(bool));
     V->def=calloc(V->nvar,sizeof(IrInstr*)); V->defblk=calloc(V->nvar,sizeof(int));
@@ -763,9 +860,9 @@ static Vra *vra_analyze(IrFunc *f) {
 
     int64_t wb[1]; (void)wb;
     int64_t *W_m=malloc(V->dsz*8), *T_m=malloc(V->dsz*8), *J_m=malloc(V->dsz*8), *D_m=malloc(V->dsz*8);
-    Octagon W={V->nvar,dim,W_m}, T={V->nvar,dim,T_m}, J={V->nvar,dim,J_m}, D={V->nvar,dim,D_m};
+    Octagon W={V->noct,dim,W_m}, T={V->noct,dim,T_m}, J={V->noct,dim,J_m}, D={V->noct,dim,D_m};
 
-    { Octagon E={V->nvar,dim,V->in[f->entry->id]}; oct_init_top(&E,V->nvar,E.m);
+    { Octagon E={V->noct,dim,V->in[f->entry->id]}; oct_init_top(&E,V->noct,E.m);
       // seed each integer parameter's type interval (a usize is ≥ 0, etc.). Skip a
       // bound whose doubled DBM entry would overflow (e.g. u64's ~2^63 upper).
       for (IrParam *p=f->params; p; p=p->next) {   // only the type interval; refinements
@@ -786,12 +883,20 @@ static Vra *vra_analyze(IrFunc *f) {
         if (!H->is_loop_header) continue;
         int himax=H->id;
         for (IrEdge *e=H->preds; e; e=e->next) if (e->block->id > himax) himax=e->block->id;
-        char *mod = calloc(V->nvar,1);
+        // ★ Keyed by OCTAGON SLOT, not value id. oct_widen_sel reads `mod[i/2]` where i is a
+        // DBM index, so the table must live in slot space. While the mapping was the identity
+        // the two coincided; under variable packing they do not, and the mismatch made the
+        // widening consult an unrelated variable — a loop counter that was never widened kept
+        // a stale bound and `src[i]` under an UNBOUNDED `i < n` was PROVEN check-free. That is
+        // a removed bounds check, caught by the corpus's own soundness lock for this shape.
+        char *mod = calloc((size_t)V->noct,1);
         for (IrBlock *b=f->blocks; b; b=b->next) {
             if (b->id < H->id || b->id > himax) continue;
             for (IrInstr *ins=b->instrs; ins; ins=ins->next)
-                if (ins->op==IR_STORE && ins->n_operands>=1 && ins->operands[0]->id < V->nvar)
-                    mod[ins->operands[0]->id]=1;
+                if (ins->op==IR_STORE && ins->n_operands>=1 && ins->operands[0]->id < V->nvar) {
+                    int sl = V->odim[ins->operands[0]->id];
+                    if (sl >= 0) mod[sl]=1;
+                }
         }
         loopmod[H->id]=mod;
     }
@@ -801,7 +906,7 @@ static Vra *vra_analyze(IrFunc *f) {
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             if (!V->reached[b->id]) continue;
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->nvar; W.dim=dim;
+            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim;
             oct_close(&W);
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
@@ -810,11 +915,11 @@ static Vra *vra_analyze(IrFunc *f) {
             else if (b->term.kind==IR_TERM_BR_COND){ succ[0]=b->term.a; succ[1]=b->term.b; ns=2; guarded=true; cond=b->term.cond; }
             for (int k=0;k<ns;k++) {
                 IrBlock *s=succ[k]; if(!s) continue;
-                memcpy(T_m, W_m, V->dsz*8); T.nvar=V->nvar; T.dim=dim;
+                memcpy(T_m, W_m, V->dsz*8); T.nvar=V->noct; T.dim=dim;
                 if (guarded){ vra_refine_guard(V,&T,cond,k==0); oct_close(&T); }
                 if (oct_is_bottom(&T)) continue;
                 if (!V->reached[s->id]) { memcpy(V->in[s->id],T_m,V->dsz*8); V->reached[s->id]=true; changed=true; continue; }
-                Octagon In={V->nvar,dim,V->in[s->id]};
+                Octagon In={V->noct,dim,V->in[s->id]};
                 oct_join(&J,&In,&T);
                 if (s->is_loop_header){ oct_widen_sel(&D,&In,&J,loopmod[s->id]); memcpy(J_m,D_m,V->dsz*8); }
                 if (!oct_leq(&J,&In)){ memcpy(V->in[s->id],J_m,V->dsz*8); changed=true; }
@@ -824,7 +929,7 @@ static Vra *vra_analyze(IrFunc *f) {
     // final pass: discharge index obligations against the converged in-states
     for (IrBlock *b=f->blocks; b; b=b->next) {
         if (!V->reached[b->id]) continue;
-        memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->nvar; W.dim=dim; oct_close(&W);
+        memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; oct_close(&W);
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             switch (ins->op) {
                 // a constant index into a FIXED array is fully decidable from constants
@@ -867,7 +972,7 @@ static Vra *vra_analyze(IrFunc *f) {
             if (b->term.kind!=IR_TERM_RET) continue;
             if (!b->term.cond) { all=false; continue; }
             if (!V->reached[b->id]) continue;          // unreachable: contributes nothing
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->nvar; W.dim=dim;
+            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim;
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
             int64_t lo,hi; vra_range(V,&W,b->term.cond,&lo,&hi);
@@ -884,6 +989,7 @@ static Vra *vra_analyze(IrFunc *f) {
     for (int i=0;i<nb;i++) if (loopmod[i]) free(loopmod[i]);
     free(loopmod);
     free(W_m); free(T_m); free(J_m); free(D_m);
+    oct_map = oct_map_saved;
     return V;
 }
 
@@ -931,16 +1037,19 @@ static bool vra_index_disjoint(void *vctx, IrValue *a, IrValue *b) {
     if (!V->reached[D->blk->id] || !V->in[D->blk->id]) return false;
     // two known, differing constants need no octagon
     if (V->cknown[a->id] && V->cknown[b->id]) return V->cval[a->id] != V->cval[b->id];
-    int dim = 2*V->nvar;
+    int dim = 2*V->noct;
     memcpy(D->scratch, V->in[D->blk->id], (size_t)V->dsz*8);
-    Octagon W = { V->nvar, dim, D->scratch };
+    const int *oct_map_saved = oct_map; oct_map = V->odim;   // queries run outside vra_analyze
+    Octagon W = { V->noct, dim, D->scratch };
     oct_close(&W);
     for (IrInstr *ins = D->blk->instrs; ins && ins != D->at; ins = ins->next)
         vra_transfer_instr(V, &W, ins);
     oct_close(&W);
     // a − b ≤ −1  (a < b)   or   b − a ≤ −1  (b < a)
-    return oct_get(&W, oct_pos(b->id), oct_pos(a->id)) <= -1
-        || oct_get(&W, oct_pos(a->id), oct_pos(b->id)) <= -1;
+    bool disj = vra_diff_ub(V, &W, a->id, b->id) <= -1
+             || vra_diff_ub(V, &W, b->id, a->id) <= -1;
+    oct_map = oct_map_saved;
+    return disj;
 }
 
 static VraDisjoint *vra_disjoint_open(IrFunc *f) {
@@ -982,9 +1091,11 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
                 && i->aux.callee->length==f->name->length
                 && memcmp(i->aux.callee->name, f->name->name, (size_t)f->name->length)==0) { any_self=true; break; }
     if (!any_self) return false;                       // not recursive: not this rule's job
-    int dim = 2*V->nvar;
+    int dim = 2*V->noct;                       // the PACKED dimension — V->dsz is sized from it
     int64_t *scratch = malloc((size_t)V->dsz*8);
     if (!scratch) return false;
+    // Runs outside vra_analyze (effects.h asks it), so it must install the packing itself.
+    const int *oct_map_saved = oct_map; oct_map = V->odim;
     // try each parameter as the measure
     int k = 0;
     for (IrParam *p=f->params; p; p=p->next, k++) {
@@ -995,7 +1106,7 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
         for (IrBlock *b=f->blocks; b && ok; b=b->next) {
             if (!V->reached[b->id] || !V->in[b->id]) continue;
             memcpy(scratch, V->in[b->id], (size_t)V->dsz*8);
-            Octagon W = { V->nvar, dim, scratch };
+            Octagon W = { V->noct, dim, scratch };
             oct_close(&W);
             for (IrInstr *i=b->instrs; i && ok; i=i->next) {
                 bool self = (i->op==IR_CALL && i->aux.callee && f->name
@@ -1006,8 +1117,8 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
                     IrValue *arg = i->operands[k];
                     if (!arg || arg->id<0 || arg->id>=V->nvar) { ok = false; break; }
                     // arg < pv  (arg − pv ≤ −1)   AND   pv ≥ 0 (well-founded below)
-                    bool shrinks = oct_get(&W, oct_pos(pv->id), oct_pos(arg->id)) <= -1;
-                    int64_t lo,hi; bool hl,hh; oct_interval(&W, pv->id, &lo,&hl,&hi,&hh);
+                    bool shrinks = vra_diff_ub(V, &W, arg->id, pv->id) <= -1;
+                    int64_t lo,hi; bool hl,hh; vra_interval(V, &W, pv->id, &lo,&hl,&hi,&hh);
                     bool grounded = (hl && lo >= 0) ||
                                     (pv->type->kind==IRT_INT && !pv->type->is_signed);
                     if (!(shrinks && grounded)) { ok = false; break; }
@@ -1015,9 +1126,10 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
                 vra_transfer_instr(V, &W, i);
             }
         }
-        if (ok) { free(scratch); return true; }        // this parameter is a measure
+        if (ok) { free(scratch); oct_map = oct_map_saved; return true; }  // this param is a measure
     }
     free(scratch);
+    oct_map = oct_map_saved;
     return false;
 }
 
@@ -1025,7 +1137,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->subslice_gep); free(V->escaped); free(V->shape_rank); free(V->shape_ext); free(V->checks); free(V);
+    free(V->slicelen); free(V->subslice_gep); free(V->escaped); free(V->shape_rank); free(V->shape_ext); free(V->odim); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H

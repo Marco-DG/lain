@@ -17,9 +17,14 @@ produce safe programs proves nothing about the prover.
 import random, sys
 
 def gen(rng):
-    kind = rng.choice(["midpoint", "divsub", "retrange", "divconst", "midpoint_wide"])
-    N    = rng.choice([8, 16, 32, 64, 100, 128])
-    lit  = ", ".join(str(i % 7) for i in range(N))
+    kind = rng.choice(["midpoint", "divsub", "retrange", "divconst", "midpoint_wide",
+                       "loop_scan", "loop_scan", "loop_unbounded"])
+    # Large arrays matter: the widening bug this fuzzer must catch is a SLOT COLLISION, and
+    # which slot collides depends on how many values the function has. But an explicit literal
+    # costs one trivially-proven obligation PER ELEMENT, so the initializer is a comprehension
+    # — one obligation, any size.
+    N    = rng.choice([16, 32, 64, 128, 256, 1024, 4096])
+    lit  = f"0 for z in 0..{N}"
 
     if kind == "midpoint":
         # mid = lo + (hi-lo)/D, guarded lo < hi < BOUND. Safe iff BOUND <= N.
@@ -72,6 +77,50 @@ def gen(rng):
     return 0
 }}"""
         call = f"probe({m}, arr)"
+
+    elif kind == "loop_scan":
+        # A counted scan. The WIDENING at the loop header is what keeps `i` sound here, and
+        # nothing else in this generator exercises it — a bug that stops widening the counter
+        # leaves a stale bound and turns an unbounded scan into a "proof". The loop bound is
+        # drawn to sit above, at, and below the array length on purpose.
+        bound = rng.choice([N, N, N // 2 or 1, N + rng.randint(1, 40)])
+        ty, inc = rng.choice([("usize", "i + 1"), ("u32", "i +% 1"), ("u32", "i + 1")])
+        body = f"""proc probe(m {ty}, a i32[{N}]) i32 {{
+    var acc i32 = 0
+    var i {ty} = 0
+    while i < {bound} {{
+        acc = acc +% a[i]
+        i = {inc}
+    }}
+    return acc
+}}"""
+        call = f"probe({rng.randint(0, N)}, arr)"
+
+    elif kind == "loop_unbounded":
+        # The soundness lock's own shape: `while i < n` with n a PARAMETER carrying no upper
+        # bound. It must never be proven, whatever the caller happens to pass.
+        n = rng.choice([0, 1, N // 2 or 1, N, N + rng.randint(1, 200)])
+        ty, inc = rng.choice([("usize", "i + 1"), ("u32", "i +% 1"), ("u32", "i + 1")])
+        # ★ The layout matters. A wrong-keyed table (a value id used where a packed slot
+        # belongs) is a COLLISION bug: whether it misfires depends on which id lands on which
+        # slot, so a single fixed shape probes exactly one arrangement and can miss it
+        # completely. Vary the parameter ORDER and pad with dead locals to shift every id.
+        pad  = "\n".join(f"    var d{k} {ty} = {k}" for k in range(rng.randint(0, 4)))
+        aacc = rng.choice(["acc = acc +% a[i]", "acc = a[i]"])
+        if rng.random() < 0.5:
+            sig, call = f"proc probe(n {ty}, a i32[{N}]) i32", f"probe({n}, arr)"
+        else:
+            sig, call = f"proc probe(a i32[{N}], n {ty}) i32", f"probe(arr, {n})"
+        body = f"""{sig} {{
+    var acc i32 = 0
+{pad}
+    var i {ty} = 0
+    while i < n {{
+        {aacc}
+        i = {inc}
+    }}
+    return acc
+}}"""
 
     else:  # retrange — the index comes from a helper's return value
         mask = rng.choice([7, 15, 31, 63, 127])

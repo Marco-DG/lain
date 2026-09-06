@@ -31,9 +31,13 @@ for i in $(seq 1 "$N"); do
   python3 fuzz_vra.py "$i" > "$f" 2>/dev/null || { skipped=$((skipped+1)); continue; }
 
   out=$("$VRADRV" "$f" --suppress 2>/dev/null) || { skipped=$((skipped+1)); continue; }
-  # every BOUNDS obligation must be discharged for the program to count as "proven"
-  echo "$out" | grep -q "index bounds" || { skipped=$((skipped+1)); continue; }
-  if echo "$out" | grep "index bounds" | grep -q "NOT proven"; then
+  # Judge ONLY `probe`, the function under test. `main`'s array literal contributes one
+  # trivially-proven constant-index obligation PER ELEMENT, and letting those into the verdict
+  # meant a 100-element literal drowned the single access that matters — a program whose real
+  # access was falsely proven still looked "mixed" and was never executed.
+  probe_out=$(echo "$out" | grep "^ *probe .*index bounds")
+  [ -n "$probe_out" ] || { skipped=$((skipped+1)); continue; }
+  if echo "$probe_out" | grep -q "NOT proven"; then
     unproven=$((unproven+1)); continue
   fi
   proven=$((proven+1))
