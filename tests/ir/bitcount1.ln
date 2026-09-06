@@ -1,0 +1,15 @@
+// Self-checking bit-intrinsic test for the NEW pipeline: @popcount / @ctz / @clz lower to
+// real IR ops (not opaque calls), so both pipelines must agree on the values. Exits 0 iff
+// every result matches the hand-computed answer.
+proc main() i32 {
+    var x u32 = 40             // 0b101000
+    var pc u32 = @popcount(x)  // 2
+    var tz u32 = @ctz(x)       // 3
+    var lz u32 = @clz(x)       // 32 - 6 = 26
+    var acc = 0
+    acc = acc +% (pc as i32)
+    acc = acc +% (tz as i32)
+    acc = acc +% (lz as i32)
+    if acc == 31 { return 0 }
+    return 1
+}

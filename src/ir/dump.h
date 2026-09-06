@@ -36,6 +36,7 @@ static const char *ir_op_name(IrOp op) {
         case IR_SLICE_LEN: return "slice_len"; case IR_SLICE_DATA: return "slice_data";
         case IR_MAKE_SLICE: return "make_slice"; case IR_SUBSLICE: return "subslice";
         case IR_ARRAY_NEW: return "array_new"; case IR_STRUCT_NEW: return "struct_new";
+        case IR_CTZ: return "ctz"; case IR_CLZ: return "clz"; case IR_POPCOUNT: return "popcount";
         case IR_SUM_NEW: return "sum_new"; case IR_SUM_TAG: return "sum_tag";
         case IR_SUM_PAYLOAD: return "sum_payload";
         case IR_STR_CONST: return "str_const";

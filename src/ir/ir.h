@@ -115,6 +115,10 @@ typedef enum {
     // arithmetic (over ℤ; overflow is a separate obligation flagged in `checked`)
     IR_ADD, IR_SUB, IR_MUL, IR_SDIV, IR_UDIV, IR_SREM, IR_UREM, IR_NEG,
     IR_AND, IR_OR, IR_XOR, IR_SHL, IR_LSHR, IR_ASHR, IR_BNOT,
+    // Bit intrinsics. Primitive in every target (C __builtin_*, Rust trailing_zeros,
+    // LLVM cttz/ctlz/ctpop), so they are ops rather than opaque calls — and the numeric
+    // domain gets an exact range for free: all three land in [0, width].
+    IR_CTZ, IR_CLZ, IR_POPCOUNT,
     // comparison → Bool
     IR_ICMP,                // aux.cmp : the predicate
     // aggregates / slices / memory

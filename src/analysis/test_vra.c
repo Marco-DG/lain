@@ -115,6 +115,24 @@ static bool mask_index_proven(int mask, int alen) {
     vra_free(V); return ok;
 }
 
+// A bit intrinsic is bounded by its OPERAND's width, for ANY input: @popcount(x) on a u32
+// is in [0,32]. Modelling ctz/clz/popcount as IR ops rather than opaque calls is what makes
+// `a[@popcount(x)]` provable with no runtime check — and refusable when the array is too
+// small, which is the soundness half.
+static bool bitcount_index_proven(IrOp op, int opbits, int alen) {
+    IrFunc *f=ir_func_new(&A,nm("bc"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+    IrType *ub=ir_type_int(&A,opbits,false), *u32=ir_type_int(&A,32,false), *i32=ir_type_int(&A,32,true);
+    IrValue *x=ir_add_param(f,ub,nm("x"));
+    IrBlock *e=f->entry;
+    IrValue *a=ir_alloca_array(f,e,arr_i32(alen));
+    IrValue *idx=ir_bitcount(f,e,op,x,u32);
+    ir_elem_ptr(f,e,a,idx,i32);
+    ir_set_ret(e,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool ok=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_BOUNDS) ok=V->checks[i].ok;
+    vra_free(V); return ok;
+}
+
 // The RELATIONAL frontier the old engine REJECTS: sliding window a[i+1] under a
 // guard `i+1 < a.len`. Intervals can't relate i+1 to len; octagons can. Build it
 // by hand (sema would exit on the reject) and confirm the new engine PROVES it.
@@ -281,6 +299,10 @@ int main(void) {
     // MASK idiom — nonlinear transfer: x & (N-1) ∈ [0,N-1] for ANY x.
     vra_expect("mask a[x & 7] over a[8]  (0..7 < 8)",        mask_index_proven(7,8),  true);
     vra_expect("mask a[x & 15] over a[8] (0..15 escapes)",   mask_index_proven(15,8), false);
+    vra_expect("a[@popcount(u32 x)] over a[33] (0..32 < 33)", bitcount_index_proven(IR_POPCOUNT,32,33), true);
+    vra_expect("a[@popcount(u32 x)] over a[32] (32 escapes)", bitcount_index_proven(IR_POPCOUNT,32,32), false);
+    vra_expect("a[@ctz(u8 x)] over a[9]      (0..8 < 9)",     bitcount_index_proven(IR_CTZ,8,9),        true);
+    vra_expect("a[@clz(u8 x)] over a[8]      (8 escapes)",    bitcount_index_proven(IR_CLZ,8,8),        false);
     vra_expect("reverse a[(N-1)-i] over a[10]  (i<10)",       reverse_fixed_proven(10), true);
     vra_expect("nested loops: a[j] under j<N (2 headers)",    nested_loop_proven(10),   true);
     // TERMINATION — a func's loops must drain their bound.

@@ -890,6 +890,24 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             IrValue *p = ir_lower_expr(c, e->as.deref_expr.expr);
             return ir_load(c->f, c->cur, p, ty);
         }
+        case EXPR_BUILTIN: {
+            // The SCALAR bit intrinsics are ordinary integer ops. (@movemask/@load/@store/
+            // @shuffle are SIMD and stay unlowered — off the North Star, and they need a
+            // vector type in the IR.)
+            BuiltinKind bk = e->as.builtin_expr.builtin_kind;
+            if (bk==BUILTIN_CTZ || bk==BUILTIN_CLZ || bk==BUILTIN_POPCOUNT) {
+                IrValue *x = ir_lower_expr(c, e->as.builtin_expr.arg);
+                IrOp op = bk==BUILTIN_CTZ ? IR_CTZ : bk==BUILTIN_CLZ ? IR_CLZ : IR_POPCOUNT;
+                return ir_bitcount(c->f, c->cur, op, x, ty && ty->kind==IRT_INT ? ty
+                                                       : ir_type_int(c->a,32,false));
+            }
+            // `@likely(x)` / `@unlikely(x)` are branch HINTS with the value of their
+            // argument — semantically the identity, so lowering them away is faithful.
+            if (bk==BUILTIN_LIKELY || bk==BUILTIN_UNLIKELY)
+                return ir_lower_expr(c, e->as.builtin_expr.arg);
+            ir_incomplete(c, "unhandled-builtin");
+            break;
+        }
         default:
             ir_incomplete(c, "unhandled-expr");   // infaithful placeholder
             return ir_const_int(c->f, c->cur, 0, ty);

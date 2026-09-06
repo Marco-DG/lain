@@ -178,6 +178,17 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             }
             break;
         }
+        case IR_CTZ: case IR_CLZ: case IR_POPCOUNT: {
+            // A bit intrinsic lands in [0, W] where W is the OPERAND's width — exactly the
+            // fact that makes `a[@popcount(mask)]` provable without a runtime check. Modelled
+            // as an op rather than an opaque call precisely so this range is free.
+            if (r<0) break;
+            oct_forget(W, r);
+            const IrType *at = ins->operands[0] ? ins->operands[0]->type : NULL;
+            int width = (at && at->kind==IRT_INT && at->bits>0 && at->bits<=64) ? at->bits : 32;
+            oct_add_lb(W, r, 0); oct_add_ub(W, r, width);
+            break;
+        }
         case IR_AND: {   // x & c  with c ≥ 0 constant  ⇒  0 ≤ r ≤ c   (mask idiom c=N−1)
             if (r<0) break;
             int a=ins->operands[0]->id, b=ins->operands[1]->id;

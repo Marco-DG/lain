@@ -120,6 +120,13 @@ void ir_consume(IrFunc *f, IrBlock *b, IrValue *slot) {
     ins->operands[0] = slot;
     ir_emit(b, ins);
 }
+// A bit intrinsic (ctz/clz/popcount): one integer operand, an integer result.
+IrValue *ir_bitcount(IrFunc *f, IrBlock *b, IrOp op, IrValue *x, IrType *t) {
+    IrInstr *ins = ir_instr(f, op, t, 1);
+    ins->operands[0] = x;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_icmp(IrFunc *f, IrBlock *b, IrCmp c, IrValue *x, IrValue *y) {
     IrInstr *ins = ir_instr(f, IR_ICMP, ir_type_bool(f->arena), 2);
     ins->aux.cmp = c; ins->operands[0] = x; ins->operands[1] = y;

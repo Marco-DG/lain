@@ -113,6 +113,12 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                             fprintf(o, "){ v%d, v%d };\n", i->operands[0]->id, i->operands[1]->id); break;
         case IR_STR_CONST:  fprintf(o, "  v%d = (uint8_t*)", i->result->id);
                             ir_emit_cstr(i->aux.str.bytes, i->aux.str.len, o); fputs(";\n", o); break;
+        case IR_CTZ: case IR_CLZ: case IR_POPCOUNT:
+            fprintf(o, "  v%d = (uint32_t)%s((unsigned)(v%d));\n", i->result->id,
+                    i->op==IR_CTZ ? "__builtin_ctz" : i->op==IR_CLZ ? "__builtin_clz"
+                                                                    : "__builtin_popcount",
+                    i->operands[0]->id);
+            break;
         case IR_SUM_TAG:    fprintf(o, "  v%d = v%d.tag;\n", i->result->id, i->operands[0]->id); break;
         case IR_SUM_PAYLOAD: {
             IrType *st = i->operands[0]->type;
