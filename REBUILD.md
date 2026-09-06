@@ -469,7 +469,9 @@ The endeavour is complete when ALL of these hold simultaneously:
       roots/fields provably disjoint, indices delegated to the VRA seam
       (`ir_place_index_disjoint_fn`) — the ★ beyond-Rust hook. test_place.c 12/12.
 - [ ] **B4: refinements ON `IrType`** (C6) — retire the ad-hoc `slicelen` side-map.
-- [x] **B3: `opaque`/havoc with declared footprints** ✓ (c9a2eca) — `incomplete` 60 → 13,
+- [x] **B3: `opaque`/havoc with declared footprints** ✓ COMPLETE — `incomplete` 60 → 13 → **2**
+      (99% faithful); the 2 left are unmodelled CONTROL FLOW, which an opaque cannot express.
+      Originally (c9a2eca): `incomplete` 60 → 13,
       faithfulness 88% → 97%; precision went UP (576/612 → 587/622). Remaining 13: 11 more
       conversions (unlowered-lvalue/unresolved-global/aggregate-init) + 2 genuinely
       unmodelled CONTROL FLOW, which an opaque cannot express.
