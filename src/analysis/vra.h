@@ -725,8 +725,11 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_BOUNDS; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.lo_ok = hl && lo>=0;
     c.has_len = (clen>=0 || lenvar>=0);
-    if (clen>=0)        c.hi_ok = hh && hi <= clen-1;
-    else if (lenvar>=0) c.hi_ok = vra_diff_ub(V, W, idx, lenvar) <= -1;  // idx − len ≤ −1
+    // A WIDE access spans `w` elements from idx, so the obligation is `idx + w <= len` —
+    // `idx < len` would pass a 32-lane load starting one element from the end.
+    int64_t w = ins->aux.elem_width > 0 ? ins->aux.elem_width : 1;
+    if (clen>=0)        c.hi_ok = hh && hi <= clen - w;
+    else if (lenvar>=0) c.hi_ok = vra_diff_ub(V, W, idx, lenvar) <= -w;  // idx − len ≤ −w
     else                c.hi_ok = false;
     // S2: if the flat check failed, try FACTORING the index against the region's shape.
     if (!c.hi_ok && shape_base>=0 && vra_factor_shape(V, W, shape_base, idx)) {

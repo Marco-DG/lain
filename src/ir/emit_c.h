@@ -140,8 +140,26 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             break;
         }
         case IR_ASSUME: case IR_ASSERT: case IR_CONSUME: break;  // verification-only; no runtime code
-        case IR_LOAD:   fprintf(o, "  v%d = *v%d;\n", i->result->id, i->operands[0]->id); break;
-        case IR_STORE:  fprintf(o, "  *v%d = v%d;\n", i->operands[0]->id, i->operands[1]->id); break;
+        // A WIDE access reads/writes more than the pointer's element type: a 16-lane vector
+        // load through a `uint8_t*`. `*p` is a type error there, and a cast would assert an
+        // alignment the address need not have — memcpy is the well-defined spelling and gcc
+        // turns it into the single instruction anyway.
+        case IR_LOAD:
+            if (i->result->type && i->result->type->kind==IRT_VECTOR
+                && i->operands[0]->type && i->operands[0]->type->elem
+                && i->operands[0]->type->elem->kind != IRT_VECTOR)
+                 fprintf(o, "  __builtin_memcpy(&v%d, v%d, sizeof v%d);\n",
+                         i->result->id, i->operands[0]->id, i->result->id);
+            else fprintf(o, "  v%d = *v%d;\n", i->result->id, i->operands[0]->id);
+            break;
+        case IR_STORE:
+            if (i->operands[1]->type && i->operands[1]->type->kind==IRT_VECTOR
+                && i->operands[0]->type && i->operands[0]->type->elem
+                && i->operands[0]->type->elem->kind != IRT_VECTOR)
+                 fprintf(o, "  __builtin_memcpy(v%d, &v%d, sizeof v%d);\n",
+                         i->operands[0]->id, i->operands[1]->id, i->operands[1]->id);
+            else fprintf(o, "  *v%d = v%d;\n", i->operands[0]->id, i->operands[1]->id);
+            break;
         case IR_SLICE_LEN:  fprintf(o, "  v%d = v%d.len;\n",  i->result->id, i->operands[0]->id); break;
         case IR_SLICE_DATA: fprintf(o, "  v%d = v%d.data;\n", i->result->id, i->operands[0]->id); break;
         case IR_MAKE_SLICE: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
@@ -203,14 +221,37 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             fputs(" };\n", o);
             break;
         }
+        case IR_VEC_MOVEMASK: {   // the ISA's own lane-predicate reduction
+            IrType *vt = i->operands[0]->type;
+            int lanes = vt ? (int)vt->array_len : 16;
+            fprintf(o, "  v%d = (uint32_t)%s((%s)v%d);\n", i->result->id,
+                    lanes >= 32 ? "_mm256_movemask_epi8" : "_mm_movemask_epi8",
+                    lanes >= 32 ? "__m256i" : "__m128i", i->operands[0]->id);
+            break;
+        }
         case IR_FUNC_REF: fprintf(o, "  v%d = %.*s;\n", i->result->id,
                                   (int)i->aux.callee->length, i->aux.callee->name); break;
         case IR_STRUCT_NEW: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
                             fputs("){ ", o);
                             for (int k=0;k<i->n_operands;k++){ if(k)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
                             fputs(" };\n", o); break;
-        case IR_ICMP:   fprintf(o, "  v%d = (v%d %s v%d);\n", i->result->id,
-                                i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id); break;
+        case IR_ICMP: {
+            // Comparing a vector to a SCALAR broadcasts it, but gcc requires the scalar to be
+            // at the LANE type: `v == 3` with an i32 literal against a u8 vector is rejected
+            // as a truncating conversion. Cast it.
+            IrType *lt = i->operands[0]->type, *rt2 = i->operands[1]->type;
+            fprintf(o, "  v%d = (", i->result->id);
+            if (lt && lt->kind==IRT_VECTOR && rt2 && rt2->kind!=IRT_VECTOR) {
+                fprintf(o, "v%d %s (", i->operands[0]->id, ir_cmp_c(i->aux.cmp));
+                ir_ctype(lt->elem, o); fprintf(o, ")v%d);\n", i->operands[1]->id);
+            } else if (rt2 && rt2->kind==IRT_VECTOR && lt && lt->kind!=IRT_VECTOR) {
+                fputc('(', o); ir_ctype(rt2->elem, o);
+                fprintf(o, ")v%d %s v%d);\n", i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id);
+            } else {
+                fprintf(o, "v%d %s v%d);\n", i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id);
+            }
+            break;
+        }
         case IR_NEG:    fprintf(o, "  v%d = -v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_BNOT:   fprintf(o, "  v%d = ~v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_CAST:   fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
@@ -279,9 +320,20 @@ static void ir_emit_func_c(IrFunc *f, FILE *o, Arena *a) {
         fprintf(o, " L%d: ;\n", b->id);
         for (IrInstr *i=b->instrs; i; i=i->next) ir_emit_instr_c(i, o);
         switch (b->term.kind) {
-            case IR_TERM_BR:      fprintf(o, "  goto L%d;\n", b->term.a->id); break;
-            case IR_TERM_BR_COND: fprintf(o, "  if (v%d) goto L%d; else goto L%d;\n",
-                                          b->term.cond->id, b->term.a->id, b->term.b->id); break;
+            // IR_TERM_BR is the ZERO value of the enum, so an UNTERMINATED block reads as a
+            // branch to nowhere. Emitting `goto L(null)` crashed the emitter; the honest
+            // response is a well-defined dead end that is visibly wrong if it is ever reached,
+            // not a segfault in the compiler.
+            case IR_TERM_BR:
+                if (b->term.a) fprintf(o, "  goto L%d;\n", b->term.a->id);
+                else fputs("  /* unterminated block */\n", o);
+                break;
+            case IR_TERM_BR_COND:
+                if (b->term.cond && b->term.a && b->term.b)
+                    fprintf(o, "  if (v%d) goto L%d; else goto L%d;\n",
+                            b->term.cond->id, b->term.a->id, b->term.b->id);
+                else fputs("  /* malformed conditional */\n", o);
+                break;
             case IR_TERM_RET:     if (b->term.cond) fprintf(o, "  return v%d;\n", b->term.cond->id);
                                   else fputs(is_main ? "  return 0;\n" : "  return;\n", o); break;
             case IR_TERM_UNREACHABLE:
@@ -514,6 +566,12 @@ void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
     // the generated C either and every `else panic(...)` failed to LINK. The old backend
     // inlines fprintf+abort at the site; emit one helper instead, and only when it is used,
     // so a module that never panics is unchanged.
+    { bool needs_x86 = false;                 // only when a movemask is actually emitted
+      for (IrFunc *f=funcs; f && !needs_x86; f=f->next)
+        for (IrBlock *b=f->blocks; b && !needs_x86; b=b->next)
+          for (IrInstr *i=b->instrs; i; i=i->next)
+            if (i->op==IR_VEC_MOVEMASK) { needs_x86 = true; break; }
+      if (needs_x86) fputs("#include <immintrin.h>\n\n", o); }
     { IrInstr *pc = NULL;
       for (IrFunc *f=funcs; f && !pc; f=f->next)
         for (IrBlock *b=f->blocks; b && !pc; b=b->next)

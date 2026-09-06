@@ -195,7 +195,17 @@ IrValue *ir_bitcount(IrFunc *f, IrBlock *b, IrOp op, IrValue *x, IrType *t) {
     return ins->result;
 }
 IrValue *ir_icmp(IrFunc *f, IrBlock *b, IrCmp c, IrValue *x, IrValue *y) {
-    IrInstr *ins = ir_instr(f, IR_ICMP, ir_type_bool(f->arena), 2);
+    // A comparison of VECTORS is lane-wise: its result is a vector of per-lane predicates,
+    // not a scalar bool. Typing it bool made `d == s` assign a 16-lane value to a `_Bool`.
+    // The lane type is the ISA's own convention — a signed integer of the operand's width.
+    IrType *rt = ir_type_bool(f->arena);
+    if (x && x->type && x->type->kind == IRT_VECTOR) {
+        IrType *v = ir_type_new(f->arena, IRT_VECTOR);
+        v->array_len = x->type->array_len;
+        v->elem = ir_type_int(f->arena, x->type->elem ? x->type->elem->bits : 8, true);
+        rt = v;
+    }
+    IrInstr *ins = ir_instr(f, IR_ICMP, rt, 2);
     ins->aux.cmp = c; ins->operands[0] = x; ins->operands[1] = y;
     ir_emit(b, ins);
     return ins->result;
@@ -299,12 +309,27 @@ IrValue *ir_field_ptr(IrFunc *f, IrBlock *b, IrValue *base, int idx, IrType *fty
     ir_emit(b, ins);
     return ins->result;
 }
+IrValue *ir_vec_movemask(IrFunc *f, IrBlock *b, IrValue *v, IrType *t) {
+    IrInstr *ins = ir_instr(f, IR_VEC_MOVEMASK, t, 1);
+    ins->operands[0] = v;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_elem_ptr(IrFunc *f, IrBlock *b, IrValue *base, IrValue *idx, IrType *elem) {
     IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = elem;
     IrInstr *ins = ir_instr(f, IR_ELEM_PTR, pt, 2);
     ins->operands[0] = base; ins->operands[1] = idx;
+    ins->aux.elem_width = 1;                 // an ordinary single-element access
     ir_emit(b, ins);
     return ins->result;
+}
+// A WIDE element access: the address is used for a read/write spanning `w` elements, so the
+// obligation is `idx + w <= len`. A vector load is the motivating case; nothing about it is
+// SIMD-specific (a memcpy-shaped bulk access is the same fact).
+IrValue *ir_elem_ptr_wide(IrFunc *f, IrBlock *b, IrValue *base, IrValue *idx, IrType *elem, int w) {
+    IrValue *p = ir_elem_ptr(f, b, base, idx, elem);
+    if (b->instrs_tail) b->instrs_tail->aux.elem_width = w > 0 ? w : 1;
+    return p;
 }
 
 // ── terminators ──────────────────────────────────────────────────────────────

@@ -1431,8 +1431,50 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             // (a segfault on any @movemask/@load/@store/@shuffle program). gcc DID warn
             // ("control reaches end of non-void function"); the build output was being
             // grepped for `error` only.
-            // SIMD (@movemask/@load/@store/@shuffle): needs a vector type in the IR. A
-            // @store WRITES memory, so declare the write footprint.
+            // SIMD, now that IRT_VECTOR exists. @load and @store are ordinary memory
+            // accesses that happen to be WIDE — which is the whole point of recording the
+            // width on the element pointer: the bounds obligation for a 32-lane load at `i`
+            // is `i + 32 <= len`, and stating it that way means the existing numeric analysis
+            // proves or refuses it with no SIMD-specific reasoning at all.
+            if (bk==BUILTIN_LOAD || bk==BUILTIN_STORE) {
+                Type *vt = e->as.builtin_expr.vec_type;
+                IrType *vecty = (bk==BUILTIN_LOAD) ? ir_lower_type(c, vt) : NULL;
+                IrValue *basev = ir_lower_expr(c, e->as.builtin_expr.arg);
+                IrValue *offv  = e->as.builtin_expr.arg2 ? ir_lower_expr(c, e->as.builtin_expr.arg2)
+                                                         : ir_const_int(c->f,c->cur,0,ir_type_int(c->a,64,false));
+                IrValue *val = NULL;
+                if (bk==BUILTIN_STORE) {
+                    val = e->as.builtin_expr.arg3 ? ir_lower_expr(c, e->as.builtin_expr.arg3) : NULL;
+                    vecty = val ? val->type : NULL;
+                }
+                if (vecty && vecty->kind==IRT_VECTOR && basev) {
+                    IrType *lane = vecty->elem ? vecty->elem : ir_type_int(c->a,8,false);
+                    if (basev->type && basev->type->kind==IRT_SLICE)
+                        basev = ir_slice_data(c->f, c->cur, basev, lane);
+                    IrValue *p = ir_elem_ptr_wide(c->f, c->cur, basev, offv, lane, (int)vecty->array_len);
+                    p->line = e->line; p->col = e->col;
+                    if (bk==BUILTIN_LOAD) return ir_load(c->f, c->cur, p, vecty);
+                    if (val) ir_store(c->f, c->cur, p, val);
+                    return ir_const_int(c->f, c->cur, 0, ir_type_int(c->a,32,true));
+                }
+            }
+            if (bk==BUILTIN_SPLAT) {
+                IrType *vecty = ir_lower_type(c, e->as.builtin_expr.vec_type);
+                IrValue *x = e->as.builtin_expr.arg ? ir_lower_expr(c, e->as.builtin_expr.arg) : NULL;
+                if (vecty && vecty->kind==IRT_VECTOR && x) {
+                    int n = (int)vecty->array_len;
+                    IrValue **lanes = arena_push_many_aligned(c->a, IrValue*, n > 0 ? n : 1);
+                    for (int k=0;k<n;k++) lanes[k] = x;      // every lane is the same value
+                    return ir_struct_new(c->f, c->cur, vecty, lanes, n);
+                }
+            }
+            if (bk==BUILTIN_MOVEMASK) {
+                IrValue *v = e->as.builtin_expr.arg ? ir_lower_expr(c, e->as.builtin_expr.arg) : NULL;
+                if (v && v->type && v->type->kind==IRT_VECTOR)
+                    return ir_vec_movemask(c->f, c->cur, v,
+                                           ty && ty->kind==IRT_INT ? ty : ir_type_int(c->a,32,false));
+            }
+            // @shuffle remains unmodelled. A @store WRITES memory, so declare the footprint.
             return ir_opaque_expr(c, ty, true, "simd-builtin",
                                   e->as.builtin_expr.arg ? ir_lower_expr(c, e->as.builtin_expr.arg) : NULL, NULL);
         }

@@ -149,6 +149,9 @@ typedef enum {
     IR_ALLOCA,              // aux.alloca_ty : slot element type ; result : Ptr
     IR_LOAD,                // op[0] = address
     IR_STORE,               // op[0] = address, op[1] = value ; no result
+    IR_VEC_MOVEMASK,        // op[0] = a Vec(N,u8) ; result : u32 — one bit per lane's sign.
+                            // Language-neutral: "reduce a lane-wise predicate to a bitmask" is
+                            // what every SIMD ISA calls it, not a Lain idea.
     IR_FIELD_PTR,           // op[0] = base ; aux.field_idx
     IR_ELEM_PTR,            // op[0] = base (array/slice), op[1] = index ; BOUNDS proven here
     IR_SLICE_LEN,           // op[0] = slice ; result : the length value (first-class)
@@ -260,6 +263,11 @@ typedef struct IrInstr {
         IrCastKind  cast_kind;  // IR_CAST
         IrType     *alloca_ty;  // IR_ALLOCA
         int32_t     field_idx;  // IR_FIELD_PTR
+        // IR_ELEM_PTR: how many ELEMENTS the access through this address spans. 1 for an
+        // ordinary `a[i]`; N for a WIDE access — a 32-lane vector load starting at `i` reads
+        // a[i..i+32), so its obligation is `i + 32 <= len`, not `i < len`. Without the width
+        // the IR cannot state the difference and a wide read past the end looks in bounds.
+        int32_t     elem_width;
         IrName     *callee;     // IR_CALL — the callee's name (IR-owned)
         struct { const char *bytes; int32_t len; } str;  // IR_STR_CONST
         struct { int32_t variant, field; } sum;           // IR_SUM_NEW / IR_SUM_PAYLOAD
