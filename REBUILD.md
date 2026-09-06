@@ -264,7 +264,13 @@ checkpoint (same ground rules).
       TOTALITY primitive. `incomplete` 60 → 13, faithfulness 88% → 97%, and precision went UP
       (576/612 → 587/622) because more code became reachable. Reserved now for unmodelled
       CONTROL FLOW only.
-- [~] **B4 Refinements as first-class IR type structure** (interval/predicate on `IrType`) — the
+- [~] **B4 Refinements as first-class IR type structure** ✓ STATIC INTERVAL (3a9e366) —
+      `IrType.has_refine/refine_lo/refine_hi`, read by `irtype_int_range` so bounds, overflow
+      AND div-by-zero all tighten at once. `type Small = u8 < 200` was being DISCARDED when
+      the alias resolved to its base. ★ The scope distinction that matters: a static interval
+      is the same for every value of the type and belongs here; a slice's length and a
+      region's extents are per-VALUE runtime quantities and belong in the IR. B4 is not
+      "move everything onto types". REMAINING: predicates beyond an interval. Originally: the
       canonical-type keystone. VRA reads them from the IR type, never the AST. Unlocks dependent
       lengths (a symbolic-length slice with a *named* length identity) and the `i < a.len` class.
 - [ ] **B5 Region + linearity qualifiers as IR type/fact structure** (prep for the borrow &
@@ -354,7 +360,13 @@ Each is a self-inflicted debt found by auditing the rebuild against its own goal
 - [~] **C4 Promote S2 ABOVE further VRA tuning** ✓ DONE as scheduling (60/61: B3 then S2,
       ahead of the remaining Stage-III divergences) and S2's CORE has landed (3b89944).
       Still open: the separation/disjointness predicate for borrow phase D.
-- [ ] **C5 Redesign the effect lattice** — 3.3 shipped a bit-for-bit port of the old
+- [~] **C5 Redesign the effect lattice** ✓ WRITE FOOTPRINT — `IrFunc.param_writes`, computed
+      transitively, conservative for extern/opaque. Mutability in the conflict rule now comes
+      from the FOOTPRINT, not the parameter type, which fixed BOTH directions: a `var` scalar
+      the callee never writes is no longer a conflict, and a SLICE/STRUCT param (which never
+      set is_mut at all, since only IRT_PTR carries ptr_mut) now does — closing whole-array
+      and subslice co-arg aliasing. REMAINING: a READS footprint, and folding IO into
+      "writes whose region is the external world". Originally: 3.3 shipped a port of the old
       `EffectSet`; the plan's own "one effect row" (reads/writes/raises/diverges + region
       footprints) is unmet. Re-derive it, don't inherit it.
 - [ ] **C6 Type lattice as infrastructure** — refinements still live in ad-hoc side-maps

@@ -18,6 +18,7 @@
 #include "../ir/ir.h"
 #include "../ir/place.h"
 #include "vra.h"          // phase D: numeric index disjointness
+#include "effects.h"      // C5: the per-parameter write footprint
 #include <stdlib.h>
 #include <string.h>
 
@@ -86,6 +87,8 @@ static bool bor_roots_local(IrFunc *f, IrInstr **def, int nvar, IrValue *v) {
 // with ptr_mut. The borrowed PLACE comes from the argument: either an address (a `var x`
 // argument) or — for a by-value shared borrow — the place the value was LOADED from, which
 // is what keeps `f(data, var data)` visible even though the first argument is a copy.
+static IrFunc *bor_loan_mod = NULL;   // module for the write-footprint query (C5)
+
 static bool bor_arg_loan(Borrow *B, IrFunc *callee, int k, IrValue *arg, IrPlace *out, bool *is_mut) {
     if (!arg) return false;
     *is_mut = false;
@@ -108,7 +111,28 @@ static bool bor_arg_loan(Borrow *B, IrFunc *callee, int k, IrValue *arg, IrPlace
     // a by-value copy is not.
     bool is_move = (p && p->value && p->value->owns);
     if (!is_borrow && !is_move) return false;
-    if (is_move || (pt->kind==IRT_PTR && pt->ptr_mut)) *is_mut = true;
+    // C5: mutability comes from the WRITE FOOTPRINT, not from the parameter's type.
+    //
+    // The type says a parameter MAY be written; the footprint says whether it IS. That
+    // matters in BOTH directions and the type alone got both wrong:
+    //   • a `var` scalar the callee never writes is not a mutable access — two arguments
+    //     naming the same place is only undefined behaviour when one is WRITTEN (C's
+    //     `restrict` is violated by a write, not by a reference), so `f(var a[i], var a[i])`
+    //     with a callee that writes neither is legal, and was rejected;
+    //   • a SLICE or STRUCT parameter never set is_mut at all, because only IRT_PTR carries
+    //     `ptr_mut` — so `vadd(n, a, a)` writing `dst[i]` produced NO mutable loan and the
+    //     whole-array aliasing case went uncaught. (That gap was invisible until the E087
+    //     suppression made these programs reachable by the new pass.)
+    //
+    // A move always writes. Without a footprint (no module, or an extern) fall back to the
+    // type, which is the conservative reading.
+    if (is_move) *is_mut = true;
+    else if (callee && bor_loan_mod && k < 64) {
+        IrWriteFootprint w = ir_param_writes(callee, bor_loan_mod);
+        *is_mut = ((w >> k) & 1u) != 0;
+    } else {
+        *is_mut = (pt->kind==IRT_PTR && pt->ptr_mut);
+    }
     IrInstr *d = (arg->id>=0 && arg->id<B->nvar) ? B->def[arg->id] : NULL;
     IrPlace pl = (d && d->op==IR_LOAD && d->n_operands>=1)
                ? ir_place_of(B->def, B->nvar, d->operands[0])   // by-value read of a place
@@ -411,6 +435,7 @@ static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
     // prove is not one. The query needs a POINT — the octagon state is per-block — so the
     // block and instruction are set before each call is examined.
     if (mod) {
+        bor_loan_mod = mod;
         VraDisjoint *D = vra_disjoint_open(f);
         for (IrBlock *b=f->blocks;b;b=b->next)
             for (IrInstr *i=b->instrs;i;i=i->next)
@@ -419,6 +444,7 @@ static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
                     bor_check_call(B, mod, i);
                 }
         vra_disjoint_close(D);
+        bor_loan_mod = NULL;
     }
     return B;
 }

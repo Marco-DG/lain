@@ -308,6 +308,19 @@ typedef enum {
 } IrEffectBit;
 typedef unsigned IrEffect;
 
+// ── C5: the WRITE FOOTPRINT ─────────────────────────────────────────────────
+// The bits above are a coarse binary — IR_EFFECT_WRITE means "writes mutable GLOBAL state"
+// and explicitly EXCLUDES a write through a parameter, so the row could not say WHICH memory
+// a function touches. That is the "region footprints" half of the effect row (C5), and its
+// absence is not academic: whether a callee actually writes through a reference parameter
+// decides whether two arguments naming the same place is undefined behaviour at all. C's
+// `restrict` is only violated by a WRITE, so `f(var a[i], var a[i])` where f writes neither
+// parameter is legal — and was being rejected.
+//
+// Universal: Fortran states it natively (INTENT(IN/OUT/INOUT)), Rust in the &/&mut split,
+// C in `const`. Conservative default: unknown ⇒ assume written.
+typedef uint64_t IrWriteFootprint;   // bit k = may write through parameter k
+
 typedef struct IrFunc {
     IrName    *name;
     IrFuncKind kind;
@@ -330,6 +343,8 @@ typedef struct IrFunc {
     // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
     IrEffect   effects;
     bool       effects_done, effects_in_progress;
+    IrWriteFootprint param_writes;      // C5: which parameters this function may write
+    bool       param_writes_done;
     // B5 region info: does the RETURN borrow from a parameter, and from WHICH? Lain has no
     // lifetime syntax, so the relationship must be recovered, or `r = get_ref(var d)` looks
     // like a plain value and the loan on `d` is invisible across statements.

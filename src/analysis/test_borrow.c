@@ -136,8 +136,14 @@ int main(void){
       IrType *u64t = ir_type_int(&A,64,false);
       // callee: swap2(var x i32, var y i32)
       IrFunc *callee = ir_func_new(&A,nm("swap2"),ir_type_new(&A,IRT_UNIT),IR_FUNC_PROC);
-      ir_add_param(callee, pi, nm("x")); ir_add_param(callee, pi, nm("y"));
-      ir_set_ret(callee->entry, NULL); ir_finalize_cfg(callee);
+      { IrValue *cx = ir_add_param(callee, pi, nm("x"));
+        IrValue *cy = ir_add_param(callee, pi, nm("y"));
+        // The callee must actually WRITE its parameters: mutability now comes from the write
+        // FOOTPRINT, not the parameter type (C5), so a callee with an empty body writes
+        // nothing and correctly produces no mutable loan at all.
+        ir_store(callee, callee->entry, cx, ir_const_int(callee,callee->entry,1,i32));
+        ir_store(callee, callee->entry, cy, ir_const_int(callee,callee->entry,2,i32));
+        ir_set_ret(callee->entry, NULL); ir_finalize_cfg(callee); }
 
       // caller: a[4]; f(&a[I], &a[J]) for various I, J
       // mode 0 = same index VALUE, 1 = two constants 1 and 2, 2 = the same constant twice,

@@ -1637,6 +1637,12 @@ static void check_call_aliasing(Decl *callee, ExprList *args, isize line, isize 
             bool ispan = sema_arg_const_span(aex[i], &ilo, &ihi);
             bool jspan = sema_arg_const_span(aex[j], &jlo, &jhi);
             if (ispan && jspan && (ihi <= jlo || jhi <= ilo)) continue;
+            // The differential seam covers this too: it is a REJECTION the new engine must
+            // be measurable against, and exiting here meant every aliasing program stopped
+            // before the new borrow pass ever ran. That artifact produced two wrong readings
+            // before it was noticed — the driver reported "accepted" for a program that had
+            // never been analysed.
+            if (g_suppress_ownership) return;
             fprintf(stderr, "[E087] Error Ln %li, Col %li: array '%.*s' reaches two parameters "
                     "of the same call (directly or via a slice/element/field), at least one of "
                     "which mutates it. The callee borrows its reference parameters as non-aliasing "
