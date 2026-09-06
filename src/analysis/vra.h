@@ -19,6 +19,8 @@
 #include <stdlib.h>
 
 // One discharged (or not) proof obligation.
+#define VRA_MAX_RANK 4
+
 typedef enum { VRA_BOUNDS, VRA_OVERFLOW, VRA_DIVZERO, VRA_TERMINATION, VRA_PRECOND } VraCheckKind;
 typedef struct {
     VraCheckKind kind;
@@ -52,6 +54,10 @@ typedef struct {
     // actually reads a[100]. A FALSE PROOF is a removed bounds check, so any call must havoc
     // every cell whose address could have reached it.
     bool    *escaped;
+    // S2: rank-N region shapes, read off the IR_SHAPE instructions. Indexed by the BASE
+    // value id; shape_rank[b] > 0 means b has extents shape_ext[b][0..rank-1].
+    int     *shape_rank;
+    int    (*shape_ext)[VRA_MAX_RANK];
     VraCheck *checks; int nchecks, cap_checks;
 } Vra;
 
@@ -120,6 +126,16 @@ static void vra_prepass(Vra *V) {
     // an ordinary write and does NOT escape; a store's VALUE (operand 1) does.
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op == IR_SHAPE && ins->n_operands >= 3) {
+                int b = ins->operands[0]->id;
+                int rank = ins->n_operands - 1;
+                if (rank > VRA_MAX_RANK) rank = VRA_MAX_RANK;
+                if (b>=0 && b<V->nvar) {
+                    V->shape_rank[b] = rank;
+                    for (int k=0;k<rank;k++) V->shape_ext[b][k] = ins->operands[1+k]->id;
+                }
+                continue;
+            }
             if (ins->op == IR_CALL || ins->op == IR_OPAQUE) {
                 for (int k=0;k<ins->n_operands;k++) vra_mark_escape(V, ins->operands[k]);
             } else if (ins->op == IR_STORE && ins->n_operands>=2) {
@@ -146,6 +162,8 @@ static void vra_assign_copy(Octagon *o, int dst, int src) {
 }                                      //  is fine — unlike per-instruction forget-closes.
 
 static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir);  // fwd
+static int  vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out);        // fwd (S2)
+static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx);            // fwd (S2)
 
 // ── transfer of one instruction over working octagon W ───────────────────────
 static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
@@ -204,6 +222,23 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             bool ac=V->cknown[a], bc=V->cknown[b];
             oct_forget(W, r);
             if (ac && bc) { int64_t v; if (vra_safe_scale(V->cval[a],V->cval[b],&v)) oct_add_const(W,r,v); break; }
+            // S2: `i * e1` where e1 is a region's innermost EXTENT — the row-major stride.
+            // Given 0 ≤ i < e0 and e1 ≥ 0 and len == e0*e1 (true by construction, the shape
+            // came from the declared `i32[h*w]`):
+            //     i*e1 ≤ (e0−1)*e1 = len − e1 ≤ len
+            // so the product is bounded BY THE LENGTH — an octagon difference, even though
+            // len == e0*e1 itself is nonlinear and unrepresentable. That is what discharges
+            // the intermediate `i*w` overflow: it is below a valid usize.
+            for (int side=0; side<2 && r>=0; side++) {
+                int stride = side ? a : b, iv = side ? b : a;
+                int e0=-1, lenv = vra_shape_len_for_stride(V, stride, &e0);
+                if (lenv < 0 || e0 < 0) continue;
+                int64_t ilo,ihi,slo,shi; bool ihl,ihh,shl,shh;
+                oct_interval(W, iv, &ilo,&ihl,&ihi,&ihh);
+                oct_interval(W, stride, &slo,&shl,&shi,&shh);
+                bool i_lt_e0 = oct_get(W, oct_pos(e0), oct_pos(iv)) <= -1;
+                if (i_lt_e0 && ihl && ilo>=0 && shl && slo>=0) oct_add_diff_le(W, r, lenv, 0);
+            }
             int xv=-1; int64_t c=0;
             if (bc) { c=V->cval[b]; xv=a; } else if (ac) { c=V->cval[a]; xv=b; }
             if (xv>=0) {
@@ -346,6 +381,62 @@ static void vra_add_check(Vra *V, VraCheck c) {
         V->checks=realloc(V->checks, V->cap_checks*sizeof(VraCheck)); }
     V->checks[V->nchecks++]=c;
 }
+// S2: the region whose innermost extent is `e1` and whose length variable is known.
+// Returns the length var, or -1. (Rank-2 only for now, matching vra_factor_shape.)
+static int vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out) {
+    for (int b=0;b<V->nvar;b++) {
+        if (V->shape_rank[b] != 2) continue;
+        if (V->shape_ext[b][1] != stride_id) continue;
+        if (V->slicelen[b] < 0) continue;
+        if (e0_out) *e0_out = V->shape_ext[b][0];
+        return V->slicelen[b];
+    }
+    return -1;
+}
+
+// S2: can the flat index `idx` be FACTORED against the shape of `sbase`?
+//
+// For a rank-2 region with extents (e0, e1) the row-major strides are (e1, 1), so the
+// coordinate access (i, j) is the flat index `i*e1 + j`. If the index matches that form
+// structurally and the octagon knows `i < e0` and `j < e1`, the access is in bounds:
+//
+//     idx = i*e1 + j  ≤  (e0−1)*e1 + (e1−1)  =  e0*e1 − 1  <  e0*e1  =  len
+//
+// which is sound because the region's LENGTH is e0*e1 by construction — the shape was
+// emitted from the declared type `i32[h*w]`, whose call sites are checked separately.
+//
+// This is the whole point of the memory model. The flat obligation `i*e1 + j < e0*e1` is
+// NONLINEAR (two runtime values multiplied) and no octagon can express it; factored, both
+// halves are facts the loop guards already established.
+static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx) {
+    if (sbase<0 || sbase>=V->nvar || V->shape_rank[sbase] != 2) return false;   // rank-2 for now
+    IrInstr *d = (idx>=0 && idx<V->nvar) ? V->def[idx] : NULL;
+    if (!d || d->op != IR_ADD || d->n_operands < 2) return false;
+    int e0 = V->shape_ext[sbase][0], e1 = V->shape_ext[sbase][1];
+    // match ADD(MUL(i, e1), j)  — and the commuted forms
+    for (int side=0; side<2; side++) {
+        IrValue *mulv = d->operands[side], *jv = d->operands[1-side];
+        if (!mulv || !jv) continue;
+        IrInstr *m = V->def[mulv->id];
+        if (!m || m->op != IR_MUL || m->n_operands < 2) continue;
+        int i_id = -1;
+        if      (m->operands[1]->id == e1) i_id = m->operands[0]->id;
+        else if (m->operands[0]->id == e1) i_id = m->operands[1]->id;
+        if (i_id < 0) continue;
+        int j_id = jv->id;
+        // i < e0  and  j < e1, both as octagon differences (x − y ≤ −1)
+        bool i_ok = oct_get(W, oct_pos(e0), oct_pos(i_id)) <= -1;
+        bool j_ok = oct_get(W, oct_pos(e1), oct_pos(j_id)) <= -1;
+        // and both non-negative (usize gives this, but check the octagon too)
+        int64_t ilo,ihi,jlo,jhi; bool ihl,ihh,jhl,jhh;
+        oct_interval(W, i_id, &ilo,&ihl,&ihi,&ihh);
+        oct_interval(W, j_id, &jlo,&jhl,&jhi,&jhh);
+        bool nonneg = (ihl && ilo>=0) && (jhl && jlo>=0);
+        if (i_ok && j_ok && nonneg) return true;
+    }
+    return false;
+}
+
 static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
     if (ins->n_operands<2) return;
     if (ins->result && V->subslice_gep[ins->result->id]) return;  // a subslice start — the make_slice checks it
@@ -357,8 +448,10 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
         clen = bd->aux.alloca_ty->array_len;                          // local fixed array
     else if (base->type && base->type->kind==IRT_ARRAY)
         clen = base->type->array_len;                                // fixed-array value (e.g. a param)
-    else if (bd && bd->op==IR_SLICE_DATA && bd->n_operands>=1) {
+    int shape_base = -1;
+    if (bd && bd->op==IR_SLICE_DATA && bd->n_operands>=1) {
         int s = bd->operands[0]->id; if (V->slicelen[s]>=0) lenvar=V->slicelen[s];
+        shape_base = s;                                    // the slice value carries the shape
     }
     int64_t lo,hi; bool hl,hh;
     if (V->cknown[idx]) { lo=hi=V->cval[idx]; hl=hh=true; }   // constant index — no octagon needed
@@ -369,6 +462,10 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
     if (clen>=0)        c.hi_ok = hh && hi <= clen-1;
     else if (lenvar>=0) c.hi_ok = oct_get(W, oct_pos(lenvar), oct_pos(idx)) <= -1;  // idx − len ≤ −1
     else                c.hi_ok = false;
+    // S2: if the flat check failed, try FACTORING the index against the region's shape.
+    if (!c.hi_ok && shape_base>=0 && vra_factor_shape(V, W, shape_base, idx)) {
+        c.hi_ok = true; c.lo_ok = true; c.has_len = true;   // both halves come from the factors
+    }
     c.ok = c.lo_ok && c.hi_ok;
     vra_add_check(V, c);
 }
@@ -417,6 +514,33 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     }
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_OVERFLOW; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.ok = (rlo >= (__int128)tlo) && (rhi <= (__int128)thi);
+    // S2: the intermediate arithmetic of a shaped access cannot overflow, because the region
+    // LENGTH bounds it and the length is itself a valid value of the index type:
+    //     i*e1     ≤ (e0−1)*e1 = len − e1 ≤ len          (given 0 ≤ i < e0, e1 ≥ 0)
+    //     i*e1 + j ≤ len − 1                              (given also 0 ≤ j < e1)
+    // Operand INTERVALS cannot see this — i and e1 are both unbounded runtime values, so
+    // their product's interval is the whole type — which is why `i*w` was reported as a
+    // possible overflow even though it indexes a region that provably contains it.
+    if (!c.ok && (ins->op==IR_MUL || ins->op==IR_ADD)) {
+        if (ins->op==IR_MUL) {
+            for (int side=0; side<2 && !c.ok; side++) {
+                int stride = side ? a->id : b->id, iv = side ? b->id : a->id;
+                int e0=-1, lenv = vra_shape_len_for_stride(V, stride, &e0);
+                if (lenv < 0 || e0 < 0) continue;
+                int64_t ilo2,ihi2,slo2,shi2; bool ihl2,ihh2,shl2,shh2;
+                oct_interval(W, iv, &ilo2,&ihl2,&ihi2,&ihh2);
+                oct_interval(W, stride, &slo2,&shl2,&shi2,&shh2);
+                if (oct_get(W, oct_pos(e0), oct_pos(iv)) <= -1 && ihl2 && ilo2>=0
+                    && shl2 && slo2>=0) c.ok = true;      // ≤ len, a valid value of the type
+            }
+        } else if (V->def[ins->result ? ins->result->id : 0]) {
+            // ADD: the whole `i*e1 + j` form — reuse the index factoring, which proves
+            // exactly `i*e1 + j < len`.
+            for (int bse=0; bse<V->nvar && !c.ok; bse++)
+                if (V->shape_rank[bse]==2 && ins->result
+                    && vra_factor_shape(V, W, bse, ins->result->id)) c.ok = true;
+        }
+    }
     vra_add_check(V, c);
 }
 // Division/remainder: the divisor must be provably non-zero.
@@ -544,6 +668,8 @@ static Vra *vra_analyze(IrFunc *f) {
     V->cval=calloc(V->nvar,sizeof(int64_t)); V->cknown=calloc(V->nvar,sizeof(bool));
     V->slicelen=calloc(V->nvar,sizeof(int)); V->subslice_gep=calloc(V->nvar,sizeof(bool));
     V->escaped=calloc(V->nvar,sizeof(bool));
+    V->shape_rank=calloc(V->nvar,sizeof(int));
+    V->shape_ext=calloc(V->nvar,sizeof(*V->shape_ext));
     vra_prepass(V);
     for (int i=0;i<nb;i++) V->in[i]=malloc(V->dsz*sizeof(int64_t));
 
@@ -656,7 +782,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->subslice_gep); free(V->escaped); free(V->checks); free(V);
+    free(V->slicelen); free(V->subslice_gep); free(V->escaped); free(V->shape_rank); free(V->shape_ext); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H

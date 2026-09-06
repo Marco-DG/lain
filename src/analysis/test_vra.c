@@ -297,6 +297,43 @@ int main(void) {
     vra_expect("sliding window a[i+1] under i+1<a.len",     sliding_window_proven(), true);
     vra_expect("two-pointer a[i] under i<=j & j<a.len",     two_pointer_proven(),    true);
     // MASK idiom — nonlinear transfer: x & (N-1) ∈ [0,N-1] for ANY x.
+    // ── S2: rank-N strided regions ─────────────────────────────────────────────────────
+    // `a[i*w + j]` over a region declared `i32[h*w]`. The FLAT obligation
+    // `i*w + j < h*w` is NONLINEAR and no octagon can express it; with the shape it FACTORS
+    // into `i < h ∧ j < w`, both already in the octagon. The negative cases matter as much:
+    // widen either guard by one and the access leaves its row / the region, and factoring
+    // must refuse.
+    { IrType *u64t=ir_type_int(&A,64,false), *i32t=ir_type_int(&A,32,true);
+      // build: shape(a,h,w); assume i<h; assume j<(w or w+1); a.data[i*w+j]
+      // `hi_slack`/`wi_slack` widen a guard to make the access genuinely out of bounds.
+      struct { const char *what; int hs, ws; bool want; } cases[] = {
+          { "2D a[i*w+j] under i<h, j<w  PROVES (factored)",      0, 0, true  },
+          { "2D a[i*w+j] under i<h, j<w+1 refused (out of row)",  0, 1, false },
+          { "2D a[i*w+j] under i<h+1, j<w refused (past end)",    1, 0, false },
+      };
+      for (unsigned t=0; t<sizeof cases/sizeof cases[0]; t++) {
+        IrFunc *f=ir_func_new(&A,nm("m2d"),i32t,IR_FUNC_PROC);
+        IrValue *a=ir_add_param(f,slice_i32(),nm("a"));
+        IrValue *h=ir_add_param(f,u64t,nm("h")), *w=ir_add_param(f,u64t,nm("w"));
+        IrValue *i=ir_add_param(f,u64t,nm("i")), *j=ir_add_param(f,u64t,nm("j"));
+        IrBlock *e=f->entry;
+        IrValue *ext[2]={h,w}; ir_shape(f,e,a,ext,2);
+        ir_slice_len(f,e,a);                                  // canonical length var
+        IrValue *hb=h, *wb=w;
+        if (cases[t].hs) hb=ir_binop(f,e,IR_ADD,h,ir_const_int(f,e,1,u64t),u64t);
+        if (cases[t].ws) wb=ir_binop(f,e,IR_ADD,w,ir_const_int(f,e,1,u64t),u64t);
+        ir_assume(f,e, ir_icmp(f,e,IR_CMP_ULT,i,hb));
+        ir_assume(f,e, ir_icmp(f,e,IR_CMP_ULT,j,wb));
+        IrValue *idx=ir_binop(f,e,IR_ADD, ir_binop(f,e,IR_MUL,i,w,u64t), j, u64t);
+        ir_elem_ptr(f,e, ir_slice_data(f,e,a,i32t), idx, i32t);
+        ir_set_ret(e,NULL); ir_finalize_cfg(f);
+        Vra *V=vra_analyze(f); bool ok=false;
+        for(int k=0;k<V->nchecks;k++) if(V->checks[k].kind==VRA_BOUNDS) ok=V->checks[k].ok;
+        vra_free(V);
+        vra_expect(cases[t].what, ok, cases[t].want);
+      }
+    }
+
     // ESCAPE: a call may write through any address it was given, so a cell whose address
     // escaped cannot keep its value across one. Modelling a scalar alloca as a stable cell
     // without this proved an out-of-bounds a[i] check-free after `bump(var i)` set i = 100.

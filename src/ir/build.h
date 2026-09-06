@@ -120,6 +120,15 @@ void ir_consume(IrFunc *f, IrBlock *b, IrValue *slot) {
     ins->operands[0] = slot;
     ir_emit(b, ins);
 }
+// S2: declare a rank-N shape for a flat region. op[0]=base, op[1..n]=extents (outermost
+// first). No result — it states a fact about the base, like an assume.
+void ir_shape(IrFunc *f, IrBlock *b, IrValue *base, IrValue **extents, int rank) {
+    IrInstr *ins = ir_instr(f, IR_SHAPE, NULL, rank+1);
+    ins->operands[0] = base;
+    for (int i=0;i<rank;i++) ins->operands[1+i] = extents[i];
+    ir_emit(b, ins);
+}
+
 // An UNMODELLED construct (B3). Result type may be NULL (a statement); `writes` declares
 // whether it may write tracked memory. Operands are the values it may read.
 IrValue *ir_opaque(IrFunc *f, IrBlock *b, IrType *rt, bool writes, const char *why,

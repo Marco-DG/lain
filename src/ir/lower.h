@@ -421,6 +421,40 @@ static void ir_lower_slice_len_refinement(LowerCtx *c, IrValue *pv, Type *pty) {
     }
 }
 
+// S2: a dependent length that is a PRODUCT of runtime extents — `a i32[h * w]` — declares a
+// rank-N strided region, not merely a flat one of that size. Emit the shape so the bounds
+// consumer can FACTOR `a[i*w + j]` into `i < h ∧ j < w` instead of facing the nonlinear
+// `i*w + j < h*w`. Extents are collected outermost-first, so `h * w` gives (h, w) and
+// row-major strides (w, 1).
+//
+// Only a product of plain identifiers is recognised — anything else stays a flat region,
+// which is the conservative default (no shape ⇒ no factoring ⇒ the old behaviour).
+static int ir_collect_extents(LowerCtx *c, Expr *e, IrValue **out, int cap) {
+    if (!e || cap <= 0) return -1;
+    if (e->kind == EXPR_BINARY && e->as.binary_expr.op == TOKEN_ASTERISK) {
+        int n = ir_collect_extents(c, e->as.binary_expr.left, out, cap);
+        if (n < 0) return -1;
+        int m = ir_collect_extents(c, e->as.binary_expr.right, out+n, cap-n);
+        if (m < 0) return -1;
+        return n+m;
+    }
+    if (e->kind == EXPR_IDENTIFIER) {
+        IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
+        IrValue *v = l ? (l->param ? l->param : l->slot) : NULL;
+        if (!v || !v->type || v->type->kind != IRT_INT) return -1;
+        out[0] = v; return 1;
+    }
+    return -1;
+}
+static void ir_lower_region_shape(LowerCtx *c, IrValue *pv, Type *pty) {
+    if (!pv || !pty || pty->kind!=TYPE_ARRAY || pty->array_len>=0 || !pty->size_expr) return;
+    if (pty->size_relop != TOKEN_EQUAL_EQUAL && pty->size_relop != 0) return;  // len == expr only
+    IrValue *ext[8];
+    int rank = ir_collect_extents(c, pty->size_expr, ext, 8);
+    if (rank < 2) return;                       // rank 1 is the ordinary flat region
+    ir_shape(c->f, c->cur, pv, ext, rank);
+}
+
 // B2 (contracts): a callee's return refinement `result OP rhs` (`func f(..) usize <= m`)
 // becomes a post-call `assume(v OP <that>)` — the caller LEARNS the ensures. rhs may be a
 // constant or one of the callee's params, resolved to the matching call argument.
@@ -1343,8 +1377,10 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         IrValue *pv = l ? l->param : NULL;
         if (pv && pv->type && pv->type->kind==IRT_INT)
             ir_lower_param_refinements(&cc, pv, pty, p->decl);
-        if (pv && pty && pty->kind==TYPE_ARRAY && pty->array_len<0 && pty->size_expr)
+        if (pv && pty && pty->kind==TYPE_ARRAY && pty->array_len<0 && pty->size_expr) {
             ir_lower_slice_len_refinement(&cc, pv, pty);
+            ir_lower_region_shape(&cc, pv, pty);      // S2: rank-N shape when len is a product
+        }
     }
     // B5: record only the SIGNATURE fact — this function returns a reference, so its result
     // borrows something of the caller's. WHICH parameter is a body fact, inferred later by

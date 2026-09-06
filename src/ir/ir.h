@@ -144,6 +144,22 @@ typedef enum {
                             // the CFG already establishes — no extra machinery needed.
     // calls
     IR_CALL,                // aux.callee : Decl ; op[0..] = args
+    // ── S2: the MEMORY MODEL — a rank-N strided region ──────────────────────
+    // Declares that a flat region has a SHAPE: operand 0 is the base (array/slice), and
+    // operands 1..n are its EXTENTS, outermost first. Strides are row-major and derived
+    // (stride_k = product of the extents right of k), so a rank-2 region (h, w) has
+    // strides (w, 1) and the flat index `i*w + j` is the coordinate access (i, j).
+    //
+    // Why this is a PRIMITIVE and not a precision tweak: without it, `a[i*w + j]` over
+    // `i32[h*w]` is a NONLINEAR obligation (i*w multiplies two runtime values) and the
+    // octagon cannot express it. With it, the obligation FACTORS per dimension into
+    // `i < h ∧ j < w` — two facts the loop guards already put in the octagon. The 2D case
+    // was manufactured hard by the missing memory model, exactly as the retrospective
+    // found; it is not a numeric-domain problem at all.
+    //
+    // The extents are RUNTIME VALUES, which is why the shape cannot live on IrType and is
+    // stated here in the IR rather than rediscovered by each analysis from a side-map.
+    IR_SHAPE,
     // ── B3: the TOTALITY primitive ──────────────────────────────────────────
     // An UNMODELLED construct, represented honestly instead of poisoning its whole
     // function. `IrFunc.incomplete` suppressed every proof over a function that contained
