@@ -17,6 +17,7 @@
 
 #include "../ir/ir.h"
 #include "../ir/place.h"
+#include "vra.h"          // phase D: numeric index disjointness
 #include <stdlib.h>
 #include <string.h>
 
@@ -343,11 +344,23 @@ static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
     }
     // phase A2: loans that outlive their statement
     if (mod) bor_check_regions(B, mod, f);
-    // phase A: conflicting co-argument borrows at each call
-    if (mod)
+    // phase A: conflicting co-argument borrows at each call.
+    //
+    // ★ Phase D is active here: the numeric domain answers `a[i]` vs `a[j]`. The conflict
+    // rule stays conservative by DEFAULT (unknown indices ⇒ assume overlap, which is what
+    // catches `f(var a[i], var a[i])`), and the octagon only ever REMOVES a conflict it can
+    // prove is not one. The query needs a POINT — the octagon state is per-block — so the
+    // block and instruction are set before each call is examined.
+    if (mod) {
+        VraDisjoint *D = vra_disjoint_open(f);
         for (IrBlock *b=f->blocks;b;b=b->next)
             for (IrInstr *i=b->instrs;i;i=i->next)
-                if (i->op==IR_CALL) bor_check_call(B, mod, i);
+                if (i->op==IR_CALL) {
+                    if (D) { D->blk = b; D->at = i; }
+                    bor_check_call(B, mod, i);
+                }
+        vra_disjoint_close(D);
+    }
     return B;
 }
 static void borrow_free(Borrow *B){ if(!B)return; free(B->def); free(B->finds); free(B); }

@@ -16,6 +16,7 @@
 
 #include "analysis/octagon.h"
 #include "ir/ir.h"
+#include "ir/place.h"   // phase D: the index-disjointness seam we fill
 #include <stdlib.h>
 
 // One discharged (or not) proof obligation.
@@ -162,6 +163,7 @@ static void vra_assign_copy(Octagon *o, int dst, int src) {
 }                                      //  is fine — unlike per-instruction forget-closes.
 
 static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir);  // fwd
+static void vra_free(Vra *V);                                                    // fwd (phase D)
 static int  vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out);        // fwd (S2)
 static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx);            // fwd (S2)
 
@@ -778,6 +780,64 @@ static Vra *vra_analyze(IrFunc *f) {
     free(W_m); free(T_m); free(J_m); free(D_m);
     return V;
 }
+// ── borrow phase D: the NUMERIC DISJOINTNESS bridge (design §4) ─────────────────────────
+//
+// ★ The beyond-Rust seam. Rust's borrow checker cannot distinguish `a[i]` from `a[j]` at all
+// — both are the place `a[_]` — which is why `split_at_mut` must be written with `unsafe`
+// and justified by a comment. The octagon already knows whether i and j differ, so the same
+// question is a QUERY here rather than an axiom the programmer asserts.
+//
+// The state is per-block, so a query needs a POINT: `V->in[block]` replayed up to the
+// instruction. Answering from the block ENTRY alone would miss everything established
+// inside the block (`var i = 1; var j = 5; f(var a[i], var a[j])` assigns both there), and
+// answering from the converged fixpoint of the whole function would be UNSOUND — a fact
+// true at one point is not true at another.
+typedef struct {
+    Vra      *V;
+    IrBlock  *blk;      // the block being examined
+    IrInstr  *at;       // the instruction the query is about (replay stops BEFORE it)
+    int64_t  *scratch;  // dsz doubles, reused across queries
+} VraDisjoint;
+
+// Are `a` and `b` PROVABLY different values at the current point? Conservative: false means
+// "cannot prove", never "provably equal".
+static bool vra_index_disjoint(void *vctx, IrValue *a, IrValue *b) {
+    VraDisjoint *D = (VraDisjoint*)vctx;
+    if (!D || !D->V || !D->blk || !a || !b) return false;
+    Vra *V = D->V;
+    if (a->id < 0 || a->id >= V->nvar || b->id < 0 || b->id >= V->nvar) return false;
+    if (a->id == b->id) return false;                       // the same value is the same index
+    if (!V->reached[D->blk->id] || !V->in[D->blk->id]) return false;
+    // two known, differing constants need no octagon
+    if (V->cknown[a->id] && V->cknown[b->id]) return V->cval[a->id] != V->cval[b->id];
+    int dim = 2*V->nvar;
+    memcpy(D->scratch, V->in[D->blk->id], (size_t)V->dsz*8);
+    Octagon W = { V->nvar, dim, D->scratch };
+    oct_close(&W);
+    for (IrInstr *ins = D->blk->instrs; ins && ins != D->at; ins = ins->next)
+        vra_transfer_instr(V, &W, ins);
+    oct_close(&W);
+    // a − b ≤ −1  (a < b)   or   b − a ≤ −1  (b < a)
+    return oct_get(&W, oct_pos(b->id), oct_pos(a->id)) <= -1
+        || oct_get(&W, oct_pos(a->id), oct_pos(b->id)) <= -1;
+}
+
+static VraDisjoint *vra_disjoint_open(IrFunc *f) {
+    Vra *V = vra_analyze(f);
+    if (!V) return NULL;
+    VraDisjoint *D = calloc(1, sizeof *D);
+    D->V = V; D->scratch = malloc((size_t)V->dsz*8);
+    ir_place_index_disjoint_fn  = vra_index_disjoint;
+    ir_place_index_disjoint_ctx = D;
+    return D;
+}
+static void vra_disjoint_close(VraDisjoint *D) {
+    ir_place_index_disjoint_fn  = NULL;
+    ir_place_index_disjoint_ctx = NULL;
+    if (!D) return;
+    vra_free(D->V); free(D->scratch); free(D);
+}
+
 static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);

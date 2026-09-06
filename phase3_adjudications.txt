@@ -67,7 +67,15 @@ tests/memory/array_uninit_element_read_fail.ln            NEW-ACCEPTS  new-incom
 tests/ownership/mut_plus_nested_shared_fail.ln            NEW-ACCEPTS  new-more-precise
 tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-more-precise
 
-# ── new-over-strict: THE PHASE-D MOTIVATION ───────────────────────────────────
+# ── new-over-strict: CLOSED by phase D ────────────────────────────────────────
+# RESOLVED (the entry below is kept for the reasoning, the test now AGREES). The octagon is
+# wired into `ir_place_index_disjoint_fn`, so `swap2(var a[i], var a[j])` with distinct
+# indices is accepted while `swap2(var a[i], var a[i])` still conflicts. Pinned by five unit
+# cases in test_borrow.c including the RELATIONAL one — `a[p]` vs `a[q]` under `p<q`, where
+# neither index has a value and the octagon proves they differ anyway. THAT is the case Rust
+# cannot express: its borrow checker has no numeric domain to ask.
+#
+# Historical motivation:
 # The new engine REJECTS `swap2(var a[i], var a[j])` with i=1, j=5 — two mutable borrows of
 # provably DISTINCT elements. Its conflict rule is right to be conservative by default
 # (ir_place_index_provably_disjoint returns false without a numeric bridge), and that same
@@ -81,7 +89,6 @@ tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-more-
 # all, which is why `split_at_mut` needs `unsafe`. The seam exists (ir/place.h); what it
 # needs is a query POINT, since the octagon state is per-block and the hook currently takes
 # only the two values.
-tests/ownership/coarg_alias_element_disjoint_pass.ln      NEW-REJECTS  new-over-strict
 
 # ── new-incomplete-borrow ─────────────────────────────────────────────────────
 # The LOAN-SITE generalisation closed 3 (cross_stmt_borrow_write, owner_reassign,

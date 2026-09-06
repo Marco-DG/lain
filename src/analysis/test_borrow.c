@@ -13,6 +13,7 @@
 static Arena A;
 static IrName *nm(const char *s){ return ir_intern(&A, s, (isize)strlen(s)); }
 static int failures=0;
+static IrType *arr_i32_4(void){ IrType *t=ir_type_new(&A,IRT_ARRAY); t->elem=ir_type_int(&A,32,true); t->array_len=4; return t; }
 static int nfind(IrFunc *f){ Borrow *B=borrow_analyze(f); int n=B->nfinds; borrow_free(B); return n; }
 static void bexpect(const char *what, int got, int want){
     printf("  %-48s : %d (expected %d)%s\n", what, got, want, got==want?"":"   <<< WRONG");
@@ -124,6 +125,58 @@ int main(void){
         f->ret_borrows = true;
         ir_set_ret(f->entry, ir_load(f,f->entry,pa,pi32));
         bexpect("opaque ret-borrow falls back to all ref params", (int)bor_ret_borrow_mask(f), 3); }
+    }
+
+    // 8) ★ PHASE D — numeric index disjointness. Rust cannot distinguish a[i] from a[j] at
+    // all (both are the place `a[_]`), which is why split_at_mut needs `unsafe`. Here the
+    // octagon answers it. The DEFAULT must stay conservative — that is what catches passing
+    // the same element twice to two `restrict` parameters, a demonstrated miscompile in the
+    // old engine — and the numeric bridge may only ever REMOVE a conflict it can prove away.
+    { IrType *pi = ir_type_new(&A,IRT_PTR); pi->elem=i32; pi->ptr_mut = true;
+      IrType *u64t = ir_type_int(&A,64,false);
+      // callee: swap2(var x i32, var y i32)
+      IrFunc *callee = ir_func_new(&A,nm("swap2"),ir_type_new(&A,IRT_UNIT),IR_FUNC_PROC);
+      ir_add_param(callee, pi, nm("x")); ir_add_param(callee, pi, nm("y"));
+      ir_set_ret(callee->entry, NULL); ir_finalize_cfg(callee);
+
+      // caller: a[4]; f(&a[I], &a[J]) for various I, J
+      // mode 0 = same index VALUE, 1 = two constants 1 and 2, 2 = the same constant twice,
+      // 3 = two unconstrained params.
+      const char *what[5] = {
+          "phase D: a[i] vs a[i] (same value) CONFLICTS",
+          "phase D: a[1] vs a[2] (distinct consts) is allowed",
+          "phase D: a[3] vs a[3] (same const) CONFLICTS",
+          "phase D: a[p] vs a[q] (unknown) CONFLICTS (conservative)",
+          "phase D: a[p] vs a[q] under p<q is ALLOWED  <-- beyond Rust",
+      };
+      int want[5] = {1, 0, 1, 1, 0};
+      for (int mode=0; mode<5; mode++) {
+          IrFunc *f=ir_func_new(&A,nm("caller"),ir_type_new(&A,IRT_UNIT),IR_FUNC_PROC);
+          IrValue *p0=NULL,*p1=NULL;
+          if (mode>=3) { p0=ir_add_param(f,u64t,nm("p")); p1=ir_add_param(f,u64t,nm("q")); }
+          IrBlock *e=f->entry;
+          IrValue *a=ir_alloca_array(f,e,arr_i32_4());
+          IrValue *ix, *jx;
+          if (mode==0)      { ix = ir_const_int(f,e,1,u64t); jx = ix; }
+          else if (mode==1) { ix = ir_const_int(f,e,1,u64t); jx = ir_const_int(f,e,2,u64t); }
+          else if (mode==2) { ix = ir_const_int(f,e,3,u64t); jx = ir_const_int(f,e,3,u64t); }
+          else              { ix = p0; jx = p1; }
+          // mode 4: the RELATIONAL case — `p < q` known, so the two elements are distinct
+          // even though neither index has a value. This is the one Rust cannot express:
+          // its borrow checker has no numeric domain to ask.
+          if (mode==4) ir_assume(f, e, ir_icmp(f,e,IR_CMP_ULT,p0,p1));
+          IrValue *ea = ir_elem_ptr(f,e,a,ix,i32), *eb = ir_elem_ptr(f,e,a,jx,i32);
+          IrInstr *call = ir_instr(f, IR_CALL, NULL, 2);
+          call->operands[0]=ea; call->operands[1]=eb;
+          call->aux.callee = nm("swap2");
+          ir_emit(e, call);
+          ir_set_ret(e,NULL); ir_finalize_cfg(f);
+          f->next = callee;                                  // a 2-function module
+          Borrow *B = borrow_analyze_mod(f, f);
+          int n=0; for (int k=0;k<B->nfinds;k++) if (B->finds[k].code==4) n++;
+          borrow_free(B);
+          bexpect(what[mode], n, want[mode]);
+      }
     }
 
     printf(failures? "BORROW: %d WRONG\n" : "BORROW: all expectations met\n", failures);
