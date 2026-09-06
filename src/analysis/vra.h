@@ -152,13 +152,12 @@ static void vra_prepass(Vra *V) {
                 if (dd && dd->op==IR_ELEM_PTR) V->subslice_gep[ins->operands[0]->id] = true;
             }
             else if (ins->op==IR_SLICE_LEN && ins->result && ins->n_operands>=1) {
+                // A cell only learned its length from a STORE, so a stack VLA — allocated and
+                // never assigned — had none anywhere. Seed it from a `.len` read on a load out
+                // of the cell, but ONLY for a cell nothing stores to: a stored slice's own
+                // length var is the better representative, because it is the one the rest of
+                // the octagon already relates to the buffer.
                 int s=ins->operands[0]->id;
-                if (V->slicelen[s]<0) V->slicelen[s]=ins->result->id;     // first len read is canonical
-                // ...and it is canonical for the CELL the slice was loaded out of, not just
-                // for that one loaded value. A cell only learned its length from a STORE, so
-                // a stack VLA — `var a u8[n]`, allocated and never assigned — had no length
-                // anywhere, and every later `a[i]` was measured against nothing. A store, if
-                // one comes, still overrides this below.
                 IrInstr *sd = V->def[s];
                 if (sd && sd->op==IR_LOAD && sd->n_operands>=1) {
                     int cell = vra_canon_cell(V, sd->operands[0]->id);
@@ -185,6 +184,16 @@ static void vra_prepass(Vra *V) {
             if (vra_is_slice_cell(V,cell) && cell_len[cell]>=0 && V->slicelen[ins->result->id]<0)
                 V->slicelen[ins->result->id]=cell_len[cell];
         }
+    // THIRD, and only now: a bare `.len` read names the length of a slice that still has no
+    // canonical one. This has to come LAST. Run before the propagation above, it claimed the
+    // loaded value for a fresh slice_len result and locked out the store's length var — the
+    // one every other constraint is stated against — which silently un-proved `buf[1..4]`.
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next)
+            if (ins->op==IR_SLICE_LEN && ins->result && ins->n_operands>=1) {
+                int s=ins->operands[0]->id;
+                if (V->slicelen[s]<0) V->slicelen[s]=ins->result->id;
+            }
     free(cell_len); free(cell_stores);
 
     // Mark every alloca whose ADDRESS escapes. Provenance is followed through the
