@@ -17,6 +17,12 @@
 #include "target.h"
 #include "sema.h"
 #include "emit_llvm.h"
+#include "ir/lower.h"
+#include "analysis/linearity.h"
+#include "analysis/borrow.h"
+#include "analysis/definite_init.h"
+#include "analysis/vra.h"
+#include "analysis/report.h"
 
 void expr_print_ast(Expr *expr, int depth);
 void stmt_print_ast(Stmt *stmt, int depth);
@@ -108,9 +114,44 @@ int main(int argc, char **argv) {
         print_ast(program, 0);
         return 0;
     }
+    // Stand the LEGACY ownership and bounds checks down: under --engine=ir the sovereign
+    // analyses are the authority for exactly those questions, and leaving both on would let
+    // the old engine exit() first — the new one would never get to speak.
+    if (args.engine_ir) {
+        g_suppress_ownership = true;                              // ownership: the IR decides
+        if (args.engine_ir_numeric) g_vra_suppress_bounds = true; // numerics: only with -full
+    }
+
 
     // sema = resolve identifiers → you’d call:
     sema_resolve_module(program, modname, &_sema_arena);
+
+    // ── STAGE 3.5, THE SPLIT ─────────────────────────────────────────────────────────────
+    // `--engine=ir` makes the SOVEREIGN IR analyses authoritative for what they actually
+    // cover — ownership/linearity, borrows, definite assignment, and the numeric obligations
+    // (bounds, overflow, division) — by standing the legacy checks down and reporting the new
+    // engine's findings instead. Resolution and typing still come from sema, and the backend
+    // is still the old emitter: this is deliberately a SPLIT, not a switchover. The analyses
+    // are ready to be authoritative; the backend has not yet earned the proofs (Stage IV).
+    if (args.engine_ir) {
+        static Arena ir_arena;
+        ir_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
+        IrFunc *mod = ir_lower_module(program, &ir_arena);
+        lin_mod = mod; bor_loan_mod = mod; vra_mod = mod;
+        int found = 0;
+        for (IrFunc *f = mod; f; f = f->next) {
+            if (f->is_extern) continue;
+            // An unfaithfully lowered function cannot be judged: say so rather than pretend.
+            if (f->incomplete) {
+                fprintf(stderr, "note: '%.*s' is not fully modelled (%s); its checks are skipped\n",
+                        (int)f->name->length, f->name->name,
+                        f->incomplete_why ? f->incomplete_why : "unknown");
+                continue;
+            }
+            found += ir_report_findings(f, args.filename, args.engine_ir_numeric);
+        }
+        if (found) { sema_destroy(); return 1; }
+    }
 
     // then code-gen: proof-carrying LLVM-IR (Phase 1 seam) or the portable C target.
     if (args.emit_llvm) {

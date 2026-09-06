@@ -19,6 +19,17 @@ typedef struct
     bool        dump_niche;         // --dump-niche: print enum niche layout decisions
     bool        dump_effects;       // --dump-effects: print each function's inferred effect row
     bool        emit_llvm;          // --emit-llvm: lower to proof-carrying LLVM-IR (Phase 1 seam)
+    bool        engine_ir_numeric;  // --engine=ir-full: ALSO make the IR authoritative for the
+                                    // NUMERIC obligations (bounds/overflow/division). Measured
+                                    // separately because that is where the gap is: the
+                                    // ownership analyses are ready to take over, the numeric
+                                    // ones still raise obligations the old engine discharges.
+    bool        engine_ir;          // --engine=ir: the SOVEREIGN IR analyses are authoritative
+                                    // for ownership, borrows, definite assignment and bounds.
+                                    // The old sema still resolves and types, and the old
+                                    // backend still emits — this is the SPLIT at Stage 3.5,
+                                    // not a wholesale switchover: the analyses are ready to be
+                                    // authoritative, the backend is not.
     const char* target_triple;      // --target=<triple>, NULL = host
 } Args;
 
@@ -59,6 +70,10 @@ static Args args_parse(int argc, char** argv)
             args.dump_effects = true;
         } else if (strcmp(argv[i], "--emit-llvm") == 0) {
             args.emit_llvm = true;
+        } else if (strcmp(argv[i], "--engine=ir") == 0) {
+            args.engine_ir = true;
+        } else if (strcmp(argv[i], "--engine=ir-full") == 0) {
+            args.engine_ir = true; args.engine_ir_numeric = true;
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             args.output_file = argv[++i];
         } else if (strncmp(argv[i], "--target=", 9) == 0) {
