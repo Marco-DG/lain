@@ -734,9 +734,14 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
             return ir_field_ptr(c->f, c->cur, base, idx, fty);
         }
     }
-    // other lvalues: not yet lowered — infaithful placeholder slot
-    ir_incomplete(c, "unlowered-lvalue");
-    return ir_alloca(c->f, c->cur, ir_lower_type(c, e->type));
+    // An lvalue whose ADDRESS we cannot compute. A fresh alloca was actively WRONG: writes
+    // through it went to a scratch local and were silently lost, reads returned garbage. An
+    // opaque POINTER is the honest model — the address is unknown, so anything written
+    // through it may touch anything, and `ir_place_of` resolves it to an unattributable
+    // DEREF which every conflict rule already treats as "may alias".
+    { IrType *pt = ir_type_new(c->a, IRT_PTR);
+      pt->elem = ir_lower_type(c, e->type); pt->ptr_mut = true;
+      return ir_opaque(c->f, c->cur, pt, true, "unlowered-lvalue", NULL, 0); }
 }
 
 static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
@@ -784,8 +789,10 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                          IrValue *v = ir_lower_expr(c, g->as.variable_decl.init);
                          c->const_depth--; return v; }
             }
-            ir_incomplete(c, "unresolved-global");   // e.g. a global array
-            return ir_const_int(c->f, c->cur, 0, ty);
+            // A global we cannot fold (typically a global ARRAY). `const 0` was a LIE — the
+            // value is simply wrong, and any proof built on it is built on a fiction. An
+            // opaque READ says only what is true: the value is unknown.
+            return ir_opaque_expr(c, ty, false, "unresolved-global", NULL, NULL);
         }
         case EXPR_BINARY: {
             Expr *L=e->as.binary_expr.left, *R=e->as.binary_expr.right;
@@ -1098,7 +1105,13 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                     // LOOP's zero-iteration path would otherwise intersect the fact away.
                     ir_init_fact(c->f, c->cur, agg);
                 } else if (init) {
-                    ir_incomplete(c, "aggregate-init");   // an init shape we don't model — fail closed
+                    // An initialiser shape we do not model. The aggregate IS initialised —
+                    // that is what an initialiser means — but with content we cannot describe.
+                    // Say exactly that: an opaque write over it, then the init fact. Marking
+                    // the whole function incomplete threw away every unrelated proof too.
+                    { IrValue *rd[1]; rd[0] = agg;
+                      ir_opaque(c->f, c->cur, NULL, true, "aggregate-init", rd, 1);
+                      ir_init_fact(c->f, c->cur, agg); }
                 }
                 break;
             }
