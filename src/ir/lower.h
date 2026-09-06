@@ -745,6 +745,10 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
         IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
         if (l && l->slot) return l->slot;
     }
+    // `*p` as an LVALUE: the address IS the pointer. Without this every `*p = v` produced an
+    // OPAQUE placeholder and the write was silently LOST — `unsafe { *q = *q + 100 }` computed
+    // nothing at all. The dereference is exactly the identity on addresses.
+    if (e->kind == EXPR_DEREF) return ir_lower_expr(c, e->as.deref_expr.expr);
     if (e->kind == EXPR_INDEX) {
         IrValue *base = ir_lower_expr(c, e->as.index_expr.target);
         IrValue *idx  = ir_lower_expr(c, e->as.index_expr.index);
