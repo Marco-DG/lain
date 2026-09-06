@@ -297,6 +297,35 @@ int main(void) {
     vra_expect("sliding window a[i+1] under i+1<a.len",     sliding_window_proven(), true);
     vra_expect("two-pointer a[i] under i<=j & j<a.len",     two_pointer_proven(),    true);
     // MASK idiom — nonlinear transfer: x & (N-1) ∈ [0,N-1] for ANY x.
+    // ESCAPE: a call may write through any address it was given, so a cell whose address
+    // escaped cannot keep its value across one. Modelling a scalar alloca as a stable cell
+    // without this proved an out-of-bounds a[i] check-free after `bump(var i)` set i = 100.
+    { IrFunc *f=ir_func_new(&A,nm("esc"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+      IrType *i32e=ir_type_int(&A,32,true); IrBlock *e=f->entry;
+      IrValue *a=ir_alloca_array(f,e,arr_i32(4));
+      IrValue *i=ir_alloca(f,e,i32e);
+      ir_store(f,e,i,ir_const_int(f,e,0,i32e));      // i = 0  (in bounds for a[4])
+      { IrInstr *c=ir_instr(f,IR_CALL,NULL,1); c->operands[0]=i; ir_emit(e,c); }  // f(&i)
+      ir_elem_ptr(f,e,a,ir_load(f,e,i,i32e),i32e);   // a[i]  — must NOT be proven
+      ir_set_ret(e,NULL); ir_finalize_cfg(f);
+      Vra *V=vra_analyze(f); bool ok=false;
+      for(int k=0;k<V->nchecks;k++) if(V->checks[k].kind==VRA_BOUNDS) ok=V->checks[k].ok;
+      vra_free(V);
+      vra_expect("a[i] after a call took &i is NOT proven", ok, false); }
+    // ...but a cell whose address never escapes keeps its value across a call
+    { IrFunc *f=ir_func_new(&A,nm("noesc"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+      IrType *i32e=ir_type_int(&A,32,true); IrBlock *e=f->entry;
+      IrValue *a=ir_alloca_array(f,e,arr_i32(4));
+      IrValue *i=ir_alloca(f,e,i32e);
+      ir_store(f,e,i,ir_const_int(f,e,0,i32e));
+      { IrInstr *c=ir_instr(f,IR_CALL,NULL,0); ir_emit(e,c); }   // a call touching nothing
+      ir_elem_ptr(f,e,a,ir_load(f,e,i,i32e),i32e);
+      ir_set_ret(e,NULL); ir_finalize_cfg(f);
+      Vra *V=vra_analyze(f); bool ok=false;
+      for(int k=0;k<V->nchecks;k++) if(V->checks[k].kind==VRA_BOUNDS) ok=V->checks[k].ok;
+      vra_free(V);
+      vra_expect("a[i] across a call that never saw &i IS proven", ok, true); }
+
     vra_expect("mask a[x & 7] over a[8]  (0..7 < 8)",        mask_index_proven(7,8),  true);
     vra_expect("mask a[x & 15] over a[8] (0..15 escapes)",   mask_index_proven(15,8), false);
     vra_expect("a[@popcount(u32 x)] over a[33] (0..32 < 33)", bitcount_index_proven(IR_POPCOUNT,32,33), true);

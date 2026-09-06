@@ -43,6 +43,15 @@ typedef struct {
     int     *slicelen;  // slice value id → its canonical length var (−1 = none)
     bool    *subslice_gep;  // elem_ptr result feeding a make_slice (a subslice start,
                             // not an element access — checked by the make_slice instead)
+    // ESCAPED cells: an alloca whose ADDRESS leaves this instruction's control — passed to a
+    // call, stored as a value, or returned. The octagon models a scalar alloca as a stable
+    // memory cell, and nothing was invalidating that cell when someone else could write it:
+    //     proc bump(var i usize) { i = i +% 100 }
+    //     var i usize = 0 ;  bump(var i) ;  a[i]        // a is i32[4]
+    // left the octagon believing i == 0, so `a[i]` was PROVEN check-free while the program
+    // actually reads a[100]. A FALSE PROOF is a removed bounds check, so any call must havoc
+    // every cell whose address could have reached it.
+    bool    *escaped;
     VraCheck *checks; int nchecks, cap_checks;
 } Vra;
 
@@ -52,6 +61,21 @@ static bool vra_is_int(IrValue *v){ return v && v->type &&
         (v->type->kind==IRT_INT || v->type->kind==IRT_BOOL); }
 
 // is value id `v` a slice-typed alloca cell?
+// Follow an address back to the alloca it roots in and mark that cell escaped.
+static void vra_mark_escape(Vra *V, IrValue *v) {
+    for (int guard=0; v && v->id>=0 && v->id<V->nvar && guard<10000; guard++) {
+        IrInstr *d = V->def[v->id];
+        if (!d) return;                                   // a parameter: not our cell
+        if (d->op == IR_ALLOCA) { V->escaped[v->id] = true; return; }
+        switch (d->op) {
+            case IR_ELEM_PTR: case IR_FIELD_PTR:
+            case IR_SLICE_DATA: case IR_MAKE_SLICE:
+                v = d->n_operands>=1 ? d->operands[0] : NULL; break;
+            default: return;                              // not an address we can attribute
+        }
+    }
+}
+
 static bool vra_is_slice_cell(Vra *V, int v) {
     IrInstr *d = (v>=0 && v<V->nvar) ? V->def[v] : NULL;
     return d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_SLICE;
@@ -90,6 +114,20 @@ static void vra_prepass(Vra *V) {
             }
         }
     free(cell_len);
+
+    // Mark every alloca whose ADDRESS escapes. Provenance is followed through the
+    // address-forming ops, so `f(&s.field)` escapes `s` too. A store's TARGET (operand 0) is
+    // an ordinary write and does NOT escape; a store's VALUE (operand 1) does.
+    for (IrBlock *b=V->f->blocks; b; b=b->next) {
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op == IR_CALL) {
+                for (int k=0;k<ins->n_operands;k++) vra_mark_escape(V, ins->operands[k]);
+            } else if (ins->op == IR_STORE && ins->n_operands>=2) {
+                vra_mark_escape(V, ins->operands[1]);          // the VALUE stored, not the target
+            }
+        }
+        if (b->term.kind == IR_TERM_RET) vra_mark_escape(V, b->term.cond);
+    }
 }
 
 // copy `src == dst` (equal values) into octagon o
@@ -253,6 +291,14 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             break;
         case IR_ASSUME:   // the asserted fact holds from here — refine the octagon
             if (ins->n_operands>=1) vra_refine_guard(V, W, ins->operands[0], true);
+            break;
+        case IR_CALL:
+            // A call may write through any address it was given, and the octagon's memory
+            // cells are exactly the scalar allocas — so every ESCAPED cell must be forgotten.
+            // Without this the analysis kept a stale value across `bump(var i)` and proved an
+            // out-of-bounds `a[i]` check-free.
+            for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) oct_forget(W, cell);
+            if (r>=0) oct_forget(W, r);
             break;
         default:
             if (r>=0) oct_forget(W, r);   // conservative: result becomes unknown
@@ -487,6 +533,7 @@ static Vra *vra_analyze(IrFunc *f) {
     V->def=calloc(V->nvar,sizeof(IrInstr*)); V->defblk=calloc(V->nvar,sizeof(int));
     V->cval=calloc(V->nvar,sizeof(int64_t)); V->cknown=calloc(V->nvar,sizeof(bool));
     V->slicelen=calloc(V->nvar,sizeof(int)); V->subslice_gep=calloc(V->nvar,sizeof(bool));
+    V->escaped=calloc(V->nvar,sizeof(bool));
     vra_prepass(V);
     for (int i=0;i<nb;i++) V->in[i]=malloc(V->dsz*sizeof(int64_t));
 
@@ -599,7 +646,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->subslice_gep); free(V->checks); free(V);
+    free(V->slicelen); free(V->subslice_gep); free(V->escaped); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H
