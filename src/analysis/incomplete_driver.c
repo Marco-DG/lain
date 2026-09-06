@@ -32,7 +32,10 @@ int main(int argc,char**argv){ if(argc<2) return 2;
   Arena ia=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
   target_init_for(NULL); const char*path=argv[1]; const char*sl=NULL;
   for(const char*q=path;*q;q++) if(*q=='/'||*q=='\\') sl=q;
-  if(sl){ char d[4096]; size_t dl=(size_t)(sl-path); if(dl<sizeof d){memcpy(d,path,dl);d[dl]='\0'; if(chdir(d)!=0){} path=sl+1;} }
+  // ABSOLUTE paths only — matching main.c. Chdir'ing for a relative path put the process
+  // in the test's directory, where `import std.*` cannot resolve, and the survey then
+  // silently dropped the file: the denominator excluded every program that uses the stdlib.
+  if(sl && path[0]=='/'){ char d[4096]; size_t dl=(size_t)(sl-path); if(dl<sizeof d){memcpy(d,path,dl);d[dl]='\0'; if(chdir(d)!=0){} path=sl+1;} }
   char *m=mn(&aa,path); DeclList*pr=load_module(&fa,&aa,m); if(!pr) return 2;
   sema_resolve_module(pr,m,&sa);
   IrFunc *mod=ir_lower_module(pr,&ia); int tot=0,inc=0;
