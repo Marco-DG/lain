@@ -1,0 +1,24 @@
+// EXPECT: [E087]
+// The SAME ELEMENT reaching two mutable scalar parameters. A `var i32` param is emitted
+// `int32_t * restrict`, so passing `a[i]` to both is two aliasing restrict pointers —
+// undefined behaviour, and a DEMONSTRATED miscompile, not a theoretical one:
+//
+//     -O0 → 226      -O1/-O2/-O3 → 116        (same program, same compiler)
+//
+// It was accepted with no diagnostic for two independent reasons, both fixed:
+//   (a) the aliasing check only considered array/slice/pointer params, so a mutable SCALAR
+//       param — which also lowers to a restrict pointer — was never examined;
+//   (b) `sema_expr_root_id` did not unwrap the borrow wrapper, so `var a[i]` reported NO
+//       root at all and every `var`-borrowed argument silently skipped the check — exactly
+//       the arguments that carry the hazard.
+proc mix(var x i32, var y i32) {
+    x = x +% 10
+    y = y +% 100
+    x = x +% y
+}
+proc main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var i usize = 2
+    mix(var a[i], var a[i])
+    return a[2]
+}

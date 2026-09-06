@@ -67,6 +67,22 @@ tests/memory/array_uninit_element_read_fail.ln            NEW-ACCEPTS  new-incom
 tests/ownership/mut_plus_nested_shared_fail.ln            NEW-ACCEPTS  new-more-precise
 tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-more-precise
 
+# ── new-over-strict: THE PHASE-D MOTIVATION ───────────────────────────────────
+# The new engine REJECTS `swap2(var a[i], var a[j])` with i=1, j=5 — two mutable borrows of
+# provably DISTINCT elements. Its conflict rule is right to be conservative by default
+# (ir_place_index_provably_disjoint returns false without a numeric bridge), and that same
+# default is what makes it CATCH `swap2(var a[i], var a[i])`, which the old engine accepted
+# and emitted as two aliasing `restrict` pointers — a demonstrated miscompile (-O0 226 vs
+# -O2 116, now fixed and locked by coarg_alias_element_fail).
+#
+# So this is the precision half of the same rule, and it is exactly borrow phase D: fill
+# `ir_place_index_disjoint_fn` from the octagon, which can prove i≠j. ★ This is the
+# project's most defensible beyond-Rust claim — Rust cannot distinguish a[i] from a[j] at
+# all, which is why `split_at_mut` needs `unsafe`. The seam exists (ir/place.h); what it
+# needs is a query POINT, since the octagon state is per-block and the hook currently takes
+# only the two values.
+tests/ownership/coarg_alias_element_disjoint_pass.ln      NEW-REJECTS  new-over-strict
+
 # ── new-incomplete-borrow ─────────────────────────────────────────────────────
 # The LOAN-SITE generalisation closed 3 (cross_stmt_borrow_write, owner_reassign,
 # direct_var_borrow). Loans had only ever been created AND checked at call arguments, so the

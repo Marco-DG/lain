@@ -1545,6 +1545,12 @@ static Id *sema_expr_root_id(Expr *e) {
         else if (e->kind == EXPR_INDEX)  e = e->as.index_expr.target;
         else if (e->kind == EXPR_MEMBER) e = e->as.member_expr.target;
         else if (e->kind == EXPR_DEREF)  e = e->as.deref_expr.expr;
+        // A borrow WRAPPER is not a different object: `var a[i]` and `mov a[i]` both root
+        // at `a`. Not unwrapping them meant every `var`-borrowed argument reported NO root,
+        // so the aliasing check silently skipped exactly the arguments that carry the
+        // hazard — the mutable ones.
+        else if (e->kind == EXPR_MUT)    e = e->as.mut_expr.expr;
+        else if (e->kind == EXPR_MOVE)   e = e->as.move_expr.expr;
         else return NULL;
     }
     return NULL;
@@ -1556,6 +1562,10 @@ static Id *sema_expr_root_id(Expr *e) {
 // spans are constant and disjoint (`a[0..4]` vs `a[4..8]`) — never rejecting that
 // correct code, while still catching every possibly-overlapping pair.
 static bool sema_arg_const_span(Expr *e, long long *lo, long long *hi) {
+    // See through the borrow wrapper, exactly as the root walk does — `var a[0..4]` and
+    // `var a[k]` describe the same spans their unwrapped forms do.
+    while (e && (e->kind == EXPR_MUT || e->kind == EXPR_MOVE))
+        e = (e->kind == EXPR_MUT) ? e->as.mut_expr.expr : e->as.move_expr.expr;
     if (e && e->kind == EXPR_INDEX && e->as.index_expr.index &&
         e->as.index_expr.index->kind == EXPR_RANGE) {
         ExprRange *r = &e->as.index_expr.index->as.range_expr;
@@ -1565,6 +1575,19 @@ static bool sema_arg_const_span(Expr *e, long long *lo, long long *hi) {
             *hi = (long long)r->end->as.literal_expr.value + (r->inclusive ? 1 : 0);
             return true;
         }
+        return false;
+    }
+    // A single ELEMENT `root[k]` spans [k, k+1). Fold k through the range table rather than
+    // demanding a literal, so `var i = 1; var j = 5; f(var a[i], var a[j])` stays legal —
+    // the indices are constants the analysis already knows, just not syntactically.
+    if (e && e->kind == EXPR_INDEX && e->as.index_expr.index) {
+        Expr *ix = e->as.index_expr.index;
+        Range r;
+        if (ix->kind == EXPR_LITERAL)
+            r = (Range){ ix->as.literal_expr.value, ix->as.literal_expr.value, true };
+        else if (sema_ranges) r = sema_eval_range(ix, sema_ranges);
+        else                  r = range_unknown();
+        if (r.known && r.min == r.max) { *lo = (long long)r.min; *hi = (long long)r.min + 1; return true; }
     }
     return false;
 }
@@ -1580,7 +1603,19 @@ static void check_call_aliasing(Decl *callee, ExprList *args, isize line, isize 
         ids[n] = NULL; wr[n] = false; aex[n] = a->expr;
         if (pv && pv->kind == DECL_VARIABLE && root) {
             Type *pt = pv->as.variable_decl.type;
-            if (pt && (pt->kind == TYPE_ARRAY || pt->kind == TYPE_SLICE || pt->kind == TYPE_POINTER)) {
+            // Which parameters carry the hazard? Exactly those that lower to a C `restrict`
+            // POINTER. That is not only arrays/slices/pointers: a MUTABLE SCALAR param is
+            // emitted `int32_t * restrict` too, and it was excluded here — so
+            // `swap2(var a[i], var a[i])` (the same element through two mutable scalar
+            // params) passed the check entirely and emitted aliasing restrict pointers.
+            // DEMONSTRATED MISCOMPILE, not a theoretical one: -O0 gave 226 and -O1/-O2/-O3
+            // gave 116 on the same program.
+            // (A SHARED non-primitive lowers to `const T* restrict`; two aliasing READS
+            // are not UB, and the `wr[]` test below already requires a writer.)
+            bool restrict_param =
+                (pt && (pt->kind == TYPE_ARRAY || pt->kind == TYPE_SLICE || pt->kind == TYPE_POINTER))
+             || (pt && pt->mode == MODE_MUTABLE);
+            if (restrict_param) {
                 ids[n] = root;
                 wr[n]  = (pt->mode == MODE_MUTABLE) ||
                          sema_body_writes_id(body, pv->as.variable_decl.name);

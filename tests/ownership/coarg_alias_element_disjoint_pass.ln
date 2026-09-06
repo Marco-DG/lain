@@ -1,0 +1,17 @@
+// The counterpart of coarg_alias_element_fail: DISTINCT elements of the same array may
+// reach two mutable parameters, because the spans are provably disjoint. The indices need
+// not be literals — they are folded through the range table, so `var i = 1` counts as the
+// constant it is. Without this the aliasing fix would reject correct code.
+proc swap2(var x i32, var y i32) {
+    var t = x
+    x = y
+    y = t
+}
+proc main() i32 {
+    var a i32[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+    var i usize = 1
+    var j usize = 5
+    swap2(var a[i], var a[j])
+    if a[1] == 5 and a[5] == 1 { return 0 }
+    return 1
+}
