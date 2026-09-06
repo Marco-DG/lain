@@ -33,6 +33,23 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
     IrEffect e = 0;
     for (IrBlock *b=f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            // B3: an UNMODELLED construct could do anything, so it contributes the
+            // conservative observable footprint. Without this, a function whose only
+            // unmodelled part was an opaque looked PURE — and the effect row is what gates
+            // the `const`/`pure` C annotations, where a wrong answer is a miscompile (gcc
+            // eliding a call that must happen). This is the case the gate caught: 4
+            // functions the effects pass previously SKIPPED (they were `incomplete`) started
+            // being analysed and dropped their observable effects.
+            if (ins->op == IR_OPAQUE) {
+                // EVERY observable effect: an unmodelled construct may print, may panic, and
+                // (per its footprint) may write. Leaving RAISES out was not conservative
+                // enough — `else panic` inside an unmodelled expression lost its Raises and
+                // the function looked non-panicking, which is exactly the annotation
+                // miscompile this row exists to prevent.
+                e |= IR_EFFECT_IO | IR_EFFECT_RAISES;
+                if (ins->aux.opaque.writes) e |= IR_EFFECT_WRITE;
+                continue;
+            }
             if (ins->op != IR_CALL) continue;
             const IrName *cn = ins->aux.callee;
             if (ireff_name_is(cn, "panic", 5)) { e |= IR_EFFECT_RAISES; continue; }

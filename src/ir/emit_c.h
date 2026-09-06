@@ -119,6 +119,19 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                                                                     : "__builtin_popcount",
                     i->operands[0]->id);
             break;
+        case IR_OPAQUE:
+            // The construct was not modelled, so there is nothing faithful to emit. Produce a
+            // zero of the right type and SAY SO in the output — a silent placeholder is how
+            // `mk(i).x` came to read uninitialised memory. Codegen through this path is not
+            // trustworthy; the IR records that, and the analyses havoc around it.
+            if (i->result) {
+                fprintf(o, "  v%d = 0;  /* OPAQUE: %s (unmodelled) */\n", i->result->id,
+                        i->aux.opaque.why ? i->aux.opaque.why : "?");
+            } else {
+                fprintf(o, "  /* OPAQUE: %s (unmodelled) */\n",
+                        i->aux.opaque.why ? i->aux.opaque.why : "?");
+            }
+            break;
         case IR_SUM_TAG:    fprintf(o, "  v%d = v%d.tag;\n", i->result->id, i->operands[0]->id); break;
         case IR_SUM_PAYLOAD: {
             IrType *st = i->operands[0]->type;

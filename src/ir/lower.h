@@ -59,6 +59,18 @@ static void ir_incomplete(LowerCtx *c, const char *why) {
     if (!c->f->incomplete_why) c->f->incomplete_why = why;
 }
 
+// B3: lower an unmodelled EXPRESSION as an honest opaque instead of poisoning the whole
+// function. The value is unknown and the footprint is declared, so analyses havoc exactly
+// that and keep analysing everything else. `incomplete` is now reserved for what an opaque
+// cannot express — unmodelled CONTROL FLOW, where we cannot even say which paths exist.
+static IrValue *ir_opaque_expr(LowerCtx *c, IrType *ty, bool writes, const char *why,
+                               IrValue *r0, IrValue *r1) {
+    IrValue *reads[2]; int n=0;
+    if (r0) reads[n++]=r0;
+    if (r1) reads[n++]=r1;
+    return ir_opaque(c->f, c->cur, ty ? ty : ir_type_int(c->a,32,true), writes, why, reads, n);
+}
+
 // A block's terminator is "set" once lowering has given it one. A freshly-memset
 // block has kind==IR_TERM_BR (0) with a==NULL, which is the unset sentinel.
 static bool ir_is_set_term(IrBlock *b) {
@@ -746,9 +758,9 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 c->cur->instrs_tail->wrap = wrap;
                 return r;
             }
-            // an unhandled binary operator — infaithful, so fail closed.
-            ir_incomplete(c, "unhandled-binop");
-            return ir_binop(c->f,c->cur,IR_AND,x,y,ir_type_bool(c->a));
+            // an unhandled binary operator: a PURE computation over two known values —
+            // unknown result, no memory effect.
+            return ir_opaque_expr(c, ty, false, "unhandled-binop", x, y);
         }
         case EXPR_UNARY: {
             IrValue *x = ir_lower_expr(c, e->as.unary_expr.right);
@@ -813,8 +825,8 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 IrValue *addr = ir_lower_addr(c, e);
                 return ir_load(c->f, c->cur, addr, fty ? fty : ty);
             }
-            ir_incomplete(c, "unresolved-member");
-            return ir_const_int(c->f, c->cur, 0, ty);
+            // a field we could not resolve: a READ of unknown storage, no write.
+            return ir_opaque_expr(c, ty, false, "unresolved-member", NULL, NULL);
         }
         case EXPR_CALL: {
             Decl *callee = e->as.call_expr.callee ? e->as.call_expr.callee->decl : NULL;
@@ -927,12 +939,14 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             // (a segfault on any @movemask/@load/@store/@shuffle program). gcc DID warn
             // ("control reaches end of non-void function"); the build output was being
             // grepped for `error` only.
-            ir_incomplete(c, "unhandled-builtin");
-            return ir_const_int(c->f, c->cur, 0, ty);
+            // SIMD (@movemask/@load/@store/@shuffle): needs a vector type in the IR. A
+            // @store WRITES memory, so declare the write footprint.
+            return ir_opaque_expr(c, ty, true, "simd-builtin",
+                                  e->as.builtin_expr.arg ? ir_lower_expr(c, e->as.builtin_expr.arg) : NULL, NULL);
         }
         default:
-            ir_incomplete(c, "unhandled-expr");   // infaithful placeholder
-            return ir_const_int(c->f, c->cur, 0, ty);
+            // Unknown shape ⇒ assume the worst footprint (it may write).
+            return ir_opaque_expr(c, ty, true, "unhandled-expr", NULL, NULL);
     }
 }
 

@@ -144,6 +144,17 @@ typedef enum {
                             // the CFG already establishes — no extra machinery needed.
     // calls
     IR_CALL,                // aux.callee : Decl ; op[0..] = args
+    // ── B3: the TOTALITY primitive ──────────────────────────────────────────
+    // An UNMODELLED construct, represented honestly instead of poisoning its whole
+    // function. `IrFunc.incomplete` suppressed every proof over a function that contained
+    // one unlowered expression — 12% of the corpus went unanalysed, and every survey number
+    // was silently conditioned on "among the functions we modelled" (backlog C3, E0.1).
+    //
+    // IR_OPAQUE says: this produces an UNKNOWN value, and it may touch memory as declared by
+    // aux.opaque. An analysis handles it by havocking exactly that footprint and carrying on
+    // — so the rest of the function is still analysed, soundly. That is what makes the IR
+    // TOTAL: there is no "gave up here" bit, only a declared unknown.
+    IR_OPAQUE,
     // verification layer (Phase 2.9 — the assume/assert substrate)
     IR_ASSUME,              // op[0] = a bool that HOLDS here (guard/refinement/precondition)
     IR_ASSERT,              // op[0] = a bool the analysis must DISCHARGE (obligation)
@@ -187,6 +198,10 @@ typedef struct IrInstr {
         IrName     *callee;     // IR_CALL — the callee's name (IR-owned)
         struct { const char *bytes; int32_t len; } str;  // IR_STR_CONST
         struct { int32_t variant, field; } sum;           // IR_SUM_NEW / IR_SUM_PAYLOAD
+        // IR_OPAQUE footprint. `writes` is the load-bearing bit: a write may invalidate the
+        // memory cells the numeric domain tracks, exactly as a call does. `why` is the same
+        // label the incomplete survey ranks, so the reason survives into the IR.
+        struct { bool writes; const char *why; } opaque;
     } aux;
     IrPhiArg  *phi_args;    // IR_PHI
     bool       unchecked;   // ELEM_PTR / arithmetic inside an `unsafe` block

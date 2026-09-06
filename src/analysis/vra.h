@@ -120,7 +120,7 @@ static void vra_prepass(Vra *V) {
     // an ordinary write and does NOT escape; a store's VALUE (operand 1) does.
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
-            if (ins->op == IR_CALL) {
+            if (ins->op == IR_CALL || ins->op == IR_OPAQUE) {
                 for (int k=0;k<ins->n_operands;k++) vra_mark_escape(V, ins->operands[k]);
             } else if (ins->op == IR_STORE && ins->n_operands>=2) {
                 vra_mark_escape(V, ins->operands[1]);          // the VALUE stored, not the target
@@ -291,6 +291,16 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             break;
         case IR_ASSUME:   // the asserted fact holds from here — refine the octagon
             if (ins->n_operands>=1) vra_refine_guard(V, W, ins->operands[0], true);
+            break;
+        case IR_OPAQUE:
+            // B3: an unmodelled construct. Its RESULT is unknown, and if its declared
+            // footprint includes a write it may have changed any escaped cell — the same
+            // havoc a call needs, for the same reason. Handling it here is what lets the
+            // REST of the function stay analysed instead of the whole function being
+            // written off as `incomplete`.
+            if (ins->aux.opaque.writes)
+                for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) oct_forget(W, cell);
+            if (r>=0) oct_forget(W, r);
             break;
         case IR_CALL:
             // A call may write through any address it was given, and the octagon's memory

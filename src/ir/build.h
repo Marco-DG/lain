@@ -120,6 +120,18 @@ void ir_consume(IrFunc *f, IrBlock *b, IrValue *slot) {
     ins->operands[0] = slot;
     ir_emit(b, ins);
 }
+// An UNMODELLED construct (B3). Result type may be NULL (a statement); `writes` declares
+// whether it may write tracked memory. Operands are the values it may read.
+IrValue *ir_opaque(IrFunc *f, IrBlock *b, IrType *rt, bool writes, const char *why,
+                   IrValue **reads, int nreads) {
+    IrInstr *ins = ir_instr(f, IR_OPAQUE, rt, nreads);
+    for (int i=0;i<nreads;i++) ins->operands[i] = reads[i];
+    ins->aux.opaque.writes = writes;
+    ins->aux.opaque.why    = why;
+    ir_emit(b, ins);
+    return ins->result;
+}
+
 // A bit intrinsic (ctz/clz/popcount): one integer operand, an integer result.
 IrValue *ir_bitcount(IrFunc *f, IrBlock *b, IrOp op, IrValue *x, IrType *t) {
     IrInstr *ins = ir_instr(f, op, t, 1);
