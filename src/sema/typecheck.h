@@ -29,6 +29,20 @@ extern bool sema_addr_of_context;   // Defined in sema.h — set by EXPR_ADDR to
 │ 1) Helpers to get a builtin “int” Type* only once               │
 ╚─────────────────────────────────────────────────────────────────*/
 
+// The default for a naked literal is i32 — but a literal whose VALUE does not fit i32 is not
+// an i32, and typing it one silently TRUNCATED it: `var x i64 = 5000000000` became 705032704.
+// The old back end never noticed because it pastes the literal into a C initializer and lets
+// the C compiler pick the type; anything that materialises a typed value sees the lie.
+static Type *get_builtin_i64_type(void) {
+  static Type *i64_ty = NULL;
+  if (!i64_ty) {
+    Id *id = arena_push_aligned(sema_arena, Id);
+    id->name = "i64";
+    id->length = 3;
+    i64_ty = type_simple(sema_arena, id);
+  }
+  return i64_ty;
+}
 Type *get_builtin_i32_type(void) {
   // Q-002 / int-removal: the default integer type for naked literals
   // is i32. The function name is kept for historical reasons but the
@@ -3342,11 +3356,15 @@ void sema_infer_expr(Expr *e) {
     // ({ν:i32 | ν=k}), so a boundary can prove `k <: Digit` by subsumption without
     // consulting the name-keyed range table. A fresh copy — never mutate the shared
     // builtin. core_identical still sees plain i32 (refinement stripped).
-    Type *base = get_builtin_i32_type();
+    int64_t lv = (int64_t)e->as.literal_expr.value;
+    // ...and the base is chosen by the value, not assumed: a literal outside i32's range is
+    // an i64. Without this the refinement below recorded a value its own type cannot hold.
+    Type *base = (lv < INT32_MIN || lv > INT32_MAX) ? get_builtin_i64_type()
+                                                    : get_builtin_i32_type();
     Type *lt = arena_push_aligned(sema_arena, Type);
     *lt = *base;
     lt->refine.known = true;
-    lt->refine.lo = lt->refine.hi = (int64_t)e->as.literal_expr.value;
+    lt->refine.lo = lt->refine.hi = lv;
     e->type = lt;
     break;
   }

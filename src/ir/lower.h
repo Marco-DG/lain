@@ -982,9 +982,20 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
                 c->cur = ftblk;
             }
-            if (elsec && elsec->body) { IrValue *av = ir_lower_expr(c, elsec->body);
-                                        if (av) ir_store(c->f, c->cur, cell, av); }
-            if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
+            if (elsec && elsec->body) {
+                IrValue *av = ir_lower_expr(c, elsec->body);
+                if (av) ir_store(c->f, c->cur, cell, av);
+                if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
+            } else if (!ir_is_set_term(c->cur)) {
+                // No `else` arm. A case EXPRESSION has to yield a value, so the front end
+                // requires it to be exhaustive and this fall-through cannot be taken. Say
+                // UNREACHABLE rather than branch to the join without storing: that path
+                // reaches the load with the cell unwritten, and definite-assignment was right
+                // to call it a read of an uninitialised value (10 false positives). Inventing
+                // a default here would be worse — it would make an unreachable path look
+                // defined instead of saying it does not exist.
+                ir_set_unreachable(c->cur);
+            }
             c->cur = join;
             return ir_load(c->f, c->cur, cell, rty);
         }
