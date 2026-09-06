@@ -189,6 +189,53 @@ static int  vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out);       
 static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx);            // fwd (S2)
 
 // ── transfer of one instruction over working octagon W ───────────────────────
+// Everything integer division tells us about `r = x / D` for a constant D ≥ 1 and x ≥ 0.
+// The relational half is what the octagon cannot derive on its own, and it is what the
+// binary-search family needs:
+//
+//   r ≥ 0, r ≤ x            always
+//   r ≤ x − 1               when D ≥ 2 and x ≥ 1   — STRICTLY smaller, the midpoint's engine
+//   x − r ≤ xhi − xhi/D     when D ≥ 2             — bounds `x − x/D` (i.e. ceil((D−1)x/D)),
+//                                                    sound because x − x/D is nondecreasing
+//                                                    (a step of 1 in x moves it by 0 or 1)
+//   xlo/D ≤ r ≤ xhi/D       the interval, which `r ≤ x` alone does not give
+static void vra_div_facts(Octagon *W, int r, int a, int64_t D, int64_t alo, bool hl, int64_t ahi, bool hh) {
+    if (D < 1) return;
+    oct_add_lb(W, r, 0);
+    oct_add_diff_le(W, r, a, 0);                        // r ≤ x
+    if (hl && alo >= 0) oct_add_lb(W, r, alo / D);
+    if (hh && ahi >= 0) oct_add_ub(W, r, ahi / D);
+    if (D >= 2) {
+        if (hl && alo >= 1) oct_add_diff_le(W, r, a, -1);          // r ≤ x − 1
+        if (hh && ahi >= 0) oct_add_diff_le(W, a, r, ahi - ahi/D); // x − r ≤ max(x − x/D)
+    }
+}
+
+// ★ The MIDPOINT identity, derived rather than pattern-matched. `mid = lo + (hi−lo)/D` is
+// the canonical binary-search index, and no octagon can prove `mid < hi`: that needs
+// `q < hi − lo`, a THREE-variable relation, and eliminating `lo` between `mid − lo = q` and
+// `hi − lo = d` is outside a domain of two-variable differences.
+//
+// But the octagon already holds `q − d ≤ c` (from vra_div_facts, with c = −1), and `d`'s
+// DEFINITION says `d = B − A`. Substituting one into the other is a single symbolic step:
+//     q − (B − A) ≤ c   ⟺   (A + q) − B ≤ c   ⟺   r − B ≤ c
+// which IS an octagon fact. So the rule is general — any A, B, divisor and any c the domain
+// happens to know — and reads no syntax beyond "this value was defined as a subtraction".
+static void vra_add_via_diff(Vra *V, Octagon *W, int r, int a, int q) {
+    for (int d=0; d<V->nvar; d++) {
+        IrInstr *dd = V->def[d];
+        if (!dd || dd->op != IR_SUB || dd->n_operands < 2) continue;
+        if (!dd->operands[0] || !dd->operands[1]) continue;
+        if (dd->operands[1]->id != a) continue;         // d = B − a, the same a we are adding to
+        int B = dd->operands[0]->id;
+        if (B == r || B < 0 || B >= V->nvar) continue;
+        int64_t c = oct_get(W, oct_pos(d), oct_pos(q)); // q − d ≤ c   ⇒   r − B ≤ c
+        if (c < OCT_INF) oct_add_diff_le(W, r, B, c);
+        int64_t c2 = oct_get(W, oct_pos(q), oct_pos(d)); // d − q ≤ c2  ⇒   B − r ≤ c2
+        if (c2 < OCT_INF) oct_add_diff_le(W, B, r, c2);
+    }
+}
+
 static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
     int r = ins->result ? ins->result->id : -1;
     switch (ins->op) {
@@ -222,9 +269,11 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             else {
                 // two-variable: sound difference bounds from the second operand's interval
                 //   r=a+b, b∈[blo,bhi] ⇒ a+blo ≤ r ≤ a+bhi ;  r=a-b ⇒ a-bhi ≤ r ≤ a-blo
-                if (!isadd) oct_close(W);   // materialize the a↔b relation before reading it
+                oct_close(W);   // materialize the a↔b (and q↔d) relations before reading them
                 int64_t blo,bhi; bool hl,hh; oct_interval(W,b,&blo,&hl,&bhi,&hh);
-                if (isadd) { if (hh) oct_add_diff_le(W,r,a,bhi); if (hl) oct_add_diff_le(W,a,r,-blo); }
+                if (isadd) { if (hh) oct_add_diff_le(W,r,a,bhi); if (hl) oct_add_diff_le(W,a,r,-blo);
+                             vra_add_via_diff(V,W,r,a,b);      // r = a + b where b is bounded vs (B − a)
+                             vra_add_via_diff(V,W,r,b,a); }    // ...and symmetrically
                 else {
                     if (hl) oct_add_diff_le(W,r,a,-blo); if (hh) oct_add_diff_le(W,a,r,bhi);
                     // RELATIONAL r = a − b: transfer the octagon's OWN a↔b difference to r
@@ -293,17 +342,23 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             else if (V->cknown[a] && V->cval[a]>=0){ oct_add_lb(W,r,0); oct_add_ub(W,r,V->cval[a]); }
             break;
         }
-        case IR_UDIV: {  // x / b  — in any defined exec (b > 0, x ≥ 0)  ⇒  0 ≤ r ≤ x
+        case IR_UDIV: {  // x / b  — in any defined exec (b > 0, x ≥ 0)
             if (r<0) break;
-            int a=ins->operands[0]->id; oct_forget(W, r);
-            oct_add_lb(W,r,0); oct_add_diff_le(W,r,a,0);   // r ≥ 0, r ≤ x
+            int a=ins->operands[0]->id, b=ins->operands[1]->id;
+            oct_close(W);                                  // the dividend's interval, relationally
+            int64_t alo,ahi; bool hl,hh; oct_interval(W,a,&alo,&hl,&ahi,&hh);
+            oct_forget(W, r);
+            vra_div_facts(W, r, a, (V->cknown[b] && V->cval[b]>0) ? V->cval[b] : 1, alo,hl,ahi,hh);
             break;
         }
         case IR_SDIV: {  // signed x / c — for x ≥ 0 and c > 0 (the common index idiom
-            if (r<0) break;                                 // `i / 2`) it is exactly udiv: 0 ≤ r ≤ x.
-            int a=ins->operands[0]->id, b=ins->operands[1]->id; oct_forget(W, r);
+            if (r<0) break;                                 // `i / 2`) it is exactly udiv.
+            int a=ins->operands[0]->id, b=ins->operands[1]->id;
+            oct_close(W);
             int64_t alo,ahi; bool hl,hh; oct_interval(W,a,&alo,&hl,&ahi,&hh);
-            if (hl && alo>=0 && V->cknown[b] && V->cval[b]>0) { oct_add_lb(W,r,0); oct_add_diff_le(W,r,a,0); }
+            oct_forget(W, r);
+            if (hl && alo>=0 && V->cknown[b] && V->cval[b]>0)
+                vra_div_facts(W, r, a, V->cval[b], alo,hl,ahi,hh);
             break;
         }
         case IR_UREM: {  // x % b  (unsigned)  ⇒  0 ≤ r < b   (b > 0 in any defined exec;

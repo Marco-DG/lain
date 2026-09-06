@@ -326,7 +326,42 @@ EOF
     esac
 }
 
-GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit gen_defer gen_enum gen_rvalue_field)
+gen_array_param() {       # a fixed ARRAY passed to a procedure — the decayed-parameter class.
+    # Every array in the generators above is a LOCAL, so nothing exercised what a fixed array
+    # becomes when it crosses a call boundary. The new emitter typed it `void*`, and GCC's
+    # byte-arithmetic extension made `a[i]` advance by BYTES rather than elements: every read
+    # past the first landed misaligned inside the array. Invisible to a differential that
+    # never passes one.
+    local n=$(r 12 4) k=$(r 7 1)
+    cat <<EOF
+func sum_at(a i32[$n], i usize) i32 {
+    if i < $n {
+        return a[i]
+    }
+    return 0
+}
+proc fill(var a i32[$n], k i32) {
+    var i = 0
+    while i < $n decreasing $n - i {
+        a[i] = (i as i32 *% k) % 97
+        i += 1
+    }
+}
+proc main() i32 {
+    var a i32[$n] = [0 for z in 0..$n]
+    fill(var a, $k)
+    var acc = 0
+    var j = 0
+    while j < $n decreasing $n - j {
+        acc = acc +% sum_at(a, j)
+        j += 1
+    }
+    return acc % 251
+}
+EOF
+}
+
+GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit gen_defer gen_enum gen_rvalue_field gen_array_param)
 
 run_pipeline() {  # $1=c-file $2=bin -> prints "<exit>|<stdout>"
     "$CC" -o "$2" "$1" $DEFS -w -O0 2>/dev/null || { echo "BUILDFAIL"; return; }

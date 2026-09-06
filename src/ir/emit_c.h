@@ -44,7 +44,14 @@ static void ir_ctype(const IrType *t, FILE *o) {
             else fputs("void*", o);
             break;
         case IRT_UNIT: case IRT_NEVER: fputs("void", o); break;
-        default:       fputs("void*", o); break;   // by-value array (rare) — later
+        // An ARRAY in a value position is a parameter that has DECAYED, so it must carry its
+        // element type: emitted as `void*` it fell into GCC's byte-arithmetic extension, and
+        // `a[i]` on an `i32[100]` parameter advanced by BYTES — every element read past the
+        // first landed on a misaligned address inside the array. It was not rare at all; it
+        // was every fixed-array parameter in the new pipeline, and nothing could see it until
+        // there was a fuzzer that EXECUTED what the new engine had proved.
+        case IRT_ARRAY: ir_ctype(t->elem, o); fputc('*', o); break;
+        default:       fputs("void*", o); break;
     }
 }
 
