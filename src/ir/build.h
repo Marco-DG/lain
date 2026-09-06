@@ -106,6 +106,17 @@ IrValue *ir_const_int(IrFunc *f, IrBlock *b, int64_t v, IrType *t) {
     ir_emit(b, ins);
     return ins->result;
 }
+// A FLOAT constant. `aux.fimm` existed from the start but nothing ever wrote it: float
+// literals had no lowering, so every one of them silently became zero.
+static IrType *ir_type_float(Arena *a, int bits) {
+    IrType *t = ir_type_new(a, IRT_FLOAT); t->float_bits = bits; return t;
+}
+IrValue *ir_const_float(IrFunc *f, IrBlock *b, double v, IrType *t) {
+    IrInstr *ins = ir_instr(f, IR_CONST, t, 0);
+    ins->aux.fimm = v;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_binop(IrFunc *f, IrBlock *b, IrOp op, IrValue *x, IrValue *y, IrType *t) {
     IrInstr *ins = ir_instr(f, op, t, 2);
     ins->operands[0] = x; ins->operands[1] = y;

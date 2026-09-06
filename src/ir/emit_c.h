@@ -22,6 +22,7 @@ static int ir_slice_tag(const IrType *e, char *buf, int n) {
         case IRT_INT:   return snprintf(buf, n, "%c%d", e->is_signed?'i':'u', e->bits);
         case IRT_BOOL:  return snprintf(buf, n, "b");
         case IRT_PTR:   { int k=snprintf(buf,n,"p"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
+        case IRT_FLOAT: return snprintf(buf, n, "f%d", e->float_bits);
         case IRT_SLICE: { int k=snprintf(buf,n,"s"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
         case IRT_STRUCT: case IRT_SUM:
                         if (e->sname) { IrName *nm=e->sname;
@@ -36,6 +37,7 @@ static void ir_ctype(const IrType *t, FILE *o) {
     switch (t->kind) {
         case IRT_INT:  fprintf(o, "%sint%d_t", t->is_signed?"":"u", ir_c_stdbits(t->bits)); break;
         case IRT_BOOL: fputs("_Bool", o); break;
+        case IRT_FLOAT: fputs(t->float_bits==32 ? "float" : "double", o); break;
         case IRT_PTR:  ir_ctype(t->elem, o); fputc('*', o); break;
         case IRT_SLICE:{ char tag[128]; ir_slice_tag(t->elem, tag, sizeof tag); fprintf(o, "Slice_%s", tag); } break;
         case IRT_STRUCT: case IRT_SUM:
@@ -97,7 +99,11 @@ static void ir_emit_cstr(const char *s, int len, FILE *o) {
 
 static void ir_emit_instr_c(IrInstr *i, FILE *o) {
     switch (i->op) {
-        case IR_CONST:  fprintf(o, "  v%d = %lld;\n", i->result->id, (long long)i->aux.imm); break;
+        case IR_CONST:
+            if (i->result->type && i->result->type->kind==IRT_FLOAT)
+                 fprintf(o, "  v%d = %.17g;\n", i->result->id, i->aux.fimm);
+            else fprintf(o, "  v%d = %lld;\n", i->result->id, (long long)i->aux.imm);
+            break;
         case IR_ALLOCA: // array decays to its element base; scalar takes the slot address
             if (i->aux.alloca_ty && i->aux.alloca_ty->kind==IRT_ARRAY)
                  fprintf(o, "  v%d = slot%d;\n",  i->result->id, i->result->id);

@@ -403,6 +403,10 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
             if (t->base_type) {
                 int len=(int)t->base_type->length; const char *nm=t->base_type->name;
                 if (len==4 && strncmp(nm,"bool",4)==0) return ir_type_bool(c->a);
+                // f32/f64 were not recognised at all, so a float local's slot lowered to an
+                // opaque pointer and every float value in the program was lost.
+                if (len==3 && nm[0]=='f' && nm[1]=='3' && nm[2]=='2') return ir_type_float(c->a,32);
+                if (len==3 && nm[0]=='f' && nm[1]=='6' && nm[2]=='4') return ir_type_float(c->a,64);
                 int b; bool s;
                 if (t->int_width_cache>0) return ir_type_int(c->a, t->int_width_cache, t->int_signed_cache);
                 if (ir_name_int(nm,len,&b,&s)) return ir_type_int(c->a, b, s);
@@ -892,6 +896,9 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             c->cur = jn;
             return ir_load(c->f, c->cur, cell, pty);
         }
+        case EXPR_FLOAT_LITERAL:
+            return ir_const_float(c->f, c->cur, e->as.float_expr.value,
+                                  ty && ty->kind==IRT_FLOAT ? ty : ir_type_float(c->a, 64));
         case EXPR_LITERAL: {
             // A literal's type comes from sema, which leaves a bare integer at i32 even where
             // the context is wider — `var x i64 = 5000000000` typed the literal i32 and the
