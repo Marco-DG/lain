@@ -507,7 +507,11 @@ void emit_stmt(Stmt *stmt, int depth) {
     emit_indent(depth);
     static int __match_cnt = 0;
     int __match_id = __match_cnt++;
-    EMIT("%s __match%d = ", c_ty, __match_id);
+    // A borrowed aggregate scrutinee arrives as a POINTER (`func f(s S)` → `const S* s`),
+    // so binding it to a value-typed __matchN needs a dereference. Without it every `case`
+    // on a struct/ADT PARAMETER emitted uncompilable C.
+    bool scrut_is_ptr = emit_expr_is_c_pointer(scrut) && !(scrut->type && scrut->type->kind==TYPE_POINTER);
+    EMIT("%s __match%d = %s", c_ty, __match_id, scrut_is_ptr ? "*" : "");
     emit_expr(scrut, depth);
     EMIT(";\n");
 

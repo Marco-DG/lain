@@ -115,6 +115,28 @@ static void emit_flush_defers(int depth) {
     emit_source_filename = saved;
 }
 
+// Does this expression RENDER AS A C POINTER? A borrowed aggregate parameter is passed by
+// address (`func f(s S)` → `const S* s`), so anything reading it whole must dereference.
+// Extracted from EXPR_MEMBER's `->` vs `.` choice, which was the only place that knew this;
+// `case s { … }` did not, and emitted `S __match0 = s;` — uncompilable C for the entirely
+// ordinary act of matching on a struct parameter.
+static bool emit_expr_is_c_pointer(Expr *e) {
+    if (!e) return false;
+    Type *t = e->type;
+    if (!t) return false;
+    if (t->kind == TYPE_POINTER) return true;
+    if (t->mode == MODE_MUTABLE)  return true;
+    if (t->mode == MODE_OWNED)    return false;
+    if (t->mode == MODE_SHARED &&
+        (t->kind == TYPE_SIMPLE || t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) &&
+        e->kind == EXPR_IDENTIFIER) {
+        Decl *d = e->decl;
+        if (d && d->kind == DECL_VARIABLE && d->as.variable_decl.is_parameter
+            && !is_primitive_type(t)) return true;
+    }
+    return false;
+}
+
 // Emit an expression at given indent‐depth
 void emit_expr(Expr *expr, int depth);
 
@@ -586,32 +608,7 @@ void emit_expr(Expr *expr, int depth) {
         }
     }
 
-    bool is_ptr = false;
-    Type *t = m->target->type;
-    if (t) {
-        // ... (existing logic) ...
-        if (t->kind == TYPE_POINTER) {
-            is_ptr = true;
-        }
-        else if (t->mode == MODE_MUTABLE) {
-            is_ptr = true;
-        }
-        else if (t->mode == MODE_OWNED) {
-            is_ptr = false;
-        }
-        else if (t->mode == MODE_SHARED) {
-            if (t->kind == TYPE_SIMPLE || t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
-                if (m->target->kind == EXPR_IDENTIFIER) {
-                    Decl *d = m->target->decl;
-                    if (d && d->kind == DECL_VARIABLE) {
-                        if (d->as.variable_decl.is_parameter && !is_primitive_type(t)) {
-                            is_ptr = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
+    bool is_ptr = emit_expr_is_c_pointer(m->target);
 
     if (expr->type && expr->type->kind == TYPE_VARIANT) {
         emit_expr(m->target, depth);

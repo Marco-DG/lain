@@ -1,0 +1,29 @@
+// Self-checking ADT/sum test for the NEW pipeline: construct each variant shape
+// (multi-field payload, single-field payload, payload-less), then discriminate and
+// read the payloads back. Exits 0 iff every arm selected and every field survived.
+type Shape {
+    Circle { radius i32 }
+    Rectangle { width i32, height i32 }
+    Point
+}
+
+func area_ish(s Shape) i32 {
+    case s {
+        Circle(r): return r *% 3
+        Rectangle(w, h): return w *% h
+        Point: return 0
+    }
+    return -1
+}
+
+proc main() i32 {
+    var c = Shape.Circle(10)
+    var r = Shape.Rectangle(6, 7)
+    var p = Shape.Point
+    var acc = 0
+    acc = acc +% area_ish(c)
+    acc = acc +% area_ish(r)
+    acc = acc +% area_ish(p)
+    if acc == 72 { return 0 }
+    return 1
+}

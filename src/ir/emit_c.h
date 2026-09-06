@@ -23,7 +23,8 @@ static int ir_slice_tag(const IrType *e, char *buf, int n) {
         case IRT_BOOL:  return snprintf(buf, n, "b");
         case IRT_PTR:   { int k=snprintf(buf,n,"p"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
         case IRT_SLICE: { int k=snprintf(buf,n,"s"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
-        case IRT_STRUCT:if (e->sname) { IrName *nm=e->sname;
+        case IRT_STRUCT: case IRT_SUM:
+                        if (e->sname) { IrName *nm=e->sname;
                             return snprintf(buf, n, "%.*s", (int)nm->length, nm->name); }
                         return snprintf(buf, n, "v");
         default:        return snprintf(buf, n, "v");
@@ -37,7 +38,7 @@ static void ir_ctype(const IrType *t, FILE *o) {
         case IRT_BOOL: fputs("_Bool", o); break;
         case IRT_PTR:  ir_ctype(t->elem, o); fputc('*', o); break;
         case IRT_SLICE:{ char tag[128]; ir_slice_tag(t->elem, tag, sizeof tag); fprintf(o, "Slice_%s", tag); } break;
-        case IRT_STRUCT:
+        case IRT_STRUCT: case IRT_SUM:
             if (t->sname) { IrName *n = t->sname;
                                   fprintf(o, "%.*s", (int)n->length, n->name); }
             else fputs("void*", o);
@@ -112,6 +113,40 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                             fprintf(o, "){ v%d, v%d };\n", i->operands[0]->id, i->operands[1]->id); break;
         case IR_STR_CONST:  fprintf(o, "  v%d = (uint8_t*)", i->result->id);
                             ir_emit_cstr(i->aux.str.bytes, i->aux.str.len, o); fputs(";\n", o); break;
+        case IR_SUM_TAG:    fprintf(o, "  v%d = v%d.tag;\n", i->result->id, i->operands[0]->id); break;
+        case IR_SUM_PAYLOAD: {
+            IrType *st = i->operands[0]->type;
+            int k = i->aux.sum.variant, fi = i->aux.sum.field;
+            IrType *pl = (st && k < st->n_fields) ? st->fields[k] : NULL;
+            IrName *vn = (st && k < st->n_fields) ? st->field_names[k] : NULL;
+            IrName *fn = (pl && fi < pl->n_fields) ? pl->field_names[fi] : NULL;
+            fprintf(o, "  v%d = v%d.data.%.*s.", i->result->id, i->operands[0]->id,
+                    vn?(int)vn->length:0, vn?vn->name:"");
+            if (fn) fprintf(o, "%.*s;\n", (int)fn->length, fn->name);
+            else    fprintf(o, "f%d;\n", fi);
+            break;
+        }
+        case IR_SUM_NEW: {
+            IrType *st = i->result->type;
+            int k = i->aux.sum.variant;
+            IrType *pl = (st && k < st->n_fields) ? st->fields[k] : NULL;
+            IrName *vn = (st && k < st->n_fields) ? st->field_names[k] : NULL;
+            fprintf(o, "  v%d = (", i->result->id); ir_ctype(st, o);
+            fprintf(o, "){ .tag = %d", k);
+            if (pl && i->n_operands > 0) {
+                fprintf(o, ", .data.%.*s = { ", vn?(int)vn->length:0, vn?vn->name:"");
+                for (int j=0;j<i->n_operands;j++) {
+                    IrName *fn = (j < pl->n_fields) ? pl->field_names[j] : NULL;
+                    if (j) fputs(", ", o);
+                    if (fn) fprintf(o, ".%.*s = ", (int)fn->length, fn->name);
+                    else    fprintf(o, ".f%d = ", j);
+                    fprintf(o, "v%d", i->operands[j]->id);
+                }
+                fputs(" }", o);
+            }
+            fputs(" };\n", o);
+            break;
+        }
         case IR_STRUCT_NEW: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
                             fputs("){ ", o);
                             for (int k=0;k<i->n_operands;k++){ if(k)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
@@ -234,6 +269,18 @@ static void ir_ts_visit(IrTypeSet *ts, IrType *t) {
                 for (int i=0;i<t->n_fields;i++) ir_ts_visit(ts, t->fields[i]);
             }
             break;
+        case IRT_SUM:
+            // A sum's variant payloads are INLINED into its union, so they are not
+            // standalone types — visit through them for their own dependencies (a slice
+            // payload still needs its Slice_ typedef) without registering them.
+            if (t->sname && !ir_ts_struct_seen(ts, t) && ts->n_struct<256) {
+                ts->structs[ts->n_struct++]=t;
+                for (int i=0;i<t->n_fields;i++) {
+                    IrType *pl = t->fields[i]; if (!pl) continue;
+                    for (int j=0;j<pl->n_fields;j++) ir_ts_visit(ts, pl->fields[j]);
+                }
+            }
+            break;
         default: break;
     }
 }
@@ -242,7 +289,36 @@ static void ir_emit_one_slice(IrType *sl, FILE *o) {
     fputs("typedef struct { ", o); ir_ctype(sl->elem, o);
     fprintf(o, "* data; size_t len; } Slice_%s;\n", tag);
 }
+// A sum's C layout: `struct S { int32_t tag; union { …per-variant payload… } data; }`.
+// This is a BACKEND decision — the IR records only which variants exist and what they carry
+// (design/ir_sum_types.md §3) — so swapping in a niche packing later touches only this file.
+// A payload-less variant contributes nothing to the union; if no variant carries a payload
+// the union is omitted entirely (an empty union is not legal C).
+static void ir_emit_one_sum_body(IrType *st, FILE *o) {
+    IrName *nm = st->sname;
+    fprintf(o, "struct %.*s { int32_t tag; ", (int)nm->length, nm->name);
+    int carrying = 0;
+    for (int k=0;k<st->n_fields;k++) if (st->fields[k]) carrying++;
+    if (carrying) {
+        fputs("union { ", o);
+        for (int k=0;k<st->n_fields;k++) {
+            IrType *pl = st->fields[k]; if (!pl) continue;
+            IrName *vn = st->field_names[k];
+            fputs("struct { ", o);
+            for (int j=0;j<pl->n_fields;j++) {
+                ir_ctype(pl->fields[j], o);
+                IrName *fn = pl->field_names[j];
+                if (fn) fprintf(o, " %.*s; ", (int)fn->length, fn->name);
+                else    fprintf(o, " f%d; ", j);
+            }
+            fprintf(o, "} %.*s; ", vn?(int)vn->length:0, vn?vn->name:"");
+        }
+        fputs("} data; ", o);
+    }
+    fputs("};\n", o);
+}
 static void ir_emit_one_struct_body(IrType *st, FILE *o) {
+    if (st->kind == IRT_SUM) { ir_emit_one_sum_body(st, o); return; }
     IrName *nm = st->sname;
     fprintf(o, "struct %.*s { ", (int)nm->length, nm->name);
     for (int fi=0; fi<st->n_fields; fi++) {

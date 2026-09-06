@@ -191,6 +191,32 @@ IrValue *ir_struct_new(IrFunc *f, IrBlock *b, IrType *sty, IrValue **fields, int
     ir_emit(b, ins);   // the struct's name lives on the result type (sty->sname)
     return ins->result;
 }
+// ── sum types (design/ir_sum_types.md) ───────────────────────────────────────
+// Construct variant `k` of `sty` from its payload fields (n may be 0).
+IrValue *ir_sum_new(IrFunc *f, IrBlock *b, IrType *sty, int k, IrValue **payload, int n) {
+    IrInstr *ins = ir_instr(f, IR_SUM_NEW, sty, n);
+    for (int i=0;i<n;i++) ins->operands[i] = payload[i];
+    ins->aux.sum.variant = k; ins->aux.sum.field = 0;
+    ir_emit(b, ins);
+    return ins->result;
+}
+// The discriminant of a sum VALUE, as a plain integer the numeric domain can track.
+IrValue *ir_sum_tag(IrFunc *f, IrBlock *b, IrValue *sum) {
+    IrInstr *ins = ir_instr(f, IR_SUM_TAG, ir_type_int(f->arena, 32, true), 1);
+    ins->operands[0] = sum;
+    ir_emit(b, ins);
+    return ins->result;
+}
+// Payload field `fi` of variant `k`. Well-defined only where the tag is known to be k —
+// the CFG establishes that, so this carries no check of its own.
+IrValue *ir_sum_payload(IrFunc *f, IrBlock *b, IrValue *sum, int k, int fi, IrType *fty) {
+    IrInstr *ins = ir_instr(f, IR_SUM_PAYLOAD, fty, 1);
+    ins->operands[0] = sum;
+    ins->aux.sum.variant = k; ins->aux.sum.field = fi;
+    ir_emit(b, ins);
+    return ins->result;
+}
+
 // Address of struct field #idx (base is the struct's address).
 IrValue *ir_field_ptr(IrFunc *f, IrBlock *b, IrValue *base, int idx, IrType *fty) {
     IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = fty;

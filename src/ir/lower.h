@@ -135,6 +135,63 @@ static Decl *ir_find_struct_decl(LowerCtx *c, Id *name) {
     }
     return NULL;
 }
+// A module-level ENUM declaration, matched the same two ways as a struct.
+static Decl *ir_find_enum_decl(LowerCtx *c, Id *name) {
+    if (!name) return NULL;
+    for (DeclList *d = c->globals; d; d = d->next) {
+        Decl *dc = d->decl;
+        if (!dc || dc->kind != DECL_ENUM) continue;
+        Id *dn = dc->as.enum_decl.type_name;
+        if (!dn) continue;
+        if (dn->length == name->length &&
+            strncmp(dn->name, name->name, (size_t)name->length) == 0) return dc;
+        const char *mod = dc->defining_module;
+        if (mod) {
+            size_t ml = strlen(mod);
+            if ((size_t)name->length == ml + 1 + (size_t)dn->length &&
+                strncmp(name->name, mod, ml) == 0 && name->name[ml] == '_' &&
+                strncmp(name->name + ml + 1, dn->name, (size_t)dn->length) == 0)
+                return dc;
+        }
+    }
+    return NULL;
+}
+// Index of the variant named `vn` in `ed`, or -1. `suffix` also accepts a MANGLED
+// reference (`<mod>_<Enum>_<Variant>`), which is how resolve.h rewrites a bare variant.
+static int ir_variant_index(Decl *ed, Id *vn, bool suffix) {
+    if (!ed || !vn) return -1;
+    int k = 0;
+    for (Variant *v = ed->as.enum_decl.variants; v; v = v->next, k++) {
+        if (!v->name) continue;
+        if (v->name->length == vn->length &&
+            strncmp(v->name->name, vn->name, (size_t)vn->length) == 0) return k;
+        if (suffix && vn->length > v->name->length) {
+            const char *tail = vn->name + (vn->length - v->name->length);
+            if (tail[-1] == '_' && strncmp(tail, v->name->name, (size_t)v->name->length) == 0)
+                return k;
+        }
+    }
+    return -1;
+}
+// The enum whose variant list contains `vn` (for a bare/mangled variant reference).
+static Decl *ir_find_enum_by_variant(LowerCtx *c, Id *vn, int *idx) {
+    for (DeclList *d = c->globals; d; d = d->next) {
+        Decl *dc = d->decl;
+        if (!dc || dc->kind != DECL_ENUM) continue;
+        int k = ir_variant_index(dc, vn, true);
+        if (k >= 0) { if (idx) *idx = k; return dc; }
+    }
+    return NULL;
+}
+
+// The variant name an expression names: `Shape.Circle` (member) or a bare/mangled `NotFound`.
+static Id *ir_variant_name_of(Expr *e) {
+    if (!e) return NULL;
+    if (e->kind == EXPR_MEMBER)     return e->as.member_expr.member;
+    if (e->kind == EXPR_IDENTIFIER) return e->as.identifier_expr.id;
+    return NULL;
+}
+
 // A type alias `type Name = <base> [refinement…]` by (bare) name.
 static Decl *ir_find_type_alias(LowerCtx *c, Id *name) {
     if (!name) return NULL;
@@ -230,6 +287,43 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
                 IrType *r = ir_resolve_alias_base(c, ad);
                 c->const_depth--;
                 if (r) return r;
+            }
+            // a named ENUM → a self-contained IRT_SUM (variant table). Payload-carrying
+            // variants get an IRT_STRUCT payload; payload-less ones get NULL. The LAYOUT
+            // (tag+union vs niche) is deliberately not recorded — that is the backend's.
+            Decl *ed = ir_find_enum_decl(c, t->base_type);
+            if (ed) {
+                for (int i=0;i<c->scache_n;i++) if (c->scache_decl[i]==ed) return c->scache_type[i];
+                IrType *r = ir_type_new(c->a, IRT_SUM);
+                Id *enm = ed->as.enum_decl.type_name;
+                if (enm) r->sname = ir_intern(c->a, enm->name, enm->length);
+                if (c->scache_n < 64) { c->scache_decl[c->scache_n]=ed;
+                                        c->scache_type[c->scache_n]=r; c->scache_n++; }
+                int nv=0; for (Variant *v = ed->as.enum_decl.variants; v; v=v->next) nv++;
+                r->n_fields    = nv;
+                r->fields      = arena_push_many_aligned(c->a, IrType*, nv>0?nv:1);
+                r->field_names = arena_push_many_aligned(c->a, IrName*, nv>0?nv:1);
+                int i=0;
+                for (Variant *v = ed->as.enum_decl.variants; v; v=v->next, i++) {
+                    r->field_names[i] = v->name ? ir_intern(c->a, v->name->name, v->name->length) : NULL;
+                    int nf=0; for (DeclList *fl=v->fields; fl; fl=fl->next)
+                        if (fl->decl && fl->decl->kind==DECL_VARIABLE) nf++;
+                    if (nf == 0) { r->fields[i] = NULL; continue; }   // a payload-less variant
+                    IrType *pt = ir_type_new(c->a, IRT_STRUCT);
+                    pt->sname = r->field_names[i];
+                    pt->n_fields = nf;
+                    pt->fields      = arena_push_many_aligned(c->a, IrType*, nf);
+                    pt->field_names = arena_push_many_aligned(c->a, IrName*, nf);
+                    int j=0; for (DeclList *fl=v->fields; fl; fl=fl->next) {
+                        if (!fl->decl || fl->decl->kind!=DECL_VARIABLE) continue;
+                        pt->fields[j] = ir_lower_type(c, fl->decl->as.variable_decl.type);
+                        Id *fn = fl->decl->as.variable_decl.name;
+                        pt->field_names[j] = fn ? ir_intern(c->a, fn->name, fn->length) : NULL;
+                        j++;
+                    }
+                    r->fields[i] = pt;
+                }
+                return r;
             }
             // a named struct → a self-contained IRT_STRUCT (lowered field table)
             Decl *sd = ir_find_struct_decl(c, t->base_type);
@@ -569,6 +663,20 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             if (l && l->aggregate) return l->slot;   // array/slice base pointer, read directly
             if (l && l->slot)  return ir_load(c->f, c->cur, l->slot,
                                               l->slot->type->elem ? l->slot->type->elem : ty);
+            // A bare variant (`return NotFound`). resolve.h rewrites the identifier to
+            // `<mod>_<Enum>_<Variant>` and points e->decl at the ENUM, so recover the variant
+            // from the name's suffix.
+            if (e->decl && e->decl->kind == DECL_ENUM) {
+                int k = ir_variant_index(e->decl, e->as.identifier_expr.id, true);
+                if (k >= 0) {
+                    Id *en = e->decl->as.enum_decl.type_name;
+                    IrType *st = (ty && ty->kind==IRT_SUM) ? ty : NULL;
+                    if (!st && en) { Type tt; memset(&tt,0,sizeof tt);
+                                     tt.kind = TYPE_SIMPLE; tt.base_type = en;
+                                     st = ir_lower_type(c, &tt); }
+                    if (st && st->kind==IRT_SUM) return ir_sum_new(c->f, c->cur, st, k, NULL, 0);
+                }
+            }
             // not a local/param: a module-level constant folds to its initializer
             if (c->const_depth < 32) {
                 Decl *g = ir_find_global_const(c, e->as.identifier_expr.id);
@@ -659,6 +767,18 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             Id *m = e->as.member_expr.member;
             Expr *tgt = e->as.member_expr.target;
             Type *tst = tgt ? tgt->type : NULL;
+            // `Shape.Point` — a payload-less variant. Checked before the field path because a
+            // variant reference has no struct base at all (its target types as UNIT), which is
+            // why these arrived at the field lookup and became the top `incomplete` cause.
+            if (ty && ty->kind==IRT_SUM) {
+                Decl *ed = (e->decl && e->decl->kind==DECL_ENUM) ? e->decl
+                         : ir_find_enum_decl(c, tgt && tgt->kind==EXPR_IDENTIFIER
+                                                 ? tgt->as.identifier_expr.id : NULL);
+                if (!ed && ty->sname) { Id tn; tn.name = ty->sname->name; tn.length = ty->sname->length;
+                                        ed = ir_find_enum_decl(c, &tn); }
+                int k = ed ? ir_variant_index(ed, m, true) : -1;
+                if (k >= 0) return ir_sum_new(c->f, c->cur, ty, k, NULL, 0);
+            }
             if (m && m->length==3 && strncmp(m->name,"len",3)==0) {
                 if (tst && tst->kind==TYPE_ARRAY && tst->array_len>=0)
                     return ir_const_int(c->f, c->cur, tst->array_len, ty);   // fixed array .len = N
@@ -694,6 +814,18 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 int k=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next,k++)
                     fs[k] = ir_lower_expr(c, a->expr);
                 return ir_struct_new(c->f, c->cur, ty, fs, n);
+            }
+            // `Shape.Circle(10)` is VARIANT construction, not a call. The callee decl is the
+            // ENUM (sema resolves the member to its owning type), so the variant comes from
+            // the member name.
+            if (callee && callee->kind == DECL_ENUM && ty && ty->kind==IRT_SUM) {
+                int k = ir_variant_index(callee, ir_variant_name_of(e->as.call_expr.callee), true);
+                if (k >= 0) {
+                    IrValue **fs = arena_push_many_aligned(c->a, IrValue*, n>0?n:1);
+                    int j=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next,j++)
+                        fs[j] = ir_lower_expr(c, a->expr);
+                    return ir_sum_new(c->f, c->cur, ty, k, fs, n);
+                }
             }
             IrInstr *ins = ir_instr(c->f, IR_CALL, (e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT) ? ty : NULL, n);
             Id *cnm = callee ? callee->as.function_decl.name : NULL;   // intern the callee name
@@ -985,20 +1117,47 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             break;
         }
         case STMT_MATCH: {
-            // Integer/char match on literal + range patterns, lowered to an if-chain.
-            // Enum/ADT matches need tag+payload modeling ⇒ fail closed until then.
+            // Integer/char match on literal + range patterns, or a SUM match on the tag —
+            // both lower to the same if-chain, because a sum's discriminant is an ordinary
+            // integer (design/ir_sum_types.md §3). That is the whole point of not modelling
+            // the niche: arm selection is a comparison the numeric domain can reason about.
             Expr *val = s->as.match_stmt.value;
             Type *vt = val ? val->type : NULL;
-            if (!(vt && vt->kind==TYPE_SIMPLE && vt->int_width_cache>0)) { ir_incomplete(c,"enum-match"); break; }
-            IrValue *v = ir_lower_expr(c, val);
+            IrValue *v = NULL; IrType *sumty = NULL;
+            { IrType *vty = ir_lower_type(c, vt);
+              if (vty && vty->kind == IRT_SUM) sumty = vty; }
+            if (!sumty && !(vt && vt->kind==TYPE_SIMPLE && vt->int_width_cache>0)) {
+                ir_incomplete(c, sumty ? "enum-match" : "match-scrutinee"); break;
+            }
+            v = ir_lower_expr(c, val);
+            if (sumty && !(v && v->type && v->type->kind==IRT_SUM)) { ir_incomplete(c,"enum-match"); break; }
+            IrValue *tagv = sumty ? ir_sum_tag(c->f, c->cur, v) : NULL;
             IrBlock *join = ir_new_block(c->f);
             StmtMatchCase *elsec = NULL;
             for (StmtMatchCase *cs = s->as.match_stmt.cases; cs; cs = cs->next) {
                 if (!cs->patterns) { elsec = cs; continue; }
                 IrBlock *body = ir_new_block(c->f);
+                int bound_k = -1; Expr *bound_pat = NULL;
                 for (ExprList *p = cs->patterns; p; p = p->next) {   // OR of this case's patterns
                     Expr *pe = p->expr;
                     IrBlock *nxt = ir_new_block(c->f);
+                    if (sumty) {
+                        // `Circle(rad)` / `Point` — select on the tag. The payload bindings are
+                        // materialised in the BODY, where the tag is known, so IR_SUM_PAYLOAD
+                        // is only ever emitted under its own variant.
+                        Expr *pv = (pe->kind==EXPR_CALL) ? pe->as.call_expr.callee : pe;
+                        Decl *ed = NULL;
+                        if (sumty->sname) { Id tn; tn.name=sumty->sname->name; tn.length=sumty->sname->length;
+                                            ed = ir_find_enum_decl(c, &tn); }
+                        int k = ed ? ir_variant_index(ed, ir_variant_name_of(pv), true) : -1;
+                        if (k < 0) { ir_incomplete(c, "enum-match-pattern"); ir_set_br(c->cur, body); c->cur = nxt; continue; }
+                        if (pe->kind==EXPR_CALL) { bound_k = k; bound_pat = pe; }
+                        IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
+                        IrValue *eq = ir_icmp(c->f, c->cur, IR_CMP_EQ, tagv, kc);
+                        ir_set_br_cond(c->cur, eq, body, nxt);
+                        c->cur = nxt;
+                        continue;
+                    }
                     if (pe->kind == EXPR_RANGE) {
                         Expr *loe=pe->as.range_expr.start, *hie=pe->as.range_expr.end;
                         IrBlock *hitest = ir_new_block(c->f);
@@ -1014,7 +1173,21 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                     c->cur = nxt;
                 }
                 IrBlock *ftblk = c->cur;   // where control lands if no pattern matched
-                c->cur = body; ir_lower_stmts(c, cs->body);
+                c->cur = body;
+                IrLocal *saved = c->locals;             // arm-local payload bindings
+                if (bound_k >= 0 && bound_pat) {
+                    IrType *pl = (bound_k < sumty->n_fields) ? sumty->fields[bound_k] : NULL;
+                    int j=0;
+                    for (ExprList *a = bound_pat->as.call_expr.args; a; a = a->next, j++) {
+                        Id *bn = a->expr && a->expr->kind==EXPR_IDENTIFIER
+                               ? a->expr->as.identifier_expr.id : NULL;
+                        if (!bn || !pl || j >= pl->n_fields) continue;
+                        IrValue *pvv = ir_sum_payload(c->f, c->cur, v, bound_k, j, pl->fields[j]);
+                        ir_env_add(c, bn, NULL, pvv);   // a read-only binding, not a slot
+                    }
+                }
+                ir_lower_stmts(c, cs->body);
+                c->locals = saved;
                 if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
                 c->cur = ftblk;
             }

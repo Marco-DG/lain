@@ -37,6 +37,7 @@ typedef enum {
     IRT_SLICE,      // T[] / u8[:0] — a fat value {data ptr, len}
     IRT_ARRAY,      // fixed T[N]
     IRT_STRUCT,     // named aggregate
+    IRT_SUM,        // discriminated union (enum / ADT / error union) — see IR_SUM_* below
     IRT_UNIT,       // no value (proc with no return)
     IRT_NEVER,      // diverges (panic / unreachable) — bottom
 } IrTypeKind;
@@ -59,10 +60,19 @@ typedef struct IrType {
     bool  linear;
     // IRT_STRUCT — self-contained: carries its lowered field types + names so the
     // backend never re-touches the AST.
-    IrName *sname;          // struct name (identity + C typedef name) — IR-owned
-    struct IrType **fields; // lowered field types, in declaration order
-    IrName **field_names;   // field names (for the C typedef)
-    int   n_fields;
+    //
+    // IRT_SUM reuses the same three arrays with the obvious reading: n_fields is the VARIANT
+    // count, field_names[i] is variant i's name, and fields[i] is its payload — an IRT_STRUCT
+    // for a multi-field payload, or NULL for a payload-less variant. `sname` is the sum's own
+    // name. What the IR deliberately does NOT record is the LAYOUT: whether a sum is stored
+    // as tag+union or niche-packed into a spare value of its payload is the backend's choice
+    // (internal/design/ir_sum_types.md §3). Recording the niche here would make a sum
+    // indistinguishable from a pointer with an odd range and destroy the discrimination every
+    // analysis depends on.
+    IrName *sname;          // struct/sum name (identity + C typedef name) — IR-owned
+    struct IrType **fields; // lowered field types / variant payloads, in declaration order
+    IrName **field_names;   // field / variant names
+    int   n_fields;         // field count, or VARIANT count for IRT_SUM
 } IrType;
 
 // The integer interval [lo,hi] implied by an IRT_INT type — seeds the numeric domain
@@ -120,6 +130,14 @@ typedef enum {
     IR_ARRAY_NEW,           // op[0..] = elements
     IR_STR_CONST,           // aux.str : static string literal bytes ; result : *u8
     IR_STRUCT_NEW,          // op[0..] = fields ; aux.struct_decl
+    // Sum types (design/ir_sum_types.md). Discrimination is EXACT: the tag is an ordinary
+    // integer the numeric domain can track, so `case`-arm refinement is ordinary guard
+    // refinement rather than pattern-matching on magic constants.
+    IR_SUM_NEW,             // aux.sum.variant = k ; op[0..] = variant k's payload fields
+    IR_SUM_TAG,             // op[0] = a sum value → its discriminant (an integer)
+    IR_SUM_PAYLOAD,         // op[0] = a sum ; aux.sum.{variant,field} → that payload field.
+                            // Well-defined ONLY where the tag is known to be `variant`, which
+                            // the CFG already establishes — no extra machinery needed.
     // calls
     IR_CALL,                // aux.callee : Decl ; op[0..] = args
     // verification layer (Phase 2.9 — the assume/assert substrate)
@@ -164,6 +182,7 @@ typedef struct IrInstr {
         int32_t     field_idx;  // IR_FIELD_PTR
         IrName     *callee;     // IR_CALL — the callee's name (IR-owned)
         struct { const char *bytes; int32_t len; } str;  // IR_STR_CONST
+        struct { int32_t variant, field; } sum;           // IR_SUM_NEW / IR_SUM_PAYLOAD
     } aux;
     IrPhiArg  *phi_args;    // IR_PHI
     bool       unchecked;   // ELEM_PTR / arithmetic inside an `unsafe` block

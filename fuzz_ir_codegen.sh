@@ -147,7 +147,7 @@ proc main() i32 {
     var s = "abcdef"
     s[1] = $c
     s[2] = s[1]
-    return (s[2] as i32) %% 251
+    return (s[2] as i32) % 251
 }
 EOF
       ;;
@@ -155,7 +155,7 @@ EOF
 func first(s u8[:0]) i32 { if s.len > 0 { return s[0] as i32 } return 0 }
 proc main() i32 {
     t = "world"
-    return first(t) %% 251
+    return first(t) % 251
 }
 EOF
       ;;
@@ -164,7 +164,7 @@ proc main() i32 {
     var s = "xyz"
     var n = s.len as i32
     s[0] = $c
-    return (n *% 7 +% (s[0] as i32)) %% 251
+    return (n *% 7 +% (s[0] as i32)) % 251
 }
 EOF
       ;;
@@ -182,7 +182,7 @@ proc main() i32 {
     defer acc = acc +% $b
     defer acc = acc *% 3
     acc = acc +% 1
-    return acc %% 251
+    return acc % 251
 }
 EOF
       ;;
@@ -195,7 +195,7 @@ proc main() i32 {
         acc = acc +% i
         i += 1
     }
-    return acc %% 251
+    return acc % 251
 }
 EOF
       ;;
@@ -204,10 +204,10 @@ proc pick(n i32) i32 {
     var acc = n
     defer acc = acc *% 2
     if n > $b {
-        return acc %% 251
+        return acc % 251
     }
     acc = acc +% $a
-    return acc %% 251
+    return acc % 251
 }
 proc main() i32 { return pick($a) }
 EOF
@@ -215,7 +215,77 @@ EOF
     esac
 }
 
-GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit gen_defer)
+gen_enum() {              # SUM TYPES: variant construction + `case` on the tag + payload
+    # reads. Exercises all three payload shapes (multi-field, single, none), both the local
+    # and the by-reference-parameter scrutinee (the latter was uncompilable C in the OLD
+    # backend until this generator's test found it), and arm selection order.
+    local a=$(r 40 1) b=$(r 30 1) k=$(r 3)
+    case $k in
+      0) cat <<EOF
+type Sh { Circle { radius i32 }
+ Rect { w i32, h i32 }
+ Dot }
+func val(s Sh) i32 {
+    case s {
+        Circle(r): return r *% 3
+        Rect(w, h): return w *% h
+        Dot: return 5
+    }
+    return -1
+}
+proc main() i32 {
+    var c = Sh.Circle($a)
+    var q = Sh.Rect($a, $b)
+    var d = Sh.Dot
+    return (val(c) +% val(q) +% val(d)) % 251
+}
+EOF
+      ;;
+      1) cat <<EOF
+type St { On { level i32 }
+ Off }
+proc main() i32 {
+    var acc = 0
+    var i = 0
+    while i < 6 decreasing 6 - i {
+        var s = St.Off
+        if i % 2 == 0 { s = St.On(i +% $a) }
+        case s {
+            On(l): acc = acc +% l
+            Off: acc = acc +% 1
+        }
+        i += 1
+    }
+    return acc % 251
+}
+EOF
+      ;;
+      *) cat <<EOF
+type P { A { x i32, y i32 }
+ B { z i32 }
+ C }
+func pick(p P) i32 {
+    case p {
+        A(x, y): return x -% y
+        B(z): return z
+        C: return $b
+    }
+    return 0
+}
+proc main() i32 {
+    var t = P.A($a, $b)
+    var u = P.B($a)
+    var v = P.C
+    var s = pick(t) +% pick(u) +% pick(v)
+    if s > 0 { return s % 251 }
+    return (0 -% s) % 251
+}
+EOF
+      ;;
+    esac
+}
+
+GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit gen_defer gen_enum)
 
 run_pipeline() {  # $1=c-file $2=bin -> prints "<exit>|<stdout>"
     "$CC" -o "$2" "$1" $DEFS -w -O0 2>/dev/null || { echo "BUILDFAIL"; return; }

@@ -14,6 +14,7 @@ static void ir_dump_type(const IrType *t, FILE *o) {
         case IRT_FLOAT: fprintf(o, "f%d", t->float_bits); break;
         case IRT_PTR:   fputc('*', o); if (t->ptr_mut) fputs("var ", o); ir_dump_type(t->elem, o); break;
         case IRT_SLICE: fputs("[]", o); ir_dump_type(t->elem, o); break;
+        case IRT_SUM:   fputs("sum", o); if (t->sname) fprintf(o, " %.*s", (int)t->sname->length, t->sname->name); break;
         case IRT_ARRAY: fprintf(o, "[%lld]", (long long)t->array_len); ir_dump_type(t->elem, o); break;
         case IRT_STRUCT:fputs("struct", o); break;
         case IRT_UNIT:  fputs("unit", o); break;
@@ -35,6 +36,8 @@ static const char *ir_op_name(IrOp op) {
         case IR_SLICE_LEN: return "slice_len"; case IR_SLICE_DATA: return "slice_data";
         case IR_MAKE_SLICE: return "make_slice"; case IR_SUBSLICE: return "subslice";
         case IR_ARRAY_NEW: return "array_new"; case IR_STRUCT_NEW: return "struct_new";
+        case IR_SUM_NEW: return "sum_new"; case IR_SUM_TAG: return "sum_tag";
+        case IR_SUM_PAYLOAD: return "sum_payload";
         case IR_STR_CONST: return "str_const";
         case IR_ASSUME: return "assume"; case IR_ASSERT: return "assert";
         case IR_CALL: return "call"; case IR_PHI: return "phi";
