@@ -1,0 +1,25 @@
+// Assigning a WHOLE value through a mutable aggregate parameter. Field writes went through
+// EXPR_MEMBER (which knew the parameter is a pointer and emitted `->`), so only the
+// whole-value form was broken: `p = P(7,8)` emitted `p = P_ctor(7,8);` where `p` is `P*`,
+// which never compiled. A mutable PRIMITIVE param already self-derefs to `(*n)`, so the
+// deref belongs exactly to the aggregate case.
+type P {
+    x i32
+    y i32
+}
+
+proc reset(var p P) {
+    p = P(7, 8)
+}
+
+proc bump_field(var p P) {
+    p.x = p.x +% 1
+}
+
+proc main() i32 {
+    var a = P(1, 2)
+    reset(var a)
+    bump_field(var a)
+    if a.x == 8 and a.y == 8 { return 0 }
+    return 1
+}

@@ -137,6 +137,21 @@ static bool emit_expr_is_c_pointer(Expr *e) {
     return false;
 }
 
+// Is this identifier a parameter that RENDERS AS A BARE C POINTER — i.e. it is passed by
+// address and emit_expr does NOT already dereference it? Exactly the aggregate borrows:
+// a mutable PRIMITIVE param self-derefs to `(*n)` (see EXPR_IDENTIFIER), and arrays, slices
+// and raw pointers are references already. What is left is a struct/ADT borrow, where the
+// bare name IS a pointer — fine for `p->field`, wrong for anything using the value whole.
+static bool emit_ident_is_bare_ptr_param(Expr *e) {
+    if (!e || e->kind != EXPR_IDENTIFIER) return false;
+    Decl *d = e->decl;
+    if (!d || d->kind != DECL_VARIABLE || !d->as.variable_decl.is_parameter) return false;
+    Type *t = d->as.variable_decl.type;
+    if (!t || is_primitive_type(t)) return false;
+    if (t->kind == TYPE_POINTER || t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) return false;
+    return t->mode == MODE_MUTABLE || t->mode == MODE_SHARED;
+}
+
 // Emit an expression at given indent‐depth
 void emit_expr(Expr *expr, int depth);
 

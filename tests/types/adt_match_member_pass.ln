@@ -1,0 +1,27 @@
+// Matching on a struct FIELD of enum type. Exhaustiveness runs during resolve, where only
+// an identifier has a type — a member expression's type comes from inference, so `case
+// o.tag` reached the check with a NULL type, found no enum, and a fully-covered match was
+// rejected as non-exhaustive (E014). The scrutinee is now inferred before the check.
+type Inner {
+    A { v i32 }
+    B
+}
+type Outer {
+    tag Inner
+    n i32
+}
+
+func rd(o Outer) i32 {
+    case o.tag {
+        A(v): return v +% o.n
+        B: return o.n
+    }
+    return -1
+}
+
+proc main() i32 {
+    var a = Outer(Inner.A(4), 6)
+    var b = Outer(Inner.B, 3)
+    if rd(a) == 10 and rd(b) == 3 { return 0 }
+    return 1
+}

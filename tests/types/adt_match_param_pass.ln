@@ -1,0 +1,43 @@
+// Matching on an ADT that arrives BY REFERENCE. A borrowed aggregate parameter is passed
+// by address (`func f(s Sh)` → `const Sh*`, `proc f(var s Sh)` → `Sh* restrict`), while
+// `__matchN` is bound BY VALUE and every arm reads it with `.`. Both halves are needed —
+// strip the pointer from the binding's type AND dereference the initializer — and getting
+// only one emitted uncompilable C in the shipping backend for years:
+//     Sh __match0 = s;    // s is `const Sh*`   → invalid initializer
+//     Sh* __match0 = s;   // then __match0.tag  → member access on a pointer
+// The corpus covered `case` on a LOCAL only, which is why this never showed up.
+type Sh {
+    Circle { radius i32 }
+    Rect { w i32, h i32 }
+    Dot
+}
+
+func shared_val(s Sh) i32 {
+    case s {
+        Circle(r): return r *% 3
+        Rect(w, h): return w *% h
+        Dot: return 5
+    }
+    return -1
+}
+
+proc mutate(var s Sh) {
+    case s {
+        Circle(r): s = Sh.Circle(r +% 1)
+        Rect(w, h): s = Sh.Rect(w, h)
+        Dot: s = Sh.Dot
+    }
+}
+
+proc main() i32 {
+    var c = Sh.Circle(10)
+    var q = Sh.Rect(6, 7)
+    var d = Sh.Dot
+    // shared borrow: 30 + 42 + 5 = 77
+    var total = shared_val(c) +% shared_val(q) +% shared_val(d)
+    // mutable borrow: the arm writes the WHOLE value back through the pointer
+    mutate(var c)
+    total = total +% shared_val(c)          // 11 * 3 = 33  → 110
+    if total == 110 { return 0 }
+    return 1
+}

@@ -705,6 +705,13 @@ void sema_resolve_stmt(Stmt *s) {
       }
       sema_pop_scope();
     }
+    // Exhaustiveness needs the scrutinee's TYPE, and resolution alone does not produce one
+    // for anything but an identifier: `case o.tag { A(v): … B: … }` reached the check with a
+    // NULL type, so no enum was found and a fully-covered match was reported non-exhaustive.
+    // Infer it here (resolve.h already infers conditions and assignment targets), and only
+    // when it is missing so nothing already typed is disturbed.
+    if (s->as.match_stmt.value && !s->as.match_stmt.value->type)
+      sema_infer_expr(s->as.match_stmt.value);
     // Check exhaustiveness after resolving all cases
     if (!sema_check_match_exhaustive(s)) {
       sema_report_nonexhaustive_match(s);

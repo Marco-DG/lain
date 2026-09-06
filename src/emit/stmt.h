@@ -457,6 +457,17 @@ void emit_stmt(Stmt *stmt, int depth) {
     sema_infer_expr(scrut);
     char c_ty[256];
     c_name_for_type(scrut->type, c_ty, sizeof c_ty);
+    // __matchN is bound BY VALUE — every arm reads it with `.`, and the payload bindings
+    // copy out of it. A borrowed aggregate scrutinee (`func f(s S)` → `const S*`, or
+    // `proc f(var s S)` → `S* restrict`) therefore needs BOTH halves: strip the pointer from
+    // the declared type, and dereference the initializer. Getting only one produced
+    // uncompilable C either way — `S* __match0 = *s;` (type/init mismatch) or
+    // `S* __match0 = s;` followed by `__match0.tag` (member access on a pointer).
+    {   size_t cl = strlen(c_ty);
+        while (cl > 0 && (c_ty[cl-1]==' ' || c_ty[cl-1]=='*')) c_ty[--cl] = 0;
+        // `const S` as a by-value local is fine, but drop it for a clean copy target
+        if (cl > 6 && strncmp(c_ty, "const ", 6) == 0) memmove(c_ty, c_ty+6, cl-6+1);
+    }
 
     // Check if it is an ADT
     bool is_adt = false;
@@ -510,7 +521,7 @@ void emit_stmt(Stmt *stmt, int depth) {
     // A borrowed aggregate scrutinee arrives as a POINTER (`func f(s S)` → `const S* s`),
     // so binding it to a value-typed __matchN needs a dereference. Without it every `case`
     // on a struct/ADT PARAMETER emitted uncompilable C.
-    bool scrut_is_ptr = emit_expr_is_c_pointer(scrut) && !(scrut->type && scrut->type->kind==TYPE_POINTER);
+    bool scrut_is_ptr = emit_ident_is_bare_ptr_param(scrut);
     EMIT("%s __match%d = %s", c_ty, __match_id, scrut_is_ptr ? "*" : "");
     emit_expr(scrut, depth);
     EMIT(";\n");
@@ -938,6 +949,11 @@ void emit_stmt(Stmt *stmt, int depth) {
             emit_expr(lhs, depth);
             EMIT("));\n");
         } else {
+            // Assigning a WHOLE value through a mutable aggregate parameter: `proc reset(
+            // var p P) { p = P(7,8) }`. The parameter is a C pointer, so the target is `*p`.
+            // Field writes went through EXPR_MEMBER (which knew to emit `->`), so only the
+            // whole-value form was broken — it emitted `p = P_ctor(7,8);` and never compiled.
+            if (emit_ident_is_bare_ptr_param(lhs)) EMIT("*");
             emit_expr(lhs, depth);
             EMIT(" = ");
             // `s = "…"` where s is a slice: lower the string literal to a terminated
