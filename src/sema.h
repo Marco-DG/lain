@@ -2068,6 +2068,29 @@ static void walk_stmt(Stmt *s) {
             // spec_audit_2026_05_14.md §F4.
 
             sema_union_coerce(&s->as.var_stmt.expr, s->as.var_stmt.type);  // `T | markers` construction
+            // A union-typed local needs an EXPLICIT annotation. `T | m1 | m2` is lowered to a
+            // synthesized niche-optimized enum by union_lower(), and that only happens for a
+            // written-out type — a union-returning CALL is still a raw TYPE_UNION when the
+            // inference above runs, so `var r = find(x)` adopts an unnamed placeholder and
+            // then fails its own conversion check against it. Say so, instead of reporting
+            // "cannot convert '__U_ptr_u8_NotFound' to '?'", which explains nothing.
+            if (s->as.var_stmt.expr && s->as.var_stmt.expr->type &&
+                s->as.var_stmt.type && s->as.var_stmt.type->kind == TYPE_UNION &&
+                !s->as.var_stmt.type->base_type) {
+                Id *vn = s->as.var_stmt.name;
+                char fb[128]; type_describe(s->as.var_stmt.expr->type, fb, sizeof fb);
+                fprintf(stderr,
+                    "[E012] Error Ln %li, Col %li: '%.*s' is initialized from a call returning "
+                    "an error union, whose type cannot be inferred. Annotate it explicitly, "
+                    "e.g. `var %.*s T | Marker = ...` (the union's value type followed by its "
+                    "markers).\n",
+                    (long)s->line, (long)s->col,
+                    (int)(vn ? vn->length : 1), vn ? vn->name : "?",
+                    (int)(vn ? vn->length : 1), vn ? vn->name : "?");
+                (void)fb;
+                diagnostic_show_line(s->line, s->col);
+                exit(1);
+            }
             if (sema_ranges && s->as.var_stmt.expr) {
                 Range r = sema_eval_range(s->as.var_stmt.expr, sema_ranges);
                 // Q-002 Phase 5: overflow-at-boundary check (var declaration).

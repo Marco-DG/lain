@@ -1,0 +1,27 @@
+// EXPECT: [E012]
+// A union-typed local needs an EXPLICIT annotation; `var r = f()` cannot infer it.
+//
+// `T | m1 | m2` is lowered to a synthesized niche-optimized enum by union_lower(), and that
+// happens for a WRITTEN-OUT type. A union-returning CALL is still a raw TYPE_UNION when var
+// inference runs, so the variable adopts an unnamed placeholder and then fails its own
+// conversion check against it. Every other union test in the corpus annotates explicitly,
+// which is exactly why this form was never exercised and the failure was a baffling
+// "cannot implicitly convert '__U_ptr_u8_NotFound' to '?'".
+//
+// The limitation is real but the diagnostic now NAMES it and gives the fix. Making it infer
+// means routing the inferred type through union_lower and following the raw TYPE_UNION into
+// the emitter — worth doing, but not worth a careless change to the niche path, which is
+// what guarantees these unions are zero-cost. See union_infer_annotated_pass.ln for the
+// working form; this test flips to a _pass if inference lands.
+func find(p *u8) *u8 | NotFound {
+    if 1 == 1 { return p }
+    return NotFound
+}
+proc main() i32 {
+    var r = find("x")
+    case r {
+        NotFound: return 1
+        else: return 0
+    }
+    return 1
+}

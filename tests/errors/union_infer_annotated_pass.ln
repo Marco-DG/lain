@@ -1,0 +1,15 @@
+// The working counterpart of union_infer_needs_annotation_fail: the SAME program with the
+// union type written out. Locks the workaround the diagnostic recommends, so the pair
+// documents both the limitation and its fix.
+func find(p *u8) *u8 | NotFound {
+    if 1 == 1 { return p }
+    return NotFound
+}
+proc main() i32 {
+    var r *u8 | NotFound = find("x")
+    case r {
+        NotFound: return 1
+        else: return 0
+    }
+    return 1
+}
