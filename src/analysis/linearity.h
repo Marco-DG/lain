@@ -62,6 +62,14 @@ static bool lin_has_release_obligation(const IrType *t, int depth) {
             if (lin_has_release_obligation(t->fields[i], depth+1)) return true;
     }
     if (t->kind==IRT_ARRAY) return lin_has_release_obligation(t->elem, depth+1);
+    // A sum owns a resource if ANY variant's payload does — `Box{ Full{ptr mov *u8}, Empty }`
+    // must be released on the Full arm. Which arm is taken is a runtime fact; the TYPE-level
+    // answer is "may own", and the per-path refinement happens where the payload is projected.
+    if (t->kind==IRT_SUM) {
+        if (t->n_fields <= 0 || !t->fields) return t->linear;
+        for (int i=0;i<t->n_fields;i++)
+            if (lin_has_release_obligation(t->fields[i], depth+1)) return true;
+    }
     return false;
 }
 
@@ -95,6 +103,59 @@ static int lin_place_of(Lin *L, IrValue *addr, unsigned *bit) {
     return -1;                                   // indexed / deeper — not tracked per element
 }
 
+// The module, for resolving a call's callee. Set by the caller (as borrow.h does for its
+// write-footprint query); NULL simply makes the call rule fall back to the conservative side.
+static IrFunc *lin_mod = NULL;
+static IrFunc *lin_find_func(const IrName *n) {
+    if (!n || !lin_mod) return NULL;
+    // By CONTENT: ir_intern allocates a fresh IrName per call despite its name, so comparing
+    // pointers silently never matches — and "callee not found" is the permissive branch here.
+    for (IrFunc *g=lin_mod; g; g=g->next)
+        if (g->name && g->name->length==n->length && memcmp(g->name->name,n->name,(size_t)n->length)==0)
+            return g;
+    return NULL;
+}
+
+// ── ESCAPE = MOVE ─────────────────────────────────────────────────────────────
+// Consuming a place is not only `mov`. An owned value READ OUT of its slot and then handed
+// somewhere the function can no longer reach it has transferred ownership just as surely,
+// and the pass must see that or it reports a leak on correct code. Three escapes:
+//
+//   return v            ownership goes to the caller          (`return File(raw)`)
+//   Struct{ .., v, .. } ownership goes into the aggregate     (`File(raw)`)
+//   f(.., v, ..)        ownership goes to the callee, iff that parameter is OWNED
+//
+// The last one needs the callee, because passing a linear value to a BORROWING parameter is
+// not a move — `write_file(f, s)` must leave `f` live. That distinction is the whole reason
+// this cannot be a syntactic rule over "appears as an operand".
+//
+// Reads that do NOT escape (`raw == 0`, `p.x`, arithmetic) are not moves, matching every
+// affine system: comparing a value borrows it.
+//
+// `lin_root_slot` walks back from a value to the slot it was loaded out of. Casts are
+// ownership-TRANSPARENT — `libc_free(mov ptr as *void)` loads the owned pointer, casts it,
+// and frees the cast; without following the cast the source slot looks unconsumed.
+static int lin_root_slot(Lin *L, IrValue *v, int depth) {
+    if (!v || v->id<0 || v->id>=L->nvar || depth>8) return -1;
+    if (L->movesl[v->id]) return v->id;   // the value IS the resource (sum payload, home-less param)
+    IrInstr *d = L->def[v->id];
+    if (!d) return -1;
+    if (d->op==IR_CAST && d->n_operands>=1) return lin_root_slot(L, d->operands[0], depth+1);
+    if (d->op==IR_LOAD && d->n_operands>=1 && d->operands[0]) {
+        int b = d->operands[0]->id;
+        if (b>=0 && b<L->nvar && L->movesl[b]) return b;
+    }
+    return -1;
+}
+
+// Consume the slot `v` was loaded out of, if it is still live. Guarded on !already-consumed
+// for the same reason move-on-assign is: `mov p` lowers to load;consume;<escape>, so the slot
+// is already marked and re-flagging it would be a spurious E002.
+static void lin_escape(Lin *L, IrValue *v, uint64_t *st) {
+    int sl = lin_root_slot(L, v, 0);
+    if (sl>=0 && sl<L->nvar && !st[sl]) st[sl] = (1ull<<LIN_WHOLE_BIT);
+}
+
 // Apply one block's instructions to `st` (consumption masks) — the transfer function. When
 // `report`, flag a use/double-move against the running state (used only in the final sweep).
 static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
@@ -116,14 +177,7 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
                 // slot is ALREADY moved here and re-flagging it would be a spurious E002. A
                 // genuine second read (`var r = p`) is caught at its own LOAD by the moved-use
                 // check below, which is the more precise report anyway.
-                if (o1 && o1->id>=0 && o1->id<L->nvar) {
-                    IrInstr *d = L->def[o1->id];
-                    if (d && d->op==IR_LOAD && d->n_operands>=1 && d->operands[0]) {
-                        int src = d->operands[0]->id;
-                        if (src>=0 && src<L->nvar && L->movesl[src] && !st[src])
-                            st[src] = (1ull<<LIN_WHOLE_BIT);
-                    }
-                }
+                lin_escape(L, o1, st);   // storing it elsewhere is an escape like any other
                 { unsigned bit; int sl = lin_place_of(L, o0, &bit);      // a store RE-INITIALISES
                   if (sl>=0) { if (bit==LIN_WHOLE_BIT) st[sl] = 0; else st[sl] &= ~(1ull<<bit); } }
             }
@@ -139,10 +193,41 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
         }
         if (report)                                      // any other reference to a moved slot = use
             for (int k=0;k<ins->n_operands;k++) {
+                // Projecting the payload follows the tag test of the SAME destructure, which
+                // already moved the resource out. It is one `case`, not a second use — the
+                // second `case b` gets its own sum_tag and IS reported there.
+                if (k==0 && ins->op==IR_SUM_PAYLOAD) continue;
                 IrValue *ok = ins->operands[k];
                 if (ok && ok->id>=0 && ok->id<L->nvar && st[ok->id]) lin_add(L, ok->id, ins->line, ins->col, 1);
             }
+        // ESCAPES (see lin_escape). An aggregate takes ownership of every operand it is built
+        // from; a call takes ownership only of the arguments its callee OWNS.
+        if (ins->op==IR_STRUCT_NEW || ins->op==IR_SUM_NEW || ins->op==IR_MAKE_SLICE) {
+            for (int k=0;k<ins->n_operands;k++) lin_escape(L, ins->operands[k], st);
+        } else if (ins->op==IR_SUM_TAG || ins->op==IR_SUM_PAYLOAD) {
+            // DESTRUCTURING an owned sum moves the resource OUT of it: after `case b`, `b` no
+            // longer owns anything — each arm's payload binding does, and carries its own
+            // obligation (classified above). The corpus warns that discharging the scrutinee
+            // on a `case` is unsound, and it was: without payload state the resource simply
+            // vanished, accepting both `Full(ptr): noop()` (leak) and a double free. With the
+            // payload tracked the transfer is complete rather than a hole — both of those are
+            // caught, and the Empty arm, which owns nothing, stops reporting a phantom leak.
+            lin_escape(L, ins->operands[0], st);
+        } else if (ins->op==IR_CALL) {
+            IrFunc *callee = lin_find_func(ins->aux.callee);
+            IrParam *p = callee ? callee->params : NULL;
+            for (int k=0;k<ins->n_operands;k++) {
+                // No callee (unresolved / indirect): a by-value LINEAR argument is taken to
+                // move. That is the strict side for the memory-safety property (use after
+                // move) and the permissive side for leaks, which is the right trade when the
+                // callee cannot be seen at all.
+                bool owned = p ? (p->value && p->value->owns) : true;
+                if (owned) lin_escape(L, ins->operands[k], st);
+                if (p) p = p->next;
+            }
+        }
     }
+    if (b->term.kind==IR_TERM_RET && b->term.cond) lin_escape(L, b->term.cond, st);  // to the caller
 }
 
 static Lin *lin_analyze(IrFunc *f) {
@@ -164,6 +249,21 @@ static Lin *lin_analyze(IrFunc *f) {
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (ins->result && ins->result->id>=0 && ins->result->id<L->nvar)
                 L->def[ins->result->id] = ins;
+            // A payload PROJECTED OUT of an owned sum is itself an owned resource: the
+            // `case` arm that binds it is the only place it can be released. Tracking it here
+            // — rather than consuming the scrutinee wholesale, which is unsound (it discharges
+            // the obligation with nobody releasing anything) — is what makes
+            // `Full(ptr): noop()` a leak and `Full(ptr): free(mov ptr)` clean. The arm is a
+            // distinct CFG path, so the created-liveness pass below gives the Empty arm, where
+            // no payload exists, no obligation at all.
+            if (ins->op==IR_SUM_PAYLOAD && ins->result && ins->result->id>=0
+                && ins->result->id<L->nvar && ins->result->type
+                && lin_has_release_obligation(ins->result->type,0)
+                && ins->n_operands>=1 && ins->operands[0] && ins->operands[0]->owns) {
+                L->movesl[ins->result->id] = true;
+                L->linsl [ins->result->id] = true;
+                L->slot_ty[ins->result->id] = ins->result->type;
+            }
             if (ins->op==IR_ALLOCA && ins->result && ins->aux.alloca_ty && ins->aux.alloca_ty->linear) {
                 L->movesl[ins->result->id] = true;
                 L->slot_ty[ins->result->id] = ins->aux.alloca_ty;
@@ -246,6 +346,80 @@ static Lin *lin_analyze(IrFunc *f) {
             }
         }
     }
+    // ── WHERE DOES THE OBLIGATION EXIST? ─────────────────────────────────────────
+    // A leak is reported at a RET, but a slot only carries an obligation at a return the
+    // resource actually reaches. `main` returning 1 from an early error branch has not yet
+    // run the `var ptr = malloc(..)` below it — there is nothing to leak on that path, and
+    // reporting one is a false positive on every function that validates its arguments before
+    // acquiring anything. MAY-created (union) is the sound side: created on SOME path and
+    // never consumed IS a leak.
+    bool **crt = calloc(L->nb,sizeof(bool*));
+    for (int i=0;i<L->nb;i++) crt[i]=calloc(L->nvar,sizeof(bool));
+    for (IrParam *p=f->params; p; p=p->next)          // parameters exist from entry
+        if (p->value && p->value->id>=0 && p->value->id<L->nvar) crt[f->entry->id][p->value->id]=true;
+    changed=true; sweeps=0;
+    while (changed && sweeps++ < 1000) {
+        changed=false;
+        for (IrBlock *b=f->blocks; b; b=b->next) {
+            bool *cur = calloc(L->nvar,sizeof(bool));
+            memcpy(cur, crt[b->id], L->nvar*sizeof(bool));
+            for (IrInstr *ins=b->instrs; ins; ins=ins->next)
+                if ((ins->op==IR_ALLOCA || ins->op==IR_SUM_PAYLOAD)
+                    && ins->result && ins->result->id>=0 && ins->result->id<L->nvar)
+                    cur[ins->result->id]=true;
+            IrBlock *succ[3]={0,0,0}; int ns=0;
+            switch (b->term.kind) {
+                case IR_TERM_BR:      succ[ns++]=b->term.a; break;
+                case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
+                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                default: break;
+            }
+            for (int k=0;k<ns;k++){ IrBlock *sb=succ[k]; if(!sb) continue;
+                for (int v=0;v<L->nvar;v++) if (cur[v] && !crt[sb->id][v]){ crt[sb->id][v]=true; changed=true; }
+            }
+            free(cur);
+        }
+    }
+
+    // MUST-created (intersection), the companion to the MAY set above. The two answer
+    // different questions and E003/E016 need one each:
+    //   MAY-created  ∧ never consumed anywhere        ⇒ E003, a resource is lost
+    //   MUST-created ∧ consumed on some paths, not all ⇒ E016, the state is not well-defined
+    // Asking MAY for E016 reports a phantom on every `case` arm: a payload projected on the
+    // Full arm is not consumed on the Empty arm because it does not EXIST there.
+    bool **crtm = calloc(L->nb,sizeof(bool*));
+    for (int i=0;i<L->nb;i++) crtm[i]=calloc(L->nvar,sizeof(bool));
+    bool *cseen = calloc(L->nb,sizeof(bool)); cseen[f->entry->id]=true;
+    for (IrParam *p=f->params; p; p=p->next)
+        if (p->value && p->value->id>=0 && p->value->id<L->nvar) crtm[f->entry->id][p->value->id]=true;
+    changed=true; sweeps=0;
+    while (changed && sweeps++ < 1000) {
+        changed=false;
+        for (IrBlock *b=f->blocks; b; b=b->next) {
+            if (!cseen[b->id]) continue;
+            bool *cur = calloc(L->nvar,sizeof(bool));
+            memcpy(cur, crtm[b->id], L->nvar*sizeof(bool));
+            for (IrInstr *ins=b->instrs; ins; ins=ins->next)
+                if ((ins->op==IR_ALLOCA || ins->op==IR_SUM_PAYLOAD)
+                    && ins->result && ins->result->id>=0 && ins->result->id<L->nvar)
+                    cur[ins->result->id]=true;
+            IrBlock *succ[3]={0,0,0}; int ns=0;
+            switch (b->term.kind) {
+                case IR_TERM_BR:      succ[ns++]=b->term.a; break;
+                case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
+                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                default: break;
+            }
+            for (int k=0;k<ns;k++){ IrBlock *sb=succ[k]; if(!sb) continue;
+                if (!cseen[sb->id]) { memcpy(crtm[sb->id],cur,L->nvar*sizeof(bool)); cseen[sb->id]=true; changed=true; continue; }
+                for (int v=0;v<L->nvar;v++) if (crtm[sb->id][v] && !cur[v]){ crtm[sb->id][v]=false; changed=true; }
+            }
+            free(cur);
+        }
+    }
+
     uint64_t *must = malloc(L->nvar*sizeof(uint64_t));
     // reporting sweep: replay each block from its converged in-state
     for (IrBlock *b=f->blocks; b; b=b->next) {
@@ -254,17 +428,30 @@ static Lin *lin_analyze(IrFunc *f) {
         if (b->term.kind==IR_TERM_RET) {
             memcpy(must, inmust[b->id], L->nvar*sizeof(uint64_t));
             if (seen[b->id]) lin_run_block(L, b, must, false);
+            // The block's OUT-created set: what reaches this return, including the allocas in
+            // this very block (a function whose whole body is one block has all of them here).
+            bool *here = calloc(L->nvar,sizeof(bool));
+            memcpy(here, crt[b->id], L->nvar*sizeof(bool));
+            bool *hered = calloc(L->nvar,sizeof(bool));
+            memcpy(hered, crtm[b->id], L->nvar*sizeof(bool));
+            for (IrInstr *ins=b->instrs; ins; ins=ins->next)
+                if ((ins->op==IR_ALLOCA || ins->op==IR_SUM_PAYLOAD)
+                    && ins->result && ins->result->id>=0 && ins->result->id<L->nvar)
+                    { here[ins->result->id]=true; hered[ins->result->id]=true; }
             for (int s=0;s<L->nvar;s++) {
+                if (!here[s]) continue;               // the resource never reaches this return
                 isize ln = b->term.cond?b->term.cond->line:0, cl = b->term.cond?b->term.cond->col:0;
                 // E003 leak: never consumed on ANY path, and a resource would be lost.
                 if (L->linsl[s] && !lin_discharged(L,s,out[s])) { lin_add(L, s, ln, cl, 3); continue; }
                 // E016: consumed on some paths, not others — the state is not well-defined.
-                if (L->movesl[s] && lin_discharged(L,s,out[s]) && seen[b->id]
+                if (L->movesl[s] && lin_discharged(L,s,out[s]) && seen[b->id] && hered[s]
                     && !lin_discharged(L,s,must[s])) lin_add(L, s, ln, cl, 16);
             }
+            free(here); free(hered);
         }
     }
-    for (int i=0;i<L->nb;i++) free(inmust[i]);
+    for (int i=0;i<L->nb;i++){ free(inmust[i]); free(crt[i]); free(crtm[i]); }
+    free(crt); free(crtm); free(cseen);
     free(inmust); free(seen); free(must);
     free(out); free(tmp);
     return L;

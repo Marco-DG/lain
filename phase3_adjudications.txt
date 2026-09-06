@@ -190,3 +190,28 @@ tests/expressions/undeclared_in_binary_fail.ln            NEW-ACCEPTS  front-end
 # records that a mutable borrow is taken, and it IS taken here; whether the source had to
 # say so is surface policy. safe-C and Fortran would not have the rule.
 tests/declarations/var_mandatory_fail.ln                  NEW-ACCEPTS  front-end-policy
+
+# ── Stage 3.2, sum-type payload linearity ────────────────────────────────────────────────
+# The `case` arm that binds a variant payload is now linear in its own right, which is what
+# the corpus test's own header said was needed before it could flip. Destructuring an owned
+# sum MOVES the resource out of the scrutinee and into the payload binding; the binding then
+# carries the obligation on exactly the arm where it exists (per-path, via the created-
+# liveness lattice), so the Empty arm — which owns nothing — reports nothing.
+#
+# The corpus warns that discharging the scrutinee on a `case` is UNSOUND. It was, while the
+# payload was untracked: the resource simply vanished. With the payload tracked the transfer
+# is complete rather than a hole, and all four failure modes are caught — verified, not
+# argued (each was run; see CORPUS_CORRECTIONS.md C-5):
+#     Full(ptr): noop()                    → E003 on the PAYLOAD      (leak)
+#     Full(ptr): dbl(mov ptr)              → E001                     (double free)
+#     proc t(b mov Box) { }                → E003 on the SCRUTINEE    (never destructured)
+#     case b {...} case b {...}            → E001                     (double destructure)
+tests/match/niche/linear_adt_payload_mov_fail.ln  NEW-ACCEPTS  new-more-precise   # C-5: payload release IS correct; negatives all caught
+
+# ── `mov` as a spelling requirement ──────────────────────────────────────────────────────
+# `close_file(f)` hands the file to a procedure that consumes it. The resource is released
+# exactly once and nothing observes it afterwards — there is no memory-safety question here.
+# E007 says the transfer must be SPELLED `mov f`, which is a rule about the source text: a
+# safe-C or Fortran front end lowering to this IR would not have it, and the IR must not
+# invent it. Stays with the front end at 3.5.
+tests/ownership/close_without_mov_fail.ln  NEW-ACCEPTS  front-end-policy   # E007 is explicit-move SYNTAX, not a safety property

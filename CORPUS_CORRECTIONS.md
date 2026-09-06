@@ -167,6 +167,49 @@ Proving such a loop total needs the numeric domain to show it covers `0..len`.
 
 ---
 
+## C-5 · `tests/match/niche/linear_adt_payload_mov_fail.ln` — fail ⇒ **pass**
+
+```lain
+proc t(b mov Box) {                    // type Box { Full { ptr mov *u8 }, Empty }
+    case b {
+        Full(ptr): mem_free(mov ptr)   // asserted [E003]; actually SAFE
+        Empty: noop()
+    }
+}
+```
+
+The `Full` arm releases the payload; the `Empty` arm owns nothing to release. Nothing leaks
+on either path.
+
+**The test authorises its own inversion.** Its header says the rejection survives only
+because *"consuming the payload does not DISCHARGE the scrutinee"*, and states the condition
+for flipping: *"Discharging correctly needs the payload binding to be linear in its own
+right — per-field state, which the new IR pass has."* That is now built.
+
+**The rule, and why the corpus's warning was right but is now satisfied.** The same header
+warns — correctly — that consuming the scrutinee wholesale on a non-borrowed `case` is
+**unsound**. It was: with the payload untracked, the resource simply vanished, and the rule
+accepted both a leak and a double free. What changed is not the warning but its premise.
+Destructuring now *moves* the resource out of the scrutinee **into the payload binding**,
+which carries the obligation on exactly the path where it exists. The transfer is complete
+rather than a hole, so the old rule's two counter-examples are both caught.
+
+**Executed, not argued.** Each of the four was run through the new pass:
+
+| program | expected | new engine |
+|---|---|---|
+| `Full(ptr): mem_free(mov ptr)` / `Empty: noop()` | accept | **clean** |
+| `Full(ptr): noop()` | leak | **E003 on the payload** |
+| `Full(ptr): dbl(mov ptr)` (frees twice) | double free | **E001** |
+| `proc t(b mov Box) { }` — never destructured | leak | **E003 on the scrutinee** |
+| `case b {...}` twice | use after move | **E001** |
+
+The Empty arm reporting nothing is not a special case: the payload is projected only on the
+`Full` block, so the created-liveness lattice gives the Empty path no obligation at all.
+Per-variant reasoning falls out of the CFG rather than being written down.
+
+---
+
 ## Switchover procedure (Stage 3.5)
 
 1. Invert each entry: rename `*_fail.ln` → `*_pass.ln`, drop the `// EXPECT:` line, add a
@@ -175,6 +218,8 @@ Proving such a loop total needs the numeric domain to show it covers `0..len`.
    authoritative they are not divergences, they are the behaviour.
 3. For C-1, keep `two_phase_borrow_pass.ln` alongside it: the pair documents that the
    nested-call and direct-read forms are now treated identically, which was the whole defect.
+4. For C-5, add the four negatives above as fail-tests beside it. The inversion is only
+   honest while they keep failing — the accepted program and the rejected ones are one rule.
 
 ## Open question deferred to Stage V
 

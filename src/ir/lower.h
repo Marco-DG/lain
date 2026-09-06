@@ -1399,7 +1399,29 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     cc.f = f; cc.cur = f->entry;
     f->ret_type = ir_lower_type(&cc, fn->as.function_decl.return_type);
     for (DeclList *p = fn->as.function_decl.params; p; p = p->next) {
-        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+        if (!p->decl) continue;
+        // A DESTRUCTURING parameter — `close_file(mov {handle} File)` — is one parameter that
+        // binds field names directly. It was dropped ENTIRELY: the function lowered with no
+        // parameters at all while its call sites still passed an argument, so the IR
+        // disagreed with itself on arity and no pass could judge what the call transferred
+        // (the ownership analysis had to guess, and guessed permissively). Lower it as the
+        // ordinary owned struct parameter it is, with each name bound to its field.
+        if (p->decl->kind == DECL_DESTRUCT) {
+            Type   *dty = p->decl->as.destruct_decl.type;
+            IrType *dt  = ir_lower_type(&cc, dty);
+            IrValue *pv = ir_add_param(f, dt, NULL);
+            IrValue *slot = ir_alloca(f, cc.cur, dt);
+            pv->owns = slot->owns = (dty && dty->mode == MODE_OWNED);
+            ir_store(f, cc.cur, slot, pv);
+            for (IdList *nm = p->decl->as.destruct_decl.names; nm; nm = nm->next) {
+                IrType *fty = NULL;
+                int idx = ir_field_index(dt, nm->id, &fty);
+                if (idx < 0) { ir_incomplete(&cc, "destructure-field"); continue; }
+                ir_env_add(&cc, nm->id, ir_field_ptr(f, cc.cur, slot, idx, fty), NULL);
+            }
+            continue;
+        }
+        if (p->decl->kind != DECL_VARIABLE) continue;
         Type   *pty = p->decl->as.variable_decl.type;
         IrType *pt  = ir_lower_type(&cc, pty);
         Id     *pnm = p->decl->as.variable_decl.name;

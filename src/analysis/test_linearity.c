@@ -180,6 +180,94 @@ int main(void){
         lin_expect("opaque linear struct leaks (fail closed)", count(f,3), 1); }
     }
 
+
+    // ── STAGE 3.2: escapes, per-path existence, and SUM PAYLOADS ────────────────────────
+    // Consumption is not only `mov`. An owned value read out of its slot and handed away has
+    // transferred ownership, and a resource only carries an obligation at a return it can
+    // actually reach. Both were missing, and between them they produced a leak report on
+    // every std wrapper (`open_file`, `mem_free`) and on every function that validates its
+    // arguments before acquiring anything.
+    { IrType *lp = ir_type_new(&A,IRT_PTR); lp->elem=i32; lp->linear=true;
+
+      // RETURNING an owned value hands it to the caller — not a leak.
+      { IrFunc *f=ir_func_new(&A,nm("retown"),lp,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *s=ir_alloca(f,e,lp); ir_set_ret(e, ir_load(f,e,s,lp));
+        lin_expect("returning the owned value discharges it", count(f,3), 0); }
+
+      // Building an AGGREGATE out of it moves it into the aggregate — `return File(raw)`.
+      { IrType *box = ir_type_new(&A,IRT_STRUCT); box->n_fields=1; box->linear=true;
+        box->fields=arena_push_many_aligned(&A,IrType*,1); box->fields[0]=lp;
+        IrFunc *f=ir_func_new(&A,nm("intoagg"),box,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *s=ir_alloca(f,e,lp); IrValue *v=ir_load(f,e,s,lp);
+        IrValue *fl[1]={v};
+        ir_set_ret(e, ir_struct_new(f,e,box,fl,1));
+        lin_expect("moving it into a returned aggregate discharges", count(f,3), 0); }
+
+      // ...but an aggregate that is BUILT AND DROPPED still leaks: the obligation moved, it
+      // did not vanish. Without this the previous rule would be a hole rather than a transfer.
+      { IrType *box = ir_type_new(&A,IRT_STRUCT); box->n_fields=1; box->linear=true;
+        box->fields=arena_push_many_aligned(&A,IrType*,1); box->fields[0]=lp;
+        IrFunc *f=ir_func_new(&A,nm("aggdropped"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *s=ir_alloca(f,e,lp); IrValue *v=ir_load(f,e,s,lp);
+        IrValue *fl[1]={v}; IrValue *ag=ir_struct_new(f,e,box,fl,1);
+        IrValue *hs=ir_alloca(f,e,box); ir_store(f,e,hs,ag);
+        ir_set_ret(e,NULL);
+        lin_expect("an aggregate built and dropped still leaks", count(f,3), 1); }
+
+      // EXISTENCE. A return that the resource never reaches carries no obligation — the
+      // early `return 1` of a function that allocates further down.
+      { IrFunc *f=ir_func_new(&A,nm("earlyret"),unit,IR_FUNC_PROC);
+        IrBlock *e=f->entry, *late=ir_new_block(f), *bail=ir_new_block(f);
+        ir_set_br_cond(e, ir_const_int(f,e,1,ir_type_bool(&A)), bail, late);
+        ir_set_ret(bail,NULL);                       // returns BEFORE anything is acquired
+        ir_alloca(f,late,lp); ir_set_ret(late,NULL); // and here it genuinely leaks
+        lin_expect("a return the resource never reaches is clean", count(f,3), 1); }
+    }
+
+    // SUM PAYLOADS. Destructuring an owned sum moves the resource OUT of the scrutinee and
+    // into the arm's payload binding, which then carries the obligation on exactly the path
+    // where it exists. Discharging the scrutinee this way is only sound BECAUSE the payload
+    // is tracked — untracked, the resource silently vanished and both a leak and a double
+    // free were accepted. All four directions are pinned here for that reason.
+    { IrType *lp = ir_type_new(&A,IRT_PTR); lp->elem=i32; lp->linear=true;
+      IrType *box = ir_type_new(&A,IRT_SUM); box->linear=true; box->n_fields=2;
+      box->fields=arena_push_many_aligned(&A,IrType*,2); box->fields[0]=lp; box->fields[1]=unit;
+
+      // consumed on the arm that binds it ⇒ clean, and the EMPTY arm reports nothing
+      { IrFunc *f=ir_func_new(&A,nm("sumok"),unit,IR_FUNC_PROC);
+        IrBlock *e=f->entry, *full=ir_new_block(f), *empty=ir_new_block(f), *j=ir_new_block(f);
+        IrValue *b=ir_add_param(f,box,nm("b")); b->owns=true;
+        IrValue *tg=ir_sum_tag(f,e,b);
+        ir_set_br_cond(e, ir_binop(f,e,IR_CMP_EQ,tg,ir_const_int(f,e,0,i32),ir_type_bool(&A)), full, empty);
+        IrValue *pl=ir_sum_payload(f,full,b,0,0,lp);
+        { IrValue *hs=ir_alloca(f,full,lp); ir_store(f,full,hs,pl); ir_consume(f,full,hs); }
+        ir_set_br(full,j); ir_set_br(empty,j); ir_set_ret(j,NULL);
+        lin_expect("payload released on its arm ⇒ clean", count(f,3)+count(f,16), 0); }
+
+      // the arm binds it and drops it ⇒ E003 on the PAYLOAD (the leak the old rule missed)
+      { IrFunc *f=ir_func_new(&A,nm("sumleak"),unit,IR_FUNC_PROC);
+        IrBlock *e=f->entry, *full=ir_new_block(f), *empty=ir_new_block(f), *j=ir_new_block(f);
+        IrValue *b=ir_add_param(f,box,nm("b")); b->owns=true;
+        IrValue *tg=ir_sum_tag(f,e,b);
+        ir_set_br_cond(e, ir_binop(f,e,IR_CMP_EQ,tg,ir_const_int(f,e,0,i32),ir_type_bool(&A)), full, empty);
+        ir_sum_payload(f,full,b,0,0,lp);             // bound, never released
+        ir_set_br(full,j); ir_set_br(empty,j); ir_set_ret(j,NULL);
+        lin_expect("payload bound and dropped is E003", count(f,3), 1); }
+
+      // never destructured at all ⇒ the SCRUTINEE leaks
+      { IrFunc *f=ir_func_new(&A,nm("sumnever"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *b=ir_add_param(f,box,nm("b")); b->owns=true;
+        ir_set_ret(e,NULL);
+        lin_expect("an undestructured owned sum leaks", count(f,3), 1); }
+
+      // destructured TWICE ⇒ use-after-move: the second `case` reads a moved-from value
+      { IrFunc *f=ir_func_new(&A,nm("sumtwice"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *b=ir_add_param(f,box,nm("b")); b->owns=true;
+        ir_sum_tag(f,e,b); ir_sum_tag(f,e,b);
+        ir_set_ret(e,NULL);
+        lin_expect("destructuring an owned sum twice is E001", count(f,1), 1); }
+    }
+
     printf(failures? "LINEARITY: %d WRONG\n" : "LINEARITY: all expectations met\n", failures);
     return failures?1:0;
 }

@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     // use the basename as the module name.
     const char *path = argv[1]; const char *slash = NULL;
     for (const char *q = path; *q; q++) if (*q=='/'||*q=='\\') slash = q;
-    if (slash) { char dir[4096]; size_t dl=(size_t)(slash-path);
+    if (slash && path[0]=='/') { char dir[4096]; size_t dl=(size_t)(slash-path);
         if (dl<sizeof dir){ memcpy(dir,path,dl); dir[dl]='\0'; if (chdir(dir)!=0){} path=slash+1; } }
 
     char *modname = drv_modname(&ast_arena, path);

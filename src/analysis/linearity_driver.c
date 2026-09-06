@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
     target_init_for(NULL);
     const char *path=argv[1]; const char *slash=NULL;
     for (const char *q=path;*q;q++) if (*q=='/'||*q=='\\') slash=q;
-    if (slash){ char dir[4096]; size_t dl=(size_t)(slash-path);
+    if (slash && path[0]=='/'){ char dir[4096]; size_t dl=(size_t)(slash-path);
         if (dl<sizeof dir){ memcpy(dir,path,dl); dir[dl]='\0'; if(chdir(dir)!=0){} path=slash+1; } }
     char *mod=drv_modname(&aa,path);
     DeclList *program=load_module(&fa,&aa,mod);
@@ -52,6 +52,7 @@ int main(int argc, char **argv) {
     sema_resolve_module(program, mod, &sa);
 
     IrFunc *m = ir_lower_module(program, &ia);
+    lin_mod = m;   // callee lookup: which arguments a call takes OWNERSHIP of
     int total=0;
     for (IrFunc *f=m; f; f=f->next) {
         if (f->is_extern || f->incomplete) continue;   // can't judge an unfaithful lowering
