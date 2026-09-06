@@ -260,10 +260,10 @@ checkpoint (same ground rules).
       callee.requires ⇒ `assert` before the call; callee.ensures ⇒ `assume` after. Gives
       interprocedural bounds/refinements *soundly* (call-site precondition checking) — the piece
       the accept-side survey currently assumes the old engine enforces.
-- [ ] **B3 `IR_OPAQUE` / havoc** with a declared read/write/effect footprint — **retire
-      `incomplete`.** Lowering becomes a TOTAL function into an always-sound IR; a not-yet-modeled
-      construct is a conservative opaque op, not a suppressed-proof function. True niche ops
-      (some SIMD intrinsics) land here with declared effects.
+- [x] **B3 `IR_OPAQUE` / havoc** ✓ (c9a2eca) — declared read/write/effect footprint; the
+      TOTALITY primitive. `incomplete` 60 → 13, faithfulness 88% → 97%, and precision went UP
+      (576/612 → 587/622) because more code became reachable. Reserved now for unmodelled
+      CONTROL FLOW only.
 - [~] **B4 Refinements as first-class IR type structure** (interval/predicate on `IrType`) — the
       canonical-type keystone. VRA reads them from the IR type, never the AST. Unlocks dependent
       lengths (a symbolic-length slice with a *named* length identity) and the `i < a.len` class.
@@ -324,9 +324,9 @@ Each is a self-inflicted debt found by auditing the rebuild against its own goal
       (compile through BOTH, diff behaviour). All 14 existing fuzzers test only the OLD
       pipeline; that blind spot hid a real miscompile (scalar `var` param by value, 41≠42).
       **Must exist before the IR pipeline is ever made authoritative.**
-- [~] **C3 Measure + retire `incomplete`** — MEASURED ✓ (session 58): every site now names its
+- [~] **C3 Measure + retire `incomplete`** — MEASURED ✓ (58) and largely RETIRED ✓ (60, B3): every site now names its
       reason (`IrFunc.incomplete_why`) and `ir_incomplete_survey.sh` ranks them —
-      **432/535 functions (80%) faithful**. RETIRING it is still open (B3 opaque/havoc).
+      Now **524/537 (97%) faithful** after B3; 13 left (11 conversions + 2 control-flow).
       **★ The ranking is now the lowering work list, and it is dominated by ONE feature:**
       - ~~**ENUMS ≈ 42/103 (41%)**~~ ✓ DONE (session 59): IRT_SUM + the three ops, all
         construction forms and `case`. **incomplete 103 → 60, faithfulness 80% → 88%.**
@@ -452,7 +452,10 @@ The endeavour is complete when ALL of these hold simultaneously:
       roots/fields provably disjoint, indices delegated to the VRA seam
       (`ir_place_index_disjoint_fn`) — the ★ beyond-Rust hook. test_place.c 12/12.
 - [ ] **B4: refinements ON `IrType`** (C6) — retire the ad-hoc `slicelen` side-map.
-- [ ] **B3: `opaque`/havoc with declared footprints** — retires `incomplete` (E0.1).
+- [x] **B3: `opaque`/havoc with declared footprints** ✓ (c9a2eca) — `incomplete` 60 → 13,
+      faithfulness 88% → 97%; precision went UP (576/612 → 587/622). Remaining 13: 11 more
+      conversions (unlowered-lvalue/unresolved-global/aggregate-init) + 2 genuinely
+      unmodelled CONTROL FLOW, which an opaque cannot express.
 - [ ] **C5: redesign the effect lattice** — reads/writes/raises/diverges + region footprints;
       re-derive, don't inherit.
 
