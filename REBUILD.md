@@ -535,7 +535,7 @@ The endeavour is complete when ALL of these hold simultaneously:
 ### ▸ STAGE IV — The backend earns the proofs
 - [~] **4.0 CAN THE NEW EMITTER REPLACE THE OLD ONE?** — `emit_gate.sh` runs the real corpus
       through BOTH backends and compares stdout + exit code. Start: 209 agree / 15 differ /
-      **141 could not build**. Now: **311 agree / 22 differ / 34 cannot build.**
+      **141 could not build**. Now: **318 agree / 22 differ / 27 cannot build.**
       ★ Almost none of the gap was backend immaturity. It was SEVEN front-end and lowering
       defects the old path happened to paper over, each found by running the corpus rather
       than by reading code:
@@ -568,9 +568,13 @@ The endeavour is complete when ALL of these hold simultaneously:
         · **union WIDENING** on the `try` path (ad457db) — the same marker at a different
           variant index; and `IR_TERM_UNREACHABLE` emitted `return 0`, a type error the moment
           a function returns a struct. Unreachable code still has to be well-TYPED.
-      Remaining is now narrow: the SIMD BUILTINS (`@load`, `@store`, `@splat`, `@movemask` —
-      `@popcount`/`@ctz`/`@clz` already have IR ops; `@load` needs the IR to express a WIDE
-      access, which is a real design question not plumbing) and niche-optimised ADT layout.
+        · **WIDE ACCESSES** (b662310) — the SIMD builtins turned on one honest question, not
+          plumbing: a 32-lane load at `i` reads a[i..i+32), so `i < len` is the WRONG
+          obligation. `IR_ELEM_PTR` records the access WIDTH (1 for `a[i]`), which is not
+          SIMD-specific — a bulk memcpy-shaped access is the same fact — and the existing
+          numeric analysis then decides it with no SIMD reasoning at all.
+      Remaining: niche-optimised ADT layout, and a long tail (~22 differences, ~27 build
+      failures) with no dominant cause left.
 - [ ] **4.1/4.3** proof-exploiting C emission (checks proved away are *absent*), niche/SIMD/
       annotations re-expressed on the IR.
 - [ ] **4.2 LLVM/native seam** on the sovereign IR (E0.7).
