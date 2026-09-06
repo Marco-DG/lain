@@ -535,7 +535,7 @@ The endeavour is complete when ALL of these hold simultaneously:
 ### ▸ STAGE IV — The backend earns the proofs
 - [~] **4.0 CAN THE NEW EMITTER REPLACE THE OLD ONE?** — `emit_gate.sh` runs the real corpus
       through BOTH backends and compares stdout + exit code. Start: 209 agree / 15 differ /
-      **141 could not build**. Now: **293 agree / 34 differ / 40 cannot build.**
+      **141 could not build**. Now: **305 agree / 22 differ / 40 cannot build.**
       ★ Almost none of the gap was backend immaturity. It was SEVEN front-end and lowering
       defects the old path happened to paper over, each found by running the corpus rather
       than by reading code:
@@ -549,6 +549,15 @@ The endeavour is complete when ALL of these hold simultaneously:
           to test; the last of C3's three clusters (error handling, enums/niche, defer)
         · **floats** — IRT_FLOAT and aux.fimm existed from the start and NOTHING ever produced
           one; f32/f64 were not recognised as type names
+        · a value binding (a match payload) had no ADDRESS, so `p.x` on one dereferenced null
+        · **`defer` is BLOCK-scoped**, and the lowering asserted in a comment that it is
+          function-scoped — every nested defer ran too late and in the wrong order, and
+          `break`/`continue` skipped theirs entirely. Not only codegen: the linearity pass
+          reads defer, so its SCOPE decides whether `defer drop(mov r)` is a release or a
+          double one.
+        · the case EXPRESSION (`return case o { Some(v): v  None: d }`) was not lowered at all
+        · a global constant ARRAY read dereferenced null (it cannot fold to a scalar, so it
+          fell through to OPAQUE)
       Remaining is concentrated: SIMD vector types (most build failures) and niche-optimised
       ADT layout — i.e. exactly what 4.3 names.
 - [ ] **4.1/4.3** proof-exploiting C emission (checks proved away are *absent*), niche/SIMD/
