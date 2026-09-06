@@ -422,6 +422,26 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
 void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
     fputs("#include <stdint.h>\n#include <stddef.h>\n\n", o);
     ir_emit_type_decls(funcs, o, a);
+    // `panic` is a declless builtin — it has no Lain declaration, so nothing declares it in
+    // the generated C either and every `else panic(...)` failed to LINK. The old backend
+    // inlines fprintf+abort at the site; emit one helper instead, and only when it is used,
+    // so a module that never panics is unchanged.
+    { IrInstr *pc = NULL;
+      for (IrFunc *f=funcs; f && !pc; f=f->next)
+        for (IrBlock *b=f->blocks; b && !pc; b=b->next)
+          for (IrInstr *i=b->instrs; i; i=i->next)
+            if (i->op==IR_CALL && i->aux.callee && i->aux.callee->length==5
+                && memcmp(i->aux.callee->name,"panic",5)==0) { pc = i; break; }
+      if (pc) {
+        // Declared, not #included: pulling in <stdio.h> makes the emitted extern for
+        // `libc_printf` collide with the real printf once the harness maps one to the other.
+        fputs("extern void abort(void);\n", o);
+        ir_ctype(pc->result ? pc->result->type : NULL, o);
+        fputs(" panic(", o);
+        if (pc->n_operands >= 1 && pc->operands[0]) ir_ctype(pc->operands[0]->type, o);
+        else fputs("void", o);
+        fputs(" m) { (void)m; abort(); }\n\n", o);
+      } }
     for (IrFunc *f=funcs; f; f=f->next) ir_emit_proto_c(f, o);
     fputc('\n', o);
     // An EXTERN has no body: emitting one would define printf locally and collide with libc.

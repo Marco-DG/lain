@@ -362,6 +362,42 @@ static IrType *ir_lower_type(LowerCtx *c, Type *t) {
 }
 static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
     if (!t) return ir_type_new(c->a, IRT_UNIT);
+    // `T | m1 | m2` — an error union. It had NO case here at all, so it silently lowered to
+    // its payload type T and every marker vanished: `try` and `else` had nothing to test and
+    // became opaque placeholders, which is the whole `errors/` family. It is a SUM: variant 0
+    // carries T, one empty variant per marker. The LAYOUT — a tagged pair, or the old
+    // backend's niche where markers are out-of-range values of T — is deliberately not
+    // recorded, exactly as for a named enum: that is the backend's choice, not the IR's.
+    if (t->kind == TYPE_UNION) {
+        // Sema already lowers a union to a real, NAMED enum (`__U_<T>_<m1>_<m2>`, one payload
+        // variant plus one empty variant per marker) and rewrites most references to it — but
+        // not all: a call site could still carry the raw TYPE_UNION, and with no case here it
+        // fell through to the payload type, so `try`/`else` had nothing to test.
+        //
+        // Find sema's enum rather than synthesising a second type for the same union: two
+        // structurally-identical-but-distinct IrTypes is worse than none, because the call's
+        // result then does not match the callee's declared return. Matched on the MARKER
+        // NAMES in order, which identifies the union without duplicating sema's mangling.
+        int nm = 0; for (IdList *m = t->union_markers; m; m = m->next) nm++;
+        for (DeclList *d = c->globals; d; d = d->next) {
+            Decl *ed = d->decl;
+            if (!ed || ed->kind != DECL_ENUM) continue;
+            int nv = 0; for (Variant *v = ed->as.enum_decl.variants; v; v=v->next) nv++;
+            if (nv != nm + 1) continue;
+            Variant *v = ed->as.enum_decl.variants ? ed->as.enum_decl.variants->next : NULL;
+            IdList  *m = t->union_markers;
+            bool same = true;
+            for (; v && m && same; v = v->next, m = m->next)
+                same = v->name && m->id && v->name->length == m->id->length
+                    && strncmp(v->name->name, m->id->name, (size_t)m->id->length) == 0;
+            if (!same || v || m) continue;
+            Id *en = ed->as.enum_decl.type_name;
+            if (!en) continue;
+            Type tt; memset(&tt, 0, sizeof tt); tt.kind = TYPE_SIMPLE; tt.base_type = en;
+            return ir_lower_type(c, &tt);              // the ENUM path: cached, named, shared
+        }
+        return ir_lower_type(c, t->element_type);      // no enum found: the payload alone
+    }
     switch (t->kind) {
         case TYPE_SIMPLE: {
             if (t->base_type) {
@@ -458,6 +494,7 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
 
 // forward
 static IrValue *ir_lower_expr(LowerCtx *c, Expr *e);
+static void ir_lower_flush_defers(LowerCtx *c);   // fwd (try/else propagate through it)
 static void     ir_lower_stmts(LowerCtx *c, StmtList *body);
 
 // map an AST comparison token to an IrCmp given signedness. false ⇒ not a comparison.
@@ -798,6 +835,63 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
     if (!e) return ir_const_int(c->f, c->cur, 0, ir_type_int(c->a,32,true));
     IrType *ty = ir_lower_type(c, e->type);
     switch (e->kind) {
+        // ── ERROR HANDLING: `try e` and `e else arm` ──────────────────────────────────────
+        // Both ask the same question of a `T | m1 | m2` value — is it the payload or a marker?
+        // — and differ only in what they do on the marker side. Neither had a lowering at all,
+        // so both became OPAQUE placeholders: the value was never computed and the `errors/`
+        // family printed garbage. With TYPE_UNION now a sum, the question is a tag test and
+        // the answer is a payload projection.
+        //
+        // Variant 0 is the payload by construction (see ir_lower_type_impl), so "is a marker"
+        // is exactly `tag != 0`.
+        case EXPR_TRY: case EXPR_ELSE: {
+            bool is_try = (e->kind == EXPR_TRY);
+            Expr *opx = is_try ? e->as.try_expr.operand : e->as.else_expr.operand;
+            IrValue *uv = ir_lower_expr(c, opx);
+            if (!uv || !uv->type || uv->type->kind != IRT_SUM)
+                return ir_opaque_expr(c, ty, false, "try-else-non-union", NULL, NULL);
+            // Variant 0 is the payload variant, and sema wraps the value in a one-field
+            // struct (`__payload { __v: T }`), so the type of the projection is that field's,
+            // not the variant's.
+            IrType *vt0 = uv->type->n_fields > 0 ? uv->type->fields[0] : NULL;
+            IrType *pty = (vt0 && vt0->kind==IRT_STRUCT && vt0->n_fields > 0) ? vt0->fields[0] : vt0;
+            if (!pty) return ir_opaque_expr(c, ty, false, "try-else-no-payload", NULL, NULL);
+
+            IrValue *tag  = ir_sum_tag(c->f, c->cur, uv);
+            IrValue *zero = ir_const_int(c->f, c->cur, 0, tag->type);
+            IrValue *isok = ir_icmp(c->f, c->cur, IR_CMP_EQ, tag, zero);
+
+            IrValue *cell = ir_alloca(c->f, c->cur, pty);
+            IrBlock *okb = ir_new_block(c->f), *bad = ir_new_block(c->f), *jn = ir_new_block(c->f);
+            ir_set_br_cond(c->cur, isok, okb, bad);
+
+            c->cur = okb;                                  // the value: project variant 0
+            ir_store(c->f, c->cur, cell, ir_sum_payload(c->f, c->cur, uv, 0, 0, pty));
+            ir_set_br(c->cur, jn);
+
+            c->cur = bad;
+            if (is_try) {
+                // Propagating a marker LEAVES THE FUNCTION, so it must run the pending defers
+                // exactly as an ordinary `return` does — `defer { cleanup() }` before a failing
+                // `try` was simply skipped.
+                ir_lower_flush_defers(c);
+                ir_set_ret(c->cur, uv);                    // propagate the marker unchanged
+            } else if (e->as.else_expr.arm_is_return) {
+                IrValue *rv = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
+                ir_lower_flush_defers(c);
+                ir_set_ret(c->cur, rv);
+            } else {
+                IrValue *av = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
+                if (e->as.else_expr.is_panic) {
+                    ir_set_unreachable(c->cur);            // `panic` never yields a value
+                } else {
+                    if (av) ir_store(c->f, c->cur, cell, av);
+                    ir_set_br(c->cur, jn);
+                }
+            }
+            c->cur = jn;
+            return ir_load(c->f, c->cur, cell, pty);
+        }
         case EXPR_LITERAL: {
             // A literal's type comes from sema, which leaves a bare integer at i32 even where
             // the context is wider — `var x i64 = 5000000000` typed the literal i32 and the
