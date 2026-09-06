@@ -535,7 +535,7 @@ The endeavour is complete when ALL of these hold simultaneously:
 ### ▸ STAGE IV — The backend earns the proofs
 - [~] **4.0 CAN THE NEW EMITTER REPLACE THE OLD ONE?** — `emit_gate.sh` runs the real corpus
       through BOTH backends and compares stdout + exit code. Start: 209 agree / 15 differ /
-      **141 could not build**. Now: **306 agree / 22 differ / 39 cannot build.**
+      **141 could not build**. Now: **311 agree / 22 differ / 34 cannot build.**
       ★ Almost none of the gap was backend immaturity. It was SEVEN front-end and lowering
       defects the old path happened to paper over, each found by running the corpus rather
       than by reading code:
@@ -561,9 +561,16 @@ The endeavour is complete when ALL of these hold simultaneously:
         · **SIMD vectors were not in the type lattice** — `Vec(N,T)` lowered to `void*`, the
           largest remaining build-failure class. `IRT_VECTOR` (f093e30) says only "N lanes of
           T"; the vector_size typedef is the backend's choice, as tag-vs-niche is for a sum.
+        · **function pointers** — `IRT_FUNC`, `IR_FUNC_REF` and the INDIRECT form of IR_CALL
+          (f99a9aa). The old code nulled the callee decl and fell back to the identifier's
+          NAME, so the emitted C called a nonexistent function while the analyses resolved
+          that name to nothing — the right answer for the wrong reason.
+        · **union WIDENING** on the `try` path (ad457db) — the same marker at a different
+          variant index; and `IR_TERM_UNREACHABLE` emitted `return 0`, a type error the moment
+          a function returns a struct. Unreachable code still has to be well-TYPED.
       Remaining is now narrow: the SIMD BUILTINS (`@load`, `@store`, `@splat`, `@movemask` —
-      `@popcount`/`@ctz`/`@clz` already have IR ops) and niche-optimised ADT layout, i.e.
-      exactly what 4.3 names.
+      `@popcount`/`@ctz`/`@clz` already have IR ops; `@load` needs the IR to express a WIDE
+      access, which is a real design question not plumbing) and niche-optimised ADT layout.
 - [ ] **4.1/4.3** proof-exploiting C emission (checks proved away are *absent*), niche/SIMD/
       annotations re-expressed on the IR.
 - [ ] **4.2 LLVM/native seam** on the sovereign IR (E0.7).
