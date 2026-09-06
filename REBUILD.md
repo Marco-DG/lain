@@ -533,6 +533,17 @@ The endeavour is complete when ALL of these hold simultaneously:
       the BACKEND has not earned the proofs. Deleting sema means the old emitter goes too.
 
 ### ▸ STAGE IV — The backend earns the proofs
+- [~] **4.0 CAN THE NEW EMITTER REPLACE THE OLD ONE?** — `emit_gate.sh` runs the real corpus
+      through BOTH backends and compares stdout + exit code. Start: 209 agree / 15 differ /
+      **141 could not build**. Now: **283 agree / 42 differ / 42 cannot build.** The remaining
+      gap is CONCENTRATED, not diffuse: 17 of the 42 differences are NICHE-optimised ADTs
+      (`bool | Nope` is one `uint8_t` in the old backend and a tagged struct in the new) and
+      most build failures are SIMD vector types — i.e. exactly items 4.3 names. Four separate
+      front-end/lowering bugs were found on the way, each of which had made the new backend
+      look worse than it was: string escapes never DECODED (`.len` wrong for every literal
+      containing one), externs lowered to a NAME with no signature (no prototypes, hence no
+      variadics, hence implicit declarations — 102 of the 141), `.data` on a slice never
+      lowered at all, `*p = v` silently lost, and integer literals truncated to i32.
 - [ ] **4.1/4.3** proof-exploiting C emission (checks proved away are *absent*), niche/SIMD/
       annotations re-expressed on the IR.
 - [ ] **4.2 LLVM/native seam** on the sovereign IR (E0.7).
