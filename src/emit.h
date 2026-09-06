@@ -139,16 +139,14 @@ static inline void emit(DeclList *decls, int depth, const char *filename) {
     }
     EMIT("\n");
 
-    emit_decl_list_topo(decls, depth);
-    // Emit Fixed_<UserType>_N typedefs that depend on user-defined struct types
-    // (complete type required for arrays) — after all struct definitions.
-    emit_user_fixed_typedefs(output_file);
+    emit_decl_list_topo(decls, depth);   // emits the Fixed_<UserType>_N bodies at its 3b
 
     // Now that all slice/array types are recorded, emit the primitive and
     // dynamic-slice typedefs ahead of the body, then splice the body in.
     if (body) {
         emit_needed_vector_types(real_out);  // before slices: a slice element may be a vector
         emit_needed_slice_types(real_out);
+        emit_user_fixed_forward_typedefs(real_out);   // names used by prototypes in the body
         fflush(body);
         rewind(body);
         char buf[8192];

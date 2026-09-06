@@ -693,10 +693,45 @@ void sema_resolve_stmt(Stmt *s) {
     }
     break;
 
-  case STMT_MATCH:
+  case STMT_MATCH: {
     sema_resolve_expr(s->as.match_stmt.value);
+    // The scrutinee's TYPE is needed twice below (to type the arms' payload bindings, and
+    // for exhaustiveness), and resolution alone produces one only for an identifier.
+    if (s->as.match_stmt.value && !s->as.match_stmt.value->type)
+      sema_infer_expr(s->as.match_stmt.value);
+    Decl *marm_enum = s->as.match_stmt.value
+                    ? find_enum_decl(s->as.match_stmt.value->type) : NULL;
     for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
       sema_push_scope();
+      // A variant pattern BINDS its payload: `Pt(p)` introduces `p` with the variant field's
+      // type. Those bindings were never declared, so they were UNTYPED — which happens to
+      // work for a scalar (`A(v): v + 1` needs no type) and fails the moment anything asks
+      // for one: `Pt(p): p.x` died with E102 "'p' is not a value".
+      if (marm_enum) for (ExprList *p = c->patterns; p; p = p->next) {
+        Expr *pe = p->expr;
+        if (!pe || pe->kind != EXPR_CALL || !pe->as.call_expr.callee) continue;
+        Expr *cal = pe->as.call_expr.callee;
+        Id *vn = cal->kind==EXPR_MEMBER     ? cal->as.member_expr.member
+               : cal->kind==EXPR_IDENTIFIER ? cal->as.identifier_expr.id : NULL;
+        if (!vn) continue;
+        for (Variant *v = marm_enum->as.enum_decl.variants; v; v = v->next) {
+          if (!v->name || v->name->length != vn->length ||
+              strncmp(v->name->name, vn->name, (size_t)vn->length) != 0) continue;
+          ExprList *a = pe->as.call_expr.args; DeclList *fl = v->fields;
+          for (; a && fl; a = a->next, fl = fl->next) {
+            if (!a->expr || a->expr->kind != EXPR_IDENTIFIER) continue;
+            if (!fl->decl || fl->decl->kind != DECL_VARIABLE) continue;
+            Id *bn = a->expr->as.identifier_expr.id;
+            if (!bn) continue;
+            char raw[256]; int bl = (int)bn->length; if (bl > 255) bl = 255;
+            memcpy(raw, bn->name, (size_t)bl); raw[bl] = 0;
+            Type *fty = fl->decl->as.variable_decl.type;
+            sema_insert_local(raw, raw, fty, fl->decl, false);
+            a->expr->type = fty;                       // the pattern occurrence itself
+          }
+          break;
+        }
+      }
       for (ExprList *p = c->patterns; p; p = p->next) {
         sema_resolve_expr(p->expr);
       }
@@ -705,19 +740,15 @@ void sema_resolve_stmt(Stmt *s) {
       }
       sema_pop_scope();
     }
-    // Exhaustiveness needs the scrutinee's TYPE, and resolution alone does not produce one
-    // for anything but an identifier: `case o.tag { A(v): … B: … }` reached the check with a
-    // NULL type, so no enum was found and a fully-covered match was reported non-exhaustive.
-    // Infer it here (resolve.h already infers conditions and assignment targets), and only
-    // when it is missing so nothing already typed is disturbed.
-    if (s->as.match_stmt.value && !s->as.match_stmt.value->type)
-      sema_infer_expr(s->as.match_stmt.value);
-    // Check exhaustiveness after resolving all cases
+    // Check exhaustiveness after resolving all cases (the scrutinee was typed above —
+    // without it `case o.tag` on a struct FIELD reported a fully-covered match as
+    // non-exhaustive, because a member expression has no type until inference runs).
     if (!sema_check_match_exhaustive(s)) {
       sema_report_nonexhaustive_match(s);
       exit(1);
     }
     break;
+  }
   
   case STMT_WHILE: {
     // Purity: while loops without a termination measure are banned in pure functions,

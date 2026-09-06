@@ -1940,6 +1940,14 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
                 }
             } else {
                 sema_check_expr_linearity(s->as.match_stmt.value, tbl, loop_depth);
+                // NOTE — do NOT discharge the scrutinee here. "A consuming `case` consumes
+                // its scrutinee" looks right and is UNSOUND as a whole-value rule: it
+                // discharges the obligation without anyone releasing the resource, so both
+                // `Full(ptr): free(ptr); free(ptr)` (double free) and `Full(ptr): noop()`
+                // (leak) are accepted. Tried, measured, reverted. Discharging correctly
+                // needs the PAYLOAD BINDING to be linear in its own right and to discharge
+                // the scrutinee when consumed — per-field state, which the new IR pass has
+                // (analysis/linearity.h) and this one does not.
             }
             if (tbl->borrows) borrow_clear_temporaries(tbl->borrows);
         }

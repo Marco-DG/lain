@@ -1,13 +1,22 @@
-// EXPECT: [E012]
+// EXPECT: [E003]
 // Locks the FIX of a former P0 compiler CRASH (type_move(NULL), old char README):
 // matching a linear ADT — a variant with a `mov *u8` payload — and `mov`-consuming
-// the binding in a `case` used to SEGFAULT the compiler. It now rejects CLEANLY with
-// [E012] (the case-payload binding has no owned value type yet). A crash or abort
-// would make this test fail — so it guards the no-crash fix.
+// the binding in a `case` used to SEGFAULT the compiler. A crash or abort would make
+// this test fail — so it guards the no-crash fix.
 //
-// The [E012] itself marks a still-open limitation: consuming a LINEAR ADT payload
-// out of a `case` isn't supported (mov → [E012], plain → [E007]). When linear-ADT
-// destructuring lands, this flips to a _pass. Tracked in TRACEABILITY (§15).
+// The rejection CODE moved from [E012] to [E003], which records real progress: match-arm
+// payload bindings are now DECLARED with their variant field's type, so `mov ptr` is a
+// well-typed consume rather than a "binding has no owned value type" error. What remains
+// is the other half — consuming the payload does not DISCHARGE the scrutinee, so `b`
+// reports as unconsumed.
+//
+// Do not "fix" that by consuming the scrutinee wholesale when a non-borrowed `case`
+// destructures it. That rule was tried and is UNSOUND: it discharges the obligation
+// without anyone releasing the resource, and accepts BOTH `Full(ptr): free(ptr);
+// free(ptr)` (double free) and `Full(ptr): noop()` (leak). Discharging correctly needs the
+// payload binding to be linear in its own right — per-field state, which the new IR pass
+// has (src/analysis/linearity.h) and this one does not. This test flips to a _pass when
+// that lands. Tracked in TRACEABILITY (§15).
 import std.mem.{mem_free}
 type Box {
     Full {

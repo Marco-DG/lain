@@ -1,0 +1,31 @@
+// An ADT variant whose payload is a STRUCT, used through its bound name. Match-arm payload
+// bindings were never declared into the arm's scope, so they had NO TYPE — which happens to
+// work for a scalar (`A(v): v + 1` needs no type) and fails the moment anything asks for
+// one: `Pt(p): p.x` died with [E102] "'p' is not a value". The bindings now carry their
+// variant field's type.
+type P {
+    x i32
+    y i32
+}
+type S {
+    Pt { p P }
+    Pair { a i32, b i32 }
+    None
+}
+
+func rd(s S) i32 {
+    case s {
+        Pt(p): return p.x +% p.y
+        Pair(a, b): return a *% b
+        None: return 0
+    }
+    return -1
+}
+
+proc main() i32 {
+    var q = S.Pt(P(3, 4))
+    var r = S.Pair(5, 6)
+    var n = S.None
+    if rd(q) == 7 and rd(r) == 30 and rd(n) == 0 { return 0 }
+    return 1
+}

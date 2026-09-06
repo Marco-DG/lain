@@ -182,6 +182,22 @@ static void record_slice_type(const char *sliceName,
 
 /* ------------------------ emit typedefs into header --------------------- */
 
+// A Fixed_<UserType>_N typedef embeds the struct BY VALUE, so it needs the complete type
+// and can only be defined after the struct bodies — but a function taking one is
+// PROTOTYPED before them, so the name must exist earlier. Give the struct a TAG and
+// forward-declare it here (ahead of the body, beside the slice typedefs); the body is
+// filled in by emit_user_fixed_typedefs once the structs are complete. Without this,
+// `proc f(var xs P[3])` emitted a prototype naming an undeclared `Fixed_P_3`.
+static void emit_user_fixed_forward_typedefs(FILE *out) {
+    bool any = false;
+    for (SliceTypeNode *n = emitted_slice_types; n; n = n->next)
+        if (n->has_len && n->sentinel_len > 0 && !n->has_sentinel && n->user_type_elem) {
+            fprintf(out, "typedef struct %s %s;\n", n->sliceName, n->sliceName);
+            any = true;
+        }
+    if (any) fputc('\n', out);
+}
+
 static void emit_needed_slice_types(FILE *out) {
     for (SliceTypeNode *n = emitted_slice_types; n; n = n->next) {
         if (n->has_len && n->sentinel_len == 0 && !n->has_sentinel) {
@@ -233,9 +249,10 @@ static void emit_needed_slice_types(FILE *out) {
 static void emit_user_fixed_typedefs(FILE *out) {
     for (SliceTypeNode *n = emitted_slice_types; n; n = n->next) {
         if (n->has_len && n->sentinel_len > 0 && !n->has_sentinel && n->user_type_elem) {
-            fprintf(out, "typedef struct {\n");
+            // tagged (not anonymous) so emit_user_fixed_forward_typedefs can name it earlier
+            fprintf(out, "struct %s {\n", n->sliceName);
             fprintf(out, "  %s data[%zu];\n", n->c_type, n->sentinel_len);
-            fprintf(out, "} %s;\n", n->sliceName);
+            fprintf(out, "};\n");
             fprintf(out, "#define %s_LENGTH %zu\n\n", n->sliceName, n->sentinel_len);
         }
     }

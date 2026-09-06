@@ -1,0 +1,26 @@
+// A fixed array of a USER type passed by mutable reference. Two bugs met here:
+// (1) the `Fixed_P_3` typedef embeds the struct BY VALUE, so it needs the complete type and
+//     was emitted after the struct bodies — but a function taking one is PROTOTYPED before
+//     them, so the prototype named an undeclared type. It is now forward-declared with a
+//     struct TAG ahead of the body, and defined between the struct and function phases.
+// (2) a user-type fixed array is a NATIVE C array as a local (`P a[3]` → `a[i]`), but a
+//     by-pointer PARAMETER is a `Fixed_P_3*` and must go through `->data[i]` exactly as the
+//     primitive case already did — `xs[i].x` indexed the WRAPPER.
+type P {
+    x i32
+}
+
+proc setall(var xs P[3]) {
+    var i usize = 0
+    while i < 3 decreasing 3 - i {
+        xs[i].x = (i as i32) +% 1
+        i += 1
+    }
+}
+
+proc main() i32 {
+    var a P[3] = [P(0), P(0), P(0)]
+    setall(var a)
+    if a[0].x == 1 and a[1].x == 2 and a[2].x == 3 { return 0 }
+    return 1
+}

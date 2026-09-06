@@ -210,6 +210,12 @@ static void emit_decl_list_topo(DeclList *decls, int depth) {
         emit_decl(sorted[i]->decl, depth);
     }
 
+    // 3b) Fixed_<UserType>_N bodies. They embed a struct BY VALUE, so they need the
+    // complete type (phase 3) — but a function body INDEXING one needs the complete
+    // Fixed type, so they must land before phase 4. Emitting them after everything left
+    // `xs[i].x` on a `var xs P[3]` parameter using an undefined struct.
+    emit_user_fixed_typedefs(output_file);
+
     // 4) emit all functions in original order
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (decl_is_generic_template(dl->decl)) continue;   // templates: only instances are emitted

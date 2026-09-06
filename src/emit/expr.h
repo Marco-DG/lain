@@ -1156,7 +1156,13 @@ void emit_expr(Expr *expr, int depth) {
           // SIMD lane access: a vector is indexed directly `v[i]` (a GCC vector
           // value, no `.data` member).
           bool is_vector = ix->target->type && ix->target->type->kind == TYPE_VECTOR;
-          if (is_user_type_fixed_array(ix->target->type) || is_thin_ptr || is_native_fixed || is_vector) {
+          // A user-type fixed array is a NATIVE C array as a local (`P a[3]` → `a[i]`), but
+          // a by-pointer PARAMETER is a `Fixed_P_3*` and must go through `->data[i]` exactly
+          // as the primitive case already did. Without the !is_ptr guard, `proc f(var xs
+          // P[3]) { xs[i].x = … }` emitted `xs[i].x` — indexing the WRAPPER, so gcc reported
+          // `Fixed_P_3 has no member named x`.
+          bool is_user_fixed_local = is_user_type_fixed_array(ix->target->type) && !is_ptr;
+          if (is_user_fixed_local || is_thin_ptr || is_native_fixed || is_vector) {
               EMIT("[");
           } else {
               EMIT(is_ptr ? "->data[" : ".data[");
