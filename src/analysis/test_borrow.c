@@ -115,7 +115,7 @@ int main(void){
         IrValue *pa=ir_add_param(f,pty,nm("a")), *pb=ir_add_param(f,pty,nm("b"));
         f->ret_borrows = true;
         IrBlock *t=ir_new_block(f), *e2=ir_new_block(f);
-        ir_set_br_cond(f->entry, ir_const_int(f,f->entry,i32,1), t, e2);
+        ir_set_br_cond(f->entry, ir_const_int(f,f->entry,1,i32), t, e2);
         ir_set_ret(t, pa); ir_set_ret(e2, pb);
         bexpect("ret-borrow mask unions both branches", (int)bor_ret_borrow_mask(f), 3); }
       // an OPAQUE return (provenance laundered through a load) ⇒ fall back to ALL ref params

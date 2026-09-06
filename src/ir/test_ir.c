@@ -11,7 +11,12 @@
 // Expected shape (ids are dense per function):
 //   func maxi(%0,%1) -> i32  : icmp.sgt → br_cond → two ret blocks
 //   func count(%0)   -> i32  : alloca/store; while as head/body/exit; bb1 = loop header
-#include "build.h"
+#include "utils/common/def.h"
+#include "utils/arena.h"
+#include "utils/common/system/memory.h"
+#include "ir/ir.h"
+#include "ir/build.h"
+#include <string.h>
 #include "dump.h"
 
 int main(void) {
@@ -20,9 +25,9 @@ int main(void) {
 
     // func maxi(a i32, b i32) i32 { if a > b { return a } return b }
     {
-        IrFunc *f = ir_func_new(&a, id(&a, 4, "maxi"), i32, IR_FUNC_PURE);
-        IrValue *pa = ir_add_param(f, i32, id(&a, 1, "a"));
-        IrValue *pb = ir_add_param(f, i32, id(&a, 1, "b"));
+        IrFunc *f = ir_func_new(&a, ir_intern(&a, "maxi", (isize)strlen("maxi")), i32, IR_FUNC_PURE);
+        IrValue *pa = ir_add_param(f, i32, ir_intern(&a, "a", (isize)strlen("a")));
+        IrValue *pb = ir_add_param(f, i32, ir_intern(&a, "b", (isize)strlen("b")));
         IrValue *c  = ir_icmp(f, f->entry, IR_CMP_SGT, pa, pb);
         IrBlock *tb = ir_new_block(f), *eb = ir_new_block(f);
         ir_set_br_cond(f->entry, c, tb, eb);
@@ -35,8 +40,8 @@ int main(void) {
 
     // func count(n i32) i32 { var i = 0; while i < n { i = i + 1 } return i }
     {
-        IrFunc *f = ir_func_new(&a, id(&a, 5, "count"), i32, IR_FUNC_PURE);
-        IrValue *pn = ir_add_param(f, i32, id(&a, 1, "n"));
+        IrFunc *f = ir_func_new(&a, ir_intern(&a, "count", (isize)strlen("count")), i32, IR_FUNC_PURE);
+        IrValue *pn = ir_add_param(f, i32, ir_intern(&a, "n", (isize)strlen("n")));
         IrBlock *e  = f->entry;
         IrValue *islot = ir_alloca(f, e, i32);
         ir_store(f, e, islot, ir_const_int(f, e, 0, i32));

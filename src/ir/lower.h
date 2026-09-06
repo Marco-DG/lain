@@ -921,8 +921,14 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             // argument — semantically the identity, so lowering them away is faithful.
             if (bk==BUILTIN_LIKELY || bk==BUILTIN_UNLIKELY)
                 return ir_lower_expr(c, e->as.builtin_expr.arg);
+            // Fall through to the same placeholder the default case uses. A bare `break`
+            // here exited the switch and ran off the end of a non-void function — undefined
+            // behaviour that returned a garbage IrValue*, which the VRA then dereferenced
+            // (a segfault on any @movemask/@load/@store/@shuffle program). gcc DID warn
+            // ("control reaches end of non-void function"); the build output was being
+            // grepped for `error` only.
             ir_incomplete(c, "unhandled-builtin");
-            break;
+            return ir_const_int(c->f, c->cur, 0, ty);
         }
         default:
             ir_incomplete(c, "unhandled-expr");   // infaithful placeholder
