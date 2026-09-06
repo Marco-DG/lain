@@ -285,7 +285,48 @@ EOF
     esac
 }
 
-GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit gen_defer gen_enum)
+gen_rvalue_field() {      # a field/element read off a value with NO ADDRESS — `mk(i).x`.
+    # An rvalue must be materialised into a temporary before its field can be addressed;
+    # falling back to a placeholder slot read the field out of UNINITIALISED memory, so the
+    # program silently computed nonsense instead of failing.
+    local a=$(r 20 1) k=$(r 2)
+    case $k in
+      0) cat <<EOF
+type P {
+    x i32
+    y i32
+}
+func mk(n i32) P { return P(n, n +% $a) }
+proc main() i32 {
+    var acc = 0
+    var i = 0
+    while i < 4 decreasing 4 - i {
+        acc = acc +% mk(i).x +% mk(i).y
+        i += 1
+    }
+    return acc % 251
+}
+EOF
+      ;;
+      *) cat <<EOF
+type P {
+    x i32
+}
+type Q {
+    inner P
+    n i32
+}
+func mq(n i32) Q { return Q(P(n *% 2), n +% $a) }
+proc main() i32 {
+    var s = mq($a).inner.x +% mq($a).n
+    return s % 251
+}
+EOF
+      ;;
+    esac
+}
+
+GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit gen_defer gen_enum gen_rvalue_field)
 
 run_pipeline() {  # $1=c-file $2=bin -> prints "<exit>|<stdout>"
     "$CC" -o "$2" "$1" $DEFS -w -O0 2>/dev/null || { echo "BUILDFAIL"; return; }

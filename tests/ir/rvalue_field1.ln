@@ -1,0 +1,29 @@
+// A field read off a value with NO ADDRESS. `mk(i).x` takes a field of a RETURNED struct;
+// an rvalue must be materialised into a temporary before its field can be addressed. The
+// new pipeline fell back to a placeholder slot instead — the call was never emitted and the
+// field was read out of UNINITIALISED memory, so the program silently computed nonsense
+// (this returned 29 instead of 0) rather than failing loudly.
+type P {
+    x i32
+    y i32
+}
+type Q {
+    inner P
+    n i32
+}
+
+func mk(n i32) P { return P(n, n +% 1) }
+func mq(n i32) Q { return Q(P(n *% 2, 0), n +% 3) }
+
+proc main() i32 {
+    var acc = 0
+    var i = 0
+    while i < 3 decreasing 3 - i {
+        acc = acc +% mk(i).x          // 0 + 1 + 2 = 3
+        i += 1
+    }
+    acc = acc +% mq(4).inner.x        // 8   → 11
+    acc = acc +% mq(4).n              // 7   → 18
+    if acc == 18 { return 0 }
+    return 1
+}

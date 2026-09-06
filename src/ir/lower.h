@@ -628,11 +628,27 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
         return p;
     }
     if (e->kind == EXPR_MEMBER) {
-        IrValue *base = ir_lower_addr(c, e->as.member_expr.target);   // struct address
-        IrType  *sty  = ir_lower_type(c, e->as.member_expr.target->type);
-        IrType  *fty  = NULL;
+        Expr   *tgt  = e->as.member_expr.target;
+        IrType *sty  = ir_lower_type(c, tgt->type);
+        IrType *fty  = NULL;
         int idx = ir_field_index(sty, e->as.member_expr.member, &fty);
-        if (idx >= 0) return ir_field_ptr(c->f, c->cur, base, idx, fty);
+        if (idx >= 0) {
+            // The target may be an RVALUE — `mk(i).x` takes a field of a RETURNED struct.
+            // An rvalue has no address, so MATERIALIZE it into a temporary and address that,
+            // which is the ordinary C rule for a temporary's lifetime. Falling through to the
+            // placeholder instead emitted an UNINITIALISED slot and read the field out of
+            // garbage: the call never happened and the program silently computed nonsense.
+            bool addressable = tgt->kind==EXPR_IDENTIFIER || tgt->kind==EXPR_MEMBER
+                            || tgt->kind==EXPR_INDEX     || tgt->kind==EXPR_DEREF;
+            IrValue *base;
+            if (addressable) base = ir_lower_addr(c, tgt);
+            else {
+                IrValue *v = ir_lower_expr(c, tgt);
+                base = ir_alloca(c->f, c->cur, sty);
+                ir_store(c->f, c->cur, base, v);
+            }
+            return ir_field_ptr(c->f, c->cur, base, idx, fty);
+        }
     }
     // other lvalues: not yet lowered — infaithful placeholder slot
     ir_incomplete(c, "unlowered-lvalue");

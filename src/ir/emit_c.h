@@ -340,6 +340,31 @@ static void ir_emit_one_struct_body(IrType *st, FILE *o) {
     }
     fputs("};\n", o);
 }
+// Emit `ts.structs[i]`'s body after everything it contains BY VALUE. Recurses through
+// struct fields and sum-variant payload fields; a pointer/slice field needs only the
+// forward declaration, so it is not a dependency.
+static void ir_emit_struct_body_deps(IrTypeSet *ts, int i, bool *done, FILE *o) {
+    if (i < 0 || i >= ts->n_struct || done[i]) return;
+    done[i] = true;                          // set first: a pointer cycle must not recurse
+    IrType *t = ts->structs[i];
+    for (int f=0; f<t->n_fields; f++) {
+        IrType *ft = t->fields[f];
+        if (!ft) continue;
+        if (t->kind == IRT_SUM) {            // a variant payload is inlined, so ITS fields
+            for (int g=0; g<ft->n_fields; g++) {
+                IrType *gt = ft->fields[g];
+                if (!gt || (gt->kind!=IRT_STRUCT && gt->kind!=IRT_SUM)) continue;
+                for (int k=0;k<ts->n_struct;k++) if (ts->structs[k]==gt) ir_emit_struct_body_deps(ts,k,done,o);
+            }
+            continue;
+        }
+        while (ft && ft->kind==IRT_ARRAY) ft = ft->elem;   // an inline array of structs too
+        if (!ft || (ft->kind!=IRT_STRUCT && ft->kind!=IRT_SUM)) continue;
+        for (int k=0;k<ts->n_struct;k++) if (ts->structs[k]==ft) ir_emit_struct_body_deps(ts,k,done,o);
+    }
+    ir_emit_one_struct_body(t, o);
+}
+
 // Forward-declare every struct, then slices (which only need the struct *pointer*),
 // then the full struct bodies in reverse discovery order (a by-value nested struct
 // is discovered after its container, so reverse puts the inner one first).
@@ -354,7 +379,15 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     for (int i=0;i<ts.n_struct;i++){ IrName *nm=ts.structs[i]->sname;
         fprintf(o, "typedef struct %.*s %.*s;\n", (int)nm->length, nm->name, (int)nm->length, nm->name); }
     for (int i=0;i<ts.n_slice;i++) ir_emit_one_slice(ts.slices[i], o);
-    for (int i=ts.n_struct-1;i>=0;i--) ir_emit_one_struct_body(ts.structs[i], o);
+    // Bodies in DEPENDENCY order: a struct that contains another BY VALUE needs the inner
+    // one complete first. Reverse discovery order is not that — it works only when the
+    // container happens to be discovered first, and `func mk() P` before `func mq() Q`
+    // (Q containing a P) discovers P first, so Q's body was emitted with an incomplete
+    // field type. By-value containment cannot be cyclic, so a simple depth-first emit with
+    // a visited set is a correct topological order; pointer cycles are already handled by
+    // the forward typedefs above.
+    { bool done[256]; for (int i=0;i<ts.n_struct;i++) done[i]=false;
+      for (int i=0;i<ts.n_struct;i++) ir_emit_struct_body_deps(&ts, i, done, o); }
     if (ts.n_struct || ts.n_slice) fputc('\n', o);
 }
 
