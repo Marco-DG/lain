@@ -119,7 +119,8 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                                                                     : "__builtin_popcount",
                     i->operands[0]->id);
             break;
-        case IR_SHAPE: case IR_INIT: break;   // FACTS about a place; no runtime effect
+        case IR_SHAPE: case IR_INIT:
+        case IR_BORROW: case IR_BORROW_END: break;   // FACTS about a place; no runtime effect
         case IR_OPAQUE:
             // The construct was not modelled, so there is nothing faithful to emit. Produce a
             // zero of the right type and SAY SO in the output — a silent placeholder is how

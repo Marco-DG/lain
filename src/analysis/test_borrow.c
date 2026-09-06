@@ -179,6 +179,45 @@ int main(void){
       }
     }
 
+    // 9) SCOPED borrows (`case &x`). The extent is stated by the construct, because no
+    // value's liveness expresses it — nothing in the arms reads the borrow. The region is a
+    // CFG reachability set, NOT a span of the flattened instruction list: the match's join
+    // block (holding borrow_end) is emitted BEFORE the arms, so a linear scan ended the
+    // region before reaching the very writes it must catch.
+    { // write INSIDE the region  →  conflict
+      { IrFunc *f=ir_func_new(&A,nm("sb1"),ir_type_new(&A,IRT_UNIT),IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *x=ir_alloca(f,e,i32);
+        ir_borrow_begin(f,e,x);
+        ir_store(f,e,x,ir_const_int(f,e,99,i32));
+        ir_borrow_end(f,e,x);
+        ir_set_ret(e,NULL); ir_finalize_cfg(f);
+        bexpect("scoped borrow: write inside conflicts", nfind(f), 1); }
+      // write AFTER the region  →  fine
+      { IrFunc *f=ir_func_new(&A,nm("sb2"),ir_type_new(&A,IRT_UNIT),IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *x=ir_alloca(f,e,i32);
+        ir_borrow_begin(f,e,x); ir_borrow_end(f,e,x);
+        ir_store(f,e,x,ir_const_int(f,e,99,i32));
+        ir_set_ret(e,NULL); ir_finalize_cfg(f);
+        bexpect("scoped borrow: write after the end is fine", nfind(f), 0); }
+      // write to a DIFFERENT place inside  →  fine
+      { IrFunc *f=ir_func_new(&A,nm("sb3"),ir_type_new(&A,IRT_UNIT),IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *x=ir_alloca(f,e,i32), *y=ir_alloca(f,e,i32);
+        ir_borrow_begin(f,e,x);
+        ir_store(f,e,y,ir_const_int(f,e,99,i32));
+        ir_borrow_end(f,e,x);
+        ir_set_ret(e,NULL); ir_finalize_cfg(f);
+        bexpect("scoped borrow: unrelated write is fine", nfind(f), 0); }
+      // ★ the write is in a BRANCH the region reaches — the case a linear scan missed
+      { IrFunc *f=ir_func_new(&A,nm("sb4"),ir_type_new(&A,IRT_UNIT),IR_FUNC_PROC);
+        IrBlock *e=f->entry, *arm=ir_new_block(f), *join=ir_new_block(f);
+        IrValue *x=ir_alloca(f,e,i32);
+        ir_borrow_begin(f,e,x);
+        ir_set_br_cond(e, ir_const_int(f,e,1,ir_type_bool(&A)), arm, join);
+        ir_store(f,arm,x,ir_const_int(f,arm,99,i32)); ir_set_br(arm,join);
+        ir_borrow_end(f,join,x); ir_set_ret(join,NULL); ir_finalize_cfg(f);
+        bexpect("scoped borrow: write in a reached BRANCH conflicts", nfind(f), 1); }
+    }
+
     printf(failures? "BORROW: %d WRONG\n" : "BORROW: all expectations met\n", failures);
     return failures?1:0;
 }

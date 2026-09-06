@@ -170,6 +170,15 @@ typedef enum {
     // Stating what lowering already knows is honest and costs nothing; making the analysis
     // re-derive it would need a proof that the loop covers 0..len.
     IR_INIT,
+    // A SCOPED borrow: op[0] is the borrowed place, and the loan is live from IR_BORROW to
+    // the matching IR_BORROW_END. No runtime effect.
+    //
+    // Most loans are inferred from LIVENESS — a reference is live until its last use — but
+    // some are scoped by a CONSTRUCT instead, and no liveness of any value expresses them.
+    // `case &x { 42: x = 99 }` borrows x for the whole match: nothing reads the borrow in
+    // the arms, so a liveness-derived region would be empty and the write would look legal.
+    // Language-neutral: Rust's borrow regions, C++ reference lifetimes, Fortran ASSOCIATE.
+    IR_BORROW, IR_BORROW_END,
     // ── B3: the TOTALITY primitive ──────────────────────────────────────────
     // An UNMODELLED construct, represented honestly instead of poisoning its whole
     // function. `IrFunc.incomplete` suppressed every proof over a function that contained

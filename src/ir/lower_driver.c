@@ -35,6 +35,9 @@ static char *drv_modname(Arena *a, const char *path) {
 }
 
 int main(int argc, char **argv) {
+    // --reject: stand the LEGACY ownership checks down so lowering completes on a program
+    // the old engine would exit() on. Lets the IR of a fail-test be inspected.
+    for (int i=1;i<argc;i++) if (!strcmp(argv[i],"--reject")) g_suppress_ownership = true;
     if (argc < 2) { fprintf(stderr, "usage: %s <file.ln>\n", argv[0]); return 2; }
     Arena file_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena ast_arena  = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);

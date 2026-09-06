@@ -124,9 +124,12 @@ tests/ownership/multi_var_param_fail.ln                   NEW-ACCEPTS  new-more-
 # lattice (intersection merge) beside the MAY one gives E016 = "moved on some paths, not all".
 # block_scope is CLOSED by per-field linear state (a consumption MASK per slot) plus failing
 # CLOSED on an opaque linear struct. ONE remains:
-#   match_borrow_mut  E004 — `case &x { 42: x = 99 }`. The scrutinee borrow is live for the
-#     whole match CONSTRUCT, which is a scoped region rather than a last-use one; loans are
-#     currently created only where an address is parked in a slot.
+#   match_borrow_mut — CLOSED (IR_BORROW/IR_BORROW_END). The extent is stated by the
+#     CONSTRUCT because no value's liveness expresses it: nothing in the arms reads the
+#     borrow, so a liveness-derived region is empty and `42: x = 99` looked legal. The region
+#     is a CFG REACHABILITY set, not a span of the flattened instruction list — the match's
+#     join block (holding borrow_end) is emitted BEFORE the arms, so a linear scan ended the
+#     region before reaching the writes it must catch. THE BORROW COLUMN IS NOW EMPTY.
 # struct_field_dangling is CLOSED: two fixes, both found by taking it seriously rather than
 # filing it. Lowering now gives a mutable string binding its OWN storage (which also fixed a
 # real segfault — see CORPUS_CORRECTIONS/commit b56aa24), so the slice honestly roots in an

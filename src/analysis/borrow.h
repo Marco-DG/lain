@@ -253,6 +253,62 @@ static uint64_t bor_ret_borrow_mask(IrFunc *f) {
 static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod);
 static Borrow *borrow_analyze(IrFunc *f) { return borrow_analyze_mod(f, NULL); }
 
+// A SCOPED loan: `IR_BORROW place` … `IR_BORROW_END place`. Unlike the liveness-derived
+// regions below, the extent is stated by the construct, because nothing's liveness expresses
+// it — `case &x { 42: x = 99 }` borrows x for the whole match while no value in the arms
+// reads that borrow.
+static void bor_check_scoped(Borrow *B, IrFunc *mod, IrFunc *f) {
+    for (IrBlock *sb=f->blocks; sb; sb=sb->next)
+    for (IrInstr *si=sb->instrs; si; si=si->next) {
+        if (si->op != IR_BORROW || si->n_operands < 1) continue;
+        IrValue *place = si->operands[0];
+        IrPlace src = ir_place_of(B->def, B->nvar, place);
+        if (!src.valid) continue;
+        // The region is every block REACHABLE from the borrow without passing its END — a
+        // CFG question, not a textual one. A linear scan over the flattened instruction list
+        // gets this wrong: the match's JOIN block (holding borrow_end) is emitted BEFORE the
+        // arms, so the scan ended the region before ever reaching the writes it must catch.
+        bool *seen = calloc(f->next_block_id, sizeof(bool));
+        IrBlock **work = malloc(sizeof(IrBlock*) * (size_t)f->next_block_id);
+        int nw = 0;
+        bool reported = false;
+        // walk the rest of the borrow's own block, then fan out
+        for (IrBlock *cur = sb; cur && !reported; ) {
+            IrInstr *from = (cur == sb) ? si->next : cur->instrs;
+            bool ended = false;
+            for (IrInstr *o = from; o && !reported; o = o->next) {
+                if (o->op==IR_BORROW_END && o->n_operands>=1 && o->operands[0]==place) { ended=true; break; }
+                if (o->op==IR_STORE && o->n_operands>=1 && o->operands[0]) {
+                    IrPlace t = ir_place_of(B->def, B->nvar, o->operands[0]);
+                    if (ir_place_overlaps(&src, &t)) { bor_add(B, o->line, o->col, 4); reported=true; }
+                } else if (o->op==IR_CALL && mod) {
+                    IrFunc *oc = bor_find_func(mod, o->aux.callee);
+                    if (oc) for (int a=0;a<o->n_operands;a++) {
+                        IrPlace p; bool m;
+                        if (!bor_arg_loan(B, oc, a, o->operands[a], &p, &m)) continue;
+                        if (m && ir_place_overlaps(&src, &p)) { bor_add(B, o->line, o->col, 4); reported=true; break; }
+                    }
+                }
+            }
+            if (!ended && !reported) {                     // fan out to successors
+                IrBlock *succ[3]={0,0,0}; int ns=0;
+                switch (cur->term.kind) {
+                    case IR_TERM_BR:      succ[ns++]=cur->term.a; break;
+                    case IR_TERM_BR_COND: succ[ns++]=cur->term.a; succ[ns++]=cur->term.b; break;
+                    case IR_TERM_SWITCH:  succ[ns++]=cur->term.a;
+                        for (IrSwitchCase *c=cur->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                    default: break;
+                }
+                for (int k=0;k<ns;k++)
+                    if (succ[k] && !seen[succ[k]->id]) { seen[succ[k]->id]=true; work[nw++]=succ[k]; }
+            }
+            cur = nw ? work[--nw] : NULL;
+        }
+        free(seen); free(work);
+        if (reported) return;
+    }
+}
+
 static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
     BorSeq s; bor_linearize(f, &s);
     for (int k=0;k<s.n;k++) {
@@ -344,6 +400,9 @@ static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
     }
     // phase A2: loans that outlive their statement
     if (mod) bor_check_regions(B, mod, f);
+    // Scoped loans stated by a construct (`case &x`). Unlike the other phases this does NOT
+    // require a module: a write conflicting with a scoped borrow is visible in one function.
+    bor_check_scoped(B, mod, f);
     // phase A: conflicting co-argument borrows at each call.
     //
     // ★ Phase D is active here: the numeric domain answers `a[i]` vs `a[j]`. The conflict

@@ -1222,6 +1222,14 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             }
             v = ir_lower_expr(c, val);
             if (sumty && !(v && v->type && v->type->kind==IRT_SUM)) { ir_incomplete(c,"enum-match"); break; }
+            // `case &x` is a NON-CONSUMING match: it borrows the scrutinee for the whole
+            // construct. Nothing in the arms reads that borrow, so a liveness-derived region
+            // would be empty and `42: x = 99` would look legal — the loan has to be stated.
+            IrValue *mborrow = NULL;
+            if (s->as.match_stmt.is_borrowed && val && val->kind == EXPR_IDENTIFIER) {
+                IrLocal *ml = ir_env_find(c, val->as.identifier_expr.id);
+                if (ml && ml->slot) { mborrow = ml->slot; ir_borrow_begin(c->f, c->cur, mborrow); }
+            }
             IrValue *tagv = sumty ? ir_sum_tag(c->f, c->cur, v) : NULL;
             IrBlock *join = ir_new_block(c->f);
             StmtMatchCase *elsec = NULL;
@@ -1285,6 +1293,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             if (elsec) ir_lower_stmts(c, elsec->body);
             if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
             c->cur = join;
+            if (mborrow) ir_borrow_end(c->f, c->cur, mborrow);   // the scoped loan ends here
             break;
         }
         case STMT_BREAK:    if (c->loop_exit) ir_set_br(c->cur, c->loop_exit); break;

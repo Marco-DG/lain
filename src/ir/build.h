@@ -120,6 +120,14 @@ void ir_consume(IrFunc *f, IrBlock *b, IrValue *slot) {
     ins->operands[0] = slot;
     ir_emit(b, ins);
 }
+// A scoped borrow of `place`: live until the matching ir_borrow_end. No runtime effect.
+void ir_borrow_begin(IrFunc *f, IrBlock *b, IrValue *place) {
+    IrInstr *ins = ir_instr(f, IR_BORROW, NULL, 1); ins->operands[0] = place; ir_emit(b, ins);
+}
+void ir_borrow_end(IrFunc *f, IrBlock *b, IrValue *place) {
+    IrInstr *ins = ir_instr(f, IR_BORROW_END, NULL, 1); ins->operands[0] = place; ir_emit(b, ins);
+}
+
 // Declare that `place` is wholly initialised from here (no runtime effect).
 void ir_init_fact(IrFunc *f, IrBlock *b, IrValue *place) {
     IrInstr *ins = ir_instr(f, IR_INIT, NULL, 1);
