@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
                         f->incomplete_why ? f->incomplete_why : "unknown");
                 continue;
             }
-            found += ir_report_findings(f, args.filename, args.engine_ir_numeric);
+            found += ir_report_findings(f, mod, args.filename, args.engine_ir_numeric);
         }
         if (found) { sema_destroy(); return 1; }
     }

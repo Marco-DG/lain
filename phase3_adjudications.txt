@@ -233,3 +233,24 @@ tests/ownership/close_without_mov_fail.ln  NEW-ACCEPTS  front-end-policy   # E00
 # Honesty note: the finding rests on the EMITTED C, which is where the trust is visible. A
 # quick attempt to produce an executed ASan fault from it did not, so it is recorded as a
 # demonstrated mis-emission rather than a demonstrated out-of-bounds read.
+
+# ── overflow: the old engine is INCONSISTENT, and silently wrong on one side ──────────────
+# `--engine=ir-full` rejects ~121 corpus pass-programs on numeric obligations, and the first
+# reading of that number ("the new engine is over-strict") is wrong for a large share of them.
+#
+#   func add(a i32, b i32) i32 { return a + b }        → OLD ENGINE REJECTS  [E086]
+#   func sum(p Point)     i32 { return p.x + p.y }     → OLD ENGINE ACCEPTS
+#
+# Same expression, same types, different SOURCE of the operands: a parameter is range-checked,
+# a struct FIELD is not. What the old engine emits for the accepted one is
+#       return ((int64_t)(p->x) + (int64_t)(p->y));
+# — it widens the arithmetic to avoid the UB, then narrows on return. EXECUTED:
+#       p.x = 2147483647 ; p.y = 1 ; sum(p)   →   prints  -2147483648
+# A compiler whose whole claim is prove-or-reject silently returns the wrong number.
+#
+# So the new engine REFUSING these is old-unsound, not new-over-strict. It cannot become a
+# corpus fail-test while the old engine is authoritative; it inverts at 3.5.
+#
+# The genuinely imprecise part of that 121 is a different family — loop counters (`i = i + 1`
+# under `i < n`), where the bound exists and the new engine should find it. Tracked separately;
+# do not conflate the two when reading the gate's number.

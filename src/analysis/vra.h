@@ -43,6 +43,7 @@ typedef struct {
     int64_t **in;       // in[bid] : entry octagon storage (NULL = unreached)
     bool    *reached;
     IrInstr **def;      // def[val id] = producing instruction (NULL for params)
+    IrValue **val;      // val[val id] = the value itself (for its TYPE — see vra_range)
     int     *defblk;    // defblk[val id] = id of the block defining it (-1 = param)
     int64_t *cval; bool *cknown;   // constant values (from IR_CONST)
     int     *slicelen;  // slice value id → its canonical length var (−1 = none)
@@ -72,6 +73,19 @@ static bool vra_is_int(IrValue *v){ return v && v->type &&
 
 // is value id `v` a slice-typed alloca cell?
 // Follow an address back to the alloca it roots in and mark that cell escaped.
+// A `var x i32` parameter is a POINTER to the caller's storage, and the domain modelled it
+// as nothing at all: every read of it was ⊤, so `pos = pos + 1` under `pos < toks.len` could
+// not be shown not to overflow, and no guard on it ever survived. It is a stable numeric cell
+// for the duration of the call — Lain's mutable borrows are EXCLUSIVE, which is the same
+// guarantee the backend already relies on when it emits these parameters `restrict`, and the
+// borrow checker is what enforces it. Treating it as a cell is reading that guarantee, not
+// assuming one; a call it is passed on to still havocs it, exactly like an escaped alloca.
+static bool vra_is_param_cell(Vra *V, int id) {
+    if (id<0 || id>=V->nvar || V->def[id]) return false;      // must be a parameter
+    IrValue *pv = V->val[id];
+    return pv && pv->type && pv->type->kind==IRT_PTR && pv->type->ptr_mut
+        && pv->type->elem && (pv->type->elem->kind==IRT_INT || pv->type->elem->kind==IRT_BOOL);
+}
 static void vra_mark_escape(Vra *V, IrValue *v) {
     for (int guard=0; v && v->id>=0 && v->id<V->nvar && guard<10000; guard++) {
         IrInstr *d = V->def[v->id];
@@ -107,11 +121,15 @@ static int vra_canon_cell(Vra *V, int v) { return (v>=0 && v<V->nvar && V->cellc
 // var is its make_slice length operand or its first slice_len read; it is propagated
 // through a slice local's store/load so `s = a[lo..hi]; s[k]` knows len(s).
 static void vra_prepass(Vra *V) {
+    for (IrParam *p=V->f->params; p; p=p->next)
+        if (p->value && p->value->id>=0 && p->value->id<V->nvar) V->val[p->value->id]=p->value;
+    // (the escape flag is set after the prepass has classified them — see below)
     for (int i=0;i<V->nvar;i++){ V->def[i]=NULL; V->defblk[i]=-1; V->cknown[i]=false; V->slicelen[i]=-1; V->subslice_gep[i]=false; }
     // first: def sites + constants (needed to classify slice cells below)
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
-            if (ins->result){ V->def[ins->result->id]=ins; V->defblk[ins->result->id]=b->id; }
+            if (ins->result){ V->def[ins->result->id]=ins; V->defblk[ins->result->id]=b->id;
+                              V->val[ins->result->id]=ins->result; }
             if (ins->op==IR_CONST && ins->result){ V->cknown[ins->result->id]=true; V->cval[ins->result->id]=ins->aux.imm; }
         }
     V->cellcanon = malloc((size_t)V->nvar*sizeof(int));
@@ -196,6 +214,10 @@ static void vra_prepass(Vra *V) {
             }
     free(cell_len); free(cell_stores);
 
+    // A `var` scalar parameter points at storage the CALLER owns, so anything we hand the
+    // pointer to may write it: it havocs at a call exactly like an escaped alloca.
+    for (IrParam *p=V->f->params; p; p=p->next)
+        if (p->value && vra_is_param_cell(V, p->value->id)) V->escaped[p->value->id] = true;
     // Mark every alloca whose ADDRESS escapes. Provenance is followed through the
     // address-forming ops, so `f(&s.field)` escapes `s` too. A store's TARGET (operand 0) is
     // an ordinary write and does NOT escape; a store's VALUE (operand 1) does.
@@ -364,17 +386,21 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             break;
         case IR_LOAD: {
             if (r<0) break;
-            IrInstr *d = ins->n_operands? V->def[ins->operands[0]->id] : NULL;
-            if (d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
-                vra_assign_copy(V, W, r, ins->operands[0]->id);   // scalar cell → value
+            int cell = ins->n_operands ? ins->operands[0]->id : -1;
+            IrInstr *d = cell>=0 ? V->def[cell] : NULL;
+            if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
+                || vra_is_param_cell(V, cell))
+                vra_assign_copy(V, W, r, cell);                // scalar cell → value
             else oct_forget(W, r);                             // array elem / unknown
             break;
         }
         case IR_STORE: {
             if (ins->n_operands<2) break;
-            IrInstr *d = V->def[ins->operands[0]->id];
-            if (d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
-                vra_assign_copy(V, W, ins->operands[0]->id, ins->operands[1]->id);  // value → cell
+            int cell = ins->operands[0]->id;
+            IrInstr *d = V->def[cell];
+            if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
+                || vra_is_param_cell(V, cell))
+                vra_assign_copy(V, W, cell, ins->operands[1]->id);  // value → cell
             break;
         }
         case IR_ADD: case IR_SUB: {
@@ -722,6 +748,24 @@ static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) 
     int64_t olo,ohi; bool hl,hh; vra_interval(V, W, v->id, &olo,&hl,&ohi,&hh);
     if (hl && olo>tlo) tlo=olo;
     if (hh && ohi<thi) thi=ohi;
+    // ★ RELATIONAL refinement. A `usize` upper bound is INT64_MAX, which the entry seeding
+    // skips (doubling it would overflow the DBM), so `while i < n` leaves `i` with no absolute
+    // bound and `i = i + 1` — the commonest statement in the corpus — cannot be shown not to
+    // overflow. But the octagon HOLDS `i − n ≤ −1`, and n is bounded by its own TYPE: together
+    // those give `i ≤ typemax(n) − 1`, hence `i + 1 ≤ typemax(n)`. The bound is symbolic in
+    // the partner rather than absolute, which is exactly what a relational domain is for.
+    if (!hh && v->id>=0 && v->id<V->nvar) {
+        for (int y=0; y<V->nvar; y++) {
+            if (y==v->id || !V->val[y] || !V->val[y]->type) continue;
+            int64_t c = oct_get(W, oct_pos(y), oct_pos(v->id));   // v − y ≤ c
+            if (c >= OCT_INF) continue;
+            int64_t ylo, yhi;
+            if (!irtype_int_range(V->val[y]->type, &ylo, &yhi)) continue;
+            if (c > 0 && yhi > INT64_MAX - c) continue;           // no wrap in the checker
+            int64_t cand = yhi + c;
+            if (cand < thi) thi = cand;
+        }
+    }
     *lo=tlo; *hi=thi;
 }
 // 128-bit range combine so i64/usize arithmetic can't wrap the checker itself.
@@ -914,10 +958,18 @@ static Vra *vra_analyze(IrFunc *f) {
     V->odim = malloc((size_t)V->nvar*sizeof(int));
     for (int i=0;i<V->nvar;i++) V->odim[i] = -1;
     V->noct = 0;
-    for (IrParam *p=f->params; p; p=p->next)
-        if (p->value && p->value->id>=0 && p->value->id<V->nvar && p->value->type
-            && (p->value->type->kind==IRT_INT || p->value->type->kind==IRT_BOOL))
+    for (IrParam *p=f->params; p; p=p->next) {
+        IrType *pt = p->value ? p->value->type : NULL;
+        if (!p->value || p->value->id<0 || p->value->id>=V->nvar || !pt) continue;
+        // A `var x i32` parameter is a POINTER, but it is also a numeric CELL (see
+        // vra_is_param_cell), so it needs a dimension like any other — without one every
+        // constraint written about it was silently discarded and the cell modelling below
+        // did nothing at all.
+        bool cell = pt->kind==IRT_PTR && pt->ptr_mut && pt->elem
+                 && (pt->elem->kind==IRT_INT || pt->elem->kind==IRT_BOOL);
+        if (pt->kind==IRT_INT || pt->kind==IRT_BOOL || cell)
             V->odim[p->value->id] = V->noct++;
+    }
     for (IrBlock *b=f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             IrValue *rv = ins->result;
@@ -941,6 +993,7 @@ static Vra *vra_analyze(IrFunc *f) {
     int nb=f->next_block_id;
     V->in=calloc(nb,sizeof(int64_t*)); V->reached=calloc(nb,sizeof(bool));
     V->def=calloc(V->nvar,sizeof(IrInstr*)); V->defblk=calloc(V->nvar,sizeof(int));
+    V->val=calloc(V->nvar,sizeof(IrValue*));
     V->cval=calloc(V->nvar,sizeof(int64_t)); V->cknown=calloc(V->nvar,sizeof(bool));
     V->slicelen=calloc(V->nvar,sizeof(int)); V->subslice_gep=calloc(V->nvar,sizeof(bool));
     V->escaped=calloc(V->nvar,sizeof(bool));
@@ -1228,7 +1281,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->cellcanon); free(V->subslice_gep); free(V->escaped); free(V->shape_rank); free(V->shape_ext); free(V->odim); free(V->checks); free(V);
+    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->shape_rank); free(V->shape_ext); free(V->odim); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H

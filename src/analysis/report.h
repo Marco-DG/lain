@@ -25,7 +25,11 @@ static void ir_diag(const char *file, isize line, isize col, const char *code, c
 
 // Run every sovereign analysis over one function and print what it finds.
 // Returns the number of ERRORS (warnings and notes do not count).
-static int ir_report_findings(IrFunc *f, const char *file, bool numeric) {
+// `mod` is passed EXPLICITLY rather than read from bor_loan_mod: borrow_analyze_mod sets that
+// global on entry and NULLS IT ON EXIT, so reading it here gave the first function a module
+// and every one after it nothing — the co-argument aliasing check silently stopped running
+// after the first callee, which is exactly where `mix(var x, var x)` lives.
+static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool numeric) {
     int n = 0;
 
     Lin *L = lin_analyze(f);
@@ -52,7 +56,7 @@ static int ir_report_findings(IrFunc *f, const char *file, bool numeric) {
     }
     di_free(D);
 
-    Borrow *B = borrow_analyze_mod(f, bor_loan_mod);
+    Borrow *B = borrow_analyze_mod(f, mod);
     for (int i = 0; i < B->nfinds; i++) {
         BorrowFinding *fi = &B->finds[i];
         ir_diag(file, fi->line, fi->col, fi->code==2 ? "E002" : "E004",
