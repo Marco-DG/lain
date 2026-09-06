@@ -499,7 +499,8 @@ The endeavour is complete when ALL of these hold simultaneously:
       cross-fn elision → **★ numeric-aided disjointness (beyond Rust: safe `split_at_mut`)**.
 - [ ] **3.2 linearity completed** — folded INTO the borrow framework as `Move` accesses
       (E016/per-field fall out of the place lattice).
-- [ ] **3.4 termination** — recursion measures on the IR; closes the DIVERGE-vs-measure gap.
+- [x] **3.4 termination** ✓ — loop measures (session 21) + RECURSION measures on the IR
+      (well-founded parameter, asked at the call edge). Closes the DIVERGE-vs-measure gap.
 - [ ] **VRA frontier** — nonlinear/symbolic 2D via S2; the accumulation-overflow honesty pass.
 - [ ] **3.5 GATE + DELETE `src/sema/`** — the rebuild's finish line (E0.3).
 
