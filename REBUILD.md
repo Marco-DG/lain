@@ -535,7 +535,7 @@ The endeavour is complete when ALL of these hold simultaneously:
 ### ▸ STAGE IV — The backend earns the proofs
 - [~] **4.0 CAN THE NEW EMITTER REPLACE THE OLD ONE?** — `emit_gate.sh` runs the real corpus
       through BOTH backends and compares stdout + exit code. Start: 209 agree / 15 differ /
-      **141 could not build**. Now: **305 agree / 22 differ / 40 cannot build.**
+      **141 could not build**. Now: **306 agree / 22 differ / 39 cannot build.**
       ★ Almost none of the gap was backend immaturity. It was SEVEN front-end and lowering
       defects the old path happened to paper over, each found by running the corpus rather
       than by reading code:
@@ -558,8 +558,12 @@ The endeavour is complete when ALL of these hold simultaneously:
         · the case EXPRESSION (`return case o { Some(v): v  None: d }`) was not lowered at all
         · a global constant ARRAY read dereferenced null (it cannot fold to a scalar, so it
           fell through to OPAQUE)
-      Remaining is concentrated: SIMD vector types (most build failures) and niche-optimised
-      ADT layout — i.e. exactly what 4.3 names.
+        · **SIMD vectors were not in the type lattice** — `Vec(N,T)` lowered to `void*`, the
+          largest remaining build-failure class. `IRT_VECTOR` (f093e30) says only "N lanes of
+          T"; the vector_size typedef is the backend's choice, as tag-vs-niche is for a sum.
+      Remaining is now narrow: the SIMD BUILTINS (`@load`, `@store`, `@splat`, `@movemask` —
+      `@popcount`/`@ctz`/`@clz` already have IR ops) and niche-optimised ADT layout, i.e.
+      exactly what 4.3 names.
 - [ ] **4.1/4.3** proof-exploiting C emission (checks proved away are *absent*), niche/SIMD/
       annotations re-expressed on the IR.
 - [ ] **4.2 LLVM/native seam** on the sovereign IR (E0.7).
