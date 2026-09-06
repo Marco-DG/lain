@@ -31,6 +31,9 @@ typedef struct {
     bool      unsafe;      // inside an `unsafe` block (elem_ptr etc. become unchecked)
     // innermost loop targets, for break/continue
     IrBlock  *loop_head, *loop_exit;
+    int       loop_defer_mark;   // defer-stack depth on entering the innermost loop BODY:
+                                 // `break`/`continue` leave that block, so they run what it
+                                 // registered, exactly as falling off its end does.
     DeclList *globals;     // module top-level decls (for global-constant references)
     int       const_depth; // recursion guard for cyclic constant initializers
     // struct-type memo: cache the IrType per struct decl so a self-referential
@@ -1440,10 +1443,11 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             c->cur = head;
             IrValue *cond = ir_lower_expr(c, s->as.while_stmt.cond);
             ir_set_br_cond(head, cond, body, exit);
-            IrBlock *oh=c->loop_head, *oe=c->loop_exit; c->loop_head=head; c->loop_exit=exit;
+            IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
+                c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
             c->cur = body; ir_lower_stmts(c, s->as.while_stmt.body);
             if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, head);
-            c->loop_head=oh; c->loop_exit=oe;
+            c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om;
             c->cur = exit;
             break;
         }
@@ -1465,14 +1469,15 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 IrValue *hi = hi_e ? ir_lower_expr(c, hi_e) : ir_const_int(c->f,head,0,ity);
                 IrValue *cond = ir_icmp(c->f, head, it->as.range_expr.inclusive?IR_CMP_ULE:IR_CMP_ULT, iv, hi);
                 ir_set_br_cond(head, cond, body, exit);
-                IrBlock *oh=c->loop_head, *oe=c->loop_exit; c->loop_head=head; c->loop_exit=exit;
+                IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
+                c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
                 c->cur = body; ir_lower_stmts(c, s->as.for_stmt.body);
                 if (!ir_is_set_term(c->cur)) {
                     IrValue *ci = ir_load(c->f, c->cur, icell, ity);
                     ir_store(c->f, c->cur, icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,ity),ity));
                     ir_set_br(c->cur, head);
                 }
-                c->loop_head=oh; c->loop_exit=oe; c->cur = exit;
+                c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om; c->cur = exit;
                 break;
             }
             // for v in arr { body }  ⇒  i=0; while i<arr.len { v=arr[i]; body; i=i+1 }
@@ -1492,7 +1497,8 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             IrValue *len = is_slice ? ir_slice_len(c->f, head, av)
                          : ir_const_int(c->f, head, alen>=0?alen:0, usz);
             ir_set_br_cond(head, ir_icmp(c->f,head,IR_CMP_ULT,iv,len), body, exit);
-            IrBlock *oh=c->loop_head, *oe=c->loop_exit; c->loop_head=head; c->loop_exit=exit;
+            IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
+                c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
             c->cur = body;
             IrValue *iv2 = ir_load(c->f, body, icell, usz);
             IrValue *dat = is_slice ? ir_slice_data(c->f, body, av, elem) : av;
@@ -1504,7 +1510,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 ir_store(c->f, c->cur, icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,usz),usz));
                 ir_set_br(c->cur, head);
             }
-            c->loop_head=oh; c->loop_exit=oe; c->cur = exit;
+            c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om; c->cur = exit;
             break;
         }
         case STMT_MATCH: {
@@ -1596,14 +1602,40 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             if (mborrow) ir_borrow_end(c->f, c->cur, mborrow);   // the scoped loan ends here
             break;
         }
-        case STMT_BREAK:    if (c->loop_exit) ir_set_br(c->cur, c->loop_exit); break;
-        case STMT_CONTINUE: if (c->loop_head) ir_set_br(c->cur, c->loop_head); break;
+        case STMT_BREAK: case STMT_CONTINUE: {
+            // Both LEAVE the loop body, so both run the defers it registered — in reverse,
+            // like any other block exit. Without this a `continue` skipped them entirely.
+            if (!c->in_defer && c->ndefers > c->loop_defer_mark) {
+                c->in_defer = true;
+                for (int i = c->ndefers - 1; i >= c->loop_defer_mark; i--) ir_lower_stmt(c, c->defers[i]);
+                c->in_defer = false;
+            }
+            IrBlock *tgt = (s->kind==STMT_BREAK) ? c->loop_exit : c->loop_head;
+            if (tgt) ir_set_br(c->cur, tgt);
+            break;
+        }
         case STMT_UNSAFE: { bool o=c->unsafe; c->unsafe=true; ir_lower_stmts(c, s->as.unsafe_stmt.body); c->unsafe=o; break; }
         default: ir_incomplete(c, "unhandled-stmt"); break;   // enum-match/use — TODO (fail closed)
     }
 }
+// `defer` is BLOCK-scoped, not function-scoped. The old backend emits the deferred call at
+// the end of the block that registered it — `defer printf("2")` inside an `if` prints before
+// the statement after the `if` — and the lowering was written on the opposite assumption, so
+// every nested defer ran too late and in the wrong order (`12-3` became `1-23`, and a defer
+// inside a loop body ran once at the end instead of once per iteration).
+//
+// A block records the stack depth it started at, replays what IT registered on the way out,
+// and pops back. A `return` still flushes EVERYTHING (an exit leaves every scope at once), so
+// the replay here is skipped when control has already left.
 static void ir_lower_stmts(LowerCtx *c, StmtList *body) {
+    int mark = c->ndefers;
     for (StmtList *b = body; b && !ir_is_set_term(c->cur); b = b->next) ir_lower_stmt(c, b->stmt);
+    if (!c->in_defer && c->ndefers > mark && !ir_is_set_term(c->cur)) {
+        c->in_defer = true;
+        for (int i = c->ndefers - 1; i >= mark; i--) ir_lower_stmt(c, c->defers[i]);
+        c->in_defer = false;
+    }
+    if (c->ndefers > mark) c->ndefers = mark;
 }
 
 // Emit `assume(param OP const)` for a scalar param's refinement (`n u32 < 4096`).
