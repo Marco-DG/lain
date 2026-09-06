@@ -33,6 +33,10 @@ typedef enum {
     IRT_INT,        // iN / uN, usize/isize — carries width + signedness
     IRT_BOOL,       // i1 truth value
     IRT_FLOAT,      // f32 / f64 (opaque to the numeric domain, for now)
+    IRT_VECTOR,     // SIMD `Vec(N, T)` — N lanes of T. `elem` = lane type, `array_len` = N.
+                    // A plain Copy value: no linearity, register-resident. The LAYOUT (a
+                    // vector_size typedef, or N scalars) is the backend's, exactly as for a
+                    // sum's tag-vs-niche — the IR says only "N lanes of T".
     IRT_PTR,        // raw *T / *var T
     IRT_SLICE,      // T[] / u8[:0] — a fat value {data ptr, len}
     IRT_ARRAY,      // fixed T[N]

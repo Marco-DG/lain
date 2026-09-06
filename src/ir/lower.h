@@ -371,6 +371,12 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
     // carries T, one empty variant per marker. The LAYOUT — a tagged pair, or the old
     // backend's niche where markers are out-of-range values of T — is deliberately not
     // recorded, exactly as for a named enum: that is the backend's choice, not the IR's.
+    if (t->kind == TYPE_VECTOR) {
+        IrType *v = ir_type_new(c->a, IRT_VECTOR);
+        v->elem = ir_lower_type(c, t->element_type);
+        v->array_len = t->array_len;                 // the lane count
+        return v;
+    }
     if (t->kind == TYPE_UNION) {
         // Sema already lowers a union to a real, NAMED enum (`__U_<T>_<m1>_<m2>`, one payload
         // variant plus one empty variant per marker) and rewrites most references to it — but
@@ -1462,6 +1468,24 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 break;
             }
             IrValue *slot = ir_alloca(c->f, c->cur, slot_ty);
+            // A VECTOR local initialised from a bracket literal. Not the array path — a vector
+            // is a VALUE, so it is built once and stored, not filled lane by lane. The literal
+            // itself types as an array; the vector comes from the DECLARED slot type, which is
+            // why this cannot be decided from the initializer alone.
+            if (slot_ty->kind == IRT_VECTOR && s->as.var_stmt.expr
+                && s->as.var_stmt.expr->kind == EXPR_ARRAY_LITERAL) {
+                Expr *vi = s->as.var_stmt.expr;
+                int n = 0; for (ExprList *el = vi->as.array_literal_expr.elements; el; el = el->next) n++;
+                IrValue **lanes = arena_push_many_aligned(c->a, IrValue*, n > 0 ? n : 1);
+                int k = 0;
+                for (ExprList *el = vi->as.array_literal_expr.elements; el; el = el->next, k++)
+                    lanes[k] = ir_lower_expr(c, el->expr);
+                ir_store(c->f, c->cur, slot, ir_struct_new(c->f, c->cur, slot_ty, lanes, n));
+                IrLocal *vl = arena_push_aligned(c->a, IrLocal);
+                vl->name = s->as.var_stmt.name; vl->slot = slot; vl->param = NULL;
+                vl->next = c->locals; c->locals = vl;
+                break;
+            }
             // A stack VLA — `var a u8[n]` — lowers to a SLICE slot, and its length was never
             // stated anywhere: `a[i]` under `i < n` could not be proven and `a.len` was
             // unknown, because nothing connected the slice to `n`. State it. This is the same

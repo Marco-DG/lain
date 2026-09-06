@@ -23,6 +23,8 @@ static int ir_slice_tag(const IrType *e, char *buf, int n) {
         case IRT_BOOL:  return snprintf(buf, n, "b");
         case IRT_PTR:   { int k=snprintf(buf,n,"p"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
         case IRT_FLOAT: return snprintf(buf, n, "f%d", e->float_bits);
+        case IRT_VECTOR: { int k=snprintf(buf,n,"v%d", (int)e->array_len);
+                           return k + ir_slice_tag(e->elem, buf+k, n-k); }
         case IRT_SLICE: { int k=snprintf(buf,n,"s"); return k + ir_slice_tag(e->elem, buf+k, n-k); }
         case IRT_STRUCT: case IRT_SUM:
                         if (e->sname) { IrName *nm=e->sname;
@@ -38,6 +40,11 @@ static void ir_ctype(const IrType *t, FILE *o) {
         case IRT_INT:  fprintf(o, "%sint%d_t", t->is_signed?"":"u", ir_c_stdbits(t->bits)); break;
         case IRT_BOOL: fputs("_Bool", o); break;
         case IRT_FLOAT: fputs(t->float_bits==32 ? "float" : "double", o); break;
+        case IRT_VECTOR: {   // the GCC/Clang vector_size typedef declared in ir_emit_type_decls
+            char tag[64]; ir_slice_tag(t->elem, tag, sizeof tag);
+            fprintf(o, "Vec_%d_%s", (int)t->array_len, tag);
+            break;
+        }
         case IRT_PTR:  ir_ctype(t->elem, o); fputc('*', o); break;
         case IRT_SLICE:{ char tag[128]; ir_slice_tag(t->elem, tag, sizeof tag); fprintf(o, "Slice_%s", tag); } break;
         case IRT_STRUCT: case IRT_SUM:
@@ -282,7 +289,8 @@ static void ir_emit_proto_c(IrFunc *f, FILE *o) {
 // A set of the composite types the module needs C declarations for, gathered
 // transitively so a struct that appears only as a slice element / pointer pointee
 // / another struct's field is still declared.
-typedef struct { IrType *structs[256]; int n_struct; IrType *slices[256]; int n_slice; } IrTypeSet;
+typedef struct { IrType *structs[256]; int n_struct; IrType *slices[256]; int n_slice;
+                 IrType *vecs[64];     int n_vec; } IrTypeSet;
 static bool ir_name_eq(const IrName *a, const IrName *b) {
     return a && b && a->length==b->length && memcmp(a->name,b->name,(size_t)a->length)==0;
 }
@@ -299,6 +307,15 @@ static void ir_ts_visit(IrTypeSet *ts, IrType *t) {
     if (!t) return;
     switch (t->kind) {
         case IRT_PTR: case IRT_ARRAY: ir_ts_visit(ts, t->elem); break;
+        case IRT_VECTOR: {   // one vector_size typedef per (lanes, lane type)
+            for (int i=0;i<ts->n_vec;i++)
+                if (ts->vecs[i]->array_len==t->array_len && ts->vecs[i]->elem
+                    && t->elem && ts->vecs[i]->elem->kind==t->elem->kind
+                    && ts->vecs[i]->elem->bits==t->elem->bits
+                    && ts->vecs[i]->elem->is_signed==t->elem->is_signed) return;
+            if (ts->n_vec < 64) ts->vecs[ts->n_vec++] = t;
+            break;
+        }
         case IRT_SLICE:
             ir_ts_visit(ts, t->elem);                         // element first (dependency)
             if (!ir_ts_slice_seen(ts, t) && ts->n_slice<256) ts->slices[ts->n_slice++]=t;
@@ -412,6 +429,16 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     }
     for (int i=0;i<ts.n_struct;i++){ IrName *nm=ts.structs[i]->sname;
         fprintf(o, "typedef struct %.*s %.*s;\n", (int)nm->length, nm->name, (int)nm->length, nm->name); }
+    // SIMD vectors first: they are primitives, and a slice or struct may contain one.
+    for (int i=0;i<ts.n_vec;i++) {
+        IrType *v = ts.vecs[i];
+        int lanes = (int)v->array_len;
+        int bytes = lanes * ((v->elem && v->elem->bits) ? v->elem->bits/8 : 4);
+        char tag[64]; ir_slice_tag(v->elem, tag, sizeof tag);
+        fputs("typedef ", o); ir_ctype(v->elem, o);
+        fprintf(o, " Vec_%d_%s __attribute__((vector_size(%d)));\n", lanes, tag, bytes);
+    }
+    if (ts.n_vec) fputc('\n', o);
     for (int i=0;i<ts.n_slice;i++) ir_emit_one_slice(ts.slices[i], o);
     // Bodies in DEPENDENCY order: a struct that contains another BY VALUE needs the inner
     // one complete first. Reverse discovery order is not that — it works only when the
