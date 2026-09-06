@@ -21,12 +21,28 @@
 #     here because the old engine happens to report them through its linearity pass, not
 #     because they are dataflow questions.
 #
-# (b) per-ELEMENT array init — a MUST-analysis cannot prove a loop covers 0..len, so arrays
-#     are deliberately untracked (tracking them produced 8 false positives). Closing this
-#     needs the numeric domain to prove the fill loop is total — a natural Stage III-D use
-#     of the same VRA bridge that gives us a[i] vs a[j] disjointness.
-tests/memory/array_comprehension_expr_position_fail.ln    NEW-ACCEPTS  new-incomplete-definite-assignment
-tests/memory/array_uninit_element_read_fail.ln            NEW-ACCEPTS  new-incomplete-definite-assignment
+# (b) per-ELEMENT array init — RE-JUDGED, and NEITHER was what this entry claimed. Arrays are
+#     now tracked per element for CONSTANT indices, which closed a real FAIL-OPEN the new
+#     engine had (`var a i32[4]; return a[0]` — reading storage nothing ever wrote — was
+#     missed entirely). The two tests turn out to be different animals:
+#
+#   • array_uninit_element_read asserts `a[0] = 5; return a[0]` must be REJECTED. That
+#     program is SAFE. The old engine demands a WHOLE-array initialiser before any element
+#     read ("initialize it with a whole-array value ... before reading elements") because it
+#     has no per-element state; the new engine tracks the element and accepts.
+#     ⇒ new-more-precise. At 3.5 this test INVERTS to a pass-test (CORPUS_CORRECTIONS C-4).
+tests/memory/array_uninit_element_read_fail.ln            NEW-ACCEPTS  new-more-precise
+#
+#   • array_comprehension_expr_position is [E100] "an array comprehension is only supported
+#     as a variable initializer ... FOR NOW" — an explicit front-end/parser limitation, not a
+#     dataflow question at all. A second front-end would not have the rule.
+tests/memory/array_comprehension_expr_position_fail.ln    NEW-ACCEPTS  front-end-policy
+#
+#     STILL OPEN and now stated precisely: a store at an UNKNOWN index is treated as
+#     initialising the whole aggregate — deliberately FAIL-OPEN, so a half-filling loop is
+#     not caught. Comprehensions no longer rely on that (lowering states IR_INIT, since a
+#     comprehension fills every element by definition), but a hand-written partial fill loop
+#     does. Proving such a loop total needs the numeric domain to show it covers 0..len.
 #
 # (c) NESTED field paths — CLOSED, and it was a FAIL-OPEN, not merely imprecision: a depth-2
 #     write (`p.a.y = 1`) marked the whole PARENT field initialised, so reading the still-unset

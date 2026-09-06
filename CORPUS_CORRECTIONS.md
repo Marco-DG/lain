@@ -141,6 +141,32 @@ deciding its own policy — deferred to Stage V, when the language catches up to
 
 ---
 
+## C-4 · `tests/memory/array_uninit_element_read_fail.ln` — fail ⇒ **pass**
+
+```lain
+var a i32[4]
+a[0] = 5
+return a[0]            // asserted [E005]; actually SAFE
+```
+
+The element being read is the element that was just written. The old engine rejects because
+it has no per-element state and says so in the diagnostic itself: *"initialize it with a
+whole-array value (a literal or comprehension) before reading elements."* That is a
+statement about the checker, not about the program.
+
+**New engine.** Tracks array elements at CONSTANT indices, so `a[0]` is initialised and the
+read is accepted — while `var a i32[4]; return a[0]`, reading storage nothing ever wrote, is
+now CAUGHT. The new engine had missed that entirely (arrays were untracked), so this change
+closed a fail-open and an over-rejection at the same time, from opposite directions.
+
+**Still fail-open, and worth stating plainly:** a store at an UNKNOWN index is treated as
+initialising the whole array, so a loop that fills only half of one is not caught.
+Comprehensions no longer depend on that approximation — lowering states `IR_INIT`, because a
+comprehension fills every element by definition — but a hand-written partial fill does.
+Proving such a loop total needs the numeric domain to show it covers `0..len`.
+
+---
+
 ## Switchover procedure (Stage 3.5)
 
 1. Invert each entry: rename `*_fail.ln` → `*_pass.ln`, drop the `// EXPECT:` line, add a

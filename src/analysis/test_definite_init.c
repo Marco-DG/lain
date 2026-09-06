@@ -84,6 +84,40 @@ int main(void){
       ir_load(f,j,s,i32); ir_set_ret(j,NULL);
       di_expect("initialised on one branch only fires E005", ncode(f,5), 1); }
 
+    // 7) ARRAYS, per ELEMENT at constant indices. Whole-array-only tracking missed reading
+    // storage nothing ever wrote; demanding a whole-array initialiser (what the old engine
+    // does) rejects the perfectly safe `a[0] = 5; return a[0]`. Both directions matter.
+    { IrType *arr = ir_type_new(&A,IRT_ARRAY); arr->elem=i32; arr->array_len=4;
+      IrType *u64t = ir_type_int(&A,64,false);
+      // read a[0] with nothing written  →  E005
+      { IrFunc *f=ir_func_new(&A,nm("aun"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *a=ir_alloca_array(f,e,arr);
+        ir_load(f,e, ir_elem_ptr(f,e,a,ir_const_int(f,e,0,u64t),i32), i32);
+        ir_set_ret(e,NULL);
+        di_expect("uninitialised a[0] read fires E005", ncode(f,5), 1); }
+      // a[0] = 5 then read a[0]  →  clean (the element IS initialised)
+      { IrFunc *f=ir_func_new(&A,nm("ael"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *a=ir_alloca_array(f,e,arr);
+        ir_store(f,e, ir_elem_ptr(f,e,a,ir_const_int(f,e,0,u64t),i32), ir_const_int(f,e,5,i32));
+        ir_load(f,e, ir_elem_ptr(f,e,a,ir_const_int(f,e,0,u64t),i32), i32);
+        ir_set_ret(e,NULL);
+        di_expect("a[0]=5 then read a[0] is clean", ncode(f,5)+ncode(f,19), 0); }
+      // a[0] = 5 then read a[1]  →  that element is still unwritten
+      { IrFunc *f=ir_func_new(&A,nm("aoth"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *a=ir_alloca_array(f,e,arr);
+        ir_store(f,e, ir_elem_ptr(f,e,a,ir_const_int(f,e,0,u64t),i32), ir_const_int(f,e,5,i32));
+        ir_load(f,e, ir_elem_ptr(f,e,a,ir_const_int(f,e,1,u64t),i32), i32);
+        ir_set_ret(e,NULL);
+        di_expect("a[0]=5 then read a[1] is flagged", ncode(f,5)+ncode(f,19), 1); }
+      // an IR_INIT fact (what a comprehension states) makes the whole array readable
+      { IrFunc *f=ir_func_new(&A,nm("ainit"),unit,IR_FUNC_PROC); IrBlock *e=f->entry;
+        IrValue *a=ir_alloca_array(f,e,arr);
+        ir_init_fact(f,e,a);
+        ir_load(f,e, ir_elem_ptr(f,e,a,ir_const_int(f,e,3,u64t),i32), i32);
+        ir_set_ret(e,NULL);
+        di_expect("IR_INIT makes every element readable", ncode(f,5)+ncode(f,19), 0); }
+    }
+
     printf(failures? "DEFINITE-INIT: %d WRONG\n" : "DEFINITE-INIT: all expectations met\n", failures);
     return failures?1:0;
 }

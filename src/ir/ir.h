@@ -160,6 +160,16 @@ typedef enum {
     // The extents are RUNTIME VALUES, which is why the shape cannot live on IrType and is
     // stated here in the IR rather than rediscovered by each analysis from a side-map.
     IR_SHAPE,
+    // Declares that op[0] (a place) is WHOLLY INITIALISED from here on. No runtime effect.
+    //
+    // Some constructs initialise a whole aggregate BY CONSTRUCTION and the fact is known at
+    // lowering: an array comprehension `[expr for i in 0..N]` fills every element, by
+    // definition. A MUST-analysis cannot rediscover that — it lowers to a fill LOOP, and the
+    // zero-iteration path through the loop intersects the fact away at the join, so
+    // definite-assignment reported every comprehension-filled array as uninitialised.
+    // Stating what lowering already knows is honest and costs nothing; making the analysis
+    // re-derive it would need a proof that the loop covers 0..len.
+    IR_INIT,
     // ── B3: the TOTALITY primitive ──────────────────────────────────────────
     // An UNMODELLED construct, represented honestly instead of poisoning its whole
     // function. `IrFunc.incomplete` suppressed every proof over a function that contained

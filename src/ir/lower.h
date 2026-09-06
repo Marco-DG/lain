@@ -1056,6 +1056,9 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                     IrValue *ci=ir_load(c->f,c->cur,icell,ity);
                     ir_store(c->f,c->cur,icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,ity),ity));
                     ir_set_br(c->cur,head); c->cur=ex;
+                    // A comprehension fills EVERY element by definition. State it: the fill
+                    // LOOP's zero-iteration path would otherwise intersect the fact away.
+                    ir_init_fact(c->f, c->cur, agg);
                 } else if (init) {
                     ir_incomplete(c, "aggregate-init");   // an init shape we don't model — fail closed
                 }

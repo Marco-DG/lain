@@ -120,6 +120,13 @@ void ir_consume(IrFunc *f, IrBlock *b, IrValue *slot) {
     ins->operands[0] = slot;
     ir_emit(b, ins);
 }
+// Declare that `place` is wholly initialised from here (no runtime effect).
+void ir_init_fact(IrFunc *f, IrBlock *b, IrValue *place) {
+    IrInstr *ins = ir_instr(f, IR_INIT, NULL, 1);
+    ins->operands[0] = place;
+    ir_emit(b, ins);
+}
+
 // S2: declare a rank-N shape for a flat region. op[0]=base, op[1..n]=extents (outermost
 // first). No result — it states a fact about the base, like an assume.
 void ir_shape(IrFunc *f, IrBlock *b, IrValue *base, IrValue **extents, int rank) {

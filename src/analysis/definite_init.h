@@ -53,6 +53,15 @@ static void di_add(Di *D, int base, isize line, isize col, int code) {
 static bool di_is_whole(uint64_t m){ return (m >> DI_WHOLE_BIT) & 1u; }
 
 // mark a place initialised in `st`; promote to whole when every field is covered
+// The CONSTANT value of an index, or -1. Per-element tracking only ever applies to indices
+// the IR states as literals; anything computed stays in the conservative path.
+static int64_t di_const_index(Di *D, const IrValue *ix) {
+    if (!ix || ix->id < 0 || ix->id >= D->nvar) return -1;
+    IrInstr *d = D->def[ix->id];
+    if (!d || d->op != IR_CONST) return -1;
+    return d->aux.imm;
+}
+
 // promote: a struct whose every field is initialised is wholly initialised
 static void di_promote(Di *D, uint64_t *st, int b) {
     IrType *t = D->alloca_ty[b];
@@ -91,8 +100,28 @@ static void di_mark_init(Di *D, uint64_t *st, const IrPlace *p) {
         di_promote(D, st, b);
         return;
     }
-    // an INDEXED store initialises an unknown element — conservatively treat the aggregate
-    // as initialised (we do not track per-element state; flagging would false-positive).
+    if (p->proj[0].kind == IRPJ_INDEX) {
+        // A CONSTANT index initialises exactly that element — `a[0] = 5` makes a[0] readable
+        // without making a[1] readable. The old engine demands a WHOLE-array initialiser
+        // before ANY element read, which rejects the perfectly safe `a[0] = 5; return a[0]`.
+        int64_t k = di_const_index(D, p->proj[0].index);
+        IrType *t = D->alloca_ty[b];
+        if (k >= 0 && k < 63) {
+            st[b*DI_W] |= (1ull<<k);
+            if (t && t->kind==IRT_ARRAY && t->array_len>0 && t->array_len<63) {
+                uint64_t all = (1ull<<t->array_len)-1u;
+                if ((st[b*DI_W] & all) == all) st[b*DI_W] |= (1ull<<DI_WHOLE_BIT);
+            }
+            return;
+        }
+        // An UNKNOWN index could be any element, so we cannot say WHICH became initialised.
+        // Treating it as initialising the whole aggregate is deliberately FAIL-OPEN: it is
+        // what lets a fill loop (`while i<n { a[i]=… }`) be followed by a read without 8
+        // false positives, and proving such a loop TOTAL needs the numeric domain to show it
+        // covers 0..len — a genuine gap, recorded rather than papered over.
+        st[b*DI_W] |= (1ull<<DI_WHOLE_BIT);
+        return;
+    }
     st[b*DI_W] |= (1ull<<DI_WHOLE_BIT);
 }
 
@@ -102,6 +131,11 @@ static int di_check_read(Di *D, const uint64_t *st, const IrPlace *p) {
     int b = p->base_id; if (b<0 || b>=D->nvar || !D->tracked[b]) return 0;
     uint64_t m = st[b*DI_W];
     if (di_is_whole(m)) return 0;
+    if (p->nproj>0 && p->proj[0].kind==IRPJ_INDEX) {
+        int64_t k = di_const_index(D, p->proj[0].index);
+        if (k >= 0 && k < 63) return (m & (1ull<<k)) ? 0 : ((m != 0) ? 19 : 5);
+        return (m != 0) ? 0 : 5;      // unknown index: any initialisation makes it plausible
+    }
     if (p->nproj>0 && p->proj[0].kind==IRPJ_FIELD) {
         int fi = p->proj[0].field;
         if (fi<0 || fi>=63) return (m != 0) ? 19 : 5;
@@ -123,6 +157,12 @@ static int di_check_read(Di *D, const uint64_t *st, const IrPlace *p) {
 
 static void di_run_block(Di *D, IrBlock *b, uint64_t *st, bool report) {
     for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+        if (ins->op==IR_INIT && ins->n_operands>=1) {      // a declared whole-initialisation
+            IrPlace t = ir_place_of(D->def, D->nvar, ins->operands[0]);
+            if (t.valid && t.base_kind==IRPB_LOCAL && t.base_id>=0 && t.base_id<D->nvar
+                && D->tracked[t.base_id]) st[t.base_id*DI_W] |= (1ull<<DI_WHOLE_BIT);
+            continue;
+        }
         if (ins->op==IR_STORE && ins->n_operands>=1) {
             IrPlace t = ir_place_of(D->def, D->nvar, ins->operands[0]);
             di_mark_init(D, st, &t);
@@ -157,8 +197,14 @@ static Di *di_analyze(IrFunc *f) {
             // array-element uninit detection — adjudicated as a known gap).
             if (i->op==IR_ALLOCA && i->result && i->aux.alloca_ty) {
                 IrTypeKind k = i->aux.alloca_ty->kind;
+                // ARRAYS are now tracked per ELEMENT for constant indices (see di_mark_init):
+                // that catches `var a i32[4]; return a[0]` — reading storage nothing ever
+                // wrote — which whole-array-only tracking missed entirely. A slice/VLA still
+                // is not tracked: it has no static extent to enumerate.
                 bool trackable = (k==IRT_INT || k==IRT_BOOL || k==IRT_FLOAT
-                                  || k==IRT_PTR || k==IRT_STRUCT);   // NOT array/slice/VLA
+                                  || k==IRT_PTR || k==IRT_STRUCT
+                                  || (k==IRT_ARRAY && i->aux.alloca_ty->array_len>0
+                                      && i->aux.alloca_ty->array_len<63));
                 if (trackable) { D->tracked[i->result->id]=true; D->alloca_ty[i->result->id]=i->aux.alloca_ty; }
             }
         }
