@@ -1127,6 +1127,23 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 break;
             }
             IrValue *slot = ir_alloca(c->f, c->cur, slot_ty);
+            // A stack VLA — `var a u8[n]` — lowers to a SLICE slot, and its length was never
+            // stated anywhere: `a[i]` under `i < n` could not be proven and `a.len` was
+            // unknown, because nothing connected the slice to `n`. State it. This is the same
+            // category of fact as IR_SHAPE and IR_INIT — no runtime effect, just what lowering
+            // already knows by construction (the backend emits exactly `T a[n]`), so it needs
+            // no discharging assert: it is definitional, not an assumption about behaviour.
+            {   Type *dt = s->as.var_stmt.type;
+                if (dt && dt->kind==TYPE_ARRAY && dt->array_len<0 && dt->size_expr
+                    && slot_ty->kind==IRT_SLICE && !s->as.var_stmt.expr) {
+                    IrValue *nv = ir_lower_expr(c, dt->size_expr);
+                    if (nv && nv->type && nv->type->kind==IRT_INT) {
+                        IrValue *sv = ir_load(c->f, c->cur, slot, slot_ty);
+                        IrValue *lv = ir_slice_len(c->f, c->cur, sv);
+                        ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_EQ, lv, nv));
+                    }
+                }
+            }
             Expr *vinit = s->as.var_stmt.expr;
             // `var s = "hello"` — a MUTABLE binding initialised from a string literal needs
             // its OWN writable storage. IR_STR_CONST points at IMMUTABLE STATIC bytes (that

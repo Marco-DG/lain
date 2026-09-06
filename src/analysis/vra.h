@@ -102,6 +102,18 @@ static void vra_prepass(Vra *V) {
         }
     int *cell_len = malloc(V->nvar*sizeof(int));
     for (int i=0;i<V->nvar;i++) cell_len[i]=-1;
+    // How many times is each slice cell STORED? A cell's canonical length is only meaningful
+    // while the cell holds one slice for its whole life. `s = borrow(big); if i < s.len { s =
+    // borrow(small); return s[i] }` reassigns to a SHORTER slice, and a length cached from the
+    // first must not survive it — that is a false proof and an out-of-bounds read. The count
+    // is what makes both directions safe: exactly one store ⇒ the stored slice's length is the
+    // cell's; ZERO stores ⇒ a stack VLA, whose length comes from the slice_len seeding below;
+    // anything else ⇒ no canonical length at all.
+    int *cell_stores = calloc((size_t)V->nvar, sizeof(int));
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next)
+            if (ins->op==IR_STORE && ins->n_operands>=2 && vra_is_slice_cell(V, ins->operands[0]->id))
+                cell_stores[ins->operands[0]->id]++;
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (ins->op==IR_MAKE_SLICE && ins->result && ins->n_operands>=2) {
@@ -112,17 +124,29 @@ static void vra_prepass(Vra *V) {
             else if (ins->op==IR_SLICE_LEN && ins->result && ins->n_operands>=1) {
                 int s=ins->operands[0]->id;
                 if (V->slicelen[s]<0) V->slicelen[s]=ins->result->id;     // first len read is canonical
+                // ...and it is canonical for the CELL the slice was loaded out of, not just
+                // for that one loaded value. A cell only learned its length from a STORE, so
+                // a stack VLA — `var a u8[n]`, allocated and never assigned — had no length
+                // anywhere, and every later `a[i]` was measured against nothing. A store, if
+                // one comes, still overrides this below.
+                IrInstr *sd = V->def[s];
+                if (sd && sd->op==IR_LOAD && sd->n_operands>=1) {
+                    int cell = sd->operands[0]->id;
+                    if (vra_is_slice_cell(V,cell) && cell_stores[cell]==0 && cell_len[cell]<0)
+                        cell_len[cell]=ins->result->id;
+                }
             }
             else if (ins->op==IR_STORE && ins->n_operands>=2) {
                 int cell=ins->operands[0]->id, v=ins->operands[1]->id;
-                if (vra_is_slice_cell(V,cell) && V->slicelen[v]>=0) cell_len[cell]=V->slicelen[v];
+                if (vra_is_slice_cell(V,cell))
+                    cell_len[cell] = (cell_stores[cell]==1) ? V->slicelen[v] : -1;
             }
             else if (ins->op==IR_LOAD && ins->result && ins->n_operands>=1) {
                 int cell=ins->operands[0]->id;
                 if (vra_is_slice_cell(V,cell) && cell_len[cell]>=0) V->slicelen[ins->result->id]=cell_len[cell];
             }
         }
-    free(cell_len);
+    free(cell_len); free(cell_stores);
 
     // Mark every alloca whose ADDRESS escapes. Provenance is followed through the
     // address-forming ops, so `f(&s.field)` escapes `s` too. A store's TARGET (operand 0) is
