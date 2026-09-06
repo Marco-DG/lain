@@ -790,6 +790,7 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
 }
 
 static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
+    if (e && e->line) { ir_cur_line = e->line; ir_cur_col = e->col; }
     if (!e) return ir_const_int(c->f, c->cur, 0, ir_type_int(c->a,32,true));
     IrType *ty = ir_lower_type(c, e->type);
     switch (e->kind) {
@@ -1144,6 +1145,7 @@ static void ir_lower_flush_defers(LowerCtx *c) {
 }
 
 static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
+    if (s && s->line) { ir_cur_line = s->line; ir_cur_col = s->col; }
     if (!s || ir_is_set_term(c->cur)) return;   // dead code after a terminator
     switch (s->kind) {
         case STMT_VAR: {

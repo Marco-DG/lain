@@ -65,8 +65,9 @@ int main(int argc, char **argv) {
                             : L->finds[i].code==2?"moved twice"
                             : L->finds[i].code==16?"consumed on some paths but not others"
                             : "linear value not consumed";
-            fprintf(stderr,"[%s] %.*s: %s (slot %%%d)\n", tag,
-                f->name?(int)f->name->length:1, f->name?f->name->name:"?", msg, L->finds[i].slot);
+            fprintf(stderr,"[%s] %.*s:%lld:%lld: %s (slot %%%d)\n", tag,
+                f->name?(int)f->name->length:1, f->name?f->name->name:"?",
+                (long long)L->finds[i].line, (long long)L->finds[i].col, msg, L->finds[i].slot);
         }
         lin_free(L);
         Di *D = di_analyze(f);

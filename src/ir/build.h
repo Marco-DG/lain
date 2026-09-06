@@ -71,7 +71,15 @@ IrBlock *ir_new_block(IrFunc *f) {
     else { f->blocks_tail->next = b; f->blocks_tail = b; }
     return b;
 }
+// The source position instructions are stamped with. Exactly ONE instruction in the whole
+// lowering used to carry a location (the elem_ptr in ir_lower_addr), so every diagnostic the
+// new engine could produce — a leak, a use-after-move, an uninitialised read, an overflow —
+// pointed at line 0. That is not a cosmetic gap: an engine that cannot say WHERE cannot be
+// the one a user runs, whatever it can prove. Lowering keeps this current; ir_emit stamps it.
+static isize ir_cur_line = 0, ir_cur_col = 0;
+
 IrInstr *ir_emit(IrBlock *b, IrInstr *ins) {
+    if (!ins->line) { ins->line = ir_cur_line; ins->col = ir_cur_col; }
     ins->next = NULL;
     if (!b->instrs) b->instrs = b->instrs_tail = ins;
     else { b->instrs_tail->next = ins; b->instrs_tail = ins; }

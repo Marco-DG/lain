@@ -438,9 +438,15 @@ static Lin *lin_analyze(IrFunc *f) {
                 if ((ins->op==IR_ALLOCA || ins->op==IR_SUM_PAYLOAD)
                     && ins->result && ins->result->id>=0 && ins->result->id<L->nvar)
                     { here[ins->result->id]=true; hered[ins->result->id]=true; }
+            // A terminator carries no position of its own, and a `return` with no value has
+            // no operand to borrow one from — so every leak reported at a void return pointed
+            // at line 0. The last instruction in the block is where control actually leaves.
+            isize bl = 0, bc = 0;
+            for (IrInstr *q=b->instrs; q; q=q->next) if (q->line) { bl=q->line; bc=q->col; }
             for (int s=0;s<L->nvar;s++) {
                 if (!here[s]) continue;               // the resource never reaches this return
-                isize ln = b->term.cond?b->term.cond->line:0, cl = b->term.cond?b->term.cond->col:0;
+                isize ln = b->term.cond&&b->term.cond->line?b->term.cond->line:bl;
+                isize cl = b->term.cond&&b->term.cond->line?b->term.cond->col:bc;
                 // E003 leak: never consumed on ANY path, and a resource would be lost.
                 if (L->linsl[s] && !lin_discharged(L,s,out[s])) { lin_add(L, s, ln, cl, 3); continue; }
                 // E016: consumed on some paths, not others — the state is not well-defined.
