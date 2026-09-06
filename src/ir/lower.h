@@ -794,8 +794,20 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
     if (!e) return ir_const_int(c->f, c->cur, 0, ir_type_int(c->a,32,true));
     IrType *ty = ir_lower_type(c, e->type);
     switch (e->kind) {
-        case EXPR_LITERAL:
-            return ir_const_int(c->f, c->cur, e->as.literal_expr.value, ty);
+        case EXPR_LITERAL: {
+            // A literal's type comes from sema, which leaves a bare integer at i32 even where
+            // the context is wider — `var x i64 = 5000000000` typed the literal i32 and the
+            // constant was TRUNCATED to 705032704. The old engine avoids it by pasting the
+            // literal straight into a C initializer and letting the C compiler pick the type;
+            // the IR materialises a typed value, so it has to be honest about the width.
+            // Refusing to encode a value the type cannot hold is the minimum: widen instead.
+            IrType *lt = ty;
+            int64_t lv = e->as.literal_expr.value;
+            int64_t llo, lhi;
+            if (lt && irtype_int_range(lt, &llo, &lhi) && (lv < llo || lv > lhi))
+                lt = ir_type_int(c->a, 64, lv < 0 || (lt && lt->is_signed));
+            return ir_const_int(c->f, c->cur, lv, lt);
+        }
         case EXPR_CHAR:
             return ir_const_int(c->f, c->cur, e->as.char_expr.value, ty);
         case EXPR_STRING: {
@@ -931,6 +943,18 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                                         ed = ir_find_enum_decl(c, &tn); }
                 int k = ed ? ir_variant_index(ed, m, true) : -1;
                 if (k >= 0) return ir_sum_new(c->f, c->cur, ty, k, NULL, 0);
+            }
+            // `.data` — the slice's base pointer. Only `.len` was handled, so every
+            // `s.data` fell through to the struct-field path, failed to resolve (a slice is
+            // not a struct) and became an OPAQUE unknown: `libc_printf("%s", greeting().data)`
+            // printed "(null)". It is the idiom the whole C boundary is written in.
+            if (m && m->length==4 && strncmp(m->name,"data",4)==0) {
+                IrValue *sv = ir_lower_expr(c, tgt);
+                if (sv && sv->type && sv->type->kind==IRT_SLICE)
+                    return ir_slice_data(c->f, c->cur, sv,
+                                         ty && ty->kind==IRT_PTR && ty->elem ? ty->elem : sv->type->elem);
+                if (sv && sv->type && sv->type->kind==IRT_ARRAY) return sv;   // already a base
+                // (fall through: a struct field literally named `data`)
             }
             if (m && m->length==3 && strncmp(m->name,"len",3)==0) {
                 if (tst && tst->kind==TYPE_ARRAY && tst->array_len>=0)
