@@ -131,7 +131,16 @@ static IrEffect ir_effects(IrFunc *f, IrFunc *mod) {
     if (!f) return 0;
     if (f->is_extern)          return f->kind==IR_FUNC_PROC ? IR_EFFECT_IO : 0u;
     if (f->effects_done)       return f->effects;
-    if (f->effects_in_progress) return IR_EFFECT_DIVERGE;   // recursion cycle
+    if (f->effects_in_progress) {
+        // 3.4: a recursion cycle is DIVERGE only if no parameter is a WELL-FOUNDED MEASURE.
+        // Ask the octagon: does some parameter strictly shrink at every self-call and stay
+        // bounded below? A binary search or a tree walk does, and was being called divergent
+        // purely because the cycle rule could not look.
+        Vra *V = vra_analyze(f);
+        bool total = vra_recursion_terminates(V, f);
+        vra_free(V);
+        return total ? 0u : IR_EFFECT_DIVERGE;
+    }
     f->effects_in_progress = true;
     IrEffect e = ir_effects_direct(f, mod);
     f->effects = e; f->effects_done = true; f->effects_in_progress = false;

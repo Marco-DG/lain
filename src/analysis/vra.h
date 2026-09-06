@@ -838,6 +838,68 @@ static void vra_disjoint_close(VraDisjoint *D) {
     vra_free(D->V); free(D->scratch); free(D);
 }
 
+// ── 3.4: RECURSION TERMINATION ──────────────────────────────────────────────────────────
+// A self-recursive function terminates if some parameter is a WELL-FOUNDED MEASURE: at every
+// self-call the argument passed for it is provably SMALLER than the current value, and it is
+// bounded below. Both halves are octagon questions, asked at the call site — the same shape
+// as the loop measure (`vra_loop_terminates`), lifted from a back-edge to a call edge.
+//
+// Without this every recursive function is DIVERGE by the conservative cycle rule, so a
+// perfectly well-founded recursion (binary search, tree walk) can never be a total `func`.
+// Conservative: any self-call that does not shrink the candidate disqualifies it, and a
+// function with no parameters or no self-call is not our business.
+static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
+    if (!V || !f || !f->name) return false;
+    int nparams = 0;
+    for (IrParam *p=f->params; p; p=p->next) nparams++;
+    if (nparams == 0 || nparams > 64) return false;
+    // collect the self-calls
+    bool any_self = false;
+    for (IrBlock *b=f->blocks; b && !any_self; b=b->next)
+        for (IrInstr *i=b->instrs; i; i=i->next)
+            if (i->op==IR_CALL && i->aux.callee && f->name
+                && i->aux.callee->length==f->name->length
+                && memcmp(i->aux.callee->name, f->name->name, (size_t)f->name->length)==0) { any_self=true; break; }
+    if (!any_self) return false;                       // not recursive: not this rule's job
+    int dim = 2*V->nvar;
+    int64_t *scratch = malloc((size_t)V->dsz*8);
+    if (!scratch) return false;
+    // try each parameter as the measure
+    int k = 0;
+    for (IrParam *p=f->params; p; p=p->next, k++) {
+        IrValue *pv = p->value;
+        if (!pv || !pv->type || pv->type->kind != IRT_INT) continue;
+        if (pv->id < 0 || pv->id >= V->nvar) continue;
+        bool ok = true;
+        for (IrBlock *b=f->blocks; b && ok; b=b->next) {
+            if (!V->reached[b->id] || !V->in[b->id]) continue;
+            memcpy(scratch, V->in[b->id], (size_t)V->dsz*8);
+            Octagon W = { V->nvar, dim, scratch };
+            oct_close(&W);
+            for (IrInstr *i=b->instrs; i && ok; i=i->next) {
+                bool self = (i->op==IR_CALL && i->aux.callee && f->name
+                             && i->aux.callee->length==f->name->length
+                             && memcmp(i->aux.callee->name, f->name->name, (size_t)f->name->length)==0);
+                if (self) {
+                    if (k >= i->n_operands) { ok = false; break; }
+                    IrValue *arg = i->operands[k];
+                    if (!arg || arg->id<0 || arg->id>=V->nvar) { ok = false; break; }
+                    // arg < pv  (arg − pv ≤ −1)   AND   pv ≥ 0 (well-founded below)
+                    bool shrinks = oct_get(&W, oct_pos(pv->id), oct_pos(arg->id)) <= -1;
+                    int64_t lo,hi; bool hl,hh; oct_interval(&W, pv->id, &lo,&hl,&hi,&hh);
+                    bool grounded = (hl && lo >= 0) ||
+                                    (pv->type->kind==IRT_INT && !pv->type->is_signed);
+                    if (!(shrinks && grounded)) { ok = false; break; }
+                }
+                vra_transfer_instr(V, &W, i);
+            }
+        }
+        if (ok) { free(scratch); return true; }        // this parameter is a measure
+    }
+    free(scratch);
+    return false;
+}
+
 static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);

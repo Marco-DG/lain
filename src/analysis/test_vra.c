@@ -297,6 +297,34 @@ int main(void) {
     vra_expect("sliding window a[i+1] under i+1<a.len",     sliding_window_proven(), true);
     vra_expect("two-pointer a[i] under i<=j & j<a.len",     two_pointer_proven(),    true);
     // MASK idiom — nonlinear transfer: x & (N-1) ∈ [0,N-1] for ANY x.
+    // ── 3.4: RECURSION TERMINATION ─────────────────────────────────────────────────────
+    // A self-recursive function is total when some parameter STRICTLY SHRINKS at every
+    // self-call and is bounded below. Both halves are octagon questions asked at the call
+    // edge — the loop measure lifted from a back-edge. Without it, the conservative cycle
+    // rule calls every recursion DIVERGE, so a well-founded one can never be a total `func`.
+    { IrType *u64t = ir_type_int(&A,64,false);
+      struct { const char *what; int delta; bool want; } rc[] = {
+          { "recursion f(n-1) is TOTAL (measure shrinks)",   -1, true  },
+          { "recursion f(n+1) DIVERGES (measure grows)",     +1, false },
+          { "recursion f(n)   DIVERGES (measure stuck)",      0, false },
+      };
+      for (unsigned t=0;t<sizeof rc/sizeof rc[0];t++) {
+        IrFunc *f=ir_func_new(&A,nm("rec"),u64t,IR_FUNC_PROC);
+        IrValue *n=ir_add_param(f,u64t,nm("n"));
+        IrBlock *e=f->entry;
+        IrValue *arg = rc[t].delta==0 ? n
+                     : ir_binop(f,e, rc[t].delta<0?IR_SUB:IR_ADD, n,
+                                ir_const_int(f,e,1,u64t), u64t);
+        IrInstr *call = ir_instr(f, IR_CALL, u64t, 1);
+        call->operands[0]=arg; call->aux.callee = nm("rec"); ir_emit(e, call);
+        ir_set_ret(e, call->result); ir_finalize_cfg(f);
+        Vra *V=vra_analyze(f);
+        bool tot = vra_recursion_terminates(V, f);
+        vra_free(V);
+        vra_expect(rc[t].what, tot, rc[t].want);
+      }
+    }
+
     // ── B4: a STATIC REFINEMENT on the TYPE ────────────────────────────────────────────
     // `type Small = u8 < 200` is a property of the TYPE, so every value of it inherits the
     // interval with no assume and no side-map. Resolving the alias to its base DISCARDED it,
