@@ -910,6 +910,84 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             c->cur = jn;
             return ir_load(c->f, c->cur, cell, pty);
         }
+        // A case EXPRESSION — `return case o { Some(v): v  None: d }`. Only the case
+        // STATEMENT was lowered, so every one of these became an OPAQUE unknown and the
+        // function returned garbage: the whole generics/Option family plus match_advanced.
+        // Same shape as the statement form (a tag/value test chain), differing only in that
+        // each arm is ONE expression whose value is stored into a result cell.
+        case EXPR_MATCH: {
+            Expr *val = e->as.match_expr.value;
+            IrType *sumty = NULL;
+            { IrType *vty = ir_lower_type(c, val ? val->type : NULL);
+              if (vty && vty->kind == IRT_SUM) sumty = vty; }
+            Type *vt = val ? val->type : NULL;
+            if (!sumty && !(vt && vt->kind==TYPE_SIMPLE && vt->int_width_cache>0))
+                return ir_opaque_expr(c, ty, false, "match-expr-scrutinee", NULL, NULL);
+            IrValue *v = ir_lower_expr(c, val);
+            if (sumty && !(v && v->type && v->type->kind==IRT_SUM))
+                return ir_opaque_expr(c, ty, false, "match-expr-scrutinee", NULL, NULL);
+
+            IrType *rty = ty && ty->kind!=IRT_UNIT ? ty : ir_type_int(c->a,32,true);
+            IrValue *cell = ir_alloca(c->f, c->cur, rty);
+            IrValue *tagv = sumty ? ir_sum_tag(c->f, c->cur, v) : NULL;
+            IrBlock *join = ir_new_block(c->f);
+            ExprMatchCase *elsec = NULL;
+            for (ExprMatchCase *cs = e->as.match_expr.cases; cs; cs = cs->next) {
+                if (!cs->patterns) { elsec = cs; continue; }
+                IrBlock *body = ir_new_block(c->f);
+                int bound_k = -1; Expr *bound_pat = NULL;
+                for (ExprList *p = cs->patterns; p; p = p->next) {
+                    Expr *pe = p->expr;
+                    IrBlock *nxt = ir_new_block(c->f);
+                    if (sumty) {
+                        Expr *pv = (pe->kind==EXPR_CALL) ? pe->as.call_expr.callee : pe;
+                        Decl *ed = NULL;
+                        if (sumty->sname) { Id tn; tn.name=sumty->sname->name; tn.length=sumty->sname->length;
+                                            ed = ir_find_enum_decl(c, &tn); }
+                        int k = ed ? ir_variant_index(ed, ir_variant_name_of(pv), true) : -1;
+                        if (k < 0) { ir_set_br(c->cur, body); c->cur = nxt; continue; }
+                        if (pe->kind==EXPR_CALL) { bound_k = k; bound_pat = pe; }
+                        IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
+                        ir_set_br_cond(c->cur, ir_icmp(c->f,c->cur,IR_CMP_EQ,tagv,kc), body, nxt);
+                    } else if (pe->kind == EXPR_RANGE) {
+                        Expr *loe=pe->as.range_expr.start, *hie=pe->as.range_expr.end;
+                        IrBlock *hitest = ir_new_block(c->f);
+                        if (loe) ir_set_br_cond(c->cur, ir_icmp(c->f,c->cur,IR_CMP_SGE,v,ir_lower_expr(c,loe)), hitest, nxt);
+                        else     ir_set_br(c->cur, hitest);
+                        c->cur = hitest;
+                        if (hie) { IrCmp cc2 = pe->as.range_expr.inclusive?IR_CMP_SLE:IR_CMP_SLT;
+                                   ir_set_br_cond(c->cur, ir_icmp(c->f,c->cur,cc2,v,ir_lower_expr(c,hie)), body, nxt); }
+                        else     ir_set_br(c->cur, body);
+                    } else {
+                        ir_set_br_cond(c->cur, ir_icmp(c->f,c->cur,IR_CMP_EQ,v,ir_lower_expr(c,pe)), body, nxt);
+                    }
+                    c->cur = nxt;
+                }
+                IrBlock *ftblk = c->cur;
+                c->cur = body;
+                IrLocal *saved = c->locals;
+                if (bound_k >= 0 && bound_pat) {
+                    IrType *pl = (bound_k < sumty->n_fields) ? sumty->fields[bound_k] : NULL;
+                    int j=0;
+                    for (ExprList *a = bound_pat->as.call_expr.args; a; a = a->next, j++) {
+                        Id *bn = a->expr && a->expr->kind==EXPR_IDENTIFIER
+                               ? a->expr->as.identifier_expr.id : NULL;
+                        if (!bn || !pl || j >= pl->n_fields) continue;
+                        ir_env_add(c, bn, NULL, ir_sum_payload(c->f, c->cur, v, bound_k, j, pl->fields[j]));
+                    }
+                }
+                if (cs->body) { IrValue *av = ir_lower_expr(c, cs->body);
+                                if (av) ir_store(c->f, c->cur, cell, av); }
+                c->locals = saved;
+                if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
+                c->cur = ftblk;
+            }
+            if (elsec && elsec->body) { IrValue *av = ir_lower_expr(c, elsec->body);
+                                        if (av) ir_store(c->f, c->cur, cell, av); }
+            if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
+            c->cur = join;
+            return ir_load(c->f, c->cur, cell, rty);
+        }
         case EXPR_FLOAT_LITERAL:
             return ir_const_float(c->f, c->cur, e->as.float_expr.value,
                                   ty && ty->kind==IRT_FLOAT ? ty : ir_type_float(c->a, 64));
