@@ -1040,6 +1040,28 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             // not a local/param: a module-level constant folds to its initializer
             if (c->const_depth < 32) {
                 Decl *g = ir_find_global_const(c, e->as.identifier_expr.id);
+                // A global ARRAY cannot fold to a scalar, and leaving it OPAQUE meant every
+                // read of one dereferenced null: four programs SEGFAULTED. Materialise it —
+                // an immutable global with a literal initializer is exactly a local array
+                // with the same initializer, and the copy is once per reference in a function
+                // rather than the static the old backend emits. Correct first; the storage
+                // is a backend concern (4.1) and the IR does not need to name it.
+                if (g && g->as.variable_decl.init
+                    && g->as.variable_decl.init->kind == EXPR_ARRAY_LITERAL
+                    && ty && ty->kind == IRT_ARRAY) {
+                    IrValue *agg = ir_alloca_array(c->f, c->cur, ty);
+                    int k = 0;
+                    c->const_depth++;
+                    for (ExprList *el = g->as.variable_decl.init->as.array_literal_expr.elements;
+                         el; el = el->next, k++) {
+                        IrValue *idx = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,64,false));
+                        IrValue *p   = ir_elem_ptr(c->f, c->cur, agg, idx, ty->elem);
+                        ir_store(c->f, c->cur, p, ir_lower_expr(c, el->expr));
+                    }
+                    c->const_depth--;
+                    ir_init_fact(c->f, c->cur, agg);      // every element is written
+                    return agg;
+                }
                 if (g) { c->const_depth++;
                          IrValue *v = ir_lower_expr(c, g->as.variable_decl.init);
                          c->const_depth--; return v; }
