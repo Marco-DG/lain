@@ -215,3 +215,21 @@ tests/match/niche/linear_adt_payload_mov_fail.ln  NEW-ACCEPTS  new-more-precise 
 # safe-C or Fortran front end lowering to this IR would not have it, and the IR must not
 # invent it. Stays with the front end at 3.5.
 tests/ownership/close_without_mov_fail.ln  NEW-ACCEPTS  front-end-policy   # E007 is explicit-move SYNTAX, not a safety property
+
+# ── struct field invariants (`pos usize in text`) ─────────────────────────────────────────
+# The IR now models them: assert at construction (the promise is MADE there, so that is where
+# it is proven), assume at the read (`l.text[l.pos]` needs no other justification). Both
+# directions verified — `Lexer(src, 0)` over a `u8[5]` discharges and its read proves;
+# `Lexer(src, 99)` leaves the assert UNDISCHARGED while its read still proves, which is the
+# correct division of labour.
+#
+# ★ old-unsound, RECORDED NOT YET TESTABLE. The old engine accepts `Lexer(src, 99)` and emits
+#       if (!(l->pos < l->text.len)) __builtin_unreachable();
+# — it converts an UNVERIFIED front-end annotation directly into a compiler assumption, with
+# nothing checking it at construction. That is the sovereignty concern in its purest form: the
+# proof engine trusting the front end. It cannot become a corpus fail-test while the old engine
+# is authoritative (the test would fail run_tests.sh); it inverts at 3.5.
+#
+# Honesty note: the finding rests on the EMITTED C, which is where the trust is visible. A
+# quick attempt to produce an executed ASan fault from it did not, so it is recorded as a
+# demonstrated mis-emission rather than a demonstrated out-of-bounds read.

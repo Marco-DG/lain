@@ -161,6 +161,40 @@ static Decl *ir_find_struct_decl(LowerCtx *c, Id *name) {
     }
     return NULL;
 }
+// ── STRUCT FIELD INVARIANTS (`pos usize in text`) ────────────────────────────────────────
+// A field declared `in <other field>` is a promise that it is a VALID INDEX into that other
+// field, for the whole life of the value. It is the one piece of a struct's meaning that the
+// IR could not see: `l.text[l.pos]` had two unrelated loads and no reason to believe the
+// index was in range, so a perfectly safe accessor could not be proven.
+//
+// The obligation is discharged where the value is BUILT and consumed where it is READ —
+// assert at construction, assume at the read, which is the same shape as the B2 contract
+// layer and keeps the "every assume is paid for by an assert" invariant intact.
+//
+// Returns the container field's index, or −1 if this field carries no invariant.
+static int ir_field_in_target(LowerCtx *c, IrType *sty, int fidx, IrType **cty) {
+    if (!sty || sty->kind!=IRT_STRUCT || fidx<0 || fidx>=sty->n_fields || !sty->field_names) return -1;
+    if (!sty->sname) return -1;
+    Id sn; sn.name = sty->sname->name; sn.length = sty->sname->length;
+    Decl *sd = ir_find_struct_decl(c, &sn);
+    if (!sd || sd->kind != DECL_STRUCT) return -1;
+    int k = 0; Id *want = NULL;
+    for (DeclList *fl = sd->as.struct_decl.fields; fl; fl = fl->next) {
+        if (!fl->decl || fl->decl->kind != DECL_VARIABLE) continue;
+        if (k == fidx) { want = fl->decl->as.variable_decl.in_field; break; }
+        k++;
+    }
+    if (!want) return -1;
+    for (int i=0;i<sty->n_fields;i++) {
+        IrName *fn = sty->field_names[i];
+        if (fn && fn->length==want->length && strncmp(fn->name, want->name, (size_t)want->length)==0) {
+            if (cty) *cty = sty->fields[i];
+            return i;
+        }
+    }
+    return -1;
+}
+
 // A module-level ENUM declaration, matched the same two ways as a struct.
 static Decl *ir_find_enum_decl(LowerCtx *c, Id *name) {
     if (!name) return NULL;
@@ -911,9 +945,22 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             // struct field read: load through the field address
             IrType *sty = ir_lower_type(c, tst);
             IrType *fty = NULL;
-            if (ir_field_index(sty, m, &fty) >= 0) {
+            int fidx = ir_field_index(sty, m, &fty);
+            if (fidx >= 0) {
                 IrValue *addr = ir_lower_addr(c, e);
-                return ir_load(c->f, c->cur, addr, fty ? fty : ty);
+                IrValue *v = ir_load(c->f, c->cur, addr, fty ? fty : ty);
+                // the `in` invariant, consumed: this field is a valid index into that one
+                IrType *cty2 = NULL;
+                int cidx = ir_field_in_target(c, sty, fidx, &cty2);
+                if (cidx >= 0 && cty2 && cty2->kind==IRT_SLICE && v->type && v->type->kind==IRT_INT) {
+                    IrValue *base = ir_lower_addr(c, tgt);
+                    if (base) {
+                        IrValue *cv  = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, cidx, cty2), cty2);
+                        IrValue *len = ir_slice_len(c->f, c->cur, cv);
+                        ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, v, len));
+                    }
+                }
+                return v;
             }
             // a field we could not resolve: a READ of unknown storage, no write.
             return ir_opaque_expr(c, ty, false, "unresolved-member", NULL, NULL);
@@ -931,6 +978,31 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 IrValue **fs = arena_push_many_aligned(c->a, IrValue*, n>0?n:1);
                 int k=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next,k++)
                     fs[k] = ir_lower_expr(c, a->expr);
+                // the `in` invariant, DISCHARGED: building the value is where the promise is
+                // made, so that is where it must be proven. Without this the assume at every
+                // read would be a fact the IR never checks — a front end could then hand the
+                // proof engine an out-of-range index and have it believed.
+                Expr *argx[64]; { int q=0; for (ExprList *a=e->as.call_expr.args; a && q<64; a=a->next) argx[q++]=a->expr; }
+                for (int fi=0; fi<n && fi<ty->n_fields && fi<64; fi++) {
+                    IrType *cty2 = NULL;
+                    int cidx = ir_field_in_target(c, ty, fi, &cty2);
+                    if (cidx < 0 || cidx >= n || cidx >= 64 || !cty2 || cty2->kind!=IRT_SLICE) continue;
+                    if (!fs[fi] || !fs[fi]->type || fs[fi]->type->kind!=IRT_INT) continue;
+                    if (!fs[cidx] || !fs[cidx]->type) continue;
+                    // The container's length. A slice carries it; a FIXED ARRAY coerced into
+                    // the slice field does not — its length is in the argument's declared
+                    // type, and reading it there is what lets `Lexer(src, 99)` over a `u8[5]`
+                    // be caught at all. Without a length there is nothing to check and the
+                    // read-side assume would be unpaid, so the site is left unverified rather
+                    // than silently passed (tracked as a gap, not as a proof).
+                    IrValue *len = NULL;
+                    if (fs[cidx]->type->kind==IRT_SLICE) len = ir_slice_len(c->f, c->cur, fs[cidx]);
+                    else if (argx[cidx] && argx[cidx]->type && argx[cidx]->type->kind==TYPE_ARRAY
+                             && argx[cidx]->type->array_len >= 0)
+                        len = ir_const_int(c->f, c->cur, argx[cidx]->type->array_len, fs[fi]->type);
+                    if (!len) continue;
+                    ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, fs[fi], len));
+                }
                 return ir_struct_new(c->f, c->cur, ty, fs, n);
             }
             // `Shape.Circle(10)` is VARIANT construction, not a call. The callee decl is the

@@ -46,6 +46,7 @@ typedef struct {
     int     *defblk;    // defblk[val id] = id of the block defining it (-1 = param)
     int64_t *cval; bool *cknown;   // constant values (from IR_CONST)
     int     *slicelen;  // slice value id → its canonical length var (−1 = none)
+    int     *cellcanon; // value id → canonical id of the PLACE it names (field_ptr aliasing)
     bool    *subslice_gep;  // elem_ptr result feeding a make_slice (a subslice start,
                             // not an element access — checked by the make_slice instead)
     // ESCAPED cells: an alloca whose ADDRESS leaves this instruction's control — passed to a
@@ -87,8 +88,21 @@ static void vra_mark_escape(Vra *V, IrValue *v) {
 
 static bool vra_is_slice_cell(Vra *V, int v) {
     IrInstr *d = (v>=0 && v<V->nvar) ? V->def[v] : NULL;
-    return d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_SLICE;
+    if (!d) return false;
+    if (d->op==IR_ALLOCA) return d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_SLICE;
+    // A slice-typed FIELD is a cell too. It was not one, so nothing about a struct's slice
+    // field ever propagated — `l.text[l.pos]` had no length for `l.text` at all.
+    if (d->op==IR_FIELD_PTR)
+        return d->result && d->result->type && d->result->type->elem
+            && d->result->type->elem->kind==IRT_SLICE;
+    return false;
 }
+// The same PLACE reached twice is two different SSA values: `l.text` lowers to a fresh
+// field_ptr at each mention. Keyed by value id, the length learned at one mention was
+// invisible at the next — which is exactly what made the struct `in` invariant useless, since
+// the assume names one load of `text` and the index check another. Canonicalise a field
+// access to the first field_ptr with the same (base, field); everything else is its own.
+static int vra_canon_cell(Vra *V, int v) { return (v>=0 && v<V->nvar && V->cellcanon) ? V->cellcanon[v] : v; }
 // pre-pass: def sites, constants, and canonical slice-length vars. A slice's length
 // var is its make_slice length operand or its first slice_len read; it is propagated
 // through a slice local's store/load so `s = a[lo..hi]; s[k]` knows len(s).
@@ -99,6 +113,22 @@ static void vra_prepass(Vra *V) {
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (ins->result){ V->def[ins->result->id]=ins; V->defblk[ins->result->id]=b->id; }
             if (ins->op==IR_CONST && ins->result){ V->cknown[ins->result->id]=true; V->cval[ins->result->id]=ins->aux.imm; }
+        }
+    V->cellcanon = malloc((size_t)V->nvar*sizeof(int));
+    for (int i=0;i<V->nvar;i++) V->cellcanon[i]=i;
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op!=IR_FIELD_PTR || !ins->result || ins->n_operands<1) continue;
+            int me = ins->result->id, base = ins->operands[0]->id;
+            for (IrBlock *b2=V->f->blocks; b2; b2=b2->next)
+                for (IrInstr *o=b2->instrs; o; o=o->next) {
+                    if (o==ins) goto done;
+                    if (o->op==IR_FIELD_PTR && o->result && o->n_operands>=1
+                        && o->operands[0]->id==base && o->aux.field_idx==ins->aux.field_idx) {
+                        V->cellcanon[me] = V->cellcanon[o->result->id]; goto done;
+                    }
+                }
+            done: ;
         }
     int *cell_len = malloc(V->nvar*sizeof(int));
     for (int i=0;i<V->nvar;i++) cell_len[i]=-1;
@@ -113,7 +143,7 @@ static void vra_prepass(Vra *V) {
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next)
             if (ins->op==IR_STORE && ins->n_operands>=2 && vra_is_slice_cell(V, ins->operands[0]->id))
-                cell_stores[ins->operands[0]->id]++;
+                cell_stores[vra_canon_cell(V, ins->operands[0]->id)]++;
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (ins->op==IR_MAKE_SLICE && ins->result && ins->n_operands>=2) {
@@ -131,20 +161,29 @@ static void vra_prepass(Vra *V) {
                 // one comes, still overrides this below.
                 IrInstr *sd = V->def[s];
                 if (sd && sd->op==IR_LOAD && sd->n_operands>=1) {
-                    int cell = sd->operands[0]->id;
+                    int cell = vra_canon_cell(V, sd->operands[0]->id);
                     if (vra_is_slice_cell(V,cell) && cell_stores[cell]==0 && cell_len[cell]<0)
                         cell_len[cell]=ins->result->id;
                 }
             }
             else if (ins->op==IR_STORE && ins->n_operands>=2) {
-                int cell=ins->operands[0]->id, v=ins->operands[1]->id;
+                int cell=vra_canon_cell(V, ins->operands[0]->id), v=ins->operands[1]->id;
                 if (vra_is_slice_cell(V,cell))
                     cell_len[cell] = (cell_stores[cell]==1) ? V->slicelen[v] : -1;
             }
-            else if (ins->op==IR_LOAD && ins->result && ins->n_operands>=1) {
-                int cell=ins->operands[0]->id;
-                if (vra_is_slice_cell(V,cell) && cell_len[cell]>=0) V->slicelen[ins->result->id]=cell_len[cell];
-            }
+        }
+    // A SECOND pass for the loads. The scan is linear, but a cell's length is not necessarily
+    // learned before the first load out of it — `l.text[l.pos]` loads `text` to index it and
+    // only then reads `.len` for the invariant, so a one-pass propagation saw nothing. The
+    // length of a cell is a property of the whole function, not of a program point (that is
+    // exactly why the single-store rule above has to be enforced), so collecting first and
+    // propagating second is the honest order.
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op!=IR_LOAD || !ins->result || ins->n_operands<1) continue;
+            int cell=vra_canon_cell(V, ins->operands[0]->id);
+            if (vra_is_slice_cell(V,cell) && cell_len[cell]>=0 && V->slicelen[ins->result->id]<0)
+                V->slicelen[ins->result->id]=cell_len[cell];
         }
     free(cell_len); free(cell_stores);
 
@@ -184,6 +223,7 @@ static bool vra_safe_scale(int64_t c, int64_t x, int64_t *out) {
 static void vra_interval(Vra *V, const Octagon *W, int id, int64_t *lo, bool *hl, int64_t *hi, bool *hh); // fwd
 static void vra_add_diff_le(Vra *V, Octagon *W, int a, int b, int64_t c);                                 // fwd
 static int64_t vra_diff_ub(Vra *V, const Octagon *W, int a, int b);                                       // fwd
+static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi);                          // fwd
 
 static void vra_assign_copy(Vra *V, Octagon *o, int dst, int src) {
     // A CONSTANT source has no dimension to copy from — it lives in the constant table — so
@@ -628,7 +668,25 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
     }
     int64_t lo,hi; bool hl,hh;
     if (V->cknown[idx]) { lo=hi=V->cval[idx]; hl=hh=true; }   // constant index — no octagon needed
-    else vra_interval(V, W, idx, &lo,&hl,&hi,&hh);
+    else {
+        // The index's TYPE bounds it too, and reading only the octagon threw that away: a
+        // `usize` loaded out of a struct field has no octagon history at all, so `0 ≤ idx` —
+        // the easy half of the obligation — could not be discharged even when the hard half
+        // could.
+        //
+        // ★ But ONLY for a value that cannot have wrapped. The octagon models arithmetic in ℤ,
+        // so `i - 1` at i = 0 is −1 there, while the unsigned TYPE says ≥ 0 — and that is the
+        // underflow, not a fact about it. Intersecting the two would assert the bug away and
+        // prove `a[i-1]` under an unguarded `i < n`, which is a removed bounds check. A load,
+        // a parameter or a call result holds a value that really does satisfy its type; an
+        // arithmetic result does not until its own overflow obligation is discharged.
+        IrInstr *idef = V->def[idx];
+        bool may_wrap = idef && (idef->op==IR_ADD || idef->op==IR_SUB || idef->op==IR_MUL
+                             || idef->op==IR_SHL || idef->op==IR_NEG);
+        if (may_wrap) vra_interval(V, W, idx, &lo,&hl,&hi,&hh);
+        else { vra_range(V, W, ins->operands[1], &lo, &hi);
+               hl = (lo > INT64_MIN); hh = (hi < INT64_MAX); }
+    }
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_BOUNDS; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.lo_ok = hl && lo>=0;
     c.has_len = (clen>=0 || lenvar>=0);
@@ -1161,7 +1219,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->subslice_gep); free(V->escaped); free(V->shape_rank); free(V->shape_ext); free(V->odim); free(V->checks); free(V);
+    free(V->slicelen); free(V->cellcanon); free(V->subslice_gep); free(V->escaped); free(V->shape_rank); free(V->shape_ext); free(V->odim); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H
