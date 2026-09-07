@@ -1863,13 +1863,40 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                     IrValue *hi=(isr&&rng->as.range_expr.end)?ir_lower_expr(c,rng->as.range_expr.end):ir_const_int(c->f,head,slot_ty->array_len,ity);
                     ir_set_br_cond(head, ir_icmp(c->f,head,(isr&&rng->as.range_expr.inclusive)?IR_CMP_ULE:IR_CMP_ULT,iv,hi), bb, ex);
                     c->cur=bb;
+                    // The element INDEX is the POSITION, not the loop variable: `[x + 1 for x
+                    // in 1..=3]` runs x over 1..3 and fills positions 0..2. Storing at `x`
+                    // left inc[0] unwritten and wrote one past the end — reading garbage from
+                    // an array the comprehension claims to fill completely.
                     IrValue *iv2=ir_load(c->f,bb,icell,ity);
-                    ir_store(c->f,bb, ir_elem_ptr(c->f,bb,agg,iv2,slot_ty->elem), ir_lower_expr(c,bod));
+                    IrValue *pos=iv2;
+                    if (isr && rng->as.range_expr.start) {
+                        IrValue *lo0 = ir_lower_expr(c, rng->as.range_expr.start);
+                        pos = ir_binop(c->f,bb,IR_SUB,iv2,lo0,ity);
+                    }
+                    ir_store(c->f,bb, ir_elem_ptr(c->f,bb,agg,pos,slot_ty->elem), ir_lower_expr(c,bod));
                     IrValue *ci=ir_load(c->f,c->cur,icell,ity);
                     ir_store(c->f,c->cur,icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,ity),ity));
                     ir_set_br(c->cur,head); c->cur=ex;
                     // A comprehension fills EVERY element by definition. State it: the fill
                     // LOOP's zero-iteration path would otherwise intersect the fact away.
+                    ir_init_fact(c->f, c->cur, agg);
+                } else if (init && slot_ty->kind==IRT_ARRAY && slot_ty->array_len > 0
+                           && ir_lower_type(c, init->type)
+                           && ir_lower_type(c, init->type)->kind==IRT_ARRAY) {
+                    // WHOLE-ARRAY COPY. `var a i32[4] = b` has VALUE semantics — C forbids
+                    // array `=`, so it must be a copy, and it was falling to the unmodelled
+                    // opaque instead: `a` held garbage and mutating `b` afterwards was
+                    // indistinguishable from not copying at all. Element-wise rather than a
+                    // memcpy op, because the length is a compile-time constant and every
+                    // element store is a fact definite-assignment can use.
+                    IrValue *src = ir_lower_expr(c, init);
+                    IrType *ity2 = ir_type_int(c->a,64,false);
+                    for (int64_t q = 0; q < slot_ty->array_len; q++) {
+                        IrValue *idx = ir_const_int(c->f, c->cur, q, ity2);
+                        IrValue *sp  = ir_elem_ptr(c->f, c->cur, src, idx, slot_ty->elem);
+                        IrValue *dp  = ir_elem_ptr(c->f, c->cur, agg, idx, slot_ty->elem);
+                        ir_store(c->f, c->cur, dp, ir_load(c->f, c->cur, sp, slot_ty->elem));
+                    }
                     ir_init_fact(c->f, c->cur, agg);
                 } else if (init && init->kind == EXPR_STRING && slot_ty->kind==IRT_ARRAY
                            && slot_ty->elem && slot_ty->elem->kind==IRT_INT
@@ -1976,6 +2003,37 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             break;
         }
         case STMT_ASSIGN: {
+            // WHOLE-ARRAY ASSIGNMENT has VALUE semantics — `c = a` copies, and C forbids array
+            // `=`, so a single store would emit either broken C or a pointer aliasing the
+            // source. Same element-wise copy as the copy-initialiser, for the same reason:
+            // the length is a compile-time constant and every store is a fact.
+            { Type *tt = s->as.assign_stmt.target ? s->as.assign_stmt.target->type : NULL;
+              IrType *at = tt ? ir_lower_type(c, tt) : NULL;
+              // sema does not always type an assignment's LHS, and the RHS is the same array
+              // type by construction — so ask it when the target has nothing to say.
+              if (!at || at->kind != IRT_ARRAY) {
+                  Type *st2 = s->as.assign_stmt.expr ? s->as.assign_stmt.expr->type : NULL;
+                  IrType *st3 = st2 ? ir_lower_type(c, st2) : NULL;
+                  if (st3 && st3->kind == IRT_ARRAY) at = st3;
+              }
+              if (at && at->kind==IRT_ARRAY && at->array_len > 0) {
+                  IrValue *dst = ir_lower_expr(c, s->as.assign_stmt.target);
+                  IrValue *src = ir_lower_expr(c, s->as.assign_stmt.expr);
+                  IrType *ity3 = ir_type_int(c->a,64,false);
+                  // NOT keyed on the values' IR types: an array LOCAL decays to a base
+                  // pointer typed `*T`, while an array FIELD carries `[N]T` — the model is
+                  // uniform in behaviour, not in spelling. The DECLARED type is what says
+                  // this is an array assignment.
+                  if (dst && src) {
+                      for (int64_t q=0; q<at->array_len; q++) {
+                          IrValue *idx = ir_const_int(c->f, c->cur, q, ity3);
+                          IrValue *sp  = ir_elem_ptr(c->f, c->cur, src, idx, at->elem);
+                          IrValue *dp  = ir_elem_ptr(c->f, c->cur, dst, idx, at->elem);
+                          ir_store(c->f, c->cur, dp, ir_load(c->f, c->cur, sp, at->elem));
+                      }
+                      break;
+                  }
+              } }
             IrValue *addr = ir_lower_addr(c, s->as.assign_stmt.target);
             ir_store(c->f, c->cur, addr, ir_lower_expr(c, s->as.assign_stmt.expr));
             break;
