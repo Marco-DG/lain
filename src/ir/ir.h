@@ -61,6 +61,13 @@ typedef struct IrType {
     // IRT_PTR / IRT_SLICE / IRT_ARRAY
     struct IrType *elem;    // pointee / element type
     bool  ptr_mut;          // *var T
+    // A RAW pointer (`*T`, `&x`) rather than a BORROW. The distinction is not Lain's: a
+    // borrow comes with an exclusivity/liveness guarantee some checker has discharged, a raw
+    // pointer comes with nothing. C has only the second kind, Rust has both, and the backend
+    // needs to know which — `restrict` is a theorem about the first and a guess about the
+    // second. Defaults to false, i.e. "a checked reference", which is what every IR builder
+    // that does not say otherwise is producing.
+    bool  is_raw;
     bool  slice_sentinel;   // u8[:0]
     int64_t array_len;      // IRT_ARRAY fixed length (>= 0)
     // ── B4: a STATIC REFINEMENT carried ON the type ─────────────────────────

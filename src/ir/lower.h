@@ -522,7 +522,7 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
             IrType *r=ir_type_new(c->a,IRT_SLICE); r->elem=el; return r;   // dynamic → slice
         }
         case TYPE_SLICE: { IrType *r=ir_type_new(c->a,IRT_SLICE); r->elem=ir_lower_type(c,t->element_type); return r; }
-        case TYPE_POINTER:{ IrType *r=ir_type_new(c->a,IRT_PTR); r->elem=ir_lower_type(c,t->element_type); r->ptr_mut=t->pointee_mutable; return r; }
+        case TYPE_POINTER:{ IrType *r=ir_type_new(c->a,IRT_PTR); r->elem=ir_lower_type(c,t->element_type); r->ptr_mut=t->pointee_mutable; r->is_raw=true; return r; }   // `*T` is unsafe: no exclusivity to promise
         default: return ir_type_new(c->a, IRT_UNIT);
     }
 }
@@ -876,7 +876,7 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
     // through it may touch anything, and `ir_place_of` resolves it to an unattributable
     // DEREF which every conflict rule already treats as "may alias".
     { IrType *pt = ir_type_new(c->a, IRT_PTR);
-      pt->elem = ir_lower_type(c, e->type); pt->ptr_mut = true;
+      pt->elem = ir_lower_type(c, e->type); pt->ptr_mut = true; pt->is_raw = true;   // `&x`
       return ir_opaque(c->f, c->cur, pt, true, "unlowered-lvalue", NULL, 0); }
 }
 

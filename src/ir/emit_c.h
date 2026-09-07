@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include "ir.h"
+#include "annot.h"   // Stage IV: the proofs, expressed as C the optimizer can use
 
 // round a non-standard integer width up to a standard C width
 static int ir_c_stdbits(int bits) { return bits<=8?8 : bits<=16?16 : bits<=32?32 : 64; }
@@ -276,14 +277,22 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
     }
 }
 
-static void ir_emit_func_c(IrFunc *f, FILE *o, Arena *a) {
+static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
     bool is_main = f->name->length==4 && strncmp(f->name->name,"main",4)==0;
     // signature
     if (is_main) fputs("int main(void)", o);
     else {
+        IrCAnnot an = ir_c_annot(f, mod);
+        if (an.const_attr)     fputs("__attribute__((const)) ", o);
+        else if (an.pure_attr) fputs("__attribute__((pure)) ", o);
         ir_ctype(f->ret_type, o); fprintf(o, " %.*s(", (int)f->name->length, f->name->name);
         int k=0; for (IrParam *p=f->params; p; p=p->next,k++) {
-            if (k) fputs(", ", o); ir_ctype(p->value->type, o); fprintf(o, " v%d", p->value->id);
+            if (k) fputs(", ", o);
+            ir_ctype(p->value->type, o);
+            IrType *pt = p->value->type;
+            if (pt && (pt->kind==IRT_PTR || pt->kind==IRT_ARRAY) && ir_param_c_restrict(p->value))
+                fputs(" restrict", o);
+            fprintf(o, " v%d", p->value->id);
         }
         if (!f->params) fputs("void", o);
         fputc(')', o);
@@ -292,11 +301,19 @@ static void ir_emit_func_c(IrFunc *f, FILE *o, Arena *a) {
     // declare all non-param values at the top, plus a backing slot for each alloca
     IrValTab vt = { arena_push_many_aligned(a, IrValue*, f->next_value_id), f->next_value_id };
     IrType **alloca_ty = arena_push_many_aligned(a, IrType*, f->next_value_id);
-    for (int k=0;k<vt.n;k++){ vt.v[k]=NULL; alloca_ty[k]=NULL; }
+    IrInstr **defof    = arena_push_many_aligned(a, IrInstr*, f->next_value_id);
+    for (int k=0;k<vt.n;k++){ vt.v[k]=NULL; alloca_ty[k]=NULL; defof[k]=NULL; }
     ir_collect_vals(f, &vt);
     for (IrBlock *b=f->blocks; b; b=b->next)
-        for (IrInstr *i=b->instrs; i; i=i->next)
+        for (IrInstr *i=b->instrs; i; i=i->next) {
+            if (i->result && i->result->id < f->next_value_id) defof[i->result->id] = i;
             if (i->op==IR_ALLOCA && i->result) alloca_ty[i->result->id] = i->aux.alloca_ty;
+        }
+    // Which parameter (if any) is a given value? Needed to decide the slice-data qualifier.
+    int *pidx = arena_push_many_aligned(a, int, f->next_value_id);
+    for (int k=0;k<vt.n;k++) pidx[k] = -1;
+    { int k=0; for (IrParam *p=f->params; p; p=p->next,k++)
+        if (p->value && p->value->id < f->next_value_id) pidx[p->value->id] = k; }
     bool param[4096] = {0};
     for (IrParam *p=f->params; p; p=p->next) if (p->value->id < 4096) param[p->value->id]=true;
     for (int id=0; id<vt.n; id++) {
@@ -312,7 +329,22 @@ static void ir_emit_func_c(IrFunc *f, FILE *o, Arena *a) {
                 fputs("  ", o); ir_ctype(at, o); fprintf(o, "* v%d;\n", id);
             }
         } else {
-            fputs("  ", o); ir_ctype(v->type, o); fprintf(o, " v%d;\n", id);
+            // ★ A SLICE's DATA POINTER is where `restrict` actually lands. A slice is passed
+            // as a by-value struct, so the parameter itself cannot carry the qualifier — but
+            // the pointer every access goes through is this SSA value, and qualifying its
+            // declaration says exactly the right thing over exactly the right block. This is
+            // the annotation that pays: on `out[i] = a[i] + b[i]` it is the difference
+            // between one vectorized loop and TWO plus a runtime overlap test.
+            IrInstr *d = defof[id];
+            int sp = (d && d->op==IR_SLICE_DATA && d->n_operands>=1 && d->operands[0])
+                     ? pidx[d->operands[0]->id] : -1;
+            if (sp >= 0 && ir_param_c_restrict(d->operands[0])) {
+                fputs("  ", o);
+                ir_ctype(v->type && v->type->elem ? v->type->elem : v->type, o);
+                fprintf(o, "* restrict v%d;\n", id);
+            } else {
+                fputs("  ", o); ir_ctype(v->type, o); fprintf(o, " v%d;\n", id);
+            }
         }
     }
     // blocks
@@ -354,10 +386,19 @@ static void ir_emit_func_c(IrFunc *f, FILE *o, Arena *a) {
 }
 
 // forward declaration line for a function (so callers link regardless of order)
-static void ir_emit_proto_c(IrFunc *f, FILE *o) {
+static void ir_emit_proto_c(IrFunc *f, IrFunc *mod, FILE *o) {
     if (f->name->length==4 && strncmp(f->name->name,"main",4)==0) return;
+    IrCAnnot an = ir_c_annot(f, mod);
+    if (an.const_attr)     fputs("__attribute__((const)) ", o);
+    else if (an.pure_attr) fputs("__attribute__((pure)) ", o);
     ir_ctype(f->ret_type, o); fprintf(o, " %.*s(", (int)f->name->length, f->name->name);
-    int k=0; for (IrParam *p=f->params; p; p=p->next,k++){ if(k)fputs(", ",o); ir_ctype(p->value->type,o); }
+    int k=0; for (IrParam *p=f->params; p; p=p->next,k++){
+        if(k)fputs(", ",o);
+        ir_ctype(p->value->type,o);
+        IrType *pt = p->value->type;
+        if (pt && (pt->kind==IRT_PTR || pt->kind==IRT_ARRAY) && ir_param_c_restrict(p->value))
+            fputs(" restrict", o);
+    }
     // `...` — without it every call to printf and friends is an implicit declaration, and the
     // generated C does not compile at all.
     if (f->is_variadic) fputs(k ? ", ..." : "...", o);
@@ -588,10 +629,10 @@ void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
         else fputs("void", o);
         fputs(" m) { (void)m; abort(); }\n\n", o);
       } }
-    for (IrFunc *f=funcs; f; f=f->next) ir_emit_proto_c(f, o);
+    for (IrFunc *f=funcs; f; f=f->next) ir_emit_proto_c(f, funcs, o);
     fputc('\n', o);
     // An EXTERN has no body: emitting one would define printf locally and collide with libc.
-    for (IrFunc *f=funcs; f; f=f->next) if (!f->is_extern) ir_emit_func_c(f, o, a);
+    for (IrFunc *f=funcs; f; f=f->next) if (!f->is_extern) ir_emit_func_c(f, funcs, o, a);
 }
 
 #endif // LAIN_IR_EMIT_C_H

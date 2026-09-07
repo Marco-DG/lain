@@ -361,10 +361,113 @@ proc main() i32 {
 EOF
 }
 
-GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit gen_defer gen_enum gen_rvalue_field gen_array_param)
+gen_effectful_result() {  # ★ the ANNOTATION class: a value-returning function with an
+    # OBSERVABLE effect whose result is then DISCARDED. `pure`/`const` license gcc to delete
+    # such a call outright, so if the effect row is wrong the print (or the abort) vanishes at
+    # -O3 and survives at -O0. There is no other shape that can falsify those two attributes,
+    # and until this existed the differential compiled at -O0 only — it could not have seen it.
+    local k=$(r 3) n=$(( $(r 3) + 2 ))
+    case $k in
+      0) cat <<EOF
+extern proc libc_printf(fmt *u8, ...) i32
+proc noisy(x i32) i32 {
+    libc_printf("t%d\n", x)
+    return x +% 1
+}
+proc main() i32 {
+    var i i32 = 0
+    while i < $n {
+        var t i32 = noisy(i)
+        i = i + 1
+    }
+    return 0
+}
+EOF
+      ;;
+      1) cat <<EOF
+extern proc libc_printf(fmt *u8, ...) i32
+func quiet(x i32) i32 { return x *% 3 }
+proc noisy(x i32) i32 {
+    libc_printf("u%d\n", quiet(x))
+    return x
+}
+proc main() i32 {
+    var a i32 = noisy($n)
+    var b i32 = quiet($n)
+    var c i32 = noisy(b)
+    return 0
+}
+EOF
+      ;;
+      *) cat <<EOF
+extern proc libc_printf(fmt *u8, ...) i32
+proc tally(var acc i32, x i32) i32 {
+    acc = acc +% x
+    libc_printf("v%d\n", acc)
+    return acc
+}
+proc main() i32 {
+    var s i32 = 0
+    var i i32 = 0
+    while i < $n {
+        var t i32 = tally(var s, i)
+        i = i + 1
+    }
+    libc_printf("s%d\n", s)
+    return 0
+}
+EOF
+      ;;
+    esac
+}
 
-run_pipeline() {  # $1=c-file $2=bin -> prints "<exit>|<stdout>"
-    "$CC" -o "$2" "$1" $DEFS -w -O0 2>/dev/null || { echo "BUILDFAIL"; return; }
+gen_rawptr_alias() {      # ★ the RESTRICT class. Two RAW pointers to the SAME object, written
+    # through one and read through the other. `restrict` says that cannot happen, and Lain
+    # promises nothing of the kind for `*T` in `unsafe` — only for borrows, where the borrow
+    # checker has refused the aliasing program. Emit restrict here and the same binary prints
+    # 11 at -O0 and 1 at -O3, which is what makes this the shape that can falsify the rule.
+    local k=$(r 2) inc=$(( $(r 9) + 1 ))
+    if [ "$k" = "0" ]; then cat <<EOF
+extern proc libc_printf(fmt *u8, ...) i32
+proc bump2(p *var i32, q *var i32) i32 {
+    unsafe {
+        *p = *p + 1
+        *q = *q + $inc
+        return *p
+    }
+}
+proc main() i32 {
+    var x i32 = 0
+    var r i32 = bump2(&x, &x)
+    libc_printf("%d\n", r)
+    return 0
+}
+EOF
+    else cat <<EOF
+extern proc libc_printf(fmt *u8, ...) i32
+proc mix(p *var i32, q *var i32) i32 {
+    unsafe {
+        *p = $inc
+        var a i32 = *q
+        *p = *p +% a
+        return *q
+    }
+}
+proc main() i32 {
+    var x i32 = 7
+    var y i32 = 3
+    var s i32 = mix(&x, &x) +% mix(&x, &y)
+    libc_printf("%d\n", s)
+    return 0
+}
+EOF
+    fi
+}
+
+GENS=(gen_mutparam_scalar gen_mutparam_struct gen_shortcircuit gen_loop_index gen_calls gen_arith gen_strlit gen_defer gen_enum gen_rvalue_field gen_array_param gen_effectful_result gen_effectful_result gen_rawptr_alias gen_rawptr_alias)
+
+run_pipeline() {  # $1=c-file $2=bin [$3=opt level] -> prints "<exit>|<stdout>"
+    "$CC" -o "$2" "$1" $DEFS -w "${3:--O0}" 2>/dev/null || { echo "BUILDFAIL"; return; }
     local out; out=$("$2" 2>/dev/null); local rc=$?
     echo "$rc|$out"
 }
@@ -388,7 +491,24 @@ for ((t=0;t<N;t++)); do
     if [ "$old" != "$new" ]; then
         mis=$((mis+1))
         echo "### MISCOMPILE ($g)  old=[$old]  new=[$new]"; cat "$src"
-    else ok=$((ok+1)); fi
+        continue
+    fi
+    # ★ THE ANNOTATION DIFFERENTIAL. The new backend now emits `restrict`, `pure` and `const`
+    # from the analyses, and those are PROMISES the optimizer acts on: a wrong `const` lets gcc
+    # delete a call, a wrong `restrict` lets it skip an overlap test. Neither shows at -O0 —
+    # which is the only level this harness used to compile at, so it could not have caught the
+    # very class the annotations introduce. Same program, -O0 vs -O3: any difference is the
+    # optimizer acting on something we promised and should not have.
+    newO3=$(run_pipeline "$TMP/new.c" "$TMP/new3.bin" -O3)
+    if [ "$newO3" = "BUILDFAIL" ]; then
+        brokenc=$((brokenc+1)); echo "### BROKEN-C at -O3 ($g)"; cat "$src"; continue
+    fi
+    if [ "$new" != "$newO3" ]; then
+        mis=$((mis+1))
+        echo "### ANNOTATION MISCOMPILE ($g)  -O0=[$new]  -O3=[$newO3]"; cat "$src"
+        continue
+    fi
+    ok=$((ok+1))
 done
 echo "=================================================================="
 echo "fuzz_ir_codegen: $N programs   agree=$ok  old-rejected=$oldfail"
