@@ -3705,6 +3705,27 @@ static EffectSet effect_full(Decl *d) {
     g_eff_acc = 0; g_eff_self = d;
     eff_visit_list(d->as.function_decl.body);
     EffectSet result = g_eff_acc;
+    // ALLOC — the bit that was in the lattice from the start and that NOTHING EVER SET (D-14),
+    // so a real allocator and a `printf` had the same row and `mem_alloc` was indistinguishable
+    // from `mem_free`. A function allocates iff it PRODUCES owned storage it did not receive:
+    // an owned pointer/slice return, with no owned pointer/slice PARAMETER to have received it
+    // from. (The IR pass decides this by provenance; this is the declared-type approximation,
+    // which is the conservative side — it may report ALLOC for a pass-through, and an effect
+    // BOUND is an upper bound, so over-reporting only ever asks for a more honest annotation.)
+    { Type *rt = d->as.function_decl.return_type;
+      bool owns_ret = rt && rt->mode == MODE_OWNED
+                   && (rt->kind == TYPE_POINTER || rt->kind == TYPE_SLICE || rt->kind == TYPE_ARRAY);
+      if (owns_ret) {
+          bool passthrough = false;
+          for (DeclList *p = d->as.function_decl.params; p && !passthrough; p = p->next) {
+              if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+              Type *pt = p->decl->as.variable_decl.type;
+              if (pt && pt->mode == MODE_OWNED
+                  && (pt->kind==TYPE_POINTER || pt->kind==TYPE_SLICE || pt->kind==TYPE_ARRAY))
+                  passthrough = true;
+          }
+          if (!passthrough) result |= EFFECT_ALLOC;
+      } }
     g_eff_acc = saved; g_eff_self = saved_self;
 
     d->as.function_decl.effects = result;

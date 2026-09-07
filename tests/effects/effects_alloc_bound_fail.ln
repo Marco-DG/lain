@@ -1,0 +1,10 @@
+// EXPECT: [E125]
+// `alloc` is a REAL bit now. It sat in the lattice from the start with nothing ever setting
+// it, so a genuine allocator and a `printf` had the same row — {IO} — and `mem_alloc` was
+// indistinguishable from `mem_free`. A function allocates iff it PRODUCES owned storage it did
+// not receive, which is what allocation is in any language and is decided from the IR alone.
+import std.mem.{mem_alloc, mem_free}
+proc grab() mov *u8 effects io {
+    return mem_alloc(64)
+}
+proc main() i32 { return 0 }

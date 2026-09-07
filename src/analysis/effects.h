@@ -115,6 +115,39 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
             if (callee) e |= ir_effects(callee, mod);   // transitive (memoized)
             else       e |= IR_EFFECT_IO;               // unknown callee ⇒ opaque external effect
         }
+    // ALLOC: the function PRODUCES owned storage it did not receive.
+    //
+    // The bit existed in the lattice from the start and NOTHING EVER SET IT (D-14), so a real
+    // allocator and a `printf` had the same row — `{IO}` — and `mem_alloc` was indistinguishable
+    // from `mem_free`. Computing it needs a definition that is not Lain-shaped, and this is it:
+    // a function allocates iff it RETURNS an owned pointer/slice whose provenance does not root
+    // in one of its own parameters. That is what allocation IS in any language — new owned
+    // storage appearing at the boundary — and it is decided from the IR alone.
+    //
+    // It also draws the distinction the row could not: `mem_alloc` returns owned storage rooted
+    // in a call ⇒ ALLOC; `mem_free` consumes and returns nothing ⇒ not; a pass-through that
+    // returns a parameter's own storage ⇒ not.
+    if (f->ret_type && (f->ret_type->kind==IRT_PTR || f->ret_type->kind==IRT_SLICE)
+        && f->ret_type->linear) {
+        for (IrBlock *b=f->blocks; b && !(e & IR_EFFECT_ALLOC); b=b->next) {
+            if (b->term.kind != IR_TERM_RET || !b->term.cond) continue;
+            // walk the returned value back to its root through the address-forming ops
+            IrValue *v = b->term.cond; bool from_param = false;
+            for (int guard=0; v && guard<64; guard++) {
+                IrInstr *d = NULL;
+                for (IrBlock *bb=f->blocks; bb && !d; bb=bb->next)
+                    for (IrInstr *i=bb->instrs; i; i=i->next)
+                        if (i->result == v) { d = i; break; }
+                if (!d) { from_param = true; break; }          // no defining instr ⇒ a parameter
+                if (d->op==IR_CAST || d->op==IR_SLICE_DATA || d->op==IR_MAKE_SLICE
+                    || d->op==IR_FIELD_PTR || d->op==IR_ELEM_PTR) { v = d->operands[0]; continue; }
+                if (d->op==IR_LOAD && d->n_operands>=1) { v = d->operands[0]; continue; }
+                break;                                          // a call/alloca/opaque root
+            }
+            if (!from_param) e |= IR_EFFECT_ALLOC;
+        }
+    }
+
     // DIVERGE: any loop the analyzer can't prove terminates. Uses vra_loop_terminates
     // DIRECTLY (not the func-gated VRA_TERMINATION obligation), so it applies to procs too.
     Vra *V = vra_analyze(f);
