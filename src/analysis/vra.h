@@ -397,6 +397,8 @@ static void vra_free(Vra *V);                                                   
 // contract the caller is separately required to satisfy. A recursive query returns nothing
 // rather than a fixpoint over itself: `state == 1` falls back to the type interval.
 static bool vra_ret_range(IrFunc *g, int64_t *lo, int64_t *hi);
+static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
+                             IrInstr *at, int64_t line, int64_t col);   // fwd (Path-F's other half)
 static int  vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out);        // fwd (S2)
 static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx);            // fwd (S2)
 
@@ -914,6 +916,28 @@ static void vra_arith_range(IrOp op, int64_t alo,int64_t ahi, int64_t blo,int64_
         *rlo=lo; *rhi=hi;
     }
 }
+// ★ THE NARROWING OBLIGATION — the other half of Path-F. `+` WIDENS (i32 + i32 : i33), so
+// the addition itself cannot overflow and the obligation moves HERE: to the point where the
+// widened value meets a narrower slot. `var s i32 = a + b` on two unconstrained i32 is
+// exactly that, and it must be refused.
+//
+// Confined to a value that is genuinely WIDER than its target, which is what keeps it free of
+// noise (a same-type store fits by construction) and away from the 64-bit edges where a type
+// interval no longer fits in the domain's own int64.
+static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
+                             IrInstr *at, int64_t line, int64_t col) {
+    if (!val || !val->type || !target) return;
+    if (val->type->kind != IRT_INT || target->kind != IRT_INT) return;
+    if (val->type->bits <= target->bits) return;            // not a narrowing
+    int64_t tlo, thi, vlo, vhi;
+    if (!irtype_int_range(target, &tlo, &thi)) return;
+    vra_range(V, W, val, &vlo, &vhi);
+    VraCheck c; memset(&c,0,sizeof c);
+    c.kind = VRA_OVERFLOW; c.at = at; c.line = line; c.col = col;
+    c.ok = (vlo >= tlo) && (vhi <= thi);
+    vra_add_check(V, c);
+}
+
 // Overflow obligation: a CHECK-mode +,−,× on two same-typed integers must land
 // back inside that type. The octagon reasons in ℤ; here we compare the ℤ result
 // range against the operand type's interval (design §2.6).
@@ -922,7 +946,16 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     if (ins->n_operands<2) return;
     IrValue *a=ins->operands[0], *b=ins->operands[1];
     int64_t tlo,thi;
-    if (!irtype_int_range(a->type, &tlo, &thi)) return;     // target = the operand type
+    // ★ THE TARGET IS THE RESULT TYPE, not the operand type. Lain's `+` is Path-F: it WIDENS,
+    // so `a + b` on two i32 has result type i33 and CANNOT overflow — the obligation moves to
+    // the NARROWING, where the widened value meets a narrower slot (see vra_check_narrow).
+    // Checking the operand type instead demanded that an i32+i32 fit in i32, which refused
+    // `func pure_add(a i32, b i32) i64 { return a + b }` — a function that provably cannot
+    // overflow, and by far the largest single cause of the numeric engine's false positives.
+    // Nothing is lost at 64 bits: there is no u65, so a u64 add's result type IS u64 and the
+    // obligation stays exactly where it was.
+    IrType *tt = (ins->result && ins->result->type) ? ins->result->type : a->type;
+    if (!irtype_int_range(tt, &tlo, &thi)) return;
     int64_t alo,ahi,blo,bhi; vra_range(V,W,a,&alo,&ahi); vra_range(V,W,b,&blo,&bhi);
     __int128 rlo,rhi; vra_arith_range(ins->op, alo,ahi, blo,bhi, &rlo,&rhi);
     // for SUB, refine with the octagon's OWN a−b relation (W is closed here) — this proves
@@ -1225,6 +1258,29 @@ static Vra *vra_analyze(IrFunc *f) {
                 case IR_MAKE_SLICE: oct_close(&W); vra_check_subslice(V,&W,ins); break;
                 case IR_ASSERT: oct_close(&W); vra_check_assert(V,&W,ins); break;
                 case IR_ADD: case IR_SUB: case IR_MUL: oct_close(&W); vra_check_overflow(V,&W,ins); break;
+                // Path-F's other half: the widened result meets a narrower slot HERE.
+                case IR_STORE: {
+                    if (ins->n_operands < 2) break;
+                    IrType *pt = ins->operands[0]->type;
+                    IrInstr *ad = V->def[ins->operands[0]->id];
+                    IrType *slot = (pt && pt->kind==IRT_PTR) ? pt->elem
+                                 : (ad && ad->op==IR_ALLOCA) ? ad->aux.alloca_ty : NULL;
+                    if (slot && slot->kind==IRT_INT && ins->operands[1]->type
+                        && ins->operands[1]->type->kind==IRT_INT
+                        && ins->operands[1]->type->bits > slot->bits) {
+                        oct_close(&W);
+                        vra_check_narrow(V,&W, ins->operands[1], slot, ins, ins->line, ins->col);
+                    }
+                    break;
+                }
+                case IR_CAST:
+                    if (ins->n_operands >= 1 && ins->aux.cast_kind == IR_CAST_TRUNC
+                        && ins->result && ins->result->type) {
+                        oct_close(&W);
+                        vra_check_narrow(V,&W, ins->operands[0], ins->result->type,
+                                         ins, ins->line, ins->col);
+                    }
+                    break;
                 case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: oct_close(&W); vra_check_divzero(V,&W,ins); break;
                 default: break;
             }
