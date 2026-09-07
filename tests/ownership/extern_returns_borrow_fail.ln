@@ -1,0 +1,19 @@
+// EXPECT: [E004]
+// An EXTERN returning a reference lends something of the caller's, exactly as a Lain function
+// does — but there is no body to infer WHICH parameter from. The honest mask is "any reference
+// parameter"; an empty one would say "it borrows nothing", which is a claim rather than an
+// absence of one, and it silently discharged every conflict on the result.
+//
+// This is the concrete place where a LIFETIME ANNOTATION would buy precision (Stage V F1):
+// with a body, `bor_ret_borrow_mask` reads the answer off the returns and charges the loan to
+// exactly one parameter. Without one, only the programmer can narrow it.
+type Data { x i32 }
+extern func pick(a var Data) var i32
+proc mutate(var d Data) { d.x = 1 }
+proc use_ref(var r i32) i32 { return r }
+proc main() i32 {
+    var d Data = Data(5)
+    var r = pick(var d)
+    mutate(var d)          // conflicts: `r` still borrows d below
+    return use_ref(var r)
+}

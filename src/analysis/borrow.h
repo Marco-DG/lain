@@ -258,6 +258,12 @@ static uint64_t bor_ret_borrow_mask(IrFunc *f) {
         for (IrInstr *i=b->instrs;i;i=i->next)
             if (i->result && i->result->id>=0 && i->result->id<nvar) def[i->result->id]=i;
     uint64_t mask = 0; bool opaque = false;
+    // NO BODY (an extern) — nothing to infer from, so the honest answer is "it may borrow any
+    // of them". An empty mask would say "it borrows nothing", which is a claim, not an absence
+    // of one, and it silently discharged every conflict on an extern's returned reference.
+    // Keyed on is_extern, not on `!f->blocks`: ir_func_new always makes an entry block, so an
+    // extern has one — empty, but present.
+    if (f->is_extern) opaque = true;
     for (IrBlock *b=f->blocks;b;b=b->next) {
         if (b->term.kind!=IR_TERM_RET || !b->term.cond) continue;
         IrValue *root = bor_root_value(def, nvar, b->term.cond);

@@ -2032,6 +2032,15 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
                             k==DECL_EXTERN_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
             f->is_extern = true; f->src_decl = d->decl;
             f->is_variadic = d->decl->as.function_decl.is_variadic;
+            // An extern returning a REFERENCE lends something of the caller's, exactly as a
+            // Lain function does — and this fact was recorded only in ir_lower_function, which
+            // runs for BODIES. So `extern func pick(a var Data) var i32` lent nothing and every
+            // conflict on its result was invisible, while the identical signature WITH a body
+            // was caught. The mask cannot be inferred here (there is no body to read), so the
+            // fallback is every reference parameter — the sound direction, and the concrete
+            // place where a LIFETIME ANNOTATION would buy precision (Stage V F1).
+            { Type *ert = d->decl->as.function_decl.return_type;
+              if (ert && ert->mode == MODE_MUTABLE) f->ret_borrows = true; }
             // An extern was lowered as a NAME and nothing else — no return type, no
             // parameters. Analyses that ask what a call transfers got no answer, and the new
             // emitter could not declare it, so every call to one was an implicit declaration
