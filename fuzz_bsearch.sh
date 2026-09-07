@@ -36,6 +36,7 @@ for ((i=0; i<N; i++)); do
 
     src="$SC/t_$i.ln"
     cat > "$src" <<EOF
+extern proc libc_printf(fmt *u8, ...) i32
 proc bsearch(a i32[$sz], target i32) usize {
     var lo usize = 0
     var hi usize = $histart
@@ -58,7 +59,18 @@ proc main() i32 {
 }
 EOF
     cfile="$SC/t_$i.c"
+    # ★ A REJECTION MUST BE THE ANALYSIS TALKING. `accepted=0` reads exactly like "the engine
+    # proves nothing" and for one commit it meant "every generated program failed to PARSE" —
+    # the generator called libc_printf without declaring it, and a new front-end check (E127)
+    # turned that into an error. The fuzzer reported 0 unsound, truthfully and uselessly.
+    # Anything but the numeric diagnostics is a broken GENERATOR, and it says so loudly.
     if ! $LAIN "$src" -o "$cfile" >/dev/null 2>&1; then
+        why=$($LAIN "$src" -o /dev/null 2>&1 | grep -m1 -oE '^\[E[0-9]+\]')
+        case "$why" in
+            "[E085]"|"[E086]"|"[E082]"|"[E087]"|"") ;;    # the obligations this fuzzer is about
+            *) echo "  ★ GENERATOR BROKEN: $why on a generated program — this fuzzer has no teeth"
+               sed -n '1,6p' "$src" | sed 's/^/      /'; exit 2;;
+        esac
         rejected=$((rejected+1)); continue
     fi
     accepted=$((accepted+1))
