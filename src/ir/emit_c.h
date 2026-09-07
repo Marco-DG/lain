@@ -258,6 +258,13 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
         }
         case IR_FUNC_REF: fprintf(o, "  v%d = ", i->result->id);
                           ir_emit_fname(i->aux.callee, o); fputs(";\n", o); break;
+        // Two slices are equal iff same length and same bytes. `memcmp` is the C spelling of
+        // the primitive; the length test comes first so a zero-length compare never reads.
+        case IR_SEQ_EQ:
+            fprintf(o, "  v%d = (v%d.len == v%d.len && __builtin_memcmp(v%d.data, v%d.data, v%d.len) == 0);\n",
+                    i->result->id, i->operands[0]->id, i->operands[1]->id,
+                    i->operands[0]->id, i->operands[1]->id, i->operands[0]->id);
+            break;
         case IR_STRUCT_NEW: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
                             fputs("){ ", o);
                             for (int k=0;k<i->n_operands;k++){ if(k)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
@@ -267,7 +274,16 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             // at the LANE type: `v == 3` with an i32 literal against a u8 vector is rejected
             // as a truncating conversion. Cast it.
             IrType *lt = i->operands[0]->type, *rt2 = i->operands[1]->type;
-            fprintf(o, "  v%d = (", i->result->id);
+            fprintf(o, "  v%d = ", i->result->id);
+            // A VECTOR comparison in gcc yields a SIGNED integer vector of the same width,
+            // whatever the operands' lane signedness — so a `u8x16` compare produces
+            // `__vector(16) signed char` and the next `|` against the declared `Vec_16_u8` is
+            // a hard type error. The IR is right that the result is a lane-shaped mask; the
+            // SIGNEDNESS of gcc's mask is a backend detail, so the backend converts it.
+            if (i->result->type && i->result->type->kind==IRT_VECTOR) {
+                fputc('(', o); ir_ctype(i->result->type, o); fputc(')', o);
+            }
+            fputc('(', o);
             if (lt && lt->kind==IRT_VECTOR && rt2 && rt2->kind!=IRT_VECTOR) {
                 fprintf(o, "v%d %s (", i->operands[0]->id, ir_cmp_c(i->aux.cmp));
                 ir_ctype(lt->elem, o); fprintf(o, ")v%d);\n", i->operands[1]->id);
@@ -296,9 +312,18 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             break;
         }
         default:
-            if (i->n_operands == 2 && i->result)
-                fprintf(o, "  v%d = v%d %s v%d;\n", i->result->id,
+            if (i->n_operands == 2 && i->result) {
+                fprintf(o, "  v%d = ", i->result->id);
+                // Same reason as the vector comparison above: a mask's LANE SIGNEDNESS is
+                // gcc's choice, not the IR's, so combining two masks with `|` can arrive at a
+                // declared type that differs only in signedness. The IR agrees on the shape;
+                // the backend reconciles the spelling.
+                if (i->result->type && i->result->type->kind==IRT_VECTOR) {
+                    fputc('(', o); ir_ctype(i->result->type, o); fputc(')', o);
+                }
+                fprintf(o, "(v%d %s v%d);\n",
                         i->operands[0]->id, ir_arith_c(i->op), i->operands[1]->id);
+            }
             break;
     }
 }

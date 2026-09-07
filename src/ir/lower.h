@@ -1263,6 +1263,21 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 else len = ir_slice_len(c->f, c->cur, ir_lower_expr(c, R));
                 return ir_icmp(c->f, c->cur, IR_CMP_ULT, a, len);
             }
+            // `s == "hi"` on SLICES is a structural comparison, not an integer one — and
+            // IR_ICMP is defined on integers, so emitting one produced C that compares two
+            // structs with `==`. It is the one place the language's `==` means something other
+            // than "same scalar".
+            if (e->as.binary_expr.op==TOKEN_EQUAL_EQUAL || e->as.binary_expr.op==TOKEN_BANG_EQUAL) {
+                IrType *lt = L ? ir_lower_type(c, L->type) : NULL;
+                IrType *rt = R ? ir_lower_type(c, R->type) : NULL;
+                if (lt && rt && lt->kind==IRT_SLICE && rt->kind==IRT_SLICE) {
+                    IrType *bt = ir_type_bool(c->a);
+                    IrValue *eq = ir_seq_eq(c->f, c->cur, ir_lower_expr(c,L), ir_lower_expr(c,R), bt);
+                    if (e->as.binary_expr.op==TOKEN_BANG_EQUAL)
+                        eq = ir_icmp(c->f, c->cur, IR_CMP_EQ, eq, ir_const_int(c->f,c->cur,0,bt));
+                    return eq;
+                }
+            }
             // Short-circuit `and` / `or`: the right operand must NOT be evaluated when
             // the left already decides the result (correctness — it may guard a deref/
             // index), so this needs real control flow, not a bitwise op. The br_cond on

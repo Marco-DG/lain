@@ -164,6 +164,13 @@ typedef enum {
     IR_SLICE_LEN,           // op[0] = slice ; result : the length value (first-class)
     IR_SLICE_DATA,          // op[0] = slice ; result : data pointer
     IR_MAKE_SLICE,          // op[0] = data, op[1] = len
+    IR_SEQ_EQ,              // op[0], op[1] = two slices → Bool: SAME LENGTH and same bytes.
+                            // Primitive in every target (C memcmp, Rust slice ==, Zig
+                            // mem.eql, LLVM recognises the loop), so it is an op rather than
+                            // an opaque call — an opaque would suppress every proof in the
+                            // function, and a lowered LOOP would invent a termination
+                            // obligation for something with no loop in it. Memory-safe by
+                            // construction: both operands carry their own lengths.
     IR_SUBSLICE,            // op[0] = slice, op[1] = lo, op[2] = hi
     IR_ARRAY_NEW,           // op[0..] = elements
     IR_STR_CONST,           // aux.str : static string literal bytes ; result : *u8

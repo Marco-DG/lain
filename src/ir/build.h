@@ -285,6 +285,10 @@ IrValue *ir_sum_new(IrFunc *f, IrBlock *b, IrType *sty, int k, IrValue **payload
     return ins->result;
 }
 // The discriminant of a sum VALUE, as a plain integer the numeric domain can track.
+IrValue *ir_seq_eq(IrFunc *f, IrBlock *b, IrValue *x, IrValue *y, IrType *boolt) {
+    IrInstr *ins = ir_instr(f, IR_SEQ_EQ, boolt, 2);
+    ins->operands[0]=x; ins->operands[1]=y; ir_emit(b, ins); return ins->result;
+}
 IrValue *ir_sum_tag(IrFunc *f, IrBlock *b, IrValue *sum) {
     IrInstr *ins = ir_instr(f, IR_SUM_TAG, ir_type_int(f->arena, 32, true), 1);
     ins->operands[0] = sum;

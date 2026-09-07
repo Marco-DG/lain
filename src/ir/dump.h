@@ -35,6 +35,8 @@ static const char *ir_op_name(IrOp op) {
         case IR_FIELD_PTR: return "field_ptr"; case IR_ELEM_PTR: return "elem_ptr";
         case IR_SLICE_LEN: return "slice_len"; case IR_SLICE_DATA: return "slice_data";
         case IR_MAKE_SLICE: return "make_slice"; case IR_SUBSLICE: return "subslice";
+        case IR_SEQ_EQ: return "seq_eq"; case IR_FUNC_REF: return "func_ref";
+        case IR_VEC_MOVEMASK: return "vec_movemask";
         case IR_ARRAY_NEW: return "array_new"; case IR_STRUCT_NEW: return "struct_new";
         case IR_SHAPE: return "shape"; case IR_INIT: return "init"; case IR_BORROW: return "borrow"; case IR_BORROW_END: return "borrow_end"; case IR_OPAQUE: return "opaque"; case IR_CTZ: return "ctz"; case IR_CLZ: return "clz"; case IR_POPCOUNT: return "popcount";
         case IR_SUM_NEW: return "sum_new"; case IR_SUM_TAG: return "sum_tag";
