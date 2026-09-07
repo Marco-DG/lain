@@ -1040,11 +1040,54 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     vra_add_check(V, c);
 }
 // Division/remainder: the divisor must be provably non-zero.
-static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins) {
+// ★ `d != 0` IS A FACT, and an interval cannot hold it: excluding a point from the middle of
+// a range is not an interval, and it is not an octagon constraint either — which is why
+// `vra_refine_guard` writes `(void)ne`. The old engine carries a dedicated nonzero marker for
+// exactly this, and without one every guarded division in the corpus was refused.
+//
+// So ask the CFG instead of the domain. A block reached only through the true edge of
+// `d != 0` — or only through the false edge of `d == 0`, which is the early-return spelling —
+// has a nonzero `d`, and that is a dominance question the IR can already answer. Walking the
+// single-predecessor chain is the cheap, sound fragment of it: it proves guardedness where it
+// says yes and simply declines otherwise.
+static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid) {
+    // An entry ASSUME says the same thing a guard does, from a parameter refinement
+    // (`func divide(a i32, b i32 != 0)`) rather than from an edge.
+    if (V->f->entry)
+        for (IrInstr *ins=V->f->entry->instrs; ins; ins=ins->next) {
+            if (ins->op != IR_ASSUME || ins->n_operands < 1) continue;
+            IrInstr *ic = V->def[ins->operands[0]->id];
+            if (!ic || ic->op!=IR_ICMP || ic->aux.cmp!=IR_CMP_NE || ic->n_operands<2) continue;
+            int z = ic->operands[1]->id;
+            if (ic->operands[0]->id==vid && z>=0 && z<V->nvar && V->cknown[z] && V->cval[z]==0)
+                return true;
+        }
+    for (int depth=0; b && depth<64; depth++) {
+        IrEdge *e = b->preds;
+        if (!e || e->next) return false;                     // not a single-predecessor chain
+        IrBlock *p = e->block;
+        if (!p) return false;
+        if (p->term.kind == IR_TERM_BR_COND && p->term.cond) {
+            IrInstr *ic = V->def[p->term.cond->id];
+            if (ic && ic->op==IR_ICMP && ic->n_operands>=2) {
+                int a = ic->operands[0]->id, z = ic->operands[1]->id;
+                bool zero_is_const = (z>=0 && z<V->nvar && V->cknown[z] && V->cval[z]==0);
+                if (a == vid && zero_is_const) {
+                    if (ic->aux.cmp==IR_CMP_NE && p->term.a == b) return true;   // `if d != 0 {`
+                    if (ic->aux.cmp==IR_CMP_EQ && p->term.b == b) return true;   // `if d == 0 { return }`
+                }
+            }
+        }
+        b = p;
+    }
+    return false;
+}
+static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
     if (ins->n_operands<2) return;
     int64_t lo,hi; vra_range(V,W,ins->operands[1],&lo,&hi);
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_DIVZERO; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.ok = (lo>0) || (hi<0);                                // 0 ∉ [lo,hi]
+    if (!c.ok) c.ok = vra_guarded_nonzero(V, at, ins->operands[1]->id);
     vra_add_check(V, c);
 }
 
@@ -1443,7 +1486,7 @@ static Vra *vra_analyze(IrFunc *f) {
                                          ins, ins->line, ins->col);
                     }
                     break;
-                case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: oct_close(&W); vra_check_divzero(V,&W,ins); break;
+                case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: oct_close(&W); vra_check_divzero(V,&W,ins,b); break;
                 default: break;
             }
             vra_transfer_instr(V,&W,ins);

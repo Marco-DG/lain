@@ -1,0 +1,20 @@
+// LAINFLAGS: --engine=ir-full
+// `d != 0` is a FACT, and no interval can hold it — excluding a point from the middle of a
+// range is not an interval, and it is not an octagon constraint either. So the division check
+// asks the CFG instead of the domain: a block reached only through the true edge of `d != 0`,
+// or only through the FALSE edge of `d == 0` (the early-return spelling), has a nonzero d.
+// The same fact stated at the entry by a parameter refinement reads identically.
+extern proc libc_printf(fmt *u8, ...) i32
+proc guarded(x i32, d i32) i32 {
+    if d != 0 { return x / d }
+    return 0
+}
+proc early(x i32, d i32) i32 {
+    if d == 0 { return 0 }
+    return x / d
+}
+func refined(a i32, b i32 != 0) i32 { return a / b }
+proc main() i32 {
+    libc_printf("%d\n", guarded(100, 5) + early(100, 4) + refined(100, 2))
+    return 0
+}

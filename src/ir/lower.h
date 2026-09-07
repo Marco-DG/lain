@@ -2348,7 +2348,18 @@ static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl
         if (!con || con->kind != EXPR_BINARY) continue;
         Expr *rhs = con->as.binary_expr.right;
         IrCmp cmp;
-        if (!ir_tok_cmp(con->as.binary_expr.op, sgn, &cmp)) continue;   // skip == / !=
+        // `b i32 != 0` — a DISEQUALITY refinement. It was skipped along with `==`, so the
+        // commonest precondition in the language (`!= 0` on a divisor) never reached the IR at
+        // all. The numeric domain cannot hold a hole in an interval, but the IR can still
+        // STATE the fact, and the division check reads it — the same shape as a guard, said at
+        // the entry instead of on an edge.
+        if (con->as.binary_expr.op == TOKEN_BANG_EQUAL) {
+            IrValue *rvn = ir_lower_refinement_rhs(c, rhs, pv->type);
+            if (rvn && rvn->type && rvn->type->kind==IRT_INT)
+                ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_NE, pv, rvn));
+            continue;
+        }
+        if (!ir_tok_cmp(con->as.binary_expr.op, sgn, &cmp)) continue;   // skip ==
         IrValue *rv = ir_lower_refinement_rhs(c, rhs, pv->type);   // literal / a.len / param
         if (rv && rv->type && rv->type->kind==IRT_INT)
             ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, pv, rv));
