@@ -1982,6 +1982,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             IrValue *tagv = sumty ? ir_sum_tag(c->f, c->cur, v) : NULL;
             IrBlock *join = ir_new_block(c->f);
             StmtMatchCase *elsec = NULL;
+            uint64_t matched = 0;          // which variants the arms selected (for `else`)
             for (StmtMatchCase *cs = s->as.match_stmt.cases; cs; cs = cs->next) {
                 if (!cs->patterns) { elsec = cs; continue; }
                 IrBlock *body = ir_new_block(c->f);
@@ -1999,6 +2000,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                                             ed = ir_find_enum_decl(c, &tn); }
                         int k = ed ? ir_variant_index(ed, ir_variant_name_of(pv), true) : -1;
                         if (k < 0) { ir_incomplete(c, "enum-match-pattern"); ir_set_br(c->cur, body); c->cur = nxt; continue; }
+                        if (k < 64) matched |= (uint64_t)1 << k;
                         if (pe->kind==EXPR_CALL) { bound_k = k; bound_pat = pe; }
                         IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
                         IrValue *eq = ir_icmp(c->f, c->cur, IR_CMP_EQ, tagv, kc);
@@ -2042,7 +2044,25 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
                 c->cur = ftblk;
             }
-            if (elsec) ir_lower_stmts(c, elsec->body);
+            if (elsec) {
+                // ★ NARROWING IN THE `else` ARM. Once every other variant has its own arm, the
+                // scrutinee here can only be the remaining one — so `case r { NotFound: … 
+                // Denied: … else: printf("%s", r) }` means the PAYLOAD, and passing the whole
+                // sum printed `(null)`. Same rule as `if x` over an optional, arrived at from
+                // the other side: exclusion is narrowing too. Only when exactly ONE variant is
+                // left and it carries a payload; anything else is still the sum.
+                IrLocal *esaved = c->locals;
+                if (sumty && val && val->kind==EXPR_IDENTIFIER && sumty->n_fields <= 64) {
+                    int rem = -1, nrem = 0;
+                    for (int q=0; q<sumty->n_fields; q++)
+                        if (!((matched >> q) & 1u)) { rem = q; nrem++; }
+                    if (nrem == 1 && rem >= 0 && sumty->fields[rem])
+                        ir_env_add(c, val->as.identifier_expr.id, NULL,
+                                   ir_sum_optional_payload(c, v, rem));
+                }
+                ir_lower_stmts(c, elsec->body);
+                c->locals = esaved;
+            }
             if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
             c->cur = join;
             if (mborrow) ir_borrow_end(c->f, c->cur, mborrow);   // the scoped loan ends here
