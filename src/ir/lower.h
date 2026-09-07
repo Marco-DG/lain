@@ -540,8 +540,12 @@ static bool ir_tok_cmp(TokenKind op, bool sgn, IrCmp *out) {
 // resolved by the LOWERED value's IR kind, never the (missing) AST type.
 static IrValue *ir_lower_refinement_rhs(LowerCtx *c, Expr *rhs, IrType *fallback_ty) {
     if (!rhs) return NULL;
-    if (rhs->kind==EXPR_LITERAL)
-        return ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, fallback_ty);
+    // (The literal special-case that used to live here was the workaround for D-13: refinement
+    // expressions were never resolved OR type-checked, so the RHS of `n < 4096` arrived with
+    // no type and would have lowered to a `unit`-typed constant. Sema now resolves and infers
+    // them, and the bounds survey is IDENTICAL with and without the workaround — 802/815 both
+    // ways — so it is dead and its removal is the statement that the defect is closed.)
+    (void)fallback_ty;
     if (rhs->kind==EXPR_MEMBER && rhs->as.member_expr.member && rhs->as.member_expr.member->length==3
         && strncmp(rhs->as.member_expr.member->name,"len",3)==0) {
         IrValue *tv = ir_lower_expr(c, rhs->as.member_expr.target);

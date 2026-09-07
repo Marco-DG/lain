@@ -4436,6 +4436,37 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             param_idx++;
         }
 
+        // ★ D-13 / lain_language_limits §3: TYPE-CHECK the refinement expressions. They were
+        // parsed and then APPLIED without ever going through inference, so they carried no
+        // type at all — the RHS of `n < 4096` reached the IR lowering with `expr->type == NULL`
+        // and had to be special-cased there, or it would have lowered to a `unit`-typed
+        // constant. A refinement is an expression and deserves what every other expression
+        // gets.
+        //
+        // It has to be a SECOND pass: a constraint on one parameter may name a LATER one
+        // (`i usize < arr.len` before `arr` is declared), so doing it inside the loop above
+        // resolved `arr` against an empty scope and rejected three corpus programs.
+        for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
+            if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+            for (ExprList *cn = p->decl->as.variable_decl.constraints; cn; cn = cn->next)
+                if (cn->expr) {
+                    // RESOLVE before inferring. The defect is deeper than "not type-checked":
+                    // these expressions never went through NAME RESOLUTION either, so the
+                    // identifiers in them carry no binding and inference alone reports
+                    // `'a' is not a value` for a parameter that is plainly in scope.
+                    sema_resolve_expr(cn->expr);
+                    sema_infer_expr(cn->expr);
+                }
+            // ...and the SIZE expression of a dependent array type (`out i32[n]`,
+            // `i32[a.len - 1]`) is a refinement too — same treatment, same reason.
+            { Type *pt2 = p->decl->as.variable_decl.type;
+              if (pt2 && pt2->kind == TYPE_ARRAY && pt2->array_len < 0 && pt2->size_expr) {
+                  sema_resolve_expr(pt2->size_expr);
+                  sema_infer_expr(pt2->size_expr);
+              } }
+        }
+
+
         // 2.b) Name resolution
         current_return_type = mono_resolve_type_apps(d->as.function_decl.return_type);
         current_function_decl = d; // Set current function
