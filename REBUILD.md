@@ -580,7 +580,7 @@ The endeavour is complete when ALL of these hold simultaneously:
 - [ ] **4.2 LLVM/native seam** on the sovereign IR (E0.7).
 
 ### ▸ STAGE V — The language catches up to the IR
-- [~] **F1 lifetimes/regions syntax** — **DESIGNED, and the framing was wrong**
+- [x] **F1 lifetimes/regions syntax** ✓ **BUILT** (design + implementation) — and the framing was wrong
       (`internal/design/f1_lifetime_syntax.md`). Rust needs lifetime parameters because it
       checks each function against its SIGNATURE ALONE; Lain-IR lowers the whole module and
       `bor_ret_borrow_mask` INFERS which parameter a returned reference borrows, from the body
@@ -593,6 +593,11 @@ The endeavour is complete when ALL of these hold simultaneously:
       means), CHECKED against the inferred mask on anything with a body, because an annotation
       the compiler trusts and never verifies is defect D-4. Roughly F2's size, not a lifetime
       system. Superseded framing kept in `lain_language_limits.md` §6b with a pointer.
+      **BUILT**: the clause parses on both function and extern declarations, REPLACES the
+      fallback on an extern, and is CHECKED against the inferred mask on anything with a body
+      (E124 when it claims less than the body does — the inferred mask is kept, soundness is
+      not negotiable). New-engine-only precision for now: the old borrow checker does not read
+      the clause. Two corpus tests; all four directions verified.
       ORIGINAL entry (`lain_language_limits.md` §6b) — was called the flagship gap;
       unblocks cross-function borrow precision.
 - [~] **F2 predicate syntax** — `assert(pred)` / `assume(pred)` ✓ (4c5ad42, limits §2): the IR
