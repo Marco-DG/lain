@@ -323,11 +323,24 @@ typedef enum { IR_FUNC_PURE, IR_FUNC_PROC } IrFuncKind;
 // by an IR pass (analysis/effects.h) and propagated callee ⊆ caller. Language-neutral: any
 // front-end's function lowers to a footprint over these bits.
 typedef enum {
+    // AUDIT (effect_lattice_audit.md): Lain has NO mutable globals — top-level bindings are
+    // compile-time constants (E100) — so this bit's domain is EMPTY by language design. Its
+    // only live trigger is an OPAQUE's declared write footprint, i.e. "unmodelled code might
+    // write", which is a fail-closed signal rather than an observation. Reserved, not dead by
+    // oversight. The PARAMETER-write channel is C5's IrWriteFootprint, which is separate and
+    // live — the row was never the right shape for it.
     IR_EFFECT_WRITE   = 1 << 0,  // writes mutable GLOBAL state (a var-param write is NOT this)
     IR_EFFECT_DIVERGE = 1 << 1,  // may not terminate (unbounded loop / non-well-founded recursion)
     IR_EFFECT_RAISES  = 1 << 2,  // may panic / abort
+    // An extern's IO bit defaults from WHICH KEYWORD the programmer wrote (`extern func` is
+    // trusted pure, `extern proc` is IO) — consistent with "believed on an extern", but the
+    // one Lain-shaped default in this row: a front end with no func/proc split cannot express
+    // it. F3's `effects` clause is the neutral carrier; the keyword is only the default.
     IR_EFFECT_IO      = 1 << 3,  // external side effects (calls a proc / extern proc)
-    IR_EFFECT_ALLOC   = 1 << 4,  // allocates
+    IR_EFFECT_ALLOC   = 1 << 4,  // PRODUCES owned storage it did not receive — an owned
+                                 // pointer/slice return whose provenance does not root in a
+                                 // parameter. Language-neutral, and the distinction the row
+                                 // could not previously draw (mem_alloc vs mem_free).
 } IrEffectBit;
 typedef unsigned IrEffect;
 
