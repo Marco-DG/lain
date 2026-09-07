@@ -151,6 +151,13 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             else fprintf(o, "  v%d = %lld;\n", i->result->id, (long long)i->aux.imm);
             break;
         case IR_ALLOCA: // array decays to its element base; scalar takes the slot address
+            if (i->n_operands >= 1) {   // DYNAMIC: `count` elements, allocated in this frame
+                fprintf(o, "  v%d = (", i->result->id);
+                ir_ctype(i->aux.alloca_ty, o);
+                fprintf(o, "*)__builtin_alloca(v%d * sizeof(", i->operands[0]->id);
+                ir_ctype(i->aux.alloca_ty, o); fputs("));\n", o);
+                break;
+            }
             if (i->aux.alloca_ty && i->aux.alloca_ty->kind==IRT_ARRAY)
                  fprintf(o, "  v%d = slot%d;\n",  i->result->id, i->result->id);
             else fprintf(o, "  v%d = &slot%d;\n", i->result->id, i->result->id);

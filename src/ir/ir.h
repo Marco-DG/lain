@@ -154,6 +154,11 @@ typedef enum {
     IR_ICMP,                // aux.cmp : the predicate
     // aggregates / slices / memory
     IR_ALLOCA,              // aux.alloca_ty : slot element type ; result : Ptr
+                            // With ONE OPERAND it is a DYNAMIC frame allocation: operand 0 is
+                            // the element COUNT and aux.alloca_ty the element type — a C VLA,
+                            // LLVM's `alloca T, n`, Zig's stack buffer. The extent is a
+                            // runtime value, so it cannot live on the type; that is the same
+                            // reason IR_SHAPE's extents are operands.
     IR_LOAD,                // op[0] = address
     IR_STORE,               // op[0] = address, op[1] = value ; no result
     IR_VEC_MOVEMASK,        // op[0] = a Vec(N,u8) ; result : u32 — one bit per lane's sign.

@@ -1953,20 +1953,23 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 vl->next = c->locals; c->locals = vl;
                 break;
             }
-            // A stack VLA — `var a u8[n]` — lowers to a SLICE slot, and its length was never
-            // stated anywhere: `a[i]` under `i < n` could not be proven and `a.len` was
-            // unknown, because nothing connected the slice to `n`. State it. This is the same
-            // category of fact as IR_SHAPE and IR_INIT — no runtime effect, just what lowering
-            // already knows by construction (the backend emits exactly `T a[n]`), so it needs
-            // no discharging assert: it is definitional, not an assumption about behaviour.
+            // A stack VLA — `var a u8[n]`. It lowered to a SLICE SLOT WITH NO STORAGE and an
+            // ASSUME that its length is n: the length was then known to the prover while the
+            // data pointer stayed null, so `a[i] = 1` wrote through null and the program
+            // SEGFAULTED on a program the analysis had just proven safe. An assumed fact with
+            // no allocation behind it is exactly the shape this project treats as a hole.
+            //
+            // Allocate it. IR_ALLOCA with a COUNT operand is a dynamic frame allocation — a C
+            // VLA, LLVM's `alloca T, n`, a Zig stack buffer — and the slice built over it
+            // carries the length as a VALUE, so nothing has to be assumed at all.
             {   Type *dt = s->as.var_stmt.type;
                 if (dt && dt->kind==TYPE_ARRAY && dt->array_len<0 && dt->size_expr
                     && slot_ty->kind==IRT_SLICE && !s->as.var_stmt.expr) {
                     IrValue *nv = ir_lower_expr(c, dt->size_expr);
                     if (nv && nv->type && nv->type->kind==IRT_INT) {
-                        IrValue *sv = ir_load(c->f, c->cur, slot, slot_ty);
-                        IrValue *lv = ir_slice_len(c->f, c->cur, sv);
-                        ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_EQ, lv, nv));
+                        IrType *el = slot_ty->elem ? slot_ty->elem : ir_type_int(c->a,8,false);
+                        IrValue *base = ir_alloca_dyn(c->f, c->cur, el, nv);
+                        ir_store(c->f, c->cur, slot, ir_make_slice(c->f, c->cur, base, nv, el));
                     }
                 }
             }

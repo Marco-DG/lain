@@ -306,6 +306,15 @@ IrValue *ir_sum_payload(IrFunc *f, IrBlock *b, IrValue *sum, int k, int fi, IrTy
 }
 
 // Address of struct field #idx (base is the struct's address).
+// A DYNAMIC frame allocation: `count` elements of `elem`. The result is the base pointer,
+// typed like every other array base in this model.
+IrValue *ir_alloca_dyn(IrFunc *f, IrBlock *b, IrType *elem, IrValue *count) {
+    IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = elem;
+    IrInstr *ins = ir_instr(f, IR_ALLOCA, pt, 1);
+    ins->operands[0] = count; ins->aux.alloca_ty = elem;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_field_ptr(IrFunc *f, IrBlock *b, IrValue *base, int idx, IrType *fty) {
     // An ARRAY field DECAYS, exactly as an array alloca does — the uniform pointer model this
     // IR uses everywhere else. Typing it `*[N]T` instead produced `int32_t**` in the emitted C
