@@ -608,7 +608,12 @@ The endeavour is complete when ALL of these hold simultaneously:
       guard), without which the feature would be inert in the authoritative one.
       REMAINING in F2: arbitrary linear-arith predicates, relational
       preconditions, `assume`/`assert` statements (limits §1, §2).
-- [ ] **F3 effect annotations** — expose the designed lattice (limits §6).
+- [x] **F3 effect annotations** ✓ — `effects io, alloc` declares an UPPER BOUND on the row
+      (write/diverge/raises/io/alloc); `effects` with an empty list means PURE. Same rule as
+      F1: believed on an extern, CHECKED against the inferred row with a body (E125 when it
+      declares fewer effects than the body has; declaring more is imprecise and allowed).
+      Checked in the OLD engine against `effect_full`, so unlike F1's precision this is not
+      new-engine-only.
 - [x] **F4 type-check refinement exprs** ✓ (c01dca6) — and the defect was DEEPER than its
       title: they were never RESOLVED either, so identifiers in them carried no binding.
       Resolve then infer, in a SECOND pass over the parameters (a constraint may name a LATER
