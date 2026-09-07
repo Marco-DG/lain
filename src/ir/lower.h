@@ -1461,7 +1461,11 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 ir_init_fact(c->f, c->cur, agg);
                 return agg;
             }
-            break;
+            // Not an array-typed literal (a vector, say): fall to the same placeholder the
+            // default case uses. A bare `break` here runs off the end of a non-void function —
+            // the exact undefined behaviour `check_build_warnings.sh` exists for, and the
+            // THIRD time this switch has grown that shape.
+            return ir_opaque_expr(c, ty, true, "unhandled-expr", NULL, NULL);
         }
         case EXPR_MEMBER: {
             Id *m = e->as.member_expr.member;
