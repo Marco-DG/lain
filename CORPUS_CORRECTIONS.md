@@ -210,6 +210,47 @@ Per-variant reasoning falls out of the CFG rather than being written down.
 
 ---
 
+---
+
+## C-6 · the loop-carried ACCUMULATOR — the old engine's overflow check does not survive a loop
+
+Not an inversion of one test: a verdict on a CLASS of roughly fifty, and the largest single
+finding of the numeric triage.
+
+```lain
+func up8(n u8) u8 {
+    var s u8 = 0
+    var i u8 = 0
+    while i < n { s = s + i  i = i + 1 }
+    return s
+}
+up8(200)     // true sum of 0..199 = 19900
+```
+
+**The old compiler accepts this and the program prints 188.** Two lines, no corner case. The
+same shape at i32 — `up(100000)` — prints 704982704 where the answer is 4999950000.
+
+**The mechanism.** Its loop widening clamps the accumulator's range to the type it is stored
+into, after which the store trivially "fits". The check is circular, so **no loop-carried
+accumulator has ever actually been checked**. The old engine's E086 does fire on a straight-line
+`var s i32 = a + b`; it is a loop that defeats it.
+
+**New engine.** `s + i` is exact in the widened result type (Path-F: `+` widens, so an i32+i32
+is an i33 and cannot overflow) and the obligation lives at the STORE back into the narrow cell.
+Unbounded accumulator ⇒ refused. `tests/vra/overflow/loop_accumulator_fail.ln` pins it.
+
+**What this costs, honestly.** ~50 corpus programs contain an unbounded accumulator while
+testing something else entirely (loops, borrows, UFCS). Every one of them is a real overflow
+and would need a guard, a wider type, or `+%`. That is not a switchover bug — it is the
+language's own promise arriving, and the corpus predating it.
+
+**And the precision frontier it exposes, stated rather than papered over.** The GUARDED form
+(`if s < 1000 { s = s + i }`) proves today, from the guard alone —
+`loop_accumulator_bounded_pass.ln`. What does NOT prove is the naturally-bounded form: `s`
+summing `i < 16` over at most 16 iterations reaches 120, and showing it needs the loop's TRIP
+COUNT related to the accumulator's per-iteration growth. That is a PRODUCT, not a difference,
+and outside an octagon. It is the sharpest open item on the numeric side.
+
 ## Switchover procedure (Stage 3.5)
 
 1. Invert each entry: rename `*_fail.ln` → `*_pass.ln`, drop the `// EXPECT:` line, add a

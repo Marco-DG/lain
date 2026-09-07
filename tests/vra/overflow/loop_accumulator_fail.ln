@@ -1,0 +1,25 @@
+// EXPECT: [E086]
+// LAINFLAGS: --engine=ir-full
+// ★ THE OLD ENGINE'S OVERFLOW CHECK DOES NOT SURVIVE A LOOP, and this is the two-line
+// demonstration: `s` is a u8, the loop sums 0..199, and the true total is 19900. The old
+// compiler ACCEPTS it and the program prints 188. Its loop widening clamps the accumulator's
+// range to the type it is stored into, after which the store "fits" by construction — the
+// check is circular, so no loop-carried accumulator has ever been checked at all.
+//
+// The sovereign engine refuses it: `s + i` is exact in the widened result type, and the STORE
+// back into the u8 is where the obligation lives (Path-F). An unbounded accumulator is not a
+// precision gap — it is a real overflow, and the language's promise is prove-or-reject.
+extern proc libc_printf(fmt *u8, ...) i32
+func up8(n u8) u8 {
+    var s u8 = 0
+    var i u8 = 0
+    while i < n {
+        s = s + i
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 {
+    libc_printf("%d\n", up8(200) as i32)
+    return 0
+}

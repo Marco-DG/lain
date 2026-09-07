@@ -1,0 +1,25 @@
+// LAINFLAGS: --engine=ir-full
+// The companion to loop_accumulator_fail, and it says exactly what the language asks for once
+// the overflow rule is actually enforced: GUARD the accumulator. `s < 1000` makes the sum
+// `s + i` at most 1014, which fits a u16, and the octagon proves it from the guard alone.
+//
+// What it does NOT do is prove the unguarded form by counting iterations. `s` bounded by
+// 15+14+…+0 = 120 needs the loop's TRIP COUNT related to the accumulator's per-iteration
+// growth — a product, not a difference, and outside an octagon. That is the real precision
+// frontier here, and it is recorded as one rather than papered over.
+extern proc libc_printf(fmt *u8, ...) i32
+func up16() u16 {
+    var s u16 = 0
+    var i u16 = 0
+    while i < 16 {
+        if s < 1000 {
+            s = s + i
+        }
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 {
+    libc_printf("%d\n", up16() as i32)
+    return 0
+}
