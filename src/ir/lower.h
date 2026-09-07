@@ -245,6 +245,59 @@ static int ir_variant_index(Decl *ed, Id *vn, bool suffix) {
     }
     return -1;
 }
+
+// ── NESTED VARIANT PATTERNS ──────────────────────────────────────────────────────────────
+// `case r { Err(NotFound): … Err(Permission): … }` names variants of the payload's OWN sum
+// type: those are TESTS, while `Err(e)` binds. Matching only the outer variant made every
+// `Err(...)` arm take the first one — `Err(Permission)` printed NotFound, a silently wrong
+// dispatch rather than a build failure. Telling the two apart is a lookup, not a syntax rule,
+// so it works at whatever depth the payload's type happens to be an enum.
+static int ir_nested_variant_index(LowerCtx *c, IrType *fty, Expr *sub) {
+    if (!sub || sub->kind!=EXPR_IDENTIFIER) return -1;
+    if (!fty || fty->kind!=IRT_SUM || !fty->sname) return -1;
+    Id tn; tn.name = fty->sname->name; tn.length = fty->sname->length;
+    Decl *ed = ir_find_enum_decl(c, &tn);
+    if (!ed) return -1;
+    return ir_variant_index(ed, sub->as.identifier_expr.id, true);
+}
+// The payload type of variant `k`'s field `j` (payloads are wrapped in a struct).
+static IrType *ir_variant_field_type(IrType *plk, int j) {
+    if (!plk) return NULL;
+    return (plk->kind==IRT_STRUCT && j < plk->n_fields) ? plk->fields[j] : plk;
+}
+// Branch on the outer tag test `eq` into `body`, threading the pattern's nested variant tests
+// in between. Each sub-test sits in its own block, entered only once the outer tag is known,
+// so IR_SUM_PAYLOAD is never emitted off its own variant. `c->cur` is left where the caller
+// had it, so the caller's `c->cur = nxt` still means what it did.
+static void ir_match_branch(LowerCtx *c, IrType *sumty, int k, Expr *pe, IrValue *v,
+                            IrValue *eq, IrBlock *body, IrBlock *nxt) {
+    IrType *plk = (sumty && k < sumty->n_fields) ? sumty->fields[k] : NULL;
+    int nsub = 0;
+    if (pe && pe->kind==EXPR_CALL && plk) {
+        int j=0; for (ExprList *aa=pe->as.call_expr.args; aa; aa=aa->next, j++)
+            if (ir_nested_variant_index(c, ir_variant_field_type(plk,j), aa->expr) >= 0) nsub++;
+    }
+    if (!nsub) { ir_set_br_cond(c->cur, eq, body, nxt); return; }
+    IrBlock *keep = c->cur, *sub = ir_new_block(c->f);
+    ir_set_br_cond(c->cur, eq, sub, nxt);
+    c->cur = sub;
+    int seen = 0, j = 0;
+    for (ExprList *aa=pe->as.call_expr.args; aa; aa=aa->next, j++) {
+        IrType *fty = ir_variant_field_type(plk, j);
+        int vk = ir_nested_variant_index(c, fty, aa->expr);
+        if (vk < 0) continue;
+        IrValue *pv2 = ir_sum_payload(c->f, c->cur, v, k, j, fty);
+        IrValue *stg = ir_sum_tag(c->f, c->cur, pv2);
+        IrValue *skc = ir_const_int(c->f, c->cur, vk, stg->type);
+        IrValue *seq = ir_icmp(c->f, c->cur, IR_CMP_EQ, stg, skc);
+        seen++;
+        IrBlock *tgt = (seen==nsub) ? body : ir_new_block(c->f);
+        ir_set_br_cond(c->cur, seq, tgt, nxt);
+        c->cur = tgt;
+    }
+    c->cur = keep;
+}
+
 // The enum whose variant list contains `vn` (for a bare/mangled variant reference).
 static Decl *ir_find_enum_by_variant(LowerCtx *c, Id *vn, int *idx) {
     for (DeclList *d = c->globals; d; d = d->next) {
@@ -1029,7 +1082,8 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                         if (k < 0) { ir_set_br(c->cur, body); c->cur = nxt; continue; }
                         if (pe->kind==EXPR_CALL) { bound_k = k; bound_pat = pe; }
                         IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
-                        ir_set_br_cond(c->cur, ir_icmp(c->f,c->cur,IR_CMP_EQ,tagv,kc), body, nxt);
+                        ir_match_branch(c, sumty, k, pe, v,
+                                        ir_icmp(c->f,c->cur,IR_CMP_EQ,tagv,kc), body, nxt);
                     } else if (pe->kind == EXPR_RANGE) {
                         Expr *loe=pe->as.range_expr.start, *hie=pe->as.range_expr.end;
                         IrBlock *hitest = ir_new_block(c->f);
@@ -1054,6 +1108,9 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                         Id *bn = a->expr && a->expr->kind==EXPR_IDENTIFIER
                                ? a->expr->as.identifier_expr.id : NULL;
                         if (!bn || !pl || j >= pl->n_fields) continue;
+                        // a nested variant NAME tested the payload; binding it here would
+                        // shadow the variant with the value it was testing for
+                        if (ir_nested_variant_index(c, pl->fields[j], a->expr) >= 0) continue;
                         ir_env_add(c, bn, NULL, ir_sum_payload(c->f, c->cur, v, bound_k, j, pl->fields[j]));
                     }
                 }
@@ -1904,7 +1961,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                         if (pe->kind==EXPR_CALL) { bound_k = k; bound_pat = pe; }
                         IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
                         IrValue *eq = ir_icmp(c->f, c->cur, IR_CMP_EQ, tagv, kc);
-                        ir_set_br_cond(c->cur, eq, body, nxt);
+                        ir_match_branch(c, sumty, k, pe, v, eq, body, nxt);
                         c->cur = nxt;
                         continue;
                     }
@@ -1932,6 +1989,9 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                         Id *bn = a->expr && a->expr->kind==EXPR_IDENTIFIER
                                ? a->expr->as.identifier_expr.id : NULL;
                         if (!bn || !pl || j >= pl->n_fields) continue;
+                        // a nested variant NAME tested the payload; binding it here would
+                        // shadow the variant with the value it was testing for
+                        if (ir_nested_variant_index(c, pl->fields[j], a->expr) >= 0) continue;
                         IrValue *pvv = ir_sum_payload(c->f, c->cur, v, bound_k, j, pl->fields[j]);
                         ir_env_add(c, bn, NULL, pvv);   // a read-only binding, not a slot
                     }
