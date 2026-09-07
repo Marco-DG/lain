@@ -582,7 +582,13 @@ The endeavour is complete when ALL of these hold simultaneously:
 ### ▸ STAGE V — The language catches up to the IR
 - [ ] **F1 lifetimes/regions syntax** (`lain_language_limits.md` §6b) — the flagship gap;
       unblocks cross-function borrow precision.
-- [ ] **F2 refinement/predicate syntax** — arbitrary linear-arith predicates, relational
+- [~] **F2 predicate syntax** — `assert(pred)` / `assume(pred)` ✓ (4c5ad42, limits §2): the IR
+      had both primitives from the start and the language could say NEITHER. `assume` is
+      confined to `unsafe` (E123) — an unchecked annotation the prover trusts is defect D-4 by
+      construction — while `assert` is always allowed, because an obligation is not a licence.
+      BOTH engines learn from it (the old range table applies an `assume` as it applies a
+      guard), without which the feature would be inert in the authoritative one.
+      REMAINING in F2: arbitrary linear-arith predicates, relational
       preconditions, `assume`/`assert` statements (limits §1, §2).
 - [ ] **F3 effect annotations** — expose the designed lattice (limits §6).
 - [x] **F4 type-check refinement exprs** ✓ (c01dca6) — and the defect was DEEPER than its
