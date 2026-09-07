@@ -1,0 +1,9 @@
+// F1: `... var i32 in a` declares WHICH parameter the returned reference borrows. Truthful
+// here — the body returns only `a.x` — so it agrees with what the borrow pass infers and is
+// accepted. On a function WITH a body the clause is documentation that gets CHECKED, never
+// believed: an annotation the compiler trusts and never verifies is defect D-4.
+type Data { x i32 }
+func pick(a var Data, b var Data) var i32 in a {
+    return var a.x
+}
+proc main() i32 { return 0 }

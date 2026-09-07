@@ -849,6 +849,17 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
         ret_type = parse_type(arena, parser);
     }
 
+    // --- F1: `in <param>` — which parameter the RETURNED reference borrows. Reuses the `in`
+    // keyword the language already has for the same KIND of idea (`pos usize in text` says an
+    // index is valid in a container; `var i32 in a` says a reference borrows a parameter).
+    Id *ret_borrow_of = NULL;
+    if (ret_type && parser_match(TOKEN_KEYWORD_IN)) {
+        parser_advance();
+        parser_expect(TOKEN_IDENTIFIER, "Expected a parameter name after `in`");
+        ret_borrow_of = id(arena, parser->token.length, parser->token.start);
+        parser_advance();
+    }
+
     // --- return type constraints (equation-style): int >= 0, int >= lo and <= hi ---
     ExprList *return_constraints = NULL;
     if (ret_type && is_comparison_op(parser->token.kind)) {
@@ -922,6 +933,7 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
         d = decl_function(arena, func_name, params, ret_type, body, false, false);
     }
     d->as.function_decl.return_constraints = return_constraints;
+    d->as.function_decl.ret_borrow_of = ret_borrow_of;
     d->as.function_decl.decreasing_measure = decreasing_measure;
     return d;
 }
@@ -1003,15 +1015,28 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
         ret_type = parse_type(arena, parser);
     }
 
+    // F1: `in <param>` on an extern is where the annotation actually earns its keep — there
+    // is no body, so nothing can infer WHICH parameter the result borrows, and the fallback is
+    // "all of them".
+    Id *ext_borrow_of = NULL;
+    if (ret_type && parser_match(TOKEN_KEYWORD_IN)) {
+        parser_advance();
+        parser_expect(TOKEN_IDENTIFIER, "Expected a parameter name after `in`");
+        ext_borrow_of = id(arena, parser->token.length, parser->token.start);
+        parser_advance();
+    }
+
     // require end-of-decl (newline or semicolon)
     parser_expect_eol("Expected ';' or newline after extern decl");
     parser_advance();
 
     // NULL body signals extern
     if (is_proc) {
-        return decl_procedure(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
+        { Decl *ed = decl_procedure(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
+          ed->as.function_decl.ret_borrow_of = ext_borrow_of; return ed; }
     } else {
-        return decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
+        { Decl *ed = decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
+          ed->as.function_decl.ret_borrow_of = ext_borrow_of; return ed; }
     }
 }
 

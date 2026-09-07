@@ -114,6 +114,18 @@ static bool ir_mod_prefix(const char *mod, const Id *name, size_t *out_ml) {
     return true;
 }
 
+// F1: index of the parameter `nm` names in this declaration, or −1.
+static int ir_param_index_by_name(Decl *fn, Id *nm) {
+    if (!fn || !nm) return -1;
+    int i = 0;
+    for (DeclList *p = fn->as.function_decl.params; p; p = p->next, i++) {
+        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+        Id *pn = p->decl->as.variable_decl.name;
+        if (pn && pn->length == nm->length && strncmp(pn->name, nm->name, (size_t)nm->length)==0)
+            return i;
+    }
+    return -1;
+}
 static Decl *ir_find_global_const(LowerCtx *c, Id *name) {
     if (!name) return NULL;
     for (DeclList *d = c->globals; d; d = d->next) {
@@ -2004,7 +2016,9 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     // borrows something of the caller's. WHICH parameter is a body fact, inferred later by
     // analysis/borrow.h (see IrFunc.ret_borrow_mask). Lowering does not analyse.
     { Type *rt = fn->as.function_decl.return_type;
-      if (rt && rt->mode == MODE_MUTABLE) f->ret_borrows = true; }
+      if (rt && rt->mode == MODE_MUTABLE) f->ret_borrows = true;
+      int bi = ir_param_index_by_name(fn, fn->as.function_decl.ret_borrow_of);
+      if (bi >= 0 && bi < 64) { f->ret_borrow_annot = true; f->ret_borrow_annot_mask = 1ull<<bi; } }
     ir_lower_stmts(&cc, fn->as.function_decl.body);
     if (!ir_is_set_term(cc.cur)) {
         ir_lower_flush_defers(&cc);   // falling off the end is an exit too
@@ -2040,7 +2054,9 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
             // fallback is every reference parameter — the sound direction, and the concrete
             // place where a LIFETIME ANNOTATION would buy precision (Stage V F1).
             { Type *ert = d->decl->as.function_decl.return_type;
-              if (ert && ert->mode == MODE_MUTABLE) f->ret_borrows = true; }
+              if (ert && ert->mode == MODE_MUTABLE) f->ret_borrows = true;
+              int bi = ir_param_index_by_name(d->decl, d->decl->as.function_decl.ret_borrow_of);
+              if (bi >= 0 && bi < 64) { f->ret_borrow_annot = true; f->ret_borrow_annot_mask = 1ull<<bi; } }
             // An extern was lowered as a NAME and nothing else — no return type, no
             // parameters. Analyses that ask what a call transfers got no answer, and the new
             // emitter could not declare it, so every call to one was an implicit declaration

@@ -1,0 +1,15 @@
+// EXPECT: [E004]
+// The `in a` clause NARROWS the loan to one parameter — it does not remove it. A conflict
+// on the annotated parameter is still a conflict, which is what keeps the clause from
+// being an escape hatch.
+type Data { x i32 }
+extern func pick(a var Data, b var Data) var i32 in a
+proc mutate(var d Data) { d.x = 1 }
+proc use_ref(var r i32) i32 { return r }
+proc main() i32 {
+    var p Data = Data(1)
+    var q Data = Data(2)
+    var r = pick(var p, var q)
+    mutate(var p)
+    return use_ref(var r)
+}

@@ -385,6 +385,12 @@ typedef struct IrFunc {
     bool       ret_borrows;          // the returned reference borrows from a parameter
     uint64_t   ret_borrow_mask;      // bit i = it may borrow from param i (0 with the flag set
     bool       ret_borrow_mask_done; // is impossible: the fallback is every reference param)
+    // F1: the DECLARED `in <param>` mask, if the signature carried one. Kept apart from the
+    // inferred mask on purpose — on an extern it REPLACES inference (there is nothing to
+    // infer from), and on a function with a body it is CHECKED against it.
+    bool       ret_borrow_annot;     // an annotation was written
+    uint64_t   ret_borrow_annot_mask;
+    bool       ret_borrow_annot_wrong;  // the annotation claims LESS than the body does
 
     // INFERRED RETURN RANGE (the numeric analogue of ret_borrow_mask): what interval the
     // callee's result provably lies in, taken from its body rather than its type. Without it

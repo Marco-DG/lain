@@ -276,6 +276,20 @@ static uint64_t bor_ret_borrow_mask(IrFunc *f) {
     }
     free(def);
     if (opaque) mask |= bor_all_ref_params(f);   // sound fallback: assume it borrows them all
+    // F1. On an EXTERN the annotation REPLACES the fallback: there is no body, so believing it
+    // is what `extern` already means. On a function WITH a body the inferred mask is the
+    // truth, and an annotation claiming LESS than the body does is a lie — reported, not
+    // trusted. That check is only possible because the engine infers the answer independently;
+    // it is the same shape as B2, where a caller may LEARN a fact only because the callee is
+    // made to PROVE it.
+    if (f->ret_borrow_annot) {
+        if (f->is_extern) mask = f->ret_borrow_annot_mask;
+        else if (mask & ~f->ret_borrow_annot_mask) {
+            // Narrower than the truth. Keep the INFERRED mask — soundness is not negotiable —
+            // and record it so the function's own analysis reports it.
+            f->ret_borrow_annot_wrong = true;
+        } else mask = f->ret_borrow_annot_mask;
+    }
     f->ret_borrow_mask = mask;
     return mask;
 }
@@ -440,6 +454,10 @@ static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
     // catches `f(var a[i], var a[i])`), and the octagon only ever REMOVES a conflict it can
     // prove is not one. The query needs a POINT — the octagon state is per-block — so the
     // block and instruction are set before each call is examined.
+    // F1: an `in <param>` that claims less than the body actually borrows. Asking for the mask
+    // is what computes this, so the query has to happen before the report.
+    if (f->ret_borrows) { (void)bor_ret_borrow_mask(f);
+        if (f->ret_borrow_annot_wrong) bor_add(B, 0, 0, 11); }
     if (mod) {
         bor_loan_mod = mod;
         VraDisjoint *D = vra_disjoint_open(f);

@@ -59,9 +59,12 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     Borrow *B = borrow_analyze_mod(f, mod);
     for (int i = 0; i < B->nfinds; i++) {
         BorrowFinding *fi = &B->finds[i];
-        ir_diag(file, fi->line, fi->col, fi->code==2 ? "E002" : "E004",
-                fi->code==2 ? "this reference outlives the value it borrows"
-                            : "conflicting borrows of the same value");
+        const char *bcode = fi->code==2 ? "E002" : fi->code==11 ? "E124" : "E004";
+        const char *bmsg  = fi->code==2  ? "this reference outlives the value it borrows"
+                          : fi->code==11 ? "the `in` clause claims this result borrows less "
+                                           "than the body actually does"
+                          :                "conflicting borrows of the same value";
+        ir_diag(file, fi->line, fi->col, bcode, bmsg);
         n++;
     }
     borrow_free(B);

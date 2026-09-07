@@ -273,6 +273,12 @@ typedef struct {
     ExprList*   pre_contracts;  // New: pre-conditions (requires/pre)
     ExprList*   post_contracts; // New: post-conditions (ensures/post)
     ExprList*   return_constraints; // Equation-style: func f() int >= 0
+    Id*         ret_borrow_of;     // F1: `... var i32 in a` — the parameter the RETURNED
+                                   // reference borrows. On an EXTERN this is believed (there
+                                   // is no body to check it against, which is what `extern`
+                                   // means); on a function WITH a body it is CHECKED against
+                                   // the mask the borrow pass infers, because an annotation
+                                   // the compiler trusts and never verifies is defect D-4.
     struct Expr* decreasing_measure; // `func f(...) R decreasing <measure>`: permits
                                      // recursion — each self-call must strictly decrease
                                      // this well-founded (>=0) measure. NULL = no recursion.
@@ -1020,6 +1026,7 @@ Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type,
     d->as.function_decl.pre_contracts = NULL;
     d->as.function_decl.post_contracts = NULL;
     d->as.function_decl.return_constraints = NULL;
+    d->as.function_decl.ret_borrow_of = NULL;
     d->as.function_decl.is_extern   = is_extern;
     d->as.function_decl.is_variadic = is_variadic;
     return d;
@@ -1038,6 +1045,7 @@ Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type
     d->as.function_decl.pre_contracts = NULL;
     d->as.function_decl.post_contracts = NULL;
     d->as.function_decl.return_constraints = NULL;
+    d->as.function_decl.ret_borrow_of = NULL;
     d->as.function_decl.is_extern   = is_extern;
     d->as.function_decl.is_variadic = is_variadic;
     return d;
