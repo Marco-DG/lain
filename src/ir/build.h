@@ -403,11 +403,48 @@ void ir_finalize_cfg(IrFunc *f) {
             default: break;
         }
     }
-    // A block is a loop header if a later block branches back to it (back-edge by
-    // block order — sufficient for the structured CFGs lowering produces).
-    for (IrBlock *b = f->blocks; b; b = b->next)
-        for (IrEdge *e = b->preds; e; e = e->next)
-            if (e->block->id >= b->id) { b->is_loop_header = true; break; }
+    // ★ A loop header is the target of a DFS BACK EDGE — an edge into a block that is still
+    // on the search stack. It used to be "a later block branches to it", justified as
+    // "sufficient for the structured CFGs lowering produces", and that stopped being true the
+    // moment `case` and `try` began allocating their JOIN block before their arm blocks: the
+    // arms have higher ids, so every match join looked like a loop header. Two consequences,
+    // both silent — the numeric domain WIDENED at every match join, throwing away everything
+    // it knew there, and the termination consumer demanded a decreasing measure for a loop
+    // that does not exist (sixteen corpus programs with no loop in them at all were rejected
+    // as non-terminating). Block ids are an ALLOCATION order, not a control-flow one; only
+    // the traversal knows which edges go backwards.
+    int nb = f->next_block_id > 0 ? f->next_block_id : 1;
+    unsigned char *colour = calloc((size_t)nb, 1);      // 0 white, 1 grey (on the stack), 2 done
+    IrBlock **stack = malloc((size_t)nb * sizeof(IrBlock*));
+    int *succ_i = calloc((size_t)nb, sizeof(int));
+    if (colour && stack && succ_i && f->entry) {
+        int sp = 0;
+        stack[sp++] = f->entry; colour[f->entry->id] = 1;
+        while (sp > 0) {
+            IrBlock *u = stack[sp-1];
+            IrBlock *sv[2 + 64]; int ns = 0;            // this block's successors, in order
+            switch (u->term.kind) {
+                case IR_TERM_BR:      if (u->term.a) sv[ns++] = u->term.a; break;
+                case IR_TERM_BR_COND:
+                    if (u->term.a) sv[ns++] = u->term.a;
+                    if (u->term.b) sv[ns++] = u->term.b;
+                    break;
+                case IR_TERM_SWITCH:
+                    if (u->term.a) sv[ns++] = u->term.a;
+                    for (IrSwitchCase *c = u->term.cases; c && ns < 66; c = c->next)
+                        if (c->target) sv[ns++] = c->target;
+                    break;
+                default: break;
+            }
+            int k = succ_i[u->id]++;
+            if (k >= ns) { colour[u->id] = 2; sp--; continue; }
+            IrBlock *nx = sv[k];
+            if (nx->id < 0 || nx->id >= nb) continue;
+            if      (colour[nx->id] == 1) nx->is_loop_header = true;      // ← the back edge
+            else if (colour[nx->id] == 0) { colour[nx->id] = 1; stack[sp++] = nx; }
+        }
+    }
+    free(colour); free(stack); free(succ_i);
 }
 
 #endif // LAIN_IR_BUILD_H

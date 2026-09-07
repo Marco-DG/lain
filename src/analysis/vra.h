@@ -1113,6 +1113,58 @@ static bool vra_loop_invariant(Vra *V, IrValue *val, int Hid) {
     if (d->op==IR_CONST || d->op==IR_SLICE_LEN) return true;
     return V->defblk[val->id]>=0 && V->defblk[val->id] < Hid;
 }
+// ── THE NATURAL LOOP OF A HEADER ─────────────────────────────────────────────────────────
+// {H} ∪ {b : b reaches a back-edge source of H without passing through H}. The textbook set,
+// and it replaces an id-RANGE heuristic ("a natural loop is a contiguous id range, because
+// Lain's CFG is structured") that stopped being true when `case` and `try` began allocating
+// their join block before their arms. Two consumers depended on it and both were wrong:
+//
+//   · the WIDENING selector — a variable modified in the loop but outside the id range was
+//     never widened, so its bound grew forever and the fixpoint DID NOT CONVERGE. Five corpus
+//     programs, including the flagship binary-search and tokenizer, were exiting through the
+//     sweep cap with a PARTIAL fixpoint, i.e. an under-approximation every proof then rested
+//     on. (One of them predates the join-block change: the heuristic was already wrong.)
+//   · the termination step recogniser, which counts stores "in the loop region".
+//
+// Fails CONSERVATIVE: if anything cannot be computed, every block is in the loop, which
+// widens more and proves less but cannot be unsound.
+static void vra_natural_loop(Vra *V, IrBlock *H, int nb, char *inloop) {
+    memset(inloop, 0, (size_t)nb);
+    char *fwd = calloc((size_t)nb, 1);
+    IrBlock **st = malloc((size_t)nb * sizeof(IrBlock*));
+    if (!fwd || !st) { memset(inloop, 1, (size_t)nb); free(fwd); free(st); return; }
+    // forward reachability from H — a pred of H that H reaches is a BACK-EDGE source
+    int sp = 0; st[sp++] = H; fwd[H->id] = 1;
+    while (sp > 0) {
+        IrBlock *u = st[--sp];
+        IrBlock *sv[2]; int ns = 0;
+        if (u->term.kind==IR_TERM_BR)      { if (u->term.a) sv[ns++]=u->term.a; }
+        else if (u->term.kind==IR_TERM_BR_COND) { if (u->term.a) sv[ns++]=u->term.a;
+                                                  if (u->term.b) sv[ns++]=u->term.b; }
+        else if (u->term.kind==IR_TERM_SWITCH) {
+            if (u->term.a && u->term.a->id>=0 && u->term.a->id<nb && !fwd[u->term.a->id])
+                { fwd[u->term.a->id]=1; st[sp++]=u->term.a; }
+            for (IrSwitchCase *c=u->term.cases; c; c=c->next)
+                if (c->target && c->target->id>=0 && c->target->id<nb && !fwd[c->target->id])
+                    { fwd[c->target->id]=1; st[sp++]=c->target; }
+        }
+        for (int k=0;k<ns;k++)
+            if (sv[k]->id>=0 && sv[k]->id<nb && !fwd[sv[k]->id]) { fwd[sv[k]->id]=1; st[sp++]=sv[k]; }
+    }
+    // backward closure from the back-edge sources, stopping at H
+    inloop[H->id] = 1; sp = 0;
+    for (IrEdge *e=H->preds; e; e=e->next)
+        if (e->block && e->block->id>=0 && e->block->id<nb && fwd[e->block->id] && !inloop[e->block->id])
+            { inloop[e->block->id]=1; st[sp++]=e->block; }
+    while (sp > 0) {
+        IrBlock *u = st[--sp];
+        for (IrEdge *e=u->preds; e; e=e->next)
+            if (e->block && e->block->id>=0 && e->block->id<nb && !inloop[e->block->id])
+                { inloop[e->block->id]=1; st[sp++]=e->block; }
+    }
+    free(fwd); free(st);
+}
+
 // A structured while-loop terminates if its guard variable is a memory cell updated
 // by EXACTLY ONE well-formed step `cell = load(cell) ± c` whose direction drains the
 // loop-invariant bound (rise toward an upper bound / fall toward a lower one). The
@@ -1178,8 +1230,14 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         if (!vra_is_scalar_cell(V,cell)) continue;
         if (!vra_loop_invariant(V,bnd,H->id)) continue;
         int64_t step=0; int nstore=0, nupd=0;
+        // The loop's REAL body, not "every block with an id at or above the header's" — the
+        // same id-order heuristic that broke the widening selector, and here it counted stores
+        // from unrelated later code as if they were loop updates.
+        int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+        char *body = malloc((size_t)nbb);
+        if (body) vra_natural_loop(V, H, nbb, body);
         for (IrBlock *b=V->f->blocks; b; b=b->next) {
-            if (b->id < H->id) continue;                       // above the loop region
+            if (body && !(b->id>=0 && b->id<nbb && body[b->id])) continue;
             for (IrInstr *s=b->instrs; s; s=s->next) {
                 if (s->op!=IR_STORE || s->n_operands<2 || s->operands[0]->id!=cell) continue;
                 nstore++;
@@ -1194,6 +1252,7 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
                 }
             }
         }
+        free(body);
         if (nstore!=1 || nupd!=1) continue;
         bool lt=(p==IR_CMP_SLT||p==IR_CMP_ULT||p==IR_CMP_SLE||p==IR_CMP_ULE);
         bool gt=(p==IR_CMP_SGT||p==IR_CMP_UGT||p==IR_CMP_SGE||p==IR_CMP_UGE);
@@ -1283,8 +1342,8 @@ static Vra *vra_analyze(IrFunc *f) {
     char **loopmod = calloc(nb, sizeof(char*));
     for (IrBlock *H=f->blocks; H; H=H->next) {
         if (!H->is_loop_header) continue;
-        int himax=H->id;
-        for (IrEdge *e=H->preds; e; e=e->next) if (e->block->id > himax) himax=e->block->id;
+        char *inloop = malloc((size_t)nb);
+        if (inloop) vra_natural_loop(V, H, nb, inloop);
         // ★ Keyed by OCTAGON SLOT, not value id. oct_widen_sel reads `mod[i/2]` where i is a
         // DBM index, so the table must live in slot space. While the mapping was the identity
         // the two coincided; under variable packing they do not, and the mismatch made the
@@ -1293,13 +1352,14 @@ static Vra *vra_analyze(IrFunc *f) {
         // a removed bounds check, caught by the corpus's own soundness lock for this shape.
         char *mod = calloc((size_t)V->noct,1);
         for (IrBlock *b=f->blocks; b; b=b->next) {
-            if (b->id < H->id || b->id > himax) continue;
+            if (inloop && !(b->id>=0 && b->id<nb && inloop[b->id])) continue;
             for (IrInstr *ins=b->instrs; ins; ins=ins->next)
                 if (ins->op==IR_STORE && ins->n_operands>=1 && ins->operands[0]->id < V->nvar) {
                     int sl = V->odim[ins->operands[0]->id];
                     if (sl >= 0) mod[sl]=1;
                 }
         }
+        free(inloop);
         loopmod[H->id]=mod;
     }
 
@@ -1327,6 +1387,16 @@ static Vra *vra_analyze(IrFunc *f) {
                 if (!oct_leq(&J,&In)){ memcpy(V->in[s->id],J_m,V->dsz*8); changed=true; }
             }
         }
+    }
+    // ★ FAIL CLOSED IF THE FIXPOINT DID NOT CONVERGE. The sweep cap exists so a pathological
+    // CFG cannot hang the compiler, but exiting through it leaves a PARTIAL fixpoint — an
+    // UNDER-approximation — and every proof discharged against one would be unsound. Nothing
+    // said so: the final pass ran over it exactly as if it had converged. The established
+    // mechanism for "this function cannot be judged" is `incomplete`, and every consumer
+    // already honours it.
+    if (changed) {
+        f->incomplete = true;
+        if (!f->incomplete_why) f->incomplete_why = "vra-fixpoint-did-not-converge";
     }
     // final pass: discharge index obligations against the converged in-states
     for (IrBlock *b=f->blocks; b; b=b->next) {
