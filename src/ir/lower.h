@@ -1844,6 +1844,31 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                     // A comprehension fills EVERY element by definition. State it: the fill
                     // LOOP's zero-iteration path would otherwise intersect the fact away.
                     ir_init_fact(c->f, c->cur, agg);
+                } else if (init && init->kind == EXPR_STRING && slot_ty->kind==IRT_ARRAY
+                           && slot_ty->elem && slot_ty->elem->kind==IRT_INT
+                           && slot_ty->elem->bits==8) {
+                    // `src u8[5] = "hello"` — a byte array initialised from a string LITERAL.
+                    // It fell to the opaque, so the array held garbage and the program printed
+                    // nothing where it should print `h`. The bytes are known at compile time,
+                    // so write them: one store per element makes every element DEFINITELY
+                    // INITIALISED, which the opaque could only approximate.
+                    int32_t n = init->as.string_expr.length;
+                    if (n > slot_ty->array_len) n = (int32_t)slot_ty->array_len;
+                    for (int32_t q = 0; q < n; q++) {
+                        IrValue *idx = ir_const_int(c->f, c->cur, q, ir_type_int(c->a,64,false));
+                        IrValue *p   = ir_elem_ptr(c->f, c->cur, agg, idx, slot_ty->elem);
+                        ir_store(c->f, c->cur, p,
+                                 ir_const_int(c->f, c->cur,
+                                              (unsigned char)init->as.string_expr.value[q],
+                                              slot_ty->elem));
+                    }
+                    // A shorter literal leaves the tail zero, exactly as C does.
+                    for (int64_t q = n; q < slot_ty->array_len; q++) {
+                        IrValue *idx = ir_const_int(c->f, c->cur, q, ir_type_int(c->a,64,false));
+                        IrValue *p   = ir_elem_ptr(c->f, c->cur, agg, idx, slot_ty->elem);
+                        ir_store(c->f, c->cur, p, ir_const_int(c->f, c->cur, 0, slot_ty->elem));
+                    }
+                    ir_init_fact(c->f, c->cur, agg);
                 } else if (init) {
                     // An initialiser shape we do not model. The aggregate IS initialised —
                     // that is what an initialiser means — but with content we cannot describe.
@@ -2010,6 +2035,12 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 IrValue *icell = ir_alloca(c->f, c->cur, ity);
                 ir_store(c->f, c->cur, icell, lo_e ? ir_lower_expr(c, lo_e) : ir_const_int(c->f,c->cur,0,ity));
                 ir_env_add(c, vn, icell, NULL);                 // i reads/writes its cell
+                // `for i, val in 0..5` binds BOTH names to the counter — over a range the
+                // index and the value are the same quantity, which is what the old backend
+                // emits (`size_t i = __i0; int val = (int)__i0;`). The second name was simply
+                // never bound, so it read whatever `i` meant outside the loop and printed 0
+                // every iteration.
+                if (xn) ir_env_add(c, xn, icell, NULL);
                 IrBlock *head=ir_new_block(c->f), *body=ir_new_block(c->f), *exit=ir_new_block(c->f);
                 ir_set_br(c->cur, head); c->cur = head;
                 IrValue *iv = ir_load(c->f, head, icell, ity);
