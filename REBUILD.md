@@ -580,7 +580,20 @@ The endeavour is complete when ALL of these hold simultaneously:
 - [ ] **4.2 LLVM/native seam** on the sovereign IR (E0.7).
 
 ### ▸ STAGE V — The language catches up to the IR
-- [ ] **F1 lifetimes/regions syntax** (`lain_language_limits.md` §6b) — the flagship gap;
+- [~] **F1 lifetimes/regions syntax** — **DESIGNED, and the framing was wrong**
+      (`internal/design/f1_lifetime_syntax.md`). Rust needs lifetime parameters because it
+      checks each function against its SIGNATURE ALONE; Lain-IR lowers the whole module and
+      `bor_ret_borrow_mask` INFERS which parameter a returned reference borrows, from the body
+      — which Rust declines to do at all, rejecting the ambiguous signature outright. For every
+      function with a body the annotation would be REDUNDANT and less precise than what the
+      engine already has. Inference reaches everywhere except the EXTERN boundary, and looking
+      for that found a live SOUNDNESS HOLE rather than an expressiveness gap (3e1198d): an
+      extern returning a reference lent nothing at all. Proposed: `... var i32 in a`, one
+      clause reusing the existing `in` keyword — believed on an extern (that is what `extern`
+      means), CHECKED against the inferred mask on anything with a body, because an annotation
+      the compiler trusts and never verifies is defect D-4. Roughly F2's size, not a lifetime
+      system. Superseded framing kept in `lain_language_limits.md` §6b with a pointer.
+      ORIGINAL entry (`lain_language_limits.md` §6b) — was called the flagship gap;
       unblocks cross-function borrow precision.
 - [~] **F2 predicate syntax** — `assert(pred)` / `assume(pred)` ✓ (4c5ad42, limits §2): the IR
       had both primitives from the start and the language could say NEITHER. `assume` is
