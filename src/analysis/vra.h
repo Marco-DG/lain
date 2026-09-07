@@ -699,9 +699,36 @@ static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir) {
     bool lt=(p==IR_CMP_SLT||p==IR_CMP_ULT), le=(p==IR_CMP_SLE||p==IR_CMP_ULE);
     bool gt=(p==IR_CMP_SGT||p==IR_CMP_UGT), ge=(p==IR_CMP_SGE||p==IR_CMP_UGE);
     bool eq=(p==IR_CMP_EQ), ne=(p==IR_CMP_NE);
+    bool uns=(p==IR_CMP_ULT||p==IR_CMP_ULE||p==IR_CMP_UGT||p==IR_CMP_UGE);
     if (!then_dir) { // negate
         bool nl=ge, nle=gt, ng=le, nge=lt, neq=ne, nne=eq;
         lt=nl; le=nle; gt=ng; ge=nge; eq=neq; ne=nne;
+    }
+    // ★ AN UNSIGNED COMPARISON PROVES NON-NEGATIVITY. `(unsigned)i < n` is the C idiom for
+    // "i is a valid index" precisely because a negative i becomes enormous and fails — and it
+    // is what `i in arr` lowers to. The refinement read it as an ordinary `<` and got only the
+    // upper half, so `func get(arr i32[10], i i32 in arr) { arr[i] }` stayed unproven on the
+    // lower one: the annotation's whole meaning was being half-believed.
+    //
+    // Sound within this domain's model: every value is carried as an int64, and an unsigned
+    // type's value is assumed to fit (that is what seeding a u64 with `lb 0` and no upper
+    // bound already asserts). So on the true edge of `a <u b`, a negative `a` would compare
+    // as ≥ 2^63 and could not be below a `b` that fits — hence a ≥ 0. The bound side must
+    // itself be trustworthy, so require its type to be unsigned or its upper bound known and
+    // well inside the range.
+    if (uns) {
+        int small = (lt||le) ? a : (gt||ge) ? b : -1;
+        int bound = (lt||le) ? b : (gt||ge) ? a : -1;
+        if (small>=0 && bound>=0) {
+            IrValue *bv = (bound<V->nvar) ? V->val[bound] : NULL;
+            bool trustworthy = bv && bv->type && bv->type->kind==IRT_INT && !bv->type->is_signed;
+            if (!trustworthy) {
+                int64_t blo,bhi; bool hl,hh;
+                vra_interval(V, W, bound, &blo,&hl,&bhi,&hh);
+                trustworthy = hh && bhi >= 0 && bhi < ((int64_t)1<<62);
+            }
+            if (trustworthy) oct_add_lb(W, small, 0);
+        }
     }
     // When one side is a CONSTANT, state an ABSOLUTE bound rather than a difference against
     // its dimension — a constant has none (it lives in the constant table), so the relational

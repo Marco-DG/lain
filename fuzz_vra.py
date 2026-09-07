@@ -19,7 +19,8 @@ import random, sys
 def gen(rng):
     kind = rng.choice(["midpoint", "divsub", "retrange", "divconst", "midpoint_wide",
                        "loop_scan", "loop_scan", "loop_unbounded",
-                       "alias", "alias", "alias"])
+                       "alias", "alias", "alias",
+                       "signedidx", "signedidx"])
     # Large arrays matter: the widening bug this fuzzer must catch is a SLOT COLLISION, and
     # which slot collides depends on how many values the function has. But an explicit literal
     # costs one trivially-proven obligation PER ELEMENT, so the initializer is a comprehension
@@ -122,6 +123,27 @@ def gen(rng):
     }}
     return acc
 }}"""
+
+    elif kind == "signedidx":
+        # ★ SIGNED INDEX under an UNSIGNED guard. `(unsigned)i < n` is the C idiom for "valid
+        # index" and what `i in a` lowers to; the domain now reads the non-negative half out of
+        # it. That deduction is only sound if the LOWERING really emits an unsigned compare, so
+        # the generator feeds negative values through all three spellings and executes whatever
+        # is proven: a signed `p < N` guard must NOT be proven (p = -1 passes it and reads
+        # a[-1]), while `p in a` must be.
+        guard = rng.choice(["in", "in", "signed_lt", "both_sides", "unsigned_cast"])
+        k     = rng.choice([-9, -1, 0, 1, N // 2, N - 1, N, N + 7])
+        if guard == "in":            cond = f"p in a"
+        elif guard == "signed_lt":   cond = f"p < {N}"
+        elif guard == "both_sides":  cond = f"p >= 0 and p < {N}"
+        else:                        cond = f"usize(p) < usize({N})"
+        body = f"""proc probe(a i32[{N}], p i32) i32 {{
+    if {cond} {{
+        return a[p]
+    }}
+    return 0
+}}"""
+        call = f"probe(arr, {k})"
 
     elif kind == "alias":
         # ★ THE ALIAS ORACLE. A call between the guard and the access used to erase the guard:
