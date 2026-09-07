@@ -357,6 +357,17 @@ typedef unsigned IrEffect;
 // C in `const`. Conservative default: unknown ⇒ assume written.
 typedef uint64_t IrWriteFootprint;   // bit k = may write through parameter k
 
+// ── The RETENTION footprint — the companion the alias oracle needs ───────────
+// bit k = "a POINTER derived from parameter k may be STORED into memory that outlives the
+// call". `stash(var h, var x) { h.r = var x }` retains x; `bump(var x) { x = x + 1 }` does
+// not — it stores an integer derived from x, not x's address.
+//
+// Why it exists: the numeric domain wants to stop havocing every escaped cell at every call,
+// and havoc only what THIS call can reach. That is sound exactly when a callee cannot squirrel
+// an address away for someone else to write later. Retention is the precise statement of when
+// it can, and it is the fact Rust's lifetimes encode in a signature.
+typedef uint64_t IrRetainFootprint;
+
 typedef struct IrFunc {
     IrName    *name;
     IrFuncKind kind;
@@ -383,8 +394,10 @@ typedef struct IrFunc {
     // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
     IrEffect   effects;
     bool       effects_done, effects_in_progress;
-    IrWriteFootprint param_writes;      // C5: which parameters this function may write
-    bool       param_writes_done;
+    IrWriteFootprint param_writes;
+    IrRetainFootprint param_retains;           // which parameters' ADDRESSES may outlive the call
+    bool              param_retains_done;
+    bool       param_writes_done;              // C5: which parameters this function may write
     // B5 region info: does the RETURN borrow from a parameter, and from WHICH? Lain has no
     // lifetime syntax, so the relationship must be recovered, or `r = get_ref(var d)` looks
     // like a plain value and the loan on `d` is invisible across statements.

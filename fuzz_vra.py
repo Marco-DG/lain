@@ -18,7 +18,8 @@ import random, sys
 
 def gen(rng):
     kind = rng.choice(["midpoint", "divsub", "retrange", "divconst", "midpoint_wide",
-                       "loop_scan", "loop_scan", "loop_unbounded"])
+                       "loop_scan", "loop_scan", "loop_unbounded",
+                       "alias", "alias", "alias"])
     # Large arrays matter: the widening bug this fuzzer must catch is a SLOT COLLISION, and
     # which slot collides depends on how many values the function has. But an explicit literal
     # costs one trivially-proven obligation PER ELEMENT, so the initializer is a comprehension
@@ -121,6 +122,68 @@ def gen(rng):
     }}
     return acc
 }}"""
+
+    elif kind == "alias":
+        # ★ THE ALIAS ORACLE. A call between the guard and the access used to erase the guard:
+        # every escaped cell was forgotten, whether or not the call could reach it. Now only
+        # what the call can actually write is forgotten — so `bump(var j)` must leave `i < N`
+        # standing, while `bump(var i)` must not. Both directions are generated: an oracle that
+        # is too generous removes a bounds check on a program that walks off the array, and the
+        # harness executes exactly those under ASan.
+        seed  = rng.randint(0, max(0, N - 1))
+        shape = rng.choice([
+            "safe_other", "safe_other", "unsafe_self", "unsafe_self",
+            "safe_second", "unsafe_second", "safe_wrap", "unsafe_wrap",
+            "safe_pure", "stash_self", "stash_other",
+            "stash_write_self", "stash_write_self", "stash_write_other",
+        ])
+        helpers = [f"proc bump(var x usize) {{ x = {N} }}"]
+        pre, perturb = "", ""
+        if shape == "safe_other":
+            perturb = "bump(var j)"
+        elif shape == "unsafe_self":
+            perturb = "bump(var i)"
+        elif shape in ("safe_second", "unsafe_second"):
+            # writes the SECOND parameter only: passing a cell is not writing it
+            helpers.append(f"proc bump2(var p usize, var q usize) {{ q = {N} }}")
+            perturb = "bump2(var i, var j)" if shape == "safe_second" else "bump2(var j, var i)"
+        elif shape in ("safe_wrap", "unsafe_wrap"):
+            helpers.append("proc wrap(var y usize) { bump(var y) }")   # transitive footprint
+            perturb = "wrap(var j)" if shape == "safe_wrap" else "wrap(var i)"
+        elif shape == "safe_pure":
+            helpers.append("func peek(x usize) usize { return x }")
+            perturb = "var t usize = peek(j)"
+        elif shape in ("stash_self", "stash_other"):
+            # the address is STASHED in a struct, so a later call could write it through the
+            # stash. Conservative by design: `stash_self` must never be proven.
+            helpers.append("type Holder { p *var usize }")
+            helpers.append("proc keep(var h Holder) { unsafe { var z usize = *h.p } }")
+            tgt = "i" if shape == "stash_self" else "j"
+            pre = f"    var h Holder = Holder(&{tgt})"
+            perturb = "keep(var h)"
+        else:
+            # ...and the stash actually FIRED. `fire` is handed the Holder, never the cell, so
+            # nothing in its argument list names `i` — the write arrives entirely through the
+            # squirreled-away address. This is the shape the `persist` half of the oracle
+            # exists for, and the only one that can falsify it: drop that half and this walks
+            # off the array with the bounds check removed.
+            helpers.append("type Holder { p *var usize }")
+            helpers.append(f"proc fire(var h Holder) {{ unsafe {{ *h.p = {N} }} }}")
+            tgt = "i" if shape == "stash_write_self" else "j"
+            pre = f"    var h Holder = Holder(&{tgt})"
+            perturb = "fire(var h)"
+        body = "\n".join(helpers) + f"""
+proc probe(a i32[{N}]) i32 {{
+    var i usize = {seed}
+    var j usize = 0
+{pre}
+    if i < {N} {{
+        {perturb}
+        return a[i]
+    }}
+    return 0
+}}"""
+        call = "probe(arr)"
 
     else:  # retrange — the index comes from a helper's return value
         mask = rng.choice([7, 15, 31, 63, 127])

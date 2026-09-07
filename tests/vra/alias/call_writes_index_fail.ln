@@ -1,0 +1,18 @@
+// EXPECT: [E085]
+// LAINFLAGS: --engine=ir-full
+// The other direction of the same rule: this call IS handed the index cell and writes it,
+// so the guard must not survive. An oracle that keeps `i < 8` here removes a bounds check
+// from a program that reads a[8].
+proc blow(var x usize) { x = 8 }
+proc probe(a i32[8]) i32 {
+    var i usize = 0
+    if i < 8 {
+        blow(var i)
+        return a[i]
+    }
+    return 0
+}
+proc main() i32 {
+    var a i32[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    return probe(a)
+}

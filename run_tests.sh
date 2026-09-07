@@ -45,6 +45,14 @@ GCC_CHECK_SKIP=(
 
 # Returns 0 if the emitted C compiles (or the check is disabled/skipped),
 # 1 otherwise (with the first gcc error in GCC_ERR).
+# Per-test compiler flags. A test may pin behaviour that is authoritative only under the
+# sovereign engine — `// LAINFLAGS: --engine=ir-full` — which is exactly the Stage 3.5 split:
+# the new analyses decide some questions before the whole switchover happens. Without this
+# the corpus could only ever record what the OLD engine does.
+lain_flags_for() {
+    grep -oE '^// LAINFLAGS:.*' "$1" 2>/dev/null | head -1 | sed 's|^// LAINFLAGS:[[:space:]]*||'
+}
+
 gcc_check_ok() {
     local file="$1" base="$2"
     GCC_ERR=""
@@ -55,7 +63,7 @@ gcc_check_ok() {
         [[ "$base" == "$s" ]] && return 0
     done
     local out_c="/tmp/lain_gcc_$$_${RANDOM}.c" out_o="/tmp/lain_gcc_$$_${RANDOM}.o"
-    if ! "$LAIN" "$file" -o "$out_c" >/dev/null 2>&1; then
+    if ! "$LAIN" $(lain_flags_for "$file") "$file" -o "$out_c" >/dev/null 2>&1; then
         rm -f "$out_c"; return 0   # Lain-level failure is handled by the caller
     fi
     local gerr
@@ -82,7 +90,7 @@ run_test() {
 
     local out
     local rc
-    out="$("$LAIN" "$file" 2>&1)"
+    out="$("$LAIN" $(lain_flags_for "$file") "$file" 2>&1)"
     rc=$?
 
     if [[ $is_fail -eq 1 ]]; then

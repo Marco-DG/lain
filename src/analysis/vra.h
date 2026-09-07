@@ -16,8 +16,20 @@
 
 #include "analysis/octagon.h"
 #include "ir/ir.h"
+#include "analysis/footprint.h"   // the alias oracle: who a call can write / retain
 #include "ir/place.h"   // phase D: the index-disjointness seam we fill
 #include <stdlib.h>
+#include <string.h>
+
+static IrFunc *vra_mod = NULL;   // module for callee lookup; NULL disables the query
+static IrFunc *vra_find_func(const IrName *n) {
+    if (!n || !vra_mod) return NULL;
+    // by CONTENT — ir_intern allocates a fresh IrName per call despite its name
+    for (IrFunc *g=vra_mod; g; g=g->next)
+        if (g->name && g->name->length==n->length && memcmp(g->name->name,n->name,(size_t)n->length)==0)
+            return g;
+    return NULL;
+}
 
 // One discharged (or not) proof obligation.
 #define VRA_MAX_RANK 4
@@ -58,7 +70,10 @@ typedef struct {
     // left the octagon believing i == 0, so `a[i]` was PROVEN check-free while the program
     // actually reads a[100]. A FALSE PROOF is a removed bounds check, so any call must havoc
     // every cell whose address could have reached it.
-    bool    *escaped;
+    bool    *escaped;   // address left this instruction's control at some point
+    bool    *persist;   // ...and OUTLIVED the call — stored into memory, returned, or handed
+                        // to a callee that RETAINS it. Only these must be havoced at EVERY
+                        // call; the rest can be havoced precisely (see the alias oracle).
     // S2: rank-N region shapes, read off the IR_SHAPE instructions. Indexed by the BASE
     // value id; shape_rank[b] > 0 means b has extents shape_ext[b][0..rank-1].
     int     *shape_rank;
@@ -86,18 +101,65 @@ static bool vra_is_param_cell(Vra *V, int id) {
     return pv && pv->type && pv->type->kind==IRT_PTR && pv->type->ptr_mut
         && pv->type->elem && (pv->type->elem->kind==IRT_INT || pv->type->elem->kind==IRT_BOOL);
 }
-static void vra_mark_escape(Vra *V, IrValue *v) {
+// Mark every CELL whose address is reachable from `v` as having escaped — and, when
+// `persist`, as OUTLIVING the call (stored into memory, returned, or handed to a callee that
+// keeps it). A persisting cell can be written by a call that never received it, so it is the
+// one case the alias oracle must stay conservative about.
+//
+// This is a TREE walk, not a chain walk. `Holder(var i)` carries &i inside an IR_STRUCT_NEW
+// and the store that follows stores the STRUCT — a walk that stopped at the constructor saw
+// no address at all and marked nothing, which was a fail-open predating the oracle. Casts are
+// followed for the same reason: a laundered pointer is still the address.
+static void vra_mark_addr(Vra *V, IrValue *v, bool persist, int depth) {
+    if (!v || v->id<0 || v->id>=V->nvar || depth>64) return;
+    IrInstr *d = V->def[v->id];
+    if (!d) return;                                   // a parameter: not our cell
+    if (d->op == IR_ALLOCA) {
+        V->escaped[v->id] = true;
+        if (persist) V->persist[v->id] = true;
+        return;
+    }
+    switch (d->op) {
+        case IR_ELEM_PTR: case IR_FIELD_PTR:
+        case IR_SLICE_DATA: case IR_MAKE_SLICE: case IR_SUBSLICE: case IR_CAST:
+            vra_mark_addr(V, d->n_operands>=1?d->operands[0]:NULL, persist, depth+1); return;
+        case IR_STRUCT_NEW: case IR_ARRAY_NEW: case IR_SUM_NEW:
+            for (int i=0;i<d->n_operands;i++) vra_mark_addr(V, d->operands[i], persist, depth+1);
+            return;
+        default: return;                              // not an address we can attribute
+    }
+}
+static void vra_mark_persist(Vra *V, IrValue *v) { vra_mark_addr(V, v, true,  0); }
+static void vra_mark_escape (Vra *V, IrValue *v) { vra_mark_addr(V, v, false, 0); }
+
+// The alias oracle's CALLER side: which cell does this argument name?
+//   >= 0  that cell — a local alloca, or a parameter's own pointer value
+//   VRA_ARG_VALUE   not an address at all (a by-value scalar): it names no cell
+//   VRA_ARG_UNKNOWN an address we cannot attribute (loaded from memory, cast, arithmetic)
+// The last one is why this returns three answers rather than two: an unattributable address
+// may be ANY escaped cell, so a call given one has to fall back to the blanket havoc. Getting
+// that wrong is not imprecision, it is a miscompile.
+#define VRA_ARG_VALUE   (-1)
+#define VRA_ARG_UNKNOWN (-2)
+static int vra_arg_cell(Vra *V, IrValue *v) {
     for (int guard=0; v && v->id>=0 && v->id<V->nvar && guard<10000; guard++) {
         IrInstr *d = V->def[v->id];
-        if (!d) return;                                   // a parameter: not our cell
-        if (d->op == IR_ALLOCA) { V->escaped[v->id] = true; return; }
+        if (!d) {   // no defining instruction ⇒ a parameter; its own value IS the cell
+            return vra_is_param_cell(V, v->id) ? v->id
+                 : (v->type && (v->type->kind==IRT_PTR || v->type->kind==IRT_SLICE))
+                   ? VRA_ARG_UNKNOWN : VRA_ARG_VALUE;
+        }
+        if (d->op == IR_ALLOCA) return v->id;
         switch (d->op) {
             case IR_ELEM_PTR: case IR_FIELD_PTR:
             case IR_SLICE_DATA: case IR_MAKE_SLICE:
                 v = d->n_operands>=1 ? d->operands[0] : NULL; break;
-            default: return;                              // not an address we can attribute
+            default:
+                return (v->type && (v->type->kind==IRT_PTR || v->type->kind==IRT_SLICE))
+                       ? VRA_ARG_UNKNOWN : VRA_ARG_VALUE;
         }
     }
+    return VRA_ARG_UNKNOWN;
 }
 
 static bool vra_is_slice_cell(Vra *V, int v) {
@@ -217,7 +279,14 @@ static void vra_prepass(Vra *V) {
     // A `var` scalar parameter points at storage the CALLER owns, so anything we hand the
     // pointer to may write it: it havocs at a call exactly like an escaped alloca.
     for (IrParam *p=V->f->params; p; p=p->next)
-        if (p->value && vra_is_param_cell(V, p->value->id)) V->escaped[p->value->id] = true;
+        if (p->value && vra_is_param_cell(V, p->value->id)) {
+            V->escaped[p->value->id] = true;
+            // ...and PERSISTS: the storage is the caller's, and we cannot see whether the
+            // caller stashed its address somewhere a callee of ours can reach. (Recovering
+            // these needs a call-site summary — the one precision the oracle leaves on the
+            // table. It costs nothing today: this is exactly the old blanket behaviour.)
+            V->persist[p->value->id] = true;
+        }
     // Mark every alloca whose ADDRESS escapes. Provenance is followed through the
     // address-forming ops, so `f(&s.field)` escapes `s` too. A store's TARGET (operand 0) is
     // an ordinary write and does NOT escape; a store's VALUE (operand 1) does.
@@ -234,12 +303,22 @@ static void vra_prepass(Vra *V) {
                 continue;
             }
             if (ins->op == IR_CALL || ins->op == IR_OPAQUE) {
-                for (int k=0;k<ins->n_operands;k++) vra_mark_escape(V, ins->operands[k]);
+                // ★ THE ALIAS ORACLE, first half. Handing an address to a call is not the same
+                // as losing it: the callee can write it DURING the call, and afterwards only if
+                // it RETAINED it. An unresolvable callee or an opaque retains everything.
+                IrFunc *callee = (ins->op==IR_CALL) ? vra_find_func(ins->aux.callee) : NULL;
+                IrRetainFootprint cr = (ins->op==IR_OPAQUE) ? ~(IrRetainFootprint)0
+                                     : (callee && vra_mod) ? ir_param_retains(callee, vra_mod)
+                                                           : ~(IrRetainFootprint)0;
+                for (int k=0;k<ins->n_operands;k++) {
+                    vra_mark_escape(V, ins->operands[k]);
+                    if (k>=64 || ((cr>>k)&1u)) vra_mark_persist(V, ins->operands[k]);
+                }
             } else if (ins->op == IR_STORE && ins->n_operands>=2) {
-                vra_mark_escape(V, ins->operands[1]);          // the VALUE stored, not the target
+                vra_mark_persist(V, ins->operands[1]);   // an address stored into memory PERSISTS
             }
         }
-        if (b->term.kind == IR_TERM_RET) vra_mark_escape(V, b->term.cond);
+        if (b->term.kind == IR_TERM_RET) vra_mark_persist(V, b->term.cond);   // outlives us
     }
 }
 
@@ -317,15 +396,6 @@ static void vra_free(Vra *V);                                                   
 // entry assumes in force, so the interval holds for every legal call — which is the same
 // contract the caller is separately required to satisfy. A recursive query returns nothing
 // rather than a fixpoint over itself: `state == 1` falls back to the type interval.
-static IrFunc *vra_mod = NULL;   // module for callee lookup; NULL disables the query
-static IrFunc *vra_find_func(const IrName *n) {
-    if (!n || !vra_mod) return NULL;
-    // by CONTENT — ir_intern allocates a fresh IrName per call despite its name
-    for (IrFunc *g=vra_mod; g; g=g->next)
-        if (g->name && g->name->length==n->length && memcmp(g->name->name,n->name,(size_t)n->length)==0)
-            return g;
-    return NULL;
-}
 static bool vra_ret_range(IrFunc *g, int64_t *lo, int64_t *hi);
 static int  vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out);        // fwd (S2)
 static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx);            // fwd (S2)
@@ -562,11 +632,43 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (r>=0) oct_forget(W, r);
             break;
         case IR_CALL: {
-            // A call may write through any address it was given, and the octagon's memory
-            // cells are exactly the scalar allocas — so every ESCAPED cell must be forgotten.
-            // Without this the analysis kept a stale value across `bump(var i)` and proved an
-            // out-of-bounds `a[i]` check-free.
-            for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) oct_forget(W, cell);
+            // ★ THE ALIAS ORACLE. A call may write through any address it was GIVEN, and the
+            // octagon's memory cells are exactly the scalar allocas — so the safe answer is to
+            // forget every escaped cell, and that is what this did. But it is far too much:
+            //
+            //     bump(var i)          // i escapes, and is now unknown — fair enough
+            //     if i < 16 {
+            //         bump(var j)      // touches j ONLY...
+            //         a[i]             // ...yet `i < 16` was thrown away here. Not proven.
+            //
+            // The call cannot reach `i` at all: it was handed `&j`, and `i`'s address was
+            // never stored, returned, or given to anything that keeps it. So havoc exactly
+            //   (a) every cell that PERSISTS — its address outlived some earlier call, so a
+            //       stash-holder may write it now, and
+            //   (b) the cells this call was handed in positions the callee actually WRITES.
+            // Anything the callee is invisible about (extern, opaque, an unattributable
+            // address) falls back to the blanket havoc. Ownership pays for precision here:
+            // the same facts that make the emitted `restrict` legal make this legal.
+            {
+                IrFunc *cal = vra_find_func(ins->aux.callee);
+                IrWriteFootprint cw = (cal && vra_mod) ? ir_param_writes(cal, vra_mod)
+                                                       : ~(IrWriteFootprint)0;
+                bool blanket = (cw == ~(IrWriteFootprint)0);
+                if (!blanket)
+                    for (int k=0; k<ins->n_operands && !blanket; k++)
+                        if (k>=64 || ((cw>>k)&1u))
+                            if (vra_arg_cell(V, ins->operands[k]) == VRA_ARG_UNKNOWN) blanket = true;
+                if (blanket) {
+                    for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) oct_forget(W, cell);
+                } else {
+                    for (int cell=0; cell<V->nvar; cell++) if (V->persist[cell]) oct_forget(W, cell);
+                    for (int k=0; k<ins->n_operands; k++) {
+                        if (k<64 && !((cw>>k)&1u)) continue;
+                        int c = vra_arg_cell(V, ins->operands[k]);
+                        if (c>=0) oct_forget(W, c);
+                    }
+                }
+            }
             if (r>=0) {
                 oct_forget(W, r);
                 // ...but the RESULT is not unknown: the callee's body bounds it.
@@ -1000,6 +1102,7 @@ static Vra *vra_analyze(IrFunc *f) {
     V->cval=calloc(V->nvar,sizeof(int64_t)); V->cknown=calloc(V->nvar,sizeof(bool));
     V->slicelen=calloc(V->nvar,sizeof(int)); V->subslice_gep=calloc(V->nvar,sizeof(bool));
     V->escaped=calloc(V->nvar,sizeof(bool));
+    V->persist=calloc(V->nvar,sizeof(bool));
     V->shape_rank=calloc(V->nvar,sizeof(int));
     V->shape_ext=calloc(V->nvar,sizeof(*V->shape_ext));
     vra_prepass(V);
@@ -1284,7 +1387,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->shape_rank); free(V->shape_ext); free(V->odim); free(V->checks); free(V);
+    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->odim); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H

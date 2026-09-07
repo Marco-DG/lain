@@ -1,0 +1,20 @@
+// LAINFLAGS: --engine=ir-full
+// THE ALIAS ORACLE. A call between the guard and the access used to erase the guard: every
+// escaped cell was forgotten, whether or not the call could reach it. `bump(var j)` is
+// handed `&j` and writes only that, so `i < 8` still stands and `a[i]` is check-free —
+// while the emitted C already asserted as much by putting `restrict` on those parameters.
+proc bump(var x usize) { x = 8 }
+proc probe(a i32[8]) i32 {
+    var i usize = 0
+    var j usize = 0
+    bump(var i)
+    if i < 8 {
+        bump(var j)
+        return a[i]
+    }
+    return 0
+}
+proc main() i32 {
+    var a i32[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    return probe(a)
+}

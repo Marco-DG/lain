@@ -1,0 +1,22 @@
+// EXPECT: [E085]
+// LAINFLAGS: --engine=ir-full
+// The `persist` half of the oracle. `fire` is handed the Holder, never the cell — nothing
+// in its argument list names `i`, and its write footprint roots through a LOAD and so
+// names no parameter at all. The write arrives entirely through the address squirreled
+// away by the struct literal, which is why an address stored into memory has to be
+// havoced at EVERY call rather than only at calls that receive it.
+type Holder { p *var usize }
+proc fire(var h Holder) { unsafe { *h.p = 8 } }
+proc probe(a i32[8]) i32 {
+    var i usize = 3
+    var h Holder = Holder(&i)
+    if i < 8 {
+        fire(var h)
+        return a[i]
+    }
+    return 0
+}
+proc main() i32 {
+    var a i32[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    return probe(a)
+}

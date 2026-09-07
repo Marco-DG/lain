@@ -254,3 +254,12 @@ tests/ownership/close_without_mov_fail.ln  NEW-ACCEPTS  front-end-policy   # E00
 # The genuinely imprecise part of that 121 is a different family — loop counters (`i = i + 1`
 # under `i < n`), where the bound exists and the new engine should find it. Tracked separately;
 # do not conflate the two when reading the gate's number.
+
+# ── the ALIAS ORACLE tests. This differential drives the LINEARITY and EFFECTS passes; these
+# two are BOUNDS obligations, judged by the numeric domain, and the new engine does reject
+# both (`--engine=ir-full`, [E085] — that is what their `// LAINFLAGS:` line pins in
+# run_tests.sh). So the divergence is an artifact of which pass this harness asks, not a gap:
+# a new classification rather than a silent skip, so the next bounds fail-test lands here
+# correctly instead of being filed as incompleteness.
+tests/vra/alias/call_writes_index_fail.ln                 NEW-ACCEPTS  new-catches-elsewhere
+tests/vra/alias/stashed_address_fail.ln                   NEW-ACCEPTS  new-catches-elsewhere

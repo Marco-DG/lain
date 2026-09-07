@@ -12,79 +12,14 @@
 #define LAIN_EFFECTS_H
 
 #include "../ir/ir.h"
+#include "footprint.h"
 #include "vra.h"
 #include <string.h>
 
 static bool ireff_name_is(const IrName *n, const char *s, int len) {
     return n && n->length==len && memcmp(n->name, s, (size_t)len)==0;
 }
-static IrFunc *ireff_find(IrFunc *mod, const IrName *name) {
-    if (!name) return NULL;
-    for (IrFunc *f=mod; f; f=f->next)
-        if (f->name && f->name->length==name->length &&
-            memcmp(f->name->name, name->name, (size_t)name->length)==0) return f;
-    return NULL;
-}
-
 static IrEffect ir_effects(IrFunc *f, IrFunc *mod);   // fwd (recursion)
-
-// C5: which PARAMETERS may this function write through? Rooted through the address-forming
-// ops, so writing `p.field` or `p[i]` counts as writing p. Transitive: handing a parameter to
-// a callee that writes its k-th parameter writes ours too.
-//
-// Conservative wherever it cannot see: an extern (no body) or an opaque may write anything.
-static int ireff_param_index(IrFunc *f, IrValue *v) {
-    int i = 0;
-    for (IrParam *p = f->params; p; p = p->next, i++) if (p->value == v) return i;
-    return -1;
-}
-static int ireff_root_param(IrFunc *f, IrInstr **def, int nvar, IrValue *v) {
-    for (int guard=0; v && v->id>=0 && v->id<nvar && guard<10000; guard++) {
-        IrInstr *d = def[v->id];
-        if (!d) return ireff_param_index(f, v);       // no defining instr ⇒ a parameter
-        switch (d->op) {
-            case IR_ELEM_PTR: case IR_FIELD_PTR:
-            case IR_SLICE_DATA: case IR_MAKE_SLICE:
-                v = d->n_operands>=1 ? d->operands[0] : NULL; break;
-            default: return -1;
-        }
-    }
-    return -1;
-}
-static IrWriteFootprint ir_param_writes(IrFunc *f, IrFunc *mod) {
-    if (!f) return ~(IrWriteFootprint)0;
-    if (f->is_extern) return ~(IrWriteFootprint)0;    // no body ⇒ assume it writes everything
-    if (f->param_writes_done) return f->param_writes;
-    f->param_writes_done = true;                       // recursion: the in-progress value is 0,
-    f->param_writes = 0;                               // refined below (a fixpoint would only add)
-    int nvar = f->next_value_id>0?f->next_value_id:1;
-    IrInstr **def = calloc(nvar, sizeof(IrInstr*));
-    if (!def) { f->param_writes = ~(IrWriteFootprint)0; return f->param_writes; }
-    for (IrBlock *b=f->blocks;b;b=b->next)
-        for (IrInstr *i=b->instrs;i;i=i->next)
-            if (i->result && i->result->id>=0 && i->result->id<nvar) def[i->result->id]=i;
-    IrWriteFootprint w = 0;
-    for (IrBlock *b=f->blocks;b;b=b->next)
-        for (IrInstr *i=b->instrs;i;i=i->next) {
-            if (i->op == IR_STORE && i->n_operands>=1) {
-                int k = ireff_root_param(f, def, nvar, i->operands[0]);
-                if (k>=0 && k<64) w |= (IrWriteFootprint)1<<k;
-            } else if (i->op == IR_OPAQUE && i->aux.opaque.writes) {
-                w = ~(IrWriteFootprint)0;              // unmodelled ⇒ may write anything
-            } else if (i->op == IR_CALL) {
-                IrFunc *callee = ireff_find(mod, i->aux.callee);
-                IrWriteFootprint cw = callee ? ir_param_writes(callee, mod) : ~(IrWriteFootprint)0;
-                for (int a=0; a<i->n_operands; a++) {
-                    if (a<64 && !((cw>>a)&1u)) continue;      // callee does not write there
-                    int k = ireff_root_param(f, def, nvar, i->operands[a]);
-                    if (k>=0 && k<64) w |= (IrWriteFootprint)1<<k;
-                }
-            }
-        }
-    free(def);
-    f->param_writes = w;
-    return w;
-}
 
 // A function's DIRECT effects: its own calls, panics, allocations, and (semantic) divergence.
 static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {

@@ -4609,6 +4609,35 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         sema_clear_locals();
     }
 
+    // 2b) D-6: a struct field may not be a MUTABLE BORROW. The construct parsed, typed as
+    // the pointee (`h.r` was a `usize`), and emitted a POINTER field that was then read
+    // WITHOUT a dereference — so `Holder(var x); h.r` printed an address where the program
+    // asked for 7. Silent, in the shipping compiler, with no corpus test over it.
+    //
+    // Rejecting is the fail-closed answer, not the final one: a struct holding a mutable
+    // borrow (`Cursor { r: &mut usize }`) is a real pattern, and Lain's borrow checker will
+    // need to carry a loan through a field to support it. Until it does, the compiler must
+    // not accept a program it cannot compile correctly. See internal/design/lain_frontend_defects.md.
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        if (!dl->decl || dl->decl->kind != DECL_STRUCT) continue;
+        for (DeclList *fl = dl->decl->as.struct_decl.fields; fl; fl = fl->next) {
+            if (!fl->decl || fl->decl->kind != DECL_VARIABLE) continue;
+            Type *ft = fl->decl->as.variable_decl.type;
+            if (!ft || ft->mode != MODE_MUTABLE) continue;
+            Id *fn = fl->decl->as.variable_decl.name;
+            Id *sn = dl->decl->as.struct_decl.name;
+            fprintf(stderr, "[E126] Error Ln %li, Col %li: field '%.*s' of type '%.*s' is a "
+                "mutable borrow (`var`), which is not yet supported — the field would hold an "
+                "address while reads of it yield the pointee's type. Store the value, or use a "
+                "raw pointer field (`*var T`) and dereference it inside `unsafe`.\n",
+                (long)fl->decl->line, (long)fl->decl->col,
+                fn ? (int)fn->length : 1, fn ? fn->name : "?",
+                sn ? (int)sn->length : 1, sn ? sn->name : "?");
+            diagnostic_show_line(fl->decl->line, fl->decl->col);
+            exit(1);
+        }
+    }
+
     // 3) F-020: detect mutual recursion involving pure functions.
     // Direct recursion is already rejected in typecheck.h; here we catch
     // indirect cycles (f -> g -> f) that break the P4 termination guarantee.
