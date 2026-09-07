@@ -529,6 +529,27 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
 
 // forward
 static IrValue *ir_lower_expr(LowerCtx *c, Expr *e);
+// Coerce a value into the representation a DECLARED slot asks for. Two coercions the
+// language performs implicitly and the IR must make explicit:
+//   slice → pointer   a string literal is a `u8[:0]`; a `*u8` field wants its DATA pointer,
+//                     and storing the two-word slice there is wrong at the ABI, not merely
+//                     ill-typed in the emitted C.
+//   array → slice     a fixed array decays where a slice is expected.
+// The call path grew both of these one at a time; naming them once is what lets STRUCT and
+// VARIANT construction have them too — `OptionByte.Some("hi")` needed exactly this.
+static IrValue *ir_coerce_repr(LowerCtx *c, IrValue *v, IrType *want, Expr *src) {
+    if (!v || !v->type || !want) return v;
+    if (want->kind==IRT_PTR && v->type->kind==IRT_SLICE)
+        return ir_slice_data(c->f, c->cur, v, want->elem ? want->elem : v->type->elem);
+    if (want->kind==IRT_SLICE && v->type->kind==IRT_PTR) {
+        int64_t ne = (src && src->type && src->type->kind==TYPE_ARRAY) ? src->type->array_len : 0;
+        IrValue *ln = ir_const_int(c->f, c->cur, ne, ir_type_int(c->a,64,false));
+        return ir_make_slice(c->f, c->cur, v, ln, want->elem);
+    }
+    return v;
+}
+
+
 static void ir_lower_flush_defers(LowerCtx *c);   // fwd (try/else propagate through it)
 static void     ir_lower_stmts(LowerCtx *c, StmtList *body);
 
@@ -1346,15 +1367,34 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 int k = ir_variant_index(callee, ir_variant_name_of(e->as.call_expr.callee), true);
                 if (k >= 0) {
                     IrValue **fs = arena_push_many_aligned(c->a, IrValue*, n>0?n:1);
-                    int j=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next,j++)
+                    // the variant's payload types: an IRT_STRUCT for a multi-field payload,
+                    // the field type itself for a single one (see IRT_SUM's layout in ir.h)
+                    IrType *pay = (k < ty->n_fields) ? ty->fields[k] : NULL;
+                    int j=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next,j++) {
                         fs[j] = ir_lower_expr(c, a->expr);
+                        IrType *want = NULL;
+                        if (pay && pay->kind==IRT_STRUCT && j < pay->n_fields) want = pay->fields[j];
+                        else if (pay && n==1) want = pay;
+                        fs[j] = ir_coerce_repr(c, fs[j], want, a->expr);
+                    }
                     return ir_sum_new(c->f, c->cur, ty, k, fs, n);
                 }
             }
             IrValue *fnv = indirect ? ir_lower_expr(c, e->as.call_expr.callee) : NULL;
-            IrInstr *ins = ir_instr(c->f, IR_CALL,
-                                    (e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT) ? ty : NULL,
-                                    indirect ? n + 1 : n);
+            // What a call PRODUCES is the callee's signature, not the call site's inferred
+            // type. Reading only the latter lost the result of every INFERRED generic call:
+            // monomorphization rewrites `map(s, triple)` to name the instance but leaves the
+            // expression's own type unresolved, so the call was emitted with no result and a
+            // `const 0` placeholder took its place — `Option_i32 = int32_t` in the C. The
+            // callee is the authority; the expression type is the fallback for a callee we
+            // cannot resolve (indirect calls, declless builtins).
+            IrType *cret = NULL;
+            if (callee && (callee->kind==DECL_FUNCTION || callee->kind==DECL_PROCEDURE
+                        || callee->kind==DECL_EXTERN_FUNCTION || callee->kind==DECL_EXTERN_PROCEDURE))
+                cret = ir_lower_type(c, callee->as.function_decl.return_type);
+            IrType *rty = ((e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT)) ? ty
+                        : (cret && cret->kind!=IRT_UNIT ? cret : NULL);
+            IrInstr *ins = ir_instr(c->f, IR_CALL, rty, indirect ? n + 1 : n);
             Id *cnm = callee ? callee->as.function_decl.name : NULL;   // intern the callee name
             if (!indirect && !cnm && e->as.call_expr.callee && e->as.call_expr.callee->kind==EXPR_IDENTIFIER)
                 cnm = e->as.call_expr.callee->as.identifier_expr.id;   // declless builtin (e.g. `panic`)
@@ -1505,6 +1545,38 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
 // operands along the taken path — a materialized bool cell (the expression lowering of
 // `A and B`) hides the numeric refinement from the analysis, so `if a<n and b<n {arr[a]}`
 // wouldn't prove. (Guard context only; the expression form still uses the bool cell.)
+// An OPTIONAL-SHAPED sum: exactly one variant with a payload and exactly one without.
+// `*u8 | none`, Rust's `Option<T>`, Zig's `?T`, a nullable pointer — all the same shape, which
+// is why this is a property of the TYPE and not a Lain spelling. Returns false for anything
+// else (a three-way union is not an optional and has no truth value).
+static bool ir_sum_optional_shape(IrType *t, int *some_k, int *none_k) {
+    if (!t || t->kind!=IRT_SUM || t->n_fields!=2) return false;
+    int s=-1, n=-1;
+    for (int i=0;i<2;i++) { if (t->fields[i]) { if (s>=0) return false; s=i; } else { if (n>=0) return false; n=i; } }
+    if (s<0 || n<0) return false;
+    *some_k = s; *none_k = n; return true;
+}
+// The payload of an optional sum, as the narrowed value `if x` makes available.
+static IrValue *ir_sum_optional_payload(LowerCtx *c, IrValue *v, int some_k) {
+    IrType *pay = v->type->fields[some_k];
+    if (pay && pay->kind==IRT_STRUCT && pay->n_fields==1)      // single-field payloads are
+        return ir_sum_payload(c->f, c->cur, v, some_k, 0, pay->fields[0]);   // wrapped in a struct
+    return ir_sum_payload(c->f, c->cur, v, some_k, 0, pay);
+}
+// Lower an expression used as a TRUTH VALUE. A sum has no truth value of its own; an OPTIONAL
+// one does — `if x` asks whether it is the payload variant. Without this the branch tested the
+// whole struct, which is not even well-typed in C.
+static IrValue *ir_lower_truth(LowerCtx *c, Expr *cond) {
+    IrValue *v = ir_lower_expr(c, cond);
+    int sk, nk;
+    if (v && v->type && ir_sum_optional_shape(v->type, &sk, &nk)) {
+        IrValue *tag = ir_sum_tag(c->f, c->cur, v);
+        IrValue *nc  = ir_const_int(c->f, c->cur, nk, tag->type);
+        return ir_icmp(c->f, c->cur, IR_CMP_NE, tag, nc);
+    }
+    return v;
+}
+
 static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) {
     if (cond && cond->kind==EXPR_BINARY &&
         (cond->as.binary_expr.op==TOKEN_KEYWORD_AND || cond->as.binary_expr.op==TOKEN_KEYWORD_OR)) {
@@ -1516,7 +1588,7 @@ static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) 
         ir_lower_cond_br(c, cond->as.binary_expr.right, tb, fb);
         return;
     }
-    ir_set_br_cond(c->cur, ir_lower_expr(c, cond), tb, fb);
+    ir_set_br_cond(c->cur, ir_lower_truth(c, cond), tb, fb);
 }
 
 static void ir_lower_stmt(LowerCtx *c, Stmt *s);
@@ -1683,7 +1755,25 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             IrBlock *tb = ir_new_block(c->f), *jb = ir_new_block(c->f);
             IrBlock *eb = s->as.if_stmt.else_branch ? ir_new_block(c->f) : jb;
             ir_lower_cond_br(c, s->as.if_stmt.cond, tb, eb);   // expands `and`/`or` (refinement-preserving)
-            c->cur = tb; ir_lower_stmts(c, s->as.if_stmt.then_body);
+            c->cur = tb;
+            // NARROWING. `if x { use_it(x) }` over an optional sum makes `x` the PAYLOAD
+            // inside the branch — the language's whole point in replacing `!= nil` guards.
+            // The lowering passed the sum straight through, so the callee received a
+            // two-variant struct where a pointer was declared. Rebinding the name for the
+            // duration of the then-branch is what the front end's flow-narrowing means, said
+            // in the IR: the env is a prepend-only list, so restoring the head unbinds it.
+            IrLocal *saved = c->locals;
+            { Expr *cx = s->as.if_stmt.cond;
+              if (cx && cx->kind==EXPR_IDENTIFIER) {
+                  IrLocal *lo = ir_env_find(c, cx->as.identifier_expr.id);
+                  IrValue *cv = lo ? (lo->param ? lo->param : lo->slot) : NULL;
+                  int sk, nk;
+                  if (cv && cv->type && ir_sum_optional_shape(cv->type, &sk, &nk))
+                      ir_env_add(c, cx->as.identifier_expr.id, NULL,
+                                 ir_sum_optional_payload(c, cv, sk));
+              } }
+            ir_lower_stmts(c, s->as.if_stmt.then_body);
+            c->locals = saved;
             if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, jb);
             if (s->as.if_stmt.else_branch) {
                 c->cur = eb; ir_lower_stmts(c, s->as.if_stmt.else_branch);
@@ -1956,7 +2046,18 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
             IrType *dt  = ir_lower_type(&cc, dty);
             IrValue *pv = ir_add_param(f, dt, NULL);
             IrValue *slot = ir_alloca(f, cc.cur, dt);
-            pv->owns = slot->owns = (dty && dty->mode == MODE_OWNED);
+            pv->owns = (dty && dty->mode == MODE_OWNED);
+            // ...but the SLOT does not own it. Lain's rule for a destructuring parameter is
+            // that taking the value APART is the disposal — `func drop(mov {id} Resource) { }`
+            // is the idiomatic destructor, and both corpus tests say so in their comments
+            // ("destructure to consume"). The struct has no existence as a unit past the
+            // pattern, so there is no struct-level obligation to discharge.
+            //
+            // KNOWN GAP, and it is the old engine's too: the obligation does not TRANSFER to
+            // the field bindings the way a sum payload's does, so an owned field named by the
+            // pattern and then dropped on the floor is not reported. Closing it is a language
+            // decision (it would make the two corpus tests fail-tests), not a lowering one.
+            slot->owns = false;
             ir_store(f, cc.cur, slot, pv);
             for (IdList *nm = p->decl->as.destruct_decl.names; nm; nm = nm->next) {
                 IrType *fty = NULL;
@@ -2038,7 +2139,19 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
         if (!d->decl) continue;
         IrFunc *f = NULL;
         DeclKind k = d->decl->kind;
-        if ((k==DECL_FUNCTION || k==DECL_PROCEDURE) && d->decl->as.function_decl.body) {
+        // A generic TEMPLATE has no runtime existence — only its instances do, and sema has
+        // already appended those to this same list. Lowering the template anyway produced a
+        // function whose type parameter is a `unit` VALUE parameter, i.e. `void* pick(void,
+        // void*, void*)`, which no C compiler accepts: every generic program in the corpus
+        // failed to build for this one reason. (It is also unanalysable by construction —
+        // `T` has no representation — so every proof over it was noise.)
+        if (decl_is_generic_template(d->decl)) continue;
+        // ...and an EMPTY body is still a body. `func drop(mov {id} Resource) { }` — the
+        // idiomatic Lain destructor — parses to a NULL statement list, so requiring one
+        // skipped the function ENTIRELY: no definition in the emitted C, and every call to it
+        // an undefined symbol at link time. A Lain function always has a body (an extern is a
+        // different DeclKind), so the presence of statements is not the question.
+        if (k==DECL_FUNCTION || k==DECL_PROCEDURE) {
             f = ir_lower_function(d->decl, program, a);
         } else if (k==DECL_EXTERN_FUNCTION || k==DECL_EXTERN_PROCEDURE) {
             Id *nm = d->decl->as.function_decl.name;
