@@ -1,0 +1,12 @@
+// F3: `effects <list>` declares an UPPER BOUND on a function's effect row. The row was already
+// computed (--dump-effects has printed it for a while); this lets the language STATE a bound
+// and have it CHECKED, so "this path does no IO" is a compile error rather than a review note.
+// Declaring MORE than the body does is merely imprecise and allowed.
+extern proc libc_printf(fmt *u8, ...) i32
+proc noisy(s u8[:0]) effects io {
+    libc_printf(s.data)
+}
+proc generous(s u8[:0]) effects io, alloc, raises {
+    libc_printf(s.data)
+}
+proc main() i32 { return 0 }

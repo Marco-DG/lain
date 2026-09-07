@@ -273,6 +273,12 @@ typedef struct {
     ExprList*   pre_contracts;  // New: pre-conditions (requires/pre)
     ExprList*   post_contracts; // New: post-conditions (ensures/post)
     ExprList*   return_constraints; // Equation-style: func f() int >= 0
+    // F3: `effects io, alloc` — a declared UPPER BOUND on the effect row. The row is already
+    // computed (`effect_full`); this lets the language STATE a bound and have it checked, so
+    // "this hot path allocates nothing" becomes a compile error rather than a code review.
+    // Same rule as F1: believed on an extern, CHECKED against the inferred row with a body.
+    bool        effects_declared;
+    EffectSet   effects_bound;
     Id*         ret_borrow_of;     // F1: `... var i32 in a` — the parameter the RETURNED
                                    // reference borrows. On an EXTERN this is believed (there
                                    // is no body to check it against, which is what `extern`
@@ -1027,6 +1033,8 @@ Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type,
     d->as.function_decl.post_contracts = NULL;
     d->as.function_decl.return_constraints = NULL;
     d->as.function_decl.ret_borrow_of = NULL;
+    d->as.function_decl.effects_declared = false;
+    d->as.function_decl.effects_bound = 0;
     d->as.function_decl.is_extern   = is_extern;
     d->as.function_decl.is_variadic = is_variadic;
     return d;
@@ -1046,6 +1054,8 @@ Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type
     d->as.function_decl.post_contracts = NULL;
     d->as.function_decl.return_constraints = NULL;
     d->as.function_decl.ret_borrow_of = NULL;
+    d->as.function_decl.effects_declared = false;
+    d->as.function_decl.effects_bound = 0;
     d->as.function_decl.is_extern   = is_extern;
     d->as.function_decl.is_variadic = is_variadic;
     return d;

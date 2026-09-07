@@ -4600,6 +4600,30 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
             EffectSet ef = effect_full(dl->decl);   // transitive; memoized + stored
             if (sema_dump_effects) sema_print_effects(dl->decl);
+            // F3: a DECLARED effect bound is an upper bound the body must respect. Same rule
+            // as F1's `in` clause — believed on an extern (there is nothing to infer from,
+            // which is what `extern` means), CHECKED here, because an annotation the compiler
+            // trusts and never verifies is defect D-4. Declaring FEWER effects than the body
+            // has is the error; declaring more is merely imprecise and allowed.
+            if (dl->decl->as.function_decl.effects_declared) {
+                EffectSet missing = ef & ~dl->decl->as.function_decl.effects_bound;
+                if (missing) {
+                    Id *n = dl->decl->as.function_decl.name;
+                    fprintf(stderr, "[E125] Error Ln %li, Col %li: '%.*s' declares `effects` "
+                        "that do not cover what its body does — it also has: ",
+                        (long)dl->decl->line, (long)dl->decl->col,
+                        n ? (int)n->length : 1, n ? n->name : "?");
+                    const char *sep = "";
+                    if (missing & EFFECT_WRITE)   { fprintf(stderr, "%swrite", sep);   sep=", "; }
+                    if (missing & EFFECT_DIVERGE) { fprintf(stderr, "%sdiverge", sep); sep=", "; }
+                    if (missing & EFFECT_RAISES)  { fprintf(stderr, "%sraises", sep);  sep=", "; }
+                    if (missing & EFFECT_IO)      { fprintf(stderr, "%sio", sep);      sep=", "; }
+                    if (missing & EFFECT_ALLOC)   { fprintf(stderr, "%salloc", sep);   sep=", "; }
+                    fprintf(stderr, ".\n");
+                    diagnostic_show_line(dl->decl->line, dl->decl->col);
+                    exit(1);
+                }
+            }
             // E3 (consistency net): a `func` is pure (no IO) and total (no
             // Diverge). If the effect row infers either, its guarantees are
             // violated — a hole the func checks (E011) should already catch.

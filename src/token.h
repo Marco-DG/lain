@@ -96,6 +96,7 @@ typedef enum {
     TOKEN_KEYWORD_UNSAFE,
     TOKEN_KEYWORD_ASSERT,   // assert(pred) — a checked obligation the engine must PROVE
     TOKEN_KEYWORD_ASSUME,   // assume(pred) — a fact handed TO the engine (unsafe only)
+    TOKEN_KEYWORD_EFFECTS,  // effects a, b — an UPPER BOUND on a function's effect row
     TOKEN_KEYWORD_C_INCLUDE,
     TOKEN_KEYWORD_WHILE,
     TOKEN_KEYWORD_DEFER,
@@ -148,6 +149,9 @@ TokenKind token_match_keyword(const char* lexeme, isize len) {
             if (strncmp(lexeme, "unsafe", 6) == 0)      return TOKEN_KEYWORD_UNSAFE;
             if (strncmp(lexeme, "assert", 6) == 0)      return TOKEN_KEYWORD_ASSERT;
             if (strncmp(lexeme, "assume", 6) == 0)      return TOKEN_KEYWORD_ASSUME;
+            break;
+        case 7:
+            if (strncmp(lexeme, "effects", 7) == 0)     return TOKEN_KEYWORD_EFFECTS;
             break;
         case 8:
             if (strncmp(lexeme, "continue", 8) == 0)    return TOKEN_KEYWORD_CONTINUE;
@@ -347,6 +351,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_KEYWORD_UNSAFE:              return "unsafe";
         case TOKEN_KEYWORD_ASSERT:              return "assert";
         case TOKEN_KEYWORD_ASSUME:              return "assume";
+        case TOKEN_KEYWORD_EFFECTS:             return "effects";
         case TOKEN_KEYWORD_C_INCLUDE:           return "c_include";
         case TOKEN_KEYWORD_TRUE:                return "true";
         case TOKEN_KEYWORD_FALSE:               return "false";

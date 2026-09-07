@@ -680,6 +680,29 @@ Decl *parse_var_decl(Arena* arena, Parser* parser)
 }
 
 // func <name>(<params>) <return_type> { <body> }
+// F3: `effects a, b, c` — the declared effect bound. Names are the lattice's own (write,
+// diverge, raises, io, alloc); `effects` with none means PURE, which is the useful end of the
+// feature ("this allocates nothing" as a compile error rather than a review note).
+static bool parse_effects_clause(Parser *parser, EffectSet *out) {
+    if (!parser_match(TOKEN_KEYWORD_EFFECTS)) return false;
+    parser_advance();
+    EffectSet e = 0;
+    while (parser_match(TOKEN_IDENTIFIER)) {
+        const char *n = parser->token.start; int l = parser->token.length;
+        if      (l==5 && strncmp(n,"write",5)==0)   e |= EFFECT_WRITE;
+        else if (l==7 && strncmp(n,"diverge",7)==0) e |= EFFECT_DIVERGE;
+        else if (l==6 && strncmp(n,"raises",6)==0)  e |= EFFECT_RAISES;
+        else if (l==2 && strncmp(n,"io",2)==0)      e |= EFFECT_IO;
+        else if (l==5 && strncmp(n,"alloc",5)==0)   e |= EFFECT_ALLOC;
+        else parser_error("unknown effect name (expected write/diverge/raises/io/alloc)");
+        parser_advance();
+        if (parser_match(TOKEN_COMMA)) { parser_advance(); continue; }
+        break;
+    }
+    *out = e;
+    return true;
+}
+
 Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     // function name
     parser_expect(TOKEN_IDENTIFIER, "Expected function/procedure name");
@@ -860,6 +883,8 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
         parser_advance();
     }
 
+    EffectSet eff_bound = 0; bool eff_declared = parse_effects_clause(parser, &eff_bound);
+
     // --- return type constraints (equation-style): int >= 0, int >= lo and <= hi ---
     ExprList *return_constraints = NULL;
     if (ret_type && is_comparison_op(parser->token.kind)) {
@@ -934,6 +959,8 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     }
     d->as.function_decl.return_constraints = return_constraints;
     d->as.function_decl.ret_borrow_of = ret_borrow_of;
+    d->as.function_decl.effects_declared = eff_declared;
+    d->as.function_decl.effects_bound    = eff_bound;
     d->as.function_decl.decreasing_measure = decreasing_measure;
     return d;
 }
@@ -1026,6 +1053,8 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
         parser_advance();
     }
 
+    EffectSet ext_eff = 0; bool ext_eff_declared = parse_effects_clause(parser, &ext_eff);
+
     // require end-of-decl (newline or semicolon)
     parser_expect_eol("Expected ';' or newline after extern decl");
     parser_advance();
@@ -1033,10 +1062,14 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
     // NULL body signals extern
     if (is_proc) {
         { Decl *ed = decl_procedure(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
-          ed->as.function_decl.ret_borrow_of = ext_borrow_of; return ed; }
+          ed->as.function_decl.ret_borrow_of = ext_borrow_of;
+          ed->as.function_decl.effects_declared = ext_eff_declared;
+          ed->as.function_decl.effects_bound = ext_eff; return ed; }
     } else {
         { Decl *ed = decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
-          ed->as.function_decl.ret_borrow_of = ext_borrow_of; return ed; }
+          ed->as.function_decl.ret_borrow_of = ext_borrow_of;
+          ed->as.function_decl.effects_declared = ext_eff_declared;
+          ed->as.function_decl.effects_bound = ext_eff; return ed; }
     }
 }
 
