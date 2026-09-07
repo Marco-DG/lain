@@ -535,7 +535,7 @@ The endeavour is complete when ALL of these hold simultaneously:
 ### ▸ STAGE IV — The backend earns the proofs
 - [~] **4.0 CAN THE NEW EMITTER REPLACE THE OLD ONE?** — `emit_gate.sh` runs the real corpus
       through BOTH backends and compares stdout + exit code. Start: 209 agree / 15 differ /
-      **141 could not build**. Now: **318 agree / 22 differ / 27 cannot build.**
+      **141 could not build**. Now: **321 agree / 22 differ / 24 cannot build.**
       ★ Almost none of the gap was backend immaturity. It was SEVEN front-end and lowering
       defects the old path happened to paper over, each found by running the corpus rather
       than by reading code:
@@ -585,7 +585,11 @@ The endeavour is complete when ALL of these hold simultaneously:
 - [ ] **F2 refinement/predicate syntax** — arbitrary linear-arith predicates, relational
       preconditions, `assume`/`assert` statements (limits §1, §2).
 - [ ] **F3 effect annotations** — expose the designed lattice (limits §6).
-- [ ] **F4 type-check refinement exprs** (limits §3 — a real sema bug, fix regardless).
+- [x] **F4 type-check refinement exprs** ✓ (c01dca6) — and the defect was DEEPER than its
+      title: they were never RESOLVED either, so identifiers in them carried no binding.
+      Resolve then infer, in a SECOND pass over the parameters (a constraint may name a LATER
+      parameter). Verified by DELETING the IR workaround that existed only for this: the
+      bounds survey is identical with and without it. **The first Stage V item to land.**
 - [ ] **F5 front-end rework proper** — lexer/parser/AST, if the above justify it.
 
 ### ▸ STAGE VI — Prove the sovereignty claim empirically
