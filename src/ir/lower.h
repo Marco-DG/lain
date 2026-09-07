@@ -991,6 +991,68 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
         case EXPR_TRY: case EXPR_ELSE: {
             bool is_try = (e->kind == EXPR_TRY);
             Expr *opx = is_try ? e->as.try_expr.operand : e->as.else_expr.operand;
+            // ★ A CHECKED OPERATOR is the other thing `else` handles, and it was not lowered
+            // at all: `a +? b else panic(...)` produced two OPAQUEs and the variable held
+            // garbage. It has no union to test — the failure is an OVERFLOW — so build the
+            // test rather than look for a tag: compute in a WIDER type, ask whether the result
+            // fits back in the operand type, and branch. Stating it that way means the numeric
+            // domain sees a real comparison and can often prove the `else` arm DEAD, which is
+            // the whole point of a checked operator in a language that proves overflow away.
+            if (!is_try && opx && expr_is_checked_op(opx)) {
+                IrType *rt2 = ir_lower_type(c, opx->type);
+                int64_t tlo, thi;
+                if (rt2 && rt2->kind==IRT_INT && irtype_int_range(rt2, &tlo, &thi) && rt2->bits <= 32) {
+                    IrType *w = ir_type_int(c->a, 64, true);            // ℤ-widened operands
+                    IrValue *wide = NULL;
+                    if (opx->kind == EXPR_CAST) {
+                        // `x as? T else E` — a checked NARROWING. Same test, one operand:
+                        // does the source VALUE land inside the target type's interval?
+                        IrValue *sv = ir_lower_expr(c, opx->as.cast_expr.expr);
+                        bool ssgn = sv && sv->type && sv->type->kind==IRT_INT && sv->type->is_signed;
+                        IrInstr *cs = ir_instr(c->f, IR_CAST, w, 1); cs->operands[0]=sv;
+                            cs->aux.cast_kind = ssgn ? IR_CAST_SEXT : IR_CAST_ZEXT; ir_emit(c->cur, cs);
+                        wide = cs->result;
+                    } else {
+                    IrValue *la = ir_lower_expr(c, opx->as.binary_expr.left);
+                    IrValue *ra = ir_lower_expr(c, opx->as.binary_expr.right);
+                    // Widen by the OPERAND's signedness: sign-extending a u32 near its top
+                    // would make it negative and the fits-test would answer about a different
+                    // number than the program computes.
+                    IrCastKind ck = rt2->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT;
+                    IrInstr *cl = ir_instr(c->f, IR_CAST, w, 1); cl->operands[0]=la;
+                        cl->aux.cast_kind=ck; ir_emit(c->cur, cl);
+                    IrInstr *cr = ir_instr(c->f, IR_CAST, w, 1); cr->operands[0]=ra;
+                        cr->aux.cast_kind=ck; ir_emit(c->cur, cr);
+                    IrOp op = opx->as.binary_expr.op==TOKEN_PLUS_QUESTION  ? IR_ADD
+                            : opx->as.binary_expr.op==TOKEN_MINUS_QUESTION ? IR_SUB : IR_MUL;
+                    wide = ir_binop(c->f, c->cur, op, cl->result, cr->result, w);
+                    }
+                    IrValue *ge = ir_icmp(c->f, c->cur, IR_CMP_SGE, wide, ir_const_int(c->f,c->cur,tlo,w));
+                    IrValue *le = ir_icmp(c->f, c->cur, IR_CMP_SLE, wide, ir_const_int(c->f,c->cur,thi,w));
+                    IrValue *cell2 = ir_alloca(c->f, c->cur, rt2);
+                    IrBlock *hi2 = ir_new_block(c->f), *okb2 = ir_new_block(c->f),
+                            *bad2 = ir_new_block(c->f), *jn2 = ir_new_block(c->f);
+                    ir_set_br_cond(c->cur, ge, hi2, bad2);
+                    c->cur = hi2; ir_set_br_cond(c->cur, le, okb2, bad2);
+                    c->cur = okb2;
+                    { IrInstr *nr = ir_instr(c->f, IR_CAST, rt2, 1); nr->operands[0]=wide;
+                      nr->aux.cast_kind=IR_CAST_TRUNC; ir_emit(c->cur, nr);
+                      ir_store(c->f, c->cur, cell2, nr->result); }
+                    ir_set_br(c->cur, jn2);
+                    c->cur = bad2;
+                    if (e->as.else_expr.arm_is_return) {
+                        IrValue *rv = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
+                        ir_lower_flush_defers(c);
+                        ir_set_ret(c->cur, rv);
+                    } else {
+                        IrValue *av = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
+                        if (e->as.else_expr.is_panic) ir_set_unreachable(c->cur);
+                        else { if (av) ir_store(c->f, c->cur, cell2, av); ir_set_br(c->cur, jn2); }
+                    }
+                    c->cur = jn2;
+                    return ir_load(c->f, c->cur, cell2, rt2);
+                }
+            }
             IrValue *uv = ir_lower_expr(c, opx);
             if (!uv || !uv->type || uv->type->kind != IRT_SUM)
                 return ir_opaque_expr(c, ty, false, "try-else-non-union", NULL, NULL);
@@ -1276,6 +1338,48 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                     if (e->as.binary_expr.op==TOKEN_BANG_EQUAL)
                         eq = ir_icmp(c->f, c->cur, IR_CMP_EQ, eq, ir_const_int(c->f,c->cur,0,bt));
                     return eq;
+                }
+            }
+            // SATURATING `+| -| *|` — clamp to the type's interval instead of overflowing.
+            // Not lowered at all before, so `250 +| 100` on a u8 became an OPAQUE and printed
+            // 0. Expanded here rather than left as a wrap MODE the backend would have to
+            // interpret: written out, the numeric domain gets the result's exact interval for
+            // free (a saturating result is in [lo,hi] by construction) and no analysis needs
+            // to know the operator exists.
+            if (e->as.binary_expr.op==TOKEN_PLUS_PIPE || e->as.binary_expr.op==TOKEN_MINUS_PIPE
+             || e->as.binary_expr.op==TOKEN_ASTERISK_PIPE) {
+                IrType *rt3 = ir_lower_type(c, e->type);
+                int64_t slo, shi;
+                if (rt3 && rt3->kind==IRT_INT && irtype_int_range(rt3,&slo,&shi) && rt3->bits<=32) {
+                    IrType *w = ir_type_int(c->a, 64, true);
+                    IrCastKind ck = rt3->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT;
+                    IrValue *la = ir_lower_expr(c, L), *ra = ir_lower_expr(c, R);
+                    IrInstr *cl = ir_instr(c->f, IR_CAST, w, 1); cl->operands[0]=la;
+                        cl->aux.cast_kind=ck; ir_emit(c->cur, cl);
+                    IrInstr *cr = ir_instr(c->f, IR_CAST, w, 1); cr->operands[0]=ra;
+                        cr->aux.cast_kind=ck; ir_emit(c->cur, cr);
+                    IrOp op = e->as.binary_expr.op==TOKEN_PLUS_PIPE  ? IR_ADD
+                            : e->as.binary_expr.op==TOKEN_MINUS_PIPE ? IR_SUB : IR_MUL;
+                    IrValue *wide = ir_binop(c->f, c->cur, op, cl->result, cr->result, w);
+                    IrValue *cell = ir_alloca(c->f, c->cur, rt3);
+                    IrBlock *hib = ir_new_block(c->f), *lotest = ir_new_block(c->f),
+                            *lob = ir_new_block(c->f), *okb3 = ir_new_block(c->f),
+                            *jn2 = ir_new_block(c->f);
+                    ir_set_br_cond(c->cur,                                     // above the top?
+                        ir_icmp(c->f,c->cur,IR_CMP_SGT,wide,ir_const_int(c->f,c->cur,shi,w)), hib, lotest);
+                    c->cur = hib;    ir_store(c->f,c->cur,cell,ir_const_int(c->f,c->cur,shi,rt3));
+                                     ir_set_br(c->cur, jn2);
+                    c->cur = lotest; ir_set_br_cond(c->cur,                    // below the bottom?
+                        ir_icmp(c->f,c->cur,IR_CMP_SLT,wide,ir_const_int(c->f,c->cur,slo,w)), lob, okb3);
+                    c->cur = lob;    ir_store(c->f,c->cur,cell,ir_const_int(c->f,c->cur,slo,rt3));
+                                     ir_set_br(c->cur, jn2);
+                    c->cur = okb3;                                             // in range: the value
+                    { IrInstr *nr = ir_instr(c->f, IR_CAST, rt3, 1); nr->operands[0]=wide;
+                      nr->aux.cast_kind=IR_CAST_TRUNC; ir_emit(c->cur, nr);
+                      ir_store(c->f, c->cur, cell, nr->result); }
+                    ir_set_br(c->cur, jn2);
+                    c->cur = jn2;
+                    return ir_load(c->f, c->cur, cell, rt3);
                 }
             }
             // Short-circuit `and` / `or`: the right operand must NOT be evaluated when
