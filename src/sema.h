@@ -2040,6 +2040,16 @@ static void bc_scan(StmtList *body, Id **gv, Id **gb, int nguard, BCEntry *e, in
 static void walk_stmt(Stmt *s) {
     if (!s) return;
     switch (s->kind) {
+        case STMT_ASSERT:
+            // `assume(pred)` is a FACT the programmer supplies, so the range table must learn
+            // it exactly as it learns a guard — otherwise the feature is inert in the engine
+            // that is still authoritative, and `assume(i < 16); a[i]` would be rejected by the
+            // very analysis it exists to inform. `assert(pred)` is an OBLIGATION, not a given:
+            // it teaches the table nothing (the new engine discharges it; see IR_ASSERT).
+            sema_infer_expr(s->as.assert_stmt.cond);
+            if (s->as.assert_stmt.is_assume && sema_ranges)
+                sema_apply_constraint(s->as.assert_stmt.cond, sema_ranges);
+            break;
         case STMT_VAR:
             sema_infer_expr(s->as.var_stmt.expr);
             // Infer variable type from initializer if missing

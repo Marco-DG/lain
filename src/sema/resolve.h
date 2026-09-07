@@ -806,6 +806,23 @@ void sema_resolve_stmt(Stmt *s) {
     break;
   }
 
+ case STMT_ASSERT: {
+    // `assume` hands the engine a fact NOTHING CHECKS, so it is only sound where the
+    // programmer has already taken responsibility. That is exactly what `unsafe` means here,
+    // and the restriction is not decoration: an unchecked annotation trusted by the prover is
+    // the shape of defect D-4, where an `in` invariant became `__builtin_unreachable()` with
+    // nothing verifying it. `assert` is always allowed — it is an obligation, not a licence.
+    if (s->as.assert_stmt.is_assume && !sema_in_unsafe_block) {
+        fprintf(stderr, "[E123] Error Ln %li, Col %li: `assume` states a fact the compiler "
+                "does not check, so it is only allowed inside an `unsafe` block. Use "
+                "`assert` if you want the fact PROVEN instead.\n", s->line, s->col);
+        diagnostic_show_line(s->line, s->col);
+        exit(1);
+    }
+    sema_resolve_expr(s->as.assert_stmt.cond);
+    break;
+  }
+
  case STMT_UNSAFE: {
     bool old = sema_in_unsafe_block;
     sema_in_unsafe_block = true;

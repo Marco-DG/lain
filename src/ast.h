@@ -343,8 +343,17 @@ typedef enum {
     STMT_UNSAFE,
     STMT_WHILE,
     STMT_DEFER,
+    STMT_ASSERT,        // assert(pred) / assume(pred) — `is_assume` picks which. The IR has
+                        // had IR_ASSERT and IR_ASSUME from the start; the LANGUAGE could not
+                        // say either, so a programmer could not state a checked obligation
+                        // inline nor hand the analyzer a fact it cannot infer.
     STMT_COMPTIME_IF,
 } StmtKind;
+
+typedef struct {
+    struct Expr *cond;
+    bool         is_assume;   // false = assert (must be PROVEN), true = assume (a given)
+} StmtAssert;
 
 typedef struct {
     Id*         name;     // Variable declaration
@@ -437,6 +446,7 @@ typedef struct Stmt {
         StmtUnsafe      unsafe_stmt;
         StmtWhile       while_stmt;
         StmtDefer       defer_stmt;
+        StmtAssert      assert_stmt;
         StmtComptimeIf  comptime_if_stmt;
     } as;
 } Stmt;
@@ -1243,6 +1253,15 @@ Stmt *stmt_return(Arena *arena, Expr *value) {
     Stmt *s = arena_push(arena, Stmt);
     s->kind = STMT_RETURN;
     s->as.return_stmt.value = value;
+    return s;
+}
+
+Stmt *stmt_assert(Arena *arena, Expr *cond, bool is_assume) {
+    Stmt *s = arena_push_aligned(arena, Stmt);
+    memset(s, 0, sizeof *s);
+    s->kind = STMT_ASSERT;
+    s->as.assert_stmt.cond = cond;
+    s->as.assert_stmt.is_assume = is_assume;
     return s;
 }
 

@@ -191,6 +191,16 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
         parser_advance();
         result = parse_unsafe_stmt(arena, parser);
     }
+    else if (parser_match(TOKEN_KEYWORD_ASSERT) || parser_match(TOKEN_KEYWORD_ASSUME)) {
+        bool is_assume = parser_match(TOKEN_KEYWORD_ASSUME);
+        parser_advance();
+        parser_expect(TOKEN_L_PAREN, "Expected '(' after assert/assume");
+        parser_advance();
+        Expr *cond = parse_expr(arena, parser);
+        parser_expect(TOKEN_R_PAREN, "Expected ')' after the predicate");
+        parser_advance();
+        result = stmt_assert(arena, cond, is_assume);
+    }
     else if (parser_match(TOKEN_KEYWORD_DEFER)) {
         parser_advance(); // consume 'defer'
         result = parse_defer_stmt(arena, parser);

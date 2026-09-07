@@ -1857,6 +1857,15 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             if (tgt) ir_set_br(c->cur, tgt);
             break;
         }
+        case STMT_ASSERT: {
+            // The two IR primitives the language could not previously reach. An `assert` is an
+            // OBLIGATION the numeric analysis must discharge (and reports if it cannot); an
+            // `assume` is a GIVEN it may use. Same node, opposite directions.
+            IrValue *cv = ir_lower_expr(c, s->as.assert_stmt.cond);
+            if (cv) { if (s->as.assert_stmt.is_assume) ir_assume(c->f, c->cur, cv);
+                      else                             ir_assert(c->f, c->cur, cv); }
+            break;
+        }
         case STMT_UNSAFE: { bool o=c->unsafe; c->unsafe=true; ir_lower_stmts(c, s->as.unsafe_stmt.body); c->unsafe=o; break; }
         default: ir_incomplete(c, "unhandled-stmt"); break;   // enum-match/use — TODO (fail closed)
     }

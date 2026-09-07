@@ -877,6 +877,15 @@ void emit_stmt(Stmt *stmt, int depth) {
     EMIT(";\n");
     break;
 
+  case STMT_ASSERT:
+    // No runtime effect by design. `assert` is discharged at COMPILE time (prove-or-reject,
+    // like every other obligation in this language) and `assume` is a fact for the analyzer —
+    // emitting a runtime check for either would contradict the whole premise.
+    emit_indent(depth);
+    EMIT("/* %s: discharged at compile time */\n",
+         stmt->as.assert_stmt.is_assume ? "assume" : "assert");
+    break;
+
   case STMT_UNSAFE: {
     emit_indent(depth);
     EMIT("/* unsafe block */\n");

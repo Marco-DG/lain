@@ -1,0 +1,8 @@
+// EXPECT: [E123]
+// `assume` states a fact NOTHING CHECKS. Allowing it in safe code would be defect D-4 by
+// design — an unverified annotation the prover then trusts.
+proc probe(i usize) i32 {
+    assume(i < 16)
+    return 0
+}
+proc main() i32 { return 0 }
