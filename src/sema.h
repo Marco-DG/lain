@@ -4609,7 +4609,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         sema_clear_locals();
     }
 
-    // 2b) D-6: a struct field may not be a MUTABLE BORROW. The construct parsed, typed as
+    // 2b) D-15: a struct field may not be a MUTABLE BORROW. The construct parsed, typed as
     // the pointee (`h.r` was a `usize`), and emitted a POINTER field that was then read
     // WITHOUT a dereference — so `Holder(var x); h.r` printed an address where the program
     // asked for 7. Silent, in the shipping compiler, with no corpus test over it.

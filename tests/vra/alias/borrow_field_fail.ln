@@ -1,5 +1,5 @@
 // EXPECT: [E126]
-// D-6. A struct field declared as a MUTABLE BORROW parsed, typed as the pointee, and
+// D-15. A struct field declared as a MUTABLE BORROW parsed, typed as the pointee, and
 // emitted a POINTER field that was then read WITHOUT a dereference: `Holder(var x); h.r`
 // printed an address where the program asked for 7. Silent, in the shipping compiler,
 // with no test over it. Rejecting is fail-closed until the borrow checker can carry a
