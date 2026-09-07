@@ -6,6 +6,8 @@ type Data {
     value i32
 }
 
+func drop(mov {value} Data) { }
+
 proc consume_data(var d Data, mov other Data) {
     d.value = other.value
     drop(mov other)

@@ -2,6 +2,9 @@
 // Block Scoping Test
 // Verifies that linear variables inside blocks are tracked correctly and reported if they leak
 
+type File { fd i32 }
+func open_file(name *u8) mov File { return File(0) }
+
 func test_block() {
     if 1 == 1 {
         mov x File = open_file("test.txt")

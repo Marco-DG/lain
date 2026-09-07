@@ -3,6 +3,7 @@
 type R {
     h i32
 }
+func drop(mov {h} R) { }
 proc sink(mov r R) { drop(mov r) }
 proc main() i32 {
     var a = R(1)

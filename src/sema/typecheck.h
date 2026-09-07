@@ -2275,6 +2275,30 @@ void sema_infer_expr(Expr *e) {
     
     // Verify equation-style constraints at call site
     Decl *callee_decl = e->as.call_expr.callee->decl;
+    // ★ D-16: a call to a name NOTHING declares. The emitted C leaned on C's implicit
+    // declaration rule — removed as an error in C23 — so a TYPO compiled: `totally_made_up_fn(42)`
+    // produced a call to a function that does not exist, and every analysis resolved that name
+    // to nothing and treated the call as opaque, i.e. as permissively as possible. For a
+    // compiler whose whole claim is prove-or-reject, accepting an unresolved call is the hole.
+    //
+    // Only a BARE IDENTIFIER callee is judged here: a call through a function POINTER has a
+    // TYPE_FUNC and returned above, a variant/method callee is an EXPR_MEMBER, and `panic` is a
+    // declless builtin the language defines itself.
+    if (sema_walk_phase && !callee_decl) {
+        Expr *cx = e->as.call_expr.callee;
+        Type *cty = cx ? cx->type : NULL;
+        Id   *cn  = (cx && cx->kind == EXPR_IDENTIFIER) ? cx->as.identifier_expr.id : NULL;
+        bool is_panic = cn && cn->length == 5 && strncmp(cn->name, "panic", 5) == 0;
+        if (cn && !is_panic && !(cty && cty->kind == TYPE_FUNC)) {
+            fprintf(stderr, "[E127] Error Ln %li, Col %li: call to undeclared function '%.*s' — "
+                    "nothing in scope declares it. Add an `extern proc %.*s(...)` declaration, "
+                    "import the module that defines it, or fix the spelling.\n",
+                    (long)e->line, (long)e->col, (int)cn->length, cn->name,
+                    (int)cn->length, cn->name);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        }
+    }
     if (callee_decl && (callee_decl->kind == DECL_FUNCTION || 
                         callee_decl->kind == DECL_PROCEDURE ||
                         callee_decl->kind == DECL_EXTERN_FUNCTION || 

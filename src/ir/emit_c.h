@@ -77,6 +77,32 @@ static void ir_ctype(const IrType *t, FILE *o) {
     }
 }
 
+
+// A Lain name that happens to be a C KEYWORD cannot be emitted verbatim: `func double(x i32)`
+// produced `int32_t double(int32_t)`, which is not a declaration at all. The old backend hid
+// this behind module-qualified mangling; the new one emits the IR name, so the escape belongs
+// here. An EXTERN can never need it — no C symbol is named `double` — so escaping every
+// keyword is safe without knowing whether the callee has a body, which is what lets call
+// sites (where the module is not in hand) agree with definitions.
+static int ir_name_is_c_keyword(const IrName *n) {
+    static const char *kw[] = {
+        "auto","break","case","char","const","continue","default","do","double","else","enum",
+        "extern","float","for","goto","if","inline","int","long","register","restrict","return",
+        "short","signed","sizeof","static","struct","switch","typedef","union","unsigned","void",
+        "volatile","while","bool","true","false","complex","imaginary","alignas","alignof",
+        "atomic","generic","noreturn","static_assert","thread_local","main",NULL };
+    if (!n) return 0;
+    for (int i=0; kw[i]; i++) {
+        int L = (int)strlen(kw[i]);
+        if (n->length==L && memcmp(n->name, kw[i], (size_t)L)==0) return 1;
+    }
+    return 0;
+}
+static void ir_emit_fname(const IrName *n, FILE *o) {
+    if (!n) { fputs("__anon", o); return; }
+    fprintf(o, "%.*s%s", (int)n->length, n->name, ir_name_is_c_keyword(n) ? "_" : "");
+}
+
 // value-table: id → IrValue* (ids are dense per function)
 typedef struct { IrValue **v; int n; } IrValTab;
 static void ir_vt_put(IrValTab *t, IrValue *v) { if (v && v->id < t->n) t->v[v->id] = v; }
@@ -230,8 +256,8 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                     lanes >= 32 ? "__m256i" : "__m128i", i->operands[0]->id);
             break;
         }
-        case IR_FUNC_REF: fprintf(o, "  v%d = %.*s;\n", i->result->id,
-                                  (int)i->aux.callee->length, i->aux.callee->name); break;
+        case IR_FUNC_REF: fprintf(o, "  v%d = ", i->result->id);
+                          ir_emit_fname(i->aux.callee, o); fputs(";\n", o); break;
         case IR_STRUCT_NEW: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
                             fputs("){ ", o);
                             for (int k=0;k<i->n_operands;k++){ if(k)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
@@ -262,7 +288,7 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             if (i->result) fprintf(o, "v%d = ", i->result->id);
             // INDIRECT (no name): operand 0 is the callee value and the rest are arguments.
             int a0 = 0;
-            if (i->aux.callee) fprintf(o, "%.*s", (int)i->aux.callee->length, i->aux.callee->name);
+            if (i->aux.callee) ir_emit_fname(i->aux.callee, o);
             else if (i->n_operands >= 1) { fprintf(o, "v%d", i->operands[0]->id); a0 = 1; }
             fputc('(', o);
             for (int k=a0;k<i->n_operands;k++){ if(k>a0)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
@@ -285,7 +311,7 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
         IrCAnnot an = ir_c_annot(f, mod);
         if (an.const_attr)     fputs("__attribute__((const)) ", o);
         else if (an.pure_attr) fputs("__attribute__((pure)) ", o);
-        ir_ctype(f->ret_type, o); fprintf(o, " %.*s(", (int)f->name->length, f->name->name);
+        ir_ctype(f->ret_type, o); fputc(' ', o); ir_emit_fname(f->name, o); fputc('(', o);
         int k=0; for (IrParam *p=f->params; p; p=p->next,k++) {
             if (k) fputs(", ", o);
             ir_ctype(p->value->type, o);
@@ -391,7 +417,7 @@ static void ir_emit_proto_c(IrFunc *f, IrFunc *mod, FILE *o) {
     IrCAnnot an = ir_c_annot(f, mod);
     if (an.const_attr)     fputs("__attribute__((const)) ", o);
     else if (an.pure_attr) fputs("__attribute__((pure)) ", o);
-    ir_ctype(f->ret_type, o); fprintf(o, " %.*s(", (int)f->name->length, f->name->name);
+    ir_ctype(f->ret_type, o); fputc(' ', o); ir_emit_fname(f->name, o); fputc('(', o);
     int k=0; for (IrParam *p=f->params; p; p=p->next,k++){
         if(k)fputs(", ",o);
         ir_ctype(p->value->type,o);

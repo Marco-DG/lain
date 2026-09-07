@@ -491,6 +491,13 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
                 // opaque pointer and every float value in the program was lost.
                 if (len==3 && nm[0]=='f' && nm[1]=='3' && nm[2]=='2') return ir_type_float(c->a,32);
                 if (len==3 && nm[0]=='f' && nm[1]=='6' && nm[2]=='4') return ir_type_float(c->a,64);
+                // `float` is the third spelling and was missing, so a `var f float` slot
+                // lowered to an opaque pointer and gcc refused the assignment outright.
+                // Mapped to f32 to MATCH THE EMITTED C the corpus runs against — note the
+                // front end disagrees with itself here (typecheck.h calls `float` an alias of
+                // f64 while the old backend emits C `float`); recorded rather than silently
+                // picked, because the two give different results for a large value.
+                if (len==5 && strncmp(nm,"float",5)==0) return ir_type_float(c->a,32);
                 int b; bool s;
                 if (t->int_width_cache>0) return ir_type_int(c->a, t->int_width_cache, t->int_signed_cache);
                 if (ir_name_int(nm,len,&b,&s)) return ir_type_int(c->a, b, s);
@@ -890,6 +897,16 @@ static void ir_lower_call_slice_len_requires(LowerCtx *c, Decl *callee, IrInstr 
 }
 
 // address of an lvalue (identifier slot / index / member) — for assignment + index.
+// `p.f` where `p : *T` implicitly DEREFERENCES, exactly as C's `->` does. The lowering used
+// the target's own type for the field lookup, so a member of a pointer-to-struct resolved to
+// nothing and became an OPAQUE read of unknown storage — which then suppressed every proof in
+// the whole function. A pointer-to-struct target's ADDRESS is the pointer value itself.
+static IrType *ir_struct_of(IrType *t) {
+    if (t && t->kind==IRT_PTR && t->elem && (t->elem->kind==IRT_STRUCT || t->elem->kind==IRT_SUM))
+        return t->elem;
+    return t;
+}
+
 static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
     if (e->kind == EXPR_IDENTIFIER) {
         IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
@@ -923,7 +940,9 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
     }
     if (e->kind == EXPR_MEMBER) {
         Expr   *tgt  = e->as.member_expr.target;
-        IrType *sty  = ir_lower_type(c, tgt->type);
+        IrType *sty0 = ir_lower_type(c, tgt->type);
+        IrType *sty  = ir_struct_of(sty0);
+        bool    thru = (sty != sty0);          // through a pointer: the value IS the address
         IrType *fty  = NULL;
         int idx = ir_field_index(sty, e->as.member_expr.member, &fty);
         if (idx >= 0) {
@@ -935,7 +954,8 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
             bool addressable = tgt->kind==EXPR_IDENTIFIER || tgt->kind==EXPR_MEMBER
                             || tgt->kind==EXPR_INDEX     || tgt->kind==EXPR_DEREF;
             IrValue *base;
-            if (addressable) base = ir_lower_addr(c, tgt);
+            if (thru) base = ir_lower_expr(c, tgt);
+            else if (addressable) base = ir_lower_addr(c, tgt);
             else {
                 IrValue *v = ir_lower_expr(c, tgt);
                 base = ir_alloca(c->f, c->cur, sty);
@@ -1346,7 +1366,7 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 // (fall through: a struct field literally named `len`)
             }
             // struct field read: load through the field address
-            IrType *sty = ir_lower_type(c, tst);
+            IrType *sty = ir_struct_of(ir_lower_type(c, tst));
             IrType *fty = NULL;
             int fidx = ir_field_index(sty, m, &fty);
             if (fidx >= 0) {
@@ -1844,7 +1864,13 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             ir_set_br(c->cur, head);
             c->cur = head;
             IrValue *cond = ir_lower_expr(c, s->as.while_stmt.cond);
-            ir_set_br_cond(head, cond, body, exit);
+            // ★ Branch from where the CONDITION FINISHED, not from the header. A
+            // short-circuit condition (`while i < n and p(a[i])`) lowers to its own blocks and
+            // leaves `c->cur` at their join; setting the terminator on `head` overwrote the
+            // edge INTO those blocks, so the loop branched on a value nothing had computed —
+            // an infinite loop, silently. Invisible until now because the one corpus program
+            // with that shape could not be BUILT by the new backend, so it was never run.
+            ir_set_br_cond(c->cur, cond, body, exit);
             IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
                 c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
             c->cur = body; ir_lower_stmts(c, s->as.while_stmt.body);

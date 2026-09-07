@@ -1,4 +1,6 @@
 // Test: 'in' as bounds-proving condition in while and if
+extern proc libc_printf(fmt *u8, ...) i32
+
 
 func find_char(data u8[:0], target i32) i32 {
     var i = 0

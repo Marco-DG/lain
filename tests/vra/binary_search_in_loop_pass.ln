@@ -4,6 +4,8 @@
 // mid+1<=hi; hi starts len and only drops to mid<hi; the guard keeps lo<hi), so
 // `mid = lo + (hi-lo)/2 < hi <= len` and the index is check-free. Terminates via
 // the `hi - lo` measure.
+extern proc libc_printf(fmt *u8, ...) i32
+
 proc bsearch(a i32[8], target i32) usize {
     var lo usize = 0
     var hi usize = 8
