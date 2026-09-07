@@ -263,3 +263,8 @@ tests/ownership/close_without_mov_fail.ln  NEW-ACCEPTS  front-end-policy   # E00
 # correctly instead of being filed as incompleteness.
 tests/vra/alias/call_writes_index_fail.ln                 NEW-ACCEPTS  new-catches-elsewhere
 tests/vra/alias/stashed_address_fail.ln                   NEW-ACCEPTS  new-catches-elsewhere
+
+# ── C-6's fail-test. Like the alias-oracle pair, this is a BOUNDS/OVERFLOW obligation judged
+# by the numeric domain, while this harness drives the LINEARITY and EFFECTS passes. The new
+# engine does reject it (`--engine=ir-full`, [E086] — pinned by its `// LAINFLAGS:` line).
+tests/vra/overflow/loop_accumulator_fail.ln               NEW-ACCEPTS  new-catches-elsewhere
