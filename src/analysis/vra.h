@@ -1117,6 +1117,54 @@ static bool vra_loop_invariant(Vra *V, IrValue *val, int Hid) {
 // by EXACTLY ONE well-formed step `cell = load(cell) ± c` whose direction drains the
 // loop-invariant bound (rise toward an upper bound / fall toward a lower one). The
 // "exactly one store" rule is conservative: any other write to the cell ⇒ not proven.
+// Does the value stored back into `cell` provably lie STRICTLY BELOW the cell's old value,
+// given that the loop guard keeps the cell positive? The step recogniser used to demand
+// `cell ± constant`, which is one shape out of several that every real loop uses:
+//
+//   b = a % b       the remainder is in [0, b−1] — Euclid's GCD, and the divisor IS the cell
+//   n = n / k       k ≥ 2, so n ≥ 1 ⇒ n/k < n — the halving loop
+//   n = n >> k      k ≥ 1, same argument
+//   x = x & (x − 1) clears the lowest set bit — the popcount loop
+//
+// Each is a FACT THE DOMAIN ALREADY HAS (vra_div_facts and the mask/modulo transfers state
+// exactly these intervals); the termination check simply was not asking. Recognising the
+// shape rather than querying the octagon at the store keeps this a syntactic, cheap test —
+// but every case is one the numeric domain independently justifies.
+static bool vra_step_decreases(Vra *V, int cell, IrInstr *vd) {
+    if (!vd) return false;
+    int nops = vd->n_operands;
+    IrInstr *ld0 = (nops>=1) ? V->def[vd->operands[0]->id] : NULL;
+    bool op0_is_cell = ld0 && ld0->op==IR_LOAD && ld0->n_operands>=1 && ld0->operands[0]->id==cell;
+    switch (vd->op) {
+        case IR_UREM: case IR_SREM: {
+            // `a % b` with b THE CELL: the remainder is below b, so the cell falls.
+            if (nops < 2) return false;
+            IrInstr *ld1 = V->def[vd->operands[1]->id];
+            return ld1 && ld1->op==IR_LOAD && ld1->n_operands>=1 && ld1->operands[0]->id==cell;
+        }
+        case IR_UDIV: case IR_SDIV: {
+            if (!op0_is_cell || nops < 2) return false;
+            int d = vd->operands[1]->id;
+            return d>=0 && d<V->nvar && V->cknown[d] && V->cval[d] >= 2;
+        }
+        case IR_LSHR: case IR_ASHR: {
+            if (!op0_is_cell || nops < 2) return false;
+            int k = vd->operands[1]->id;
+            return k>=0 && k<V->nvar && V->cknown[k] && V->cval[k] >= 1;
+        }
+        case IR_AND: {
+            // `x & (x − 1)` — clears the lowest set bit, so it is strictly below x for x ≥ 1.
+            if (!op0_is_cell || nops < 2) return false;
+            IrInstr *sub = V->def[vd->operands[1]->id];
+            if (!sub || sub->op!=IR_SUB || sub->n_operands<2) return false;
+            IrInstr *ls = V->def[sub->operands[0]->id];
+            int one = sub->operands[1]->id;
+            return ls && ls->op==IR_LOAD && ls->n_operands>=1 && ls->operands[0]->id==cell
+                && one>=0 && one<V->nvar && V->cknown[one] && V->cval[one]==1;
+        }
+        default: return false;
+    }
+}
 static bool vra_loop_terminates(Vra *V, IrBlock *H) {
     if (H->term.kind != IR_TERM_BR_COND) return false;
     IrInstr *ic = V->def[H->term.cond->id];
@@ -1141,6 +1189,8 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
                     if (ld && ld->op==IR_LOAD && ld->operands[0]->id==cell && V->cknown[c]) {
                         step = (vd->op==IR_ADD)? V->cval[c] : -V->cval[c]; nupd++;
                     }
+                } else if (vra_step_decreases(V, cell, vd)) {
+                    step = -1; nupd++;      // a falling step the domain justifies (see above)
                 }
             }
         }

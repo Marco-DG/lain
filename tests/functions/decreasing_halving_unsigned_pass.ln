@@ -1,0 +1,22 @@
+// LAINFLAGS: --engine=ir-full
+// The termination measure need not step by a CONSTANT. Four shapes every real loop uses are
+// each a fact the numeric domain already states — the step recogniser simply was not asking:
+//   b = a % b        the remainder is in [0, b-1] (Euclid; the divisor IS the measure)
+//   n = n / k        k >= 2, so n >= 1 implies n/k < n
+//   n = n >> k       k >= 1, same argument
+//   x = x & (x - 1)  clears the lowest set bit  (new engine only — the old one refuses it)
+// Each is verified exactly as an explicit `decreasing` is, so a non-decreasing step is still
+// rejected: see decreasing_zero_step_fail and decreasing_binary_search_stuck_fail.
+func halve(n0 usize) usize {
+    var n usize = n0
+    var steps usize = 0
+    while n > 0 decreasing n {
+        n = n / 2
+        if steps < 100 { steps = steps + 1 }
+    }
+    return steps
+}
+proc main() i32 {
+    if halve(1024) == 11 { return 0 }
+    return 1
+}
