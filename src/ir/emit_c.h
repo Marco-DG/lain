@@ -161,9 +161,12 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             IrType *st = i->operands[0]->type ? i->operands[0]->type->elem : NULL;
             IrName *fn = (st && st->kind==IRT_STRUCT && i->aux.field_idx < st->n_fields)
                      ? st->field_names[i->aux.field_idx] : NULL;
-            if (fn) fprintf(o, "  v%d = &v%d->%.*s;\n", i->result->id, i->operands[0]->id,
+            // An ARRAY field is already a base pointer once named — C decays it — so taking
+            // its address would be one indirection too many.
+            const char *amp = (i->result->type && i->result->type->kind==IRT_ARRAY) ? "" : "&";
+            if (fn) fprintf(o, "  v%d = %sv%d->%.*s;\n", i->result->id, amp, i->operands[0]->id,
                             (int)fn->length, fn->name);
-            else    fprintf(o, "  v%d = &v%d->f%d;\n", i->result->id, i->operands[0]->id, i->aux.field_idx);
+            else    fprintf(o, "  v%d = %sv%d->f%d;\n", i->result->id, amp, i->operands[0]->id, i->aux.field_idx);
             break;
         }
         case IR_ASSUME: case IR_ASSERT: case IR_CONSUME: break;  // verification-only; no runtime code
@@ -265,10 +268,31 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                     i->result->id, i->operands[0]->id, i->operands[1]->id,
                     i->operands[0]->id, i->operands[1]->id, i->operands[0]->id);
             break;
-        case IR_STRUCT_NEW: fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
-                            fputs("){ ", o);
-                            for (int k=0;k<i->n_operands;k++){ if(k)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
-                            fputs(" };\n", o); break;
+        case IR_STRUCT_NEW: {
+            // An ARRAY field cannot be initialised from a pointer in a C compound literal, and
+            // the IR's uniform model gives every array value as its decayed base. So brace the
+            // array fields empty and COPY them in — which is what `M([10,20,30,40], 4)` means.
+            IrType *sty = i->result->type;
+            fprintf(o, "  v%d = (", i->result->id); ir_ctype(sty, o); fputs("){ ", o);
+            for (int k=0;k<i->n_operands;k++){
+                if (k) fputs(", ", o);
+                IrType *ft = (sty && sty->kind==IRT_STRUCT && k < sty->n_fields) ? sty->fields[k] : NULL;
+                if (ft && ft->kind==IRT_ARRAY) fputs("{0}", o);
+                else fprintf(o, "v%d", i->operands[k]->id);
+            }
+            fputs(" };\n", o);
+            for (int k=0;k<i->n_operands;k++){
+                IrType *ft = (sty && sty->kind==IRT_STRUCT && k < sty->n_fields) ? sty->fields[k] : NULL;
+                if (!ft || ft->kind!=IRT_ARRAY) continue;
+                IrName *fn = sty->field_names ? sty->field_names[k] : NULL;
+                fputs("  __builtin_memcpy(v", o); fprintf(o, "%d.", i->result->id);
+                if (fn) fprintf(o, "%.*s", (int)fn->length, fn->name); else fprintf(o, "f%d", k);
+                fprintf(o, ", v%d, sizeof v%d.", i->operands[k]->id, i->result->id);
+                if (fn) fprintf(o, "%.*s", (int)fn->length, fn->name); else fprintf(o, "f%d", k);
+                fputs(");\n", o);
+            }
+            break;
+        }
         case IR_ICMP: {
             // Comparing a vector to a SCALAR broadcasts it, but gcc requires the scalar to be
             // at the LANE type: `v == 3` with an i32 literal against a u8 vector is rejected

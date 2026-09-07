@@ -1445,6 +1445,24 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             IrValue *addr = ir_lower_addr(c, e);
             return ir_load(c->f, c->cur, addr, ty);
         }
+        case EXPR_ARRAY_LITERAL: {
+            // An array literal OUTSIDE a variable initialiser — `M([10,20,30,40], 4)`. It was
+            // `unhandled-expr`, so the constructor got an OPAQUE null and the struct's array
+            // field held garbage. There is no array VALUE in this model, so materialise it
+            // into a slot and hand back the decayed base, exactly like an array local.
+            if (ty && ty->kind==IRT_ARRAY) {
+                IrValue *agg = ir_alloca_array(c->f, c->cur, ty);
+                int k = 0;
+                for (ExprList *el = e->as.array_literal_expr.elements; el; el = el->next, k++) {
+                    IrValue *idx = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,64,false));
+                    IrValue *p   = ir_elem_ptr(c->f, c->cur, agg, idx, ty->elem);
+                    ir_store(c->f, c->cur, p, ir_lower_expr(c, el->expr));
+                }
+                ir_init_fact(c->f, c->cur, agg);
+                return agg;
+            }
+            break;
+        }
         case EXPR_MEMBER: {
             Id *m = e->as.member_expr.member;
             Expr *tgt = e->as.member_expr.target;
@@ -1490,6 +1508,11 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             int fidx = ir_field_index(sty, m, &fty);
             if (fidx >= 0) {
                 IrValue *addr = ir_lower_addr(c, e);
+                // An ARRAY field READS as its decayed base, not as a load of the whole array —
+                // there is no array VALUE in this model, and indexing one produced C that
+                // subscripted a pointer read out of the array's own bytes.
+                if (fty && fty->kind==IRT_ARRAY && addr && addr->type
+                    && addr->type->kind==IRT_ARRAY) return addr;
                 IrValue *v = ir_load(c->f, c->cur, addr, fty ? fty : ty);
                 // the `in` invariant, consumed: this field is a valid index into that one
                 IrType *cty2 = NULL;

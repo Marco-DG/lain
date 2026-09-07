@@ -307,6 +307,16 @@ IrValue *ir_sum_payload(IrFunc *f, IrBlock *b, IrValue *sum, int k, int fi, IrTy
 
 // Address of struct field #idx (base is the struct's address).
 IrValue *ir_field_ptr(IrFunc *f, IrBlock *b, IrValue *base, int idx, IrType *fty) {
+    // An ARRAY field DECAYS, exactly as an array alloca does — the uniform pointer model this
+    // IR uses everywhere else. Typing it `*[N]T` instead produced `int32_t**` in the emitted C
+    // for a value that is really `int32_t[4]` inside the struct, and the load that followed
+    // read a pointer out of the array's first two elements: a segfault, not a type error.
+    if (fty && fty->kind == IRT_ARRAY) {
+        IrInstr *ai = ir_instr(f, IR_FIELD_PTR, fty, 1);
+        ai->operands[0] = base; ai->aux.field_idx = idx;
+        ir_emit(b, ai);
+        return ai->result;
+    }
     IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = fty;
     IrInstr *ins = ir_instr(f, IR_FIELD_PTR, pt, 1);
     ins->operands[0] = base; ins->aux.field_idx = idx;
