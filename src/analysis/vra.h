@@ -613,6 +613,48 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (canon>=0 && canon!=r) vra_assign_copy(V, W, r, canon); // all len reads agree
             break;
         }
+        case IR_SUM_TAG: {
+            // A discriminant is an ORDINARY INTEGER in [0, variants−1] — ir.h says so as the
+            // reason discrimination is exact — and the domain was forgetting it. Stating it
+            // is what lets a tag comparison refine like any other guard.
+            if (r<0) break;
+            oct_forget(W, r);
+            IrType *st = ins->n_operands>=1 && ins->operands[0] ? ins->operands[0]->type : NULL;
+            if (st && st->kind==IRT_SUM && st->n_fields > 0) {
+                oct_add_lb(W, r, 0); oct_add_ub(W, r, st->n_fields - 1);
+            }
+            break;
+        }
+        case IR_VEC_MOVEMASK: {
+            // One bit per lane: the result is in [0, 2^lanes − 1], exactly. Without it the
+            // `@ctz(@movemask(v))` idiom — the whole point of a SIMD scan — indexed with a
+            // value the domain knew nothing about.
+            if (r<0) break;
+            oct_forget(W, r);
+            IrType *vt = ins->n_operands>=1 && ins->operands[0] ? ins->operands[0]->type : NULL;
+            int64_t lanes = (vt && vt->kind==IRT_VECTOR) ? vt->array_len : 0;
+            if (lanes > 0 && lanes < 63) { oct_add_lb(W, r, 0); oct_add_ub(W, r, (1LL<<lanes) - 1); }
+            break;
+        }
+        case IR_SEQ_EQ: case IR_ICMP: {
+            if (r<0) break;                       // a BOOL is 0 or 1, and nothing said so
+            oct_forget(W, r); oct_add_lb(W, r, 0); oct_add_ub(W, r, 1);
+            break;
+        }
+        case IR_NEG: {
+            // `r = −x` — EXACT, and it is the octagon's own shape (`r + x ≤ 0` with
+            // `−r − x ≤ 0`), not an interval approximation. There was no case at all, so a
+            // negated value was FORGOTTEN: `var y i16 = -1000` could not be shown to fit i16,
+            // because the domain had lost the 1000 the moment it was negated.
+            if (r<0) break;
+            oct_forget(W, r);
+            if (ins->n_operands < 1) break;
+            int x = ins->operands[0]->id;
+            if (x>=0 && x<V->nvar && V->cknown[x]) { oct_add_const(W, r, -V->cval[x]); break; }
+            oct_add_sum_le(W, r, x, 0);
+            oct_add_negsum_le(W, r, x, 0);
+            break;
+        }
         case IR_CAST:
             if (r>=0){ // treat as a copy (widenings preserve value; a narrowing that
                        // changes it would be a separate proven-safe obligation)
