@@ -20,8 +20,8 @@ Lain is a statically typed, compiled programming language designed for embedded 
 | **Data Races** | Structurally impossible | Lain programs are single-threaded pre-1.0; no concurrency model exists. Interrupt-aware model (M2) is roadmapped. |
 | **Null Dereference** | Prevented | Pointer dereference requires `unsafe` |
 | **Memory Leaks** | Prevented | Linear variables must be consumed; forgetting is a compile error |
-| **Division by Zero** | Prevented | Type constraints (`b int != 0`) enforce non-zero divisors |
-| **Integer Overflow** | Defined | Signed: two's complement wrapping (`-fwrapv`). Unsigned: modular arithmetic |
+| **Division by Zero** | Impossible | A refinement (`b int != 0`) or a live guard (`if d != 0`) must establish it |
+| **Integer Overflow** | Impossible | Checked at compile time and REJECTED (§17); `+%` wraps, `+\|` saturates, `+?` recovers — each by request |
 | **Purity Violations** | Impossible | `func` cannot call `proc`, access globals, or have unbounded loops |
 
 ---
@@ -40,14 +40,13 @@ All safety checks (ownership, borrowing, bounds, purity, pattern exhaustiveness)
 
 **Build the compiler:**
 ```bash
-gcc src/main.c -o compiler -std=c99 -Wall -Wextra \
-    -Wno-unused-function -Wno-unused-parameter
+gcc -std=c99 -Wall -Wextra -o lain src/main.c -I src
 ```
 
 **Compile a Lain program:**
 ```bash
 # Step 1: Lain -> C
-./compiler my_program.ln
+./lain my_program.ln -o out.c
 
 # Step 2: C -> Executable
 gcc out.c -o my_program -Dlibc_printf=printf -Dlibc_puts=puts -w
@@ -55,6 +54,11 @@ gcc out.c -o my_program -Dlibc_printf=printf -Dlibc_puts=puts -w
 # Step 3: Run
 ./my_program
 ```
+
+> [!NOTE]
+> `import std.…` resolves the module path relative to the **working directory**, so run the
+> compiler from the repository root (the directory containing `std/`) when an example imports
+> from the standard library.
 
 **Run the test suite:**
 ```bash
@@ -804,14 +808,28 @@ func add(a int, b int) int {
 }
 ```
 
-**Termination guarantee:**
+**Termination guarantee.** A `func` must be *total*: it has to terminate on every input. That
+does not ban recursion — it requires the compiler to be able to see why the recursion stops.
+A parameter that strictly shrinks toward a bound is enough, and it is inferred:
+
 ```lain
-// ERROR: Recursion not allowed in pure function
 func factorial(n int) int {
     if n <= 1 { return 1 }
-    return n * factorial(n - 1)    // Compile error [E011]
+    return n *% factorial(n - 1)    // OK: n shrinks toward the n <= 1 base case
 }
 ```
+
+What is rejected is a recursion whose measure the compiler cannot see shrinking:
+
+```lain
+func collatz(n int) int {
+    if n <= 1 { return 0 }
+    if n % 2 == 0 { return collatz(n / 2) }
+    return collatz(3 * n + 1)     // Compile error [E011]: no decreasing measure
+}
+```
+
+The same rule governs loops — see §5.5.
 
 ### 5.2 Procedures (`proc`)
 
@@ -845,6 +863,8 @@ See §4.1 for full semantics.
 ### 5.4 Return Types & Void Functions
 
 ```lain
+extern proc libc_printf(fmt *u8, ...) i32
+
 func add(a int, b int) int {    // Returns int
     return a + b
 }
@@ -877,7 +897,7 @@ func check(valid bool) {
 | `for` loops | Allowed | Allowed |
 | Unbounded `while` | Banned | Allowed |
 | Bounded `while` (`decreasing`) | Allowed | Allowed |
-| Recursion | Banned | Allowed |
+| Recursion | Allowed **if provably total** | Allowed |
 | Global state access | Banned | Allowed |
 | Calling `proc` | Banned | Allowed |
 | Calling `func` | Allowed | Allowed |
@@ -1610,11 +1630,11 @@ All functions in `std/math` are pure (`func`), with no side effects or external 
 
 **`std/option.ln`** — Generic Option type:
 ```lain
-type OptInt = Option(int)
+import std.option.{Option}
 
 proc main() int {
-    var a = OptInt.Some(42)
-    var b = OptInt.None
+    var a = Option(int).Some(42)
+    var b = Option(int).None
 
     var x = 0
     case a {
@@ -1629,10 +1649,10 @@ proc main() int {
 
 **`std/result.ln`** — Generic Result type:
 ```lain
-type MyResult = Result(int, int)
+import std.result.{Result}
 
 proc main() int {
-    var r = MyResult.Ok(15)
+    var r = Result(int, int).Ok(15)
     var x = 0
     case r {
         Ok(v): x = v
@@ -1649,7 +1669,7 @@ proc main() int {
 Lain uses a multi-pass compiler. Functions, procedures, and types can be referenced before they are declared in the source file. There is no need for forward declarations or header files.
 
 ```lain
-func main() int { return helper() }
+proc main() int { return helper() }
 proc helper() int { return 42 }      // OK: defined after use
 ```
 
@@ -1762,12 +1782,13 @@ unsafe {
 Raw pointers (`*int`, `*void`) bypass Lain's ownership system. **Dereferencing** a raw pointer is only allowed inside `unsafe` blocks.
 
 ```lain
-func main() {
+proc main() i32 {
     var p *int = 0
 
     unsafe {
         var y = *p      // OK (compiles, though dangerous at runtime)
     }
+    return 0
 }
 ```
 
@@ -2036,11 +2057,52 @@ var q = Point(10, undefined)
 
 ## 17. Arithmetic Overflow
 
-| Type Category | Overflow Behavior |
-|:-------------|:------------------|
-| **Signed integers** (`int`, `i8`-`i64`, `isize`) | Two's complement wrapping (via `-fwrapv`) |
-| **Unsigned integers** (`u8`-`u64`, `usize`) | Modular arithmetic (e.g., `u8(255) + 1 -> 0`) |
-| **Floating-point** (`f32`, `f64`) | IEEE 754 rules: overflow to +/-infinity, underflow to 0 or denormal |
+**Integer overflow is a compile-time error, not a runtime behaviour.** `+`, `-` and `*` on
+integers are checked: if the compiler cannot prove the result stays in range, the program is
+rejected with `[E086]`. There is no wrapping to fall back on unless you ask for it.
+
+| Operator | Behaviour on overflow |
+|:---------|:----------------------|
+| `+` `-` `*` | **Rejected at compile time** unless provably in range |
+| `+%` `-%` `*%` | Modular (two's complement wrapping) — you have asked for it |
+| `+\|` `-\|` `*\|` | Saturating — clamps to the type's range |
+| `+?` `-?` `*?` | Checked, handled inline by `else` (a fallback value, or `else panic(...)`) |
+| `as?` | Checked narrowing cast, handled the same way |
+| inside `unsafe { }` | The obligation is waived; you have taken responsibility |
+| **Floating-point** (`f32`, `f64`) | IEEE 754: overflow to ±infinity, underflow to 0 or denormal |
+
+`+` **widens**: `a + b` on two `i32` has an intermediate type wide enough to hold any result,
+so the addition itself never overflows. The obligation is on the **narrowing** — storing that
+result back into an `i32`, or returning it as one:
+
+```lain
+func widened(a i32, b i32) i64 { return a + b }   // OK: i64 holds every i32 + i32
+```
+
+```lain
+proc narrowed(a i32, b i32) i32 {
+    var s i32 = a + b     // ERROR [E086]: the sum may not fit an i32
+    return s
+}
+```
+
+The compiler proves what it can from guards, refinements and loop structure, so ordinary
+bounded arithmetic needs no annotation:
+
+```lain
+proc bounded(a i32, b i32) i32 {
+    if a < 1000 and a > 0 and b < 1000 and b > 0 {
+        var s i32 = a + b     // proven: at most 1998
+        return s
+    }
+    return 0
+}
+```
+
+> [!WARNING]
+> An **unbounded accumulator is a real overflow** and is rejected: `while i < n { s = s + i }`
+> can exceed `s`'s type for a large enough `n`. Give the accumulator a guard, a wider type, or
+> use `+%` if wrapping is what you mean.
 
 ---
 
@@ -2141,7 +2203,7 @@ The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` 
 ### Hello World
 
 ```lain
-import std.c
+import std.c.{libc_printf}
 
 proc main() int {
     libc_printf("Hello, World!\n")
@@ -2202,19 +2264,17 @@ func area(s Shape) int {
 ### Option and Result
 
 ```lain
-type OptionInt  = Option(int)
-type FileResult = Result(File, int)
-
-func find_positive(arr int[10]) OptionInt {
+import std.option.{Option}
+import std.c.{libc_printf}
+func find_positive(arr i32[10]) Option(i32) {
     for i in 0..10 {
-        if arr[i] > 0 { return OptionInt.Some(arr[i]) }
+        if arr[i] > 0 { return Option(i32).Some(arr[i]) }
     }
-    return OptionInt.None
+    return Option(i32).None
 }
 
 proc main() int {
-    var arr int[10]
-    // ... fill arr ...
+    var arr i32[10] = [0 for i in 0..10]
 
     case find_positive(arr) {
         Some(v): libc_printf("Found: %d\n", v)
