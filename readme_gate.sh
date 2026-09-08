@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # readme_gate.sh — the README is DOCUMENTATION OF RECORD, so check it the way the corpus is
-# checked: by running it. Every ```lain block is extracted and put through the compiler.
+# checked: by running it. Every ```lain block on BOTH pages — the front page and the language
+# reference — is extracted and put through the compiler.
 #
 # A block is judged by what it claims:
 #   · contains `// ERROR` or an `[Exxx]` code  → it ILLUSTRATES a rejection and must FAIL
@@ -24,32 +25,37 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP" "$ROOT/_readme_gate_tmp.ln" "$ROOT/_readme
 python3 - "$TMP" <<'PY'
 import re, sys, os
 tmp = sys.argv[1]
-src = open("README.md").read().split("\n")
-blocks, cur, start = [], None, 0
-for i, line in enumerate(src, 1):
+src = []
+for path in ("README.md", "LANGUAGE.md"):
+    for i, line in enumerate(open(path).read().split("\n"), 1):
+        src.append((path, i, line))
+blocks, cur, start, where = [], None, 0, ""
+for path, i, line in src:
     if cur is None:
         if line.strip() == "```lain":
-            cur, start = [], i
+            cur, start, where = [], i, path
     else:
         if line.strip() == "```":
-            blocks.append((start, "\n".join(cur))); cur = None
+            blocks.append((where, start, "\n".join(cur))); cur = None
         else:
             cur.append(line)
-for n, (ln, body) in enumerate(blocks):
-    open(os.path.join(tmp, "b%04d_%d.txt" % (n, ln)), "w").write(body)
+for n, (path, ln, body) in enumerate(blocks):
+    tag = path.replace("/", "%")
+    open(os.path.join(tmp, "b%04d_%s_%d.txt" % (n, tag, ln)), "w").write(body)
 print(len(blocks))
 PY
 
 ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
 for f in "$TMP"/b*.txt; do
     ln=${f##*_}; ln=${ln%.txt}
+    page=${f%_*}; page=${page##*_}; page=${page//%//}
     body=$(cat "$f")
     # what does the block CLAIM?
     # A block CLAIMS to be an error only when the marker follows real CODE on that line.
     # `// x = 20   // ERROR: ...` has the offending line COMMENTED OUT — the block is showing
     # you what not to write, and it must still compile.
     expect_fail=0
-    echo "$body" | grep -qE '^[[:space:]]*[^/[:space:]].*//.*(ERROR|error:|Compile error)' && expect_fail=1
+    echo "$body" | grep -qE '^[[:space:]]*[^/[:space:]].*//.*(ERROR|error:|Compile error|E[0-9]{3})' && expect_fail=1
     # make it a program
     # ★ The program is written into the REPOSITORY ROOT, not into $TMP. Module paths resolve
     # relative to the source file's directory, so an example that says `import std.c.{…}` can
@@ -77,7 +83,7 @@ for f in "$TMP"/b*.txt; do
     # An example nothing can check is a claim nobody is testing.
     if [ $rc -ne 0 ] && [ $expect_fail -eq 0 ] && [ $selfcontained -eq 0 ]; then
         unchecked=$((unchecked+1))
-        [ $VERBOSE -eq 1 ] && { echo "  UNVERIFIABLE README.md:$ln"
+        [ $VERBOSE -eq 1 ] && { echo "  UNVERIFIABLE $page:$ln"
                                 echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'; }
         continue
     fi
@@ -85,14 +91,14 @@ for f in "$TMP"/b*.txt; do
         if [ $rc -ne 0 ]; then expfail_ok=$((expfail_ok+1))
         else
             expfail_bad=$((expfail_bad+1))
-            echo "  ★ README.md:$ln — block says it is an ERROR, compiler ACCEPTS it"
+            echo "  ★ $page:$ln — block says it is an ERROR, compiler ACCEPTS it"
             [ $VERBOSE -eq 1 ] && sed 's/^/      /' "$f"
         fi
     else
         if [ $rc -eq 0 ]; then ok=$((ok+1))
         else
             fail=$((fail+1))
-            echo "  ★ README.md:$ln — documented as valid, compiler REJECTS it"
+            echo "  ★ $page:$ln — documented as valid, compiler REJECTS it"
             echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'
             [ $VERBOSE -eq 1 ] && sed 's/^/      /' "$f"
         fi
