@@ -1139,6 +1139,36 @@ static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) 
     if (v && v->id>=0 && v->id<V->nvar && V->cknown[v->id]) { *lo=*hi=V->cval[v->id]; return; }
     int64_t tlo=INT64_MIN, thi=INT64_MAX; (void)V;
     irtype_int_range(v->type, &tlo, &thi);
+    // ★ A WIDENING CAST CARRIES ITS SOURCE'S TYPE BOUND. `(x as i64)` on an i32 holds the same
+    // number, so it is in i32's range — but the value's own type is i64 and that is all the
+    // interval says. The bound lives one step back along the cast chain, and following it is
+    // always sound because sext/zext are value-preserving. (A TRUNC is not, so it stops here.)
+    //
+    // Two things were failing for want of this. The saturating `+|` expands to a widened add
+    // whose operands are casts of the destination type; inside a loop the octagon has widened
+    // those away, so `i64 + i64` could not be shown to fit i64 and a TOTAL operation was
+    // rejected (D-22). And B1's per-iteration delta read `(a[i] as i32)` on a u8 element as
+    // [-2^31, 255], which bounds no sum at all.
+    for (IrValue *src = v; src && src->id>=0 && src->id<V->nvar; ) {
+        IrInstr *d = V->def[src->id];
+        if (!d || d->op != IR_CAST || d->n_operands < 1) break;
+        // Decided from the TYPES, not from aux.cast_kind: the lowering labels a u8 -> i32
+        // widening IR_CAST_BITCAST, so trusting the label follows nothing. A cast preserves
+        // the value when it widens AND the source cannot become negative under it — an
+        // unsigned source always survives, and a same-signedness widening survives. i8 -> u32
+        // does NOT: zext turns -1 into 4294967295, so intersecting with [-128,127] would be
+        // unsound. That case stops here.
+        IrType *st = d->operands[0] ? d->operands[0]->type : NULL;
+        IrType *dt = d->result ? d->result->type : NULL;
+        if (!st || !dt || st->kind != IRT_INT || dt->kind != IRT_INT) break;
+        if (st->bits > dt->bits) break;                       // a narrowing changes the value
+        if (st->is_signed && !dt->is_signed) break;           // signed -> unsigned may not
+        src = d->operands[0];
+        int64_t slo, shi;
+        if (!irtype_int_range(st, &slo, &shi)) break;
+        if (slo > tlo) tlo = slo;
+        if (shi < thi) thi = shi;
+    }
     int64_t olo,ohi; bool hl,hh; vra_interval(V, W, v->id, &olo,&hl,&ohi,&hh);
     if (hl && olo>tlo) tlo=olo;
     if (hh && ohi<thi) thi=ohi;
@@ -1631,23 +1661,10 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
     if (!found) return false;
     *H = found;
 
-    // The addend's range, tightened through CASTS. `(a[i] as i32)` on a u8 element is
-    // [0,255], but the octagon reports the range of the i32 RESULT, whose type floor is
-    // INT32_MIN — and a delta of [-2^31, 255] over 4096 iterations bounds nothing. Every
-    // value on a widening cast chain holds the same number, so intersecting with each
-    // source's own type range is always sound and is where the real bound lives.
-    IrValue *addend = add->operands[1];
-    vra_range(V, W, addend, dlo, dhi);
-    for (IrValue *src = addend; src && src->id>=0 && src->id<V->nvar; ) {
-        IrInstr *d = V->def[src->id];
-        if (!d || d->op != IR_CAST || d->n_operands < 1) break;
-        src = d->operands[0];
-        if (!src || !src->type || src->type->kind != IRT_INT) break;
-        int64_t slo, shi;
-        if (!irtype_int_range(src->type, &slo, &shi)) break;
-        if (slo > *dlo) *dlo = slo;
-        if (shi < *dhi) *dhi = shi;
-    }
+    // The addend's range. vra_range follows widening casts to the source's own type, so
+    // `(a[i] as i32)` on a u8 element reads as [0,255] rather than [-2^31,255] — without
+    // which no sum is bounded by anything.
+    vra_range(V, W, add->operands[1], dlo, dhi);
     if (add->op==IR_SUB) { int64_t t=*dlo; *dlo = -*dhi; *dhi = -t; }
     int64_t clo,chi; bool hl,hh; vra_interval(V,W,cell,&clo,&hl,&chi,&hh);
     *s0lo = hl ? clo : 0; *s0hi = hh ? chi : 0;

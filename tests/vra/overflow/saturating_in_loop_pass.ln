@@ -1,0 +1,26 @@
+// LAINFLAGS: --engine=ir-full
+// D-22: `+|` is TOTAL — saturation is defined at every input, so it can never owe an overflow
+// obligation. It worked outside a loop and was REJECTED inside one, which is the only place a
+// programmer reaches for it.
+//
+// The lowering was never at fault: it clamps to the destination type. The obligation was on
+// the WIDENED ADD inside the expansion, whose operands are casts of i32 values. vra_range
+// reported those as full i64, because a cast's own type is all the interval says — the bound
+// lives one step back, on the source. Following widening casts recovers it.
+//
+// Decided from the TYPES rather than aux.cast_kind, because the lowering labels a u8 -> i32
+// widening IR_CAST_BITCAST and trusting that label follows nothing.
+func total(a i32[]) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < a.len {
+        s = s +| a[i]
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 {
+    var buf i32[4] = [1, 2, 3, 4]
+    if total(buf) == 10 { return 0 }
+    return 1
+}
