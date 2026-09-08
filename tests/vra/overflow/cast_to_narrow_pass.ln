@@ -1,8 +1,11 @@
-// Explicit `as` cast bypasses the boundary check (programmer takes
-// responsibility for narrowing).
-
+// The companion to cast_to_narrow_fail.ln: the same narrowing, said out loud. `as%` truncates
+// modularly and is total, so it owes no obligation. A value that DOES provably fit needs no
+// tier at all — `narrow2` proves, because 200 fits a u8.
 proc main() i32 {
     var big u16 = 500
-    var narrow u8 = big as u8   // explicit cast, no E086
-    return 0
+    var narrow u8 = big as% u8
+    var small u16 = 200
+    var narrow2 u8 = small as u8
+    if narrow == 244 { return (narrow2 as i32) - 200 }
+    return 1
 }

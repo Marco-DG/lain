@@ -1660,8 +1660,37 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
         }
         case EXPR_CAST: {
             IrValue *x = ir_lower_expr(c, e->as.cast_expr.expr);
-            IrInstr *ins = ir_instr(c->f, IR_CAST, ir_lower_type(c, e->as.cast_expr.target_type), 1);
-            ins->operands[0]=x; ins->aux.cast_kind=IR_CAST_BITCAST; ir_emit(c->cur,ins);
+            IrType  *dt = ir_lower_type(c, e->as.cast_expr.target_type);
+            IrInstr *ins = ir_instr(c->f, IR_CAST, dt, 1);
+            ins->operands[0]=x;
+            // ★ The cast KIND, from the types and the tier — every source-level `as` used to
+            // be labelled BITCAST regardless.
+            //
+            // Two things went wrong with one label. The narrowing obligation fires only on
+            // IR_CAST_TRUNC, so `500 as u8` silently produced 244 — while
+            // spec/chapters/08-expressions.tex says of the proven tier: "narrows only if VRA
+            // proves it fits, else E086". The compiler was not implementing its own
+            // specification, and the whole promise of the language is that a narrowing
+            // cannot silently lose information. And in the other direction a widening was
+            // labelled BITCAST too, so nothing downstream could tell that it preserves its
+            // operand's value (see vra_range, which now decides that from the types).
+            //
+            // Only the PROVEN tier owes the obligation. `as%` truncates modularly and `as|`
+            // clamps: both are total, and asking them to prove they fit would be asking them
+            // to prove they are unnecessary.
+            IrType *st = x ? x->type : NULL;
+            CastKind tier = e->as.cast_expr.kind;
+            if (st && dt && st->kind==IRT_INT && dt->kind==IRT_INT) {
+                if (st->bits > dt->bits)
+                    ins->aux.cast_kind = (tier == CAST_PROVEN) ? IR_CAST_TRUNC : IR_CAST_BITCAST;
+                else if (st->bits < dt->bits)
+                    ins->aux.cast_kind = st->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT;
+                else
+                    ins->aux.cast_kind = IR_CAST_BITCAST;   // same width: a reinterpretation
+            } else {
+                ins->aux.cast_kind = IR_CAST_BITCAST;
+            }
+            ir_emit(c->cur,ins);
             return ins->result;
         }
         case EXPR_MOVE: {                               // `mov x`: read the value, then INVALIDATE

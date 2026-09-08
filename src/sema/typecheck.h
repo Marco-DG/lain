@@ -3611,6 +3611,22 @@ void sema_infer_expr(Expr *e) {
     // F-028: basic cast validity — pointer-related casts require `unsafe`.
     Type *src = e->as.cast_expr.expr ? e->as.cast_expr.expr->type : NULL;
     Type *tgt = e->as.cast_expr.target_type;
+
+    // ★ THE PROVEN TIER MUST ACTUALLY BE PROVEN.
+    // spec/chapters/08-expressions.tex, on the four cast tiers:
+    //     proven  `as`   narrows only if VRA proves it fits, else E086
+    // It did not. `var x i32 = 500; x as u8` compiled and produced 244 — a silent
+    // truncation, in a language whose entire claim is that narrowing cannot lose
+    // information without saying so. The other three tiers are total and owe nothing:
+    // `as?` traps, `as%` wraps, `as|` clamps.
+    if (sema_walk_phase && e->as.cast_expr.kind == CAST_PROVEN && !sema_in_unsafe_block &&
+        src && tgt && sema_ranges) {
+        int sb = 0, tb = 0; bool ss = false, ts = false;
+        if (parse_iN_uN(src, &sb, &ss) && parse_iN_uN(tgt, &tb, &ts) && sb > tb) {
+            Range r = sema_eval_range(e->as.cast_expr.expr, sema_ranges);
+            check_value_fits_type(r, tgt, e->line, e->col, "cast of", "");
+        }
+    }
     Type *src_u = src, *tgt_u = tgt;
     while (src_u && src_u->kind == TYPE_COMPTIME) src_u = src_u->element_type;
     while (tgt_u && tgt_u->kind == TYPE_COMPTIME) tgt_u = tgt_u->element_type;

@@ -1,3 +1,7 @@
+// ADJUDICATED 2026-09-08: the proven tier `as` now NARROWS ONLY IF IT FITS, which is what
+// spec/chapters/08-expressions.tex has always said: "proven `as` — narrows only if VRA
+// proves it fits, else E086". The compiler used to truncate silently. Where the intent
+// here is a deliberate truncation, that is spelled `as%`.
 // F3.5 Path-F: `a - b` on i32 inputs widens to i33 and is computed in int64_t,
 // so the old "a - b overflows int before the cast" UB is fixed by construction.
 // The `as u32` is now the programmer's EXPLICIT truncation choice (a-b can be
@@ -5,7 +9,7 @@
 // outside u32, e.g. negative) or `as| u32` (clamps to 0). This replaces the old
 // model that rejected the whole expression.
 func gap(a i32, b i32) u32 {
-    return (a - b) as u32
+    return (a - b) as% u32
 }
 proc main() i32 {
     var _ = gap(5, 10)

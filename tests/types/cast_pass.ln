@@ -1,10 +1,14 @@
+// ADJUDICATED 2026-09-08: the proven tier `as` now NARROWS ONLY IF IT FITS, which is what
+// spec/chapters/08-expressions.tex has always said: "proven `as` — narrows only if VRA
+// proves it fits, else E086". The compiler used to truncate silently. Where the intent
+// here is a deliberate truncation, that is spelled `as%`.
 // Test: cast operator (as)
 
 extern proc libc_printf(fmt *u8, ...) i32
 
 proc main() i32 {
     var x i32 = 1000
-    var y = x as u8
+    var y = x as% u8
     
     libc_printf("x = %d, y (as u8) = %d\n", x, y)
     

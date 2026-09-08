@@ -1,0 +1,16 @@
+// EXPECT: [E086]
+// ★ This test used to be a _pass, and its comment read "explicit cast, no E086". That was the
+// compiler contradicting its own specification. spec/chapters/08-expressions.tex gives four
+// cast tiers, and of the first it says:
+//
+//     proven   `as`   narrows only if VRA proves it fits, else E086
+//
+// `500 as u8` produced 244 — a silent truncation, in a language whose whole claim is that
+// narrowing cannot lose information without saying so. The other three tiers are TOTAL and owe
+// nothing: `as?` traps, `as%` wraps, `as|` clamps. See cast_to_narrow_pass.ln for the spelling
+// that means what this program was doing.
+proc main() i32 {
+    var big u16 = 500
+    var narrow u8 = big as u8
+    return 0
+}
