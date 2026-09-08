@@ -602,6 +602,28 @@ The endeavour is complete when ALL of these hold simultaneously:
       niche/SIMD re-expressed on the IR.
 - [ ] **4.2 LLVM/native seam** on the sovereign IR (E0.7).
 
+### ▸ 3.5b — THE NUMERIC HALF (session 77–78)
+- [~] `--engine=ir-full` false positives **115 → 60**, catches 243 → **245**. The number was a
+      BUCKET before it was a fact: nobody had separated "the new engine is imprecise" from
+      "the old engine is unsound", and the second half turned out to be the bigger one.
+      ★ **~50 of the 60 that remain are the ACCUMULATOR class (C-6), where the new engine is
+      RIGHT** — the old engine's overflow check does not survive a loop (`while i < n
+      { s = s + i }` at u8 prints 188 for a sum of 19900). Those programs are real overflows
+      and need a guard, a wider type, or `+%`; that is the language's promise arriving.
+      Fixed on the way: the overflow obligation belonged to the RESULT type (Path-F widens),
+      which required BUILDING the narrowing obligation first; block ids are not control flow
+      (DFS back edges + natural loops — five programs' fixpoints DID NOT CONVERGE, including
+      the flagship binary search, and the final pass was discharging against the partial
+      result); the fixpoint now FAILS CLOSED if it exits through the sweep cap; a termination
+      measure need not step by a constant; `d != 0` is a fact no interval can hold, so ask the
+      CFG; `unsafe` waives the numeric obligations and the region is the whole block; four
+      opcodes with an exactly-known result were being forgotten; and widening now climbs a
+      THRESHOLD LADDER of the program's own constants (Astrée-style).
+      **Next: a `--dump-octagon` state instrument.** Three precision questions in a row have
+      been answered by bisecting programs instead of reading the abstract state, and the
+      binary-search midpoint's overflow obligation is stuck exactly there — see
+      `lain_language_limits.md` for what bisection already established about it.
+
 ### ▸ STAGE V — The language catches up to the IR
 - [x] **F1 lifetimes/regions syntax** ✓ **BUILT** (design + implementation) — and the framing was wrong
       (`internal/design/f1_lifetime_syntax.md`). Rust needs lifetime parameters because it
