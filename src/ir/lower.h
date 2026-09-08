@@ -1410,6 +1410,11 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             if (ir_bin_op(e->as.binary_expr.op, sgn, &op, &wrap)) {
                 IrValue *r = ir_binop(c->f,c->cur,op,x,y,ty);
                 c->cur->instrs_tail->wrap = wrap;
+                // `unchecked` is documented on IR_ELEM_PTR *and arithmetic* — but only the
+                // element pointer ever set it, so `unsafe { var c u8 = a + b }` still carried
+                // an overflow obligation the corpus test says it must not. Inside `unsafe` the
+                // programmer has taken responsibility; the IR has to record that it happened.
+                c->cur->instrs_tail->unchecked = c->unsafe;
                 return r;
             }
             // an unhandled binary operator: a PURE computation over two known values —
@@ -2005,7 +2010,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             ir_env_add(c, s->as.var_stmt.name, slot, NULL);
             break;
         }
-        case STMT_ASSIGN: {
+        case STMT_ASSIGN: {   // (an `unsafe` store carries the same waiver — see below)
             // WHOLE-ARRAY ASSIGNMENT has VALUE semantics — `c = a` copies, and C forbids array
             // `=`, so a single store would emit either broken C or a pointer aliasing the
             // source. Same element-wise copy as the copy-initialiser, for the same reason:
@@ -2039,6 +2044,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
               } }
             IrValue *addr = ir_lower_addr(c, s->as.assign_stmt.target);
             ir_store(c->f, c->cur, addr, ir_lower_expr(c, s->as.assign_stmt.expr));
+            if (c->cur->instrs_tail) c->cur->instrs_tail->unchecked = c->unsafe;
             break;
         }
         case STMT_EXPR: (void)ir_lower_expr(c, s->as.expr_stmt.expr); break;
@@ -2312,7 +2318,20 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                       else                             ir_assert(c->f, c->cur, cv); }
             break;
         }
-        case STMT_UNSAFE: { bool o=c->unsafe; c->unsafe=true; ir_lower_stmts(c, s->as.unsafe_stmt.body); c->unsafe=o; break; }
+        case STMT_UNSAFE: {
+            // Everything emitted for the body is UNCHECKED. `unsafe` is lexical, so the region
+            // is "this block from here on, plus every block created while inside" — marking
+            // only the arithmetic missed the STORE that narrows it, which is where Path-F puts
+            // the obligation, and the corpus's own `unsafe { var c u8 = a + b }` still fired.
+            bool o=c->unsafe; c->unsafe=true;
+            IrBlock *b0 = c->cur; IrInstr *t0 = b0 ? b0->instrs_tail : NULL;
+            int32_t nb0 = c->f->next_block_id;
+            ir_lower_stmts(c, s->as.unsafe_stmt.body);
+            for (IrInstr *i = (t0 ? t0->next : (b0 ? b0->instrs : NULL)); i; i = i->next) i->unchecked = true;
+            for (IrBlock *b = c->f->blocks; b; b = b->next)
+                if (b->id >= nb0) for (IrInstr *i = b->instrs; i; i = i->next) i->unchecked = true;
+            c->unsafe=o; break;
+        }
         default: ir_incomplete(c, "unhandled-stmt"); break;   // enum-match/use — TODO (fail closed)
     }
 }

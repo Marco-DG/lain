@@ -1,0 +1,15 @@
+// LAINFLAGS: --engine=ir-full
+// `unsafe` waives the NUMERIC obligations, not just the bounds one — and the region is
+// lexical, so it covers the whole block including the STORE that narrows, which is where
+// Path-F puts the overflow obligation. `unchecked` was documented on "ELEM_PTR / arithmetic"
+// and only ever set on the element pointer, so `unsafe { var c u8 = a + b }` still fired.
+// The companion negative is right below: the same expression OUTSIDE the block is refused.
+proc inside(a u8, b u8) u8 {
+    unsafe {
+        var c u8 = a + b
+        return c
+    }
+}
+proc main() i32 {
+    return inside(200, 100) as i32
+}

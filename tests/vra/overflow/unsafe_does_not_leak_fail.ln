@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// LAINFLAGS: --engine=ir-full
+// The other direction: an `unsafe` block waives the obligations INSIDE it and nothing more.
+// The same addition after the block is still an overflow the compiler must refuse.
+proc main() i32 {
+    var a u8 = 200
+    var b u8 = 100
+    unsafe {
+        var c u8 = a + b
+        var _c = c
+    }
+    var d u8 = a + b
+    var _d = d
+    return 0
+}

@@ -968,6 +968,7 @@ static void vra_arith_range(IrOp op, int64_t alo,int64_t ahi, int64_t blo,int64_
 // interval no longer fits in the domain's own int64.
 static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
                              IrInstr *at, int64_t line, int64_t col) {
+    if (at && at->unchecked) return;                        // inside `unsafe`
     if (!val || !val->type || !target) return;
     if (val->type->kind != IRT_INT || target->kind != IRT_INT) return;
     if (val->type->bits <= target->bits) return;            // not a narrowing
@@ -985,6 +986,7 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
 // range against the operand type's interval (design §2.6).
 static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     if (ins->wrap != IR_WRAP_CHECK) return;                 // .wrap/.sat skip the obligation
+    if (ins->unchecked) return;                             // ...and so does `unsafe`
     if (ins->n_operands<2) return;
     IrValue *a=ins->operands[0], *b=ins->operands[1];
     int64_t tlo,thi;
@@ -1083,7 +1085,7 @@ static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid) {
     return false;
 }
 static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
-    if (ins->n_operands<2) return;
+    if (ins->n_operands<2 || ins->unchecked) return;         // `unsafe` waives it, as for bounds
     int64_t lo,hi; vra_range(V,W,ins->operands[1],&lo,&hi);
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_DIVZERO; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.ok = (lo>0) || (hi<0);                                // 0 ∉ [lo,hi]
