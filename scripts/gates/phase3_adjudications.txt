@@ -291,9 +291,18 @@ tests/vra/sliding_window_underflow_fail.ln                NEW-ACCEPTS  new-catch
 
 tests/ownership/multi_var_param_fail.ln   NEW-ACCEPTS  new-more-precise   # pick_x returns `var a.x`, so it borrows only `da`; reading `db` while the result lives is SAFE. The test's own comment asserts "pick_x borrows both da and db", which is the old engine's conservatism written down as intent. bor_ret_borrow_mask answers exactly. Flip to _pass.ln when --engine=ir becomes the default; it cannot flip earlier because the old engine still rejects it.
 
-tests/ownership/close_without_mov_fail.ln NEW-ACCEPTS  front-end-policy   # [E007] "moving a linear variable requires explicit `mov` at the call site" is a rule about how the source is SPELLED. The IR is identical either way, so no IR analysis can see it. It lives in sema/linearity.h and is currently stood down with g_suppress_ownership. MUST be split out into a spelling-only pass before the default flips, or the rule silently disappears.
-tests/ownership/move_needs_mov_fail.ln    NEW-ACCEPTS  front-end-policy   # same rule, [E007]
-tests/declarations/var_mandatory_fail.ln  NEW-ACCEPTS  front-end-policy   # same shape, [E017] "passing to a `var` parameter requires explicit `var`"
+# ── the three front-end-policy rules are now RE-CHECKED under --engine=ir (2026-09-08).
+# sema_check_call_spelling() in linearity.h is a focused walk that emits [E007] and [E017] and
+# nothing else, and it runs exactly when g_suppress_ownership stands the big pass down. So the
+# rules no longer disappear with the engine switch. Kept below as the record of WHY they are
+# front-end policy rather than an IR gap.
+# tests/ownership/close_without_mov_fail.ln  CAUGHT by the spelling pass
+# tests/ownership/move_needs_mov_fail.ln     CAUGHT by the spelling pass
+# tests/declarations/var_mandatory_fail.ln   CAUGHT by the spelling pass
+#
+# (historical) tests/ownership/close_without_mov_fail.ln NEW-ACCEPTS front-end-policy # [E007] "moving a linear variable requires explicit `mov` at the call site" is a rule about how the source is SPELLED. The IR is identical either way, so no IR analysis can see it. It lives in sema/linearity.h and is currently stood down with g_suppress_ownership. MUST be split out into a spelling-only pass before the default flips, or the rule silently disappears.
+# (historical) tests/ownership/move_needs_mov_fail.ln NEW-ACCEPTS front-end-policy # same rule, [E007]
+# (historical) tests/declarations/var_mandatory_fail.ln NEW-ACCEPTS front-end-policy # same shape, [E017] "passing to a `var` parameter requires explicit `var`"
 
 tests/ownership/mut_plus_nested_shared_fail.ln  NEW-ACCEPTS  new-incomplete-borrow  # `scale(var v, length(v))`: a mutable borrow and a shared borrow of the same variable in ONE call, where the shared one is inside a NESTED CALL. Two-phase borrows cover direct-read arguments; the nested-call argument is the known weaker case. A genuine gap, not policy.
 tests/match/niche/linear_adt_payload_mov_fail.ln NEW-ACCEPTS new-incomplete-linearity # consuming a `mov *u8` payload inside a `case` does not discharge the scrutinee. The file's own comment records that the obvious fix (discharge the scrutinee wholesale when a non-borrowed case destructures it) was TRIED and is UNSOUND: it accepts both double-free and leak. A genuine gap needing per-variant obligations.

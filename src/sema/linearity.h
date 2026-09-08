@@ -2085,8 +2085,15 @@ static void sema_check_stmt_linearity_with_table(Stmt *s, LTable *tbl, int loop_
 
 /* ---------- public entry: check one function ---------- */
 
+static void sema_check_call_spelling(Decl *d);   // defined at the end of this file
+
 static void sema_check_function_linearity(Decl *d) {
-    if (g_suppress_ownership) return;                 // deferred to the new IR ownership passes
+    // ── the SPELLING rules survive the engine switch ─────────────────────────────────────
+    // [E007] `mov` and [E017] `var` at the call site are rules about how the source is
+    // WRITTEN, not about what it means: the IR is byte-identical either way, so no IR
+    // analysis can see them and standing this pass down would delete them silently. They are
+    // re-checked by a focused walk that does nothing else.
+    if (g_suppress_ownership) { sema_check_call_spelling(d); return; }
     if (!d || (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE)) return;
 
     LTable *tbl = ltable_new(sema_arena);
@@ -2146,3 +2153,149 @@ static void __attribute__((unused)) sema_check_module_linearity(DeclList *decls)
 }
 
 #endif /* SEMA_LINEARITY_H */
+
+/* ─────────────────────────────────────────────────────────────────────────────────────────
+   CALL-SITE SPELLING  —  [E007] `mov`, [E017] `var`
+
+   These two are not ownership analysis. They are surface rules: an owned parameter must be
+   handed its argument with `mov` written at the call site, and a mutable parameter with
+   `var`. The IR lowers `f(a)` and `f(mov a)` to the same instructions, so no IR analysis can
+   recover the distinction — which is exactly why the rule belongs to the front end and has to
+   keep running when the sovereign analyses take over ownership (`--engine=ir`).
+
+   The walk does NOTHING else: no tables, no state, no other diagnostic. Duplicating the two
+   checks is deliberate; sharing them with the pass above would mean running the pass above.
+   ───────────────────────────────────────────────────────────────────────────────────────── */
+
+static void spell_walk_expr(Expr *e);
+static void spell_walk_stmt(Stmt *s);
+
+static void spell_walk_stmt_list(StmtList *l) {
+    for (StmtList *sl = l; sl; sl = sl->next) spell_walk_stmt(sl->stmt);
+}
+
+/* The owner NAME behind an argument, or NULL when the argument is not a named place
+   (a literal, a call result, a temporary): those cannot be moved FROM, so the rule
+   does not apply to them. Mirrors the same unwrapping the linearity pass does. */
+static Id *spell_owner_of(Expr *arg) {
+    if (!arg) return NULL;
+    if (arg->kind == EXPR_IDENTIFIER) return arg->as.identifier_expr.id;
+    if (arg->kind == EXPR_MEMBER) {
+        Expr *head = arg->as.member_expr.target;
+        while (head && head->kind == EXPR_MEMBER) head = head->as.member_expr.target;
+        return (head && head->kind == EXPR_IDENTIFIER) ? head->as.identifier_expr.id : NULL;
+    }
+    if (arg->kind == EXPR_MUT || arg->kind == EXPR_MOVE) {
+        Expr *in = (arg->kind == EXPR_MUT) ? arg->as.mut_expr.expr : arg->as.move_expr.expr;
+        return (in && in->kind == EXPR_IDENTIFIER) ? in->as.identifier_expr.id : NULL;
+    }
+    return NULL;
+}
+
+static void spell_check_call(Expr *e) {
+    Expr *callee = e->as.call_expr.callee;
+    Decl *fn = NULL;
+    if (callee && callee->decl &&
+        (callee->decl->kind == DECL_FUNCTION || callee->decl->kind == DECL_PROCEDURE))
+        fn = callee->decl;
+    if (!fn && callee && callee->kind == EXPR_IDENTIFIER && callee->as.identifier_expr.id) {
+        Id *cid = callee->as.identifier_expr.id;
+        char buf[256];
+        int  n = cid->length < 255 ? (int)cid->length : 255;
+        memcpy(buf, cid->name, (size_t)n); buf[n] = '\0';
+        fn = find_function_decl_by_mangled_or_raw(buf);
+    }
+    if (!fn || (fn->kind != DECL_FUNCTION && fn->kind != DECL_PROCEDURE)) return;
+
+    DeclList *params = fn->as.function_decl.params;
+    ExprList *args   = e->as.call_expr.args;
+    for (; params && args; params = params->next, args = args->next) {
+        // NOT gated on DECL_VARIABLE: a DESTRUCTURING parameter (`mov {handle} File`) has
+        // no binding name, and gating on the kind skipped exactly the consuming functions
+        // this rule exists for.
+        if (!params->decl) continue;
+        Type *pty = params->decl->as.variable_decl.type;
+        Expr *arg = args->expr;
+        Id   *own = spell_owner_of(arg);
+        if (!pty || !arg || !own) continue;
+
+        if (pty->mode == MODE_OWNED && arg->kind != EXPR_MOVE) {
+            fprintf(stderr, "[E007] Error Ln %li, Col %li: moving linear variable '%.*s' "
+                    "requires explicit 'mov' at the call site.\n",
+                    (long)e->line, (long)e->col, (int)own->length, own->name);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        }
+        if (pty->mode == MODE_MUTABLE && arg->kind != EXPR_MUT) {
+            fprintf(stderr, "[E017] Error Ln %li, Col %li: passing '%.*s' to a mutable "
+                    "('var') parameter requires explicit 'var' at the call site.\n",
+                    (long)e->line, (long)e->col, (int)own->length, own->name);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        }
+    }
+}
+
+static void spell_walk_expr(Expr *e) {
+    if (!e) return;
+    switch (e->kind) {
+    case EXPR_CALL:
+        spell_check_call(e);
+        spell_walk_expr(e->as.call_expr.callee);
+        for (ExprList *a = e->as.call_expr.args; a; a = a->next) spell_walk_expr(a->expr);
+        break;
+    case EXPR_BINARY: spell_walk_expr(e->as.binary_expr.left);
+                      spell_walk_expr(e->as.binary_expr.right); break;
+    case EXPR_UNARY:  spell_walk_expr(e->as.unary_expr.right); break;
+    case EXPR_MEMBER: spell_walk_expr(e->as.member_expr.target); break;
+    case EXPR_INDEX:  spell_walk_expr(e->as.index_expr.target);
+                      spell_walk_expr(e->as.index_expr.index); break;
+    case EXPR_CAST:   spell_walk_expr(e->as.cast_expr.expr); break;
+    case EXPR_MOVE:   spell_walk_expr(e->as.move_expr.expr); break;
+    case EXPR_MUT:    spell_walk_expr(e->as.mut_expr.expr); break;
+    case EXPR_TRY:    spell_walk_expr(e->as.try_expr.operand); break;
+    case EXPR_ELSE:   spell_walk_expr(e->as.else_expr.operand);
+                      spell_walk_expr(e->as.else_expr.arm); break;
+    case EXPR_MATCH:
+        spell_walk_expr(e->as.match_expr.value);
+        for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
+            for (ExprList *pl = c->patterns; pl; pl = pl->next) spell_walk_expr(pl->expr);
+            spell_walk_expr(c->body);
+        }
+        break;
+    default: break;
+    }
+}
+
+static void spell_walk_stmt(Stmt *s) {
+    if (!s) return;
+    switch (s->kind) {
+    case STMT_VAR:    spell_walk_expr(s->as.var_stmt.expr); break;
+    case STMT_ASSIGN: spell_walk_expr(s->as.assign_stmt.target);
+                      spell_walk_expr(s->as.assign_stmt.expr); break;
+    case STMT_EXPR:   spell_walk_expr(s->as.expr_stmt.expr); break;
+    case STMT_RETURN: spell_walk_expr(s->as.return_stmt.value); break;
+    case STMT_IF:     spell_walk_expr(s->as.if_stmt.cond);
+                      spell_walk_stmt_list(s->as.if_stmt.then_body);
+                      spell_walk_stmt_list(s->as.if_stmt.else_branch); break;
+    case STMT_FOR:    spell_walk_expr(s->as.for_stmt.iterable);
+                      spell_walk_stmt_list(s->as.for_stmt.body); break;
+    case STMT_WHILE:  spell_walk_expr(s->as.while_stmt.cond);
+                      spell_walk_stmt_list(s->as.while_stmt.body); break;
+    case STMT_MATCH:
+        spell_walk_expr(s->as.match_stmt.value);
+        for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
+            for (ExprList *pl = c->patterns; pl; pl = pl->next) spell_walk_expr(pl->expr);
+            spell_walk_stmt_list(c->body);
+        }
+        break;
+    case STMT_UNSAFE: spell_walk_stmt_list(s->as.unsafe_stmt.body); break;
+    case STMT_DEFER:  spell_walk_stmt(s->as.defer_stmt.stmt); break;
+    default: break;
+    }
+}
+
+static void sema_check_call_spelling(Decl *d) {
+    if (!d || (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE)) return;
+    spell_walk_stmt_list(d->as.function_decl.body);
+}
