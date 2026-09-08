@@ -787,7 +787,7 @@ ordinary work rather than a redesign.
 # 10. Quick Start
 
 ```bash
-gcc -std=c99 -Wall -Wextra -o lain src/main.c -I src     # build the compiler
+make                                                     # build the compiler
 ./lain my_program.ln -o out.c                            # Lain  -> C99
 gcc out.c -o my_program -Dlibc_printf=printf -w          # C99   -> executable
 ```
@@ -796,11 +796,11 @@ Run from the repository root if a program imports from `std/`, since module path
 relative to the source file.
 
 ```bash
-bash run_tests.sh        # the corpus
-bash readme_gate.sh      # every example on this page, through the compiler
-bash spec_gate.sh        # every diagnostic the compiler emits, against the specification
+make test                # the corpus
+make gates               # the corpus, the examples on this page, the spec, the IR units
+make fuzz                # the fuzzers: they run what the compiler claimed was safe
 ```
 
-`readme_gate.sh` pulls every Lain example off this page and compiles it. Examples labelled with
+`scripts/gates/readme_gate.sh` pulls every Lain example off this page and compiles it. Examples labelled with
 an error have to fail; the rest have to compile. It exists because the previous version of this
 file spent months describing a language the compiler had stopped implementing.
