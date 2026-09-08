@@ -102,7 +102,33 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                                    : "index is not provably within bounds (no length is known here)");
                 n++; break;
             case VRA_OVERFLOW:
-                ir_diag(file, c->line, c->col, "E086", "arithmetic is not provably free of overflow");
+                if (c->accum) {
+                    // B1 computed all of this in order to fail. Saying only "not provably free
+                    // of overflow" leaves the user to guess which of three things to change,
+                    // on a loop they wrote in the obvious way.
+                    ir_diag(file, c->line, c->col, "E086",
+                            "this running total can overflow the type it is stored in");
+                    fprintf(stderr, "       it starts in [%lld, %lld] and each iteration adds "
+                                    "between %lld and %lld\n",
+                            (long long)c->accum_s0lo, (long long)c->accum_s0hi,
+                            (long long)c->accum_dlo, (long long)c->accum_dhi);
+                    if (c->accum_T < 0)
+                        fprintf(stderr, "       and the loop has no bounded trip count, so the "
+                                        "total has no bound at all\n");
+                    else
+                        fprintf(stderr, "       over up to %lld iterations\n",
+                                (long long)c->accum_T);
+                    fprintf(stderr,
+                        "       bound any ONE of the three and this proves:\n"
+                        "         the count    a length with a refinement, e.g. "
+                        "`f(a i32[n], n usize < 4096)`\n"
+                        "         the element  a narrower element type, or a refinement on it\n"
+                        "         the total    a wider accumulator, widening the addend too\n"
+                        "       or say which arithmetic you meant: `+%%` wraps, `+|` saturates\n");
+                } else {
+                    ir_diag(file, c->line, c->col, "E086",
+                            "arithmetic is not provably free of overflow");
+                }
                 n++; break;
             case VRA_DIVZERO:
                 ir_diag(file, c->line, c->col, "E015", "divisor is not provably non-zero");

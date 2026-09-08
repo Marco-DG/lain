@@ -94,6 +94,13 @@ typedef struct {
     bool     hi_ok;     // proved idx < len
     bool     has_len;   // a length was found at all
     VraLoss  loss;      // when !ok: which capability was missing (A1)
+    // ── why a running total could not be bounded, for the diagnostic ─────────────────────
+    // B1 computes all of this in order to FAIL. A user told only "arithmetic is not provably
+    // free of overflow" has no way to know the problem is the trip count, or which of three
+    // things to change. 42% of unproven obligations are the engine refusing correctly, so the
+    // quality of the refusal IS the user experience.
+    bool     accum;                       // the numbers below are meaningful
+    int64_t  accum_T, accum_dlo, accum_dhi, accum_s0lo, accum_s0hi;
     int64_t  line, col;
 } VraCheck;
 
@@ -1214,7 +1221,8 @@ static void vra_arith_range(IrOp op, int64_t alo,int64_t ahi, int64_t blo,int64_
 // Confined to a value that is genuinely WIDER than its target, which is what keeps it free of
 // noise (a same-type store fits by construction) and away from the 64-bit edges where a type
 // interval no longer fits in the domain's own int64.
-static bool vra_accum_fits(Vra *V, Octagon *W, IrValue *val, int64_t tlo, int64_t thi); // B1
+static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
+                           int64_t tlo, int64_t thi); // B1, defined below
 
 static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
                              IrInstr *at, int64_t line, int64_t col) {
@@ -1230,7 +1238,7 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
     c.ok = (vlo >= tlo) && (vhi <= thi);
     // B1: the domain cannot bound a running total, because the bound is a PRODUCT of the trip
     // count and the step. Derive it outside the domain and hand back the interval.
-    if (!c.ok) c.ok = vra_accum_fits(V, W, val, tlo, thi);
+    if (!c.ok) c.ok = vra_accum_info(V, W, val, &c, tlo, thi);
     vra_add_check(V, c);
 }
 
@@ -1294,7 +1302,7 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     }
     // B1: a 64-bit accumulator has no wider type to widen INTO, so its obligation lands
     // here rather than at a narrowing. Same product bound, same place to ask for it.
-    if (!c.ok && ins->result) c.ok = vra_accum_fits(V, W, ins->result, tlo, thi);
+    if (!c.ok && ins->result) c.ok = vra_accum_info(V, W, ins->result, &c, tlo, thi);
     vra_add_check(V, c);
 }
 // Division/remainder: the divisor must be provably non-zero.
@@ -1671,20 +1679,30 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
     return true;
 }
 
-static bool vra_accum_fits(Vra *V, Octagon *W, IrValue *val, int64_t tlo, int64_t thi) {
+// Same computation, but it reports what it found even when the bound does not hold — that is
+// what the diagnostic needs.
+static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
+                           int64_t tlo, int64_t thi) {
     IrBlock *H = NULL; int64_t s0lo, s0hi, dlo, dhi, T;
     if (!vra_accum_delta(V, W, val, &H, &s0lo, &s0hi, &dlo, &dhi)) return false;
-    if (!vra_loop_trips(V, W, H, &T)) return false;
+    bool haveT = vra_loop_trips(V, W, H, &T);
+    if (c) {
+        c->accum = true; c->accum_dlo = dlo; c->accum_dhi = dhi;
+        c->accum_s0lo = s0lo; c->accum_s0hi = s0hi;
+        c->accum_T = haveT ? T : -1;                 // -1 = the trip count is not bounded
+    }
+    if (!haveT) return false;
     int64_t alo, ahi;
     if (vra_mul_ovf(T, dlo, &alo)) return false;
     if (vra_mul_ovf(T, dhi, &ahi)) return false;
-    if (alo > 0) alo = 0;                              // the PARTIAL sum, after 0..T iterations
+    if (alo > 0) alo = 0;
     if (ahi < 0) ahi = 0;
     int64_t lo, hi;
     if (__builtin_add_overflow(s0lo, alo, &lo)) return false;
     if (__builtin_add_overflow(s0hi, ahi, &hi)) return false;
     return lo >= tlo && hi <= thi;
 }
+
 
 // ── the fixpoint over the CFG ────────────────────────────────────────────────
 static Vra *vra_analyze(IrFunc *f) {
