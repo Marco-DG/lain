@@ -1,9 +1,15 @@
 // EXPECT: [E003]
 // Block Scoping Test
 // Verifies that linear variables inside blocks are tracked correctly and reported if they leak
+// ADJUDICATED 2026-09-08: the type was not linear. spec/chapters/07-types.tex is
+// normative — "a struct type is linear if and only if at least one of its fields is of
+// a linear type" — and `h i32` is unrestricted, so nothing here had to be consumed. The
+// old engine enforced `mov` on the BINDING; the new engine enforces linearity of the
+// TYPE, which is what the spec says. The field is now genuinely linear, which restores
+// what this test was written to lock. Both engines reject it.
 
-type File { fd i32 }
-func open_file(name *u8) mov File { return File(0) }
+type File { mov fd *u8 }
+func open_file(name *u8) mov File { return File(name) }
 
 func test_block() {
     if 1 == 1 {
@@ -11,3 +17,4 @@ func test_block() {
         // No close_file(x) -> Should trigger linearity error at the end of the block
     }
 }
+proc main() i32 { return 0 }

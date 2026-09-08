@@ -1,12 +1,15 @@
 // EXPECT: [E007]
 // Lock: passing a linear value to an owned param requires explicit `mov`.
+// ADJUDICATED 2026-09-08: `h i32` made R unrestricted (spec 07-types: a struct is linear
+// iff a field is), so there was no linear value to require `mov` on. Now genuinely linear.
 type R {
-    h i32
+    mov h *u8
 }
 func drop(mov {h} R) { }
 proc sink(mov r R) { drop(mov r) }
 proc main() i32 {
-    var a = R(1)
+    var p *u8 = 0
+    var a = R(p)
     sink(a)
     return 0
 }

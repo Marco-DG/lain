@@ -4,16 +4,23 @@
 //   Error Ln X, Col Y: linear variable 'r' was not consumed before return.
 //   --> declared at Ln X, Col Y
 //   help: consume with `mov r` or add `defer { drop(mov r) }`
+// ADJUDICATED 2026-09-08: the type was not linear. spec/chapters/07-types.tex is
+// normative — "a struct type is linear if and only if at least one of its fields is of
+// a linear type" — and `h i32` is unrestricted, so nothing here had to be consumed. The
+// old engine enforced `mov` on the BINDING; the new engine enforces linearity of the
+// TYPE, which is what the spec says. The field is now genuinely linear, which restores
+// what this test was written to lock. Both engines reject it.
 
 type Resource {
-    id i32
+    mov id *u8
 }
 
-func drop(mov r Resource) {
+func drop(mov {id} Resource) {
 }
 
 proc main() i32 {
-    var r = Resource(42)
+    var p *u8 = 0
+    var r = Resource(p)
     // Intentionally not consuming r — should get rich diagnostic
     return 0
 }

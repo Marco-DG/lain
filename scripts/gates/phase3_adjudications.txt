@@ -271,3 +271,29 @@ tests/vra/overflow/loop_accumulator_fail.ln               NEW-ACCEPTS  new-catch
 # C-7's fail-test: an OVERFLOW obligation, judged by the numeric domain, while this harness
 # drives linearity and effects. Rejected by `--engine=ir-full` ([E086]) per its LAINFLAGS line.
 tests/vra/sliding_window_underflow_fail.ln                NEW-ACCEPTS  new-catches-elsewhere
+
+# ── A0 (2026-09-08): adjudicating what --engine=ir misses, on the way to making it the
+# default. Four of the original 14 were never regressions (the OLD engine misses them too;
+# only --engine=ir-full catches them). Four were corpus programs that did not test their own
+# intent and are now corrected. Six remain, in three groups.
+#
+# ★ THE SPEC SETTLED THE BIGGEST GROUP. spec/chapters/07-types.tex is normative: "a struct
+# type is linear if and only if at least one of its fields is of a linear type". Three tests
+# used `type R { h i32 }` — `i32` is unrestricted, so R is NOT linear and nothing had to be
+# consumed. The old engine enforced `mov` on the BINDING; the new engine enforces linearity of
+# the TYPE, which is what the specification says. The types are now genuinely linear
+# (`mov h *u8`), which restores what each test was written to lock, and BOTH engines reject
+# them. Not adjudicated away: corrected.
+#   tests/ownership/consume_before_return_fail.ln   FIXED  old-over-strict  # type was not linear
+#   tests/ownership/block_scope_fail.ln             FIXED  old-over-strict  # type was not linear
+#   tests/ownership/rich_diagnostics_fail.ln        FIXED  old-over-strict  # type was not linear
+#   tests/memory/array_uninit_element_read_fail.ln  FIXED  old-over-strict  # read a[0] after writing a[0]
+
+tests/ownership/multi_var_param_fail.ln   NEW-ACCEPTS  new-more-precise   # pick_x returns `var a.x`, so it borrows only `da`; reading `db` while the result lives is SAFE. The test's own comment asserts "pick_x borrows both da and db", which is the old engine's conservatism written down as intent. bor_ret_borrow_mask answers exactly. Flip to _pass.ln when --engine=ir becomes the default; it cannot flip earlier because the old engine still rejects it.
+
+tests/ownership/close_without_mov_fail.ln NEW-ACCEPTS  front-end-policy   # [E007] "moving a linear variable requires explicit `mov` at the call site" is a rule about how the source is SPELLED. The IR is identical either way, so no IR analysis can see it. It lives in sema/linearity.h and is currently stood down with g_suppress_ownership. MUST be split out into a spelling-only pass before the default flips, or the rule silently disappears.
+tests/ownership/move_needs_mov_fail.ln    NEW-ACCEPTS  front-end-policy   # same rule, [E007]
+tests/declarations/var_mandatory_fail.ln  NEW-ACCEPTS  front-end-policy   # same shape, [E017] "passing to a `var` parameter requires explicit `var`"
+
+tests/ownership/mut_plus_nested_shared_fail.ln  NEW-ACCEPTS  new-incomplete-borrow  # `scale(var v, length(v))`: a mutable borrow and a shared borrow of the same variable in ONE call, where the shared one is inside a NESTED CALL. Two-phase borrows cover direct-read arguments; the nested-call argument is the known weaker case. A genuine gap, not policy.
+tests/match/niche/linear_adt_payload_mov_fail.ln NEW-ACCEPTS new-incomplete-linearity # consuming a `mov *u8` payload inside a `case` does not discharge the scrutinee. The file's own comment records that the obvious fix (discharge the scrutinee wholesale when a non-borrowed case destructures it) was TRIED and is UNSOUND: it accepts both double-free and leak. A genuine gap needing per-variant obligations.
