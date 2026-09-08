@@ -179,7 +179,10 @@ int main(void){
           ir_set_ret(e,NULL); ir_finalize_cfg(f);
           f->next = callee;                                  // a 2-function module
           Borrow *B = borrow_analyze_mod(f, f);
-          int n=0; for (int k=0;k<B->nfinds;k++) if (B->finds[k].code==4) n++;
+          // 4 = co-argument conflict, 87 = the same conflict where an ARRAY reaches two
+          // parameters (E087, "array reaches two parameters"). These phase-D cases index an
+          // array, so they now report 87; both are the conflict this test is counting.
+          int n=0; for (int k=0;k<B->nfinds;k++) if (B->finds[k].code==4 || B->finds[k].code==87) n++;
           borrow_free(B);
           bexpect(what[mode], n, want[mode]);
       }

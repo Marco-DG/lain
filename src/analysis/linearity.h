@@ -191,7 +191,20 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
             }
             continue;
         }
-        if (report)                                      // any other reference to a moved slot = use
+        // A `mov` of an already-moved place lowers to `load; consume`, so the LOAD reaches
+        // the catch-all below first and reports it as a use-after-move (code 1) before the
+        // CONSUME can report it as the double move it is (code 2). Both are true, but E002
+        // "this value is moved twice" names what the programmer did; E001 describes the
+        // symptom. Let the consume speak.
+        bool feeds_consume = false;
+        if (ins->op==IR_LOAD && ins->next && ins->next->op==IR_CONSUME &&
+            ins->n_operands>=1 && ins->next->n_operands>=1) {
+            unsigned lb, cb;
+            int ls = lin_place_of(L, ins->operands[0], &lb);
+            int cs = lin_place_of(L, ins->next->operands[0], &cb);
+            feeds_consume = (ls>=0 && ls==cs && lb==cb);
+        }
+        if (report && !feeds_consume)                    // any other reference to a moved slot = use
             for (int k=0;k<ins->n_operands;k++) {
                 // Projecting the payload follows the tag test of the SAME destructure, which
                 // already moved the resource out. It is one `case`, not a second use — the

@@ -89,7 +89,8 @@ static bool bor_roots_local(IrFunc *f, IrInstr **def, int nvar, IrValue *v) {
 // is what keeps `f(data, var data)` visible even though the first argument is a copy.
 static IrFunc *bor_loan_mod = NULL;   // module for the write-footprint query (C5)
 
-static bool bor_arg_loan(Borrow *B, IrFunc *callee, int k, IrValue *arg, IrPlace *out, bool *is_mut) {
+static bool bor_arg_loan_ex(Borrow *B, IrFunc *callee, int k, IrValue *arg, IrPlace *out,
+                            bool *is_mut, bool *is_arr) {
     if (!arg) return false;
     *is_mut = false;
     IrParam *p = callee ? callee->params : NULL;
@@ -138,7 +139,24 @@ static bool bor_arg_loan(Borrow *B, IrFunc *callee, int k, IrValue *arg, IrPlace
                ? ir_place_of(B->def, B->nvar, d->operands[0])   // by-value read of a place
                : ir_place_of(B->def, B->nvar, arg);             // an address argument
     if (!pl.valid || pl.base_kind==IRPB_DEREF) return false;    // unresolved ⇒ no loan tracked
+    // An ARRAY or SLICE reaching two parameters is the `restrict` violation the language
+    // names E087, not a generic borrow conflict: it is what makes the emitted `restrict`
+    // a lie. Reporting it as E004 loses the reason.
+    // ...and also when the parameter is a SCALAR but the place is an ELEMENT of one:
+    // `mix(var a[i], var a[j])` passes two i32s, yet what reaches the callee twice is the
+    // array `a`. The projection says so even when the parameter type does not.
+    if (is_arr) {
+        bool elem = false;
+        for (int q=0; q<pl.nproj; q++) if (pl.proj[q].kind==IRPJ_INDEX) { elem = true; break; }
+        *is_arr = (pt->kind==IRT_SLICE || pt->kind==IRT_ARRAY || elem);
+    }
     *out = pl; return true;
+}
+
+static bool bor_arg_loan(Borrow *B, IrFunc *callee, int k, IrValue *arg,
+                         IrPlace *out, bool *is_mut) {
+    bool ignored = false;
+    return bor_arg_loan_ex(B, callee, k, arg, out, is_mut, &ignored);
 }
 
 // Collect the loans a call's arguments create, INCLUDING those made by a nested call that
@@ -156,28 +174,31 @@ static bool bor_arg_loan(Borrow *B, IrFunc *callee, int k, IrValue *arg, IrPlace
 // copy creates no loan at any depth.
 #define BOR_ARG_DEPTH 3
 static void bor_collect_loans(Borrow *B, IrFunc *mod, IrInstr *call, IrFunc *callee,
-                              IrPlace *pl, bool *mut, int *n, int cap, int depth) {
+                              IrPlace *pl, bool *mut, bool *arr, int *n, int cap, int depth) {
     for (int k=0; k<call->n_operands && *n<cap; k++) {
         IrValue *arg = call->operands[k];
-        IrPlace p; bool m;
-        if (bor_arg_loan(B, callee, k, arg, &p, &m)) { pl[*n]=p; mut[*n]=m; (*n)++; continue; }
+        IrPlace p; bool m; bool a = false;
+        if (bor_arg_loan_ex(B, callee, k, arg, &p, &m, &a)) {
+            pl[*n]=p; mut[*n]=m; arr[*n]=a; (*n)++; continue; }
         if (depth >= BOR_ARG_DEPTH || !arg || arg->id<0 || arg->id>=B->nvar) continue;
         IrInstr *d = B->def[arg->id];
         if (!d || d->op != IR_CALL) continue;
         IrFunc *inner = bor_find_func(mod, d->aux.callee);
-        if (inner) bor_collect_loans(B, mod, d, inner, pl, mut, n, cap, depth+1);
+        if (inner) bor_collect_loans(B, mod, d, inner, pl, mut, arr, n, cap, depth+1);
     }
 }
 
 static void bor_check_call(Borrow *B, IrFunc *mod, IrInstr *call) {
     IrFunc *callee = bor_find_func(mod, call->aux.callee);
     if (!callee || call->n_operands < 2) return;
-    IrPlace pl[16]; bool mut[16]; int n = 0;
-    bor_collect_loans(B, mod, call, callee, pl, mut, &n, 16, 0);
+    IrPlace pl[16]; bool mut[16]; bool arr[16]; int n = 0;
+    bor_collect_loans(B, mod, call, callee, pl, mut, arr, &n, 16, 0);
     for (int i=0;i<n;i++)
         for (int j=i+1;j<n;j++)
             if ((mut[i] || mut[j]) && ir_place_overlaps(&pl[i], &pl[j])) {
-                bor_add(B, call->line, call->col, 4);   // conflicting co-argument borrows
+                // 87 when an array/slice reaches two parameters (the restrict violation),
+                // 4 otherwise. Two names for two constraints, as Annex B has them.
+                bor_add(B, call->line, call->col, (arr[i] || arr[j]) ? 87 : 4);
                 return;                                  // one finding per call is enough
             }
 }

@@ -59,10 +59,16 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     Borrow *B = borrow_analyze_mod(f, mod);
     for (int i = 0; i < B->nfinds; i++) {
         BorrowFinding *fi = &B->finds[i];
-        const char *bcode = fi->code==2 ? "E002" : fi->code==11 ? "E124" : "E004";
-        const char *bmsg  = fi->code==2  ? "this reference outlives the value it borrows"
+        // borrow.h emits 4 (conflicting co-argument borrows), 10 (dangling return) and
+        // 11 (`in` clause understates the body). 10 had NO branch here and fell through to
+        // E004, so every dangling return was reported as a borrow conflict — the analysis
+        // knew, and the last step threw it away.
+        const char *bcode = fi->code==10 ? "E010" : fi->code==11 ? "E124"
+                          : fi->code==87 ? "E087" : "E004";
+        const char *bmsg  = fi->code==10 ? "this reference would outlive the value it borrows"
                           : fi->code==11 ? "the `in` clause claims this result borrows less "
                                            "than the body actually does"
+                          : fi->code==87 ? "this array reaches two parameters of the same call"
                           :                "conflicting borrows of the same value";
         ir_diag(file, fi->line, fi->col, bcode, bmsg);
         n++;
@@ -84,10 +90,10 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 ir_diag(file, c->line, c->col, "E086", "arithmetic is not provably free of overflow");
                 n++; break;
             case VRA_DIVZERO:
-                ir_diag(file, c->line, c->col, "E087", "divisor is not provably non-zero");
+                ir_diag(file, c->line, c->col, "E015", "divisor is not provably non-zero");
                 n++; break;
             case VRA_PRECOND:
-                ir_diag(file, c->line, c->col, "E088", "a required precondition is not established here");
+                ir_diag(file, c->line, c->col, "E012", "a required precondition is not established here");
                 n++; break;
             case VRA_TERMINATION:
                 ir_diag(file, c->line, c->col, "E082", "this loop is not provably terminating");
