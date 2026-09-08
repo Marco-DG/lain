@@ -4659,7 +4659,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 EffectSet missing = ef & ~dl->decl->as.function_decl.effects_bound;
                 if (missing) {
                     Id *n = dl->decl->as.function_decl.name;
-                    fprintf(stderr, "[E125] Error Ln %li, Col %li: '%.*s' declares `effects` "
+                    fprintf(stderr, "[E130] Error Ln %li, Col %li: '%.*s' declares `effects` "
                         "that do not cover what its body does — it also has: ",
                         (long)dl->decl->line, (long)dl->decl->col,
                         n ? (int)n->length : 1, n ? n->name : "?");

@@ -28,7 +28,7 @@ Diagnostic codes are divided into the following ranges:
 \diagcode{E011}–\diagcode{E015}, \diagcode{E060} & Purity, safety, and verification \\
 \diagcode{E080}–\diagcode{E082} & Bounded while verification \\
 \diagcode{E083}–\diagcode{E087} & Array/slice safety and integer boundaries \\
-\diagcode{E084}, \diagcode{E101}--\diagcode{E125} & Modules, attributes, generics, packing, ADT access \\
+\diagcode{E084}, \diagcode{E101}--\diagcode{E130} & Modules, attributes, generics, packing, ADT access, effects, verification \\
 \diagcode{E100}                 & Miscellaneous \\
 \diagcode{VRA}                  & Value range analysis \\
 \end{longtable}
@@ -364,6 +364,17 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E121} & struct-field packing supports only iN/uN fields totaling $\le 64$ bits \\[2pt]
 \diagcode{E122} & a function pointer must be initialized with a matching function \\[2pt]
 \diagcode{E123} & wrong number of arguments in a call through a function pointer \\[2pt]
-\diagcode{E124} & type application on a non-generic type \\[2pt]
+\diagcode{E124} & generic instantiation: non-generic type, missing or uninferable type argument, wrong arity \\[2pt]
 \diagcode{E125} & direct ADT field access outside \lain{unsafe} --- destructure with \lain{case} \\[2pt]
+\diagcode{E065} & a \lain{try} may propagate a marker the enclosing return union does not list \\[2pt]
+\diagcode{E066} & \lain{try}/\lain{else} requires a \lain{T | markers} union value \\[2pt]
+\diagcode{E067} & a checked operator (\lain{+?}, \lain{-?}, \lain{*?}, \lain{as?}) must be handled by \lain{else} \\[2pt]
+\diagcode{E088} & a function returns a fixed-size array by value --- return a slice or write through a \lain{var} parameter \\[2pt]
+\diagcode{E089} & a non-terminated value used where a sentinel-terminated type is required \\[2pt]
+\diagcode{E090} & assignment between fixed-length strings of different lengths \\[2pt]
+\diagcode{E126} & a struct field declared as a mutable borrow (\lain{var}) --- not yet supported \\[2pt]
+\diagcode{E127} & call to an undeclared function \\[2pt]
+\diagcode{E128} & the receiver has no such member, and no function of that name is in scope for UFCS \\[2pt]
+\diagcode{E129} & \lain{assume} outside an \lain{unsafe} block --- use \lain{assert} to have the fact proven \\[2pt]
+\diagcode{E130} & a declared \lain{effects} row does not cover what the body does \\[2pt]
 \end{longtable}

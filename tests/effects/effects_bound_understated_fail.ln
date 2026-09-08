@@ -1,4 +1,4 @@
-// EXPECT: [E125]
+// EXPECT: [E130]
 // Declaring FEWER effects than the body has is the error — an annotation the compiler trusts
 // and never verifies is defect D-4, so the bound is checked against the inferred row. Same
 // rule as F1's `in` clause: believed on an extern, checked wherever there is a body.

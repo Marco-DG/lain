@@ -551,28 +551,53 @@ context:
 
 \pnum
 Integer arithmetic in Lain uses two's complement representation for all
-signed integer types.  Overflow wraps modulo $2^N$ where $N$ is the bit
-width of the type.
+signed integer types.
 
 \pnum
-Unsigned integer arithmetic is modular (wrapping) by definition.
+A program in which an integer operation can overflow is \illformed{}.  The
+plain operators \tok{+}, \tok{-} and \tok{*} carry a proof obligation: the
+result shall be shown to lie within its type.  Where the implementation
+cannot show it, the program is \illformed{}~(\diagcode{E086}).  Overflow is
+therefore a diagnosable constraint violation, not a runtime behaviour.
+
+\pnum
+\tok{+}, \tok{-} and \tok{*} \emph{widen}: the result of an operation on two
+operands of width $N < 64$ has a type wide enough to represent every result,
+so the operation itself cannot overflow.  The obligation attaches instead to
+the \emph{narrowing} --- the point at which that result is stored into, passed
+as, or returned as a narrower type.  At width 64 no wider type exists and the
+obligation attaches to the operation.
+
+\pnum
+Overflow that is intended shall be written as such.  Each form is a distinct
+operator, and each is well-formed by construction:
+
+\begin{itemize}
+  \item \tok{+\%}, \tok{-\%}, \tok{*\%} --- \emph{modular}: the result wraps
+        modulo $2^N$.
+  \item \tok{+|}, \tok{-|}, \tok{*|} --- \emph{saturating}: the result is
+        clamped to the bounds of its type.
+  \item \tok{+?}, \tok{-?}, \tok{*?}, \tok{as?} --- \emph{checked}: the
+        operation shall be handled by an \lain{else} arm supplying a
+        fallback value, propagating with \lain{return}, or
+        \lain{panic}\-ing~(\diagcode{E067}).
+\end{itemize}
+
+\pnum
+Within an \lain{unsafe} block the obligation is waived for every operation
+lexically inside it, including the narrowing.  Responsibility passes to the
+program.
 
 \pnum
 A conforming implementation that emits C99 shall compile the translation
-output with \texttt{-fwrapv} or equivalent, ensuring that signed integer
-overflow is two's complement wrapping and not undefined behavior in the C
-sense.
+output with \texttt{-fwrapv} or equivalent.  This is a requirement on the
+\emph{translation output}, not a licence for the source language: it ensures
+that the wrapping operators have their defined meaning and that no operation
+the implementation has accepted becomes undefined behaviour downstream.
 
 \begin{note}
-  This differs from ISO C, where signed integer overflow is undefined
-  behavior.  In Lain, signed overflow is defined as wrapping.  Programs
-  that rely on wrapping behavior are well-formed.
+  Unsigned arithmetic in ISO C is modular and signed overflow is undefined.
+  Lain admits neither as a source-language behaviour for the plain operators:
+  a program that would rely on either is rejected, and a program that wants
+  one says which.  See \S\,\ref{sec:vra.boundary}.
 \end{note}
-
-\pnum
-Plain arithmetic operators (\tok{+}, \tok{-}, \tok{*}, \tok{/}) on
-sized integer values whose static range cannot be proven to fit the
-target type are \illformed{}~(\diagcode{E086}). Explicit operators
-indicate the cases where overflow is intentional: \tok{+\%},
-\tok{-\%}, \tok{*\%} (wrapping) and \tok{+|}, \tok{-|}, \tok{*|}
-(saturating). See \S\,\ref{sec:vra.boundary}.

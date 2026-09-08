@@ -23,6 +23,14 @@ $(PDF): $(TEX) lain-spec.sty grammar.tex \
 	$(LATEXMK) -pdf -interaction=nonstopmode -halt-on-error $(TEX) || \
 	  { $(PDFLATEX) -interaction=nonstopmode $(TEX) && \
 	    $(PDFLATEX) -interaction=nonstopmode $(TEX); }
+# The fallback runs pdflatex WITHOUT -halt-on-error, which is what makes multi-pass builds
+# work — and also what let two LaTeX errors sit in the sources unnoticed: a PDF came out, so
+# nothing complained. A build that produced errors is not a build.
+	@if grep -qE '^! ' $(MAIN).log; then \
+	  echo "=== LaTeX errors (the PDF may be stale or wrong) ==="; \
+	  grep -E '^! ' -A3 $(MAIN).log | head -40; \
+	  exit 1; \
+	fi
 
 clean:
 	$(LATEXMK) -c $(TEX) 2>/dev/null || true

@@ -813,7 +813,7 @@ void sema_resolve_stmt(Stmt *s) {
     // the shape of defect D-4, where an `in` invariant became `__builtin_unreachable()` with
     // nothing verifying it. `assert` is always allowed — it is an obligation, not a licence.
     if (s->as.assert_stmt.is_assume && !sema_in_unsafe_block) {
-        fprintf(stderr, "[E123] Error Ln %li, Col %li: `assume` states a fact the compiler "
+        fprintf(stderr, "[E129] Error Ln %li, Col %li: `assume` states a fact the compiler "
                 "does not check, so it is only allowed inside an `unsafe` block. Use "
                 "`assert` if you want the fact PROVEN instead.\n", s->line, s->col);
         diagnostic_show_line(s->line, s->col);

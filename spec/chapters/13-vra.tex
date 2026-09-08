@@ -128,14 +128,30 @@ by \lain{if n == 0 \{ return \}} is refined to $[1, u]$ on the fall-through,
 so a subsequent \lain{a[0]} on a length-\lain{n} slice is in bounds.
 
 \pnum
+\textbf{Unsigned subtraction.}  For $r = a - b$ at an \emph{unsigned} result
+type, the relation $r = a - b$ holds over $\mathbb{Z}$ but not over the type
+unless $a \ge b$: the difference wraps to a large positive value otherwise.  An
+implementation shall record no relation between $r$, $a$ and $b$ unless it can
+show $a \ge b$; where it can --- \lain{hi - lo} under a live \lain{lo < hi}, or
+\lain{n - 1} behind \lain{if n == 0 \{ return \}} --- the relation is exact and
+may be recorded.
+
+\begin{note}
+  Recording the $\mathbb{Z}$ relation unconditionally is unsound and not merely
+  imprecise.  Under it, \lain{hi = mid - 1} with \lain{mid} zero appears to give
+  \lain{hi} the value $-1$ rather than the type's maximum, and every bound
+  derived from that relation inherits the error.
+\end{note}
+
+\pnum
 \textbf{Early-return refinement.}  When an \lain{if} whose then-branch exits
 the enclosing scope (via \lain{return}, and provided no \lain{break} escapes)
 has condition \textit{C}, the code that follows the \lain{if} is reached only
 when \textit{C} is false; the VRA therefore refines with $\lnot\textit{C}$
-for the remainder of the scope.  Likewise, after a \lain{while cond \{ … \}}
+for the remainder of the scope.  Likewise, after a \lain{while cond \{ ... \}}
 loop whose body contains no \lain{break} at that loop's level, the VRA
 assumes $\lnot\mathit{cond}$, since the loop exits only when the condition
-fails (e.g.\ after \lain{while j > 0 \{ … \}}, \lain{j} is refined to $0$).
+fails (e.g.\ after \lain{while j > 0 \{ ... \}}, \lain{j} is refined to $0$).
 
 \pnum
 \textbf{Length guards.}  A guard on a slice or array length --- \lain{i <
@@ -232,10 +248,12 @@ The following limitations are known and accepted:
         prove indexing of a field slice).
   \item VRA does not track ranges across loop-carried dependences with
         non-linear measures.
-  \item Integer overflow in VRA arithmetic uses saturating semantics; the
-        actual Lain program uses wrapping arithmetic.  Programs whose
-        correctness depends on integer overflow are not analyzed correctly
-        by VRA.
+  \item The analysis reasons over $\mathbb{Z}$: its arithmetic does not wrap.
+        This is consistent with the language, because an operation that could
+        overflow is \illformed{}~(\S\,\ref{sec:lex.overflow}) and the operators
+        that \emph{do} wrap or saturate are written explicitly and carry no
+        obligation.  A program whose correctness depends on wrapping shall say
+        so with \tok{+\%}; the analysis then makes no claim about the value.
   \item Floating-point values are not tracked by VRA.
 \end{enumerate}
 
