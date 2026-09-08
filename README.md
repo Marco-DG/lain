@@ -446,70 +446,49 @@ Both of those are real. `func divide(a i32, b i32 != 0) i32` puts the constraint
 signature, where every caller has to satisfy it, and an `if b != 0` that dominates the division
 settles it locally.
 
-## Where a C compiler cannot follow
+## Where no optimiser can follow
 
-In this loop the index does not come from the loop counter. It is read out of memory and masked:
+An optimiser can only use facts it can see. When the fact that makes an access safe lives at the
+call site, and the function is compiled separately, it is out of reach. Preconditions in Lain
+are part of the signature, so the caller discharges them and the callee is free of them:
 
 ```lain
-proc kernel(a i32[4096], b i32[4096], idx u32[4096]) i64 {
-    var acc i64 = 0
-    var i usize = 0
-    while i < 4096 {
-        var j usize = (idx[i] & 4095) as usize
-        acc = acc +% ((a[j] *% b[i]) as i64)
-        i = i + 1
-    }
-    return acc
+func get(a i32[n], n usize, i usize < n) i32 {
+    return a[i]
 }
 ```
 
-Whatever `idx[i]` holds, `idx[i] & 4095` lands in `[0, 4095]`, and the array has 4096 elements.
-That holds for every possible input, so no check is emitted and gcc vectorises eight elements at
-a time. The mask instruction does double duty: it is both the computation and the reason the
-access is safe.
+`i usize < n` is checked at every call. Inside, nothing is left to check, and the proof is
+handed on to gcc as an assumption:
+
+```c
+__attribute__((access(read_only, 1, 2))) __attribute__((pure)) __attribute__((nonnull))
+int32_t ip_get(const int32_t * restrict a, size_t n, size_t i) {
+    if (i >= n) __builtin_unreachable();
+    return a[i];
+}
+```
+
+The same guarantee in C has to be a runtime check, because the callee cannot see who called it:
 
 ```asm
-  vpand     (%r8,%rdx,1),%ymm2,%ymm0    ; mask 8 indices, the proof
-  vmovd     %xmm0,%esi                  ; ┐
-  vpextrd   $0x1,%xmm0,%ecx             ; │ gather the 8 elements
-  ...                                   ; ┘
-  vpmulld   (%rdi,%rdx,1),%ymm0,%ymm0   ; 8 multiplies
-  vpaddq    %ymm4,%ymm1,%ymm1           ; widen and accumulate
-  cmp       $0x4000,%rdx
-  jne       <loop>
+; Lain                          ; C: if (i >= n) abort();      ; Rust: a[i]
+ip_get:                         get_checked:                    get_rs:
+  endbr64                         endbr64                         cmp  %rsi,%rdx
+  mov  (%rdi,%rdx,4),%eax         cmp  %rsi,%rdx                  jae  <panic>
+  ret                             jae  <abort>                    mov  (%rdi,%rdx,4),%eax
+                                  mov  (%rdi,%rdx,4),%eax         ret
+                                  ret                             ...panic landing pad
 ```
 
-The same C compiled with `-fsanitize=undefined,bounds` stays scalar, with a pointer-overflow,
-null and alignment test in front of every access:
+gcc and LLVM both keep their check, and neither is doing anything wrong: the information that
+would remove it is in another translation unit.
 
-```asm
-  mov    %r13,%r12
-  add    %rbx,%r12
-  jb     c5                    ; pointer overflow
-  test   %r12,%r12
-  je     1a1                   ; null
-  test   $0x3,%r12b
-  jne    1a1                   ; alignment
-  mov    0x0(%r13,%rbx,1),%eax ; and only now the load
-  and    $0xfff,%eax
-  lea    (%rcx,%rax,4),%r12
-  cmp    %rcx,%r12
-  jb     182                   ; and the same again for the gather
-```
-
-**57 instructions against 111**, and no vectorisation. Measured end to end (`bench/thesis/`,
-same kernel on both sides, `gcc -O3 -march=native`):
-
-```
-  (A) proven safe, check-free (what Lain emits)    :   1468.1 ms
-  (B) runtime-checked safety (-fsanitize=undefined):   6290.0 ms
-  --> 4.28x to learn at runtime what the compiler already knew
-```
-
-This only matters for some checks. A check gcc can see is redundant, like `a[i]` guarded by
-`i < n`, gcc removes on its own, and Lain gains nothing. A check that depends on runtime data
-cannot be removed by any optimiser, since the optimiser has no way to know what the data will
-be. Those are the ones a proof removes.
+**This is the honest shape of the advantage.** Inside a single function an optimiser is often as
+good. The masked index in the table above, `a[x & 4095]` over a 4096-element array, is proved by
+gcc and by LLVM as readily as by Lain, and all three vectorise it. What an optimiser cannot do
+is carry a fact across a boundary it cannot see through, or reject the program when the fact
+does not hold.
 
 ---
 
@@ -583,54 +562,58 @@ out by following the call graph. You can declare what a function is allowed to d
        it also has: io.
 ```
 
-## An empty effect set means one call instead of two
+## An empty effect set lifts a call out of a loop
 
-A function with no effects writes nothing, does no I/O, allocates nothing and cannot panic.
-That is exactly what `__attribute__((const))` claims in C:
+A function with no effects writes no global state, does no I/O, allocates nothing and cannot
+panic. Its result depends on its arguments and nothing else, which is what
+`__attribute__((const))` claims in C.
+
+A compiler that knows this can move the call. If the arguments do not change inside a loop,
+neither can the result, so the call belongs outside it:
 
 ```lain
-func mix(x i32, y i32) i32 {
+func scale(x i32, y i32) i32 {
     var a i32 = (x *% 2654435761) ^ (y *% 40503)
     a = a ^ (a >> 13)
     return a *% 1274126177
 }
 
-func twice(p i32, q i32) i32 { return mix(p, q) +% mix(p, q) }
+proc apply(out var i32[], p i32, q i32) {
+    var i usize = 0
+    while i < out.len {
+        out[i] = out[i] +% scale(p, q)
+        i = i + 1
+    }
+}
 ```
+
+`scale` has no effects, so it is declared to the C compiler as `const`:
 
 ```c
-__attribute__((const)) int32_t eff_mix(int32_t, int32_t);
+__attribute__((const)) int32_t licm_scale(int32_t, int32_t);
 ```
 
-Compiling the two in separate translation units leaves gcc with nothing to go on but that
-annotation:
+Compiled separately, so the annotation is all gcc has to go on:
 
 ```asm
-; effect row known                    ; effect row withheld
-eff_twice:                            eff_twice:
-  endbr64                               endbr64
-  sub    $0x8,%rsp                      push   %r12
-  call   <eff_mix>                      mov    %esi,%r12d
-  add    $0x8,%rsp                      push   %rbp
-  add    %eax,%eax   ; CSE'd            mov    %edi,%ebp
-  ret                                   push   %rbx
-                                        call   <eff_mix>
-                                        mov    %r12d,%esi
-                                        mov    %ebp,%edi
-                                        mov    %eax,%ebx
-                                        call   <eff_mix>   ; twice
-                                        add    %ebx,%eax
-                                        pop    %rbx
-                                        pop    %rbp
-                                        pop    %r12
-                                        ret
+; effect set known                       ; effect set withheld
+licm_apply:                              licm_apply:
+  ...                                      ...
+  call  <licm_scale>   ; once, here      <loop>:
+<loop>:                                    mov   (%r15,%rbx,4),%ebp
+  add   %eax,(%rdx)    ; reuse result      mov   %r14d,%esi
+  add   %eax,0x4(%rdx)                     mov   %r13d,%edi
+  add   $0x8,%rdx                          call  <licm_scale>   ; once per element
+  cmp   %rcx,%rdx                          add   %eax,%ebp
+  jne   <loop>                             mov   %ebp,(%r15,%rbx,4)
+                                           add   $0x1,%rbx
+                                           cmp   %rbx,%r12
+                                           jne   <loop>
 ```
 
-On the left gcc makes one call and doubles the result with `add %eax,%eax`, because `const` told
-it a second call with the same arguments would return the same value. On the right it has to
-make both calls, and since a call is free to overwrite registers it must also save `p` and `q`
-before the first one and restore them afterwards, which is what the `push` and `pop` pairs are
-doing. **6 instructions against 13.**
+On the left the call happens once, before the loop starts, and the loop reuses the value in
+`%eax`. On the right it happens on every iteration: over a 4096-element array that is 4096 calls
+instead of one.
 
 Written by hand in C, `const` is a claim nobody verifies. Here it is the effect set, which the
 compiler worked out.
