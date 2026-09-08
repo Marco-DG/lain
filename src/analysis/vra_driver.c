@@ -30,9 +30,10 @@ static char *drv_modname(Arena *a, const char *path) {
 
 int main(int argc, char **argv) {
     if (argc<2){ fprintf(stderr,"usage: %s <file.ln> [--dump] [--suppress] [--dump-octagon]\n", argv[0]); return 2; }
-    bool dump=false, suppress=false;
+    bool dump=false, suppress=false, loss_mode=false;
     for (int k=2;k<argc;k++){ if(!strcmp(argv[k],"--dump"))dump=true; if(!strcmp(argv[k],"--suppress"))suppress=true;
-                              if(!strcmp(argv[k],"--dump-octagon"))vra_dump_enabled=true; }
+                              if(!strcmp(argv[k],"--dump-octagon"))vra_dump_enabled=true;
+                              if(!strcmp(argv[k],"--loss"))loss_mode=true; }
     Arena fa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena aa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -66,6 +67,14 @@ int main(int argc, char **argv) {
                                  : c->kind==VRA_OVERFLOW?"arith overflow"
                                  : c->kind==VRA_DIVZERO?"div-by-zero"
                                  : c->kind==VRA_PRECOND?"call precond" : "termination";
+                if (loss_mode) {
+                    // one machine-readable line per UNPROVEN obligation: the survey tallies these
+                    if (!c->ok)
+                        printf("LOSS\t%s\t%s\t%.*s\t%lld:%lld\n",
+                            vra_loss_name(c->loss), what,
+                            (int)f->name->length, f->name->name,
+                            (long long)c->line,(long long)c->col);
+                } else
                 printf("  %-8.*s  %-14s @ %lld:%lld  %s\n",
                     (int)f->name->length, f->name->name, what,
                     (long long)c->line,(long long)c->col,
@@ -74,6 +83,6 @@ int main(int argc, char **argv) {
             vra_free(V);
         }
     }
-    printf("%d/%d proof obligations discharged check-free\n", proven, total);
+    if (!loss_mode) printf("%d/%d proof obligations discharged check-free\n", proven, total);
     return 0;
 }

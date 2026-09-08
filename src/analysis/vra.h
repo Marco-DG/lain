@@ -35,6 +35,47 @@ static IrFunc *vra_find_func(const IrName *n) {
 #define VRA_MAX_RANK 4
 
 typedef enum { VRA_BOUNDS, VRA_OVERFLOW, VRA_DIVZERO, VRA_TERMINATION, VRA_PRECOND } VraCheckKind;
+
+// ── A1: WHERE THE FACT DIED ───────────────────────────────────────────────────────────────
+// An unproven obligation is not evidence for anything until you know WHICH capability was
+// missing. Three precision questions in a row were answered by bisecting programs instead of
+// reading the abstract state; this records the answer at the point of failure so the next one
+// is answered by a tally. The categories map 1:1 onto the Stage B items in REBUILD.md, so the
+// survey ORDERS that stage rather than confirming a guess about it.
+typedef enum {
+    VLOSS_NONE = 0,   // discharged
+    VLOSS_PRODUCT,    // loop-carried with a NON-constant step: `s = s + a[i]`. Needs a bound
+                      // of the form s0 + T*delta, which is a PRODUCT and unstatable in any
+                      // relational domain. Stage B1 (loop summarisation).
+    VLOSS_WIDEN,      // loop-carried with a CONSTANT step: the domain should reach this and
+                      // widening threw it away. A precision bug, not a missing capability.
+    VLOSS_CALL,       // an operand comes from a call: needs a postcondition summary. B4.
+    VLOSS_ARITY,      // three or more distinct symbolic values: octagons are binary. B5.
+    VLOSS_JOIN,       // the value is defined at a merge point: the join is a hull, so a
+                      // disjunction was flattened. B2 (partitioning).
+    // ── the two below are NOT capability gaps. The engine is refusing correctly. ──────────
+    VLOSS_UNBOUNDED,  // every symbolic operand is an unrefined parameter, so the operation
+                      // GENUINELY can overflow for some input. Prove-or-reject working as
+                      // designed: the program needs a guard, a wider type or `+%`. Counting
+                      // these as precision loss would inflate every number in this survey.
+    VLOSS_NOLEN,      // no length is known for the array at all. Not a domain weakness
+                      // either: nothing in scope says how long it is.
+    VLOSS_OTHER
+} VraLoss;
+
+static const char *vra_loss_name(VraLoss l) {
+    switch (l) {
+        case VLOSS_NONE:    return "discharged";
+        case VLOSS_PRODUCT: return "product";
+        case VLOSS_WIDEN:   return "widen";
+        case VLOSS_CALL:    return "call";
+        case VLOSS_ARITY:   return "arity";
+        case VLOSS_JOIN:    return "join";
+        case VLOSS_UNBOUNDED: return "unbounded";
+        case VLOSS_NOLEN:   return "no-length";
+        default:            return "other";
+    }
+}
 typedef struct {
     VraCheckKind kind;
     IrInstr *at;
@@ -43,6 +84,7 @@ typedef struct {
     bool     lo_ok;     // proved idx ≥ 0
     bool     hi_ok;     // proved idx < len
     bool     has_len;   // a length was found at all
+    VraLoss  loss;      // when !ok: which capability was missing (A1)
     int64_t  line, col;
 } VraCheck;
 
@@ -844,7 +886,121 @@ static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir) {
 }
 
 // ── bounds consumer: discharge 0 ≤ idx < len at an IR_ELEM_PTR ───────────────
+// Walk an operand tree to a bounded depth, counting distinct SYMBOLIC leaves and noting
+// whether a call result or a loop-carried load appears. Bounded because an SSA chain can be
+// long and this runs per failed obligation, not per instruction.
+static void vra_loss_walk(Vra *V, IrValue *v, int depth,
+                          int *nsym, bool *saw_call, bool *all_param, int *sym_ids, int cap) {
+    if (!v || depth > 4 || v->id < 0 || v->id >= V->nvar) return;
+    IrInstr *d = V->def[v->id];
+    if (!d) {                                    // a parameter: a symbolic leaf
+        for (int i=0;i<*nsym;i++) if (sym_ids[i]==v->id) return;
+        if (*nsym < cap) sym_ids[(*nsym)++] = v->id;
+        return;
+    }
+    if (d->op == IR_CALL) { *saw_call = true; return; }
+    if (V->cknown[v->id]) return;                // a constant is not a symbolic leaf
+    if (d->op == IR_LOAD || d->op == IR_SLICE_LEN || d->op == IR_ALLOCA) {
+        // Whether a LOAD counts as "an unrefined parameter" depends on where its ADDRESS
+        // roots. `p.x` with `p` a parameter is a parameter value and really is unbounded;
+        // a load from a local alloca is not. Following the field_ptr/elem_ptr chain is the
+        // difference between "the engine is right to refuse" and "the engine lost a fact",
+        // and getting it wrong put every `p.x = p.x + 1` into the unclassified bucket.
+        if (d->op == IR_LOAD) {
+            IrValue *addr = d->n_operands >= 1 ? d->operands[0] : NULL;
+            for (int hop = 0; hop < 6 && addr && addr->id >= 0 && addr->id < V->nvar; hop++) {
+                IrInstr *ad = V->def[addr->id];
+                if (!ad) break;                                   // rooted at a parameter
+                if (ad->op == IR_ALLOCA) { *all_param = false; break; }   // a local
+                if (ad->n_operands < 1) { *all_param = false; break; }
+                addr = ad->operands[0];                           // field_ptr / elem_ptr / cast
+            }
+        }
+        for (int i=0;i<*nsym;i++) if (sym_ids[i]==v->id) return;
+        if (*nsym < cap) sym_ids[(*nsym)++] = v->id;
+        return;
+    }
+    for (int k=0;k<d->n_operands;k++)
+        vra_loss_walk(V, d->operands[k], depth+1, nsym, saw_call, all_param, sym_ids, cap);
+}
+
+// Is this instruction's result stored back into a slot it also READ? That is the shape of a
+// loop-carried update, `s = s <op> x`, and the step tells the two apart: a CONSTANT step is
+// something the domain should reach (so failing is a widening loss), a symbolic one needs a
+// trip-count times delta bound, which is a product.
+static bool vra_loss_selfupdate(Vra *V, IrInstr *ins, bool *const_step) {
+    if (!ins || !ins->result || ins->result->id < 0) return false;
+    int blk = V->defblk[ins->result->id];
+    if (blk < 0) return false;
+    IrValue *slot = NULL;
+    for (IrBlock *b = V->f->blocks; b; b = b->next) {
+        if (b->id != blk) continue;
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            if (i->op == IR_STORE && i->n_operands >= 2 && i->operands[1] == ins->result)
+                slot = i->operands[0];
+        break;
+    }
+    if (!slot) return false;
+    bool found = false; *const_step = true;
+    for (int k=0;k<ins->n_operands;k++) {
+        IrValue *o = ins->operands[k];
+        if (!o || o->id < 0 || o->id >= V->nvar) continue;
+        IrInstr *d = V->def[o->id];
+        if (d && d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0] == slot) { found = true; continue; }
+        if (!V->cknown[o->id]) *const_step = false;      // the OTHER operand is symbolic
+    }
+    return found;
+}
+
+static VraLoss vra_classify_loss(Vra *V, IrInstr *ins) {
+    if (!ins) return VLOSS_OTHER;
+    // Path-F puts the overflow obligation on the NARROWING, so the failing instruction is the
+    // STORE and not the arithmetic. Look through it, or every accumulator classifies as
+    // whatever its operand tree happens to look like — which is how `s = s + i` came out as
+    // "arity" on the first run of this survey.
+    if (ins->op == IR_STORE && ins->n_operands >= 2 && ins->operands[1] &&
+        ins->operands[1]->id >= 0 && ins->operands[1]->id < V->nvar) {
+        IrInstr *src = V->def[ins->operands[1]->id];
+        if (src) ins = src;
+    }
+    bool const_step = true;
+    if (vra_loss_selfupdate(V, ins, &const_step))
+        return const_step ? VLOSS_WIDEN : VLOSS_PRODUCT;
+
+    int sym_ids[16]; int nsym = 0; bool saw_call = false, all_param = true;
+    for (int k=0;k<ins->n_operands;k++)
+        vra_loss_walk(V, ins->operands[k], 0, &nsym, &saw_call, &all_param, sym_ids, 16);
+    if (saw_call) return VLOSS_CALL;
+    if (nsym >= 3)  return VLOSS_ARITY;
+    // Every operand is an unrefined parameter: the operation really can overflow, and saying
+    // so is the language working. Not a precision loss.
+    if (all_param && nsym >= 1) return VLOSS_UNBOUNDED;
+
+    // Defined at a merge point: more than one block branches here, so whatever held on each
+    // path separately was hulled on the way in.
+    if (ins->result && ins->result->id >= 0 && ins->result->id < V->nvar) {
+        int blk = V->defblk[ins->result->id];
+        int preds = 0;
+        for (IrBlock *b = V->f->blocks; b && preds < 2; b = b->next) {
+            if (b->term.kind == IR_TERM_BR) {
+                if (b->term.a && b->term.a->id == blk) preds++;
+            } else if (b->term.kind == IR_TERM_BR_COND) {
+                if (b->term.a && b->term.a->id == blk) preds++;
+                if (b->term.b && b->term.b->id == blk) preds++;
+            }
+        }
+        if (preds >= 2) return VLOSS_JOIN;
+    }
+    return VLOSS_OTHER;
+}
+
 static void vra_add_check(Vra *V, VraCheck c) {
+    if (!c.ok && c.loss == VLOSS_NONE) {
+        // A bounds obligation with NO length in scope is not a domain weakness: nothing
+        // available says how long the array is.
+        c.loss = (c.kind == VRA_BOUNDS && !c.has_len) ? VLOSS_NOLEN
+                                                      : vra_classify_loss(V, c.at);
+    }
     if (V->nchecks==V->cap_checks){ V->cap_checks=V->cap_checks?V->cap_checks*2:8;
         V->checks=realloc(V->checks, V->cap_checks*sizeof(VraCheck)); }
     V->checks[V->nchecks++]=c;
