@@ -32,9 +32,24 @@ static void ir_diag(const char *file, isize line, isize col, const char *code, c
 static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool numeric) {
     int n = 0;
 
+    // The borrow pass runs FIRST so the linearity pass can defer to it. `f(var d, mov d)`
+    // produces two findings at one position: linearity sees `var d` as a use of a value the
+    // same call moved (E001), and the borrow pass sees the real constraint — you may not
+    // borrow and move the same place in one call (E008). Both are true; only the second says
+    // what the programmer did wrong, and the first is an artefact of `mov` being lowered as a
+    // use. Emission order is unchanged; only the analysis order and this suppression are new.
+    Borrow *B = borrow_analyze_mod(f, mod);
+
     Lin *L = lin_analyze(f);
     for (int i = 0; i < L->nfinds; i++) {
         LinFinding *fi = &L->finds[i];
+        if (fi->code == 1) {
+            bool superseded = false;
+            for (int q = 0; q < B->nfinds && !superseded; q++)
+                superseded = (B->finds[q].code == 8 &&
+                              B->finds[q].line == fi->line && B->finds[q].col == fi->col);
+            if (superseded) continue;
+        }
         const char *code = fi->code==1 ? "E001" : fi->code==2 ? "E002"
                          : fi->code==16 ? "E016" : "E003";
         const char *msg  = fi->code==1 ? "use of a value that was already moved"
@@ -56,7 +71,6 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     }
     di_free(D);
 
-    Borrow *B = borrow_analyze_mod(f, mod);
     for (int i = 0; i < B->nfinds; i++) {
         BorrowFinding *fi = &B->finds[i];
         // borrow.h emits 4 (conflicting co-argument borrows), 10 (dangling return) and
@@ -64,11 +78,12 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
         // E004, so every dangling return was reported as a borrow conflict — the analysis
         // knew, and the last step threw it away.
         const char *bcode = fi->code==10 ? "E010" : fi->code==11 ? "E124"
-                          : fi->code==87 ? "E087" : "E004";
+                          : fi->code==87 ? "E087" : fi->code==8 ? "E008" : "E004";
         const char *bmsg  = fi->code==10 ? "this reference would outlive the value it borrows"
                           : fi->code==11 ? "the `in` clause claims this result borrows less "
                                            "than the body actually does"
                           : fi->code==87 ? "this array reaches two parameters of the same call"
+                          : fi->code==8  ? "cannot move this value because it is also borrowed here"
                           :                "conflicting borrows of the same value";
         ir_diag(file, fi->line, fi->col, bcode, bmsg);
         n++;

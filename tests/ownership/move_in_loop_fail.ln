@@ -1,4 +1,7 @@
-// EXPECT: [E006]
+// EXPECT: [E002]
+// ADJUDICATED 2026-09-08: [E002] "this value is moved twice" rather than [E006]
+// "consuming a field inside a loop". Consuming the same value on every iteration IS moving
+// it twice; E002 names the violation, E006 named the syntactic setting it occurred in.
 // spec §11: consuming a linear variable declared OUTSIDE a loop from INSIDE the loop
 // body is rejected — the loop may run more than once, which would double-consume.
 import std.mem.{mem_alloc, mem_free}

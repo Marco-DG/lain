@@ -1,0 +1,46 @@
+// Two `var` parameters, a returned `var` reference, and a read of the OTHER one while that
+// reference is still live. Legal, and the borrow checker now says so.
+//
+// This was a _fail.ln locking [E004], and its own comment asserted "pick_x borrows both da
+// and db". That was the old engine's conservatism written down as intent: `pick_x` returns
+// `var a.x`, so it borrows `da` and nothing else. bor_ret_borrow_mask reads which parameter a
+// returned reference borrows out of the BODY, so the answer is exact rather than assumed.
+//
+// Rust needs `<'a, 'b>` written by hand to accept the equivalent; its own suggested fix (one
+// lifetime for both) rejects it. Nothing is written here.
+type Data {
+    x i32
+    y i32
+}
+
+func pick_x(var a Data, var b Data) var i32 {
+    return var a.x
+}
+
+func use_ref(var r i32) i32 {
+    return r
+}
+
+func read_data(d Data) i32 {
+    return d.x
+}
+
+proc main() i32 {
+    var da Data
+    var db Data
+    da.x = 10
+    da.y = 0
+    db.x = 20
+    db.y = 0
+    
+    // pick_x borrows both da and db
+    var ref = pick_x(var da, var db)
+    
+    // ERROR: db is still borrowed by ref (ref used below)
+    var y = read_data(db)
+    
+    var x = use_ref(var ref)
+    var _x = x
+    var _y = y
+    return 0
+}

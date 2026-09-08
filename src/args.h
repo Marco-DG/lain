@@ -58,13 +58,13 @@ static Args args_parse(int argc, char** argv)
     if (argc == 1) { _args_help(); exit(EXIT_SUCCESS); }
 
     Args args = {0};
-    // The sovereign IR analyses are still OPT-IN (`--engine=ir`). The accept side is ready
-    // (403 accepted, 0 false positives, 251 rejections caught), and the reject side rejects
-    // every program the old engine does — but it NAMES A DIFFERENT CONSTRAINT on 16 of them,
-    // because report.h has no case for several codes the analyses already produce (borrow
-    // code 10 is a dangling return, E010, and falls through to E004). Flipping with that
-    // outstanding would tell users the wrong thing about correct rejections. See
-    // scripts/gates/phase3_adjudications.txt.
+    // ── THE DEFAULT ENGINE (2026-09-08) ──────────────────────────────────────────────────
+    // The sovereign IR analyses answer for ownership, borrows and definite assignment on a
+    // plain compile. 403 pass programs accepted with 0 false positives, 251 rejections
+    // caught, and every divergence adjudicated in scripts/gates/phase3_adjudications.txt.
+    // `--engine=legacy` restores the old AST engine; `--engine=ir-full` also hands it the
+    // numeric obligations (not yet default: the accumulator class, see REBUILD.md B1).
+    args.engine_ir = true;
     args.output_file = "out.c";  // default
 
     for (int i = 1; i < argc; i++) {

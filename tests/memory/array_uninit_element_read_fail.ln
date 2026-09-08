@@ -1,4 +1,8 @@
-// EXPECT: [E005]
+// EXPECT: [E019]
+// ADJUDICATED 2026-09-08: [E019] "only partially initialised" rather than [E005] "use of
+// uninitialized variable". The array HAS been written, at a[0]; what is unwritten is the
+// element being read. The new engine distinguishes wholly-uninitialised from partially
+// initialised, which is a more accurate account of the same rejection.
 // Reading an element of an uninitialized array is caught (was silent garbage).
 //
 // ADJUDICATED 2026-09-08: the program did not test its own intent. It wrote `a[0] = 5` and

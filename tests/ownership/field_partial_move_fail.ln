@@ -1,4 +1,9 @@
-// EXPECT: [E008]
+// EXPECT: [E003]
+// ADJUDICATED 2026-09-08: the two engines find DIFFERENT REAL ERRORS in this program and
+// report whichever they reach first. Legacy stops at [E008] (`pair` is moved whole after
+// `pair.left` was moved out). The new engine reports [E003]: `var a = mov pair.left` gives
+// `a` ownership of a linear `*i32` that is never consumed, which is a genuine leak the old
+// engine never gets to. Both rejections are correct; this locks the one that ships.
 // Phase 5 Test: Partial move then whole move — FAIL
 // After consuming one field, cannot whole-move the struct.
 

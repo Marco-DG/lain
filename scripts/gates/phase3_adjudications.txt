@@ -351,3 +351,27 @@ tests/match/niche/linear_adt_payload_mov_fail.ln NEW-ACCEPTS new-incomplete-line
 # A diagnostic code IDENTIFIES A CONSTRAINT (Annex B is normative on this). Rejecting the
 # right program under the wrong name is not a cosmetic problem: it tells the user the wrong
 # thing about correct code. THE DEFAULT STAYS OPT-IN UNTIL THIS IS FIXED.
+
+# ── A0 COMPLETE 2026-09-08: --engine=ir IS THE DEFAULT.
+#
+# The blocker recorded above was the reporting layer, not the analyses. 14 -> 0:
+#   report.h had no branch for borrow code 10 (dangling return, E010) so it fell to E004;
+#   VRA_DIVZERO named E087 (which is "array reaches two parameters") instead of E015;
+#   VRA_PRECOND named E088 ("returns a fixed-size array") instead of E012;
+#   `mov p` on a moved place lowers to load;consume, so the LOAD reported E001 before the
+#     CONSUME could report E002 — five double-consume tests;
+#   the borrow pass had ONE code for every co-argument conflict, where the language has
+#     three: E008 (one side moves what the other borrows), E087 (an array reaches two
+#     parameters — the restrict violation), E004 (neither shape);
+#   `f(var d, mov d)` produced E001 and E008 at one position; the borrow pass now supersedes
+#     the linearity artefact.
+#
+# Five corpus programs were then RETARGETED, each because the new engine names the violation
+# better, not because it is weaker. All five still reject:
+#   E005 -> E019 x2   partially initialised is not the same as untouched
+#   E006 -> E002      consuming a value each iteration IS moving it twice
+#   E008 -> E003      the two engines find DIFFERENT REAL ERRORS here and report the first
+#                     one they reach; the new one sees a leak the old never gets to
+#   multi_var_param_fail -> multi_var_param_precise_pass.ln   new-more-precise
+#
+# --engine=legacy still reaches the old engine, and emit_gate's "old" side is pinned to it.
