@@ -747,7 +747,9 @@ what has LANDED. Update or delete each line as it resolves.
 | **Frontier axes** | untouched | parametric substructural typing; proven ranges as `__builtin_unreachable` | nothing |
 | **`--dump-octagon` follow-ups** | instrument landed and already paid for itself | use it on the remaining precision gaps instead of bisecting programs | nothing |
 | **Project tree restructure** | not started; Marco: "the current tree is a chaos and a mess" | plan a layout, then move — README deliberately names no paths that would go stale | nothing |
-| **`x = x & (x-1)` termination** | STATUS LOG (77) claims it landed; **both engines reject it today** | re-derive or strike the claim; `decreasing_halving_unsigned_pass.ln`'s comment asserts it too | nothing |
+| **`x = x & (x-1)` termination** | STATUS LOG (77) claims it landed; **both engines reject it today**; corpus comment corrected, claim still unimplemented | implement the step, or strike the claim from (77) | nothing |
+| **★ conjunction-guard bounds gap (new engine)** | `while i < a.len` proves; `while i < n and i < a.len` does NOT — `--engine=ir-full` E085 | fix guard refinement to take BOTH conjuncts; likely a large slice of the remaining 55 false positives | nothing — this is the next numeric item |
+| **README-audit precision gaps** | 4 filed as P-1…P-4 in `lain_language_limits.md`, 2 as D-19/D-20 in `lain_frontend_defects.md` | D-19 (explicit measure rejected while inferred is accepted) is the cheapest and most user-visible | nothing |
 
 **Reference material outside this repo.** The undergraduate thesis on Lain lives at
 `~/Scrivania/MEGA/Documenti/Educazione/UNIFI/Tesi/Tesi` (LaTeX). It predates the rebuild, so

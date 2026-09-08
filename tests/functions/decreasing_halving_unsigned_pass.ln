@@ -4,7 +4,10 @@
 //   b = a % b        the remainder is in [0, b-1] (Euclid; the divisor IS the measure)
 //   n = n / k        k >= 2, so n >= 1 implies n/k < n
 //   n = n >> k       k >= 1, same argument
-//   x = x & (x - 1)  clears the lowest set bit  (new engine only — the old one refuses it)
+//   x = x & (x - 1)  clears the lowest set bit  — CLAIMED HERE, NOT IMPLEMENTED: verified
+//                    2026-09-08 that BOTH engines reject it, with and without an explicit
+//                    `decreasing x`. This file's body never exercised it. See
+//                    internal/design/lain_language_limits.md, README-audit precision gaps.
 // Each is verified exactly as an explicit `decreasing` is, so a non-decreasing step is still
 // rejected: see decreasing_zero_step_fail and decreasing_binary_search_stuck_fail.
 func halve(n0 usize) usize {
