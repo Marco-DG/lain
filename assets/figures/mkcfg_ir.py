@@ -58,12 +58,12 @@ OBLIG = [(re.compile(r'\belem_ptr\b'), "must be in bounds"),
          (re.compile(r'^%\d+ = add\b'), "must not overflow")]
 
 # GitHub light palette
-FG      = "#1f2328"   # default text
-MUTED   = "#59636e"   # comments, edges
-BORDER  = "#8c959f"   # box borders
+FG      = "#000000"   # default text
+MUTED   = "#3d444d"   # comments, edges
+BORDER  = "#57606a"   # box borders
 SUBTLE  = "#f6f8fa"   # header band
-DANGER  = "#cf222e"   # obligations owed
-ACCENT  = "#0969da"   # facts proved
+DANGER  = "#9e1420"   # obligations owed
+ACCENT  = "#0a4a9e"   # facts proved
 
 def esc(t):
     return t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
@@ -71,9 +71,9 @@ def esc(t):
 def emit(blocks, order, edges, facts, out, func, max_insn):
     L = ['digraph ir {',
          '  graph [bgcolor="transparent", fontname="Helvetica", nodesep=0.36, ranksep=0.42];',
-         f'  node  [shape=plaintext, fontname="SFMono-Regular,Menlo,monospace", fontsize=11];',
-         f'  edge  [fontname="Helvetica", fontsize=10, color="{MUTED}", '
-         f'fontcolor="{MUTED}", arrowsize=0.7];']
+         f'  node  [shape=plaintext, fontname="SFMono-Regular,Menlo,monospace", fontsize=13];',
+         f'  edge  [fontname="Helvetica", fontsize=10, color="#8b949e", '
+         f'fontcolor="#8b949e", arrowsize=0.8, penwidth=1.3];']
     cond = {}
     for b in order:
         d = blocks[b]
@@ -88,11 +88,11 @@ def emit(blocks, order, edges, facts, out, func, max_insn):
             why = next((t for rx, t in OBLIG if rx.search(ins)), None)
             if why:
                 rows.append(f'<tr><td align="left" colspan="2">'
-                            f'<font color="{DANGER}">{esc(ins)}</font>'
+                            f'<font color="{DANGER}"><b>{esc(ins)}</b></font>'
                             f'<font color="{DANGER}">   ; {why}</font></td></tr>')
             else:
                 rows.append(f'<tr><td align="left" colspan="2">'
-                            f'<font color="{FG}">{esc(ins)}</font></td></tr>')
+                            f'<font color="{FG}"><b>{esc(ins)}</b></font></td></tr>')
         if len(d["insns"]) > max_insn:
             rows.append(f'<tr><td align="left" colspan="2"><font color="{MUTED}">...</font></td></tr>')
 
@@ -101,7 +101,7 @@ def emit(blocks, order, edges, facts, out, func, max_insn):
             lead = '; proved  ' if i == 0 else '&#160;' * 10
             rows.append(f'<tr><td align="left" colspan="2">'
                         f'<font color="{MUTED}">{lead}</font>'
-                        f'<font color="{ACCENT}">{esc(f)}</font></td></tr>')
+                        f'<font color="{ACCENT}"><b>{esc(f)}</b></font></td></tr>')
 
         if has_cond:
             rows.append(f'<tr><td port="s0" align="center" bgcolor="{SUBTLE}">'

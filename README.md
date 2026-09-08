@@ -7,12 +7,10 @@ termination are **proven at compile time** and therefore **not checked at runtim
 that could read out of bounds, overflow, divide by zero, use a moved value or leak a resource
 does not compile.
 
-Rejecting programs is only half of what the proofs are for. Each one is also a fact about how
-the code behaves, and facts are what an optimiser is short of. Exclusive access becomes
-`restrict`. A function with no effects becomes `const`. A parameter's declared length becomes
-`access`. A C programmer can write every one of those by hand, and nothing checks them when they
-do. So the generated code lands where careful C lands, and ahead of any build that is still
-paying for its checks at runtime: on the gather in chapter 4 that difference is 4.28x.
+Rejecting programs is only half of it. Every proof is also a fact the backend can use: exclusive
+access becomes `restrict`, an empty effect set becomes `const`, a declared length becomes
+`access`. And a check shown to be unnecessary is simply never emitted, including checks no
+optimiser could have removed on its own.
 
 ```
  your.ln ──▶ front end ──▶ Lain-IR ──▶ analyses ──▶ backend ──▶ executable
@@ -29,21 +27,25 @@ so the same proofs hold whichever backend emits the code.
 
 ## Guarantees
 
-| | C | C++ | Rust | **Lain** |
+| | C / C++ | C + sanitizers | Rust | **Lain** |
 |:---|:---|:---|:---|:---|
-| Out-of-bounds read/write | UB | UB | Panics at runtime | **Rejected at compile time** |
-| Integer overflow | UB (signed) | UB (signed) | Panics in debug, wraps in release | **Rejected at compile time** † |
-| Division by zero | UB | UB | Panics | **Rejected at compile time** |
-| Use after free / move | UB | UB | Prevented | **Prevented** |
-| Double free | UB | UB | Prevented | **Prevented** |
-| Resource leak | Silent | Silent | **Allowed** (`mem::forget` is safe) | **Rejected** |
-| Dangling reference | UB | UB | Prevented | **Prevented** |
-| Uninitialised read | UB | UB | Prevented | **Prevented** |
-| Non-termination | Allowed | Allowed | Allowed | **Rejected in `func`** |
+| Out-of-bounds read/write | UB | Caught when a run hits it | Panics at runtime | **Rejected at compile time** |
+| Integer overflow | UB (signed) | Caught when a run hits it | Panics in debug, wraps in release | **Rejected at compile time** † |
+| Division by zero | UB | Caught when a run hits it | Panics | **Rejected at compile time** |
+| Use after free / move | UB | Caught when a run hits it | Prevented | **Prevented** |
+| Double free | UB | Caught when a run hits it | Prevented | **Prevented** |
+| Resource leak | Silent | Memory leaks listed at exit | **Allowed** (`mem::forget` is safe) | **Rejected** |
+| Dangling reference | UB | Caught when a run hits it | Prevented | **Prevented** |
+| Uninitialised read | UB | Caught when a run hits it | Prevented | **Prevented** |
+| Non-termination | Allowed | Not detected | Allowed | **Rejected in `func`** |
+| Data races | UB | Caught when a run hits it | Prevented | Single-threaded before 1.0 |
 | Array length in the type | No | No | Const generics only | **`a i32[out.len]`, `a i32[h*w]`** |
-| Aliasing told to the optimiser | manual `restrict`, UB if wrong | same | `noalias` from `&mut` | **Derived from the borrow proof** |
-| Sum-type layout | manual | manual | Niche packing, silent | **Niche packing, and it warns when it fails** |
-| Data races | UB | UB | Prevented | Single-threaded before 1.0 |
+| Aliasing told to the optimiser | manual `restrict`, UB if wrong | No help | `noalias` from `&mut` | **Derived from the borrow proof** |
+| Sum-type layout | manual | No help | Niche packing, silent | **Niche packing, and it warns when it fails** |
+
+Sanitizers are a testing tool. They find a bug on the paths a run happens to take, say nothing
+about the paths it does not, and are too slow to ship: the gather in chapter 4 costs 4.28x under
+`-fsanitize=undefined,bounds`. A proof covers every path and costs nothing at runtime.
 
 † One class escapes the shipping binary today, the loop-carried accumulator. It is stated in
 full, with the program that miscomputes, in [11. Limits](#11-limits).
@@ -96,17 +98,13 @@ overflow, and the back edge into a loop header has to be shown to terminate.
 has to prove, blue what was proved there. In <code>bb2</code> the index <code>%7</code> is compared
 against the length <code>%5</code>, which is what settles the access on the line above.</sub></p>
 
-**Step 2. Work out what the values can be.** The compiler attaches a set of facts to each value
-and pushes those facts along the edges of the graph. A loop has to be walked more than once,
-because what is true entering the header depends on what the body did last time round; it keeps
-walking until another pass adds nothing new. For a loop, that means the facts it ends up with
-hold on every iteration, not just the first.
+**Step 2. Work out what the values can be.** Facts are propagated through the graph, and each
+loop is walked again until a pass adds nothing new, so what comes out holds on every iteration
+rather than only the first.
 
-Two kinds of fact are recorded. One is the range a single value can take. The other is how two
-values compare to each other, which for an array access is usually the one that decides it.
-`i ∈ [0, 2^64)` tells you nothing useful, and no range for the length helps either when the
-length is only known at runtime. `i` being smaller than that length settles the access whatever
-the two turn out to be.
+Two kinds of fact are kept: the range a value can take, and how two values compare. The second
+is what settles an array access. A range for `i` is no use when the length is unknown too, but
+`i` being below the length is enough whatever either turns out to be.
 
 `--dump-octagon` prints what the compiler settled on at the array access:
 
