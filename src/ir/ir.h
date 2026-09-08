@@ -97,7 +97,7 @@ typedef struct IrType {
     // for a multi-field payload, or NULL for a payload-less variant. `sname` is the sum's own
     // name. What the IR deliberately does NOT record is the LAYOUT: whether a sum is stored
     // as tag+union or niche-packed into a spare value of its payload is the backend's choice
-    // (internal/design/ir_sum_types.md §3). Recording the niche here would make a sum
+    // (local/internal/design/ir_sum_types.md §3). Recording the niche here would make a sum
     // indistinguishable from a pointer with an odd range and destroy the discrimination every
     // analysis depends on.
     IrName *sname;          // struct/sum name (identity + C typedef name) — IR-owned

@@ -1,5 +1,5 @@
 // SIMD whitespace counter — the P1 milestone kernel for the proof-licensed
-// performance doctrine (internal/design/proof_licensed_performance.md).
+// performance doctrine (local/internal/design/proof_licensed_performance.md).
 //
 // Counts space (0x20) bytes over `n` bytes at `data`, 32 lanes at a time:
 //   @load  → 32 bytes into a u8x32   (unaligned load, one vmovdqu)

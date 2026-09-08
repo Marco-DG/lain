@@ -3,7 +3,7 @@
 #
 # The previous criterion ("0 findings on programs the old engine accepts") was a STRUCTURAL
 # MISTAKE: it forbids the new engine from ever being STRONGER than the old one — a better
-# checker fails it by construction (see internal/design/critical_retrospective.md §2).
+# checker fails it by construction (see local/internal/design/critical_retrospective.md §2).
 #
 # The gate now COMPARES VERDICTS and requires every difference to be CLASSIFIED:
 #

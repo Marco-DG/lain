@@ -1,79 +1,50 @@
-# Binaries
-test_destruct
+# Everything private lives in one place. Working notes, research, the vendored
+# toolchain, old versions: none of it is product, all of it stays on disk.
+local/
+
+# The compiler itself, and anything a build leaves behind.
+lain
+*.o
+*.obj
 *.exe
 *.elf
 *.dbg
 *.out
-# Binaries without extension
-lain
-lexer_test
-/ownership
-/test_main
-test_out
-unsafe_nested
-unsafe_valid
-compiler.exe
-
-# Generated files
 out.c
 lain.h
-*.o
-*.obj
-out/
-test_out/
-test_output.txt
-test_output.txt*
+*.dot
+# extensionless binaries left by ad-hoc gcc runs
+/arena_list_out
+/lain_dbg
+/lain_new
+/lexer_test
+/out_test
+/ownership
+/test_destruct
+/test_main
+/unsafe_nested
+/unsafe_valid
+/out/
+/test_out/
+/fuzz_bugs/
+
+# Scratch
+*_scratch.ln
+_*.ln
 debug_out.txt
-test_uninit.ln
-test_main.c
-fix_final.py
+test_output.txt*
+tests/**/out
+tests/**/out.c
+tests/**/lain.h
+src/lainc
 
-# Development Utilities & Scripts (Ignored for GitHub)
-tools/
-translate_spec.js
-translate_spec.py
-apply_crt_styler.py
-run_destructuring_test.sh
-# run_tests.sh is published — it is the project's test runner
-
-# Documentation & Analysis (Ignored for GitHub)
-internal/
-# Superseded documentation now lives in internal/attic/ (itself ignored). These five entries
-# are kept so a stray copy at the root is still ignored rather than silently committed.
-changelog_category_b.md
-changelog_fixes.md
-lain.md
-PLAN.md
-old.README.md
-docs/TASKS.md
-
-# Backups
+# Editor / OS / agent
+.claude/
+.DS_Store
 _backups/
 
-# OS specific
-.DS_Store
-
-# Toolchains
-cosmocc/
-
-# Personal / Legacy / Research (Ignored for GitHub)
-legacy/
-research/
-artifacts/
-
-# IDE/Tools
-.claude/
-# LinkedIn assets
-linkedin/
-
-# Directories ignored at user request
-compiler-doc/
-docs/
-
-# spec/ SOURCES are tracked (the contract must be reviewable/diffable); only the
-# LaTeX build artifacts below are ignored.
-
-# LaTeX build artifacts (spec/)
+# spec/ SOURCES are tracked: the contract has to be reviewable and diffable.
+# Only the LaTeX build products are ignored, and the built PDF is kept.
 spec/**/*.aux
 spec/**/*.log
 spec/**/*.toc
@@ -88,47 +59,10 @@ spec/**/*.fdb_latexmk
 spec/**/*.synctex.gz
 spec/**/*.bbl
 spec/**/*.blg
-spec/*.aux
-spec/*.log
-spec/*.toc
-spec/*.out
-spec/*.idx
-spec/*.ind
-spec/*.ilg
-spec/*.lot
-spec/*.lof
-spec/*.fls
-spec/*.fdb_latexmk
-spec/*.synctex.gz
-spec/*.bbl
-spec/*.blg
-# Keep: spec/lain-spec.pdf (published artifact)
 !spec/lain-spec.pdf
 
-# Additional Binaries & Test Artifacts
-arena_list_out
-out_test
-lain_dbg
-lain_new
-src/lainc
-tests/core/out
-
-# AST Dump & Dot Graphs
-*.dot
-.vadd.dot
-
-# Scratch & Temporary Files
-*_scratch.ln
-_*.ln
-
-# LeetCode Temporary / Generated Output Files
+# handwritten/ is Marco's own working code; its build output is not tracked.
 handwritten/leetcode/*.c
 handwritten/leetcode/*.txt
 handwritten/leetcode/update_compiler.sh
 handwritten/main.ln
-
-# stray test build artifacts
-tests/**/out
-tests/**/out.c
-tests/**/lain.h
-fuzz_bugs/

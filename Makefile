@@ -36,4 +36,8 @@ figures: $(BIN)
 	bash assets/figures/make_figures.sh
 
 clean:
-	rm -f $(BIN) out.c
+	rm -f $(BIN) out.c lain.h *.o *.dot
+	rm -f arena_list_out lain_dbg lain_new lexer_test out_test ownership \
+	      test_destruct test_main unsafe_nested unsafe_valid
+	rm -rf out test_out fuzz_bugs
+	find tests -name out -o -name out.c -o -name lain.h | xargs -r rm -rf

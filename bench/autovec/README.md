@@ -1,6 +1,6 @@
 # Tier-1: auto-vectorization via proofs
 
-Evidence for the general-programmer SIMD path (`internal/design/simd_strategy.md`
+Evidence for the general-programmer SIMD path (`local/internal/design/simd_strategy.md`
 tier 1): an **ordinary loop with no SIMD in the source** vectorizes because Lain's
 borrow checker *proves* the pointers don't alias and stamps `restrict`.
 

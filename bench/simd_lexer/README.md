@@ -1,7 +1,7 @@
 # SIMD lexer core (P4 first cut)
 
 The hybrid lexer of the *proof-licensed performance* doctrine
-(`internal/design/proof_licensed_performance.md` §6), written **in Lain**:
+(`local/internal/design/proof_licensed_performance.md` §6), written **in Lain**:
 
 - **SIMD** skips the long whitespace runs — `@load` 16 bytes → detect ws by
   elementwise compares → `@movemask` → `@ctz` to the first non-whitespace byte,

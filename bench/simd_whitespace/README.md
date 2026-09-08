@@ -1,7 +1,7 @@
 # SIMD whitespace-count benchmark
 
 The P1 milestone for the *proof-licensed performance* doctrine
-(`internal/design/proof_licensed_performance.md`): a SIMD kernel written **in
+(`local/internal/design/proof_licensed_performance.md`): a SIMD kernel written **in
 Lain** that counts space bytes 32-at-a-time, measured against a scalar C loop.
 
 ```

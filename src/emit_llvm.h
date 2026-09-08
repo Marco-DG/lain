@@ -9,7 +9,7 @@
 // comparisons, `if <cond> { return } ...`, `return`. Everything else is skipped
 // with a comment (C stays the portable fallback target). This is a demonstration
 // of the seam, not yet the full backend; aggressive proofs are gated on Phase-0
-// trust (see internal/design/GRAIL_BACKEND.md).
+// trust (see local/internal/design/GRAIL_BACKEND.md).
 
 #include <stdio.h>
 #include "ast.h"

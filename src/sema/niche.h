@@ -3,7 +3,7 @@
 
 /*
    Niche optimization for enum layout.
-   See internal/ai_analysis/analysis19_aggressive_niche.md.
+   See local/internal/ai_analysis/analysis19_aggressive_niche.md.
 
    M2 — core algorithms only. No codegen yet; M3 consumes this.
 

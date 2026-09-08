@@ -2074,7 +2074,7 @@ static void walk_stmt(Stmt *s) {
             // F4 (spec audit): full type-compatibility enforcement at
             // STMT_VAR is non-trivial — requires refinement-alias
             // resolution + float literal polymorphism + integer literal
-            // polymorphism. Deferred. See internal/ai_analysis/
+            // polymorphism. Deferred. See local/internal/ai_analysis/
             // spec_audit_2026_05_14.md §F4.
 
             sema_union_coerce(&s->as.var_stmt.expr, s->as.var_stmt.type);  // `T | markers` construction
@@ -4617,7 +4617,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // Rejecting is the fail-closed answer, not the final one: a struct holding a mutable
     // borrow (`Cursor { r: &mut usize }`) is a real pattern, and Lain's borrow checker will
     // need to carry a loan through a field to support it. Until it does, the compiler must
-    // not accept a program it cannot compile correctly. See internal/design/lain_frontend_defects.md.
+    // not accept a program it cannot compile correctly. See local/internal/design/lain_frontend_defects.md.
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (!dl->decl || dl->decl->kind != DECL_STRUCT) continue;
         for (DeclList *fl = dl->decl->as.struct_decl.fields; fl; fl = fl->next) {
