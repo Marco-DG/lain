@@ -38,6 +38,8 @@ run_destructuring_test.sh
 
 # Documentation & Analysis (Ignored for GitHub)
 internal/
+# Superseded documentation now lives in internal/attic/ (itself ignored). These five entries
+# are kept so a stray copy at the root is still ignored rather than silently committed.
 changelog_category_b.md
 changelog_fixes.md
 lain.md
