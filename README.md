@@ -270,9 +270,12 @@ error[E0106]: missing lifetime specifier
   |              ---------     ---------     ^ expected named lifetime parameter
 ```
 
-What Lain infers is the conservative relationship: the returned borrow is treated as borrowing
-from every mutable parameter, so `b` counts as borrowed even though the result came from `a`.
-Rust, once you write `<'a, 'b>` by hand, is more precise than that. See
+The relationship is read out of the body, so the result is known to borrow `a` and not `b`, and
+`b` stays usable while the result is alive. Rust can express that too, but only if you write
+`<'a, 'b>` yourself: its own suggested fix ties both parameters to one lifetime and freezes `b`.
+
+The precise version runs under `--engine=ir`. The default path still uses the older borrow
+checker, which assumes a returned borrow came from every mutable parameter. See
 [9. Limits](#9-limits).
 
 ## Exclusive borrows become `restrict`
@@ -772,11 +775,11 @@ ordinary work rather than a redesign.
 - **Generics are monomorphised with no trait bounds.** Mistakes show up when a generic is
   instantiated rather than where it is defined.
 
-- **A returned borrow is attributed to every mutable parameter, not just the one it came from.**
-  `func pick_x(var a Data, var b Data) var i32` returning a borrow of `a` leaves `b` counted as
-  borrowed as well, so reading `b` while the result is still live is an `E004`. Rust accepts
-  that program once `<'a, 'b>` is written out by hand. Lain has no lifetime syntax to say it
-  with, and infers the conservative answer instead.
+- **The precise borrow inference is not on the default path yet.** Asked which parameter a
+  returned borrow came from, the rebuilt checker answers exactly, and `--engine=ir` accepts
+  programs the default rejects with `E004`. The older checker still answers the default
+  compile, and it assumes every mutable parameter was borrowed. Switching the default over is
+  the next step on the rebuild.
 
 - **None of this is machine-checked.** The analyses are fuzz-tested and the domain is validated
   by brute force, but there is no mechanised soundness proof. That is future work, and not
