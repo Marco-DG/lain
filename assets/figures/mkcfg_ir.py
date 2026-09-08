@@ -54,43 +54,67 @@ def parse_octagon(path, func, keep):
 
 MAX_FACTS = 3
 
-OBLIG = [(re.compile(r'\belem_ptr\b'), "bounds obligation"),
-         (re.compile(r'^%\d+ = add\b'), "overflow obligation")]
+OBLIG = [(re.compile(r'\belem_ptr\b'), "must be in bounds"),
+         (re.compile(r'^%\d+ = add\b'), "must not overflow")]
 
-def rec(t):
-    """escape for a graphviz record label"""
-    for a, b in (('\\', '\\\\'), ('{', '\\{'), ('}', '\\}'), ('|', '\\|'),
-                 ('<', '\\<'), ('>', '\\>'), ('"', '\\"'), (' ', ' ')):
-        t = t.replace(a, b)
-    return t
+# GitHub light palette
+FG      = "#1f2328"   # default text
+MUTED   = "#59636e"   # comments, edges
+BORDER  = "#d1d9e0"   # box borders
+SUBTLE  = "#f6f8fa"   # header band
+DANGER  = "#cf222e"   # obligations owed
+ACCENT  = "#0969da"   # facts proved
+
+def esc(t):
+    return t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
 
 def emit(blocks, order, edges, facts, out, func, max_insn):
-    """Drawn in LLVM's own `opt -dot-cfg` conventions: record nodes, Courier,
-    T/F ports on a conditional branch. Annotations use the IR's comment syntax."""
-    L = ['digraph "CFG for \'%s\' function" {' % func,
-         '\tlabel="CFG for \'%s\' function";' % func,
-         '\tnode [shape=record, fontname="Courier", fontsize=10, '
-         'color="#000000", style=filled, fillcolor="#ffffff"];',
-         '\tedge [fontname="Courier", fontsize=10, color="#000000"];']
+    L = ['digraph ir {',
+         '  graph [bgcolor="white", fontname="Helvetica", nodesep=0.34, ranksep=0.40];',
+         f'  node  [shape=plaintext, fontname="SFMono-Regular,Menlo,monospace", fontsize=11];',
+         f'  edge  [fontname="Helvetica", fontsize=10, color="{MUTED}", '
+         f'fontcolor="{MUTED}", arrowsize=0.7];']
     cond = {}
     for b in order:
         d = blocks[b]
-        rows = []
-        for ins in d["insns"][:max_insn]:
-            note = next((t for rx, t in OBLIG if rx.search(ins)), None)
-            rows.append(rec(f'  {ins}' + (f'    ; {note}' if note else '')) + '\\l')
-        if len(d["insns"]) > max_insn:
-            rows.append(rec('  ...') + '\\l')
-        for f in sorted(facts.get(b, []), key=lambda f: (0 if '-1' in f else 1, f))[:MAX_FACTS]:
-            rows.append(rec(f'  ; proved: {f}') + '\\l')
-        hdr = rec(b + ':' + (('   ; ' + d["note"]) if d["note"] else '')) + '\\l'
         has_cond = any(i.startswith('br_cond') for i in d["insns"])
         cond[b] = has_cond
-        ports = '|{<s0>T|<s1>F}' if has_cond else ''
-        L.append(f'\t{b} [label="{{{hdr}|{"".join(rows)}{ports}}}"];')
+
+        note = f'  <font color="{MUTED}">; {esc(d["note"])}</font>' if d["note"] else ''
+        rows = [f'<tr><td align="left" bgcolor="{SUBTLE}" colspan="2">'
+                f'<font color="{FG}"><b>{b}</b></font>{note}</td></tr>']
+
+        for ins in d["insns"][:max_insn]:
+            why = next((t for rx, t in OBLIG if rx.search(ins)), None)
+            if why:
+                rows.append(f'<tr><td align="left" colspan="2">'
+                            f'<font color="{DANGER}"><b>{esc(ins)}</b></font>'
+                            f'<font color="{DANGER}">   ; {why}</font></td></tr>')
+            else:
+                rows.append(f'<tr><td align="left" colspan="2">'
+                            f'<font color="{FG}">{esc(ins)}</font></td></tr>')
+        if len(d["insns"]) > max_insn:
+            rows.append(f'<tr><td align="left" colspan="2"><font color="{MUTED}">...</font></td></tr>')
+
+        shown = sorted(facts.get(b, []), key=lambda f: (0 if '-1' in f else 1, f))[:MAX_FACTS]
+        for i, f in enumerate(shown):
+            lead = '; proved  ' if i == 0 else '&#160;' * 10
+            rows.append(f'<tr><td align="left" colspan="2">'
+                        f'<font color="{MUTED}">{lead}</font>'
+                        f'<font color="{ACCENT}"><b>{esc(f)}</b></font></td></tr>')
+
+        if has_cond:
+            rows.append(f'<tr><td port="s0" align="center" bgcolor="{SUBTLE}">'
+                        f'<font color="{MUTED}">true</font></td>'
+                        f'<td port="s1" align="center" bgcolor="{SUBTLE}">'
+                        f'<font color="{MUTED}">false</font></td></tr>')
+
+        L.append(f'  {b} [label=<<table border="1" cellborder="0" cellspacing="0" '
+                 f'cellpadding="4" color="{BORDER}" bgcolor="white">{"".join(rows)}</table>>];')
+
     for a, b, lab in edges:
         port = '' if not cond.get(a) else (':s0' if lab == 'true' else ':s1')
-        L.append(f'\t{a}{port} -> {b};')
+        L.append(f'  {a}{port} -> {b};')
     L.append('}')
     open(out, 'w').write("\n".join(L) + "\n")
 

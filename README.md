@@ -5,8 +5,7 @@
 Lain is a systems language in which memory safety, resource safety, integer safety and
 termination are **proven at compile time** and therefore **not checked at runtime**. A program
 that could read out of bounds, overflow, divide by zero, use a moved value or leak a resource
-does not compile. One that does compile carries none of the machinery that would detect those
-things while it runs.
+does not compile.
 
 ```
  your.ln ──▶ front end ──▶ Lain-IR ──▶ analyses ──▶ backend ──▶ executable
@@ -18,8 +17,8 @@ things while it runs.
                                        effects
 ```
 
-The proof engine is the product. It works on the IR, not on the syntax and not on the target,
-so a backend is a client of it. C99 is the backend that carries the whole corpus today.
+Every analysis runs on the IR. None of them looks at the source text or at the output target,
+so the same proofs hold whichever backend emits the code. Today that backend is C99.
 
 ## Guarantees
 
@@ -48,15 +47,15 @@ full, with the program that miscomputes, in [11. Limits](#11-limits).
 ## Contents
 
 ```
-  1  Proof Engine ................. one program, end to end
-  2  Linear Type System ........... exactly one consumer
-  3  Borrow Checking .............. exclusivity, and the vectorised loop it buys
-  4  Value Range Analysis ......... the relational domain, and the gather it proves
-  5  Termination Analysis ......... measures, inferred
-  6  Effect System ................ the row that licenses `const`
-  7  Data Layout .................. niche packing, enforced
-  8  Code Generation .............. what reaches the C compiler
-  9  Verification ................. how much of this holds
+  1  Proof Engine
+  2  Linear Type System
+  3  Borrow Checking
+  4  Value Range Analysis
+  5  Termination Analysis
+  6  Effect System
+  7  Data Layout
+  8  Code Generation
+  9  Verification
  10  Reference
  11  Limits
  12  Quick Start
@@ -66,7 +65,7 @@ full, with the program that miscomputes, in [11. Limits](#11-limits).
 
 # 1. Proof Engine
 
-The shortest complete showing of the engine: one program, from source to machine.
+One program, followed from source to machine code.
 
 ```lain
 func find(haystack u8[], target u8) usize {
@@ -79,21 +78,28 @@ func find(haystack u8[], target u8) usize {
 }
 ```
 
-**Lower to a typed SSA/CFG IR.** Every obligation gets a home. `elem_ptr` is where a bounds
-proof is owed, `add` is where an overflow proof is owed, the back edge to a loop header is where
-a termination measure is owed.
+**Step 1. Lower to a typed SSA/CFG IR.** Lowering attaches every safety obligation to a
+specific instruction. `elem_ptr` has to be shown in bounds, `add` has to be shown not to
+overflow, and the back edge into a loop header has to be shown to terminate.
 
 <p align="center">
   <img src="assets/figures/cfg_find_ir.png" alt="Lain-IR control-flow graph of find, with the octagon facts proved at each block" width="820">
 </p>
 
-<p align="center"><sub>The IR of <code>find</code>, drawn from the compiler's own dump. Each block carries the
-obligations it owes and the octagon facts proved there. In <code>bb2</code>,
-<code>; proved: %7 − %5 ≤ -1</code> sits beside the <code>elem_ptr</code> that owes the bounds proof.</sub></p>
+<p align="center"><sub>The IR of <code>find</code>, drawn from the compiler's own dump. Red marks what a block
+has to prove, blue what was proved there. In <code>bb2</code> the index <code>%7</code> is compared
+against the length <code>%5</code>, which is what settles the access on the line above.</sub></p>
 
-**Run an abstract interpreter to fixpoint over that graph.** The domain is *relational*: it
-holds not only each value's interval but the differences between values. This is the state it
-reaches at the access, printed by the compiler itself (`--dump-octagon`):
+**Step 2. Work out what the values can be.** The compiler walks the graph over and over until
+the answers stop changing. For each value it tracks two kinds of fact: the range that value can
+take, and how it compares to the other values.
+
+The second kind is the one that matters. Knowing `i` sits somewhere in `[0, 2^64)` proves
+nothing about an array access. Knowing `i` is smaller than the length proves everything, and the
+length is not a number the compiler knows either. Facts of that shape are what the octagon
+domain is for.
+
+`--dump-octagon` prints the facts the compiler settled on at the array access:
 
 ```
 ── octagon state: find ──
@@ -109,10 +115,11 @@ reaches at the access, printed by the compiler itself (`--dump-octagon`):
                                                        ; index − length ≤ −1
 ```
 
-`%7 − %5 ≤ -1` is the whole proof: the index is strictly below the length. Not "i is in
-[0, 255]", but a *relation* between two runtime values, neither of which is known.
+Read the last line. `%7` is the index and `%5` is the length, so `%7 − %5 ≤ -1` says the index
+is at least one below the length. Neither value is known at compile time. The comparison between
+them is, and that is enough to settle the bounds check before the program runs.
 
-**Discharge, and report.**
+**Step 3. Check each obligation against those facts.**
 
 ```
   find      index bounds   @ 4:13  PROVEN check-free
@@ -121,7 +128,7 @@ reaches at the access, printed by the compiler itself (`--dump-octagon`):
 3/3 proof obligations discharged check-free
 ```
 
-**Emit, carrying the facts the proof established.**
+**Step 4. Emit C, keeping what was proved.**
 
 ```c
 __attribute__((pure)) __attribute__((nonnull))
@@ -137,11 +144,11 @@ size_t bytes_find(size_t __len_haystack, const uint8_t * restrict haystack, uint
 }
 ```
 
-`pure`, `nonnull`, `restrict` and the length parameter are consequences of the proofs just
-discharged, not of anything written in the source.
+Nothing in the Lain source asked for `pure`, `nonnull` or `restrict`, and nothing asked for the
+length to be passed separately. Each one is a fact the analyses established.
 
-Change `<` to `<=`. The relation becomes `%7 − %5 ≤ 0`, the obligation fails, and there is no
-program:
+Change `<` to `<=` and the fact becomes `%7 − %5 ≤ 0`. The index can now equal the length, so
+the bounds obligation no longer holds and the program is rejected:
 
 ```
 [E085] bounds error: cannot prove index is within bounds for dynamic-length array
@@ -154,19 +161,20 @@ program:
        hint: use `for i in 0..arr.len`, a fixed-length type `[N]`, or a `p in arr` guard
 ```
 
-The five analyses below are not independent. The borrow checker's exclusivity is what lets the
-numeric domain keep a fact across a call. The effect row is what makes an annotation on the
-output safe to emit.
+The analyses in the chapters below depend on one another. Because the borrow checker guarantees
+a mutable borrow is exclusive, the numeric analysis can keep a fact about a value across a
+function call. Because the effect system knows a function cannot panic, the backend is allowed
+to mark it `const`.
 
 ---
 
 # 2. Linear Type System
 
-Linear logic (Girard, 1987) and linear types (Wadler, 1990) give the rule: a linear value is
-used **exactly once**. Rust is *affine*, where a value is used at most once, which is why
-leaking is safe there. Lain is linear, so zero uses is an error too.
+Linear types (Girard, 1987; Wadler, 1990) require a value to be used **exactly once**. Rust is
+*affine*: a value is used at most once, which is why leaking is safe there. Lain is linear, so
+using a value zero times is an error as well.
 
-An owned value has exactly one consumer, not two:
+Using it twice is rejected:
 
 ```lain
 type Buffer {
@@ -200,29 +208,29 @@ proc main() i32 {
 }
 ```
 
-Linearity is **per field**, so a struct is taken apart piecewise and the obligation follows each
-piece. It is **flow-sensitive**, so consuming on one branch and not the other is caught. And
-`defer` participates, so a deferred release counts as the consumer at every exit, including the
-exit taken by an error propagating out.
+The rule applies **per field**, so a struct can be taken apart a piece at a time and each piece
+is tracked separately. It is **flow-sensitive**, so consuming a value on one branch but not the
+other is caught. `defer` counts as the consumer, and it counts at every exit from the function,
+including the exit taken when an error propagates out.
 
-**Rust allows the second program.** `mem::forget` is safe, `Rc` cycles leak, and leaking sits
-explicitly outside Rust's guarantees.
+**Rust accepts the second program.** `mem::forget` is safe, `Rc` cycles leak, and Rust states
+that leaking is outside its guarantees.
 
 ---
 
 # 3. Borrow Checking
 
-Regions come from Cyclone (Jim et al., 2002), the ownership and loan discipline from Patina
-(Reed, 2015) and Oxide (Weiss et al., 2019), and the flow-sensitive refinement from non-lexical
-lifetimes. One mutable borrow, or many shared ones, never both, with a borrow ending at its last
-use rather than at the end of its scope.
+The rule is one mutable borrow or many shared ones, never both, and a borrow ends at its last
+use rather than at the end of its scope. The regions come from Cyclone (Jim et al., 2002), the
+loan discipline from Patina (Reed, 2015) and Oxide (Weiss et al., 2019), and the last-use
+refinement from non-lexical lifetimes.
 
-Two consequences beyond the safety property itself.
+Two things follow from that beyond the safety property.
 
 ## Lifetimes are inferred, not annotated
 
-The compiler lowers the whole module, so which parameter a returned reference borrows is read
-out of the *body*:
+The compiler lowers the whole module before checking it, so it can read out of the function
+body which parameter a returned reference borrows:
 
 ```lain
 type Data { x i32 }
@@ -251,15 +259,17 @@ help: consider introducing a named lifetime parameter
 2 | fn pick_x<'a>(a: &'a mut Data, b: &'a mut Data) -> &'a mut i32 { &mut a.x }
 ```
 
-The suggested fix is also *weaker* than the truth. It ties `a` and `b` to one lifetime, so `b`
-stays frozen for as long as the result lives. Lain reads the body, sees that the result borrows
-`a` only, and leaves `b` free.
+Its suggested fix is weaker than the truth. Tying `a` and `b` to one lifetime freezes `b` for as
+long as the result lives, even though the result never pointed into `b`. Lain reads the body,
+sees the result borrows `a`, and leaves `b` alone.
 
-## Exclusivity is `restrict`, and that is a vectorised loop
+## Exclusive borrows become `restrict`
 
-A mutable borrow is exclusive by proof, which is exactly what C's `restrict` asserts by fiat. So
-it is emitted. The same loop, compiled twice, once with the borrow proof handed to gcc and once
-with it stripped out, `gcc -O3 -march=x86-64-v3`:
+C's `restrict` is a promise that two pointers never refer to the same object, and the C compiler
+takes it on trust. In Lain that promise is the borrow checker's output, so it can be emitted.
+
+Below is the same loop compiled twice. The only difference is whether `restrict` was passed
+through to gcc (`-O3 -march=x86-64-v3`):
 
 ```lain
 proc vadd(out var i32[], a i32[out.len], b i32[out.len]) {
@@ -300,18 +310,20 @@ vadds_vadd:                               vadds_vadd:
                                             add   $0x1,%rax
 ```
 
-Both reach an AVX2 loop. Only one reaches it unconditionally. Without the proof gcc must test at
-runtime whether the three buffers overlap, and must keep a scalar copy of the loop to jump to
-when they do. **59 instructions against 81.**
+Both versions end up with an AVX2 loop. Only the left one goes straight into it. On the right
+gcc has to check at runtime whether the three buffers overlap, and has to keep a scalar copy of
+the loop to jump to when they do. **59 instructions against 81.**
 
 ---
 
 # 4. Value Range Analysis
 
-Abstract interpretation (Cousot and Cousot, 1977) over the CFG, in the octagon domain (Miné,
-2006), which holds constraints of the form `±x ±y ≤ c`, with threshold widening in the style of
-Astrée. The relational part is what reaches real code, because the fact that makes an access
-safe is almost never a constant.
+This is abstract interpretation (Cousot and Cousot, 1977) using the octagon domain (Miné, 2006),
+which stores facts of the form `±x ±y ≤ c`, widened against thresholds as in Astrée.
+
+Storing comparisons between values, rather than only ranges, is what makes it useful on real
+code. The fact that makes an array access safe is hardly ever a constant. It is usually a
+comparison with a length that is itself unknown.
 
 | the access | proven by |
 |:---|:---|
@@ -324,13 +336,16 @@ safe is almost never a constant.
 | 2D `a[i*w + j]` over `i32[h*w]` | per dimension: `i < h ∧ j < w` |
 | binary search `a[lo + (hi-lo)/2]` over `a i32[8]` | an inductive loop invariant recovers `0 ≤ lo < hi ≤ len`, which the loop's blanket widening had thrown away, then `mid < hi` |
 
-Every row is a program in the corpus, and acceptance *is* the proof. An index Lain cannot place
-in bounds is an `E085`, not a runtime check. The binary search row is the honest edge: it proves
-over a fixed-length array, and the same search over a runtime length is still rejected.
+Each row is a program in the test corpus. Since an index the compiler cannot place in bounds is
+an `E085` rather than a runtime check, a program compiling is what tells you the bound was
+proved.
 
-## Lengths can be part of the type
+The last row is the current edge: binary search proves over a fixed-length array, and the same
+search over a runtime length is still rejected.
 
-Because the analysis reasons about lengths:
+## Lengths can be part of a type
+
+A parameter's length can be written as an expression over the other parameters:
 
 ```lain
 proc vadd(var out i32[], a i32[out.len], b i32[out.len]) {
@@ -340,9 +355,11 @@ proc vadd(var out i32[], a i32[out.len], b i32[out.len]) {
 }
 ```
 
-`a` and `b` are arrays *of the same length as `out`*, discharged at every call site (`E087`) and
-free inside the body. Length expressions are arbitrary, so a matrix is a flat buffer with a
-shape, and `a[i*w + j]` is check-free with `h` and `w` unknown at compile time:
+`a` and `b` are arrays the same length as `out`. Callers have to satisfy that, and are told so
+with `E087` if they do not; inside the body it comes for free.
+
+The expression can be anything, so a matrix is just a flat buffer with a shape. Here `h` and `w`
+are unknown at compile time and `a[i*w + j]` still needs no check:
 
 ```lain
 proc msum(a i32[h * w], h usize, w usize) i32 {
@@ -360,12 +377,13 @@ proc msum(a i32[h * w], h usize, w usize) i32 {
 }
 ```
 
-C cannot state that precondition. Rust's const generics cannot take `h * w`.
+C has no way to state that precondition. Rust's const generics cannot take `h * w`.
 
-## Accesses carry a width
+## Wide accesses are checked at their real width
 
-A 16-byte SIMD load owes `i + 16 ≤ len` rather than `i < len`, and the same numeric domain
-discharges it, with no SIMD-specific reasoning anywhere in the prover:
+A 16-byte SIMD load has to satisfy `i + 16 ≤ len`, not `i < len`. That is still an ordinary
+comparison, so the same analysis handles it and there is no SIMD-specific reasoning anywhere in
+the compiler:
 
 ```lain
 proc scan(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
@@ -385,10 +403,10 @@ proc scan(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
 
 No `unsafe`. No runtime bounds check.
 
-## Arithmetic is the same discipline
+## Arithmetic works the same way
 
-`+` widens, so the sum of two `i32` cannot overflow, and the obligation attaches to the
-narrowing:
+`+` widens its result, so adding two `i32` values cannot overflow. What can fail is storing the
+result somewhere narrower, and that is where the check goes:
 
 ```lain
 func widened(a i32, b i32) i64 { return a + b }     // accepted
@@ -401,10 +419,11 @@ func narrowed(a i32, b i32) i32 {
 }
 ```
 
-`+%` wraps, `+|` saturates, `a +? b else 0` recovers, `unsafe { }` waives. The one thing you
-cannot express is *"I did not think about it."*
+When overflow is what you want, say which kind: `+%` wraps, `+|` saturates, `a +? b else 0`
+gives you a fallback value, and `unsafe { }` turns the check off. What you cannot do is leave the
+question unanswered.
 
-Divisors work the same way, and the diagnostic names every way out:
+Division is handled the same way, and the error lists the ways out:
 
 ```
 [E015] Error: division/modulo by a divisor whose range [-2147483648, 2147483647]
@@ -412,14 +431,13 @@ Divisors work the same way, and the diagnostic names every way out:
        the divide in an `unsafe` block.
 ```
 
-Both remedies are real signatures. `func divide(a i32, b i32 != 0) i32` carries the constraint
-in the type and discharges it at each call site, and a dominating `if b != 0` discharges it
-locally.
+Both of those are real. `func divide(a i32, b i32 != 0) i32` puts the constraint in the
+signature, where every caller has to satisfy it, and an `if b != 0` that dominates the division
+settles it locally.
 
-## A proof gcc cannot make
+## Where a C compiler cannot follow
 
-A data-dependent gather, where the index is not bounded by the loop but comes out of memory and
-is masked:
+In this loop the index does not come from the loop counter. It is read out of memory and masked:
 
 ```lain
 proc kernel(a i32[4096], b i32[4096], idx u32[4096]) i64 {
@@ -434,9 +452,10 @@ proc kernel(a i32[4096], b i32[4096], idx u32[4096]) i64 {
 }
 ```
 
-`idx[i] & 4095` is proven in `[0, 4095]` for **any** value of `idx[i]`, with no assumption about
-the data. So there is no check to emit, and gcc vectorises eight elements at a time. The `vpand`
-*is* the bounds proof, executed as one instruction on eight indices:
+Whatever `idx[i]` holds, `idx[i] & 4095` lands in `[0, 4095]`, and the array has 4096 elements.
+That holds for every possible input, so no check is emitted and gcc vectorises eight elements at
+a time. The mask instruction does double duty: it is both the computation and the reason the
+access is safe.
 
 ```asm
   vpand     (%r8,%rdx,1),%ymm2,%ymm0    ; mask 8 indices, the proof
@@ -449,8 +468,8 @@ the data. So there is no check to emit, and gcc vectorises eight elements at a t
   jne       <loop>
 ```
 
-The identical C under `-fsanitize=undefined,bounds`. Scalar, with pointer-overflow, null and
-alignment tests standing in front of every access:
+The same C compiled with `-fsanitize=undefined,bounds` stays scalar, with a pointer-overflow,
+null and alignment test in front of every access:
 
 ```asm
   mov    %r13,%r12
@@ -467,8 +486,8 @@ alignment tests standing in front of every access:
   jb     182                   ; and the same again for the gather
 ```
 
-**57 instructions against 111**, and the vectoriser is gone. End to end (`bench/thesis/`, same
-kernel both sides, `gcc -O3 -march=native`):
+**57 instructions against 111**, and no vectorisation. Measured end to end (`bench/thesis/`,
+same kernel on both sides, `gcc -O3 -march=native`):
 
 ```
   (A) proven safe, check-free (what Lain emits)    :   1468.1 ms
@@ -476,21 +495,22 @@ kernel both sides, `gcc -O3 -march=native`):
   --> 4.28x to learn at runtime what the compiler already knew
 ```
 
-This is the case gcc cannot rescue. Where a bounds check is *redundant*, as `a[i]` under
-`i < n` is, gcc removes it on its own and Lain's advantage is nil. Where the check is
-**data-dependent**, no optimiser can discharge it, and only a proof about the program's values
-will do.
+This only matters for some checks. A check gcc can see is redundant, like `a[i]` guarded by
+`i < n`, gcc removes on its own, and Lain gains nothing. A check that depends on runtime data
+cannot be removed by any optimiser, since the optimiser has no way to know what the data will
+be. Those are the ones a proof removes.
 
 ---
 
 # 5. Termination Analysis
 
-A `func` is **total**. Every loop and recursion needs a measure that provably decreases toward a
-bound, and the measure is **inferred**: `while i < n` gives `n − i`, `while i > 0` gives `i`,
-`while lo < hi` gives `hi − lo`.
+A `func` always finishes. Every loop and every recursive call needs some quantity that shrinks
+on each step and cannot shrink forever, and in most cases the compiler works out what that
+quantity is: `while i < n` gives `n − i`, `while i > 0` gives `i`, `while lo < hi` gives
+`hi − lo`.
 
-The step need not be constant, because "this decreases" is a fact the numeric domain already
-derives. Halving and shifting need nothing written at all:
+The step does not have to be by one. Whether a quantity shrinks is something the numeric
+analysis already knows, so halving and shifting need nothing written:
 
 ```lain
 func bits(x u32) u32 {
@@ -504,8 +524,8 @@ func bits(x u32) u32 {
 }
 ```
 
-Euclid's algorithm needs the measure named, but not proved. `b = a % b` lands in `[0, b-1]`, so
-the divisor is its own measure:
+Euclid's algorithm needs the quantity named, though not justified. Since `b = a % b` lands in
+`[0, b-1]`, the divisor shrinks on every iteration:
 
 ```lain
 func gcd(a0 usize, b0 usize) usize {
@@ -537,25 +557,25 @@ func collatz(n int) int {
 }
 ```
 
-A `proc` may loop forever. That is the difference between the two.
+A `proc` is allowed to loop forever. That is what separates the two.
 
 ---
 
 # 6. Effect System
 
-Each function's effects, drawn from `{Write, Diverge, Raises, IO, Alloc}`, are computed
-transitively over the call graph. Writing `effects …` declares an upper bound, and the compiler
-**checks** it rather than believing it:
+Every function gets a set of effects drawn from `{Write, Diverge, Raises, IO, Alloc}`, worked
+out by following the call graph. You can declare what a function is allowed to do with
+`effects …`, and the compiler checks the declaration instead of trusting it:
 
 ```
 [E130] Error: 'talk' declares `effects` that do not cover what its body does —
        it also has: io.
 ```
 
-## An empty row is `const`, and that is one call instead of two
+## An empty effect set means one call instead of two
 
-An empty row means no write, no I/O, no allocation and **no panic**, which is exactly what
-`__attribute__((const))` asserts:
+A function with no effects writes nothing, does no I/O, allocates nothing and cannot panic.
+That is exactly what `__attribute__((const))` claims in C:
 
 ```lain
 func mix(x i32, y i32) i32 {
@@ -571,8 +591,8 @@ func twice(p i32, q i32) i32 { return mix(p, q) +% mix(p, q) }
 __attribute__((const)) int32_t eff_mix(int32_t, int32_t);
 ```
 
-Compiled in a separate translation unit, so the annotation is the only thing gcc knows about
-`mix`:
+Compiling the two in separate translation units leaves gcc with nothing to go on but that
+annotation:
 
 ```asm
 ; effect row known                    ; effect row withheld
@@ -595,15 +615,15 @@ eff_twice:                            eff_twice:
                                         ret
 ```
 
-One call instead of two, and the callee-saved spills vanish with it. **6 instructions against
-13.** Across a translation-unit boundary gcc has nothing but the annotation to go on, and in C
-that annotation is a promise. Here it is a consequence of the effect row, which the compiler
-checked.
+Knowing the result depends only on the arguments, gcc calls `mix` once and doubles the answer.
+The register saving and restoring around the second call goes with it: **6 instructions against
+13**. Written by hand in C, that annotation is a claim nobody checks. Here it comes from the
+effect set.
 
-The row includes *panics* for a reason. `const` licenses gcc to delete a call whose result is
-unused, so annotating a function that can abort turns a program that aborted at `-O0` into one
-that does not at `-O3`. That is a miscompile this project shipped once, and the effect row is
-what fixed it.
+Panics are part of the set for a good reason. `const` lets gcc delete a call whose result is
+never used, so putting it on a function that can abort will turn a program that aborts at `-O0`
+into one that runs clean at `-O3`. This project shipped that miscompile once. Tracking panics as
+an effect is what fixed it.
 
 ---
 
@@ -627,10 +647,11 @@ static inline niche_OptionByte niche_OptionByte_None(void) {
 }
 ```
 
-Not a struct with a tag, but **the pointer itself**, with `None` as the null pattern. The
-compiler searches the payload for spare bit patterns and uses them as discriminants.
+There is no tag and no struct. The type is the pointer, and `None` is the null pointer. The
+compiler looks through the payload type for bit patterns it cannot otherwise hold, and uses
+those to tell the cases apart.
 
-The same machinery carries errors. `*u8 | NotFound | Denied` is still one pointer wide:
+Errors are laid out the same way. `*u8 | NotFound | Denied` is still one pointer wide:
 
 ```c
 typedef const uint8_t * __U_ptr_u8_NotFound_Denied;
@@ -643,9 +664,11 @@ static inline __U_ptr_u8_NotFound_Denied ..._Denied(void) {
 }
 ```
 
-Two unmapped low addresses stand in for the two error cases. No discriminant word, no heap, no
-unwinding. And for a union whose markers carry no payload, zero cost is not an optimisation the
-compiler attempts but a **requirement it enforces**:
+The two error cases become addresses 0 and 8, which no real object can occupy. No tag word, no
+heap allocation, no unwinding.
+
+When none of the error cases carries a payload, fitting in the spare patterns is not something
+the compiler tries and gives up on. It is required, and you are told when it cannot be done:
 
 ```
 [E064] Error: the union `i32 | ...` cannot be zero-cost — 'i32' has no spare
@@ -653,8 +676,8 @@ compiler attempts but a **requirement it enforces**:
        refinement like `u8 < 200`, a pointer, or a slice), or use fewer markers.
 ```
 
-Where a marker does carry a payload a tag byte is unavoidable and allowed, and the same
-principle then applies to plain enums, where the fallback is reported rather than taken quietly:
+When an error case does carry a payload a tag byte is unavoidable, and then it is allowed.
+Ordinary enums work the same way, and the compiler says so when it has to add one:
 
 ```
 [W120] Warning: enum 'OptI32' not fully zero-cost.
@@ -665,17 +688,17 @@ principle then applies to plain enums, where the fallback is reported rather tha
        larger sentinel space (i8: 255, i16: 65535, *T: 8192).
 ```
 
-A silent layout optimisation is a performance cliff you find with a profiler. This one reports
-itself.
+A layout optimisation that silently fails is something you discover later with a profiler. This
+one tells you at compile time.
 
 ---
 
 # 8. Code Generation
 
-## Annotations the compiler derives
+## What the C compiler is told
 
-A sliding-window sum over a runtime length, nine lines of Lain with no annotation written,
-reaches the C compiler like this:
+Here is a nine-line sliding-window sum over a runtime length. Its Lain source carries no
+annotations at all. This is the declaration it produces:
 
 ```c
 __attribute__((access(read_only, 1, 2)))
@@ -684,35 +707,35 @@ __attribute__((nonnull))
 int32_t window(const int32_t * restrict a, size_t n);
 ```
 
-Five facts about the function, none of them stated by the programmer:
+Five separate facts about the function, none of them written by the programmer:
 
 | C annotation | Derived from | What it is in C |
 |:---|:---|:---|
-| `restrict` | The borrow checker refused every program where two reference parameters could name the same object | An assertion. **UB if wrong** |
-| `access(read_write, n, m)` | The dependent length: parameter *n* is *m* elements long | An assertion |
-| `const T *` | The computed write footprint | Unchecked across the call |
-| `pure` / `const` | An empty effect row: no writes, no I/O, no allocation, **no panic** | An assertion. A wrong one lets the optimiser delete a call that had to happen |
-| `nonnull` | A borrow is not a nullable pointer | An assertion |
+| `restrict` | The borrow checker rejects any program where two reference parameters could name the same object | A claim the C compiler trusts. **UB if wrong** |
+| `access(read_write, n, m)` | The declared length: parameter *n* holds *m* elements | A claim the C compiler trusts |
+| `const T *` | The set of things the function writes, computed from its body | Not checked across the call |
+| `pure` / `const` | An empty effect set: no writes, no I/O, no allocation, **no panic** | A claim the C compiler trusts. If it is wrong, calls that had to happen get deleted |
+| `nonnull` | A borrow can never be null | A claim the C compiler trusts |
 
 ## Targets
 
-**C99 is the working backend.** It carries the entire corpus, and every artifact on this page
-came out of it. The output is portable, readable, and debuggable with ordinary tools.
+C99 is the backend that works. It compiles the whole corpus, and every listing on this page came
+out of it. The output is portable and readable, and ordinary debuggers understand it.
 
-**An LLVM seam exists and is a subset.** `--emit-llvm` lowers an integer subset of the IR and
-injects proven parameter ranges as `@llvm.assume`, so the optimiser can delete what the proof
-makes dead. That is the direction worth taking, because it reaches optimisations no transpiler
-to C can express. It is not a backend yet: outside its subset it emits `; unsupported`
-placeholders, and the C path remains the one that runs.
+There is also an LLVM path, and it is honestly a partial one. `--emit-llvm` lowers integer code
+and passes the proved ranges through as `@llvm.assume`, which lets LLVM drop work the proof
+shows is unreachable. That is where more of the value is, since it reaches optimisations that
+cannot be expressed by going through C at all. But it covers a subset: anything outside it comes
+out as an `; unsupported` comment, so C remains the path that runs.
 
-The proofs do not belong to either target. They are discharged on the IR, which is why a second
-backend is an engineering task rather than a redesign.
+Neither target owns the proofs. They are settled on the IR, which is why adding a backend is
+ordinary work rather than a redesign.
 
 ---
 
 # 9. Verification
 
-Not a benchmark, the whole test suite:
+These numbers cover the whole test suite, not a selected benchmark:
 
 ```
 corpus                             658 programs, pass and fail alike
@@ -720,20 +743,21 @@ bounds obligations proven          833 / 846  check-free
 programs with zero bounds checks   104 / 111
 ```
 
-Validated at three levels, all executable:
+Three things are checked, and all three are run rather than argued:
 
-- **The abstract domain**, by brute force against its concretisation. 40 000 randomised trials
-  per run confirm that closure, join, meet and widening over-approximate.
-- **The analyses**, by differential fuzzers that *execute what the compiler claimed to prove*
-  under ASan and UBSan. A program proven check-free that then reads out of bounds is a false
-  proof and is reported as one. Seventeen fuzzers, each verified to have teeth by reintroducing
-  the bug it was written for and confirming it fires.
-- **The corpus**, where every `_fail.ln` program names the diagnostic it must produce.
+- **The numeric domain.** Its operations are compared against brute force over small integer
+  boxes, 40 000 random trials per run, to confirm they never claim a value is outside a range it
+  can actually reach.
+- **The analyses.** Fuzzers generate programs, compile them, and then *run* what the compiler
+  claimed was safe under ASan and UBSan. A program proved check-free that reads out of bounds
+  when executed is a false proof, and is reported as one. There are seventeen of them, and each
+  was checked by putting back the bug it was written to catch and confirming it fires.
+- **The corpus.** Every program expected to fail names the diagnostic it has to produce.
 
-The middle end is being rebuilt around the relational interpreter shown in chapter 1. Under
-`--engine=ir` the new analyses already answer for ownership, borrows and definite assignment on
-the real user-facing path, at **402 programs accepted, 0 false positives, 241 rejections
-caught**. Both engines are gated against the corpus on every change.
+The middle end is being rebuilt around the analysis shown in chapter 1. With `--engine=ir` the
+new ownership, borrow and initialisation checks already run on the normal compile path: **402
+programs accepted, 0 false positives, 241 rejections caught**. Both engines run against the
+corpus on every change.
 
 ---
 
@@ -743,15 +767,15 @@ caught**. Both engines are gated against the corpus on every change.
 |:---|:---|
 | `LANGUAGE.md` | the full language reference |
 | `spec/` | the specification, with `spec_gate.sh` diffing Annex B against the compiler (54/54) |
-| `bench/thesis/` | the reproducible benchmark behind the 4.28x figure |
+| `bench/thesis/` | the benchmark behind the 4.28x figure, rerunnable |
 
 ---
 
 # 11. Limits
 
-- **The loop-carried accumulator is a live hole in the shipping compiler.** Its loop widening
-  clamps an accumulator to the type it is stored in, so the overflow check does not survive the
-  loop:
+- **Overflow of a running total inside a loop is not caught.** When the analysis widens a loop
+  it clamps the total to the type it is stored in, which makes the store fit by construction and
+  the check meaningless:
 
   ```lain
   func up8(n u8) u8 {
@@ -765,26 +789,27 @@ caught**. Both engines are gated against the corpus on every change.
   }
   ```
 
-  `up8(200)` compiles and prints **188**. The rebuilt engine rejects it (`--engine=ir-full`
-  gives `[E086] arithmetic is not provably free of overflow`), and closing this class on the
-  default path is the reason the middle end is being replaced. It is the largest known gap
-  between what this page claims and what the current binary enforces.
+  `up8(200)` compiles, and prints **188** instead of 19900. The rebuilt engine catches it
+  (`--engine=ir-full` reports `[E086] arithmetic is not provably free of overflow`), and getting
+  that onto the default path is the main reason the middle end is being replaced. This is the
+  largest gap between what this page claims and what the current binary enforces.
 
-- **Even once fixed, an unbounded accumulator is *rejected*, not checked.** Guard it, widen the
-  type, or use `+%`. This is the rule most likely to cost you.
+- **Once that is fixed, a running total with no bound will be rejected rather than checked.**
+  You will have to guard it, widen the type, or use `+%`. Expect this to be the rule that costs
+  you the most.
 
-- **No concurrency.** Single-threaded before 1.0, so "no data races" is structural rather than
-  an achievement. An interrupt-aware model is roadmapped.
+- **No concurrency.** Single-threaded before 1.0, so "no data races" is a consequence of that
+  rather than something achieved. An interrupt-aware model is planned.
 
-- **`unsafe` exists**, and inside it the numeric and bounds obligations are waived. Lexical and
-  greppable.
+- **`unsafe` turns off the numeric and bounds checks** inside it. It is a block, so it is easy
+  to find.
 
-- **Generics are monomorphised and duck-typed.** Errors surface at the instantiation, and there
-  are no trait bounds.
+- **Generics are monomorphised with no trait bounds.** Mistakes show up when a generic is
+  instantiated rather than where it is defined.
 
-- **The proof engine is not machine-checked.** Fuzz-validated and brute-force-validated against
-  the domain's concretisation. A mechanised soundness proof is future work, not a claim being
-  made today.
+- **None of this is machine-checked.** The analyses are fuzz-tested and the domain is validated
+  by brute force, but there is no mechanised soundness proof. That is future work, and not
+  something being claimed here.
 
 ---
 
@@ -796,8 +821,8 @@ gcc -std=c99 -Wall -Wextra -o lain src/main.c -I src     # build the compiler
 gcc out.c -o my_program -Dlibc_printf=printf -w          # C99   -> executable
 ```
 
-Run from the repository root when a program imports from `std/`, since module paths resolve
-relative to the source file's directory.
+Run from the repository root if a program imports from `std/`, since module paths are resolved
+relative to the source file.
 
 ```bash
 bash run_tests.sh        # the corpus
@@ -805,6 +830,6 @@ bash readme_gate.sh      # every example on this page, through the compiler
 bash spec_gate.sh        # every diagnostic the compiler emits, against the specification
 ```
 
-Every Lain example above is extracted and compiled by `readme_gate.sh`. A block claiming to be
-an error must fail, and every other must compile. Documentation nothing checks is how a README
-comes to describe a language that no longer exists.
+`readme_gate.sh` pulls every Lain example off this page and compiles it. Examples labelled with
+an error have to fail; the rest have to compile. It exists because the previous version of this
+file spent months describing a language the compiler had stopped implementing.
