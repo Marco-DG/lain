@@ -375,3 +375,6 @@ tests/match/niche/linear_adt_payload_mov_fail.ln NEW-ACCEPTS new-incomplete-line
 #   multi_var_param_fail -> multi_var_param_precise_pass.ln   new-more-precise
 #
 # --engine=legacy still reaches the old engine, and emit_gate's "old" side is pinned to it.
+
+# ── B1 (2026-09-08): the trip-count bound on a running total.
+tests/vra/overflow/accum_trip_bound_fail.ln  NEW-ACCEPTS  front-end-policy   # [E086] on a u8 total over 4096 iterations is a NUMERIC obligation, so only --engine=ir-full owns it; the pass this gate drives covers ownership/borrows/definite-assignment and correctly finds nothing. The test is pinned to ir-full and is caught there (verified). Same shape as the four numeric fail-tests adjudicated above.

@@ -1184,6 +1184,8 @@ static void vra_arith_range(IrOp op, int64_t alo,int64_t ahi, int64_t blo,int64_
 // Confined to a value that is genuinely WIDER than its target, which is what keeps it free of
 // noise (a same-type store fits by construction) and away from the 64-bit edges where a type
 // interval no longer fits in the domain's own int64.
+static bool vra_accum_fits(Vra *V, Octagon *W, IrValue *val, int64_t tlo, int64_t thi); // B1
+
 static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
                              IrInstr *at, int64_t line, int64_t col) {
     if (at && at->unchecked) return;                        // inside `unsafe`
@@ -1196,6 +1198,9 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
     VraCheck c; memset(&c,0,sizeof c);
     c.kind = VRA_OVERFLOW; c.at = at; c.line = line; c.col = col;
     c.ok = (vlo >= tlo) && (vhi <= thi);
+    // B1: the domain cannot bound a running total, because the bound is a PRODUCT of the trip
+    // count and the step. Derive it outside the domain and hand back the interval.
+    if (!c.ok) c.ok = vra_accum_fits(V, W, val, tlo, thi);
     vra_add_check(V, c);
 }
 
@@ -1257,6 +1262,9 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
                     && vra_factor_shape(V, W, bse, ins->result->id)) c.ok = true;
         }
     }
+    // B1: a 64-bit accumulator has no wider type to widen INTO, so its obligation lands
+    // here rather than at a narrowing. Same product bound, same place to ask for it.
+    if (!c.ok && ins->result) c.ok = vra_accum_fits(V, W, ins->result, tlo, thi);
     vra_add_check(V, c);
 }
 // Division/remainder: the divisor must be provably non-zero.
@@ -1523,6 +1531,142 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         if (gt && step<0) return true;
     }
     return false;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────────────────
+   B1 — LOOP SUMMARISATION: bounding a running total by TRIP COUNT x STEP
+
+   `s = s + a[i]` inside a loop is the commonest rejection in the language and the largest
+   category the A1 survey measured (21 of 129 unproven obligations). The fact needed is
+
+       s  ∈  [ s0 + T*δlo , s0 + T*δhi ]
+
+   with T the trip count and δ the per-iteration addend. That is a PRODUCT of two quantities,
+   so no relational domain can hold it: octagons carry ±x±y ≤ c, polyhedra carry linear
+   combinations, and T·δ is neither. It has to be derived OUTSIDE the domain and handed back
+   as an interval, which is what this does.
+
+   Deliberately a check-time refinement rather than a state injection: it can only turn an
+   obligation from unproven to proven, so it cannot make the fixpoint less sound, and it costs
+   nothing on programs that do not need it.
+
+   It pays only when T is bounded. `while i < a.len` over a runtime slice gives T ≤ 2^64 and
+   the sum really can overflow — refusing is right. Over `a i32[4096]` it gives T ≤ 4096, and
+   4096 × 255 fits an i32 with room to spare.
+   ───────────────────────────────────────────────────────────────────────────────────────── */
+static bool vra_mul_ovf(int64_t a, int64_t b, int64_t *out) {
+    if (a==0 || b==0) { *out = 0; return false; }
+    int64_t r = a * b;
+    if (r / b != a) return true;                      // wrapped
+    *out = r; return false;
+}
+
+// The trip count of the natural loop headed at H, when the induction variable rises by a
+// positive constant toward a bounded limit. Mirrors vra_loop_terminates' recovery of
+// (cell, bound, step): that function proves the loop ENDS, this asks how late.
+static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
+    if (H->term.kind != IR_TERM_BR_COND || !H->term.cond) return false;
+    IrInstr *ic = V->def[H->term.cond->id];
+    if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
+    IrCmp pr = ic->aux.cmp;
+    if (!(pr==IR_CMP_SLT||pr==IR_CMP_ULT||pr==IR_CMP_SLE||pr==IR_CMP_ULE)) return false;
+    IrValue *ivv = ic->operands[0], *bnd = ic->operands[1];
+    IrInstr *ivd = V->def[ivv->id];
+    if (!ivd || ivd->op!=IR_LOAD || ivd->n_operands<1) return false;
+    int cell = ivd->operands[0]->id;
+    if (!vra_is_scalar_cell(V,cell)) return false;
+    if (!vra_loop_invariant(V,bnd,H->id)) return false;
+
+    int64_t blo,bhi; vra_range(V,W,bnd,&blo,&bhi); (void)blo;
+    if (bhi >= INT64_MAX/2) return false;             // an unbounded limit bounds nothing
+    int64_t ilo,ihi; bool hl,hh; vra_interval(V,W,cell,&ilo,&hl,&ihi,&hh); (void)ihi; (void)hh;
+    if (!hl) ilo = 0;
+
+    int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+    char *body = malloc((size_t)nbb); if (!body) return false;
+    vra_natural_loop(V, H, nbb, body);
+    int64_t step = 0; int nupd = 0;
+    for (IrBlock *b=V->f->blocks; b; b=b->next) {
+        if (!(b->id>=0 && b->id<nbb && body[b->id])) continue;
+        for (IrInstr *st=b->instrs; st; st=st->next) {
+            if (st->op!=IR_STORE || st->n_operands<2 || st->operands[0]->id!=cell) continue;
+            IrInstr *vd=V->def[st->operands[1]->id];
+            if (vd && vd->op==IR_ADD && vd->n_operands>=2) {
+                IrInstr *ld=V->def[vd->operands[0]->id]; int k=vd->operands[1]->id;
+                if (ld && ld->op==IR_LOAD && ld->operands[0]->id==cell &&
+                    k>=0 && k<V->nvar && V->cknown[k] && V->cval[k] > 0) { step=V->cval[k]; nupd++; }
+                else nupd += 2;                        // an update we cannot read: give up
+            } else nupd += 2;
+        }
+    }
+    free(body);
+    if (nupd != 1 || step <= 0) return false;
+    if (bhi < ilo) { *T = 0; return true; }
+    *T = (bhi - ilo + step - 1) / step;                // ceil((limit − start) / step)
+    return *T >= 0;
+}
+
+// Is `val` a running total in a loop, and what does one iteration add?
+static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
+                            int64_t *s0lo, int64_t *s0hi, int64_t *dlo, int64_t *dhi) {
+    if (!val || val->id<0 || val->id>=V->nvar) return false;
+    IrInstr *add = V->def[val->id];
+    if (!add || (add->op!=IR_ADD && add->op!=IR_SUB) || add->n_operands<2) return false;
+    IrInstr *ld = V->def[add->operands[0]->id];
+    if (!ld || ld->op!=IR_LOAD || ld->n_operands<1) return false;
+    int cell = ld->operands[0]->id;
+
+    int blk = V->defblk[val->id]; if (blk < 0) return false;
+    int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+    char *body = malloc((size_t)nbb); if (!body) return false;
+    // `is_loop_header` is set by the back-edge pass; anything else is not a loop and
+    // vra_natural_loop over it means nothing.
+    IrBlock *found = NULL;
+    for (IrBlock *h=V->f->blocks; h && !found; h=h->next) {
+        if (!h->is_loop_header) continue;
+        vra_natural_loop(V, h, nbb, body);
+        if (blk>=0 && blk<nbb && body[blk]) found = h;
+    }
+    free(body);
+    if (!found) return false;
+    *H = found;
+
+    // The addend's range, tightened through CASTS. `(a[i] as i32)` on a u8 element is
+    // [0,255], but the octagon reports the range of the i32 RESULT, whose type floor is
+    // INT32_MIN — and a delta of [-2^31, 255] over 4096 iterations bounds nothing. Every
+    // value on a widening cast chain holds the same number, so intersecting with each
+    // source's own type range is always sound and is where the real bound lives.
+    IrValue *addend = add->operands[1];
+    vra_range(V, W, addend, dlo, dhi);
+    for (IrValue *src = addend; src && src->id>=0 && src->id<V->nvar; ) {
+        IrInstr *d = V->def[src->id];
+        if (!d || d->op != IR_CAST || d->n_operands < 1) break;
+        src = d->operands[0];
+        if (!src || !src->type || src->type->kind != IRT_INT) break;
+        int64_t slo, shi;
+        if (!irtype_int_range(src->type, &slo, &shi)) break;
+        if (slo > *dlo) *dlo = slo;
+        if (shi < *dhi) *dhi = shi;
+    }
+    if (add->op==IR_SUB) { int64_t t=*dlo; *dlo = -*dhi; *dhi = -t; }
+    int64_t clo,chi; bool hl,hh; vra_interval(V,W,cell,&clo,&hl,&chi,&hh);
+    *s0lo = hl ? clo : 0; *s0hi = hh ? chi : 0;
+    return true;
+}
+
+static bool vra_accum_fits(Vra *V, Octagon *W, IrValue *val, int64_t tlo, int64_t thi) {
+    IrBlock *H = NULL; int64_t s0lo, s0hi, dlo, dhi, T;
+    if (!vra_accum_delta(V, W, val, &H, &s0lo, &s0hi, &dlo, &dhi)) return false;
+    if (!vra_loop_trips(V, W, H, &T)) return false;
+    int64_t alo, ahi;
+    if (vra_mul_ovf(T, dlo, &alo)) return false;
+    if (vra_mul_ovf(T, dhi, &ahi)) return false;
+    if (alo > 0) alo = 0;                              // the PARTIAL sum, after 0..T iterations
+    if (ahi < 0) ahi = 0;
+    int64_t lo, hi;
+    if (__builtin_add_overflow(s0lo, alo, &lo)) return false;
+    if (__builtin_add_overflow(s0hi, ahi, &hi)) return false;
+    return lo >= tlo && hi <= thi;
 }
 
 // ── the fixpoint over the CFG ────────────────────────────────────────────────

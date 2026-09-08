@@ -1,0 +1,25 @@
+// LAINFLAGS: --engine=ir-full
+// B1 — a running total bounded by TRIP COUNT x STEP.
+//
+// `s = s + a[i]` needs `s ∈ [s0 + T*δlo, s0 + T*δhi]`, which is a PRODUCT of the trip count
+// and the addend. No relational domain can hold that: octagons carry ±x±y ≤ c and polyhedra
+// carry linear combinations, and T·δ is neither. It is derived outside the domain and handed
+// back as an interval.
+//
+// Here T = 4096 from `for i in 0..4096`, and δ ∈ [0,255] because the element is a u8 — read
+// through the cast, since the octagon reports the i32 RESULT whose type floor is INT32_MIN.
+// 4096 * 255 = 1044480, comfortably inside i32.
+//
+// Locked from the other side by accum_trip_bound_fail.ln.
+func total(a u8[4096]) i32 {
+    var s i32 = 0
+    for i in 0..4096 {
+        s = s + (a[i] as i32)
+    }
+    return s
+}
+proc main() i32 {
+    var buf u8[4096] = [0 for x in 0..4096]
+    if total(buf) == 0 { return 0 }
+    return 1
+}

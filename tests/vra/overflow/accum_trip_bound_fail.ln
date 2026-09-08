@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// LAINFLAGS: --engine=ir-full
+// The companion to accum_trip_bound_pass.ln, and the reason that one is safe to accept.
+//
+// Same loop, same trip count, but the total is a u8. 4096 * 255 does not fit a u8, so the
+// bound the trip count gives is exactly what REFUSES this. A summarisation that proved both
+// would not be a proof of anything.
+func total(a u8[4096]) u8 {
+    var s u8 = 0
+    for i in 0..4096 {
+        s = s + a[i]
+    }
+    return s
+}
+proc main() i32 { return 0 }
