@@ -27,28 +27,38 @@ so the same proofs hold whichever backend emits the code.
 
 ## Guarantees
 
-| | C / C++ | C + sanitizers | Rust | **Lain** |
-|:---|:---|:---|:---|:---|
-| Out-of-bounds read/write | UB | Caught when a run hits it | Panics at runtime | **Rejected at compile time** |
-| Integer overflow | UB (signed) | Caught when a run hits it | Panics in debug, wraps in release | **Rejected at compile time** † |
-| Division by zero | UB | Caught when a run hits it | Panics | **Rejected at compile time** |
-| Use after free / move | UB | Caught when a run hits it | Prevented | **Prevented** |
-| Double free | UB | Caught when a run hits it | Prevented | **Prevented** |
-| Resource leak | Silent | Memory leaks listed at exit | **Allowed** (`mem::forget` is safe) | **Rejected** |
-| Dangling reference | UB | Caught when a run hits it | Prevented | **Prevented** |
-| Uninitialised read | UB | Caught when a run hits it | Prevented | **Prevented** |
-| Non-termination | Allowed | Not detected | Allowed | **Rejected in `func`** |
-| Data races | UB | Caught when a run hits it | Prevented | Single-threaded before 1.0 |
-| Array length in the type | No | No | Const generics only | **`a i32[out.len]`, `a i32[h*w]`** |
-| Aliasing told to the optimiser | manual `restrict`, UB if wrong | No help | `noalias` from `&mut` | **Derived from the borrow proof** |
-| Sum-type layout | manual | No help | Niche packing, silent | **Niche packing, and it warns when it fails** |
+| | C / C++ | Rust | **Lain** |
+|:---|:---|:---|:---|
+| Out-of-bounds read/write | UB | Panics at runtime | **Rejected at compile time** |
+| Integer overflow | UB (signed) | Panics in debug, wraps in release | **Rejected at compile time** † |
+| Division by zero | UB | Panics | **Rejected at compile time** |
+| Use after free / move | UB | Prevented | **Prevented** |
+| Double free | UB | Prevented | **Prevented** |
+| Resource leak | Silent | **Allowed** (`mem::forget` is safe) | **Rejected** |
+| Dangling reference | UB | Prevented | **Prevented** |
+| Uninitialised read | UB | Prevented | **Prevented** |
+| Non-termination | Allowed | Allowed | **Rejected in `func`** |
+| Data races | UB | Prevented | Single-threaded before 1.0 |
+| Array length in the type | No | Const generics only | **`a i32[out.len]`, `a i32[h*w]`** |
+| Aliasing told to the optimiser | manual `restrict`, UB if wrong | `noalias` from `&mut` | **Derived from the borrow proof** |
+| Sum-type layout | manual | Niche packing, silent | **Niche packing, and it warns when it fails** |
 
-Sanitizers are a testing tool. They find a bug on the paths a run happens to take, say nothing
-about the paths it does not, and are too slow to ship: the gather in chapter 4 costs 4.28x under
-`-fsanitize=undefined,bounds`. A proof covers every path and costs nothing at runtime.
+Against the C tooling, six minimal programs, one per error class, put through each tool in turn:
+
+| Error class | `gcc -Wall` | `gcc -fanalyzer` | `clang -Wall` | ASan + UBSan | Valgrind | **Lain** |
+|:---|:---|:---|:---|:---|:---|:---|
+| Use after free | warning | warning | missed | at runtime | at runtime | **compile time** |
+| Resource leak | missed | missed | missed | missed | missed | **compile time** |
+| Double free | warning | warning | missed | at runtime | at runtime | **compile time** |
+| Aliasing violation | missed | missed | missed | missed | missed | **compile time** |
+| Buffer overflow | missed | warning | warning | at runtime | missed | **compile time** |
+| Division by zero | missed | missed | missed | at runtime | missed | **compile time** |
+
+A warning does not stop the build, and the two runtime columns only report a bug on a run that
+actually reaches it. Measured with gcc 13.3, clang 18.1 and valgrind 3.22.
 
 † One class escapes the shipping binary today, the loop-carried accumulator. It is stated in
-full, with the program that miscomputes, in [11. Limits](#11-limits).
+full, with the program that miscomputes, in [9. Limits](#9-limits).
 
 ## Contents
 
@@ -61,10 +71,8 @@ full, with the program that miscomputes, in [11. Limits](#11-limits).
   6  Effect System
   7  Data Layout
   8  Code Generation
-  9  Verification
- 10  Reference
- 11  Limits
- 12  Quick Start
+  9  Limits
+ 10  Quick Start
 ```
 
 ---
@@ -234,10 +242,10 @@ refinement from non-lexical lifetimes.
 
 Two things follow from that beyond the safety property.
 
-## Lifetimes are inferred, not annotated
+## No lifetime annotations
 
-The compiler lowers the whole module before checking it, so it can read out of the function
-body which parameter a returned reference borrows:
+Lain has no lifetime syntax. A function returning a borrow is written without one, and the
+compiler works out the relationship itself:
 
 ```lain
 type Data { x i32 }
@@ -247,28 +255,24 @@ func pick_x(var a Data, var b Data) var i32 { return var a.x }
 proc main() i32 {
     var p = Data(1)
     var q = Data(2)
-    var r = pick_x(var p, var q)     // r borrows p, inferred, not written
+    var r = pick_x(var p, var q)
     r = 7
-    return q.x                       // q is still free
+    return q.x
 }
 ```
 
-Rust rejects that signature outright, because it checks each function against its signature
-alone:
+Rust rejects the same signature until a lifetime is written on it:
 
 ```
 error[E0106]: missing lifetime specifier
 2 | fn pick_x(a: &mut Data, b: &mut Data) -> &mut i32 { &mut a.x }
   |              ---------     ---------     ^ expected named lifetime parameter
-  = help: this function's return type contains a borrowed value, but the signature
-          does not say whether it is borrowed from `a` or `b`
-help: consider introducing a named lifetime parameter
-2 | fn pick_x<'a>(a: &'a mut Data, b: &'a mut Data) -> &'a mut i32 { &mut a.x }
 ```
 
-Its suggested fix is weaker than the truth. Tying `a` and `b` to one lifetime freezes `b` for as
-long as the result lives, even though the result never pointed into `b`. Lain reads the body,
-sees the result borrows `a`, and leaves `b` alone.
+What Lain infers is the conservative relationship: the returned borrow is treated as borrowing
+from every mutable parameter, so `b` counts as borrowed even though the result came from `a`.
+Rust, once you write `<'a, 'b>` by hand, is more precise than that. See
+[9. Limits](#9-limits).
 
 ## Exclusive borrows become `restrict`
 
@@ -622,14 +626,18 @@ eff_twice:                            eff_twice:
                                         ret
 ```
 
-Knowing the result depends only on the arguments, gcc calls `mix` once and doubles the answer.
-The register saving and restoring around the second call goes with it: **6 instructions against
-13**. Written by hand in C, that annotation is a claim nobody checks. Here it comes from the
-effect set.
+On the left gcc makes one call and doubles the result with `add %eax,%eax`, because `const` told
+it a second call with the same arguments would return the same value. On the right it has to
+make both calls, and since a call is free to overwrite registers it must also save `p` and `q`
+before the first one and restore them afterwards, which is what the `push` and `pop` pairs are
+doing. **6 instructions against 13.**
 
-Panics are part of the set for a good reason. `const` lets gcc delete a call whose result is
-never used, so putting it on a function that can abort will turn a program that aborts at `-O0`
-into one that runs clean at `-O3`. This project shipped that miscompile once. Tracking panics as
+Written by hand in C, `const` is a claim nobody verifies. Here it is the effect set, which the
+compiler worked out.
+
+Panics are tracked for a specific reason. `const` also lets gcc delete a call whose result is
+never used, so putting it on a function that can abort turns a program that aborts at `-O0` into
+one that runs clean at `-O3`. This project shipped that miscompile once, and treating a panic as
 an effect is what fixed it.
 
 ---
@@ -740,45 +748,7 @@ ordinary work rather than a redesign.
 
 ---
 
-# 9. Verification
-
-These numbers cover the whole test suite, not a selected benchmark:
-
-```
-corpus                             658 programs, pass and fail alike
-bounds obligations proven          833 / 846  check-free
-programs with zero bounds checks   104 / 111
-```
-
-Three things are checked, and all three are run rather than argued:
-
-- **The numeric domain.** Its operations are compared against brute force over small integer
-  boxes, 40 000 random trials per run, to confirm they never claim a value is outside a range it
-  can actually reach.
-- **The analyses.** Fuzzers generate programs, compile them, and then *run* what the compiler
-  claimed was safe under ASan and UBSan. A program proved check-free that reads out of bounds
-  when executed is a false proof, and is reported as one. There are seventeen of them, and each
-  was checked by putting back the bug it was written to catch and confirming it fires.
-- **The corpus.** Every program expected to fail names the diagnostic it has to produce.
-
-The middle end is being rebuilt around the analysis shown in chapter 1. With `--engine=ir` the
-new ownership, borrow and initialisation checks already run on the normal compile path: **402
-programs accepted, 0 false positives, 241 rejections caught**. Both engines run against the
-corpus on every change.
-
----
-
-# 10. Reference
-
-| | |
-|:---|:---|
-| `LANGUAGE.md` | the full language reference |
-| `spec/` | the specification, with `spec_gate.sh` diffing Annex B against the compiler (54/54) |
-| `bench/thesis/` | the benchmark behind the 4.28x figure, rerunnable |
-
----
-
-# 11. Limits
+# 9. Limits
 
 - **Overflow of a running total inside a loop is not caught.** When the analysis widens a loop
   it clamps the total to the type it is stored in, which makes the store fit by construction and
@@ -814,13 +784,19 @@ corpus on every change.
 - **Generics are monomorphised with no trait bounds.** Mistakes show up when a generic is
   instantiated rather than where it is defined.
 
+- **A returned borrow is attributed to every mutable parameter, not just the one it came from.**
+  `func pick_x(var a Data, var b Data) var i32` returning a borrow of `a` leaves `b` counted as
+  borrowed as well, so reading `b` while the result is still live is an `E004`. Rust accepts
+  that program once `<'a, 'b>` is written out by hand. Lain has no lifetime syntax to say it
+  with, and infers the conservative answer instead.
+
 - **None of this is machine-checked.** The analyses are fuzz-tested and the domain is validated
   by brute force, but there is no mechanised soundness proof. That is future work, and not
   something being claimed here.
 
 ---
 
-# 12. Quick Start
+# 10. Quick Start
 
 ```bash
 gcc -std=c99 -Wall -Wextra -o lain src/main.c -I src     # build the compiler
