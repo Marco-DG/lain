@@ -31,7 +31,7 @@ LN
 "$WORK/vradrv" "$WORK/bytes.ln" --dump-octagon 2> "$WORK/oct.txt" >/dev/null
 python3 "$HERE/mkcfg_ir.py" "$WORK/ir.txt" "$WORK/oct.txt" find "$WORK/ir.dot" --facts '%4,%5,%7'
 dot -Tpng -Gdpi=110 "$WORK/ir.dot" -o "$WORK/ir.png"
-convert "$WORK/ir.png" -bordercolor white -border 22 "$HERE/cfg_find_ir.png"
+convert "$WORK/ir.png" -background none -bordercolor none -border 22 PNG32:"$HERE/cfg_find_ir.png"
 
 echo
 echo "figure written to assets/figures/:"

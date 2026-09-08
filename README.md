@@ -7,10 +7,17 @@ termination are **proven at compile time** and therefore **not checked at runtim
 that could read out of bounds, overflow, divide by zero, use a moved value or leak a resource
 does not compile.
 
+Rejecting programs is only half of what the proofs are for. Each one is also a fact about how
+the code behaves, and facts are what an optimiser is short of. Exclusive access becomes
+`restrict`. A function with no effects becomes `const`. A parameter's declared length becomes
+`access`. A C programmer can write every one of those by hand, and nothing checks them when they
+do. So the generated code lands where careful C lands, and ahead of any build that is still
+paying for its checks at runtime: on the gather in chapter 4 that difference is 4.28x.
+
 ```
  your.ln ──▶ front end ──▶ Lain-IR ──▶ analyses ──▶ backend ──▶ executable
-                          typed SSA    ownership     C99 today
-                           and CFG     borrows       LLVM seam
+                          typed SSA    ownership     C99
+                           and CFG     borrows       LLVM
                                        bounds
                                        overflow
                                        termination
@@ -18,7 +25,7 @@ does not compile.
 ```
 
 Every analysis runs on the IR. None of them looks at the source text or at the output target,
-so the same proofs hold whichever backend emits the code. Today that backend is C99.
+so the same proofs hold whichever backend emits the code.
 
 ## Guarantees
 
@@ -37,9 +44,6 @@ so the same proofs hold whichever backend emits the code. Today that backend is 
 | Aliasing told to the optimiser | manual `restrict`, UB if wrong | same | `noalias` from `&mut` | **Derived from the borrow proof** |
 | Sum-type layout | manual | manual | Niche packing, silent | **Niche packing, and it warns when it fails** |
 | Data races | UB | UB | Prevented | Single-threaded before 1.0 |
-
-Rust has a concurrency story and an ecosystem. Everything else in that column is a design
-difference, not a maturity gap.
 
 † One class escapes the shipping binary today, the loop-carried accumulator. It is stated in
 full, with the program that miscomputes, in [11. Limits](#11-limits).
@@ -65,7 +69,9 @@ full, with the program that miscomputes, in [11. Limits](#11-limits).
 
 # 1. Proof Engine
 
-One program, followed from source to machine code.
+The program below searches a slice of bytes for a value. The slice length is not known when the
+program is compiled, so every access into it has to be justified against a number that only
+exists at runtime.
 
 ```lain
 func find(haystack u8[], target u8) usize {
@@ -90,16 +96,19 @@ overflow, and the back edge into a loop header has to be shown to terminate.
 has to prove, blue what was proved there. In <code>bb2</code> the index <code>%7</code> is compared
 against the length <code>%5</code>, which is what settles the access on the line above.</sub></p>
 
-**Step 2. Work out what the values can be.** The compiler walks the graph over and over until
-the answers stop changing. For each value it tracks two kinds of fact: the range that value can
-take, and how it compares to the other values.
+**Step 2. Work out what the values can be.** The compiler attaches a set of facts to each value
+and pushes those facts along the edges of the graph. A loop has to be walked more than once,
+because what is true entering the header depends on what the body did last time round; it keeps
+walking until another pass adds nothing new. For a loop, that means the facts it ends up with
+hold on every iteration, not just the first.
 
-The second kind is the one that matters. Knowing `i` sits somewhere in `[0, 2^64)` proves
-nothing about an array access. Knowing `i` is smaller than the length proves everything, and the
-length is not a number the compiler knows either. Facts of that shape are what the octagon
-domain is for.
+Two kinds of fact are recorded. One is the range a single value can take. The other is how two
+values compare to each other, which for an array access is usually the one that decides it.
+`i ∈ [0, 2^64)` tells you nothing useful, and no range for the length helps either when the
+length is only known at runtime. `i` being smaller than that length settles the access whatever
+the two turn out to be.
 
-`--dump-octagon` prints the facts the compiler settled on at the array access:
+`--dump-octagon` prints what the compiler settled on at the array access:
 
 ```
 ── octagon state: find ──

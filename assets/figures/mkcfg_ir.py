@@ -60,7 +60,7 @@ OBLIG = [(re.compile(r'\belem_ptr\b'), "must be in bounds"),
 # GitHub light palette
 FG      = "#1f2328"   # default text
 MUTED   = "#59636e"   # comments, edges
-BORDER  = "#d1d9e0"   # box borders
+BORDER  = "#8c959f"   # box borders
 SUBTLE  = "#f6f8fa"   # header band
 DANGER  = "#cf222e"   # obligations owed
 ACCENT  = "#0969da"   # facts proved
@@ -70,7 +70,7 @@ def esc(t):
 
 def emit(blocks, order, edges, facts, out, func, max_insn):
     L = ['digraph ir {',
-         '  graph [bgcolor="white", fontname="Helvetica", nodesep=0.34, ranksep=0.40];',
+         '  graph [bgcolor="transparent", fontname="Helvetica", nodesep=0.36, ranksep=0.42];',
          f'  node  [shape=plaintext, fontname="SFMono-Regular,Menlo,monospace", fontsize=11];',
          f'  edge  [fontname="Helvetica", fontsize=10, color="{MUTED}", '
          f'fontcolor="{MUTED}", arrowsize=0.7];']
@@ -88,7 +88,7 @@ def emit(blocks, order, edges, facts, out, func, max_insn):
             why = next((t for rx, t in OBLIG if rx.search(ins)), None)
             if why:
                 rows.append(f'<tr><td align="left" colspan="2">'
-                            f'<font color="{DANGER}"><b>{esc(ins)}</b></font>'
+                            f'<font color="{DANGER}">{esc(ins)}</font>'
                             f'<font color="{DANGER}">   ; {why}</font></td></tr>')
             else:
                 rows.append(f'<tr><td align="left" colspan="2">'
@@ -101,7 +101,7 @@ def emit(blocks, order, edges, facts, out, func, max_insn):
             lead = '; proved  ' if i == 0 else '&#160;' * 10
             rows.append(f'<tr><td align="left" colspan="2">'
                         f'<font color="{MUTED}">{lead}</font>'
-                        f'<font color="{ACCENT}"><b>{esc(f)}</b></font></td></tr>')
+                        f'<font color="{ACCENT}">{esc(f)}</font></td></tr>')
 
         if has_cond:
             rows.append(f'<tr><td port="s0" align="center" bgcolor="{SUBTLE}">'
@@ -109,8 +109,8 @@ def emit(blocks, order, edges, facts, out, func, max_insn):
                         f'<td port="s1" align="center" bgcolor="{SUBTLE}">'
                         f'<font color="{MUTED}">false</font></td></tr>')
 
-        L.append(f'  {b} [label=<<table border="1" cellborder="0" cellspacing="0" '
-                 f'cellpadding="4" color="{BORDER}" bgcolor="white">{"".join(rows)}</table>>];')
+        L.append(f'  {b} [label=<<table border="2" cellborder="0" cellspacing="0" '
+                 f'cellpadding="5" color="{BORDER}" bgcolor="white">{"".join(rows)}</table>>];')
 
     for a, b, lab in edges:
         port = '' if not cond.get(a) else (':s0' if lab == 'true' else ':s1')
