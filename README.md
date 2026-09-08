@@ -43,14 +43,15 @@ so the same proofs hold whichever backend emits the code.
 | Aliasing told to the optimiser | manual `restrict`, UB if wrong | `noalias` from `&mut` | **Derived from the borrow proof** |
 | Sum-type layout | manual | Niche packing, silent | **Niche packing, and it warns when it fails** |
 
-Against the C tooling, six minimal programs, one per error class, put through each tool in turn:
+Against the C tooling, five minimal programs, one per error class, put through each tool in
+turn. Every one of them is undefined behaviour or a real leak in C, not merely something Lain
+dislikes:
 
 | Error class | `gcc -Wall` | `gcc -fanalyzer` | `clang -Wall` | ASan + UBSan | Valgrind | **Lain** |
 |:---|:---|:---|:---|:---|:---|:---|
 | Use after free | warning | warning | missed | at runtime | at runtime | **compile time** |
 | Resource leak | missed | missed | missed | missed | missed | **compile time** |
 | Double free | warning | warning | missed | at runtime | at runtime | **compile time** |
-| Aliasing violation | missed | missed | missed | missed | missed | **compile time** |
 | Buffer overflow | missed | warning | warning | at runtime | missed | **compile time** |
 | Division by zero | missed | missed | missed | at runtime | missed | **compile time** |
 
@@ -323,7 +324,24 @@ vadds_vadd:                               vadds_vadd:
 
 Both versions end up with an AVX2 loop. Only the left one goes straight into it. On the right
 gcc has to check at runtime whether the three buffers overlap, and has to keep a scalar copy of
-the loop to jump to when they do. **59 instructions against 81.**
+the loop to jump to when they do: **59 instructions against 81**.
+
+What that is worth depends on how long the loop runs, and it is worth being exact. The overlap
+test happens once per call, so it vanishes into a long loop and dominates a short one:
+
+```
+       n    restrict     without     ratio
+       8      57.2 ms      72.6 ms    1.27x
+      16      47.0 ms      61.8 ms    1.32x
+      64      29.7 ms      31.9 ms    1.07x
+     256      19.4 ms      19.4 ms    1.00x
+    4096      38.4 ms      38.4 ms    1.00x
+```
+
+On long vectors gcc's runtime versioning recovers everything and the proof buys only smaller
+code. On the short ones that fill inner loops it is worth about a third. What does not vary with
+`n` is that in C you have to write `restrict` yourself, and it is undefined behaviour if you are
+wrong.
 
 ---
 
@@ -627,6 +645,9 @@ an effect is what fixed it.
 
 # 7. Data Layout
 
+A sum type whose payload has spare bit patterns is laid out without a tag. `Option(*u8)` is one
+pointer, with `None` as the null pointer:
+
 ```lain
 type OptionByte {
     Some { v *u8 }
@@ -637,36 +658,19 @@ type OptionByte {
 ```c
 typedef const uint8_t * niche_OptionByte;
 
-static inline niche_OptionByte niche_OptionByte_Some(const uint8_t * v) {
-    return v;
-}
+static inline niche_OptionByte niche_OptionByte_Some(const uint8_t * v) { return v; }
 static inline niche_OptionByte niche_OptionByte_None(void) {
     return (const uint8_t *)(uintptr_t)0LL;
 }
 ```
 
-There is no tag and no struct. The type is the pointer, and `None` is the null pointer. The
-compiler looks through the payload type for bit patterns it cannot otherwise hold, and uses
-those to tell the cases apart.
+Rust does this too, and calls it the same thing. Errors get the same treatment, so
+`*u8 | NotFound | Denied` is still one pointer wide, with the two error cases at addresses 0 and
+8 where no real object can sit. No tag word, no allocation, no unwinding.
 
-Errors are laid out the same way. `*u8 | NotFound | Denied` is still one pointer wide:
-
-```c
-typedef const uint8_t * __U_ptr_u8_NotFound_Denied;
-
-static inline __U_ptr_u8_NotFound_Denied ..._NotFound(void) {
-    return (const uint8_t *)(uintptr_t)0LL;
-}
-static inline __U_ptr_u8_NotFound_Denied ..._Denied(void) {
-    return (const uint8_t *)(uintptr_t)8LL;
-}
-```
-
-The two error cases become addresses 0 and 8, which no real object can occupy. No tag word, no
-heap allocation, no unwinding.
-
-When none of the error cases carries a payload, fitting in the spare patterns is not something
-the compiler tries and gives up on. It is required, and you are told when it cannot be done:
+**The difference is what happens when it does not fit.** For a union whose error cases carry no
+payload, the packing is not an optimisation the compiler attempts. It is required, and the
+program is rejected when it cannot be done:
 
 ```
 [E064] Error: the union `i32 | ...` cannot be zero-cost — 'i32' has no spare
@@ -674,8 +678,9 @@ the compiler tries and gives up on. It is required, and you are told when it can
        refinement like `u8 < 200`, a pointer, or a slice), or use fewer markers.
 ```
 
-When an error case does carry a payload a tag byte is unavoidable, and then it is allowed.
-Ordinary enums work the same way, and the compiler says so when it has to add one:
+That is a deliberate trade, and it cuts both ways: a program that would have compiled elsewhere
+does not compile here. Where a tag byte is genuinely unavoidable, because an error case carries
+a payload, it is allowed and reported rather than added quietly:
 
 ```
 [W120] Warning: enum 'OptI32' not fully zero-cost.
@@ -686,8 +691,8 @@ Ordinary enums work the same way, and the compiler says so when it has to add on
        larger sentinel space (i8: 255, i16: 65535, *T: 8192).
 ```
 
-A layout optimisation that silently fails is something you discover later with a profiler. This
-one tells you at compile time.
+A layout optimisation that quietly fails is a cost you find later with a profiler. This one is
+either guaranteed or refused, and says which.
 
 ---
 
