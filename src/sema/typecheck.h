@@ -2005,6 +2005,34 @@ void sema_infer_expr(Expr *e) {
       }
     }
 
+    // ★ UFCS ON A NON-STRUCT. `x.is_even()` where x is an i32 is `is_even(x)` — the whole
+    // point of universal call syntax — but the field lookup below EXITS when the receiver's
+    // type names no struct, so it never reached the UFCS fallback and the user got a raw
+    // internal message ("sema error: unknown struct 'i32'") with no code and no line. Ask
+    // whether the member names a FUNCTION first; the call site rewrites it.
+    if (!find_struct_decl(t->base_type)) {
+        char ubuf[256];
+        int ulen = e->as.member_expr.member->length < 255 ? e->as.member_expr.member->length : 255;
+        memcpy(ubuf, e->as.member_expr.member->name, ulen); ubuf[ulen] = '\0';
+        Symbol *usym = sema_lookup(ubuf);
+        if (usym && usym->decl && (usym->decl->kind == DECL_FUNCTION || usym->decl->kind == DECL_PROCEDURE
+                                || usym->decl->kind == DECL_EXTERN_FUNCTION
+                                || usym->decl->kind == DECL_EXTERN_PROCEDURE)) {
+            e->type = NULL;   // the parent EXPR_CALL turns this into `member(target, …)`
+            return;
+        }
+        // Neither a field (the type is not a struct) nor a function. This used to fall into
+        // `lookup_struct_field_type`, which exits with a raw internal line — no code, no
+        // position, no suggestion. A user-facing failure deserves a user-facing diagnostic.
+        fprintf(stderr, "[E128] Error Ln %li, Col %li: '%.*s' has no member '%.*s', and no "
+                "function of that name is in scope to call as `%.*s(x, ...)`.\n",
+                (long)e->line, (long)e->col,
+                (int)t->base_type->length, t->base_type->name,
+                (int)e->as.member_expr.member->length, e->as.member_expr.member->name,
+                (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+        diagnostic_show_line(e->line, e->col);
+        exit(1);
+    }
     // fall back to struct field lookup (existing behavior)
     e->type = lookup_struct_field_type(t->base_type, e->as.member_expr.member);
     
