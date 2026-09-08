@@ -304,5 +304,12 @@ tests/ownership/multi_var_param_fail.ln   NEW-ACCEPTS  new-more-precise   # pick
 # (historical) tests/ownership/move_needs_mov_fail.ln NEW-ACCEPTS front-end-policy # same rule, [E007]
 # (historical) tests/declarations/var_mandatory_fail.ln NEW-ACCEPTS front-end-policy # same shape, [E017] "passing to a `var` parameter requires explicit `var`"
 
-tests/ownership/mut_plus_nested_shared_fail.ln  NEW-ACCEPTS  new-incomplete-borrow  # `scale(var v, length(v))`: a mutable borrow and a shared borrow of the same variable in ONE call, where the shared one is inside a NESTED CALL. Two-phase borrows cover direct-read arguments; the nested-call argument is the known weaker case. A genuine gap, not policy.
+# CLOSED 2026-09-08: bor_collect_loans now reaches into a nested call that computes an
+# argument, so the shared read inside `length(v)` is visible at the outer call's mutable
+# loan. Checked against Rust first: rustc REJECTS the same program (E0502), because
+# two-phase borrows cover a method receiver and not an explicit `&mut` argument — so the
+# old engine was right and the new one had a gap, not the other way round. A scalar
+# by-value copy still creates no loan, so `ms(var a, a)` stays legal.
+# tests/ownership/mut_plus_nested_shared_fail.ln  CAUGHT (E004)
+# tests/ownership/mut_plus_nested_shared_depth2_fail.ln  CAUGHT (E004) — new, locks the RECURSION
 tests/match/niche/linear_adt_payload_mov_fail.ln NEW-ACCEPTS new-incomplete-linearity # consuming a `mov *u8` payload inside a `case` does not discharge the scrutinee. The file's own comment records that the obvious fix (discharge the scrutinee wholesale when a non-borrowed case destructures it) was TRIED and is UNSOUND: it accepts both double-free and leak. A genuine gap needing per-variant obligations.

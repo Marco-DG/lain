@@ -141,14 +141,39 @@ static bool bor_arg_loan(Borrow *B, IrFunc *callee, int k, IrValue *arg, IrPlace
     *out = pl; return true;
 }
 
+// Collect the loans a call's arguments create, INCLUDING those made by a nested call that
+// computes an argument.
+//
+// `scale(var v, length(v))` was accepted because the second argument is the RESULT of a call:
+// its defining instruction is an IR_CALL, no place resolves from it, and the read of `v` that
+// happens inside `length` was therefore invisible at the outer call. In the IR the nested call
+// is a separate, EARLIER instruction, so when it runs the outer call's mutable loan does not
+// exist yet — the conflict is only visible if the outer call reaches down into it.
+//
+// Rust rejects the same program (E0502): two-phase borrows cover a method RECEIVER
+// (`v.push(v.len())`), not an explicit `&mut` argument sitting beside a shared one. The
+// by-value-copy rule in bor_arg_loan still protects the two-phase pattern, because a scalar
+// copy creates no loan at any depth.
+#define BOR_ARG_DEPTH 3
+static void bor_collect_loans(Borrow *B, IrFunc *mod, IrInstr *call, IrFunc *callee,
+                              IrPlace *pl, bool *mut, int *n, int cap, int depth) {
+    for (int k=0; k<call->n_operands && *n<cap; k++) {
+        IrValue *arg = call->operands[k];
+        IrPlace p; bool m;
+        if (bor_arg_loan(B, callee, k, arg, &p, &m)) { pl[*n]=p; mut[*n]=m; (*n)++; continue; }
+        if (depth >= BOR_ARG_DEPTH || !arg || arg->id<0 || arg->id>=B->nvar) continue;
+        IrInstr *d = B->def[arg->id];
+        if (!d || d->op != IR_CALL) continue;
+        IrFunc *inner = bor_find_func(mod, d->aux.callee);
+        if (inner) bor_collect_loans(B, mod, d, inner, pl, mut, n, cap, depth+1);
+    }
+}
+
 static void bor_check_call(Borrow *B, IrFunc *mod, IrInstr *call) {
     IrFunc *callee = bor_find_func(mod, call->aux.callee);
-    if (!callee || call->n_operands < 2) return;        // need ≥2 args to conflict
+    if (!callee || call->n_operands < 2) return;
     IrPlace pl[16]; bool mut[16]; int n = 0;
-    for (int k=0; k<call->n_operands && n<16; k++) {
-        IrPlace p; bool m;
-        if (bor_arg_loan(B, callee, k, call->operands[k], &p, &m)) { pl[n]=p; mut[n]=m; n++; }
-    }
+    bor_collect_loans(B, mod, call, callee, pl, mut, &n, 16, 0);
     for (int i=0;i<n;i++)
         for (int j=i+1;j<n;j++)
             if ((mut[i] || mut[j]) && ir_place_overlaps(&pl[i], &pl[j])) {
