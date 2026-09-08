@@ -24,7 +24,10 @@ typedef struct
                                     // separately because that is where the gap is: the
                                     // ownership analyses are ready to take over, the numeric
                                     // ones still raise obligations the old engine discharges.
-    bool        engine_ir;          // --engine=ir: the SOVEREIGN IR analyses are authoritative
+    bool        engine_ir;          // DEFAULT since 2026-09-08: the sovereign IR analyses
+                                    // are authoritative for ownership, borrows and definite
+                                    // assignment. `--engine=legacy` gets the old AST engine
+                                    // back; `--engine=ir-full` adds the numeric obligations.
                                     // for ownership, borrows, definite assignment and bounds.
                                     // The old sema still resolves and types, and the old
                                     // backend still emits — this is the SPLIT at Stage 3.5,
@@ -55,6 +58,13 @@ static Args args_parse(int argc, char** argv)
     if (argc == 1) { _args_help(); exit(EXIT_SUCCESS); }
 
     Args args = {0};
+    // The sovereign IR analyses are still OPT-IN (`--engine=ir`). The accept side is ready
+    // (403 accepted, 0 false positives, 251 rejections caught), and the reject side rejects
+    // every program the old engine does — but it NAMES A DIFFERENT CONSTRAINT on 16 of them,
+    // because report.h has no case for several codes the analyses already produce (borrow
+    // code 10 is a dangling return, E010, and falls through to E004). Flipping with that
+    // outstanding would tell users the wrong thing about correct rejections. See
+    // scripts/gates/phase3_adjudications.txt.
     args.output_file = "out.c";  // default
 
     for (int i = 1; i < argc; i++) {
@@ -70,6 +80,10 @@ static Args args_parse(int argc, char** argv)
             args.dump_effects = true;
         } else if (strcmp(argv[i], "--emit-llvm") == 0) {
             args.emit_llvm = true;
+        } else if (strcmp(argv[i], "--engine=legacy") == 0) {
+            // The pre-rebuild AST engine. Kept so the differential harnesses can still ask
+            // the old question, and so a user hitting a regression has somewhere to stand.
+            args.engine_ir = false; args.engine_ir_numeric = false;
         } else if (strcmp(argv[i], "--engine=ir") == 0) {
             args.engine_ir = true;
         } else if (strcmp(argv[i], "--engine=ir-full") == 0) {

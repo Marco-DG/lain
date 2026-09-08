@@ -1,0 +1,31 @@
+// LAINFLAGS: --engine=ir
+// Consuming a linear payload in a `case` arm DISCHARGES the scrutinee. This was a _fail.ln
+// locking the old engine's limitation, and the note on it said so: "discharging correctly
+// needs the payload binding to be linear in its own right — per-field state, which the new IR
+// pass has and this one does not. This test flips to a _pass when that lands."
+//
+// It has landed. The new pass transfers the obligation from the sum to the bound payload, per
+// arm, which is what the elimination rule for a linear sum says: `case` is the eliminator, so
+// in the `Full` arm the resource IS `ptr`, and consuming `ptr` discharges it. The `Empty` arm
+// binds nothing and owes nothing.
+//
+// The precision this buys is locked by linear_adt_payload_leak_fail.ln: change the arm to
+// `noop()` and the payload is unconsumed, which is still [E003]. The old engine cannot tell
+// those two programs apart and rejects both.
+import std.mem.{mem_free}
+type Box {
+    Full {
+        ptr mov *u8
+    }
+    Empty
+}
+proc noop() {
+    var x = 0
+}
+proc t(b mov Box) {
+    case b {
+        Full(ptr): mem_free(mov ptr)
+        Empty: noop()
+    }
+}
+proc main() i32 { return 0 }

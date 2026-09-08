@@ -313,3 +313,41 @@ tests/ownership/multi_var_param_fail.ln   NEW-ACCEPTS  new-more-precise   # pick
 # tests/ownership/mut_plus_nested_shared_fail.ln  CAUGHT (E004)
 # tests/ownership/mut_plus_nested_shared_depth2_fail.ln  CAUGHT (E004) — new, locks the RECURSION
 tests/match/niche/linear_adt_payload_mov_fail.ln NEW-ACCEPTS new-incomplete-linearity # consuming a `mov *u8` payload inside a `case` does not discharge the scrutinee. The file's own comment records that the obvious fix (discharge the scrutinee wholesale when a non-borrowed case destructures it) was TRIED and is UNSOUND: it accepts both double-free and leak. A genuine gap needing per-variant obligations.
+
+# ── A0 BLOCKER FOUND 2026-09-08: the reject side is COMPLETE but MISNAMED.
+#
+# With --engine=ir made the default, the corpus went 660 -> 644. Not one of the 16 was
+# accepted: every program the old engine rejects, the new engine also rejects. It names a
+# DIFFERENT CONSTRAINT on 16 of them, and the runner compares the code.
+#
+#   tests/ownership/two_phase_borrow_fail.ln        legacy E008   new E001
+#   tests/types/return_local_slice_fail.ln          legacy E010   new E004
+#   tests/types/return_local_array_slice_fail.ln    legacy E010   new E004
+#   tests/ownership/return_addr_local_fail.ln       legacy E010   new E004
+#   tests/ownership/return_var_dangling_fail.ln     legacy E010   new E004
+#   tests/errors/alias_restrict_fail.ln             legacy E087   new (other)
+#   tests/ownership/coarg_alias_element_fail.ln     legacy E087   new (other)
+#   tests/ownership/coarg_alias_subslice_fail.ln    legacy E087   new (other)
+#   tests/memory/field_uninit_read_fail.ln          legacy E005   new E019
+#   tests/ownership/move_in_loop_fail.ln            legacy E006   new (other)
+#   tests/ownership/borrow_fail.ln                  legacy E008   new (other)
+#   tests/ownership/field_partial_move_fail.ln      legacy E008   new (other)
+#   ... and 4 more of the same shape
+#
+# ★ ROOT CAUSE, and it is small. src/analysis/report.h maps findings to codes with a chain of
+# ternaries that has no case for several codes the analyses ALREADY produce:
+#
+#     borrow:     fi->code==2 ? E002 : fi->code==11 ? E124 : E004
+#     linearity:  fi->code==1 ? E001 : fi->code==2 ? E002 : fi->code==16 ? E016 : E003
+#
+# borrow.h's own header comment says "code: 10 = dangling return (E010)". The analysis emits
+# 10; report.h has no branch for it, so a dangling return is reported as a co-argument borrow
+# conflict. The information is there and is being discarded at the last step.
+#
+# Also spotted while reading it: VRA_DIVZERO maps to "E087", but E087 is the call-site length
+# obligation and division-by-zero is E015 (verified against the shipping diagnostic). Only
+# visible under --engine=ir-full, which is why spec_gate did not catch it — both codes exist.
+#
+# A diagnostic code IDENTIFIES A CONSTRAINT (Annex B is normative on this). Rejecting the
+# right program under the wrong name is not a cosmetic problem: it tells the user the wrong
+# thing about correct code. THE DEFAULT STAYS OPT-IN UNTIL THIS IS FIXED.

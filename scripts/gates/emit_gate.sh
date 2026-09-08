@@ -24,7 +24,7 @@ agree=0; differ=0; buildfail=0; oldskip=0
 : > "$TMP/bad"; : > "$TMP/bf"
 for f in $(find tests -name '*_pass.ln' -type f | sort | head -"$N"); do
   case "$f" in */_tmp/*) continue;; esac
-  ./lain "$f" -o "$TMP/old.c" >/dev/null 2>&1 || { oldskip=$((oldskip+1)); continue; }
+  ./lain --engine=legacy "$f" -o "$TMP/old.c" >/dev/null 2>&1 || { oldskip=$((oldskip+1)); continue; }
   $CC -std=c99 -w -o "$TMP/old" "$TMP/old.c" $DEFS 2>/dev/null || { oldskip=$((oldskip+1)); continue; }
   oout=$("$TMP/old" 2>/dev/null); orc=$?
 
