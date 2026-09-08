@@ -1,0 +1,22 @@
+// EXPECT: [E086]
+// LAINFLAGS: --engine=ir-full
+// ★ C-7. The obligation that fires is the OVERFLOW one on `n - 1` itself — which is the
+// honest place for it: the underflow is the bug, and the out-of-bounds read is its
+// consequence. `n - 1` on a usize with n = 0 is SIZE_MAX, so the loop runs and `a[0]` on a
+// zero-length slice reads out of bounds. The old engine proves this function check-free and
+// the emitted C has no bounds check — ASan reports a stack-buffer-overflow on `sw(empty, 0)`.
+//
+// The domain used to record `r = a - b` as an exact Z relation for an UNSIGNED subtraction:
+// true over Z, false in u64 the moment a < b. It now states nothing unless `a >= b` is
+// provable, which is why the GUARDED forms (`hi - lo` under `lo < hi`, `n - 1` behind
+// `if n == 0 { return }`) keep their exact relation and lose no precision.
+proc sw(a i32[n], n usize) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < n - 1 decreasing n - 1 - i {
+        s = s +% (a[i] +% a[i + 1])
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 { return 0 }

@@ -268,3 +268,6 @@ tests/vra/alias/stashed_address_fail.ln                   NEW-ACCEPTS  new-catch
 # by the numeric domain, while this harness drives the LINEARITY and EFFECTS passes. The new
 # engine does reject it (`--engine=ir-full`, [E086] — pinned by its `// LAINFLAGS:` line).
 tests/vra/overflow/loop_accumulator_fail.ln               NEW-ACCEPTS  new-catches-elsewhere
+# C-7's fail-test: an OVERFLOW obligation, judged by the numeric domain, while this harness
+# drives linearity and effects. Rejected by `--engine=ir-full` ([E086]) per its LAINFLAGS line.
+tests/vra/sliding_window_underflow_fail.ln                NEW-ACCEPTS  new-catches-elsewhere

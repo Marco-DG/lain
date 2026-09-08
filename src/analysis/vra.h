@@ -385,6 +385,8 @@ static void vra_add_diff_le(Vra *V, Octagon *W, int a, int b, int64_t c) {   // 
 
 static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir);  // fwd
 static void vra_free(Vra *V);                                                    // fwd (phase D)
+static bool vra_dump_enabled = false;   // --dump-octagon: print the converged state
+static void vra_dump_state(Vra *V, FILE *o);   // fwd
 
 // ── INFERRED RETURN RANGES ───────────────────────────────────────────────────────────────
 // A call's result was simply FORGOTTEN, so `LUT[nib(c)]` could not be proven even though
@@ -435,12 +437,25 @@ static void vra_div_facts(Vra *V, Octagon *W, int r, int a, int64_t D, int64_t a
 //     q − (B − A) ≤ c   ⟺   (A + q) − B ≤ c   ⟺   r − B ≤ c
 // which IS an octagon fact. So the rule is general — any A, B, divisor and any c the domain
 // happens to know — and reads no syntax beyond "this value was defined as a subtraction".
+// ★ Matched on VALUE EQUALITY, not on value IDENTITY. `mid = lo + (hi − lo)/2` loads `lo`
+// TWICE — once for the addition and once for the subtraction — so the two are different SSA
+// values and an identity test never fired. The whole midpoint identity was therefore dead on
+// the shape it exists for: the binary search's `mid < hi` was never derived, `lo = mid + 1`
+// lost its bound, and the loop's `lo` went unbounded through the widening.
+//
+// The octagon already KNOWS the two loads are equal (both copy the same cell). Asking it is
+// both the fix and the general form — anything the domain proves equal to `a` will do.
+static bool vra_same_value(Vra *V, const Octagon *W, int x, int y) {
+    if (x == y) return true;
+    if (x<0 || y<0 || x>=V->nvar || y>=V->nvar) return false;
+    return vra_diff_ub(V,W,x,y) <= 0 && vra_diff_ub(V,W,y,x) <= 0;
+}
 static void vra_add_via_diff(Vra *V, Octagon *W, int r, int a, int q) {
     for (int d=0; d<V->nvar; d++) {
         IrInstr *dd = V->def[d];
         if (!dd || dd->op != IR_SUB || dd->n_operands < 2) continue;
         if (!dd->operands[0] || !dd->operands[1]) continue;
-        if (dd->operands[1]->id != a) continue;         // d = B − a, the same a we are adding to
+        if (!vra_same_value(V, W, dd->operands[1]->id, a)) continue;   // d = B − a′ with a′ = a
         int B = dd->operands[0]->id;
         if (B == r || B < 0 || B >= V->nvar) continue;
         int64_t c = vra_diff_ub(V, W, q, d); // q − d ≤ c   ⇒   r − B ≤ c
@@ -480,6 +495,23 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             int a=ins->operands[0]->id, b=ins->operands[1]->id;
             bool ac=V->cknown[a], bc=V->cknown[b], isadd=(ins->op==IR_ADD);
             oct_forget(W, r);
+            // ★ AN UNSIGNED SUBTRACTION THAT MAY UNDERFLOW HAS NO ℤ RELATION TO STATE.
+            // The transfers below record `r = a − b` exactly, which is true over ℤ and FALSE
+            // in u64 the moment `a < b`: `hi = mid − 1` with mid = 0 is SIZE_MAX, not −1. The
+            // corpus's own soundness lock for this shape (binary_search_underflow_fail) caught
+            // it the minute the midpoint identity started firing and something downstream
+            // finally depended on the relation. Where `a ≥ b` is provable — `hi − lo` under a
+            // live `lo < hi` guard — the relation is exact and is kept; where it is not, the
+            // result is unknown except for what its TYPE guarantees.
+            if (!isadd && ins->result->type && ins->result->type->kind==IRT_INT
+                && !ins->result->type->is_signed) {
+                oct_close(W);
+                int64_t ba = vra_diff_ub(V, W, b, a);      // b − a ≤ ba
+                if (!(ba <= 0)) {                          // a ≥ b NOT provable ⇒ may wrap
+                    oct_add_lb(W, r, 0);
+                    break;
+                }
+            }
             if (isadd && bc)      { vra_add_diff_le(V,W,r,a,V->cval[b]); vra_add_diff_le(V,W,a,r,-V->cval[b]); }   // r=a+c (exact)
             else if (isadd && ac) { vra_add_diff_le(V,W,r,b,V->cval[a]); vra_add_diff_le(V,W,b,r,-V->cval[a]); }
             else if (!isadd && bc){ vra_add_diff_le(V,W,r,a,-V->cval[b]); vra_add_diff_le(V,W,a,r,V->cval[b]); }   // r=a-c (exact)
@@ -793,7 +825,22 @@ static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir) {
     else if (gt) vra_add_diff_le(V,W,b,a,-1);   // b − a ≤ −1
     else if (ge) vra_add_diff_le(V,W,b,a,0);    // b − a ≤ 0
     else if (eq){ vra_add_diff_le(V,W,a,b,0); vra_add_diff_le(V,W,b,a,0); }
-    (void)ne;                                 // a≠b is not an octagon constraint
+    // ★ `a ≠ c` IS representable when it cuts an ENDPOINT. A hole in the middle of an interval
+    // is not an interval, but `n ≠ 0` on a value already known to be ≥ 0 is exactly `n ≥ 1` —
+    // and that is the false edge of `if n == 0 { return }`, the guard every length-1
+    // subtraction in the corpus is written behind. Without it `n − 1` could underflow for all
+    // the domain knew, and the whole post-loop-negation family lost its bound.
+    if (ne) {
+        int x = -1; int64_t cv = 0;
+        if (bc && !ac)      { x = a; cv = V->cval[b]; }
+        else if (ac && !bc) { x = b; cv = V->cval[a]; }
+        if (x >= 0) {
+            int64_t lo,hi; bool hl,hh;
+            vra_interval(V, W, x, &lo,&hl,&hi,&hh);
+            if (hl && lo == cv) oct_add_lb(W, x, cv + 1);        // the low end was the hole
+            if (hh && hi == cv) oct_add_ub(W, x, cv - 1);        // ...or the high end
+        }
+    }
 }
 
 // ── bounds consumer: discharge 0 ≤ idx < len at an IR_ELEM_PTR ───────────────
@@ -1514,6 +1561,7 @@ static Vra *vra_analyze(IrFunc *f) {
             vra_transfer_instr(V,&W,ins);
         }
     }
+    if (vra_dump_enabled) vra_dump_state(V, stderr);
     // one termination obligation per loop header — but ONLY for a `func` (totality is a
     // func requirement; a `proc` may loop forever, e.g. an event loop). Emitting it for
     // procs was spuriously marking terminating procs "partially proven".
@@ -1691,6 +1739,85 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
     free(scratch);
     oct_map = oct_map_saved;
     return false;
+}
+
+// ── STATE INSTRUMENT ─────────────────────────────────────────────────────────────────────
+// Print the CONVERGED in-state of every block. Three precision questions in a row had been
+// answered by bisecting programs — shrinking a failing case until it passed — instead of by
+// reading the abstract state, which is slower and only ever localises to a shape, never to a
+// link. This prints what the domain actually holds: each tracked value's interval, and every
+// difference it knows that is not ⊤.
+//
+// Names come from IrValue.src_name where lowering recorded one. They are DIAGNOSTIC only —
+// the analysis is keyed on ids, and that is the whole point of the rebuild.
+static void vra_dump_val(Vra *V, int id, FILE *o) {
+    IrValue *v = (id>=0 && id<V->nvar) ? V->val[id] : NULL;
+    if (v && v->src_name) fprintf(o, "%%%d:%.*s", id, (int)v->src_name->length, v->src_name->name);
+    else                  fprintf(o, "%%%d", id);
+}
+static void vra_dump_state(Vra *V, FILE *o) {
+    int dim = 2*V->noct;
+    int64_t *m = malloc((size_t)V->dsz*8);
+    if (!m) return;
+    fprintf(o, "── octagon state: %.*s ──\n",
+            V->f->name?(int)V->f->name->length:1, V->f->name?V->f->name->name:"?");
+    for (IrBlock *b=V->f->blocks; b; b=b->next) {
+        if (!V->reached[b->id]) { fprintf(o, "  bb%d: UNREACHED\n", b->id); continue; }
+        memcpy(m, V->in[b->id], (size_t)V->dsz*8);
+        Octagon W = { V->noct, dim, m };
+        oct_close(&W);
+        fprintf(o, "  bb%d%s%s\n", b->id, b->is_loop_header ? "  [loop header]" : "",
+                oct_is_bottom(&W) ? "  BOTTOM" : "");
+        if (oct_is_bottom(&W)) continue;
+        for (int id=0; id<V->nvar; id++) {
+            if (V->odim[id] < 0) continue;                 // packed out: no dimension
+            int64_t lo,hi; bool hl,hh;
+            vra_interval(V,&W,id,&lo,&hl,&hi,&hh);
+            if (!hl && !hh) continue;                      // ⊤ — nothing to say
+            fputs("      ", o); vra_dump_val(V,id,o);
+            fputs(" ∈ [", o);
+            if (hl) fprintf(o, "%lld", (long long)lo); else fputs("-inf", o);
+            fputs(", ", o);
+            if (hh) fprintf(o, "%lld", (long long)hi); else fputs("+inf", o);
+            fputs("]\n", o);
+        }
+        for (int a=0; a<V->nvar; a++) {
+            if (V->odim[a] < 0) continue;
+            for (int c=0; c<V->nvar; c++) {
+                if (c==a || V->odim[c] < 0) continue;
+                int64_t d = oct_get(&W, oct_pos(c), oct_pos(a));   // a − c ≤ d
+                if (d >= OCT_INF) continue;
+                fputs("      ", o); vra_dump_val(V,a,o); fputs(" − ", o); vra_dump_val(V,c,o);
+                fprintf(o, " ≤ %lld\n", (long long)d);
+            }
+        }
+        // ...and then the block's own instructions, each with what its RESULT is known to be
+        // afterwards. The entry state alone cannot answer "where was this relation lost?" —
+        // every value defined inside the block is ⊤ there by construction.
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            vra_transfer_instr(V,&W,ins);
+            if (!ins->result || ins->result->id<0 || ins->result->id>=V->nvar) continue;
+            int rid = ins->result->id;
+            if (V->odim[rid] < 0) { fprintf(o, "    · "); vra_dump_val(V,rid,o);
+                                    fputs(" = <packed out>\n", o); continue; }
+            oct_close(&W);
+            int64_t lo,hi; bool hl,hh; vra_interval(V,&W,rid,&lo,&hl,&hi,&hh);
+            fputs("    · ", o); vra_dump_val(V,rid,o); fputs(" ∈ [", o);
+            if (hl) fprintf(o,"%lld",(long long)lo); else fputs("-inf",o);
+            fputs(", ", o);
+            if (hh) fprintf(o,"%lld",(long long)hi); else fputs("+inf",o);
+            fputs("]", o);
+            for (int c=0; c<V->nvar; c++) {
+                if (c==rid || V->odim[c] < 0) continue;
+                int64_t d = oct_get(&W, oct_pos(c), oct_pos(rid));
+                if (d >= OCT_INF) continue;
+                fputs("   ", o); vra_dump_val(V,rid,o); fputs("−", o); vra_dump_val(V,c,o);
+                fprintf(o, "≤%lld", (long long)d);
+            }
+            fputc('\n', o);
+        }
+    }
+    free(m);
 }
 
 static void vra_free(Vra *V){

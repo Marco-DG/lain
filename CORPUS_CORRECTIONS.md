@@ -251,6 +251,50 @@ summing `i < 16` over at most 16 iterations reaches 120, and showing it needs th
 COUNT related to the accumulator's per-iteration growth. That is a PRODUCT, not a difference,
 and outside an octagon. It is the sharpest open item on the numeric side.
 
+---
+
+## C-7 · `tests/vra/sliding_window_pass.ln` — pass ⇒ **fail**, and it is an ASan-provable OOB
+
+The first correction where the corpus asserts a proof that is **not merely over-permissive but
+executably wrong**.
+
+```lain
+proc sw(a i32[n], n usize) i32 {
+    var i usize = 0
+    while i < n - 1 decreasing n - 1 - i { s = s +% (a[i] +% a[i + 1]) ; i = i + 1 }
+}
+sw(empty, 0)
+```
+
+`n - 1` on a **usize** with `n = 0` is SIZE_MAX. The loop then runs, and `a[0]` on a
+zero-length slice reads out of bounds. The old engine proves the whole function check-free, so
+the emitted C has no bounds check:
+
+```
+==ERROR: AddressSanitizer: stack-buffer-overflow
+    READ of size 4 ... in sw0_sw
+```
+
+**The mechanism, and it is the same one as C-6 seen from the other side.** The domain recorded
+`r = a − b` as an exact ℤ relation for an UNSIGNED subtraction. True over ℤ, false in u64 the
+moment `a < b` — `hi = mid − 1` with mid = 0 is SIZE_MAX, not −1. Every downstream bound built
+on that relation inherited the lie.
+
+**New engine.** A subtraction whose result type is unsigned states no relation unless `a ≥ b`
+is provable. Where it is — `hi − lo` under a live `lo < hi` guard, or `n − 1` behind
+`if n == 0 { return }` — the relation is exact and kept, and the precision is unchanged.
+
+**How it was found**, because the route matters: the reject-side survey (`0 PROVED-ALL`) went
+to 1 the moment the midpoint identity started firing and something finally *depended* on the
+relation. The lock had been green for the whole session while this sat in an ACCEPT-side test,
+which is the limitation worth writing down — a fail-test survey cannot see an unsound proof
+that lives in a pass-test.
+
+The same defect was encoded in the ENGINE'S OWN UNIT TEST: `test_vra.c` asserted that
+`f(n − 1)` on a bare u64 is a total recursion. It is not, at n = 0. That test now states the
+four cases that actually differ — total *under a guard*, not total without one, not total when
+the measure grows or is stuck.
+
 ## Switchover procedure (Stage 3.5)
 
 1. Invert each entry: rename `*_fail.ln` → `*_pass.ln`, drop the `// EXPECT:` line, add a

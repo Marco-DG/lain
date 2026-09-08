@@ -302,16 +302,29 @@ int main(void) {
     // self-call and is bounded below. Both halves are octagon questions asked at the call
     // edge — the loop measure lifted from a back-edge. Without it, the conservative cycle
     // rule calls every recursion DIVERGE, so a well-founded one can never be a total `func`.
+    // ★ What makes a recursion WELL-FOUNDED, stated as the four cases that actually differ.
+    // The original test asserted that `f(n − 1)` on a bare u64 is total. It is not: at n = 0
+    // the subtraction underflows to U64MAX and the recursion runs forever. It passed only
+    // because the domain used to record `n − 1` as an exact ℤ relation for an UNSIGNED
+    // subtraction that can wrap — the same defect the corpus's own soundness lock caught
+    // (CORPUS_CORRECTIONS C-6/C-7). A guard is what makes the shape total, so the test now
+    // says that: with `n ≥ 1` assumed it is total, and without it it is not.
+    //
+    // A SIGNED measure does not help either, and for a different reason worth keeping: it is
+    // not GROUNDED. `f(n − 1)` on an i32 descends forever toward INT32_MIN.
     { IrType *u64t = ir_type_int(&A,64,false);
-      struct { const char *what; int delta; bool want; } rc[] = {
-          { "recursion f(n-1) is TOTAL (measure shrinks)",   -1, true  },
-          { "recursion f(n+1) DIVERGES (measure grows)",     +1, false },
-          { "recursion f(n)   DIVERGES (measure stuck)",      0, false },
+      struct { const char *what; int delta; bool guard; bool want; } rc[] = {
+          { "recursion f(n-1) under `n >= 1` is TOTAL",        -1, true,  true  },
+          { "recursion f(n-1) with NO guard: n=0 WRAPS",       -1, false, false },
+          { "recursion f(n+1) DIVERGES (measure grows)",       +1, false, false },
+          { "recursion f(n)   DIVERGES (measure stuck)",        0, false, false },
       };
       for (unsigned t=0;t<sizeof rc/sizeof rc[0];t++) {
         IrFunc *f=ir_func_new(&A,nm("rec"),u64t,IR_FUNC_PROC);
         IrValue *n=ir_add_param(f,u64t,nm("n"));
         IrBlock *e=f->entry;
+        if (rc[t].guard)
+            ir_assume(f, e, ir_icmp(f, e, IR_CMP_UGE, n, ir_const_int(f,e,1,u64t)));
         IrValue *arg = rc[t].delta==0 ? n
                      : ir_binop(f,e, rc[t].delta<0?IR_SUB:IR_ADD, n,
                                 ir_const_int(f,e,1,u64t), u64t);

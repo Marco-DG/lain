@@ -29,9 +29,10 @@ static char *drv_modname(Arena *a, const char *path) {
 }
 
 int main(int argc, char **argv) {
-    if (argc<2){ fprintf(stderr,"usage: %s <file.ln> [--dump] [--suppress]\n", argv[0]); return 2; }
+    if (argc<2){ fprintf(stderr,"usage: %s <file.ln> [--dump] [--suppress] [--dump-octagon]\n", argv[0]); return 2; }
     bool dump=false, suppress=false;
-    for (int k=2;k<argc;k++){ if(!strcmp(argv[k],"--dump"))dump=true; if(!strcmp(argv[k],"--suppress"))suppress=true; }
+    for (int k=2;k<argc;k++){ if(!strcmp(argv[k],"--dump"))dump=true; if(!strcmp(argv[k],"--suppress"))suppress=true;
+                              if(!strcmp(argv[k],"--dump-octagon"))vra_dump_enabled=true; }
     Arena fa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena aa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
