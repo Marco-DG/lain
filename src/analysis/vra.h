@@ -1408,6 +1408,26 @@ static Vra *vra_analyze(IrFunc *f) {
         loopmod[H->id]=mod;
     }
 
+    // ★ THE THRESHOLD LADDER: every integer constant the function itself mentions, at both DBM
+    // scalings (a unary bound `v ≤ c` is stored doubled, a difference `v−w ≤ c` is not), plus
+    // the type maxima the guards are written against. Ascending and deduplicated, so the
+    // widening can climb it. Capped, because a program with hundreds of distinct constants
+    // would otherwise pay for a ladder it does not need.
+    #define VRA_MAX_THR 96
+    int64_t thr[VRA_MAX_THR]; int nthr = 0;
+    for (int i=0; i<V->nvar && nthr < VRA_MAX_THR-2; i++) {
+        if (!V->cknown[i]) continue;
+        int64_t c1 = V->cval[i];
+        if (c1 < 0 || c1 > OCT_INF/4) continue;
+        for (int k=0;k<2;k++) {
+            int64_t cand = k ? c1*2 : c1;
+            bool seen=false; for (int t=0;t<nthr;t++) if (thr[t]==cand) { seen=true; break; }
+            if (!seen && nthr < VRA_MAX_THR) thr[nthr++] = cand;
+        }
+    }
+    for (int i=0;i<nthr;i++) for (int j=i+1;j<nthr;j++)
+        if (thr[j] < thr[i]) { int64_t t=thr[i]; thr[i]=thr[j]; thr[j]=t; }
+
     bool changed=true; int sweeps=0;
     while (changed && sweeps++ < 1000) {
         changed=false;
@@ -1428,7 +1448,7 @@ static Vra *vra_analyze(IrFunc *f) {
                 if (!V->reached[s->id]) { memcpy(V->in[s->id],T_m,V->dsz*8); V->reached[s->id]=true; changed=true; continue; }
                 Octagon In={V->noct,dim,V->in[s->id]};
                 oct_join(&J,&In,&T);
-                if (s->is_loop_header){ oct_widen_sel(&D,&In,&J,loopmod[s->id]); memcpy(J_m,D_m,V->dsz*8); }
+                if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); }
                 if (!oct_leq(&J,&In)){ memcpy(V->in[s->id],J_m,V->dsz*8); changed=true; }
             }
         }

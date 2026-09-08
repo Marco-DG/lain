@@ -198,14 +198,37 @@ static void oct_widen(Octagon *dst, const Octagon *a, const Octagon *b) {
 // across outer iterations) from being wrongly blown to +∞ at an inner header. Sound: a
 // var genuinely modified in the loop is still widened, so termination holds; an invariant
 // var's join stabilizes on its own. `mod` NULL ⇒ widen everything (standard widening).
-static void oct_widen_sel(Octagon *dst, const Octagon *a, const Octagon *b, const char *mod) {
+// ★ WIDENING WITH THRESHOLDS. Plain widening sends any bound that grew straight to ⊤, which
+// is sound and, on a loop whose bound is a CONSTANT IN THE PROGRAM, needlessly destructive:
+//
+//     var hi usize = 64
+//     while lo < hi { mid = lo + (hi-lo)/2 ; if flag { lo = mid+1 } else { hi = mid } }
+//
+// `hi ≤ 64` is inductive — hi only ever becomes `mid ≤ hi` — but hi is loop-modified, so the
+// first widening threw the 64 away, `lo` became unbounded with it, and `lo + (hi-lo)/2` was
+// then a REAL overflow in the abstract state. Give the widening a ladder of candidate values
+// (the constants the program itself mentions) and it stops at the first one above the joined
+// bound instead of at infinity. Standard technique (Astrée's), and it is what makes an
+// ordinary binary search provable.
+//
+// Sound because any T ≥ the joined value gives a WEAKER constraint, i.e. a larger state; and
+// terminating because each entry climbs a finite ladder before reaching ⊤.
+static void oct_widen_thr(Octagon *dst, const Octagon *a, const Octagon *b, const char *mod,
+                          const int64_t *thr, int nthr) {
     dst->nvar=a->nvar; dst->dim=a->dim;
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++) {
             int64_t av=oct_get(a,i,j), bv=oct_get(b,i,j);
             bool widen = !mod || mod[i/2] || mod[j/2];   // DBM index i ↔ var i/2
-            *oct_at(dst,i,j) = widen ? ((bv <= av) ? av : OCT_INF) : bv;
+            if (!widen)      { *oct_at(dst,i,j) = bv; continue; }
+            if (bv <= av)    { *oct_at(dst,i,j) = av; continue; }   // stable: keep it
+            int64_t up = OCT_INF;                                   // else climb the ladder
+            for (int t=0; t<nthr; t++) if (thr[t] >= bv) { up = thr[t]; break; }
+            *oct_at(dst,i,j) = up;
         }
+}
+static void oct_widen_sel(Octagon *dst, const Octagon *a, const Octagon *b, const char *mod) {
+    oct_widen_thr(dst, a, b, mod, NULL, 0);
 }
 static bool oct_leq(const Octagon *a, const Octagon *b) {
     for (int i=0;i<a->dim;i++)
