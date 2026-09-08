@@ -47,8 +47,16 @@ typedef enum {
     VLOSS_PRODUCT,    // loop-carried with a NON-constant step: `s = s + a[i]`. Needs a bound
                       // of the form s0 + T*delta, which is a PRODUCT and unstatable in any
                       // relational domain. Stage B1 (loop summarisation).
-    VLOSS_WIDEN,      // loop-carried with a CONSTANT step: the domain should reach this and
-                      // widening threw it away. A precision bug, not a missing capability.
+    VLOSS_WIDEN,      // loop-carried with a CONSTANT step in a 64-bit slot: nothing wider
+                      // can be bounding it, so the domain SHOULD reach this and widening
+                      // threw it away. A precision bug, not a missing capability.
+    VLOSS_NARROW,     // ★ loop-carried, constant step, but the slot is NARROWER than 64 bits
+                      // while the thing bounding it (a slice length) is usize. `var i = 0`
+                      // is an i32; `while i in data` compares it unsigned against a usize
+                      // length, so `i + 1` really can leave i32 and the engine is RIGHT to
+                      // refuse. Split out because lumping it with WIDEN said "18 precision
+                      // bugs" when most of them are the language letting a counter be
+                      // narrower than what bounds it — an L1 problem, not a domain one.
     VLOSS_CALL,       // an operand comes from a call: needs a postcondition summary. B4.
     VLOSS_ARITY,      // three or more distinct symbolic values: octagons are binary. B5.
     VLOSS_JOIN,       // the value is defined at a merge point: the join is a hull, so a
@@ -68,6 +76,7 @@ static const char *vra_loss_name(VraLoss l) {
         case VLOSS_NONE:    return "discharged";
         case VLOSS_PRODUCT: return "product";
         case VLOSS_WIDEN:   return "widen";
+        case VLOSS_NARROW:  return "narrow-counter";
         case VLOSS_CALL:    return "call";
         case VLOSS_ARITY:   return "arity";
         case VLOSS_JOIN:    return "join";
@@ -928,7 +937,7 @@ static void vra_loss_walk(Vra *V, IrValue *v, int depth,
 // loop-carried update, `s = s <op> x`, and the step tells the two apart: a CONSTANT step is
 // something the domain should reach (so failing is a widening loss), a symbolic one needs a
 // trip-count times delta bound, which is a product.
-static bool vra_loss_selfupdate(Vra *V, IrInstr *ins, bool *const_step) {
+static bool vra_loss_selfupdate(Vra *V, IrInstr *ins, bool *const_step, int *slot_bits) {
     if (!ins || !ins->result || ins->result->id < 0) return false;
     int blk = V->defblk[ins->result->id];
     if (blk < 0) return false;
@@ -941,6 +950,10 @@ static bool vra_loss_selfupdate(Vra *V, IrInstr *ins, bool *const_step) {
         break;
     }
     if (!slot) return false;
+    // width of the slot being stored back into: an alloca's type is *var T, so take the elem
+    *slot_bits = 64;
+    if (slot->type && slot->type->elem && slot->type->elem->kind == IRT_INT)
+        *slot_bits = slot->type->elem->bits;
     bool found = false; *const_step = true;
     for (int k=0;k<ins->n_operands;k++) {
         IrValue *o = ins->operands[k];
@@ -963,9 +976,11 @@ static VraLoss vra_classify_loss(Vra *V, IrInstr *ins) {
         IrInstr *src = V->def[ins->operands[1]->id];
         if (src) ins = src;
     }
-    bool const_step = true;
-    if (vra_loss_selfupdate(V, ins, &const_step))
-        return const_step ? VLOSS_WIDEN : VLOSS_PRODUCT;
+    bool const_step = true; int slot_bits = 64;
+    if (vra_loss_selfupdate(V, ins, &const_step, &slot_bits)) {
+        if (!const_step) return VLOSS_PRODUCT;
+        return slot_bits < 64 ? VLOSS_NARROW : VLOSS_WIDEN;
+    }
 
     int sym_ids[16]; int nsym = 0; bool saw_call = false, all_param = true;
     for (int k=0;k<ins->n_operands;k++)
