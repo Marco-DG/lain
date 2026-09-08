@@ -2124,7 +2124,16 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             if (it && it->kind == EXPR_RANGE) {
                 // for i in lo..hi { body }  ⇒  i=lo; while i <(=) hi { body; i=i+1 }
                 Expr *lo_e=it->as.range_expr.start, *hi_e=it->as.range_expr.end;
-                IrType *ity = lo_e ? ir_lower_type(c, lo_e->type) : usz;
+                // ★ The counter takes the type of the BOUND, not of the start. `for i in
+                // 0..out.len` was typing `i` from the literal `0`, so an i32 counter got
+                // compared against a usize length; nothing bounds a length below INT32_MAX,
+                // so `i + 1` can genuinely leave i32 and the overflow check refuses it —
+                // correctly, on the most ordinary loop in the language. The A1 survey
+                // measured this shape at 12% of every unproven obligation in the corpus.
+                // The bound already carries the right type; the counter just was not asking.
+                IrType *ity = hi_e ? ir_lower_type(c, hi_e->type) : NULL;
+                if (!ity || ity->kind!=IRT_INT)
+                    ity = lo_e ? ir_lower_type(c, lo_e->type) : usz;
                 if (!ity || ity->kind!=IRT_INT) ity = usz;
                 IrValue *icell = ir_alloca(c->f, c->cur, ity);
                 ir_store(c->f, c->cur, icell, lo_e ? ir_lower_expr(c, lo_e) : ir_const_int(c->f,c->cur,0,ity));

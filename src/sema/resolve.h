@@ -539,7 +539,27 @@ void sema_resolve_stmt(Stmt *s) {
     Type *val_ty = NULL;
 
     if (it->kind == EXPR_RANGE) {
-        val_ty = get_builtin_i32_type();
+        // ── the loop variable takes the type of its BOUND ────────────────────────────────
+        // `for i in 0..out.len` was giving `i` an i32 unconditionally. A length is a usize,
+        // so the guard compares an i32 against a usize, nothing bounds the length below
+        // INT32_MAX, and the increment `i + 1` can genuinely leave i32 — which the overflow
+        // check then refuses, CORRECTLY, on a loop the programmer wrote in the obvious way.
+        //
+        // The A1 precision survey put this shape at 12% of every unproven obligation in the
+        // corpus, the single cheapest item measured. The bound already carries the right
+        // type; the loop variable just was not asking for it.
+        //
+        // The START is only consulted when the END has no type, and a literal `0` start is
+        // ignored on purpose: `0..out.len` should follow `out.len`, not the literal.
+        Type *bt = NULL;
+        Expr *end = it->as.range_expr.end, *st = it->as.range_expr.start;
+        // inference on the range itself does not necessarily type its endpoints
+        if (end) { sema_resolve_expr(end); sema_infer_expr(end); }
+        if (st)  { sema_resolve_expr(st);  sema_infer_expr(st);  }
+        if (end && end->type && end->type->kind == TYPE_SIMPLE) bt = end->type;
+        else if (st && st->type && st->type->kind == TYPE_SIMPLE && st->kind != EXPR_LITERAL)
+            bt = st->type;
+        val_ty = bt ? bt : get_builtin_i32_type();
     } else {
         assert(iter_ty &&
                (iter_ty->kind == TYPE_ARRAY || iter_ty->kind == TYPE_SLICE));

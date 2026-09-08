@@ -4003,6 +4003,128 @@ static void sema_check_no_mutual_recursion(DeclList *decls) {
     }
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────────────────
+   INDEX COUNTERS INFER `usize`
+
+   `var i = 0` takes its type from the literal, so it is an i32. When that variable indexes an
+   array, the loop guard compares it against a LENGTH, and a length is a usize. Nothing bounds
+   a usize below INT32_MAX, so `i += 1` genuinely can leave i32 and the overflow check refuses
+   it — CORRECTLY. The user meets [E086] on the increment of a loop counter, which is the most
+   demoralising possible place to meet it, and the fix is a word they had no reason to expect.
+
+   The A1 precision survey measured this at 17 of 141 unproven obligations, 12%, the cheapest
+   item on the board. It is not a gap in the prover: the fact an i32 counter needs is FALSE.
+   It is the language choosing a type that makes a true statement unprovable.
+
+   So: an untyped binding initialised from a non-negative integer literal and used at least
+   once as an ARRAY INDEX is a usize. Everything the rule needs is already visible.
+
+   Deliberately narrow — it does not fire on a declared type, on a non-literal initialiser, on
+   a negative literal, or on a binding never used as an index.
+   ───────────────────────────────────────────────────────────────────────────────────────── */
+typedef struct { bool used_as_index; bool escapes; } IdxcUse;
+static void idxc_scan_expr(Expr *e, Id *nm, IdxcUse *u);
+static void idxc_scan_stmt(Stmt *s, Id *nm, IdxcUse *u);
+
+static bool idxc_is_name(Expr *e, Id *nm) {
+    return e && e->kind == EXPR_IDENTIFIER && e->as.identifier_expr.id && nm &&
+           e->as.identifier_expr.id->length == nm->length &&
+           memcmp(e->as.identifier_expr.id->name, nm->name, (size_t)nm->length) == 0;
+}
+static void idxc_scan_list(StmtList *l, Id *nm, IdxcUse *u) {
+    for (StmtList *sl = l; sl; sl = sl->next) idxc_scan_stmt(sl->stmt, nm, u);
+}
+// The value ESCAPES if it is handed somewhere that fixes its type: returned, passed to a
+// call, or bound to another variable. `var i = 0` indexing an array AND returned from a
+// function declared `i32` cannot become a usize — the return would then be a narrowing. That
+// is a real corpus program (in_condition_pass.ln) and it is why this rule needs a veto rather
+// than just a trigger.
+static void idxc_scan_expr(Expr *e, Id *nm, IdxcUse *u) {
+    if (!e) return;
+    switch (e->kind) {
+    case EXPR_INDEX:
+        if (idxc_is_name(e->as.index_expr.index, nm)) { u->used_as_index = true; }
+        else idxc_scan_expr(e->as.index_expr.index, nm, u);
+        idxc_scan_expr(e->as.index_expr.target, nm, u);
+        return;
+        idxc_scan_expr(e->as.index_expr.target, nm, u);
+        idxc_scan_expr(e->as.index_expr.index, nm, u);
+        break;
+    case EXPR_CALL:
+        idxc_scan_expr(e->as.call_expr.callee, nm, u);
+        for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
+            if (idxc_is_name(a->expr, nm)) u->escapes = true;   // the callee fixes the type
+            else idxc_scan_expr(a->expr, nm, u);
+        }
+        break;
+    case EXPR_BINARY: idxc_scan_expr(e->as.binary_expr.left, nm, u);
+                      idxc_scan_expr(e->as.binary_expr.right, nm, u); break;
+    case EXPR_UNARY:  idxc_scan_expr(e->as.unary_expr.right, nm, u); break;
+    case EXPR_MEMBER: idxc_scan_expr(e->as.member_expr.target, nm, u); break;
+    case EXPR_CAST:   idxc_scan_expr(e->as.cast_expr.expr, nm, u); break;
+    case EXPR_MOVE:   idxc_scan_expr(e->as.move_expr.expr, nm, u); break;
+    case EXPR_MUT:    idxc_scan_expr(e->as.mut_expr.expr, nm, u); break;
+    case EXPR_TRY:    idxc_scan_expr(e->as.try_expr.operand, nm, u); break;
+    case EXPR_ELSE:   idxc_scan_expr(e->as.else_expr.operand, nm, u);
+                      idxc_scan_expr(e->as.else_expr.arm, nm, u); break;
+    default: break;
+    }
+}
+static void idxc_scan_stmt(Stmt *s, Id *nm, IdxcUse *u) {
+    if (!s) return;
+    switch (s->kind) {
+    case STMT_VAR:
+        if (idxc_is_name(s->as.var_stmt.expr, nm)) u->escapes = true;  // `var j = i`
+        else idxc_scan_expr(s->as.var_stmt.expr, nm, u);
+        break;
+    case STMT_ASSIGN:
+        // `i = <expr>` is the counter updating ITSELF and fixes nothing; assigning `i` to
+        // something else does.
+        if (!idxc_is_name(s->as.assign_stmt.target, nm) &&
+            idxc_is_name(s->as.assign_stmt.expr, nm)) u->escapes = true;
+        idxc_scan_expr(s->as.assign_stmt.target, nm, u);
+        if (!idxc_is_name(s->as.assign_stmt.expr, nm)) idxc_scan_expr(s->as.assign_stmt.expr, nm, u);
+        break;
+    case STMT_EXPR:   idxc_scan_expr(s->as.expr_stmt.expr, nm, u); break;
+    case STMT_RETURN:
+        if (idxc_is_name(s->as.return_stmt.value, nm)) u->escapes = true;  // the return type wins
+        else idxc_scan_expr(s->as.return_stmt.value, nm, u);
+        break;
+    case STMT_IF:     idxc_scan_expr(s->as.if_stmt.cond, nm, u);
+                      idxc_scan_list(s->as.if_stmt.then_body, nm, u);
+                      idxc_scan_list(s->as.if_stmt.else_branch, nm, u); break;
+    case STMT_FOR:    idxc_scan_expr(s->as.for_stmt.iterable, nm, u);
+                      idxc_scan_list(s->as.for_stmt.body, nm, u); break;
+    case STMT_WHILE:  idxc_scan_expr(s->as.while_stmt.cond, nm, u);
+                      idxc_scan_list(s->as.while_stmt.body, nm, u); break;
+    case STMT_UNSAFE: idxc_scan_list(s->as.unsafe_stmt.body, nm, u); break;
+    case STMT_DEFER:  idxc_scan_stmt(s->as.defer_stmt.stmt, nm, u); break;
+    default: break;
+    }
+}
+static void idxc_apply(StmtList *body, StmtList *scope) {
+    for (StmtList *sl = scope; sl; sl = sl->next) {
+        Stmt *s = sl->stmt;
+        if (!s) continue;
+        if (s->kind == STMT_VAR && !s->as.var_stmt.type && s->as.var_stmt.name &&
+            s->as.var_stmt.expr && s->as.var_stmt.expr->kind == EXPR_LITERAL &&
+            s->as.var_stmt.expr->as.literal_expr.value >= 0) {
+            IdxcUse u = {false, false};
+            idxc_scan_list(body, s->as.var_stmt.name, &u);
+            if (u.used_as_index && !u.escapes)
+                s->as.var_stmt.type = type_simple(sema_arena, id(sema_arena, 5, "usize"));
+        }
+        switch (s->kind) {
+        case STMT_IF:     idxc_apply(body, s->as.if_stmt.then_body);
+                          idxc_apply(body, s->as.if_stmt.else_branch); break;
+        case STMT_FOR:    idxc_apply(body, s->as.for_stmt.body); break;
+        case STMT_WHILE:  idxc_apply(body, s->as.while_stmt.body); break;
+        case STMT_UNSAFE: idxc_apply(body, s->as.unsafe_stmt.body); break;
+        default: break;
+        }
+    }
+}
+
 static void sema_resolve_module(DeclList *decls, const char *module_path,
                                 Arena *arena) {
     sema_arena = arena;
@@ -4555,6 +4677,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                  sema_infer_expr(post->expr);
              }
         }
+
+        // Before RESOLUTION, not after: resolve creates the implicit local and gives it the
+        // declared type, so a type decided later never reaches the symbol.
+        idxc_apply(d->as.function_decl.body, d->as.function_decl.body);
 
         for (StmtList *sl = d->as.function_decl.body; sl; sl = sl->next) {
             sema_resolve_stmt(sl->stmt);

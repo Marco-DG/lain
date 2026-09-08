@@ -1994,8 +1994,18 @@ void sema_infer_expr(Expr *e) {
     if (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) {
       Id *mem = e->as.member_expr.member;
       if (mem && mem->length == 3 && strncmp(mem->name, "len", 3) == 0) {
-        // .len → integer
-        e->type = get_builtin_i32_type();
+        // ★ .len is a usize, not an i32.
+        //
+        // It was an i32, and that one line propagated everywhere: `for i in 0..arr.len` typed
+        // its counter from the range and got an i32, `while i < arr.len` compared an i32
+        // against a length, and `i + 1` then had to be proved to fit in i32 — which it cannot,
+        // because nothing bounds a length below INT32_MAX. The overflow check refused the most
+        // ordinary loop in the language, CORRECTLY, for a reason the programmer could not see.
+        //
+        // The A1 precision survey attributed 12% of every unproven obligation in the corpus to
+        // that shape. A length is a count of elements in memory; usize is what it has always
+        // been in the emitted C (`size_t`), so this makes the type say what the value is.
+        e->type = type_simple(sema_arena, id(sema_arena, 5, "usize"));
         break;
       }
       if (mem && mem->length == 4 && strncmp(mem->name, "data", 4) == 0) {
