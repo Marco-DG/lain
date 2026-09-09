@@ -655,6 +655,36 @@ void sema_resolve_stmt(Stmt *s) {
           diagnostic_show_line(s->line, s->col);
           exit(1);
         }
+        // ★ A `var` SLICE parameter cannot be reassigned AS A WHOLE, because neither backend
+        // can express it and each got it wrong in a different way. A slice parameter is
+        // decomposed at the ABI boundary into `(size_t __len_s, T *s)` — which is what earns
+        // the `restrict` and `access` annotations — so there is no single lvalue to assign to:
+        // the old emitter produced `s = (Slice_i32){...}` against an `int32_t *` and the C
+        // compiler REFUSED it, while the new one passes the slice by value and silently drops
+        // the write (a `shrink` that leaves len at 8). Every other `var` parameter shape
+        // propagates correctly — scalar, whole struct, struct field — so this is the one place
+        // the rule quietly fails, and it failed with no diagnostic at all.
+        //
+        // Writing THROUGH the slice (`s[i] = v`) is unaffected: that is an element store, not
+        // a rebind, and it is the operation the decomposed ABI exists to make fast.
+        Type *vpt = sym->decl->as.variable_decl.type;
+        while (vpt && vpt->kind == TYPE_COMPTIME) vpt = vpt->element_type;
+        if (vpt && ((vpt->kind == TYPE_ARRAY && vpt->array_len < 0) || vpt->kind == TYPE_SLICE)) {
+          fprintf(stderr, "[E009] Error Ln %li, Col %li: cannot reassign the `var` slice "
+                  "parameter '%s' as a whole.\n"
+                  "       A slice parameter is passed as a length and a pointer, so there is no "
+                  "single value to\n"
+                  "       assign back to; the caller would not see the new length.\n"
+                  "       Options to resolve:\n"
+                  "         (a) Write through it instead: `%s[i] = v` modifies the caller's "
+                  "elements.\n"
+                  "         (b) Return the new slice and let the caller rebind it.\n"
+                  "         (c) Take the length as its own `var usize` parameter if the length "
+                  "is what changes.\n",
+                  s->line, s->col, raw, raw);
+          diagnostic_show_line(s->line, s->col);
+          exit(1);
+        }
       }
     }
 

@@ -1,0 +1,20 @@
+// EXPECT: [E009]
+// A `var` slice parameter cannot be reassigned AS A WHOLE. Neither backend can express it and
+// each got it wrong in a different way: the old emitter produced `s = (Slice_i32){...}` against
+// an `int32_t *` and the C compiler REFUSED it (a broken-C escape, with no diagnostic from
+// Lain), while the new one passes the slice by value and silently DROPS the write — `shrink`
+// returns with the caller's length still 8.
+//
+// The cause is the ABI that earns the annotations: a slice parameter is decomposed into
+// `(size_t __len_s, T * restrict s)`, so there is no single lvalue to assign back to. Every
+// other `var` parameter shape propagates correctly — scalar, whole struct, struct field — so
+// this was the one place the `var` rule quietly failed.
+//
+// Writing THROUGH the slice is unaffected: see var_slice_param_write_pass.ln.
+proc shrink(var s i32[], src i32[]) { s = src[0..1] }
+proc main() i32 {
+    var a i32[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    var s = a[0..8]
+    shrink(var s, a)
+    return 0
+}
