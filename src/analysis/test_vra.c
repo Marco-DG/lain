@@ -327,8 +327,78 @@ static bool swapped_loop(IrCmp cmp, int bound, int step) {
     vra_free(V); return term;
 }
 
+// A loop whose counter is updated on TWO paths:
+//   i = 0; while i < 8 { if c != 0 { i += then_step } [else { i += else_step }] }
+// `has_else == false` leaves a path through the body that does NOT touch i — one update site,
+// and the loop does not terminate. The whole point of the MUST analysis is that COUNTING
+// update sites cannot tell these apart: the terminating two-armed form has two and the
+// non-terminating one-armed form has one.
+static bool two_arm_loop(int then_step, int else_step, bool has_else) {
+    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PURE);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrValue *c = ir_add_param(f, i32, nm("c"));
+    IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f);
+    IrBlock *thn=ir_new_block(f),*els=ir_new_block(f),*join=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *islot=ir_alloca(f,e,i32);
+    ir_store(f,e,islot,ir_const_int(f,e,0,i32)); ir_set_br(e,head);
+    IrValue *iv=ir_load(f,head,islot,i32);
+    ir_set_br_cond(head, ir_icmp(f,head,IR_CMP_SLT,iv,ir_const_int(f,head,8,i32)), body, ex);
+    ir_set_br_cond(body, ir_icmp(f,body,IR_CMP_NE,c,ir_const_int(f,body,0,i32)),
+                   thn, has_else ? els : join);
+    IrValue *tv=ir_load(f,thn,islot,i32);
+    ir_store(f,thn,islot,ir_binop(f,thn,IR_ADD,tv,ir_const_int(f,thn,then_step,i32),i32));
+    ir_set_br(thn,join);
+    if (has_else) {
+        IrValue *ev=ir_load(f,els,islot,i32);
+        ir_store(f,els,islot,ir_binop(f,els,IR_ADD,ev,ir_const_int(f,els,else_step,i32),i32));
+    }
+    ir_set_br(els,join);
+    ir_set_br(join,head); ir_set_ret(ex,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool term=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_TERMINATION) term=V->checks[i].ok;
+    vra_free(V); return term;
+}
+
+// i = 0; while i < 8 { i = i + 1; [reset(&i)] } — the call is handed the counter's ADDRESS,
+// so it can put i back and the loop may never end. There is no IR_STORE for that write, so a
+// store-only scan sees a clean +1 per iteration and calls it progress.
+static bool call_resets_counter(bool pass_addr) {
+    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PURE);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *islot=ir_alloca(f,e,i32);
+    ir_store(f,e,islot,ir_const_int(f,e,0,i32)); ir_set_br(e,head);
+    IrValue *iv=ir_load(f,head,islot,i32);
+    ir_set_br_cond(head, ir_icmp(f,head,IR_CMP_SLT,iv,ir_const_int(f,head,8,i32)), body, ex);
+    IrValue *iv3=ir_load(f,body,islot,i32);
+    ir_store(f,body,islot,ir_binop(f,body,IR_ADD,iv3,ir_const_int(f,body,1,i32),i32));
+    if (pass_addr) {
+        IrInstr *call = ir_instr(f, IR_CALL, i32, 1);
+        call->aux.callee = nm("reset"); call->operands[0] = islot;
+        ir_emit(body, call);
+    }
+    ir_set_br(body,head); ir_set_ret(ex,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool term=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_TERMINATION) term=V->checks[i].ok;
+    vra_free(V); return term;
+}
+
 int main(void) {
     A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*256);
+    vra_expect("counter cell never escapes -> terminates",
+               call_resets_counter(false), true);
+    vra_expect("a call is handed the counter's ADDRESS -> must NOT prove",
+               call_resets_counter(true),  false);
+    // Progress on EVERY path, not a count of update sites. The two-armed form terminates with
+    // two updates; the one-armed form does not terminate with one.
+    vra_expect("both arms advance the counter -> terminates",
+               two_arm_loop( 1,  2, true),  true);
+    vra_expect("only the THEN arm advances -> must NOT prove",
+               two_arm_loop( 1,  0, false), false);
+    vra_expect("one arm advances, the other RETREATS -> must NOT prove",
+               two_arm_loop( 1, -1, true),  false);
+    vra_expect("both arms retreat in a counting-up loop -> must NOT prove",
+               two_arm_loop(-1, -2, true),  false);
     // ★ the false proof: rising counter, guard `0 < i`, which never becomes false.
     vra_expect("while 0 < i { i = i + 1 } is INFINITE -> must NOT prove",
                swapped_loop(IR_CMP_SLT, 0,  1), false);

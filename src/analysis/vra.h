@@ -1589,6 +1589,68 @@ static bool vra_step_decreases(Vra *V, int cell, IrInstr *vd) {
         default: return false;
     }
 }
+// Successors of a block, as a small array. (Two at most: the CFG has no switch.)
+static int vra_succs(IrBlock *b, IrBlock **out) {
+    int n=0;
+    if (b->term.kind==IR_TERM_BR)          { if (b->term.a) out[n++]=b->term.a; }
+    else if (b->term.kind==IR_TERM_BR_COND){ if (b->term.a) out[n++]=b->term.a;
+                                             if (b->term.b) out[n++]=b->term.b; }
+    return n;
+}
+
+// Does EVERY path from the header around to the header pass through a block that makes
+// progress? A forward MUST analysis over the natural loop:
+//
+//   seen[H] = false                                   (an iteration starts having done nothing)
+//   seen[b] = AND over in-loop preds q of ( seen[q] OR prog[q] )
+//   terminates iff every back-edge source q satisfies seen[q] OR prog[q]
+//
+// The direction matters and the obvious backward reading is WRONG: "every path FROM b reaches
+// an update" fails on the join block after a two-armed `if`, where the update has already
+// happened upstream. Asking whether it has happened YET is the question that composes.
+//
+// A successor outside the loop is not a constraint — that path leaves, which is termination,
+// not a failure to progress. Optimistic initialisation (true everywhere but H) with an AND
+// meet is the greatest fixpoint, which is the correct one for "on all paths": an inner cycle
+// with no progress drives itself to false rather than assuming its own conclusion.
+static bool vra_progress_on_every_path(Vra *V, IrBlock *H, int nbb,
+                                       const char *inloop, const char *prog) {
+    char *seen = malloc((size_t)nbb);
+    if (!seen) return false;                                  // fail closed
+    for (int i=0;i<nbb;i++) seen[i]=1;
+    if (H->id>=0 && H->id<nbb) seen[H->id]=0;
+    for (int round=0; round<=nbb+1; round++) {
+        bool changed=false;
+        for (IrBlock *b=V->f->blocks; b; b=b->next) {
+            if (!(b->id>=0 && b->id<nbb && inloop[b->id])) continue;
+            if (b->id==H->id) continue;
+            char v=1;
+            for (IrBlock *q=V->f->blocks; q && v; q=q->next) {
+                if (!(q->id>=0 && q->id<nbb && inloop[q->id])) continue;
+                IrBlock *sc[2]; int ns=vra_succs(q,sc);
+                bool is_pred=false;
+                for (int k=0;k<ns;k++) if (sc[k] && sc[k]->id==b->id) is_pred=true;
+                if (!is_pred) continue;
+                if (!(seen[q->id] || prog[q->id])) v=0;
+            }
+            if (v!=seen[b->id]) { seen[b->id]=v; changed=true; }
+        }
+        if (!changed) break;
+    }
+    bool any=false, ok=true;
+    for (IrBlock *q=V->f->blocks; q && ok; q=q->next) {
+        if (!(q->id>=0 && q->id<nbb && inloop[q->id])) continue;
+        IrBlock *sc[2]; int ns=vra_succs(q,sc);
+        for (int k=0;k<ns;k++) {
+            if (!sc[k] || sc[k]->id!=H->id) continue;
+            any=true;
+            if (!(seen[q->id] || prog[q->id])) ok=false;
+        }
+    }
+    free(seen);
+    return ok && any;
+}
+
 // `a CMP b` read as `b CMP' a`. Needed because the counter may sit on EITHER side of the
 // guard, and every direction test below is written from the counter's point of view.
 static IrCmp vra_cmp_swap(IrCmp c) {
@@ -1621,35 +1683,84 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         int cell=ivd->operands[0]->id;
         if (!vra_is_scalar_cell(V,cell)) continue;
         if (!vra_loop_invariant(V,bnd,H)) continue;
-        int64_t step=0; int nstore=0, nupd=0;
+        bool lt=(p==IR_CMP_SLT||p==IR_CMP_ULT||p==IR_CMP_SLE||p==IR_CMP_ULE);
+        bool gt=(p==IR_CMP_SGT||p==IR_CMP_UGT||p==IR_CMP_SGE||p==IR_CMP_UGE);
+        if (!lt && !gt) continue;
         // The loop's REAL body, not "every block with an id at or above the header's" — the
         // same id-order heuristic that broke the widening selector, and here it counted stores
         // from unrelated later code as if they were loop updates.
         int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
         char *body = malloc((size_t)nbb);
-        if (body) vra_natural_loop(V, H, nbb, body);
-        for (IrBlock *b=V->f->blocks; b; b=b->next) {
-            if (body && !(b->id>=0 && b->id<nbb && body[b->id])) continue;
-            for (IrInstr *s=b->instrs; s; s=s->next) {
-                if (s->op!=IR_STORE || s->n_operands<2 || s->operands[0]->id!=cell) continue;
-                nstore++;
-                IrInstr *vd=V->def[s->operands[1]->id];
+        if (!body) continue;                                  // fail closed
+        vra_natural_loop(V, H, nbb, body);
+        // ★ PROGRESS PER BLOCK, not "exactly one update in the whole loop". Requiring a single
+        // update site refused `if flag > 0 { i = i + 1 } else { i = i + 2 }` — both arms move
+        // the counter the right way, so the loop plainly terminates, and it is an ordinary
+        // shape. What actually has to hold is (a) EVERY store to the cell is progress, so no
+        // path can undo one, and (b) every path around the loop passes through at least one.
+        // (b) is a dataflow question, computed below; counting cannot answer it, and the two
+        // ways of being wrong are opposite: `if c { i = i + 1 }` has one update site and does
+        // NOT terminate, while the two-armed `if` has two and does.
+        char *prog = calloc((size_t)nbb, 1);
+        if (!prog) { free(body); continue; }
+        bool bad = false, anyprog = false, has_call = false;
+        for (IrBlock *b=V->f->blocks; b && !bad; b=b->next) {
+            if (!(b->id>=0 && b->id<nbb && body[b->id])) continue;
+            for (IrInstr *st=b->instrs; st; st=st->next) {
+                // ★ A CALL CAN MOVE THE COUNTER WITH NO STORE TO SEE. This scan reads
+                // IR_STOREs, so `while i < 8 { i = i + 1; reset(var i) }` looked like a clean
+                // +1 per iteration and was PROVEN TERMINATING — `reset` can put i back to 0
+                // forever. Sound only when the cell's address never left: `V->escaped` is the
+                // same set the memory model havocs at every call, and if nothing in the loop
+                // calls anything then nothing can exercise the escape while the loop runs.
+                if (st->op==IR_CALL) has_call = true;
+                if (st->op!=IR_STORE || st->n_operands<2 || st->operands[0]->id!=cell) continue;
+                bool ok_step = false;
+                IrInstr *vd=V->def[st->operands[1]->id];
                 if (vd && (vd->op==IR_ADD||vd->op==IR_SUB) && vd->n_operands>=2) {
                     IrInstr *ld=V->def[vd->operands[0]->id]; int c=vd->operands[1]->id;
                     if (ld && ld->op==IR_LOAD && ld->operands[0]->id==cell && V->cknown[c]) {
-                        step = (vd->op==IR_ADD)? V->cval[c] : -V->cval[c]; nupd++;
+                        int64_t stp = (vd->op==IR_ADD)? V->cval[c] : -V->cval[c];
+                        ok_step = (lt && stp>0) || (gt && stp<0);
                     }
-                } else if (vra_step_decreases(V, cell, vd)) {
-                    step = -1; nupd++;      // a falling step the domain justifies (see above)
+                } else if (gt && vra_step_decreases(V, cell, vd)) {
+                    ok_step = true;      // a falling step the domain justifies (see above)
                 }
+                // A store of a CONSTANT that makes the guard false is progress too: that path
+                // leaves the loop at the next header test. `while j > 0 { ... else { j = 0 } }`
+                // is the shape — the else arm does not decrease j by a step, it ends the loop.
+                if (!ok_step) {
+                    int sv = st->operands[1]->id, bv = bnd->id;
+                    if (sv>=0 && sv<V->nvar && V->cknown[sv] &&
+                        bv>=0 && bv<V->nvar && V->cknown[bv]) {
+                        int64_t cv=V->cval[sv], bc=V->cval[bv];
+                        uint64_t cu=(uint64_t)cv, bu=(uint64_t)bc;
+                        bool holds = true;
+                        switch (p) {
+                            case IR_CMP_SLT: holds = cv <  bc; break;
+                            case IR_CMP_SLE: holds = cv <= bc; break;
+                            case IR_CMP_SGT: holds = cv >  bc; break;
+                            case IR_CMP_SGE: holds = cv >= bc; break;
+                            case IR_CMP_ULT: holds = cu <  bu; break;
+                            case IR_CMP_ULE: holds = cu <= bu; break;
+                            case IR_CMP_UGT: holds = cu >  bu; break;
+                            case IR_CMP_UGE: holds = cu >= bu; break;
+                            default: holds = true; break;
+                        }
+                        ok_step = !holds;               // guard now false -> the loop exits
+                    }
+                }
+                if (!ok_step) { bad = true; break; }   // a store that is not progress
+                prog[b->id] = 1; anyprog = true;
             }
         }
-        free(body);
-        if (nstore!=1 || nupd!=1) continue;
-        bool lt=(p==IR_CMP_SLT||p==IR_CMP_ULT||p==IR_CMP_SLE||p==IR_CMP_ULE);
-        bool gt=(p==IR_CMP_SGT||p==IR_CMP_UGT||p==IR_CMP_SGE||p==IR_CMP_UGE);
-        if (lt && step>0) return true;
-        if (gt && step<0) return true;
+        if (bad || !anyprog) { free(body); free(prog); continue; }
+        if (has_call && cell>=0 && cell<V->nvar && V->escaped && V->escaped[cell]) {
+            free(body); free(prog); continue;          // the callee may write the counter
+        }
+        bool ok = vra_progress_on_every_path(V, H, nbb, body, prog);
+        free(body); free(prog);
+        if (ok) return true;
     }
     return false;
 }
