@@ -16,38 +16,55 @@
 #   join      defined at a merge: a disjunction hulled -> B2 partitioning
 #   other     unclassified — if this dominates, the classifier is what needs work
 #
+# ── WHICH PROGRAMS COUNT ────────────────────────────────────────────────────────────────────
+# A `_fail.ln` program is one the corpus asserts must be REJECTED. Its unproven obligations are
+# the engine doing exactly what the test demands, so putting them in the same tally as a
+# `_pass.ln` program's is measuring a success as a failure. The first version of this survey did
+# that and inflated every bucket: 50 of 134 obligations came from asserted-reject programs, and
+# `other` — the bucket the number was steering work toward — was 52% of the fail side against 32%
+# of the rest. The two sides are now tallied SEPARATELY. The fail side is still printed, because
+# it is the audit trail for "the refusal is for the reason the test intends" and because a shift
+# there is how an over-strict change announces itself.
+#
 #   bash scripts/survey/precision_loss.sh [N]
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 N="${1:-100000}"
-DRV="$(mktemp -d)/vradrv"; trap 'rm -rf "$(dirname "$DRV")"' EXIT
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+DRV="$TMP/vradrv"
 gcc -std=c99 -O2 -o "$DRV" src/analysis/vra_driver.c -I src 2>/dev/null || { echo "driver build failed"; exit 2; }
 
-TALLY="$(mktemp)"; BYKIND="$(mktemp)"; trap 'rm -f "$TALLY" "$BYKIND"' EXIT
-files=0
-for f in $(find tests examples -name '*_pass.ln' -o -name '*.ln' 2>/dev/null | grep -v '/_tmp/' | sort -u | head -"$N"); do
+PASS="$TMP/pass"; FAIL="$TMP/fail"; : > "$PASS"; : > "$FAIL"
+pfiles=0; ffiles=0
+for f in $(find tests examples -name '*.ln' 2>/dev/null | grep -v '/_tmp/' | sort -u | head -"$N"); do
     out=$("$DRV" "$f" --loss --suppress 2>/dev/null | grep '^LOSS') || true
     [ -z "$out" ] && continue
-    files=$((files+1))
-    echo "$out" | cut -f2 >> "$TALLY"
-    echo "$out" | cut -f2,3 >> "$BYKIND"
+    case "$f" in
+        *_fail.ln) ffiles=$((ffiles+1)); echo "$out" | awk -v F="$f" '{print F"\t"$2"\t"$3" "$4}' >> "$FAIL" ;;
+        *)         pfiles=$((pfiles+1)); echo "$out" | awk -v F="$f" '{print F"\t"$2"\t"$3" "$4}' >> "$PASS" ;;
+    esac
 done
 
-tot=$(wc -l < "$TALLY")
+report() {              # $1 = file, $2 = heading, $3 = program count
+    local tot; tot=$(wc -l < "$1")
+    echo "------------------------------------------------------------------"
+    printf "  %s\n" "$2"
+    printf "    programs: %-6s obligations: %s\n" "$3" "$tot"
+    [ "$tot" -eq 0 ] && return
+    cut -f2 "$1" | sort | uniq -c | sort -rn | while read -r n cat; do
+        pct=$(( n * 100 / tot ))
+        printf "    %-15s %5d  %3d%%  %s\n" "$cat" "$n" "$pct" "$(printf '#%.0s' $(seq 1 $(( pct / 2 + 1 ))))"
+    done
+    echo "    by obligation kind:"
+    cut -f2,3 "$1" | sort | uniq -c | sort -rn | head -10 | while read -r n cat kind; do
+        printf "      %-15s %-16s %5d\n" "$cat" "$kind" "$n"
+    done
+}
+
 echo "=================================================================="
 echo "A1 — where the numeric engine loses a proof"
-echo "  programs with at least one unproven obligation : $files"
-echo "  unproven obligations                           : $tot"
-echo "------------------------------------------------------------------"
-if [ "$tot" -gt 0 ]; then
-    sort "$TALLY" | uniq -c | sort -rn | while read -r n cat; do
-        pct=$(( n * 100 / tot ))
-        printf "  %-10s %5d  %3d%%  %s\n" "$cat" "$n" "$pct" "$(printf '#%.0s' $(seq 1 $(( pct / 2 + 1 ))))"
-    done
-    echo "------------------------------------------------------------------"
-    echo "  by obligation kind:"
-    sort "$BYKIND" | uniq -c | sort -rn | head -12 | while read -r n cat kind; do
-        printf "    %-10s %-16s %5d\n" "$cat" "$kind" "$n"
-    done
-fi
+report "$PASS" "★ PRECISION QUESTIONS — programs the corpus asserts COMPILE" "$pfiles"
+report "$FAIL" "CORRECT REFUSALS — programs the corpus asserts are REJECTED" "$ffiles"
 echo "=================================================================="
+echo "Only the first block orders Stage B. The second is an audit trail: every line in it is a"
+echo "test that WANTS a refusal, so a bucket growing there is not a regression by itself."

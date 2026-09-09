@@ -1,6 +1,6 @@
 // EXPECT: [E086]
-// LAINFLAGS: --engine=ir-full
-// ★ C-7. The obligation that fires is the OVERFLOW one on `n - 1` itself — which is the
+// ★ C-7, and it now fires on the DEFAULT engine — the fix reached the shipping path, so
+// this no longer waits for the Stage-3.5 switchover. The obligation that fires is the OVERFLOW one on `n - 1` itself — which is the
 // honest place for it: the underflow is the bug, and the out-of-bounds read is its
 // consequence. `n - 1` on a usize with n = 0 is SIZE_MAX, so the loop runs and `a[0]` on a
 // zero-length slice reads out of bounds. The old engine proves this function check-free and

@@ -1124,10 +1124,26 @@ static void sema_apply_constraint(Expr *cond, RangeTable *t) {
                  rhs->as.binary_expr.right->as.literal_expr.value >= 1) {
             Id *v1 = lhs->as.identifier_expr.id;
             Id *v2 = rhs->as.binary_expr.left->as.identifier_expr.id;   // n
+            int64_t D = (int64_t)rhs->as.binary_expr.right->as.literal_expr.value;
             Range nr = range_get(t, v2);
             if (nr.known && nr.min >= 0) {
                 if (op == TOKEN_ANGLE_BRACKET_LEFT)            constraint_add(t, v1, v2, -1);
                 else if (op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL) constraint_add(t, v1, v2, 0);
+            }
+            // The guard also bounds n FROM BELOW: with i >= 0 and D >= 1, integer
+            // division makes `n / D == 0` whenever 0 <= n < D, so `i < n / D` would
+            // demand i < 0. The guard holding therefore proves n >= D.
+            // Without it the two-pointer reverse `a[n - 1 - i]` under `while i < n / 2`
+            // was rejected: `n - 1` on a usize underflows at n == 0, and nothing said
+            // n >= 2. Only the STRICT form gives this — `i <= n / D` is satisfied by
+            // i == 0, n == 0.
+            if (op == TOKEN_ANGLE_BRACKET_LEFT && D >= 1) {
+                Range ir = range_get(t, v1);
+                if (ir.known && ir.min >= 0 && nr.known && nr.min >= 0 && nr.min < D) {
+                    Range tightened = nr;
+                    tightened.min = D;
+                    if (tightened.min <= tightened.max) range_set(t, v2, tightened);
+                }
             }
         }
         // VRA: Identifier vs member(.len): x < arr.len (narrows i against length)

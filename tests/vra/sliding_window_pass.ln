@@ -1,11 +1,17 @@
-// VRA symbolic-offset guard: `while i < n - 1` is captured as `i - n <= -2`, so the
-// sliding-window index `a[i+1]` proves in bounds over a runtime-length array `a[n]`
-// ((i+1) - n = (i-n)+1 <= -1). The ubiquitous sliding-window / two-element idiom is
-// now check-free.
+// VRA symbolic-offset guard: the sliding-window index `a[i+1]` proves in bounds over a
+// runtime-length array `a[n]`, so the ubiquitous two-element idiom is check-free.
+//
+// ★ THE GUARD IS `i + 1 < n`, NOT `i < n - 1`. The two are equivalent over the integers and
+// are NOT equivalent in usize: `n - 1` at n == 0 is SIZE_MAX, so the second spelling runs the
+// loop on an empty slice and `a[0]` reads out of bounds. This test asserted that spelling and
+// the emitted C had no bounds check — an ASan-confirmed stack-buffer-overflow. See C-7 in
+// CORPUS_CORRECTIONS.md; the underflowing form is now pinned by
+// `sliding_window_underflow_fail.ln`. Written this way nothing underflows, and BOTH accesses
+// still prove check-free: `i + 1 < n` gives `i + 1 <= n - 1 < n` directly.
 proc sw(a i32[n], n usize) i32 {
     var s i32 = 0
     var i usize = 0
-    while i < n - 1 decreasing n - 1 - i {
+    while i + 1 < n decreasing n - i {
         s = s +% (a[i] +% a[i + 1])
         i = i + 1
     }

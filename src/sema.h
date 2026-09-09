@@ -2858,7 +2858,23 @@ static void walk_stmt(Stmt *s) {
             }
 
             if (s->as.while_stmt.measure) {
-                sema_infer_expr(s->as.while_stmt.measure);
+                // The measure is a PROOF TERM, never emitted and never evaluated except
+                // where the loop runs — which is exactly the scope E080 judges it in on
+                // the next line ("non-negative when the loop condition holds"). Inferring
+                // it outside that scope range-checked it against facts that do not apply:
+                // `while i < n decreasing n - i` with `var i usize = 1` reported an
+                // underflow on `n - i`, because n was unconstrained there while the guard
+                // gives n > i. Apply the condition, infer, then pop back — the constraint
+                // table is push-based, so restoring head+constraints undoes everything.
+                if (sema_ranges) {
+                    RangeEntry *h0 = sema_ranges->head;
+                    ConstraintEntry *c0 = sema_ranges->constraints;
+                    sema_apply_constraint(s->as.while_stmt.cond, sema_ranges);
+                    sema_infer_expr(s->as.while_stmt.measure);
+                    sema_ranges->head = h0; sema_ranges->constraints = c0;
+                } else {
+                    sema_infer_expr(s->as.while_stmt.measure);
+                }
                 sema_verify_bounded_while(s);
             }
 

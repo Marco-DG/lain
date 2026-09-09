@@ -1,10 +1,15 @@
 // EXPECT: [E085]
-// SOUNDNESS: the offset-guard capture must not over-prove — under `i < n - 1`, the
-// index `a[i+2]` reaches n (i can be n-2, i+2 = n), out of bounds. Rejected.
+// SOUNDNESS: the offset-guard capture must not over-prove — under `i + 1 < n`, the index
+// `a[i+2]` reaches n (i can be n-2, i+2 = n), out of bounds. Rejected.
+//
+// The guard is spelled `i + 1 < n` rather than `i < n - 1` deliberately: the second underflows
+// on a usize at n == 0 and is rejected for THAT reason (C-7), which would have made this test
+// pass for a reason it does not describe — the bounds over-reach it exists to pin would have
+// gone untested. Written this way the guard is sound and E085 is the only obligation left.
 proc f(a i32[n], n usize) i32 {
     var s i32 = 0
     var i usize = 0
-    while i < n - 1 decreasing n - 1 - i {
+    while i + 1 < n decreasing n - i {
         s = s +% a[i + 2]
         i = i + 1
     }

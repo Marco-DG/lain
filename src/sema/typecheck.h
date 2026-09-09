@@ -220,17 +220,54 @@ bool check_value_fits_type(Range r, Type *target_type,
     // small window of LLONG_MIN/LLONG_MAX is treated as "no info".
     // The window absorbs arithmetic from type-max constants
     // (e.g. `n - 2` widens to [LLONG_MIN+2, LLONG_MAX-2]).
+    //
+    // ★ THE WINDOW IS PER-BOUND, NOT PER-RANGE. Testing them together made ONE
+    // unknown end excuse the OTHER, and that is a memory-safety hole rather than a
+    // precision choice: an unrefined `n usize` has range [0, LLONG_MAX], so `n - 1`
+    // is [-1, LLONG_MAX-1] — a min of -1 that is exact and below usize's 0, skipped
+    // because the max happens to be large. `while i < n - 1 { a[i] }` then compiled
+    // with no diagnostic and read out of bounds at n == 0, since the underflowed
+    // bound is UINT64_MAX (ASan-confirmed stack-buffer-overflow, and the guard is
+    // what wraps, so the index check the array access does never sees it).
+    // A bound near an extremum is no information about THAT side. A bound that is
+    // not stays evidence, whatever the other end does.
     const long long UNBOUNDED_WINDOW = 4096;
-    if (r.min <= LLONG_MIN + UNBOUNDED_WINDOW ||
-        r.max >= LLONG_MAX - UNBOUNDED_WINDOW) return true;
+    bool lo_unknown = r.min <= LLONG_MIN + UNBOUNDED_WINDOW;
+    bool hi_unknown = r.max >= LLONG_MAX - UNBOUNDED_WINDOW;
+    if (lo_unknown && hi_unknown) return true;
     long long tlo, thi;
     if (!target_type || !type_integer_range(target_type, &tlo, &thi)) return true;
-    if (r.min < tlo || r.max > thi) {
+    if ((!lo_unknown && r.min < tlo) || (!hi_unknown && r.max > thi)) {
         const char *type_name = "?";
         int type_len = 1;
         if (target_type->kind == TYPE_SIMPLE && target_type->base_type) {
             type_name = target_type->base_type->name;
             type_len = (int)target_type->base_type->length;
+        }
+        // An UNSIGNED value going below zero is its own failure and reads nothing like an
+        // overflow: it wraps UPWARD, to a number near the type maximum, so the usual advice
+        // ("widen the target type") makes the wrapped value larger rather than fixing
+        // anything. Say what actually happens and name the edits that work. The case that
+        // motivates this is `n - 1` used as a loop bound, where the wrap turns a loop that
+        // should not run into one that runs SIZE_MAX times.
+        if (!lo_unknown && r.min < tlo && tlo == 0) {
+            fprintf(stderr,
+                "[E086] Error Ln %li, Col %li: this subtraction can go below zero, and '%.*s' "
+                "is unsigned.\n"
+                "       The result can be as low as %lld. On an unsigned type that is not a "
+                "negative\n"
+                "       number but a very large one: -1 becomes the type's maximum.\n"
+                "       Options to resolve:\n"
+                "         (a) Guard the subtraction: `if a > b { ... a - b ... }`.\n"
+                "         (b) Rewrite so nothing is subtracted: `i + 1 < n` in place of "
+                "`i < n - 1`.\n"
+                "         (c) Refine the operand where it is declared: `n usize > 0`.\n"
+                "         (d) Use a wrapping (-%%) or saturating (-|) operator if the wrap is "
+                "intended.\n",
+                (long)line, (long)col, type_len, type_name,
+                (long long)r.min);
+            diagnostic_show_line(line, col);
+            exit(1);
         }
         fprintf(stderr,
             "[E086] Error Ln %li, Col %li: %s '%s' would overflow target type '%.*s'.\n"

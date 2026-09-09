@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// SOUNDNESS: `i < n / D` with i >= 0 proves n >= D, because integer division makes n / D zero
+// for every 0 <= n < D and no unsigned i is below zero. That is what lets the two-pointer
+// reverse write `a[n - 1 - i]` without underflow (two_pointer_reverse_pass.ln).
+//
+// The NON-STRICT form proves nothing: `i <= n / 2` is satisfied by i == 0, n == 0, so n may
+// still be 0 and `n - 1` is SIZE_MAX. Widen the inference to `<=` and this program compiles
+// and reads out of bounds. Stated with an `if` rather than a `while` so the termination
+// measure cannot reject it first and hide what is being pinned.
+proc f(a i32[n], n usize) i32 {
+    var i usize = 0
+    if i <= n / 2 { return a[n - 1 - i] }
+    return 0
+}
+proc main() i32 { return 0 }

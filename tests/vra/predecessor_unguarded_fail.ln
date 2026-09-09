@@ -1,6 +1,11 @@
-// EXPECT: [E085]
+// EXPECT: [E086]
 // SOUNDNESS: a NEGATIVE-offset index needs its lower bound proven. `a[i-1]` under
 // only `i < n` (no `i > 0`) can underflow at i=0 — rejected, not proven.
+//
+// The code is E086 and not E085 because the defect is named at its source: on a usize,
+// `i - 1` at i == 0 is SIZE_MAX, so the INDEX EXPRESSION is what is ill-defined, and the
+// out-of-bounds read is its consequence. Both codes reject; this one says which edit
+// fixes the program (guard `i > 0`), which the bounds code cannot.
 proc f(a i32[n], n usize) i32 {
     var s i32 = 0
     var i usize = 0

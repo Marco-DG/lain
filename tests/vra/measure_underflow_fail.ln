@@ -1,0 +1,14 @@
+// EXPECT: [E086]
+// SOUNDNESS: a `decreasing` measure is range-checked UNDER the loop guard, because that is the
+// only scope in which it is ever evaluated — the same scope E080 judges it in. That is what
+// lets `while i < n decreasing n - i` past the check when i starts at 1: the guard gives n > i.
+//
+// The guard must actually supply the fact. Here it does not: `i > 0` says nothing about n, so
+// `n - i` underflows at n == 0, i == 1, and a measure that wraps to SIZE_MAX is not a
+// well-founded termination argument. Drop the guard scoping and this is accepted.
+proc f(n usize) usize {
+    var i usize = 1
+    while i > 0 decreasing n - i { i = i - 1 }
+    return i
+}
+proc main() i32 { return 0 }
