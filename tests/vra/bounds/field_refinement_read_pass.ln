@@ -2,6 +2,12 @@
 // was enforced only at construction; now `a[b.v]` is provable in bounds (and
 // `b.pct + 1` provable non-overflowing) because a member read seeds the field's
 // refinement range.
+//
+// The IR engine reads the same declaration: a field's refinement clauses now reach its
+// lowered type (`IrType.has_refine`), which only the ALIAS form used to do, so a refined
+// field lowered to a bare `i32` and this proof was lost under `--engine=ir-full`.
+// Trusting it at the use site is sound because construction and every assignment enforce
+// it — `field_refinement_violated_fail.ln` is the pair that pins that.
 type Box {
     v   i32 >= 0 and <= 3
     pct i32 >= 0 and <= 100

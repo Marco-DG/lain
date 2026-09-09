@@ -362,15 +362,17 @@ static IrType *ir_resolve_alias_base(LowerCtx *c, Decl *ad) {
 // B4: copy `base` and narrow it by the alias's literal relational constraints. Only literal
 // RHS bounds are type-level: a constraint against another identifier is per-VALUE and stays
 // in the assume channel where it belongs.
-static IrType *ir_refine_int_type(LowerCtx *c, IrType *base, Decl *ad) {
-    if (!ad || ad->kind != DECL_TYPE_ALIAS) return base;
+// The refinement clauses of an alias (`type Small = u8 < 200`) and of a struct FIELD
+// (`v i32 >= 0 and <= 3`) are the same list in the same shape — both are filed on the DECL by
+// sema, not on the type expression. Only the alias case was read, so a refined field lowered
+// to a bare `i32` and `a[b.v]` could not be proven in bounds even though the old engine proves
+// it from the same declaration. Taking the LIST rather than the Decl lets both callers in.
+static IrType *ir_refine_int_type_from(LowerCtx *c, IrType *base, ExprList *constraints) {
     int64_t lo, hi;
+    if (!constraints) return base;
     if (!irtype_int_range(base, &lo, &hi)) return base;
     int64_t nlo = lo, nhi = hi; bool got = false;
-    // The constraints hang off the DECL, not the RHS expression — sema resolves the RHS to
-    // an EXPR_TYPE and files the relational clauses separately (alias_constraints_for reads
-    // the same list). Walking the expression found nothing at all.
-    for (ExprList *cn = ad->as.type_alias_decl.constraints; cn; cn = cn->next) {
+    for (ExprList *cn = constraints; cn; cn = cn->next) {
         Expr *e = cn->expr;
         {
             if (!e || e->kind != EXPR_BINARY) continue;
@@ -391,6 +393,11 @@ static IrType *ir_refine_int_type(LowerCtx *c, IrType *base, Decl *ad) {
     *r = *base;
     r->has_refine = true; r->refine_lo = nlo; r->refine_hi = nhi;
     return r;
+}
+
+static IrType *ir_refine_int_type(LowerCtx *c, IrType *base, Decl *ad) {
+    if (!ad || ad->kind != DECL_TYPE_ALIAS) return base;
+    return ir_refine_int_type_from(c, base, ad->as.type_alias_decl.constraints);
 }
 
 // Index of field `m` in an IRT_STRUCT (uses the IR type's own field table — no AST).
@@ -567,7 +574,9 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
                 r->field_names  = arena_push_many_aligned(c->a, IrName*, nf>0?nf:1);
                 int i=0; for (DeclList *fl=sd->as.struct_decl.fields; fl; fl=fl->next) {
                     if (!fl->decl || fl->decl->kind!=DECL_VARIABLE) continue;
-                    r->fields[i]      = ir_lower_type(c, fl->decl->as.variable_decl.type);
+                    r->fields[i]      = ir_refine_int_type_from(c,
+                                            ir_lower_type(c, fl->decl->as.variable_decl.type),
+                                            fl->decl->as.variable_decl.constraints);
                     Id *fnm = fl->decl->as.variable_decl.name;
                     r->field_names[i] = fnm ? ir_intern(c->a, fnm->name, fnm->length) : NULL;
                     i++;
