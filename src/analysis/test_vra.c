@@ -407,8 +407,46 @@ static bool mask_clear_loop(void) {
     vra_free(V); return term;
 }
 
+// B1's bound is s0 + T*delta, and BOTH factors are recovered by scanning IR_STOREs. A call
+// handed either cell's ADDRESS writes it with no store to find:
+//   i=0; s=0; while i < 4 { s = s + 100; i = i + 1; [reset(&i) | reset(&s)] }   with s an i16.
+// Without a call T = 4, so s <= 400 and the narrowing to i16 is provable. With one, the loop
+// may run forever (counter) or s may be assigned behind the loop's back (accumulator), and the
+// overflow obligation must NOT be discharged. `which`: 0 none, 1 counter, 2 accumulator.
+static bool accum_bounded(int which) {
+    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PROC);
+    IrType *i32=ir_type_int(&A,32,true), *i16=ir_type_int(&A,16,true);
+    IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *islot=ir_alloca(f,e,i32), *sslot=ir_alloca(f,e,i16);
+    ir_store(f,e,islot,ir_const_int(f,e,0,i32));
+    ir_store(f,e,sslot,ir_const_int(f,e,0,i16)); ir_set_br(e,head);
+    IrValue *iv=ir_load(f,head,islot,i32);
+    ir_set_br_cond(head, ir_icmp(f,head,IR_CMP_SLT,iv,ir_const_int(f,head,4,i32)), body, ex);
+    IrValue *sv=ir_load(f,body,sslot,i16);
+    ir_store(f,body,sslot,ir_binop(f,body,IR_ADD,sv,ir_const_int(f,body,100,i16),i16));
+    IrValue *iv3=ir_load(f,body,islot,i32);
+    ir_store(f,body,islot,ir_binop(f,body,IR_ADD,iv3,ir_const_int(f,body,1,i32),i32));
+    if (which) {
+        IrInstr *call = ir_instr(f, IR_CALL, i32, 1);
+        call->aux.callee = nm("reset");
+        call->operands[0] = (which==1) ? islot : sslot;
+        ir_emit(body, call);
+    }
+    ir_set_br(body,head); ir_set_ret(ex,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f);
+    bool all_ok = true; int n=0;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_OVERFLOW){ n++; if(!V->checks[i].ok) all_ok=false; }
+    vra_free(V); return n>0 && all_ok;
+}
+
 int main(void) {
     A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*256);
+    vra_expect("B1: T=4 bounds the running total",
+               accum_bounded(0), true);
+    vra_expect("B1: a call may reset the COUNTER -> T is not a trip count",
+               accum_bounded(1), false);
+    vra_expect("B1: a call may assign the ACCUMULATOR -> s0+T*d says nothing",
+               accum_bounded(2), false);
     vra_expect("while x > 0 { x = x & (x-1) } terminates", mask_clear_loop(), true);
     vra_expect("counter cell never escapes -> terminates",
                call_resets_counter(false), true);

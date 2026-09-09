@@ -1589,6 +1589,25 @@ static bool vra_step_decreases(Vra *V, int cell, IrInstr *vd) {
         default: return false;
     }
 }
+// ★ CAN ANYTHING THIS SCAN CANNOT SEE CHANGE `cell` WHILE THE LOOP RUNS?
+// Every rule below recovers a per-iteration fact by pattern-matching IR_STOREs — the counter's
+// step, the trip count, the accumulator's starting value. A call handed the cell's ADDRESS
+// writes it with no store to find, so all three read a clean per-iteration update that the
+// program does not actually have. That produced three separate FALSE PROOFS, of termination
+// and of no-overflow.
+//
+// `V->escaped` is the same set the memory model already havocs at every call, and if nothing
+// in the loop calls anything then nothing can exercise the escape while the loop runs — so
+// the guard costs no precision on the ordinary case, where a counter's address never leaves.
+static bool vra_cell_opaque_write(Vra *V, int cell, int nbb, const char *inloop) {
+    if (cell < 0 || cell >= V->nvar || !V->escaped || !V->escaped[cell]) return false;
+    for (IrBlock *b=V->f->blocks; b; b=b->next) {
+        if (!(b->id>=0 && b->id<nbb && inloop[b->id])) continue;
+        for (IrInstr *st=b->instrs; st; st=st->next) if (st->op==IR_CALL) return true;
+    }
+    return false;
+}
+
 // Successors of a block, as a small array. (Two at most: the CFG has no switch.)
 static int vra_succs(IrBlock *b, IrBlock **out) {
     int n=0;
@@ -1754,8 +1773,9 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
                 prog[b->id] = 1; anyprog = true;
             }
         }
+        (void)has_call;
         if (bad || !anyprog) { free(body); free(prog); continue; }
-        if (has_call && cell>=0 && cell<V->nvar && V->escaped && V->escaped[cell]) {
+        if (vra_cell_opaque_write(V, cell, nbb, body)) {
             free(body); free(prog); continue;          // the callee may write the counter
         }
         bool ok = vra_progress_on_every_path(V, H, nbb, body, prog);
@@ -1831,7 +1851,9 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
             } else nupd += 2;
         }
     }
+    bool opaque = vra_cell_opaque_write(V, cell, nbb, body);
     free(body);
+    if (opaque) return false;          // a call may reset the counter: T is not a trip count
     if (nupd != 1 || step <= 0) return false;
     if (bhi < ilo) { *T = 0; return true; }
     *T = (bhi - ilo + step - 1) / step;                // ceil((limit − start) / step)
@@ -1859,8 +1881,12 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
         vra_natural_loop(V, h, nbb, body);
         if (blk>=0 && blk<nbb && body[blk]) found = h;
     }
+    // `body` still holds the found loop's block set. The ACCUMULATOR's cell needs the same
+    // question asked of it as the counter's: s0 + T*delta says nothing if a callee can assign
+    // to s behind the loop's back.
+    bool opaque = found && vra_cell_opaque_write(V, cell, nbb, body);
     free(body);
-    if (!found) return false;
+    if (!found || opaque) return false;
     *H = found;
 
     // The addend's range. vra_range follows widening casts to the source's own type, so
