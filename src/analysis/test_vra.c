@@ -383,8 +383,33 @@ static bool call_resets_counter(bool pass_addr) {
     vra_free(V); return term;
 }
 
+// x = X; while x > 0 { x = x & (x - 1) } — clears the lowest set bit, so x strictly falls for
+// x >= 1. The popcount idiom, and the one measure in the language that is neither a counter nor
+// a division. It had NO test: the old front end refuses it with [E082], so no source-level test
+// can reach the new engine's answer, and the gap table had it recorded as "both engines reject
+// it, still unimplemented" — which was wrong about the new engine for weeks.
+static bool mask_clear_loop(void) {
+    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,false),IR_FUNC_PURE);
+    IrType *u32=ir_type_int(&A,32,false);
+    IrValue *x0 = ir_add_param(f, u32, nm("x0"));
+    IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *xs=ir_alloca(f,e,u32);
+    ir_store(f,e,xs,x0); ir_set_br(e,head);
+    IrValue *xv=ir_load(f,head,xs,u32);
+    ir_set_br_cond(head, ir_icmp(f,head,IR_CMP_UGT,xv,ir_const_int(f,head,0,u32)), body, ex);
+    IrValue *xb=ir_load(f,body,xs,u32);
+    IrValue *sub=ir_binop(f,body,IR_SUB,xb,ir_const_int(f,body,1,u32),u32);
+    IrValue *xb2=ir_load(f,body,xs,u32);
+    ir_store(f,body,xs,ir_binop(f,body,IR_AND,xb2,sub,u32));
+    ir_set_br(body,head); ir_set_ret(ex,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool term=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_TERMINATION) term=V->checks[i].ok;
+    vra_free(V); return term;
+}
+
 int main(void) {
     A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*256);
+    vra_expect("while x > 0 { x = x & (x-1) } terminates", mask_clear_loop(), true);
     vra_expect("counter cell never escapes -> terminates",
                call_resets_counter(false), true);
     vra_expect("a call is handed the counter's ADDRESS -> must NOT prove",

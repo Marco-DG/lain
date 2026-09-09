@@ -46,6 +46,7 @@ print(len(blocks))
 PY
 
 ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
+unchecked_readme=0 unchecked_lang=0
 for f in "$TMP"/b*.txt; do
     ln=${f##*_}; ln=${ln%.txt}
     page=${f%_*}; page=${page##*_}; page=${page//%//}
@@ -71,7 +72,10 @@ for f in "$TMP"/b*.txt; do
     elif [ -n "$(echo "$body" | tr -d '[:space:]')" ]; then
         { printf 'proc main() i32 {\n'; printf '%s\n' "$body"; printf '    return 0\n}\n'; } > "$prog"
     else
-        unchecked=$((unchecked+1)); continue
+        unchecked=$((unchecked+1))
+        case "$page" in README.md) unchecked_readme=$((unchecked_readme+1)) ;;
+                        *)         unchecked_lang=$((unchecked_lang+1))     ;; esac
+        continue
     fi
     out=$("$LAIN" "$prog" -o "$ROOT/_readme_gate_tmp.c" 2>&1); rc=$?
     # ★ ONLY A SELF-CONTAINED EXAMPLE IS HELD TO ACCOUNT. A fragment names types and functions
@@ -83,6 +87,8 @@ for f in "$TMP"/b*.txt; do
     # An example nothing can check is a claim nobody is testing.
     if [ $rc -ne 0 ] && [ $expect_fail -eq 0 ] && [ $selfcontained -eq 0 ]; then
         unchecked=$((unchecked+1))
+        case "$page" in README.md) unchecked_readme=$((unchecked_readme+1)) ;;
+                        *)         unchecked_lang=$((unchecked_lang+1))     ;; esac
         [ $VERBOSE -eq 1 ] && { echo "  UNVERIFIABLE $page:$ln"
                                 echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'; }
         continue
@@ -111,6 +117,12 @@ echo "  compile as documented   : $ok"
 echo "  REJECTED but documented : $fail      ← the README is wrong here"
 echo "  illustrate an error, and do fail : $expfail_ok"
 echo "  illustrate an error, but COMPILE : $expfail_bad   ← the README is wrong here too"
+# Split by PAGE, because the two are held to different standards and the combined number reads
+# as a regression on the one that is clean. README.md is the showcase and its count is 0 by
+# policy; LANGUAGE.md is the old manual and its count is a backlog. Reading "66" against a
+# recorded "README has zero unverifiable fragments" cost a real detour before this split.
 echo "  UNVERIFIABLE fragments   : $unchecked   ← not noise: a claim nobody tests"
+echo "      README.md   : $unchecked_readme   <- must stay 0"
+echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a regression"
 echo "=================================================================="
 [ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && exit 0 || exit 1
