@@ -1197,6 +1197,27 @@ static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) 
             if (cand < thi) thi = cand;
         }
     }
+    // ★ THE SAME ARGUMENT DOWNWARD, which was missing — and Path-F needs both halves.
+    // `y − v ≤ c` with y bounded below by its type gives `v ≥ ylo − c`. Only the upper half
+    // existed, so a value whose type is wide but whose partner is narrow kept the WIDE type's
+    // minimum. That is exactly the shape Path-F creates: `TABLE[2] as i32 + 1` on a u8 element
+    // is an i33 add, and the obligation is the narrowing back to i32. Its upper bound came out
+    // 256 from `%sum − %elem ≤ 1`, while its lower bound stayed i33's −2^32 — so a sum that
+    // can only be [1, 256] was not provably an i32, and a test whose whole subject is "no false
+    // overflow on a u8 element" failed on the narrowing rather than the add.
+    if (!hl && v->id>=0 && v->id<V->nvar) {
+        for (int y=0; y<V->nvar; y++) {
+            if (y==v->id || !V->val[y] || !V->val[y]->type) continue;
+            int64_t c = oct_get(W, oct_pos(v->id), oct_pos(y));   // y − v ≤ c
+            if (c >= OCT_INF) continue;
+            int64_t ylo, yhi; (void)yhi;
+            if (!irtype_int_range(V->val[y]->type, &ylo, &yhi)) continue;
+            if (c > 0 && ylo < INT64_MIN + c) continue;           // no wrap in the checker
+            if (c < 0 && ylo > INT64_MAX + c) continue;
+            int64_t cand = ylo - c;
+            if (cand > tlo) tlo = cand;
+        }
+    }
     *lo=tlo; *hi=thi;
 }
 // 128-bit range combine so i64/usize arithmetic can't wrap the checker itself.
