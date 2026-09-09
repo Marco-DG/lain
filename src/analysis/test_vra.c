@@ -304,8 +304,38 @@ static bool loop_bound_in_cell(bool bump_bound) {
     vra_free(V); return term;
 }
 
+// The counter on the RIGHT of the guard: `i = 1; while <bound> CMP i { i = i + step }`.
+// The predicate relates operands[0] to operands[1], so reading it from the COUNTER's side
+// means turning it round — and not doing so was a FALSE PROOF, not a missed one:
+// `while 0 < i { i = i + 1 }` lowers to `icmp.slt 0, i`, was read as `i < 0`, and a rising
+// step then satisfied "counts up toward a bound". The engine proved an INFINITE loop
+// terminating. Unreachable from source only because the old front end refuses that shape
+// with [E082] first, which is an accident this stops relying on.
+static bool swapped_loop(IrCmp cmp, int bound, int step) {
+    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PURE);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *islot=ir_alloca(f,e,i32);
+    ir_store(f,e,islot,ir_const_int(f,e,1,i32)); ir_set_br(e,head);
+    IrValue *iv=ir_load(f,head,islot,i32);
+    ir_set_br_cond(head, ir_icmp(f,head,cmp,ir_const_int(f,head,bound,i32),iv), body, ex);
+    IrValue *iv3=ir_load(f,body,islot,i32);
+    ir_store(f,body,islot,ir_binop(f,body,IR_ADD,iv3,ir_const_int(f,body,step,i32),i32));
+    ir_set_br(body,head); ir_set_ret(ex,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool term=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_TERMINATION) term=V->checks[i].ok;
+    vra_free(V); return term;
+}
+
 int main(void) {
     A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*256);
+    // ★ the false proof: rising counter, guard `0 < i`, which never becomes false.
+    vra_expect("while 0 < i { i = i + 1 } is INFINITE -> must NOT prove",
+               swapped_loop(IR_CMP_SLT, 0,  1), false);
+    vra_expect("while 8 > i { i = i + 1 } counts up to a bound",
+               swapped_loop(IR_CMP_SGT, 8,  1), true);
+    vra_expect("while 0 < i { i = i - 1 } counts down to a bound",
+               swapped_loop(IR_CMP_SLT, 0, -1), true);
     vra_expect("bound in a cell the loop never writes -> terminates",
                loop_bound_in_cell(false), true);
     vra_expect("bound in a cell the loop RAISES -> must NOT prove",

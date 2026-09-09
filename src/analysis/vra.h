@@ -1589,13 +1589,33 @@ static bool vra_step_decreases(Vra *V, int cell, IrInstr *vd) {
         default: return false;
     }
 }
+// `a CMP b` read as `b CMP' a`. Needed because the counter may sit on EITHER side of the
+// guard, and every direction test below is written from the counter's point of view.
+static IrCmp vra_cmp_swap(IrCmp c) {
+    switch (c) {
+        case IR_CMP_SLT: return IR_CMP_SGT;   case IR_CMP_SGT: return IR_CMP_SLT;
+        case IR_CMP_SLE: return IR_CMP_SGE;   case IR_CMP_SGE: return IR_CMP_SLE;
+        case IR_CMP_ULT: return IR_CMP_UGT;   case IR_CMP_UGT: return IR_CMP_ULT;
+        case IR_CMP_ULE: return IR_CMP_UGE;   case IR_CMP_UGE: return IR_CMP_ULE;
+        default:         return c;            // EQ / NE are symmetric
+    }
+}
+
 static bool vra_loop_terminates(Vra *V, IrBlock *H) {
     if (H->term.kind != IR_TERM_BR_COND) return false;
     IrInstr *ic = V->def[H->term.cond->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
-    IrCmp p = ic->aux.cmp;
+    IrCmp p0 = ic->aux.cmp;
     for (int side=0; side<2; side++) {
         IrValue *ivv=ic->operands[side], *bnd=ic->operands[side^1];
+        // ★ THE PREDICATE IS READ FROM THE COUNTER'S SIDE. `p0` relates operands[0] to
+        // operands[1]; when the counter is operands[1] the relation has to be turned round,
+        // and it was not. That is a FALSE PROOF, not a missed one: `while 0 < i { i = i + 1 }`
+        // lowers to `icmp.slt 0, i`, was read as `i < 0`, and a rising step then satisfied the
+        // "counts up toward a bound" rule — the engine proved an INFINITE loop terminating.
+        // Not reachable from source today only because the old front end refuses that shape
+        // with [E082] first, which is the accident this relies on until 3.5.
+        IrCmp p = (side==0) ? p0 : vra_cmp_swap(p0);
         IrInstr *ivd=V->def[ivv->id];
         if (!ivd || ivd->op!=IR_LOAD || ivd->n_operands<1) continue;
         int cell=ivd->operands[0]->id;
