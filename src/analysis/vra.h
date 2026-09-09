@@ -68,6 +68,13 @@ typedef enum {
                       // these as precision loss would inflate every number in this survey.
     VLOSS_NOLEN,      // no length is known for the array at all. Not a domain weakness
                       // either: nothing in scope says how long it is.
+    VLOSS_TERM,       // a TERMINATION obligation. Not a numeric-domain capability at all, so
+                      // running the operand classifier over it produced noise: it walks the
+                      // operands of a check whose subject is a LOOP, and everything landed in
+                      // `other`. Termination fails for its own reasons (a measure that is not
+                      // a counter, an update the recogniser cannot see, a decrease that only
+                      // holds across a join), and those want their own survey, not a bucket in
+                      // this one.
     VLOSS_OTHER
 } VraLoss;
 
@@ -82,6 +89,7 @@ static const char *vra_loss_name(VraLoss l) {
         case VLOSS_JOIN:    return "join";
         case VLOSS_UNBOUNDED: return "unbounded";
         case VLOSS_NOLEN:   return "no-length";
+        case VLOSS_TERM:    return "termination";
         default:            return "other";
     }
 }
@@ -1020,7 +1028,8 @@ static void vra_add_check(Vra *V, VraCheck c) {
     if (!c.ok && c.loss == VLOSS_NONE) {
         // A bounds obligation with NO length in scope is not a domain weakness: nothing
         // available says how long the array is.
-        c.loss = (c.kind == VRA_BOUNDS && !c.has_len) ? VLOSS_NOLEN
+        c.loss = (c.kind == VRA_TERMINATION)          ? VLOSS_TERM
+               : (c.kind == VRA_BOUNDS && !c.has_len) ? VLOSS_NOLEN
                                                       : vra_classify_loss(V, c.at);
     }
     if (V->nchecks==V->cap_checks){ V->cap_checks=V->cap_checks?V->cap_checks*2:8;
@@ -1435,13 +1444,46 @@ static bool vra_is_scalar_cell(Vra *V, int v) {
     return d && d->op==IR_ALLOCA && d->aux.alloca_ty &&
            d->aux.alloca_ty->kind!=IRT_ARRAY && d->aux.alloca_ty->kind!=IRT_SLICE;
 }
+static void vra_natural_loop(Vra *V, IrBlock *H, int nb, char *inloop);   // fwd
+
 // A guard bound is loop-invariant if it is a parameter, a constant, a slice length,
 // or defined in a block strictly above the loop header (structured CFG order).
-static bool vra_loop_invariant(Vra *V, IrValue *val, int Hid) {
+//
+// ★ ...and ALSO when it is a LOAD from a scalar cell the loop never writes. `for i in
+// 0..arr.len` proved termination and `var n = arr.len; for i in 0..n` did not: binding the
+// bound to a local puts its LOAD in the header itself, so the block-order test failed on a
+// value nothing in the loop can change. Two of the four termination losses the A1 survey
+// found were exactly this, both in ordinary code (`reverse`, `last_n`) — the block-order
+// test is a proxy for "cannot change", and a load is where the proxy and the property part.
+//
+// Sound because both ways the cell could change are excluded: a STORE anywhere in the natural
+// loop, and a call writing through an ESCAPED address. `V->escaped` is precisely the set the
+// memory model already havocs at every call, for this same reason.
+static bool vra_loop_invariant(Vra *V, IrValue *val, IrBlock *H) {
+    int Hid = H->id;
     IrInstr *d=V->def[val->id];
     if (!d) return true;
     if (d->op==IR_CONST || d->op==IR_SLICE_LEN) return true;
-    return V->defblk[val->id]>=0 && V->defblk[val->id] < Hid;
+    if (V->defblk[val->id]>=0 && V->defblk[val->id] < Hid) return true;
+    if (d->op==IR_LOAD && d->n_operands>=1) {
+        int cell = d->operands[0]->id;
+        if (!vra_is_scalar_cell(V, cell)) return false;
+        if (cell>=0 && cell<V->nvar && V->escaped && V->escaped[cell]) return false;
+        int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+        char *body = malloc((size_t)nbb);
+        if (!body) return false;                       // fail closed
+        vra_natural_loop(V, H, nbb, body);
+        bool written = false;
+        for (IrBlock *b=V->f->blocks; b && !written; b=b->next) {
+            if (!(b->id>=0 && b->id<nbb && body[b->id])) continue;
+            for (IrInstr *st=b->instrs; st; st=st->next)
+                if (st->op==IR_STORE && st->n_operands>=2 &&
+                    st->operands[0]->id==cell) { written = true; break; }
+        }
+        free(body);
+        return !written;
+    }
+    return false;
 }
 // ── THE NATURAL LOOP OF A HEADER ─────────────────────────────────────────────────────────
 // {H} ∪ {b : b reaches a back-edge source of H without passing through H}. The textbook set,
@@ -1558,7 +1600,7 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         if (!ivd || ivd->op!=IR_LOAD || ivd->n_operands<1) continue;
         int cell=ivd->operands[0]->id;
         if (!vra_is_scalar_cell(V,cell)) continue;
-        if (!vra_loop_invariant(V,bnd,H->id)) continue;
+        if (!vra_loop_invariant(V,bnd,H)) continue;
         int64_t step=0; int nstore=0, nupd=0;
         // The loop's REAL body, not "every block with an id at or above the header's" — the
         // same id-order heuristic that broke the widening selector, and here it counted stores
@@ -1634,7 +1676,7 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
     if (!ivd || ivd->op!=IR_LOAD || ivd->n_operands<1) return false;
     int cell = ivd->operands[0]->id;
     if (!vra_is_scalar_cell(V,cell)) return false;
-    if (!vra_loop_invariant(V,bnd,H->id)) return false;
+    if (!vra_loop_invariant(V,bnd,H)) return false;
 
     int64_t blo,bhi; vra_range(V,W,bnd,&blo,&bhi); (void)blo;
     if (bhi >= INT64_MAX/2) return false;             // an unbounded limit bounds nothing

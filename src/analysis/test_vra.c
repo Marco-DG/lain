@@ -275,8 +275,41 @@ static bool loop_terminates(int step, IrCmp cmp, int bound) {
     vra_free(V); return term;
 }
 
+// termination when the BOUND is a local cell rather than a value defined above the header:
+// `n = N; i = 0; while i < n { i = i + 1; [n = n + 1] }`. The block-order test for
+// loop-invariance fails on the load (it sits in the header), so the rule falls back to "no
+// store to that cell inside the loop" — and `bump_bound` is the case that must still refuse.
+// The corpus cannot state this: `func` with a bound the loop writes is stopped by [E011] in
+// the old front end long before the new pass runs, which is exactly why these live here.
+static bool loop_bound_in_cell(bool bump_bound) {
+    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PURE);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *islot=ir_alloca(f,e,i32), *nslot=ir_alloca(f,e,i32);
+    ir_store(f,e,islot,ir_const_int(f,e,0,i32));
+    ir_store(f,e,nslot,ir_const_int(f,e,8,i32));
+    ir_set_br(e,head);
+    IrValue *iv=ir_load(f,head,islot,i32);
+    IrValue *nv=ir_load(f,head,nslot,i32);                 // the BOUND, loaded in the header
+    ir_set_br_cond(head, ir_icmp(f,head,IR_CMP_SLT,iv,nv), body, ex);
+    IrValue *iv3=ir_load(f,body,islot,i32);
+    ir_store(f,body,islot,ir_binop(f,body,IR_ADD,iv3,ir_const_int(f,body,1,i32),i32));
+    if (bump_bound) {                                      // the loop RAISES its own bound
+        IrValue *nv3=ir_load(f,body,nslot,i32);
+        ir_store(f,body,nslot,ir_binop(f,body,IR_ADD,nv3,ir_const_int(f,body,1,i32),i32));
+    }
+    ir_set_br(body,head); ir_set_ret(ex,NULL); ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool term=false;
+    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_TERMINATION) term=V->checks[i].ok;
+    vra_free(V); return term;
+}
+
 int main(void) {
     A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*256);
+    vra_expect("bound in a cell the loop never writes -> terminates",
+               loop_bound_in_cell(false), true);
+    vra_expect("bound in a cell the loop RAISES -> must NOT prove",
+               loop_bound_in_cell(true),  false);
 
     // POSITIVES — the canonical safe patterns must be proven.
     vra_expect("counted loop  i < 8  over a[8]",          counted_loop_proven(IR_CMP_ULT, 8, 8), true);

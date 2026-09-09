@@ -14,6 +14,8 @@
 #   call      an operand comes from a call             -> B4 postcondition summaries
 #   arity     three or more distinct symbolic values   -> B5 (octagons are binary)
 #   join      defined at a merge: a disjunction hulled -> B2 partitioning
+#   termination  a loop the termination checker could not discharge. Not a numeric-domain
+#             capability, so it is reported apart rather than counted against the domain.
 #   other     unclassified — if this dominates, the classifier is what needs work
 #
 # ── WHICH PROGRAMS COUNT ────────────────────────────────────────────────────────────────────
