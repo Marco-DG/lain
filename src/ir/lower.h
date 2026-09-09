@@ -2139,14 +2139,23 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             IrBlock *head = ir_new_block(c->f), *body = ir_new_block(c->f), *exit = ir_new_block(c->f);
             ir_set_br(c->cur, head);
             c->cur = head;
-            IrValue *cond = ir_lower_expr(c, s->as.while_stmt.cond);
-            // ★ Branch from where the CONDITION FINISHED, not from the header. A
-            // short-circuit condition (`while i < n and p(a[i])`) lowers to its own blocks and
-            // leaves `c->cur` at their join; setting the terminator on `head` overwrote the
-            // edge INTO those blocks, so the loop branched on a value nothing had computed —
-            // an infinite loop, silently. Invisible until now because the one corpus program
-            // with that shape could not be BUILT by the new backend, so it was never run.
-            ir_set_br_cond(c->cur, cond, body, exit);
+            // ★ THE CONDITION IS LOWERED AS CONTROL FLOW, NOT AS A VALUE — the same helper
+            // `if` uses, and for the same reason. Materialising `A and B` as a bool builds a
+            // temp slot written on two paths and a JOIN before the branch, so the fact from A
+            // (established on the edge into B's block) is hulled against the path where A is
+            // false. Measured: `while i < 100 { a[i] }` proves check-free and
+            // `while i < 100 and s < 5 { a[i] }` does not — ANY `and` in a while guard lost
+            // BOTH conjuncts, while the identical `and` in an `if` proved, because `if` was
+            // already going through here. Short-circuiting through blocks puts each conjunct's
+            // fact on its own edge, where a guard refinement can see it.
+            //
+            // The helper sets the terminator on the block the condition FINISHES in, which is
+            // also what the previous code had to do by hand: a short-circuit condition leaves
+            // `c->cur` past the header, and setting the terminator on `head` overwrote the edge
+            // INTO those blocks — the loop then branched on a value nothing had computed, an
+            // infinite loop, silently. `head` remains the loop header: the back edge from the
+            // body still targets it, which is what the natural-loop detection keys on.
+            ir_lower_cond_br(c, s->as.while_stmt.cond, body, exit);
             IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
                 c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
             c->cur = body; ir_lower_stmts(c, s->as.while_stmt.body);
