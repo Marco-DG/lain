@@ -47,6 +47,10 @@ int main(int argc, char **argv) {
     DeclList *prog=load_module(&fa,&aa,mod);
     if(!prog){ fprintf(stderr,"load failed\n"); return 1; }
     g_vra_suppress_bounds = suppress;   // analyze even legacy-rejected programs (reject-side)
+    // ...and the TERMINATION diagnostics, for the same reason: a program the old engine
+    // refuses is one whose new-engine verdict nothing can otherwise see. Three false proofs
+    // lived behind E082/E011 and had to be found by reading the code.
+    g_suppress_termination = suppress;
     sema_resolve_module(prog,mod,&sa);
 
     int total=0, proven=0;

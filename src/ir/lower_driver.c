@@ -43,6 +43,11 @@ int main(int argc, char **argv) {
         // NEW engine proves can still be EMITTED and run. Without it the new VRA's own proofs
         // are unfalsifiable — nothing can execute a program the old engine refuses.
         if (!strcmp(argv[i],"--suppress-bounds")) g_vra_suppress_bounds = true;
+        // --suppress-term: same seam for the legacy TERMINATION diagnostics. Needed to
+        // EMIT a program the old engine refuses on those grounds, which is the only way
+        // to execute one and check that a loop proven terminating actually terminates
+        // (scripts/fuzz/fuzz_termination.sh).
+        if (!strcmp(argv[i],"--suppress-term")) g_suppress_termination = true;
     }
     if (argc < 2) { fprintf(stderr, "usage: %s <file.ln>\n", argv[0]); return 2; }
     Arena file_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);

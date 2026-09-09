@@ -115,6 +115,27 @@ static bool verify_recursion_expr_measure(Decl *fn, Expr *call);
 // stand down, so the Phase 3 differential can measure the NEW IR linearity/borrow passes on
 // programs the old engine would exit() on. Set ONLY by that driver — never in the compiler.
 bool g_suppress_ownership = false;
+// ── SEAM: legacy TERMINATION checks (mirrors g_vra_suppress_bounds for E085) ─────────────
+// The old engine exit()s on E080/E081/E082/E011 before the sovereign IR passes run, so for
+// every program it refuses the NEW engine's verdict is unobservable — through the compiler,
+// the corpus, and the differential gate alike. That blind spot hid THREE false proofs
+// (2026-09-09): a rising counter proved terminating because the guard's predicate was not
+// reversed, a counter a callee resets, and B1's trip count built on the same. All three had to
+// be found by reading the code, because no harness could reach them.
+//
+// Set ONLY by the analysis drivers and surveys, never by the shipping compiler: with it on,
+// the program is analysed rather than rejected, so the new engine's ACCEPT direction can be
+// measured on exactly the programs that used to be invisible. Termination is the new engine's
+// own subject area, which is what makes extending the seam here legitimate (session 68's rule:
+// a skip is a hole only when the blocking diagnostic is in the gate's OWN subject area).
+// SCOPE: LOOPS ONLY. The sovereign pass proves loop termination (a counter, a bound, a step);
+// it has no analysis of RECURSION at all, so standing the legacy recursion checks down would
+// defer to nothing and report "no obligation" where the honest answer is "nobody looked" —
+// which is the failure mode this seam exists to remove, not to create. E082-recursion and the
+// no-measure E011 therefore keep firing even under the seam. That is session 68's rule applied
+// to itself: a skip is a hole only when the blocking diagnostic is in the new engine's OWN
+// subject area, and recursion is not yet in it.
+bool g_suppress_termination = false;
 
 #include "sema/scope.h"
 #include "sema/resolve.h"
@@ -1606,6 +1627,7 @@ static bool sema_verify_bounded_while_impl(Stmt *s, bool emit) {
     // Check 1: condition implies measure >= 0
     if (!sema_verify_measure_nonneg(cond, measure)) {
         if (!emit) return false;
+        if (g_suppress_termination) return false;
         fprintf(stderr, "[E080] Error Ln %li, Col %li: cannot verify that the termination measure "
                 "is non-negative when the loop condition holds.\n"
                 "  Hint: use 'while a < b : b - a { ... }' so the condition implies the measure is positive.\n",
@@ -1619,6 +1641,7 @@ static bool sema_verify_bounded_while_impl(Stmt *s, bool emit) {
     int nvar = measure_extract_vars(measure, vars, MAX_MEASURE_VARS);
     if (nvar == 0) {
         if (!emit) return false;
+        if (g_suppress_termination) return false;
         fprintf(stderr, "[E081] Error Ln %li, Col %li: cannot extract variables from termination measure.\n"
                 "  Hint: the measure must reference identifiers or struct fields.\n",
                 s->line, s->col);
@@ -1655,6 +1678,7 @@ static bool sema_verify_bounded_while_impl(Stmt *s, bool emit) {
     g_term_measure_a = g_term_measure_b = NULL; g_term_measure_expr = NULL; g_term_ndefs = 0;
     if (result <= 0) {
         if (!emit) return false;
+        if (g_suppress_termination) return false;
         fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify that the termination measure "
                 "strictly decreases on each iteration.\n"
                 "  Hint: the loop body must contain an assignment that decreases the measure "
@@ -2843,7 +2867,7 @@ static void walk_stmt(Stmt *s) {
                         ok = sema_verify_bounded_while_impl(s, false);
                         if (!ok) s->as.while_stmt.measure = NULL;  // discard; not provable
                     }
-                    if (!ok) {
+                    if (!ok && !g_suppress_termination) {
                         // Not inferable: emit E011 (add explicit `decreasing` or use proc).
                         fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination "
                                 "measure are not allowed in pure function '%.*s'. "
@@ -4819,6 +4843,13 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             // E3 (consistency net): a `func` is pure (no IO) and total (no
             // Diverge). If the effect row infers either, its guarantees are
             // violated — a hole the func checks (E011) should already catch.
+            // The DIVERGE half is a termination verdict, so the seam stands it down too —
+            // otherwise the effect row refuses the program a step after the loop check was
+            // suppressed, and the new engine's answer stays just as invisible. IO is NOT a
+            // termination question and is left alone.
+            if (g_suppress_termination && (ef & EFFECT_DIVERGE) && !(ef & EFFECT_IO)) {
+                /* fall through: measured by the sovereign termination pass instead */
+            } else
             if (dl->decl->kind == DECL_FUNCTION && (ef & (EFFECT_IO | EFFECT_DIVERGE))) {
                 Id *n = dl->decl->as.function_decl.name;
                 fprintf(stderr, "[E011] Error Ln %li, Col %li: `func` '%.*s' has a forbidden "
