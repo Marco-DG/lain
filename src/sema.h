@@ -136,6 +136,18 @@ bool g_suppress_ownership = false;
 // to itself: a skip is a hole only when the blocking diagnostic is in the new engine's OWN
 // subject area, and recursion is not yet in it.
 bool g_suppress_termination = false;
+// ── SEAM: legacy ARITHMETIC-OVERFLOW checks (the E086 family) ────────────────────────────
+// Same purpose and same limits as the two above. 47 corpus programs are stopped by E086 before
+// the sovereign pass runs — the largest blocked bucket in phase3's breakdown — and B1's false
+// proof of 2026-09-09 lived in exactly that shadow.
+//
+// SCOPE: the ARITHMETIC sites only, `check_value_fits_type` and the wide-multiply check, both
+// of which the new engine answers with a VRA_OVERFLOW obligation. E086 is also emitted for a
+// shift amount out of range, for a refinement-alias violation and for a struct-field
+// refinement; the shift one has NO IR obligation at all, so suppressing it would report "no
+// obligation" where the truth is "nobody looked". Left alone. See g_suppress_termination for
+// why that boundary is the whole discipline.
+bool g_suppress_overflow = false;
 
 #include "sema/scope.h"
 #include "sema/resolve.h"

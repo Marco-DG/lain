@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// SOUNDNESS PAIR for negative_refinement_pass.ln. A negative refinement bound that parsed but
+// was not ENFORCED would be worse than the parse error it replaced: `clamp_to_byte` proves its
+// `as i8` narrowing FROM the declared range, so an argument outside that range makes the proof
+// false and the narrowing silently truncates.
+func clamp_to_byte(a i32 >= -100 and <= 100) i8 {
+    return a as i8
+}
+proc main() i32 {
+    return clamp_to_byte(-999) as i32
+}

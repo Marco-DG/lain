@@ -407,11 +407,19 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                     TokenKind op = parser->token.kind;
                     parser_advance();
                     Expr *rhs = NULL;
+                    // A refinement bound may be NEGATIVE. Without this, `a i32 >= -10 and <= 10`
+                    // is a PARSE ERROR, so half the range of every signed type was unreachable
+                    // by a refinement and no signed-negative arithmetic could be constrained
+                    // enough to prove. Folded into the literal, so every consumer downstream
+                    // (the IR refinement, the alias constraints, the VRA seeding) reads an
+                    // ordinary EXPR_LITERAL and needed no change.
+                    bool neg = false;
+                    if (parser_match(TOKEN_MINUS)) { neg = true; parser_advance(); }
                     if (parser_match(TOKEN_NUMBER)) {
                         long long value = parse_numeric_literal(parser->token.start, parser->token.length);
                         parser_advance();
-                        rhs = expr_literal(arena, value);
-                    } else if (parser_match(TOKEN_IDENTIFIER)) {
+                        rhs = expr_literal(arena, neg ? -value : value);
+                    } else if (!neg && parser_match(TOKEN_IDENTIFIER)) {
                         Id *rid = id(arena, parser->token.length, parser->token.start);
                         parser_advance();
                         rhs = expr_identifier(arena, rid);
@@ -809,13 +817,16 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                         TokenKind op = parser->token.kind;
                         parser_advance();  // consume operator
                         
-                        // Parse the RHS (literal or identifier)
+                        // Parse the RHS (literal or identifier). A NEGATIVE bound is folded
+                        // into the literal — see the struct-field site above for why.
                         Expr *rhs = NULL;
+                        bool pneg = false;
+                        if (parser_match(TOKEN_MINUS)) { pneg = true; parser_advance(); }
                         if (parser_match(TOKEN_NUMBER)) {
                             long long value = parse_numeric_literal(parser->token.start, parser->token.length);
                             parser_advance();
-                            rhs = expr_literal(arena, value);
-                        } else if (parser_match(TOKEN_IDENTIFIER)) {
+                            rhs = expr_literal(arena, pneg ? -value : value);
+                        } else if (!pneg && parser_match(TOKEN_IDENTIFIER)) {
                             Id *rhs_id = id(arena, parser->token.length, parser->token.start);
                             parser_advance();
                             rhs = expr_identifier(arena, rhs_id);

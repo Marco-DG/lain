@@ -439,8 +439,37 @@ static bool accum_bounded(int which) {
     vra_free(V); return n>0 && all_ok;
 }
 
+// THE RETURN IS A NARROWING SITE. Path-F widens, so a chain of multiplies on i16 parameters
+// has a wide result type, and `ret` out of a function declared `-> i16` narrows it. That site
+// had NO obligation: the engine proved every multiply (correctly — none overflows its own
+// widened type) and called the function check-free. Found by fuzz_overflow.sh executing what
+// the engine had proved; UBSan reported the overflow. `wide` selects whether the returned
+// value is genuinely too wide for the declared return type.
+static bool ret_narrowing_checked(bool wide) {
+    IrType *i16t = ir_type_int(&A,16,true), *i48t = ir_type_int(&A,48,true);
+    IrFunc *f = ir_func_new(&A, nm("f"), i16t, IR_FUNC_PURE);
+    IrValue *a = ir_add_param(f, i16t, nm("a"));
+    IrValue *v;
+    if (wide) {                       // a * a * a in a 48-bit result: cannot fit i16
+        IrValue *m1 = ir_binop(f, f->entry, IR_MUL, a, a, ir_type_int(&A,32,true));
+        v = ir_binop(f, f->entry, IR_MUL, m1, a, i48t);
+    } else {
+        v = a;                        // already an i16: not a narrowing at all
+    }
+    ir_set_ret(f->entry, v); ir_finalize_cfg(f);
+    Vra *V = vra_analyze(f);
+    bool all_ok = true; int n = 0;
+    for (int i=0;i<V->nchecks;i++) if (V->checks[i].kind==VRA_OVERFLOW) { n++; if(!V->checks[i].ok) all_ok=false; }
+    bool res = wide ? all_ok : (n==0 || all_ok);
+    vra_free(V); return res;
+}
+
 int main(void) {
     A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*256);
+    vra_expect("ret of a 48-bit value from `-> i16` must NOT prove",
+               ret_narrowing_checked(true),  false);
+    vra_expect("ret of an i16 from `-> i16` is no narrowing",
+               ret_narrowing_checked(false), true);
     vra_expect("B1: T=4 bounds the running total",
                accum_bounded(0), true);
     vra_expect("B1: a call may reset the COUNTER -> T is not a trip count",

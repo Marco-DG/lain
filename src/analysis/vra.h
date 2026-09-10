@@ -913,6 +913,24 @@ static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir) {
 // Walk an operand tree to a bounded depth, counting distinct SYMBOLIC leaves and noting
 // whether a call result or a loop-carried load appears. Bounded because an SSA chain can be
 // long and this runs per failed obligation, not per instruction.
+// Is this alloca just where a PARAMETER was spilled? Exactly one store to it, of a value with
+// no defining instruction — i.e. a parameter. Distinct from vra_is_param_cell, which asks
+// whether a value IS a pointer parameter; this asks whether a local cell merely HOLDS one.
+static bool vra_cell_is_param_spill(Vra *V, int cell) {
+    if (cell < 0 || cell >= V->nvar) return false;
+    IrInstr *d = V->def[cell];
+    if (!d || d->op != IR_ALLOCA) return false;
+    int nstore = 0; bool from_param = false;
+    for (IrBlock *b = V->f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            if (i->op == IR_STORE && i->n_operands >= 2 && i->operands[0]->id == cell) {
+                nstore++;
+                int sv = i->operands[1]->id;
+                from_param = (sv >= 0 && sv < V->nvar && !V->def[sv]);
+            }
+    return nstore == 1 && from_param;
+}
+
 static void vra_loss_walk(Vra *V, IrValue *v, int depth,
                           int *nsym, bool *saw_call, bool *all_param, int *sym_ids, int cap) {
     if (!v || depth > 4 || v->id < 0 || v->id >= V->nvar) return;
@@ -935,7 +953,16 @@ static void vra_loss_walk(Vra *V, IrValue *v, int depth,
             for (int hop = 0; hop < 6 && addr && addr->id >= 0 && addr->id < V->nvar; hop++) {
                 IrInstr *ad = V->def[addr->id];
                 if (!ad) break;                                   // rooted at a parameter
-                if (ad->op == IR_ALLOCA) { *all_param = false; break; }   // a local
+                if (ad->op == IR_ALLOCA) {
+                    // ...unless the alloca is the PARAMETER'S OWN SPILL SLOT. Lowering stores
+                    // an aggregate parameter into a local cell at entry, so `p.x` on a
+                    // `p Point` parameter reaches an IR_ALLOCA and looked like a local — which
+                    // put every `return p.x + p.y` into the UNCLASSIFIED bucket instead of
+                    // `unbounded`, where it belongs: two unrefined i32 fields really can sum
+                    // out of i32, and refusing is the language working, not a lost proof.
+                    if (!vra_cell_is_param_spill(V, addr->id)) { *all_param = false; }
+                    break;
+                }
                 if (ad->n_operands < 1) { *all_param = false; break; }
                 addr = ad->operands[0];                           // field_ptr / elem_ptr / cast
             }
@@ -2129,6 +2156,28 @@ static Vra *vra_analyze(IrFunc *f) {
                 default: break;
             }
             vra_transfer_instr(V,&W,ins);
+        }
+        // ★ THE RETURN IS A NARROWING SITE, and it had no obligation at all.
+        // Path-F widens, so `(a * b) * a` on i16 parameters has result type i48 — and
+        // `ret %11` out of a function declared `-> i16` narrows 48 bits to 16 with nothing
+        // checking it. The engine PROVED both multiplies (correctly: neither overflows its
+        // own widened type) and then said the function was check-free.
+        //
+        // Found by fuzz_overflow.sh on its first real run, executing what the engine had
+        // proved: UBSan reported `268402689 * 16383 cannot be represented in type 'int'`.
+        // The old engine catches this one — it judges the RETURN VALUE's range against the
+        // declared type — so it was a new-engine-only hole and a switchover blocker.
+        //
+        // The check is the same one STORE and CAST already use; only the site was missing.
+        if (b->term.kind == IR_TERM_RET && b->term.cond && V->f->ret_type) {
+            IrValue *rv = b->term.cond;
+            if (rv->type && rv->type->kind==IRT_INT && V->f->ret_type->kind==IRT_INT
+                && rv->type->bits > V->f->ret_type->bits) {
+                oct_close(&W);
+                IrInstr *site = V->def[rv->id];
+                vra_check_narrow(V,&W, rv, V->f->ret_type, site,
+                                 site ? site->line : 0, site ? site->col : 0);
+            }
         }
     }
     if (vra_dump_enabled) vra_dump_state(V, stderr);

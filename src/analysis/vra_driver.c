@@ -51,6 +51,7 @@ int main(int argc, char **argv) {
     // refuses is one whose new-engine verdict nothing can otherwise see. Three false proofs
     // lived behind E082/E011 and had to be found by reading the code.
     g_suppress_termination = suppress;
+    g_suppress_overflow  = suppress;
     sema_resolve_module(prog,mod,&sa);
 
     int total=0, proven=0;

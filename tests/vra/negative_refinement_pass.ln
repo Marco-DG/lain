@@ -1,0 +1,23 @@
+// A refinement bound may be NEGATIVE. `a i32 >= -100 and <= 100` used to be a PARSE ERROR
+// ([E100] "Expected number or identifier after comparison operator"), so half the range of
+// every signed type was unreachable by a refinement and no signed-negative arithmetic could be
+// constrained enough to prove anything.
+//
+// The bound is not merely parsed: it is enforced at the call site (see
+// negative_refinement_violated_fail.ln) and it NARROWS, which is what makes the `as i8` below
+// provable — [-100, 100] fits i8, and without the lower bound the source range is all of i32.
+func clamp_to_byte(a i32 >= -100 and <= 100) i8 {
+    return a as i8
+}
+// A negative bound on a struct FIELD parses the same way and reaches the IR type.
+type Delta {
+    v i32 >= -8 and <= 8
+}
+func shift(d Delta, a i32[17]) i32 {
+    return a[(d.v + 8) as usize]
+}
+proc main() i32 {
+    var xs i32[17] = [0 for k in 0..17]
+    var d = Delta(-8)
+    return clamp_to_byte(-100) as i32 + 100 + shift(d, xs)
+}

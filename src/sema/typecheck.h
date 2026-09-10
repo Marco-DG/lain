@@ -214,6 +214,7 @@ bool check_value_fits_type(Range r, Type *target_type,
                            isize line, isize col,
                            const char *context, const char *target_label) {
     if (sema_in_unsafe_block) return true;
+    if (g_suppress_overflow) return true;   // seam: deferred to the new IR VRA (VRA_OVERFLOW)
     if (!r.known) return true;
     // Skip if range is effectively unbounded — VRA may have widened from
     // an unconstrained value, so a range whose extremum sits within a
@@ -374,6 +375,9 @@ static void reject_lossy_int_conversion(Type *from, Type *to, Range r, Expr *src
     if (flo >= tlo && fhi <= thi) return;                // statically safe widening
     if (flo >= tlo && fhi <= thi) return;                // statically safe widening
     if (range_proves_int_fit(r, to)) return;             // VRA proved the narrowing safe
+    // Seam: this IS Path-F's narrowing obligation, which the new engine answers with
+    // vra_check_narrow, so deferring it is deferring to something that actually looks.
+    if (g_suppress_overflow) return;
     const char *fn = (from->base_type) ? from->base_type->name : "?";
     int fl = (from->base_type) ? (int)from->base_type->length : 1;
     const char *tn = (to->base_type) ? to->base_type->name : "?";
@@ -3308,7 +3312,7 @@ void sema_infer_expr(Expr *e) {
             if (aop2 == TOKEN_ASTERISK && !e->idx2d_ovf_ok) {
                 Range lrg = sema_eval_range(e->as.binary_expr.left, sema_ranges);
                 Range rrg = sema_eval_range(e->as.binary_expr.right, sema_ranges);
-                if (!op_product_fits(lrg, rrg, check_ty)) {
+                if (!op_product_fits(lrg, rrg, check_ty) && !g_suppress_overflow) {
                     fprintf(stderr, "[E086] Error Ln %li, Col %li: multiplication would "
                         "overflow target type — the product range exceeds the type's range. "
                         "Use a wrapping (*%%) or saturating (*|) operator, widen the type, or "
