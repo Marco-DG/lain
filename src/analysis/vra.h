@@ -637,6 +637,29 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 else          { if (hh && vra_safe_scale(c,xhi,&v)) oct_add_lb(W,r,v);   // c<0: flip
                                 if (hl && vra_safe_scale(c,xlo,&v)) oct_add_ub(W,r,v); }
             }
+            // ★ BOTH OPERANDS SYMBOLIC BUT BOUNDED: the product's INTERVAL is the extremes of
+            // the four corner products. The octagon cannot hold a product — that is why the
+            // constant-stride cases above exist — but an interval for it is ordinary interval
+            // arithmetic and the domain was simply not asking. Without it, `a * b` on two
+            // parameters refined to [0,3] had no bound but its RESULT TYPE, so
+            // `func f(a u8 >= 0 and <= 3, b u8 >= 0 and <= 3) u8 { return a * b }` was refused:
+            // the product is [0,9] and plainly fits u8. Measured by fuzz_unsigned.sh as
+            // over-strictness on 11 of 100 SAFE programs, which is what put a number on it.
+            else {
+                int64_t alo,ahi,blo,bhi;
+                vra_range(V, W, ins->operands[0], &alo, &ahi);
+                vra_range(V, W, ins->operands[1], &blo, &bhi);
+                int64_t c1,c2,c3,c4;
+                if (alo > INT64_MIN && ahi < INT64_MAX && blo > INT64_MIN && bhi < INT64_MAX
+                    && vra_safe_scale(alo,blo,&c1) && vra_safe_scale(alo,bhi,&c2)
+                    && vra_safe_scale(ahi,blo,&c3) && vra_safe_scale(ahi,bhi,&c4)) {
+                    int64_t lo=c1, hi=c1;
+                    if (c2<lo) lo=c2; if (c2>hi) hi=c2;
+                    if (c3<lo) lo=c3; if (c3>hi) hi=c3;
+                    if (c4<lo) lo=c4; if (c4>hi) hi=c4;
+                    oct_add_lb(W,r,lo); oct_add_ub(W,r,hi);
+                }
+            }
             break;
         }
         case IR_CTZ: case IR_CLZ: case IR_POPCOUNT: {
