@@ -1857,6 +1857,47 @@ static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) 
     ir_set_br_cond(c->cur, ir_lower_truth(c, cond), tb, fb);
 }
 
+// Does `for <k> in 0..N { body }` fill every element of one local array? If so, hand the
+// definite-init pass the same IR_INIT fact a comprehension states. Deliberately narrow — see
+// the call site for why each condition is load-bearing.
+static void ir_forloop_init_fact(LowerCtx *c, Stmt *s, Expr *lo_e, Expr *hi_e, bool inclusive) {
+    if (!s || !lo_e || !hi_e) return;
+    if (lo_e->kind != EXPR_LITERAL || lo_e->as.literal_expr.value != 0) return;
+    Id *ctr = s->as.for_stmt.value_name;
+    if (!ctr) return;
+    // exactly one statement in the body
+    StmtList *bl = s->as.for_stmt.body;
+    if (!bl || bl->next || !bl->stmt || bl->stmt->kind != STMT_ASSIGN) return;
+    Expr *tg = bl->stmt->as.assign_stmt.target;
+    if (!tg || tg->kind != EXPR_INDEX) return;
+    Expr *base = tg->as.index_expr.target, *idx = tg->as.index_expr.index;
+    if (!base || base->kind != EXPR_IDENTIFIER) return;
+    if (!idx || idx->kind != EXPR_IDENTIFIER) return;
+    if (!id_bytes_equal(idx->as.identifier_expr.id, ctr)) return;   // indexed BY the counter
+    // the array must be a fixed-length local whose length the range exactly covers
+    IrLocal *loc = ir_env_find(c, base->as.identifier_expr.id);
+    if (!loc || !loc->slot) return;
+    IrValue *agg = loc->slot;
+    // The LENGTH comes from the AST type, not from the slot's: an array alloca is typed `*T`
+    // (a pointer to the ELEMENT), so the element count is nowhere on the value — it lives in
+    // the alloca instruction's aux, which is not reachable from here.
+    IrType *at = base->type ? ir_lower_type(c, base->type) : NULL;
+    if (!at || at->kind != IRT_ARRAY || at->array_len <= 0) return;
+    if (hi_e->kind == EXPR_LITERAL) {
+        int64_t top = (int64_t)hi_e->as.literal_expr.value + (inclusive ? 1 : 0);
+        if (top != at->array_len) return;
+    } else if (hi_e->kind == EXPR_MEMBER) {
+        // `0..a.len` on the SAME array is the length by definition.
+        Expr *ob = hi_e->as.member_expr.target;
+        Id   *mn = hi_e->as.member_expr.member;
+        if (inclusive) return;
+        if (!ob || ob->kind != EXPR_IDENTIFIER || !mn) return;
+        if (!id_bytes_equal(ob->as.identifier_expr.id, base->as.identifier_expr.id)) return;
+        if (mn->length != 3 || memcmp(mn->name, "len", 3) != 0) return;
+    } else return;
+    ir_init_fact(c->f, c->cur, agg);
+}
+
 static void ir_lower_stmt(LowerCtx *c, Stmt *s);
 // Replay the pending `defer` bodies in REVERSE registration order. The stack is not popped:
 // an early return runs the defers registered SO FAR, and a later exit runs them too — one
@@ -2206,6 +2247,20 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                     ir_set_br(c->cur, head);
                 }
                 c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om; c->cur = exit;
+                // ★ A LOOP THAT FILLS EVERY ELEMENT IS A WHOLE-INITIALISATION.
+                // `for k in 0..8 { a[k] = e }` over `a i32[8]` writes every slot, but
+                // definite-init is a MUST analysis over a per-element lattice and the store is
+                // at a symbolic index, so it learned nothing and `a[7]` afterwards was [E005].
+                // The comprehension form already states the fact with IR_INIT; a fill loop is
+                // the same fact written differently, and fuzz_init.sh measured it as the ONLY
+                // over-strict shape it could produce (8 of 8 in a 60-program run).
+                //
+                // Recognised narrowly, because the fact is unconditional: the range must start
+                // at 0 and end at the array's own length, and the body must be exactly ONE
+                // assignment whose target is that array indexed by the loop counter. A
+                // conditional store, a second statement, a `break` or a different index all
+                // fall out and the loop stays unproven — which is the safe direction.
+                ir_forloop_init_fact(c, s, lo_e, hi_e, it->as.range_expr.inclusive);
                 break;
             }
             // for v in arr { body }  ⇒  i=0; while i<arr.len { v=arr[i]; body; i=i+1 }

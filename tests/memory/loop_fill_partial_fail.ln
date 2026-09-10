@@ -1,0 +1,16 @@
+// EXPECT: [E005]
+// SOUNDNESS PAIR for loop_fill_whole_pass.ln. The whole-initialisation fact is only true when
+// the loop really covers every element, so the recogniser is deliberately narrow: the range
+// must start at 0 and end at the array's own length, and the body must be exactly ONE
+// assignment whose target is that array indexed by the loop counter.
+//
+// Here the range stops at 4 over an 8-element array, so `a[7]` reads storage nothing wrote.
+// Each of the other ways to break the pattern is refused the same way and for the same reason:
+// a conditional store, a second statement in the body, a different index expression, and a
+// loop that fills a different array. Widen any one of those and this program compiles and
+// reads uninitialised memory.
+proc main() i32 {
+    var a i32[8]
+    for k in 0..4 { a[k] = 7 }
+    return a[7]
+}

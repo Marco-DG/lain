@@ -1,0 +1,14 @@
+// A loop that fills EVERY element is a whole-initialisation, so a later read is sound.
+// `for k in 0..8 { a[k] = 7 }` writes every slot, but definite-init is a MUST analysis over a
+// per-element lattice and the store is at a SYMBOLIC index, so it learned nothing and `a[7]`
+// afterwards was [E005] — an over-rejection of an entirely ordinary idiom. The comprehension
+// form already states the fact with IR_INIT; a fill loop is the same fact written differently.
+//
+// Measured by scripts/fuzz/fuzz_init.sh as the ONLY over-strict shape it could produce
+// (8 of 8 in a 60-program run), which is what named the idiom instead of leaving a vague
+// sense that the pass was strict. The refusing side is pinned by loop_fill_partial_fail.ln.
+proc main() i32 {
+    var a i32[8]
+    for k in 0..8 { a[k] = 7 }
+    return a[7] - 7
+}
