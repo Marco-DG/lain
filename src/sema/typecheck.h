@@ -2750,7 +2750,24 @@ void sema_infer_expr(Expr *e) {
                                 // length array is passed for `out i32[a.len + b.len]`.
                                 Range req = eval_callsite_size_range(e87_ptype->size_expr,
                                                                      params, e->as.call_expr.args);
-                                if (e87_alen.known && req.known &&
+                                // ★ A DEPENDENT SIZE THAT CAN GO NEGATIVE IS AN OOB, and the
+                                // equality check below cannot see it: that check needs BOTH
+                                // lengths to be exact constants, so a dynamic length skipped
+                                // it entirely. `out i32[src.len - 1]` with a runtime-length
+                                // `src` then compiled, and at src.len == 0 the callee's
+                                // `out.len` is SIZE_MAX — the loop runs and reads off the end
+                                // (ASan: stack-buffer-overflow). Same shape as the sliding
+                                // window of 2026-09-09: the wrapped value becomes a BOUND, so
+                                // nothing downstream checks it.
+                                if (req.known && req.min < 0) {
+                                    snprintf(e87_msg, sizeof(e87_msg),
+                                        "dependent size for '%.*s' can be negative (as low as %ld)"
+                                        " — on a usize that is a huge length, not an error."
+                                        " Constrain the source length, e.g. `src i32[> 0]`",
+                                        (int)e87_pname->length, e87_pname->name, (long)req.min);
+                                    e87_fail = true;
+                                }
+                                if (!e87_fail && e87_alen.known && req.known &&
                                     e87_alen.min == e87_alen.max && req.min == req.max &&
                                     e87_alen.min != req.min) {
                                     snprintf(e87_msg, sizeof(e87_msg),

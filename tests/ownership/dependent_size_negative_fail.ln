@@ -1,0 +1,25 @@
+// EXPECT: [E087]
+// A dependent size that can go NEGATIVE is an out-of-bounds, and until 2026-09-14 it compiled.
+//
+// `out i32[src.len - 1]` is materialised at runtime — the emitted C computes `__len_src - 1`
+// and uses it as the loop bound — so at `src.len == 0` the callee's `out.len` is SIZE_MAX, the
+// loop runs, and it reads off the end. ASan: stack-buffer-overflow. Same shape as the sliding
+// window of 2026-09-09: the wrapped value becomes a BOUND, so nothing downstream checks it.
+//
+// The existing equality check could not see it. That check needs BOTH the argument length and
+// the required length to be exact CONSTANTS, so a statically-known call was caught and a
+// dynamic one skipped the check entirely — which is the only interesting case.
+//
+// The fix a user should reach for is in the diagnostic: constrain the source length.
+// dependent_size_guarded_pass.ln is that program, and it compiles.
+proc run(n usize >= 0 and <= 4) i32 {
+    var xs i32[4] = [1, 2, 3, 4]
+    var a = xs[0..n]
+    var b = xs[0..n]
+    slide(a, b)
+    return 0
+}
+func slide(src i32[], out i32[src.len - 1]) {
+    for i in 0..out.len { out[i] = src[i] }
+}
+proc main() i32 { return run(0) }
