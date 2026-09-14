@@ -1,0 +1,21 @@
+// LAINFLAGS: --engine=ir-full
+// The element range survives a SUBSLICE. `var s = xs[1..4]` stores an address, which marks the
+// array escaped, and the slice is round-tripped through a slot, which launders provenance —
+// so the whole subslice family lost the range for two independent reasons. Both are handled:
+//
+//   · an escape only forfeits the range when something can EXERCISE it. A callee is the only
+//     thing that writes through an escaped address with no IR_STORE here to see, so with no
+//     call in the function the stores are the complete set of writers.
+//   · a LOAD from a slot written EXACTLY ONCE is that stored value, so provenance survives it.
+//
+// The second subslice below makes the chain eight hops (make_slice, elem_ptr, slice_data and a
+// load-through-slot per level), which is why the walk allows twenty-four.
+//
+// element_range_subslice_fail.ln is the direction that matters: a callee that rewrites the
+// array through the slice makes the join stale, and must keep failing.
+proc main() i32 {
+    var xs i32[5] = [10, 20, 30, 40, 50]
+    var s = xs[1..4]
+    var t = s[1..3]
+    return s[0] + t[0] - 50
+}

@@ -278,6 +278,7 @@ tests/vra/element_range_unknown_fail.ln                   NEW-ACCEPTS  new-catch
 tests/vra/element_range_escape_fail.ln                    NEW-ACCEPTS  new-catches-elsewhere
 tests/vra/overflow/accum_nonzero_start_fail.ln            NEW-ACCEPTS  new-catches-elsewhere
 tests/vra/midpoint_identity_fail.ln                       NEW-ACCEPTS  new-catches-elsewhere
+tests/vra/element_range_subslice_fail.ln                  NEW-ACCEPTS  new-catches-elsewhere
 
 # ── A0 (2026-09-08): adjudicating what --engine=ir misses, on the way to making it the
 # default. Four of the original 14 were never regressions (the OLD engine misses them too;

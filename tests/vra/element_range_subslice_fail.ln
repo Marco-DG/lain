@@ -1,0 +1,21 @@
+// EXPECT: [E086]
+// LAINFLAGS: --engine=ir-full
+// SOUNDNESS PAIR for element_range_subslice_pass.ln. A slice is a WRITABLE view: `zero` really
+// does rewrite the array through it, so the join taken from the literal initialiser is stale
+// the moment the call returns. The rule forfeits the element range for any array that escapes
+// in a function containing a call — deliberately coarse, because asking which cells a
+// particular callee touches is the write-footprint question and a wrong answer here is a
+// removed bounds check, not a lost proof.
+//
+// Writing a KNOWN value through a subslice is fine and stays proven: that store is one the
+// scan sees, and it joins in like any other.
+proc zero(var s i32[]) {
+    for i in 0..s.len { s[i] = 0 }
+}
+proc f() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var s = a[0..4]
+    zero(var s)
+    return a[0] + a[3]
+}
+proc main() i32 { return f() }

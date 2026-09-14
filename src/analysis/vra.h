@@ -268,7 +268,9 @@ static int vra_canon_cell(Vra *V, int v) { return (v>=0 && v<V->nvar && V->cellc
 // Follow an address back to the ARRAY CELL it indexes, through the address-forming ops.
 // Stops at anything that launders provenance, which is the conservative direction.
 static int vra_array_root(Vra *V, int addr) {
-    for (int hop=0; hop<8 && addr>=0 && addr<V->nvar; hop++) {
+    // 24 hops: a double subslice (`s = a[0..4]; t = s[2..4]`) is already 8 — make_slice,
+    // elem_ptr, slice_data and a load-through-slot for each level — and the walk is linear.
+    for (int hop=0; hop<24 && addr>=0 && addr<V->nvar; hop++) {
         IrInstr *d = V->def[addr];
         if (!d) return -1;                                   // a parameter: not a local array
         if (d->op == IR_ALLOCA)
@@ -277,6 +279,22 @@ static int vra_array_root(Vra *V, int addr) {
             d->op==IR_MAKE_SLICE || d->op==IR_CAST) {
             if (d->n_operands < 1) return -1;
             addr = d->operands[0]->id; continue;
+        }
+        // A LOAD launders provenance in general — but when the slot it reads is written
+        // EXACTLY ONCE, the loaded value IS that stored value and provenance survives. Without
+        // this, `var s = xs[1..4]` defeats the walk: the slice is stored into a slot and read
+        // back, so `s[0]` reaches a LOAD and the array behind it is invisible. Same rule the
+        // borrow checker uses to see an escaping local (bor_unique_store_value).
+        if (d->op==IR_LOAD && d->n_operands >= 1) {
+            int slot = d->operands[0]->id;
+            IrValue *only = NULL; int nst = 0;
+            for (IrBlock *b=V->f->blocks; b; b=b->next)
+                for (IrInstr *i=b->instrs; i; i=i->next)
+                    if (i->op==IR_STORE && i->n_operands>=2 && i->operands[0]->id==slot) {
+                        only = i->operands[1]; nst++;
+                    }
+            if (nst != 1 || !only) return -1;
+            addr = only->id; continue;
         }
         return -1;
     }
@@ -326,7 +344,25 @@ static void vra_seed_element_ranges(Vra *V) {
             if (cell<0 || cell>=n || !seen[cell] || !ok[cell]) continue;
             IrType *at = ins->aux.alloca_ty;
             if (!at || at->kind!=IRT_ARRAY || at->array_len<=0 || at->array_len>4096) { ok[cell]=false; continue; }
-            if (V->escaped && V->escaped[cell]) { ok[cell]=false; continue; }
+            // ★ AN ESCAPE ONLY MATTERS IF SOMETHING CAN EXERCISE IT. Making a slice of a local
+            // array marks the array escaped — `var s = xs[1..4]` stores an address — which
+            // dropped the element range for the whole subslice family even when nothing else
+            // in the function ever runs. A callee is the only thing that can write through an
+            // escaped address without an IR_STORE here to see, so with NO CALL in the function
+            // the escape cannot be taken up by anyone and the stores below are the complete
+            // set of writers.
+            //
+            // Deliberately coarse: any call at all forfeits the range, rather than asking the
+            // write footprint which cells a particular callee touches. `zero(var s)` really
+            // does rewrite the array through the slice, and the join from before the call is
+            // then stale — that case must keep failing, and does.
+            if (V->escaped && V->escaped[cell]) {
+                bool anycall = false;
+                for (IrBlock *bc=V->f->blocks; bc && !anycall; bc=bc->next)
+                    for (IrInstr *ic=bc->instrs; ic; ic=ic->next)
+                        if (ic->op==IR_CALL) { anycall = true; break; }
+                if (anycall) { ok[cell]=false; continue; }
+            }
             int len = (int)at->array_len;
             // An IR_INIT fact on this cell IS coverage — it is lowering stating that every
             // element is written (a comprehension, or a loop that fills 0..len). That is the
