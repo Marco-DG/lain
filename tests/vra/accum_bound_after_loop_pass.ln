@@ -1,0 +1,23 @@
+// LAINFLAGS: --engine=ir-full
+// B1's accumulator bound is answerable as an ordinary RANGE QUERY, not only at the narrowing
+// obligation it was built for. The loop below proves on its own; the line after it,
+// `s + a.len`, used to fail because the octagon still held only the widened value for `s`.
+//
+// Sound because of the clamps inside B1: the interval [s0+T*dlo, s0+T*dhi] is widened to
+// contain s0 itself, so it covers every partial sum s0 + k*delta for 0 <= k <= T — the bound
+// holds at EVERY point in and after the loop, which is what makes it a legitimate answer to a
+// query rather than a fact about the final value only. Nothing is written into the octagon, so
+// B1 keeps the property it was designed with: it can only turn an obligation from unproven to
+// proven, never make the fixpoint less sound.
+//
+// The refusing side is affine_recap_multistep_fail.ln — with TWO updates per iteration the
+// bound would be an undercount, and it must not apply.
+proc main() i32 {
+    var a i32[3] = [10, 20, 30]
+    a[0] = 5
+    var s i32 = 0
+    for i in 0..3 {
+        s = s + a[i]
+    }
+    return s + a.len as i32 - 58
+}

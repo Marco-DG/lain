@@ -160,6 +160,11 @@ typedef struct {
     // CONSTANT, and a constant does not change between sweeps.
     int64_t *cret_lo, *cret_hi;
     signed char *cret_state;      // 0 = not asked, 1 = no answer, 2 = have one
+    // Cells that are LOOP ACCUMULATORS, marked structurally in the prepass: some store to the
+    // cell is an add/sub whose first operand loads that same cell. Purely syntactic and
+    // therefore stable across sweeps, which is what keeps the B1 query off the hot path —
+    // vra_range asks this before doing anything expensive.
+    bool    *accum_cell;
     VraCheck *checks; int nchecks, cap_checks;
 } Vra;
 
@@ -394,6 +399,18 @@ static void vra_seed_element_ranges(Vra *V) {
         if (seen[i] && ok[i] && lo[i] <= hi[i]) {
             V->elem_known[i]=true; V->elem_lo[i]=lo[i]; V->elem_hi[i]=hi[i];
         }
+    // Structural marking of accumulator cells — see the field's comment.
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op != IR_STORE || ins->n_operands < 2) continue;
+            int cell = ins->operands[0]->id;
+            if (cell < 0 || cell >= n) continue;
+            IrInstr *vd = V->def[ins->operands[1]->id];
+            if (!vd || (vd->op != IR_ADD && vd->op != IR_SUB) || vd->n_operands < 1) continue;
+            IrInstr *ld = V->def[vd->operands[0]->id];
+            if (ld && ld->op == IR_LOAD && ld->n_operands >= 1 && ld->operands[0]->id == cell)
+                V->accum_cell[cell] = true;
+        }
     free(lo); free(hi); free(ok); free(seen);
 }
 
@@ -613,6 +630,10 @@ static void vra_dump_state(Vra *V, FILE *o);   // fwd
 // entry assumes in force, so the interval holds for every legal call — which is the same
 // contract the caller is separately required to satisfy. A recursive query returns nothing
 // rather than a fixpoint over itself: `state == 1` falls back to the type interval.
+static bool vra_cell_accum_range(Vra *V, Octagon *W, int cell, int64_t *lo, int64_t *hi);
+static int  vra_range_depth = 0;
+static void vra_arith_range(IrOp op, int64_t alo,int64_t ahi, int64_t blo,int64_t bhi,
+                            __int128 *rlo, __int128 *rhi);
 static bool vra_ret_range(IrFunc *g, int64_t *lo, int64_t *hi);
 static bool vra_ret_range_at(Vra *V, Octagon *W, IrFunc *g, IrInstr *call,
                              int64_t *lo, int64_t *hi);
@@ -1471,6 +1492,44 @@ static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) 
     int64_t olo,ohi; bool hl,hh; vra_interval(V, W, v->id, &olo,&hl,&ohi,&hh);
     if (hl && olo>tlo) tlo=olo;
     if (hh && ohi<thi) thi=ohi;
+    // ★ INTERVAL ARITHMETIC OVER THE OPERANDS, when the octagon's own answer is looser.
+    // The octagon records add/sub results as DIFFERENCE bounds built from `vra_interval` —
+    // the octagon's view — so any range that lives only in this function (an element range, a
+    // call-site return range, B1's accumulator bound) never reaches an arithmetic RESULT.
+    // `for i in 0..3 { s = s + a[i] }` then bounded `s` at [0,90] and still lost
+    // `return s + a.len`, because the add's own range came back as the whole i33.
+    //
+    // Recomputing from the operands' ranges closes that, and it is only ever an INTERSECTION —
+    // it can tighten the answer, never widen it. Depth-bounded because the operands are
+    // themselves queried this way.
+    if (v->id>=0 && v->id<V->nvar && vra_range_depth < 3) {
+        IrInstr *d0 = V->def[v->id];
+        if (d0 && (d0->op==IR_ADD || d0->op==IR_SUB || d0->op==IR_MUL) && d0->n_operands>=2) {
+            vra_range_depth++;
+            int64_t xlo,xhi,ylo,yhi;
+            vra_range(V, W, d0->operands[0], &xlo, &xhi);
+            vra_range(V, W, d0->operands[1], &ylo, &yhi);
+            vra_range_depth--;
+            __int128 rlo, rhi;
+            vra_arith_range(d0->op, xlo,xhi, ylo,yhi, &rlo, &rhi);
+            if (rlo > (__int128)tlo) tlo = (int64_t)rlo;
+            if (rhi < (__int128)thi) thi = (int64_t)rhi;
+        }
+    }
+    // A LOAD out of a loop ACCUMULATOR carries B1's bound. Gated on the structural
+    // `accum_cell` marker, so an ordinary range query pays one array read; the widened value
+    // usually still HAS octagon bounds (the type interval), just useless ones, which is why
+    // this cannot be conditioned on the octagon having left it unbounded.
+    if (v->id>=0 && v->id<V->nvar && V->def[v->id]) {
+        IrInstr *ld = V->def[v->id];
+        if (ld->op == IR_LOAD && ld->n_operands >= 1) {
+            int64_t blo, bhi;
+            if (vra_cell_accum_range(V, W, ld->operands[0]->id, &blo, &bhi)) {
+                if (blo > tlo) tlo = blo;
+                if (bhi < thi) thi = bhi;
+            }
+        }
+    }
     // ★ RELATIONAL refinement. A `usize` upper bound is INT64_MAX, which the entry seeding
     // skips (doubling it would overflow the DBM), so `while i < n` leaves `i` with no absolute
     // bound and `i = i + 1` — the commonest statement in the corpus — cannot be shown not to
@@ -2266,6 +2325,66 @@ static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
     return lo >= tlo && hi <= thi;
 }
 
+// ★ B1'S BOUND IS NOT ONLY FOR THE OBLIGATION IT WAS INVENTED FOR.
+// The clamps above (alo <= 0, ahi >= 0) make [s0lo+alo, s0hi+ahi] contain s0 itself and every
+// partial sum s0 + k*delta for 0 <= k <= T — so the interval holds at EVERY point in and after
+// the loop, not just at the end. That makes it answerable as an ordinary range query.
+//
+// Without this the bound reached the accumulator's own narrowing and nothing else:
+// `for i in 0..3 { s = s + a[i] }` proved, and the very next line `return s + a.len` did not,
+// because the octagon still had only the widened value for s. B1 was deliberately built as a
+// check-time refinement rather than a state injection ("it can only turn an obligation from
+// unproven to proven, so it cannot make the fixpoint less sound"), and that caution was right;
+// this keeps the property — nothing is written into the octagon — while letting any query see
+// the answer.
+//
+// `V->accum_cell` is the structural pre-filter: vra_range is hot, and without it every range
+// query would walk the function looking for a self-referencing store.
+static bool vra_accum_busy = false;
+static bool vra_cell_accum_range(Vra *V, Octagon *W, int cell, int64_t *lo, int64_t *hi) {
+    if (cell < 0 || cell >= V->nvar || !V->accum_cell || !V->accum_cell[cell]) return false;
+    if (vra_accum_busy) return false;                 // vra_accum_delta asks vra_range back
+    // ★ EXACTLY ONE accumulating store, and EXACTLY ONE store overall.
+    // `s0 + T*delta` describes one update per iteration. With two — `x = x + 1; x = x + 2` —
+    // taking the first gives +1/iter where the truth is +3, and the bound is an UNDERCOUNT:
+    // `arr[x]` with x == 30 on a 21-element array came out PROVEN. That is the exact defect
+    // `affine_recap_multistep_fail.ln` exists to pin, and this query walked straight back into
+    // it by picking the first store it found. A second store of ANY kind is equally fatal —
+    // it can reset or jump the accumulator between iterations — so both are counted.
+    IrValue *acc = NULL; int nstore = 0, nacc = 0;
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op != IR_STORE || ins->n_operands < 2) continue;
+            if (ins->operands[0]->id != cell) continue;
+            nstore++;
+            IrInstr *vd = V->def[ins->operands[1]->id];
+            if (!vd || (vd->op != IR_ADD && vd->op != IR_SUB)) continue;
+            IrInstr *ld = V->def[vd->operands[0]->id];
+            if (!ld || ld->op != IR_LOAD || ld->n_operands < 1 ||
+                ld->operands[0]->id != cell) continue;
+            acc = ins->operands[1]; nacc++;
+        }
+    // one accumulating store, plus at most the initialiser before the loop
+    if (!acc || nacc != 1 || nstore > 2) return false;
+    vra_accum_busy = true;
+    IrBlock *H = NULL; int64_t s0lo, s0hi, dlo, dhi, T; bool ok = false;
+    if (vra_accum_delta(V, W, acc, &H, &s0lo, &s0hi, &dlo, &dhi) &&
+        vra_loop_trips(V, W, H, &T)) {
+        int64_t alo, ahi;
+        if (!vra_mul_ovf(T, dlo, &alo) && !vra_mul_ovf(T, dhi, &ahi)) {
+            if (alo > 0) alo = 0;
+            if (ahi < 0) ahi = 0;
+            int64_t l, h;
+            if (!__builtin_add_overflow(s0lo, alo, &l) &&
+                !__builtin_add_overflow(s0hi, ahi, &h) && l <= h) {
+                *lo = l; *hi = h; ok = true;
+            }
+        }
+    }
+    vra_accum_busy = false;
+    return ok;
+}
+
 
 // ── the fixpoint over the CFG ────────────────────────────────────────────────
 static Vra *vra_analyze(IrFunc *f) {
@@ -2326,6 +2445,7 @@ static Vra *vra_analyze(IrFunc *f) {
     V->elem_known=calloc(V->nvar,sizeof(bool));
     V->cret_lo=calloc(V->nvar,sizeof(int64_t)); V->cret_hi=calloc(V->nvar,sizeof(int64_t));
     V->cret_state=calloc(V->nvar,sizeof(signed char));
+    V->accum_cell=calloc(V->nvar,sizeof(bool));
     vra_prepass(V);
     vra_seed_element_ranges(V);
     for (int i=0;i<nb;i++) V->in[i]=malloc(V->dsz*sizeof(int64_t));
@@ -2861,7 +2981,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->odim); free(V->checks); free(V);
+    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->odim); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H

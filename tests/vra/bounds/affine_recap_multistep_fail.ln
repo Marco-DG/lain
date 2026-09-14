@@ -3,6 +3,13 @@
 // twice per iteration (x += 1; x += 2 → +3/iter, not +2), undercounting the
 // final value. arr[x] with x==30 on a length-21 array was accepted. Now a
 // duplicate affine step discards the exact recap.
+//
+// ★ It caught a REGRESSION on 2026-09-14. Exposing B1's accumulator bound as a range
+// query (accum_bound_after_loop_pass.ln) walked straight back into this: the query took
+// the FIRST accumulating store it found, read +1 per iteration where the truth is +3,
+// and proved `arr[30]` on a 21-element array. The query now requires exactly ONE
+// accumulating store and at most one other (the initialiser) — `s0 + T*delta` describes
+// one update per iteration and says nothing when there are two.
 proc main() i32 {
     var arr i32[21] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
     var x i32 = 0
