@@ -144,6 +144,15 @@ typedef struct {
     // value id; shape_rank[b] > 0 means b has extents shape_ext[b][0..rank-1].
     int     *shape_rank;
     int    (*shape_ext)[VRA_MAX_RANK];
+    // ── ELEMENT RANGES: what an array's CONTENTS can be ──────────────────────────────────
+    // The domain models INDICES and forgets what is behind them, so `a[0] + a[3]` over
+    // `var a i32[4] = [10, 20, 30, 40]` was refused: both loads fell back to the i32 type
+    // range and their sum leaves i32. Measured 2026-09-14 as 11 of the 65 programs blocking
+    // the 3.5 switchover — the single largest ENGINE gap in that set.
+    // Keyed by the ARRAY CELL (the alloca's value id); see vra_seed_element_ranges for the
+    // conditions that make the join sound.
+    int64_t *elem_lo, *elem_hi;
+    bool    *elem_known;
     VraCheck *checks; int nchecks, cap_checks;
 } Vra;
 
@@ -248,6 +257,103 @@ static int vra_canon_cell(Vra *V, int v) { return (v>=0 && v<V->nvar && V->cellc
 // pre-pass: def sites, constants, and canonical slice-length vars. A slice's length
 // var is its make_slice length operand or its first slice_len read; it is propagated
 // through a slice local's store/load so `s = a[lo..hi]; s[k]` knows len(s).
+// ── ELEMENT RANGES ───────────────────────────────────────────────────────────────────────
+// Follow an address back to the ARRAY CELL it indexes, through the address-forming ops.
+// Stops at anything that launders provenance, which is the conservative direction.
+static int vra_array_root(Vra *V, int addr) {
+    for (int hop=0; hop<8 && addr>=0 && addr<V->nvar; hop++) {
+        IrInstr *d = V->def[addr];
+        if (!d) return -1;                                   // a parameter: not a local array
+        if (d->op == IR_ALLOCA)
+            return (d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_ARRAY) ? addr : -1;
+        if (d->op==IR_ELEM_PTR || d->op==IR_FIELD_PTR || d->op==IR_SLICE_DATA ||
+            d->op==IR_MAKE_SLICE || d->op==IR_CAST) {
+            if (d->n_operands < 1) return -1;
+            addr = d->operands[0]->id; continue;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+// What can an element of this array BE? The join of every value stored into it — sound only
+// when three things hold together, and each one is load-bearing:
+//
+//   · every store to the cell has a value we know exactly (the constant table). One unknown
+//     store and the join says nothing, so the whole cell drops out.
+//   · the constant store indices COVER [0, len). Without this a load could read an element
+//     nothing wrote, and the join would describe values that element never held. Covering
+//     also means the result does not depend on the definite-init pass being right — the
+//     proof stands on this function's own evidence.
+//   · the cell does not ESCAPE. A callee handed the address can store anything, with no
+//     IR_STORE here to see — the same hole that produced three false proofs on 2026-09-09.
+//
+// A store at an UNKNOWN index with a known value is fine: coverage still holds from the
+// constant stores, and the unknown-index value joins in like any other.
+static void vra_seed_element_ranges(Vra *V) {
+    int n = V->nvar;
+    int64_t *lo = malloc((size_t)n*sizeof(int64_t)), *hi = malloc((size_t)n*sizeof(int64_t));
+    bool *ok = calloc((size_t)n, sizeof(bool)), *seen = calloc((size_t)n, sizeof(bool));
+    unsigned char *cov = NULL;
+    if (!lo || !hi || !ok || !seen) { free(lo); free(hi); free(ok); free(seen); return; }
+    for (int i=0;i<n;i++) { ok[i]=true; lo[i]=INT64_MAX; hi[i]=INT64_MIN; }
+
+    // pass 1: join the stored values per cell, and note which cells have an unknown store
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op != IR_STORE || ins->n_operands < 2) continue;
+            int cell = vra_array_root(V, ins->operands[0]->id);
+            if (cell < 0) continue;
+            seen[cell] = true;
+            int sv = ins->operands[1]->id;
+            if (sv<0 || sv>=n || !V->cknown[sv]) { ok[cell] = false; continue; }
+            if (V->cval[sv] < lo[cell]) lo[cell] = V->cval[sv];
+            if (V->cval[sv] > hi[cell]) hi[cell] = V->cval[sv];
+        }
+
+    // pass 2: coverage — every index in [0,len) written by a CONSTANT-index store
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op != IR_ALLOCA || !ins->result) continue;
+            int cell = ins->result->id;
+            if (cell<0 || cell>=n || !seen[cell] || !ok[cell]) continue;
+            IrType *at = ins->aux.alloca_ty;
+            if (!at || at->kind!=IRT_ARRAY || at->array_len<=0 || at->array_len>4096) { ok[cell]=false; continue; }
+            if (V->escaped && V->escaped[cell]) { ok[cell]=false; continue; }
+            int len = (int)at->array_len;
+            // An IR_INIT fact on this cell IS coverage — it is lowering stating that every
+            // element is written (a comprehension, or a loop that fills 0..len). That is the
+            // same fact the constant-index scan below reconstructs, declared instead of
+            // inferred, and it is what the definite-init pass already trusts.
+            bool covered_by_fact = false;
+            for (IrBlock *bf=V->f->blocks; bf && !covered_by_fact; bf=bf->next)
+                for (IrInstr *fi=bf->instrs; fi; fi=fi->next)
+                    if (fi->op==IR_INIT && fi->n_operands>=1 &&
+                        vra_array_root(V, fi->operands[0]->id)==cell) { covered_by_fact=true; break; }
+            if (covered_by_fact) continue;              // ok[cell] stays true
+            cov = calloc((size_t)len, 1);
+            if (!cov) { ok[cell]=false; continue; }
+            for (IrBlock *b2=V->f->blocks; b2; b2=b2->next)
+                for (IrInstr *s2=b2->instrs; s2; s2=s2->next) {
+                    if (s2->op != IR_STORE || s2->n_operands < 2) continue;
+                    if (vra_array_root(V, s2->operands[0]->id) != cell) continue;
+                    IrInstr *ad = V->def[s2->operands[0]->id];
+                    if (!ad || ad->op != IR_ELEM_PTR || ad->n_operands < 2) continue;
+                    int ix = ad->operands[1]->id;
+                    if (ix>=0 && ix<n && V->cknown[ix] &&
+                        V->cval[ix]>=0 && V->cval[ix]<len) cov[V->cval[ix]] = 1;
+                }
+            for (int k=0;k<len;k++) if (!cov[k]) { ok[cell]=false; break; }
+            free(cov); cov=NULL;
+        }
+
+    for (int i=0;i<n;i++)
+        if (seen[i] && ok[i] && lo[i] <= hi[i]) {
+            V->elem_known[i]=true; V->elem_lo[i]=lo[i]; V->elem_hi[i]=hi[i];
+        }
+    free(lo); free(hi); free(ok); free(seen);
+}
+
 static void vra_prepass(Vra *V) {
     for (IrParam *p=V->f->params; p; p=p->next)
         if (p->value && p->value->id>=0 && p->value->id<V->nvar) V->val[p->value->id]=p->value;
@@ -544,7 +650,20 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
                 || vra_is_param_cell(V, cell))
                 vra_assign_copy(V, W, r, cell);                // scalar cell → value
-            else oct_forget(W, r);                             // array elem / unknown
+            else {
+                oct_forget(W, r);                              // array elem / unknown
+                // ...but an element of an array whose CONTENTS are known is bounded by them.
+                // The bound goes into the OCTAGON, not just into vra_range: the add/sub
+                // transfer records DIFFERENCE bounds (`r − a ≤ bhi`), so the closure can only
+                // turn those into an absolute range for the result if the operand has one
+                // here. Putting it only in vra_range proved the two loads and still lost
+                // `a[0] + a[3] - 50`.
+                int arr = vra_array_root(V, cell);
+                if (arr >= 0 && V->elem_known && V->elem_known[arr]) {
+                    oct_add_lb(W, r, V->elem_lo[arr]);
+                    oct_add_ub(W, r, V->elem_hi[arr]);
+                }
+            }
             break;
         }
         case IR_STORE: {
@@ -1205,6 +1324,22 @@ static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) 
     if (v && v->id>=0 && v->id<V->nvar && V->cknown[v->id]) { *lo=*hi=V->cval[v->id]; return; }
     int64_t tlo=INT64_MIN, thi=INT64_MAX; (void)V;
     irtype_int_range(v->type, &tlo, &thi);
+    // ★ A LOAD OUT OF AN ARRAY WHOSE CONTENTS ARE KNOWN carries the element range. The domain
+    // models indices and forgets what is behind them, so `a[0] + a[3]` over
+    // `var a i32[4] = [10,20,30,40]` fell back to the i32 type range on both loads and their
+    // sum left i32. See vra_seed_element_ranges for the three conditions that make the join
+    // sound; by the time it is consulted the cell is fully written, unescaped, and every
+    // stored value is exact.
+    if (v->id>=0 && v->id<V->nvar && V->def[v->id] && V->elem_known) {
+        IrInstr *ld = V->def[v->id];
+        if (ld->op == IR_LOAD && ld->n_operands >= 1) {
+            int cell = vra_array_root(V, ld->operands[0]->id);
+            if (cell >= 0 && V->elem_known[cell]) {
+                if (V->elem_lo[cell] > tlo) tlo = V->elem_lo[cell];
+                if (V->elem_hi[cell] < thi) thi = V->elem_hi[cell];
+            }
+        }
+    }
     // ★ A WIDENING CAST CARRIES ITS SOURCE'S TYPE BOUND. `(x as i64)` on an i32 holds the same
     // number, so it is in i32's range — but the value's own type is i64 and that is all the
     // interval says. The bound lives one step back along the cast chain, and following it is
@@ -2028,7 +2163,11 @@ static Vra *vra_analyze(IrFunc *f) {
     V->persist=calloc(V->nvar,sizeof(bool));
     V->shape_rank=calloc(V->nvar,sizeof(int));
     V->shape_ext=calloc(V->nvar,sizeof(*V->shape_ext));
+    V->elem_lo=calloc(V->nvar,sizeof(int64_t));
+    V->elem_hi=calloc(V->nvar,sizeof(int64_t));
+    V->elem_known=calloc(V->nvar,sizeof(bool));
     vra_prepass(V);
+    vra_seed_element_ranges(V);
     for (int i=0;i<nb;i++) V->in[i]=malloc(V->dsz*sizeof(int64_t));
 
     int64_t wb[1]; (void)wb;
@@ -2466,7 +2605,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->odim); free(V->checks); free(V);
+    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->odim); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H

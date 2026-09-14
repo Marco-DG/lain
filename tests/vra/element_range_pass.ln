@@ -1,0 +1,25 @@
+// LAINFLAGS: --engine=ir-full
+// The domain models INDICES and used to forget what is behind them, so `a[0] + a[3]` over a
+// constant-initialised array fell back to the i32 type range on both loads and their sum left
+// i32. An array whose CONTENTS are known now carries an element range.
+//
+// The bound goes into the OCTAGON at the load, not only into the range query: add/sub record
+// DIFFERENCE bounds (`r - a <= bhi`), so the closure can only turn those into an absolute
+// range for the result if the operand has one in the state. Seeding only the query proved the
+// two loads and still lost `a[0] + a[3] - 50`.
+//
+// The lookup-table index below is the capability this buys beyond arithmetic: `d[t[1]]` is
+// provably in bounds because t's elements are known to be 0..2. element_range_escape_fail.ln
+// and element_range_unknown_fail.ln pin the conditions that make the join sound.
+proc sums() i32 {
+    var a i32[4] = [10, 20, 30, 40]
+    return a[0] + a[3] - 50
+}
+proc lookup() i32 {
+    var t i32[3] = [0, 1, 2]
+    var d i32[3] = [7, 8, 9]
+    return d[t[1]]
+}
+proc main() i32 {
+    return sums() + lookup() - 8
+}

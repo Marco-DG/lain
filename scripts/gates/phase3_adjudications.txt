@@ -271,6 +271,11 @@ tests/vra/overflow/loop_accumulator_fail.ln               NEW-ACCEPTS  new-catch
 # C-7's fail-test: an OVERFLOW obligation, judged by the numeric domain, while this harness
 # drives linearity and effects. Rejected by `--engine=ir-full` ([E086]) per its LAINFLAGS line.
 tests/vra/sliding_window_underflow_fail.ln                NEW-ACCEPTS  new-catches-elsewhere
+# Element ranges (2026-09-14): both are NUMERIC fail-tests gated on `--engine=ir-full`. This
+# differential compares the OWNERSHIP engines, and neither program is an ownership violation —
+# the numeric pass is what refuses them, and does. Same shape as the four rows above.
+tests/vra/element_range_unknown_fail.ln                   NEW-ACCEPTS  new-catches-elsewhere
+tests/vra/element_range_escape_fail.ln                    NEW-ACCEPTS  new-catches-elsewhere
 
 # ── A0 (2026-09-08): adjudicating what --engine=ir misses, on the way to making it the
 # default. Four of the original 14 were never regressions (the OLD engine misses them too;

@@ -2,15 +2,21 @@
 // LAINFLAGS: --engine=ir-full
 // SOUNDNESS PAIR for the LOWER half of the relational refinement (vra_const_folding_pass.ln).
 // A value's lower bound may be raised from a partner it is octagon-related to: `y - v <= c`
-// with y bounded below by its type gives `v >= ylo - c`. That is what lets `TABLE[2] as i32 + 1`
-// narrow back to an i32 — its lower bound is 1, not i33's -2^32.
+// with y bounded below gives `v >= ylo - c`. The same machinery must not raise a bound that
+// is not there.
 //
-// The same machinery must not raise a bound that is not there. `TABLE[2] as i32 - 1` is
-// [-1, 254] over a u8 element, so it is NOT a valid index and the array read is refused. Get
-// the sign of the relation wrong and this reads xs[-1].
-TABLE u8[4] = [10, 20, 30, 40]
+// ★ REWRITTEN 2026-09-14. This test used to read `TABLE[2] as i32 - 1` over
+// `TABLE u8[4] = [10,20,30,40]` and assert a refusal, because the engine knew only u8's TYPE
+// range and so read the result as [-1, 254]. Element ranges made the engine know the CONTENTS,
+// at which point `30 - 1 = 29` is plainly in bounds and the refusal was no longer correct —
+// the program is safe and the engine became right to accept it. Keeping the old assertion
+// would have pinned an over-rejection as if it were a guarantee.
+//
+// The subject is preserved by giving the table a ZERO: the element range is the array-wide
+// join [0, 40], so `TABLE[k] - 1` really can be -1 and `xs[j]` really can read xs[-1].
+TABLE u8[4] = [0, 20, 30, 40]
 proc main() i32 {
     var xs i32[256] = [0 for k in 0..256]
-    var j i32 = TABLE[2] as i32 - 1
+    var j i32 = TABLE[0] as i32 - 1
     return xs[j]
 }

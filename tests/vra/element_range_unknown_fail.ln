@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// LAINFLAGS: --engine=ir-full
+// SOUNDNESS PAIR for element_range_pass.ln. The element range is the JOIN of every value
+// stored into the array, and it is sound only while every one of those stores is a value the
+// engine knows exactly. One store of an unknown parameter and the join describes values the
+// array can no longer be held to — so the whole cell drops out rather than keeping a stale
+// bound. Widen this and `a[0] + a[1]` is "proven" for an array holding anything at all.
+proc f(k i32) i32 {
+    var a i32[2] = [1, 2]
+    a[0] = k
+    return a[0] + a[1]
+}
+proc main() i32 { return 0 }
