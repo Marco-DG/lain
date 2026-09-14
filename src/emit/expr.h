@@ -420,10 +420,19 @@ void emit_expr(Expr *expr, int depth) {
       const char *op_c = (expr->as.binary_expr.op == TOKEN_PLUS_PERCENT)  ? "+"
                        : (expr->as.binary_expr.op == TOKEN_MINUS_PERCENT) ? "-"
                                                                           : "*";
+      // ★ EACH OPERAND GETS ITS OWN PARENTHESES. Wrapping the whole expression is not
+      // enough: `a +% (b & 1)` emitted `(a + b & 1)`, and in C `+` binds tighter than `&`, so
+      // that is `(a + b) & 1` — a MISCOMPILE, silent and answer-changing. `popcount(255)`
+      // returned 0 instead of 8. The plain `+` path never showed it because Path-F casts each
+      // operand (`(uint64_t)(a) + (uint64_t)(b & 1)`) and a cast parenthesises what follows.
+      //
+      // Found 2026-09-14 by the emit gate, after a corpus edit switched one `+` to `+%`; the
+      // exit-code suite called the wrong-answer program a PASS, which is exactly the blind
+      // spot that fuzzers executing accepted programs exist to cover.
       EMIT("(");
-      emit_expr(expr->as.binary_expr.left, depth);
+      EMIT("("); emit_expr(expr->as.binary_expr.left, depth);  EMIT(")");
       EMIT(" %s ", op_c);
-      emit_expr(expr->as.binary_expr.right, depth);
+      EMIT("("); emit_expr(expr->as.binary_expr.right, depth); EMIT(")");
       EMIT(")");
     } else if (expr->as.binary_expr.op == TOKEN_PLUS_PIPE
             || expr->as.binary_expr.op == TOKEN_MINUS_PIPE
