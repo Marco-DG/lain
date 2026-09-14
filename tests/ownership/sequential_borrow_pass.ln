@@ -11,7 +11,7 @@ func read_counter(c Counter) i32 {
 }
 
 func increment_counter(var c Counter) {
-    c.value = c.value + 1
+    c.value = c.value +% 1
 }
 
 proc main() i32 {

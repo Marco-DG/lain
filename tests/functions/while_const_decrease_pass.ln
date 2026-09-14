@@ -7,7 +7,7 @@ func scan(n usize) usize {
     var j = n
     var steps usize = 0
     while j > 0 {
-        steps = steps + 1
+        steps = steps +% 1
         if j > 3 {
             j = j - 1
         } else {

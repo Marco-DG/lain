@@ -5,7 +5,7 @@ func popcount(x0 u32) u32 {
     var x u32 = x0
     var count u32 = 0
     while x > 0 decreasing x {
-        count = count + (x & 1)
+        count = count +% (x & 1)
         x = x >> 1
     }
     return count

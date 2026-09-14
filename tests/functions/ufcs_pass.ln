@@ -5,7 +5,7 @@ type Counter {
 }
 
 func increment(var c Counter, amount i32) {
-    c.val = c.val + amount
+    c.val = c.val +% amount
 }
 
 func get_val(c Counter) i32 {

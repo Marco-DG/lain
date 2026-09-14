@@ -9,7 +9,7 @@ proc recursive_proc(n i32) {
 func loop_func(n i32) i32 {
     var sum = 0
     for i in 0..n {
-        sum = sum + i // OK: for loop allowed
+        sum = sum +% i // OK: for loop allowed
     }
     return sum
 }

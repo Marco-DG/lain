@@ -6,7 +6,7 @@ type Cell {
 }
 
 func tweak(var c Cell) {
-    c.val = c.val + 1
+    c.val = c.val +% 1
 }
 
 proc main() i32 {

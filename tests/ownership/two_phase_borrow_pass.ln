@@ -8,7 +8,7 @@ type Vec {
 }
 
 func push_n(var v Vec, n i32) {
-    v.len = v.len + n
+    v.len = v.len +% n
 }
 
 func get_cap(v Vec) i32 {

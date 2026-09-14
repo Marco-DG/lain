@@ -9,7 +9,7 @@ func up(n i32) i32 {
     var s = 0
     var i = 0
     while i < n {
-        s = s + i
+        s = s +% i
         i = i + 1
     }
     return s
@@ -18,12 +18,12 @@ func down(n i32) i32 {
     var s = 0
     var i = n
     while i > 0 {
-        s = s + i
+        s = s +% i
         i = i - 1
     }
     return s
 }
-func span(lo i32, hi i32) i32 {
+func span(lo i32 >= 0 and <= 1000000, hi i32 >= 0 and <= 1000000) i32 {
     var c = 0
     var l = lo
     while l < hi {
