@@ -2,12 +2,16 @@
 // at least 1, `src.len - 1` cannot go negative and the dependent size is well defined.
 // Statically-sized arguments make the required length exact, so the equality check applies
 // as it always did.
-func slide(src i32[], out i32[src.len - 1]) {
+// The signature STATES the precondition it needs: with `src` known non-empty,
+// `src.len - 1` cannot go negative and the body's `out.len` is well defined. Without
+// it the function would have to hold for a zero-length `src`, which it cannot.
+func slide(src i32[> 0], out i32[src.len - 1]) {
     for i in 0..out.len { out[i] = src[i] }
 }
 proc main() i32 {
     var xs i32[4] = [1, 2, 3, 4]
     var ys i32[3] = [0, 0, 0]
     slide(xs, ys)
-    return ys[0] - 1
+    if ys[0] == 1 { return 0 }
+    return 1
 }
