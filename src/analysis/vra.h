@@ -725,6 +725,38 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                     break;
                 }
             }
+            // ★ THE MIDPOINT IDENTITY: r = a + (b − a)/D with D ≥ 1 and a ≤ b.
+            // Then (b−a)/D ≤ b−a, so r ≤ a + (b−a) = b, and r ≥ a because the quotient is
+            // non-negative. The conclusion `a ≤ r ≤ b` is derived ENTIRELY from wrap-free
+            // facts — the subtraction is guarded by `a ≤ b` and the division only shrinks —
+            // which is what makes it usable to prove the ADD does not overflow.
+            //
+            // The octagon cannot reach this on its own: the step needs `%q + a ≤ b`, a bound
+            // on a SUM by a third VALUE, and octagons hold `x + y ≤ c` only for a constant c.
+            // Using the add's own recorded relation instead would be circular — that relation
+            // is recorded assuming no wrap, which is the thing being proven.
+            //
+            // Without it `var mid usize = lo + (hi - lo) / 2` under `lo < hi` is refused: the
+            // check reads the OPERAND ranges, both unbounded usize, and their sum leaves u64.
+            // The old engine has this identity (47a88a2); the new one did not.
+            if (isadd && !ac && !bc) {
+                for (int side=0; side<2; side++) {
+                    int q   = side ? a : b;               // the quotient operand
+                    int lo_ = side ? b : a;               // the base operand
+                    IrInstr *qd = (q>=0 && q<V->nvar) ? V->def[q] : NULL;
+                    if (!qd || (qd->op!=IR_UDIV && qd->op!=IR_SDIV) || qd->n_operands<2) continue;
+                    int dv = qd->operands[1]->id;
+                    if (dv<0 || dv>=V->nvar || !V->cknown[dv] || V->cval[dv] < 1) continue;
+                    IrInstr *sd2 = V->def[qd->operands[0]->id];
+                    if (!sd2 || sd2->op!=IR_SUB || sd2->n_operands<2) continue;
+                    if (sd2->operands[1]->id != lo_) continue;          // (b − a), same a
+                    int hi_ = sd2->operands[0]->id;
+                    oct_close(W);
+                    if (vra_diff_ub(V, W, lo_, hi_) > 0) continue;      // a ≤ b not provable
+                    vra_add_diff_le(V, W, r, hi_, 0);                   // r ≤ b
+                    vra_add_diff_le(V, W, lo_, r, 0);                   // r ≥ a
+                }
+            }
             if (isadd && bc)      { vra_add_diff_le(V,W,r,a,V->cval[b]); vra_add_diff_le(V,W,a,r,-V->cval[b]); }   // r=a+c (exact)
             else if (isadd && ac) { vra_add_diff_le(V,W,r,b,V->cval[a]); vra_add_diff_le(V,W,b,r,-V->cval[a]); }
             else if (!isadd && bc){ vra_add_diff_le(V,W,r,a,-V->cval[b]); vra_add_diff_le(V,W,a,r,V->cval[b]); }   // r=a-c (exact)
@@ -1518,6 +1550,32 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     }
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_OVERFLOW; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.ok = (rlo >= (__int128)tlo) && (rhi <= (__int128)thi);
+    // ★ THE MIDPOINT IDENTITY, applied HERE rather than read off the octagon. `a + (b − a)/D`
+    // with D >= 1 and `a <= b` lies in [a, b], because the quotient is non-negative and no
+    // greater than `b − a`. Both operands are values of this type, so the result is too and the
+    // add cannot overflow — `var mid usize = lo + (hi - lo) / 2` under `lo < hi`, which the
+    // operand intervals refuse (both are unbounded usize and their sum leaves u64).
+    //
+    // It must be decided here and not from the octagon's r-bound: the ADD transfer records its
+    // relation ASSUMING no wrap, so proving no-wrap from it would be circular. The facts used
+    // below are all wrap-free — the subtraction is guarded by `a <= b` and the division only
+    // shrinks. The old engine carries the same identity (47a88a2).
+    if (!c.ok && ins->op == IR_ADD) {
+        for (int side=0; side<2 && !c.ok; side++) {
+            IrValue *qv = side ? a : b, *lv = side ? b : a;
+            IrInstr *qd = (qv->id>=0 && qv->id<V->nvar) ? V->def[qv->id] : NULL;
+            if (!qd || (qd->op!=IR_UDIV && qd->op!=IR_SDIV) || qd->n_operands<2) continue;
+            int dv = qd->operands[1]->id;
+            if (dv<0 || dv>=V->nvar || !V->cknown[dv] || V->cval[dv] < 1) continue;
+            IrInstr *sd2 = V->def[qd->operands[0]->id];
+            if (!sd2 || sd2->op!=IR_SUB || sd2->n_operands<2) continue;
+            if (sd2->operands[1]->id != lv->id) continue;              // the SAME `a`
+            if (vra_diff_ub(V, W, lv->id, sd2->operands[0]->id) > 0) continue;   // a <= b?
+            int64_t hlo, hhi; vra_range(V, W, sd2->operands[0], &hlo, &hhi);
+            int64_t llo, lhi2; vra_range(V, W, lv, &llo, &lhi2); (void)lhi2;
+            if (llo >= tlo && hhi <= thi) c.ok = true;                 // a <= r <= b, both fit
+        }
+    }
     // S2: the intermediate arithmetic of a shaped access cannot overflow, because the region
     // LENGTH bounds it and the length is itself a valid value of the index type:
     //     i*e1     ≤ (e0−1)*e1 = len − e1 ≤ len          (given 0 ≤ i < e0, e1 ≥ 0)

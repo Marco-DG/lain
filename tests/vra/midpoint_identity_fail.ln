@@ -1,0 +1,17 @@
+// EXPECT: [E086]
+// LAINFLAGS: --engine=ir-full
+// SOUNDNESS PAIR for midpoint_identity_pass.ln. The identity needs `a <= b` PROVABLE — it is
+// what makes `b - a` wrap-free and the quotient non-negative. Unguarded, `hi - lo` on a usize
+// underflows whenever lo > hi, the "quotient" is then near SIZE_MAX/2, and `lo + that`
+// overflows. Drop the guard requirement and this program is "proven" check-free.
+//
+// The other three ways to break the pattern are refused for the same reason and were each
+// checked: a different base (`lo + (hi - k) / 2`), a multiply where the divide should be, and
+// a divisor that is not a positive constant.
+func mid(lo usize, hi usize) usize {
+    return lo + (hi - lo) / 2
+}
+proc main() i32 {
+    if mid(2, 8) == 5 { return 0 }
+    return 1
+}

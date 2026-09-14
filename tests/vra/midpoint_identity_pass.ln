@@ -1,0 +1,21 @@
+// LAINFLAGS: --engine=ir-full
+// THE MIDPOINT IDENTITY. `a + (b - a) / D` with D >= 1 and `a <= b` lies in [a, b]: the
+// quotient is non-negative and no greater than `b - a`. Both operands are values of the type,
+// so the result is too and the add cannot overflow.
+//
+// The operand intervals refuse it — `lo` and `hi` are unbounded usize and their sum leaves u64
+// — and the octagon cannot reach it either: the step needs `q + a <= b`, a bound on a SUM by a
+// third VALUE, and octagons hold `x + y <= c` only for a constant c. Reading the add's own
+// recorded relation instead would be circular, since that relation is recorded assuming no
+// wrap, which is the thing being proven. So it is decided from wrap-free facts at check time.
+//
+// midpoint_identity_fail.ln pins the guard: without `lo < hi` the subtraction itself can
+// underflow and nothing holds.
+func mid(lo usize, hi usize) usize {
+    if lo < hi { return lo + (hi - lo) / 2 }
+    return lo
+}
+proc main() i32 {
+    if mid(2, 8) == 5 { return 0 }
+    return 1
+}
