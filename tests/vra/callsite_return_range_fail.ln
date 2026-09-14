@@ -1,0 +1,20 @@
+// EXPECT: [E085]
+// LAINFLAGS: --engine=ir-full
+// SOUNDNESS PAIR for callsite_return_range_pass.ln. The binding is a GLOBAL channel consulted
+// while seeding a callee's parameters, so the danger is one call site's intervals reaching a
+// different call — or a different function entirely. Two guards make that impossible and both
+// are exercised here:
+//
+//   · a nested UNBOUND query clears the channel before analysing, so a callee reached from
+//     inside a bound analysis is still seeded from its DECLARED intervals
+//   · the memo is restored afterwards, because a call-site answer is not valid everywhere
+//
+// `dbl(2)` above it is bindable and `dbl(k)` is not; if the tight answer leaked from the first
+// to the second, `t[dbl(k)]` would be "proven" for an argument that can be anything.
+func dbl(a i32) i32 { return a +% a }
+proc f(k i32) i32 {
+    var t i32[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+    var good i32 = t[dbl(2)]
+    return good + t[dbl(k)]
+}
+proc main() i32 { return f(1) }

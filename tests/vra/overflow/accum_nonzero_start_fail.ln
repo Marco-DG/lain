@@ -1,0 +1,25 @@
+// EXPECT: [E086]
+// LAINFLAGS: --engine=ir-full
+// B1 bounds a running total by `s0 + T * delta`. s0 is the value on entry to the loop, and it
+// used to be read from the accumulator's OCTAGON interval at the check point — inside the loop,
+// where the value has been WIDENED — with a fall back to 0 when that gave nothing.
+//
+// Falling back to 0 is ASSUMING THE ACCUMULATOR STARTS AT ZERO. Here it starts at `b`, refined
+// [1, 3]. The false bound `0 + 2 * 1073741823` fits i32; the true bound
+// `3 + 2 * 1073741823` = 2147483649 does not. This program was PROVEN check-free and
+// overflows — UBSan: `1073741826 + 1073741823 cannot be represented in type 'int'`.
+//
+// Found by scripts/fuzz/fuzz_overflow.sh on 2026-09-14 and PRE-EXISTING (reproduced at HEAD),
+// the second false proof in B1. s0 now comes from the stores OUTSIDE the loop, so an
+// accumulator that starts anywhere but zero is bounded from where it actually starts.
+// accum_trip_bound_pass.ln is the other direction: s0 there really is 0, and it still proves.
+proc f(a i32 >= 1 and <= 1073741823, b i32 >= 1 and <= 3) i32 {
+    var s i32 = b
+    var i i32 = 0
+    while i < 2 {
+        s = s + a
+        i = i + 1
+    }
+    return s
+}
+proc main() i32 { return f(1073741823, 3) }

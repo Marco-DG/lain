@@ -1,0 +1,21 @@
+// LAINFLAGS: --engine=ir-full
+// A call's return range is computed with the ACTUAL argument intervals, not the callee's
+// DECLARED ones. `vra_ret_range` analysed `dbl` with `a` over all of i32, so the result was
+// all of i32 and `t[dbl(3)]` could not be proven in bounds — even though 3 is a constant right
+// there at the call. Measured as 6 of the 65 programs blocking the 3.5 switchover.
+//
+// A non-integer argument binds nothing and its parameter keeps the declared interval, so this
+// is strictly tighter than before in every case and never looser. The binding INTERSECTS with
+// the declared interval rather than replacing it.
+//
+// callsite_return_range_fail.ln pins the direction that matters: an argument the caller cannot
+// bound must not inherit a tight range from a different call site of the same function.
+func dbl(a i32) i32 { return a +% a }
+func pick(a i32, b i32) i32 {
+    if a > b { return a }
+    return b
+}
+proc main() i32 {
+    var t i32[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+    return t[dbl(3)] + t[pick(1, 2)] - 8
+}

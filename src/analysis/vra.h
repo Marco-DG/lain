@@ -153,6 +153,13 @@ typedef struct {
     // conditions that make the join sound.
     int64_t *elem_lo, *elem_hi;
     bool    *elem_known;
+    // Call-site return ranges, memoised per CALL RESULT. The query re-analyses the callee, and
+    // the transfer function runs once per fixpoint SWEEP — computing it there cost an 8.5x
+    // compile-time regression (207s against 24s over 80 programs) before this cache existed.
+    // Sound to cache because the query only fires when every bound argument is an exact
+    // CONSTANT, and a constant does not change between sweeps.
+    int64_t *cret_lo, *cret_hi;
+    signed char *cret_state;      // 0 = not asked, 1 = no answer, 2 = have one
     VraCheck *checks; int nchecks, cap_checks;
 } Vra;
 
@@ -571,6 +578,27 @@ static void vra_dump_state(Vra *V, FILE *o);   // fwd
 // contract the caller is separately required to satisfy. A recursive query returns nothing
 // rather than a fixpoint over itself: `state == 1` falls back to the type interval.
 static bool vra_ret_range(IrFunc *g, int64_t *lo, int64_t *hi);
+static bool vra_ret_range_at(Vra *V, Octagon *W, IrFunc *g, IrInstr *call,
+                             int64_t *lo, int64_t *hi);
+
+// ── CALL-SITE-SENSITIVE RETURN RANGES ────────────────────────────────────────────────────
+// `vra_ret_range` analyses the callee with its parameters at their DECLARED intervals, so
+// `gcd(48, 36)` reads back as the whole usize range and the narrowing `as i32` is refused.
+// Measured 2026-09-14 as 6 of the 65 programs blocking the 3.5 switchover.
+//
+// The channel below hands the callee the ACTUAL argument intervals for one analysis. It is a
+// global rather than a parameter because `vra_analyze` is re-entered through several paths and
+// threading it would touch all of them; it is saved and restored around the single call site
+// that sets it, and it is INERT unless that site is active.
+//
+// Non-integer arguments (arrays, structs) simply bind nothing and the parameter keeps its type
+// interval — strictly tighter than today in every case, never looser.
+#define VRA_ARGBIND_MAX 16
+#define VRA_CALLSITE_MAX_INSTR 48   // see the size cap in vra_ret_range_at
+static int      vra_argbind_n = 0;
+static int64_t  vra_argbind_lo[VRA_ARGBIND_MAX], vra_argbind_hi[VRA_ARGBIND_MAX];
+static bool     vra_argbind_has[VRA_ARGBIND_MAX];
+static int      vra_retq_depth = 0;
 static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
                              IrInstr *at, int64_t line, int64_t col);   // fwd (Path-F's other half)
 static int  vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out);        // fwd (S2)
@@ -957,8 +985,10 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 oct_forget(W, r);
                 // ...but the RESULT is not unknown: the callee's body bounds it.
                 int64_t rlo, rhi;
-                if (ins->result && ins->result->type
-                    && vra_ret_range(vra_find_func(ins->aux.callee), &rlo, &rhi)) {
+                IrFunc *cal2 = vra_find_func(ins->aux.callee);
+                bool got = vra_ret_range_at(V, W, cal2, ins, &rlo, &rhi);
+                if (!got) got = vra_ret_range(cal2, &rlo, &rhi);
+                if (got && ins->result && ins->result->type) {
                     if (rlo > -OCT_INF/2) oct_add_lb(W, r, rlo);
                     if (rhi <  OCT_INF/2) oct_add_ub(W, r, rhi);
                 }
@@ -2070,8 +2100,7 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
     // question asked of it as the counter's: s0 + T*delta says nothing if a callee can assign
     // to s behind the loop's back.
     bool opaque = found && vra_cell_opaque_write(V, cell, nbb, body);
-    free(body);
-    if (!found || opaque) return false;
+    if (!found || opaque) { free(body); return false; }
     *H = found;
 
     // The addend's range. vra_range follows widening casts to the source's own type, so
@@ -2079,8 +2108,43 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
     // which no sum is bounded by anything.
     vra_range(V, W, add->operands[1], dlo, dhi);
     if (add->op==IR_SUB) { int64_t t=*dlo; *dlo = -*dhi; *dhi = -t; }
-    int64_t clo,chi; bool hl,hh; vra_interval(V,W,cell,&clo,&hl,&chi,&hh);
-    *s0lo = hl ? clo : 0; *s0hi = hh ? chi : 0;
+    // ★ s0 IS THE VALUE ON ENTRY TO THE LOOP, and it must be read from the stores that happen
+    // OUTSIDE it. This used to read the cell's octagon interval at the check point — inside
+    // the loop, where the accumulator has been WIDENED — and fall back to 0 when that gave
+    // nothing. Falling back to 0 is assuming the accumulator starts at zero. For
+    // `var s i32 = b` with `b` refined [1,3] that is false, and `0 + T*delta` was small enough
+    // to discharge an obligation the real `s0 + T*delta` fails:
+    //     proc f(a i32 >= 1 and <= 1073741823, b i32 >= 1 and <= 3) i32 {
+    //         var s i32 = b ; while i < 2 { s = s + a ; i = i + 1 } ; return s }
+    // was PROVEN check-free and overflows (UBSan: 1073741826 + 1073741823). PRE-EXISTING —
+    // reproduced at HEAD — and the second false proof in B1. A missing bound is "I do not
+    // know", never "zero".
+    //
+    // The join is over every store to the cell from a block NOT in the loop. A store AFTER the
+    // loop joins in too, which can only WIDEN s0 and therefore prove less; that is the safe
+    // direction. Each stored value is read from the CONSTANT table or its declared type, never
+    // from the octagon — the octagon state here is the one inside the loop, where a guard may
+    // have narrowed a value below its entry range.
+    int64_t s_lo = INT64_MAX, s_hi = INT64_MIN; bool any = false;
+    for (IrBlock *b2=V->f->blocks; b2; b2=b2->next) {
+        if (b2->id>=0 && b2->id<nbb && body[b2->id]) continue;      // inside the loop: not s0
+        for (IrInstr *st=b2->instrs; st; st=st->next) {
+            if (st->op!=IR_STORE || st->n_operands<2 || st->operands[0]->id!=cell) continue;
+            IrValue *sv = st->operands[1];
+            int64_t vlo, vhi;
+            if (sv && sv->id>=0 && sv->id<V->nvar && V->cknown[sv->id]) {
+                vlo = vhi = V->cval[sv->id];
+            } else if (!sv || !sv->type || !irtype_int_range(sv->type, &vlo, &vhi)) {
+                free(body); return false;
+            }
+            if (vlo < s_lo) s_lo = vlo;
+            if (vhi > s_hi) s_hi = vhi;
+            any = true;
+        }
+    }
+    free(body);
+    if (!any || s_lo > s_hi) return false;
+    *s0lo = s_lo; *s0hi = s_hi;
     return true;
 }
 
@@ -2166,6 +2230,8 @@ static Vra *vra_analyze(IrFunc *f) {
     V->elem_lo=calloc(V->nvar,sizeof(int64_t));
     V->elem_hi=calloc(V->nvar,sizeof(int64_t));
     V->elem_known=calloc(V->nvar,sizeof(bool));
+    V->cret_lo=calloc(V->nvar,sizeof(int64_t)); V->cret_hi=calloc(V->nvar,sizeof(int64_t));
+    V->cret_state=calloc(V->nvar,sizeof(signed char));
     vra_prepass(V);
     vra_seed_element_ranges(V);
     for (int i=0;i<nb;i++) V->in[i]=malloc(V->dsz*sizeof(int64_t));
@@ -2177,9 +2243,17 @@ static Vra *vra_analyze(IrFunc *f) {
     { Octagon E={V->noct,dim,V->in[f->entry->id]}; oct_init_top(&E,V->noct,E.m);
       // seed each integer parameter's type interval (a usize is ≥ 0, etc.). Skip a
       // bound whose doubled DBM entry would overflow (e.g. u64's ~2^63 upper).
-      for (IrParam *p=f->params; p; p=p->next) {   // only the type interval; refinements
+      int pidx = 0;
+      for (IrParam *p=f->params; p; p=p->next, pidx++) {   // only the type interval; refinements
           int64_t tlo,thi;                          // now arrive as entry IR_ASSUME nodes
           if (!irtype_int_range(p->value->type,&tlo,&thi)) continue;
+          // A call-site binding INTERSECTS with the declared interval — never replaces it, so
+          // a wrong binding can only ever be narrower than something already true.
+          if (pidx < vra_argbind_n && pidx < VRA_ARGBIND_MAX && vra_argbind_has[pidx]) {
+              if (vra_argbind_lo[pidx] > tlo) tlo = vra_argbind_lo[pidx];
+              if (vra_argbind_hi[pidx] < thi) thi = vra_argbind_hi[pidx];
+              if (tlo > thi) { tlo = thi; }         // empty: the call is unreachable; stay sound
+          }
           if (tlo > -OCT_INF/2) oct_add_lb(&E, p->value->id, tlo);
           if (thi <  OCT_INF/2) oct_add_ub(&E, p->value->id, thi);
       }
@@ -2382,14 +2456,102 @@ static Vra *vra_analyze(IrFunc *f) {
     return V;
 }
 
+// Re-analyse the callee with THIS call's argument intervals. Returns false when nothing is
+// tighter than the declared intervals, so the memoised whole-function answer is used instead
+// and no work is wasted.
+//
+// Cost is the reason for the depth cap: this re-analyses a function body per call site, and
+// session (70) recorded an 800x slowdown from an unbounded numeric query. Depth 1 means a
+// callee analysed under bindings does not itself re-analyse ITS callees under bindings — it
+// falls back to the memoised answer, which is exactly today's behaviour.
+static bool vra_ret_range_at(Vra *V, Octagon *W, IrFunc *g, IrInstr *call,
+                             int64_t *lo, int64_t *hi) {
+    if (!g || g->is_extern || !g->ret_type || !call) return false;
+    if (g->ret_range_state == 1) return false;            // recursive query, already in flight
+    if (vra_retq_depth >= 1) return false;                // bound the work (see above)
+    if (call->n_operands <= 0 || call->n_operands > VRA_ARGBIND_MAX) return false;
+    // ★ SIZE CAP. This re-analyses a whole function body, and the transfer runs per fixpoint
+    // sweep — even with the per-call cache below, an uncapped version cost 2.7x compile time
+    // over the corpus (65s against a 24s baseline). The functions this precision is for are
+    // small (`dbl`, `pure_id`, `gcd`, `fill`); a large callee called with a constant is not
+    // worth a second full analysis, and falls back to the memoised whole-function answer.
+    {
+        int ninstr = 0;
+        for (IrBlock *b = g->blocks; b && ninstr <= VRA_CALLSITE_MAX_INSTR; b = b->next)
+            for (IrInstr *i = b->instrs; i && ninstr <= VRA_CALLSITE_MAX_INSTR; i = i->next) ninstr++;
+        if (ninstr > VRA_CALLSITE_MAX_INSTR) return false;
+    }
+    int rid = (call->result && call->result->id >= 0 && call->result->id < V->nvar)
+              ? call->result->id : -1;
+    if (rid >= 0 && V->cret_state[rid]) {                 // asked before, on an earlier sweep
+        if (V->cret_state[rid] == 1) return false;
+        *lo = V->cret_lo[rid]; *hi = V->cret_hi[rid]; return true;
+    }
+
+    int64_t blo[VRA_ARGBIND_MAX], bhi[VRA_ARGBIND_MAX]; bool bhas[VRA_ARGBIND_MAX];
+    bool tighter = false; int n = call->n_operands;
+    IrParam *p = g->params;
+    for (int k=0; k<n; k++, p = p ? p->next : NULL) {
+        bhas[k] = false;
+        IrValue *a = call->operands[k];
+        if (!p || !p->value || !p->value->type || p->value->type->kind != IRT_INT) continue;
+        if (!a || !a->type || a->type->kind != IRT_INT) continue;
+        // ONLY an exact constant. Two reasons, both load-bearing: a constant is stable across
+        // fixpoint sweeps, which is what makes the per-call cache below sound; and it keeps the
+        // trigger rare enough that re-analysing a whole function body stays affordable.
+        if (a->id < 0 || a->id >= V->nvar || !V->cknown[a->id]) continue;
+        int64_t tlo, thi;
+        if (!irtype_int_range(p->value->type, &tlo, &thi)) continue;
+        int64_t c = V->cval[a->id];
+        if (c <= tlo && c >= thi) continue;               // no news
+        bhas[k] = true; blo[k] = c; bhi[k] = c; tighter = true;
+    }
+    if (!tighter) { if (rid>=0) V->cret_state[rid]=1; return false; }
+
+    // save/restore: the channel is global, and this runs inside an analysis of the caller
+    int sn = vra_argbind_n; int sd = vra_retq_depth;
+    int64_t slo[VRA_ARGBIND_MAX], shi[VRA_ARGBIND_MAX]; bool shas[VRA_ARGBIND_MAX];
+    memcpy(slo, vra_argbind_lo, sizeof slo); memcpy(shi, vra_argbind_hi, sizeof shi);
+    memcpy(shas, vra_argbind_has, sizeof shas);
+    memcpy(vra_argbind_lo, blo, sizeof blo); memcpy(vra_argbind_hi, bhi, sizeof bhi);
+    memcpy(vra_argbind_has, bhas, sizeof bhas);
+    vra_argbind_n = n; vra_retq_depth = sd + 1;
+
+    int saved_state = g->ret_range_state;
+    int64_t saved_lo = g->ret_range_lo, saved_hi = g->ret_range_hi;
+    g->ret_range_state = 1;                                // guard against self-recursion
+    Vra *sub = vra_analyze(g);
+    bool ok = (g->ret_range_state == 2);
+    if (ok) { *lo = g->ret_range_lo; *hi = g->ret_range_hi; }
+    vra_free(sub);
+    // the memo belongs to the DECLARED-interval analysis; this one is call-site specific
+    g->ret_range_state = saved_state; g->ret_range_lo = saved_lo; g->ret_range_hi = saved_hi;
+
+    vra_argbind_n = sn; vra_retq_depth = sd;
+    memcpy(vra_argbind_lo, slo, sizeof slo); memcpy(vra_argbind_hi, shi, sizeof shi);
+    memcpy(vra_argbind_has, shas, sizeof shas);
+    if (rid >= 0) {
+        V->cret_state[rid] = ok ? 2 : 1;
+        if (ok) { V->cret_lo[rid] = *lo; V->cret_hi[rid] = *hi; }
+    }
+    return ok;
+}
+
 static bool vra_ret_range(IrFunc *g, int64_t *lo, int64_t *hi) {
     if (!g || g->is_extern || !g->ret_type) return false;
     if (g->ret_range_state==1) return false;      // recursive query — no fixpoint over itself
     if (g->ret_range_state==3) return false;      // analysed, nothing usable
     if (g->ret_range_state==0) {
         g->ret_range_state = 1;                   // mark in-progress BEFORE recursing
+        // ★ CLEAR THE CALL-SITE BINDINGS FIRST. They are a global channel, and this analysis
+        // is of a DIFFERENT function reached from inside a bound one — leaving them set would
+        // apply one callee's argument intervals to another callee's parameters, which is a
+        // tighter-than-true entry state and therefore a false-proof generator. The memoised
+        // answer this computes must be the DECLARED-interval one, valid at every call site.
+        int sn = vra_argbind_n; vra_argbind_n = 0;
         Vra *sub = vra_analyze(g);                // sets state to 2 or 3 as a side effect
         vra_free(sub);
+        vra_argbind_n = sn;
         if (g->ret_range_state==1) g->ret_range_state=3;   // defensive: never leave it pending
     }
     if (g->ret_range_state!=2) return false;
@@ -2605,7 +2767,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->odim); free(V->checks); free(V);
+    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->odim); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H
