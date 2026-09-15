@@ -66,3 +66,7 @@ handwritten/leetcode/*.c
 handwritten/leetcode/*.txt
 handwritten/leetcode/update_compiler.sh
 handwritten/main.ln
+
+# Design notes and the engine theses are working documents, not deliverables.
+design/
+thesis/
