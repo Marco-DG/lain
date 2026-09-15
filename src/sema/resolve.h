@@ -446,6 +446,31 @@ void sema_resolve_stmt(Stmt *s) {
     if (rhs) {
       sema_resolve_expr(rhs);
       sema_infer_expr(rhs);
+      // D-30: a mutable borrow may not be STORED IN A LOCAL either. E126 rejected it as a
+      // struct FIELD; the same construct as a local binding was accepted and emitted C that
+      // does not compile — `var r = var a` gives `P r = &(a);`, an "invalid initializer".
+      // The scalar case was worse because it was SILENT: `var ref = var d.value` emits
+      // `int32_t ref = &(d.value);`, which gcc only WARNS about, storing a truncated address
+      // in an int. The one corpus test over it passed solely because it never read the
+      // binding.
+      //
+      // Rejecting makes the restriction uniform, which is the point: the borrow checker is
+      // 535 lines and call-site-scoped BECAUSE a reference cannot be stored, so every hole in
+      // that rule is load-bearing rather than cosmetic. It is also exactly the axiom of
+      // mutable value semantics — references are created at call boundaries and stored
+      // "neither in variables nor in object fields" — which Lain had adopted for fields only.
+      //
+      // This removes no working feature: the construct has never compiled correctly.
+      if (rhs->kind == EXPR_MUT) {
+          Id *nm = s->as.var_stmt.name;
+          fprintf(stderr, "[E126] Error Ln %li, Col %li: '%.*s' binds a mutable borrow (`var`), "
+              "which cannot be stored — a reference lives only for the call that creates it. "
+              "Bind the value instead, or pass the borrow directly to the function that needs it.\n",
+              (long)s->line, (long)s->col,
+              nm ? (int)nm->length : 1, nm ? nm->name : "?");
+          diagnostic_show_line(s->line, s->col);
+          exit(1);
+      }
       if (sema_ranges) {
           // Range analysis moved to typecheck phase
       }

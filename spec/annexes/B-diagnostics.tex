@@ -372,7 +372,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E088} & a function returns a fixed-size array by value --- return a slice or write through a \lain{var} parameter \\[2pt]
 \diagcode{E089} & a non-terminated value used where a sentinel-terminated type is required \\[2pt]
 \diagcode{E090} & assignment between fixed-length strings of different lengths \\[2pt]
-\diagcode{E126} & a struct field declared as a mutable borrow (\lain{var}) --- not yet supported \\[2pt]
+\diagcode{E126} & a mutable borrow (\lain{var}) stored in a struct field or bound to a local --- a reference lives only for the call that creates it \\[2pt]
 \diagcode{E127} & call to an undeclared function \\[2pt]
 \diagcode{E128} & the receiver has no such member, and no function of that name is in scope for UFCS \\[2pt]
 \diagcode{E129} & \lain{assume} outside an \lain{unsafe} block --- use \lain{assert} to have the fact proven \\[2pt]
