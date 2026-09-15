@@ -476,33 +476,10 @@ void sema_resolve_stmt(Stmt *s) {
       }
       if (!ty) {
           ty = rhs->type;           // infer from initializer
-          // D-38 tier 1. A CALL returning `var T` yields an ADDRESS. Stripping its mode to
-          // SHARED declared the local at the VALUE type while the initialiser stayed a pointer
-          // — `int32_t ref = <int32_t*>`. gcc calls that a warning, not an error, so the
-          // broken-C gate (which compiles with -w) never saw it, and seven corpus programs
-          // shipped a truncated address in an integer.
-          //
-          // REJECTING it was tried first, on the reasoning that Hylo's LocalBindings.md says an
-          // `inout` binding "never has storage", so `var` (which always has storage) cannot name
-          // a borrow. That is right about the SPELLING and wrong as a fix: it broke 16 tests, and
-          // 9 of them are `_fail` tests that use this construct to SET UP a conflict. Rejecting
-          // it removes the only way Lain can express a loan that outlives a statement, and makes
-          // the borrow checker's entire conflict-detection capability unreachable. The construct
-          // is not an incidental spelling; it is the language's `inout` binding wearing `var`'s
-          // keyword because there is no other.
-          //
-          // So: keep the binding and give it the type it actually has. A `var T` initialiser
-          // keeps MODE_MUTABLE, which the backend already emits as `T*` — it does so for every
-          // `var` parameter. What a future language revision should add is the distinct binding
-          // form (plan §10.4); until then this binding means "name this borrow" and is lowered
-          // as one, which is what `borrow.h` phase 3 already assumes.
-          // Strip MODE_MUTABLE: `var x = var_param` gives value type, not reference — reading a
-          // `var` PARAMETER yields the pointee, so binding it copies. That is a value binding and
-          // stays correct.
+          // Strip MODE_MUTABLE: `var x = var_param` gives value type, not reference.
           // Exception: TYPE_POINTER with MODE_MUTABLE is a mutable thin pointer
           // (from `&arr[k]`) — preserve mutability so it emits without const.
-          if (ty && ty->mode == MODE_MUTABLE && ty->kind != TYPE_POINTER
-              && rhs->kind != EXPR_CALL) {
+          if (ty && ty->mode == MODE_MUTABLE && ty->kind != TYPE_POINTER) {
               Type *stripped = arena_push_aligned(sema_arena, Type);
               *stripped = *ty;
               stripped->mode = MODE_SHARED;

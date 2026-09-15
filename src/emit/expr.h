@@ -281,7 +281,22 @@ void emit_expr(Expr *expr, int depth) {
         expr->decl->as.variable_decl.type &&
         expr->decl->as.variable_decl.type->mode == MODE_MUTABLE &&
         is_primitive_type(expr->decl->as.variable_decl.type);
-    if (is_var_prim_param) {
+    // D-38 tier 1, second half. A LOCAL bound to a borrow returned by a call
+    // (`var r = get_ref(var d)`) has the same C representation as a `var` primitive PARAMETER
+    // — `T*` — so every use of it must dereference too. Only the parameter case was handled, so
+    // the binding's type was right and its uses were not: `r = 42` emitted `r = 42` against an
+    // `int32_t*`.
+    //
+    // It cannot be detected the way the parameter case is: `sema_insert_local` stores NULL for
+    // the Decl, so a local identifier has `expr->decl == NULL` and there is nothing to ask. The
+    // type is on the EXPRESSION instead, and it is the one resolve.h now preserves.
+    //
+    // TYPE_POINTER is excluded because a mutable thin pointer (`var p = &arr[k]`) is a pointer
+    // VALUE, not a reference to one — the same exclusion resolve.h makes on the inference side.
+    bool is_var_prim_local = !is_var_prim_param && !expr->decl &&
+        expr->type && expr->type->mode == MODE_MUTABLE &&
+        expr->type->kind != TYPE_POINTER && is_primitive_type(expr->type);
+    if (is_var_prim_param || is_var_prim_local) {
         EMIT("(*%s)", c_name_for_id(expr->as.identifier_expr.id));
     } else {
         EMIT("%s", c_name_for_id(expr->as.identifier_expr.id));
