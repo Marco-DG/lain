@@ -1,0 +1,32 @@
+// Writing THROUGH a returned mutable borrow must reach the owner.
+//
+// D-38 tier 1, pinned 2026-09-15. This lives in tests/trust/ and NOT in tests/ownership/
+// because the corpus runner only checks that COMPILATION succeeds — it never runs the
+// program. The first version of this test was put there and was worthless: it passed against
+// the very compiler it was written to catch.
+//
+// Before the fix, `var r = ref_val(var c)` declared `r` as `int32_t` while the initialiser
+// was an `int32_t*`, so the binding held a truncated address and `r = 42` wrote to that
+// integer instead of to `c.val`. The program printed 7. It must print 42.
+//
+// Nothing caught it: gcc reports int-from-pointer as a WARNING, the broken-C gate compiles
+// with `-w`, and the seven corpus programs over this construct never READ the binding.
+
+extern proc libc_printf(fmt *u8, ...) i32
+
+type Cell {
+    val i32
+}
+
+func ref_val(var c Cell) var i32 {
+    return var c.val
+}
+
+proc main() i32 {
+    var c Cell
+    c.val = 7
+    var r = ref_val(var c)
+    r = 42
+    libc_printf("%d\n", c.val)
+    return 0
+}
