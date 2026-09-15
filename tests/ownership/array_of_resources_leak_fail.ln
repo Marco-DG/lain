@@ -1,0 +1,19 @@
+// EXPECT: [E003]
+// Lock D-31: an array of resources that is simply dropped is a LEAK.
+//
+// This was accepted with no diagnostic at all by the sovereign engine while
+// `--engine=legacy` reported it — a regression in the shipping default that no gate
+// could see, because both engines pass the corpus. The cause was that `ir_alloca`
+// marks a local slot as owning its contents and `ir_alloca_array` did not, and the
+// leak check is gated on that bit, so no array-typed local ever entered it.
+//
+// `[T; N]` is linear iff `T` is (spec/chapters/07-types.tex), so `a` carries the
+// release obligation of both its elements and discharges neither.
+
+type R { mov h *u8 }
+
+proc main() i32 {
+    var p *u8 = 0
+    var a R[2] = [R(p), R(p)]
+    return 0
+}

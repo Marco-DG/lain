@@ -224,6 +224,11 @@ IrValue *ir_alloca_array(IrFunc *f, IrBlock *b, IrType *arr_ty) {
     IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = arr_ty->elem;
     IrInstr *ins = ir_instr(f, IR_ALLOCA, pt, 0);
     ins->aux.alloca_ty = arr_ty;   // IRT_ARRAY(elem, N)
+    // An array local owns its elements exactly as a scalar local owns its contents — `[T; N]`
+    // is linear iff T is. Omitting this made the leak check skip every array-typed local,
+    // because linearity.h gates the release obligation on `owns`: an array of resources could
+    // be dropped with no diagnostic, which the LEGACY engine still caught (defect D-31).
+    ins->result->owns = true;
     ir_emit(b, ins);
     return ins->result;
 }
