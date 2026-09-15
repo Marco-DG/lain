@@ -1,6 +1,11 @@
 // EXPECT: [E004]
-// Test for NLL: borrow used after owner access keeps it alive.
-// This should FAIL compilation.
+// NLL: a borrow used AFTER an access to its owner keeps the loan alive across that access.
+// Straight-line code; no loop.
+//
+// RENAMED 2026-09-15 from `nll_loop_borrow_fail.ln`, which it never was — there is no loop in
+// it. The misnomer mattered: it made the corpus look as though the loop case were covered, and
+// a genuine loop-back-edge conflict (D-36) went undetected through a 690-program suite. The
+// real loop case is now `nll_loop_backedge_fail.ln`.
 
 type Data {
     value i32

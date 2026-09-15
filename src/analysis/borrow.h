@@ -411,6 +411,124 @@ static void bor_check_scoped(Borrow *B, IrFunc *mod, IrFunc *f) {
     }
 }
 
+// ── D-36: a loan's region is LIVENESS OVER THE CFG, not a window in a flattened list ────────
+//
+// `bor_linearize` walks f->blocks in LIST order and `bor_last_use` scans that list forward, so
+// the region was the index range (creation, last_use]. Inside a loop whose body uses the
+// carrier BEFORE it writes the borrowed place, the computed window ends before the write — and
+// the back edge, which makes the next iteration's use follow it, is not in the list at all:
+//
+//     var ref = get_ref(var data)
+//     while i < 3 {
+//         consume_ref(var ref)    // use
+//         data.value = 99         // conflict, at a LATER index than the use
+//         i = i + 1
+//     }                           // back edge: the next iteration uses an invalidated ref
+//
+// Accepted; --engine=legacy reports E004. The source comment claimed branch approximation was
+// "narrower or equal" — narrower is the unsound direction, and a back edge is where it bites.
+//
+// The fix is the standard one (Brandner et al., "Computing Liveness Sets for SSA-Form
+// Programs", which is what Hylo's last-use stage uses): compute, per block, whether a use of
+// the carrier is REACHABLE FROM ITS ENTRY. A back edge is then an ordinary edge and needs no
+// special case.
+//
+//     R[b] = uses(b) OR (OR over successors s of R[s])
+//
+// A loan created at instruction i0 is live at instruction j iff j is reachable from i0 and a
+// use is reachable from j — i.e. a later use inside j's block, or R[s] for some successor.
+#define BOR_MAX_BLOCKS 4096
+typedef struct { bool reach_use[BOR_MAX_BLOCKS]; bool from_new[BOR_MAX_BLOCKS]; int nb; } BorLive;
+
+static int bor_succs(IrBlock *b, IrBlock **out) {
+    int n = 0;
+    switch (b->term.kind) {
+        case IR_TERM_BR:      if (b->term.a) out[n++] = b->term.a; break;
+        case IR_TERM_BR_COND: if (b->term.a) out[n++] = b->term.a;
+                              if (b->term.b) out[n++] = b->term.b; break;
+        case IR_TERM_SWITCH:  if (b->term.a) out[n++] = b->term.a;
+            for (IrSwitchCase *c = b->term.cases; c && n < 3; c = c->next)
+                if (c->target) out[n++] = c->target;
+            break;
+        default: break;
+    }
+    return n;
+}
+
+static bool bor_instr_uses(IrInstr *i, IrValue *val, IrValue *slot) {
+    for (int o = 0; o < i->n_operands; o++) {
+        IrValue *op = i->operands[o];
+        if (!op) continue;
+        if ((val && op == val) || (slot && op == slot)) return true;
+    }
+    return false;
+}
+
+// R[b]: is a use of the carrier reachable from the entry of block b? Backward fixpoint.
+// `from_new[b]`: is b reachable from the creating block? Forward fixpoint.
+static void bor_live_sets(IrFunc *f, IrBlock *newb, IrValue *val, IrValue *slot, BorLive *L) {
+    L->nb = f->next_block_id > 0 ? f->next_block_id : 1;
+    if (L->nb > BOR_MAX_BLOCKS) L->nb = BOR_MAX_BLOCKS;
+    for (int i = 0; i < L->nb; i++) { L->reach_use[i] = false; L->from_new[i] = false; }
+
+    for (IrBlock *b = f->blocks; b; b = b->next) {
+        if (b->id < 0 || b->id >= L->nb) continue;
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            if (bor_instr_uses(i, val, slot)) { L->reach_use[b->id] = true; break; }
+    }
+    IrBlock *sc[4];
+    for (bool ch = true; ch; ) {                       // backward: use reachable from entry
+        ch = false;
+        for (IrBlock *b = f->blocks; b; b = b->next) {
+            if (b->id < 0 || b->id >= L->nb || L->reach_use[b->id]) continue;
+            int ns = bor_succs(b, sc);
+            for (int k = 0; k < ns; k++)
+                if (sc[k]->id >= 0 && sc[k]->id < L->nb && L->reach_use[sc[k]->id]) {
+                    L->reach_use[b->id] = true; ch = true; break;
+                }
+        }
+    }
+    if (newb && newb->id >= 0 && newb->id < L->nb) L->from_new[newb->id] = true;
+    for (bool ch = true; ch; ) {                       // forward: reachable from the creation
+        ch = false;
+        for (IrBlock *b = f->blocks; b; b = b->next) {
+            if (b->id < 0 || b->id >= L->nb || !L->from_new[b->id]) continue;
+            int ns = bor_succs(b, sc);
+            for (int k = 0; k < ns; k++)
+                if (sc[k]->id >= 0 && sc[k]->id < L->nb && !L->from_new[sc[k]->id]) {
+                    L->from_new[sc[k]->id] = true; ch = true;
+                }
+        }
+    }
+}
+
+// Is the loan live at instruction `at` in block `b`? A use later in the same block keeps it
+// live; otherwise it is live iff a use is reachable from some successor.
+static bool bor_live_at(IrBlock *b, IrInstr *at, IrValue *val, IrValue *slot, BorLive *L) {
+    if (b->id < 0 || b->id >= L->nb || !L->from_new[b->id]) return false;
+    for (IrInstr *i = at->next; i; i = i->next)
+        if (bor_instr_uses(i, val, slot)) return true;
+    IrBlock *sc[4]; int ns = bor_succs(b, sc);
+    for (int k = 0; k < ns; k++)
+        if (sc[k]->id >= 0 && sc[k]->id < L->nb && L->reach_use[sc[k]->id]) return true;
+    return false;
+}
+
+static IrBlock *bor_block_of(IrFunc *f, IrInstr *target) {
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            if (i == target) return b;
+    return NULL;
+}
+// A carrier may be used only across a back edge, which the flattened scan cannot see; ask the
+// CFG instead before concluding the reference is never used.
+static bool bor_carrier_used_anywhere(IrFunc *f, IrInstr *create, IrValue *val, IrValue *slot) {
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            if (i != create && bor_instr_uses(i, val, slot)) return true;
+    return false;
+}
+
 static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
     BorSeq s; bor_linearize(f, &s);
     for (int k=0;k<s.n;k++) {
@@ -443,11 +561,24 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
         } else continue;
         if (!nsrc) continue;
         IrValue *slot = bor_result_slot(&s, k, ins->result);
-        int last = bor_last_use(&s, k, ins->result, slot);
-        if (last < 0) continue;                       // reference never used ⇒ no live region
-        // any conflicting ACCESS of an overlapping place inside (k, last]
-        for (int j=k+1;j<=last;j++) {
-            IrInstr *other = s.ins[j];
+        if (bor_last_use(&s, k, ins->result, slot) < 0 &&
+            !bor_carrier_used_anywhere(f, ins, ins->result, slot))
+            continue;                                 // reference never used ⇒ no live region
+
+        // D-36: the region is LIVENESS OVER THE CFG, not the index range (k, last]. Walk every
+        // block reachable from the creating one and test each instruction for liveness, so an
+        // instruction that follows the creation only across a BACK EDGE is inside the region.
+        BorLive live;
+        bor_live_sets(f, bor_block_of(f, ins), ins->result, slot, &live);
+        for (IrBlock *ob = f->blocks; ob; ob = ob->next) {
+            if (ob->id < 0 || ob->id >= live.nb || !live.from_new[ob->id]) continue;
+            bool after_creation = (ob != bor_block_of(f, ins));
+            for (IrInstr *other = ob->instrs; other; other = other->next) {
+                if (!after_creation) {                // skip up to and including the creation
+                    if (other == ins) after_creation = true;
+                    continue;
+                }
+                if (!bor_live_at(ob, other, ins->result, slot, &live)) continue;
             // A DIRECT WRITE conflicts with a live loan just as a second borrow does — the
             // conflict rule (design §1.4) is over ACCESSES, not over calls. Loans were only
             // ever created and checked at call arguments, so `r = get_ref(var d); d.value = 99`
@@ -472,6 +603,7 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
                 if (slot && other->op==IR_CALL && p.base_kind==IRPB_LOCAL && p.base_id==slot->id) continue; // using the ref itself
                 for (int q=0;q<nsrc;q++)
                     if (ir_place_overlaps(&src[q], &p)) { bor_add(B, other->line, other->col, 4); return; }
+            }
             }
         }
     }

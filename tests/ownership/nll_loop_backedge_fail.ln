@@ -1,0 +1,39 @@
+// EXPECT: [E004]
+// A borrow conflict reachable only across a LOOP BACK EDGE. D-36, fixed 2026-09-15.
+//
+// On the second iteration `consume_ref(var ref)` uses a reference that the first iteration's
+// `data.value = 99` invalidated. Inside the body the use PRECEDES the write, so the old region
+// computation — a window in a list produced by walking `f->blocks` in list order — ended
+// before the write, and the back edge was not in that list at all. Accepted; legacy said E004.
+//
+// The region is now liveness over the CFG (Brandner et al., which is what Hylo's last-use
+// stage uses), where a back edge is an ordinary edge and needs no special case.
+//
+// Note the test that was NAMED for this case, nll_loop_borrow_fail.ln, contains no loop.
+//
+// The control is direct_var_borrow_pass.ln and the `if` variant: the same body order without a
+// back edge leaves the loan genuinely dead at the write, and must still be ACCEPTED.
+
+type Data {
+    value i32
+}
+
+func get_ref(var d Data) var i32 {
+    return var d.value
+}
+
+func consume_ref(var r i32) {
+}
+
+proc main() i32 {
+    var data Data
+    data.value = 42
+    var ref = get_ref(var data)
+    var i = 0
+    while i < 3 {
+        consume_ref(var ref)
+        data.value = 99
+        i = i + 1
+    }
+    return 0
+}
