@@ -275,7 +275,7 @@ IrValue *ir_struct_new(IrFunc *f, IrBlock *b, IrType *sty, IrValue **fields, int
     ir_emit(b, ins);   // the struct's name lives on the result type (sty->sname)
     return ins->result;
 }
-// ── sum types (design/ir_sum_types.md) ───────────────────────────────────────
+// ── sum types (local/internal/design/ir_sum_types.md) ────────────────────────
 // Construct variant `k` of `sty` from its payload fields (n may be 0).
 IrValue *ir_sum_new(IrFunc *f, IrBlock *b, IrType *sty, int k, IrValue **payload, int n) {
     IrInstr *ins = ir_instr(f, IR_SUM_NEW, sty, n);

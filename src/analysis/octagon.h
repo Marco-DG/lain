@@ -1,11 +1,11 @@
 // src/analysis/octagon.h — the relational numeric domain (Phase 2.1 of the rebuild).
 //
-// An octagon is a conjunction of constraints  ±x ± y ≤ c  over machine-integer
-// variables, reasoned about in ℤ (overflow is a *separate* obligation — see
-// design/vra-octagon.md §2.6). It is stored as a Difference Bound Matrix (DBM)
-// over 2n "dimensions": each variable v_i gets a positive form (dim 2i, meaning
-// +v_i) and a negative form (dim 2i+1, meaning −v_i). Entry m[i][j] is an upper
-// bound on  e(j) − e(i)  where e(2k)=+v_k and e(2k+1)=−v_k. Thus:
+// An octagon is a conjunction of constraints ±x ± y ≤ c over machine-integer variables,
+// reasoned about in ℤ (overflow is a *separate* obligation — see
+// local/internal/design/vra-octagon.md §2.6). It is stored as a Difference Bound Matrix
+// (DBM) over 2n "dimensions": each variable v_i gets a positive form (dim 2i, meaning
+// +v_i) and a negative form (dim 2i+1, meaning −v_i). Entry m[i][j] is an upper bound on
+// e(j) − e(i) where e(2k)=+v_k and e(2k+1)=−v_k. Thus:
 //
 //     v_a − v_b ≤ c   ⟺  m[pos b][pos a] = c        (and its coherent twin)
 //     v_a + v_b ≤ c   ⟺  m[neg b][pos a] = c

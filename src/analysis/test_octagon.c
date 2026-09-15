@@ -1,7 +1,7 @@
 // test_octagon.c — soundness/precision validation of the octagon domain by BRUTE
 // FORCE over concretization γ. The domain claims to over-approximate the integer
 // point set; here we enumerate every point in a small box and check the claims
-// directly. This is the yardstick from design/vra-octagon.md §2.3/§7.
+// directly. This is the yardstick from local/internal/design/vra-octagon.md §2.3/§7.
 //
 //   gcc -std=c99 -O2 -o /tmp/test_octagon src/analysis/test_octagon.c -I src && /tmp/test_octagon
 #include "analysis/octagon.h"

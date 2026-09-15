@@ -1,13 +1,13 @@
 // src/ir/ir.h — Lain IR: typed SSA/CFG intermediate representation.
 //
-// Phase 1.1 of the clean-core rebuild (see REBUILD.md, design/ir.md). This is the
-// data structure the new analyses run over and the backend lowers to C. It is built
-// BESIDE the old sema/ engine and is not yet wired into main.c (that is Phase 1.4);
+// Phase 1.1 of the clean-core rebuild (see REBUILD.md, local/internal/design/ir.md). This
+// is the data structure the new analyses run over and the backend lowers to C. It is
+// built BESIDE the old sema/ engine and is not yet wired into main.c (that is Phase 1.4);
 // nothing here changes the current pipeline.
 //
-// Design goals (see design/ir.md §1): value identity (SSA, not names), explicit
-// control flow (functions are CFGs of basic blocks), typed + total, and a shape the
-// abstract interpreter consumes directly (slice length is a value; array index is an
+// Design goals (see local/internal/design/ir.md §1): value identity (SSA, not names),
+// explicit control flow (functions are CFGs of basic blocks), typed + total, and a shape
+// the abstract interpreter consumes directly (slice length is a value; array index is an
 // explicit instruction where bounds are proven; calls carry the callee).
 #ifndef LAIN_IR_H
 #define LAIN_IR_H
@@ -26,8 +26,8 @@
 typedef struct IrName { char *name; isize length; } IrName;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Types (design/ir.md §2). A fresh, analysis-facing type; the AST Type is bridged
-// to it during lowering, not reused, so the IR is decoupled from frontend types.
+// Types (local/internal/design/ir.md §2). A fresh, analysis-facing type; the AST Type is
+// bridged to it during lowering, not reused, so the IR is decoupled from frontend types.
 // ─────────────────────────────────────────────────────────────────────────────
 typedef enum {
     IRT_INT,        // iN / uN, usize/isize — carries width + signedness
@@ -95,11 +95,11 @@ typedef struct IrType {
     // IRT_SUM reuses the same three arrays with the obvious reading: n_fields is the VARIANT
     // count, field_names[i] is variant i's name, and fields[i] is its payload — an IRT_STRUCT
     // for a multi-field payload, or NULL for a payload-less variant. `sname` is the sum's own
-    // name. What the IR deliberately does NOT record is the LAYOUT: whether a sum is stored
-    // as tag+union or niche-packed into a spare value of its payload is the backend's choice
-    // (local/internal/design/ir_sum_types.md §3). Recording the niche here would make a sum
-    // indistinguishable from a pointer with an odd range and destroy the discrimination every
-    // analysis depends on.
+    // name. What the IR deliberately does NOT record is the LAYOUT: whether a sum is
+    // stored as tag+union or niche-packed into a spare value of its payload is the
+    // backend's choice (local/internal/design/ir_sum_types.md §3). Recording the niche
+    // here would make a sum indistinguishable from a pointer with an odd range and
+    // destroy the discrimination every analysis depends on.
     IrName *sname;          // struct/sum name (identity + C typedef name) — IR-owned
     struct IrType **fields; // lowered field types / variant payloads, in declaration order
     IrName **field_names;   // field / variant names
@@ -111,8 +111,8 @@ typedef struct IrType {
 bool irtype_int_range(const IrType *t, int64_t *lo, int64_t *hi);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Values (design/ir.md §3). Every value is defined exactly once (SSA) and identified
-// by its id — this is what replaces name-keying. A value is produced by an
+// Values (local/internal/design/ir.md §3). Every value is defined exactly once (SSA) and
+// identified by its id — this is what replaces name-keying. A value is produced by an
 // instruction, a block φ, or a function parameter.
 // ─────────────────────────────────────────────────────────────────────────────
 typedef struct IrValue {
@@ -136,8 +136,8 @@ typedef struct IrValue {
 } IrValue;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Instructions (design/ir.md §4). Each defines 0 or 1 result value (`result`, NULL
-// if none). Operands are IrValue* (SSA edges).
+// Instructions (local/internal/design/ir.md §4). Each defines 0 or 1 result value
+// (`result`, NULL if none). Operands are IrValue* (SSA edges).
 // ─────────────────────────────────────────────────────────────────────────────
 typedef enum {
     // constants & casts
@@ -180,9 +180,9 @@ typedef enum {
     IR_ARRAY_NEW,           // op[0..] = elements
     IR_STR_CONST,           // aux.str : static string literal bytes ; result : *u8
     IR_STRUCT_NEW,          // op[0..] = fields ; aux.struct_decl
-    // Sum types (design/ir_sum_types.md). Discrimination is EXACT: the tag is an ordinary
-    // integer the numeric domain can track, so `case`-arm refinement is ordinary guard
-    // refinement rather than pattern-matching on magic constants.
+    // Sum types (local/internal/design/ir_sum_types.md). Discrimination is EXACT: the tag
+    // is an ordinary integer the numeric domain can track, so `case`-arm refinement is
+    // ordinary guard refinement rather than pattern-matching on magic constants.
     IR_SUM_NEW,             // aux.sum.variant = k ; op[0..] = variant k's payload fields
     IR_SUM_TAG,             // op[0] = a sum value → its discriminant (an integer)
     IR_SUM_PAYLOAD,         // op[0] = a sum ; aux.sum.{variant,field} → that payload field.
@@ -302,7 +302,7 @@ typedef struct IrInstr {
 } IrInstr;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Terminators (design/ir.md §5) — every block ends in exactly one.
+// Terminators (local/internal/design/ir.md §5) — every block ends in exactly one.
 // ─────────────────────────────────────────────────────────────────────────────
 typedef enum { IR_TERM_BR, IR_TERM_BR_COND, IR_TERM_SWITCH, IR_TERM_RET, IR_TERM_UNREACHABLE } IrTermKind;
 
@@ -317,7 +317,8 @@ typedef struct IrTerm {
 } IrTerm;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Basic blocks & functions (design/ir.md §6). The CFG the fixpoint iterates.
+// Basic blocks & functions (local/internal/design/ir.md §6). The CFG the fixpoint
+// iterates.
 // ─────────────────────────────────────────────────────────────────────────────
 typedef struct IrEdge { struct IrBlock *block; struct IrEdge *next; } IrEdge;
 

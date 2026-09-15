@@ -2298,9 +2298,10 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
         }
         case STMT_MATCH: {
             // Integer/char match on literal + range patterns, or a SUM match on the tag —
-            // both lower to the same if-chain, because a sum's discriminant is an ordinary
-            // integer (design/ir_sum_types.md §3). That is the whole point of not modelling
-            // the niche: arm selection is a comparison the numeric domain can reason about.
+            // both lower to the same if-chain, because a sum's discriminant is an
+            // ordinary integer (local/internal/design/ir_sum_types.md §3). That is the
+            // whole point of not modelling the niche: arm selection is a comparison the
+            // numeric domain can reason about.
             Expr *val = s->as.match_stmt.value;
             Type *vt = val ? val->type : NULL;
             IrValue *v = NULL; IrType *sumty = NULL;

@@ -67,6 +67,4 @@ handwritten/leetcode/*.txt
 handwritten/leetcode/update_compiler.sh
 handwritten/main.ln
 
-# Design notes are working documents, not deliverables. The engine theses live in local/.
-design/
 fuzz_bugs/

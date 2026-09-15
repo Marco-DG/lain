@@ -567,9 +567,10 @@ static void ir_emit_one_slice(IrType *sl, FILE *o) {
     fprintf(o, "* data; size_t len; } Slice_%s;\n", tag);
 }
 // A sum's C layout: `struct S { int32_t tag; union { …per-variant payload… } data; }`.
-// This is a BACKEND decision — the IR records only which variants exist and what they carry
-// (design/ir_sum_types.md §3) — so swapping in a niche packing later touches only this file.
-// A payload-less variant contributes nothing to the union; if no variant carries a payload
+// This is a BACKEND decision — the IR records only which variants exist and what they
+// carry (local/internal/design/ir_sum_types.md §3) — so swapping in a niche packing later
+// touches only this file. A payload-less variant contributes nothing to the union; if no
+// variant carries a payload
 // the union is omitted entirely (an empty union is not legal C).
 static void ir_emit_one_sum_body(IrType *st, FILE *o) {
     IrName *nm = st->sname;
