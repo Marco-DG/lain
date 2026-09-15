@@ -217,7 +217,8 @@ static Di *di_analyze(IrFunc *f) {
     // MUST fixpoint: in[succ] = INTERSECTION over preds of out[pred]
     bool changed=true; int sweeps=0;
     seen[f->entry->id]=true;
-    while (changed && sweeps++ < 1000) {
+    while (changed) {
+        if (sweeps++ > LAIN_FIXPOINT_BOUND(D->nb, D->nvar)) LAIN_FIXPOINT_EXHAUSTED("definite initialisation", D->nb, D->nvar);
         changed=false;
         for (IrBlock *b=f->blocks;b;b=b->next) {
             if (!seen[b->id]) continue;
@@ -250,5 +251,29 @@ static Di *di_analyze(IrFunc *f) {
 }
 static void di_free(Di *D){ if(!D)return; for(int i=0;i<D->nb;i++) free(D->in[i]);
     free(D->in); free(D->def); free(D->tracked); free(D->alloca_ty); free(D->finds); free(D); }
+
+// ── P3: a fixpoint bound must be DERIVED and its exhaustion must be LOUD ───────────────────
+// Spec pillar P3 requires verification to be "decidable and polynomial in program size. No SMT
+// solver or unbounded fixpoint iteration is required." So a bound here is not a wart — it is
+// the pillar. What was wrong is that it was the constant 1000 with no diagnostic: measured over
+// the corpus and std, the high-water mark is 114 sweeps, so the headroom was 8.8x, and a
+// program an order of magnitude larger would have silently proceeded over a NON-fixpoint.
+// Silently, because the loop simply stopped.
+//
+// These lattices are finite and the transfer functions monotone, so the iteration cannot need
+// more sweeps than there are (block, slot) pairs it could still change, plus one to observe
+// that nothing did. That is the derived bound below. Reaching it does not mean "the program is
+// too big" — it means the monotonicity assumption is false, which is a compiler bug, so it
+// aborts rather than reporting a result it cannot stand behind.
+#ifndef LAIN_FIXPOINT_BOUND
+#define LAIN_FIXPOINT_BOUND(nb, nvar) ((long)(nb) * (long)(nvar) + 2L)
+#define LAIN_FIXPOINT_EXHAUSTED(what, nb, nvar) do { \
+    fprintf(stderr, "internal error: %s did not reach a fixpoint within the derived bound " \
+            "(%ld sweeps for %d blocks x %d slots). This is a compiler bug: the transfer " \
+            "function is not monotone. Refusing to report analysis results.\n", \
+            (what), LAIN_FIXPOINT_BOUND(nb, nvar), (int)(nb), (int)(nvar)); \
+    exit(70); \
+} while (0)
+#endif
 
 #endif // LAIN_DEFINITE_INIT_H

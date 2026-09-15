@@ -230,11 +230,27 @@ static void bor_check_call(Borrow *B, IrFunc *mod, IrInstr *call) {
 #define BOR_MAX_INSTR 4096
 typedef struct { IrInstr *ins[BOR_MAX_INSTR]; int n; } BorSeq;
 
+// D-37: truncating at BOR_MAX_INSTR was SILENT, so every loan in a larger function was checked
+// against a prefix of it. The conflict scan now walks the CFG directly (D-36), so this sequence
+// is only used to find a carrier's home slot and to ask whether it is used at all — but a
+// truncated answer to either is still a missed conflict. Measured over the corpus and std the
+// high-water mark is 0 truncations, so the bound is generous; what was wrong was proceeding
+// without saying so. A limit that is not reported is indistinguishable from a proof.
 static void bor_linearize(IrFunc *f, BorSeq *s) {
     s->n = 0;
     for (IrBlock *b=f->blocks;b;b=b->next)
-        for (IrInstr *i=b->instrs;i;i=i->next)
-            if (s->n < BOR_MAX_INSTR) s->ins[s->n++] = i;
+        for (IrInstr *i=b->instrs;i;i=i->next) {
+            if (s->n >= BOR_MAX_INSTR) {
+                fprintf(stderr, "error: '%.*s' exceeds %d instructions, which is more than the "
+                        "borrow checker can sequence. Its loans would be checked against a "
+                        "truncated function, so no borrow result is reported for it. Split the "
+                        "function.\n",
+                        f->name ? (int)f->name->length : 1, f->name ? f->name->name : "?",
+                        BOR_MAX_INSTR);
+                exit(1);
+            }
+            s->ins[s->n++] = i;
+        }
 }
 // last index at which `val` (or a load of `slot`) is used; -1 if never
 static int bor_last_use(BorSeq *s, int from, IrValue *val, IrValue *slot) {

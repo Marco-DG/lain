@@ -243,6 +243,30 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
     if (b->term.kind==IR_TERM_RET && b->term.cond) lin_escape(L, b->term.cond, st);  // to the caller
 }
 
+// ── P3: a fixpoint bound must be DERIVED and its exhaustion must be LOUD ───────────────────
+// Spec pillar P3 requires verification to be "decidable and polynomial in program size. No SMT
+// solver or unbounded fixpoint iteration is required." So a bound here is not a wart — it is
+// the pillar. What was wrong is that it was the constant 1000 with no diagnostic: measured over
+// the corpus and std, the high-water mark is 114 sweeps, so the headroom was 8.8x, and a
+// program an order of magnitude larger would have silently proceeded over a NON-fixpoint.
+// Silently, because the loop simply stopped.
+//
+// These lattices are finite and the transfer functions monotone, so the iteration cannot need
+// more sweeps than there are (block, slot) pairs it could still change, plus one to observe
+// that nothing did. That is the derived bound below. Reaching it does not mean "the program is
+// too big" — it means the monotonicity assumption is false, which is a compiler bug, so it
+// aborts rather than reporting a result it cannot stand behind.
+#ifndef LAIN_FIXPOINT_BOUND
+#define LAIN_FIXPOINT_BOUND(nb, nvar) ((long)(nb) * (long)(nvar) + 2L)
+#define LAIN_FIXPOINT_EXHAUSTED(what, nb, nvar) do { \
+    fprintf(stderr, "internal error: %s did not reach a fixpoint within the derived bound " \
+            "(%ld sweeps for %d blocks x %d slots). This is a compiler bug: the transfer " \
+            "function is not monotone. Refusing to report analysis results.\n", \
+            (what), LAIN_FIXPOINT_BOUND(nb, nvar), (int)(nb), (int)(nvar)); \
+    exit(70); \
+} while (0)
+#endif
+
 static Lin *lin_analyze(IrFunc *f) {
     Lin *L = calloc(1,sizeof *L);
     L->f=f; L->nvar = f->next_value_id>0?f->next_value_id:1; L->nb = f->next_block_id;
@@ -308,7 +332,8 @@ static Lin *lin_analyze(IrFunc *f) {
 
     // forward MAY fixpoint: in[succ] |= transfer(in[pred])
     bool changed=true; int sweeps=0;
-    while (changed && sweeps++ < 1000) {
+    while (changed) {
+        if (sweeps++ > LAIN_FIXPOINT_BOUND(L->nb, L->nvar)) LAIN_FIXPOINT_EXHAUSTED("linearity", L->nb, L->nvar);
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             memcpy(tmp, L->in[b->id], L->nvar*sizeof(uint64_t)); lin_run_block(L, b, tmp, false);  // out = transfer(in)
@@ -339,7 +364,8 @@ static Lin *lin_analyze(IrFunc *f) {
     bool *seen = calloc(L->nb,sizeof(bool));
     seen[f->entry->id] = true;
     changed=true; sweeps=0;
-    while (changed && sweeps++ < 1000) {
+    while (changed) {
+        if (sweeps++ > LAIN_FIXPOINT_BOUND(L->nb, L->nvar)) LAIN_FIXPOINT_EXHAUSTED("linearity", L->nb, L->nvar);
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             if (!seen[b->id]) continue;
@@ -371,7 +397,8 @@ static Lin *lin_analyze(IrFunc *f) {
     for (IrParam *p=f->params; p; p=p->next)          // parameters exist from entry
         if (p->value && p->value->id>=0 && p->value->id<L->nvar) crt[f->entry->id][p->value->id]=true;
     changed=true; sweeps=0;
-    while (changed && sweeps++ < 1000) {
+    while (changed) {
+        if (sweeps++ > LAIN_FIXPOINT_BOUND(L->nb, L->nvar)) LAIN_FIXPOINT_EXHAUSTED("linearity", L->nb, L->nvar);
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             bool *cur = calloc(L->nvar,sizeof(bool));
@@ -407,7 +434,8 @@ static Lin *lin_analyze(IrFunc *f) {
     for (IrParam *p=f->params; p; p=p->next)
         if (p->value && p->value->id>=0 && p->value->id<L->nvar) crtm[f->entry->id][p->value->id]=true;
     changed=true; sweeps=0;
-    while (changed && sweeps++ < 1000) {
+    while (changed) {
+        if (sweeps++ > LAIN_FIXPOINT_BOUND(L->nb, L->nvar)) LAIN_FIXPOINT_EXHAUSTED("linearity", L->nb, L->nvar);
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             if (!cseen[b->id]) continue;

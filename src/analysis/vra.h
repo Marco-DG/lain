@@ -2522,8 +2522,26 @@ static Vra *vra_analyze(IrFunc *f) {
     for (int i=0;i<nthr;i++) for (int j=i+1;j<nthr;j++)
         if (thr[j] < thr[i]) { int64_t t=thr[i]; thr[i]=thr[j]; thr[j]=t; }
 
+    // P3 again, but this lattice is NOT the bit-vector kind: it is the octagon, and what
+    // guarantees termination is WIDENING, not finite height. So the bound cannot be derived as
+    // (blocks x slots) the way linearity's and definite-init's can — widening converges because
+    // each widen jumps to a threshold from a finite set, and the argument is Cousot & Cousot's,
+    // not a counting one.
+    //
+    // What can be fixed is the silence. Measured over the corpus and std the high-water mark is
+    // 114 sweeps; the bound stays generous, and reaching it now means WIDENING FAILED TO
+    // CONVERGE, which is a compiler bug rather than a large program. Say so and stop, instead of
+    // proceeding over a non-fixpoint — the numeric engine's results licence removed bounds
+    // checks, so a non-fixpoint here is a miscompile waiting to happen.
+    #define VRA_FIXPOINT_BOUND 4096
     bool changed=true; int sweeps=0;
-    while (changed && sweeps++ < 1000) {
+    while (changed) {
+        if (sweeps++ > VRA_FIXPOINT_BOUND) {
+            fprintf(stderr, "internal error: the numeric fixpoint did not converge within %d "
+                    "sweeps. Widening should make that impossible, so this is a compiler bug. "
+                    "Refusing to report numeric results.\n", VRA_FIXPOINT_BOUND);
+            exit(70);
+        }
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             if (!V->reached[b->id]) continue;
