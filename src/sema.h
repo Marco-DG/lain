@@ -4255,6 +4255,20 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 sema_clear_locals();
                 sema_resolve_expr(d->as.variable_decl.init);
                 sema_infer_expr(d->as.variable_decl.init);
+                // A top-level constant written without an annotation (`MAX = 100`) had NO TYPE
+                // at all: the declaration keeps whatever the parser gave it, which is NULL, and
+                // the initialiser's inferred type was never written back. The emitter then asked
+                // `c_name_for_type(NULL)` and got its placeholder, producing
+                //
+                //     static const /*<unknown-type>*/ MAX = 100;
+                //
+                // which is not valid C99 — implicit int was REMOVED in C99. gcc accepts it with
+                // -Wimplicit-int for compatibility, and the broken-C gate compiles with `-w`, so
+                // it shipped. Found 2026-09-15 while clearing D-38 tier 2.
+                //
+                // The initialiser has just been inferred, so its type is the declaration's.
+                if (!d->as.variable_decl.type && d->as.variable_decl.init->type)
+                    d->as.variable_decl.type = d->as.variable_decl.init->type;
             }
             continue;
         }

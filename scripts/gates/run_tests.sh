@@ -67,7 +67,32 @@ gcc_check_ok() {
         rm -f "$out_c"; return 0   # Lain-level failure is handled by the caller
     fi
     local gerr
-    gerr="$("$GCC_BIN" -std=c99 -c -w -o "$out_o" "$out_c" \
+    # `-w` silences warnings, and gcc classifies some C CONSTRAINT VIOLATIONS as warnings —
+    # cases where the emitted program does something other than what the Lain program said. The
+    # gate could not see them, so whether a codegen defect was caught came down to whether gcc
+    # had chosen "error" or "warning", which is not a property of Lain at all. 31 programs
+    # carried one (D-38).
+    #
+    # Two of the three classes are now clean and are promoted to errors, so they cannot return:
+    #   int-conversion   -- a pointer stored in an integer. This was a LIVE MISCOMPILE: Lain
+    #                       could not write through a mutable borrow (D-38 tier 1).
+    #   implicit-int     -- a declaration with no type at all. C99 removed implicit int, so
+    #                       `static const <nothing> MAX = 100;` is not valid C99.
+    #
+    # incompatible-pointer-types is NOT yet promoted: one case remains, and it is D-39 (a string
+    # literal passed to a `u8[]` parameter), not the Fixed_T_N family the rest of it was.
+    # Promote it the day D-39 closes.
+    # `-w` had to GO, not be supplemented: it beats -Werror= in every flag position, so the
+    # promotions below were inert while it was present (verified twice). What remains is an
+    # explicit list of what is tolerated, which is the honest form — each -Wno- is a claim that
+    # the class does not change behaviour, and each can be argued.
+    #
+    # Measured over all emitted C: discarded-qualifiers 15, format-security 4,
+    # incompatible-pointer-types 1. None is int-conversion or implicit-int any more.
+    gerr="$("$GCC_BIN" -std=c99 -c -o "$out_o" "$out_c" \
+        -Wno-discarded-qualifiers -Wno-format-security \
+        -Wno-incompatible-pointer-types \
+        -Werror=int-conversion -Werror=implicit-int \
         -Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_putchar=putchar \
         -Dlibc_malloc=malloc -Dlibc_free=free -Dlibc_realloc=realloc 2>&1)"
     local grc=$?

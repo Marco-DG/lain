@@ -1053,6 +1053,25 @@ void emit_expr(Expr *expr, int depth) {
                    if (byptr_param) {
                        EMIT("%s", c_name_for_id(arg->expr->as.identifier_expr.id));
                    } else if (is_lvalue) {
+                       // D-38 tier 2. A fixed-array PARAMETER has C type `Fixed_<T>_N*`, while a
+                       // local of the same Lain type is emitted as a native C array — so `&(buf)`
+                       // is `const uint8_t(*)[8]` where `const Fixed_u8_8*` is wanted. The types
+                       // differ, the layouts do not (the struct's only member IS the array), and
+                       // gcc reports the mismatch as a WARNING, which the broken-C gate hid
+                       // behind `-w`. 23 programs emitted it.
+                       //
+                       // The reinterpret is the idiom this file already uses for the by-VALUE
+                       // case a few lines above, with the same layout-identity argument. It is
+                       // sound here for the reason strict aliasing actually cares about: every
+                       // access through the parameter is `v->data[i]`, which reads the element
+                       // type — the same type the memory already holds. The struct is only a
+                       // path to it, never itself the unit of access.
+                       Type *ptu = sema_unwrap_type(pt);
+                       if (ptu && ptu->kind == TYPE_ARRAY && ptu->array_len >= 0) {
+                           Type tn = *ptu; tn.mode = MODE_SHARED;
+                           char pbuf[256]; c_name_for_type(&tn, pbuf, sizeof pbuf);
+                           EMIT("(%s%s*)", pt->mode == MODE_MUTABLE ? "" : "const ", pbuf);
+                       }
                        EMIT("&(");
                        emit_expr(arg->expr, depth);
                        EMIT(")");
@@ -1074,7 +1093,23 @@ void emit_expr(Expr *expr, int depth) {
            }
       }
   
-      // fallback for everything else
+      // fallback for everything else. D-38 tier 2, the `var` half: a MUTABLE fixed-array
+      // argument (`setall(var a)`) reaches here as an EXPR_MUT and is emitted as `&(a)`, which
+      // is `int32_t(*)[4]` where the parameter wants `Fixed_i32_4*`. Same mismatch as the
+      // shared case above, same layout-identity, same fix — but it cannot be applied inside
+      // EXPR_MUT, which does not know the parameter it is being passed to. It has to be here,
+      // where `pt` is in scope.
+      {
+          Type *fpt = (param && param->decl && param->decl->kind == DECL_VARIABLE)
+                      ? param->decl->as.variable_decl.type : NULL;
+          Type *ptu = fpt ? sema_unwrap_type(fpt) : NULL;
+          if (ptu && ptu->kind == TYPE_ARRAY && ptu->array_len >= 0 &&
+              arg->expr->kind == EXPR_MUT) {
+              Type tn = *ptu; tn.mode = MODE_SHARED;
+              char pbuf[256]; c_name_for_type(&tn, pbuf, sizeof pbuf);
+              EMIT("(%s%s*)", fpt->mode == MODE_MUTABLE ? "" : "const ", pbuf);
+          }
+      }
       emit_expr(arg->expr, depth);
       
       next_arg:
