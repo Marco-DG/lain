@@ -1,3 +1,5 @@
+// `d + d` on an arbitrary non-zero i32 overflows — `!= 0` says nothing about magnitude.
+// The subject is the refinement alias itself, so the doubling is explicitly wrapping.
 // Refinement with `!=` constraint: NonZero type. The alias can be
 // declared and used as an annotation; full VRA-propagation of `!= 0`
 // to arithmetic safety (e.g. division) is a separate concern.
@@ -5,7 +7,7 @@
 type NonZeroI32 = i32 != 0
 
 func double(d NonZeroI32) i32 {
-    return d + d
+    return d +% d
 }
 
 proc main() i32 {

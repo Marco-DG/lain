@@ -1,3 +1,7 @@
+// The running total is over UNBOUNDED elements, so it is a real overflow: the diagnostic
+// asks for a bound on the count, the element or the total, and this test supplies none
+// of the three because its subject is the reverse index `a[7 - i]`. The addition is therefore
+// explicitly wrapping (`+%`), which states that and leaves the subject intact.
 // General loop bounds: a reverse index `a[(len-1) - i]` under `i < len` is proven
 // in bounds — (len-1)-i ranges over [0, len-1] as i runs [0, len-1]. Complements the
 // forward-index cases; exercised broadly by fuzz_loop.sh.
@@ -5,7 +9,7 @@ proc run(a i32[8]) i32 {
     var i usize = 0
     var s i32 = 0
     while i < 8 decreasing 8 - i {
-        s = s + a[7 - i]
+        s = s +% a[7 - i]
         i = i + 1
     }
     return s

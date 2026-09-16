@@ -1,3 +1,5 @@
+// `shift` returns an element of an unrefined `i32[17]`, so adding it to anything can
+// overflow. The subject is the NEGATIVE refinement bounds, so the final sum wraps.
 // A refinement bound may be NEGATIVE. `a i32 >= -100 and <= 100` used to be a PARSE ERROR
 // ([E100] "Expected number or identifier after comparison operator"), so half the range of
 // every signed type was unreachable by a refinement and no signed-negative arithmetic could be
@@ -19,5 +21,5 @@ func shift(d Delta, a i32[17]) i32 {
 proc main() i32 {
     var xs i32[17] = [0 for k in 0..17]
     var d = Delta(-8)
-    return clamp_to_byte(-100) as i32 + 100 + shift(d, xs)
+    return clamp_to_byte(-100) as i32 +% 100 +% shift(d, xs)
 }

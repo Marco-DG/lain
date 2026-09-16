@@ -1,3 +1,7 @@
+// `fib(n-1) + fib(n-2)` overflows i32 at n = 47 and `1 + cnt(n/2)` adds to an unbounded
+// return, and no engine can bound a recurrence's result from its definition. This test's
+// subject is the INFERRED termination measure, so both additions are explicitly wrapping
+// and the inference is what is being checked.
 // The recursion termination measure is INFERRED from the self-calls: a parameter
 // that strictly descends (`n - K` or `n / D`) in every self-call, with a base case,
 // needs no explicit `decreasing` clause in a pure `func`.
@@ -8,11 +12,11 @@
 // (see termination_fail, func_recursion_no_clause_fail).
 func fib(n i32) i32 {
     if n < 2 { return n }
-    return fib(n - 1) + fib(n - 2)
+    return fib(n - 1) +% fib(n - 2)
 }
 func cnt(n i32) i32 {
     if n <= 0 { return 0 }
-    return 1 + cnt(n / 2)
+    return cnt(n / 2) +% 1
 }
 proc main() i32 {
     // fib(10) == 55, cnt(16) == 5  → exit 0 on success

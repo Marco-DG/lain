@@ -1,7 +1,11 @@
+// `o0` is BOUNDED, and it has to be: at o0 = SIZE_MAX the guard `o + 1 < k` is evaluated on
+// a WRAPPED `o + 1`, so it passes and `out[o]` reads far out of bounds. That is the same
+// class as C-7's `i < n - 1`. The subject is the left-hand-side offset proof, which the
+// bound leaves intact.
 // VRA symmetric offset guard: `i + k < n` (offset on the LHS — `if o + 1 < k`, a very
 // common write-pair / lookahead guard) is captured as `i - n <= -1 - k`, proving both
 // `out[o]` (o < k) and `out[o+1]` (o+1 < k) in bounds. Complements the RHS form `i < n-k`.
-proc write_pair(var out i32[k], k usize, o0 usize) {
+proc write_pair(var out i32[k], k usize, o0 usize < 1000000) {
     var o usize = o0
     if o + 1 < k {
         out[o] = 1

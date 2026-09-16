@@ -1,11 +1,14 @@
+// The field refinements are load-bearing: `p.x + p.y` on an unrefined `Point` is a real
+// overflow at INT32_MAX and does not compile. This test's subject is field nested construction,
+// so the arithmetic is bounded and the subject is kept.
 // Nested construction: fill every leaf (incl. a whole-sub-object write), then use.
 type Inner {
-    x i32
-    y i32
+    x i32 >= 0 and <= 1000
+    y i32 >= 0 and <= 1000
 }
 type Outer {
     a Inner
-    b i32
+    b i32 >= 0 and <= 1000
 }
 func rd(p Outer) i32 { return p.a.x + p.a.y + p.b }
 proc main() i32 {

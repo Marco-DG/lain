@@ -1,3 +1,7 @@
+// Elements of a slice parameter are unbounded, so `acc + arr[i / 2]` is a real overflow and
+// prove-or-reject refuses it. This test's subject is division monotonicity for the INDEX `arr[i / 2]`, not arithmetic, so the
+// addition is explicitly wrapping (`+%`) — which states the intent rather than
+// relying on an engine that was not looking.
 // Fix 2a: division monotonicity.
 // arr[i/2] where i is a for-loop variable with constraint i < arr.len.
 // Proof: i >= 0 (from loop range [0, arr.len-1]) AND i - __len_arr <= -1
@@ -6,7 +10,7 @@
 func half_view(arr i32[> 0]) i32 {
     var acc = 0
     for i in 0..arr.len {
-        acc = acc + arr[i / 2]
+        acc = acc +% arr[i / 2]
     }
     return acc
 }

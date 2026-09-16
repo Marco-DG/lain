@@ -311,10 +311,10 @@ var y int = x           // OK: implicit widening u8 -> int
 var z = x + 1000        // result type: int (1000 is int, wider than u8)
 
 var n i32 = 200
-var b = n as u8         // explicit cast, and 200 fits
-var f = n as f64        // explicit cast: int -> float
-// `n as u8` at n = 1000 is [E086]: `as` truncates a value the compiler cannot bound,
-// it does not license a loss the compiler can already see.
+var b = n as u8         // proven: VRA shows 200 fits u8
+var f = n as f64        // widening, always fits
+// `n as u8` at n = 1000 is [E086]. `as` is the PROVEN tier; `as?` `as%` `as|` are the
+// checked, wrapping and saturating ones.
 ```
 
 ### 2.3 Pointer Types
@@ -1261,9 +1261,8 @@ var x i32 = 200
 var y = x as u8           // Narrow i32 to u8; 200 fits, so it is exact
 var big = 42 as i64       // Widen int to i64
 var n = 'A' as int        // char to int: 65
-// A cast whose loss is STATICALLY KNOWN is still refused: `300 as u8` is [E086].
-// `as` is for a value the compiler cannot bound, not a licence to discard bits it
-// can already see going missing.
+// `300 as u8` is [E086]: `as` narrows only where the value is PROVEN to fit. The other
+// three tiers say what to do when it does not — `as?` panics, `as%` wraps, `as|` clamps.
 ```
 
 **Rules:**
@@ -1316,9 +1315,11 @@ var z = x + 1000     // OK: result type is int
 var n int = 42
 var b = n as u8      // Explicit: int -> u8
 
-// `as` truncates a value the compiler cannot bound. It does NOT license a truncation the
-// compiler can already see: `var n int = 300` followed by `n as u8` is [E086], because 300
-// is known not to fit. Narrowing is explicit; a statically-known loss is still an error.
+// `as` is the PROVEN tier: it narrows only where VRA can show the value fits, and is
+// [E086] otherwise — `var n int = 300` then `n as u8` does not compile, and neither does
+// an unbounded `u32` narrowed to `u8`. To narrow a value you cannot bound, say which
+// behaviour you mean: `as?` checks at run time and panics, `as%` truncates modulo 2^N,
+// `as|` clamps. Spec §8, cast tiers.
 ```
 
 **Float/int (explicit, requires `as`):**

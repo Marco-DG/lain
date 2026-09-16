@@ -1,9 +1,12 @@
+// The field refinements are load-bearing: `p.x + p.y` on an unrefined `Point` is a real
+// overflow at INT32_MAX and does not compile. This test's subject is field shared and mutable borrows of a struct,
+// so the arithmetic is bounded and the subject is kept.
 // 02_borrow_basic.ln
 // Tests borrowing rules.
 
 type Point {
-    x i32
-    y i32
+    x i32 >= 0 and <= 1000
+    y i32 >= 0 and <= 1000
 }
 
 func read(p Point) i32 {
@@ -11,7 +14,17 @@ func read(p Point) i32 {
 }
 
 func update(var p Point) {
-    p.x = p.x + 1
+    // The guard is what lets the increment satisfy `x`'s own refinement: writing a field has
+    // to land inside the field's declared range, so an unguarded `p.x + 1` at the top of that
+    // range is [E086] "violates its refinement constraint" rather than a silent wrap.
+    //
+    // ★ The guard is on a LOCAL COPY, and it has to be. `if p.x < 1000 { p.x = p.x + 1 }` is
+    // still refused by BOTH engines: a guard on a FIELD does not narrow that field's range,
+    // only a guard on a local does. That is a precision gap in both, not a rule.
+    var v = p.x
+    if v < 1000 {
+        p.x = v + 1
+    }
 }
 
 proc main() i32 {

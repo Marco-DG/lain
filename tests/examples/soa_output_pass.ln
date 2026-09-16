@@ -1,8 +1,11 @@
+// `n` is BOUNDED, and it has to be: `i as u8` under `i < n` truncates for any n > 256, and
+// `as` is the proven tier. The subject here is the struct-of-arrays write pattern, and the
+// bound is also what the program actually means — both arrays are 256 long.
 // Structure-of-Arrays output: two parallel `var` array params written together via
 // in-guarded element writes (`count in kinds` proves `kinds[count]`). The borrow
 // checker proves the three arrays don't alias, so all get `restrict`. This is the
 // core of the lexer's SoA `tokenize` (kinds[] 1B + starts[] 4B, no length stored).
-proc fill_soa(n u32, var kinds u8[256], var starts u32[256]) u32 {
+proc fill_soa(n u32 <= 256, var kinds u8[256], var starts u32[256]) u32 {
     var count u32 = 0
     var i     u32 = 0
     while i < n {

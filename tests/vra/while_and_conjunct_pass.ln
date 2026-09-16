@@ -1,3 +1,5 @@
+// Both helpers return an unbounded i32 (the accumulator wraps), so their difference can
+// overflow. The subject is the `and`-conjunct guard inside the loop, not the subtraction.
 // A `while` guard's conjuncts each reach the body. `while i < 100 and s < 5` proves `a[i]`
 // exactly as the bare `while i < 100` does.
 //
@@ -25,5 +27,5 @@ proc second(a i32[100]) i32 {
 }
 proc main() i32 {
     var xs i32[100] = [1 for k in 0..100]
-    return first(xs) - second(xs)
+    return first(xs) -% second(xs)
 }

@@ -1,3 +1,7 @@
+// The running total is over UNBOUNDED elements, so it is a real overflow: the diagnostic
+// asks for a bound on the count, the element or the total, and this test supplies none
+// of the three because its subject is the `i in data` bounds proof over a sentinel string. The addition is therefore
+// explicitly wrapping (`+%`), which states that and leaves the subject intact.
 // TRUST: VRA proves every data[i] in-bounds (i in data). Scanned to the last
 // byte; an off-by-one in the proof would be an ASan OOB read.
 extern proc libc_printf(fmt *u8, ...) i32
@@ -5,7 +9,7 @@ func sum_all(data u8[:0]) i32 {
     var s = 0
     var i = 0
     while i in data decreasing data.len - i {
-        s = s + (data[i] as i32)
+        s = s +% (data[i] as i32)
         i += 1
     }
     return s

@@ -1,9 +1,13 @@
+// Elements of a slice parameter are unbounded, so `dst[i] + src[i]` is a real overflow and
+// prove-or-reject refuses it. This test's subject is that two distinct arrays are proved non-aliasing, not arithmetic, so the
+// addition is explicitly wrapping (`+%`) — which states the intent rather than
+// relying on an engine that was not looking.
 // TRUST: distinct arrays into restrict'd params — sound, and the result is correct.
 extern proc libc_printf(fmt *u8, ...) i32
 proc vadd(n usize, dst i32[n], src i32[n]) {
     var i usize = 0
     while i < n decreasing n - i {
-        dst[i] = dst[i] + src[i]
+        dst[i] = dst[i] +% src[i]
         i += 1
     }
 }

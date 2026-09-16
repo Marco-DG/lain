@@ -1,3 +1,7 @@
+// Elements of a slice parameter are unbounded, so `a[0] + a[3]` is a real overflow and
+// prove-or-reject refuses it. This test's subject is writing through a `var` slice parameter, not arithmetic, so the
+// addition is explicitly wrapping (`+%`) — which states the intent rather than
+// relying on an engine that was not looking.
 // The other half of var_slice_param_reassign_fail.ln: REBINDING a `var` slice parameter is
 // refused, writing THROUGH it is not. An element store is what the decomposed
 // `(length, pointer)` ABI exists to make fast, and the caller sees every one of them.
@@ -8,5 +12,5 @@ proc main() i32 {
     var a i32[4] = [1, 2, 3, 4]
     var s = a[0..4]
     zero(var s)
-    return a[0] + a[3]
+    return a[0] +% a[3]
 }

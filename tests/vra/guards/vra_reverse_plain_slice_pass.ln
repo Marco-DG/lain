@@ -1,10 +1,14 @@
+// The running total is over UNBOUNDED elements, so it is a real overflow: the diagnostic
+// asks for a bound on the count, the element or the total, and this test supplies none
+// of the three because its subject is the reverse index `a[a.len - i - 1]`. The addition is therefore
+// explicitly wrapping (`+%`), which states that and leaves the subject intact.
 // VRA precision (synergy of #1+#2+#3): reverse iteration and two-pointer indexing
 // over a PLAIN dynamic slice must be proven safe, not only over sized `T[n]`. The
 // Omega fallback now synthesizes `a.len` as the bound for plain `[]`.
 func rev(a i32[]) i32 {
     var s i32 = 0
     for i in 0..a.len {
-        s = s + a[a.len - i - 1]
+        s = s +% a[a.len - i - 1]
     }
     return s
 }

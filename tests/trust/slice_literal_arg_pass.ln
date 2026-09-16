@@ -1,3 +1,6 @@
+// Same narrowing as slice_len_pass: `s.len as i32` on an unbounded `usize` needs the value
+// shown to fit before `as` will take it. The subject is passing a string literal where a
+// `u8[]` is expected.
 // A string literal passed to a `u8[]` parameter, and a `u8[]` local from a literal.
 // Both emitted HARD gcc errors before D-39 was fixed 2026-09-16.
 //
@@ -13,7 +16,9 @@
 extern proc libc_printf(fmt *u8, ...) i32
 
 proc show(s u8[]) {
-    libc_printf("%d\n", s.len as i32)
+    if s.len < 2147483647 {
+        libc_printf("%d\n", s.len as i32)
+    }
 }
 
 proc main() i32 {

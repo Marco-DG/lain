@@ -1,7 +1,10 @@
+// The field refinements are load-bearing: `p.x + p.y` on an unrefined `Point` is a real
+// overflow at INT32_MAX and does not compile. This test's subject is field initialisation across a branch merge,
+// so the arithmetic is bounded and the subject is kept.
 // A field written on BOTH branches of an if is initialized after the join.
 type Point {
-    x i32
-    y i32
+    x i32 >= 0 and <= 1000
+    y i32 >= 0 and <= 1000
 }
 func sum(p Point) i32 { return p.x + p.y }
 proc main() i32 {
