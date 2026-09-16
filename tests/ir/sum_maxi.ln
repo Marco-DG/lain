@@ -1,3 +1,5 @@
+// `s = s + i` over `i < n` for an unbounded `n` sums 0..n-1, which leaves i32 at n = 65536.
+// A real overflow; the subject is the loop and the call, so the addition wraps explicitly.
 // Phase 1.2 lowering sample — exercises params, var (alloca/load/store), while (CFG
 // with a detected loop header), if/else (branch + join), binary/comparison, return,
 // and a call. Run: gcc -std=c99 -o /tmp/lowerdrv src/ir/lower_driver.c -I src
@@ -6,7 +8,7 @@ func sum(n i32) i32 {
     var s = 0
     var i = 0
     while i < n {
-        s = s + i
+        s = s +% i
         i = i + 1
     }
     return s

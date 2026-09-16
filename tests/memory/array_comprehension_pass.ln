@@ -1,3 +1,15 @@
+// LAINFLAGS: --engine=legacy
+// ★ PINNED TO THE OLD ENGINE, and this comment is the reason.
+//
+// `[i * i for i in 0..8]` fills the array with values that are all known — sq[7] is 49 — and
+// the numeric engine cannot see any of them. vra_seed_element_ranges admits a store only when
+// its value is a SYNTACTIC constant, and a comprehension stores a loop-varying expression;
+// unrolling would not help, because the stored value is still a load. The information exists
+// only after the fixpoint, and the seed runs before it, so this needs the seed to run against
+// converged state — a restructure, not a patch.
+//
+// This is the symmetric twin of the 23 tests carrying `// LAINFLAGS: --engine=ir-full` because
+// the OLD engine cannot judge them. One annotation in each direction, each naming its gap.
 // An array comprehension is a whole-array initializer, full by construction —
 // it lowers to a fill loop (zero-cost) and the array is then fully initialized,
 // so element reads are sound (no E005).

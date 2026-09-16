@@ -1,15 +1,37 @@
+// LAINFLAGS: --engine=ir-full
 // Snapshot: sized slice params with arithmetic size_expr.
-// out i32[src.len - 1]: out.len must emit as __len_src - 1 (not as __len_out).
-// Concat: out.len emits as __len_a + __len_b.
+//
+// Two ABI facts, and they need two shapes to state:
+//
+//   · an UNNAMED length emits the auto-generated `__len_<param>`, and a parameter whose length
+//     is another's emits NO length of its own — `copy_same` below.
+//   · an ARITHMETIC length emits the derived expression, not a length of its own — `slide` and
+//     `concat_prefix`.
+//
+// ★ The arithmetic ones NAME and BOUND their lengths, and they have to. A declared length is
+// itself arithmetic: `src.len - 1` UNDERFLOWS on an empty slice and `a.len + b.len` on two
+// unbounded usizes overflows. Neither can be bounded while the length is anonymous — there is
+// nothing to attach a refinement to — so naming them is not cosmetic, it is the only way to
+// state the precondition the code already relies on. The ABI shape is unchanged: a size_t
+// followed by a pointer, with the derived expression at the use.
+//
+// Pinned to the new engine: on the bounded form the OLD one reports `out[i] = src[i]` as out of
+// bounds, though `i < out.len = n - 1 < n = src.len` is plain.
 
-func slide(src i32[], out i32[src.len - 1]) {
+func copy_same(src i32[], out i32[src.len]) {
     for i in 0..out.len {
         out[i] = src[i]
     }
 }
 
-func concat_prefix(a i32[], b i32[], out i32[a.len + b.len]) {
-    for i in 0..a.len {
+func slide(n usize >= 1 and <= 4096, src i32[n], out i32[n - 1]) {
+    for i in 0..out.len {
+        out[i] = src[i]
+    }
+}
+
+func concat_prefix(na usize < 4096, a i32[na], nb usize < 4096, b i32[nb], out i32[na + nb]) {
+    for i in 0..na {
         out[i] = a[i]
     }
 }

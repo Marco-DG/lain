@@ -1,8 +1,11 @@
+// The running total is over the elements of an UNBOUNDED slice, so it is a real overflow:
+// the diagnostic asks for a bound on the count, the element or the total and this has none.
+// The subject is the `i in data` bounds proof, so the addition is explicitly wrapping.
 proc total(data i32[]) i32 {
     var s i32 = 0
     var i usize = 0
     while i in data {
-        s = s + data[i]
+        s = s +% data[i]
         i = i + 1
     }
     return s

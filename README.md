@@ -390,7 +390,7 @@ A parameter's length can be written as an expression over the other parameters:
 ```lain
 proc vadd(var out i32[], a i32[out.len], b i32[out.len]) {
     for i in 0..out.len {
-        out[i] = a[i] + b[i]
+        out[i] = a[i] +% b[i]
     }
 }
 ```
@@ -398,11 +398,17 @@ proc vadd(var out i32[], a i32[out.len], b i32[out.len]) {
 `a` and `b` are arrays the same length as `out`. Callers have to satisfy that, and are told so
 with `E087` if they do not; inside the body it comes for free.
 
+The addition wraps (`+%`) because the elements are unbounded `i32` and their sum is a real
+overflow — the lengths being proven says nothing about the values. Writing `+` here compiles
+today and will not once the numeric obligations move to the rebuilt engine.
+
 The expression can be anything, so a matrix is just a flat buffer with a shape. Here `h` and `w`
-are unknown at compile time and `a[i*w + j]` still needs no check:
+are unknown at compile time and `a[i*w + j]` still needs no check. They are bounded because the
+declared length is itself arithmetic: `h * w` on two unbounded `usize`s overflows, and a bound
+needs a named parameter to attach to.
 
 ```lain
-proc msum(a i32[h * w], h usize, w usize) i32 {
+proc msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
     var s i32 = 0
     var i usize = 0
     while i < h {

@@ -1259,6 +1259,19 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             return data;   // fixed u8[N:0] / pointer context: the data pointer
         }
         case EXPR_IDENTIFIER: {
+            // ★ AN UNDECLARED NAME MAKES THIS FUNCTION UNJUDGEABLE, and saying so is the whole
+            // point. E106 is raised by the EMITTER — after resolution, monomorphization and
+            // UFCS, which is what makes its predicate reliable — so it runs LATER than the
+            // analyses. With the numeric obligations authoritative, `return x + missing` was
+            // reported as "arithmetic is not provably free of overflow": a confusing message
+            // about the wrong thing, and the program never reached the emitter that knew.
+            //
+            // The predicate is the emitter's, verbatim. Marking the function incomplete is
+            // fail-closed — no finding is reported for it — and the emitter then says what is
+            // actually wrong.
+            if (e->line > 0 && e->type == NULL && e->decl == NULL && !e->is_global &&
+                !ir_env_find(c, e->as.identifier_expr.id))
+                ir_incomplete(c, "undeclared-identifier");
             IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
             if (l && l->param) return l->param;
             if (l && l->aggregate) return l->slot;   // array/slice base pointer, read directly

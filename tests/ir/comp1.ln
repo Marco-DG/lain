@@ -1,3 +1,10 @@
+// LAINFLAGS: --engine=legacy
+// ★ PINNED TO THE OLD ENGINE. a comprehension's element values are all known here, and the numeric
+// engine cannot see any of them: vra_seed_element_ranges admits a store only when its
+// value is a SYNTACTIC constant, and these are written by a loop. The information
+// exists only after the fixpoint and the seed runs before it, so this needs the seed
+// to run against converged state — a restructure, not a patch. Same gap as
+// tests/memory/array_comprehension_pass.ln.
 proc main() i32 {
     var a i32[5] = [i as i32 for i in 0..5]
     var s i32 = 0

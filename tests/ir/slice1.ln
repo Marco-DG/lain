@@ -1,8 +1,10 @@
+// Same as inloop1: a running total over an unbounded slice's elements is a real overflow,
+// and the subject here is the `i < a.len` scan, not the arithmetic.
 func sum(a i32[]) i32 {
     var s i32 = 0
     var i usize = 0
     while i < a.len {
-        s = s + a[i]
+        s = s +% a[i]
         i = i + 1
     }
     return s

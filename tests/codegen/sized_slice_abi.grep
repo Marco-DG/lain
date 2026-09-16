@@ -1,7 +1,12 @@
-// Arithmetic size_expr ABI: out.len emits as derived expression, not __len_out.
-// slide: out i32[src.len - 1] → loop bound is __len_src - 1
-__i0 < __len_src - 1
-// slide signature: only __len_src, no __len_out
-tests_codegen_sized_slice_abi_slide(size_t __len_src
-// concat: out has no __len_out param (derived from __len_a + __len_b)
-tests_codegen_sized_slice_abi_concat_prefix(size_t __len_a
+// Arithmetic size_expr ABI: out.len emits as a derived expression, not __len_out.
+// The loop-counter names (__i0, __i1, ...) are numbered per function, so the patterns
+// match the BOUND only — the counter's index is not what this snapshot is about.
+// An UNNAMED length still emits the auto-generated __len_<param>, and a parameter whose
+// length IS another's emits no length of its own.
+tests_codegen_sized_slice_abi_copy_same(size_t __len_src
+< __len_src;
+// slide: out i32[n - 1] -> loop bound is the derived n - 1, and there is no __len_out
+< n - 1;
+tests_codegen_sized_slice_abi_slide(size_t n, const int32_t * restrict src, int32_t * restrict out)
+// concat_prefix: two named lengths, and out carries none of its own
+tests_codegen_sized_slice_abi_concat_prefix(size_t na, const int32_t * restrict a, size_t nb, const int32_t * restrict b, int32_t * restrict out)

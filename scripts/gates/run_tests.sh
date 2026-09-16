@@ -159,7 +159,10 @@ run_emit_snapshot() {
         return 0
     fi
     local out_c="/tmp/lain_emit_$$.c"
-    "$LAIN" "$file" -o "$out_c" > /dev/null 2>&1
+    # ★ The file's own LAINFLAGS apply HERE too. This path ran the compiler bare, so a test
+    # pinned to an engine was snapshotted under a different one — and a test pinned because the
+    # DEFAULT cannot compile it failed as "compilation failed" with nothing saying why.
+    "$LAIN" $(lain_flags_for "$file") "$file" -o "$out_c" > /dev/null 2>&1
     local rc=$?
     if [[ $rc -ne 0 ]]; then
         FAIL_COUNT=$((FAIL_COUNT + 1))

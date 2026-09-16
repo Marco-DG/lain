@@ -1,4 +1,10 @@
-// EXPECT: [E085]
+// LAINFLAGS: --engine=ir-full
+// ★ Pinned to the new engine, which names the BUG rather than its consequence. The defect is
+// `hi = mid - 1` underflowing when mid is 0; the old engine reported the downstream [E085],
+// an index it could no longer bound, while the new one says "this subtraction can go below
+// zero, and 'usize' is unsigned" at the subtraction itself. Same rejection, and the second
+// message is the one that tells you what to change.
+// EXPECT: [E086]
 // SOUNDNESS: `hi = mid - 1` on usize underflows to SIZE_MAX when mid = 0
 // (lo=0, hi=1 gives mid=0). The invariant engine models arithmetic over signed
 // intervals; an unsigned-underflowing subtraction is abstracted to unknown
