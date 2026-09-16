@@ -1787,7 +1787,24 @@ static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid) {
             if (ic->operands[0]->id==vid && z>=0 && z<V->nvar && V->cknown[z] && V->cval[z]==0)
                 return true;
         }
+    // ★ THE GUARD AND THE USE ARE DIFFERENT SSA VALUES. `var d = f()` puts the result in a
+    // SLOT; `if d != 0` loads it once and `left / d` loads it again, so matching the compared
+    // value by id compared two distinct loads and found nothing. Any divisor that is not a
+    // parameter — every `var d = <call>` — therefore failed its guard. Match through the CELL
+    // instead: two loads of the same slot are the same value as long as nothing writes the
+    // slot in between, which is what the walk below checks.
+    IrInstr *vdd = (vid>=0 && vid<V->nvar) ? V->def[vid] : NULL;
+    int vcell = (vdd && vdd->op==IR_LOAD && vdd->n_operands>=1) ? vdd->operands[0]->id : -1;
+
     for (int depth=0; b && depth<64; depth++) {
+        // Anything that could write the slot between the guard and the use invalidates it.
+        // Deliberately coarse: the whole block, not just the instructions before the use, and
+        // any call at all once the cell has escaped.
+        if (vcell >= 0)
+            for (IrInstr *q=b->instrs; q; q=q->next) {
+                if (q->op==IR_STORE && q->n_operands>=1 && q->operands[0]->id==vcell) return false;
+                if (q->op==IR_CALL && vcell<V->nvar && V->escaped && V->escaped[vcell]) return false;
+            }
         IrEdge *e = b->preds;
         if (!e || e->next) return false;                     // not a single-predecessor chain
         IrBlock *p = e->block;
@@ -1797,7 +1814,13 @@ static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid) {
             if (ic && ic->op==IR_ICMP && ic->n_operands>=2) {
                 int a = ic->operands[0]->id, z = ic->operands[1]->id;
                 bool zero_is_const = (z>=0 && z<V->nvar && V->cknown[z] && V->cval[z]==0);
-                if (a == vid && zero_is_const) {
+                bool same = (a == vid);
+                if (!same && vcell >= 0 && a>=0 && a<V->nvar) {
+                    IrInstr *ad = V->def[a];
+                    same = ad && ad->op==IR_LOAD && ad->n_operands>=1 &&
+                           ad->operands[0]->id == vcell;
+                }
+                if (same && zero_is_const) {
                     if (ic->aux.cmp==IR_CMP_NE && p->term.a == b) return true;   // `if d != 0 {`
                     if (ic->aux.cmp==IR_CMP_EQ && p->term.b == b) return true;   // `if d == 0 { return }`
                 }

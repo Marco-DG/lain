@@ -1,0 +1,21 @@
+// LAINFLAGS: --engine=ir-full
+// `if d != 0 { a / d }` where `d` is a LOCAL, not a parameter. The guard walk matched the
+// compared value by SSA id — and `var d = f()` puts the result in a SLOT, so `if d != 0` loads
+// it once and `a / d` loads it again. Two distinct loads, no match, and every divisor that was
+// not a parameter failed its own guard with [E015].
+//
+// Two loads of the same slot are the same value as long as nothing writes the slot in between,
+// which is exactly what the walk now checks — see ..._reassigned_fail.ln for the other side.
+func pick(t i32[4]) i32 {
+    return t[0]
+}
+
+proc div_guarded(t i32[4], a i32 >= 0 and <= 1000) i32 {
+    var d = pick(t)
+    if d != 0 {
+        return a / d
+    }
+    return 0
+}
+
+proc main() i32 { return 0 }

@@ -1,0 +1,19 @@
+// LAINFLAGS: --engine=ir-full
+// EXPECT: [E015]
+// The teeth for nonzero_guard_via_slot_pass.ln. Matching the guard through the SLOT is only
+// sound while the slot still holds what the guard tested: `d` is written again after the
+// branch, so the second value was never compared to zero and the division is unproven.
+func pick(t i32[4]) i32 {
+    return t[0]
+}
+
+proc div_guarded(t i32[4], a i32 >= 0 and <= 1000) i32 {
+    var d = pick(t)
+    if d != 0 {
+        d = pick(t)
+        return a / d
+    }
+    return 0
+}
+
+proc main() i32 { return 0 }
