@@ -4,11 +4,17 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-func add_int(a int, b int) int {
+// ★ The arithmetic is REFINED, and it has to be. `func add_int(a int, b int) int` with bare
+// parameters was accepted here until 2026-09-16 and is a real overflow at INT32_MAX + 1 — it
+// compiled and printed -2147483648. `int` reads as an integer everywhere except
+// path_f_result_type, which asks parse_iN_uN directly, so `int + int` never widened to i33
+// and nothing narrowed back for the check to fire on. The alias is the subject of this test;
+// the hole was not, and refining the parameters keeps the subject and drops the hole.
+func add_int(a int >= 0 and <= 1000, b int >= 0 and <= 1000) int {
     return a + b
 }
 
-func mix(a int, b i32) i32 {
+func mix(a int >= 0 and <= 1000, b i32 >= 0 and <= 1000) i32 {
     return a + b
 }
 

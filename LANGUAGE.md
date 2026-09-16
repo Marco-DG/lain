@@ -310,9 +310,11 @@ var x u8 = 42
 var y int = x           // OK: implicit widening u8 -> int
 var z = x + 1000        // result type: int (1000 is int, wider than u8)
 
-var n i32 = 1000
-var b = n as u8         // explicit cast (truncation: 1000 -> 232)
+var n i32 = 200
+var b = n as u8         // explicit cast, and 200 fits
 var f = n as f64        // explicit cast: int -> float
+// `n as u8` at n = 1000 is [E086]: `as` truncates a value the compiler cannot bound,
+// it does not license a loss the compiler can already see.
 ```
 
 ### 2.3 Pointer Types
@@ -781,7 +783,7 @@ func get_ref(var ctx Context) var int {
 
 **`return` (default) — return by value (copy):**
 ```lain
-func compute(a int, b int) int {
+func compute(a int >= 0 and <= 1000, b int >= 0 and <= 1000) int {
     return a + b          // Return a copy
 }
 ```
@@ -803,7 +805,7 @@ Functions declared with `func` are **pure, deterministic, and guaranteed to term
 - Can only use `for` loops (over finite ranges) and bounded `while` loops with a termination measure. Unbounded `while` loops are banned.
 
 ```lain
-func add(a int, b int) int {
+func add(a int >= 0 and <= 1000, b int >= 0 and <= 1000) int {
     return a + b
 }
 ```
@@ -865,7 +867,9 @@ See §4.1 for full semantics.
 ```lain
 extern proc libc_printf(fmt *u8, ...) i32
 
-func add(a int, b int) int {    // Returns int
+// The refinements are not decoration: unbounded `int + int` is a real overflow at
+// INT32_MAX and does not compile. `int` is the alias of i32, and it is checked like one.
+func add(a int >= 0 and <= 1000, b int >= 0 and <= 1000) int {    // Returns int
     return a + b
 }
 
@@ -1253,11 +1257,13 @@ x ^= bits  // Equivalent to: x = x ^ bits
 The `as` operator performs explicit type conversions between numeric types:
 
 ```lain
-var x i32 = 1000
-var y = x as u8           // Truncate i32 to u8 (wrapping)
+var x i32 = 200
+var y = x as u8           // Narrow i32 to u8; 200 fits, so it is exact
 var big = 42 as i64       // Widen int to i64
-var small = 300 as u8     // Truncate to u8 (300 -> 44)
 var n = 'A' as int        // char to int: 65
+// A cast whose loss is STATICALLY KNOWN is still refused: `300 as u8` is [E086].
+// `as` is for a value the compiler cannot bound, not a licence to discard bits it
+// can already see going missing.
 ```
 
 **Rules:**
@@ -1307,8 +1313,12 @@ var z = x + 1000     // OK: result type is int
 
 **Narrowing (explicit, requires `as`):**
 ```lain
-var n int = 300
-var b = n as u8      // Explicit: int -> u8 (may truncate)
+var n int = 42
+var b = n as u8      // Explicit: int -> u8
+
+// `as` truncates a value the compiler cannot bound. It does NOT license a truncation the
+// compiler can already see: `var n int = 300` followed by `n as u8` is [E086], because 300
+// is known not to fit. Narrowing is explicit; a statically-known loss is still an error.
 ```
 
 **Float/int (explicit, requires `as`):**
@@ -1367,7 +1377,10 @@ safe_div(10, 0)     // ERROR: 0 violates b != 0
 Constraints on the return value are written after the return type:
 
 ```lain
-func abs(x int) int >= 0 {
+// The refinement on `x` is doing real work: `0 - x` at INT32_MIN has no positive
+// answer in i32, so an unrefined `abs` does not compile. This is the one place the
+// C version of this function is famously wrong.
+func abs(x int >= -2147483647) int >= 0 {
     if x < 0 { return 0 - x }
     return x
 }
@@ -1444,7 +1457,9 @@ while l.pos in l.src and (l.src[l.pos] as int) != '"' decreasing l.src.len - l.p
 Constraints can reference other parameters:
 
 ```lain
-func require_lt(a int, b int > a) int {
+// `b > a` alone does not bound `b - a`: at a = INT32_MIN and b = INT32_MAX the
+// difference does not fit. Bounding the operands is what makes the subtraction provable.
+func require_lt(a int >= 0 and <= 1000, b int > a and <= 1000) int {
     return b - a     // Always positive
 }
 

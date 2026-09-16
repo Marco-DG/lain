@@ -1,0 +1,14 @@
+// EXPECT: [E086]
+// Pins the hole closed. `int` is the documented alias of i32, and until 2026-09-16 it carried
+// no width through parse_iN_uN — so path_f_result_type did not widen `int + int` to i33, no
+// narrowing back to `int` ever happened, and the op-level overflow check had nothing to fire
+// on. This program compiled, ran, and printed -2147483648. It is the same defect as the
+// usize/isize one fixed earlier, one alias over; see tests/types/int_alias_pass.ln.
+func add_int(a int, b int) int {
+    return a + b
+}
+
+proc main() i32 {
+    var x int = 2147483647
+    return add_int(x, 1)
+}

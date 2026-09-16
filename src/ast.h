@@ -759,6 +759,19 @@ static bool id_bytes_equal(Id *a, Id *b) {
 // re-derived from the name string on each query.
 static void ast_parse_int_width(const char *n, isize len, signed char *w, bool *sgn) {
     *w = -1; *sgn = false;
+    // `int` is the documented alias of i32, and it was missing here for exactly the reason
+    // usize/isize were below: is_integer_type() and type_integer_range() special-case it
+    // AFTER parse_iN_uN, so the type read as an integer and carried a range everywhere
+    // EXCEPT the one place that asks parse_iN_uN directly — path_f_result_type. Without a
+    // width there, `int + int` did not widen to i33, so nothing ever narrowed back and the
+    // op-level overflow check had nothing to fire on:
+    //     func add(a int, b int) int { return a + b }   // add(INT32_MAX, 1)
+    // compiled, ran, and printed -2147483648. Same bug as usize/isize, one alias over.
+    //
+    // ★ It goes FIRST. "int" is three characters starting with 'i', so it enters the iN
+    // branch below, fails to parse "nt" as digits, and RETURNS — any check placed after
+    // that branch is unreachable for this exact name.
+    if (n && len == 3 && memcmp(n, "int", 3) == 0) { *w = 32; *sgn = true; return; }
     if (n && len >= 2 && len <= 3 && (n[0] == 'i' || n[0] == 'u')) {
         int v = 0; bool ok = true;
         for (isize k = 1; k < len; k++) {

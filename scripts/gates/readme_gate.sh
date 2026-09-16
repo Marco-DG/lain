@@ -46,7 +46,7 @@ print(len(blocks))
 PY
 
 ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
-unchecked_readme=0 unchecked_lang=0
+unchecked_readme=0 unchecked_lang=0 falseclaim=0
 for f in "$TMP"/b*.txt; do
     ln=${f##*_}; ln=${ln%.txt}
     page=${f%_*}; page=${page##*_}; page=${page//%//}
@@ -57,6 +57,12 @@ for f in "$TMP"/b*.txt; do
     # you what not to write, and it must still compile.
     expect_fail=0
     echo "$body" | grep -qE '^[[:space:]]*[^/[:space:]].*//.*(ERROR|error:|Compile error|E[0-9]{3})' && expect_fail=1
+    # ...and a marker on its OWN first line labels the whole block. That is a different thing
+    # from the commented-out-line case above, and missing it cost a real false negative:
+    # `// ERROR: -1 does not satisfy >= 0` over a `func bad_abs` block was read as an example
+    # that should COMPILE, failed, and was filed under UNVERIFIABLE instead of being counted
+    # as the error demonstration it is.
+    echo "$body" | grep -m1 -vE '^[[:space:]]*$' | grep -qE '^[[:space:]]*//[[:space:]]*(ERROR|Compile error|E[0-9]{3})' && expect_fail=1
     # make it a program
     # ★ The program is written into the REPOSITORY ROOT, not into $TMP. Module paths resolve
     # relative to the source file's directory, so an example that says `import std.c.{…}` can
@@ -86,6 +92,18 @@ for f in "$TMP"/b*.txt; do
     # The fragment count is therefore not noise to be suppressed — it is the number to REDUCE.
     # An example nothing can check is a claim nobody is testing.
     if [ $rc -ne 0 ] && [ $expect_fail -eq 0 ] && [ $selfcontained -eq 0 ]; then
+        # ★ NOT EVERY FAILURE HERE IS AN UNCHECKABLE FRAGMENT. A fragment that fails on a
+        # PARSE or NAME error (E100, E106, E012, ...) really is the wrapper talking. One that
+        # fails on a PROOF diagnostic — bounds, overflow, borrows, initialisation — compiled
+        # far enough to be judged, and the judgement was that the documented code is unsafe.
+        # That is the page making a false claim, and filing it under "backlog" hides it: the
+        # `int` alias fix turned five such fragments red and this bucket absorbed all five
+        # without the total moving enough to notice.
+        if echo "$out" | grep -qE '^\[E(004|005|019|082|085|086|126|130|131)\]'; then
+            falseclaim=$((falseclaim+1))
+            echo "  ★ $page:$ln — fragment draws a PROOF diagnostic: the documented code is not safe"
+            echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'
+        fi
         unchecked=$((unchecked+1))
         case "$page" in README.md) unchecked_readme=$((unchecked_readme+1)) ;;
                         *)         unchecked_lang=$((unchecked_lang+1))     ;; esac
@@ -138,5 +156,6 @@ echo "  UNVERIFIABLE fragments   : $unchecked   ← not noise: a claim nobody te
 echo "      README.md   : $unchecked_readme   <- must stay 0"
 echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a regression"
 echo "  FLAGS named but not accepted : $flag_bad   ← a claim about the binary, now tested"
+echo "  fragments drawing a PROOF diagnostic : $falseclaim   ← a false SAFETY claim, must stay 0"
 echo "=================================================================="
-[ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $flag_bad -eq 0 ] && exit 0 || exit 1
+[ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] && exit 0 || exit 1
