@@ -445,6 +445,7 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
     // recorded, exactly as for a named enum: that is the backend's choice, not the IR's.
     if (t->kind == TYPE_FUNC) {
         IrType *ft = ir_type_new(c->a, IRT_FUNC);
+        ft->fn_is_total = t->func_is_total;      // *func vs *proc — the arrow's effect bound
         ft->elem = t->element_type ? ir_lower_type(c, t->element_type) : NULL;
         int n = 0; for (TypeList *p = t->func_params; p; p = p->next) n++;
         ft->n_fields = n;

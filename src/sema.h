@@ -3501,6 +3501,9 @@ static void mrec_walk_stmt_list(StmtList *list, void (*visit)(Decl *)) {
 │ those eligible, emits W130 with the suggestion.                  │
 ╚─────────────────────────────────────────────────────────────────*/
 
+// Defined below, next to the effect collector that shares it (D-42).
+static bool sema_call_via_fnptr(Expr *callee, bool *is_total);
+
 static bool proc_w130_eligible;       // false on any violation
 static Decl *proc_w130_self;          // decl being analyzed (to detect self-recursion)
 static bool proc_w130_has_while_no_measure;  // while w/o decreasing seen
@@ -3523,6 +3526,12 @@ static void proc_w130_visit_expr(Expr *e) {
                 memcmp(callee->as.identifier_expr.id->name, "panic", 5) == 0) {
                 proc_w130_eligible = false;
                 return;
+            }
+            {   // D-42: a call through a `*proc` pointer is observably effectful, so the
+                // function is NOT eligible to be suggested as `func`. Without this, W130
+                // advised exactly the change that breaks P4.
+                bool ft = false;
+                if (sema_call_via_fnptr(callee, &ft) && !ft) { proc_w130_eligible = false; return; }
             }
             if (callee && callee->decl) {
                 DeclKind k = callee->decl->kind;
@@ -3648,15 +3657,41 @@ static void eff_visit_stmt(Stmt *s);
 static void eff_visit_list(StmtList *l) { for (; l; l = l->next) eff_visit_stmt(l->stmt); }
 static EffectSet effect_full(Decl *d);   // E2: transitive, memoized
 
+// D-42: a call THROUGH A FUNCTION POINTER. The callee resolves to a VARIABLE (a parameter or
+// local of type `*func(..)R` / `*proc(..)R`), not to a function declaration, so every effect
+// path that keys on `callee->decl->kind` missed it entirely: an indirect call contributed
+// NOTHING, a function whose only impurity was calling through a pointer came out pure and
+// total, W130 advised downgrading it to `func`, and taking that advice produced a `func` that
+// performs IO — which P4 says cannot happen.
+//
+// The arrow carries its own bound. `*func` targets are checked total and pure at assignment
+// (E122 / fnptr_totality_fail), so a call through one contributes nothing; a `*proc` may do
+// anything observable. This is Nielson & Nielson's latent effect, read off the type instead of
+// off a declaration that is not there.
+static bool sema_call_via_fnptr(Expr *callee, bool *is_total) {
+    if (!callee) return false;
+    Type *t = callee->type;
+    if ((!t || t->kind != TYPE_FUNC) && callee->decl &&
+        callee->decl->kind == DECL_VARIABLE)
+        t = callee->decl->as.variable_decl.type;
+    if (!t || t->kind != TYPE_FUNC) return false;
+    if (is_total) *is_total = t->func_is_total;
+    return true;
+}
+
 static void eff_visit_expr(Expr *e) {
     if (!e) return;
     switch (e->kind) {
         case EXPR_CALL: {
             Expr *callee = e->as.call_expr.callee;
+            bool fnptr_total = false;
             if (callee && callee->kind == EXPR_IDENTIFIER && callee->as.identifier_expr.id &&
                 callee->as.identifier_expr.id->length == 5 &&
                 memcmp(callee->as.identifier_expr.id->name, "panic", 5) == 0) {
                 g_eff_acc |= EFFECT_RAISES;
+            } else if (sema_call_via_fnptr(callee, &fnptr_total)) {
+                // D-42: charge the arrow's bound, not nothing.
+                if (!fnptr_total) g_eff_acc |= EFFECT_IO | EFFECT_RAISES | EFFECT_DIVERGE;
             } else if (callee && callee->decl) {
                 // E2: a call carries the callee's WHOLE effect set (transitive).
                 // effect_full resolves extern func -> {}, extern proc -> IO,

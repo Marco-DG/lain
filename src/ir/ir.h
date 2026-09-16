@@ -69,6 +69,18 @@ typedef struct IrType {
     // that does not say otherwise is producing.
     bool  is_raw;
     bool  slice_sentinel;   // u8[:0]
+    // IRT_FUNC. The declared EFFECT BOUND on the arrow: true for `*func`, false for `*proc`.
+    // Nielson & Nielson write this as the latent effect of a function type, tau ->^phi tau',
+    // and it is the reason a function type has to exist at all for effects: a declaration's
+    // effect row cannot follow a value that is passed around, but the TYPE can.
+    //
+    // Dropping it at lowering made every indirect call unattributable, and the effect pass
+    // then charged an indirect call NOTHING — so a function whose only impurity was calling
+    // through a pointer came out `{}` (pure & total), W130 advised downgrading it to `func`,
+    // and taking that advice produced a `func` that performs IO (D-42). The bound is
+    // conservative in the right direction: false ("may do anything") is the default for any
+    // builder that does not say otherwise.
+    bool  fn_is_total;
     int64_t array_len;      // IRT_ARRAY fixed length (>= 0)
     // ── B4: a STATIC REFINEMENT carried ON the type ─────────────────────────
     // The interval a value of this type is known to inhabit, tighter than its width allows.

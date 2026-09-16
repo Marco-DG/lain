@@ -46,6 +46,27 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
             if (ins->op != IR_CALL) continue;
             const IrName *cn = ins->aux.callee;
             if (ireff_name_is(cn, "panic", 5)) { e |= IR_EFFECT_RAISES; continue; }
+            // D-42: an INDIRECT call (aux.callee == NULL; operand 0 is the callee VALUE)
+            // charged nothing at all, so a function whose only impurity was calling through a
+            // pointer came out `{}` — pure and total. W130 then advised downgrading it to
+            // `func`, taking that advice was accepted, and the result was a `func` that
+            // performs IO. P4 says a `func` is referentially transparent; it was not.
+            //
+            // It escaped only because no `const` attribute is emitted for a function with a
+            // function-pointer parameter, so gcc had nothing to elide. That is an unrelated
+            // conservatism, not a defence.
+            //
+            // The answer is the arrow's effect bound, which the type now carries: a `*func`
+            // target is verified total and pure, so a call through it contributes nothing; a
+            // `*proc` target may do anything observable. This is the same rule as IR_OPAQUE
+            // above, and it is Nielson & Nielson's latent effect read off the type.
+            if (!cn) {
+                IrValue *tgt = ins->n_operands >= 1 ? ins->operands[0] : NULL;
+                IrType  *tt  = tgt ? tgt->type : NULL;
+                bool total = tt && tt->kind == IRT_FUNC && tt->fn_is_total;
+                if (!total) e |= IR_EFFECT_IO | IR_EFFECT_RAISES | IR_EFFECT_DIVERGE;
+                continue;
+            }
             IrFunc *callee = ireff_find(mod, cn);
             if (callee) e |= ir_effects(callee, mod);   // transitive (memoized)
             else       e |= IR_EFFECT_IO;               // unknown callee ⇒ opaque external effect
