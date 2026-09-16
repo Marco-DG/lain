@@ -1429,13 +1429,16 @@ func peek(data u8[:0], pos int) int {
 
 **While loops with `in`:**
 ```lain
-func find_zero(data u8[:0]) int {
-    var i = 0
+// The counter is a `usize`, and it has to be: `i in data` bounds it by `data.len`, which is
+// a usize, so an `int` counter can leave i32 on a long enough slice. The not-found answer is
+// the length rather than -1, for the same reason — it keeps the return type usize.
+func find_zero(data u8[:0]) usize {
+    var i usize = 0
     while i in data decreasing data.len - i {
         if (data[i] as int) == 0 { return i }   // safe: in-guarded
         i += 1
     }
-    return 0 - 1
+    return data.len
 }
 ```
 
@@ -2262,9 +2265,11 @@ proc process() {
 ### ADT and Pattern Matching
 
 ```lain
+// The payload fields are REFINED, and they have to be: `r * r * 314` on an unbounded int
+// overflows long before the division brings it back.
 type Shape {
-    Circle    { radius int }
-    Rectangle { width int, height int }
+    Circle    { radius int >= 0 and <= 1000 }
+    Rectangle { width int >= 0 and <= 1000, height int >= 0 and <= 1000 }
     Point
 }
 
@@ -2303,9 +2308,10 @@ proc main() int {
 ### Bounded While Loop in a Pure Function (Lexer)
 
 ```lain
-// String length as a pure, provably-terminating function
-func string_length(src u8[:0]) int {
-    var i = 0
+// String length as a pure, provably-terminating function.
+// The counter is a `usize` because `i in src` bounds it by `src.len`, which is one.
+func string_length(src u8[:0]) usize {
+    var i usize = 0
     while i in src decreasing src.len - i {
         i += 1
     }
@@ -2313,8 +2319,8 @@ func string_length(src u8[:0]) int {
 }
 
 // Scan for a delimiter, safe with in-guard and and-chain
-func scan_until(src u8[:0], delim u8) int {
-    var i = 0
+func scan_until(src u8[:0], delim u8) usize {
+    var i usize = 0
     while i in src and (src[i] as int) != (delim as int) decreasing src.len - i {
         i += 1
     }

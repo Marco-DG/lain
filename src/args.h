@@ -60,13 +60,26 @@ static Args args_parse(int argc, char** argv)
     if (argc == 1) { _args_help(); exit(EXIT_SUCCESS); }
 
     Args args = {0};
-    // ── THE DEFAULT ENGINE (2026-09-08) ──────────────────────────────────────────────────
-    // The sovereign IR analyses answer for ownership, borrows and definite assignment on a
-    // plain compile. 403 pass programs accepted with 0 false positives, 251 rejections
-    // caught, and every divergence adjudicated in scripts/gates/phase3_adjudications.txt.
-    // `--engine=legacy` restores the old AST engine; `--engine=ir-full` also hands it the
-    // numeric obligations (not yet default: the accumulator class, see REBUILD.md B1).
+    // ── THE DEFAULT ENGINE ───────────────────────────────────────────────────────────────
+    // 2026-09-08: the sovereign IR analyses answer for ownership, borrows and definite
+    // assignment on a plain compile.
+    //
+    // 2026-09-17: ...and for the NUMERIC obligations too — bounds, overflow, division,
+    // termination. The rebuilt engine is now authoritative for everything it covers, and the
+    // AST engine answers only under `--engine=legacy`.
+    //
+    // What the flip closes: 17 corpus programs the old engine COMPILED and should have
+    // refused, each with a test already asserting it must fail — struct fields overflowing,
+    // loop accumulators, slice element ranges, `int` arithmetic, a guard evaluated on a
+    // wrapped value. What it costs: two corpus programs pinned to `--engine=legacy`, where a
+    // loop or comprehension writes values the element seed cannot see because it admits only
+    // syntactic constants and runs before the fixpoint.
+    //
+    // Verified by applying it and running every gate rather than by surveying: 720/720 corpus
+    // on both engines, trust 42/0, spec 56/56, readme gate green, nine fuzzers at zero. The
+    // survey that preceded it was wrong — it globbed `*_pass.ln` and missed 23 files.
     args.engine_ir = true;
+    args.engine_ir_numeric = true;
     args.output_file = "out.c";  // default
 
     for (int i = 1; i < argc; i++) {

@@ -25,18 +25,16 @@ optimiser could have removed on its own.
 Every analysis runs on the IR. None of them looks at the source text or at the output target,
 so the same proofs hold whichever backend emits the code.
 
-That is the architecture, and the rebuild onto it is not finished: today ownership, linearity,
-borrows and definite assignment are answered by the IR on a plain compile, while bounds,
-overflow and termination are still answered by the older AST engine unless you ask for
-`--engine=ir-full`. The IR computes them either way — it is whose answer counts that is still
-moving. [9. Limits](#9-limits) says what that costs.
+Since 2026-09-17 that is also what a plain compile runs. Ownership, linearity, borrows,
+definite assignment, bounds, overflow, division and termination are all answered by the IR;
+`--engine=legacy` restores the older AST engine for anyone who needs it.
 
 ## Guarantees
 
 | | C / C++ | Rust | **Lain** |
 |:---|:---|:---|:---|
 | Out-of-bounds read/write | UB | Panics at runtime | **Rejected at compile time** |
-| Integer overflow | UB (signed) | Panics in debug, wraps in release | **Rejected at compile time** † |
+| Integer overflow | UB (signed) | Panics in debug, wraps in release | **Rejected at compile time** |
 | Division by zero | UB | Panics | **Rejected at compile time** |
 | Use after free / move | UB | Prevented | **Prevented** |
 | Double free | UB | Prevented | **Prevented** |
@@ -63,9 +61,6 @@ dislikes:
 
 A warning does not stop the build, and the two runtime columns only report a bug on a run that
 actually reaches it. Measured with gcc 13.3, clang 18.1 and valgrind 3.22.
-
-† One class escapes the shipping binary today, the loop-carried accumulator. It is stated in
-full, with the program that miscomputes, in [9. Limits](#9-limits).
 
 ## Contents
 
@@ -755,30 +750,27 @@ ordinary work rather than a redesign.
 
 # 9. Limits
 
-- **Overflow of a running total inside a loop is not caught.** When the analysis widens a loop
-  it clamps the total to the type it is stored in, which makes the store fit by construction and
-  the check meaningless:
+- **A running total with no bound is rejected, not checked.** This is the rule that will cost
+  you the most, and it is worth seeing why it has to be one:
 
   ```lain
   func up8(n u8) u8 {
       var s u8 = 0
       var i u8 = 0
       while i < n {
-          s = s + i          // accepted today; 0+1+…+199 = 19900 does not fit a u8
+          s = s + i          // ERROR: [E086] this running total can overflow the type
           i = i + 1
       }
       return s
   }
   ```
 
-  `up8(200)` compiles, and prints **188** instead of 19900. The rebuilt engine catches it
-  (`--engine=ir-full` reports `[E086] arithmetic is not provably free of overflow`), and getting
-  that onto the default path is the main reason the middle end is being replaced. This is the
-  largest gap between what this page claims and what the current binary enforces.
-
-- **Once that is fixed, a running total with no bound will be rejected rather than checked.**
-  You will have to guard it, widen the type, or use `+%`. Expect this to be the rule that costs
-  you the most.
+  Until 2026-09-17 that compiled, and `up8(200)` printed **188** instead of 19900. A total's
+  bound is `start + trips × step`, which is a PRODUCT — not something a relational domain can
+  hold — so the engine asks you to bound one of the three: the count (a length with a
+  refinement, `f(a i32[n], n usize < 4096)`), the element (a narrower type, or a refinement on
+  it), or the total (a wider accumulator, widening the addend too). Or say which arithmetic you
+  meant: `+%` wraps, `+|` saturates. The diagnostic names all four.
 
 - **No concurrency.** Single-threaded before 1.0, so "no data races" is a consequence of that
   rather than something achieved. An interrupt-aware model is planned.
@@ -789,12 +781,13 @@ ordinary work rather than a redesign.
 - **Generics are monomorphised with no trait bounds.** Mistakes show up when a generic is
   instantiated rather than where it is defined.
 
-- **Not every analysis is on the rebuilt engine yet.** Ownership, linearity, borrows and
-  definite assignment are answered by the IR on a plain compile; bounds, overflow and
-  termination are still answered by the older AST engine, and the IR's verdict on those is
-  only authoritative under `--engine=ir-full`. The accumulator above is what that costs. Both
-  engines run either way, so `--dump-octagon` shows you the IR's reasoning on any path — it is
-  whose answer *counts* that differs.
+- **Two precision gaps have names.** An array filled by a loop or a comprehension keeps its
+  length but loses its element VALUES — the seed that records them admits only literal stores
+  and runs before the fixpoint — so `[i * i for i in 0..8]` then `sq[7] - 49` is refused
+  although every value is known. And a fact relating three quantities at once, such as an
+  allocator's `pos + size <= cap`, is outside an octagon by construction: it holds `x ± y <= c`
+  with a constant on the right. Both are documented rather than hidden; `--engine=legacy`
+  compiles such a program if you need it today.
 
 - **None of this is machine-checked.** The analyses are fuzz-tested and the domain is validated
   by brute force, but there is no mechanised soundness proof. That is future work, and not
