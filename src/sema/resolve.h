@@ -270,6 +270,41 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         snprintf(cnames, sclen, "%s_%s", safe_module_path, raws);
         for (char *p = cnames; *p; p++) if (*p == '.') *p = '_';
   
+        // ★ A FIELD INVARIANT THE COMPILER IGNORES IS AN UNPAID ASSUME. A field refinement whose
+        // right-hand side is a LITERAL is enforced at construction and usable in proofs; one that
+        // names ANOTHER FIELD — `type B { cap usize, pos usize <= cap }` — parsed, and then did
+        // nothing at all: it was not carried as a fact and `B(5, 10)` compiled clean. A reader
+        // has every reason to believe the invariant holds, and nothing checks it.
+        //
+        // Relational field invariants are planned (the `in`-invariant work) and not built. Until
+        // they are, say so. Nothing in std/ or tests/ uses the form, so refusing it costs
+        // nothing, and refusing what is not checked is the same rule the IR applies when it
+        // marks a function `incomplete` rather than passing it silently.
+        for (DeclList *f = d->as.struct_decl.fields; f; f = f->next) {
+            if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
+            for (ExprList *c = f->decl->as.variable_decl.constraints; c; c = c->next) {
+                if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+                Expr *rhs = c->expr->as.binary_expr.right;
+                if (!rhs || rhs->kind == EXPR_LITERAL) continue;
+                Id *fnm = f->decl->as.variable_decl.name;
+                fprintf(stderr,
+                    "[E132] Error Ln %li, Col %li: field '%.*s' of struct '%.*s' has a refinement "
+                    "that names another field.\n"
+                    "       Relational field invariants are not implemented, and this one would be\n"
+                    "       silently ignored: it is neither checked when the struct is built nor\n"
+                    "       usable as a fact afterwards. Refusing it rather than pretending.\n"
+                    "       A refinement against a LITERAL (`%.*s usize <= 4096`) is supported.\n",
+                    (long)(c->expr->line ? c->expr->line : (f->decl ? f->decl->line : d->line)),
+                    (long)(c->expr->line ? c->expr->col  : (f->decl ? f->decl->col  : d->col)),
+                    (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
+                    (int)id->length, id->name,
+                    (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "");
+                diagnostic_show_line(c->expr->line ? c->expr->line : (f->decl ? f->decl->line : d->line),
+                                     c->expr->line ? c->expr->col  : (f->decl ? f->decl->col  : d->col));
+                exit(1);
+            }
+        }
+
         Type *sty = type_simple(sema_arena, id);
         sema_insert_global(raws, cnames, sty, d, false);
   

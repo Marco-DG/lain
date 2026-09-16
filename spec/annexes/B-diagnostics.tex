@@ -378,4 +378,5 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E129} & \lain{assume} outside an \lain{unsafe} block --- use \lain{assert} to have the fact proven \\[2pt]
 \diagcode{E130} & a declared \lain{effects} row does not cover what the body does \\[2pt]
 \diagcode{E131} & an \lain{extern} declares a slice parameter --- a slice has no C representation; pass a pointer and a length \\[2pt]
+\diagcode{E132} & a struct field's refinement names another field --- relational field invariants are not implemented, and one that is ignored is an unpaid assume \\[2pt]
 \end{longtable}

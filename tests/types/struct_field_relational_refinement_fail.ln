@@ -1,0 +1,16 @@
+// EXPECT: [E132]
+// A field invariant the compiler ignores is an unpaid assume. A field refinement against a
+// LITERAL is enforced when the struct is built and usable as a fact afterwards; one that names
+// another field parsed and then did nothing at all — `B(5, 10)` compiled clean with
+// `pos usize <= cap` declared, and no proof could use it either. A reader has every reason to
+// believe such an invariant holds.
+//
+// Relational field invariants are planned (the `in`-invariant work) and not built, so this is
+// refused rather than ignored — the same rule the IR applies when it marks a function
+// `incomplete` instead of passing it silently. Nothing in std/ or tests/ used the form.
+type BumpLike {
+    cap usize,
+    pos usize <= cap
+}
+
+proc main() i32 { return 0 }
