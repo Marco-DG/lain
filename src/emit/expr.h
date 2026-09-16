@@ -982,12 +982,24 @@ void emit_expr(Expr *expr, int depth) {
                        // Fixed-length slice (Fixed_<T>_N, e.g. a string literal):
                        // the struct has no `.len` member — use the known length.
                        EMIT("(size_t)%lld, ", (long long)at->sentinel_len);
+                   } else if (base_arg->kind == EXPR_STRING) {
+                       // D-39: a STRING LITERAL passed to a `u8[]` parameter. Its type carries
+                       // sentinel_is_string, so it misses the fixed-length-slice branch above
+                       // and fell through to `emit_expr(.) ".len"` — emitting `"hi".len`, which
+                       // is not C at all. gcc reports a hard ERROR, so unlike the rest of D-38
+                       // this was never hidden by `-w`; it was hidden by the corpus, which has
+                       // no program of this shape. The literal's length is known here.
+                       EMIT("(size_t)%lld, ", (long long)base_arg->as.string_expr.length);
                    } else {
                        emit_expr(base_arg, depth); EMIT(".len, ");
                    }
                }
                // Emit data pointer
-               if (at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
+               if (base_arg->kind == EXPR_STRING) {
+                   // D-39, the data half. A C string literal is `char*`; the parameter wants
+                   // `const uint8_t*`, and they differ in signedness only.
+                   EMIT("(const uint8_t*)"); emit_expr(base_arg, depth);
+               } else if (at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
                    emit_expr(base_arg, depth);
                    // Native C array — decays to pointer, no .data field.
                } else if (at && at->kind == TYPE_ARRAY && at->array_len == -1) {

@@ -54,6 +54,25 @@ static bool emit_fixed_string_init(Type *ty, Expr *rhs, int depth) {
       // Fixed-length slice encoded in sentinel_len
       is_fixed_like = true;
       fixed_len = (size_t)ty->sentinel_len;
+  } else if ((ty->kind == TYPE_SLICE && !ty->sentinel_str && !ty->sentinel_is_string &&
+              ty->sentinel_len == 0) ||
+             (ty->kind == TYPE_ARRAY && ty->array_len == -1)) {
+      // D-39: a string literal initialising or passed as a plain DYNAMIC slice (`u8[]`).
+      // Neither branch above matches — a dynamic slice has no fixed length and no sentinel —
+      // so this fell through to the caller's generic path, which emitted `Slice_u8 s = "hi";`
+      // ("invalid initializer") and `f("hi".len, "hi".data)` (not C at all). Both are hard gcc
+      // ERRORS, so unlike the rest of D-38 they were never hidden by `-w`; they were hidden by
+      // the corpus, which has no program of either shape. Measured: `u8[]` PARAMETERS are used
+      // 17 times, `u8[]` locals initialised from a literal zero times.
+      //
+      // A dynamic slice is {len, data}, and both are known for a literal.
+      const unsigned char *b = (const unsigned char*)rhs->as.string_expr.value;
+      size_t n = (size_t)rhs->as.string_expr.length;
+      char sb[256]; c_name_for_type(ty, sb, sizeof sb);
+      EMIT("(%s){ .len = %zu, .data = (uint8_t[]){ ", sb, n);
+      for (size_t i = 0; i < n; i++) EMIT("%s0x%02X", i ? ", " : "", b[i]);
+      EMIT("%s} }", n ? " " : "");
+      return true;
   } else if (ty->kind == TYPE_SLICE && (ty->sentinel_str != NULL || ty->sentinel_is_string)) {
       // Sentinel-terminated slice (e.g. u8[:0]) initialized by string literal
       // Coerce fixed string into sentinel slice struct

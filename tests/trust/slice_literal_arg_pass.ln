@@ -1,0 +1,24 @@
+// A string literal passed to a `u8[]` parameter, and a `u8[]` local from a literal.
+// Both emitted HARD gcc errors before D-39 was fixed 2026-09-16.
+//
+//   f("hi")            ->  slice_f("hi".len, "hi".data)                   not C at all
+//   var s u8[] = "hi"  ->  Slice_u8 s = "hi";                             invalid initializer
+//
+// Neither was hidden by `-w` — gcc calls both errors. They were hidden by the CORPUS, which
+// had no program of either shape: `u8[]` parameters are used 17 times, but never receive a
+// literal, and a `u8[]` local from a literal appeared nowhere.
+//
+// In tests/trust/ so the program is RUN and its output checked, not merely compiled.
+
+extern proc libc_printf(fmt *u8, ...) i32
+
+proc show(s u8[]) {
+    libc_printf("%d\n", s.len as i32)
+}
+
+proc main() i32 {
+    show("hello")
+    var t u8[] = "hi!"
+    show(t)
+    return 0
+}
