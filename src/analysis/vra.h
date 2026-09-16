@@ -2213,6 +2213,27 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
     if (!(pr==IR_CMP_SLT||pr==IR_CMP_ULT||pr==IR_CMP_SLE||pr==IR_CMP_ULE)) return false;
     IrValue *ivv = ic->operands[0], *bnd = ic->operands[1];
     IrInstr *ivd = V->def[ivv->id];
+
+    // ★ THE GUARD NEED NOT BE SPELLED `i < n`. A sliding window is guarded `i + 1 < n`, and
+    // that is not a stylistic choice: `i < n - 1` UNDERFLOWS at n == 0 on an unsigned type and
+    // runs the loop on an empty slice (corpus C-7), so the offset form is the only SAFE way to
+    // write the idiom. Reading only a bare LOAD here meant the safe spelling produced no trip
+    // count at all, and every accumulator under it was refused with "the loop has no bounded
+    // trip count" — the diagnostic asking the author to bound something that was bounded.
+    //
+    // `i + k < n` for a constant k >= 0 is `i < n - k` over the integers, so the same recovery
+    // works against a limit lowered by k. k is subtracted from the BOUND rather than added to
+    // the start: the start may be unknown, the bound is what has to be finite anyway.
+    int64_t off = 0;
+    if (ivd && ivd->op==IR_ADD && ivd->n_operands>=2) {
+        IrInstr *ld = V->def[ivd->operands[0]->id];
+        int k = ivd->operands[1]->id;
+        if (ld && ld->op==IR_LOAD && ld->n_operands>=1 &&
+            k>=0 && k<V->nvar && V->cknown[k] && V->cval[k] >= 0) {
+            off = V->cval[k];
+            ivd = ld;
+        }
+    }
     if (!ivd || ivd->op!=IR_LOAD || ivd->n_operands<1) return false;
     int cell = ivd->operands[0]->id;
     if (!vra_is_scalar_cell(V,cell)) return false;
@@ -2220,6 +2241,7 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
 
     int64_t blo,bhi; vra_range(V,W,bnd,&blo,&bhi); (void)blo;
     if (bhi >= INT64_MAX/2) return false;             // an unbounded limit bounds nothing
+    bhi -= off;                                       // `i + k < n`  ==>  `i < n - k`
     int64_t ilo,ihi; bool hl,hh; vra_interval(V,W,cell,&ilo,&hl,&ihi,&hh); (void)ihi; (void)hh;
     if (!hl) ilo = 0;
 

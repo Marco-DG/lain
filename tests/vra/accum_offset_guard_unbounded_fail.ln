@@ -1,0 +1,17 @@
+// LAINFLAGS: --engine=ir-full
+// EXPECT: [E086]
+// The teeth for accum_offset_guard_pass.ln. Reading `i + k < n` as an induction guard must not
+// invent a bound where there is none: with `n` unrefined the trip count is unbounded, the total
+// is T x delta with T unbounded, and the accumulator really can overflow. Lowering the limit by
+// k changes nothing about that — an unbounded limit minus a constant is still unbounded.
+func sum_pairs(a i8[n], n usize) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i + 1 < n decreasing n - i {
+        s = s + (a[i] as i32)
+        i = i + 1
+    }
+    return s
+}
+
+proc main() i32 { return 0 }

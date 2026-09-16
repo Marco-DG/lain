@@ -1,0 +1,23 @@
+// LAINFLAGS: --engine=ir-full
+// B1's trip count from an OFFSET guard. The accumulator bound is T x delta, and T came only
+// from a guard spelled exactly `i < n` — the comparison's left side had to be a bare LOAD of
+// the induction cell. A sliding window is guarded `i + 1 < n`, and that is not a style choice:
+// `i < n - 1` UNDERFLOWS at n == 0 on an unsigned type and runs the loop on an empty slice
+// (corpus C-7), so the offset form is the only SAFE spelling of the idiom. The safe spelling
+// therefore produced no trip count at all and every accumulator under it was refused with
+// "the loop has no bounded trip count" — asking the author to bound something already bounded.
+//
+// `i + k < n` for a constant k >= 0 is `i < n - k` over the integers, so T is recovered against
+// a limit lowered by k. Here: n < 4096, elements are i8, so the total is within [-4096*128,
+// 4096*127] and fits i32 with room to spare.
+proc sum_pairs(a i8[n], n usize < 4096) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i + 1 < n decreasing n - i {
+        s = s + (a[i] as i32)
+        i = i + 1
+    }
+    return s
+}
+
+proc main() i32 { return 0 }
