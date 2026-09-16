@@ -16,5 +16,9 @@ proc main() i32 {
 
     // Narrow both lanes to u8 so the sum is VRA-provable (an i32 lane, like an
     // i32 array element, carries a full range on purpose). c[0]=11, y[0]=0.
-    return ((c[0] as u8) as i32) + (y[0] as i32)
+    // `c[0]` is a lane of `a + b`, so it is an unbounded i32 and narrowing it with `as` is a
+    // real truncation — `as%` says the wrap is intended. The subject here is the vector ops,
+    // and until 2026-09-16 this line could not be judged at all: a vector carried no length
+    // in the IR, so `c[0]` was "no length is known here" rather than an in-range lane.
+    return ((c[0] as% u8) as i32) + (y[0] as i32)
 }

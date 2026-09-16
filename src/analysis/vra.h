@@ -1389,16 +1389,28 @@ static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx) {
 }
 
 static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
+    // ★ `unsafe` waives the BOUNDS obligation too, not only the numeric ones. The flag was
+    // read by vra_check_narrow, vra_check_overflow and vra_check_divzero and by neither of
+    // the two bounds checks, so `unsafe { a[i] }` — which the language documents as turning
+    // these checks off, and which the old engine accepts — was [E085] under --engine=ir-full.
+    // That made every SIMD program in the corpus unbuildable on the new engine.
+    if (ins->unchecked) return;
     if (ins->n_operands<2) return;
     if (ins->result && V->subslice_gep[ins->result->id]) return;  // a subslice start — the make_slice checks it
     int idx = ins->operands[1]->id;
     IrValue *base = ins->operands[0];
     IrInstr *bd = V->def[base->id];
     int64_t clen=-1; int lenvar=-1;
-    if (bd && bd->op==IR_ALLOCA && bd->aux.alloca_ty && bd->aux.alloca_ty->kind==IRT_ARRAY)
-        clen = bd->aux.alloca_ty->array_len;                          // local fixed array
-    else if (base->type && base->type->kind==IRT_ARRAY)
-        clen = base->type->array_len;                                // fixed-array value (e.g. a param)
+    // ★ A VECTOR IS A FIXED-LENGTH THING AND ITS LENGTH IS RIGHT HERE. `IRT_VECTOR` carries N
+    // in the same `array_len` field as `IRT_ARRAY`, and this was reading only the array case —
+    // so `i32x4[0]` reported "no length is known here" and every SIMD program was rejected by
+    // --engine=ir-full while the default accepted it. A lane index is a bounds obligation like
+    // any other; the length was never missing, only unread.
+    if (bd && bd->op==IR_ALLOCA && bd->aux.alloca_ty &&
+        (bd->aux.alloca_ty->kind==IRT_ARRAY || bd->aux.alloca_ty->kind==IRT_VECTOR))
+        clen = bd->aux.alloca_ty->array_len;                          // local fixed array or vector
+    else if (base->type && (base->type->kind==IRT_ARRAY || base->type->kind==IRT_VECTOR))
+        clen = base->type->array_len;                                // fixed-length value (e.g. a param)
     int shape_base = -1;
     if (bd && bd->op==IR_SLICE_DATA && bd->n_operands>=1) {
         int s = bd->operands[0]->id; if (V->slicelen[s]>=0) lenvar=V->slicelen[s];
@@ -1767,6 +1779,7 @@ static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
 // bounds iff 0 ≤ lo AND hi ≤ len(src). (The start elem_ptr is NOT an element access,
 // so it is skipped in vra_check_elem; the real obligation is checked here.)
 static void vra_check_subslice(Vra *V, Octagon *W, IrInstr *ms) {
+    if (ms->unchecked) return;                              // inside `unsafe`, as for vra_check_elem
     if (ms->n_operands<2) return;
     IrInstr *ndd = V->def[ms->operands[0]->id];
     if (!ndd || ndd->op!=IR_ELEM_PTR || ndd->n_operands<2) return;    // array→slice decay, not a subslice
