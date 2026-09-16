@@ -283,6 +283,8 @@ static int vra_canon_cell(Vra *V, int v) { return (v>=0 && v<V->nvar && V->cellc
 //     no IR_STORE here to see — the same argument vra_seed_element_ranges makes for arrays.
 // A store to the base ITSELF (a whole-struct assignment, `p = q`) is handled in the STORE
 // transfer by forgetting the base's field cells: it writes them all with nothing here to see.
+static void vra_forget_fields_of(Vra *V, Octagon *W, int base);   // fwd
+
 static int vra_field_cell_base(Vra *V, int v) {
     IrInstr *d = (v>=0 && v<V->nvar && V->def) ? V->def[v] : NULL;
     if (!d || d->op != IR_FIELD_PTR || d->n_operands < 1) return -1;
@@ -291,10 +293,36 @@ static int vra_field_cell_base(Vra *V, int v) {
         (rt->elem->kind != IRT_INT && rt->elem->kind != IRT_BOOL)) return -1;
     int base = d->operands[0]->id;
     IrInstr *bd = (base>=0 && base<V->nvar) ? V->def[base] : NULL;
-    if (!bd || bd->op != IR_ALLOCA || !bd->aux.alloca_ty ||
-        bd->aux.alloca_ty->kind != IRT_STRUCT) return -1;
-    if (V->escaped && V->escaped[base]) return -1;
+    if (bd) {
+        if (bd->op != IR_ALLOCA || !bd->aux.alloca_ty ||
+            bd->aux.alloca_ty->kind != IRT_STRUCT) return -1;
+        if (V->escaped && V->escaped[base]) return -1;
+        return base;
+    }
+    // ★ ...OR A STRUCT PARAMETER. No defining instruction means a parameter, and a `var B`
+    // one points at storage the caller owns — the same relationship a `var i32` parameter has,
+    // which vra_is_param_cell already models as a cell. Without this, `a.room` at a guard and
+    // `a.room` at its use were two independent unknown loads and no guard on a field could
+    // settle anything: `if a.room > a.cap { return } ... a.cap - a.room` stayed an underflow.
+    //
+    // A `var` parameter is marked ESCAPED, which is what havocs it at a call — so field cells
+    // on one are dropped at every call too (see the IR_CALL transfer). What is NOT re-derived
+    // is aliasing between two `var` parameters of the same call: the language forbids that
+    // (two mutable borrows of one value is E004, which is the same promise `restrict` carries
+    // into the emitted C), and scripts/fuzz/fuzz_alias.sh is the harness that tests it.
+    IrValue *bv = (base>=0 && base<V->nvar) ? V->val[base] : NULL;
+    if (!bv || !bv->type || bv->type->kind != IRT_PTR || !bv->type->elem ||
+        bv->type->elem->kind != IRT_STRUCT) return -1;
     return base;
+}
+
+// Every field cell of `base` becomes unknown. Used wherever the whole struct is written with
+// no per-field IR_STORE to see: a call that may write through an escaped address, an opaque.
+static void vra_forget_fields_of(Vra *V, Octagon *W, int base) {
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *q=b->instrs; q; q=q->next)
+            if (q->op==IR_FIELD_PTR && q->result && q->n_operands>=1 &&
+                q->operands[0]->id == base) oct_forget(W, vra_canon_cell(V, q->result->id));
 }
 // pre-pass: def sites, constants, and canonical slice-length vars. A slice's length
 // var is its make_slice length operand or its first slice_len read; it is propagated
@@ -581,8 +609,15 @@ static void vra_prepass(Vra *V) {
 
     // A `var` scalar parameter points at storage the CALLER owns, so anything we hand the
     // pointer to may write it: it havocs at a call exactly like an escaped alloca.
+    // ...and so does a `var` STRUCT parameter, now that its FIELDS are cells. It was marked
+    // neither escaped nor persisting, because before field cells it carried no numeric fact
+    // worth havocing — a pointer to a struct has no range. With `a.room` tracked, skipping it
+    // meant a callee could set a field out of range and the caller kept the value from before
+    // the call. Same storage relationship as the scalar case, so the same treatment.
     for (IrParam *p=V->f->params; p; p=p->next)
-        if (p->value && vra_is_param_cell(V, p->value->id)) {
+        if (p->value && (vra_is_param_cell(V, p->value->id) ||
+                         (p->value->type && p->value->type->kind==IRT_PTR &&
+                          p->value->type->elem && p->value->type->elem->kind==IRT_STRUCT))) {
             V->escaped[p->value->id] = true;
             // ...and PERSISTS: the storage is the caller's, and we cannot see whether the
             // caller stashed its address somewhere a callee of ours can reach. (Recovering
@@ -1156,7 +1191,10 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             // REST of the function stay analysed instead of the whole function being
             // written off as `incomplete`.
             if (ins->aux.opaque.writes)
-                for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) oct_forget(W, cell);
+                for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) {
+                    oct_forget(W, cell);
+                    vra_forget_fields_of(V, W, cell);
+                }
             if (r>=0) oct_forget(W, r);
             break;
         case IR_CALL: {
@@ -1187,13 +1225,23 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                         if (k>=64 || ((cw>>k)&1u))
                             if (vra_arg_cell(V, ins->operands[k]) == VRA_ARG_UNKNOWN) blanket = true;
                 if (blanket) {
-                    for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) oct_forget(W, cell);
+                    for (int cell=0; cell<V->nvar; cell++) if (V->escaped[cell]) {
+                        oct_forget(W, cell);
+                        vra_forget_fields_of(V, W, cell);
+                    }
                 } else {
-                    for (int cell=0; cell<V->nvar; cell++) if (V->persist[cell]) oct_forget(W, cell);
+                    for (int cell=0; cell<V->nvar; cell++) if (V->persist[cell]) {
+                        oct_forget(W, cell); vra_forget_fields_of(V, W, cell);
+                    }
                     for (int k=0; k<ins->n_operands; k++) {
                         if (k<64 && !((cw>>k)&1u)) continue;
                         int c = vra_arg_cell(V, ins->operands[k]);
-                        if (c>=0) oct_forget(W, c);
+                        // The FIELD cells of an argument go with it: a callee handed the
+                        // struct's address writes any field of it, and there is no per-field
+                        // IR_STORE here to see. Forgetting only the base left `a.room` reading
+                        // as whatever it was before the call — an accepted program whose
+                        // callee had just set it out of range.
+                        if (c>=0) { oct_forget(W, c); vra_forget_fields_of(V, W, c); }
                     }
                 }
             }

@@ -1,6 +1,6 @@
 // std/bump.ln — Bump (arena) allocator
 //
-// A BumpAlloc tracks a position inside a caller-owned backing buffer.
+// A BumpAlloc tracks how much of a caller-owned backing buffer is left.
 // The caller creates a fixed array, then passes it to bump_init.
 // Individual allocations are tracked by the returned index; the caller
 // accesses bytes via the original backing array.
@@ -15,11 +15,41 @@
 //   if off >= 0 {
 //       // write into backing[off .. off+64]
 //   }
+//
+// ── WHY THIS COUNTS DOWN ─────────────────────────────────────────────────────
+// It used to store `pos`, the offset of the next free byte, and advance it:
+//
+//     if size > a.cap - a.pos { return -1 }
+//     a.pos = a.pos + size
+//
+// That is correct, and it is not PROVABLE — not by this engine and not by any
+// decidable relational domain of the kind P3 commits to. Preserving its own
+// invariant means showing `pos + size <= cap`, which relates THREE quantities
+// at once; an octagon holds `x ± y <= c`, with a constant on the right. The
+// engine was not being conservative, it was reporting that the data structure's
+// safety condition could not be written down.
+//
+// Storing the REMAINING bytes instead makes every obligation two-quantity:
+//
+//     size <= room   ⇒   room - size >= 0        the update, from the guard alone
+//     room <= cap    ⇒   cap - room >= 0         the offset, from the invariant
+//
+// Same allocator, same arithmetic, same machine code — one representation can
+// state its own invariant and the other cannot. `bump_remaining` also stops
+// doing arithmetic at all.
+//
+// One piece is still missing: `room <= cap` is a relational field invariant,
+// which the language does not implement yet (it is refused as E132 rather than
+// silently ignored). Until it lands, the two places that need it say so with an
+// explicit guard. Those guards are dead in practice — `room` is only ever set to
+// `cap` or decreased — and they come out when the invariant can be declared:
+//
+//     type BumpAlloc { data *u8, cap usize, room usize <= cap }
 
 type BumpAlloc {
     data *u8    // raw pointer into caller's backing buffer
     cap  usize  // total capacity in bytes
-    pos  usize  // current allocation offset
+    room usize  // bytes still available; invariant: room <= cap
 }
 
 // Initialise from a mutable byte slice.
@@ -28,37 +58,55 @@ func bump_init(buf var u8[]) BumpAlloc {
     var a BumpAlloc
     a.data = buf.data
     a.cap  = buf.len
-    a.pos  = 0
+    a.room = buf.len      // room == cap, so the invariant holds on creation
     return a
 }
 
 // Allocate `size` bytes. Returns byte offset into the backing buffer,
 // or -1 if the allocator is full.
 func bump_alloc(var a BumpAlloc, size usize) i32 {
-    // Overflow-safe capacity check. `a.pos + size` can wrap around usize for a
-    // huge `size`, making the naive `a.pos + size > a.cap` pass and hand out an
-    // out-of-bounds offset. The invariant a.pos <= a.cap holds (pos only grows
-    // by size after this check succeeds), so a.cap - a.pos never underflows.
-    if size > a.cap - a.pos {
+    if a.room > a.cap {
+        return -1         // unreachable; stands in for the `room <= cap` invariant
+    }
+    if size > a.room {
         return -1
     }
-    var off = a.pos
-    a.pos = a.pos + size
+    var off = a.cap - a.room
+    if off > 2147483647 {
+        return -1         // an offset this API cannot represent: see the note below
+    }
+    a.room = a.room - size
     return off as i32
 }
+
+// ── WHY THE OFFSET IS RANGE-CHECKED ──────────────────────────────────────────
+// `bump_alloc` reports failure as -1, so it returns an i32, while the offset it
+// computes is a usize. On a backing buffer larger than 2 GiB an offset can exceed
+// INT32_MAX, and `off as i32` then truncates and hands back a DIFFERENT offset —
+// a silent wrong answer, not a refusal. That was true of this file before the
+// rewrite too; nothing was checking it.
+//
+// `as` is the PROVEN cast tier: it compiles only where the value is shown to fit,
+// which is why the check has to be here. The guard makes the allocator refuse an
+// allocation it cannot describe, which is the honest behaviour for this signature.
+// It disappears if the API ever returns a usize offset with the failure reported
+// some other way.
 
 // Reset: all previously allocated regions are considered freed.
 // Does NOT zero-fill; caller is responsible for reuse safety.
 func bump_reset(var a BumpAlloc) {
-    a.pos = 0
+    a.room = a.cap
 }
 
-// Remaining bytes available.
+// Remaining bytes available. No arithmetic: it is what the allocator stores.
 func bump_remaining(a BumpAlloc) usize {
-    return a.cap - a.pos
+    return a.room
 }
 
 // Bytes allocated so far.
 func bump_used(a BumpAlloc) usize {
-    return a.pos
+    if a.room > a.cap {
+        return 0          // unreachable; stands in for the `room <= cap` invariant
+    }
+    return a.cap - a.room
 }
