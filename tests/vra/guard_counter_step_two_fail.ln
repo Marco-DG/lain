@@ -1,0 +1,16 @@
+// LAINFLAGS: --engine=ir-full
+// EXPECT: [E086]
+// Teeth for guard_counter_offset_pass.ln. STEP ONE is load-bearing in that proof: with step s,
+// `i_prev + 1 < n` gives i_prev <= n - 2 and i = i_prev + s <= n + s - 2, so `i + 1` reaches
+// n + s - 1 and can leave the type. Only a step of exactly one keeps the bound at n.
+proc sw(a i32[n], n usize) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i + 1 < n {
+        s = s +% a[i]
+        i = i + 2
+    }
+    return s
+}
+
+proc main() i32 { return 0 }

@@ -1,0 +1,25 @@
+// LAINFLAGS: --engine=ir-full
+// A loop guard's OWN arithmetic. `while i + 1 < n` is the only SAFE spelling of a sliding window
+// — `i < n - 1` underflows at n == 0 on an unsigned type and runs the loop on an empty slice
+// (corpus C-7) — and its `i + 1` was reported as a possible overflow.
+//
+// The reason was structural, not a missing fact: a guard's arithmetic is evaluated at the loop
+// HEADER, before the guard refines anything, so it cannot benefit from the guard it is part of.
+// With `i < n` the increment lives in the BODY where `i <= n - 1` already holds; with
+// `i + 1 < n` the arithmetic IS the condition and meets only the widened `i` in [0, +inf].
+//
+// The invariant is inductive and needs a case split on the first iteration, which an octagon
+// cannot state, so it is proved syntactically. At every header entry after the first, the
+// previous visit had `i_prev + 1 < n`, so i_prev <= n - 2, so i = i_prev + 1 <= n - 1, so
+// `i + 1 <= n <= typemax`. On the first entry i is 0 and `0 + 1` is checked directly.
+proc sw(a i32[n], n usize) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i + 1 < n decreasing n - i {
+        s = s +% (a[i] +% a[i + 1])
+        i = i + 1
+    }
+    return s
+}
+
+proc main() i32 { return 0 }

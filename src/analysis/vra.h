@@ -1745,6 +1745,7 @@ static void vra_arith_range(IrOp op, int64_t alo,int64_t ahi, int64_t blo,int64_
 // interval no longer fits in the domain's own int64.
 static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
                            int64_t tlo, int64_t thi); // B1, defined below
+static bool vra_guard_counter_fits(Vra *V, Octagon *W, IrInstr *ins, int64_t thi); // fwd
 
 static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
                              IrInstr *at, int64_t line, int64_t col) {
@@ -1850,6 +1851,9 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     }
     // B1: a 64-bit accumulator has no wider type to widen INTO, so its obligation lands
     // here rather than at a narrowing. Same product bound, same place to ask for it.
+    // A loop guard's OWN arithmetic is evaluated before the guard refines anything, so it has
+    // to be proved from the loop's shape instead. See vra_guard_counter_fits.
+    if (!c.ok) c.ok = vra_guard_counter_fits(V, W, ins, thi);
     if (!c.ok && ins->result) c.ok = vra_accum_info(V, W, ins->result, &c, tlo, thi);
     vra_add_check(V, c);
 }
@@ -2422,6 +2426,84 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
     if (bhi < ilo) { *T = 0; return true; }
     *T = (bhi - ilo + step - 1) / step;                // ceil((limit − start) / step)
     return *T >= 0;
+}
+
+// ── A LOOP GUARD'S OWN ARITHMETIC ────────────────────────────────────────────────────────
+// `while i + 1 < n` is the only SAFE spelling of a sliding window — `i < n - 1` underflows at
+// n == 0 on an unsigned type and runs the loop on an empty slice (corpus C-7) — and its `i + 1`
+// was reported as a possible overflow. The reason is structural, not a missing fact:
+//
+//   A guard's arithmetic is evaluated at the loop HEADER, before the guard refines anything,
+//   so it cannot benefit from the guard it is part of. With `i < n` the increment lives in the
+//   BODY, where `i <= n - 1` already holds; with `i + 1 < n` the arithmetic IS the condition
+//   and meets only the widened `i` in [0, +inf].
+//
+// The invariant that settles it is inductive and the octagon cannot state it (it needs a case
+// split on the first iteration), so it is proved here, syntactically, on one narrow shape:
+//
+//   the cell's ONLY in-loop update is `i := i + 1`   (step exactly one)
+//   the guard is `i + k < n`, STRICT, k a non-negative constant
+//   `n` is loop-invariant and a value of the same type
+//   the cell's only pre-loop store is a constant c with c + k in range
+//
+// Then at every header entry after the first, the previous visit had `i_prev + k < n`, hence
+// i_prev <= n - k - 1, hence i = i_prev + 1 <= n - k, hence `i + k <= n <= typemax`. On the
+// first entry `i = c` and `c + k` was checked directly. Step one is load-bearing: with step
+// s the bound becomes n + s - 1, which can leave the type.
+static bool vra_guard_counter_fits(Vra *V, Octagon *W, IrInstr *ins, int64_t thi) {
+    if (ins->op != IR_ADD || ins->n_operands < 2 || !ins->result) return false;
+    IrInstr *ld = V->def[ins->operands[0]->id];
+    int kv = ins->operands[1]->id;
+    if (!ld || ld->op != IR_LOAD || ld->n_operands < 1) return false;
+    if (kv < 0 || kv >= V->nvar || !V->cknown[kv] || V->cval[kv] < 0) return false;
+    int64_t k = V->cval[kv];
+    int cell = ld->operands[0]->id;
+
+    for (IrBlock *H = V->f->blocks; H; H = H->next) {
+        if (!H->is_loop_header || H->term.kind != IR_TERM_BR_COND || !H->term.cond) continue;
+        IrInstr *ic = V->def[H->term.cond->id];
+        if (!ic || ic->op != IR_ICMP || ic->n_operands < 2) continue;
+        if (ic->operands[0]->id != ins->result->id) continue;          // this ADD IS the guard
+        if (!(ic->aux.cmp == IR_CMP_SLT || ic->aux.cmp == IR_CMP_ULT)) continue;  // strict only
+        IrValue *bnd = ic->operands[1];
+        if (!vra_loop_invariant(V, bnd, H)) continue;
+        int64_t nlo, nhi;                                              // n must fit the result type
+        if (!bnd->type || bnd->type->kind != IRT_INT) continue;
+        if (!irtype_int_range(bnd->type, &nlo, &nhi) || nhi > thi) continue;
+
+        int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+        char *body = malloc((size_t)nbb); if (!body) return false;
+        vra_natural_loop(V, H, nbb, body);
+
+        int64_t step = 0; int nupd = 0, nentry = 0; int64_t c0 = 0; bool c0_known = true;
+        for (IrBlock *b = V->f->blocks; b; b = b->next) {
+            bool in = (b->id >= 0 && b->id < nbb && body[b->id]);
+            for (IrInstr *st = b->instrs; st; st = st->next) {
+                if (st->op != IR_STORE || st->n_operands < 2 || st->operands[0]->id != cell) continue;
+                if (!in) {                                             // the pre-loop initialiser
+                    int sv = st->operands[1]->id;
+                    nentry++;
+                    if (sv < 0 || sv >= V->nvar || !V->cknown[sv]) c0_known = false;
+                    else c0 = V->cval[sv];
+                    continue;
+                }
+                IrInstr *vd = V->def[st->operands[1]->id];
+                if (vd && vd->op == IR_ADD && vd->n_operands >= 2) {
+                    IrInstr *l2 = V->def[vd->operands[0]->id]; int a2 = vd->operands[1]->id;
+                    if (l2 && l2->op == IR_LOAD && l2->operands[0]->id == cell &&
+                        a2 >= 0 && a2 < V->nvar && V->cknown[a2]) { step = V->cval[a2]; nupd++; }
+                    else nupd += 2;
+                } else nupd += 2;
+            }
+        }
+        bool opaque = vra_cell_opaque_write(V, cell, nbb, body);
+        free(body);
+        if (opaque || nupd != 1 || step != 1) continue;                 // step ONE, and nothing else
+        if (nentry != 1 || !c0_known) continue;
+        if (c0 > thi - k) continue;                                     // the first entry
+        return true;
+    }
+    return false;
 }
 
 // Is `val` a running total in a loop, and what does one iteration add?
