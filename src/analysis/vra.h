@@ -266,6 +266,36 @@ static bool vra_is_slice_cell(Vra *V, int v) {
 // the assume names one load of `text` and the index check another. Canonicalise a field
 // access to the first field_ptr with the same (base, field); everything else is its own.
 static int vra_canon_cell(Vra *V, int v) { return (v>=0 && v<V->nvar && V->cellcanon) ? V->cellcanon[v] : v; }
+
+// ── A FIELD OF A LOCAL STRUCT IS A SCALAR CELL ───────────────────────────────────────────
+// `p.x` has a stable identity already: cellcanon unifies every field_ptr with the same base
+// and index. What it did not have was a numeric one — the LOAD/STORE transfer required an
+// ALLOCA, so a field_ptr fell to oct_forget and `var p = Point(3,4)` then `p.x + p.y` proved
+// nothing at all, though every value in it is a literal.
+//
+// Returns the base alloca when `v` names such a field, else −1. The gate is deliberately
+// narrow, and each clause is load-bearing:
+//   · the base must be an ALLOCA of a struct — NOT an elem_ptr. `a[i].x` for a runtime `i`
+//     would give each field_ptr its own identity while the memory aliases, which is a false
+//     proof rather than a precision choice.
+//   · the field must be a scalar. A nested struct field is an address, not a number.
+//   · the base must not ESCAPE. A callee handed the struct's address can write any field with
+//     no IR_STORE here to see — the same argument vra_seed_element_ranges makes for arrays.
+// A store to the base ITSELF (a whole-struct assignment, `p = q`) is handled in the STORE
+// transfer by forgetting the base's field cells: it writes them all with nothing here to see.
+static int vra_field_cell_base(Vra *V, int v) {
+    IrInstr *d = (v>=0 && v<V->nvar && V->def) ? V->def[v] : NULL;
+    if (!d || d->op != IR_FIELD_PTR || d->n_operands < 1) return -1;
+    IrType *rt = d->result ? d->result->type : NULL;
+    if (!rt || rt->kind != IRT_PTR || !rt->elem ||
+        (rt->elem->kind != IRT_INT && rt->elem->kind != IRT_BOOL)) return -1;
+    int base = d->operands[0]->id;
+    IrInstr *bd = (base>=0 && base<V->nvar) ? V->def[base] : NULL;
+    if (!bd || bd->op != IR_ALLOCA || !bd->aux.alloca_ty ||
+        bd->aux.alloca_ty->kind != IRT_STRUCT) return -1;
+    if (V->escaped && V->escaped[base]) return -1;
+    return base;
+}
 // pre-pass: def sites, constants, and canonical slice-length vars. A slice's length
 // var is its make_slice length operand or its first slice_len read; it is propagated
 // through a slice local's store/load so `s = a[lo..hi]; s[k]` knows len(s).
@@ -793,6 +823,10 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
         case IR_LOAD: {
             if (r<0) break;
             int cell = ins->n_operands ? ins->operands[0]->id : -1;
+            if (vra_field_cell_base(V, cell) >= 0) {        // a field of a local struct
+                vra_assign_copy(V, W, r, vra_canon_cell(V, cell));
+                break;
+            }
             IrInstr *d = cell>=0 ? V->def[cell] : NULL;
             if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
                 || vra_is_param_cell(V, cell))
@@ -816,7 +850,28 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
         case IR_STORE: {
             if (ins->n_operands<2) break;
             int cell = ins->operands[0]->id;
+            if (vra_field_cell_base(V, cell) >= 0) {        // a field of a local struct
+                vra_assign_copy(V, W, vra_canon_cell(V, cell), ins->operands[1]->id);
+                break;
+            }
             IrInstr *d = V->def[cell];
+            // A whole-struct assignment writes every field with no per-field IR_STORE to see,
+            // so the field cells it invalidates have to be dropped here.
+            //
+            // ★ `var p = Point(3, 4)` does NOT reach this. A struct local with an initialiser
+            // is lowered by the aggregate path as an OPAQUE write over the slot ("an
+            // initialiser shape we do not model"), even though a constructor has a perfectly
+            // good IR form — IR_STRUCT_NEW, carrying its fields as operands. So the
+            // constructor spelling of a struct proves nothing while the field-by-field
+            // spelling of the same struct proves everything. Reading the fields here was
+            // tried and is unreachable; the fix belongs in lowering and is not yet found.
+            if (d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_STRUCT) {
+                for (int q=0; q<V->nvar; q++) {
+                    IrInstr *qd = V->def[q];
+                    if (qd && qd->op==IR_FIELD_PTR && qd->n_operands>=1 &&
+                        qd->operands[0]->id == cell) oct_forget(W, vra_canon_cell(V, q));
+                }
+            }
             if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
                 || vra_is_param_cell(V, cell))
                 vra_assign_copy(V, W, cell, ins->operands[1]->id);  // value → cell
@@ -2539,6 +2594,13 @@ static Vra *vra_analyze(IrFunc *f) {
                 keep = ins->aux.alloca_ty && ins->aux.alloca_ty->kind!=IRT_ARRAY;  // scalar cell
             else if (ins->op==IR_CONST)
                 keep = false;                      // exact in cval/cknown; see vra_range
+            else if (ins->op==IR_FIELD_PTR)
+                // A scalar field's address is modelled as a numeric CELL (see
+                // vra_field_cell_base), so it needs a dimension exactly as a scalar alloca
+                // does. A superset of what the transfer will actually use — the narrow gate
+                // needs V->def and V->escaped, which the prepass has not run yet.
+                keep = rv->type && rv->type->kind==IRT_PTR && rv->type->elem &&
+                       (rv->type->elem->kind==IRT_INT || rv->type->elem->kind==IRT_BOOL);
             else
                 keep = rv->type && (rv->type->kind==IRT_INT || rv->type->kind==IRT_BOOL);
             if (keep) V->odim[rv->id] = V->noct++;

@@ -1,0 +1,14 @@
+// LAINFLAGS: --engine=ir-full
+// A FIELD of a local struct is a numeric cell. `p.x` already had a stable identity — cellcanon
+// unifies every field_ptr with the same base and index — but not a numeric one: the LOAD/STORE
+// transfer required an IR_ALLOCA, so a field_ptr fell to oct_forget and `p.x + p.y` proved
+// nothing at all, though both values are literals written two lines above.
+type Point { x i32, y i32 }
+
+proc main() i32 {
+    var p Point
+    p.x = 3
+    p.y = 4
+    // The LATEST store is what the cell holds, so this is 3 + 4 and not [i32.min, i32.max].
+    return p.x + p.y - 7
+}

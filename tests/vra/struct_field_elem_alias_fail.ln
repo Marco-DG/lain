@@ -1,0 +1,16 @@
+// LAINFLAGS: --engine=ir-full
+// EXPECT: [E086]
+// Teeth for struct_field_cell_pass.ln, the aliasing half. `a[i].x` for a runtime `i` would give
+// each field_ptr its own identity while the memory aliases — a false proof, not a precision
+// choice — so the base has to be an ALLOCA of a struct and never an element pointer.
+type Point { x i32, y i32 }
+
+proc main() i32 {
+    var a Point[2]
+    a[0].x = 1
+    a[0].y = 1
+    a[1].x = 2000000000
+    a[1].y = 1
+    var i usize = 1
+    return a[i].x + a[i].x
+}

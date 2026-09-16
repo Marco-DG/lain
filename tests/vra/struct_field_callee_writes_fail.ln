@@ -1,0 +1,18 @@
+// LAINFLAGS: --engine=ir-full
+// EXPECT: [E086]
+// Teeth for struct_field_cell_pass.ln. A callee handed the struct's address can write any field
+// with no IR_STORE here to see, so a field of an ESCAPED struct is not a cell — the value from
+// before the call must not survive it.
+type Point { x i32, y i32 }
+
+proc bump(var p Point) {
+    p.x = 2000000000
+}
+
+proc main() i32 {
+    var p Point
+    p.x = 1
+    p.y = 1
+    bump(var p)
+    return p.x + p.x
+}
