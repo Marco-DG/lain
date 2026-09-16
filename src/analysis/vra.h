@@ -320,7 +320,7 @@ static int vra_array_root(Vra *V, int addr) {
 //
 // A store at an UNKNOWN index with a known value is fine: coverage still holds from the
 // constant stores, and the unknown-index value joins in like any other.
-static void vra_seed_element_ranges(Vra *V) {
+static void vra_seed_element_ranges_round(Vra *V) {
     int n = V->nvar;
     int64_t *lo = malloc((size_t)n*sizeof(int64_t)), *hi = malloc((size_t)n*sizeof(int64_t));
     bool *ok = calloc((size_t)n, sizeof(bool)), *seen = calloc((size_t)n, sizeof(bool));
@@ -336,9 +336,27 @@ static void vra_seed_element_ranges(Vra *V) {
             if (cell < 0) continue;
             seen[cell] = true;
             int sv = ins->operands[1]->id;
-            if (sv<0 || sv>=n || !V->cknown[sv]) { ok[cell] = false; continue; }
-            if (V->cval[sv] < lo[cell]) lo[cell] = V->cval[sv];
-            if (V->cval[sv] > hi[cell]) hi[cell] = V->cval[sv];
+            if (sv<0 || sv>=n) { ok[cell] = false; continue; }
+            int64_t vlo, vhi;
+            if (V->cknown[sv]) { vlo = vhi = V->cval[sv]; }
+            else {
+                // ★ A COPY IS NOT AN UNKNOWN STORE. `var a i32[4] = b` lowers to an
+                // element-wise `store(a[q], load(b[q]))`, so every stored value is a LOAD and
+                // the constant test rejected all of them — the copy lost what the SOURCE was
+                // known to hold, while reading `b` directly still proved. The loaded value is
+                // one of the source cell's values, so the source's own element join bounds it.
+                // Sound because that join is over every store to the source anywhere in the
+                // function, and a cell that escapes has already been dropped below.
+                IrInstr *sd = V->def[sv];
+                int scell = (sd && sd->op==IR_LOAD && sd->n_operands>=1)
+                          ? vra_array_root(V, sd->operands[0]->id) : -1;
+                if (scell < 0 || scell >= n || scell == cell || !V->elem_known[scell]) {
+                    ok[cell] = false; continue;
+                }
+                vlo = V->elem_lo[scell]; vhi = V->elem_hi[scell];
+            }
+            if (vlo < lo[cell]) lo[cell] = vlo;
+            if (vhi > hi[cell]) hi[cell] = vhi;
         }
 
     // pass 2: coverage — every index in [0,len) written by a CONSTANT-index store
@@ -412,6 +430,14 @@ static void vra_seed_element_ranges(Vra *V) {
                 V->accum_cell[cell] = true;
         }
     free(lo); free(hi); free(ok); free(seen);
+}
+
+// A round can only resolve a copy whose SOURCE is already known, so `a = b; c = a` needs two.
+// Three rounds, and each one only ever ADDS cells (a cell that fails stays failed within the
+// round and is recomputed from scratch in the next), so this converges and is bounded. Chains
+// longer than two copies simply do not get the range — a limit, not an unsoundness.
+static void vra_seed_element_ranges(Vra *V) {
+    for (int round = 0; round < 3; round++) vra_seed_element_ranges_round(V);
 }
 
 static void vra_prepass(Vra *V) {

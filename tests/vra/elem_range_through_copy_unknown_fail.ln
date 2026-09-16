@@ -1,0 +1,12 @@
+// LAINFLAGS: --engine=ir-full
+// EXPECT: [E086]
+// The teeth for elem_range_through_copy_pass.ln. Following a copy back to its source must not
+// invent a range where the source has none: `src` is a parameter, its elements are arbitrary
+// i32, and the sum of two of them really can overflow. A copy carries the source's facts, and
+// when the source has no facts it carries none.
+proc f(src i32[4]) i32 {
+    var a i32[4] = src
+    return a[2] + a[3]
+}
+
+proc main() i32 { return 0 }
