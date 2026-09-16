@@ -620,6 +620,14 @@ static void vra_free(Vra *V);                                                   
 static bool vra_dump_enabled = false;   // --dump-octagon: print the converged state
 static void vra_dump_state(Vra *V, FILE *o);   // fwd
 
+// --dump-octagon prints once per function per compile, not once per analysis run.
+static IrFunc *vra_dumped[512]; static int vra_dumped_n = 0;
+static bool vra_dumped_already(IrFunc *f) {
+    for (int i = 0; i < vra_dumped_n; i++) if (vra_dumped[i] == f) return true;
+    if (vra_dumped_n < 512) vra_dumped[vra_dumped_n++] = f;
+    return false;
+}
+
 // ── INFERRED RETURN RANGES ───────────────────────────────────────────────────────────────
 // A call's result was simply FORGOTTEN, so `LUT[nib(c)]` could not be proven even though
 // `func nib(c u8) u8 { return c & 0x0F }` can only return 0..15. The range is read off the
@@ -2648,7 +2656,10 @@ static Vra *vra_analyze(IrFunc *f) {
             }
         }
     }
-    if (vra_dump_enabled) vra_dump_state(V, stderr);
+    // The analysis runs more than once per function in a compile (effects.h drives it for
+    // totality, report.h again for the numeric obligations under --engine=ir-full), and a
+    // flag that prints the same converged state twice reads as two different states.
+    if (vra_dump_enabled && !vra_dumped_already(f)) vra_dump_state(V, stderr);
     // one termination obligation per loop header — but ONLY for a `func` (totality is a
     // func requirement; a `proc` may loop forever, e.g. an event loop). Emitting it for
     // procs was spuriously marking terminating procs "partially proven".

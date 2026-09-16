@@ -111,6 +111,19 @@ for f in "$TMP"/b*.txt; do
     fi
 done
 
+# ── FLAGS ────────────────────────────────────────────────────────────────────────────────
+# The ```lain blocks were the only thing this gate read, so a flag named in PROSE was checked
+# by nothing — and `--dump-octagon` sat in the README for weeks without existing in the binary.
+# A flag name is a claim about the compiler like any other, so it gets tested like any other.
+flag_bad=0
+for flag in $(grep -ohE '\-\-[a-z][a-z-]*(=[a-z-]+)?' README.md LANGUAGE.md 2>/dev/null | sort -u); do
+    grep -qF "\"$flag\"" src/args.h && continue
+    grep -qE "\"${flag%%=*}=\"" src/args.h && continue          # --target=<triple> style
+    grep -qE "strncmp\(argv\[i\], \"${flag%%=*}=\"" src/args.h && continue
+    flag_bad=$((flag_bad+1))
+    echo "  ★ README/LANGUAGE names $flag — src/args.h does not accept it"
+done
+
 echo "=================================================================="
 echo "README examples"
 echo "  compile as documented   : $ok"
@@ -124,5 +137,6 @@ echo "  illustrate an error, but COMPILE : $expfail_bad   ← the README is wron
 echo "  UNVERIFIABLE fragments   : $unchecked   ← not noise: a claim nobody tests"
 echo "      README.md   : $unchecked_readme   <- must stay 0"
 echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a regression"
+echo "  FLAGS named but not accepted : $flag_bad   ← a claim about the binary, now tested"
 echo "=================================================================="
-[ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && exit 0 || exit 1
+[ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $flag_bad -eq 0 ] && exit 0 || exit 1

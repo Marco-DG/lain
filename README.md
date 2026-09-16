@@ -25,6 +25,12 @@ optimiser could have removed on its own.
 Every analysis runs on the IR. None of them looks at the source text or at the output target,
 so the same proofs hold whichever backend emits the code.
 
+That is the architecture, and the rebuild onto it is not finished: today ownership, linearity,
+borrows and definite assignment are answered by the IR on a plain compile, while bounds,
+overflow and termination are still answered by the older AST engine unless you ask for
+`--engine=ir-full`. The IR computes them either way — it is whose answer counts that is still
+moving. [9. Limits](#9-limits) says what that costs.
+
 ## Guarantees
 
 | | C / C++ | Rust | **Lain** |
@@ -274,9 +280,11 @@ The relationship is read out of the body, so the result is known to borrow `a` a
 `b` stays usable while the result is alive. Rust can express that too, but only if you write
 `<'a, 'b>` yourself: its own suggested fix ties both parameters to one lifetime and freezes `b`.
 
-The precise version runs under `--engine=ir`. The default path still uses the older borrow
-checker, which assumes a returned borrow came from every mutable parameter. See
-[9. Limits](#9-limits).
+This is what a plain compile runs. `--engine=legacy` restores the pre-rebuild checker, which
+assumes a returned borrow came from *every* mutable parameter. Move the write to `q` above the
+last use of `r`, so that the borrow is still live when `q` is touched, and that checker rejects
+the program with `E004`; the one that answers a plain compile accepts it, because it knows the
+borrow came from `a`.
 
 ## Exclusive borrows become `restrict`
 
@@ -775,11 +783,12 @@ ordinary work rather than a redesign.
 - **Generics are monomorphised with no trait bounds.** Mistakes show up when a generic is
   instantiated rather than where it is defined.
 
-- **The precise borrow inference is not on the default path yet.** Asked which parameter a
-  returned borrow came from, the rebuilt checker answers exactly, and `--engine=ir` accepts
-  programs the default rejects with `E004`. The older checker still answers the default
-  compile, and it assumes every mutable parameter was borrowed. Switching the default over is
-  the next step on the rebuild.
+- **Not every analysis is on the rebuilt engine yet.** Ownership, linearity, borrows and
+  definite assignment are answered by the IR on a plain compile; bounds, overflow and
+  termination are still answered by the older AST engine, and the IR's verdict on those is
+  only authoritative under `--engine=ir-full`. The accumulator above is what that costs. Both
+  engines run either way, so `--dump-octagon` shows you the IR's reasoning on any path — it is
+  whose answer *counts* that differs.
 
 - **None of this is machine-checked.** The analyses are fuzz-tested and the domain is validated
   by brute force, but there is no mechanised soundness proof. That is future work, and not

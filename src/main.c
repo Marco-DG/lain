@@ -121,6 +121,11 @@ int main(int argc, char **argv) {
         g_suppress_ownership = true;                              // ownership: the IR decides
         if (args.engine_ir_numeric) g_vra_suppress_bounds = true; // numerics: only with -full
     }
+    // The octagon is built on a PLAIN compile too — effects.h runs the numeric analysis to
+    // settle totality — so the dump has something to print on every path. What --engine=ir-full
+    // changes is whether that state is authoritative for bounds and overflow, not whether it
+    // exists (src/analysis/report.h returns before the numeric findings otherwise).
+    vra_dump_enabled = args.dump_octagon;
 
 
     // sema = resolve identifiers → you’d call:

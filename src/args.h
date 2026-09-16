@@ -18,6 +18,7 @@ typedef struct
     bool        no_line_directives; // --no-line-directives: suppress #line in emitted C
     bool        dump_niche;         // --dump-niche: print enum niche layout decisions
     bool        dump_effects;       // --dump-effects: print each function's inferred effect row
+    bool        dump_octagon;       // --dump-octagon: print the converged octagon state per block
     bool        emit_llvm;          // --emit-llvm: lower to proof-carrying LLVM-IR (Phase 1 seam)
     bool        engine_ir_numeric;  // --engine=ir-full: ALSO make the IR authoritative for the
                                     // NUMERIC obligations (bounds/overflow/division). Measured
@@ -45,6 +46,7 @@ static void _args_help(void)
     printf("  --no-line-directives  Suppress #line directives in emitted C\n");
     printf("  --dump-niche          Print niche layout decision for every enum\n");
     printf("  --dump-effects        Print each function's inferred effect row (F3.3)\n");
+    printf("  --dump-octagon        Print the converged octagon state per block\n");
     printf("  -o <file>             Set output C file (default: out.c)\n");
     printf("  --target=<triple>     Cross-compile target. Supported:\n");
     printf("                          x86_64-linux-gnu, aarch64-linux-gnu,\n");
@@ -78,6 +80,8 @@ static Args args_parse(int argc, char** argv)
             args.dump_niche = true;
         } else if (strcmp(argv[i], "--dump-effects") == 0) {
             args.dump_effects = true;
+        } else if (strcmp(argv[i], "--dump-octagon") == 0) {
+            args.dump_octagon = true;
         } else if (strcmp(argv[i], "--emit-llvm") == 0) {
             args.emit_llvm = true;
         } else if (strcmp(argv[i], "--engine=legacy") == 0) {
