@@ -1,0 +1,10 @@
+// LAINFLAGS: --engine=ir-full
+// EXPECT: [E086]
+// Teeth for struct_field_constructor_pass.ln. Reading a constructor's fields must carry the
+// ACTUAL values, not merely make the struct look known: doubling this one does not fit i32.
+type Point { x i32, y i32 }
+
+proc main() i32 {
+    var p = Point(2000000000, 4)
+    return p.x + p.x
+}

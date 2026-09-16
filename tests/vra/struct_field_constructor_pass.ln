@@ -1,0 +1,17 @@
+// LAINFLAGS: --engine=ir-full
+// The CONSTRUCTOR spelling of a struct, which proved nothing while the field-by-field spelling
+// of the identical struct proved everything. Two things had to meet for that:
+//
+//   · `Point(3, 4)` builds an IR_STRUCT_NEW and stores it WHOLE, so there is no per-field
+//     IR_STORE — the fields are the store value's OPERANDS and have to be read from there.
+//   · computing an address does not change what is at it. The transfer's default forgets every
+//     instruction result, which is right for a fresh value and wrong for a field_ptr: it NAMES
+//     a cell that already holds something. Order made it visible — `p.x = 3` creates the
+//     field_ptr BEFORE the store so the forget was harmless, while a constructor stores first
+//     and reads later, so the READ's own field_ptr wiped what the store had just put there.
+type Point { x i32, y i32 }
+
+proc main() i32 {
+    var p = Point(3, 4)
+    return p.x + p.y - 7
+}

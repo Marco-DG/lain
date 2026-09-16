@@ -856,7 +856,10 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             }
             IrInstr *d = V->def[cell];
             // A whole-struct assignment writes every field with no per-field IR_STORE to see,
-            // so the field cells it invalidates have to be dropped here.
+            // so the field cells it invalidates have to be dropped here — UNLESS the value is
+            // an IR_STRUCT_NEW, which carries its fields as OPERANDS. `var p = Point(3, 4)` is
+            // exactly that: the constructor builds the value and it is stored whole, so
+            // forgetting would throw away two literals that are sitting right there.
             //
             // ★ `var p = Point(3, 4)` does NOT reach this. A struct local with an initialiser
             // is lowered by the aggregate path as an OPAQUE write over the slot ("an
@@ -866,10 +869,17 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             // spelling of the same struct proves everything. Reading the fields here was
             // tried and is unreachable; the fix belongs in lowering and is not yet found.
             if (d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_STRUCT) {
+                IrInstr *sn = V->def[ins->operands[1]->id];
+                if (sn && sn->op != IR_STRUCT_NEW) sn = NULL;
                 for (int q=0; q<V->nvar; q++) {
                     IrInstr *qd = V->def[q];
-                    if (qd && qd->op==IR_FIELD_PTR && qd->n_operands>=1 &&
-                        qd->operands[0]->id == cell) oct_forget(W, vra_canon_cell(V, q));
+                    if (!qd || qd->op!=IR_FIELD_PTR || qd->n_operands<1 ||
+                        qd->operands[0]->id != cell) continue;
+                    int fi = qd->aux.field_idx;
+                    if (sn && fi >= 0 && fi < sn->n_operands)
+                        vra_assign_copy(V, W, vra_canon_cell(V, q), sn->operands[fi]->id);
+                    else
+                        oct_forget(W, vra_canon_cell(V, q));
                 }
             }
             if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
@@ -1201,6 +1211,17 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             }
             break;
         }
+        case IR_FIELD_PTR:
+            // ★ COMPUTING AN ADDRESS DOES NOT CHANGE WHAT IS AT IT. The default below forgets
+            // every instruction result, which is right for a fresh value and wrong for a
+            // field_ptr: it NAMES a cell that already holds something. Order made it visible —
+            // `p.x = 3` creates the field_ptr BEFORE the store, so the forget was harmless,
+            // while `var p = Point(3, 4)` stores first and reads later, so the read's own
+            // field_ptr wiped the value the store had just put there. The constructor spelling
+            // of a struct proved nothing and the field-by-field spelling of the same struct
+            // proved everything, for no reason in the source.
+            if (r>=0 && vra_field_cell_base(V, r) < 0) oct_forget(W, r);
+            break;
         default:
             if (r>=0) oct_forget(W, r);   // conservative: result becomes unknown
             break;
