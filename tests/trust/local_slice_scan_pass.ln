@@ -1,3 +1,8 @@
+// The sum wraps explicitly: `s`'s elements are an unbounded i32 and its length is a runtime
+// value, so a running total over them really can overflow and the subject here is the SCAN
+// of a local slice, not the arithmetic. Until 2026-09-16 this program also drew [E085]
+// "no length is known here" under --engine=ir-full: `s` comes from a CALL, so the cell it
+// is stored into had no length var and the guard `i < s.len` had nothing to relate to.
 // TRUST: the canonical check-free scan `while i < s.len { s[i] }` proves in-bounds
 // for a slice bound to a LOCAL (not only a slice parameter) — `var s = borrow(arr)`.
 // The __len_s seeding for local slices makes `i < s.len ⟹ s[i]` provable; under ASan
@@ -11,7 +16,7 @@ proc main() i32 {
     var sum i32 = 0
     var i usize = 0
     while i < s.len decreasing s.len - i {
-        sum = sum + s[i]
+        sum = sum +% s[i]
         i = i + 1
     }
     if sum == 100 {

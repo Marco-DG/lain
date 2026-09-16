@@ -1000,8 +1000,18 @@ void emit_expr(Expr *expr, int depth) {
                    // `const uint8_t*`, and they differ in signedness only.
                    EMIT("(const uint8_t*)"); emit_expr(base_arg, depth);
                } else if (at && at->kind == TYPE_ARRAY && at->array_len >= 0) {
+                   // A fixed-array LOCAL is a native C array and decays to a pointer. A fixed
+                   // array PARAMETER does not: it is `Fixed_<T>_N*`, and passing it where a
+                   // `const int32_t*` is wanted emitted C that gcc rejects outright —
+                   //     scan(const Fixed_i32_4* arr) { ... borrow((size_t)4, arr) }
+                   //     error: passing argument 2 ... from incompatible pointer type
+                   // The struct's only member IS the array, so `->data` is the decay the
+                   // caller meant. No fuzzer reaches this shape (they generate locals, not
+                   // fixed-array parameters forwarded to a slice), which is why it survived
+                   // with broken-C at 0 until a hand-written test crossed the two.
                    emit_expr(base_arg, depth);
-                   // Native C array — decays to pointer, no .data field.
+                   if (base_arg->kind == EXPR_IDENTIFIER && base_arg->decl &&
+                       is_fixed_array_param_decl(base_arg->decl)) EMIT("->data");
                } else if (at && at->kind == TYPE_ARRAY && at->array_len == -1) {
                    emit_expr(base_arg, depth);
                    // Decomposed dynarray param: already a raw pointer, no .data.

@@ -1,0 +1,24 @@
+// A fixed-array PARAMETER forwarded to a slice parameter. `a i32[4]` as a parameter is emitted
+// as `Fixed_i32_4*`, not as a native C array — so it does NOT decay, and passing it where a
+// `const int32_t*` is wanted emitted
+//     error: passing argument 2 of 'take' from incompatible pointer type
+// which the broken-C half of run_tests.sh catches and nothing else did: every fuzzer generates
+// fixed-array LOCALS, which are native arrays and do decay, so the shape was never crossed.
+// The struct's only member IS the array, so `->data` is the decay the caller meant.
+extern proc libc_printf(fmt *u8, ...) i32
+
+func take(s i32[]) usize {
+    return s.len
+}
+
+proc forward(a i32[4]) usize {
+    return take(a)
+}
+
+proc main() i32 {
+    var arr i32[4] = [1, 2, 3, 4]
+    // `forward` returns an unbounded `usize` as far as a caller can tell, so `as` — the
+    // PROVEN tier — will not take it. The subject here is the emitted C, not the cast.
+    libc_printf("%d\n", forward(arr) as% i32)
+    return 0
+}

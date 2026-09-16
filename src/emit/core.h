@@ -310,6 +310,17 @@ static bool is_dynarray_param_decl(Decl *d) {
     return t && t->kind == TYPE_ARRAY && t->array_len == -1;
 }
 
+// A FIXED-length array PARAMETER, which is emitted as `Fixed_<T>_N*` — not as a native C
+// array. The distinction matters wherever a fixed array is expected to decay to a pointer:
+// a LOCAL `var a i32[4]` is a native array and does decay, a parameter `a i32[4]` is a
+// struct pointer and does not, so it needs `->data` to reach the elements.
+static bool is_fixed_array_param_decl(Decl *d) {
+    if (!d || d->kind != DECL_VARIABLE) return false;
+    if (!d->as.variable_decl.is_parameter) return false;
+    Type *t = d->as.variable_decl.type;
+    return t && t->kind == TYPE_ARRAY && t->array_len >= 0;
+}
+
 // Case-arm payload bindings currently in scope during codegen. A binding
 // (`case s { Some(v): … v … }`) is a NULL-typed local that isn't tracked in the
 // symbol table, so the undeclared-identifier check (emit/expr.h EXPR_IDENTIFIER)

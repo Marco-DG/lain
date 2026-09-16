@@ -1,0 +1,21 @@
+// LAINFLAGS: --engine=ir-full
+// EXPECT: [E085]
+// The teeth for call_result_slice_len_pass.ln. Naming a call-result slice's length must not make
+// every index into it provable: `i < s.len` bounds `i`, and `s[i + 1]` reads one PAST that. The
+// guard has to be the one that covers the access, which is the whole point of relating them.
+func borrow(a i32[]) i32[] {
+    return a
+}
+
+proc scan(arr i32[4]) i32 {
+    var s = borrow(arr)
+    var i usize = 0
+    var t i32 = 0
+    while i < s.len decreasing s.len - i {
+        t = t +% s[i + 1]
+        i = i + 1
+    }
+    return t
+}
+
+proc main() i32 { return 0 }

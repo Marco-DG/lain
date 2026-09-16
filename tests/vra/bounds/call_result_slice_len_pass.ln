@@ -1,0 +1,23 @@
+// LAINFLAGS: --engine=ir-full
+// A slice that came from a CALL still has a length, and a guard against it settles the access.
+// `var s = borrow(arr)` stores a slice value carrying no length var of its own, and the cell's
+// length was seeded from a `.len` read ONLY for a cell nothing stores to — so a call-result
+// slice ended with no length at all and `s[i]` under `i < s.len` reported [E085] "no length is
+// known here". The guard settles the access whatever the length turns out to be; it was refused
+// because the length had no NAME, not because anything was unknown about it.
+func borrow(a i32[]) i32[] {
+    return a
+}
+
+proc scan(arr i32[4]) i32 {
+    var s = borrow(arr)
+    var i usize = 0
+    var t i32 = 0
+    while i < s.len decreasing s.len - i {
+        t = t +% s[i]
+        i = i + 1
+    }
+    return t
+}
+
+proc main() i32 { return 0 }

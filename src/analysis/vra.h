@@ -499,14 +499,29 @@ static void vra_prepass(Vra *V) {
                 IrInstr *sd = V->def[s];
                 if (sd && sd->op==IR_LOAD && sd->n_operands>=1) {
                     int cell = vra_canon_cell(V, sd->operands[0]->id);
-                    if (vra_is_slice_cell(V,cell) && cell_stores[cell]==0 && cell_len[cell]<0)
+                    // ★ ...or for a cell whose ONE store brought no length with it. A slice
+                    // returned by a call — `var s = borrow(arr)` — is stored with no length var
+                    // of its own, so requiring zero stores left the cell with none at all and
+                    // `s[i]` under `i < s.len` reported "no length is known here": a guard that
+                    // settles the access whatever the length turns out to be, refused because
+                    // the length had no name. The `.len` read gives it one. The single-store
+                    // rule is what makes this the same slice at every load, and it is the same
+                    // rule the store-derived length below already relies on.
+                    if (vra_is_slice_cell(V,cell) && cell_len[cell]<0 &&
+                        (cell_stores[cell]==0 || cell_stores[cell]==1))
                         cell_len[cell]=ins->result->id;
                 }
             }
             else if (ins->op==IR_STORE && ins->n_operands>=2) {
                 int cell=vra_canon_cell(V, ins->operands[0]->id), v=ins->operands[1]->id;
-                if (vra_is_slice_cell(V,cell))
-                    cell_len[cell] = (cell_stores[cell]==1) ? V->slicelen[v] : -1;
+                if (vra_is_slice_cell(V,cell)) {
+                    int sl = (cell_stores[cell]==1) ? V->slicelen[v] : -1;
+                    // Do not CLOBBER a `.len`-derived length with "none": a stored slice's own
+                    // length var is the better representative only when it has one. More than
+                    // one store still forces -1 — different stores mean different slices, and
+                    // then no single name describes the cell's length.
+                    if (sl >= 0 || cell_stores[cell] != 1) cell_len[cell] = sl;
+                }
             }
         }
     // A SECOND pass for the loads. The scan is linear, but a cell's length is not necessarily
