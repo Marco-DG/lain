@@ -1,0 +1,16 @@
+// EXPECT: [E131]
+// An `extern` may not declare a slice parameter. D-40, fixed 2026-09-16.
+//
+// A slice is a Lain value; C has no type for one. Whatever the declaration emitted it could not
+// describe the callee: it was `const Slice_u8*` while the call site passed the decomposed data
+// pointer, so even forwarding a `u8[]` parameter to such an extern warned. `extern` exists to
+// describe functions Lain did not write, and a C function takes a pointer and, separately, a
+// length — which is how `std/` already declares every one of its 143 externs.
+//
+// A SENTINEL slice (`u8[:0]`) is exempt: it is NUL-terminated, so it genuinely is a C string.
+
+extern proc c_write(s u8[])
+
+proc main() i32 {
+    return 0
+}

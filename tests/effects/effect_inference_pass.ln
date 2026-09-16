@@ -2,7 +2,9 @@
 // computed (--dump-effects surfaces it): pure_add {} pure&total, with_panic
 // {Raises}, mutates {Write}, does_io {IO}, diverges {Diverge}. This test locks
 // that the effect pass does not break compilation of the effect-bearing forms.
-extern proc print(s u8[])
+// D-40: an extern takes a pointer and a length, not a slice — a slice has no C type, so the
+// declaration could not describe the callee (E131). std/ already declares its externs this way.
+extern proc print(s *u8, n usize)
 func pure_add(a i32, b i32) i64 {
     return a + b
 }
@@ -16,7 +18,8 @@ func mutates(var c i32) {
     c = c +% 1
 }
 proc does_io() {
-    print("hi")
+    msg = "hi"
+    print(msg.data, msg.len)
 }
 proc diverges(n i32) i32 {
     var i = 0

@@ -79,9 +79,10 @@ gcc_check_ok() {
     #   implicit-int     -- a declaration with no type at all. C99 removed implicit int, so
     #                       `static const <nothing> MAX = 100;` is not valid C99.
     #
-    # incompatible-pointer-types is NOT yet promoted: one case remains, and it is D-39 (a string
-    # literal passed to a `u8[]` parameter), not the Fixed_T_N family the rest of it was.
-    # Promote it the day D-39 closes.
+    # incompatible-pointer-types joined them 2026-09-16, once D-39 (a string literal reaching a
+    # `u8[]`) and D-40 (an extern declaring a slice parameter, which has no C type) were closed.
+    # All three classes are now errors; what remains tolerated is listed explicitly above, and
+    # each -Wno- is a claim that the class does not change behaviour.
     # `-w` had to GO, not be supplemented: it beats -Werror= in every flag position, so the
     # promotions below were inert while it was present (verified twice). What remains is an
     # explicit list of what is tolerated, which is the honest form — each -Wno- is a claim that
@@ -91,8 +92,8 @@ gcc_check_ok() {
     # incompatible-pointer-types 1. None is int-conversion or implicit-int any more.
     gerr="$("$GCC_BIN" -std=c99 -c -o "$out_o" "$out_c" \
         -Wno-discarded-qualifiers -Wno-format-security \
-        -Wno-incompatible-pointer-types \
         -Werror=int-conversion -Werror=implicit-int \
+        -Werror=incompatible-pointer-types \
         -Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_putchar=putchar \
         -Dlibc_malloc=malloc -Dlibc_free=free -Dlibc_realloc=realloc 2>&1)"
     local grc=$?

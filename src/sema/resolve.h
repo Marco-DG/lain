@@ -207,6 +207,39 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
   
         char *cnamef;
         if (d->kind == DECL_EXTERN_FUNCTION || d->kind == DECL_EXTERN_PROCEDURE) {
+            // D-40: an EXTERN may not take a plain dynamic slice. There is no C type for one,
+            // so the declaration could not tell the truth about the callee whatever it emitted:
+            // it was declared `const Slice_u8*` while the call site passed the decomposed data
+            // pointer, and even forwarding a `u8[]` parameter to such an extern warned.
+            //
+            // `extern` exists to describe functions Lain did not write, and a C function takes a
+            // pointer and, separately, a length. `std/` already declares them that way —
+            // `libc_printf(fmt *u8, ...)` — so this rejects a form nothing depends on and
+            // matches what the standard library had already settled on.
+            //
+            // A SENTINEL slice (`u8[:0]`) is exempt: it is NUL-terminated, so it genuinely is a
+            // C string and is already declared `const char*`.
+            for (DeclList *pp = d->as.function_decl.params; pp; pp = pp->next) {
+                if (!pp->decl || pp->decl->kind != DECL_VARIABLE) continue;
+                Type *pt = pp->decl->as.variable_decl.type;
+                bool dyn_slice = pt &&
+                    ((pt->kind == TYPE_SLICE && !pt->sentinel_is_string && !pt->sentinel_str &&
+                      pt->sentinel_len == 0) ||
+                     (pt->kind == TYPE_ARRAY && pt->array_len == -1));
+                if (!dyn_slice) continue;
+                Id *pn = pp->decl->as.variable_decl.name;
+                fprintf(stderr, "[E131] Error Ln %li, Col %li: extern '%.*s' declares parameter "
+                    "'%.*s' as a slice, which has no C representation — the declaration cannot "
+                    "describe the function being bound. Pass a pointer and a length instead "
+                    "(`p *u8, n usize`), as std/ does.\n",
+                    (long)(d->line ? d->line : (pp->decl ? pp->decl->line : 0)),
+                    (long)(d->line ? d->col  : (pp->decl ? pp->decl->col  : 0)),
+                    (int)id->length, id->name,
+                    pn ? (int)pn->length : 1, pn ? pn->name : "?");
+                diagnostic_show_line(d->line ? d->line : (pp->decl ? pp->decl->line : 0),
+                                     d->line ? d->col  : (pp->decl ? pp->decl->col  : 0));
+                exit(1);
+            }
             // Extern functions use their raw name
             cnamef = strdup(rawf);
         } else {
