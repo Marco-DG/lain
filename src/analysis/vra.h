@@ -617,10 +617,23 @@ static void vra_assign_copy(Vra *V, Octagon *o, int dst, int src) {
         oct_forget(o, dst); oct_add_const(o, dst, V->cval[src]); return;
     }
     oct_close(o);                      // materialize src's transitive bounds BEFORE the copy
-    oct_forget(o, dst);                // (so dst inherits them; this is where a loop invariant
-    vra_add_diff_le(V, o, dst, src, 0);//  is carried through a memory-cell load). Copies are
-    vra_add_diff_le(V, o, src, dst, 0);//  infrequent (loads/casts/lengths), so O(dim^3) here
-}                                      //  is fine — unlike per-instruction forget-closes.
+    int64_t slo, shi; bool shl, shh;   // (so dst inherits them; this is where a loop invariant
+    oct_interval(o, src, &slo,&shl,&shi,&shh);  // is carried through a memory-cell load).
+    oct_forget(o, dst);
+    vra_add_diff_le(V, o, dst, src, 0);// Copies are infrequent (loads/casts/lengths), so the
+    vra_add_diff_le(V, o, src, dst, 0);// O(dim^3) close here is fine — unlike per-instruction
+                                       // forget-closes.
+    // ★ AND STATE dst's INTERVAL OUTRIGHT. The two differences say dst == src, but an ABSOLUTE
+    // bound for dst follows from them only after ANOTHER closure — and most readers of a range
+    // do not close first, so a copied value read as unbounded. That is why `a *? b` lost its
+    // value while `a + b` kept it: the checked lowering computes in i64, so the multiply's
+    // operands are sext CASTS, and the MUL interval-product read them without closing and saw
+    // the whole type. The closure this function already pays for is right above; carrying the
+    // interval across costs nothing more and makes it visible to every reader, not just the
+    // ones that close.
+    if (shl) oct_add_lb(o, dst, slo);
+    if (shh) oct_add_ub(o, dst, shi);
+}
 
 // A constant has no octagon dimension (see the packing note), so every interval read must
 // consult the constant table first. This is not a workaround: the exact value is strictly

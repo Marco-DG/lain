@@ -1,0 +1,16 @@
+// LAINFLAGS: --engine=ir-full
+// A checked multiply kept no value, so anything downstream of it was unproven. `a *? b` lowers
+// to a WIDENED multiply — the operands are sext casts to i64 — and a cast is a COPY in the
+// octagon. vra_assign_copy stated the copy as two difference constraints (dst <= src, src <=
+// dst), which say dst == src but yield an ABSOLUTE bound for dst only after another closure.
+// The MUL interval-product reads its operands without closing, so it saw the whole i64 type
+// and produced nothing; `+?` and `-?` were unaffected because ADD/SUB state their own relations.
+//
+// The copy now carries the source's interval outright. The closure it needs was already being
+// paid for one line above.
+proc main() i32 {
+    var a i32 = 10
+    var b i32 = 3
+    var p = a *? b else panic("overflow")
+    return p + p - 60
+}
