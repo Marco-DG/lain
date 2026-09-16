@@ -100,7 +100,24 @@ static int lin_place_of(Lin *L, IrValue *addr, unsigned *bit) {
     if (p.proj[0].kind == IRPJ_FIELD && p.proj[0].field >= 0 && p.proj[0].field < 63) {
         *bit = (unsigned)p.proj[0].field; return p.base_id;
     }
-    return -1;                                   // indexed / deeper — not tracked per element
+    // D-32: a FIELD index at or past 63 has no bit in the mask, and returning "unresolved" here
+    // meant the consume was never recorded — so `mov b.h63` twice was ACCEPTED while the same
+    // program using field 0 was correctly refused. Failing to resolve a place fails OPEN, which
+    // is the wrong direction for a memory-safety property.
+    //
+    // Refusing is the fail-closed answer and the bound is unreachable in practice (the widest
+    // struct in tests+std has 19 fields). The real answer is a location TREE with no width bound
+    // at all, shared with definite-init, which is plan §7.2.
+    //
+    // An INDEXED projection still returns -1: that is D-31, whose answer is projections, not a
+    // wider mask, and refusing it here would reject array code that the corpus relies on.
+    if (p.proj[0].kind == IRPJ_FIELD && p.proj[0].field >= 63) {
+        fprintf(stderr, "error: field %d exceeds the %d fields this ownership analysis can track "
+                "separately. Leaving it untracked would let a double move through, so no result "
+                "is reported for this function. Split the struct.\n", p.proj[0].field, 63);
+        exit(1);
+    }
+    return -1;                                   // indexed — not tracked per element (D-31)
 }
 
 // The module, for resolving a call's callee. Set by the caller (as borrow.h does for its

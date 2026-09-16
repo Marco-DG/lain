@@ -31,7 +31,22 @@
 // initialising its whole parent — `p.a.y = 1` marked all of `p.a` set, so reading the still
 // -uninitialised `p.a.x` reported nothing. That is a FAIL-OPEN on the one thing this pass
 // exists to catch, so the depth the analysis models has to reach the depth programs write at.
-#define DI_SUBF 8u
+// D-41: this was 8, and past it a nested write fell back to marking the WHOLE parent field
+// initialised — verbatim the fail-open the submasks exist to remove, just moved to field 8. It
+// was MemorySanitizer-proven: `p.f8.y = 1; return p.f8.x` was accepted and reports
+// use-of-uninitialized-value at run time.
+//
+// Raising the bound alone would only move the hole again, which is what the depth-1 -> depth-2
+// fix already did once. So two changes: the width now matches the top mask (63 fields, the most
+// a uint64 can index), and crossing it is an ERROR rather than a silent widening. Measured over
+// tests+std, the widest struct has 19 fields and the deepest write is depth 2, so the refusal is
+// unreachable in practice — which is the point: a bound you cannot reach and that announces
+// itself is not a fail-open.
+//
+// The real fix is a location TREE — root plus a path of offsets, no width or depth bound at all,
+// which is what Hylo tracks the same facts over and what would let this engine and linearity
+// share one representation (plan §7.2). This is the fail-closed stopgap, not that.
+#define DI_SUBF 63u
 #define DI_W    (1u + DI_SUBF)
 
 typedef struct { int base; isize line, col; int code; } DiFinding;   // 5 = E005, 19 = E019
@@ -86,7 +101,13 @@ static void di_mark_init(Di *D, uint64_t *st, const IrPlace *p) {
         }
         // p.f.g = v — initialises ONLY the leaf. The parent field becomes initialised when
         // every one of ITS fields is, which is what separates this from the old behaviour.
-        if ((unsigned)fi >= DI_SUBF) { st[b*DI_W] |= (1ull<<fi); di_promote(D,st,b); return; }
+        if ((unsigned)fi >= DI_SUBF) {
+            fprintf(stderr, "error: a nested write to field %d exceeds the %u fields this "
+                    "initialisation analysis can track separately. Marking the whole parent "
+                    "initialised would hide a read of uninitialised memory, so no result is "
+                    "reported for this function. Split the struct.\n", fi, DI_SUBF);
+            exit(1);
+        }
         int gi = p->proj[1].field;
         if (gi<0 || gi>=63) { st[b*DI_W] |= (1ull<<fi); di_promote(D,st,b); return; }
         uint64_t *sub = &st[b*DI_W + 1 + fi];

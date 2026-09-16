@@ -1,0 +1,31 @@
+// EXPECT: [E005]
+// A nested write to a field past index 8 must still leave its SIBLING uninitialised.
+//
+// D-41, fixed 2026-09-16. `definite_init.h` kept 8 submasks for depth-1 fields, and past that a
+// nested write fell back to marking the WHOLE parent field initialised — verbatim the fail-open
+// the submasks exist to remove, moved to field 8. It was MemorySanitizer-proven: this program
+// was accepted and reported use-of-uninitialized-value at run time, exiting 86.
+//
+// Raising the bound alone would only move the hole again, which the depth-1 -> depth-2 fix had
+// already done once. So the width now matches the top mask (63) AND crossing it is a hard error
+// rather than a silent widening. Measured over tests+std the widest struct has 19 fields, so the
+// refusal is unreachable in practice.
+//
+// The control is the same shape at field index 1, which was always caught.
+
+type Inner { x i32, y i32 }
+type Outer { f0 i32, f1 i32, f2 i32, f3 i32, f4 i32, f5 i32, f6 i32, f7 i32, f8 Inner }
+
+proc main() i32 {
+    var p Outer
+    p.f0 = 0
+    p.f1 = 1
+    p.f2 = 2
+    p.f3 = 3
+    p.f4 = 4
+    p.f5 = 5
+    p.f6 = 6
+    p.f7 = 7
+    p.f8.y = 1
+    return p.f8.x
+}
