@@ -1,0 +1,13 @@
+// LAINFLAGS: --engine=ir-full
+// EXPECT: [E085]
+// Teeth for the shared-term cancellation that makes concat_pass.ln provable. `out[j + na]`
+// against a length of `na + nb` cancels to `j < nb`, which holds. `out[j + na + 1]` cancels to
+// `j + 1 < nb`, which does NOT — the guard gives `j < nb`, so the last iteration writes one
+// past the end. Cancelling a shared term must stay an identity, not become a licence.
+proc cat(na usize < 4096, a i32[na], nb usize < 4096, b i32[nb], out var i32[na + nb]) {
+    for j in 0..nb {
+        out[j + na + 1] = b[j]
+    }
+}
+
+proc main() i32 { return 0 }

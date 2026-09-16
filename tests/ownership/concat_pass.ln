@@ -2,12 +2,22 @@
 // Second loop uses index j + a.len — proved by Omega Test (FM elimination).
 // After eliminating j: cross-pair (j<b.len, j≥b.len) gives 0 ≤ -1 → UNSAT.
 
-func concat(a i32[], b i32[], out i32[a.len + b.len]) {
-    for i in 0..a.len {
+// ★ The lengths are BOUNDED, and they have to be: the declared length `i32[na + nb]` is itself
+// arithmetic, and adding two unbounded usizes overflows. Same class as matrix_symbolic_2d's
+// `h * w`. They are also NAMED, because a bound needs something to attach to.
+//
+// The second loop's `out[j + na]` is the interesting one. Its obligation is
+// `j + na < na + nb`, which is `j < nb` — a fact the domain has. What it cannot do is get
+// there: index and length are both sums and the shared term has to be cancelled, while
+// `len = na + nb` is a three-variable fact no octagon can hold. The cancellation is done
+// syntactically in vra_check_elem; over the integers it is an identity, and both sums carry
+// their own overflow obligations so neither has wrapped by the time it is asked.
+func concat(na usize < 4096, a i32[na], nb usize < 4096, b i32[nb], out i32[na + nb]) {
+    for i in 0..na {
         out[i] = a[i]
     }
-    for j in 0..b.len {
-        out[j + a.len] = b[j]
+    for j in 0..nb {
+        out[j + na] = b[j]
     }
 }
 
@@ -15,6 +25,6 @@ proc main() i32 {
     var xs i32[2] = [1, 2]
     var ys i32[3] = [3, 4, 5]
     var zs i32[5] = [0, 0, 0, 0, 0]
-    concat(xs, ys, zs)
+    concat(2, xs, 3, ys, zs)
     return zs[0]
 }
