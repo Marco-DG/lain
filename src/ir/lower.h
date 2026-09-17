@@ -337,9 +337,56 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t);        // fwd (wrapped 
 // Does a mutable borrow (`var x`) of this type have to travel as an ADDRESS for writes to
 // reach the caller's storage? Yes for types that are COPIED (struct, scalar); no for a
 // slice/array/pointer, which already carries a shared data pointer.
+static bool ir_mut_by_address(const IrType *t);   // fwd
+// ── A BORROW IS A POINTER, AND THE TYPE MUST SAY SO ─────────────────────────────────────
+// A `var T` PARAMETER of a copied type has always been lowered to a pointer (see the param
+// loop). A `var T` RETURN was not: its IR type was T, and the fact that it returns a reference
+// was recorded as IrFunc.ret_borrows — a boolean beside the type, read by analysis/borrow.h and
+// by nothing else. The IR was then ill-typed, `ret %1 : *i32` from a function typed i32, and
+// every client that trusts types rather than the flag got it wrong. The IR's own C backend
+// emitted an int32_t return and the write through the returned reference never reached the
+// owner; src/emit/ was right only because it works from the AST.
+//
+// Same rule, same predicate, applied wherever a BINDING takes a borrow: the return type, and a
+// local bound to one. Deliberately NOT folded into ir_lower_type — that is called for field
+// types, element types and casts, where `var` means something else or nothing.
+static IrType *ir_lower_borrow_binding_type(LowerCtx *c, Type *t) {
+    IrType *lt = ir_lower_type(c, t);
+    if (!t || t->mode != MODE_MUTABLE) return lt;
+    if (ir_mut_by_address(lt)) {
+        // COPIED types travel as an address, so the borrow IS a pointer and the type says so.
+        IrType *ptr = ir_type_new(c->a, IRT_PTR); ptr->elem = lt; ptr->ptr_mut = true;
+        ptr->borrowed = true;
+        return ptr;
+    }
+    // A slice, array or pointer already carries a data pointer, so a mutable borrow of one
+    // travels AS ITSELF — there is no wrapper whose shape could record the fact. Mark the type
+    // instead, on a FRESH copy: `ir_lower_type` may hand back a structure another site shares,
+    // and a borrow flag that leaked into a field or element type would make every value of
+    // that type look like a reference. This is the case `IrFunc.ret_borrows` was really
+    // covering, and the reason the fact needs a bit of its own rather than `ptr_mut`.
+    IrType *cp = ir_type_new(c->a, lt->kind);
+    *cp = *lt;
+    cp->borrowed = true;
+    return cp;
+}
+
 static bool ir_mut_by_address(const IrType *t) {
     if (!t) return false;
     switch (t->kind) {
+        // IRT_SUM belongs here and was missing. A sum is a COPIED aggregate exactly like a
+        // struct — tag plus payload, or a niche-packed value — so a `var` borrow of one has to
+        // travel as an address or the callee writes a local copy and the owner never sees it.
+        // `proc mutate(var s Sh) { case s { Circle(r): s = Sh.Circle(r+1) ... } }` did exactly
+        // that: the arm wrote the whole value back through what it thought was a reference,
+        // the caller's `c` was unchanged, and the program returned 1 instead of 0
+        // (`emit_gate`'s `adt_match_param_pass`). The old emitter was right because it works
+        // from the AST, where the mode is still written down.
+        //
+        // The list is "types that are COPIED", and a sum was omitted because the predicate was
+        // written when sums were not yet modelled — the same omission shape as the fixed-array
+        // decay and the returned borrow: a case that simply was not there when the rule was.
+        case IRT_SUM:
         case IRT_STRUCT: case IRT_INT: case IRT_BOOL: case IRT_FLOAT: return true;
         default: return false;   // slice / array / ptr / unit — already reference-like
     }
@@ -1534,6 +1581,46 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                     return ir_const_int(c->f, c->cur, s->type->array_len, ty);
                 // (fall through: a struct field literally named `len`)
             }
+            // ── `s.Variant.field` — reading a payload OUTSIDE a `case` arm ──────────────────
+            // The inner member names a VARIANT, not a field, so `ir_field_index` on the sum
+            // returned -1 and the whole expression became `opaque.unchecked` — honest, and
+            // useless: the value was never computed, and the new backend emitted a program
+            // that printed 0 where the old one printed 10 (`emit_gate`'s `unsafe_adt_pass`).
+            //
+            // Everything needed already existed — `ir_sum_payload`, the `aux.sum` addressing,
+            // the backend's case for it — used only from the `case`-arm path. The only missing
+            // piece was this SOURCE FORM. Discrimination is the programmer's responsibility
+            // here (the language requires `unsafe` for exactly that reason, and IR_SUM_PAYLOAD
+            // is well-defined only where the tag is known), so lowering states the projection
+            // and adds no check of its own.
+            if (tgt && tgt->kind == EXPR_MEMBER) {
+                Expr *sumex = tgt->as.member_expr.target;
+                IrType *sumty = sumex ? ir_struct_of(ir_lower_type(c, sumex->type)) : NULL;
+                if (sumty && sumty->kind == IRT_SUM) {
+                    Id *vn = tgt->as.member_expr.member;
+                    int k = -1;
+                    for (int q = 0; q < sumty->n_fields; q++) {
+                        IrName *n2 = sumty->field_names[q];
+                        if (n2 && vn && n2->length == vn->length
+                            && memcmp(n2->name, vn->name, (size_t)vn->length) == 0) { k = q; break; }
+                    }
+                    if (k >= 0) {
+                        IrType *pl = sumty->fields[k];
+                        int fj = -1; IrType *pfty = NULL;
+                        if (pl && pl->kind == IRT_STRUCT)
+                            for (int q = 0; q < pl->n_fields; q++) {
+                                IrName *n3 = pl->field_names[q];
+                                if (n3 && m && n3->length == m->length
+                                    && memcmp(n3->name, m->name, (size_t)m->length) == 0) {
+                                    fj = q; pfty = pl->fields[q]; break; }
+                            }
+                        if (fj >= 0) {
+                            IrValue *sv = ir_lower_expr(c, sumex);
+                            return ir_sum_payload(c->f, c->cur, sv, k, fj, pfty ? pfty : ty);
+                        }
+                    }
+                }
+            }
             // struct field read: load through the field address
             IrType *sty = ir_struct_of(ir_lower_type(c, tst));
             IrType *fty = NULL;
@@ -1642,9 +1729,15 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
             IrType *cret = NULL;
             if (callee && (callee->kind==DECL_FUNCTION || callee->kind==DECL_PROCEDURE
                         || callee->kind==DECL_EXTERN_FUNCTION || callee->kind==DECL_EXTERN_PROCEDURE))
-                cret = ir_lower_type(c, callee->as.function_decl.return_type);
+                cret = ir_lower_borrow_binding_type(c, callee->as.function_decl.return_type);
             IrType *rty = ((e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT)) ? ty
                         : (cret && cret->kind!=IRT_UNIT ? cret : NULL);
+            // A call to a function returning a BORROW yields a pointer, and the generic
+            // expression type above does not know that — `ty` came from ir_lower_type, which
+            // deliberately does not apply the borrow rule. Prefer the callee's binding type
+            // whenever it says pointer: that is the signature speaking, and the signature is
+            // what the callee will actually return.
+            if (cret && cret->kind==IRT_PTR && (!rty || rty->kind!=IRT_PTR)) rty = cret;
             IrInstr *ins = ir_instr(c->f, IR_CALL, rty, indirect ? n + 1 : n);
             Id *cnm = callee ? callee->as.function_decl.name : NULL;   // intern the callee name
             if (!indirect && !cnm && e->as.call_expr.callee && e->as.call_expr.callee->kind==EXPR_IDENTIFIER)
@@ -1945,8 +2038,8 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
     if (!s || ir_is_set_term(c->cur)) return;   // dead code after a terminator
     switch (s->kind) {
         case STMT_VAR: {
-            IrType *slot_ty = s->as.var_stmt.type ? ir_lower_type(c, s->as.var_stmt.type)
-                            : (s->as.var_stmt.expr ? ir_lower_type(c, s->as.var_stmt.expr->type)
+            IrType *slot_ty = s->as.var_stmt.type ? ir_lower_borrow_binding_type(c, s->as.var_stmt.type)
+                            : (s->as.var_stmt.expr ? ir_lower_borrow_binding_type(c, s->as.var_stmt.expr->type)
                                                    : ir_type_int(c->a,32,true));
             if (ir_type_is_agg(slot_ty)) {
                 IrValue *agg = slot_ty->kind==IRT_ARRAY ? ir_alloca_array(c->f, c->cur, slot_ty)
@@ -2152,6 +2245,23 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                   }
               } }
             IrValue *addr = ir_lower_addr(c, s->as.assign_stmt.target);
+            // ★ WRITING THROUGH A BORROW BINDING. `var r = f(var c)` where f returns `var i32`
+            // binds r to a POINTER, so its slot is `**i32` and `r = 42` must store through the
+            // pointer the slot holds, not over it. Without this the assignment overwrote the
+            // borrow itself and the owner never saw the write — the program printed 7 instead
+            // of 42, which is precisely the defect D-38 fixed in the AST-based emitter and
+            // which the IR then reproduced from its own side.
+            //
+            // A plain `var x i32 = 5` is NOT this: its slot holds an i32 and the mode says
+            // mutable BINDING, not borrow. The two are told apart by the same predicate the
+            // binding used — a borrow is a pointer only where the value would otherwise be
+            // copied (ir_mut_by_address).
+            { Type *tt2 = s->as.assign_stmt.target ? s->as.assign_stmt.target->type : NULL;
+              IrType *slotv = addr && addr->type ? addr->type->elem : NULL;
+              if (tt2 && tt2->mode == MODE_MUTABLE && slotv && slotv->kind == IRT_PTR &&
+                  slotv->ptr_mut && ir_mut_by_address(slotv->elem))
+                  addr = ir_load(c->f, c->cur, addr, slotv);
+            }
             ir_store(c->f, c->cur, addr, ir_lower_expr(c, s->as.assign_stmt.expr));
             if (c->cur->instrs_tail) c->cur->instrs_tail->unchecked = c->unsafe;
             break;
@@ -2474,6 +2584,28 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 if (b->id >= nb0) for (IrInstr *i = b->instrs; i; i = i->next) i->unchecked = true;
             c->unsafe=o; break;
         }
+        // ── comptime `if`: the FRONT END already chose, and lowering must honour the choice ──
+        // Dead-branch elimination, decided by sema (`is_taken`) and mirrored by the old emitter
+        // since it existed. The IR had no case at all, so the statement fell into the default
+        // below and made the whole function `incomplete` — which is fail-closed and therefore
+        // sound, but it meant the SELECTED BRANCH WAS ABSENT FROM THE IR. The new backend then
+        // faithfully emitted a program missing a line the old one printed (`emit_gate`'s
+        // `comptime_if_pass`: old prints "Running on Linux\nDone", new prints "Done").
+        //
+        // It is not a codegen bug and it was never in the emitter: an IR that claims to be the
+        // semantic authority cannot omit a statement the program executes. Lowering the taken
+        // branch INLINE is also the honest representation — after the choice there is no
+        // branch left, which is exactly what `comptime` means.
+        case STMT_COMPTIME_IF: {
+            if (!s->as.comptime_if_stmt.evaluated) {   // sema must have decided; say so if not
+                ir_incomplete(c, "comptime-if-unevaluated"); break;
+            }
+            StmtList *taken = s->as.comptime_if_stmt.is_taken
+                            ? s->as.comptime_if_stmt.then_body
+                            : s->as.comptime_if_stmt.else_branch;   // NULL else ⇒ nothing at all
+            if (taken) ir_lower_stmts(c, taken);
+            break;
+        }
         default: ir_incomplete(c, "unhandled-stmt"); break;   // enum-match/use — TODO (fail closed)
     }
 }
@@ -2548,7 +2680,7 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     f->src_decl = fn;   // opaque provenance (void*) — the IR never derefs it
     cc.fdecl = fn;      // for callee-side return-ensures asserts
     cc.f = f; cc.cur = f->entry;
-    f->ret_type = ir_lower_type(&cc, fn->as.function_decl.return_type);
+    f->ret_type = ir_lower_borrow_binding_type(&cc, fn->as.function_decl.return_type);
     for (DeclList *p = fn->as.function_decl.params; p; p = p->next) {
         if (!p->decl) continue;
         // A DESTRUCTURING parameter — `close_file(mov {handle} File)` — is one parameter that
@@ -2599,6 +2731,7 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
             // pointer to the caller's storage, so writes propagate. The pointer *is* the
             // slot. (A slice/array/pointer already shares its data, so it stays by value.)
             IrType *ptr = ir_type_new(cc.a, IRT_PTR); ptr->elem = pt; ptr->ptr_mut = true;
+            ptr->borrowed = true;        // a REFERENCE into the caller's storage — see below
             IrValue *pv = ir_add_param(f, ptr, pin);
             pv->owns = false;                       // a mutable borrow never owns
             ir_env_add(&cc, pnm, pv, NULL);
@@ -2632,8 +2765,9 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     // B5: record only the SIGNATURE fact — this function returns a reference, so its result
     // borrows something of the caller's. WHICH parameter is a body fact, inferred later by
     // analysis/borrow.h (see IrFunc.ret_borrow_mask). Lowering does not analyse.
-    { Type *rt = fn->as.function_decl.return_type;
-      if (rt && rt->mode == MODE_MUTABLE) f->ret_borrows = true;
+    f->has_decreasing = (fn->as.function_decl.decreasing_measure != NULL);
+    { // WHETHER the return is a reference is now on the TYPE (`ret_type->borrowed`, set by
+      // ir_lower_borrow_binding_type), so there is nothing to record here but the annotation.
       int bi = ir_param_index_by_name(fn, fn->as.function_decl.ret_borrow_of);
       if (bi >= 0 && bi < 64) { f->ret_borrow_annot = true; f->ret_borrow_annot_mask = 1ull<<bi; } }
     ir_lower_stmts(&cc, fn->as.function_decl.body);
@@ -2682,16 +2816,14 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
             // was caught. The mask cannot be inferred here (there is no body to read), so the
             // fallback is every reference parameter — the sound direction, and the concrete
             // place where a LIFETIME ANNOTATION would buy precision (Stage V F1).
-            { Type *ert = d->decl->as.function_decl.return_type;
-              if (ert && ert->mode == MODE_MUTABLE) f->ret_borrows = true;
-              int bi = ir_param_index_by_name(d->decl, d->decl->as.function_decl.ret_borrow_of);
+            { int bi = ir_param_index_by_name(d->decl, d->decl->as.function_decl.ret_borrow_of);
               if (bi >= 0 && bi < 64) { f->ret_borrow_annot = true; f->ret_borrow_annot_mask = 1ull<<bi; } }
             // An extern was lowered as a NAME and nothing else — no return type, no
             // parameters. Analyses that ask what a call transfers got no answer, and the new
             // emitter could not declare it, so every call to one was an implicit declaration
             // in the generated C: 102 of the corpus's 141 backend build failures, one cause.
             { LowerCtx ec = {0}; ec.a = a; ec.globals = program; ec.f = f; ec.cur = f->entry;
-              f->ret_type = ir_lower_type(&ec, d->decl->as.function_decl.return_type);
+              f->ret_type = ir_lower_borrow_binding_type(&ec, d->decl->as.function_decl.return_type);
               for (DeclList *p = d->decl->as.function_decl.params; p; p = p->next) {
                   if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
                   Type *pty = p->decl->as.variable_decl.type;

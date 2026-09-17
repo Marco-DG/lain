@@ -35,7 +35,11 @@ def gen_accept():
         "    var sum i32 = 0",
         "    var i usize = 0",
         "    while i < s.len decreasing s.len - i {",
-        "        sum = sum + s[i]",
+        # `+%`: the elements are an unbounded i32 and the slice length is a runtime value,
+        # so a running total over them is a REAL overflow — the numeric engine has been
+        # authoritative for that since 2026-09-17 and refuses it. This generator's subject
+        # is the DANGLING-SLICE question, not arithmetic, so the wrap is explicit.
+        "        sum = sum +% s[i]",
         "        i = i + 1",
         "    }",
         "    return sum - sum",
@@ -50,13 +54,18 @@ def gen_accept():
             "    var s = borrow(arr)",
         ] + scan + ["}"]
     elif style == "param_sub":
+        # ★ The parameter is SIZED AND REFINED. `func borrow(a i32[]) i32[] { return a[lo..hi] }`
+        # takes a slice of unknown length and subslices it at a constant — genuinely out of
+        # bounds whenever the caller passes something shorter, and correctly [E085]. Naming the
+        # length is not enough on its own: `hi <= m` has to be PROVABLE, so the bound goes on the
+        # parameter. That is the precondition the old code relied on and never stated.
         lines += [
-            "func borrow(a i32[]) i32[] {",
+            f"func borrow(m usize >= {hi}, a i32[m]) i32[] {{",
             f"    return a[{lo}..{hi}]",
             "}",
             "proc main() i32 {",
             f"    var arr i32[{n}] = [{vals}]",
-            "    var s = borrow(arr)",
+            f"    var s = borrow({n}, arr)",
         ] + scan + ["}"]
     else:  # local_direct: slice a local IN THE SAME frame that scans it (no escape).
         lines += [
