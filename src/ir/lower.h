@@ -1659,10 +1659,26 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
                 // a fixed array decays to a slice when the callee expects one
                 if (pp && pp->decl && pp->decl->kind==DECL_VARIABLE) {
                     IrType *ptype = ir_lower_type(c, pp->decl->as.variable_decl.type);
-                    if (ptype && ptype->kind==IRT_SLICE && av->type && av->type->kind==IRT_PTR) {
-                        int64_t ne = (a->expr->type && a->expr->type->kind==TYPE_ARRAY) ? a->expr->type->array_len : 0;
+                    if (ptype && ptype->kind==IRT_SLICE && av->type &&
+                        (av->type->kind==IRT_PTR || av->type->kind==IRT_ARRAY)) {
+                        IrValue *data = av;
+                        int64_t ne;
+                        if (av->type->kind==IRT_ARRAY) {
+                            // ★ A FIXED-ARRAY PARAMETER IS AN ARRAY VALUE, not a pointer. Only the
+                            // pointer case was handled, so forwarding one to a slice parameter
+                            // passed `[4]i32` where `[]i32` was declared — the IR said so, and the
+                            // IR's own C backend then emitted a bare pointer for a Slice_i32
+                            // argument, which does not compile. The old backend hid it by working
+                            // from the AST. The length is IN the type here, which is better than
+                            // the pointer case's guess from the AST.
+                            ne = av->type->array_len;
+                            IrValue *z = ir_const_int(c->f, c->cur, 0, ir_type_int(c->a,64,false));
+                            data = ir_elem_ptr(c->f, c->cur, av, z, av->type->elem);
+                        } else {
+                            ne = (a->expr->type && a->expr->type->kind==TYPE_ARRAY) ? a->expr->type->array_len : 0;
+                        }
                         IrValue *ln = ir_const_int(c->f, c->cur, ne, ir_type_int(c->a,64,false));
-                        av = ir_make_slice(c->f, c->cur, av, ln, ptype->elem);
+                        av = ir_make_slice(c->f, c->cur, data, ln, ptype->elem);
                     }
                     // ...and the REVERSE decay, which was missing: a parameter declared `*u8`
                     // given a string literal got the whole SLICE by value. `libc_printf("x")`

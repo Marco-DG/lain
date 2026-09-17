@@ -2037,6 +2037,14 @@ static void vra_check_subslice(Vra *V, Octagon *W, IrInstr *ms) {
     int64_t clen=-1; int lenvar=-1;
     if (bd && bd->op==IR_ALLOCA && bd->aux.alloca_ty && bd->aux.alloca_ty->kind==IRT_ARRAY) clen=bd->aux.alloca_ty->array_len;
     else if (bd && bd->op==IR_SLICE_DATA && bd->n_operands>=1){ int s=bd->operands[0]->id; if(V->slicelen[s]>=0) lenvar=V->slicelen[s]; }
+    // ...or the base is an ARRAY VALUE, whose length is in its own type. A fixed-array
+    // PARAMETER has no defining instruction, so neither branch above sees it — and the
+    // array->slice decay at a call site builds exactly this shape: elem_ptr(param, 0) feeding
+    // a make_slice. vra_check_elem already reads the length from the type here; this check did
+    // not, so the decay reported "no length is known here" for a length written in the
+    // signature. Same resolution, same place, one branch apart.
+    else if (ndd->operands[0]->type && ndd->operands[0]->type->kind==IRT_ARRAY)
+        clen = ndd->operands[0]->type->array_len;
     int hi=-1;
     IrInstr *lend = V->def[ms->operands[1]->id];
     if (lend && lend->op==IR_SUB && lend->n_operands>=2 && lend->operands[1]->id==lo) hi=lend->operands[0]->id; // len = hi − lo
@@ -2044,7 +2052,15 @@ static void vra_check_subslice(Vra *V, Octagon *W, IrInstr *ms) {
     int64_t llo,lhi; bool lhl,lhh; vra_interval(V, W,lo,&llo,&lhl,&lhi,&lhh);
     c.lo_ok = lhl && llo>=0;                                          // 0 ≤ lo
     c.has_len = (clen>=0 || lenvar>=0);
-    if (hi<0) c.hi_ok=false;                                          // couldn't recover hi ⇒ conservative
+    // ...or the LENGTH is given directly rather than as `hi - lo`. The array->slice decay
+    // builds make_slice(elem_ptr(base, 0), N) with N a constant, and the `hi = len + lo`
+    // recovery below only fires for a SUB — so a whole-array decay, the most obviously
+    // in-bounds slice there is, fell to the conservative branch and was refused. In bounds
+    // iff lo + len <= clen, which is the same obligation stated the other way round.
+    int64_t dlo, dhi; bool dhl, dhh;
+    vra_interval(V, W, ms->operands[1]->id, &dlo,&dhl,&dhi,&dhh);
+    if (hi<0 && clen>=0 && dhh && lhh && dhi>=0 && lhi>=0 && lhi <= clen - dhi) c.hi_ok = true;
+    else if (hi<0) c.hi_ok=false;                                     // couldn't recover hi ⇒ conservative
     else if (clen>=0){ int64_t hl,hh_; bool a,bb; vra_interval(V, W,hi,&hl,&a,&hh_,&bb); c.hi_ok = bb && hh_<=clen; } // hi ≤ N
     else if (lenvar>=0) c.hi_ok = vra_diff_ub(V, W, hi, lenvar) <= 0;   // hi − len ≤ 0
     else c.hi_ok=false;
