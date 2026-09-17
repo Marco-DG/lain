@@ -33,7 +33,11 @@ echo "verdicts — the same analyses, over C:"
 check oob.c     E085     # unguarded index
 check safe.c    none     # the same shape, guarded ⇒ proven check-free
 check uninit.c  E005     # read of a local nothing wrote
-check divzero.c E087     # divisor not provably non-zero
+check divzero.c E015     # divisor not provably non-zero
+# ★ E015, not E087. The division diagnostic became E015 when the sovereign analyses were
+# made authoritative (4d449b1); this expectation stayed at E087 — an array/slice code —
+# and the gate has been RED ever since. Nobody saw it because `make gates` does not run
+# this gate. A gate nobody runs is not a gate.
 
 # ── behaviour: C → Lain-IR → C must match C → gcc ────────────────────────────
 echo "behaviour — a C program compiled THROUGH Lain-IR:"

@@ -22,8 +22,8 @@ VRADRV="${VRADRV:-/tmp/vradrv}"; LOWERDRV="${LOWERDRV:-/tmp/lowerdrv_vra}"
 CC="${CC:-gcc}"; N="${1:-300}"
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-gcc -std=c99 -o "$VRADRV"   src/analysis/vra_driver.c -I src 2>/dev/null || { echo "build vradrv failed"; exit 2; }
-gcc -std=c99 -o "$LOWERDRV" src/ir/lower_driver.c     -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
+gcc -std=c99 -o "$VRADRV"   src/tools/vra_driver.c -I src 2>/dev/null || { echo "build vradrv failed"; exit 2; }
+gcc -std=c99 -o "$LOWERDRV" src/tools/lower_driver.c     -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
 
 proven=0; unproven=0; skipped=0; falseproof=0; brokenc=0; miscompile=0
 mkdir -p "$TMP/w"

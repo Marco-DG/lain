@@ -30,8 +30,8 @@ N="${1:-200}"
 SEED=${RANDOM_SEED:-$$}
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts"
 
-gcc -std=c99 -O2 -o "$SC/vradrv"   src/analysis/vra_driver.c -I src 2>/dev/null || { echo "vradrv build failed"; exit 2; }
-gcc -std=c99 -O2 -o "$SC/lowerdrv" src/ir/lower_driver.c     -I src 2>/dev/null || { echo "lowerdrv build failed"; exit 2; }
+gcc -std=c99 -O2 -o "$SC/vradrv"   src/tools/vra_driver.c -I src 2>/dev/null || { echo "vradrv build failed"; exit 2; }
+gcc -std=c99 -O2 -o "$SC/lowerdrv" src/tools/lower_driver.c     -I src 2>/dev/null || { echo "lowerdrv build failed"; exit 2; }
 
 proven=0; notproven=0; ran=0; unsound=0; skipped=0; brokenc=0
 for ((k=0; k<N; k++)); do

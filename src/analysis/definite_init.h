@@ -24,6 +24,23 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ★ DEFINED HERE, NOT BESIDE ITS USE. This macro is used ~250 lines below and used to be
+// defined ~50 lines after that, so this header compiled ONLY when linearity.h — which
+// defines the same pair — had been included first. Including analysis/definite_init.h on
+// its own gave `implicit declaration of function 'LAIN_FIXPOINT_BOUND'` and a link error,
+// which is exactly what src/tools/test_definite_init.c does. A header that needs another
+// header included first is a header that does not say what it needs.
+#ifndef LAIN_FIXPOINT_BOUND
+#define LAIN_FIXPOINT_BOUND(nb, nvar) ((long)(nb) * (long)(nvar) + 2L)
+#define LAIN_FIXPOINT_EXHAUSTED(what, nb, nvar) do { \
+    fprintf(stderr, "internal error: %s did not reach a fixpoint within the derived bound " \
+            "(%ld sweeps for %d blocks x %d slots). This is a compiler bug: the transfer " \
+            "function is not monotone. Refusing to report analysis results.\n", \
+            (what), LAIN_FIXPOINT_BOUND(nb, nvar), (int)(nb), (int)(nvar)); \
+    exit(70); \
+} while (0)
+#endif
+
 #define DI_WHOLE_BIT 63u
 // Depth-2 paths. The state per tracked base is DI_W words: word 0 is the top mask (bit63 =
 // the whole value, bits 0..62 = depth-1 fields fully initialised), and words 1..DI_SUBF are
@@ -286,15 +303,7 @@ static void di_free(Di *D){ if(!D)return; for(int i=0;i<D->nb;i++) free(D->in[i]
 // that nothing did. That is the derived bound below. Reaching it does not mean "the program is
 // too big" — it means the monotonicity assumption is false, which is a compiler bug, so it
 // aborts rather than reporting a result it cannot stand behind.
-#ifndef LAIN_FIXPOINT_BOUND
-#define LAIN_FIXPOINT_BOUND(nb, nvar) ((long)(nb) * (long)(nvar) + 2L)
-#define LAIN_FIXPOINT_EXHAUSTED(what, nb, nvar) do { \
-    fprintf(stderr, "internal error: %s did not reach a fixpoint within the derived bound " \
-            "(%ld sweeps for %d blocks x %d slots). This is a compiler bug: the transfer " \
-            "function is not monotone. Refusing to report analysis results.\n", \
-            (what), LAIN_FIXPOINT_BOUND(nb, nvar), (int)(nb), (int)(nvar)); \
-    exit(70); \
-} while (0)
-#endif
+// (the derived-bound macros were lifted to the top of this header — see there)
+
 
 #endif // LAIN_DEFINITE_INIT_H

@@ -711,8 +711,10 @@ When calling a method via UFCS (e.g., `x.method(x.field)`), the compiler desugar
 Lain solves this with **two-phase borrows** (inspired by Rust RFC 2025). During argument evaluation, mutable borrows are registered in a **RESERVED** phase that permits shared reads of the same owner. After all arguments are evaluated, reserved borrows are promoted to **ACTIVE** (fully exclusive).
 
 ```lain
+// The addition WRAPS: `v.data + n` on two unbounded ints is a real overflow, and this
+// example is about two-phase borrows, not about arithmetic.
 type Vec { data int, cap int }
-proc push_n(var v Vec, n int) { v.data = v.data + n }
+proc push_n(var v Vec, n int) { v.data = v.data +% n }
 
 proc main() int {
     var v = Vec(0, 10)

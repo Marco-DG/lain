@@ -9,7 +9,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 N="${1:-300}"; DRV=/tmp/lain_incdrv
-gcc -std=c99 -w -o "$DRV" src/analysis/incomplete_driver.c -I src || { echo "build failed"; exit 2; }
+gcc -std=c99 -w -o "$DRV" src/tools/incomplete_driver.c -I src || { echo "build failed"; exit 2; }
 WHY=$(mktemp); trap 'rm -f "$WHY"' EXIT
 T=0; I=0; F=0; unmeasured=0
 for f in $(find tests -name "*_pass.ln" | head -"$N"); do

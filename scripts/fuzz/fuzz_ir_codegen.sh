@@ -25,7 +25,7 @@ CC="${CC:-gcc}"; N="${1:-200}"
 DEFS="-Dlibc_printf=printf -Dlibc_malloc=malloc -Dlibc_free=free"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 [ -x "$LAIN" ] || { echo "build first: gcc -std=c99 -o lain src/main.c -I src"; exit 2; }
-gcc -std=c99 -o "$LOWERDRV" src/ir/lower_driver.c -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
+gcc -std=c99 -o "$LOWERDRV" src/tools/lower_driver.c -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
 
 r() { echo $(( RANDOM % $1 + ${2:-0} )); }
 

@@ -15,12 +15,12 @@
 #      is the Phase-1 progress metric, not a pass/fail gate.
 #
 # Build once, then run from the repo root:
-#   gcc -std=c99 -o /tmp/lowerdrv src/ir/lower_driver.c -I src
+#   gcc -std=c99 -o /tmp/lowerdrv src/tools/lower_driver.c -I src
 #   bash diff_engines.sh
 set -u
 cd "$(dirname "$0")/../.."
 DRV="${LOWERDRV:-/tmp/lowerdrv}"
-[ -x "$DRV" ] || { echo "build the driver first: gcc -std=c99 -o $DRV src/ir/lower_driver.c -I src"; exit 2; }
+[ -x "$DRV" ] || { echo "build the driver first: gcc -std=c99 -o $DRV src/tools/lower_driver.c -I src"; exit 2; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
 # ── 1. behavioural gate ──────────────────────────────────────────────────────

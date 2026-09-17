@@ -28,8 +28,8 @@ LEDGER="$(dirname "$0")/phase3_adjudications.txt"
 LINDRV=/tmp/lindrv EFFDRV=/tmp/effdrv
 LIST=0; [ "${1:-}" = "--list" ] && LIST=1
 
-gcc -std=c99 -o "$LINDRV" src/analysis/linearity_driver.c -I src 2>/dev/null || { echo "build lindrv failed"; exit 2; }
-gcc -std=c99 -o "$EFFDRV" src/analysis/effects_driver.c   -I src 2>/dev/null || { echo "build effdrv failed"; exit 2; }
+gcc -std=c99 -o "$LINDRV" src/tools/linearity_driver.c -I src 2>/dev/null || { echo "build lindrv failed"; exit 2; }
+gcc -std=c99 -o "$EFFDRV" src/tools/effects_driver.c   -I src 2>/dev/null || { echo "build effdrv failed"; exit 2; }
 
 # classification for a path, from the ledger ("" if unadjudicated)
 adjudication() { grep -E "^[[:space:]]*$1[[:space:]]" "$LEDGER" 2>/dev/null | awk '{print $3}' | head -1; }

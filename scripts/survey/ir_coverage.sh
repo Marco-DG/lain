@@ -15,7 +15,7 @@
 set -u
 cd "$(dirname "$0")/../.."
 DRV=/tmp/lowerdrv
-gcc -std=c99 -o "$DRV" src/ir/lower_driver.c -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
+gcc -std=c99 -o "$DRV" src/tools/lower_driver.c -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
 WORST=0; [ "${1:-}" = "--worst" ] && WORST=1
 
 inc=0 tot=0 files=0 rows=""

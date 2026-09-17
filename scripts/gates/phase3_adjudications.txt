@@ -386,3 +386,18 @@ tests/match/niche/linear_adt_payload_mov_fail.ln NEW-ACCEPTS new-incomplete-line
 
 # ── B1 (2026-09-08): the trip-count bound on a running total.
 tests/vra/overflow/accum_trip_bound_fail.ln  NEW-ACCEPTS  front-end-policy   # [E086] on a u8 total over 4096 iterations is a NUMERIC obligation, so only --engine=ir-full owns it; the pass this gate drives covers ownership/borrows/definite-assignment and correctly finds nothing. The test is pinned to ir-full and is caught there (verified). Same shape as the four numeric fail-tests adjudicated above.
+
+# ── 2026-09-17: the NUMERIC fail-tests added while closing the over-rejection list ──
+# This gate compares the linearity/borrow/definite-init DRIVERS, which do not judge numeric
+# obligations at all — so every one of these is accepted here and rejected by the numeric
+# analysis in the real compiler, where each carries `// LAINFLAGS: --engine=ir-full` and an
+# EXPECT line asserting exactly that. `new-catches-elsewhere`, the same classification the
+# earlier accumulator and element-range fail-tests already use.
+tests/vra/accum_offset_guard_unbounded_fail.ln            NEW-ACCEPTS  new-catches-elsewhere  # E086: an unbounded limit minus a constant is still unbounded
+tests/vra/elem_range_through_copy_unknown_fail.ln         NEW-ACCEPTS  new-catches-elsewhere  # E086: a copy carries the source's facts, and the source has none
+tests/vra/guard_counter_nonstrict_fail.ln                 NEW-ACCEPTS  new-catches-elsewhere  # E086: `i + 1 <= n` bounds i at n, so i + 1 reaches n + 1
+tests/vra/guard_counter_step_two_fail.ln                  NEW-ACCEPTS  new-catches-elsewhere  # E086: with step s the bound is n + s - 1, which can leave the type
+tests/vra/guard_counter_unknown_start_fail.ln             NEW-ACCEPTS  new-catches-elsewhere  # E086: the first entry is covered by the START value, and it is unknown
+tests/vra/struct_field_callee_writes_fail.ln              NEW-ACCEPTS  new-catches-elsewhere  # E086: a field of an ESCAPED struct is not a cell
+tests/vra/struct_field_constructor_overflow_fail.ln       NEW-ACCEPTS  new-catches-elsewhere  # E086: the constructor's fields carry their ACTUAL values
+tests/vra/struct_field_elem_alias_fail.ln                 NEW-ACCEPTS  new-catches-elsewhere  # E086: `a[i].x` for a runtime i must not get a per-access identity

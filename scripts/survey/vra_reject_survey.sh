@@ -6,7 +6,7 @@
 set -u
 cd "$(cd "$(dirname "$0")/../.." && pwd)"
 DRV="${VRADRV:-/tmp/vradrv}"
-[ -x "$DRV" ] || { echo "build first: gcc -std=c99 -o $DRV src/analysis/vra_driver.c -I src"; exit 2; }
+[ -x "$DRV" ] || { echo "build first: gcc -std=c99 -o $DRV src/tools/vra_driver.c -I src"; exit 2; }
 refused=0; proveall=0; noobl=0
 : > /tmp/proveall.list
 for f in $(find tests -name "*_fail.ln" | sort); do

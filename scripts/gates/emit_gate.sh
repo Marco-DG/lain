@@ -18,7 +18,7 @@ LOWERDRV="${LOWERDRV:-/tmp/lowerdrv}"; CC="${CC:-gcc}"; N="${1:-100000}"
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_malloc=malloc -Dlibc_free=free -Dlibc_realloc=realloc -Dlibc_putchar=putchar -Dlibc_calloc=calloc"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 [ -x ./lain ] || { echo "build first"; exit 2; }
-gcc -std=c99 -o "$LOWERDRV" src/ir/lower_driver.c -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
+gcc -std=c99 -o "$LOWERDRV" src/tools/lower_driver.c -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
 
 agree=0; differ=0; buildfail=0; oldskip=0
 : > "$TMP/bad"; : > "$TMP/bf"

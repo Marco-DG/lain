@@ -34,7 +34,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 N="${1:-100000}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 DRV="$TMP/vradrv"
-gcc -std=c99 -O2 -o "$DRV" src/analysis/vra_driver.c -I src 2>/dev/null || { echo "driver build failed"; exit 2; }
+gcc -std=c99 -O2 -o "$DRV" src/tools/vra_driver.c -I src 2>/dev/null || { echo "driver build failed"; exit 2; }
 
 PASS="$TMP/pass"; FAIL="$TMP/fail"; : > "$PASS"; : > "$FAIL"
 pfiles=0; ffiles=0

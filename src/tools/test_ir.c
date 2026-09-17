@@ -17,7 +17,7 @@
 #include "ir/ir.h"
 #include "ir/build.h"
 #include <string.h>
-#include "dump.h"
+#include "ir/dump.h"
 
 int main(void) {
     Arena a = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE * 256);

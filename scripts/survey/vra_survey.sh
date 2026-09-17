@@ -6,7 +6,7 @@
 set -u
 cd "$(cd "$(dirname "$0")/../.." && pwd)"
 DRV="${VRADRV:-/tmp/vradrv}"
-[ -x "$DRV" ] || { echo "build first: gcc -std=c99 -o $DRV src/analysis/vra_driver.c -I src"; exit 2; }
+[ -x "$DRV" ] || { echo "build first: gcc -std=c99 -o $DRV src/tools/vra_driver.c -I src"; exit 2; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 prog_ok=0 prog_partial=0 prog_skip=0
 bounds_ok=0 bounds_tot=0
