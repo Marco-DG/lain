@@ -36,12 +36,19 @@ gates: $(BIN)
 	bash scripts/gates/phase3_differential.sh
 	bash scripts/gates/check_build_warnings.sh
 
-# PROGRESS MEASURES, not gates: these always exit 0 by design, because their answer is a
-# distance rather than a verdict. Putting them in `gates` would add noise and teach everyone
-# to ignore it; leaving them unrun is how the emitter's four miscompiles went unnoticed.
+# PROGRESS MEASURES, not gates: their answer is a DISTANCE rather than a verdict. Putting them
+# in `gates` would add noise and teach everyone to ignore it; leaving them unrun is how the
+# emitter's four miscompiles went unnoticed.
+#
+# ★ The comment here used to claim these "always exit 0 by design". They do not — each script
+# ends on its own readiness predicate, so `emit_gate` exits 1 precisely when it has differences
+# to report, and make then abandoned the target before `engine_ir_gate` ever ran. A progress
+# meter that stops being printed exactly when it has something to say is worse than no meter,
+# so the exit status is absorbed HERE, where the target's contract is "print both distances",
+# and left intact in the scripts, where "are we there yet" is still a useful question to ask.
 measure: $(BIN)
-	bash scripts/gates/emit_gate.sh
-	bash scripts/gates/engine_ir_gate.sh
+	-bash scripts/gates/emit_gate.sh
+	-bash scripts/gates/engine_ir_gate.sh
 
 fuzz: $(BIN)
 	@for f in scripts/fuzz/fuzz_*.sh; do echo "== $$f"; bash $$f || exit 1; done

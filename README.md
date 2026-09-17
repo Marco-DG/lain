@@ -394,8 +394,9 @@ proc vadd(var out i32[], a i32[out.len], b i32[out.len]) {
 with `E087` if they do not; inside the body it comes for free.
 
 The addition wraps (`+%`) because the elements are unbounded `i32` and their sum is a real
-overflow — the lengths being proven says nothing about the values. Writing `+` here compiles
-today and will not once the numeric obligations move to the rebuilt engine.
+overflow — the lengths being proven says nothing about the values. Writing `+` here is rejected:
+proving where a value *lives* says nothing about how large it *is*, and the two obligations are
+separate.
 
 The expression can be anything, so a matrix is just a flat buffer with a shape. Here `h` and `w`
 are unknown at compile time and `a[i*w + j]` still needs no check. They are bounded because the
