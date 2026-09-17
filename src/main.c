@@ -119,7 +119,23 @@ int main(int argc, char **argv) {
     // the old engine exit() first — the new one would never get to speak.
     if (args.engine_ir) {
         g_suppress_ownership = true;                              // ownership: the IR decides
-        if (args.engine_ir_numeric) g_vra_suppress_bounds = true; // numerics: only with -full
+        if (args.engine_ir_numeric) {
+            g_vra_suppress_bounds = true;                         // numerics: only with -full
+            // RECURSION termination. The sovereign engine now answers it — a well-founded
+            // ranking over a parameter, or over a DIFFERENCE of two parameters (which is what
+            // divide-and-conquer descends on), read from the octagon at each self-call — and
+            // raises it as an obligation through analysis/report.h. Leaving the legacy check on
+            // would let the old engine exit() first and the new verdict would never be heard.
+            //
+            // NOT the loop half, and the boundary was measured rather than assumed: the
+            // sovereign engine raises a loop obligation only inside a `func`, while a written
+            // `decreasing` clause is a claim the language accepts on ANY loop. Standing the
+            // loop checks down dropped three such claims in `proc`s — see g_suppress_recursion
+            // in sema.h. Also staying with the old engine: E091 (the SHAPE of a `decreasing`
+            // clause, front-end policy) and MUTUAL recursion (f -> g -> f), which the sovereign
+            // check does not model at all.
+            g_suppress_recursion = true;
+        }
     }
     // The octagon is built on a PLAIN compile too — effects.h runs the numeric analysis to
     // settle totality — so the dump has something to print on every path. What --engine=ir-full

@@ -109,6 +109,15 @@ typedef struct {
     // quality of the refusal IS the user experience.
     bool     accum;                       // the numbers below are meaningful
     int64_t  accum_T, accum_dlo, accum_dhi, accum_s0lo, accum_s0hi;
+    // A VRA_TERMINATION check about a RECURSION rather than a loop. The two are one
+    // obligation — "this does not run forever" — proved by two different arguments (a loop
+    // measure, a well-founded ranking over the self-call's arguments), and a user needs to be
+    // told which one failed: the loop answer is E082 and the recursive one is E011.
+    bool     recursion;
+    // Did the source write a `decreasing` clause? Annex B makes the CODE depend on it — E011
+    // for a recursion with no inferable measure, E082 for one whose measure is present and
+    // fails — so the engine has to carry the distinction to be normatively right.
+    bool     had_measure;
     int64_t  line, col;
 } VraCheck;
 
@@ -2773,6 +2782,22 @@ static bool vra_cell_accum_range(Vra *V, Octagon *W, int cell, int64_t *lo, int6
 
 
 // ── the fixpoint over the CFG ────────────────────────────────────────────────
+// Does `f` call itself, and where? Returns the FIRST self-call instruction, so a diagnostic
+// can point at a line the programmer wrote rather than at the function's opening brace.
+// Direct calls only: an indirect one names no function, which the effect row already charges
+// as the worst case.
+static IrInstr *vra_self_call_site(IrFunc *f) {
+    if (!f || !f->name) return NULL;
+    for (IrBlock *b=f->blocks; b; b=b->next)
+        for (IrInstr *i=b->instrs; i; i=i->next)
+            if (i->op==IR_CALL && i->aux.callee
+                && i->aux.callee->length==f->name->length
+                && memcmp(i->aux.callee->name, f->name->name, (size_t)f->name->length)==0)
+                return i;
+    return NULL;
+}
+static bool vra_recursion_terminates(Vra *V, IrFunc *f);   // fwd — defined after the domain helpers
+
 static Vra *vra_analyze(IrFunc *f) {
     Vra *V = calloc(1, sizeof *V);
     V->f=f; V->nvar = f->next_value_id>0 ? f->next_value_id : 1;
@@ -3054,6 +3079,29 @@ static Vra *vra_analyze(IrFunc *f) {
             VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
             vra_add_check(V, c);
         }
+    // ── RECURSION: the same obligation, one level up ────────────────────────────────────────
+    // `vra_recursion_terminates` has existed here since the effect row needed to know whether a
+    // recursive cycle diverges, and it is a real well-founded-ranking check: a parameter that
+    // strictly descends at every self-call (read from the octagon, so `n/2` and `n-k` count) and
+    // is grounded below. But `analysis/effects.h` was its ONLY caller, so it never produced a
+    // user-facing verdict, and E011/E082 for recursion went on coming from `src/sema/`.
+    //
+    // That made an engine that HAS an opinion indistinguishable from one that has none: the
+    // project's own plan recorded twice that no recursion analysis existed, and the seam rule
+    // ("stand the legacy check down only where the new engine speaks") kept the legacy checks
+    // on for exactly that reason. It speaks. Raising the obligation here is what lets it be
+    // heard — and is what unblocks standing the legacy recursion checks down.
+    if (f->kind == IR_FUNC_PURE) {
+        IrInstr *site = vra_self_call_site(f);
+        if (site) {
+            VraCheck c; memset(&c,0,sizeof c);
+            c.kind = VRA_TERMINATION; c.recursion = true; c.at = site;
+            c.had_measure = f->has_decreasing;
+            c.line = site->line; c.col = site->col;
+            c.ok = vra_recursion_terminates(V, f);
+            vra_add_check(V, c);
+        }
+    }
     // RETURN RANGE: union the interval of every returned value, read from that block's
     // converged state replayed to its terminator. Only for a faithfully lowered function —
     // an `incomplete` body could return anything.
@@ -3295,6 +3343,14 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
                     if (k >= i->n_operands) { ok = false; break; }
                     IrValue *arg = i->operands[k];
                     if (!arg || arg->id<0 || arg->id>=V->nvar) { ok = false; break; }
+                    // ★ CLOSE BEFORE ASKING. The transfers above ADD constraints; it is the
+                    // CLOSURE that makes them transitive, and a descent fact is almost always
+                    // derived rather than stated: `mid = lo + (hi-lo)/2` yields `mid - hi <= -1`
+                    // only by composing the division's fact with the subtraction's. Querying a
+                    // non-closed DBM answers about what was written down, not about what is
+                    // known — so this read INF for every derived descent, and the rule silently
+                    // covered only the shapes some transfer had stated outright.
+                    oct_close(&W);
                     // arg < pv  (arg − pv ≤ −1)   AND   pv ≥ 0 (well-founded below)
                     bool shrinks = vra_diff_ub(V, &W, arg->id, pv->id) <= -1;
                     int64_t lo,hi; bool hl,hh; vra_interval(V, &W, pv->id, &lo,&hl,&hi,&hh);
@@ -3306,6 +3362,80 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
             }
         }
         if (ok) { free(scratch); oct_map = oct_map_saved; return true; }  // this param is a measure
+    }
+
+    // ── A DIFFERENCE OF TWO PARAMETERS, WHICH IS WHAT DIVIDE-AND-CONQUER DESCENDS ON ────────
+    // Binary search recurses as `bs(mid+1, hi)` and `bs(lo, mid)`: NEITHER bound descends on
+    // its own — one rises and one falls, depending on the branch — so the loop above, which
+    // asks each parameter in isolation, refuses the whole family. What shrinks is `hi - lo`.
+    //
+    // Measured before writing this: over every corpus program with a self-call, the
+    // single-parameter rule proved 50 termination obligations and refused 10, and NINE of the
+    // ten are programs the corpus asserts must be refused. The tenth is exactly this shape.
+    // One idiom is worth incomparably more than a sense that the rule is strict — and the
+    // language already lets you NAME this measure (`decreasing hi - lo`), so refusing it would
+    // be the engine failing to prove something the surface syntax advertises.
+    //
+    // ── WHY THIS IS AN OCTAGON QUESTION AT ALL ──────────────────────────────────────────
+    // Descent of `a - b` is a FOUR-variable relation — (a' - b') - (a - b) <= -1 — and no
+    // octagon can hold one. It collapses to two variables exactly when one of the two
+    // arguments is UNCHANGED, which is precisely what divide-and-conquer does: it moves one
+    // bound and carries the other through. So:
+    //
+    //   arg_a is param_a  ->  the measure falls iff b STRICTLY GROWS:  ub(b - arg_b) <= -1
+    //   arg_b is param_b  ->  the measure falls iff a STRICTLY FALLS:  ub(arg_a - a) <= -1
+    //   neither           ->  not answerable here; refuse
+    //
+    // and the measure is well-founded where `ub(b - a) <= 0`, i.e. `a - b >= 0`, which is what
+    // a `lo < hi` guard above the recursion puts in the octagon.
+    //
+    // Both surviving questions are single differences between two values the domain already
+    // relates, which is the whole reason this is affordable: `bsearch(a, mid+1, hi, t)` needs
+    // `lo <= mid` and `bsearch(a, lo, mid, t)` needs `mid < hi`, and the midpoint transfer
+    // derives both. The first formulation tried here compared ub(new) against lb(old) and
+    // failed on every program, because both sides mention an UNBOUNDED `hi` and infinity is
+    // not a bound. Asking about the CHANGE rather than the VALUE is what makes it finite.
+    {
+        IrParam *pa = f->params; int ka = 0;
+        for (; pa; pa=pa->next, ka++) {
+            IrValue *av = pa->value;
+            if (!av || !av->type || av->type->kind != IRT_INT || av->id<0 || av->id>=V->nvar) continue;
+            IrParam *pb = f->params; int kb = 0;
+            for (; pb; pb=pb->next, kb++) {
+                if (kb == ka) continue;
+                IrValue *bv = pb->value;
+                if (!bv || !bv->type || bv->type->kind != IRT_INT || bv->id<0 || bv->id>=V->nvar) continue;
+                bool ok = true;
+                for (IrBlock *b=f->blocks; b && ok; b=b->next) {
+                    if (!V->reached[b->id] || !V->in[b->id]) continue;
+                    memcpy(scratch, V->in[b->id], (size_t)V->dsz*8);
+                    Octagon W = { V->noct, dim, scratch };
+                    oct_close(&W);
+                    for (IrInstr *i=b->instrs; i && ok; i=i->next) {
+                        bool self = (i->op==IR_CALL && i->aux.callee && f->name
+                                     && i->aux.callee->length==f->name->length
+                                     && memcmp(i->aux.callee->name, f->name->name,
+                                               (size_t)f->name->length)==0);
+                        if (self) {
+                            if (ka >= i->n_operands || kb >= i->n_operands) { ok=false; break; }
+                            IrValue *aa = i->operands[ka], *ab = i->operands[kb];
+                            if (!aa || !ab || aa->id<0 || aa->id>=V->nvar
+                                           || ab->id<0 || ab->id>=V->nvar) { ok=false; break; }
+                            oct_close(&W);              // see the note in the loop above
+                            bool shrinks = false;
+                            if (aa->id == av->id)                                  // a carried through
+                                shrinks = vra_diff_ub(V, &W, bv->id, ab->id) <= -1;
+                            else if (ab->id == bv->id)                             // b carried through
+                                shrinks = vra_diff_ub(V, &W, aa->id, av->id) <= -1;
+                            bool grounded = vra_diff_ub(V, &W, bv->id, av->id) <= 0;
+                            if (!(shrinks && grounded)) { ok=false; break; }
+                        }
+                        vra_transfer_instr(V, &W, i);
+                    }
+                }
+                if (ok) { free(scratch); oct_map = oct_map_saved; return true; }
+            }
+        }
     }
     free(scratch);
     oct_map = oct_map_saved;

@@ -1,0 +1,15 @@
+// EXPECT: [E011]
+// The teeth for recursion_ir_engine_pass.ln. `up` recurses on a parameter that GROWS, so no
+// well-founded ranking exists and the sovereign engine must refuse it — with the position of
+// the self-call, which is what a user needs and what the legacy diagnostic never printed.
+//
+// Why this test matters beyond the one program: the check that answers it was made strictly
+// MORE precise on 2026-09-17 (the octagon is now closed before the descent is queried, so a
+// DERIVED descent like `mid = lo + (hi-lo)/2` is visible where before only a stated one was).
+// A permissive change needs its violating case pinned BEFORE the suite goes green, or a green
+// corpus is mistaken for evidence.
+func up(n usize) usize {
+    if n <= 1 { return 1 }
+    return up(n +% 1)
+}
+proc main() i32 { return up(2) as% i32 }

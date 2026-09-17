@@ -2,8 +2,14 @@
 // The measure decreases but is NOT well-founded: `n` is signed and the base case
 // `n == 0` does not catch negatives, so `bad(-1)` recurses forever. The `>= 0`
 // requirement rejects it (guard `n < 1`, or use an unsigned measure).
+// (The step is explicitly WRAPPING so that no arithmetic refusal fires first and hides this
+// test's subject, which is WELL-FOUNDEDNESS. `n - 1` on an unrefined i32 is a real underflow
+// at INT_MIN, and once the sovereign engine owned the recursion verdict that E086 arrived
+// before the termination one. Wrapping escapes the overflow obligation and never totality:
+// a counter that wraps is not a well-founded witness either, so the program is still refused
+// — for the reason the test is named after.)
 func bad(n i32) i32 decreasing n {
     if n == 0 { return 0 }
-    return bad(n - 1)
+    return bad(n -% 1)
 }
 proc main() i32 { return bad(3) }

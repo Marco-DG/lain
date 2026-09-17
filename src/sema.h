@@ -128,14 +128,45 @@ bool g_suppress_ownership = false;
 // measured on exactly the programs that used to be invisible. Termination is the new engine's
 // own subject area, which is what makes extending the seam here legitimate (session 68's rule:
 // a skip is a hole only when the blocking diagnostic is in the gate's OWN subject area).
-// SCOPE: LOOPS ONLY. The sovereign pass proves loop termination (a counter, a bound, a step);
-// it has no analysis of RECURSION at all, so standing the legacy recursion checks down would
-// defer to nothing and report "no obligation" where the honest answer is "nobody looked" —
-// which is the failure mode this seam exists to remove, not to create. E082-recursion and the
-// no-measure E011 therefore keep firing even under the seam. That is session 68's rule applied
-// to itself: a skip is a hole only when the blocking diagnostic is in the new engine's OWN
-// subject area, and recursion is not yet in it.
+// SCOPE (widened 2026-09-17): LOOPS **AND RECURSION**.
+//
+// It used to read LOOPS ONLY, on the stated ground that the sovereign pass "has no analysis of
+// RECURSION at all", so standing the legacy recursion checks down would defer to nothing and
+// report "no obligation" where the honest answer is "nobody looked". The rule was right and the
+// premise was false: `vra_recursion_terminates` has been in vra.h the whole time — a real
+// well-founded ranking check, a parameter that strictly descends at every self-call (read from
+// the octagon, so `n/2` and `n-k` both count) and is grounded below. It had ONE caller,
+// analysis/effects.h, which used it to decide DIVERGE, and it never produced a user-facing
+// verdict. An analysis whose result nobody can observe is indistinguishable from one that does
+// not exist, and it was recorded as not existing in two places.
+//
+// It now raises an obligation (vra_analyze emits a VRA_TERMINATION check with `recursion` set;
+// analysis/report.h reports it as E011), so the seam covers it by the same rule that used to
+// exclude it: stand a legacy check down exactly where the new engine speaks.
+//
+// STILL OUTSIDE THE SEAM: E091, the shape of a `decreasing` clause. That is front-end policy —
+// which spellings of a measure the language accepts — not a termination verdict, and the new
+// engine has no opinion about it.
 bool g_suppress_termination = false;
+// ── SEAM: legacy RECURSION checks ONLY (E011 no-measure, E082 non-descent) ───────────────
+// Separate from the loop seam above, and the separation was bought with three corpus failures.
+//
+// The sovereign engine emits a termination obligation for a LOOP only inside a `func`, because
+// totality is a `func` requirement and a `proc` may loop forever. But a `decreasing` clause is
+// a CLAIM THE PROGRAMMER WROTE, and the language accepts it on any loop — including in a
+// `proc`, where the old engine verified it and the new one says nothing at all. Standing the
+// whole loop family down therefore silently dropped three such claims (a zero step, a signed
+// halving, a binary search that sticks at hi-lo == 1): all three programs are asserted to be
+// REFUSED and all three compiled. That is the seam rule violated in the one direction it
+// exists to prevent, caught by the corpus rather than by reasoning.
+//
+// So the shipping compiler stands down exactly the RECURSION half, which is the half the
+// sovereign engine now answers for every case it accepts (`vra_self_call_site` +
+// `vra_recursion_terminates`, reported as E011 by analysis/report.h). The loop half keeps
+// running until the sovereign engine has an opinion about a written measure in a `proc` —
+// which is a language question (what does `decreasing` mean outside a `func`?) and not a
+// porting one.
+bool g_suppress_recursion = false;
 // ── SEAM: legacy ARITHMETIC-OVERFLOW checks (the E086 family) ────────────────────────────
 // Same purpose and same limits as the two above. 47 corpus programs are stopped by E086 before
 // the sovereign pass runs — the largest blocked bucket in phase3's breakdown — and B1's false
@@ -4077,6 +4108,21 @@ static void sema_check_no_mutual_recursion(DeclList *decls) {
             // not yet supported).
             if (d->as.function_decl.decreasing_measure && mrec_found_cycle_end == d)
                 continue;
+            // ── THE SEAM'S BOUNDARY, AND IT IS EXACTLY HERE ─────────────────────────────────
+            // `mrec_found_cycle_end == d` is a SELF-cycle (f → f). The sovereign engine answers
+            // that one — `vra_self_call_site` finds the call and `vra_recursion_terminates`
+            // looks for a well-founded ranking — so under the seam it should speak instead of
+            // this check. A cycle through OTHER functions (f → g → f) it does not answer at
+            // all: the self-call scan keys on the function's own name. Standing this down for
+            // a mutual cycle would report "no obligation" where the truth is "nobody looked",
+            // which is the one thing the seam rule forbids.
+            //
+            // So the boundary is not "recursion" but "SELF-recursion", and it is drawn here
+            // rather than in the seam's declaration because this is the only site that can tell
+            // the two apart. Mutual recursion is a real gap in the sovereign engine, recorded
+            // as such rather than hidden by a suppression.
+            if ((g_suppress_termination || g_suppress_recursion) && mrec_found_cycle_end == d)
+                continue;
             fprintf(stderr,
                     "[E011] Error Ln %li, Col %li: pure function '%.*s' participates in mutual recursion (via '%.*s'). "
                     "Mutual recursion breaks the termination guarantee of 'func'.\n",
@@ -4908,7 +4954,19 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             // otherwise the effect row refuses the program a step after the loop check was
             // suppressed, and the new engine's answer stays just as invisible. IO is NOT a
             // termination question and is left alone.
-            if (g_suppress_termination && (ef & EFFECT_DIVERGE) && !(ef & EFFECT_IO)) {
+            // ★ The DIVERGE half is a TERMINATION VERDICT and it fires FIRST, with no position
+            // — "func 'f' has a forbidden effect (Diverge)" — so while it ran, the sovereign
+            // engine's precise recursion diagnostic (which names the self-call's line and the
+            // three ways out) was never seen by anyone. Surfacing an obligation is not enough
+            // if a coarser check still wins the race.
+            //
+            // Standing it down under EITHER seam is safe because the sovereign engine answers
+            // both sources of DIVERGE in a `func`: an unbounded LOOP raises E082 per loop
+            // header, and an unbounded RECURSION now raises E011/E082 at the call. Note that
+            // effects.h computes this very bit BY ASKING `vra_recursion_terminates` — so the
+            // two were already the same analysis, delivered through a worse message.
+            if ((g_suppress_termination || g_suppress_recursion)
+                && (ef & EFFECT_DIVERGE) && !(ef & EFFECT_IO)) {
                 /* fall through: measured by the sovereign termination pass instead */
             } else
             if (dl->decl->kind == DECL_FUNCTION && (ef & (EFFECT_IO | EFFECT_DIVERGE))) {

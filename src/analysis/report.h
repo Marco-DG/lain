@@ -137,7 +137,29 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 ir_diag(file, c->line, c->col, "E012", "a required precondition is not established here");
                 n++; break;
             case VRA_TERMINATION:
-                ir_diag(file, c->line, c->col, "E082", "this loop is not provably terminating");
+                // One obligation, two arguments, two codes — the identity a user already knows.
+                // E082 is a loop whose measure does not decrease; E011 is a `func` whose
+                // recursion has no well-founded ranking. Both come from the sovereign engine
+                // now; both used to come from src/sema/.
+                if (c->recursion) {
+                    // Annex B, normatively: E011 is a self-recursion for which NO measure can
+                    // be inferred; a measure that is present and fails is E082. The engine
+                    // carries the source fact (`IrFunc.has_decreasing`) so it can tell them
+                    // apart rather than picking one and being wrong about half the programs.
+                    ir_diag(file, c->line, c->col, c->had_measure ? "E082" : "E011",
+                            c->had_measure
+                              ? "the `decreasing` measure is not provably well-founded here"
+                              : "this recursion is not provably terminating");
+                    fprintf(stderr, "       a `func` must be total, so some parameter has to "
+                                    "shrink toward a base case on every self-call\n"
+                                    "       the engine looks for one that strictly decreases "
+                                    "AND is bounded below (`>= 0`, or an unsigned type)\n"
+                                    "       name it with `decreasing <param>`, guard the base "
+                                    "case, or declare the function `proc`\n");
+                } else {
+                    ir_diag(file, c->line, c->col, "E082",
+                            "this loop is not provably terminating");
+                }
                 n++; break;
         }
     }

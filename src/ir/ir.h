@@ -441,6 +441,17 @@ typedef struct IrFunc {
     // conflict on `b`. Rust cannot infer this and rejects such a signature outright ("missing
     // lifetime specifier"); being whole-program, we read it off the returns instead.
     bool       ret_borrows;          // the returned reference borrows from a parameter
+    // Did the SOURCE carry a `decreasing <measure>` clause? A source fact, and the IR had no
+    // way to state it — which mattered the moment the sovereign engine started reporting
+    // recursion, because Annex B makes the DIAGNOSTIC depend on it: E011 is "a direct
+    // self-recursion for which no measure can be inferred", E082/E091 "a present-but-failing
+    // measure". Without the bit the engine could only pick one code and be wrong about half
+    // the programs — normatively wrong, against a spec that already decided.
+    //
+    // It is also the first plank of the open language question (D-44): a written `decreasing`
+    // in a `proc` is a claim nothing sovereign currently checks, and checking it needs exactly
+    // this fact, per loop rather than per function.
+    bool       has_decreasing;
     uint64_t   ret_borrow_mask;      // bit i = it may borrow from param i (0 with the flag set
     bool       ret_borrow_mask_done; // is impossible: the fallback is every reference param)
     // F1: the DECLARED `in <param>` mask, if the signature carried one. Kept apart from the

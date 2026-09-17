@@ -1894,6 +1894,11 @@ static void check_recursion_measure(Decl *fn, Expr *call) {
     Range mr = sema_eval_range(m, sema_ranges);
     bool wellfounded = mr.known && mr.min >= 0;
     if (!strict || !wellfounded) {
+        // Same seam as the no-measure case above: this is a TERMINATION VERDICT, and the
+        // sovereign engine now returns one for recursion. (E091 above is NOT seam-guarded —
+        // the shape of a `decreasing` clause is front-end policy, not a termination question,
+        // and the new engine has no opinion about it.)
+        if (g_suppress_termination || g_suppress_recursion) return;
         fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify the recursion in `func` "
                 "'%.*s' terminates. The `decreasing %.*s` measure must be provably >= 0 and "
                 "strictly smaller in every self-call. %s\n",
@@ -2310,7 +2315,13 @@ void sema_infer_expr(Expr *e) {
                 Expr *inferred = infer_recursion_measure(current_function_decl);
                 if (inferred) {
                     current_function_decl->as.function_decl.decreasing_measure = inferred;
-                } else {
+                } else if (!g_suppress_termination && !g_suppress_recursion) {
+                    // SEAM (extended 2026-09-17): the sovereign engine now raises a recursion
+                    // obligation of its own — `vra_self_call_site` + `vra_recursion_terminates`,
+                    // reported as E011 by analysis/report.h. Until it did, standing this check
+                    // down would have deferred to nothing and reported "no obligation" where the
+                    // truth was "nobody looked", which is why the seam's scope note said LOOPS
+                    // ONLY. That note is now obsolete and the scope is the whole subject.
                     fprintf(stderr, "[E011] Error: recursion is not allowed in pure function '%.*s' (a `func` must be total; recursion cannot guarantee termination). Add a `decreasing <measure>` clause to permit it.\n",
                             (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
                     exit(1);
