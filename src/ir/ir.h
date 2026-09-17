@@ -68,6 +68,25 @@ typedef struct IrType {
     // second. Defaults to false, i.e. "a checked reference", which is what every IR builder
     // that does not say otherwise is producing.
     bool  is_raw;
+    // ── A BORROW IS A PROPERTY OF THE TYPE, NOT A FLAG BESIDE IT ────────────────────────
+    // True when a value of this type is a REFERENCE INTO something the caller owns, for the
+    // duration of a scope some checker has discharged — as opposed to a value that was copied
+    // or a raw address that promises nothing.
+    //
+    // This existed as `IrFunc.ret_borrows`, a boolean on the FUNCTION, read by
+    // analysis/borrow.h and by nothing else. The IR was then ill-typed for the most important
+    // case in the language (`func ref_val(%0: *var struct) -> i32` whose body is
+    // `ret %1 : *i32`), and every client that trusts types rather than the side flag got it
+    // wrong: the IR's own C backend emitted an `int32_t` return and the write through the
+    // returned reference never reached the owner. The borrow analysis was correct BECAUSE it
+    // read the flag, and its correctness is what hid that the type was wrong.
+    //
+    // Why a bit here and not just `ptr_mut` on a pointer: a mutable borrow of a STRUCT or a
+    // scalar travels as an address (so it is an IRT_PTR and could be recognised by its
+    // shape), but a mutable borrow of a SLICE or an ARRAY travels as itself — it already
+    // carries a data pointer — so there is no wrapper to recognise. One bit answers both, and
+    // answers it for every kind of type, which is what the side flag was really saying.
+    bool  borrowed;
     bool  slice_sentinel;   // u8[:0]
     // IRT_FUNC. The declared EFFECT BOUND on the arrow: true for `*func`, false for `*proc`.
     // Nielson & Nielson write this as the latent effect of a function type, tau ->^phi tau',
@@ -434,13 +453,16 @@ typedef struct IrFunc {
     // lifetime syntax, so the relationship must be recovered, or `r = get_ref(var d)` looks
     // like a plain value and the loan on `d` is invisible across statements.
     //
-    // `ret_borrows` is a SIGNATURE fact (the return type is a reference) — set at lowering.
+    // WHETHER the return is a reference is a SIGNATURE fact and now lives where signature
+    // facts belong — on `ret_type->borrowed`, set at lowering, readable by every client
+    // including the backends. It used to be `IrFunc.ret_borrows`, a boolean beside a type that
+    // contradicted it; `ir_ret_is_borrow()` is the reader.
+    //
     // The SOURCE is a BODY fact and is INFERRED by analysis/borrow.h, never guessed from the
     // signature: `pick(var a, var b) var i32` may return either, and picking "the first
     // mutable param" mis-attributes the loan for `return var b.x`, silently losing every
     // conflict on `b`. Rust cannot infer this and rejects such a signature outright ("missing
     // lifetime specifier"); being whole-program, we read it off the returns instead.
-    bool       ret_borrows;          // the returned reference borrows from a parameter
     // Did the SOURCE carry a `decreasing <measure>` clause? A source fact, and the IR had no
     // way to state it — which mattered the moment the sovereign engine started reporting
     // recursion, because Annex B makes the DIAGNOSTIC depend on it: E011 is "a direct
@@ -452,7 +474,7 @@ typedef struct IrFunc {
     // in a `proc` is a claim nothing sovereign currently checks, and checking it needs exactly
     // this fact, per loop rather than per function.
     bool       has_decreasing;
-    uint64_t   ret_borrow_mask;      // bit i = it may borrow from param i (0 with the flag set
+    uint64_t   ret_borrow_mask;      // bit i = it may borrow from param i (0 with a borrowed ret
     bool       ret_borrow_mask_done; // is impossible: the fallback is every reference param)
     // F1: the DECLARED `in <param>` mask, if the signature carried one. Kept apart from the
     // inferred mask on purpose — on an extern it REPLACES inference (there is nothing to
@@ -471,6 +493,15 @@ typedef struct IrFunc {
     Arena     *arena;       // where this function's IR is allocated
     struct IrFunc *next;
 } IrFunc;
+
+// Does this function return a BORROW — a reference into storage the caller owns? ONE reader
+// for what used to be `IrFunc.ret_borrows`, a boolean beside a type that contradicted it, so
+// the question now has a single answer and every client asks the TYPE. `is_raw` is what keeps
+// a plain `*T` the programmer took out of it: a raw address carries no discharged guarantee
+// and must not create a loan.
+static inline bool ir_ret_is_borrow(const IrFunc *f) {
+    return f && f->ret_type && f->ret_type->borrowed && !f->ret_type->is_raw;
+}
 
 typedef struct IrModule {
     IrFunc  *funcs;

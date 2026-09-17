@@ -322,7 +322,7 @@ static uint64_t bor_all_ref_params(IrFunc *f) {
     return m;
 }
 static uint64_t bor_ret_borrow_mask(IrFunc *f) {
-    if (!f->ret_borrows) return 0;
+    if (!ir_ret_is_borrow(f)) return 0;
     if (f->ret_borrow_mask_done) return f->ret_borrow_mask;
     f->ret_borrow_mask_done = true;
     int nvar = f->next_value_id>0?f->next_value_id:1;
@@ -553,7 +553,7 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
         IrPlace src[8]; int nsrc = 0;
         if (ins->op == IR_CALL) {
             IrFunc *callee = bor_find_func(mod, ins->aux.callee);
-            if (!callee || !callee->ret_borrows) continue;  // the return must BORROW a parameter
+            if (!callee || !ir_ret_is_borrow(callee)) continue;  // the return must BORROW a parameter
             // Loans on every place passed to a parameter the RETURN may borrow from. The mask
             // is inferred from the callee's body, so `pick(var a, var b) var i32` charges the
             // loan to the parameter actually returned — and to both only if it returns either.
@@ -662,7 +662,7 @@ static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
     // block and instruction are set before each call is examined.
     // F1: an `in <param>` that claims less than the body actually borrows. Asking for the mask
     // is what computes this, so the query has to happen before the report.
-    if (f->ret_borrows) { (void)bor_ret_borrow_mask(f);
+    if (ir_ret_is_borrow(f)) { (void)bor_ret_borrow_mask(f);
         if (f->ret_borrow_annot_wrong) bor_add(B, 0, 0, 11); }
     if (mod) {
         bor_loan_mod = mod;

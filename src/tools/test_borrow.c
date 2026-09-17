@@ -101,28 +101,30 @@ int main(void){
     // read off the BODY, not guessed from the signature. `pick(var a, var b) var i32` may
     // return either; the old syntactic rule ("first mutable reference param") mis-attributed
     // `return var b.x` to `a` and silently lost every conflict on `b`. These pin the mask.
+    // These build their IR by hand, so they must state the SIGNATURE FACT the same way the
+    // lowering does: a returned borrow is a property of the RETURN TYPE (`borrowed`), not a
+    // boolean on the function. `pi32b` is that type — the same `*i32` these functions return,
+    // marked as a reference into the caller's storage.
     { IrType *pty=ir_type_new(&A,IRT_PTR); pty->elem=i32;
+      IrType *pi32b=ir_type_new(&A,IRT_PTR); *pi32b=*pi32; pi32b->borrowed=true;
       for (int which=0; which<2; which++) {
-          IrFunc *f=ir_func_new(&A,nm("pick"),pi32,IR_FUNC_PURE);
+          IrFunc *f=ir_func_new(&A,nm("pick"),pi32b,IR_FUNC_PURE);
           IrValue *pa=ir_add_param(f,pty,nm("a")), *pb=ir_add_param(f,pty,nm("b"));
-          f->ret_borrows = true;
           ir_set_ret(f->entry, which ? pb : pa);
           uint64_t m = bor_ret_borrow_mask(f);
           bexpect(which ? "ret-borrow mask isolates param b" : "ret-borrow mask isolates param a",
                   (int)m, which ? 2 : 1);
       }
       // returning EITHER on different paths ⇒ both bits (a union, still exact)
-      { IrFunc *f=ir_func_new(&A,nm("pick2"),pi32,IR_FUNC_PURE);
+      { IrFunc *f=ir_func_new(&A,nm("pick2"),pi32b,IR_FUNC_PURE);
         IrValue *pa=ir_add_param(f,pty,nm("a")), *pb=ir_add_param(f,pty,nm("b"));
-        f->ret_borrows = true;
         IrBlock *t=ir_new_block(f), *e2=ir_new_block(f);
         ir_set_br_cond(f->entry, ir_const_int(f,f->entry,1,i32), t, e2);
         ir_set_ret(t, pa); ir_set_ret(e2, pb);
         bexpect("ret-borrow mask unions both branches", (int)bor_ret_borrow_mask(f), 3); }
       // an OPAQUE return (provenance laundered through a load) ⇒ fall back to ALL ref params
-      { IrFunc *f=ir_func_new(&A,nm("opaque"),pi32,IR_FUNC_PURE);
+      { IrFunc *f=ir_func_new(&A,nm("opaque"),pi32b,IR_FUNC_PURE);
         IrValue *pa=ir_add_param(f,pty,nm("a")); ir_add_param(f,pty,nm("b"));
-        f->ret_borrows = true;
         ir_set_ret(f->entry, ir_load(f,f->entry,pa,pi32));
         bexpect("opaque ret-borrow falls back to all ref params", (int)bor_ret_borrow_mask(f), 3); }
     }

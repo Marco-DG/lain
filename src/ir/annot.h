@@ -85,7 +85,17 @@ static bool ir_param_c_restrict(IrValue *pv) {
     if (!t) return false;
     if (t->kind == IRT_SLICE) return true;               // fat pointer: its data pointer
     if (t->kind == IRT_ARRAY) return true;               // a DECAYED fixed-array reference
-    if (t->kind == IRT_PTR)  return !t->is_raw;          // a borrow, not an unsafe pointer
+    // ★ POSITIVE EVIDENCE, NOT THE ABSENCE OF EVIDENCE. This read `!t->is_raw`, and `is_raw`
+    // defaults to false — so a pointer type built by any code path that did not think about the
+    // question got `restrict`, which is UB if wrong. The default was the unsafe one, and chapter
+    // 0's gap list has said so since it was written.
+    //
+    // `borrowed` is the fact stated positively: this pointer is a reference into storage the
+    // caller owns, whose exclusivity some checker has discharged. A type nobody marked is now
+    // simply not a borrow, and gets nothing. `is_raw` stays as the belt-and-braces half —
+    // `&x` and `*T` in `unsafe` set it explicitly — so both a missing mark and an explicit raw
+    // pointer fall on the safe side.
+    if (t->kind == IRT_PTR)  return t->borrowed && !t->is_raw;
     return false;
 }
 
