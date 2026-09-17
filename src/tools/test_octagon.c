@@ -178,7 +178,44 @@ int main(void) {
         CHECK(oct_get(&T, oct_pos(2), oct_pos(0)) <= 5, "transitive x−z≤5 not derived");
     }
 
-    if (fails==0) printf("octagon: ALL PROPERTIES HOLD over %d random trials (box [-%d,%d]^%d) + tightness cases\n", trials, R,R,NV);
+    // 10. INTEGER TIGHTNESS. Mine's Definition 3 asks that every m[i][bar i] be even;
+    //     nothing in octagon.h evens them, and it is tightly closed anyway because the
+    //     strong step at i = bar j reads the same entry twice: floor(c/2)+floor(c/2),
+    //     which for an odd c is strictly smaller, and even.
+    {
+        Octagon T={0}; T.m=bufA; oct_init_top(&T, NV, bufA);
+        *oct_at(&T, oct_neg(0), oct_pos(0)) = 5;          // 2x <= 5, planted ODD by hand
+        oct_close(&T);
+        CHECK(oct_get(&T, oct_neg(0), oct_pos(0)) == 4, "odd unary entry not tightened");
+        // and it is reached by a DERIVATION, not only by hand: x+y<=5 and x-y<=0 give
+        // 2x <= 5 through the shortest path, which over Z is x <= 2.
+        oct_init_top(&T, NV, bufA);
+        oct_add_sum_le(&T,0,1,5); oct_add_diff_le(&T,0,1,0);
+        oct_close(&T);
+        CHECK(oct_get(&T, oct_neg(0), oct_pos(0)) == 4, "derived 2x bound not tightened");
+        int64_t lo,hi; bool hl,hh;
+        oct_interval(&T,0,&lo,&hl,&hi,&hh); CHECK(hh && hi==2, "tight: x<=2 from x+y<=5, x<=y");
+        // every unary entry is even after closure, which is the property itself
+        for (int v=0; v<NV; v++) {
+            int64_t u = oct_get(&T, oct_neg(v), oct_pos(v));
+            int64_t l = oct_get(&T, oct_pos(v), oct_neg(v));
+            CHECK(u>=OCT_INF || u%2==0, "unary upper entry odd after closure");
+            CHECK(l>=OCT_INF || l%2==0, "unary lower entry odd after closure");
+        }
+    }
+    // 11. The emptiness test that a RATIONAL closure misses: 2x <= 1 and -2x <= -1 is
+    //     x = 1/2, satisfiable over Q and unsatisfiable over Z. Shortest paths alone
+    //     give m[x][x] = 0; the tightening drives it negative.
+    {
+        Octagon T={0}; T.m=bufB; oct_init_top(&T, NV, bufB);
+        *oct_at(&T, oct_neg(0), oct_pos(0)) =  1;         //  2x <= 1
+        *oct_at(&T, oct_pos(0), oct_neg(0)) = -1;         // -2x <= -1
+        oct_close(&T);
+        CHECK(oct_is_bottom(&T), "x = 1/2 not detected as empty over Z");
+        CHECK(gamma_empty(&T), "declared empty but gamma nonempty");
+    }
+
+    if (fails==0) printf("octagon: ALL PROPERTIES HOLD over %d random trials (box [-%d,%d]^%d) + tightness/integer cases\n", trials, R,R,NV);
     else          printf("octagon: %d FAILURES\n", fails);
     return fails ? 1 : 0;
 }
