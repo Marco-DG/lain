@@ -1,0 +1,20 @@
+// ★ WAS `decreasing_halving_signed_fail.ln`, AND THE REFUSAL WAS THE OLD ENGINE'S RULE, NOT A
+// PROPERTY OF THIS PROGRAM. It asserted: "for a SIGNED n, `n = n / 2` moves toward zero — an
+// INCREASE when n is negative — so the halving rule must not fire". That is true of a SYNTACTIC
+// rule, which can only look at the type. The octagon looks at the GUARD: `n > 0` puts `n >= 1`
+// in the domain, and `n / 2 < n` for every `n >= 1`. The loop terminates — executed, seven
+// iterations — so proving it is correct and refusing it was a cost.
+//
+// The soundness condition the old rule was reaching for is real, and it is pinned separately by
+// `decreasing_halving_unguarded_fail.ln`: with a guard that ADMITS negatives (`n != 0`) the same
+// step is still NOT proven. The rule fires only where the guard bounds the measure below, which
+// is the actual requirement rather than a proxy for it.
+proc main() i32 {
+    var n i32 = 64
+    var c = 0
+    while n > 0 decreasing n {
+        n = n / 2
+        c += 1
+    }
+    return c
+}

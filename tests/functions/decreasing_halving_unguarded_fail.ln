@@ -1,0 +1,20 @@
+// EXPECT: [E082]
+// THE TEETH for `decreasing_halving_signed_pass.ln`, and the reason that test could be flipped.
+//
+// Halving is a well-founded step only when the measure is BOUNDED BELOW. `while n > 0` supplies
+// that bound and the octagon reads it. `while n != 0` does not: for a negative `n`, `n / 2`
+// moves TOWARD zero, which is an increase, and the loop need not terminate. The engine must
+// refuse this even though it is one character different from the program it proves.
+//
+// A permissive change needs its violating case tested BEFORE the suite goes green — a green
+// corpus is not evidence. This file is that case.
+proc descend(start i32) i32 {
+    var n i32 = start
+    var c i32 = 0
+    while n != 0 decreasing n {
+        n = n / 2
+        c = c +% 1
+    }
+    return c
+}
+proc main() i32 { return 0 }

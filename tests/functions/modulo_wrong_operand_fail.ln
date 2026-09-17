@@ -1,7 +1,11 @@
 // EXPECT: [E082]
 // SOUNDNESS: only `X % v` (v the divisor) decreases v. `b = b % a` (b the DIVIDEND)
 // is not < b in general, so termination is not proven.
-func f(a usize, b0 usize) usize {
+// (`a != 0` is stated so that the DIVISION obligation cannot fire first and hide this test's
+// subject. `b % a` with an unconstrained `a` is a genuine divide-by-zero, and once the
+// sovereign engine owned the termination verdict that E015 arrived before the E082. The
+// refinement is incidental scaffolding; the measure is what is being tested.)
+func f(a usize != 0, b0 usize) usize {
     var b usize = b0
     while b > 0 decreasing b {
         b = b % a

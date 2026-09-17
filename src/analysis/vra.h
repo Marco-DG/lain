@@ -2122,11 +2122,40 @@ static void vra_natural_loop(Vra *V, IrBlock *H, int nb, char *inloop);   // fwd
 // Sound because both ways the cell could change are excluded: a STORE anywhere in the natural
 // loop, and a call writing through an ESCAPED address. `V->escaped` is precisely the set the
 // memory model already havocs at every call, for this same reason.
+static bool vra_loop_invariant_d(Vra *V, IrValue *val, IrBlock *H, int depth);
 static bool vra_loop_invariant(Vra *V, IrValue *val, IrBlock *H) {
+    return vra_loop_invariant_d(V, val, H, 0);
+}
+static bool vra_loop_invariant_d(Vra *V, IrValue *val, IrBlock *H, int depth) {
     int Hid = H->id;
     IrInstr *d=V->def[val->id];
     if (!d) return true;
     if (d->op==IR_CONST || d->op==IR_SLICE_LEN) return true;
+    // ── AN OPERATION IS INVARIANT WHEN ITS OPERANDS ARE ─────────────────────────────────
+    // The textbook definition, and its absence refused a whole family of ordinary loops:
+    // `while i < n / 2` (two-pointer reverse) computes its BOUND in the header block, so the
+    // "defined above the header" test fails and the bound was treated as varying — even though
+    // nothing in the loop writes `n`. The same for `while i < h * w` and every guard whose
+    // limit is arithmetic over loop-invariant values.
+    //
+    // Pure arithmetic only: no loads (the cell case below has its own, stronger test), no
+    // calls, nothing that can read memory the loop writes. Depth-capped because this is a walk
+    // over a DAG and a cap is cheaper than a visited set for the shapes that occur.
+    if (depth < 8) {
+        switch (d->op) {
+            case IR_ADD: case IR_SUB: case IR_MUL:
+            case IR_UDIV: case IR_SDIV: case IR_UREM: case IR_SREM:
+            case IR_AND: case IR_OR: case IR_XOR:
+            case IR_SHL: case IR_LSHR: case IR_ASHR:
+            case IR_NEG: case IR_BNOT: case IR_CAST: {
+                for (int q=0; q<d->n_operands; q++)
+                    if (!d->operands[q] || !vra_loop_invariant_d(V, d->operands[q], H, depth+1))
+                        return false;
+                return true;
+            }
+            default: break;
+        }
+    }
     if (V->defblk[val->id]>=0 && V->defblk[val->id] < Hid) return true;
     if (d->op==IR_LOAD && d->n_operands>=1) {
         int cell = d->operands[0]->id;
@@ -2186,10 +2215,50 @@ static void vra_natural_loop(Vra *V, IrBlock *H, int nb, char *inloop) {
         for (int k=0;k<ns;k++)
             if (sv[k]->id>=0 && sv[k]->id<nb && !fwd[sv[k]->id]) { fwd[sv[k]->id]=1; st[sp++]=sv[k]; }
     }
+    // ── A BACK EDGE NEEDS DOMINANCE, NOT REACHABILITY ───────────────────────────────────
+    // "a pred of H that H can reach" is not a back edge, and in a NESTED loop it is wrong in a
+    // way that quietly refused every nested program in the corpus. From the inner header,
+    // control reaches the inner exit, the outer latch, the outer header and back into the outer
+    // BODY — which is also a pred of the inner header. So the outer body was classified as a
+    // back-edge source and the inner loop's "natural loop" swallowed the whole outer body,
+    // including the `var c = 0` that initialises the inner counter. That store is not progress,
+    // every store must be progress, and the inner loop was refused. The outer one proved, which
+    // is why the symptom was always "the first obligation passes and the second does not".
+    //
+    // H dominates P exactly when P is NOT reachable from the entry while avoiding H — one DFS,
+    // and it is the definition rather than a proxy for it. Deliberately not an id-order test:
+    // this file has been bitten twice by "later id means inside the loop" (the widening
+    // selector, and the store scan this same function feeds).
+    char *avoid = calloc((size_t)nb, 1);
+    if (avoid) {
+        sp = 0;
+        if (V->f->entry && V->f->entry->id>=0 && V->f->entry->id<nb && V->f->entry != H) {
+            avoid[V->f->entry->id] = 1; st[sp++] = V->f->entry;
+        }
+        while (sp > 0) {
+            IrBlock *u = st[--sp];
+            IrBlock *sv[2]; int ns = 0;
+            if (u->term.kind==IR_TERM_BR)            { if (u->term.a) sv[ns++]=u->term.a; }
+            else if (u->term.kind==IR_TERM_BR_COND)  { if (u->term.a) sv[ns++]=u->term.a;
+                                                       if (u->term.b) sv[ns++]=u->term.b; }
+            else if (u->term.kind==IR_TERM_SWITCH) {
+                if (u->term.a) sv[ns++]=u->term.a;
+                for (IrSwitchCase *c=u->term.cases; c; c=c->next)
+                    if (c->target && c->target->id>=0 && c->target->id<nb
+                        && c->target!=H && !avoid[c->target->id])
+                        { avoid[c->target->id]=1; st[sp++]=c->target; }
+            }
+            for (int k=0;k<ns;k++)
+                if (sv[k] && sv[k]!=H && sv[k]->id>=0 && sv[k]->id<nb && !avoid[sv[k]->id])
+                    { avoid[sv[k]->id]=1; st[sp++]=sv[k]; }
+        }
+    }
     // backward closure from the back-edge sources, stopping at H
     inloop[H->id] = 1; sp = 0;
     for (IrEdge *e=H->preds; e; e=e->next)
-        if (e->block && e->block->id>=0 && e->block->id<nb && fwd[e->block->id] && !inloop[e->block->id])
+        if (e->block && e->block->id>=0 && e->block->id<nb && fwd[e->block->id]
+            && (!avoid || !avoid[e->block->id])          // H must DOMINATE the source
+            && !inloop[e->block->id])
             { inloop[e->block->id]=1; st[sp++]=e->block; }
     while (sp > 0) {
         IrBlock *u = st[--sp];
@@ -2197,7 +2266,7 @@ static void vra_natural_loop(Vra *V, IrBlock *H, int nb, char *inloop) {
             if (e->block && e->block->id>=0 && e->block->id<nb && !inloop[e->block->id])
                 { inloop[e->block->id]=1; st[sp++]=e->block; }
     }
-    free(fwd); free(st);
+    free(fwd); free(st); free(avoid);
 }
 
 // A structured while-loop terminates if its guard variable is a memory cell updated
@@ -2345,6 +2414,84 @@ static IrCmp vra_cmp_swap(IrCmp c) {
     }
 }
 
+// ── A TWO-ENDPOINT MEASURE: `while lo < hi { ... lo = mid+1 ... hi = mid ... }` ──────────
+// The rule above tracks ONE counter against a loop-INVARIANT bound. Binary search has neither:
+// both endpoints are written in the loop, and which one moves depends on the branch. What
+// shrinks is the DIFFERENCE `hi - lo`, and the corpus says so out loud — those loops carry
+// `decreasing hi - lo` — so refusing them made the engine unable to prove the very measure the
+// programmer wrote.
+//
+// It is the same algebra the RECURSION rule uses one level up, and for the same reason it is
+// affordable: a difference is a four-variable relation in general, but each store site moves
+// exactly ONE endpoint and leaves the other alone, so every question collapses to a single
+// difference the octagon already relates:
+//
+//     a store to `lo`  is progress iff the new value is strictly GREATER than the old
+//     a store to `hi`  is progress iff the new value is strictly LESS    than the old
+//
+// Both are read from the converged loop state replayed to the store, so they hold on every
+// iteration rather than the first. Groundedness is the guard itself: `lo < hi` is what stops
+// the difference falling below zero, and it is re-tested at the header every time round.
+//
+// Soundness rests on the same three conditions as the single-counter rule, and they are not
+// relaxed: EVERY store to either cell must be progress (so no path can undo one), every path
+// around the loop must pass through at least one (the `prog` dataflow), and neither cell may be
+// written through an escaped address by a call.
+static bool vra_loop_terminates_pair(Vra *V, IrBlock *H) {
+    if (H->term.kind != IR_TERM_BR_COND) return false;
+    IrInstr *ic = V->def[H->term.cond->id];
+    if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
+    for (int side=0; side<2; side++) {
+        IrCmp p = (side==0) ? ic->aux.cmp : vra_cmp_swap(ic->aux.cmp);
+        bool lt = (p==IR_CMP_SLT||p==IR_CMP_ULT||p==IR_CMP_SLE||p==IR_CMP_ULE);
+        if (!lt) continue;                                  // read as `low < high`
+        IrInstr *dlo = V->def[ic->operands[side]->id];
+        IrInstr *dhi = V->def[ic->operands[side^1]->id];
+        if (!dlo || dlo->op!=IR_LOAD || dlo->n_operands<1) continue;
+        if (!dhi || dhi->op!=IR_LOAD || dhi->n_operands<1) continue;
+        int clo = dlo->operands[0]->id, chi = dhi->operands[0]->id;
+        if (clo==chi) continue;
+        if (!vra_is_scalar_cell(V,clo) || !vra_is_scalar_cell(V,chi)) continue;
+        int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+        char *body = malloc((size_t)nbb); if (!body) continue;
+        vra_natural_loop(V, H, nbb, body);
+        char *prog = calloc((size_t)nbb,1); if (!prog) { free(body); continue; }
+        bool bad=false, anyprog=false;
+        for (IrBlock *b=V->f->blocks; b && !bad; b=b->next) {
+            if (!(b->id>=0 && b->id<nbb && body[b->id])) continue;
+            for (IrInstr *st=b->instrs; st && !bad; st=st->next) {
+                if (st->op!=IR_STORE || st->n_operands<2) continue;
+                int tgt = st->operands[0]->id;
+                if (tgt!=clo && tgt!=chi) continue;
+                int nv = st->operands[1]->id;
+                if (nv<0 || nv>=V->nvar || !V->in[b->id]) { bad=true; break; }
+                int64_t *sc = malloc((size_t)V->dsz*8);
+                if (!sc) { bad=true; break; }
+                memcpy(sc, V->in[b->id], (size_t)V->dsz*8);
+                Octagon SW = { V->noct, 2*V->noct, sc };
+                oct_close(&SW);
+                for (IrInstr *q=b->instrs; q && q!=st; q=q->next) vra_transfer_instr(V,&SW,q);
+                oct_close(&SW);
+                // the OLD value of the cell being written, as the guard's load names it
+                int old = (tgt==clo) ? dlo->result->id : dhi->result->id;
+                bool ok_step = (tgt==clo) ? (vra_diff_ub(V,&SW,old,nv) <= -1)   // lo rises
+                                          : (vra_diff_ub(V,&SW,nv,old) <= -1);  // hi falls
+                free(sc);
+                if (!ok_step) { bad = true; break; }
+                prog[b->id] = 1; anyprog = true;
+            }
+        }
+        bool ok = false;
+        if (!bad && anyprog
+            && !vra_cell_opaque_write(V, clo, nbb, body)
+            && !vra_cell_opaque_write(V, chi, nbb, body))
+            ok = vra_progress_on_every_path(V, H, nbb, body, prog);
+        free(body); free(prog);
+        if (ok) return true;
+    }
+    return false;
+}
+
 static bool vra_loop_terminates(Vra *V, IrBlock *H) {
     if (H->term.kind != IR_TERM_BR_COND) return false;
     IrInstr *ic = V->def[H->term.cond->id];
@@ -2361,6 +2508,22 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         // with [E082] first, which is the accident this relies on until 3.5.
         IrCmp p = (side==0) ? p0 : vra_cmp_swap(p0);
         IrInstr *ivd=V->def[ivv->id];
+        // ── THE COUNTER MAY CARRY A CONSTANT OFFSET ─────────────────────────────────────
+        // `while i + 1 < n` is the sliding-window guard, and it is the spelling the corpus
+        // PREFERS: `i < n - 1` underflows at n == 0 on a usize and was replaced everywhere for
+        // exactly that reason (C-7). The rule matched only a BARE load, so the ubiquitous form
+        // was refused while the dangerous one proved.
+        //
+        // Peeling is sound because adding a loop-invariant constant is MONOTONE: `i + k` rises
+        // exactly when `i` rises, so the predicate's direction is unchanged and the bound moves
+        // by a constant. Progress is then checked on the CELL, as before — which is the part
+        // that must not be relaxed, because it is what the counter actually is.
+        if (ivd && (ivd->op==IR_ADD || ivd->op==IR_SUB) && ivd->n_operands>=2) {
+            IrValue *a0=ivd->operands[0], *a1=ivd->operands[1];
+            bool c1 = a1 && a1->id>=0 && a1->id<V->nvar && V->cknown[a1->id];
+            IrInstr *ld = (a0 && a0->id>=0 && a0->id<V->nvar) ? V->def[a0->id] : NULL;
+            if (c1 && ld && ld->op==IR_LOAD && ld->n_operands>=1) ivd = ld;   // `i ± const`
+        }
         if (!ivd || ivd->op!=IR_LOAD || ivd->n_operands<1) continue;
         int cell=ivd->operands[0]->id;
         if (!vra_is_scalar_cell(V,cell)) continue;
@@ -2401,9 +2564,40 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
                 IrInstr *vd=V->def[st->operands[1]->id];
                 if (vd && (vd->op==IR_ADD||vd->op==IR_SUB) && vd->n_operands>=2) {
                     IrInstr *ld=V->def[vd->operands[0]->id]; int c=vd->operands[1]->id;
-                    if (ld && ld->op==IR_LOAD && ld->operands[0]->id==cell && V->cknown[c]) {
-                        int64_t stp = (vd->op==IR_ADD)? V->cval[c] : -V->cval[c];
-                        ok_step = (lt && stp>0) || (gt && stp<0);
+                    if (ld && ld->op==IR_LOAD && ld->operands[0]->id==cell) {
+                        if (V->cknown[c]) {
+                            int64_t stp = (vd->op==IR_ADD)? V->cval[c] : -V->cval[c];
+                            ok_step = (lt && stp>0) || (gt && stp<0);
+                        } else if (c>=0 && c<V->nvar && V->in[b->id]) {
+                            // ── A VARIABLE STEP, WHICH ONLY NEEDS ITS SIGN ──────────────────
+                            // `while i < n decreasing n - i { i = i + k }` is an ordinary
+                            // strided scan and the step need not be a literal: what termination
+                            // requires is that every iteration MOVES THE COUNTER THE RIGHT WAY,
+                            // i.e. that `k` is bounded away from zero on the correct side. The
+                            // rule asked `V->cknown[c]` — is it a compile-time constant — which
+                            // is a much stronger question than the one that matters, and it
+                            // refused the whole family.
+                            //
+                            // The bound is read from the CONVERGED loop state, so it holds on
+                            // every iteration rather than the first; a step that is sometimes
+                            // zero (the `decreasing_zero_step_fail` shape, `m` in [0, ...])
+                            // yields lo == 0 and is still refused, which is the soundness
+                            // condition and is pinned by that test.
+                            int64_t slo,shi; bool hl,hh;
+                            int64_t *sc = malloc((size_t)V->dsz*8);
+                            if (sc) {
+                                memcpy(sc, V->in[b->id], (size_t)V->dsz*8);
+                                Octagon SW = { V->noct, 2*V->noct, sc };
+                                oct_close(&SW);
+                                for (IrInstr *q=b->instrs; q && q!=st; q=q->next)
+                                    vra_transfer_instr(V,&SW,q);
+                                oct_close(&SW);
+                                vra_interval(V,&SW,c,&slo,&hl,&shi,&hh);
+                                if (vd->op==IR_ADD) ok_step = (lt && hl && slo>=1) || (gt && hh && shi<=-1);
+                                else                ok_step = (lt && hh && shi<=-1) || (gt && hl && slo>=1);
+                                free(sc);
+                            }
+                        }
                     }
                 } else if (gt && vra_step_decreases(V, cell, vd)) {
                     ok_step = true;      // a falling step the domain justifies (see above)
@@ -2445,7 +2639,8 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         free(body); free(prog);
         if (ok) return true;
     }
-    return false;
+    // Neither endpoint is a counter against an invariant bound — try the DIFFERENCE.
+    return vra_loop_terminates_pair(V, H);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
@@ -3073,12 +3268,24 @@ static Vra *vra_analyze(IrFunc *f) {
     // one termination obligation per loop header — but ONLY for a `func` (totality is a
     // func requirement; a `proc` may loop forever, e.g. an event loop). Emitting it for
     // procs was spuriously marking terminating procs "partially proven".
-    if (f->kind == IR_FUNC_PURE)
-        for (IrBlock *b=f->blocks; b; b=b->next) {
-            if (!b->is_loop_header) continue;
-            VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
-            vra_add_check(V, c);
-        }
+    // ── D-44: A WRITTEN MEASURE IS AN OBLIGATION WHEREVER IT IS WRITTEN ──────────────────
+    // A `func` owes termination on every loop, because totality is what `func` means. A `proc`
+    // owes it on the loops where the PROGRAMMER SAID SO — `while ... decreasing m` is a claim,
+    // and a claim the compiler does not check is worse than one nobody made: it reads as
+    // verified. The old engine checked both; the sovereign engine checked only the first, and
+    // the gap was invisible until the legacy checks were stood down and three `proc` programs
+    // asserting a bad measure compiled.
+    //
+    // This is the assertion rule applied one level down from `effects ...`: the declaration
+    // unlocks no inference (the measure is inferred anyway where it can be), it states an
+    // intention, and the compiler defends it against drift.
+    for (IrBlock *b=f->blocks; b; b=b->next) {
+        if (!b->is_loop_header) continue;
+        if (f->kind != IR_FUNC_PURE && !b->has_measure) continue;   // a proc may loop forever
+        VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
+        c.had_measure = b->has_measure;
+        vra_add_check(V, c);
+    }
     // ── RECURSION: the same obligation, one level up ────────────────────────────────────────
     // `vra_recursion_terminates` has existed here since the effect row needed to know whether a
     // recursive cycle diverges, and it is a real well-founded-ranking check: a parameter that

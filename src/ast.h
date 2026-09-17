@@ -407,6 +407,13 @@ typedef struct {
 typedef struct {
     Expr     *cond;
     Expr     *measure;   // termination measure (NULL = unbounded, banned in func)
+    // Did the PROGRAMMER write `decreasing ...`, as opposed to sema inferring one? The two are
+    // indistinguishable in `measure` by the time lowering runs, because inference INSTALLS its
+    // candidate in the same field — and the difference is load-bearing twice over: Annex B makes
+    // the diagnostic depend on it (E011 for a loop whose measure is neither given nor inferable,
+    // E082 for one that is present and fails), and D-44's rule is about a claim the PROGRAMMER
+    // made, not one the compiler guessed.
+    bool      measure_written;
     StmtList *body;
 } StmtWhile;
 
@@ -1238,6 +1245,7 @@ Stmt *stmt_while(Arena *arena, Expr *cond, Expr *measure, StmtList *body) {
     s->kind = STMT_WHILE;
     s->as.while_stmt.cond = cond;
     s->as.while_stmt.measure = measure;
+    s->as.while_stmt.measure_written = (measure != NULL);   // set at PARSE time — see the field
     s->as.while_stmt.body = body;
     return s;
 }

@@ -2336,6 +2336,12 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             // INTO those blocks — the loop then branched on a value nothing had computed, an
             // infinite loop, silently. `head` remains the loop header: the back edge from the
             // body still targets it, which is what the natural-loop detection keys on.
+            // D-44: carry the SOURCE's `decreasing` clause onto the header. A written measure
+            // is a claim the compiler defends wherever it appears — including in a `proc`,
+            // where totality is not required and the sovereign engine would otherwise raise no
+            // obligation at all. Without this the fact reached no analysis and three corpus
+            // programs asserting a bad measure compiled.
+            head->has_measure = s->as.while_stmt.measure_written;
             ir_lower_cond_br(c, s->as.while_stmt.cond, body, exit);
             IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
                 c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;

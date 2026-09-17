@@ -135,6 +135,29 @@ int main(int argc, char **argv) {
             // clause, front-end policy) and MUTUAL recursion (f -> g -> f), which the sovereign
             // check does not model at all.
             g_suppress_recursion = true;
+            // ── D-44 ANSWERED, AND THE LOOP HALF STANDS DOWN WITH IT ─────────────────────
+            // The blocker was never porting: it was a language question plus a precision debt,
+            // and both are now paid.
+            //
+            // THE LANGUAGE ANSWER: a written `decreasing` is a CLAIM THE COMPILER DEFENDS,
+            // wherever it appears — the same relationship `effects ...` has to the effect row.
+            // `IrBlock.has_measure` carries the fact per loop, and `vra_analyze` raises the
+            // obligation for every `func` loop AND every `proc` loop that carried a measure. A
+            // `proc` loop with no measure raises nothing, which is what lets an event loop be
+            // written at all.
+            //
+            // THE PRECISION DEBT: raising it cost 12 corpus programs, because the sovereign
+            // loop rule was weaker than the legacy one in four shapes — a variable step, an
+            // offset counter (`i + 1 < n`), a bound that is an expression (`n / 2`), and a
+            // two-endpoint measure (`lo < hi`) — and because the back-edge test used
+            // REACHABILITY where it needed DOMINANCE, which refused every nested loop in the
+            // corpus. All five are closed, each with its violating case checked first.
+            //
+            // STILL WITH THE OLD ENGINE, deliberately: E091 (the SHAPE of a `decreasing`
+            // clause) and MUTUAL recursion (f -> g -> f), which the sovereign check does not
+            // model. And one claim is weaker than the legacy's: the engine defends "this loop
+            // terminates", not "this expression is the measure".
+            g_suppress_termination = true;
         }
     }
     // The octagon is built on a PLAIN compile too — effects.h runs the numeric analysis to

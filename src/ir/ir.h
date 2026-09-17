@@ -361,6 +361,21 @@ typedef struct IrBlock {
     IrTerm    term;
     IrEdge   *preds;        // predecessors (filled after CFG is built)
     bool      is_loop_header;   // widening point (set by a back-edge pass)
+    // ── Did the SOURCE write a `decreasing <measure>` on THIS loop? ─────────────────────
+    // A source fact the IR could not state, and its absence was a real hole. The sovereign
+    // engine raises a loop-termination obligation only inside a `func`, because totality is a
+    // `func` requirement and a `proc` may loop forever by design. But `decreasing` is accepted
+    // on ANY loop, and the old engine verified it wherever it was written — so standing the
+    // legacy loop checks down silently accepted three corpus programs whose whole subject is a
+    // written measure that does not hold (a step whose range includes zero, a signed halving,
+    // a binary search that sticks at hi-lo == 1). All three are `proc`s.
+    //
+    // The language answer (D-44) is that a written measure is a CLAIM THE COMPILER DEFENDS —
+    // the same relationship `effects ...` has to the effect row: it unlocks no inference, it
+    // states an intention and the compiler refuses to let it drift. Defending it needs exactly
+    // this bit, per loop rather than per function, because a `proc` may hold both a checked
+    // loop and a deliberately unbounded one.
+    bool      has_measure;
     struct IrBlock *next;   // list within the function
 } IrBlock;
 

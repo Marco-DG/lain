@@ -157,8 +157,17 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                                     "       name it with `decreasing <param>`, guard the base "
                                     "case, or declare the function `proc`\n");
                 } else {
-                    ir_diag(file, c->line, c->col, "E082",
-                            "this loop is not provably terminating");
+                    // Annex B again, and the same rule as the recursive case above: E011 is a
+                    // loop "whose measure is neither given nor inferable", E082 one whose
+                    // measure is PRESENT and fails. `IrBlock.has_measure` carries whether the
+                    // programmer wrote `decreasing` — recorded at PARSE time, because sema's
+                    // inference installs its candidate in the same AST field and by lowering
+                    // the two are indistinguishable.
+                    ir_diag(file, c->line, c->col, c->had_measure ? "E082" : "E011",
+                            c->had_measure
+                              ? "the `decreasing` measure is not provably well-founded here"
+                              : "this loop is not provably terminating, and no measure could "
+                                "be inferred");
                 }
                 n++; break;
         }

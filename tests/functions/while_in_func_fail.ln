@@ -4,10 +4,15 @@
 // AWAY from the bound (it decrements), so no measure decreases — the loop does not
 // provably terminate and must still be rejected (add `decreasing` or use `proc`).
 
+// (The step WRAPS so that no arithmetic refusal fires first: `i - 1` from 0 on an i32 is a real
+// underflow, and once the sovereign engine owned the termination verdict that E086 arrived
+// before this test's subject could be reached. Wrapping escapes the overflow obligation and
+// never totality — a counter that wraps is not a well-founded witness either — so the loop is
+// still refused, for the reason the test is named after.)
 func loop_forever() i32 {
     var i = 0
     while i < 10 {
-        i = i - 1
+        i = i -% 1
     }
     return i
 }
