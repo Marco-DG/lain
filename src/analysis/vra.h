@@ -2441,6 +2441,15 @@ static bool vra_loop_terminates_pair(Vra *V, IrBlock *H) {
     if (H->term.kind != IR_TERM_BR_COND) return false;
     IrInstr *ic = V->def[H->term.cond->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
+    // ★ INSTALL THE PACKING. `oct_map` translates a VALUE id into the octagon's packed slot,
+    // and the domain's own operations index with it. vra_analyze installs it for the duration
+    // of its own work — but this rule also runs from analysis/effects.h, which asks about
+    // totality OUTSIDE that window, and there `oct_map` is whatever the last caller left. A
+    // transfer replayed without it indexes a dim-sized matrix with raw value ids and writes off
+    // the end: an ASan heap-buffer-overflow in oct_forget, reached only through the emitter's
+    // annotation path. The corpus never saw it; `emit_gate` did.
+    const int *oct_map_saved_pair = oct_map; oct_map = V->odim;
+    bool result_pair = false;
     for (int side=0; side<2; side++) {
         IrCmp p = (side==0) ? ic->aux.cmp : vra_cmp_swap(ic->aux.cmp);
         bool lt = (p==IR_CMP_SLT||p==IR_CMP_ULT||p==IR_CMP_SLE||p==IR_CMP_ULE);
@@ -2487,9 +2496,10 @@ static bool vra_loop_terminates_pair(Vra *V, IrBlock *H) {
             && !vra_cell_opaque_write(V, chi, nbb, body))
             ok = vra_progress_on_every_path(V, H, nbb, body, prog);
         free(body); free(prog);
-        if (ok) return true;
+        if (ok) { result_pair = true; break; }
     }
-    return false;
+    oct_map = oct_map_saved_pair;
+    return result_pair;
 }
 
 static bool vra_loop_terminates(Vra *V, IrBlock *H) {
@@ -2497,6 +2507,12 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
     IrInstr *ic = V->def[H->term.cond->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
     IrCmp p0 = ic->aux.cmp;
+    // See the note in vra_loop_terminates_pair: this rule is also asked from effects.h, outside
+    // vra_analyze's window, so it must install the packing map itself before replaying any
+    // transfer. The variable-step rule below is what made that necessary — until it existed,
+    // this function never touched an octagon.
+    const int *oct_map_saved_loop = oct_map; oct_map = V->odim;
+    bool result_loop = false;
     for (int side=0; side<2; side++) {
         IrValue *ivv=ic->operands[side], *bnd=ic->operands[side^1];
         // ★ THE PREDICATE IS READ FROM THE COUNTER'S SIDE. `p0` relates operands[0] to
@@ -2637,10 +2653,11 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         }
         bool ok = vra_progress_on_every_path(V, H, nbb, body, prog);
         free(body); free(prog);
-        if (ok) return true;
+        if (ok) { result_loop = true; break; }
     }
+    oct_map = oct_map_saved_loop;
     // Neither endpoint is a counter against an invariant bound — try the DIFFERENCE.
-    return vra_loop_terminates_pair(V, H);
+    return result_loop ? true : vra_loop_terminates_pair(V, H);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
