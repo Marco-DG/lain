@@ -35,9 +35,11 @@ N="${1:-100000}"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
 KEYS=( 'restrict' '__attribute__((pure))' '__attribute__((const))' '__attribute__((nonnull))' 'returns_nonnull' 'access(read' )
+# Counted and reported, but NOT counted as short — see the note at the bottom of this script.
+CONST_PTR_RE='const [A-Za-z_][A-Za-z0-9_]* ?\*'
 declare -A O N_
 for k in "${KEYS[@]}"; do O[$k]=0; N_[$k]=0; done
-prog=0; crash=0
+prog=0; crash=0; oconst=0; nconst=0
 for f in $(find tests -name '*_pass.ln' -type f | sort | head -"$N"); do
   ./lain "$f" -o "$TMP/o.c" >/dev/null 2>&1 || continue      # old engine refused: not our question
   if ! "$LOWER" "$f" --emit-c > "$TMP/n.c" 2>/dev/null; then crash=$((crash+1)); continue; fi
@@ -46,6 +48,8 @@ for f in $(find tests -name '*_pass.ln' -type f | sort | head -"$N"); do
     O[$k]=$((  ${O[$k]}  + $(grep -c -F -- "$k" "$TMP/o.c") ))
     N_[$k]=$(( ${N_[$k]} + $(grep -c -F -- "$k" "$TMP/n.c") ))
   done
+  oconst=$(( oconst + $(grep -cE "$CONST_PTR_RE" "$TMP/o.c") ))
+  nconst=$(( nconst + $(grep -cE "$CONST_PTR_RE" "$TMP/n.c") ))
 done
 
 echo "=================================================================="
@@ -57,7 +61,25 @@ for k in "${KEYS[@]}"; do
   if [ "${N_[$k]}" -lt "${O[$k]}" ]; then mark="<- SHORT by $(( ${O[$k]} - ${N_[$k]} ))"; short=$((short+1)); fi
   printf "  %-28s %8d %8d   %s\n" "$k" "${O[$k]}" "${N_[$k]}" "$mark"
 done
+printf "  %-28s %8d %8d   %s\n" "const T* (pointee)" "$oconst" "$nconst" \
+       "$( [ "$nconst" -lt "$oconst" ] && echo '<- DELIBERATE, see below' )"
 echo "  rows where the new backend says LESS : $short   (must be 0 before src/emit/ can go)"
 [ "$crash" -gt 0 ] && echo "  new backend could not emit           : $crash"
 echo "=================================================================="
 echo "A meter, not a verdict: it always exits 0. The number is a distance."
+cat <<'NOTE'
+
+★ `const T*` ON THE POINTEE IS COUNTED BUT NOT COUNTED AGAINST — a DELIBERATE divergence, and
+  it is listed here because an invisible one is worse than a stated one. This meter read "0 rows
+  short" for a day while the new backend emitted NONE of the old one's 355, simply because it
+  was not looking: the same blind spot it was built to expose, one level up.
+
+  The argument for not emitting it is in src/ir/annot.h and it is sound: C's `const` is not an
+  aliasing guarantee — it can be cast away, so no optimiser may rely on it — and qualifying a
+  parameter cascades into every pointer derived from it (`&p[i]` is not const), which is real
+  emitter complexity bought for nothing an optimiser can use. Its value is DOCUMENTATION: the
+  emitted C says which parameters are read-only.
+
+  So the row is informational. If it is ever decided that the emitted C should read as the old
+  one did, the write footprint (`ir_param_writes`) is already the honest source for it.
+NOTE
