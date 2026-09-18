@@ -69,6 +69,61 @@ typedef struct {
     bool      cse_recording;   // only while lowering a `while` condition
 } LowerCtx;
 
+// ── A FUNCTION'S IDENTITY IS MODULE-QUALIFIED, AND THE IR HAS TO CARRY IT (D-54) ─────────
+// Lain's modules share a flat namespace, but a QUALIFIED call is legal — so `lib/a.ln` and
+// `lib/b.ln` may both define `value`, both reach the IR, and both arrive under the bare name.
+// Every analysis resolves a callee by name and takes the FIRST match (`vra_find_func`,
+// `bor_find_func`, `di_find_func`, the effect row's own lookup), so one of them is analysed as
+// the other. Measured with the project's own driver:
+//
+//     UNSOUND main  old={IO} new={}  (dropped observable IO)
+//
+// — `b.value` prints, the lookup finds `a.value` which is pure, and `main` comes out pure and
+// total. That is the miscompile class this project has already shipped once.
+//
+// It is not a shipping miscompile TODAY only because the emitted C does not compile: both
+// backends collide on the name. Which is the dangerous part — the C compiler is the only thing
+// standing between this and a wrong answer, and fixing the emitted SPELLING is exactly what
+// would remove it. So identity comes first, and the spelling follows from it.
+//
+// This is not a C concern. Chapter 0 says the IR is the authority on a program's meaning, and
+// two functions with different bodies are different functions whatever a backend calls them.
+// `defining_module` is the front end's own record of where a decl came from — and note it is
+// the DEFINING module, which is the bug in the old emitter's scheme: that one prefixes the
+// ROOT module, so two modules' `value` both became `main_value`.
+static IrName *ir_qualified_name(Arena *a, Decl *d, Id *nm) {
+    if (!nm) return NULL;
+    // `main` is the program's ENTRY POINT and its identity is fixed by the platform, not by
+    // the module it happens to sit in — there is exactly one and it cannot collide. Qualifying
+    // it produced `main_main` and an emitted C file with no `main` at all.
+    if (nm->length==4 && memcmp(nm->name,"main",4)==0) return ir_intern(a, nm->name, nm->length);
+    // ★ AN EXTERN NAMES A FOREIGN SYMBOL, and its name is no more ours to choose than its ABI
+    // was (see the emitter's extern note). `libc_puts` is `puts` in someone else's object file;
+    // qualifying it produced a link error against `lib_b_libc_puts`. The rule is the same one,
+    // arriving from the other side: what crosses the boundary keeps the boundary's spelling.
+    if (d && (d->kind==DECL_EXTERN_FUNCTION || d->kind==DECL_EXTERN_PROCEDURE))
+        return ir_intern(a, nm->name, nm->length);
+    const char *mod = d ? d->defining_module : NULL;
+    if (!mod || !*mod) return ir_intern(a, nm->name, nm->length);   // the root module
+    size_t ml = strlen(mod), nl = (size_t)nm->length;
+    char *buf = arena_push_many(a, char, ml + 1 + nl + 1);
+    size_t k = 0;
+    // Sanitise EVERY character that cannot appear in an identifier, not just the dot. A
+    // defining_module is a PATH — `tests/codegen/const_attr_pointer_reader_pass` — and
+    // replacing only `.` emitted names with slashes in them, which 251 programs then failed to
+    // compile. The old emitter's `c_name_for_id` has always done the general form; taking the
+    // specific case from a dotted example was the mistake.
+    for (size_t i = 0; i < ml; i++) {
+        char ch = mod[i];
+        bool ok = (ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||ch=='_';
+        buf[k++] = ok ? ch : '_';
+    }
+    buf[k++] = '_';
+    memcpy(buf + k, nm->name, nl); k += nl;
+    buf[k] = '\0';
+    return ir_intern(a, buf, (isize)k);
+}
+
 // Structural equality over the PURE expression shapes a loop guard and its measure share.
 // Deliberately narrow: an identifier, a literal, `x.len`, and the arithmetic that joins them.
 // Anything with a call, an index or a side effect returns false, so nothing observable is ever
@@ -1304,6 +1359,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             if (sumty && !(v && v->type && v->type->kind==IRT_SUM))
                 return ir_opaque_expr(c, ty, false, "match-expr-scrutinee", NULL, NULL);
 
+
+
             IrType *rty = ty && ty->kind!=IRT_UNIT ? ty : ir_type_int(c->a,32,true);
             IrValue *cell = ir_alloca(c->f, c->cur, rty);
             IrValue *tagv = sumty ? ir_sum_tag(c->f, c->cur, v) : NULL;
@@ -1448,8 +1505,11 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             if (e->decl && (e->decl->kind==DECL_FUNCTION || e->decl->kind==DECL_PROCEDURE
                          || e->decl->kind==DECL_EXTERN_FUNCTION || e->decl->kind==DECL_EXTERN_PROCEDURE)) {
                 Id *fnm = e->decl->as.function_decl.name;
+                // The SAME identity the definition and every call site use — a function
+                // referenced as a value is the same function, and a second naming scheme here
+                // would emit a name nothing declares. Four programs did exactly that.
                 if (fnm) return ir_func_ref(c->f, c->cur,
-                                            ir_intern(c->a, fnm->name, fnm->length),
+                                            ir_qualified_name(c->a, e->decl, fnm),
                                             ty && ty->kind==IRT_FUNC ? ty : ir_type_new(c->a, IRT_FUNC));
             }
             // not a local/param: a module-level constant folds to its initializer
@@ -1846,7 +1906,16 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             Id *cnm = callee ? callee->as.function_decl.name : NULL;   // intern the callee name
             if (!indirect && !cnm && e->as.call_expr.callee && e->as.call_expr.callee->kind==EXPR_IDENTIFIER)
                 cnm = e->as.call_expr.callee->as.identifier_expr.id;   // declless builtin (e.g. `panic`)
-            ins->aux.callee = (!indirect && cnm) ? ir_intern(c->a, cnm->name, cnm->length) : NULL;
+            // ★ THE CALL SITE MUST NAME THE CALLEE THE SAME WAY THE DEFINITION DOES, or every
+            // lookup misses — and a MISS is worse than a wrong hit here, because an
+            // unattributable call is treated as opaque and the analyses fall back to the worst
+            // case. `callee` is the resolved Decl, so its `defining_module` is the right one
+            // even for a qualified call across modules, which is the whole point of D-54.
+            //
+            // The declless-builtin fallback (`panic`) has no Decl and no module: it qualifies
+            // to itself, which matches how it is DEFINED — the emitter writes it into the
+            // preamble under the bare name.
+            ins->aux.callee = (!indirect && cnm) ? ir_qualified_name(c->a, callee, cnm) : NULL;
             if (indirect) ins->operands[0] = fnv;
             DeclList *pp = callee ? callee->as.function_decl.params : NULL;
             int i=0;
@@ -2864,12 +2933,13 @@ static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl
     }
 }
 
+
 // ── entry: lower one function ────────────────────────────────────────────────
 IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     IrType tmp; LowerCtx cc = {0}; cc.a = a; cc.globals = globals; (void)tmp;
     Id *fnm = fn->as.function_decl.name;
-    IrFunc *f = ir_func_new(a, fnm ? ir_intern(a, fnm->name, fnm->length) : NULL,
-                            NULL, fn->kind==DECL_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
+    IrFunc *f = ir_func_new(a, ir_qualified_name(a, fn, fnm), NULL,
+                            fn->kind==DECL_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
     f->src_decl = fn;   // opaque provenance (void*) — the IR never derefs it
     cc.fdecl = fn;      // for callee-side return-ensures asserts
     cc.f = f; cc.cur = f->entry;
