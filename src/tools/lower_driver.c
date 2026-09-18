@@ -35,6 +35,23 @@ static char *drv_modname(Arena *a, const char *path) {
 }
 
 int main(int argc, char **argv) {
+    // ── DEFAULT TO THE SHIPPING CONFIGURATION ────────────────────────────────────────────
+    // This driver predates the flip, so its default was the OLD split: every legacy check on,
+    // the sovereign engine merely observing. The compiler has not been that since 2026-09-17,
+    // and the mismatch was not academic — it made `emit_gate` and `annot_gate` attribute a
+    // LEGACY refusal to the new BACKEND. Six of the eight programs they reported as "the new
+    // emitter cannot build this" were programs the legacy engine refused before lowering ever
+    // ran, on grounds (a halving measure, an element range) the shipping compiler PROVES.
+    //
+    // A meter that blames the wrong component does not produce a wrong number, it produces a
+    // wrong TARGET — the same failure `precision_loss.sh` had with its glob. Matching the
+    // compiler's configuration is what makes a refusal here mean what it says.
+    g_suppress_ownership  = true;
+    g_vra_suppress_bounds = true;
+    g_suppress_termination = true;
+    g_suppress_overflow   = true;
+    // The flags below are kept so a caller can still ask the OLD question explicitly.
+    //
     // --reject: stand the LEGACY ownership checks down so lowering completes on a program
     // the old engine would exit() on. Lets the IR of a fail-test be inspected.
     for (int i=1;i<argc;i++) {

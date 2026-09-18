@@ -464,9 +464,10 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
     }
     fputs(" {\n", o);
     // declare all non-param values at the top, plus a backing slot for each alloca
-    IrValTab vt = { arena_push_many_aligned(a, IrValue*, f->next_value_id), f->next_value_id };
-    IrType **alloca_ty = arena_push_many_aligned(a, IrType*, f->next_value_id);
-    IrInstr **defof    = arena_push_many_aligned(a, IrInstr*, f->next_value_id);
+    int nval = f->next_value_id > 0 ? f->next_value_id : 1;   // see ir_emit_type_decls
+    IrValTab vt = { arena_push_many_aligned(a, IrValue*, nval), f->next_value_id };
+    IrType **alloca_ty = arena_push_many_aligned(a, IrType*, nval);
+    IrInstr **defof    = arena_push_many_aligned(a, IrInstr*, nval);
     for (int k=0;k<vt.n;k++){ vt.v[k]=NULL; alloca_ty[k]=NULL; defof[k]=NULL; }
     ir_collect_vals(f, &vt);
     // Mark the slice PARAMETERS for this function — they arrived split as (length, pointer).
@@ -483,7 +484,7 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
             if (i->op==IR_ALLOCA && i->result) alloca_ty[i->result->id] = i->aux.alloca_ty;
         }
     // Which parameter (if any) is a given value? Needed to decide the slice-data qualifier.
-    int *pidx = arena_push_many_aligned(a, int, f->next_value_id);
+    int *pidx = arena_push_many_aligned(a, int, nval);
     for (int k=0;k<vt.n;k++) pidx[k] = -1;
     { int k=0; for (IrParam *p=f->params; p; p=p->next,k++)
         if (p->value && p->value->id < f->next_value_id) pidx[p->value->id] = k; }
@@ -770,6 +771,14 @@ static void ir_emit_struct_body_deps(IrTypeSet *ts, int i, bool *done, FILE *o) 
 static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     IrTypeSet ts = {0};
     for (IrFunc *f=funcs; f; f=f->next) {
+        // ★ AN EXTERN HAS NO VALUES. `next_value_id` is 0 for a declaration with no body, and
+        // the arena refuses a zero-count push — so a program whose only aggregates came from
+        // an extern's signature aborted the compiler here rather than emitting anything.
+        // `mov p *u8 = acquire()` with `extern proc acquire() mov *u8` is the whole program.
+        //
+        // The guard is the count, not the extern-ness: a body-less function is one way to have
+        // no values and there is no reason to enumerate the others.
+        if (f->next_value_id <= 0) continue;
         IrValTab vt = { arena_push_many_aligned(a, IrValue*, f->next_value_id), f->next_value_id };
         for (int k=0;k<vt.n;k++) vt.v[k]=NULL;
         ir_collect_vals(f, &vt);
