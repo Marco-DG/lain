@@ -139,6 +139,46 @@ static bool ir_func_c_returns_nonnull(IrFunc *f) {
     return f && !f->is_extern && ir_ret_is_borrow(f);
 }
 
+// ── `access(read_only|read_write, pointer_pos, size_pos)` ───────────────────────────────
+// The last of README §8's five facts, and the only one that needs a CALLING CONVENTION rather
+// than just a proof: it names PARAMETER POSITIONS — "parameter p points at `n` elements, and
+// the function only reads them" — so the length has to BE a parameter. It became reachable
+// the moment a slice started crossing the boundary as (length, pointer) instead of a fat
+// struct.
+//
+// Both halves are already computed and neither is a promise:
+//   * the EXTENT is the slice's own length, which the language carries and the analyses use
+//     to prove every access in bounds;
+//   * read_only vs read_write is the WRITE FOOTPRINT (C5) — `ir_param_writes`, bit k — which
+//     is the same fact that decides whether two arguments naming one object is undefined at
+//     all. Conservative direction: unknown ⇒ read_write, which claims less.
+//
+// Positions are 1-based and count C parameters, not IR ones — a slice occupies two — so this
+// walks the parameter list the way the emitter does. That coupling is the reason it lives
+// beside the emitter's own rule and not somewhere it could drift from it.
+typedef struct { int ptr_pos, len_pos; bool read_only; } IrCAccess;
+
+static int ir_c_access_list(IrFunc *f, IrFunc *mod, IrCAccess *out, int max) {
+    if (!f || f->is_extern) return 0;
+    int n = 0, cpos = 1, k = 0;
+    IrWriteFootprint w = mod ? ir_param_writes(f, mod) : (IrWriteFootprint)~0ull;
+    for (IrParam *p=f->params; p; p=p->next, k++) {
+        IrType *t = p->value ? p->value->type : NULL;
+        if (t && t->kind == IRT_SLICE) {
+            if (n < max) {
+                out[n].len_pos = cpos;          // the length comes first — see the emitter
+                out[n].ptr_pos = cpos + 1;
+                out[n].read_only = (k < 64) && !((w >> k) & 1ull);
+                n++;
+            }
+            cpos += 2;
+        } else {
+            cpos += 1;
+        }
+    }
+    return n;
+}
+
 // `const` on the POINTEE, from the computed write footprint rather than the declaration.
 //
 // NOT currently emitted, and the reason is worth keeping: C's `const` is not an aliasing

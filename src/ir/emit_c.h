@@ -143,6 +143,60 @@ static void ir_emit_cstr(const char *s, int len, FILE *o) {
     fputc('"', o);
 }
 
+
+
+// ── THE SLICE CALLING CONVENTION: (length, pointer), not a fat struct ────────────────────
+// A slice is two machine words either way, so this costs nothing at the ABI — both forms pass
+// in two registers on every target that matters. What it BUYS is the one annotation the fat
+// struct makes unreachable: `access(read_only, p, n)` names PARAMETER POSITIONS, telling gcc
+// that parameter p is a pointer to n elements and is only read. With the length hidden inside
+// a struct there is no position to name, and `annot_gate` measured the result — 38 of them in
+// the old backend, zero here.
+//
+// It is also what README §8 documents as the product's C interface, and what the old emitter
+// has always produced. The IR is untouched: a slice stays a first-class fat value there, and
+// this is purely the backend's choice about how one crosses a function boundary — which is
+// exactly where a calling convention belongs.
+//
+// The rule is UNIFORM, which is what makes it implementable without every call site looking up
+// its callee: a slice PARAMETER becomes two parameters, and a slice ARGUMENT becomes two
+// arguments. The two halves cannot disagree because neither consults anything but the type in
+// front of it.
+static bool ir_c_slice_split(const IrType *t) { return t && t->kind == IRT_SLICE; }
+
+// Is this value a slice PARAMETER — i.e. one that arrived split? Set for the duration of one
+// function's emission, because the instruction emitter has no other way to tell a parameter
+// from an ordinary SSA value, and that is exactly what decides whether `.len` exists to read.
+static bool *ir_emit_sliceparam = NULL;
+static int   ir_emit_sliceparam_n = 0;
+// The module, so a CALL can ask whether its callee is an `extern`. See ir_c_extern_slice.
+static IrFunc *ir_emit_mod = NULL;
+static IrFunc *ir_emit_find(const IrName *n) {
+    if (!n || !ir_emit_mod) return NULL;
+    for (IrFunc *g=ir_emit_mod; g; g=g->next)
+        if (g->name && g->name->length==n->length
+            && memcmp(g->name->name, n->name, (size_t)n->length)==0) return g;
+    return NULL;
+}
+
+// ── AN EXTERN'S ABI IS NOT OURS TO CHOOSE ───────────────────────────────────────────────
+// The (length, pointer) convention is Lain's, and it applies to functions Lain emits. An
+// `extern` is a declaration of something the foreign world already defines, so its shape is
+// fixed by whoever wrote it — and a slice parameter there means a plain pointer, which is what
+// `extern proc printf(fmt u8[:0], ...)` denotes.
+//
+// Getting this wrong was a SEGFAULT, and instructively so: splitting `printf`'s parameter
+// passed the LENGTH as the format string. It had also been latently wrong BEFORE the split —
+// the fat struct was passed by value and `Slice_u8` happens to store `data` first, so the right
+// word landed in the right register BY ACCIDENT. The convention only became visible when it
+// changed.
+static bool ir_c_extern_slice(IrFunc *callee) { return callee && callee->is_extern; }
+static bool ir_emit_is_slice_param(const IrValue *v) {
+    return v && ir_emit_sliceparam && v->id >= 0 && v->id < ir_emit_sliceparam_n
+        && ir_emit_sliceparam[v->id];
+}
+
+
 static void ir_emit_instr_c(IrInstr *i, FILE *o) {
     switch (i->op) {
         case IR_CONST:
@@ -338,7 +392,21 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             if (i->aux.callee) ir_emit_fname(i->aux.callee, o);
             else if (i->n_operands >= 1) { fprintf(o, "v%d", i->operands[0]->id); a0 = 1; }
             fputc('(', o);
-            for (int k=a0;k<i->n_operands;k++){ if(k>a0)fputs(", ",o); fprintf(o,"v%d",i->operands[k]->id); }
+            for (int k=a0;k<i->n_operands;k++){
+                if(k>a0)fputs(", ",o);
+                IrValue *av = i->operands[k];
+                // The other half of the convention: a slice argument is (length, pointer), in
+                // that order, matching the parameter list. Neither side consults the other —
+                // both read the type in front of them — which is what keeps them in step.
+                // The one exception is a foreign callee, whose shape we do not get to pick.
+                if (av && ir_c_slice_split(av->type)) {
+                    if (ir_c_extern_slice(ir_emit_find(i->aux.callee)))
+                        fprintf(o, "v%d.data", av->id);
+                    else
+                        fprintf(o, "v%d.len, v%d.data", av->id, av->id);
+                } else
+                    fprintf(o,"v%d",av->id);
+            }
             fputs(");\n", o);
             break;
         }
@@ -371,11 +439,22 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
         // non-nullness into callers. Theorems, not promises — see annot.h.
         if (ir_func_c_nonnull(f))         fputs("__attribute__((nonnull)) ", o);
         if (ir_func_c_returns_nonnull(f)) fputs("__attribute__((returns_nonnull)) ", o);
+        { IrCAccess ac[16]; int na = ir_c_access_list(f, mod, ac, 16);
+          for (int q=0;q<na;q++)
+              fprintf(o, "__attribute__((access(%s, %d, %d))) ",
+                      ac[q].read_only ? "read_only" : "read_write", ac[q].ptr_pos, ac[q].len_pos); }
         ir_ctype(f->ret_type, o); fputc(' ', o); ir_emit_fname(f->name, o); fputc('(', o);
         int k=0; for (IrParam *p=f->params; p; p=p->next,k++) {
             if (k) fputs(", ", o);
-            ir_ctype(p->value->type, o);
             IrType *pt = p->value->type;
+            if (ir_c_slice_split(pt)) {          // (length, pointer) — see the note above
+                fprintf(o, "size_t __len_v%d, ", p->value->id);
+                ir_ctype(pt->elem, o); fputs("*", o);
+                if (ir_param_c_restrict(p->value)) fputs(" restrict", o);
+                fprintf(o, " __ptr_v%d", p->value->id);
+                continue;
+            }
+            ir_ctype(pt, o);
             if (pt && (pt->kind==IRT_PTR || pt->kind==IRT_ARRAY) && ir_param_c_restrict(p->value))
                 fputs(" restrict", o);
             fprintf(o, " v%d", p->value->id);
@@ -390,6 +469,14 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
     IrInstr **defof    = arena_push_many_aligned(a, IrInstr*, f->next_value_id);
     for (int k=0;k<vt.n;k++){ vt.v[k]=NULL; alloca_ty[k]=NULL; defof[k]=NULL; }
     ir_collect_vals(f, &vt);
+    // Mark the slice PARAMETERS for this function — they arrived split as (length, pointer).
+    { bool *sp = arena_push_many_aligned(a, bool, f->next_value_id>0?f->next_value_id:1);
+      for (int q=0;q<f->next_value_id;q++) sp[q]=false;
+      for (IrParam *p=f->params; p; p=p->next)
+          if (p->value && ir_c_slice_split(p->value->type) && p->value->id>=0
+              && p->value->id < f->next_value_id) sp[p->value->id]=true;
+      ir_emit_sliceparam = sp; ir_emit_sliceparam_n = f->next_value_id; }
+    ir_emit_mod = mod;                 // so a CALL can ask whether its callee is an extern
     for (IrBlock *b=f->blocks; b; b=b->next)
         for (IrInstr *i=b->instrs; i; i=i->next) {
             if (i->result && i->result->id < f->next_value_id) defof[i->result->id] = i;
@@ -433,6 +520,23 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
             }
         }
     }
+    // ── REASSEMBLE EACH SPLIT SLICE PARAMETER ───────────────────────────────────────────
+    // The split is a CALLING CONVENTION, not a change to what a slice IS. Inside the body a
+    // slice parameter is still a first-class value: it gets returned, passed on, compared,
+    // stored. Rebuilding it here under its own name means not one instruction in the body has
+    // to know the convention exists — `vN.len`, `vN.data` and `return vN` all keep working.
+    //
+    // The first attempt did the opposite: it left the pointer under the value's name and
+    // taught IR_SLICE_LEN / IR_SLICE_DATA to read the two halves. That handles reads and
+    // nothing else, so twenty programs stopped building the moment a slice parameter was used
+    // AS A VALUE — returned, or handed to `panic`. Reassembling costs two register moves gcc
+    // deletes, and it costs no special cases at all.
+    for (IrParam *p=f->params; p; p=p->next) {
+        if (!p->value || !ir_c_slice_split(p->value->type)) continue;
+        fputs("  ", o); ir_ctype(p->value->type, o);
+        fprintf(o, " v%d = { __ptr_v%d, __len_v%d };\n",
+                p->value->id, p->value->id, p->value->id);
+    }
     // blocks
     for (IrBlock *b=f->blocks; b; b=b->next) {
         fprintf(o, " L%d: ;\n", b->id);
@@ -472,6 +576,8 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
 }
 
 // forward declaration line for a function (so callers link regardless of order)
+
+
 static void ir_emit_proto_c(IrFunc *f, IrFunc *mod, FILE *o) {
     if (f->name->length==4 && strncmp(f->name->name,"main",4)==0) return;
     IrCAnnot an = ir_c_annot(f, mod);
@@ -481,11 +587,24 @@ static void ir_emit_proto_c(IrFunc *f, IrFunc *mod, FILE *o) {
     // caller in another translation unit ever sees, and it is where these facts do their work.
     if (ir_func_c_nonnull(f))         fputs("__attribute__((nonnull)) ", o);
     if (ir_func_c_returns_nonnull(f)) fputs("__attribute__((returns_nonnull)) ", o);
+    { IrCAccess ac[16]; int na = ir_c_access_list(f, mod, ac, 16);
+      for (int q=0;q<na;q++)
+          fprintf(o, "__attribute__((access(%s, %d, %d))) ",
+                  ac[q].read_only ? "read_only" : "read_write", ac[q].ptr_pos, ac[q].len_pos); }
     ir_ctype(f->ret_type, o); fputc(' ', o); ir_emit_fname(f->name, o); fputc('(', o);
     int k=0; for (IrParam *p=f->params; p; p=p->next,k++){
         if(k)fputs(", ",o);
-        ir_ctype(p->value->type,o);
         IrType *pt = p->value->type;
+        if (ir_c_slice_split(pt)) {              // (length, pointer) — see the note above
+            if (f->is_extern) {                  // ...but a foreign declaration keeps its shape
+                ir_ctype(pt->elem, o); fputs("*", o);
+                continue;
+            }
+            fputs("size_t, ", o); ir_ctype(pt->elem, o); fputs("*", o);
+            if (ir_param_c_restrict(p->value)) fputs(" restrict", o);
+            continue;
+        }
+        ir_ctype(pt,o);
         if (pt && (pt->kind==IRT_PTR || pt->kind==IRT_ARRAY) && ir_param_c_restrict(p->value))
             fputs(" restrict", o);
     }
@@ -716,9 +835,18 @@ void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
         fputs("extern void abort(void);\n", o);
         ir_ctype(pc->result ? pc->result->type : NULL, o);
         fputs(" panic(", o);
-        if (pc->n_operands >= 1 && pc->operands[0]) ir_ctype(pc->operands[0]->type, o);
-        else fputs("void", o);
-        fputs(" m) { (void)m; abort(); }\n\n", o);
+        // ★ The runtime helper obeys the SAME convention as every other function. It is
+        // hand-written here rather than lowered, so it does not get the split for free — and
+        // that is exactly how a convention rots: one function that "obviously" does not need
+        // it, and every call site that passes it a slice stops compiling. Four programs did.
+        IrType *mt = (pc->n_operands >= 1 && pc->operands[0]) ? pc->operands[0]->type : NULL;
+        if (mt && ir_c_slice_split(mt)) {
+            fputs("size_t __len_m, ", o); ir_ctype(mt->elem, o); fputs("* __ptr_m", o);
+            fputs(") { (void)__len_m; (void)__ptr_m; abort(); }\n\n", o);
+        } else {
+            if (mt) ir_ctype(mt, o); else fputs("void", o);
+            fputs(" m) { (void)m; abort(); }\n\n", o);
+        }
       } }
     for (IrFunc *f=funcs; f; f=f->next) ir_emit_proto_c(f, funcs, o);
     fputc('\n', o);
