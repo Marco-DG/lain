@@ -99,6 +99,46 @@ static bool ir_param_c_restrict(IrValue *pv) {
     return false;
 }
 
+// ── `nonnull` and `returns_nonnull`: A BORROW CAN NEVER BE NULL ─────────────────────────
+// The second-largest thing the old backend says and the new one did not: 358 `nonnull` and 18
+// `returns_nonnull` across the corpus, against zero. They are not decoration — gcc uses them
+// to delete null tests and to propagate non-nullness into callers — and they are theorems
+// here rather than promises, for the same reason `restrict` is: a BORROW is a reference to
+// storage that exists, created from a live place by a checker that refused every program
+// where it could dangle. Lain has no null borrow to express.
+//
+// A RAW pointer is exactly the case that must NOT get it. `*T` in `unsafe` may be null by
+// construction — `var p *u8 = 0` is an ordinary program — so the test is `borrowed`, the fact
+// stated positively, and never the absence of `is_raw`. Same discipline as `restrict` above,
+// and for the same reason: a type nobody marked must fall on the safe side.
+//
+// Emitted as ONE `nonnull` with no argument list, which in gcc means "every pointer parameter
+// of this function". That is only correct when EVERY pointer parameter is a borrow, so the
+// predicate below requires exactly that and says nothing otherwise — the alternative
+// (`nonnull(1,3)`, listing positions) is more precise and needs the emitter to agree with the
+// analysis about C parameter numbering, which is where a slice that becomes two parameters
+// would quietly desynchronise them.
+static bool ir_func_c_nonnull(IrFunc *f) {
+    if (!f || f->is_extern || f->is_variadic) return false;
+    bool any = false;
+    for (IrParam *p=f->params; p; p=p->next) {
+        IrType *t = p->value ? p->value->type : NULL;
+        if (!t) return false;
+        bool is_ref = (t->kind==IRT_PTR || t->kind==IRT_SLICE || t->kind==IRT_ARRAY);
+        if (!is_ref) continue;                       // a scalar parameter is not our business
+        if (t->kind==IRT_PTR && !(t->borrowed && !t->is_raw)) return false;   // a raw pointer
+        any = true;
+    }
+    return any;
+}
+
+// The return is a reference into the caller's storage — so it is a borrow, so it is not null.
+// `ir_ret_is_borrow` is the one reader of that fact (it used to be a side flag on IrFunc), and
+// this is its second client, which is the point of having moved it onto the type.
+static bool ir_func_c_returns_nonnull(IrFunc *f) {
+    return f && !f->is_extern && ir_ret_is_borrow(f);
+}
+
 // `const` on the POINTEE, from the computed write footprint rather than the declaration.
 //
 // NOT currently emitted, and the reason is worth keeping: C's `const` is not an aliasing

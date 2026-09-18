@@ -367,6 +367,10 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
         IrCAnnot an = ir_c_annot(f, mod);
         if (an.const_attr)     fputs("__attribute__((const)) ", o);
         else if (an.pure_attr) fputs("__attribute__((pure)) ", o);
+        // A borrow can never be null, and gcc uses that to delete null tests and propagate
+        // non-nullness into callers. Theorems, not promises — see annot.h.
+        if (ir_func_c_nonnull(f))         fputs("__attribute__((nonnull)) ", o);
+        if (ir_func_c_returns_nonnull(f)) fputs("__attribute__((returns_nonnull)) ", o);
         ir_ctype(f->ret_type, o); fputc(' ', o); ir_emit_fname(f->name, o); fputc('(', o);
         int k=0; for (IrParam *p=f->params; p; p=p->next,k++) {
             if (k) fputs(", ", o);
@@ -473,6 +477,10 @@ static void ir_emit_proto_c(IrFunc *f, IrFunc *mod, FILE *o) {
     IrCAnnot an = ir_c_annot(f, mod);
     if (an.const_attr)     fputs("__attribute__((const)) ", o);
     else if (an.pure_attr) fputs("__attribute__((pure)) ", o);
+    // The PROTOTYPE must carry the same attributes as the definition — it is the only thing a
+    // caller in another translation unit ever sees, and it is where these facts do their work.
+    if (ir_func_c_nonnull(f))         fputs("__attribute__((nonnull)) ", o);
+    if (ir_func_c_returns_nonnull(f)) fputs("__attribute__((returns_nonnull)) ", o);
     ir_ctype(f->ret_type, o); fputc(' ', o); ir_emit_fname(f->name, o); fputc('(', o);
     int k=0; for (IrParam *p=f->params; p; p=p->next,k++){
         if(k)fputs(", ",o);
