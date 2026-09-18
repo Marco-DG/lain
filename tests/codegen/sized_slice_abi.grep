@@ -1,12 +1,20 @@
-// Arithmetic size_expr ABI: out.len emits as a derived expression, not __len_out.
-// The loop-counter names (__i0, __i1, ...) are numbered per function, so the patterns
-// match the BOUND only — the counter's index is not what this snapshot is about.
-// An UNNAMED length still emits the auto-generated __len_<param>, and a parameter whose
-// length IS another's emits no length of its own.
-tests_codegen_sized_slice_abi_copy_same(size_t __len_src
-< __len_src;
-// slide: out i32[n - 1] -> loop bound is the derived n - 1, and there is no __len_out
-< n - 1;
-tests_codegen_sized_slice_abi_slide(size_t n, const int32_t * restrict src, int32_t * restrict out)
-// concat_prefix: two named lengths, and out carries none of its own
-tests_codegen_sized_slice_abi_concat_prefix(size_t na, const int32_t * restrict a, size_t nb, const int32_t * restrict b, int32_t * restrict out)
+// INTERFACE assertions — what the C compiler is TOLD, not how the body is spelled.
+//
+// These three tests are the residue of a family that used to grep the OLD emitter's private
+// names (`__match`, `__try`, `__elsev`). Those pinned an IMPLEMENTATION, and the project now has
+// two: every one of them failed against the new backend while the programs behaved identically.
+// The behaviour is asserted by the sibling `.expected` oracle, and by `emit_gate`, which runs
+// all 399 programs through BOTH backends and compares.
+//
+// What is left here is the part neither of those covers: the SIGNATURE. Patterns are chosen to
+// hold for either backend — the qualifiers and attributes that carry a proof, never a parameter
+// NAME or a struct spelling.
+//
+// A slice crosses the boundary as (length, pointer), which is what lets `access(read_only, p, n)`
+// name the pair: parameter p points at n elements and is only read. A slice the callee WRITES is
+// read_write. Only read_only is asserted: the OLD backend does not emit the read_write form at
+// all, and asserting it here would pin the NEW backend — the same mistake this file was rewritten
+// to stop making, in the other direction. `annot_gate` counts both corpus-wide.
+size_t
+restrict
+__attribute__((access(read_only,

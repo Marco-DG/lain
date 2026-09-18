@@ -1,10 +1,18 @@
-// Snapshot patterns for var T primitive ABI.
-// write-through: assignment emits (*out) = val
-(*out) = val;
-// read: return emits (*n) not bare n
-return (*n);
-// forwarding: var x forwarded raw, no double address-of
-tests_codegen_var_prim_abi_write_int(x, val);
-// var T params still get nonnull and restrict
-int32_t * restrict out
-int32_t * restrict n
+// INTERFACE assertions — what the C compiler is TOLD, not how the body is spelled.
+//
+// These three tests are the residue of a family that used to grep the OLD emitter's private
+// names (`__match`, `__try`, `__elsev`). Those pinned an IMPLEMENTATION, and the project now has
+// two: every one of them failed against the new backend while the programs behaved identically.
+// The behaviour is asserted by the sibling `.expected` oracle, and by `emit_gate`, which runs
+// all 399 programs through BOTH backends and compares.
+//
+// What is left here is the part neither of those covers: the SIGNATURE. Patterns are chosen to
+// hold for either backend — the qualifiers and attributes that carry a proof, never a parameter
+// NAME or a struct spelling.
+//
+// A `var` scalar parameter travels as a pointer to the caller's storage, so writes reach the
+// owner — and that pointer is an exclusive, non-null borrow. `restrict` is asserted bare
+// rather than as `int32_t* restrict`: the two backends space the star differently, and a test
+// that pins WHITESPACE is pinning an implementation again.
+restrict
+__attribute__((nonnull))

@@ -1,2 +1,0 @@
-(uintptr_t)__try
-return __try

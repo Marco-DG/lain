@@ -152,9 +152,54 @@ run_test() {
     fi
 }
 
+
+# Build the program and diff its stdout against the oracle. Returns 0 when a `.grep` should
+# ALSO be applied, 1 when this was the whole test.
+run_output_oracle() {
+    local file="$1" exp="$2"
+    local base; base="$(basename "${file%.ln}")"
+    local c="/tmp/lain_oracle_$$.c" bin="/tmp/lain_oracle_$$"
+    if ! "$LAIN" $(lain_flags_for "$file") "$file" -o "$c" >/dev/null 2>&1; then
+        FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("$file (oracle: compilation failed)")
+        rm -f "$c"; return 1
+    fi
+    if ! gcc -o "$bin" "$c" -Dlibc_printf=printf -Dlibc_puts=puts -w 2>/dev/null; then
+        FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("$file (oracle: emitted C rejected by gcc)")
+        rm -f "$c" "$bin"; return 1
+    fi
+    local got; got="$("$bin" 2>/dev/null)"
+    rm -f "$c" "$bin"
+    if ! diff -q <(printf '%s\n' "$got") "$exp" >/dev/null 2>&1; then
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        FAILED_TESTS+=("$file (oracle: output differs from $(basename "$exp"))")
+        return 1
+    fi
+    PASS_COUNT=$((PASS_COUNT + 1))
+    return 1
+}
+
+# ── AN OUTPUT ORACLE BEATS A TEXT GREP, AND IT IS BACKEND-NEUTRAL ────────────────────────
+# A `.grep` sidecar asserts that the emitted C CONTAINS some text, which pins an IMPLEMENTATION.
+# The project now has two backends, and they are two implementations of one semantics: every
+# one of these tests grepped for the old emitter's private spellings — `__match`, `__try`,
+# `__elsev`, `_Tag_ParseErr` — so all 22 failed against the new backend while the programs
+# behaved identically (emit_gate: 399 agree).
+#
+# A `.expected` sidecar asserts the program's OUTPUT instead. That is a property of the program
+# rather than of the compiler that emitted it, so it holds whichever backend runs — and it is
+# strictly stronger than a grep, because it catches a wrong ANSWER where a grep only catches a
+# renamed temporary. It is the same mechanism `run_trust.sh` already uses for its oracles.
+#
+# A test may carry either. `.expected` is preferred when present; `.grep` remains for the few
+# assertions that are genuinely about the emitted INTERFACE rather than the behaviour.
 run_emit_snapshot() {
     local file="$1"
     local grepfile="${file%.ln}.grep"
+    local expfile="${file%.ln}.expected"
+    if [[ -f "$expfile" ]]; then
+        run_output_oracle "$file" "$expfile" || return 0
+        [[ -f "$grepfile" ]] || return 0
+    fi
     if [[ ! -f "$grepfile" ]]; then
         return 0
     fi
