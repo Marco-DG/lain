@@ -61,6 +61,7 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     }
     lin_free(L);
 
+    di_mod = mod;                 // the shared-borrow read rule needs callee signatures
     Di *D = di_analyze(f);
     for (int i = 0; i < D->nfinds; i++) {
         DiFinding *fi = &D->finds[i];

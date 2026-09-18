@@ -417,6 +417,38 @@ static IrType *ir_lower_borrow_binding_type(LowerCtx *c, Type *t) {
     return cp;
 }
 
+// Does a SHARED borrow of this parameter travel as an ADDRESS?
+//
+// The mutable case (`ir_mut_by_address`) has always said yes for COPIED types, because writes
+// have to reach the caller's storage. The shared case said NO, and passed the aggregate BY
+// VALUE — which is a COPY, and P1 forbids hidden copies outright: a shared borrow that copies
+// its argument is not a borrow. It also left nothing for the backend to annotate, since
+// `nonnull` and `access(read_only, n, m)` describe POINTER parameters, which is how the gap
+// first showed up (D-50: `nonnull` short by 52, `access` short by 38).
+//
+// Only aggregates. A scalar is genuinely cheaper in a register and a copy of one is not
+// observable; a slice/array/pointer already carries its data pointer. And only a SHARED
+// binding: `mov` transfers ownership and must keep passing the value, or the callee would be
+// consuming storage it does not own.
+//
+// ★ STRUCTS ONLY, AND THE REASON IS THE IR'S OWN DESIGN. A SUM's layout is deliberately NOT
+// recorded here (chapter 0 §3: recording the niche would make a sum indistinguishable from a
+// pointer with an odd range, and destroy the discrimination every analysis depends on) — so
+// this rule cannot tell a tag-plus-payload aggregate from a NICHE-PACKED one. `*u8 | none` is
+// exactly one pointer at run time, and passing its ADDRESS is strictly worse than passing it:
+// an extra indirection for a word-sized value, plus a narrowing (`if x { use_it(x) }`) that
+// now has to load before it can narrow. Measured: it broke that program's build.
+//
+// A struct is always a genuine aggregate, so the question does not arise for it. Sums wait for
+// the LAYOUT PASS BELOW THE IR (plan item 2.2) — the same pass that has to exist before a
+// second backend can agree with the first about niches. This is the first time that missing
+// pass has blocked something concrete rather than being an argument.
+static bool ir_shared_agg_by_address(const IrType *lt, const Type *declared) {
+    if (!lt || !declared) return false;
+    if (declared->mode != MODE_SHARED) return false;       // mov / var are the other rules
+    return lt->kind == IRT_STRUCT;
+}
+
 static bool ir_mut_by_address(const IrType *t) {
     if (!t) return false;
     switch (t->kind) {
@@ -1820,6 +1852,58 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             int i=0;
             if (indirect) i = 1;                       // operand 0 is the callee value
             for (ExprList *a=e->as.call_expr.args; a; a=a->next,i++) {
+                // ── A SHARED BORROW OF AN AGGREGATE IS PASSED BY ADDRESS ────────────────
+                // The callee's parameter is a pointer (see the param loop and
+                // `ir_shared_agg_by_address`), so the argument has to be one. Taken BEFORE
+                // lowering the expression as a value, because `ir_lower_addr` handles the
+                // rvalue case itself — `f(mk())` materialises the temporary into a slot and
+                // addresses that, which is the ordinary C rule for a temporary's lifetime.
+                //
+                // Only where the callee is KNOWN: an indirect call names no function, so its
+                // convention cannot be read, and it keeps the by-value shape on both sides.
+                if (pp && pp->decl && pp->decl->kind==DECL_VARIABLE && !indirect) {
+                    Type   *pdt = pp->decl->as.variable_decl.type;
+                    IrType *plt = ir_lower_type(c, pdt);
+                    if (ir_shared_agg_by_address(plt, pdt) && a->expr) {
+                        // ★ ONLY A PLACE HAS AN ADDRESS. `name(Color.Green)` passes an RVALUE —
+                        // a freshly constructed sum — and `ir_lower_addr` answers a
+                        // non-addressable expression with an OPAQUE pointer, which is honest
+                        // and fatal: three programs segfaulted on a pointer nothing had ever
+                        // pointed anywhere. A variant reference is an `EXPR_MEMBER` like a
+                        // field access and has to be told apart by its DECL, not its shape.
+                        //
+                        // Anything that is not a place is materialised into a slot and the
+                        // slot's address is passed — the ordinary C rule for a temporary's
+                        // lifetime, and exactly what the parameter loop does for a by-value
+                        // struct. It costs the copy this change exists to remove, but only
+                        // where the value had to be built anyway.
+                        Expr *ax = a->expr;
+                        bool is_variant = (ax->kind==EXPR_MEMBER && ax->decl
+                                           && ax->decl->kind==DECL_ENUM);
+                        bool place = !is_variant &&
+                                     (ax->kind==EXPR_IDENTIFIER || ax->kind==EXPR_DEREF
+                                      || ax->kind==EXPR_INDEX   || ax->kind==EXPR_MEMBER);
+                        IrValue *addr = NULL;
+                        if (place) {
+                            addr = ir_lower_addr(c, ax);
+                            if (!addr || !addr->type || addr->type->kind!=IRT_PTR) addr = NULL;
+                        }
+                        if (!addr) {                       // an rvalue: give it storage
+                            IrValue *tv = ir_lower_expr(c, ax);
+                            if (tv && tv->type && (tv->type->kind==IRT_STRUCT || tv->type->kind==IRT_SUM)) {
+                                IrValue *slot = ir_alloca(c->f, c->cur, tv->type);
+                                ir_store(c->f, c->cur, slot, tv);
+                                addr = slot;
+                            } else {
+                                ins->operands[i] = tv;      // not an aggregate after all
+                                pp = pp->next; continue;
+                            }
+                        }
+                        ins->operands[i] = addr;
+                        pp = pp->next;
+                        continue;
+                    }
+                }
                 IrValue *av = ir_lower_expr(c, a->expr);
                 // a fixed array decays to a slice when the callee expects one
                 if (pp && pp->decl && pp->decl->kind==DECL_VARIABLE) {
@@ -2835,14 +2919,20 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         // same category of front-end fact as the type itself; what the IR does with it is
         // decided by analysis, not asked of the front end.
         bool p_owns = pty && pty->mode == MODE_OWNED;
-        if (ir_mut_by_address(pt) && pty && pty->mode == MODE_MUTABLE) {
-            // a `var` param of a COPIED type (struct or scalar) is a mutable borrow — a
-            // pointer to the caller's storage, so writes propagate. The pointer *is* the
-            // slot. (A slice/array/pointer already shares its data, so it stays by value.)
-            IrType *ptr = ir_type_new(cc.a, IRT_PTR); ptr->elem = pt; ptr->ptr_mut = true;
+        bool mut_addr = ir_mut_by_address(pt) && pty && pty->mode == MODE_MUTABLE;
+        bool shr_addr = ir_shared_agg_by_address(pt, pty);
+        if (mut_addr || shr_addr) {
+            // A BORROW OF A COPIED TYPE TRAVELS AS AN ADDRESS, mutable or shared.
+            //   mutable — so the callee's writes reach the caller's storage;
+            //   shared  — so no copy is made (P1), and so the backend has a POINTER parameter
+            //             to attach `nonnull` and `access(read_only, n, m)` to.
+            // Either way the pointer IS the slot. (A slice/array/pointer already shares its
+            // data, so it stays by value; a scalar is cheaper in a register.)
+            IrType *ptr = ir_type_new(cc.a, IRT_PTR); ptr->elem = pt;
+            ptr->ptr_mut = mut_addr;     // a shared borrow is a pointer to CONST
             ptr->borrowed = true;        // a REFERENCE into the caller's storage — see below
             IrValue *pv = ir_add_param(f, ptr, pin);
-            pv->owns = false;                       // a mutable borrow never owns
+            pv->owns = false;                       // a borrow never owns, shared or mutable
             ir_env_add(&cc, pnm, pv, NULL);
         } else if (pt->kind == IRT_STRUCT) {
             // a by-value struct param: materialize to a slot so its fields address

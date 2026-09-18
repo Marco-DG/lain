@@ -21,6 +21,21 @@
 
 #include "../ir/ir.h"
 #include "../ir/place.h"
+
+// The module, for looking up a callee's parameter conventions. Set by `di_analyze_mod`; NULL
+// when the caller has no module to give, in which case the shared-borrow read rule below
+// simply does not fire — fail-open for a PRECISION rule, and the legacy engine still covers
+// the case until the split is complete. (borrow.h has carried the same handle for the same
+// reason since the co-argument aliasing check needed it.)
+static IrFunc *di_mod = NULL;
+static IrFunc *di_find_func(const IrName *n) {
+    if (!n || !di_mod) return NULL;
+    for (IrFunc *g=di_mod; g; g=g->next)
+        if (g->name && g->name->length==n->length
+            && memcmp(g->name->name, n->name, (size_t)n->length)==0) return g;
+    return NULL;
+}
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -214,6 +229,44 @@ static void di_run_block(Di *D, IrBlock *b, uint64_t *st, bool report) {
             IrPlace q = ir_place_of(D->def, D->nvar, ins->operands[0]);
             int c = di_check_read(D, st, &q);
             if (c) di_add(D, q.base_id, ins->line, ins->col, c);
+        }
+        // ── ...AND PASSING A SHARED BORROW IS A READ OF THE WHOLE PLACE ──────────────────
+        // The comment above is right that taking an address is not a read. A shared borrow is
+        // the exception, and it is a LANGUAGE rule rather than an artefact of how the argument
+        // travels: the callee may read every field, so the place must be fully initialised
+        // before it is lent. `func sum(p Point) i32 { return p.x }` called on a `p` with only
+        // `p.x` written is an error whether or not the callee happens to touch `p.y`.
+        //
+        // ★ It was previously enforced BY ACCIDENT. A shared aggregate argument used to travel
+        // BY VALUE, so the call site emitted a LOAD of the whole struct and the rule above
+        // caught it. Passing the address instead (which removes a copy P1 forbids, and gives
+        // the backend a pointer to annotate) made the load vanish and took the diagnostic with
+        // it — two corpus fail-tests started compiling. A guarantee that rests on an ABI
+        // detail is a guarantee waiting to be lost, so it is stated here instead.
+        //
+        // MUTABLE borrows are deliberately excluded: `var p` is how a caller hands storage to
+        // be FILLED, and requiring it initialised first would refuse the out-parameter idiom
+        // the language is built on.
+        // ★ The question is about the CALLEE'S PARAMETER, not the argument's type. The
+        // argument is the caller's local SLOT, and an alloca is always `*var T` — so reading
+        // the convention off the argument says "mutable" for every call and the rule never
+        // fires. Only the callee's signature knows whether the place is being LENT for reading
+        // or handed over to be filled.
+        if (report && ins->op==IR_CALL && ins->aux.callee) {
+            IrFunc *cal = di_find_func(ins->aux.callee);
+            if (cal) {
+                IrParam *pp = cal->params; int k = 0;
+                for (; pp && k < ins->n_operands; pp = pp->next, k++) {
+                    IrType *pt = pp->value ? pp->value->type : NULL;
+                    if (!pt || pt->kind!=IRT_PTR || !pt->borrowed || pt->ptr_mut || pt->is_raw) continue;
+                    if (!pt->elem || pt->elem->kind!=IRT_STRUCT) continue;
+                    IrValue *av = ins->operands[k];
+                    if (!av) continue;
+                    IrPlace q = ir_place_of(D->def, D->nvar, av);
+                    int c = di_check_read(D, st, &q);
+                    if (c) di_add(D, q.base_id, ins->line, ins->col, c);
+                }
+            }
         }
     }
 }

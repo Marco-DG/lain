@@ -70,6 +70,7 @@ int main(int argc, char **argv) {
                 (long long)L->finds[i].line, (long long)L->finds[i].col, msg, L->finds[i].slot);
         }
         lin_free(L);
+        di_mod = m;               // the shared-borrow read rule needs callee signatures
         Di *D = di_analyze(f);
         for (int i=0;i<D->nfinds;i++) { total++;
             fprintf(stderr,"[%s] %.*s: %s\n", D->finds[i].code==5?"E005 uninitialized":"E019 partial-init",
