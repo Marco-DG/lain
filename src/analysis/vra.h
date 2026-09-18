@@ -1848,12 +1848,29 @@ static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
                            int64_t tlo, int64_t thi); // B1, defined below
 static bool vra_guard_counter_fits(Vra *V, Octagon *W, IrInstr *ins, int64_t thi); // fwd
 
+// Can a value of type `from` fail to fit type `to`? The question every narrowing site is
+// really asking, stated once.
+//
+// ★ IT IS NOT `from->bits > to->bits`, which is what every site used to test. That is a PROXY
+// for "the target can hold every value of the source type", and the two part exactly at a SIGN
+// CHANGE: `i32 -> u32` is the same width and is not a subset — `func to_unsigned(a i32) u32 {
+// return a }` compiled, and a negative `a` becomes a huge positive. Same for `usize <- i65`,
+// where Path-F's widened subtraction meets an unsigned slot and `x - 1` at x == 0 wraps to
+// SIZE_MAX. Comparing the two types' INTERVALS asks the property directly; the width comparison
+// is then just the common case of it.
+static bool vra_type_may_lose(const IrType *from, const IrType *to) {
+    if (!from || !to || from->kind != IRT_INT || to->kind != IRT_INT) return false;
+    int64_t flo, fhi, tlo, thi;
+    if (!irtype_int_range(from, &flo, &fhi) || !irtype_int_range(to, &tlo, &thi)) return false;
+    return !(tlo <= flo && fhi <= thi);       // the target does NOT contain the source's range
+}
+
 static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
                              IrInstr *at, int64_t line, int64_t col) {
     if (at && at->unchecked) return;                        // inside `unsafe`
     if (!val || !val->type || !target) return;
     if (val->type->kind != IRT_INT || target->kind != IRT_INT) return;
-    if (val->type->bits <= target->bits) return;            // not a narrowing
+    if (!vra_type_may_lose(val->type, target)) return;      // the target holds every value
     int64_t tlo, thi, vlo, vhi;
     if (!irtype_int_range(target, &tlo, &thi)) return;
     vra_range(V, W, val, &vlo, &vhi);
@@ -3234,9 +3251,7 @@ static Vra *vra_analyze(IrFunc *f) {
                     IrInstr *ad = V->def[ins->operands[0]->id];
                     IrType *slot = (pt && pt->kind==IRT_PTR) ? pt->elem
                                  : (ad && ad->op==IR_ALLOCA) ? ad->aux.alloca_ty : NULL;
-                    if (slot && slot->kind==IRT_INT && ins->operands[1]->type
-                        && ins->operands[1]->type->kind==IRT_INT
-                        && ins->operands[1]->type->bits > slot->bits) {
+                    if (slot && vra_type_may_lose(ins->operands[1]->type, slot)) {
                         oct_close(&W);
                         vra_check_narrow(V,&W, ins->operands[1], slot, ins, ins->line, ins->col);
                     }
@@ -3250,6 +3265,70 @@ static Vra *vra_analyze(IrFunc *f) {
                                          ins, ins->line, ins->col);
                     }
                     break;
+                // ── THE OTHER NARROWING SITES: every place a value MEETS A DECLARED SLOT ───
+                // Path-F puts the overflow obligation on the NARROWING, and the engine wired
+                // three of the places one happens — a STORE into a cell, a TRUNC cast, and the
+                // `ret` out of a function. It missed three more, and the omission was not
+                // theoretical: `take(300)` where `take(x u8)`, `S(300)` where `S.x` is `u8`,
+                // and `Shape.Circle(300)` where the payload is `u8` all compiled under the
+                // sovereign engine alone. Seven corpus programs asserted those refusals and
+                // the legacy engine was the only thing still making them, which is why
+                // `g_suppress_overflow` could not stand down (D-47).
+                //
+                // They are one rule, not three, and they are written as one deliberately: a
+                // LIST OF SITES is exactly the shape that hides a missing entry — the same
+                // shape as `ir_mut_by_address` omitting IRT_SUM and the projection path
+                // omitting a source form (D-45). Stating the question once ("what declared
+                // slot does this value land in?") is what makes the next omission visible.
+                case IR_CALL: {
+                    // the callee's PARAMETER type, by position. An indirect call names no
+                    // function and an extern's declaration is believed, as everywhere else.
+                    IrFunc *cal = ins->aux.callee ? vra_find_func(ins->aux.callee) : NULL;
+                    if (!cal) break;
+                    IrParam *pp = cal->params; int k = 0;
+                    for (; pp && k < ins->n_operands; pp = pp->next, k++) {
+                        IrValue *arg = ins->operands[k];
+                        IrType  *pt  = pp->value ? pp->value->type : NULL;
+                        if (!arg || !vra_type_may_lose(arg->type, pt)) continue;
+                        oct_close(&W);
+                        vra_check_narrow(V,&W, arg, pt, ins, ins->line, ins->col);
+                    }
+                    break;
+                }
+                case IR_STRUCT_NEW: {
+                    // NOTE: no pointer-peeling helper here on purpose — `ir_struct_of` lives
+                    // in ir/lower.h, and analysis/ may include only ir/* and analysis/* (the
+                    // sovereignty litmus the cmin gate enforces). A struct_new's result IS the
+                    // struct type; anything else is not this rule's business.
+                    IrType *st = ins->result ? ins->result->type : NULL;
+                    if (!st || st->kind!=IRT_STRUCT) break;
+                    for (int k=0; k<ins->n_operands && k<st->n_fields; k++) {
+                        IrValue *fv = ins->operands[k];
+                        IrType  *ft = st->fields[k];
+                        if (!fv || !vra_type_may_lose(fv->type, ft)) continue;
+                        oct_close(&W);
+                        vra_check_narrow(V,&W, fv, ft, ins, ins->line, ins->col);
+                    }
+                    break;
+                }
+                case IR_SUM_NEW: {
+                    IrType *su = ins->result ? ins->result->type : NULL;
+                    if (!su || su->kind!=IRT_SUM) break;
+                    int kv = ins->aux.sum.variant;
+                    if (kv < 0 || kv >= su->n_fields) break;
+                    IrType *pl = su->fields[kv];             // the variant's payload
+                    if (!pl) break;
+                    for (int k=0; k<ins->n_operands; k++) {
+                        IrValue *pv2 = ins->operands[k];
+                        // a multi-field payload is a struct; a single one may be the type
+                        IrType *ft = (pl->kind==IRT_STRUCT && k < pl->n_fields) ? pl->fields[k]
+                                   : (k==0 ? pl : NULL);
+                        if (!pv2 || !vra_type_may_lose(pv2->type, ft)) continue;
+                        oct_close(&W);
+                        vra_check_narrow(V,&W, pv2, ft, ins, ins->line, ins->col);
+                    }
+                    break;
+                }
                 case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: oct_close(&W); vra_check_divzero(V,&W,ins,b); break;
                 default: break;
             }
@@ -3269,8 +3348,7 @@ static Vra *vra_analyze(IrFunc *f) {
         // The check is the same one STORE and CAST already use; only the site was missing.
         if (b->term.kind == IR_TERM_RET && b->term.cond && V->f->ret_type) {
             IrValue *rv = b->term.cond;
-            if (rv->type && rv->type->kind==IRT_INT && V->f->ret_type->kind==IRT_INT
-                && rv->type->bits > V->f->ret_type->bits) {
+            if (vra_type_may_lose(rv->type, V->f->ret_type)) {
                 oct_close(&W);
                 IrInstr *site = V->def[rv->id];
                 vra_check_narrow(V,&W, rv, V->f->ret_type, site,

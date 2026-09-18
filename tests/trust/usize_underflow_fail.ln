@@ -4,6 +4,13 @@
 // `usize`, so type_integer_range returned "no range" and EVERY overflow/
 // underflow check on usize was silently skipped. Now usize carries a range
 // (lower bound 0), so the sub-zero result is rejected.
+//
+// (The `extern` below is not decoration: without it the program's FIRST error is an undeclared
+// `libc_printf`, and that only stayed hidden because the legacy overflow check fired on line 9
+// before the resolver reached line 11. Once the sovereign engine owned the obligation, the test
+// started asserting its subject by accident of ordering — so the declaration is stated and the
+// underflow is what the test is about.)
+extern proc libc_printf(fmt *u8, ...) i32
 proc main() i32 {
     var x usize = 0
     var y usize = x - 1

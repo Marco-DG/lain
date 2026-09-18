@@ -2345,7 +2345,27 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             ir_lower_cond_br(c, s->as.while_stmt.cond, body, exit);
             IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
                 c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
-            c->cur = body; ir_lower_stmts(c, s->as.while_stmt.body);
+            c->cur = body;
+            // ── D-49, ATTEMPTED AND BACKED OUT — the finding is worth more than the fix ──
+            // A written `decreasing` is a claim the compiler defends (D-44), and a claim that is
+            // not well-defined defends nothing: `while i > 0 decreasing n - i` UNDERFLOWS at
+            // n == 0. The IR records only THAT a measure exists, never WHAT it is, so the
+            // sovereign engine cannot see the expression. The obvious fix is to lower it here —
+            // the value discarded, only its obligations kept — and it does catch the bug.
+            //
+            // It also RE-COMPUTES the expression, and that is what makes it wrong today:
+            // `while i < n / 2 decreasing n / 2 - i` lowers a SECOND `n / 2`, a fresh SSA value
+            // the octagon cannot relate to the one the GUARD compares `i` against. So the
+            // subtraction's `i <= n/2` is unprovable and an ordinary in-place reverse is
+            // refused. Measured: lowering at the header cost 8 over-rejections (the measure had
+            // to be defined on the EXIT path too), moving it under the guard fixed 7, and this
+            // one is not a placement problem but a SHARING problem.
+            //
+            // The real fix is for the guard and the measure to lower to ONE value rather than
+            // two — a lowering restructure, not a patch — and it is recorded as D-49 with this
+            // reproducer. Until then `measure_underflow_fail` is the single program keeping the
+            // legacy overflow path alive.
+            ir_lower_stmts(c, s->as.while_stmt.body);
             if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, head);
             c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om;
             c->cur = exit;

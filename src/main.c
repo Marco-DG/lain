@@ -178,7 +178,18 @@ int main(int argc, char **argv) {
             // `vra_check_narrow`; a call argument, a struct field initialiser and an enum
             // payload are not. That is the list, and closing it is what would retire these
             // checks. Until then the legacy path is not redundancy, it is coverage.
-            //   g_suppress_overflow = true;   // ← do not set: see above
+            //   g_suppress_overflow = true;   // ← do not set: ONE program still needs it
+            //
+            // RE-RUN 2026-09-18, after D-47 wired the three missing narrowing sites and
+            // `vra_type_may_lose` replaced the width proxy: **8 regressions → 1**, and the one
+            // is `measure_underflow_fail` — a `decreasing n - i` whose own expression
+            // underflows. The IR does not carry the measure EXPRESSION (only the bit saying one
+            // was written), so the sovereign engine cannot see it; lowering it re-computes
+            // subexpressions the octagon cannot relate to the guard's copies. That is D-49, and
+            // it is a lowering restructure rather than a patch.
+            //
+            // One program, one named cause. That is what stands between here and retiring the
+            // legacy overflow path — and with it, the old half of src/sema/.
         }
     }
     // The octagon is built on a PLAIN compile too — effects.h runs the numeric analysis to
