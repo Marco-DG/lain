@@ -178,7 +178,23 @@ int main(int argc, char **argv) {
             // `vra_check_narrow`; a call argument, a struct field initialiser and an enum
             // payload are not. That is the list, and closing it is what would retire these
             // checks. Until then the legacy path is not redundancy, it is coverage.
-            //   g_suppress_overflow = true;   // ← do not set: ONE program still needs it
+            // ── OVERFLOW: THE LEGACY PATH IS NOW REDUNDANT ───────────────────────────────
+            // Item 1.6 asked this twice. The first run (2026-09-17) said NO: 8 programs
+            // regressed and SEVEN were LOST GUARANTEES. Those named three missing NARROWING
+            // SITES — a call argument, a struct field initialiser, an enum payload — plus a
+            // wrong predicate at the three sites that already existed (`from->bits > to->bits`
+            // is a proxy that misses a SIGN CHANGE) and one measure expression the IR never
+            // lowered. All closed (D-47, D-49).
+            //
+            // Re-measured: **zero**. Corpus 723/723 with this set, all eight gates green, and
+            // the four numeric fuzzers — which EXECUTE what the engine proved — at zero:
+            // fuzz_overflow (UBSan), fuzz_unsigned (exact integer oracle, since no sanitizer
+            // sees unsigned wrap), fuzz_termination, fuzz_vra.
+            //
+            // So the rebuilt engine is now the SOLE authority for every numeric obligation:
+            // bounds, division, overflow and termination. What remains with the old engine is
+            // E091 (the SHAPE of a `decreasing` clause) and MUTUAL recursion, both deliberate.
+            g_suppress_overflow = true;
             //
             // RE-RUN 2026-09-18, after D-47 wired the three missing narrowing sites and
             // `vra_type_may_lose` replaced the width proxy: **8 regressions → 1**, and the one

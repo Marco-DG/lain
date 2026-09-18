@@ -51,7 +51,53 @@ typedef struct {
     Stmt     *defers[64];
     int       ndefers;
     bool      in_defer;    // guard: a defer's own body must not re-register defers
+    // ── D-49: THE GUARD'S VALUES, SO THE MEASURE CAN REUSE THEM ─────────────────────────
+    // `while i < n / 2 decreasing n / 2 - i` mentions `n / 2` twice. Lowering each occurrence
+    // independently makes two SSA values, and a RELATIONAL DOMAIN RELATES VALUES, NOT SYNTAX:
+    // the octagon knows `i < %k` from the guard and is asked about `%m - i` from the measure,
+    // with nothing tying `%m` to `%k`. So the measure's subtraction cannot be shown not to
+    // underflow, and an ordinary in-place reverse is refused.
+    //
+    // While the loop's CONDITION is lowered, each pure subexpression is recorded here; the
+    // MEASURE then reuses a structurally identical one instead of recomputing it. That is
+    // local value numbering restricted to one statement, which is the smallest thing that
+    // makes the two spellings denote one value — and it is a lowering concern, not a domain
+    // one: the domain was right to refuse two unrelated values.
+    Expr     *cse_expr[32];
+    IrValue  *cse_val[32];
+    int       cse_n;
+    bool      cse_recording;   // only while lowering a `while` condition
 } LowerCtx;
+
+// Structural equality over the PURE expression shapes a loop guard and its measure share.
+// Deliberately narrow: an identifier, a literal, `x.len`, and the arithmetic that joins them.
+// Anything with a call, an index or a side effect returns false, so nothing observable is ever
+// de-duplicated — reuse is only ever a way to name the SAME value twice.
+static bool ir_expr_same(const Expr *a, const Expr *b) {
+    if (a == b) return true;
+    if (!a || !b || a->kind != b->kind) return false;
+    switch (a->kind) {
+        case EXPR_LITERAL:
+            return a->as.literal_expr.value == b->as.literal_expr.value;
+        case EXPR_IDENTIFIER:
+            return a->as.identifier_expr.id && b->as.identifier_expr.id
+                && a->as.identifier_expr.id->length == b->as.identifier_expr.id->length
+                && memcmp(a->as.identifier_expr.id->name, b->as.identifier_expr.id->name,
+                          (size_t)a->as.identifier_expr.id->length) == 0;
+        case EXPR_MEMBER:
+            return a->as.member_expr.member && b->as.member_expr.member
+                && a->as.member_expr.member->length == b->as.member_expr.member->length
+                && memcmp(a->as.member_expr.member->name, b->as.member_expr.member->name,
+                          (size_t)a->as.member_expr.member->length) == 0
+                && ir_expr_same(a->as.member_expr.target, b->as.member_expr.target);
+        case EXPR_BINARY:
+            return a->as.binary_expr.op == b->as.binary_expr.op
+                && ir_expr_same(a->as.binary_expr.left,  b->as.binary_expr.left)
+                && ir_expr_same(a->as.binary_expr.right, b->as.binary_expr.right);
+        default:
+            return false;                       // calls, indexes, anything effectful: never
+    }
+}
 
 // Mark the function unfaithful, WITH A REASON. `incomplete` suppresses every proof over the
 // function, so an unlabelled one is an unmeasured escape hatch conditioning every survey
@@ -1031,7 +1077,33 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
       return ir_opaque(c->f, c->cur, pt, true, "unlowered-lvalue", NULL, 0); }
 }
 
+static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e);
+
+// D-49's seam. While a loop CONDITION is lowered, every pure subexpression's value is
+// remembered; while its MEASURE is lowered, a structurally identical one is reused rather than
+// recomputed, so `while i < n / 2 decreasing n / 2 - i` mentions ONE `n / 2` in the IR.
+//
+// Scoped to that one statement on purpose. A general CSE over the function would be a bigger
+// change with a bigger blast radius, and the problem is not general: it is that a guard and its
+// own measure are two spellings of the same quantities, written in one line by one programmer.
 static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
+    if (c && c->cse_n > 0 && e && !c->cse_recording) {
+        for (int i = 0; i < c->cse_n; i++)
+            if (ir_expr_same(c->cse_expr[i], e)) return c->cse_val[i];
+    }
+    IrValue *v = ir_lower_expr_raw(c, e);
+    if (c && c->cse_recording && e && v && c->cse_n < 32) {
+        switch (e->kind) {                      // only the shapes ir_expr_same can match
+            case EXPR_BINARY: case EXPR_MEMBER: case EXPR_IDENTIFIER:
+                c->cse_expr[c->cse_n] = e; c->cse_val[c->cse_n] = v; c->cse_n++;
+                break;
+            default: break;
+        }
+    }
+    return v;
+}
+
+static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
     if (e && e->line) { ir_cur_line = e->line; ir_cur_col = e->col; }
     if (!e) return ir_const_int(c->f, c->cur, 0, ir_type_int(c->a,32,true));
     IrType *ty = ir_lower_type(c, e->type);
@@ -2342,29 +2414,40 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             // obligation at all. Without this the fact reached no analysis and three corpus
             // programs asserting a bad measure compiled.
             head->has_measure = s->as.while_stmt.measure_written;
+            // D-49: record the guard's values so the measure can reuse them (see LowerCtx).
+            int cse_save = c->cse_n; bool cse_rec_save = c->cse_recording;
+            c->cse_n = 0; c->cse_recording = (s->as.while_stmt.measure_written != false);
             ir_lower_cond_br(c, s->as.while_stmt.cond, body, exit);
+            c->cse_recording = false;
             IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
                 c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
             c->cur = body;
-            // ── D-49, ATTEMPTED AND BACKED OUT — the finding is worth more than the fix ──
-            // A written `decreasing` is a claim the compiler defends (D-44), and a claim that is
-            // not well-defined defends nothing: `while i > 0 decreasing n - i` UNDERFLOWS at
-            // n == 0. The IR records only THAT a measure exists, never WHAT it is, so the
-            // sovereign engine cannot see the expression. The obvious fix is to lower it here —
-            // the value discarded, only its obligations kept — and it does catch the bug.
+            // ── D-49: THE MEASURE IS AN EXPRESSION, AND IT HAS TO BE WELL-DEFINED ────────
+            // A written `decreasing` is a claim the compiler defends (D-44), and a claim that
+            // is not well-defined defends nothing: `while i > 0 decreasing n - i` UNDERFLOWS at
+            // n == 0, and `n - i` is SIZE_MAX rather than a measure. The IR recorded only THAT
+            // a measure existed, never WHAT it was, so the sovereign engine had nothing to say
+            // and the legacy overflow path was the only thing catching it.
             //
-            // It also RE-COMPUTES the expression, and that is what makes it wrong today:
-            // `while i < n / 2 decreasing n / 2 - i` lowers a SECOND `n / 2`, a fresh SSA value
-            // the octagon cannot relate to the one the GUARD compares `i` against. So the
-            // subtraction's `i <= n/2` is unprovable and an ordinary in-place reverse is
-            // refused. Measured: lowering at the header cost 8 over-rejections (the measure had
-            // to be defined on the EXIT path too), moving it under the guard fixed 7, and this
-            // one is not a placement problem but a SHARING problem.
+            // Lowering it puts the expression under the ordinary arithmetic obligations with no
+            // special case. Two things about WHERE and HOW, both measured rather than guessed:
             //
-            // The real fix is for the guard and the measure to lower to ONE value rather than
-            // two — a lowering restructure, not a patch — and it is recorded as D-49 with this
-            // reproducer. Until then `measure_underflow_fail` is the single program keeping the
-            // legacy overflow path alive.
+            //   IN THE BODY, UNDER THE GUARD. At the header the measure had to be well-defined
+            //   on the EXIT path too, where `i < n` does not hold — 8 over-rejections, since
+            //   `decreasing n - i` is the commonest measure in the corpus. A measure's job is
+            //   to fall on each ITERATION, so where it must be defined is where one happens.
+            //
+            //   REUSING THE GUARD'S VALUES. Lowering it fresh re-computes shared subexpressions
+            //   (`while i < n / 2 decreasing n / 2 - i` builds a SECOND `n / 2`), and a
+            //   relational domain relates VALUES, not syntax — so the octagon could not connect
+            //   the measure's copy to the one the guard bounds `i` against. The cse memo above
+            //   makes both spellings denote one value.
+            //
+            // The value is discarded; only its obligations matter. Nothing is stored, so no
+            // analysis sees a new write and the loop's shape is unchanged.
+            if (s->as.while_stmt.measure_written && s->as.while_stmt.measure)
+                (void)ir_lower_expr(c, s->as.while_stmt.measure);
+            c->cse_n = cse_save; c->cse_recording = cse_rec_save;
             ir_lower_stmts(c, s->as.while_stmt.body);
             if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, head);
             c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om;
