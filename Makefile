@@ -40,6 +40,12 @@ gates: $(BIN)
 # in `gates` would add noise and teach everyone to ignore it; leaving them unrun is how the
 # emitter's four miscompiles went unnoticed.
 #
+# `annot_gate` is the third, and it exists because the second was being misread: emit_gate
+# compares the two backends' BEHAVIOUR, so it cannot see that the new one emits none of the
+# `nonnull`, `returns_nonnull` or `access(...)` the old one derives from proofs. Behaviourally
+# identical, and it has thrown the proofs away. "emit_gate is at 399/0/0, so src/emit/ can go"
+# was wrong for exactly that reason.
+#
 # ★ The comment here used to claim these "always exit 0 by design". They do not — each script
 # ends on its own readiness predicate, so `emit_gate` exits 1 precisely when it has differences
 # to report, and make then abandoned the target before `engine_ir_gate` ever ran. A progress
@@ -48,6 +54,7 @@ gates: $(BIN)
 # and left intact in the scripts, where "are we there yet" is still a useful question to ask.
 measure: $(BIN)
 	-bash scripts/gates/emit_gate.sh
+	-bash scripts/gates/annot_gate.sh
 	-bash scripts/gates/engine_ir_gate.sh
 
 fuzz: $(BIN)

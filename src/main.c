@@ -158,26 +158,6 @@ int main(int argc, char **argv) {
             // model. And one claim is weaker than the legacy's: the engine defends "this loop
             // terminates", not "this expression is the measure".
             g_suppress_termination = true;
-            // ── OVERFLOW STAYS WITH BOTH ENGINES, AND THE EXPERIMENT SAYS WHY ────────────
-            // Item 1.6 asked whether the legacy overflow checks are redundant now. Run by the
-            // flip's own method — set `g_suppress_overflow`, run the corpus, back it out — and
-            // the answer is NO, emphatically: 8 programs regress and SEVEN of them are
-            // "expected fail, got pass", i.e. LOST GUARANTEES, the one direction that must
-            // never move. The shapes are consistent and they name the gap:
-            //
-            //   overflow at a CALL ARGUMENT        arg_literal_overflow, callarg_overflow,
-            //                                      overflow_callarg
-            //   a STRUCT FIELD initialiser         struct_field_literal_overflow
-            //   an ENUM PAYLOAD                    enum_payload_overflow
-            //   an implicit SIGN CHANGE            sign_change_implicit
-            //   a usize/measure UNDERFLOW          usize_underflow, measure_underflow
-            //
-            // Every one is a NARROWING SITE — a value stored into a slot whose type is smaller
-            // than the value's range — and Path-F's whole design is that the obligation belongs
-            // to the narrowing rather than to the operation. STORE, CAST and `ret` are wired to
-            // `vra_check_narrow`; a call argument, a struct field initialiser and an enum
-            // payload are not. That is the list, and closing it is what would retire these
-            // checks. Until then the legacy path is not redundancy, it is coverage.
             // ── OVERFLOW: THE LEGACY PATH IS NOW REDUNDANT ───────────────────────────────
             // Item 1.6 asked this twice. The first run (2026-09-17) said NO: 8 programs
             // regressed and SEVEN were LOST GUARANTEES. Those named three missing NARROWING
