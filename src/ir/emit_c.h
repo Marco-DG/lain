@@ -249,7 +249,30 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                 && i->operands[0]->type->elem->kind != IRT_VECTOR)
                  fprintf(o, "  __builtin_memcpy(v%d, &v%d, sizeof v%d);\n",
                          i->operands[0]->id, i->operands[1]->id, i->operands[1]->id);
-            else fprintf(o, "  *v%d = v%d;\n", i->operands[0]->id, i->operands[1]->id);
+            else {
+                // ── A POINTER SLOT WRITTEN FROM AN INTEGER NEEDS THE CAST SPELLED ────────
+                // `var p *i32 = 0` is a null pointer, and the IR says so exactly: a `const 0`
+                // of integer type stored into a `*i32` slot. C does not accept that silently
+                // — it is `-Wint-conversion`, "makes pointer from integer without a cast", and
+                // this corpus promotes that warning to an ERROR on purpose, because the same
+                // class WAS a live miscompile once (D-38 tier 1: a pointer stored in an int).
+                //
+                // The IR is right and the C spelling was incomplete. The cast is written from
+                // the SLOT's type — the destination is what the value must become — and only
+                // where the kinds actually disagree, so nothing else acquires a cast it does
+                // not need.
+                IrType *slot = i->operands[0]->type ? i->operands[0]->type->elem : NULL;
+                IrType *val  = i->operands[1]->type;
+                bool needs = slot && val && slot->kind != val->kind
+                          && (slot->kind==IRT_PTR || slot->kind==IRT_FUNC);
+                fputs("  *", o); fprintf(o, "v%d = ", i->operands[0]->id);
+                // Through `uintptr_t`, because the integer is typically narrower than a
+                // pointer and a direct cast is `-Wint-to-pointer-cast`. The old emitter has
+                // always spelled it this way — `(const uint8_t *)(uintptr_t)0LL` is how a
+                // niche-packed `none` is written — so this is the same idiom, not a new one.
+                if (needs) { fputc('(', o); ir_ctype(slot, o); fputs(")(uintptr_t)", o); }
+                fprintf(o, "v%d;\n", i->operands[1]->id);
+            }
             break;
         case IR_SLICE_LEN:  fprintf(o, "  v%d = v%d.len;\n",  i->result->id, i->operands[0]->id); break;
         case IR_SLICE_DATA: fprintf(o, "  v%d = v%d.data;\n", i->result->id, i->operands[0]->id); break;

@@ -85,6 +85,39 @@ static Args args_parse(int argc, char** argv)
     // survey that preceded it was wrong — it globbed `*_pass.ln` and missed 23 files.
     args.engine_ir = true;
     args.engine_ir_numeric = true;
+    // ── THE DEFAULT BACKEND, 2026-09-19 ──────────────────────────────────────────────────
+    // The C is now emitted FROM THE IR. `--backend=legacy` restores the AST emitter.
+    //
+    // What had to be true first, each measured rather than argued:
+    //   emit_gate      399 agree / 0 differ / 0 build-fail
+    //   annot_gate     0 rows short — the new backend tells the C compiler at least as much
+    //                  on every row, and more on four of five (restrict 200 -> 488,
+    //                  access 38 -> 164); the one divergence (`const T*`) is stated
+    //   backend_corpus 421 programs through the REAL compiler: 0 differ, 0 cannot build
+    //   D-51/54/55     0 programs it cannot emit · module-qualified function identity ·
+    //                  no corpus test depends on the old emitter's spellings
+    //
+    // ★ AND THE POINT OF FLIPPING IT, beyond tidiness: until now every corpus test compiled
+    // through the OLD emitter, so `make gates` could not see the new one — 251 programs once
+    // failed to build under it while all eight gates stayed green. THE FLIP IS WHAT MAKES THE
+    // CORPUS THE NEW BACKEND'S TEST. That, not deleting a directory, is the switchover.
+    //
+    // ⚠ NOT FLIPPED YET, AND FLIPPING IT IS WHAT FOUND OUT WHY. Running the corpus through
+    // the new backend surfaced 12 failures the differential could not: nine were codegen
+    // defects, now FIXED (a null pointer stored from an integer, a function-pointer type with
+    // no signature, a borrow binding addressed instead of loaded). The remaining three are one
+    // thing, and it is not a backend bug:
+    //
+    //   ★ E106 — "use of undeclared identifier" — IS REPORTED BY src/emit/expr.h.
+    //
+    // Name resolution is the FRONT END's job, and the backend is the last place that should
+    // notice. With the IR backend the program is accepted and emits `void v0;`, which gcc
+    // rejects — a broken-C hole, and prove-or-reject delegated to the C compiler.
+    //
+    // The check cannot simply move: its own comment says it runs at emit time to be AFTER
+    // monomorphisation and UFCS, and it reads emitter walk state (a pattern-binding stack, a
+    // suppression flag). Doing it properly is a front-end pass, and it is D-57.
+    args.backend_ir = false;
     args.output_file = "out.c";  // default
 
     for (int i = 1; i < argc; i++) {

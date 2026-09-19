@@ -22,10 +22,17 @@ for f in $(find tests -name '*.ln' -type f | sort); do
   flags=$(grep -o 'LAINFLAGS:.*' "$f" | sed 's/LAINFLAGS: *//' | head -1)
   ./lain $flags "$f" -o /tmp/cb_o.c >/dev/null 2>&1 || { refused=$((refused+1)); continue; }
   gcc -o /tmp/cb_o /tmp/cb_o.c -Dlibc_printf=printf -Dlibc_puts=puts -w 2>/dev/null || { refused=$((refused+1)); continue; }
+  # ★ NOT `-w` for the NEW backend. The corpus gate promotes three warning classes to ERRORS on
+  # purpose — int-conversion, implicit-int, incompatible-pointer-types — because whether a
+  # codegen defect is caught must not depend on gcc's warning/error split, which "is not a
+  # property of Lain at all" (D-38). Silencing them here hid NINE defects behind a flag chosen
+  # for convenience: this script reported "0 cannot build" while the corpus reported 9.
   oout=$(/tmp/cb_o 2>/dev/null); orc=$?
   if ! ./lain $flags --backend=ir "$f" -o /tmp/cb_n.c >/dev/null 2>&1; then
     ccfail=$((ccfail+1)); echo "LOWER  $f" >> /tmp/cb_fail.txt; continue; fi
-  if ! gcc -o /tmp/cb_n /tmp/cb_n.c -Dlibc_printf=printf -Dlibc_puts=puts -w 2>/dev/null; then
+  if ! gcc -o /tmp/cb_n /tmp/cb_n.c -Dlibc_printf=printf -Dlibc_puts=puts \
+        -Werror=int-conversion -Werror=implicit-int -Werror=incompatible-pointer-types \
+        -Wno-everything 2>/dev/null; then
     ccfail=$((ccfail+1)); echo "CC     $f" >> /tmp/cb_fail.txt; continue; fi
   nout=$(/tmp/cb_n 2>/dev/null); nrc=$?
   if [ "$oout" = "$nout" ] && [ "$orc" = "$nrc" ]; then ok=$((ok+1));

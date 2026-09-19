@@ -1508,9 +1508,36 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 // The SAME identity the definition and every call site use — a function
                 // referenced as a value is the same function, and a second naming scheme here
                 // would emit a name nothing declares. Four programs did exactly that.
+                // ★ THE ARROW'S SHAPE COMES FROM THE DECLARATION, NOT FROM A FALLBACK.
+                // The old code used the expression's type when it happened to be IRT_FUNC and
+                // otherwise built an EMPTY one — no return type, no parameters — which emits
+                // as `void (*)(void)` and then does not accept the function being assigned to
+                // it. A function type with no signature is not a conservative approximation;
+                // it is a different type, and C says so.
+                //
+                // The declaration is right here and has both halves. `ir_lower_type` on each
+                // is the same lowering every other type goes through.
+                IrType *fty = (ty && ty->kind==IRT_FUNC) ? ty : NULL;
+                if (!fty) {
+                    fty = ir_type_new(c->a, IRT_FUNC);
+                    fty->elem = ir_lower_type(c, e->decl->as.function_decl.return_type);
+                    int np = 0;
+                    for (DeclList *q = e->decl->as.function_decl.params; q; q = q->next) np++;
+                    if (np > 0) {
+                        fty->fields = arena_push_many_aligned(c->a, IrType*, np);
+                        int qi = 0;
+                        for (DeclList *q = e->decl->as.function_decl.params; q; q = q->next, qi++)
+                            fty->fields[qi] = (q->decl && q->decl->kind==DECL_VARIABLE)
+                                            ? ir_lower_type(c, q->decl->as.variable_decl.type)
+                                            : ir_type_int(c->a, 32, true);
+                        fty->n_fields = np;
+                    }
+                    // The declared effect BOUND on the arrow: `func` is total, `proc` is not.
+                    fty->fn_is_total = (e->decl->kind==DECL_FUNCTION
+                                     || e->decl->kind==DECL_EXTERN_FUNCTION);
+                }
                 if (fnm) return ir_func_ref(c->f, c->cur,
-                                            ir_qualified_name(c->a, e->decl, fnm),
-                                            ty && ty->kind==IRT_FUNC ? ty : ir_type_new(c->a, IRT_FUNC));
+                                            ir_qualified_name(c->a, e->decl, fnm), fty);
             }
             // not a local/param: a module-level constant folds to its initializer
             if (c->const_depth < 32) {
@@ -2069,6 +2096,21 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
         case EXPR_MUT: {                                // `var lv`: a mutable borrow
             Expr *inner = e->as.mut_expr.expr;
             IrType *it = inner ? ir_lower_type(c, inner->type) : NULL;
+            // ★ A LOCAL THAT IS ALREADY A BORROW HOLDS THE POINTER — pass it, do not address
+            // it again. `var r = pick_x(var p, var q)` binds r to a RETURNED borrow, so r's
+            // slot has type `**i32`; taking its address for `use_ref(var r)` passed `**i32`
+            // where `*i32` was declared. The pointer is already in the slot, so the borrow is
+            // a LOAD.
+            //
+            // Told apart by the same predicate the store case uses (see "WRITING THROUGH A
+            // BORROW BINDING"): a slot whose value is itself a mutable pointer to a copied
+            // type. A plain `var x i32 = 5` is not that — its slot holds an i32.
+            if (inner && inner->kind==EXPR_IDENTIFIER) {
+                IrLocal *l = ir_env_find(c, inner->as.identifier_expr.id);
+                IrType *sv = (l && l->slot && l->slot->type) ? l->slot->type->elem : NULL;
+                if (sv && sv->kind==IRT_PTR && sv->ptr_mut && ir_mut_by_address(sv->elem))
+                    return ir_load(c->f, c->cur, l->slot, sv);
+            }
             // a COPIED type (struct or scalar) must travel as its ADDRESS or the callee's
             // writes are lost; a slice/array/ptr already shares its data, so pass the value.
             if (ir_mut_by_address(it)) return ir_lower_addr(c, inner);
