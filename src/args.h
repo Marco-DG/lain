@@ -25,6 +25,11 @@ typedef struct
                                     // separately because that is where the gap is: the
                                     // ownership analyses are ready to take over, the numeric
                                     // ones still raise obligations the old engine discharges.
+    // STAGE IV: emit the C from the IR (src/ir/emit_c.h) rather than from the AST
+    // (src/emit/). A flag first, so the corpus can be run both ways and the difference
+    // MEASURED — the gates cannot see the new backend while every test compiles through the
+    // old one.
+    bool        backend_ir;
     bool        engine_ir;          // DEFAULT since 2026-09-08: the sovereign IR analyses
                                     // are authoritative for ownership, borrows and definite
                                     // assignment. `--engine=legacy` gets the old AST engine
@@ -97,6 +102,10 @@ static Args args_parse(int argc, char** argv)
             args.dump_octagon = true;
         } else if (strcmp(argv[i], "--emit-llvm") == 0) {
             args.emit_llvm = true;
+        } else if (strcmp(argv[i], "--backend=ir") == 0) {
+            args.backend_ir = true;
+        } else if (strcmp(argv[i], "--backend=legacy") == 0) {
+            args.backend_ir = false;
         } else if (strcmp(argv[i], "--engine=legacy") == 0) {
             // The pre-rebuild AST engine. Kept so the differential harnesses can still ask
             // the old question, and so a user hitting a regression has somewhere to stand.

@@ -23,6 +23,7 @@
 #include "analysis/definite_init.h"
 #include "analysis/vra.h"
 #include "analysis/report.h"
+#include "ir/emit_c.h"
 
 void expr_print_ast(Expr *expr, int depth);
 void stmt_print_ast(Stmt *stmt, int depth);
@@ -205,10 +206,12 @@ int main(int argc, char **argv) {
     // engine's findings instead. Resolution and typing still come from sema, and the backend
     // is still the old emitter: this is deliberately a SPLIT, not a switchover. The analyses
     // are ready to be authoritative; the backend has not yet earned the proofs (Stage IV).
+    static Arena ir_arena;
+    IrFunc *ir_mod = NULL;
     if (args.engine_ir) {
-        static Arena ir_arena;
         ir_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
         IrFunc *mod = ir_lower_module(program, &ir_arena);
+        ir_mod = mod;
         lin_mod = mod; bor_loan_mod = mod; vra_mod = mod;
         int found = 0;
         for (IrFunc *f = mod; f; f = f->next) {
@@ -228,6 +231,29 @@ int main(int argc, char **argv) {
     // then code-gen: proof-carrying LLVM-IR (Phase 1 seam) or the portable C target.
     if (args.emit_llvm) {
         emit_llvm(program, args.output_file);
+        sema_destroy();
+        return 0;
+    }
+    // ── STAGE IV: WHICH BACKEND WRITES THE C ─────────────────────────────────────────────
+    // `--backend=ir` emits from the IR (src/ir/emit_c.h) instead of from the AST
+    // (src/emit/). Introduced as a FLAG rather than a switchover so the change is one line to
+    // revert and, more importantly, so the corpus can be run both ways and the difference
+    // measured — `emit_gate` compares the two on 399 programs, but the corpus is 723, and the
+    // ones it cannot reach are exactly the ones nobody has checked.
+    //
+    // ⚠ THE GATES CANNOT SEE THE NEW BACKEND TODAY. Every corpus program compiles through the
+    // OLD emitter, which is why 251 programs once failed to build under the new one while all
+    // eight gates stayed green. Flipping this default is what makes the corpus the new
+    // backend's test — and that, not the deletion of a directory, is the real switchover.
+    if (args.backend_ir) {
+        if (!ir_mod) {
+            ir_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
+            ir_mod = ir_lower_module(program, &ir_arena);
+        }
+        FILE *out = fopen(args.output_file, "w");
+        if (!out) { fprintf(stderr, "Error: cannot open %s\n", args.output_file); sema_destroy(); return 1; }
+        ir_emit_module_c(ir_mod, out, &ir_arena);
+        fclose(out);
         sema_destroy();
         return 0;
     }
