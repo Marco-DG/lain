@@ -42,7 +42,10 @@ for ((k=0; k<N; k++)); do
     python3 scripts/fuzz/fuzz_termination.py $((SEED + k)) > "$prog" || { skipped=$((skipped+1)); continue; }
 
     # The new engine's verdict for `run`, with the legacy termination diagnostics stood down.
-    v=$("$SC/vradrv" "$prog" --suppress 2>/dev/null | grep -E '^\s+run\s+termination' | head -1)
+    # Suffix-matched: D-54 made function identity module-qualified, so the driver prints
+    # `t_run`, and `^\s+run\s+` matched nothing from that day on — 200/200 skipped, reported
+    # as "bugs: UNSOUND=0". See the same fix in fuzz_vra.sh.
+    v=$("$SC/vradrv" "$prog" --suppress 2>/dev/null | awk '$1 ~ /(^|_)run$/ && $2=="termination"' | head -1)
     [ -z "$v" ] && { skipped=$((skipped+1)); continue; }
     case "$v" in
         *"PROVEN check-free"*) ;;
@@ -70,6 +73,10 @@ done
 
 echo "=============================================================="
 echo "fuzz_termination: gens=$N  proven=$proven  not-proven=$notproven  skipped=$skipped"
+if [ "$skipped" -gt $(( N / 2 )) ]; then
+  echo "  ★ FUZZER DID NOT RUN: $skipped/$N skipped — this report says nothing about the engine"
+  exit 1
+fi
 # EXECUTED is the number the teeth depend on: a verdict nothing ran is a verdict
 # nothing checked. A run where proven is high and ran is low has no oracle at all.
 echo "  proven AND EXECUTED : $ran   <- the ones actually held to account"

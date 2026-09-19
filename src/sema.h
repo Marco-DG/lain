@@ -186,6 +186,7 @@ bool g_suppress_overflow = false;
 #include "sema/monomorph.h"
 #include "sema/linearity.h"
 #include "sema/niche.h"
+#include "sema/undeclared.h"
 
 Type *current_return_type = NULL;
 Decl *current_function_decl = NULL;

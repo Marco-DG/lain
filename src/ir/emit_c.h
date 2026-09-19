@@ -120,6 +120,25 @@ static const char *ir_cmp_c(IrCmp c) {
         case IR_CMP_SGT: case IR_CMP_UGT:return ">"; case IR_CMP_SGE: case IR_CMP_UGE:return ">="; }
     return "==";
 }
+// ── C'S INTEGER PROMOTIONS ARE PART OF THE TARGET, NOT AN OPTIMIZATION DETAIL ────────────
+// `uint16_t a = 60000, b = 60000; uint32_t p = a * b;` is UNDEFINED in C: both operands
+// promote to `int`, and 3.6e9 does not fit there. The value Lain proved — a u32 product that
+// fits — is never computed; UBSan traps on it, and that is how the trust harness found this
+// the day the IR backend became the default.
+//
+// A WIDENING operation must therefore be spelled as one: cast each operand up to the result
+// type so the multiply happens in the type the IR says it happens in. The same-width case
+// needs nothing — the engine has already proven the result fits, so the promoted computation
+// and the declared one agree — and narrowing arithmetic is not produced.
+static void ir_arith_operand_c(IrInstr *i, int k, FILE *o) {
+    IrType *rt = i->result ? i->result->type : NULL;
+    IrType *ot = i->operands[k]->type;
+    if (rt && ot && rt->kind == IRT_INT && ot->kind == IRT_INT && rt->bits > ot->bits) {
+        fputc('(', o); ir_ctype(rt, o); fputc(')', o);
+    }
+    fprintf(o, "v%d", i->operands[k]->id);
+}
+
 static const char *ir_arith_c(IrOp op) {
     switch (op) { case IR_ADD:return "+"; case IR_SUB:return "-"; case IR_MUL:return "*";
         case IR_SDIV: case IR_UDIV:return "/"; case IR_SREM: case IR_UREM:return "%";
@@ -443,8 +462,11 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                 if (i->result->type && i->result->type->kind==IRT_VECTOR) {
                     fputc('(', o); ir_ctype(i->result->type, o); fputc(')', o);
                 }
-                fprintf(o, "(v%d %s v%d);\n",
-                        i->operands[0]->id, ir_arith_c(i->op), i->operands[1]->id);
+                fputc('(', o);
+                ir_arith_operand_c(i, 0, o);
+                fprintf(o, " %s ", ir_arith_c(i->op));
+                ir_arith_operand_c(i, 1, o);
+                fputs(");\n", o);
             }
             break;
     }
@@ -840,6 +862,43 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     { bool done[256]; for (int i=0;i<ts.n_struct;i++) done[i]=false;
       for (int i=0;i<ts.n_struct;i++) ir_emit_struct_body_deps(&ts, i, done, o); }
     if (ts.n_struct || ts.n_slice) fputc('\n', o);
+}
+
+// ── WHAT THIS BACKEND CANNOT EMIT, SAID OUT LOUD ─────────────────────────────────────────
+// IR_OPAQUE is the IR's TOTALITY primitive and it is exactly right for the ANALYSES: "an
+// unknown value with this memory footprint" lets them havoc precisely and keep proving the
+// rest of the function, instead of one unlowered expression poisoning all of it.
+//
+// ★ IT IS NOT RIGHT FOR CODEGEN, and emitting `v0 = 0 /* unmodelled */` is worse than broken
+// C. Broken C is caught by the C compiler; a zero of the right type COMPILES. The program
+// that found this is `array_comprehension_expr_position_fail`, where the old backend refused
+// with E100 and this one passed a NULL to a function that dereferences it — a clean compile
+// and a segfault, from a construct the compiler knew it had not modelled.
+//
+// So the backend is prove-or-reject too: it emits what it can represent faithfully and
+// REFUSES the rest. Measured before it was written — in the whole corpus exactly ONE program
+// reaches an emitted OPAQUE, and it is a test asserting that this construct must be refused.
+static int ir_emit_refuse_opaque(IrFunc *funcs, const char *file) {
+    int n = 0;
+    for (IrFunc *f = funcs; f; f = f->next) {
+        if (f->is_extern) continue;
+        for (IrBlock *b = f->blocks; b; b = b->next)
+            for (IrInstr *i = b->instrs; i; i = i->next) {
+                if (i->op != IR_OPAQUE) continue;
+                const char *why = i->aux.opaque.why ? i->aux.opaque.why : "?";
+                fprintf(stderr, "[E100] Error");
+                if (i->line) fprintf(stderr, " Ln %lld, Col %lld", (long long)i->line, (long long)i->col);
+                fprintf(stderr, ": this construct is not supported by the code generator yet"
+                                " (%s).\n", why);
+                if (file && i->line)
+                    fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)i->line, (long long)i->col);
+                fprintf(stderr, "       the compiler did not model it, so there is nothing "
+                                "faithful to emit — refusing rather than emitting a "
+                                "placeholder\n");
+                n++;
+            }
+    }
+    return n;
 }
 
 void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {

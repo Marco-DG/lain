@@ -18,10 +18,17 @@ accepted=0; rejected=0; unsound=0; brokenc=0; mism_ok=0; mism_bad=0
 declare -A DIMS=( [12]="1 2 3 4 6 12" [16]="1 2 4 8 16" [24]="1 2 3 4 6 8 12 24" [36]="1 2 3 4 6 9 12 18 36" )
 sizes=(12 16 24 36)
 
+# ★ THE DIMENSIONS ARE BOUNDED, AND THEY COME FIRST — for the reason
+# tests/vra/matrix_symbolic_2d_pass.ln states in its own header. The declared length
+# `i32[h * w]` is itself arithmetic, so on two UNBOUNDED usizes it overflows and the program
+# is [E086]; and the refinements must precede the parameter that uses them, because `h * w`
+# is checked where it is written. Without both, every generated matching program was refused
+# — accepted=0 of 149, reported as "bugs: 0" — and the symbolic 2D index this fuzzer exists
+# to stress was never once compiled. The bound leaves that index untouched.
 kernel() {
 cat <<EOF
 extern proc libc_printf(fmt *u8, ...) i32
-proc msum(a i32[h * w], h usize, w usize) i32 {
+proc msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
     var s i32 = 0
     var i usize = 0
     while i < h decreasing h - i {
@@ -36,7 +43,7 @@ proc msum(a i32[h * w], h usize, w usize) i32 {
 }
 proc main() i32 {
     var m i32[$1] = [$(seq -s ', ' 1 $1)]
-    libc_printf("%d\n", msum(m, $2, $3))
+    libc_printf("%d\n", msum($2, $3, m))
     return 0
 }
 EOF

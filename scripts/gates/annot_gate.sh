@@ -83,3 +83,13 @@ cat <<'NOTE'
   So the row is informational. If it is ever decided that the emitted C should read as the old
   one did, the write footprint (`ir_param_writes`) is already the honest source for it.
 NOTE
+
+# Same contract as backend_corpus: in `make gates` since 2026-09-19, so the exit code is a
+# verdict. A row going SHORT means the new backend has stopped telling the C compiler
+# something the old one proved — a silent loss of exactly the proofs this project exists to
+# deliver. The `const T*` row is excluded above as a stated, deliberate divergence.
+if [ "$short" -ne 0 ]; then
+  echo "ANNOT GATE FAILS — $short row(s) short"
+  exit 1
+fi
+echo "ANNOT GATE HOLDS — the new backend states at least as much on every row"

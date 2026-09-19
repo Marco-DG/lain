@@ -102,22 +102,28 @@ static Args args_parse(int argc, char** argv)
     // failed to build under it while all eight gates stayed green. THE FLIP IS WHAT MAKES THE
     // CORPUS THE NEW BACKEND'S TEST. That, not deleting a directory, is the switchover.
     //
-    // ⚠ NOT FLIPPED YET, AND FLIPPING IT IS WHAT FOUND OUT WHY. Running the corpus through
-    // the new backend surfaced 12 failures the differential could not: nine were codegen
-    // defects, now FIXED (a null pointer stored from an integer, a function-pointer type with
-    // no signature, a borrow binding addressed instead of loaded). The remaining three are one
-    // thing, and it is not a backend bug:
+    // ⚠ AND FLIPPING IT IS WHAT FOUND OUT WHAT THE DIFFERENTIALS COULD NOT. Running the
+    // corpus through the new backend surfaced twelve failures, and then the trust harness —
+    // which EXECUTES what was proven — surfaced a thirteenth the corpus could not see:
     //
-    //   ★ E106 — "use of undeclared identifier" — IS REPORTED BY src/emit/expr.h.
+    //   nine  codegen defects: a null pointer stored from an integer, a function-pointer type
+    //         with no signature, a borrow binding addressed instead of loaded
+    //   two   E106 "use of undeclared identifier", REPORTED BY src/emit/expr.h — so with this
+    //         backend the program was accepted and emitted `void v0;`. Name resolution is the
+    //         front end's job; it is now src/sema/undeclared.h (D-57). (The D-57 entry said
+    //         all THREE remaining failures were E106. Two were; the third was the one below,
+    //         and it was the more serious of the two kinds.)
+    //   one   IR_OPAQUE emitted as `v0 = 0`. Right for the ANALYSES (a declared unknown they
+    //         havoc around); for codegen it passed a NULL to a function that dereferences it.
+    //         The backend now REFUSES what it cannot model rather than emitting a placeholder,
+    //         because a zero of the right type compiles and a segfault is not a diagnostic
+    //   plus  `uint16_t * uint16_t` into a `uint32_t`: UB in C, because both operands promote
+    //         to `int`. The IR said u32; the C computed in int. A widening operation is now
+    //         SPELLED as one. No gate saw it — run_trust did, by running the program
     //
-    // Name resolution is the FRONT END's job, and the backend is the last place that should
-    // notice. With the IR backend the program is accepted and emits `void v0;`, which gcc
-    // rejects — a broken-C hole, and prove-or-reject delegated to the C compiler.
-    //
-    // The check cannot simply move: its own comment says it runs at emit time to be AFTER
-    // monomorphisation and UFCS, and it reads emitter walk state (a pattern-binding stack, a
-    // suppression flag). Doing it properly is a front-end pass, and it is D-57.
-    args.backend_ir = false;
+    // Verified after all of it: corpus 723/723 with every gate at exit 0, trust 42/0, and
+    // backend_corpus 421 agree / 0 behaviour differs / 0 cannot build.
+    args.backend_ir = true;
     args.output_file = "out.c";  // default
 
     for (int i = 1; i < argc; i++) {

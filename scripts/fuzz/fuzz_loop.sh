@@ -38,6 +38,11 @@ for ((i=0; i<N; i++)); do
       6) idx="j";;                          # second running var
     esac
     # optional guard around the write
+    #
+    # ★ THE ACCUMULATOR SAYS `+%`. With `+` the running total over i32 elements has no
+    # provable bound, so from the day overflow became a sovereign obligation this fuzzer's
+    # programs were refused for that — accepted 3 of 300, and the BOUNDS question it exists to
+    # ask was never reached. The rejection was right and it was about something else.
     guard=$((RANDOM % 3))
 
     src="$SC/t_$i.ln"
@@ -49,9 +54,9 @@ for ((i=0; i<N; i++)); do
       echo "    var s i32 = 0"
       echo "    while i < $bound decreasing $bound - i {"
       case $guard in
-        0) echo "        s = s + a[$idx]";;
-        1) echo "        if $idx < $sz {"; echo "            s = s + a[$idx]"; echo "        }";;
-        2) echo "        if i < $sz {"; echo "            s = s + a[$idx]"; echo "        }";;
+        0) echo "        s = s +% a[$idx]";;
+        1) echo "        if $idx < $sz {"; echo "            s = s +% a[$idx]"; echo "        }";;
+        2) echo "        if i < $sz {"; echo "            s = s +% a[$idx]"; echo "        }";;
       esac
       echo "        j = j + 1"
       echo "        i = i + $step"

@@ -253,6 +253,13 @@ void emit_expr(Expr *expr, int depth) {
   }
 
   case EXPR_IDENTIFIER: {
+    // ⚠ SUPERSEDED 2026-09-19 — this is now a BACKSTOP, not the check. E106 is raised by
+    // src/sema/undeclared.h, which runs before either backend, because a guarantee that
+    // holds in one backend and not the other is not a guarantee of the language: with the C
+    // emitted from the IR this code never ran, and an undeclared name reached gcc as
+    // `void v0;`. The predicate below is the one that pass copied, kept here so the two
+    // cannot silently disagree — if this ever fires, the front-end walk missed something.
+    //
     // G-06.1 — undeclared-identifier check, at the final codegen stage. By now
     // every genuine reference is bound: a global carries is_global (and a
     // mangled name / decl), a local carries an inferred type, `panic` and type

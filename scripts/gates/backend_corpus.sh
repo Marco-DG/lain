@@ -10,17 +10,19 @@
 # would run — same module loading, same flags, same everything. A backend that works under a
 # driver and not under the compiler is not a backend anybody can use.
 #
-# The reason this matters more than it sounds: every corpus test compiles through the OLD
-# emitter today, so `make gates` cannot see the new one at all. 251 programs once failed to
-# build under it while all eight gates stayed green. Until `--backend=ir` is the default, THIS
-# is the only thing that looks.
-cd "/home/marco/Scrivania/MEGA/Progetti/Correnti/Lain/Lain Compiler/lain"
+# ⚠ AND THE REFERENCE LEG MUST NAME ITS BACKEND. It used to read `./lain $flags "$f"`,
+# meaning "the default" — which was the old emitter when this was written and became the NEW
+# one the day the default flipped. For one run this script compared the IR backend against
+# ITSELF and reported 423 agree / 0 differ, a green that asked no question at all. A
+# differential that spells only one of its two sides stops being a differential the moment the
+# default moves under it; both legs are now explicit.
+cd "$(cd "$(dirname "$0")/../.." && pwd)"
 ok=0; ccfail=0; differ=0; refused=0
 : > /tmp/cb_fail.txt
 for f in $(find tests -name '*.ln' -type f | sort); do
   case "$f" in *_fail.ln) continue;; esac
   flags=$(grep -o 'LAINFLAGS:.*' "$f" | sed 's/LAINFLAGS: *//' | head -1)
-  ./lain $flags "$f" -o /tmp/cb_o.c >/dev/null 2>&1 || { refused=$((refused+1)); continue; }
+  ./lain $flags --backend=legacy "$f" -o /tmp/cb_o.c >/dev/null 2>&1 || { refused=$((refused+1)); continue; }
   gcc -o /tmp/cb_o /tmp/cb_o.c -Dlibc_printf=printf -Dlibc_puts=puts -w 2>/dev/null || { refused=$((refused+1)); continue; }
   # ★ NOT `-w` for the NEW backend. The corpus gate promotes three warning classes to ERRORS on
   # purpose — int-conversion, implicit-int, incompatible-pointer-types — because whether a
@@ -46,3 +48,12 @@ echo "  cannot build     : $ccfail"
 echo "  (old engine refused / did not build: $refused)"
 echo "=================================================="
 head -20 /tmp/cb_fail.txt
+# ★ A GATE HAS TO BE ABLE TO FAIL. This script ended on a `head`, whose status is 0 whatever it
+# printed, so for as long as it was a progress meter its exit code said nothing. It is in
+# `make gates` now (2026-09-19), and the contract is a VERDICT: the two backends agree on every
+# program, or this stops the build.
+if [ "$differ" -ne 0 ] || [ "$ccfail" -ne 0 ]; then
+  echo "BACKEND GATE FAILS — differ=$differ cannot-build=$ccfail (see /tmp/cb_fail.txt)"
+  exit 1
+fi
+echo "BACKEND GATE HOLDS — both backends agree on all $ok programs"

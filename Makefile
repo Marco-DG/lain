@@ -35,7 +35,19 @@ gates: $(BIN)
 	bash scripts/gates/cmin_gate.sh
 	bash scripts/gates/phase3_differential.sh
 	bash scripts/gates/check_build_warnings.sh
+	bash scripts/gates/backend_corpus.sh
+	bash scripts/gates/annot_gate.sh
 
+# ── TWO OF THESE GRADUATED, 2026-09-19 ───────────────────────────────────────────────────
+# A meter measures a DISTANCE; once the distance is zero and expected to stay there, the
+# honest instrument is a GATE. `backend_corpus` (421 agree / 0 differ / 0 cannot build) and
+# `annot_gate` (0 rows short) moved up into `gates` when the IR backend became the default.
+#
+# `backend_corpus` earns it twice over: it is the only thing that runs the whole corpus
+# through BOTH backends with the real compiler and compares what the programs actually print.
+# It is also why `src/emit/` is still here — deleting the old backend deletes this gate's
+# reference leg, and that trade is not worth making while the new one is this young.
+#
 # PROGRESS MEASURES, not gates: their answer is a DISTANCE rather than a verdict. Putting them
 # in `gates` would add noise and teach everyone to ignore it; leaving them unrun is how the
 # emitter's four miscompiles went unnoticed.

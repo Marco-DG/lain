@@ -172,6 +172,15 @@ int main(int argc, char **argv) {
             // fuzz_overflow (UBSan), fuzz_unsigned (exact integer oracle, since no sanitizer
             // sees unsigned wrap), fuzz_termination, fuzz_vra.
             //
+            // ⚠ CORRECTION, 2026-09-19: two of those four were reporting zero because they
+            // had stopped RUNNING. `fuzz_vra` and `fuzz_termination` filter the driver's
+            // output by function name, and D-54 made every name module-qualified the day
+            // before — so `probe` never matched `p17_probe`, every program counted as
+            // SKIPPED, and both printed "bugs: 0" over 0 judgements. Re-run after the fix:
+            // fuzz_vra 34 proven / 0 false proofs, fuzz_termination 40 proven AND EXECUTED /
+            // 0 unsound. The conclusion above survives; the evidence for half of it did not
+            // exist when it was written.
+            //
             // So the rebuilt engine is now the SOLE authority for every numeric obligation:
             // bounds, division, overflow and termination. What remains with the old engine is
             // E091 (the SHAPE of a `decreasing` clause) and MUTUAL recursion, both deliberate.
@@ -198,6 +207,20 @@ int main(int argc, char **argv) {
 
     // sema = resolve identifiers → you’d call:
     sema_resolve_module(program, modname, &_sema_arena);
+
+    // ── E106, AND IT USED TO LIVE IN THE BACKEND ─────────────────────────────────────────
+    // "use of undeclared identifier" was raised by src/emit/expr.h, which was fine only while
+    // the AST emitter was the one backend: with the C emitted from the IR, that code never
+    // runs, the program is ACCEPTED, and `void v0;` goes to the C compiler. A guarantee that
+    // holds in one backend and not the other is not a guarantee of the language.
+    //
+    // It runs HERE — after resolution, monomorphization and UFCS, before any analysis — for
+    // the reason its old comment gave: earlier than this, an unbound name is not yet evidence.
+    // Before the analyses, because an undeclared name makes a function unjudgeable, and the
+    // sovereign engine was reporting `return x + missing` as "arithmetic is not provably free
+    // of overflow" — a confusing message about the wrong thing (src/ir/lower.h marks the
+    // function incomplete for exactly this, and that seam stays as the fail-closed backstop).
+    if (sema_check_undeclared(program, args.filename)) { sema_destroy(); return 1; }
 
     // ── STAGE 3.5, THE SPLIT ─────────────────────────────────────────────────────────────
     // `--engine=ir` makes the SOVEREIGN IR analyses authoritative for what they actually
@@ -235,21 +258,29 @@ int main(int argc, char **argv) {
         return 0;
     }
     // ── STAGE IV: WHICH BACKEND WRITES THE C ─────────────────────────────────────────────
-    // `--backend=ir` emits from the IR (src/ir/emit_c.h) instead of from the AST
-    // (src/emit/). Introduced as a FLAG rather than a switchover so the change is one line to
-    // revert and, more importantly, so the corpus can be run both ways and the difference
-    // measured — `emit_gate` compares the two on 399 programs, but the corpus is 723, and the
+    // ★ THE IR IS THE DEFAULT SINCE 2026-09-19; `--backend=legacy` restores the AST emitter
+    // (src/emit/). It was a flag first so the corpus could be run both ways and the difference
+    // MEASURED — `emit_gate` compares the two on 399 programs, but the corpus is 723, and the
     // ones it cannot reach are exactly the ones nobody has checked.
     //
-    // ⚠ THE GATES CANNOT SEE THE NEW BACKEND TODAY. Every corpus program compiles through the
-    // OLD emitter, which is why 251 programs once failed to build under the new one while all
-    // eight gates stayed green. Flipping this default is what makes the corpus the new
-    // backend's test — and that, not the deletion of a directory, is the real switchover.
+    // And the flag was not enough. While every corpus program compiled through the OLD
+    // emitter the gates could not see this one at all — 251 programs once failed to build
+    // under it while all eight gates stayed green — so flipping the default, not deleting a
+    // directory, was the switchover. It found four defects on the day it landed, three of
+    // which no differential could have: they were places where the OLD backend, not the
+    // language, was enforcing something (see args.h).
+    //
+    // `--backend=legacy` stays for now because it is the reference leg of `backend_corpus`,
+    // which is in `make gates` and runs all 723 programs through both.
     if (args.backend_ir) {
         if (!ir_mod) {
             ir_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
             ir_mod = ir_lower_module(program, &ir_arena);
         }
+        // Refuse BEFORE opening the file: a backend that cannot represent a construct says
+        // so, rather than leaving a half-written .c that happens to compile (see
+        // ir_emit_refuse_opaque — a zero of the right type is not a diagnosable failure).
+        if (ir_emit_refuse_opaque(ir_mod, args.filename)) { sema_destroy(); return 1; }
         FILE *out = fopen(args.output_file, "w");
         if (!out) { fprintf(stderr, "Error: cannot open %s\n", args.output_file); sema_destroy(); return 1; }
         ir_emit_module_c(ir_mod, out, &ir_arena);

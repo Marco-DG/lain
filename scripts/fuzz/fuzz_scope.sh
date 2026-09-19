@@ -24,13 +24,20 @@ for ((i=0; i<N; i++)); do
     # Arrays sized BY the param `n` (a i32[n]) so a[i] is proven ONLY via the
     # name-keyed `i < n` constraint — the exact fact that would leak across the two
     # same-named functions if the store weren't per-function / name-sound.
+    #
+    # ★ `+%`, NOT `+`, AND THAT IS WHY THIS FUZZER WORKS AT ALL. With `+` the running total
+    # over an unbounded `n` cannot be proven in i32, so from the day overflow became a
+    # sovereign obligation (2026-09-18) EVERY generated program was refused — accepted=0 of
+    # 250, reported as "bugs: 0". The rejection was correct and it was about something this
+    # fuzzer does not test; saying `+%` states which arithmetic is meant and leaves the BOUNDS
+    # question, the one under test, exactly as it was.
     cat > "$src" <<EOF
 extern proc libc_printf(fmt *u8, ...) i32
 proc g(a i32[n], n usize) i32 {
     var sum i32 = 0
     var i usize = 0
     while i < n decreasing n - i {
-        sum = sum + a[i]
+        sum = sum +% a[i]
         i = i + 1
     }
     return sum
@@ -39,7 +46,7 @@ proc h(a i32[n], n usize) i32 {
     var sum i32 = 0
     var i usize = 0
     while i < n decreasing n - i {
-        sum = sum + a[i]
+        sum = sum +% a[i]
         i = i + 1
     }
     return sum

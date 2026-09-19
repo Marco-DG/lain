@@ -1,0 +1,26 @@
+// ★ C'S INTEGER PROMOTIONS ARE PART OF THE TARGET, NOT AN OPTIMIZATION DETAIL.
+//
+// Both operations here are WIDENING: narrow operands, a wider declared result. C does not do
+// that by itself — `uint16_t * uint16_t` is computed in `int`, and 60000*60000 does not fit
+// there, so the value Lain proved is never computed and the program is undefined.
+//
+// The IR backend emitted exactly that (`v7 = (v5 * v6)`) until 2026-09-19. No gate saw it,
+// because the emitted C compiles cleanly and the wrong answer is a plausible number. UBSan,
+// RUNNING the program, is what saw it — on the first trust run after the backend flip.
+//
+// The signed row is here too: 30000*30000 happens to fit in `int`, so it is correct either
+// way — which is exactly why it belongs in the test. It pins the SPELLING, so a future
+// "simplification" back to a bare `v5 * v6` cannot pass by choosing the harmless case.
+extern proc libc_printf(fmt *u8, ...) i32
+proc main() i32 {
+    var a u16 = 60000
+    var b u16 = 60000
+    var p u32 = a * b            // 3_600_000_000 — exceeds int, fits u32
+    libc_printf("%u\n", p)
+
+    var f i16 = 30000
+    var g i16 = 30000
+    var s i32 = f * g            // 900_000_000 — fits int, must still widen
+    libc_printf("%d\n", s)
+    return 0
+}

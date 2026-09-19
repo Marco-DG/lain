@@ -36,7 +36,12 @@ for i in $(seq 1 "$N"); do
   # trivially-proven constant-index obligation PER ELEMENT, and letting those into the verdict
   # meant a 100-element literal drowned the single access that matters — a program whose real
   # access was falsely proven still looked "mixed" and was never executed.
-  probe_out=$(echo "$out" | grep "^ *probe .*index bounds")
+  # ★ MATCH THE NAME AS A SUFFIX. This read `grep "^ *probe "` until 2026-09-19, and D-54 made
+  # every function's identity MODULE-QUALIFIED — the driver now prints `p17_probe`. The filter
+  # stopped matching, every program counted as SKIPPED, and this fuzzer reported
+  # "300 programs, proven=0, bugs: FALSE-PROOF=0" for a full day. Zero bugs out of zero
+  # judgements. The skip count was the whole report and nothing read it.
+  probe_out=$(echo "$out" | awk '$1 ~ /(^|_)probe$/ && $2=="index" && $3=="bounds"')
   [ -n "$probe_out" ] || { skipped=$((skipped+1)); continue; }
   if echo "$probe_out" | grep -q "NOT proven"; then
     unproven=$((unproven+1)); continue
@@ -69,6 +74,12 @@ done
 
 echo "=================================================================="
 echo "fuzz_vra: $N programs   proven=$proven  unproven=$unproven  skipped=$skipped"
+# A fuzzer that judged nothing has not found nothing — it has not looked. Make that a FAILURE
+# rather than a green line with a zero in it.
+if [ "$skipped" -gt $(( N / 2 )) ]; then
+  echo "  ★ FUZZER DID NOT RUN: $skipped/$N skipped — this report says nothing about the engine"
+  exit 1
+fi
 echo "  bugs:  FALSE-PROOF=$falseproof  MISCOMPILE=$miscompile  broken-C=$brokenc"
 echo "=================================================================="
 [ "$falseproof" -eq 0 ] && [ "$brokenc" -eq 0 ] && [ "$miscompile" -eq 0 ]
