@@ -121,9 +121,42 @@ static Args args_parse(int argc, char** argv)
     //         to `int`. The IR said u32; the C computed in int. A widening operation is now
     //         SPELLED as one. No gate saw it — run_trust did, by running the program
     //
-    // Verified after all of it: corpus 723/723 with every gate at exit 0, trust 42/0, and
-    // backend_corpus 421 agree / 0 behaviour differs / 0 cannot build.
-    args.backend_ir = true;
+    // Verified after all of it: corpus 724/724 with every gate at exit 0, trust 43/0, and
+    // backend_corpus 422 agree / 0 behaviour differs / 0 cannot build.
+    //
+    // ══ AND THEN REVERTED, THE SAME DAY, FOR A REASON NONE OF THOSE TEN GATES COULD SEE ══
+    //
+    // ★ D-62 — THE NEW BACKEND DOES NOT NICHE-PACK. For every `T | markers` in the corpus it
+    // emits a tag+union struct where the old backend emits the payload itself:
+    //
+    //     old:  typedef const uint8_t * __U_ptr_u8_none;                    // 8 bytes
+    //     new:  struct __U_ptr_u8_none { int32_t tag; union {...} data; };  // 16 bytes
+    //
+    // Both are CORRECT and the programs print the same thing, which is precisely why
+    // `backend_corpus` — behaviour, 422/0/0 — is blind to it, and why `emit_gate` and the
+    // corpus and trust and the nineteen fuzzers are too. The measurement is `layout_gate.sh`,
+    // written after the fact: **29 sums lost their packing, 85 agree**.
+    //
+    // The niche optimization is not a nicety here. It is P2 — "zero-cost" — it is what the
+    // README showcases, and `T | markers` is the ONE error-handling construct in the language,
+    // so this silently doubles the width of every optional and every result in every program
+    // that uses them. A default that abandons the project's headline claim without saying so
+    // is worse than a flag.
+    //
+    // plan item 2.2 predicted this exactly: "if two backends chose differently, the same
+    // program would have different runtime semantics under each, and nothing would catch it —
+    // there is no cross-backend layout test because there has never been a second backend."
+    // It was written as an argument for the layout pass. It was also a defect report.
+    //
+    // What stands: everything the flip FOUND (D-57 E106 in the front end, D-58 the backend
+    // refusing what it cannot model, D-59 the widening-arithmetic UB, D-60/61 the unplugged
+    // harnesses) — those were real and are fixed. And `backend_corpus` is now a GATE, so the
+    // corpus still tests the new backend on every run even though it is not the default. The
+    // flip's value did not depend on the flip staying.
+    //
+    // THE CONDITION FOR FLIPPING IT AGAIN: `layout_gate.sh` at 0 niche lost — i.e. plan item
+    // 2.2, layout decided once below the IR.
+    args.backend_ir = false;
     args.output_file = "out.c";  // default
 
     for (int i = 1; i < argc; i++) {

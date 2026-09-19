@@ -40,13 +40,22 @@ gates: $(BIN)
 
 # ── TWO OF THESE GRADUATED, 2026-09-19 ───────────────────────────────────────────────────
 # A meter measures a DISTANCE; once the distance is zero and expected to stay there, the
-# honest instrument is a GATE. `backend_corpus` (421 agree / 0 differ / 0 cannot build) and
-# `annot_gate` (0 rows short) moved up into `gates` when the IR backend became the default.
+# honest instrument is a GATE. `backend_corpus` (422 agree / 0 differ / 0 cannot build) and
+# `annot_gate` (0 rows short) moved up here on 2026-09-19. Both name BOTH backends explicitly,
+# so neither depends on which one is the default — and with the default back on the legacy
+# emitter (see args.h, D-62) `backend_corpus` is now the ONLY thing that runs the whole corpus
+# through the IR backend on every `make gates`. That is the property the flip was for, and it
+# survived the flip being reverted.
 #
-# `backend_corpus` earns it twice over: it is the only thing that runs the whole corpus
-# through BOTH backends with the real compiler and compares what the programs actually print.
 # It is also why `src/emit/` is still here — deleting the old backend deletes this gate's
 # reference leg, and that trade is not worth making while the new one is this young.
+#
+# ★ AND ONE CAME BACK DOWN, THE SAME DAY. `layout_gate` was written after the IR backend had
+# been the default for an afternoon, and it is the reason it is not the default any more: the
+# two backends REPRESENT a `T | markers` differently — the old one niche-packs it into its
+# payload's spare bit-patterns, the new one emits a tag+union — and 29 sums in the corpus lost
+# their packing without a single gate noticing, because both representations print the same
+# thing. Its distance is 29, and its target is 0 (plan item 2.2, layout below the IR).
 #
 # PROGRESS MEASURES, not gates: their answer is a DISTANCE rather than a verdict. Putting them
 # in `gates` would add noise and teach everyone to ignore it; leaving them unrun is how the
@@ -66,7 +75,7 @@ gates: $(BIN)
 # and left intact in the scripts, where "are we there yet" is still a useful question to ask.
 measure: $(BIN)
 	-bash scripts/gates/emit_gate.sh
-	-bash scripts/gates/annot_gate.sh
+	-bash scripts/gates/layout_gate.sh
 	-bash scripts/gates/engine_ir_gate.sh
 
 fuzz: $(BIN)
