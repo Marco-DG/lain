@@ -76,9 +76,14 @@ static Args args_parse(int argc, char** argv)
     // What the flip closes: 17 corpus programs the old engine COMPILED and should have
     // refused, each with a test already asserting it must fail — struct fields overflowing,
     // loop accumulators, slice element ranges, `int` arithmetic, a guard evaluated on a
-    // wrapped value. What it costs: two corpus programs pinned to `--engine=legacy`, where a
-    // loop or comprehension writes values the element seed cannot see because it admits only
-    // syntactic constants and runs before the fixpoint.
+    // wrapped value. What it cost: three corpus programs pinned to `--engine=legacy`, where a
+    // loop or comprehension writes values the element seed could not see because it admitted
+    // only syntactic constants and ran before the fixpoint.
+    //
+    // ✅ THAT COST IS NOW ZERO (C14, 2026-09-20). The fixpoint runs twice: the seeding re-runs
+    // against pass 0's converged state, and pass 1 uses the result. Twice and no more, so
+    // nothing justifies itself in a circle. **No corpus program carries `--engine=legacy` any
+    // more** — the sovereign engine judges every one of them.
     //
     // Verified by applying it and running every gate rather than by surveying: 720/720 corpus
     // on both engines, trust 42/0, spec 56/56, readme gate green, nine fuzzers at zero. The
