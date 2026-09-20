@@ -37,6 +37,7 @@ gates: $(BIN)
 	bash scripts/gates/check_build_warnings.sh
 	bash scripts/gates/backend_corpus.sh
 	bash scripts/gates/annot_gate.sh
+	bash scripts/gates/layout_gate.sh
 
 # ── TWO OF THESE GRADUATED, 2026-09-19 ───────────────────────────────────────────────────
 # A meter measures a DISTANCE; once the distance is zero and expected to stay there, the
@@ -50,12 +51,17 @@ gates: $(BIN)
 # It is also why `src/emit/` is still here — deleting the old backend deletes this gate's
 # reference leg, and that trade is not worth making while the new one is this young.
 #
-# ★ AND ONE CAME BACK DOWN, THE SAME DAY. `layout_gate` was written after the IR backend had
-# been the default for an afternoon, and it is the reason it is not the default any more: the
-# two backends REPRESENT a `T | markers` differently — the old one niche-packs it into its
-# payload's spare bit-patterns, the new one emits a tag+union — and 29 sums in the corpus lost
-# their packing without a single gate noticing, because both representations print the same
-# thing. Its distance is 29, and its target is 0 (plan item 2.2, layout below the IR).
+# ★ AND ONE WENT DOWN AND CAME BACK UP. `layout_gate` was written after the IR backend had
+# been the default for an afternoon, and it is why that flip was reverted: the two backends
+# REPRESENTED a `T | markers` differently — the old one packs it into its payload's spare
+# bit-patterns, the new one emitted a tag+union — and 29 sums lost their packing without a
+# single gate noticing, because both representations print the same thing. It is a GATE now
+# (2026-09-20), at 0, because src/ir/layout.h decides layout once for both backends.
+#
+# ⚠ ITS TEETH ARE VERIFIED, not assumed: forcing `L.packed = false` takes it to 26 differing.
+# A gate reporting 0 over a question it cannot ask is the failure mode this whole file is
+# about, and a layout gate is especially prone to it — it compares SPELLINGS, so a predicate
+# that matches one backend's exact phrasing scores the other as whatever it likes.
 #
 # PROGRESS MEASURES, not gates: their answer is a DISTANCE rather than a verdict. Putting them
 # in `gates` would add noise and teach everyone to ignore it; leaving them unrun is how the
@@ -75,7 +81,6 @@ gates: $(BIN)
 # and left intact in the scripts, where "are we there yet" is still a useful question to ask.
 measure: $(BIN)
 	-bash scripts/gates/emit_gate.sh
-	-bash scripts/gates/layout_gate.sh
 	-bash scripts/gates/engine_ir_gate.sh
 
 fuzz: $(BIN)

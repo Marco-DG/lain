@@ -34,22 +34,38 @@ for f in $(find tests std -name '*.ln' -type f | sort); do
   flags=$(grep -o 'LAINFLAGS:.*' "$f" | sed 's/LAINFLAGS: *//' | head -1)
   ./lain $flags --backend=legacy "$f" -o "$TMP/old.c" >/dev/null 2>&1 || { skipped=$((skipped+1)); continue; }
   ./lain $flags --backend=ir     "$f" -o "$TMP/new.c" >/dev/null 2>&1 || { skipped=$((skipped+1)); continue; }
-  # Every sum the program declares, by name, with how each backend spelled it.
-  for nm in $(grep -ohE '\b__U_[A-Za-z0-9_]+' "$TMP/old.c" | sort -u); do
-    o_niche=0; n_niche=0
-    grep -qE "^struct $nm \{ int32_t tag;" "$TMP/old.c" || o_niche=1
-    grep -qE "^struct $nm \{ int32_t tag;" "$TMP/new.c" || n_niche=1
-    if [ "$o_niche" = "$n_niche" ]; then agree=$((agree+1));
+  # ★ EVERY TYPE BOTH BACKENDS NAME, not just the `__U_` sums. The first version of this gate
+  # asked only about sums, which is the case that prompted it — and a gate that asks only
+  # about the defect you already found is how the defect got in. A `[packed]` struct emitted
+  # as a scalar typedef by one backend and a struct by the other is the same class of silent
+  # divergence, and so is a plain enum.
+  #
+  # Only names present in BOTH files are compared: if the two backends do not even call a type
+  # the same thing, that is a naming difference, not a layout one, and scoring it here would
+  # bury the signal this gate exists for.
+  # Names come from BOTH typedef spellings and BOTH files. Taking them only from
+  # `^typedef ... X;` lines missed every multi-line `typedef struct X { ... } X;`, so the gate
+  # could see "old scalar, new struct" and was BLIND to "old struct, new scalar" — a bias
+  # toward the answer being looked for, which is the one bias a gate must not have.
+  names=$( { grep -ohE '^(typedef .*|\}) *[A-Za-z_][A-Za-z0-9_]*;' "$TMP/old.c" "$TMP/new.c" \
+             | sed -E 's/.*[^A-Za-z0-9_]([A-Za-z_][A-Za-z0-9_]*);/\1/'; } | sort -u)
+  for nm in $names; do
+    grep -qE "(^|[^A-Za-z0-9_])$nm;" "$TMP/old.c" || continue      # not named by both
+    grep -qE "(^|[^A-Za-z0-9_])$nm;" "$TMP/new.c" || continue
+    o_struct=0; n_struct=0
+    grep -qE "struct $nm[[:space:]]*\{" "$TMP/old.c" && o_struct=1
+    grep -qE "struct $nm[[:space:]]*\{" "$TMP/new.c" && n_struct=1
+    if [ "$o_struct" = "$n_struct" ]; then agree=$((agree+1));
     else
       lost=$((lost+1))
-      echo "NICHE-LOST $f  $nm  old=$( [ $o_niche = 1 ] && echo packed || echo tagged )  new=$( [ $n_niche = 1 ] && echo packed || echo tagged )" >> "$TMP/lost.txt"
+      echo "LAYOUT-DIFFERS $f  $nm  old=$( [ $o_struct = 1 ] && echo struct || echo scalar )  new=$( [ $n_struct = 1 ] && echo struct || echo scalar )" >> "$TMP/lost.txt"
     fi
   done
 done
 echo "=================================================="
 echo "LAYOUT — do both backends represent a sum the same way?"
-echo "  sums agreeing    : $agree"
-echo "  NICHE LOST       : $lost   <- the new backend tagged what the old one packed"
+echo "  types agreeing   : $agree"
+echo "  LAYOUT DIFFERS   : $lost   <- one backend boxed what the other left flat"
 echo "  programs skipped : $skipped  (one backend refused it)"
 echo "=================================================="
 sort -u "$TMP/lost.txt" | head -20

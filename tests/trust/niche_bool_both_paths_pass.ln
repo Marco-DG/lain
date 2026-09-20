@@ -1,0 +1,35 @@
+// ★ A NICHE OVER `bool`, EXERCISED ON **BOTH** PATHS — which is the whole point of the test.
+//
+// `bool | Nope` packs the marker into a spare bit pattern of the payload: bool uses 0 and 1,
+// so the sentinel is 2. That only works if the storage can HOLD a 2, and C's `_Bool` cannot —
+// it normalises every nonzero store to 1. The IR backend emitted `typedef _Bool` and read the
+// marker back as `true`.
+//
+// It looked correct on the marker path, and that is the trap: `x == (_Bool)2` normalises to
+// `x == 1` on both sides, so returning `Nope` still reported `Nope`. The collision is only
+// visible when the payload IS `true` — and the corpus's existing bool-union test called
+// `g(true, true)`, the path that works either way. One argument's difference between a green
+// suite and a miscompile.
+extern proc libc_printf(fmt *u8, ...) i32
+func f(b bool, fail bool) bool | Nope {
+    if fail { return Nope }
+    return b
+}
+proc main() i32 {
+    var a bool | Nope = f(true, false)      // payload true — the one that collides
+    case a {
+        Nope: libc_printf("a=nope\n")
+        else: libc_printf("a=%d\n", a)
+    }
+    var b bool | Nope = f(false, false)     // payload false
+    case b {
+        Nope: libc_printf("b=nope\n")
+        else: libc_printf("b=%d\n", b)
+    }
+    var c bool | Nope = f(true, true)       // the marker itself
+    case c {
+        Nope: libc_printf("c=nope\n")
+        else: libc_printf("c=%d\n", c)
+    }
+    return 0
+}

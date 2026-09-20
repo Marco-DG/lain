@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include "ir.h"
 #include "annot.h"   // Stage IV: the proofs, expressed as C the optimizer can use
+#include "layout.h"  // D-62: how a sum is REPRESENTED — decided once, below the IR
 
 // round a non-standard integer width up to a standard C width
 static int ir_c_stdbits(int bits) { return bits<=8?8 : bits<=16?16 : bits<=32?32 : 64; }
@@ -77,6 +78,17 @@ static void ir_ctype(const IrType *t, FILE *o) {
     }
 }
 
+// ★ THE BACKING TYPE MUST BE ABLE TO HOLD ITS OWN SENTINELS, and for `bool` the obvious
+// choice cannot. C's `_Bool` normalises every nonzero store to 1, so a niche over a bool —
+// whose spare patterns are 2..255 — writes sentinel 2 and reads back 1, which is `true`.
+// It even looks right on the marker path, because the comparison normalises identically:
+// `x == (_Bool)2` is `x == 1`. The collision only shows when the payload IS true, and the
+// corpus happened to test only the other path. The old backend widens to uint8_t; so does
+// this. (`ir_ctype` prints the SEMANTIC type, which is still bool — this is storage.)
+static void ir_layout_backing_ctype(const IrType *back, FILE *o) {
+    if (back && back->kind == IRT_BOOL) { fputs("uint8_t", o); return; }
+    ir_ctype(back, o);
+}
 
 // A Lain name that happens to be a C KEYWORD cannot be emitted verbatim: `func double(x i32)`
 // produced `int32_t double(int32_t)`, which is not a declaration at all. The old backend hid
@@ -216,6 +228,21 @@ static bool ir_emit_is_slice_param(const IrValue *v) {
 }
 
 
+// ── EMITTING A PACKED SUM ────────────────────────────────────────────────────────────────
+// When ir_layout_of says a sum is packed, the VALUE IS THE PAYLOAD and the payload-less
+// variants are spare bit patterns of it. So the three sum instructions stop being struct
+// accesses and become, respectively: a comparison chain, the value itself, and a constant.
+//
+// The comparison goes through `uintptr_t` for a pointer backing because a sentinel is an
+// integer and C will not compare it to a pointer otherwise — the same cast the old backend
+// uses, and the same one a null-pointer store needs (D-38 tier 1).
+static void ir_emit_sentinel_cmp(IrType *back, int vid, long long sent, FILE *o) {
+    if (back && (back->kind == IRT_PTR || back->kind == IRT_SLICE))
+        fprintf(o, "(uintptr_t)v%d == (uintptr_t)%lldull", vid, sent);
+    else
+        fprintf(o, "v%d == (", vid), ir_layout_backing_ctype(back, o), fprintf(o, ")%lldll", sent);
+}
+
 static void ir_emit_instr_c(IrInstr *i, FILE *o) {
     switch (i->op) {
         case IR_CONST:
@@ -320,10 +347,39 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                         i->aux.opaque.why ? i->aux.opaque.why : "?");
             }
             break;
-        case IR_SUM_TAG:    fprintf(o, "  v%d = v%d.tag;\n", i->result->id, i->operands[0]->id); break;
+
+        case IR_SUM_TAG: {
+            IrType *st = i->operands[0]->type;
+            IrLayout L = ir_layout_of(st);
+            if (L.packed && L.all_empty) {            // the value already IS the ordinal
+                fprintf(o, "  v%d = (int32_t)v%d;\n", i->result->id, i->operands[0]->id);
+                break;
+            }
+            if (L.packed) {
+                // tag = (v == s_a) ? a : (v == s_b) ? b : <the payload variant>
+                fprintf(o, "  v%d = ", i->result->id);
+                for (int k = 0; k < st->n_fields; k++) {
+                    if (!L.has_sentinel[k]) continue;
+                    fputc('(', o);
+                    ir_emit_sentinel_cmp(L.backing, i->operands[0]->id, L.sentinel[k], o);
+                    fprintf(o, ") ? %d : ", k);
+                }
+                fprintf(o, "%d;\n", L.primary);
+                break;
+            }
+            fprintf(o, "  v%d = v%d.tag;\n", i->result->id, i->operands[0]->id);
+            break;
+        }
         case IR_SUM_PAYLOAD: {
             IrType *st = i->operands[0]->type;
             int k = i->aux.sum.variant, fi = i->aux.sum.field;
+            {   IrLayout L = ir_layout_of(st);
+                if (L.packed) {                        // the value is the payload
+                    fprintf(o, "  v%d = (", i->result->id);
+                    ir_ctype(i->result->type, o);
+                    fprintf(o, ")v%d;\n", i->operands[0]->id);
+                    break;
+                } }
             IrType *pl = (st && k < st->n_fields) ? st->fields[k] : NULL;
             IrName *vn = (st && k < st->n_fields) ? st->field_names[k] : NULL;
             IrName *fn = (pl && fi < pl->n_fields) ? pl->field_names[fi] : NULL;
@@ -336,6 +392,22 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
         case IR_SUM_NEW: {
             IrType *st = i->result->type;
             int k = i->aux.sum.variant;
+            {   IrLayout L = ir_layout_of(st);
+                if (L.packed) {
+                    fprintf(o, "  v%d = (", i->result->id); ir_ctype(st, o); fputs(")", o);
+                    if (L.has_sentinel[k]) {
+                        // a payload-less variant: its spare bit pattern, as an integer the
+                        // backing type can hold
+                        if (L.backing && (L.backing->kind==IRT_PTR || L.backing->kind==IRT_SLICE))
+                            fprintf(o, "(uintptr_t)%lldull;\n", L.sentinel[k]);
+                        else fprintf(o, "%lldll;\n", L.sentinel[k]);
+                    } else if (i->n_operands > 0) {
+                        fprintf(o, "v%d;\n", i->operands[0]->id);
+                    } else {
+                        fputs("0;\n", o);
+                    }
+                    break;
+                } }
             IrType *pl = (st && k < st->n_fields) ? st->fields[k] : NULL;
             IrName *vn = (st && k < st->n_fields) ? st->field_names[k] : NULL;
             fprintf(o, "  v%d = (", i->result->id); ir_ctype(st, o);
@@ -747,6 +819,20 @@ static void ir_emit_one_slice(IrType *sl, FILE *o) {
 // the union is omitted entirely (an empty union is not legal C).
 static void ir_emit_one_sum_body(IrType *st, FILE *o) {
     IrName *nm = st->sname;
+    // ★ THE NICHE, and the reason this is a query rather than a choice made here. Layout is
+    // ONE decision (ir/layout.h) so that two backends cannot answer it differently — which is
+    // exactly what happened when this function unconditionally emitted a tagged struct and
+    // the old emitter packed the same sum into a single pointer (D-62).
+    IrLayout L = ir_layout_of(st);
+    if (L.packed) {
+        if (L.all_empty) {   // a plain enumeration: the smallest integer that holds it
+            fprintf(o, "typedef int32_t %.*s;\n", (int)nm->length, nm->name);
+        } else {
+            fputs("typedef ", o); ir_layout_backing_ctype(L.backing, o);
+            fprintf(o, " %.*s;\n", (int)nm->length, nm->name);
+        }
+        return;
+    }
     fprintf(o, "struct %.*s { int32_t tag; ", (int)nm->length, nm->name);
     int carrying = 0;
     for (int k=0;k<st->n_fields;k++) if (st->fields[k]) carrying++;
@@ -830,6 +916,11 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
         for (int id=0; id<vt.n; id++) if (vt.v[id]) ir_ts_visit(&ts, vt.v[id]->type);
     }
     for (int i=0;i<ts.n_struct;i++){ IrName *nm=ts.structs[i]->sname;
+        // A PACKED sum is not a struct — it is a typedef for its backing type, emitted whole
+        // by ir_emit_one_sum_body. A forward `typedef struct X X;` for it would collide with
+        // that (and name a struct that is never defined), exactly as it would for a packed
+        // struct in the old backend.
+        if (ts.structs[i]->kind == IRT_SUM && ir_layout_of(ts.structs[i]).packed) continue;
         fprintf(o, "typedef struct %.*s %.*s;\n", (int)nm->length, nm->name, (int)nm->length, nm->name); }
     for (int i=0;i<ts.n_fn;i++) {          // function-pointer typedefs
         IrType *ft = ts.fns[i];

@@ -154,9 +154,37 @@ static Args args_parse(int argc, char** argv)
     // corpus still tests the new backend on every run even though it is not the default. The
     // flip's value did not depend on the flip staying.
     //
-    // THE CONDITION FOR FLIPPING IT AGAIN: `layout_gate.sh` at 0 niche lost — i.e. plan item
-    // 2.2, layout decided once below the IR.
-    args.backend_ir = false;
+    // ══ AND FLIPPED AGAIN, 2026-09-20, WITH THE CONDITION MET ════════════════════════════
+    //
+    // The condition was `layout_gate.sh` at 0, and the way to reach it was the thing the plan
+    // had been calling item 2.2 for months: LAYOUT DECIDED ONCE, BELOW THE IR. That is
+    // src/ir/layout.h — the niche search ported from src/sema/niche.h to IrType, so the
+    // question "how is this sum represented" has ONE answer that every backend reads instead
+    // of each deriving its own.
+    //
+    // It is deliberately the SAME algorithm and not a better one: the job was for the two
+    // backends to AGREE, and an improved port silently reintroduces the divergence it exists
+    // to close. The IrType is untouched — ir.h is right that a niche recorded ON the type
+    // would make a sum indistinguishable from a pointer with an odd range. Representation is
+    // a QUERY over the type, not a field in it.
+    //
+    // Measured: `layout_gate` 52 types agreeing / **0 differing** (and verified to have teeth:
+    // disabling the packing takes it to 26 differing) · `backend_corpus` 423 agree / 0 differ
+    // / 0 cannot build · corpus 725/725 · trust 44/0 · every gate at exit 0.
+    //
+    // Two defects found along the way, neither by a gate:
+    //   a `bool` backing needs uint8_t storage. `_Bool` normalises every nonzero store to 1,
+    //   so the sentinel 2 read back as `true`. It looked CORRECT on the marker path, because
+    //   `x == (_Bool)2` normalises on both sides — the collision only shows when the payload
+    //   IS true, and the corpus's bool-union test passed `g(true, true)`, the path that works
+    //   either way. One argument's difference between a green suite and a miscompile.
+    //   (tests/trust/niche_bool_both_paths_pass.ln is the test that was missing.)
+    //
+    //   a SLICE backing cannot be packed at all in this scheme, though src/sema/niche.h packs
+    //   it. Its reasoning is sound and its representation does not follow: a slice is a
+    //   two-word struct and a sentinel is an integer, so the old backend emits C that does not
+    //   compile. This side fails closed and emits a tagged struct — correct, merely not free.
+    args.backend_ir = true;
     args.output_file = "out.c";  // default
 
     for (int i = 1; i < argc; i++) {
