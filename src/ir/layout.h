@@ -26,24 +26,11 @@
 // port that improves on the original silently reintroduces the divergence it exists to close.
 #include "ir.h"
 #include "../target.h"
+#include "../layout_core.h"   // the sentinel algebra, shared with src/sema/niche.h
 
-typedef enum {
-    IRP_EMPTY,          // no spare bit patterns
-    IRP_POINTER,        // [0, zero_page) stepped by pointer alignment
-    IRP_INT_BELOW,      // [type_lo, refine_lo)
-    IRP_INT_ABOVE,      // (refine_hi, type_hi]
-    IRP_INT_SPLIT,      // both
-    IRP_BOOL,           // [2, 255]
-} IrPoolKind;
-
-typedef struct {
-    IrPoolKind kind;
-    long long  size;          // how many sentinels are available
-    long long  below_start, below_count;
-    long long  above_start, above_count;
-    long long  ptr_stride;
-    long long  index_offset;  // cascade: skip the slots an inner sum already took
-} IrPool;
+/* The pool algebra is src/layout_core.h's — ONE definition for both backends. Keeping a
+   second copy here is exactly how D-62 and D-63 happened: each side was individually
+   defensible and they answered the same question differently. */
 
 #define IR_LAYOUT_MAX_VARIANTS 64
 
@@ -55,7 +42,7 @@ typedef struct {
     IrType   *backing;        // that payload's single field type (NULL when all_empty)
     long long sentinel[IR_LAYOUT_MAX_VARIANTS];   // per empty variant, by variant index
     bool      has_sentinel[IR_LAYOUT_MAX_VARIANTS];
-    IrPool    pool;
+    SentinelPool pool;
 } IrLayout;
 
 static IrLayout ir_layout_of(IrType *sum);   // forward: the cascade recurses
@@ -70,37 +57,21 @@ static IrType *ir_layout_single_field(IrType *sum, int k) {
 }
 
 static bool ir_layout_int_range(const IrType *t, long long *lo, long long *hi) {
-    if (!t || t->kind != IRT_INT || t->bits <= 0 || t->bits > 64) return false;
-    if (t->is_signed) {
-        if (t->bits == 64) { *lo = INT64_MIN; *hi = INT64_MAX; return true; }
-        *hi = (1LL << (t->bits - 1)) - 1;
-        *lo = -(1LL << (t->bits - 1));
-    } else {
-        if (t->bits >= 63) { *lo = 0; *hi = INT64_MAX; return true; }
-        *lo = 0;
-        *hi = (1LL << t->bits) - 1;
-    }
-    return true;
+    if (!t || t->kind != IRT_INT) return false;
+    return sentinel_int_range(t->bits, t->is_signed, lo, hi);   /* shared: layout_core.h */
 }
 
-static IrPool ir_pool_int_refined(const IrType *t, long long rlo, long long rhi) {
-    IrPool p = {0}; p.kind = IRP_EMPTY;
+static SentinelPool ir_pool_int_refined(const IrType *t, long long rlo, long long rhi) {
+    SentinelPool p = {0}; p.kind = POOL_EMPTY;
     long long tlo, thi;
     if (!ir_layout_int_range(t, &tlo, &thi)) return p;
-    long long below = (rlo > tlo) ? (rlo - tlo) : 0;
-    long long above = (thi > rhi) ? (thi - rhi) : 0;
-    if (below == 0 && above == 0) return p;
-    if (above == 0) { p.kind=IRP_INT_BELOW; p.below_start=tlo; p.below_count=below; p.size=below; return p; }
-    if (below == 0) { p.kind=IRP_INT_ABOVE; p.above_start=rhi+1; p.above_count=above; p.size=above; return p; }
-    p.kind=IRP_INT_SPLIT; p.below_start=tlo; p.below_count=below;
-    p.above_start=rhi+1; p.above_count=above; p.size=below+above;
-    return p;
+    return sentinel_pool_int_refined(tlo, thi, rlo, rhi);       /* shared: layout_core.h */
 }
 
 // The spare bit patterns of a payload type — the ones that cannot be a legitimate value, so
 // they are free to mean "this is one of the payload-less variants".
-static IrPool ir_pool_for(IrType *t) {
-    IrPool p = {0}; p.kind = IRP_EMPTY;
+static SentinelPool ir_pool_for(IrType *t) {
+    SentinelPool p = {0}; p.kind = POOL_EMPTY;
     if (!t) return p;
 
     // A pointer: the zero page, which no user mapping can occupy.
@@ -113,14 +84,8 @@ static IrPool ir_pool_for(IrType *t) {
     // naming a type it never defines. Both are broken, neither is in the corpus, and this side
     // fails CLOSED: a tagged struct is correct, merely not free. Packing a slice needs the
     // sentinel to live in the data POINTER FIELD, which is a different emit, not a wider cast.
-    if (t->kind == IRT_PTR) {
-        if (target.zero_page_size == 0) return p;      // bare metal: the zero page is real memory
-        p.kind = IRP_POINTER;
-        p.ptr_stride = (long long)target.pointer_alignment;
-        p.size = (long long)(target.zero_page_size / target.pointer_alignment);
-        return p;
-    }
-    if (t->kind == IRT_BOOL) { p.kind = IRP_BOOL; p.size = 254; return p; }
+    if (t->kind == IRT_PTR)  return sentinel_pool_pointer();   /* shared */
+    if (t->kind == IRT_BOOL) return sentinel_pool_bool();      /* shared */
 
     // An integer is only a niche source when something has NARROWED it: a plain i32 uses
     // every bit pattern it has. `IrType.has_refine` is that narrowing, carried on the type
@@ -133,12 +98,12 @@ static IrPool ir_pool_for(IrType *t) {
     if (t->kind == IRT_SUM) {
         IrLayout inner = ir_layout_of(t);
         if (inner.packed && inner.backing) {
-            IrPool base = ir_pool_for(inner.backing);
-            if (base.kind != IRP_EMPTY) {
+            SentinelPool base = ir_pool_for(inner.backing);
+            if (base.kind != POOL_EMPTY) {
                 long long used = inner.empty_count;
                 base.index_offset = used;
                 base.size = base.size > used ? base.size - used : 0;
-                if (base.size == 0) { IrPool e = {0}; return e; }
+                if (base.size == 0) { SentinelPool e = {0}; return e; }
                 return base;
             }
         }
@@ -148,19 +113,8 @@ static IrPool ir_pool_for(IrType *t) {
 
 // Deterministic assignment, same order as src/sema/niche.h — the two backends must pick the
 // SAME bit pattern for the same variant, not merely both pick some pattern.
-static long long ir_sentinel_pick(const IrPool *p, long long index) {
-    long long i = index + p->index_offset;
-    switch (p->kind) {
-        case IRP_POINTER:   return p->ptr_stride * i;
-        case IRP_INT_BELOW: return (p->below_start + p->below_count - 1) - i;
-        case IRP_INT_ABOVE: return p->above_start + i;
-        case IRP_INT_SPLIT:
-            if (i < p->below_count) return (p->below_start + p->below_count - 1) - i;
-            return p->above_start + (i - p->below_count);
-        case IRP_BOOL:      return 2 + i;
-        default:            return 0;
-    }
-}
+/* ir_sentinel_pick: gone. The ASSIGNMENT is sentinel_pick() in layout_core.h — two backends
+   that both pack but choose different patterns disagree about what `none` IS. */
 
 // THE decision. Cheap and pure, so callers may ask per use rather than caching.
 static IrLayout ir_layout_of(IrType *sum) {
@@ -189,7 +143,7 @@ static IrLayout ir_layout_of(IrType *sum) {
     if (!back) { L.primary = -1; return L; }
 
     L.pool = ir_pool_for(back);
-    if (L.pool.kind == IRP_EMPTY || (long long)L.empty_count > L.pool.size) {
+    if (L.pool.kind == POOL_EMPTY || (long long)L.empty_count > L.pool.size) {
         L.primary = -1;          // the pool is too small: a tag byte it is
         return L;
     }
@@ -198,7 +152,7 @@ static IrLayout ir_layout_of(IrType *sum) {
     L.backing = back;
     for (int k = 0, n = 0; k < sum->n_fields; k++) {
         if (sum->fields[k]) continue;                 // the payload variant carries no sentinel
-        L.sentinel[k] = ir_sentinel_pick(&L.pool, n++);
+        L.sentinel[k] = sentinel_pick(&L.pool, n++);
         L.has_sentinel[k] = true;
     }
     return L;

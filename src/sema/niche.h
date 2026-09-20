@@ -20,6 +20,7 @@
 #include <limits.h>
 #include "../ast.h"
 #include "../target.h"
+#include "../layout_core.h"
 
 extern Arena *sema_arena;
 
@@ -27,25 +28,8 @@ extern Arena *sema_arena;
 │ Sentinel pool: kind-specific representation                      │
 ╚─────────────────────────────────────────────────────────────────*/
 
-typedef enum {
-    POOL_EMPTY,             // no sentinel slots available
-    POOL_POINTER,           // slots = [0, zero_page_size) step pointer_alignment
-    POOL_INTEGER_BELOW,     // slots = [lo, vra_lo)
-    POOL_INTEGER_ABOVE,     // slots = (vra_hi, hi]
-    POOL_INTEGER_SPLIT,     // slots = [lo, vra_lo) ∪ (vra_hi, hi]
-    POOL_BOOL,              // slots = [2, 255]
-} SentinelPoolKind;
-
-typedef struct {
-    SentinelPoolKind kind;
-    long long size;           // total slot count (already adjusted for index_offset)
-    long long below_start;    // POOL_INTEGER_*: low end of below-range
-    long long below_count;    // POOL_INTEGER_SPLIT: slots in [below_start, below_start+below_count)
-    long long above_start;    // POOL_INTEGER_*: low end of above-range
-    long long above_count;    // POOL_INTEGER_SPLIT: slots in [above_start, above_start+above_count)
-    long long ptr_stride;     // POOL_POINTER: spacing between slots (= pointer_alignment)
-    long long index_offset;   // M6 cascade: skip the first N slots (already used by inner enum)
-} SentinelPool;
+/* The pool algebra now lives in src/layout_core.h — ONE definition, shared with
+   src/ir/layout.h, so the two backends cannot drift apart on it (D-62/D-63). */
 
 /* Layout decision for one enum declaration. */
 typedef struct {
@@ -122,20 +106,10 @@ static SentinelPool compute_sentinel_pool(Type *t) {
     if (!t) return p;
 
     /* Pointer: zero-page slots stepped by alignment. */
-    if (t->kind == TYPE_POINTER) {
-        if (target.zero_page_size == 0) return p;  // bare-metal: no niche
-        p.kind        = POOL_POINTER;
-        p.ptr_stride  = (long long)target.pointer_alignment;
-        p.size        = (long long)(target.zero_page_size / target.pointer_alignment);
-        return p;
-    }
+    if (t->kind == TYPE_POINTER) return sentinel_pool_pointer();   /* shared */
 
     /* Bool: 1 byte storage, 254 unused bit patterns. */
-    if (niche_is_bool(t)) {
-        p.kind = POOL_BOOL;
-        p.size = 254;
-        return p;
-    }
+    if (niche_is_bool(t)) return sentinel_pool_bool();              /* shared */
 
     /* Sized integer: pool = type-range minus VRA-narrowed range.
        Pre-M2 we have no VRA hook here — the layout caller will
@@ -188,38 +162,8 @@ static SentinelPool compute_sentinel_pool_integer_refined(Type *t,
                                                           long long ref_hi) {
     SentinelPool p = {0};
     long long tlo, thi;
-    if (!niche_type_int_range(t, &tlo, &thi)) {
-        p.kind = POOL_EMPTY;
-        return p;
-    }
-    long long below = (ref_lo > tlo) ? (ref_lo - tlo) : 0;
-    long long above = (thi > ref_hi) ? (thi - ref_hi) : 0;
-
-    if (below == 0 && above == 0) {
-        p.kind = POOL_EMPTY;
-        return p;
-    }
-    if (below > 0 && above == 0) {
-        p.kind        = POOL_INTEGER_BELOW;
-        p.below_start = tlo;
-        p.below_count = below;
-        p.size        = below;
-        return p;
-    }
-    if (below == 0 && above > 0) {
-        p.kind        = POOL_INTEGER_ABOVE;
-        p.above_start = ref_hi + 1;
-        p.above_count = above;
-        p.size        = above;
-        return p;
-    }
-    p.kind        = POOL_INTEGER_SPLIT;
-    p.below_start = tlo;
-    p.below_count = below;
-    p.above_start = ref_hi + 1;
-    p.above_count = above;
-    p.size        = below + above;
-    return p;
+    if (!niche_type_int_range(t, &tlo, &thi)) { p.kind = POOL_EMPTY; return p; }
+    return sentinel_pool_int_refined(tlo, thi, ref_lo, ref_hi);   /* shared: layout_core.h */
 }
 
 /*─────────────────────────────────────────────────────────────────╗
@@ -236,35 +180,8 @@ static SentinelPool compute_sentinel_pool_integer_refined(Type *t,
 │   - POOL_BOOL:           2, 3, 4, ..., 255                       │
 ╚─────────────────────────────────────────────────────────────────*/
 
-static long long sentinel_pick(SentinelPool *p, size_t index) {
-    long long i = (long long)index + p->index_offset;
-    switch (p->kind) {
-        case POOL_POINTER:
-            return p->ptr_stride * i;
-
-        case POOL_INTEGER_BELOW:
-            /* descending from below_start + below_count - 1 */
-            return (p->below_start + p->below_count - 1) - i;
-
-        case POOL_INTEGER_ABOVE:
-            return p->above_start + i;
-
-        case POOL_INTEGER_SPLIT: {
-            if (i < p->below_count) {
-                return (p->below_start + p->below_count - 1) - i;
-            }
-            long long over = i - p->below_count;
-            return p->above_start + over;
-        }
-
-        case POOL_BOOL:
-            return 2 + i;
-
-        case POOL_EMPTY:
-        default:
-            return 0;  // caller should have checked size
-    }
-}
+/* sentinel_pick: shared, src/layout_core.h — the ASSIGNMENT must match across backends,
+   not merely the decision to pack. */
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Variant counting helpers                                         │
@@ -513,7 +430,7 @@ static NicheLayout niche_compute_layout(DeclEnum *e) {
                 sema_arena, long long, sub_count);
             L.secondary_sentinels_count = sub_count;
             for (size_t i = 0; i < sub_count; i++) {
-                L.secondary_sentinels[i] = sentinel_pick(&pool, i);
+                L.secondary_sentinels[i] = sentinel_pick(&pool, (long long)i);
             }
             return L;
         }
@@ -564,7 +481,7 @@ static NicheLayout niche_compute_layout(DeclEnum *e) {
             sema_arena, long long, L.empty_variant_count);
         L.empty_sentinels_count = L.empty_variant_count;
         for (size_t i = 0; i < L.empty_variant_count; i++) {
-            L.empty_sentinels[i] = sentinel_pick(&L.pool, i);
+            L.empty_sentinels[i] = sentinel_pick(&L.pool, (long long)i);
         }
     }
 
