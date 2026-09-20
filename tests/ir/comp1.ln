@@ -1,10 +1,16 @@
-// LAINFLAGS: --engine=legacy
-// ★ PINNED TO THE OLD ENGINE. a comprehension's element values are all known here, and the numeric
-// engine cannot see any of them: vra_seed_element_ranges admits a store only when its
-// value is a SYNTACTIC constant, and these are written by a loop. The information
-// exists only after the fixpoint and the seed runs before it, so this needs the seed
-// to run against converged state — a restructure, not a patch. Same gap as
-// tests/memory/array_comprehension_pass.ln.
+// ★ THE PIN IS GONE (C14, 2026-09-20). This file carried `// LAINFLAGS: --engine=legacy` and a
+// comment saying the numeric engine could not see the values a loop fill or a comprehension
+// writes, because `vra_seed_element_ranges` admitted a store only when its value was a
+// SYNTACTIC constant — and the information exists only after the fixpoint, while the seed ran
+// before it. The comment called it "a restructure, not a patch", and it was right.
+//
+// The restructure: the fixpoint runs TWICE. Pass 0 seeds from constants and copies as before;
+// the seeding then runs AGAIN against pass 0's converged state, which can see what the loop
+// stores; pass 1 re-runs from scratch with those ranges.
+//
+// ⚠ Twice and no more, because the hazard is circular justification — a range derived from a
+// state computed using that range proves nothing. Pass 0 never sees the refinement, so the
+// refined range is a true statement about the program, and pass 1 may use it.
 proc main() i32 {
     var a i32[5] = [i as i32 for i in 0..5]
     var s i32 = 0

@@ -387,6 +387,28 @@ static int vra_array_root(Vra *V, int addr) {
 //
 // A store at an UNKNOWN index with a known value is fine: coverage still holds from the
 // constant stores, and the unknown-index value joins in like any other.
+// ★ THE SECOND SEEDING MODE (C14). When this is set, a store whose value is neither a
+// constant nor a load from a known cell is no longer an automatic give-up: its range is read
+// off the CONVERGED octagon at that store. `var a i32[4]` filled by `while i < 4 { a[i] = i }`
+// has all its values known — to the fixpoint, which runs AFTER this seeding did. Three corpus
+// programs were pinned to `--engine=legacy` for exactly this.
+//
+// ⚠ SOUNDNESS, AND THE HAZARD IS SEEDING FROM YOUR OWN CONCLUSION. The refined range must be
+// validated against a fixpoint that did NOT use it, or the two justify each other in a circle.
+// So vra_analyze runs the fixpoint TWICE and no more: pass 0 with constants-and-copies only,
+// then this refinement against pass 0's converged state — a true statement about the program,
+// because pass 0 is a sound over-approximation — then pass 1 using it. Element ranges are
+// never re-derived from pass 1.
+//
+// Everything else — coverage, escape, the any-call forfeit — is the same code and the same
+// conditions as before, deliberately: this widens WHERE a value's range comes from, not which
+// cells are eligible to have one.
+static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi);      // fwd
+static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins);                     // fwd
+
+static bool vra_seed_from_state = false;
+static int  vra_seed_dim = 0;
+
 static void vra_seed_element_ranges_round(Vra *V) {
     int n = V->nvar;
     int64_t *lo = malloc((size_t)n*sizeof(int64_t)), *hi = malloc((size_t)n*sizeof(int64_t));
@@ -396,9 +418,19 @@ static void vra_seed_element_ranges_round(Vra *V) {
     for (int i=0;i<n;i++) { ok[i]=true; lo[i]=INT64_MAX; hi[i]=INT64_MIN; }
 
     // pass 1: join the stored values per cell, and note which cells have an unknown store
-    for (IrBlock *b=V->f->blocks; b; b=b->next)
+    int64_t *Wm = NULL; Octagon Wv = {0,0,NULL};
+    if (vra_seed_from_state && vra_seed_dim > 0) {
+        Wm = malloc((size_t)V->dsz*8);
+        Wv.nvar = V->noct; Wv.dim = vra_seed_dim; Wv.m = Wm;
+    }
+    for (IrBlock *b=V->f->blocks; b; b=b->next) {
+        bool replay = Wm && V->reached && V->reached[b->id] && V->in && V->in[b->id];
+        if (replay) { memcpy(Wm, V->in[b->id], (size_t)V->dsz*8); oct_close(&Wv); }
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
-            if (ins->op != IR_STORE || ins->n_operands < 2) continue;
+            if (replay && ins->op != IR_STORE) vra_transfer_instr(V, &Wv, ins);
+            if (ins->op != IR_STORE || ins->n_operands < 2) {
+                continue;
+            }
             int cell = vra_array_root(V, ins->operands[0]->id);
             if (cell < 0) continue;
             seen[cell] = true;
@@ -418,13 +450,22 @@ static void vra_seed_element_ranges_round(Vra *V) {
                 int scell = (sd && sd->op==IR_LOAD && sd->n_operands>=1)
                           ? vra_array_root(V, sd->operands[0]->id) : -1;
                 if (scell < 0 || scell >= n || scell == cell || !V->elem_known[scell]) {
-                    ok[cell] = false; continue;
+                    // C14: ask the converged state what this value can be.
+                    int64_t rlo, rhi;
+                    if (!replay || !V->val[sv]) { ok[cell] = false; continue; }
+                    vra_range(V, &Wv, V->val[sv], &rlo, &rhi);
+                    if (rlo > rhi) { ok[cell] = false; continue; }
+                    vlo = rlo; vhi = rhi;
+                } else {
+                    vlo = V->elem_lo[scell]; vhi = V->elem_hi[scell];
                 }
-                vlo = V->elem_lo[scell]; vhi = V->elem_hi[scell];
             }
             if (vlo < lo[cell]) lo[cell] = vlo;
             if (vhi > hi[cell]) hi[cell] = vhi;
+            if (replay) vra_transfer_instr(V, &Wv, ins);   // the store itself, after reading it
         }
+    }
+    free(Wm);
 
     // pass 2: coverage — every index in [0,len) written by a CONSTANT-index store
     for (IrBlock *b=V->f->blocks; b; b=b->next)
@@ -3027,6 +3068,30 @@ static IrInstr *vra_self_call_site(IrFunc *f) {
 }
 static bool vra_recursion_terminates(Vra *V, IrFunc *f);   // fwd — defined after the domain helpers
 
+// The function's entry state: each integer parameter's type interval, intersected with any
+// call-site binding. Factored out because the fixpoint now runs TWICE (see vpass) and pass 1
+// must start from the same entry state pass 0 did — re-running from a stale `in[entry]` would
+// start pass 1 inside pass 0's conclusions.
+static void vra_seed_entry(Vra *V, IrFunc *f, int dim) {
+    Octagon E={V->noct,dim,V->in[f->entry->id]}; oct_init_top(&E,V->noct,E.m);
+      // seed each integer parameter's type interval (a usize is ≥ 0, etc.). Skip a
+      // bound whose doubled DBM entry would overflow (e.g. u64's ~2^63 upper).
+      int pidx = 0;
+      for (IrParam *p=f->params; p; p=p->next, pidx++) {   // only the type interval; refinements
+          int64_t tlo,thi;                          // now arrive as entry IR_ASSUME nodes
+          if (!irtype_int_range(p->value->type,&tlo,&thi)) continue;
+          // A call-site binding INTERSECTS with the declared interval — never replaces it, so
+          // a wrong binding can only ever be narrower than something already true.
+          if (pidx < vra_argbind_n && pidx < VRA_ARGBIND_MAX && vra_argbind_has[pidx]) {
+              if (vra_argbind_lo[pidx] > tlo) tlo = vra_argbind_lo[pidx];
+              if (vra_argbind_hi[pidx] < thi) thi = vra_argbind_hi[pidx];
+              if (tlo > thi) { tlo = thi; }         // empty: the call is unreachable; stay sound
+          }
+          if (tlo > -OCT_INF/2) oct_add_lb(&E, p->value->id, tlo);
+          if (thi <  OCT_INF/2) oct_add_ub(&E, p->value->id, thi);
+      }
+    }
+
 static Vra *vra_analyze(IrFunc *f) {
     Vra *V = calloc(1, sizeof *V);
     V->f=f; V->nvar = f->next_value_id>0 ? f->next_value_id : 1;
@@ -3101,24 +3166,7 @@ static Vra *vra_analyze(IrFunc *f) {
     int64_t *W_m=malloc(V->dsz*8), *T_m=malloc(V->dsz*8), *J_m=malloc(V->dsz*8), *D_m=malloc(V->dsz*8);
     Octagon W={V->noct,dim,W_m}, T={V->noct,dim,T_m}, J={V->noct,dim,J_m}, D={V->noct,dim,D_m};
 
-    { Octagon E={V->noct,dim,V->in[f->entry->id]}; oct_init_top(&E,V->noct,E.m);
-      // seed each integer parameter's type interval (a usize is ≥ 0, etc.). Skip a
-      // bound whose doubled DBM entry would overflow (e.g. u64's ~2^63 upper).
-      int pidx = 0;
-      for (IrParam *p=f->params; p; p=p->next, pidx++) {   // only the type interval; refinements
-          int64_t tlo,thi;                          // now arrive as entry IR_ASSUME nodes
-          if (!irtype_int_range(p->value->type,&tlo,&thi)) continue;
-          // A call-site binding INTERSECTS with the declared interval — never replaces it, so
-          // a wrong binding can only ever be narrower than something already true.
-          if (pidx < vra_argbind_n && pidx < VRA_ARGBIND_MAX && vra_argbind_has[pidx]) {
-              if (vra_argbind_lo[pidx] > tlo) tlo = vra_argbind_lo[pidx];
-              if (vra_argbind_hi[pidx] < thi) thi = vra_argbind_hi[pidx];
-              if (tlo > thi) { tlo = thi; }         // empty: the call is unreachable; stay sound
-          }
-          if (tlo > -OCT_INF/2) oct_add_lb(&E, p->value->id, tlo);
-          if (thi <  OCT_INF/2) oct_add_ub(&E, p->value->id, thi);
-      }
-    }
+    vra_seed_entry(V, f, dim);
     V->reached[f->entry->id]=true;
 
     // Per-loop-header set of cells MODIFIED inside the loop (for selective widening — an
@@ -3182,6 +3230,42 @@ static Vra *vra_analyze(IrFunc *f) {
     // checks, so a non-fixpoint here is a miscompile waiting to happen.
     #define VRA_FIXPOINT_BOUND 4096
     bool changed=true; int sweeps=0;
+    // ★ TWO PASSES, AND EXACTLY TWO (C14). Pass 0 runs with element ranges seeded from
+    // constants and copies only. Then the seeding runs AGAIN against pass 0's converged state,
+    // which can see what a loop fill or a comprehension actually stores — information that did
+    // not exist when the first seeding ran, because it is produced by the fixpoint itself.
+    // Pass 1 then re-runs from scratch with those ranges.
+    //
+    // ⚠ Two and no more, because the hazard here is circular justification: a range derived
+    // from a state that was itself computed using that range proves nothing. Pass 0 never sees
+    // the refinement, so the refined range is a true statement about the program, and using a
+    // true statement in pass 1 is sound. Element ranges are never re-derived from pass 1.
+    for (int vpass = 0; vpass < 2; vpass++) {
+    if (vpass == 1) {
+        bool improved = false;
+        { // re-seed against the converged state
+            int64_t *sv_lo = malloc((size_t)V->nvar*sizeof(int64_t));
+            int64_t *sv_hi = malloc((size_t)V->nvar*sizeof(int64_t));
+            bool *sv_k = malloc((size_t)V->nvar*sizeof(bool));
+            if (sv_lo && sv_hi && sv_k) {
+                memcpy(sv_lo, V->elem_lo, (size_t)V->nvar*sizeof(int64_t));
+                memcpy(sv_hi, V->elem_hi, (size_t)V->nvar*sizeof(int64_t));
+                memcpy(sv_k,  V->elem_known, (size_t)V->nvar*sizeof(bool));
+                vra_seed_from_state = true; vra_seed_dim = dim;
+                vra_seed_element_ranges(V);
+                vra_seed_from_state = false;
+                for (int i=0;i<V->nvar;i++)
+                    if (V->elem_known[i] != sv_k[i] ||
+                        V->elem_lo[i] != sv_lo[i] || V->elem_hi[i] != sv_hi[i]) { improved = true; break; }
+            }
+            free(sv_lo); free(sv_hi); free(sv_k);
+        }
+        if (!improved) break;                     // nothing new to learn: pass 0 stands
+        for (int i=0;i<nb;i++) V->reached[i]=false;
+        vra_seed_entry(V, f, dim);
+        V->reached[f->entry->id]=true;
+        changed=true; sweeps=0;
+    }
     while (changed) {
         if (sweeps++ > VRA_FIXPOINT_BOUND) {
             fprintf(stderr, "internal error: the numeric fixpoint did not converge within %d "
@@ -3212,6 +3296,7 @@ static Vra *vra_analyze(IrFunc *f) {
             }
         }
     }
+    }   // vpass
     // ★ FAIL CLOSED IF THE FIXPOINT DID NOT CONVERGE. The sweep cap exists so a pathological
     // CFG cannot hang the compiler, but exiting through it leaves a PARTIAL fixpoint — an
     // UNDER-approximation — and every proof discharged against one would be unsound. Nothing

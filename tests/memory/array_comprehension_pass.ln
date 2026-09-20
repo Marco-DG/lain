@@ -1,18 +1,16 @@
-// LAINFLAGS: --engine=legacy
-// ★ PINNED TO THE OLD ENGINE, and this comment is the reason.
+// ★ THE PIN IS GONE (C14, 2026-09-20). This file carried `// LAINFLAGS: --engine=legacy` and a
+// comment saying the numeric engine could not see the values a loop fill or a comprehension
+// writes, because `vra_seed_element_ranges` admitted a store only when its value was a
+// SYNTACTIC constant — and the information exists only after the fixpoint, while the seed ran
+// before it. The comment called it "a restructure, not a patch", and it was right.
 //
-// `[i * i for i in 0..8]` fills the array with values that are all known — sq[7] is 49 — and
-// the numeric engine cannot see any of them. vra_seed_element_ranges admits a store only when
-// its value is a SYNTACTIC constant, and a comprehension stores a loop-varying expression;
-// unrolling would not help, because the stored value is still a load. The information exists
-// only after the fixpoint, and the seed runs before it, so this needs the seed to run against
-// converged state — a restructure, not a patch.
+// The restructure: the fixpoint runs TWICE. Pass 0 seeds from constants and copies as before;
+// the seeding then runs AGAIN against pass 0's converged state, which can see what the loop
+// stores; pass 1 re-runs from scratch with those ranges.
 //
-// This is the symmetric twin of the 23 tests carrying `// LAINFLAGS: --engine=ir-full` because
-// the OLD engine cannot judge them. One annotation in each direction, each naming its gap.
-// An array comprehension is a whole-array initializer, full by construction —
-// it lowers to a fill loop (zero-cost) and the array is then fully initialized,
-// so element reads are sound (no E005).
+// ⚠ Twice and no more, because the hazard is circular justification — a range derived from a
+// state computed using that range proves nothing. Pass 0 never sees the refinement, so the
+// refined range is a true statement about the program, and pass 1 may use it.
 extern proc libc_printf(fmt *u8, ...) i32
 proc main() i32 {
     var sq = [i * i for i in 0..8]
