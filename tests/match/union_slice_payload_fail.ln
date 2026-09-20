@@ -1,0 +1,29 @@
+// EXPECT: [E064]
+// ★ A SLICE IS NOT A NICHE SOURCE, and the reason is representation, not reasoning (D-63).
+//
+// The argument for it is sound: a slice is (ptr, len) and its ptr is never NULL (D-N2), so
+// the zero page really is spare. What does not follow is that a marker can be STORED there —
+// a slice is a two-word struct and a sentinel is an integer, so there is no `typedef
+// <backing> U;` to write and no `(U)(uintptr_t)0` for C to perform.
+//
+// The compiler used to believe the argument. It ACCEPTED this program and emitted
+// `typedef Slice_u8_0 __U_t2_none;`, naming a type nothing defines — C that gcc rejects, from
+// a compiler whose whole claim is prove-or-reject. Nothing caught it because no corpus
+// program had this shape; it surfaced only when a SECOND backend was written and the two were
+// compared on it.
+//
+// Refusing is the correct answer while the representation does not exist: E064 is
+// prove-or-reject for layout, and "I cannot make this zero-cost" is exactly what it says.
+extern proc libc_printf(fmt *u8, ...) i32
+func pick(b bool) u8[:0] | none {
+    if b { return "hi" }
+    return none
+}
+proc main() i32 {
+    var r u8[:0] | none = pick(true)
+    case r {
+        none: libc_printf("none\n")
+        else: libc_printf("some\n")
+    }
+    return 0
+}

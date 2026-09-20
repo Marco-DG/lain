@@ -152,16 +152,23 @@ static SentinelPool compute_sentinel_pool(Type *t) {
         return p;  // empty by default; refinement extends below
     }
 
-    /* TYPE_SLICE: fat pointer (ptr, len). With invariant
-       "ptr never NULL" (D-N2), use the ptr field as niche source.
-       We model this as a pointer pool. */
-    if (t->kind == TYPE_SLICE) {
-        if (target.zero_page_size == 0) return p;
-        p.kind        = POOL_POINTER;
-        p.ptr_stride  = (long long)target.pointer_alignment;
-        p.size        = (long long)(target.zero_page_size / target.pointer_alignment);
-        return p;
-    }
+    /* ⚠ TYPE_SLICE IS NOT A NICHE SOURCE, and the comment that used to sit here explained
+       why it looked like one: a slice is a fat pointer (ptr, len) whose ptr is never NULL
+       (D-N2), so the zero page is genuinely spare. The REASONING is sound. The
+       REPRESENTATION does not follow.
+
+       A slice is a two-word STRUCT and a sentinel is an integer, so there is no `typedef
+       <backing> U;` to write and no `(U)(uintptr_t)0` for C to perform. Packing one emitted
+       `typedef Slice_u8_0 __U_t2_none;` — naming a type nothing ever defines — so
+       `func pick(b bool) u8[:0] | none` was ACCEPTED and produced C that gcc rejects. A
+       broken-C hole (D-63), found when src/ir/layout.h was written and the two backends were
+       compared on a shape the corpus does not contain.
+
+       Packing a slice means putting the sentinel in the DATA POINTER FIELD and keeping the
+       struct — a different emit, not a wider cast. Until that exists this fails CLOSED: a
+       tagged union is correct, merely not free. src/ir/layout.h excludes it for the same
+       reason, so both backends agree (scripts/gates/layout_gate.sh). */
+    if (t->kind == TYPE_SLICE) return p;
 
     /* Struct / array / float / others: pre-1.0 conservative — no niche. */
     return p;

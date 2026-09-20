@@ -397,9 +397,16 @@ static Type *union_lower(Type *u) {
     // to a tag-byte struct when the niche overlay doesn't fit (worst case ties C).
     if (!has_payload_marker && !niche_enum_is_zero_cost(&ed->as.enum_decl)) {
         char vd[128]; type_describe(value, vd, sizeof vd);
+        // ⚠ THE REMEDY LIST HAD TO BE CORRECTED (D-63). It named "or a slice", and a slice
+        // stopped being a niche source the day the reason was checked against the
+        // representation: the pool is real (its data pointer is never null) but a sentinel
+        // cannot be STORED in a two-word struct, and packing one emitted C that does not
+        // compile. An error message that advises a fix which does not work is worse than one
+        // that offers fewer — it sends the reader to spend time on something that cannot
+        // succeed.
         fprintf(stderr, "[E064] Error: the union `%s | ...` cannot be zero-cost — '%s' has no "
                 "spare bit-patterns for its %d marker(s). Give the value type niche room "
-                "(a refinement like `u8 < 200`, a pointer, or a slice), or use fewer markers.\n",
+                "(a pointer, a bool, or a refinement like `u8 < 200`), or use fewer markers.\n",
                 vd, vd, nmark);
         exit(1);
     }
