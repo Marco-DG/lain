@@ -11,7 +11,6 @@
 #include "ast.h"
 #include "ast_print.h"
 #include "module.h"
-#include "emit.h"
 #include "error.h"
 #include "args.h"
 #include "target.h"
@@ -257,40 +256,25 @@ int main(int argc, char **argv) {
         sema_destroy();
         return 0;
     }
-    // ── STAGE IV: WHICH BACKEND WRITES THE C ─────────────────────────────────────────────
-    // ★ THE IR IS THE DEFAULT SINCE 2026-09-19; `--backend=legacy` restores the AST emitter
-    // (src/emit/). It was a flag first so the corpus could be run both ways and the difference
-    // MEASURED — `emit_gate` compares the two on 399 programs, but the corpus is 723, and the
-    // ones it cannot reach are exactly the ones nobody has checked.
-    //
-    // And the flag was not enough. While every corpus program compiled through the OLD
-    // emitter the gates could not see this one at all — 251 programs once failed to build
-    // under it while all eight gates stayed green — so flipping the default, not deleting a
-    // directory, was the switchover. It found four defects on the day it landed, three of
-    // which no differential could have: they were places where the OLD backend, not the
-    // language, was enforcing something (see args.h).
-    //
-    // `--backend=legacy` stays for now because it is the reference leg of `backend_corpus`,
-    // which is in `make gates` and runs all 723 programs through both.
-    if (args.backend_ir) {
-        if (!ir_mod) {
-            ir_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
-            ir_mod = ir_lower_module(program, &ir_arena);
-        }
-        // Refuse BEFORE opening the file: a backend that cannot represent a construct says
-        // so, rather than leaving a half-written .c that happens to compile (see
-        // ir_emit_refuse_opaque — a zero of the right type is not a diagnosable failure).
-        if (ir_emit_refuse_opaque(ir_mod, args.filename)) { sema_destroy(); return 1; }
-        FILE *out = fopen(args.output_file, "w");
-        if (!out) { fprintf(stderr, "Error: cannot open %s\n", args.output_file); sema_destroy(); return 1; }
-        ir_emit_module_c(ir_mod, out, &ir_arena);
-        fclose(out);
-        sema_destroy();
-        return 0;
+    // ── THE BACKEND ──────────────────────────────────────────────────────────────────────
+    // The C is emitted from the IR (src/ir/emit_c.h). `src/emit/`, the AST emitter, was
+    // DELETED on 2026-09-23 after its answers were recorded: tests/BASELINE.txt holds, for
+    // every corpus program, what it printed, its exit code, and how every type it declared was
+    // REPRESENTED — generated from that backend while it still existed, then verified against
+    // this one (behaviour identical; two programs this backend compiles and that one could
+    // not). `baseline_gate.sh` keeps asking those questions with the implementation gone.
+    if (!ir_mod) {
+        ir_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
+        ir_mod = ir_lower_module(program, &ir_arena);
     }
-    emit_source_filename = args.no_line_directives ? NULL : args.filename;
-    emit(program, 0, args.output_file);
-
+    // Refuse BEFORE opening the file: a backend that cannot represent a construct says so,
+    // rather than leaving a half-written .c that happens to compile (see ir_emit_refuse_opaque
+    // — a zero of the right type is not a diagnosable failure).
+    if (ir_emit_refuse_opaque(ir_mod, args.filename)) { sema_destroy(); return 1; }
+    FILE *out = fopen(args.output_file, "w");
+    if (!out) { fprintf(stderr, "Error: cannot open %s\n", args.output_file); sema_destroy(); return 1; }
+    ir_emit_module_c(ir_mod, out, &ir_arena);
+    fclose(out);
     sema_destroy();
 
     return 0;

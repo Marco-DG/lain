@@ -1,0 +1,1699 @@
+### tests/borrow/ret_borrow_in_truthful_pass.ln
+rc=0
+out=
+ty=Data struct
+### tests/codegen/case_expression_payload_pass.ln
+rc=0
+out=
+ty=R struct
+### tests/codegen/const_attr_pointer_reader_pass.ln
+rc=0
+out=
+### tests/codegen/fixed_array_param_to_slice_pass.ln
+rc=0
+out=4
+ty=Slice_i32 scalar
+ty=Slice_u8 scalar
+### tests/codegen/ownership_abi.ln
+rc=0
+out=
+ty=Vec2 struct
+### tests/codegen/sized_slice_abi.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/codegen/str_eq_literal_pass.ln
+rc=1
+out=
+ty=Slice_u8 scalar
+### tests/codegen/struct_array_field_index_pass.ln
+rc=0
+out=
+ty=M struct
+### tests/codegen/var_prim_abi.ln
+rc=0
+out=
+### tests/codegen/wrapping_precedence_pass.ln
+rc=0
+out=5 3 4 5
+ty=Slice_u8 scalar
+### tests/declarations/const_global_pass.ln
+rc=0
+out=MASK=3 FLAGS[2]=3
+ty=Slice_u8 scalar
+### tests/declarations/immutable_decl_pass.ln
+rc=0
+out=a=42 b=10 c=100 d=1 px=1 py=2
+ty=Point struct
+ty=Slice_u8 scalar
+### tests/declarations/immutable_var_coexist_pass.ln
+rc=0
+out=counter=628
+ty=Slice_u8 scalar
+### tests/declarations/implicit_decl_pass.ln
+rc=0
+out=x=42 y=10
+ty=Slice_u8 scalar
+### tests/declarations/single_line_comma_decl_pass.ln
+rc=10
+out=
+ty=Color scalar
+ty=Point struct
+### tests/declarations/toplevel_const_inferred_pass.ln
+rc=0
+out=115
+ty=Slice_u8 scalar
+### tests/declarations/toplevel_string_const_pass.ln
+rc=0
+out=5 5
+ty=Slice_u8 scalar
+### tests/declarations/undefined_pass.ln
+rc=0
+out=Passed.
+ty=Slice_u8 scalar
+### tests/effects/effects_bound_honest_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+### tests/effects/panic_func_annotation_pass.ln
+rc=6
+out=
+ty=Slice_u8 scalar
+### tests/errors/checked_else_pass.ln
+rc=0
+out=0
+out=255
+out=49
+ty=Slice_u8 scalar
+### tests/errors/else_panic_pass.ln
+rc=0
+out=z
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound_Denied scalar
+### tests/errors/else_return_pass.ln
+rc=0
+out=TooBig
+out=Denied
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_Denied scalar
+ty=__U_ptr_u8_NotFound scalar
+ty=__U_ptr_u8_TooBig scalar
+### tests/errors/else_value_pass.ln
+rc=0
+out=DEFAULT
+out=REAL
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound_Denied scalar
+### tests/errors/near_type_name_var_pass.ln
+rc=254
+out=
+### tests/errors/payload_marker_pass.ln
+rc=0
+out=err line=42
+out=ok=7
+ty=Slice_u8 scalar
+ty=__U_i32_ParseErr_i32 struct
+### tests/errors/payload_marker_try_pass.ln
+rc=0
+out=line=99
+ty=Slice_u8 scalar
+ty=__U_i32_NotFound_ParseErr_i32 struct
+### tests/errors/try_bool_union_pass.ln
+rc=0
+out=nope
+ty=Slice_u8 scalar
+ty=__U_bool_Nope scalar
+### tests/errors/try_chain_pass.ln
+rc=0
+out=
+ty=__U_ptr_u8_NotFound scalar
+ty=__U_ptr_u8_NotFound_ParseErr scalar
+ty=__U_ptr_u8_ParseErr scalar
+### tests/errors/try_defer_pass.ln
+rc=0
+out=cleanup
+out=nf
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound scalar
+### tests/errors/try_propagate_pass.ln
+rc=0
+out=ok=f
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound_Denied scalar
+### tests/errors/try_widen_pass.ln
+rc=0
+out=
+ty=__U_ptr_u8_NotFound scalar
+ty=__U_ptr_u8_NotFound_ParseErr scalar
+### tests/errors/union_infer_annotated_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound scalar
+### tests/examples/fixed_array_arg_pass.ln
+rc=7
+out=
+### tests/examples/kw_match_pass.ln
+rc=1
+out=
+### tests/examples/refine_ident_bound_pass.ln
+rc=42
+out=
+### tests/examples/simd_lexer_pass.ln
+rc=1
+out=
+### tests/examples/simd_load_checked_pass.ln
+rc=32
+out=
+### tests/examples/simd_load_pass.ln
+rc=1
+out=
+### tests/examples/simd_mask_pass.ln
+rc=25
+out=
+### tests/examples/simd_scan_proven_pass.ln
+rc=50
+out=
+### tests/examples/simd_splat_store_pass.ln
+rc=16
+out=
+### tests/examples/simd_vec_pass.ln
+rc=11
+out=
+### tests/examples/simd_vra_count_pass.ln
+rc=32
+out=
+### tests/examples/soa_output_pass.ln
+rc=10
+out=
+### tests/examples/vra_and_flow_peek_pass.ln
+rc=0
+out=
+### tests/examples/vra_struct_field_slice_pass.ln
+rc=0
+out=
+ty=Buf struct
+ty=Slice_u8 scalar
+### tests/examples/vra_while_lt_scalar_pass.ln
+rc=0
+out=
+### tests/examples/vra_while_lt_wide_load_pass.ln
+rc=0
+out=
+### tests/expressions/attribute_fast_math_pass.ln
+rc=12
+out=
+### tests/expressions/attribute_multiple_pass.ln
+rc=6
+out=
+### tests/expressions/bitwise_pass.ln
+rc=0
+out=12 & 10 = 8
+out=12 | 10 = 14
+out=12 ^ 10 = 6
+out=~12 = -13
+ty=Slice_u8 scalar
+### tests/expressions/compound_assign_pass.ln
+rc=0
+out=10 += 5 = 15
+out=15 -= 3 = 12
+out=12 *= 2 = 24
+out=24 /= 4 = 6
+out=6 %= 4 = 2
+out=255 &= 15 = 15
+out=15 |= 48 = 63
+out=63 ^= 33 = 30
+ty=Slice_u8 scalar
+### tests/expressions/compound_shift_assign_pass.ln
+rc=0
+out=24
+ty=Slice_u8 scalar
+### tests/expressions/i64_literal_pass.ln
+rc=0
+out=5000000000
+ty=Slice_u8 scalar
+### tests/expressions/null_compare_pass.ln
+rc=0
+out=
+### tests/expressions/numeric_literals_pass.ln
+rc=0
+out=255 165 493 1000000
+ty=Slice_u8 scalar
+### tests/expressions/shift_operators_pass.ln
+rc=0
+out=
+### tests/functions/all_paths_return_pass.ln
+rc=0
+out=
+### tests/functions/bounded_while_pass.ln
+rc=0
+out=Result: 10
+ty=Slice_u8 scalar
+### tests/functions/decreasing_binary_search_pass.ln
+rc=0
+out=0
+ty=Slice_u8 scalar
+### tests/functions/decreasing_both_paths_pass.ln
+rc=0
+out=
+### tests/functions/decreasing_halving_pass.ln
+rc=0
+out=7
+ty=Slice_u8 scalar
+### tests/functions/decreasing_halving_signed_pass.ln
+rc=7
+out=
+### tests/functions/decreasing_halving_unsigned_pass.ln
+rc=0
+out=
+### tests/functions/decreasing_ok_pass.ln
+rc=0
+out=
+### tests/functions/decreasing_var_step_pass.ln
+rc=0
+out=10
+ty=Slice_u8 scalar
+### tests/functions/fnptr_basic_pass.ln
+rc=0
+out=
+### tests/functions/fnptr_hof_pass.ln
+rc=0
+out=
+### tests/functions/fnptr_proc_target_pass.ln
+rc=0
+out=
+### tests/functions/func_proc_pass.ln
+rc=0
+out=Result: 30
+ty=Slice_u8 scalar
+### tests/functions/func_pure_pass.ln
+rc=0
+out=
+### tests/functions/func_recursion_decreasing_pass.ln
+rc=0
+out=55 5
+ty=Slice_u8 scalar
+### tests/functions/functions_pass.ln
+rc=0
+out=add(10, 20) = 30
+out=fib(10) = 55
+ty=Slice_u8 scalar
+### tests/functions/gcd_modulo_termination_pass.ln
+rc=12
+out=
+### tests/functions/loop_advance_or_break_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+### tests/functions/popcount_shift_termination_pass.ln
+rc=8
+out=
+### tests/functions/recursion_diff_measure_pass.ln
+rc=3
+out=
+### tests/functions/recursion_infer_measure_pass.ln
+rc=0
+out=
+### tests/functions/recursion_ir_engine_pass.ln
+rc=0
+out=1 5 0
+ty=Slice_u8 scalar
+### tests/functions/string_return_pass.ln
+rc=0
+out=[hi there]
+ty=Slice_u8 scalar
+### tests/functions/termination_pass.ln
+rc=45
+out=
+### tests/functions/ufcs_pass.ln
+rc=15
+out=
+ty=Counter struct
+### tests/functions/ufcs_primitive_pass.ln
+rc=0
+out=20
+ty=Slice_u8 scalar
+### tests/functions/while_const_decrease_pass.ln
+rc=0
+out=
+### tests/functions/while_infer_measure_pass.ln
+rc=0
+out=
+### tests/generics/comptime_if_pass.ln
+rc=0
+out=Running on Linux
+out=Done
+ty=Slice_u8 scalar
+### tests/generics/generic_combinator_pass.ln
+rc=0
+out=
+ty=Option_i32 struct
+### tests/generics/generic_enum_option_pass.ln
+rc=0
+out=
+ty=Option_i32 struct
+### tests/generics/generic_enum_result_pass.ln
+rc=0
+out=
+ty=Result_i32_i32 struct
+### tests/generics/generic_func_explicit_pass.ln
+rc=0
+out=
+### tests/generics/generic_func_infer_pass.ln
+rc=0
+out=
+### tests/generics/generic_nested_pass.ln
+rc=0
+out=
+ty=Box_i32 struct
+ty=Option_i32 struct
+### tests/generics/generic_option_map_pass.ln
+rc=0
+out=
+ty=Option_i32 struct
+### tests/generics/generic_std_option_pass.ln
+rc=0
+out=
+ty=Option_i32 struct
+### tests/generics/generic_std_result_pass.ln
+rc=0
+out=
+ty=Option_i32 struct
+ty=Result_i32_i32 struct
+### tests/generics/generic_struct_infer_pass.ln
+rc=0
+out=
+ty=Pair_i32 struct
+### tests/generics/generic_struct_pass.ln
+rc=0
+out=
+ty=Pair_i32 struct
+### tests/ir/adt_sum1.ln
+rc=0
+out=
+ty=Shape struct
+### tests/ir/alias1.ln
+rc=0
+out=
+### tests/ir/array1.ln
+rc=0
+out=
+### tests/ir/array2.ln
+rc=0
+out=
+### tests/ir/array3.ln
+rc=0
+out=
+### tests/ir/bitcount1.ln
+rc=0
+out=
+### tests/ir/comp1.ln
+rc=0
+out=
+### tests/ir/forloop1.ln
+rc=0
+out=
+### tests/ir/globals1.ln
+rc=0
+out=
+### tests/ir/inloop1.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/ir/match1.ln
+rc=0
+out=
+### tests/ir/rvalue_field1.ln
+rc=0
+out=
+ty=P struct
+ty=Q struct
+### tests/ir/shortcircuit1.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/ir/slice1.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/ir/str1.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+### tests/ir/struct1.ln
+rc=0
+out=
+ty=Vec struct
+### tests/ir/subslice1.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/ir/sum_maxi.ln
+rc=0
+out=
+### tests/match/bool_exhaustive_pass.ln
+rc=1
+out=
+### tests/match/match_advanced_pass.ln
+rc=0
+out=Kind is: 1
+out=Desc is: 10
+ty=Slice_u8 scalar
+### tests/match/niche/bool_payload_pass.ln
+rc=0
+out=
+### tests/match/niche/case_pointer_match_pass.ln
+rc=0
+out=ok: None branch
+out=ok: Some branch
+ty=OptionByte scalar
+ty=Slice_u8 scalar
+### tests/match/niche/generic_pointer_niche_pass.ln
+rc=0
+out=
+ty=Option_ptr_u8 scalar
+ty=Slice_u8 scalar
+### tests/match/niche/multi_empty_pointer_pass.ln
+rc=0
+out=
+### tests/match/niche/multi_payload_runtime_pass.ln
+rc=0
+out=r1=NotFound
+out=r2=Permission
+out=r3=OOM
+out=r4=Ok
+ty=FileErr scalar
+ty=FileResult struct
+ty=Slice_u8 scalar
+### tests/match/niche/multi_payload_tagged_pass.ln
+rc=0
+out=
+### tests/match/niche/nested_cascade_pass.ln
+rc=0
+out=
+### tests/match/niche/nested_runtime_pass.ln
+rc=0
+out=r1=NotFound
+out=r2=Permission
+out=r3=OOM
+out=r4=Ok
+out=r5=Ok
+ty=InnerOpt scalar
+ty=OuterResult scalar
+ty=Slice_u8 scalar
+### tests/match/niche/option_pointer_pass.ln
+rc=0
+out=
+### tests/match/niche/pointer_array_pass.ln
+rc=0
+out=
+### tests/match/niche/pure_empty_enum_pass.ln
+rc=0
+out=
+### tests/match/niche/refinement_below_only_pass.ln
+rc=0
+out=
+### tests/match/niche/refinement_payload_pass.ln
+rc=0
+out=
+### tests/match/niche/refinement_runtime_pass.ln
+rc=0
+out=r1=NoData
+out=r2=SensorFault
+out=r3=Ok(500)
+ty=Reading scalar
+ty=Slice_u8 scalar
+### tests/match/niche/refinement_split_pass.ln
+rc=0
+out=
+### tests/match/optional_construct_pass.ln
+rc=0
+out=
+ty=__U_ptr_u8_none scalar
+### tests/match/optional_narrow_pass.ln
+rc=0
+out=
+ty=__U_ptr_u8_none scalar
+### tests/match/range_pattern_exclusive_pass.ln
+rc=0
+out=
+### tests/match/union_case_runtime_pass.ln
+rc=0
+out=ok=hi
+out=bad=nf
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound_Denied scalar
+### tests/match/union_construct_pass.ln
+rc=0
+out=
+ty=__U_ptr_u8_NotFound_Denied scalar
+### tests/match/union_if_narrow_runtime_pass.ln
+rc=0
+out=a=some
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_none scalar
+### tests/match/union_optionality_unify_pass.ln
+rc=0
+out=take(a)=1 take(b)=0 (want 1 0)
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_none scalar
+### tests/match/union_passthrough_pass.ln
+rc=0
+out=
+ty=__U_ptr_u8_NotFound_Denied scalar
+### tests/match/union_pointer_layout_pass.ln
+rc=0
+out=
+ty=__U_ptr_u8_NotFound_Denied scalar
+### tests/match/union_struct_field_pass.ln
+rc=0
+out=
+### tests/memory/array_comprehension_pass.ln
+rc=0
+out=sq[7]=49 inc[0]=2
+ty=Slice_u8 scalar
+### tests/memory/array_literal_pass.ln
+rc=0
+out=
+### tests/memory/array_ref_of_uninit_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/memory/array_value_copy_pass.ln
+rc=14
+out=
+### tests/memory/field_branch_merge_pass.ln
+rc=0
+out=
+ty=Point struct
+### tests/memory/field_construct_pass.ln
+rc=0
+out=
+ty=Point struct
+### tests/memory/field_nested_branch_merge_pass.ln
+rc=0
+out=
+ty=Inner struct
+ty=Outer struct
+### tests/memory/field_nested_construct_pass.ln
+rc=0
+out=
+ty=Inner struct
+ty=Outer struct
+### tests/memory/fixed_array_outparam_pass.ln
+rc=99
+out=
+### tests/memory/loop_fill_whole_pass.ln
+rc=0
+out=
+### tests/memory/uninit_if_pass.ln
+rc=0
+out=
+### tests/memory/uninit_pass.ln
+rc=0
+out=
+### tests/modules/module_alias_pass.ln
+rc=0
+out=via alias
+ty=Slice_u8 scalar
+### tests/modules/module_qualified_access_pass.ln
+rc=0
+out=hi
+out=also unqualified
+ty=Slice_u8 scalar
+### tests/ownership/block_nll_pass.ln
+rc=0
+out=
+ty=Resource struct
+### tests/ownership/block_scoped_borrow_release_pass.ln
+rc=0
+out=
+ty=Cell struct
+### tests/ownership/block_scope_pass.ln
+rc=0
+out=inner = 42
+out=outer = 100
+out=outer = 100
+out=i = 0
+out=i = 1
+out=i = 2
+ty=Slice_u8 scalar
+### tests/ownership/borrow_basic_pass.ln
+rc=11
+out=
+ty=Point struct
+### tests/ownership/borrow_pass.ln
+rc=11
+out=
+ty=Counter struct
+### tests/ownership/borrow_valid_pass.ln
+rc=0
+out=
+ty=Resource struct
+### tests/ownership/coarg_alias_element_disjoint_pass.ln
+rc=0
+out=
+### tests/ownership/coarg_alias_subslice_disjoint_pass.ln
+rc=6
+out=
+ty=Slice_i32 scalar
+### tests/ownership/coarg_disjoint_fields_pass.ln
+rc=0
+out=
+ty=Inner struct
+ty=Outer struct
+### tests/ownership/concat_pass.ln
+rc=1
+out=
+ty=Slice_i32 scalar
+### tests/ownership/defer_consume_pass.ln
+rc=0
+out=
+ty=Resource struct
+### tests/ownership/defer_consume_scope_pass.ln
+rc=42
+out=
+ty=Resource struct
+### tests/ownership/dependent_size_guarded_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/ownership/direct_var_borrow_pass.ln
+rc=43
+out=
+ty=Data struct
+### tests/ownership/div_index_pass.ln
+rc=12
+out=
+ty=Slice_i32 scalar
+### tests/ownership/elif_borrow_pass.ln
+rc=0
+out=
+ty=Resource struct
+### tests/ownership/field_consume_pass.ln
+rc=42
+out=
+ty=Resource struct
+### tests/ownership/immutability_pass.ln
+rc=20
+out=
+### tests/ownership/len_minus1_pass.ln
+rc=3
+out=
+ty=Slice_i32 scalar
+### tests/ownership/loop_reassign_consume_pass.ln
+rc=134
+out=
+ty=File struct
+ty=Slice_u8 scalar
+### tests/ownership/match_borrow_pass.ln
+rc=43
+out=
+### tests/ownership/mod_index_pass.ln
+rc=10
+out=
+ty=Slice_i32 scalar
+### tests/ownership/move_basic_pass.ln
+rc=0
+out=
+ty=Resource struct
+### tests/ownership/mov_syntax_pass.ln
+rc=0
+out=
+ty=Foo struct
+### tests/ownership/multi_var_param_pass.ln
+rc=0
+out=
+ty=Data struct
+### tests/ownership/multi_var_param_precise_pass.ln
+rc=0
+out=
+ty=Data struct
+### tests/ownership/nll_last_use_pass.ln
+rc=42
+out=
+ty=Data struct
+### tests/ownership/nll_while_pass.ln
+rc=0
+out=
+ty=Lexer struct
+### tests/ownership/owner_reassign_after_release_pass.ln
+rc=99
+out=
+ty=Data struct
+### tests/ownership/ownership_pass.ln
+rc=0
+out=Point(10, 20)
+out=Point(11, 21)
+out=Moved Point(11, 21)
+ty=Point struct
+ty=Slice_u8 scalar
+### tests/ownership/reborrow_chain_pass.ln
+rc=100
+out=
+ty=Data struct
+### tests/ownership/reborrow_pass.ln
+rc=42
+out=
+ty=Data struct
+### tests/ownership/return_borrow_var_param_pass.ln
+rc=0
+out=
+ty=Cell struct
+### tests/ownership/return_slice_borrows_active_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+### tests/ownership/return_slice_borrows_param_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+### tests/ownership/reverse_pass.ln
+rc=4
+out=
+ty=Slice_i32 scalar
+### tests/ownership/scalar_var_shared_pass.ln
+rc=6
+out=
+### tests/ownership/sequential_borrow_pass.ln
+rc=0
+out=
+ty=Counter struct
+### tests/ownership/sized_literal_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/ownership/slide_pass.ln
+rc=1
+out=
+ty=Slice_i32 scalar
+### tests/ownership/struct_field_param_pass.ln
+rc=0
+out=
+ty=Lexer struct
+ty=Slice_u8 scalar
+### tests/ownership/subslice_pass.ln
+rc=60
+out=
+ty=Slice_i32 scalar
+### tests/ownership/two_phase_borrow_pass.ln
+rc=20
+out=
+ty=Vec struct
+### tests/ownership/two_shared_same_call_pass.ln
+rc=5
+out=
+ty=Vec struct
+### tests/ownership/u1_index_pass.ln
+rc=20
+out=
+### tests/ownership/var_prim_forward_pass.ln
+rc=42
+out=
+### tests/ownership/var_prim_read_pass.ln
+rc=42
+out=
+### tests/ownership/var_prim_write_pass.ln
+rc=42
+out=
+### tests/ownership/var_struct_whole_write_pass.ln
+rc=0
+out=
+ty=P struct
+### tests/statements/control_flow_pass.ln
+rc=0
+out=
+### tests/statements/defer_basic_pass.ln
+rc=0
+out=12-3
+ty=Slice_u8 scalar
+### tests/statements/defer_loop_pass.ln
+rc=0
+out=A1-1--2-A3-3-END
+ty=Slice_u8 scalar
+### tests/statements/defer_return_pass.ln
+rc=0
+out=1234-
+ty=Slice_u8 scalar
+### tests/statements/for_two_var_pass.ln
+rc=0
+out=for i, val in 0..5:
+out=  i=0, val=0
+out=  i=1, val=1
+out=  i=2, val=2
+out=  i=3, val=3
+out=  i=4, val=4
+ty=Slice_u8 scalar
+### tests/statements/panic_basic_pass.ln
+rc=42
+out=
+ty=Slice_u8 scalar
+### tests/statements/panic_no_defer_pass.ln
+rc=7
+out=
+ty=Slice_u8 scalar
+### tests/statements/semicolon_same_line_pass.ln
+rc=11
+out=
+### tests/statements/while_loop_pass.ln
+rc=0
+out=Testing while loop (0 to 9):
+out=0 1 2 3 4 5 6 7 8 9 
+out=Done.
+out=Testing break:
+out=0 1 2 
+out=Done break.
+out=Testing continue (skip 2):
+out=1 3 4 5 
+out=Done continue.
+ty=Slice_u8 scalar
+### tests/stdlib/bump_smoke_pass.ln
+rc=0
+out=bump: ok
+ty=BumpAlloc struct
+ty=Slice_u8 scalar
+### tests/stdlib/c_include_smoke_pass.ln
+rc=0
+out=Hello from c_include!
+ty=Slice_u8 scalar
+### tests/stdlib/extern_smoke_pass.ln
+rc=0
+out=Testing extern keyword...
+out=abs(-42) = 42 (OK)
+out=malloc and free (OK)
+out=All extern tests passed.
+ty=Slice_u8 scalar
+### tests/stdlib/fs_smoke_pass.ln
+rc=0
+out=Opening file: test_output.txt
+out=Writing to file...
+out=Closing file...
+out=Done.
+ty=File struct
+ty=Slice_u8 scalar
+### tests/stdlib/import_pass.ln
+rc=0
+out=
+### tests/stdlib/io_smoke_pass.ln
+rc=0
+out=Hello World!
+out=Partial line... Done.
+ty=Slice_u8 scalar
+### tests/stdlib/math_pass.ln
+rc=0
+out=10 + 3 = 13
+out=10 - 3 = 7
+out=10 * 3 = 30
+out=10 / 3 = 3
+out=10 % 3 = 1
+ty=Slice_u8 scalar
+### tests/stdlib/math_smoke_pass.ln
+rc=0
+out=
+### tests/stdlib/math_test_pass.ln
+rc=0
+out=
+### tests/stdlib/private_pub_pass.ln
+rc=0
+out=
+### tests/trust/adt_payload_pass.ln
+rc=0
+out=r 42
+ty=Shape struct
+ty=Slice_u8 scalar
+### tests/trust/algo_max_pass.ln
+rc=0
+out=111
+ty=Slice_u8 scalar
+### tests/trust/alias_distinct_pass.ln
+rc=0
+out=11 22 33 44
+ty=Slice_i32 scalar
+ty=Slice_u8 scalar
+### tests/trust/bitnot_unsigned_pass.ln
+rc=0
+out=250
+out=4294967295
+out=4294967283
+out=18446744073709551615
+out=18446744073709551614
+out=-13
+ty=Slice_u8 scalar
+### tests/trust/borrow_write_reaches_owner_pass.ln
+rc=0
+out=42
+ty=Cell struct
+ty=Slice_u8 scalar
+### tests/trust/bounds_edge_pass.ln
+rc=0
+out=10 50
+ty=Slice_u8 scalar
+### tests/trust/bounds_mod_pass.ln
+rc=0
+out=327
+ty=Slice_u8 scalar
+### tests/trust/bounds_nested_pass.ln
+rc=0
+out=21
+ty=Slice_u8 scalar
+### tests/trust/bounds_scan_pass.ln
+rc=0
+out=198
+ty=Slice_u8 scalar
+### tests/trust/calculator_pass.ln
+rc=0
+out=
+ty=Slice_Token scalar
+ty=Slice_u8 scalar
+ty=Token struct
+### tests/trust/cast_checked_pass.ln
+rc=0
+out=255
+ty=Slice_u8 scalar
+### tests/trust/comprehension_pass.ln
+rc=0
+out=0 7
+ty=Slice_u8 scalar
+### tests/trust/div_early_return_guard_pass.ln
+rc=0
+out=
+### tests/trust/div_guard_ne_zero_pass.ln
+rc=0
+out=
+### tests/trust/div_safe_pass.ln
+rc=0
+out=25
+ty=Slice_u8 scalar
+### tests/trust/enum_match_pass.ln
+rc=0
+out=2
+ty=Color scalar
+ty=Slice_u8 scalar
+### tests/trust/interproc_bounds_pass.ln
+rc=0
+out=30
+ty=Slice_i32 scalar
+ty=Slice_u8 scalar
+### tests/trust/local_slice_scan_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/trust/mul_narrowing_provable_pass.ln
+rc=0
+out=
+### tests/trust/mul_narrowing_wrapping_pass.ln
+rc=0
+out=
+### tests/trust/neg_width_pass.ln
+rc=0
+out=-5000000000
+out=5000000000
+out=-4294967296
+out=-7
+ty=Slice_u8 scalar
+### tests/trust/niche_bool_both_paths_pass.ln
+rc=0
+out=a=1
+out=b=0
+out=c=nope
+ty=Slice_u8 scalar
+ty=__U_bool_Nope scalar
+### tests/trust/niche_multi_pass.ln
+rc=0
+out=denied
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound_Denied scalar
+### tests/trust/niche_refined_pass.ln
+rc=0
+out=7
+ty=Slice_u8 scalar
+ty=__U_Small_TooBig scalar
+### tests/trust/niche_union_pass.ln
+rc=0
+out=OK
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound scalar
+### tests/trust/overflow_checked_pass.ln
+rc=0
+out=0
+ty=Slice_u8 scalar
+### tests/trust/overflow_narrow_pass.ln
+rc=0
+out=3600000000
+ty=Slice_u8 scalar
+### tests/trust/overflow_sub_pass.ln
+rc=0
+out=-197
+ty=Slice_u8 scalar
+### tests/trust/overflow_widen_pass.ln
+rc=0
+out=2000000000
+ty=Slice_u8 scalar
+### tests/trust/payload_marker_pass.ln
+rc=0
+out=1234
+ty=Slice_u8 scalar
+ty=__U_i32_ParseErr_i32 struct
+### tests/trust/return_range_pass.ln
+rc=0
+out=255 0 70
+ty=Slice_u8 scalar
+### tests/trust/saturating_pass.ln
+rc=0
+out=255
+ty=Slice_u8 scalar
+### tests/trust/shift_unsigned_high_bit_pass.ln
+rc=0
+out=
+### tests/trust/shift_variable_guarded_pass.ln
+rc=0
+out=
+### tests/trust/slice_len_pass.ln
+rc=0
+out=5
+ty=Slice_u8 scalar
+### tests/trust/slice_literal_arg_pass.ln
+rc=0
+out=5
+out=3
+ty=Slice_u8 scalar
+### tests/trust/string_sentinel_terminated_pass.ln
+rc=0
+out=[hello]
+out=[world]
+ty=Slice_u8 scalar
+### tests/trust/struct_field_pass.ln
+rc=0
+out=13 4
+ty=Point struct
+ty=Slice_u8 scalar
+### tests/trust/subslice_pass.ln
+rc=0
+out=20 40
+ty=Slice_i32 scalar
+ty=Slice_u8 scalar
+### tests/trust/tokenizer_pass.ln
+rc=0
+out=
+ty=Slice_Token scalar
+ty=Slice_u8 scalar
+ty=Token struct
+### tests/trust/try_defer_pass.ln
+rc=0
+out=cleanup
+out=got Err
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_Err scalar
+### tests/trust/usize_underflow_guarded_pass.ln
+rc=0
+out=
+### tests/trust/widening_arith_promotion_pass.ln
+rc=0
+out=3600000000
+out=900000000
+ty=Slice_u8 scalar
+### tests/trust/wrapping_pass.ln
+rc=0
+out=4
+ty=Slice_u8 scalar
+### tests/types/adt_array_param_pass.ln
+rc=0
+out=
+ty=P struct
+### tests/types/adt_match_member_pass.ln
+rc=0
+out=
+ty=Inner struct
+ty=Outer struct
+### tests/types/adt_match_param_pass.ln
+rc=0
+out=
+ty=Sh struct
+### tests/types/adt_pass.ln
+rc=0
+out=Circle radius: 10
+ty=Shape struct
+ty=Slice_u8 scalar
+### tests/types/adt_struct_payload_pass.ln
+rc=0
+out=
+ty=P struct
+ty=S struct
+### tests/types/array_decay_pass.ln
+rc=104
+out=
+### tests/types/array_literal_pass.ln
+rc=0
+out=arr[0]=10, arr[2]=30, arr[4]=50
+ty=Slice_u8 scalar
+### tests/types/arrays_pass.ln
+rc=0
+out=arr[0]=10, arr[1]=20
+ty=Slice_u8 scalar
+### tests/types/bool_pass.ln
+rc=0
+out=x is true
+out=y is false
+out=true = 1, false = 0
+ty=Slice_u8 scalar
+### tests/types/cast_pass.ln
+rc=0
+out=x = 1000, y (as u8) = 232
+out=big = 42
+ty=Slice_u8 scalar
+### tests/types/cast_tiers_pass.ln
+rc=168
+out=
+ty=Slice_u8 scalar
+### tests/types/character_literal_pass.ln
+rc=0
+out=char: A
+out=char as i32: 65
+out=newline as i32: 10
+out=tab as i32: 9
+ty=Slice_u8 scalar
+### tests/types/destructuring_pass.ln
+rc=0
+out=Point: x=10, y=20
+ty=Point struct
+ty=Slice_u8 scalar
+### tests/types/enum_exhaustive_pass.ln
+rc=0
+out=Running
+ty=Slice_u8 scalar
+ty=Status scalar
+### tests/types/enums_pass.ln
+rc=0
+out=Color is Red
+ty=Color scalar
+ty=Slice_u8 scalar
+### tests/types/float_int_literal_promote_pass.ln
+rc=0
+out=
+### tests/types/float_pass.ln
+rc=0
+out=f32: 3.140000
+out=f64: 2.718280
+out=sum: 10.500000
+out=diff: 5.250000
+ty=Slice_u8 scalar
+### tests/types/int_alias_pass.ln
+rc=0
+out=z=15 w=30 f=3.000000 g=4.500000
+ty=Slice_u8 scalar
+### tests/types/integer_iN_arbitrary_pass.ln
+rc=0
+out=
+### tests/types/integer_types_pass.ln
+rc=0
+out=i32: 42
+out=u8: 255
+out=i64: 1000000
+out=u32: 12345
+ty=Slice_u8 scalar
+### tests/types/local_array_pass.ln
+rc=58
+out=
+### tests/types/null_zero_ptr_pass.ln
+rc=0
+out=
+### tests/types/overflow_boundary_safe_pass.ln
+rc=0
+out=
+### tests/types/overflow_operators_pass.ln
+rc=0
+out=
+### tests/types/overflow_wrap_explicit_pass.ln
+rc=0
+out=
+### tests/types/packed_mixed_widths_pass.ln
+rc=0
+out=
+ty=Header struct
+### tests/types/packed_struct_pass.ln
+rc=0
+out=
+ty=GpioModer struct
+### tests/types/packed_struct_reconstruct_pass.ln
+rc=0
+out=
+ty=GpioModer struct
+### tests/types/paradigm_b_widening_pass.ln
+rc=0
+out=
+### tests/types/refinement_alias_int_pass.ln
+rc=0
+out=
+### tests/types/refinement_type_alias_pass.ln
+rc=0
+out=
+### tests/types/slice_codegen_pass.ln
+rc=7
+out=
+ty=Slice_i32 scalar
+### tests/types/string_escape_pass.ln
+rc=0
+out=he said "hi"
+out=tab:	here
+out=backslash: \
+ty=Slice_u8 scalar
+### tests/types/string_slices_pass.ln
+rc=0
+out=Length: 14
+out=Content: Hello Sentinel
+out=Length: 8
+out=Content: Explicit
+ty=Slice_u8 scalar
+### tests/types/structs_pass.ln
+rc=0
+out=v = {10, 20}
+out=v2.x = 30, v.x = 10
+ty=Slice_u8 scalar
+ty=Vec2 struct
+### tests/types/sub_slice_basic_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+### tests/types/unsafe_adt_pass.ln
+rc=0
+out=Radius is 10
+ty=Shape struct
+ty=Slice_u8 scalar
+### tests/types/var_slice_param_write_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/types/vla_stack_array_pass.ln
+rc=4
+out=
+ty=Slice_u8 scalar
+### tests/types/vra_l1_autosize_pass.ln
+rc=0
+out=
+### tests/types/vra_l2_int_concretize_pass.ln
+rc=0
+out=
+### tests/unsafe/ptr_var_write_pass.ln
+rc=0
+out=111
+ty=Slice_u8 scalar
+### tests/unsafe/ptr_write_param_pass.ln
+rc=0
+out=42
+ty=Slice_u8 scalar
+### tests/unsafe/unsafe_nested_pass.ln
+rc=0
+out=
+### tests/unsafe/unsafe_valid_pass.ln
+rc=0
+out=
+### tests/verification/assert_proven_pass.ln
+rc=0
+out=
+### tests/verification/assume_in_unsafe_pass.ln
+rc=0
+out=
+### tests/vra/accum_bound_after_loop_pass.ln
+rc=0
+out=
+### tests/vra/accum_offset_guard_pass.ln
+rc=0
+out=
+ty=Slice_i8 scalar
+### tests/vra/alias/call_does_not_erase_guard_pass.ln
+rc=0
+out=
+### tests/vra/binary_search_in_loop_pass.ln
+rc=0
+out=idx=3
+ty=Slice_u8 scalar
+### tests/vra/bounded_counter_return_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/bounds/bounds_pass.ln
+rc=0
+out=arr[0]=10, arr[4]=50, arr[3]=40
+ty=Slice_u8 scalar
+### tests/vra/bounds/call_result_slice_len_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/bounds/dependent_array_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/bounds/diff_constraint_vardecl_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/bounds/equation_constraints_pass.ln
+rc=0
+out=
+### tests/vra/bounds/field_refinement_read_pass.ln
+rc=30
+out=
+ty=Box struct
+### tests/vra/bounds/in_condition_pass.ln
+rc=0
+out=find_char: 2
+out=peek_safe: 98
+ty=Slice_u8 scalar
+### tests/vra/bounds/in_field_forwarded_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+### tests/vra/bounds/in_keyword_pass.ln
+rc=0
+out=
+### tests/vra/bounds/interprocedural_return_range_pass.ln
+rc=0
+out=
+### tests/vra/bounds/or_guard_bounds_pass.ln
+rc=20
+out=
+ty=Slice_i32 scalar
+### tests/vra/bounds/range_if_pass.ln
+rc=0
+out=
+### tests/vra/bounds/range_linear_pass.ln
+rc=0
+out=
+### tests/vra/bounds/range_relational_pass.ln
+rc=0
+out=
+### tests/vra/bounds/return_constraints_pass.ln
+rc=0
+out=
+### tests/vra/bounds/sub_slice_empty_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/bounds/subslice_inbounds_pass.ln
+rc=7
+out=
+ty=Slice_i32 scalar
+### tests/vra/bounds/sub_slice_valid_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/bounds/vra_body_return_inference_pass.ln
+rc=0
+out=
+### tests/vra/bounds/vra_loop_lower_bound_pass.ln
+rc=0
+out=
+### tests/vra/callsite_return_range_pass.ln
+rc=0
+out=
+### tests/vra/correlated_div_range_pass.ln
+rc=0
+out=
+### tests/vra/div_guard_strict_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/element_range_pass.ln
+rc=0
+out=
+### tests/vra/element_range_subslice_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/elem_range_through_copy_pass.ln
+rc=0
+out=
+### tests/vra/empty_check_narrows_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/fixed_array_len_guard_pass.ln
+rc=0
+out=
+### tests/vra/guard_counter_offset_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/guards/affine_loop_post_pass.ln
+rc=0
+out=
+### tests/vra/guards/affine_step_neg_pass.ln
+rc=0
+out=
+### tests/vra/guards/and_chain_in_guard_pass.ln
+rc=0
+out=
+### tests/vra/guards/array_index_safe_pass.ln
+rc=0
+out=
+### tests/vra/guards/constraint_param_pass.ln
+rc=0
+out=
+### tests/vra/guards/guarded_compound_index_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/guards/if_narrows_then_branch_pass.ln
+rc=0
+out=
+### tests/vra/guards/in_guard_dynamic_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/guards/in_guard_narrows_pass.ln
+rc=0
+out=
+### tests/vra/guards/literal_widening_pass.ln
+rc=0
+out=
+### tests/vra/guards/return_constrained_to_unsigned_pass.ln
+rc=0
+out=
+### tests/vra/guards/subtraction_widened_explicit_cast_pass.ln
+rc=0
+out=
+### tests/vra/guards/vra_len_guard_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/guards/vra_reverse_plain_slice_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/guards/while_decreasing_pass.ln
+rc=0
+out=
+### tests/vra/insertion_sort_pass.ln
+rc=1
+out=
+ty=Slice_i32 scalar
+### tests/vra/invariant/struct_in_basic_pass.ln
+rc=0
+out=ch=h
+ty=Lexer struct
+ty=Slice_u8 scalar
+### tests/vra/invariant/struct_in_interprocedural_pass.ln
+rc=0
+out=h
+ty=Lexer struct
+ty=Slice_u8 scalar
+### tests/vra/invariant/struct_in_mutation_pass.ln
+rc=0
+out=pos=2
+ty=Buf struct
+ty=Slice_u8 scalar
+### tests/vra/length_equality_guard_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+### tests/vra/len_guard_narrows_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/lhs_offset_guard_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/loop_reverse_index_pass.ln
+rc=28
+out=
+### tests/vra/mask_bounds_pass.ln
+rc=0
+out=
+### tests/vra/masked_ring_index_pass.ln
+rc=42
+out=
+### tests/vra/matrix_const_stride_pass.ln
+rc=0
+out=
+### tests/vra/matrix_symbolic_2d_pass.ln
+rc=78
+out=
+ty=Slice_i32 scalar
+### tests/vra/midpoint_identity_pass.ln
+rc=0
+out=
+### tests/vra/midpoint_in_bounds_pass.ln
+rc=0
+out=
+### tests/vra/negative_refinement_pass.ln
+rc=0
+out=
+ty=Delta struct
+### tests/vra/offset_condition_measure_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/one_armed_clamp_pass.ln
+rc=0
+out=
+### tests/vra/overflow/accum_trip_bound_pass.ln
+rc=0
+out=
+### tests/vra/overflow/cast_to_narrow_pass.ln
+rc=0
+out=
+### tests/vra/overflow/checked_mul_keeps_value_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+### tests/vra/overflow/checked_ops_pass.ln
+rc=50
+out=
+ty=Slice_u8 scalar
+### tests/vra/overflow/loop_accumulator_bounded_pass.ln
+rc=0
+out=120
+ty=Slice_u8 scalar
+### tests/vra/overflow/mixed_signed_pass.ln
+rc=0
+out=
+### tests/vra/overflow/overflow_cond_widened_pass.ln
+rc=0
+out=
+### tests/vra/overflow/overflow_escapes_pass.ln
+rc=0
+out=
+### tests/vra/overflow/overflow_mul_widened_pass.ln
+rc=0
+out=
+### tests/vra/overflow/saturating_in_loop_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/overflow/u16_mul_widened_pass.ln
+rc=0
+out=
+### tests/vra/overflow/u16_to_u8_assign_pass.ln
+rc=0
+out=
+### tests/vra/overflow/u8_saturating_pass.ln
+rc=0
+out=
+### tests/vra/overflow/u8_wrap_pass.ln
+rc=0
+out=
+### tests/vra/overflow/unsafe_bypasses_pass.ln
+rc=0
+out=
+### tests/vra/overflow/unsafe_waives_narrowing_pass.ln
+rc=44
+out=
+### tests/vra/overflow/usize_widen_pass.ln
+rc=0
+out=
+### tests/vra/overflow/vra_const_folding_pass.ln
+rc=0
+out=
+### tests/vra/overflow/vra_return_range_pass.ln
+rc=0
+out=
+### tests/vra/overflow/widening_pass.ln
+rc=0
+out=
+### tests/vra/post_loop_negation_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/refinement/alias_param_seeds_bounds_pass.ln
+rc=0
+out=
+### tests/vra/refinement/alias_valid_pass.ln
+rc=50
+out=
+### tests/vra/refinement/callsite_len_forwarded_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/refinement/callsite_len_same_name_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/refinement/composed_constraints_pass.ln
+rc=0
+out=
+### tests/vra/refinement/div_guard_nonzero_ir_pass.ln
+rc=0
+out=95
+ty=Slice_u8 scalar
+### tests/vra/refinement/divisor_range_proven_pass.ln
+rc=0
+out=
+### tests/vra/refinement/equal_constraint_pass.ln
+rc=0
+out=
+### tests/vra/refinement/len_param_refinement_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/refinement/nonzero_guard_via_slot_pass.ln
+rc=0
+out=
+### tests/vra/refinement/nonzero_pass.ln
+rc=0
+out=
+### tests/vra/refinement/refined_alias_range_on_type_pass.ln
+rc=0
+out=
+### tests/vra/refinement/refinement_narrow_pass.ln
+rc=0
+out=
+### tests/vra/refinement/refinement_reflexivity_pass.ln
+rc=0
+out=
+### tests/vra/refinement/refinement_runtime_alias_pass.ln
+rc=0
+out=80 -> 40
+ty=Slice_u8 scalar
+### tests/vra/refinement/return_refinement_proven_pass.ln
+rc=0
+out=
+### tests/vra/refinement/struct_field_refinement_pass.ln
+rc=0
+out=
+ty=Config struct
+### tests/vra/refinement/within_bound_pass.ln
+rc=0
+out=
+### tests/vra/return_refinement_param_pass.ln
+rc=0
+out=
+### tests/vra/sliding_window_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
+### tests/vra/struct_field_cell_pass.ln
+rc=0
+out=
+ty=Point struct
+### tests/vra/struct_field_constructor_pass.ln
+rc=0
+out=
+ty=Point struct
+### tests/vra/two_pointer_reverse_pass.ln
+rc=5
+out=
+ty=Slice_i32 scalar
+### tests/vra/while_and_conjunct_pass.ln
+rc=0
+out=

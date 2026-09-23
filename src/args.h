@@ -25,11 +25,6 @@ typedef struct
                                     // separately because that is where the gap is: the
                                     // ownership analyses are ready to take over, the numeric
                                     // ones still raise obligations the old engine discharges.
-    // STAGE IV: emit the C from the IR (src/ir/emit_c.h) rather than from the AST
-    // (src/emit/). A flag first, so the corpus can be run both ways and the difference
-    // MEASURED — the gates cannot see the new backend while every test compiles through the
-    // old one.
-    bool        backend_ir;
     bool        engine_ir;          // DEFAULT since 2026-09-08: the sovereign IR analyses
                                     // are authoritative for ownership, borrows and definite
                                     // assignment. `--engine=legacy` gets the old AST engine
@@ -90,106 +85,25 @@ static Args args_parse(int argc, char** argv)
     // survey that preceded it was wrong — it globbed `*_pass.ln` and missed 23 files.
     args.engine_ir = true;
     args.engine_ir_numeric = true;
-    // ── THE DEFAULT BACKEND, 2026-09-19 ──────────────────────────────────────────────────
-    // The C is now emitted FROM THE IR. `--backend=legacy` restores the AST emitter.
+    // ── THE BACKEND, AND THERE IS ONLY ONE NOW ───────────────────────────────────────────
+    // The C is emitted from the IR. `src/emit/`, the AST emitter, was deleted on 2026-09-23;
+    // `--backend=ir` / `--backend=legacy` went with it, because a flag that selects between
+    // one thing is not a choice.
     //
-    // What had to be true first, each measured rather than argued:
-    //   emit_gate      399 agree / 0 differ / 0 build-fail
-    //   annot_gate     0 rows short — the new backend tells the C compiler at least as much
-    //                  on every row, and more on four of five (restrict 200 -> 488,
-    //                  access 38 -> 164); the one divergence (`const T*`) is stated
-    //   backend_corpus 421 programs through the REAL compiler: 0 differ, 0 cannot build
-    //   D-51/54/55     0 programs it cannot emit · module-qualified function identity ·
-    //                  no corpus test depends on the old emitter's spellings
+    // ★ WHAT THE FLAG WAS FOR, AND WHY IT EARNED ITS KEEP. It existed so the corpus could be
+    // run BOTH ways and the difference MEASURED, and that measurement found four defects no
+    // other instrument could — two of which were not backend bugs at all but checks the OLD
+    // BACKEND was enforcing on the language's behalf (E106 undeclared identifiers; an
+    // unmodelled construct emitted as `v0 = 0`). Flipping the default was the switchover;
+    // deleting the directory is the bookkeeping.
     //
-    // ★ AND THE POINT OF FLIPPING IT, beyond tidiness: until now every corpus test compiled
-    // through the OLD emitter, so `make gates` could not see the new one — 251 programs once
-    // failed to build under it while all eight gates stayed green. THE FLIP IS WHAT MAKES THE
-    // CORPUS THE NEW BACKEND'S TEST. That, not deleting a directory, is the switchover.
-    //
-    // ⚠ AND FLIPPING IT IS WHAT FOUND OUT WHAT THE DIFFERENTIALS COULD NOT. Running the
-    // corpus through the new backend surfaced twelve failures, and then the trust harness —
-    // which EXECUTES what was proven — surfaced a thirteenth the corpus could not see:
-    //
-    //   nine  codegen defects: a null pointer stored from an integer, a function-pointer type
-    //         with no signature, a borrow binding addressed instead of loaded
-    //   two   E106 "use of undeclared identifier", REPORTED BY src/emit/expr.h — so with this
-    //         backend the program was accepted and emitted `void v0;`. Name resolution is the
-    //         front end's job; it is now src/sema/undeclared.h (D-57). (The D-57 entry said
-    //         all THREE remaining failures were E106. Two were; the third was the one below,
-    //         and it was the more serious of the two kinds.)
-    //   one   IR_OPAQUE emitted as `v0 = 0`. Right for the ANALYSES (a declared unknown they
-    //         havoc around); for codegen it passed a NULL to a function that dereferences it.
-    //         The backend now REFUSES what it cannot model rather than emitting a placeholder,
-    //         because a zero of the right type compiles and a segfault is not a diagnostic
-    //   plus  `uint16_t * uint16_t` into a `uint32_t`: UB in C, because both operands promote
-    //         to `int`. The IR said u32; the C computed in int. A widening operation is now
-    //         SPELLED as one. No gate saw it — run_trust did, by running the program
-    //
-    // Verified after all of it: corpus 724/724 with every gate at exit 0, trust 43/0, and
-    // backend_corpus 422 agree / 0 behaviour differs / 0 cannot build.
-    //
-    // ══ AND THEN REVERTED, THE SAME DAY, FOR A REASON NONE OF THOSE TEN GATES COULD SEE ══
-    //
-    // ★ D-62 — THE NEW BACKEND DOES NOT NICHE-PACK. For every `T | markers` in the corpus it
-    // emits a tag+union struct where the old backend emits the payload itself:
-    //
-    //     old:  typedef const uint8_t * __U_ptr_u8_none;                    // 8 bytes
-    //     new:  struct __U_ptr_u8_none { int32_t tag; union {...} data; };  // 16 bytes
-    //
-    // Both are CORRECT and the programs print the same thing, which is precisely why
-    // `backend_corpus` — behaviour, 422/0/0 — is blind to it, and why `emit_gate` and the
-    // corpus and trust and the nineteen fuzzers are too. The measurement is `layout_gate.sh`,
-    // written after the fact: **29 sums lost their packing, 85 agree**.
-    //
-    // The niche optimization is not a nicety here. It is P2 — "zero-cost" — it is what the
-    // README showcases, and `T | markers` is the ONE error-handling construct in the language,
-    // so this silently doubles the width of every optional and every result in every program
-    // that uses them. A default that abandons the project's headline claim without saying so
-    // is worse than a flag.
-    //
-    // plan item 2.2 predicted this exactly: "if two backends chose differently, the same
-    // program would have different runtime semantics under each, and nothing would catch it —
-    // there is no cross-backend layout test because there has never been a second backend."
-    // It was written as an argument for the layout pass. It was also a defect report.
-    //
-    // What stands: everything the flip FOUND (D-57 E106 in the front end, D-58 the backend
-    // refusing what it cannot model, D-59 the widening-arithmetic UB, D-60/61 the unplugged
-    // harnesses) — those were real and are fixed. And `backend_corpus` is now a GATE, so the
-    // corpus still tests the new backend on every run even though it is not the default. The
-    // flip's value did not depend on the flip staying.
-    //
-    // ══ AND FLIPPED AGAIN, 2026-09-20, WITH THE CONDITION MET ════════════════════════════
-    //
-    // The condition was `layout_gate.sh` at 0, and the way to reach it was the thing the plan
-    // had been calling item 2.2 for months: LAYOUT DECIDED ONCE, BELOW THE IR. That is
-    // src/ir/layout.h — the niche search ported from src/sema/niche.h to IrType, so the
-    // question "how is this sum represented" has ONE answer that every backend reads instead
-    // of each deriving its own.
-    //
-    // It is deliberately the SAME algorithm and not a better one: the job was for the two
-    // backends to AGREE, and an improved port silently reintroduces the divergence it exists
-    // to close. The IrType is untouched — ir.h is right that a niche recorded ON the type
-    // would make a sum indistinguishable from a pointer with an odd range. Representation is
-    // a QUERY over the type, not a field in it.
-    //
-    // Measured: `layout_gate` 52 types agreeing / **0 differing** (and verified to have teeth:
-    // disabling the packing takes it to 26 differing) · `backend_corpus` 423 agree / 0 differ
-    // / 0 cannot build · corpus 725/725 · trust 44/0 · every gate at exit 0.
-    //
-    // Two defects found along the way, neither by a gate:
-    //   a `bool` backing needs uint8_t storage. `_Bool` normalises every nonzero store to 1,
-    //   so the sentinel 2 read back as `true`. It looked CORRECT on the marker path, because
-    //   `x == (_Bool)2` normalises on both sides — the collision only shows when the payload
-    //   IS true, and the corpus's bool-union test passed `g(true, true)`, the path that works
-    //   either way. One argument's difference between a green suite and a miscompile.
-    //   (tests/trust/niche_bool_both_paths_pass.ln is the test that was missing.)
-    //
-    //   a SLICE backing cannot be packed at all in this scheme, though src/sema/niche.h packs
-    //   it. Its reasoning is sound and its representation does not follow: a slice is a
-    //   two-word struct and a sentinel is an integer, so the old backend emits C that does not
-    //   compile. This side fails closed and emits a tagged struct — correct, merely not free.
-    args.backend_ir = true;
+    // ★★ AND THE REFERENCE OUTLIVED THE IMPLEMENTATION. tests/BASELINE.txt records, for every
+    // corpus program, what it prints, its exit code, and how every type it declares is
+    // REPRESENTED — generated from the AST emitter before it was removed, then verified
+    // against this backend: behaviour IDENTICAL, plus two programs this one compiles and that
+    // one could not. `baseline_gate.sh` still asks the question that caught D-62 (29 sums
+    // silently losing their niche packing while ten gates stayed green), which is the one
+    // question no behavioural instrument can ask.
     args.output_file = "out.c";  // default
 
     for (int i = 1; i < argc; i++) {
@@ -207,10 +121,10 @@ static Args args_parse(int argc, char** argv)
             args.dump_octagon = true;
         } else if (strcmp(argv[i], "--emit-llvm") == 0) {
             args.emit_llvm = true;
-        } else if (strcmp(argv[i], "--backend=ir") == 0) {
-            args.backend_ir = true;
-        } else if (strcmp(argv[i], "--backend=legacy") == 0) {
-            args.backend_ir = false;
+        } else if (strncmp(argv[i], "--backend=", 10) == 0) {
+            // Accepted and ignored: there is one backend. Kept as a no-op rather than an
+            // error so a script pinned to `--backend=ir` still runs.
+            (void)0;
         } else if (strcmp(argv[i], "--engine=legacy") == 0) {
             // The pre-rebuild AST engine. Kept so the differential harnesses can still ask
             // the old question, and so a user hitting a regression has somewhere to stand.
