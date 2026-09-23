@@ -137,7 +137,15 @@ static int lin_place_of(Lin *L, IrValue *addr, unsigned *bit) {
                 "is reported for this function. Split the struct.\n", p.proj[0].field, 63);
         exit(1);
     }
-    if (p.proj[0].kind == IRPJ_INDEX && p.proj[0].index) {
+    // ⚠ EXACTLY ONE PROJECTION. `a[0].h1` names a place INSIDE element 0, and resolving it to
+    // "element 0" claims the whole element was released — so a struct with two linear fields
+    // lost one silently: `mov a[0].h1` was accepted with h2 leaked. That is fail-OPEN, and it
+    // is the hole this rule opened when it started resolving indexed places at all.
+    //
+    // A flat mask can name one level. Deeper places go back to unresolved, which leaves the
+    // array's whole obligation outstanding — over-rejection, the direction that is safe to be
+    // wrong in. Naming `a[0].h1` properly is the location tree (A.2), not a wider mask.
+    if (p.nproj == 1 && p.proj[0].kind == IRPJ_INDEX && p.proj[0].index) {
         IrValue *iv = p.proj[0].index;
         IrInstr *d = (iv->id >= 0 && iv->id < L->nvar) ? L->def[iv->id] : NULL;
         if (d && d->op == IR_CONST) {

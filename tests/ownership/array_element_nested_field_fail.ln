@@ -1,0 +1,24 @@
+// EXPECT: [E003]
+// ★ THE HOLE THAT THE ELEMENT RULE OPENED, and the reason a flat mask can name ONE level.
+//
+// `a[0].h1` is a place INSIDE element 0. Resolving it to "element 0" claims the whole element
+// was released — so this program, which releases h1 and leaks h2, was ACCEPTED. Fail-OPEN,
+// introduced by the same change that made element-wise release work at all (D-31), and found
+// by asking what happens when an element has TWO linear fields instead of one.
+//
+// The element rule now requires the index to be the WHOLE projection. A deeper place goes back
+// to unresolved, so the array keeps its entire obligation and this is refused. That is
+// over-rejection — `mov a[0].h` is correct when `h` is the element's only linear field, and is
+// now rejected too — which is the direction it is safe to be wrong in.
+//
+// Naming `a[0].h1` properly needs the location tree (plan A.2): a root plus a path of offsets,
+// with no width bound and no depth bound. This test is what tells that work it has arrived.
+type H { mov p *i32 }
+type R { mov h1 H, mov h2 H }
+func drop_h(mov {p} H) { }
+proc main() i32 {
+    var q *i32 = 0
+    var a R[1] = [R(H(q), H(q))]
+    drop_h(mov a[0].h1)
+    return 0
+}
