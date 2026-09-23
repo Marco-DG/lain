@@ -3388,6 +3388,30 @@ void sema_infer_expr(Expr *e) {
         }
     } else {
         e->type = get_builtin_i32_type();
+        // ★ BITWISE COMPLEMENT KEEPS ITS OPERAND'S TYPE. Every non-deref unary landed on
+        // i32 here, which is wrong for `~` on any other integer type and wrong in a way
+        // that only bites the UNSIGNED ones: `~x` on a uN is (2^N−1)−x, a value of that
+        // same uN, but typing it i32 made the range come back NEGATIVE ([−2^31, −1] for a
+        // u64 operand), so the narrowing check refused it:
+        //     func f(a u64) u64 { return ~a }      // [E086] not provably free of overflow
+        // while the identical expression on an iN compiled, because a negative i32 range
+        // does fit an i64 slot. The corpus never caught it: bitwise_pass.ln inverts
+        // `var a = 12` (signed `int`), and simd_lexer_pass.ln writes
+        // `(~@movemask(ws)) & 65535`, where the AND re-bounds the result before anything
+        // narrows it. `~` is width-defined, so the operand's type IS the result type.
+        //
+        // ★ AND SO DOES UNARY MINUS, where the same i32 default was not a false rejection
+        // but a silent MISCOMPILE. `func neg(a i64) i64 { return -a }` emitted
+        //     int32_t v1;  v1 = -v0;  return v1;
+        // so the 64-bit negation was TRUNCATED to 32 bits and sign-extended back:
+        // neg(5000000000) returned -705032704 instead of -5000000000, with no diagnostic.
+        // The narrow types escaped it only by accident, because the negation-overflow
+        // check below refuses `-x` on an iN with N < 32 before codegen ever runs.
+        if (e->as.unary_expr.op == TOKEN_TILDE || e->as.unary_expr.op == TOKEN_MINUS) {
+            Type *ot = e->as.unary_expr.right ? e->as.unary_expr.right->type : NULL;
+            while (ot && ot->kind == TYPE_COMPTIME) ot = ot->element_type;
+            if (ot && is_integer_type(ot)) e->type = ot;
+        }
         // Unary negation overflow: `-x` overflows at the type minimum
         // (e.g. -INT_MIN is not representable). Check against the operand's
         // integer type. (The common abs idiom uses the binary form `0 - x`,

@@ -1,0 +1,28 @@
+// TRUST: bitwise complement on UNSIGNED types, which was rejected outright.
+//
+// `~` was typed i32 regardless of its operand, so `~a` on a uN came back with a
+// NEGATIVE range ([-2^31,-1] for a u64) and the narrowing check refused it:
+//     func f(a u64) u64 { return ~a }     // [E086] not provably free of overflow
+// The signed form compiled the whole time, because a negative i32 range fits an i64
+// slot, which is why nothing caught it: bitwise_pass.ln inverts `var a = 12` (signed
+// `int`), and simd_lexer_pass.ln writes `(~@movemask(ws)) & 65535`, where the AND
+// re-bounds the result before anything narrows it.
+//
+// The VALUES are the point, not just that it compiles: `~` is width-defined, so the
+// answer differs per type, and a type-inference regression would change them.
+extern proc libc_printf(fmt *u8, ...) i32
+
+func not_u8(a u8) u8    { return ~a }
+func not_u32(a u32) u32 { return ~a }
+func not_u64(a u64) u64 { return ~a }
+func not_i32(a i32) i32 { return ~a }
+
+proc main() i32 {
+    libc_printf("%u\n",   not_u8(5) as u32)       // 255 - 5   = 250
+    libc_printf("%u\n",   not_u32(0))             // 2^32 - 1  = 4294967295
+    libc_printf("%u\n",   not_u32(12))            // 2^32 - 13 = 4294967283
+    libc_printf("%llu\n", not_u64(0))             // 2^64 - 1
+    libc_printf("%llu\n", not_u64(1))             // 2^64 - 2
+    libc_printf("%d\n",   not_i32(12))            // -13, the signed identity -x-1
+    return 0
+}

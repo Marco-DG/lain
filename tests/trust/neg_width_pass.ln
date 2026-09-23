@@ -1,0 +1,32 @@
+// TRUST: unary minus must keep its operand's WIDTH. It did not, and the result was a
+// silent miscompile rather than a rejection.
+//
+// Every non-deref unary operator was typed i32, so `func neg(a i64) i64 { return -a }`
+// emitted
+//     int32_t v1;  v1 = -v0;  return v1;
+// The 64-bit negation was truncated to 32 bits and sign-extended back, so
+// neg(5000000000) returned -705032704. No diagnostic, no warning, wrong answer.
+//
+// Narrow types escaped only by accident: the negation-overflow check refuses `-x` on an
+// iN with N < 32 before codegen runs, so the truncation never got the chance to happen
+// there. Only the types WIDER than i32 were affected, which is why nothing caught it.
+//
+// The values are the test. A width regression changes them.
+extern proc libc_printf(fmt *u8, ...) i32
+
+func neg64(a i64) i64 { return -a }
+
+proc main() i32 {
+    var a i64 = 5000000000                  // 5e9, past i32
+    libc_printf("%lld\n", neg64(a))         // -5000000000
+
+    var b i64 = -5000000000
+    libc_printf("%lld\n", neg64(b))         // 5000000000
+
+    var c i64 = 4294967296                  // 2^32 exactly: truncates to 0 if narrowed
+    libc_printf("%lld\n", neg64(c))         // -4294967296
+
+    var d i64 = 7                           // small value, unaffected either way
+    libc_printf("%lld\n", neg64(d))         // -7
+    return 0
+}

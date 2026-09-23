@@ -1224,6 +1224,48 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             oct_add_negsum_le(W, r, x, 0);
             break;
         }
+        case IR_BNOT: {
+            // `r = ~x` — EXACT, and octagon-shaped, exactly as IR_NEG above is. In ℤ the
+            // identity is signedness-dependent: for a signed type ~x = −x − 1, so r + x = −1;
+            // for an unsigned N-bit type ~x = (2^N − 1) − x, so r + x = 2^N − 1.
+            //
+            // ★ There was no case at all, so the result was FORGOTTEN and read back as the
+            // full signed range. That range contains negatives, so it does not fit an
+            // UNSIGNED slot, and the NARROWING check refused every `~` on a uN:
+            //     func f(a u64) u64 { return ~a }     // [E086] not provably free of overflow
+            // while the identical expression on an iN compiled. The corpus never caught it:
+            // bitwise_pass.ln inverts `var a = 12` (signed `int`), and simd_lexer_pass.ln
+            // writes `(~@movemask(ws)) & 65535`, where the AND re-bounds the result before
+            // anything narrows it. Bare `~` on unsigned was untested.
+            if (r<0) break;
+            oct_forget(W, r);
+            if (ins->n_operands < 1) break;
+            int x = ins->operands[0]->id;
+            int64_t tlo, thi;
+            const IrType *rt = ins->result ? ins->result->type : NULL;
+            bool have_t = irtype_int_range(rt, &tlo, &thi);
+            bool is_signed = rt && rt->kind == IRT_INT && rt->is_signed;
+            if (x>=0 && x<V->nvar && V->cknown[x]) {
+                // Fold exactly, in the result type's own arithmetic: ~c is −c−1 signed, and
+                // (2^N−1)−c unsigned. Using C's ~ on the i64 carrier would give the SIGNED
+                // answer for an unsigned type (u8: ~5 is 250, not −6).
+                int64_t c = (is_signed || !have_t) ? -V->cval[x] - 1 : thi - V->cval[x];
+                oct_add_const(W, r, c);
+                break;
+            }
+            // The result is a value of its own type, always. This alone is what the
+            // narrowing check needs; the relation below is the precision.
+            if (have_t) { oct_add_lb(W, r, tlo); oct_add_ub(W, r, thi); }
+            // r + x = s. Signed s = −1 is always representable. Unsigned s = 2^N − 1 is not:
+            // irtype_int_range clamps u64 to INT64_MAX (the domain is i64), and OCT_INF is
+            // INT64_MAX/4, so the sum constraint is only added when it actually fits.
+            int64_t s = is_signed ? -1 : (have_t ? thi : 0);
+            if ((is_signed || have_t) && s > -OCT_INF && s < OCT_INF) {
+                oct_add_sum_le(W, r, x, s);
+                oct_add_negsum_le(W, r, x, -s);
+            }
+            break;
+        }
         case IR_CAST:
             if (r>=0){ // treat as a copy (widenings preserve value; a narrowing that
                        // changes it would be a separate proven-safe obligation)
