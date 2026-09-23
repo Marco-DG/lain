@@ -1,0 +1,28 @@
+// ★ D-35: CONSUMING AN ARRAY OF RESOURCES WHOLE, and releasing it inside the callee.
+//
+// Two defects, and the first hid the second.
+//
+// 1. An aggregate passed by ADDRESS lowers `drain(mov a)` to `consume %a; call drain(%a)` —
+//    so the call's own operand IS the place the consume just marked, and the use check fired
+//    on the very instruction the `mov` exists to feed. A by-VALUE argument never hit this:
+//    it lowers to `load; consume; call(%loaded)`, naming a value whose slot is clean. The
+//    difference was the calling convention, not the language.
+//
+// 2. `slot_ty` — which the discharge rule reads to ask "which sub-obligations does this place
+//    have" — was only ever set for allocas. An owned PARAMETER had no type there, so the rule
+//    could not see that `a` was an array of two, and releasing both elements still leaked.
+//
+// See array_whole_move_partial_fail.ln for the direction that must stay closed: the callee
+// takes ownership of BOTH elements and must discharge both.
+type R { mov h *i32, id i32 }
+func drop_it(mov {h, id} R) { }
+proc drain(mov a R[2]) {
+    drop_it(mov a[0])
+    drop_it(mov a[1])
+}
+proc main() i32 {
+    var p *i32 = 0
+    var a R[2] = [R(p, 1), R(p, 2)]
+    drain(mov a)
+    return 0
+}

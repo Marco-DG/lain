@@ -1,0 +1,24 @@
+// EXPECT: [E003]
+// ★ THE SOUNDNESS HALF OF D-35, and it caught a real mistake in the fix for it.
+//
+// `drain` takes ownership of the whole array, so it owes BOTH releases. It performs one.
+//
+// The first attempt at giving an owned parameter a slot type wrote
+// `pv->type->elem ? pv->type->elem : pv->type`, which for an array parameter takes the
+// ELEMENT type — so the discharge rule ran its STRUCT branch and one released element
+// satisfied the entire array. This program was ACCEPTED, leaking `a[1]`. Only a POINTER is
+// stripped now.
+//
+// A weaker check that happens to make the target program pass is worse than the refusal it
+// replaced, because it looks like progress.
+type R { mov h *i32, id i32 }
+func drop_it(mov {h, id} R) { }
+proc drain(mov a R[2]) {
+    drop_it(mov a[0])
+}
+proc main() i32 {
+    var p *i32 = 0
+    var a R[2] = [R(p, 1), R(p, 2)]
+    drain(mov a)
+    return 0
+}

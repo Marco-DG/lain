@@ -204,7 +204,8 @@ static void lin_escape(Lin *L, IrValue *v, uint64_t *st) {
 // Apply one block's instructions to `st` (consumption masks) — the transfer function. When
 // `report`, flag a use/double-move against the running state (used only in the final sweep).
 static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
-    for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+    IrInstr *prev = NULL;                 // for the `consume %p; call f(%p)` handover, below
+    for (IrInstr *ins=b->instrs; ins; prev = ins, ins=ins->next) {
         IrValue *o0 = ins->n_operands>=1 ? ins->operands[0] : NULL;
         if (ins->op==IR_STORE) {                         // store re-initializes the target slot
             if (o0) {
@@ -268,6 +269,15 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
                 // rule above reports the double move (E002), which is the precise diagnosis.
                 // A WHOLE consume still reports here — after `mov a`, `a[1]` really is a use
                 // of something that is gone.
+                // ── `mov a` ON AN AGGREGATE IS A HANDOVER, NOT A USE (D-35) ──────────
+                // An array or struct passed by ADDRESS lowers `f(mov a)` to
+                // `consume %a; call f(%a)` — the call's own operand IS the place the consume
+                // just marked, so the use check fired on the very instruction the `mov` exists
+                // to feed. A by-VALUE argument never hit this: it lowers to `load; consume;
+                // call(%loaded)` and the call names the loaded value, whose slot is clean.
+                // The distinction was the calling convention, not the language.
+                if (ins->op==IR_CALL && prev && prev->op==IR_CONSUME &&
+                    prev->n_operands>=1 && prev->operands[0]==ok) continue;
                 bool projecting = (ins->op==IR_ELEM_PTR || ins->op==IR_FIELD_PTR) && k==0;
                 bool whole_gone = (st[ok->id] >> LIN_WHOLE_BIT) & 1u;
                 if (projecting && !whole_gone) continue;
@@ -378,6 +388,19 @@ static Lin *lin_analyze(IrFunc *f) {
         if (!pv || !pv->owns || !pv->type || !pv->type->linear) continue;
         if (!lin_has_release_obligation(pv->type,0)) continue;   // nothing to release ⇒ no leak
         if (pv->id<0 || pv->id>=L->nvar) continue;
+        // The discharge rule reads slot_ty to ask "which sub-obligations does this place
+        // have" — all linear fields of a struct, all elements of an array. It was only ever
+        // set for allocas, so an OWNED PARAMETER had no type there: `proc drain(mov a R[2])`
+        // releasing both elements still reported a leak, because the rule could not see that
+        // `a` was an array of two in the first place. A parameter is a place like any other.
+        // ⚠ Only a POINTER is stripped. Writing `pv->type->elem ? ... : pv->type` took the
+        // ELEMENT type of an array parameter, so the discharge rule ran the STRUCT branch and
+        // one released element satisfied the whole array — a callee that took `mov a R[2]`
+        // and released only `a[0]` was ACCEPTED, leaking the other. A weaker check that
+        // happens to make the target program pass is worse than the refusal it replaced.
+        if (!L->slot_ty[pv->id])
+            L->slot_ty[pv->id] = (pv->type->kind == IRT_PTR && pv->type->elem)
+                               ? pv->type->elem : pv->type;
         bool has_home = false;
         for (IrBlock *b=f->blocks; b && !has_home; b=b->next)
             for (IrInstr *i=b->instrs; i; i=i->next)

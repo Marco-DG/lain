@@ -625,6 +625,10 @@ ty=Slice_u8 scalar
 rc=0
 out=
 ty=R struct
+### tests/ownership/array_whole_move_pass.ln
+rc=0
+out=
+ty=R struct
 ### tests/ownership/block_nll_pass.ln
 rc=0
 out=
