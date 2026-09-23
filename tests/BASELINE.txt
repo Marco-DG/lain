@@ -621,6 +621,10 @@ rc=0
 out=hi
 out=also unqualified
 ty=Slice_u8 scalar
+### tests/ownership/array_element_consume_pass.ln
+rc=0
+out=
+ty=R struct
 ### tests/ownership/block_nll_pass.ln
 rc=0
 out=

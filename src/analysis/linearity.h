@@ -84,7 +84,25 @@ static void lin_add(Lin *L, int slot, isize line, isize col, int code) {
 static bool lin_discharged(const Lin *L, int slot, uint64_t m) {
     if ((m >> LIN_WHOLE_BIT) & 1u) return true;
     IrType *t = (slot>=0 && slot<L->nvar) ? L->slot_ty[slot] : NULL;
-    if (!t || t->kind != IRT_STRUCT || t->n_fields <= 0 || t->n_fields >= 63 || !t->fields) return false;
+    if (!t) return false;
+    // ── AN ARRAY OF RESOURCES (D-31 / C2) ────────────────────────────────────────────────
+    // `[T; N]` is linear iff T is, so the array carries N release obligations and discharges
+    // them one element at a time. Nothing here handled that: an indexed place resolved to
+    // "unknown", the consume was never recorded, and a program that frees EVERY element
+    // exactly once was still reported as a leak. The plan calls this "an array of resources
+    // has no correct spelling at all", and it was over-rejection, not unsoundness — which is
+    // the right direction to fail, but it made the shape unusable.
+    //
+    // A CONSTANT index is exactly as identifiable as a field, so it gets a bit the same way.
+    // A non-constant one still resolves to nothing (see lin_place_of) and the array keeps its
+    // whole obligation — fail-closed, unchanged.
+    if (t->kind == IRT_ARRAY && t->elem && t->elem->linear &&
+        t->array_len > 0 && t->array_len < 63) {
+        uint64_t need = 0;
+        for (int64_t i = 0; i < t->array_len; i++) need |= (1ull << i);
+        return (m & need) == need;
+    }
+    if (t->kind != IRT_STRUCT || t->n_fields <= 0 || t->n_fields >= 63 || !t->fields) return false;
     uint64_t need = 0; bool any = false;
     for (int i=0;i<t->n_fields;i++)
         if (t->fields[i] && t->fields[i]->linear) { need |= (1ull<<i); any = true; }
@@ -109,15 +127,25 @@ static int lin_place_of(Lin *L, IrValue *addr, unsigned *bit) {
     // struct in tests+std has 19 fields). The real answer is a location TREE with no width bound
     // at all, shared with definite-init, which is plan §7.2.
     //
-    // An INDEXED projection still returns -1: that is D-31, whose answer is projections, not a
-    // wider mask, and refusing it here would reject array code that the corpus relies on.
+    // An indexed projection with a CONSTANT index names one element, and one element is as
+    // identifiable as one field — so it takes a bit (D-31). A VARIABLE index names an element
+    // nobody can pin down; it still returns -1, leaving the array's whole obligation
+    // outstanding, which is the fail-closed answer and the one the corpus relies on.
     if (p.proj[0].kind == IRPJ_FIELD && p.proj[0].field >= 63) {
         fprintf(stderr, "error: field %d exceeds the %d fields this ownership analysis can track "
                 "separately. Leaving it untracked would let a double move through, so no result "
                 "is reported for this function. Split the struct.\n", p.proj[0].field, 63);
         exit(1);
     }
-    return -1;                                   // indexed — not tracked per element (D-31)
+    if (p.proj[0].kind == IRPJ_INDEX && p.proj[0].index) {
+        IrValue *iv = p.proj[0].index;
+        IrInstr *d = (iv->id >= 0 && iv->id < L->nvar) ? L->def[iv->id] : NULL;
+        if (d && d->op == IR_CONST) {
+            int64_t k = d->aux.imm;
+            if (k >= 0 && k < 63) { *bit = (unsigned)k; return p.base_id; }
+        }
+    }
+    return -1;                                   // a variable index names no one element
 }
 
 // The module, for resolving a call's callee. Set by the caller (as borrow.h does for its
@@ -228,7 +256,22 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
                 // second `case b` gets its own sum_tag and IS reported there.
                 if (k==0 && ins->op==IR_SUM_PAYLOAD) continue;
                 IrValue *ok = ins->operands[k];
-                if (ok && ok->id>=0 && ok->id<L->nvar && st[ok->id]) lin_add(L, ok->id, ins->line, ins->col, 1);
+                if (!ok || ok->id<0 || ok->id>=L->nvar || !st[ok->id]) continue;
+                // ── FORMING THE ADDRESS OF A SIBLING IS NOT A USE (D-31) ─────────────────
+                // `take(mov a[0]); take(mov a[1])` computes `&a[1]` from the slot `a`, whose
+                // mask now has bit 0 set. Reporting any non-zero mask made that a
+                // use-after-move, so consuming an array one element at a time — the only
+                // correct way to release an array of resources — was refused.
+                //
+                // A PARTIAL consume says a sibling place is gone, not this one. Whether THIS
+                // place is gone is decided where it is actually read or consumed: the consume
+                // rule above reports the double move (E002), which is the precise diagnosis.
+                // A WHOLE consume still reports here — after `mov a`, `a[1]` really is a use
+                // of something that is gone.
+                bool projecting = (ins->op==IR_ELEM_PTR || ins->op==IR_FIELD_PTR) && k==0;
+                bool whole_gone = (st[ok->id] >> LIN_WHOLE_BIT) & 1u;
+                if (projecting && !whole_gone) continue;
+                lin_add(L, ok->id, ins->line, ins->col, 1);
             }
         // ESCAPES (see lin_escape). An aggregate takes ownership of every operand it is built
         // from; a call takes ownership only of the arguments its callee OWNS.

@@ -1,0 +1,16 @@
+// EXPECT: [E002]
+// ★ THE SOUNDNESS HALF OF D-31. Element-wise release was made to work by giving a constant
+// index its own bit; the whole point of a BIT, rather than a counter, is that consuming
+// `a[0]` twice is distinguishable from consuming `a[0]` and `a[1]`.
+//
+// A count would accept this: two consumes, two elements, obligations balanced — and it would
+// be a double free. E002 names it exactly, and the leak of `a[1]` is reported alongside.
+type R { mov h *i32, id i32 }
+func drop_it(mov {h, id} R) { }
+proc main() i32 {
+    var p *i32 = 0
+    var a R[2] = [R(p, 1), R(p, 2)]
+    drop_it(mov a[0])
+    drop_it(mov a[0])
+    return 0
+}

@@ -1,0 +1,21 @@
+// EXPECT: [E003]
+// ★ WHAT MUST STAY CLOSED. A CONSTANT index names one element; a variable one names an
+// element nobody can pin down, so no bit can be set for it and the array keeps its whole
+// obligation. This loop really does release both elements, and the compiler cannot know that
+// — refusing is the fail-closed answer.
+//
+// It is here so that a later attempt to "improve" the element rule cannot quietly accept a
+// variable index without the numeric engine PROVING the indices distinct and exhaustive.
+// That is a real extension; this test is the line it has to cross deliberately.
+type R { mov h *i32, id i32 }
+func drop_it(mov {h, id} R) { }
+proc main() i32 {
+    var p *i32 = 0
+    var a R[2] = [R(p, 1), R(p, 2)]
+    var i usize = 0
+    while i < 2 decreasing 2 - i {
+        drop_it(mov a[i])
+        i = i + 1
+    }
+    return 0
+}
