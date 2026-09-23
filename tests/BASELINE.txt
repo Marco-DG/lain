@@ -625,6 +625,11 @@ ty=Slice_u8 scalar
 rc=0
 out=
 ty=R struct
+### tests/ownership/array_element_nested_field_pass.ln
+rc=0
+out=
+ty=H struct
+ty=R struct
 ### tests/ownership/array_whole_move_pass.ln
 rc=0
 out=

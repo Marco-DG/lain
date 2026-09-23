@@ -6,13 +6,15 @@
 // introduced by the same change that made element-wise release work at all (D-31), and found
 // by asking what happens when an element has TWO linear fields instead of one.
 //
-// The element rule now requires the index to be the WHOLE projection. A deeper place goes back
-// to unresolved, so the array keeps its entire obligation and this is refused. That is
-// over-rejection — `mov a[0].h` is correct when `h` is the element's only linear field, and is
-// now rejected too — which is the direction it is safe to be wrong in.
+// ★ IT IS STILL REJECTED, AND NOW FOR THE RIGHT REASON. Between then and now the location
+// tree landed (plan A.2): `a[0].h1` and `a[0].h2` are separate obligation LEAVES, each with
+// its own bit. So the compiler no longer refuses this because it cannot name the place — it
+// refuses it because `h2` is genuinely never released.
 //
-// Naming `a[0].h1` properly needs the location tree (plan A.2): a root plus a path of offsets,
-// with no width bound and no depth bound. This test is what tells that work it has arrived.
+// An earlier version of this comment said the test "should flip to accepted when a tree can
+// name the place". That was wrong: the program leaks, and must be refused forever. What the
+// tree changed is the DIAGNOSIS, not the verdict — see array_element_nested_field_pass.ln for
+// the program this one is one release short of.
 type H { mov p *i32 }
 type R { mov h1 H, mov h2 H }
 func drop_h(mov {p} H) { }

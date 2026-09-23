@@ -24,6 +24,12 @@
 
 #define LIN_WHOLE_BIT 63u
 
+#define LIN_MAX_LEAVES 63
+#define LIN_MAX_PATH    8
+
+typedef struct { int8_t n; int16_t step[LIN_MAX_PATH]; } LinPath;
+
+
 typedef struct { int slot; isize line, col; int code; } LinFinding;  // 1=E001, 2=E002, 3=E003 leak
 
 typedef struct {
@@ -34,6 +40,8 @@ typedef struct {
     bool       *movesl;     // movesl[slot] = the slot holds a LINEAR value (move-tracked)
     IrInstr   **def;        // def[value] = the instruction defining it
     IrType    **slot_ty;    // element type per tracked slot (for the "all linear fields" rule)
+    LinPath   **slot_leaf;  // slot -> its obligation leaves (the location tree, A.2)
+    int        *slot_nleaf; // how many; -1 = the type needs more than can be represented
     LinFinding *finds; int nfinds, cap;
 } Lin;
 
@@ -82,78 +90,169 @@ static void lin_add(Lin *L, int slot, isize line, isize col, int code) {
 // every LINEAR field of it was — `consume(r mov Resource) { return mov r.handle }` discharges
 // the struct by consuming its only linear field, which the corpus requires to be accepted.
 static bool lin_discharged(const Lin *L, int slot, uint64_t m) {
-    if ((m >> LIN_WHOLE_BIT) & 1u) return true;
-    IrType *t = (slot>=0 && slot<L->nvar) ? L->slot_ty[slot] : NULL;
-    if (!t) return false;
-    // ── AN ARRAY OF RESOURCES (D-31 / C2) ────────────────────────────────────────────────
-    // `[T; N]` is linear iff T is, so the array carries N release obligations and discharges
-    // them one element at a time. Nothing here handled that: an indexed place resolved to
-    // "unknown", the consume was never recorded, and a program that frees EVERY element
-    // exactly once was still reported as a leak. The plan calls this "an array of resources
-    // has no correct spelling at all", and it was over-rejection, not unsoundness — which is
-    // the right direction to fail, but it made the shape unusable.
-    //
-    // A CONSTANT index is exactly as identifiable as a field, so it gets a bit the same way.
-    // A non-constant one still resolves to nothing (see lin_place_of) and the array keeps its
-    // whole obligation — fail-closed, unchanged.
-    if (t->kind == IRT_ARRAY && t->elem && t->elem->linear &&
-        t->array_len > 0 && t->array_len < 63) {
-        uint64_t need = 0;
-        for (int64_t i = 0; i < t->array_len; i++) need |= (1ull << i);
-        return (m & need) == need;
+    if ((m >> LIN_WHOLE_BIT) & 1u) return true;     // an escape marks the whole place gone
+    if (slot < 0 || slot >= L->nvar) return false;
+    int n = L->slot_nleaf[slot];
+    if (n <= 0) return false;                        // unrepresentable, or nothing to discharge
+    // ★ ONE RULE. Every obligation leaf of this place has been consumed. The old code had two
+    // special cases — "all linear FIELDS of a struct" and, later, "all ELEMENTS of an array" —
+    // and neither could express `a[0].h1`, which is a leaf of both kinds at once.
+    uint64_t need = (n >= 63) ? ~(1ull<<LIN_WHOLE_BIT) : ((1ull<<n) - 1u);
+    return (m & need) == need;
+}
+
+// ══ THE LOCATION TREE (plan A.2) ═════════════════════════════════════════════════════════
+//
+// A place is a root plus a path of steps — `a[0].h1` is "slot a, element 0, field 1". The
+// flat mask could name ONE step: bit 63 for the whole value, bits 0..62 for a depth-1 field
+// OR a depth-1 element, never both and never deeper. Everything that went wrong with arrays
+// came from that: `a[0].h1` had to either claim the whole element (fail-OPEN — a sibling
+// obligation lost in silence) or resolve to nothing (fail-closed, and the shape unusable).
+//
+// ★ THE REPRESENTATION. Rather than carry path SETS through the dataflow — which would mean
+// replacing union/intersection over uint64_t with something the fixpoint cannot do cheaply —
+// enumerate each type's OBLIGATION LEAVES once and give each leaf a bit. A leaf is a place
+// that owns a resource and has no owning parts of its own:
+//
+//     type R { mov h1 H, mov h2 H }   R[2]  ->  a[0].h1  a[0].h2  a[1].h1  a[1].h2
+//                                                 bit 0    bit 1    bit 2    bit 3
+//
+// Then every operation is a MASK over leaves, and the existing machinery is untouched:
+//
+//     mov a[0].h1   sets one bit          consume covers the leaves UNDER the named place
+//     mov a[0]      sets bits 0 and 1
+//     mov a         sets all four
+//     discharged    all leaf bits set     — the "all linear fields" rule falls out, and so
+//                                           does the array rule, instead of being two cases
+//     moved twice   a bit already set     — precise at any depth
+//     use-after-move  any leaf under the place being read is set
+//
+// Depth and width are bounded (8 and 63) and EXCEEDING EITHER FAILS CLOSED, the same way the
+// old field bound did: an obligation with no bit is one nobody is tracking, and for a
+// memory-safety property that must refuse, not shrug.
+
+// Enumerate the obligation leaves of `t`, appending each one's path. Returns false if the
+// type needs more leaves or more depth than can be represented.
+static bool lin_leaves(const IrType *t, LinPath *cur, LinPath *out, int *n) {
+    if (!t) return true;
+    if (cur->n > LIN_MAX_PATH) return false;
+    // A sum's payload is projected by IR_SUM_PAYLOAD, which owns its own slot from that point
+    // on; the sum itself is one obligation until then. An OPAQUE struct (no visible fields,
+    // a cross-module type) is one obligation for the reason lin_has_release_obligation gives:
+    // concluding "owns nothing" about a type we cannot see is a fail-open.
+    bool opaque_agg = (t->kind==IRT_STRUCT || t->kind==IRT_SUM) && (t->n_fields <= 0 || !t->fields);
+    if (((t->kind==IRT_PTR || t->kind==IRT_SLICE) && t->linear) || t->kind==IRT_SUM || opaque_agg) {
+        if (!lin_has_release_obligation(t, 0)) return true;
+        if (*n >= LIN_MAX_LEAVES) return false;
+        out[(*n)++] = *cur;
+        return true;
     }
-    if (t->kind != IRT_STRUCT || t->n_fields <= 0 || t->n_fields >= 63 || !t->fields) return false;
-    uint64_t need = 0; bool any = false;
-    for (int i=0;i<t->n_fields;i++)
-        if (t->fields[i] && t->fields[i]->linear) { need |= (1ull<<i); any = true; }
-    return any && (m & need) == need;
+    if (t->kind == IRT_STRUCT) {
+        for (int i=0;i<t->n_fields;i++) {
+            if (!t->fields[i] || !lin_has_release_obligation(t->fields[i],0)) continue;
+            if (cur->n >= LIN_MAX_PATH) return false;
+            LinPath sub = *cur; sub.step[sub.n++] = (int16_t)i;
+            if (!lin_leaves(t->fields[i], &sub, out, n)) return false;
+        }
+        return true;
+    }
+    if (t->kind == IRT_ARRAY) {
+        if (!t->elem || !lin_has_release_obligation(t->elem,0)) return true;
+        if (t->array_len <= 0 || t->array_len > LIN_MAX_LEAVES) return false;
+        for (int64_t k=0;k<t->array_len;k++) {
+            if (cur->n >= LIN_MAX_PATH) return false;
+            LinPath sub = *cur; sub.step[sub.n++] = (int16_t)k;
+            if (!lin_leaves(t->elem, &sub, out, n)) return false;
+        }
+        return true;
+    }
+    return true;
+}
+
+// The mask of every leaf lying UNDER the path `pre` (a prefix match). An empty prefix is the
+// whole value, so `mov a` and "all leaves" are the same statement rather than a special case.
+static uint64_t lin_mask_under(const LinPath *leaves, int nleaf, const int16_t *pre, int npre) {
+    uint64_t m = 0;
+    for (int i=0;i<nleaf;i++) {
+        if (leaves[i].n < npre) continue;
+        bool pfx = true;
+        for (int k=0;k<npre && pfx;k++) if (leaves[i].step[k] != pre[k]) pfx = false;
+        if (pfx) m |= (1ull<<i);
+    }
+    return m;
 }
 
 // The place a consume/store names, as (slot, bit). bit = LIN_WHOLE_BIT for the whole value,
 // or the field index for a depth-1 field. Returns -1 for anything it cannot resolve.
-static int lin_place_of(Lin *L, IrValue *addr, unsigned *bit) {
+// Build (once) the leaf table for a slot. A type that cannot be enumerated — too wide, too
+// deep — records -1, and lin_place_of then refuses to name any place in it. An obligation
+// with no bit is one nobody is tracking, and for a memory-safety property that must refuse.
+static void lin_build_leaves(Lin *L, int slot, IrType *t) {
+    if (slot < 0 || slot >= L->nvar || L->slot_leaf[slot] || L->slot_nleaf[slot]) return;
+    if (!t) return;
+    LinPath tmp[LIN_MAX_LEAVES]; LinPath cur; cur.n = 0;
+    int n = 0;
+    if (!lin_leaves(t, &cur, tmp, &n)) { L->slot_nleaf[slot] = -1; return; }
+    if (n <= 0) { L->slot_nleaf[slot] = 0; return; }
+    L->slot_leaf[slot] = malloc((size_t)n * sizeof(LinPath));
+    if (!L->slot_leaf[slot]) { L->slot_nleaf[slot] = -1; return; }
+    memcpy(L->slot_leaf[slot], tmp, (size_t)n * sizeof(LinPath));
+    L->slot_nleaf[slot] = n;
+}
+
+// Resolve the place an address names to (slot, MASK OF LEAVES it covers). The mask is what
+// makes depth work: `a[0]` covers every leaf under element 0, `a[0].h1` covers exactly one,
+// `a` covers them all — one rule instead of three special cases.
+//
+// Returns -1 when the place cannot be named, which leaves the whole obligation outstanding.
+// That is the fail-closed direction, and it is what a DEREF base, a variable index, or a type
+// too wide or too deep to enumerate all get.
+static int lin_place_of(Lin *L, IrValue *addr, uint64_t *mask) {
     IrPlace p = ir_place_of(L->def, L->nvar, addr);
     if (!p.valid || p.base_kind==IRPB_DEREF) return -1;
-    if (p.nproj == 0) { *bit = LIN_WHOLE_BIT; return p.base_id; }
-    if (p.proj[0].kind == IRPJ_FIELD && p.proj[0].field >= 0 && p.proj[0].field < 63) {
-        *bit = (unsigned)p.proj[0].field; return p.base_id;
+    int slot = p.base_id;
+    if (slot < 0 || slot >= L->nvar) return -1;
+    if (L->slot_nleaf[slot] <= 0) {
+        // -1 means the type could not be enumerated, and that must not silently become
+        // "whole": it is the fail-closed case.
+        if (L->slot_nleaf[slot] < 0) return -1;
+        // ★ ZERO LEAVES IS NOT "NOTHING TO TRACK". `type Resource { id i32 }` bound by `mov`
+        // is LINEAR — exactly one owner, so moving it twice is an error — while owning nothing
+        // releasable, so dropping it leaks nothing. Move-tracking and leak-tracking are
+        // different questions, and the leaf table only answers the second.
+        //
+        // Returning an empty mask here made the consume record nothing, and
+        // `defer drop(mov r); drop(mov r)` was ACCEPTED. The whole-value bit is the unit for
+        // a value whose obligation cannot be subdivided, which is exactly this case.
+        *mask = (1ull<<LIN_WHOLE_BIT);
+        return slot;
     }
-    // D-32: a FIELD index at or past 63 has no bit in the mask, and returning "unresolved" here
-    // meant the consume was never recorded — so `mov b.h63` twice was ACCEPTED while the same
-    // program using field 0 was correctly refused. Failing to resolve a place fails OPEN, which
-    // is the wrong direction for a memory-safety property.
-    //
-    // Refusing is the fail-closed answer and the bound is unreachable in practice (the widest
-    // struct in tests+std has 19 fields). The real answer is a location TREE with no width bound
-    // at all, shared with definite-init, which is plan §7.2.
-    //
-    // An indexed projection with a CONSTANT index names one element, and one element is as
-    // identifiable as one field — so it takes a bit (D-31). A VARIABLE index names an element
-    // nobody can pin down; it still returns -1, leaving the array's whole obligation
-    // outstanding, which is the fail-closed answer and the one the corpus relies on.
-    if (p.proj[0].kind == IRPJ_FIELD && p.proj[0].field >= 63) {
-        fprintf(stderr, "error: field %d exceeds the %d fields this ownership analysis can track "
-                "separately. Leaving it untracked would let a double move through, so no result "
-                "is reported for this function. Split the struct.\n", p.proj[0].field, 63);
-        exit(1);
-    }
-    // ⚠ EXACTLY ONE PROJECTION. `a[0].h1` names a place INSIDE element 0, and resolving it to
-    // "element 0" claims the whole element was released — so a struct with two linear fields
-    // lost one silently: `mov a[0].h1` was accepted with h2 leaked. That is fail-OPEN, and it
-    // is the hole this rule opened when it started resolving indexed places at all.
-    //
-    // A flat mask can name one level. Deeper places go back to unresolved, which leaves the
-    // array's whole obligation outstanding — over-rejection, the direction that is safe to be
-    // wrong in. Naming `a[0].h1` properly is the location tree (A.2), not a wider mask.
-    if (p.nproj == 1 && p.proj[0].kind == IRPJ_INDEX && p.proj[0].index) {
-        IrValue *iv = p.proj[0].index;
-        IrInstr *d = (iv->id >= 0 && iv->id < L->nvar) ? L->def[iv->id] : NULL;
-        if (d && d->op == IR_CONST) {
+    // Walk the projection into a path of steps. A FIELD step is its index; an INDEX step is
+    // its constant value. Anything else — a variable index, a deref partway down — stops the
+    // walk and the place is unnameable.
+    int16_t pre[LIN_MAX_PATH]; int npre = 0;
+    for (int i=0;i<p.nproj;i++) {
+        if (npre >= LIN_MAX_PATH) return -1;
+        if (p.proj[i].kind == IRPJ_FIELD) {
+            if (p.proj[i].field < 0) return -1;
+            pre[npre++] = (int16_t)p.proj[i].field;
+        } else if (p.proj[i].kind == IRPJ_INDEX && p.proj[i].index) {
+            IrValue *iv = p.proj[i].index;
+            IrInstr *d = (iv->id >= 0 && iv->id < L->nvar) ? L->def[iv->id] : NULL;
+            if (!d || d->op != IR_CONST) return -1;          // a variable index names no leaf
             int64_t k = d->aux.imm;
-            if (k >= 0 && k < 63) { *bit = (unsigned)k; return p.base_id; }
+            if (k < 0 || k > INT16_MAX) return -1;
+            pre[npre++] = (int16_t)k;
+        } else {
+            return -1;                                        // IRPJ_DEREF, or an untracked index
         }
     }
-    return -1;                                   // a variable index names no one element
+    uint64_t m = lin_mask_under(L->slot_leaf[slot], L->slot_nleaf[slot], pre, npre);
+    // A path that covers NO leaf is a place with no obligation under it — reading `r.id` next
+    // to a linear `r.h`. That is not unresolvable, it is empty, and treating the two the same
+    // made a non-owning field look untrackable.
+    *mask = m;
+    return slot;
 }
 
 // The module, for resolving a call's callee. Set by the caller (as borrow.h does for its
@@ -204,9 +303,17 @@ static int lin_root_slot(Lin *L, IrValue *v, int depth) {
 // Consume the slot `v` was loaded out of, if it is still live. Guarded on !already-consumed
 // for the same reason move-on-assign is: `mov p` lowers to load;consume;<escape>, so the slot
 // is already marked and re-flagging it would be a spurious E002.
+// ⚠ AN ESCAPE MARKS EVERY LEAF, NOT JUST THE WHOLE-VALUE BIT. Once consumes became masks
+// over leaves, setting only bit 63 here put the two in different bit spaces: a later
+// `release(mov r)` tested `st & leafmask` and found nothing, so a double free through an
+// escape was ACCEPTED. Three corpus tests caught it immediately — defer_double_consume,
+// defer_double_defer and linear_copy_double_free — which is what they are for.
 static void lin_escape(Lin *L, IrValue *v, uint64_t *st) {
     int sl = lin_root_slot(L, v, 0);
-    if (sl>=0 && sl<L->nvar && !st[sl]) st[sl] = (1ull<<LIN_WHOLE_BIT);
+    if (sl<0 || sl>=L->nvar || st[sl]) return;
+    int n = L->slot_nleaf[sl];
+    uint64_t leaves = (n > 0) ? ((n >= 63) ? ~(1ull<<LIN_WHOLE_BIT) : ((1ull<<n) - 1u)) : 0;
+    st[sl] = (1ull<<LIN_WHOLE_BIT) | leaves;
 }
 
 // Apply one block's instructions to `st` (consumption masks) — the transfer function. When
@@ -232,16 +339,19 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
                 // genuine second read (`var r = p`) is caught at its own LOAD by the moved-use
                 // check below, which is the more precise report anyway.
                 lin_escape(L, o1, st);   // storing it elsewhere is an escape like any other
-                { unsigned bit; int sl = lin_place_of(L, o0, &bit);      // a store RE-INITIALISES
-                  if (sl>=0) { if (bit==LIN_WHOLE_BIT) st[sl] = 0; else st[sl] &= ~(1ull<<bit); } }
+                { uint64_t m; int sl = lin_place_of(L, o0, &m);          // a store RE-INITIALISES
+                  if (sl>=0) st[sl] &= ~m; }   // every leaf under the written place is live again
             }
             continue;
         }
         if (ins->op==IR_CONSUME) {                       // `mov` — consume the PLACE it names
-            unsigned bit; int sl = o0 ? lin_place_of(L, o0, &bit) : -1;
-            if (sl>=0 && sl<L->nvar) {
-                if (report && ((st[sl]>>bit)&1u)) lin_add(L, sl, ins->line, ins->col, 2);
-                st[sl] |= (1ull<<bit);
+            uint64_t m; int sl = o0 ? lin_place_of(L, o0, &m) : -1;
+            if (sl>=0 && sl<L->nvar && m) {
+                // Any leaf under this place that is ALREADY consumed makes this a second move
+                // of something — precise at any depth now, so `mov a[0].h1` twice is caught
+                // while `mov a[0].h1; mov a[0].h2` is not.
+                if (report && (st[sl] & m)) lin_add(L, sl, ins->line, ins->col, 2);
+                st[sl] |= m;
             }
             continue;
         }
@@ -253,10 +363,10 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
         bool feeds_consume = false;
         if (ins->op==IR_LOAD && ins->next && ins->next->op==IR_CONSUME &&
             ins->n_operands>=1 && ins->next->n_operands>=1) {
-            unsigned lb, cb;
-            int ls = lin_place_of(L, ins->operands[0], &lb);
-            int cs = lin_place_of(L, ins->next->operands[0], &cb);
-            feeds_consume = (ls>=0 && ls==cs && lb==cb);
+            uint64_t lm, cm;
+            int ls = lin_place_of(L, ins->operands[0], &lm);
+            int cs = lin_place_of(L, ins->next->operands[0], &cm);
+            feeds_consume = (ls>=0 && ls==cs && lm==cm);
         }
         if (report && !feeds_consume)                    // any other reference to a moved slot = use
             for (int k=0;k<ins->n_operands;k++) {
@@ -354,6 +464,8 @@ static Lin *lin_analyze(IrFunc *f) {
     L->movesl = calloc(L->nvar,sizeof(bool));
     L->def    = calloc(L->nvar,sizeof(IrInstr*));
     L->slot_ty= calloc(L->nvar,sizeof(IrType*));
+    L->slot_leaf  = calloc(L->nvar,sizeof(LinPath*));
+    L->slot_nleaf = calloc(L->nvar,sizeof(int));
     // Two DISTINCT sets, conflated at first and worth keeping apart:
     //   movesl — every LINEAR slot. Move-tracked: reading it out is a transfer of ownership.
     //   linsl  — the leak-relevant subset: linear AND OWNED by this binding, so this function
@@ -378,10 +490,12 @@ static Lin *lin_analyze(IrFunc *f) {
                 L->movesl[ins->result->id] = true;
                 L->linsl [ins->result->id] = true;
                 L->slot_ty[ins->result->id] = ins->result->type;
+                lin_build_leaves(L, ins->result->id, ins->result->type);
             }
             if (ins->op==IR_ALLOCA && ins->result && ins->aux.alloca_ty && ins->aux.alloca_ty->linear) {
                 L->movesl[ins->result->id] = true;
                 L->slot_ty[ins->result->id] = ins->aux.alloca_ty;
+                lin_build_leaves(L, ins->result->id, ins->aux.alloca_ty);
                 if (ins->result->owns && lin_has_release_obligation(ins->aux.alloca_ty,0))
                     L->linsl[ins->result->id] = true;
             }
@@ -409,6 +523,7 @@ static Lin *lin_analyze(IrFunc *f) {
         if (!L->slot_ty[pv->id])
             L->slot_ty[pv->id] = (pv->type->kind == IRT_PTR && pv->type->elem)
                                ? pv->type->elem : pv->type;
+        lin_build_leaves(L, pv->id, L->slot_ty[pv->id]);
         bool has_home = false;
         for (IrBlock *b=f->blocks; b && !has_home; b=b->next)
             for (IrInstr *i=b->instrs; i; i=i->next)
@@ -594,6 +709,7 @@ static Lin *lin_analyze(IrFunc *f) {
     free(out); free(tmp);
     return L;
 }
-static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in); free(L->slot_ty); free(L->linsl); free(L->movesl); free(L->def); free(L->finds); free(L); }
+static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in);
+    for(int i=0;i<L->nvar;i++) free(L->slot_leaf[i]); free(L->slot_leaf); free(L->slot_nleaf); free(L->slot_ty); free(L->linsl); free(L->movesl); free(L->def); free(L->finds); free(L); }
 
 #endif // LAIN_LINEARITY_H

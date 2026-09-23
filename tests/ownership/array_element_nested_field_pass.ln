@@ -1,0 +1,23 @@
+// ★ THE LOCATION TREE (plan A.2): a place INSIDE an array element, named exactly.
+//
+// `a[0].h1` and `a[0].h2` are two distinct obligations living at depth two — an element of an
+// array, then a field of that element. The flat 64-bit mask could name ONE step, so this shape
+// had only two possible answers and both were wrong: claim the whole element on the first
+// release (fail-OPEN, h2 lost in silence) or resolve nothing and refuse the program.
+//
+// Each obligation LEAF now has its own bit, and every operation is a mask over leaves:
+//
+//     mov a[0].h1   one bit            mov a[0]   both of element 0's     mov a   all of them
+//
+// The two old special cases — "all linear fields of a struct" and "all elements of an array" —
+// stop being cases at all: discharge is "every leaf set", at any depth, for any mixture.
+type H { mov p *i32 }
+type R { mov h1 H, mov h2 H }
+func drop_h(mov {p} H) { }
+proc main() i32 {
+    var q *i32 = 0
+    var a R[1] = [R(H(q), H(q))]
+    drop_h(mov a[0].h1)
+    drop_h(mov a[0].h2)
+    return 0
+}
