@@ -125,25 +125,12 @@ static Args args_parse(int argc, char** argv)
             // Accepted and ignored: there is one backend. Kept as a no-op rather than an
             // error so a script pinned to `--backend=ir` still runs.
             (void)0;
-        } else if (strcmp(argv[i], "--engine=legacy") == 0) {
-            // The pre-rebuild AST engine. Kept so the differential harnesses can still ask
-            // the old question, and so a user hitting a regression has somewhere to stand.
-            args.engine_ir = false; args.engine_ir_numeric = false;
-        } else if (strcmp(argv[i], "--engine=ir") == 0) {
-            // ★ THE SPLIT, AND IT HAD STOPPED EXISTING. This case set `engine_ir` and left
-            // `engine_ir_numeric` alone — which was right while the numeric default was false
-            // and became a silent no-op the day the default flipped to true (2026-09-17). So
-            // `--engine=ir` and `--engine=ir-full` named the same configuration, and every
-            // harness passing the former to mean "sovereign ownership, LEGACY numerics" was
-            // measuring the full engine instead: engine_ir_gate.sh, and reverse_differential.sh
-            // — which is MEASURE-0, the instrument that reports lost guarantees.
-            //
-            // A flag whose name states a configuration it no longer selects is the same defect
-            // as a survey that globs the wrong sample: it does not produce a wrong number, it
-            // produces a number about a different question.
-            args.engine_ir = true; args.engine_ir_numeric = false;
-        } else if (strcmp(argv[i], "--engine=ir-full") == 0) {
-            args.engine_ir = true; args.engine_ir_numeric = true;
+        } else if (strncmp(argv[i], "--engine=", 9) == 0) {
+            // Accepted and ignored: there is one engine. `--engine=legacy` selected the AST
+            // analyses, which were deleted on 2026-09-23 — honouring it would mean compiling
+            // with no ownership, bounds or overflow checking at all, which is a fail-open
+            // wearing a flag's name. A no-op rather than an error so old scripts still run.
+            (void)0;
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             args.output_file = argv[++i];
         } else if (strncmp(argv[i], "--target=", 9) == 0) {

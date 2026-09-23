@@ -6,7 +6,6 @@
 #include "resolve.h"
 #include "resolve.h"
 #include "ranges.h" // Range analysis
-#include "bounds.h"  // Static bounds checking
 
 extern Arena *sema_arena;
 extern DeclList *sema_decls;
@@ -3549,14 +3548,9 @@ void sema_infer_expr(Expr *e) {
 
   case EXPR_INDEX: {
     sema_infer_expr(e->as.index_expr.target);
-    // 2D flat-index overflow exemption: recognize `a[i*w+j]` over `a[h*w]` BEFORE
-    // inferring the index (the `i*w` overflow fires during that inference).
-    if (sema_walk_phase && sema_ranges && e->as.index_expr.target->type) {
-        Type *_at = sema_unwrap_type(e->as.index_expr.target->type);
-        Expr *_rb = NULL;
-        if (_at && bounds_recognize_2d(_at, e->as.index_expr.index, sema_ranges, &_rb) && _rb)
-            _rb->idx2d_ovf_ok = true;
-    }
+    // The 2D flat-index overflow exemption (`a[i*w+j]` over `a[h*w]`) lived here to keep the
+    // LEGACY overflow check from firing on `i*w`. That check is the IR's now, and it models
+    // the same fact itself — so the exemption went with src/sema/bounds.h.
     // Capture and clear the addr-of flag before inferring the index sub-expression
     // so that nested array accesses within the index are NOT treated as addr-of.
     bool _is_addr_of = sema_addr_of_context;
@@ -3596,12 +3590,9 @@ void sema_infer_expr(Expr *e) {
         }
         // STATIC BOUNDS CHECK (only during walk phase, skipped in unsafe/in-guarded)
         if (sema_ranges && sema_walk_phase && !sema_in_unsafe_block) {
-            bool guarded = sema_is_in_guarded(e->as.index_expr.index, e->as.index_expr.target);
-            if (guarded) {
-                /* bounds proven by 'in' guard — skip check */
-            } else {
-                sema_check_bounds(sema_ranges, e->as.index_expr.index, t, e->as.index_expr.target, _is_addr_of);
-            }
+            // Bounds are the IR's obligation (src/analysis/vra.h). The legacy check that
+            // stood here was stood down by `g_vra_suppress_bounds` from 2026-09-17 and its
+            // implementation was deleted with src/sema/bounds.h on 2026-09-23.
         }
     } else if (t->kind == TYPE_VECTOR) {
         // SIMD lane access v[i]: result is the element type. The vector has a
@@ -3966,12 +3957,7 @@ void sema_infer_expr(Expr *e) {
                 long long tlo, thi;
                 bool off_unsigned = off->type &&
                                     type_integer_range(off->type, &tlo, &thi) && tlo >= 0;
-                if (off_unsigned && sema_is_in_guarded(last, e->as.builtin_expr.arg)) {
-                    /* proven via the last-byte in-guard — no check, no error */
-                } else {
-                    sema_check_bounds(sema_ranges, off,  bt, e->as.builtin_expr.arg, false);
-                    sema_check_bounds(sema_ranges, last, bt, e->as.builtin_expr.arg, false);
-                }
+                (void)off_unsigned;   // bounds are the IR's: see the note at the index case
             }
         }
     }

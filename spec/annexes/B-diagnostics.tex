@@ -60,7 +60,11 @@ Diagnostic codes are divided into the following ranges:
   & \S\,\ref{sec:own.diag}
   & \textit{value '\texttt{x}' consumed twice} ---
     Issued when a second \lain{mov} expression is applied to a variable
-    already in state \textsc{Consumed}.
+    already in state \textsc{Consumed}. This subsumes the retired
+    \texttt{E006} (\textit{consumed inside a loop}): consuming a value
+    declared outside a loop from inside its body \emph{is} consuming it twice,
+    and \diagcode{E002} names the violation where \texttt{E006} named
+    only the syntactic setting it occurred in.
     \\[4pt]
 
 \diagcode{E003}
@@ -84,12 +88,7 @@ Diagnostic codes are divided into the following ranges:
     it has been initialized (definite-assignment analysis).
     \\[4pt]
 
-\diagcode{E006}
-  & \S\,\ref{sec:own.diag}
-  & \textit{cannot consume '\texttt{x}' inside a loop} ---
-    Issued when a linear variable or field is consumed inside a loop body
-    that may execute more than once.
-    \\[4pt]
+
 
 \diagcode{E007}
   & \S\,\ref{sec:own.diag}

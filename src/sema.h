@@ -184,7 +184,7 @@ bool g_suppress_overflow = false;
 #include "sema/resolve.h"
 #include "sema/typecheck.h"
 #include "sema/monomorph.h"
-#include "sema/linearity.h"
+#include "sema/ownership_spelling.h"
 #include "sema/niche.h"
 #include "sema/undeclared.h"
 

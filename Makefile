@@ -33,35 +33,37 @@ gates: $(BIN)
 	bash scripts/gates/spec_gate.sh
 	bash scripts/gates/run_ir_tests.sh
 	bash scripts/gates/cmin_gate.sh
-	bash scripts/gates/phase3_differential.sh
 	bash scripts/gates/check_build_warnings.sh
 	bash scripts/gates/baseline_gate.sh
 
-# ── THE INSTRUMENTS AFTER THE DELETION, 2026-09-23 ───────────────────────────────────────
-# `src/emit/` is gone, and with it FOUR differentials that compared the two backends:
-# emit_gate, annot_gate, backend_corpus and layout_gate. They were not noise — between them
-# they found the niche-packing regression (D-62: 29 sums, ten green gates), the slice-niche
-# broken-C hole (D-63), and the nine codegen defects the flip surfaced. Deleting the reference
-# implementation would normally delete that capability.
+# ── THE INSTRUMENTS AFTER THE DELETIONS, 2026-09-23 ──────────────────────────────────────
+# Two engines and two backends became one of each, and SEVEN differentials went with them:
+#   emit_gate, annot_gate, backend_corpus, layout_gate   (compared the two BACKENDS)
+#   phase3_differential, engine_ir_gate, reverse_differential (compared the two ENGINES)
 #
-# ★ SO THE REFERENCE WAS RECORDED BEFORE IT WAS REMOVED. tests/BASELINE.txt holds, per corpus
-# program, its output, its exit code, and how every type it declares is REPRESENTED —
-# generated from the AST emitter while it still existed, verified against the IR backend
-# (behaviour identical), then re-recorded from the backend we keep. `baseline_gate.sh` asks
-# those same questions with the implementation gone, and asks the one that matters most: a
-# `T | markers` that stops being niche-packed prints the same thing and passes everything else.
+# They were not noise. Between them they found the niche-packing regression (D-62: 29 sums
+# silently unpacked while ten gates stayed green), the slice-niche broken-C hole (D-63), the
+# nine codegen defects the backend flip surfaced, and every adjudicated engine divergence for
+# a month. Deleting the reference implementations would normally delete that capability — so
+# the capability was preserved FIRST and the implementations removed after.
 #
-# A baseline is also STRONGER than the differential it replaces: a differential is silent when
-# both sides are wrong together; a baseline states the answer.
+# ★ WHAT REPLACED THEM. `baseline_gate` (tests/BASELINE.txt) records, per corpus program, its
+# output, its exit code, and HOW EVERY TYPE IT DECLARES IS REPRESENTED — captured from the AST
+# emitter before it was deleted, verified against the IR backend, then re-recorded from the
+# backend we keep. It still asks the question that caught D-62, the one no behavioural
+# instrument can ask. And the corpus itself is now the engine differential: every one of its
+# 728 programs is judged by the sovereign engine, with no `--engine=legacy` pin left anywhere.
 #
-# PROGRESS MEASURES, not gates: their answer is a DISTANCE rather than a verdict. Putting them
-# in `gates` would add noise and teach everyone to ignore it; leaving them unrun is how the
-# emitter's four miscompiles went unnoticed.
+# ⚠ A differential whose two legs become the same thing does not fail — it PASSES, loudly and
+# meaninglessly (D-60: backend_corpus comparing the IR backend to itself and reporting "423
+# agree"). That is why these were deleted rather than left running against a retired flag.
 #
-# ★ The exit status is absorbed HERE, where the target's contract is "print the distance", and
-# left intact in the scripts, where "are we there yet" is still a useful question.
+# PROGRESS MEASURES, not gates: their answer is a DISTANCE rather than a verdict. The exit
+# status is absorbed HERE, where the target's contract is "print the distance", and left
+# intact in the scripts, where "are we there yet" is still a useful question.
 measure: $(BIN)
-	-bash scripts/gates/engine_ir_gate.sh
+	@echo "no distances left to report: the engine and backend differentials closed"
+	@echo "and were retired with the implementations they compared against."
 
 fuzz: $(BIN)
 	@for f in scripts/fuzz/fuzz_*.sh; do echo "== $$f"; bash $$f || exit 1; done

@@ -47,7 +47,8 @@ int main(int argc, char **argv) {
     // wrong TARGET — the same failure `precision_loss.sh` had with its glob. Matching the
     // compiler's configuration is what makes a refusal here mean what it says.
     g_suppress_ownership  = true;
-    g_vra_suppress_bounds = true;
+    /* g_vra_suppress_bounds: the legacy bounds pass (src/sema/bounds.h) was deleted
+       2026-09-23 — there is nothing left to suppress. */
     g_suppress_termination = true;
     g_suppress_overflow   = true;
     // The flags below are kept so a caller can still ask the OLD question explicitly.
@@ -59,7 +60,7 @@ int main(int argc, char **argv) {
         // --suppress-bounds: stand the LEGACY bounds checker down too, so a program only the
         // NEW engine proves can still be EMITTED and run. Without it the new VRA's own proofs
         // are unfalsifiable — nothing can execute a program the old engine refuses.
-        if (!strcmp(argv[i],"--suppress-bounds")) g_vra_suppress_bounds = true;
+        /* --suppress-bounds: accepted and ignored; the legacy bounds pass is gone. */
         // --suppress-term: same seam for the legacy TERMINATION diagnostics. Needed to
         // EMIT a program the old engine refuses on those grounds, which is the only way
         // to execute one and check that a loop proven terminating actually terminates

@@ -114,93 +114,26 @@ int main(int argc, char **argv) {
         print_ast(program, 0);
         return 0;
     }
-    // Stand the LEGACY ownership and bounds checks down: under --engine=ir the sovereign
-    // analyses are the authority for exactly those questions, and leaving both on would let
-    // the old engine exit() first — the new one would never get to speak.
-    if (args.engine_ir) {
-        g_suppress_ownership = true;                              // ownership: the IR decides
-        if (args.engine_ir_numeric) {
-            g_vra_suppress_bounds = true;                         // numerics: only with -full
-            // RECURSION termination. The sovereign engine now answers it — a well-founded
-            // ranking over a parameter, or over a DIFFERENCE of two parameters (which is what
-            // divide-and-conquer descends on), read from the octagon at each self-call — and
-            // raises it as an obligation through analysis/report.h. Leaving the legacy check on
-            // would let the old engine exit() first and the new verdict would never be heard.
-            //
-            // NOT the loop half, and the boundary was measured rather than assumed: the
-            // sovereign engine raises a loop obligation only inside a `func`, while a written
-            // `decreasing` clause is a claim the language accepts on ANY loop. Standing the
-            // loop checks down dropped three such claims in `proc`s — see g_suppress_recursion
-            // in sema.h. Also staying with the old engine: E091 (the SHAPE of a `decreasing`
-            // clause, front-end policy) and MUTUAL recursion (f -> g -> f), which the sovereign
-            // check does not model at all.
-            g_suppress_recursion = true;
-            // ── D-44 ANSWERED, AND THE LOOP HALF STANDS DOWN WITH IT ─────────────────────
-            // The blocker was never porting: it was a language question plus a precision debt,
-            // and both are now paid.
-            //
-            // THE LANGUAGE ANSWER: a written `decreasing` is a CLAIM THE COMPILER DEFENDS,
-            // wherever it appears — the same relationship `effects ...` has to the effect row.
-            // `IrBlock.has_measure` carries the fact per loop, and `vra_analyze` raises the
-            // obligation for every `func` loop AND every `proc` loop that carried a measure. A
-            // `proc` loop with no measure raises nothing, which is what lets an event loop be
-            // written at all.
-            //
-            // THE PRECISION DEBT: raising it cost 12 corpus programs, because the sovereign
-            // loop rule was weaker than the legacy one in four shapes — a variable step, an
-            // offset counter (`i + 1 < n`), a bound that is an expression (`n / 2`), and a
-            // two-endpoint measure (`lo < hi`) — and because the back-edge test used
-            // REACHABILITY where it needed DOMINANCE, which refused every nested loop in the
-            // corpus. All five are closed, each with its violating case checked first.
-            //
-            // STILL WITH THE OLD ENGINE, deliberately: E091 (the SHAPE of a `decreasing`
-            // clause) and MUTUAL recursion (f -> g -> f), which the sovereign check does not
-            // model. And one claim is weaker than the legacy's: the engine defends "this loop
-            // terminates", not "this expression is the measure".
-            g_suppress_termination = true;
-            // ── OVERFLOW: THE LEGACY PATH IS NOW REDUNDANT ───────────────────────────────
-            // Item 1.6 asked this twice. The first run (2026-09-17) said NO: 8 programs
-            // regressed and SEVEN were LOST GUARANTEES. Those named three missing NARROWING
-            // SITES — a call argument, a struct field initialiser, an enum payload — plus a
-            // wrong predicate at the three sites that already existed (`from->bits > to->bits`
-            // is a proxy that misses a SIGN CHANGE) and one measure expression the IR never
-            // lowered. All closed (D-47, D-49).
-            //
-            // Re-measured: **zero**. Corpus 723/723 with this set, all eight gates green, and
-            // the four numeric fuzzers — which EXECUTE what the engine proved — at zero:
-            // fuzz_overflow (UBSan), fuzz_unsigned (exact integer oracle, since no sanitizer
-            // sees unsigned wrap), fuzz_termination, fuzz_vra.
-            //
-            // ⚠ CORRECTION, 2026-09-19: two of those four were reporting zero because they
-            // had stopped RUNNING. `fuzz_vra` and `fuzz_termination` filter the driver's
-            // output by function name, and D-54 made every name module-qualified the day
-            // before — so `probe` never matched `p17_probe`, every program counted as
-            // SKIPPED, and both printed "bugs: 0" over 0 judgements. Re-run after the fix:
-            // fuzz_vra 34 proven / 0 false proofs, fuzz_termination 40 proven AND EXECUTED /
-            // 0 unsound. The conclusion above survives; the evidence for half of it did not
-            // exist when it was written.
-            //
-            // So the rebuilt engine is now the SOLE authority for every numeric obligation:
-            // bounds, division, overflow and termination. What remains with the old engine is
-            // E091 (the SHAPE of a `decreasing` clause) and MUTUAL recursion, both deliberate.
-            g_suppress_overflow = true;
-            //
-            // RE-RUN 2026-09-18, after D-47 wired the three missing narrowing sites and
-            // `vra_type_may_lose` replaced the width proxy: **8 regressions → 1**, and the one
-            // is `measure_underflow_fail` — a `decreasing n - i` whose own expression
-            // underflows. The IR does not carry the measure EXPRESSION (only the bit saying one
-            // was written), so the sovereign engine cannot see it; lowering it re-computes
-            // subexpressions the octagon cannot relate to the guard's copies. That is D-49, and
-            // it is a lowering restructure rather than a patch.
-            //
-            // One program, one named cause. That is what stands between here and retiring the
-            // legacy overflow path — and with it, the old half of src/sema/.
-        }
-    }
-    // The octagon is built on a PLAIN compile too — effects.h runs the numeric analysis to
-    // settle totality — so the dump has something to print on every path. What --engine=ir-full
-    // changes is whether that state is authoritative for bounds and overflow, not whether it
-    // exists (src/analysis/report.h returns before the numeric findings otherwise).
+    // ── THE LEGACY SEAMS, NOW PERMANENT ──────────────────────────────────────────────────
+    // These used to be conditional on `--engine=ir`, standing the old AST checks down so the
+    // sovereign engine could speak (the old one exit()s first, so leaving both on meant the
+    // new verdict was never heard). The old checks are DELETED as of 2026-09-23 — ownership,
+    // borrows, definite assignment, bounds, overflow and termination are the IR's, and have
+    // been the default since 2026-09-08.
+    //
+    // The flags remain only because a few blocks inside sema.h and typecheck.h still read
+    // them; they are set unconditionally, so those blocks are now unreachable. They are the
+    // last of the old engine and are marked for removal as a unit.
+    //
+    // ★ `--engine=legacy` IS GONE, and removing it was not tidiness. The flag selected passes
+    // that no longer exist, so it would have silently compiled with NO ownership, bounds or
+    // overflow checking at all — a fail-open with a friendly name. A flag whose implementation
+    // has been deleted must be deleted with it.
+    g_suppress_ownership   = true;
+    g_suppress_recursion   = true;
+    g_suppress_termination = true;
+    g_suppress_overflow    = true;
+
     vra_dump_enabled = args.dump_octagon;
 
 

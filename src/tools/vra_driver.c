@@ -46,7 +46,9 @@ int main(int argc, char **argv) {
     char *mod=drv_modname(&aa,path);
     DeclList *prog=load_module(&fa,&aa,mod);
     if(!prog){ fprintf(stderr,"load failed\n"); return 1; }
-    g_vra_suppress_bounds = suppress;   // analyze even legacy-rejected programs (reject-side)
+    /* g_vra_suppress_bounds: the legacy bounds pass (src/sema/bounds.h) was deleted
+       2026-09-23 — there is nothing left to suppress. */
+    (void)suppress;
     // ...and the TERMINATION diagnostics, for the same reason: a program the old engine
     // refuses is one whose new-engine verdict nothing can otherwise see. Three false proofs
     // lived behind E082/E011 and had to be found by reading the code.
