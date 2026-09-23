@@ -31,7 +31,15 @@ proc touch(p *u8) u8 { unsafe { return *p } }
 type Res { mov h *u8 }
 proc rmake() Res { unsafe { return Res(libc_malloc(4) as *u8) } }
 proc rfree(mov {h} Res) { unsafe { libc_free(mov h as *void) } }
-proc rtouch(r Res) u8 { unsafe { return *r.h } }"""
+proc rtouch(r Res) u8 { unsafe { return *r.h } }
+type Two { mov a *u8, mov b *u8 }
+proc tmake() Two { unsafe { return Two(libc_malloc(4) as *u8, libc_malloc(4) as *u8) } }
+proc tfree(mov {a, b} Two) {
+    unsafe {
+        libc_free(mov a as *void)
+        libc_free(mov b as *void)
+    }
+}"""
 
 class Gen:
     def __init__(self, rng):
@@ -83,6 +91,26 @@ class Gen:
         self.ind -= 1
         self.emit("}")
 
+    # ── AN ARRAY OF RESOURCES, released element by element ───────────────────────────
+    # ★ ADDED 2026-09-23 BECAUSE THIS GENERATOR COULD NOT REACH THE SHAPE. The element rule
+    # (D-31) was fail-OPEN for a nested place — `mov a[0].h1` claimed the whole element, so a
+    # struct with TWO linear fields inside an array lost one silently. fuzz_linear reported
+    # `missed-violations=0` across 250 generations before AND after the fix, because nothing
+    # it generates puts a two-obligation value inside an array. A fuzzer's zero is about its
+    # generator.
+    def array_life(self):
+        a = f"ar{self.u()}"
+        self.emit(f"var {a} Res[2] = [rmake(), rmake()]")
+        self.emit(f"rfree(mov {a}[0])")
+        self.emit(f"rfree(mov {a}[1])")
+
+    # a struct with TWO linear fields: both obligations must be discharged, and neither
+    # discharge may be mistaken for the other.
+    def two_field_life(self):
+        t = f"tw{self.u()}"
+        self.emit(f"var {t} = tmake()")
+        self.emit(f"tfree(mov {t})")
+
     # move-chain: move an owned ptr into a second var, consume the second.
     def move_chain(self):
         a = f"a{self.u()}"
@@ -95,12 +123,16 @@ def build_valid(g):
     n = g.rng.randint(1, 4)
     for _ in range(n):
         pick = g.rng.random()
-        if pick < 0.35:
+        if pick < 0.28:
             g.ptr_life(f"r{g.u()}")
-        elif pick < 0.6:
+        elif pick < 0.48:
             g.struct_life(f"q{g.u()}")
-        elif pick < 0.8:
+        elif pick < 0.62:
             g.loop_scoped()
+        elif pick < 0.76:
+            g.array_life()
+        elif pick < 0.88:
+            g.two_field_life()
         else:
             g.move_chain()
 
@@ -113,7 +145,8 @@ def gen_accept():
 
 def gen_reject():
     kind = rng.choice(["leak", "double", "uaf", "loop_move", "defer_double",
-                       "unbalanced", "cond_double", "struct_double"])
+                       "unbalanced", "cond_double", "struct_double",
+                       "array_partial", "array_double", "nested_partial"])
     body = ["    var flag i32 = 1"]
     if kind == "leak":
         body.append("    mov r *u8 = acquire()")            # never consumed -> E003
@@ -131,6 +164,23 @@ def gen_reject():
         body += ["    mov r *u8 = acquire()", "    if flag { release(mov r) }", "    release(mov r)"]  # E016
     elif kind == "struct_double":
         body += ["    var r = rmake()", "    rfree(mov r)", "    rfree(mov r)"]  # E002
+    # ── THE THREE SHAPES THIS GENERATOR COULD NOT REACH (added 2026-09-23) ───────────────
+    # The element rule (D-31) was fail-OPEN for a nested place and this fuzzer reported
+    # `missed-violations=0` right through it, because nothing it generated put a
+    # two-obligation value inside an array. A fuzzer's zero is about its generator.
+    elif kind == "array_partial":
+        body += ["    var ar Res[2] = [rmake(), rmake()]",
+                 "    rfree(mov ar[0])"]                     # E003 — ar[1] leaks
+    elif kind == "array_double":
+        body += ["    var ar Res[2] = [rmake(), rmake()]",
+                 "    rfree(mov ar[0])", "    rfree(mov ar[0])",
+                 "    rfree(mov ar[1])"]                     # E002 — the same element twice
+    elif kind == "nested_partial":
+        # ★ THE ONE THAT WAS ACTUALLY MISSED. `mov tw[0].a` names a place INSIDE element 0;
+        # resolving it to "element 0" claimed both obligations were discharged and `b` leaked
+        # in silence. Two linear fields is the minimum shape that can tell the difference.
+        body += ["    var tw Two[1] = [tmake()]",
+                 "    unsafe { libc_free(mov tw[0].a as *void) }"]   # E003 — .b leaks
     else:  # loop_move: consume an outer-scope resource inside a loop
         body += ["    mov r *u8 = acquire()", "    var i usize = 0",
                  "    while i < 3 decreasing 3 - i {", "        release(mov r)",
