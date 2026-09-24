@@ -50,7 +50,7 @@ export UBSAN_OPTIONS="print_stacktrace=0:halt_on_error=0"
 
 if [[ ! -x "$LAIN" ]]; then
   echo "Building compiler..."
-  gcc -std=c99 -Wall -Wextra -o "$LAIN" "$ROOT/src/main.c" -I "$ROOT/src" 2>/dev/null
+  gcc -std=c99 -Wall -Wextra -o "$LAIN" "$ROOT/src/frontends/lain/main.c" -I "$ROOT/src" 2>/dev/null
   [[ -x "$LAIN" ]] || { echo "Build failed."; exit 255; }
 fi
 

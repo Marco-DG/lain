@@ -32,7 +32,7 @@ export ASAN_OPTIONS="detect_leaks=0:abort_on_error=1"
 export UBSAN_OPTIONS="halt_on_error=1"
 
 cd "$ROOT" || exit 1
-[[ -x "$LAIN" ]] || gcc -std=c99 -o "$LAIN" "$ROOT/src/main.c" -I "$ROOT/src" 2>/dev/null
+[[ -x "$LAIN" ]] || gcc -std=c99 -o "$LAIN" "$ROOT/src/frontends/lain/main.c" -I "$ROOT/src" 2>/dev/null
 BUGDIR="$ROOT/fuzz_bugs"; mkdir -p "$BUGDIR"
 TDIR="$(mktemp -d)"; trap 'rm -rf "$TDIR"' EXIT
 

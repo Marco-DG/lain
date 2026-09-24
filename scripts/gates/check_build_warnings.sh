@@ -16,7 +16,7 @@
 set -u
 cd "$(dirname "$0")/../.."
 FATAL='-Wreturn-type -Wuninitialized -Wimplicit-function-declaration -Wint-conversion -Wincompatible-pointer-types'
-UNITS="src/main.c src/tools/vra_driver.c src/tools/linearity_driver.c
+UNITS="src/frontends/lain/main.c src/tools/vra_driver.c src/tools/linearity_driver.c
        src/tools/effects_driver.c src/tools/incomplete_driver.c src/tools/lower_driver.c
        src/tools/test_vra.c src/tools/test_linearity.c src/tools/test_borrow.c
        src/tools/test_definite_init.c src/tools/test_place.c src/tools/test_ir.c

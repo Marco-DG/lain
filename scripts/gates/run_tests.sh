@@ -17,7 +17,7 @@ cd "$ROOT" || exit 1
 
 if [[ ! -x "$LAIN" ]]; then
     echo "Compiler not found. Building..."
-    gcc -std=c99 -Wall -Wextra -o "$LAIN" "$ROOT/src/main.c" -I "$ROOT/src" 2>/dev/null
+    gcc -std=c99 -Wall -Wextra -o "$LAIN" "$ROOT/src/frontends/lain/main.c" -I "$ROOT/src" 2>/dev/null
     if [[ ! -x "$LAIN" ]]; then
         echo "Build failed."
         exit 1

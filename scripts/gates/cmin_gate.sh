@@ -51,6 +51,39 @@ for f in tests/cmin/exec.c; do
   else echo "  FAIL $f: Lain-IR $a != gcc $r"; fail=$((fail+1)); fi
 done
 
+
+# ── THE LAYERING, CHECKED RATHER THAN CONVENTIONAL (2026-09-24) ──────────────────────────
+# The tree was restructured so it STATES the architecture: `ir/` and `analysis/` are the core,
+# `frontends/lain/` and `frontends/cmin/` are clients of it. That is only worth doing if
+# something notices when it stops being true — a single `#include "frontends/lain/ast.h"` in
+# an analysis would invert the dependency and nothing below would fail.
+#
+# cmin already proves the claim ONE way: it builds with no front-end header, so a core that
+# needed Lain's AST would break it. This proves it the OTHER way, which cmin cannot: that the
+# core does not reach INTO a front end.
+#
+# `src/frontends/lain/lower.h` is where that line was actually being crossed. It lives in
+# `frontends/lain/` now, and used to be `src/ir/lower.h` — filed under the IR while
+# referencing AST types, which said the IR knew about Lain. It does not; the Lain front end
+# knows about the IR.
+bad=0
+for f in src/ir/*.h src/analysis/*.h; do
+  if grep -qE '#include "(frontends/|\.\./frontends/)' "$f"; then
+    echo "  ★ LAYERING VIOLATION: $f includes a FRONT END"; bad=$((bad+1))
+  fi
+  # the front-end headers by their bare names, in case a relative path sneaks one in
+  if grep -qE '#include "(\.\./)*(ast|sema|parser|lexer|token|module|args)\.h"' "$f"; then
+    echo "  ★ LAYERING VIOLATION: $f includes a front-end header"; bad=$((bad+1))
+  fi
+done
+if [ "$bad" -ne 0 ]; then
+  echo "=================================================================="
+  echo "SOVEREIGNTY GATE FAILS — the core depends on a front end ($bad)"
+  echo "=================================================================="
+  exit 1
+fi
+echo "layering: ir/ and analysis/ include no front end ($(ls src/ir/*.h src/analysis/*.h | wc -l) files checked)"
+
 echo "=================================================================="
 [ $fail -eq 0 ] && echo "SOVEREIGNTY GATE HOLDS — a non-Lain front end gets the same guarantees" \
                 || echo "SOVEREIGNTY GATE: $fail failure(s)"

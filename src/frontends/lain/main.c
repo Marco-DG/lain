@@ -16,7 +16,7 @@
 #include "target.h"
 #include "sema.h"
 #include "emit_llvm.h"
-#include "ir/lower.h"
+#include "frontends/lain/lower.h"
 #include "analysis/linearity.h"
 #include "analysis/borrow.h"
 #include "analysis/definite_init.h"

@@ -19,7 +19,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 LAIN=./lain
 VERBOSE=0; [ "${1:-}" = "-v" ] && VERBOSE=1
-[ -x "$LAIN" ] || { echo "build first: gcc -std=c99 -o lain src/main.c -I src"; exit 2; }
+[ -x "$LAIN" ] || { echo "build first: gcc -std=c99 -o lain src/frontends/lain/main.c -I src"; exit 2; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP" "$ROOT/_readme_gate_tmp.ln" "$ROOT/_readme_gate_tmp.c"' EXIT
 
 python3 - "$TMP" <<'PY'
@@ -135,11 +135,11 @@ done
 # A flag name is a claim about the compiler like any other, so it gets tested like any other.
 flag_bad=0
 for flag in $(grep -ohE '\-\-[a-z][a-z-]*(=[a-z-]+)?' README.md LANGUAGE.md 2>/dev/null | sort -u); do
-    grep -qF "\"$flag\"" src/args.h && continue
-    grep -qE "\"${flag%%=*}=\"" src/args.h && continue          # --target=<triple> style
-    grep -qE "strncmp\(argv\[i\], \"${flag%%=*}=\"" src/args.h && continue
+    grep -qF "\"$flag\"" src/frontends/lain/args.h && continue
+    grep -qE "\"${flag%%=*}=\"" src/frontends/lain/args.h && continue          # --target=<triple> style
+    grep -qE "strncmp\(argv\[i\], \"${flag%%=*}=\"" src/frontends/lain/args.h && continue
     flag_bad=$((flag_bad+1))
-    echo "  ★ README/LANGUAGE names $flag — src/args.h does not accept it"
+    echo "  ★ README/LANGUAGE names $flag — src/frontends/lain/args.h does not accept it"
 done
 
 echo "=================================================================="

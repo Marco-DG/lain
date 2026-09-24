@@ -9,7 +9,7 @@
 
 CC      ?= gcc
 CFLAGS  ?= -std=c99 -Wall -Wextra
-SRC      = src/main.c
+SRC      = src/frontends/lain/main.c
 BIN      = lain
 
 .PHONY: all test gates fuzz figures clean

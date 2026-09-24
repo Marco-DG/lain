@@ -11,13 +11,13 @@
 #include "utils/common/system.h"
 #include "utils/panic.h"
 #include <unistd.h>
-#include "lexer.h"
-#include "parser.h"
-#include "ast.h"
-#include "module.h"
+#include "frontends/lain/lexer.h"
+#include "frontends/lain/parser.h"
+#include "frontends/lain/ast.h"
+#include "frontends/lain/module.h"
 #include "target.h"
-#include "sema.h"
-#include "ir/lower.h"
+#include "frontends/lain/sema.h"
+#include "frontends/lain/lower.h"
 #include "analysis/effects.h"
 
 static char *drv_modname(Arena *a, const char *path) {

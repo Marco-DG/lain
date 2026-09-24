@@ -31,7 +31,7 @@ export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"
 
 cd "$ROOT" || exit 1
 if [[ ! -x "$LAIN" ]]; then
-    echo "building lain…"; gcc -std=c99 -Wall -Wextra -o "$LAIN" "$ROOT/src/main.c" -I "$ROOT/src" 2>/dev/null || { echo "build failed"; exit 1; }
+    echo "building lain…"; gcc -std=c99 -Wall -Wextra -o "$LAIN" "$ROOT/src/frontends/lain/main.c" -I "$ROOT/src" 2>/dev/null || { echo "build failed"; exit 1; }
 fi
 
 PASS=0; FAIL=0; VIOL=(); TDIR="$(mktemp -d)"

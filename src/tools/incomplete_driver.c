@@ -13,13 +13,13 @@
 #include "utils/common/system.h"
 #include "utils/panic.h"
 #include <unistd.h>
-#include "lexer.h"
-#include "parser.h"
-#include "ast.h"
-#include "module.h"
+#include "frontends/lain/lexer.h"
+#include "frontends/lain/parser.h"
+#include "frontends/lain/ast.h"
+#include "frontends/lain/module.h"
 #include "target.h"
-#include "sema.h"
-#include "ir/lower.h"
+#include "frontends/lain/sema.h"
+#include "frontends/lain/lower.h"
 static char *mn(Arena *a, const char *path){ const char *p=path;
   while ((p[0]=='.'&&(p[1]=='/'||p[1]=='\\'))||p[0]=='/'||p[0]=='\\') p+=(p[0]=='/'||p[0]=='\\')?1:2;
   size_t n=strlen(p),e=(n>3&&strcmp(p+n-3,".ln")==0)?n-3:n;

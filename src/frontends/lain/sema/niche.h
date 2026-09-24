@@ -19,8 +19,8 @@
 
 #include <limits.h>
 #include "../ast.h"
-#include "../target.h"
-#include "../layout_core.h"
+#include "target.h"
+#include "layout_core.h"
 
 extern Arena *sema_arena;
 

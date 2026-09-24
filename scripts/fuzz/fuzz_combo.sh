@@ -28,7 +28,7 @@ SC="${TMPDIR:-/tmp}/fuzz_combo.$$"; mkdir -p "$SC"
 trap 'rm -rf "$SC"' EXIT
 N="${1:-300}"
 BASE=${RANDOM_SEED:-$$}
-[ -x "$LAIN" ] || { echo "build first: gcc -std=c99 -o lain src/main.c -I src"; exit 2; }
+[ -x "$LAIN" ] || { echo "build first: gcc -std=c99 -o lain src/frontends/lain/main.c -I src"; exit 2; }
 
 ok=0 wrongrej=0 brokenc=0 miscomp=0 genfail=0
 for ((k=0; k<N; k++)); do

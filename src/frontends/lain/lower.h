@@ -1,4 +1,9 @@
-// src/ir/lower.h — AST → IR lowering (Phase 1.2).
+// src/frontends/lain/lower.h — the Lain AST → Lain-IR lowering (Phase 1.2).
+//
+// ★ MOVED OUT OF src/ir/ ON 2026-09-24, and the move is the point. This file references AST
+// types and is included AFTER ast.h by its driver — it was never core IR, it is the Lain front
+// end's CLIENT of the IR, exactly as src/frontends/cmin/cmin.c contains its own lowering for
+// the C subset. Filing it under ir/ said the IR knew about Lain. It does not.
 //
 // Walks the frontend's TYPED AST (after sema_resolve_module populates ->type) and
 // emits the IR of build.h. Mutable and immutable locals both become stack slots
@@ -10,7 +15,7 @@
 #ifndef LAIN_IR_LOWER_H
 #define LAIN_IR_LOWER_H
 
-#include "build.h"
+#include "ir/build.h"
 
 // ── local environment (the name→storage map — the AST/IR boundary) ───────────
 typedef struct IrLocal {
