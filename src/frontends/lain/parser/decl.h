@@ -842,7 +842,48 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
                         } else {
                             parser_error("Expected number or identifier after comparison operator");
                         }
-                        
+
+                        // ── C6: THE BOUND MAY BE AN EXPRESSION ──────────────────────────
+                        // `n usize <= cap - 1`, `i usize < a.len - 1`. Until now the RHS was a
+                        // single term, so a bound one-off from another quantity — which is what
+                        // a window, a capacity or a last-index IS — could not be stated at all.
+                        //
+                        // ADDITIVE ONLY, and that is the domain's boundary rather than a
+                        // shortcut: the octagon holds `±x ±y <= c`, so `n <= cap - 1` becomes
+                        // the relation `n - cap <= -1` it already keeps exactly. `n <= 2 * k`
+                        // is outside it, and accepting a bound the engine must immediately
+                        // approximate would buy syntax and lose proofs.
+                        //
+                        // ⚠ The arithmetic is lowered CHECKED, so `cap - 1` on an unbounded
+                        // usize raises the underflow obligation rather than wrapping to
+                        // SIZE_MAX and making the precondition vacuous. A caller writes
+                        // `cap usize >= 1` beside it and both prove. Fail-closed: a bound that
+                        // cannot be evaluated is refused, never silently widened.
+                        while (parser_match(TOKEN_PLUS) || parser_match(TOKEN_MINUS)) {
+                            TokenKind aop = parser->token.kind;
+                            parser_advance();
+                            Expr *term = NULL;
+                            if (parser_match(TOKEN_NUMBER)) {
+                                long long v = parse_numeric_literal(parser->token.start, parser->token.length);
+                                parser_advance();
+                                term = expr_literal(arena, v);
+                            } else if (parser_match(TOKEN_IDENTIFIER)) {
+                                Id *tid = id(arena, parser->token.length, parser->token.start);
+                                parser_advance();
+                                term = expr_identifier(arena, tid);
+                                if (parser_match(TOKEN_DOT)) {
+                                    parser_advance();
+                                    parser_expect(TOKEN_IDENTIFIER, "Expected identifier after '.'");
+                                    Id *m = id(arena, parser->token.length, parser->token.start);
+                                    parser_advance();
+                                    term = expr_member(arena, term, m);
+                                }
+                            } else {
+                                parser_error("Expected number or identifier after '+' or '-' in a refinement bound");
+                            }
+                            rhs = expr_binary(arena, aop, rhs, term);
+                        }
+
                         // Create binary constraint expression
                         Expr *constraint = expr_binary(arena, op, param_expr, rhs);
                         *ctail = expr_list(arena, constraint);

@@ -1628,6 +1628,10 @@ out=
 rc=0
 out=
 ty=Slice_i32 scalar
+### tests/vra/refine_expr_bound_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
 ### tests/vra/refinement/alias_param_seeds_bounds_pass.ln
 rc=0
 out=

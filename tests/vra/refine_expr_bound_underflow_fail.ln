@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// ★ THE BOUND'S OWN ARITHMETIC IS AN OBLIGATION (C6, the fail-closed half).
+//
+// `n >= 1` does not make `n - 2` safe: at n == 1 it underflows. Lowered with MODULAR
+// arithmetic it would wrap to SIZE_MAX and the precondition `i <= n - 2` would become
+// "i <= SIZE_MAX" — vacuously true, licensing any index at all, in a callee whose array has
+// one element. That is the shape of a removed bounds check.
+//
+// So the bound is lowered CHECKED and the underflow is reported. The fix is to say what was
+// meant (`n usize >= 2`), and then both the bound and the two accesses prove — see
+// refine_expr_bound_pass.ln.
+proc window(a i32[n], n usize >= 1, i usize <= n - 2) i32 {
+    return a[i] +% a[i + 1]
+}
+proc main() i32 { return 0 }

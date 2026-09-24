@@ -950,6 +950,20 @@ static void ir_lower_return_ensures_assert(LowerCtx *c, IrValue *v) {
 static IrValue *ir_resolve_contract_rhs(LowerCtx *c, Decl *callee, IrInstr *call, Expr *rhs, IrType *ty) {
     if (!rhs) return NULL;
     if (rhs->kind==EXPR_LITERAL) return ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, ty);
+    // ── C6, THE CALL-SITE HALF — and it is the half that keeps this sound ────────────────
+    // An additive bound (`n <= cap - 1`) is rebuilt here out of the CALLER's argument values,
+    // so the assert the caller must discharge is the same statement as the assume the callee
+    // gets. Returning NULL for a shape this cannot resolve emits NO assert, which would leave
+    // the callee believing a fact nobody proved — an unlicensed assume, the exact hazard the
+    // contract machinery exists to avoid. So the two sides grow together or not at all.
+    if (rhs->kind==EXPR_BINARY &&
+        (rhs->as.binary_expr.op==TOKEN_PLUS || rhs->as.binary_expr.op==TOKEN_MINUS)) {
+        IrValue *l = ir_resolve_contract_rhs(c, callee, call, rhs->as.binary_expr.left,  ty);
+        IrValue *r = ir_resolve_contract_rhs(c, callee, call, rhs->as.binary_expr.right, ty);
+        if (!l || !r || !l->type || l->type->kind!=IRT_INT) return NULL;
+        IrOp op = (rhs->as.binary_expr.op==TOKEN_PLUS) ? IR_ADD : IR_SUB;
+        return ir_binop(c->f, c->cur, op, l, r, l->type);
+    }
     Id *nm=NULL; bool is_len=false;
     if (rhs->kind==EXPR_IDENTIFIER) nm=rhs->as.identifier_expr.id;
     else if (rhs->kind==EXPR_MEMBER && rhs->as.member_expr.member && rhs->as.member_expr.member->length==3

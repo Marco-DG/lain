@@ -1,0 +1,22 @@
+// ★ C6: A REFINEMENT BOUND MAY BE AN EXPRESSION.
+//
+// `i usize <= n - 2` was a PARSE ERROR until 2026-09-24 — the RHS of a refinement could be a
+// literal, a parameter, or `a.len`, and nothing else. So a bound one off from another quantity
+// could not be stated at all, and a bound one off from another quantity is what a window, a
+// capacity and a last index all ARE.
+//
+// Here it buys both accesses at once: `i <= n - 2` gives `a[i]` and `a[i + 1]` check-free,
+// which is the sliding-window idiom stated as a precondition instead of re-derived by a guard.
+//
+// ADDITIVE ONLY, and that is the octagon's boundary rather than a shortcut: the domain holds
+// `±x ±y <= c`, so `i <= n - 2` is the relation `i - n <= -2` it already keeps exactly.
+// `i <= 2 * k` is outside it, and accepting a bound the engine must immediately approximate
+// would buy syntax and lose proofs.
+//
+// ⚠ `n usize >= 2` is not decoration. The bound's arithmetic is lowered CHECKED, so `n - 2` on
+// an unbounded usize raises the underflow obligation rather than wrapping to SIZE_MAX and
+// making the precondition vacuously true. See refine_expr_bound_underflow_fail.ln.
+proc window(a i32[n], n usize >= 2, i usize <= n - 2) i32 {
+    return a[i] +% a[i + 1]
+}
+proc main() i32 { return 0 }
