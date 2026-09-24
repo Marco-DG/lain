@@ -1692,6 +1692,10 @@ ty=Config struct
 ### tests/vra/refinement/within_bound_pass.ln
 rc=0
 out=
+### tests/vra/refine_relational_param_pass.ln
+rc=0
+out=
+ty=Slice_i32 scalar
 ### tests/vra/return_refinement_param_pass.ln
 rc=0
 out=

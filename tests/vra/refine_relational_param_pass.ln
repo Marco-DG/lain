@@ -1,0 +1,15 @@
+// ★ C3: A PRECONDITION RELATING TWO PARAMETERS, and the bound travels along it.
+//
+// Only `j` is bounded by the length. `i` is bounded by `j`, so nothing in this signature says
+// directly that `i` is a valid index — the engine has to compose `i <= j` with `j < n` to get
+// there. That composition is native to the octagon, which holds `±x ±y <= c`: `i - j <= 0` and
+// `j - n <= -1` close to `i - n <= -1`.
+//
+// It WORKED before this test existed, and that is why the test exists. No corpus program bounded
+// a parameter by another PARAMETER — every relational test used a literal or a `.len` — so the
+// composition was one refactor away from being lost silently, and the plan still listed C3 as
+// unbuilt. A capability nobody exercises is indistinguishable from one nobody has.
+proc pick(a i32[n], n usize, j usize < n, i usize <= j) i32 {
+    return a[i] +% a[j]
+}
+proc main() i32 { return 0 }
