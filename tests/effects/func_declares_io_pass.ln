@@ -1,0 +1,20 @@
+// ★ B.1: A DECLARED EFFECT ROW WIDENS `func`'s BOUND — and until now it widened nothing.
+//
+// `func f() i32 effects io` was rejected identically to `func f() i32`: the purity check was
+// purely syntactic (a DECL_FUNCTION calling a DECL_PROCEDURE) and never looked at the clause.
+// So the clause could only ever be satisfied by the EMPTY row — it narrowed nothing and widened
+// nothing, which made `effects` on a `func` an assertion of nothing, the same defect as
+// `effects write`.
+//
+// A `func` has an empty bound BY DEFAULT, which is what keeps purity the default rather than an
+// opt-in; `effects io` states that this one performs IO, so calling a proc is precisely what was
+// declared rather than a violation of it.
+//
+// ★ This is the prerequisite for deleting `proc` (DECIDE-F): one introducer, bound ∅ by default,
+// `effects …` to widen. Until the clause was load-bearing there was nothing to delete `proc` in
+// favour of.
+extern proc libc_printf(fmt *u8, ...) i32
+func shout(x i32) i32 effects io {
+    return libc_printf("%d\n", x)
+}
+proc main() i32 { return shout(7) }

@@ -2296,9 +2296,22 @@ void sema_infer_expr(Expr *e) {
         Expr *callee = e->as.call_expr.callee;
         if (callee->decl) {
             if (callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE) {
-                fprintf(stderr, "sema error: pure function '%.*s' cannot call procedure\n",
-                        (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
-                exit(1);
+                // The same rule as resolve.h's E011, and it has to be the same: a declared
+                // `effects io` row WIDENS the bound, so calling a proc is what was declared.
+                // This copy had no diagnostic code and no source position — it printed
+                // "sema error: ..." and exited — so a program that got past resolve.h died
+                // here with a message that names no line. Two checks of one rule, and only one
+                // of them was findable; they now agree, and this one says where.
+                DeclFunction *cf2 = &current_function_decl->as.function_decl;
+                if (!(cf2->effects_declared && (cf2->effects_bound & EFFECT_IO))) {
+                    fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot "
+                            "call procedure\n", e->line, e->col,
+                            (int)cf2->name->length, cf2->name->name);
+                    fprintf(stderr, "       a `func` has an empty effect bound by default; write "
+                                    "`effects io` on it to declare that it performs IO\n");
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
             }
             
             // Termination Analysis: recursion in `func` is banned UNLESS the

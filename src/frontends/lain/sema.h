@@ -4975,16 +4975,31 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             if ((g_suppress_termination || g_suppress_recursion)
                 && (ef & EFFECT_DIVERGE) && !(ef & EFFECT_IO)) {
                 /* fall through: measured by the sovereign termination pass instead */
-            } else
-            if (dl->decl->kind == DECL_FUNCTION && (ef & (EFFECT_IO | EFFECT_DIVERGE))) {
+            } else {
+            // ── the DECLARED BOUND is what "forbidden" is measured against (B.1) ─────────
+            // A `func` has an empty effect bound BY DEFAULT, which is what makes purity the
+            // default rather than an opt-in. An `effects …` clause WIDENS that bound, and an
+            // effect inside the declared bound is not forbidden — it is declared. Before this,
+            // the clause was checked against nothing here and the row was refused outright, so
+            // `func f() i32 effects io` could not exist.
+            //
+            // Only the effects the bound does NOT cover are reported, so the message names what
+            // is actually wrong instead of the first bit it finds.
+            EffectSet declared = dl->decl->as.function_decl.effects_declared
+                               ? dl->decl->as.function_decl.effects_bound : 0;
+            EffectSet forbidden = ef & (EFFECT_IO | EFFECT_DIVERGE) & ~declared;
+            if (dl->decl->kind == DECL_FUNCTION && forbidden) {
                 Id *n = dl->decl->as.function_decl.name;
-                fprintf(stderr, "[E011] Error Ln %li, Col %li: `func` '%.*s' has a forbidden "
-                    "effect (%s) — a func must be pure and total. Declare it `proc`.\n",
+                fprintf(stderr, "[E011] Error Ln %li, Col %li: `func` '%.*s' has an undeclared "
+                    "effect (%s) — a `func` has an empty effect bound by default.\n",
                     (long)dl->decl->line, (long)dl->decl->col,
                     n ? (int)n->length : 1, n ? n->name : "?",
-                    (ef & EFFECT_IO) ? "IO" : "Diverge");
+                    (forbidden & EFFECT_IO) ? "IO" : "Diverge");
+                fprintf(stderr, "       declare it with `effects %s`, or keep the function pure.\n",
+                    (forbidden & EFFECT_IO) ? "io" : "diverge");
                 diagnostic_show_line(dl->decl->line, dl->decl->col);
                 exit(1);
+            }
             }
         }
         if (dl->decl->kind == DECL_PROCEDURE) {

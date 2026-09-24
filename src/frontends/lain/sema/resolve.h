@@ -1252,17 +1252,39 @@ void sema_resolve_expr(Expr *e) {
     }
     sema_monomorphize_call(e);   // no-op unless callee is a generic template
 
-    // Purity Check: func cannot call proc (checked on the possibly-rewritten callee)
+    // ── Purity: a `func` may not call a `proc` UNLESS it declared the effect (B.1) ────────
+    //
+    // ★ THE DECLARED ROW HAD TO START MEANING SOMETHING. This check was purely syntactic —
+    // DECL_FUNCTION calling DECL_PROCEDURE, refused regardless of any `effects` clause — so
+    // `func f() i32 effects io` was rejected identically to `func f() i32`. The clause could
+    // therefore never be satisfied by anything but the empty row: it narrowed nothing and
+    // widened nothing, which made `effects` on a `func` ANOTHER ASSERTION OF NOTHING, the same
+    // defect as `effects write` one level up.
+    //
+    // A declared row is an upper BOUND that the programmer states and the compiler checks
+    // (sema's declared-vs-inferred comparison does the checking). Stating `io` means "this
+    // performs IO" — so calling a proc is precisely what was declared, not a violation of it.
+    // Without the clause the bound is ∅ and the refusal stands, which is what keeps `func`'s
+    // purity guarantee the default rather than an opt-in.
+    //
+    // This is the prerequisite for deleting `proc` (DECIDE-F): one introducer whose bound is ∅
+    // by default and `effects …` to widen it. Until the clause was load-bearing, "delete
+    // `proc`" had nothing to delete it in favour of.
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         Expr *callee = e->as.call_expr.callee;
         if (callee->decl) {
             if (callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE) {
-                fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot call procedure\n",
-                        e->line, e->col,
-                        (int)current_function_decl->as.function_decl.name->length,
-                        current_function_decl->as.function_decl.name->name);
-                diagnostic_show_line(e->line, e->col);
-                exit(1);
+                DeclFunction *cf = &current_function_decl->as.function_decl;
+                bool declared_io = cf->effects_declared && (cf->effects_bound & EFFECT_IO);
+                if (!declared_io) {
+                    fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot call procedure\n",
+                            e->line, e->col,
+                            (int)cf->name->length, cf->name->name);
+                    fprintf(stderr, "       a `func` has an empty effect bound by default; write "
+                                    "`effects io` on it to declare that it performs IO\n");
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
             }
         }
     }
