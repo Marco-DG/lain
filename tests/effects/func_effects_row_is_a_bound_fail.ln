@@ -1,0 +1,27 @@
+// EXPECT: [E011]
+// ★ `effects` IS AN UPPER BOUND, NOT A PERMISSION — and the difference is the whole design.
+//
+// Two things could plausibly license a side effect, and only one of them does:
+//
+//   the KEYWORD  `func` is pure and total; `proc` may do IO and may diverge. This is the
+//                PERMISSION, it is one word, and it is the only annotation Lain asks for.
+//   the ROW      `effects io, alloc` is an upper BOUND on what the body does, checked against
+//                the INFERRED row. It cannot license anything; it can only be wrong ([E130]).
+//                It is genuinely useful on a `proc` — declaring `io` on one that also
+//                allocates is refused — because a proc's permission is broad and the row
+//                narrows it.
+//
+// For one afternoon on 2026-09-24 the row was made to widen a `func`'s bound, so this program
+// compiled. It half-worked, which is how the mistake showed: `effects io` permitted IO while
+// `effects diverge` still could not license an unbounded loop, because termination is the
+// sovereign engine's obligation and never reads the row. One clause meaning "at most this" in
+// one place and "allow this" in another is two mechanisms wearing one name, which is exactly
+// what L3 refuses.
+//
+// Effects are ALWAYS INFERRED. Nothing in Lain requires an effect to be written down; the row
+// exists only to be checked.
+extern proc libc_printf(fmt *u8, ...) i32
+func shout(x i32) i32 effects io {
+    return libc_printf("%d\n", x)
+}
+proc main() i32 { return shout(7) }

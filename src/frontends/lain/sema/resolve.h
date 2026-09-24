@@ -1275,16 +1275,23 @@ void sema_resolve_expr(Expr *e) {
         if (callee->decl) {
             if (callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE) {
                 DeclFunction *cf = &current_function_decl->as.function_decl;
-                bool declared_io = cf->effects_declared && (cf->effects_bound & EFFECT_IO);
-                if (!declared_io) {
-                    fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot call procedure\n",
-                            e->line, e->col,
-                            (int)cf->name->length, cf->name->name);
-                    fprintf(stderr, "       a `func` has an empty effect bound by default; write "
-                                    "`effects io` on it to declare that it performs IO\n");
-                    diagnostic_show_line(e->line, e->col);
-                    exit(1);
-                }
+                fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot call procedure\n",
+                        e->line, e->col, (int)cf->name->length, cf->name->name);
+                // ★ A ROW CANNOT BUY THE PERMISSION, and saying so is the point of this line.
+                // Measured 2026-09-24: `effects` is a BOUND — an upper limit checked against
+                // the inferred row, and genuinely useful on a `proc` (declaring `io` on one
+                // that also allocates is [E130]). The KEYWORD is the PERMISSION. Briefly today
+                // `effects io` was made to widen a func's bound, and it half-worked: IO became
+                // permitted while `effects diverge` still could not license a loop, because
+                // termination is the sovereign engine's obligation and does not read the row.
+                // One clause meaning "at most this" in one place and "allow this" in another is
+                // two mechanisms wearing one name (L3).
+                if (cf->effects_declared && (cf->effects_bound & EFFECT_IO))
+                    fprintf(stderr, "       the `effects io` clause is an upper BOUND on what "
+                            "this function does, not permission to do it — a `func` is pure by "
+                            "definition. Declare it `proc`.\n");
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
             }
         }
     }

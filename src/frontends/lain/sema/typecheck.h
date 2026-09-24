@@ -2302,16 +2302,19 @@ void sema_infer_expr(Expr *e) {
                 // "sema error: ..." and exited — so a program that got past resolve.h died
                 // here with a message that names no line. Two checks of one rule, and only one
                 // of them was findable; they now agree, and this one says where.
+                // The same rule as resolve.h's E011, and it has to BE the same. This copy had
+                // no diagnostic code and no source position — it printed "sema error: ..." and
+                // exited — so a program that got past resolve.h died here with a message that
+                // names no line. Two checks of one rule, and only one of them findable.
                 DeclFunction *cf2 = &current_function_decl->as.function_decl;
-                if (!(cf2->effects_declared && (cf2->effects_bound & EFFECT_IO))) {
-                    fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot "
-                            "call procedure\n", e->line, e->col,
-                            (int)cf2->name->length, cf2->name->name);
-                    fprintf(stderr, "       a `func` has an empty effect bound by default; write "
-                                    "`effects io` on it to declare that it performs IO\n");
-                    diagnostic_show_line(e->line, e->col);
-                    exit(1);
-                }
+                fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot "
+                        "call procedure\n", e->line, e->col,
+                        (int)cf2->name->length, cf2->name->name);
+                if (cf2->effects_declared && (cf2->effects_bound & EFFECT_IO))
+                    fprintf(stderr, "       the `effects io` clause is an upper BOUND, not "
+                            "permission — a `func` is pure by definition. Declare it `proc`.\n");
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
             }
             
             // Termination Analysis: recursion in `func` is banned UNLESS the

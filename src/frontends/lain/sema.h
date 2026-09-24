@@ -4985,18 +4985,18 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             //
             // Only the effects the bound does NOT cover are reported, so the message names what
             // is actually wrong instead of the first bit it finds.
-            EffectSet declared = dl->decl->as.function_decl.effects_declared
-                               ? dl->decl->as.function_decl.effects_bound : 0;
-            EffectSet forbidden = ef & (EFFECT_IO | EFFECT_DIVERGE) & ~declared;
-            if (dl->decl->kind == DECL_FUNCTION && forbidden) {
+            // ⚠ The declared row is NOT subtracted here, and that is deliberate. `effects` is
+            // an upper BOUND checked against inference (meaningful on a `proc`: declaring `io`
+            // on one that also allocates is [E130]); the KEYWORD is the permission. A `func` is
+            // pure and total by definition, so an effect in its body is forbidden however the
+            // row is written — there is nothing for a bound to license.
+            if (dl->decl->kind == DECL_FUNCTION && (ef & (EFFECT_IO | EFFECT_DIVERGE))) {
                 Id *n = dl->decl->as.function_decl.name;
-                fprintf(stderr, "[E011] Error Ln %li, Col %li: `func` '%.*s' has an undeclared "
-                    "effect (%s) — a `func` has an empty effect bound by default.\n",
+                fprintf(stderr, "[E011] Error Ln %li, Col %li: `func` '%.*s' has a forbidden "
+                    "effect (%s) — a func must be pure and total. Declare it `proc`.\n",
                     (long)dl->decl->line, (long)dl->decl->col,
                     n ? (int)n->length : 1, n ? n->name : "?",
-                    (forbidden & EFFECT_IO) ? "IO" : "Diverge");
-                fprintf(stderr, "       declare it with `effects %s`, or keep the function pure.\n",
-                    (forbidden & EFFECT_IO) ? "io" : "diverge");
+                    (ef & EFFECT_IO) ? "IO" : "Diverge");
                 diagnostic_show_line(dl->decl->line, dl->decl->col);
                 exit(1);
             }
