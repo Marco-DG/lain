@@ -1,0 +1,17 @@
+// ★ `@diverges` — the one exception to "everything terminates", and why it is an ATTRIBUTE.
+//
+// The first attempt used the effect row (`effects diverge`), and the corpus refused it: the row
+// is a COMPLETE upper bound, so declaring one bit obliges you to declare them all — a `main`
+// that also prints got [E130] for an incomplete row. Opting out of termination would have meant
+// spelling out every other effect, which is the verbosity the inference exists to avoid.
+//
+// Divergence is one rare property of one declaration. That is exactly what `@cold`, `@hot` and
+// `@noreturn` already are, so it joins them and leaves the row alone.
+extern proc libc_printf(fmt *u8, ...) i32
+@diverges
+proc serve(n i32) i32 {
+    var i i32 = 0
+    while i < n { }
+    return libc_printf("%d\n", i)
+}
+proc main() i32 { return 0 }

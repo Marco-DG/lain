@@ -1,0 +1,22 @@
+// EXPECT: [E011]
+// ★ TERMINATION IS THE DEFAULT NOW, FOR EVERYTHING.
+//
+// Before 2026-09-24 this compiled, because the check read `f->kind != IR_FUNC_PURE` — "a proc
+// may loop forever". That made the guarantee depend on a keyword answering a DIFFERENT
+// question: `proc` means "may do IO", so every function that printed inherited "may hang" for
+// sharing a keyword with the ones that genuinely do.
+//
+// Measured over the corpus at the time: 845 procs, of which 592 were pure and total anyway,
+// 173 did IO and TERMINATED while being exempt from the check, and 61 actually diverged. No
+// function in `std/` needed the permission at all.
+//
+// So the default inverted: every loop carries the obligation, and the handful that cannot be
+// proven say `@diverges`. Across 742 corpus programs that came to TEN markers — fewer
+// annotations than before, and 173 functions gained a guarantee they did not have.
+extern proc libc_printf(fmt *u8, ...) i32
+proc spin(n i32) i32 {
+    var i i32 = 0
+    while i < n { }
+    return libc_printf("%d\n", i)
+}
+proc main() i32 { return 0 }

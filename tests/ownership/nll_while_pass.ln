@@ -1,3 +1,8 @@
+// ⚠ `effects diverge` — the compiler cannot prove this loop terminates, and says so here
+// rather than exempting every `proc` from the question. Before 2026-09-24 the keyword
+// `proc` carried this permission silently: it means "may do IO", and every IO function
+// inherited "may hang" for sharing it. Measured then: 173 procs did IO and terminated
+// while exempt, against 61 that actually diverge. The marker is now on the exceptions.
 // Tests that Non-Lexical Lifetimes (NLL) work for temporary borrows in conditions.
 
 type Lexer {
@@ -13,6 +18,7 @@ func consume(var l Lexer) i32 {
     return l.pos
 }
 
+@diverges
 proc test_nll_while() {
     var l = Lexer(0)
     

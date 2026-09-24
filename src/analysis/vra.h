@@ -3503,7 +3503,16 @@ static Vra *vra_analyze(IrFunc *f) {
     // intention, and the compiler defends it against drift.
     for (IrBlock *b=f->blocks; b; b=b->next) {
         if (!b->is_loop_header) continue;
-        if (f->kind != IR_FUNC_PURE && !b->has_measure) continue;   // a proc may loop forever
+        // ★ THE DEFAULT IS TERMINATION (2026-09-24). Every loop carries the obligation unless
+        // its function declared `effects diverge` — and a WRITTEN measure is defended even
+        // then, because a claim the compiler does not check reads as verified (D-44).
+        //
+        // This line used to read `f->kind != IR_FUNC_PURE`, i.e. "a proc may loop forever".
+        // That made the guarantee depend on a keyword answering a different question: `proc`
+        // means "may do IO", and every IO function was exempt from termination checking for
+        // sharing a keyword with the ones that genuinely hang. The exemption is now stated by
+        // the function that wants it rather than inherited from how it prints.
+        if (f->may_diverge && !b->has_measure) continue;
         VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
         c.had_measure = b->has_measure;
         vra_add_check(V, c);

@@ -288,6 +288,10 @@ typedef struct {
     struct Expr* decreasing_measure; // `func f(...) R decreasing <measure>`: permits
                                      // recursion — each self-call must strictly decrease
                                      // this well-founded (>=0) measure. NULL = no recursion.
+    // ★ `@diverges`: this function is permitted not to terminate. Every loop carries the
+    // termination obligation unless its function says this — the default is "it terminates",
+    // and the exception is written on the handful that need it.
+    bool        diverges;
     bool        is_extern;      // true for “extern func”
     bool        is_variadic;    // true for “...”
     bool        is_cold;        // @cold:     GCC moves to .text.cold, pessimizes branch

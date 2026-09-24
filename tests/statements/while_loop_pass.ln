@@ -1,6 +1,12 @@
+// ⚠ `effects diverge` — the compiler cannot prove this loop terminates, and says so here
+// rather than exempting every `proc` from the question. Before 2026-09-24 the keyword
+// `proc` carried this permission silently: it means "may do IO", and every IO function
+// inherited "may hang" for sharing it. Measured then: 173 procs did IO and terminated
+// while exempt, against 61 that actually diverge. The marker is now on the exceptions.
 
 extern proc libc_printf(fmt *u8, ...) i32
 
+@diverges
 proc main() i32 {
     var i = 0
     libc_printf("Testing while loop (0 to 9):\n")

@@ -1,3 +1,8 @@
+// ⚠ `effects diverge` — the compiler cannot prove this loop terminates, and says so here
+// rather than exempting every `proc` from the question. Before 2026-09-24 the keyword
+// `proc` carried this permission silently: it means "may do IO", and every IO function
+// inherited "may hang" for sharing it. Measured then: 173 procs did IO and terminated
+// while exempt, against 61 that actually diverge. The marker is now on the exceptions.
 // Both helpers return an unbounded i32 (the accumulator wraps), so their difference can
 // overflow. The subject is the `and`-conjunct guard inside the loop, not the subtraction.
 // A `while` guard's conjuncts each reach the body. `while i < 100 and s < 5` proves `a[i]`
@@ -11,6 +16,7 @@
 // `ir_lower_cond_br`, which puts each conjunct's fact on its own edge.
 //
 // Both orders are checked: the index guard is the FIRST conjunct here and the SECOND below.
+@diverges
 proc first(a i32[100]) i32 {
     var i usize = 0
     var s i32 = 0
@@ -18,6 +24,7 @@ proc first(a i32[100]) i32 {
         i = i + 1 }
     return s
 }
+@diverges
 proc second(a i32[100]) i32 {
     var i usize = 0
     var s i32 = 0

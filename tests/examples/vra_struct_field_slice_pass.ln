@@ -11,6 +11,7 @@ type Buf {
 }
 func is_sp(c u8) bool { return c == 32 }
 func is_az(c u8) bool { return c >= 97 and c <= 122 }
+@diverges
 proc count_words(l *Buf) u32 {
     var i u32 = 0
     var words u32 = 0

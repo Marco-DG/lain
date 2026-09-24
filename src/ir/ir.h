@@ -443,6 +443,16 @@ typedef uint64_t IrRetainFootprint;
 typedef struct IrFunc {
     IrName    *name;
     IrFuncKind kind;
+    // ── MAY THIS FUNCTION RUN FOREVER? ──────────────────────────────────────────────────
+    // Set from a declared `effects diverge`. Termination is an obligation for EVERY loop
+    // unless this is true — the default is "it terminates", and the exception is written.
+    //
+    // ★ It used to be the other way round, keyed on `kind`: a `proc` could loop forever
+    // because the keyword that lets a function print also let it hang. Those are independent
+    // questions and conflating them cost the guarantee: measured over the corpus, 173 procs
+    // did IO and terminated while being exempt from the check, against 61 that actually
+    // diverge — and no function in `std/` needs the permission at all.
+    bool       may_diverge;
     bool       is_extern;   // declaration only (no body) — a trusted boundary
     bool       is_variadic; // `...` — a C-style variadic boundary (printf and friends). The
                             // IR must carry it or the emitter cannot declare the function at

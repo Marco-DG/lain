@@ -7,6 +7,7 @@ func is_alpha(c u8) bool { return (c >= 65 and c <= 90) or (c >= 97 and c <= 122
 func is_digit(c u8) bool { return c >= 48 and c <= 57 }
 func is_alnum(c u8) bool { return is_alpha(c) or is_digit(c) }
 
+@diverges
 proc count_tokens(src u8[4096], n u32) u32 {
     var count u32 = 0
     var i     u32 = 0

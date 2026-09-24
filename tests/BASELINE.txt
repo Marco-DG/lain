@@ -71,6 +71,10 @@ ty=Slice_u8 scalar
 rc=0
 out=Passed.
 ty=Slice_u8 scalar
+### tests/effects/diverges_attribute_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
 ### tests/effects/effects_bound_honest_pass.ln
 rc=0
 out=

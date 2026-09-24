@@ -3002,6 +3002,10 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     IrFunc *f = ir_func_new(a, ir_qualified_name(a, fn, fnm), NULL,
                             fn->kind==DECL_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
     f->src_decl = fn;   // opaque provenance (void*) — the IR never derefs it
+    // The exception to "everything terminates", written by the function that wants it. The
+    // effect row already had a `diverge` bit and a parser for it; this is the one place that
+    // had to start reading it, so the opt-out needed no new syntax.
+    f->may_diverge = fn->as.function_decl.diverges;
     cc.fdecl = fn;      // for callee-side return-ensures asserts
     cc.f = f; cc.cur = f->entry;
     f->ret_type = ir_lower_borrow_binding_type(&cc, fn->as.function_decl.return_type);
