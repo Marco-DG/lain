@@ -738,11 +738,20 @@ Five separate facts about the function, none of them written by the programmer:
 C99 is the backend that works. It compiles the whole corpus, and every listing on this page came
 out of it. The output is portable and readable, and ordinary debuggers understand it.
 
-There is also an LLVM path, and it is honestly a partial one. `--emit-llvm` lowers integer code
-and passes the proved ranges through as `@llvm.assume`, which lets LLVM drop work the proof
-shows is unreachable. That is where more of the value is, since it reaches optimisations that
-cannot be expressed by going through C at all. But it covers a subset: anything outside it comes
-out as an `; unsupported` comment, so C remains the path that runs.
+There is also an LLVM path, and it is a demonstration rather than a backend. `--emit-llvm`
+lowers integer functions built from `+ - *`, the comparisons, `if` and `return`, and passes the
+proved ranges through as `@llvm.assume` — which is where more of the value eventually is, since
+it reaches optimisations that going through C cannot express at all.
+
+Outside that subset it now **refuses**, and it did not always. It used to emit a comment and
+carry on, which sounds harmless and was not: `return a +% b` came out as `add i32 %a, 0`, so the
+function returned `a`. Wrong output that looks like valid LLVM IR, from a compiler whose whole
+claim is prove-or-reject — and measured across the corpus, **120 of 120 programs** contained at
+least one such placeholder. It reports what it cannot model and translates nothing, the same way
+the C backend refuses a construct it has not modelled.
+
+So C is the path that runs, and the honest summary of the LLVM one is that the seam exists and
+the backend does not.
 
 Neither target owns the proofs. They are settled on the IR, which is why adding a backend is
 ordinary work rather than a redesign.

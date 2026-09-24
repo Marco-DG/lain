@@ -14,6 +14,24 @@
 #include <stdio.h>
 #include "ast.h"
 
+// ★ WHAT THIS EMITTER CANNOT MODEL, IT MUST REFUSE (2026-09-24).
+//
+// Every one of the three sites below used to emit a COMMENT and carry on:
+//
+//     %t0 = add i32 %a, 0 ; unsupported binop      <- `a +% b` became `a + 0`
+//     ; unsupported expr kind 5
+//     ; unsupported stmt kind 3
+//
+// So `func add(a i32, b i32) i32 { return a +% b }` produced LLVM that returns `a`. Not
+// partial output — WRONG output, from a compiler whose entire claim is prove-or-reject, and
+// measured over the corpus at **120 of 120 programs containing a placeholder**. The README
+// documented the flag as working-if-partial, which is how it survived: a reader checking the
+// claim gets a file, and the file looks like LLVM IR.
+//
+// This is exactly D-58 one backend over. The IR backend refuses an unmodelled construct rather
+// than emitting `v0 = 0`, for the same reason, and the reason is that a plausible-looking
+// wrong answer is worse than a refusal: the C compiler cannot catch it and neither can you.
+static int  ll_unsupported;     // > 0 ⇒ nothing faithful was written; refuse
 static FILE *llf;
 static int   ll_tmp;          // SSA temp counter
 static int   ll_lbl;          // block-label counter
@@ -58,12 +76,14 @@ static void ll_expr(Expr *e, char *out, size_t n) {
         int t = ll_tmp++;
         if (icmp) fprintf(llf, "  %%t%d = icmp %s i32 %s, %s\n", t, icmp, a, b);
         else if (op) fprintf(llf, "  %%t%d = %s i32 %s, %s\n", t, op, a, b);
-        else fprintf(llf, "  %%t%d = add i32 %s, 0 ; unsupported binop\n", t, a);
+        else { ll_unsupported++;
+               fprintf(llf, "  ; REFUSED: binary operator not modelled by the LLVM path\n"); }
         snprintf(out, n, "%%t%d", t);
         return;
       }
       default:
-        fprintf(llf, "  ; unsupported expr kind %d\n", e->kind);
+        ll_unsupported++;
+        fprintf(llf, "  ; REFUSED: expression kind %d not modelled by the LLVM path\n", e->kind);
         snprintf(out, n, "0");
         return;
     }
@@ -93,7 +113,8 @@ static bool ll_stmt(Stmt *s) {
         return false;
       }
       default:
-        fprintf(llf, "  ; unsupported stmt kind %d\n", s->kind);
+        ll_unsupported++;
+        fprintf(llf, "  ; REFUSED: statement kind %d not modelled by the LLVM path\n", s->kind);
         return false;
     }
 }
@@ -145,9 +166,12 @@ static void ll_func(Decl *d) {
     fprintf(llf, "}\n\n");
 }
 
-static void emit_llvm(DeclList *program, const char *out_file) {
+// Returns the number of constructs it could not model. Non-zero means the caller must NOT
+// treat the output as a translation of the program.
+static int emit_llvm(DeclList *program, const char *out_file) {
+    ll_unsupported = 0;
     llf = fopen(out_file, "w");
-    if (!llf) { fprintf(stderr, "emit_llvm: cannot open %s\n", out_file); return; }
+    if (!llf) { fprintf(stderr, "emit_llvm: cannot open %s\n", out_file); return -1; }
     fprintf(llf, "; Lain-IR -> LLVM-IR (proof-carrying seam)\n");
     fprintf(llf, "declare void @llvm.assume(i1)\n\n");
     for (DeclList *dl = program; dl; dl = dl->next) {
@@ -156,6 +180,7 @@ static void emit_llvm(DeclList *program, const char *out_file) {
         else if (d && d->kind == DECL_PROCEDURE) ll_func(d);  // same shape here
     }
     fclose(llf);
+    return ll_unsupported;
 }
 
 #endif /* EMIT_LLVM_H */
