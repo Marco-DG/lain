@@ -395,7 +395,13 @@ typedef enum {
     // write", which is a fail-closed signal rather than an observation. Reserved, not dead by
     // oversight. The PARAMETER-write channel is C5's IrWriteFootprint, which is separate and
     // live — the row was never the right shape for it.
-    IR_EFFECT_WRITE   = 1 << 0,  // writes mutable GLOBAL state (a var-param write is NOT this)
+    // ★ RENAMED FROM IR_EFFECT_WRITE (2026-09-24). The comment above already said the domain
+    // is empty and the only live trigger is an OPAQUE's declared write footprint — so the NAME
+    // described a thing that cannot happen, while the BIT meant "unmodelled code might write".
+    // Those are different claims, and a reader had to get to the fourth line of the comment to
+    // learn which one was in force. `effects write` is no longer sayable in source for the same
+    // reason: a bound on an impossible effect is an assertion of nothing (L3).
+    IR_EFFECT_UNMODELLED_WRITE = 1 << 0,
     IR_EFFECT_DIVERGE = 1 << 1,  // may not terminate (unbounded loop / non-well-founded recursion)
     IR_EFFECT_RAISES  = 1 << 2,  // may panic / abort
     // An extern's IO bit defaults from WHICH KEYWORD the programmer wrote (`extern func` is
@@ -411,7 +417,7 @@ typedef enum {
 typedef unsigned IrEffect;
 
 // ── C5: the WRITE FOOTPRINT ─────────────────────────────────────────────────
-// The bits above are a coarse binary — IR_EFFECT_WRITE means "writes mutable GLOBAL state"
+// The bits above are a coarse binary — IR_EFFECT_UNMODELLED_WRITE means "writes mutable GLOBAL state"
 // and explicitly EXCLUDES a write through a parameter, so the row could not say WHICH memory
 // a function touches. That is the "region footprints" half of the effect row (C5), and its
 // absence is not academic: whether a callee actually writes through a reference parameter

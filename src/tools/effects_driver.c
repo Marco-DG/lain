@@ -78,11 +78,11 @@ int main(int argc, char **argv) {
         // The soundness-critical direction: new dropping an OBSERVABLE effect the old has.
         // DIVERGE is excluded — it is semantic (VRA termination), and new legitimately
         // proves termination where the old engine only checked syntactically (no measure).
-        unsigned OBSERVABLE = IR_EFFECT_WRITE | IR_EFFECT_IO | IR_EFFECT_RAISES;
+        unsigned OBSERVABLE = IR_EFFECT_UNMODELLED_WRITE | IR_EFFECT_IO | IR_EFFECT_RAISES;
         unsigned dropped = oldE & ~newE & OBSERVABLE;
         if (dropped){ mism++;
             fprintf(stderr,"UNSOUND %.*s  old=%s new=%s  (dropped observable %s)\n",
-                    (int)nm->length,nm->name,ob,nb, (dropped&IR_EFFECT_WRITE)?"Write":(dropped&IR_EFFECT_IO)?"IO":"Raises");
+                    (int)nm->length,nm->name,ob,nb, (dropped&IR_EFFECT_UNMODELLED_WRITE)?"Write":(dropped&IR_EFFECT_IO)?"IO":"Raises");
         } else if (newE!=oldE){
             if (!quiet) fprintf(stdout,"  ~%.*s : old=%s new=%s (Diverge-precision, sound)\n",(int)nm->length,nm->name,ob,nb);
         } else if (!quiet) {

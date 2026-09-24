@@ -697,12 +697,31 @@ static bool parse_effects_clause(Parser *parser, EffectSet *out) {
     EffectSet e = 0;
     while (parser_match(TOKEN_IDENTIFIER)) {
         const char *n = parser->token.start; int l = parser->token.length;
-        if      (l==5 && strncmp(n,"write",5)==0)   e |= EFFECT_WRITE;
+        // ★ `write` IS NOT SAYABLE, and that is the point of naming it here rather than
+        // leaving it out of the list. Its domain is EMPTY by language design: the effect means
+        // "writes mutable GLOBAL state", and a top-level `var` is [E100] — there is no shared
+        // mutable state in Lain at all. So `effects write` declared a bound on something that
+        // cannot happen, was always satisfied, and W130 would then advise downgrading the
+        // function to `func` in the same breath.
+        //
+        // That is an ASSERTION OF NOTHING: a spelling that carries no information, which is
+        // exactly what law L3 (one mechanism per concern) refuses. The audit said so three
+        // months ago and it stayed sayable, because nothing rejects a bound that is merely
+        // vacuous.
+        //
+        // A programmer who writes it means one of two real things, so the diagnostic names
+        // both: mutating through a `var` PARAMETER (not an effect — it is in the signature,
+        // and the write footprint C5 tracks is a separate and live mechanism), or doing IO.
+        if      (l==5 && strncmp(n,"write",5)==0)
+            parser_error("there is no `write` effect: Lain has no mutable global state "
+                         "(a top-level `var` is [E100]), so the bound would always hold. "
+                         "Mutation through a `var` parameter is in the signature, not the "
+                         "effect row; for external side effects write `io`");
         else if (l==7 && strncmp(n,"diverge",7)==0) e |= EFFECT_DIVERGE;
         else if (l==6 && strncmp(n,"raises",6)==0)  e |= EFFECT_RAISES;
         else if (l==2 && strncmp(n,"io",2)==0)      e |= EFFECT_IO;
         else if (l==5 && strncmp(n,"alloc",5)==0)   e |= EFFECT_ALLOC;
-        else parser_error("unknown effect name (expected write/diverge/raises/io/alloc)");
+        else parser_error("unknown effect name (expected diverge/raises/io/alloc)");
         parser_advance();
         if (parser_match(TOKEN_COMMA)) { parser_advance(); continue; }
         break;

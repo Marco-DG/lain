@@ -60,7 +60,7 @@ static IrCAnnot ir_c_annot(IrFunc *f, IrFunc *mod) {
     // drop a call whose result is unused, and dropping a call that ABORTS is a miscompile.
     if (ir_effects(f, mod) != 0) return a;
     // ★★ AND an empty WRITE FOOTPRINT — the effect row alone is NOT enough, and finding out
-    // why is the sharpest thing this file taught. `IR_EFFECT_WRITE` means "writes mutable
+    // why is the sharpest thing this file taught. `IR_EFFECT_UNMODELLED_WRITE` means "writes mutable
     // GLOBAL state", and says so: a write through a `var` parameter is deliberately excluded,
     // because it is part of the function's INTERFACE, visible to the caller through the
     // argument, not a hidden effect. That is the right lattice. It is the wrong gate for

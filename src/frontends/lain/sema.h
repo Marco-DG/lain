@@ -3736,8 +3736,14 @@ static void eff_visit_expr(Expr *e) {
             break;
         }
         case EXPR_IDENTIFIER:
+            // ⚠ UNREACHABLE BY LANGUAGE DESIGN, and kept deliberately. A top-level `var` is
+            // [E100] — Lain has no mutable global state — so `is_global && is_mutable` cannot
+            // hold. It stays as the fail-closed shape this rule would need if that ever
+            // changed, rather than being deleted and silently forgotten. `effects write` is
+            // no longer sayable in source (see parse_effects_clause): a bound on an effect
+            // whose domain is empty is an assertion of nothing.
             if (e->is_global && e->decl && e->decl->kind == DECL_VARIABLE &&
-                e->decl->as.variable_decl.is_mutable) g_eff_acc |= EFFECT_WRITE;
+                e->decl->as.variable_decl.is_mutable) g_eff_acc |= EFFECT_UNMODELLED_WRITE;
             break;
         case EXPR_BINARY: eff_visit_expr(e->as.binary_expr.left); eff_visit_expr(e->as.binary_expr.right); break;
         case EXPR_UNARY:  eff_visit_expr(e->as.unary_expr.right); break;
@@ -3803,7 +3809,7 @@ static void eff_visit_stmt(Stmt *s) {
 // E2: the TRANSITIVE effect set of a function — its direct effects unioned with
 // every callee's effects — memoized on the decl. An `extern func` is trusted pure
 // ({}), an `extern proc` is opaque (IO), and a recursion cycle yields Diverge via
-// the in-progress guard. EFFECT_WRITE is reserved for mutation of mutable GLOBAL
+// the in-progress guard. EFFECT_UNMODELLED_WRITE is reserved for mutation of mutable GLOBAL
 // state (a hidden side effect); mutation of a `var` parameter is NOT an effect —
 // it is declared in the signature, exclusive, and referentially transparent
 // (spec §12), so a `func` that only mutates a var param is pure & total.
@@ -3860,7 +3866,7 @@ static void sema_print_effects(Decl *d) {
     EffectSet e = d->as.function_decl.effects;
     fprintf(stderr, "[effects] %s %.*s : {", kind, n ? (int)n->length : 1, n ? n->name : "?");
     const char *sep = "";
-    if (e & EFFECT_WRITE)   { fprintf(stderr, "%sWrite",   sep); sep = ", "; }
+    if (e & EFFECT_UNMODELLED_WRITE)   { fprintf(stderr, "%sWrite",   sep); sep = ", "; }
     if (e & EFFECT_DIVERGE) { fprintf(stderr, "%sDiverge", sep); sep = ", "; }
     if (e & EFFECT_RAISES)  { fprintf(stderr, "%sRaises",  sep); sep = ", "; }
     if (e & EFFECT_IO)      { fprintf(stderr, "%sIO",      sep); sep = ", "; }
@@ -4938,7 +4944,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                         (long)dl->decl->line, (long)dl->decl->col,
                         n ? (int)n->length : 1, n ? n->name : "?");
                     const char *sep = "";
-                    if (missing & EFFECT_WRITE)   { fprintf(stderr, "%swrite", sep);   sep=", "; }
+                    if (missing & EFFECT_UNMODELLED_WRITE)   { fprintf(stderr, "%swrite", sep);   sep=", "; }
                     if (missing & EFFECT_DIVERGE) { fprintf(stderr, "%sdiverge", sep); sep=", "; }
                     if (missing & EFFECT_RAISES)  { fprintf(stderr, "%sraises", sep);  sep=", "; }
                     if (missing & EFFECT_IO)      { fprintf(stderr, "%sio", sep);      sep=", "; }

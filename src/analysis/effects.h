@@ -40,7 +40,7 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
                 // the function looked non-panicking, which is exactly the annotation
                 // miscompile this row exists to prevent.
                 e |= IR_EFFECT_IO | IR_EFFECT_RAISES;
-                if (ins->aux.opaque.writes) e |= IR_EFFECT_WRITE;
+                if (ins->aux.opaque.writes) e |= IR_EFFECT_UNMODELLED_WRITE;
                 continue;
             }
             if (ins->op != IR_CALL) continue;
