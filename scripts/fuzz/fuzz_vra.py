@@ -33,7 +33,7 @@ def gen(rng):
         D     = rng.choice([2, 2, 2, 3, 4])
         bound = rng.choice([N, N, N // 2 or 1, N + rng.randint(1, 40)])
         lo, hi = rng.randint(0, 3), rng.randint(1, bound + 20)
-        body = f"""proc probe(lo usize, hi usize, a i32[{N}]) i32 {{
+        body = f"""func probe(lo usize, hi usize, a i32[{N}]) i32 {{
     if lo < hi and hi < {bound} {{
         var mid usize = lo + (hi - lo) / {D}
         return a[mid]
@@ -45,7 +45,7 @@ def gen(rng):
     elif kind == "midpoint_wide":
         # the same shape with NO upper guard on hi — must never be proven.
         lo, hi = rng.randint(0, 3), rng.randint(1, N + 50)
-        body = f"""proc probe(lo usize, hi usize, a i32[{N}]) i32 {{
+        body = f"""func probe(lo usize, hi usize, a i32[{N}]) i32 {{
     if lo < hi {{
         var mid usize = lo + (hi - lo) / 2
         return a[mid]
@@ -59,7 +59,7 @@ def gen(rng):
         D     = rng.choice([2, 2, 3, 4])
         bound = rng.choice([N, N + rng.randint(1, 60), 2 * N, N // 2 or 1])
         m     = rng.randint(0, bound + 20)
-        body = f"""proc probe(m usize, a i32[{N}]) i32 {{
+        body = f"""func probe(m usize, a i32[{N}]) i32 {{
     if m < {bound} {{
         return a[m - m / {D}]
     }}
@@ -72,7 +72,7 @@ def gen(rng):
         D     = rng.choice([2, 3, 5, 8])
         bound = rng.choice([N, N * D, N * D + rng.randint(1, 30), N // 2 or 1])
         m     = rng.randint(0, bound + 20)
-        body = f"""proc probe(m usize, a i32[{N}]) i32 {{
+        body = f"""func probe(m usize, a i32[{N}]) i32 {{
     if m < {bound} {{
         return a[m / {D}]
     }}
@@ -87,7 +87,7 @@ def gen(rng):
         # drawn to sit above, at, and below the array length on purpose.
         bound = rng.choice([N, N, N // 2 or 1, N + rng.randint(1, 40)])
         ty, inc = rng.choice([("usize", "i + 1"), ("u32", "i +% 1"), ("u32", "i + 1")])
-        body = f"""proc probe(m {ty}, a i32[{N}]) i32 {{
+        body = f"""func probe(m {ty}, a i32[{N}]) i32 {{
     var acc i32 = 0
     var i {ty} = 0
     while i < {bound} {{
@@ -110,9 +110,9 @@ def gen(rng):
         pad  = "\n".join(f"    var d{k} {ty} = {k}" for k in range(rng.randint(0, 4)))
         aacc = rng.choice(["acc = acc +% a[i]", "acc = a[i]"])
         if rng.random() < 0.5:
-            sig, call = f"proc probe(n {ty}, a i32[{N}]) i32", f"probe({n}, arr)"
+            sig, call = f"func probe(n {ty}, a i32[{N}]) i32", f"probe({n}, arr)"
         else:
-            sig, call = f"proc probe(a i32[{N}], n {ty}) i32", f"probe(arr, {n})"
+            sig, call = f"func probe(a i32[{N}], n {ty}) i32", f"probe(arr, {n})"
         body = f"""{sig} {{
     var acc i32 = 0
 {pad}
@@ -137,7 +137,7 @@ def gen(rng):
         elif guard == "signed_lt":   cond = f"p < {N}"
         elif guard == "both_sides":  cond = f"p >= 0 and p < {N}"
         else:                        cond = f"usize(p) < usize({N})"
-        body = f"""proc probe(a i32[{N}], p i32) i32 {{
+        body = f"""func probe(a i32[{N}], p i32) i32 {{
     if {cond} {{
         return a[p]
     }}
@@ -159,7 +159,7 @@ def gen(rng):
             "safe_pure", "stash_self", "stash_other",
             "stash_write_self", "stash_write_self", "stash_write_other",
         ])
-        helpers = [f"proc bump(var x usize) {{ x = {N} }}"]
+        helpers = [f"func bump(var x usize) {{ x = {N} }}"]
         pre, perturb = "", ""
         if shape == "safe_other":
             perturb = "bump(var j)"
@@ -167,10 +167,10 @@ def gen(rng):
             perturb = "bump(var i)"
         elif shape in ("safe_second", "unsafe_second"):
             # writes the SECOND parameter only: passing a cell is not writing it
-            helpers.append(f"proc bump2(var p usize, var q usize) {{ q = {N} }}")
+            helpers.append(f"func bump2(var p usize, var q usize) {{ q = {N} }}")
             perturb = "bump2(var i, var j)" if shape == "safe_second" else "bump2(var j, var i)"
         elif shape in ("safe_wrap", "unsafe_wrap"):
-            helpers.append("proc wrap(var y usize) { bump(var y) }")   # transitive footprint
+            helpers.append("func wrap(var y usize) { bump(var y) }")   # transitive footprint
             perturb = "wrap(var j)" if shape == "safe_wrap" else "wrap(var i)"
         elif shape == "safe_pure":
             helpers.append("func peek(x usize) usize { return x }")
@@ -179,7 +179,7 @@ def gen(rng):
             # the address is STASHED in a struct, so a later call could write it through the
             # stash. Conservative by design: `stash_self` must never be proven.
             helpers.append("type Holder { p *var usize }")
-            helpers.append("proc keep(var h Holder) { unsafe { var z usize = *h.p } }")
+            helpers.append("func keep(var h Holder) { unsafe { var z usize = *h.p } }")
             tgt = "i" if shape == "stash_self" else "j"
             pre = f"    var h Holder = Holder(&{tgt})"
             perturb = "keep(var h)"
@@ -190,12 +190,12 @@ def gen(rng):
             # exists for, and the only one that can falsify it: drop that half and this walks
             # off the array with the bounds check removed.
             helpers.append("type Holder { p *var usize }")
-            helpers.append(f"proc fire(var h Holder) {{ unsafe {{ *h.p = {N} }} }}")
+            helpers.append(f"func fire(var h Holder) {{ unsafe {{ *h.p = {N} }} }}")
             tgt = "i" if shape == "stash_write_self" else "j"
             pre = f"    var h Holder = Holder(&{tgt})"
             perturb = "fire(var h)"
         body = "\n".join(helpers) + f"""
-proc probe(a i32[{N}]) i32 {{
+func probe(a i32[{N}]) i32 {{
     var i usize = {seed}
     var j usize = 0
 {pre}
@@ -215,13 +215,13 @@ proc probe(a i32[{N}]) i32 {{
         elif op == "div":  helper = f"func idx(c u8) u8 {{ return c / {rng.choice([2,4,8])} }}"
         else:              helper = "func idx(c u8) u8 { return c }"
         body = f"""{helper}
-proc probe(c u8, a i32[{N}]) i32 {{
+func probe(c u8, a i32[{N}]) i32 {{
     return a[idx(c) as usize]
 }}"""
         call = f"probe({c}, arr)"
 
     return f"""{body}
-proc main() i32 {{
+func main() i32 effects io, raises, alloc {{
     var arr i32[{N}] = [{lit}]
     var s i32 = 0
     s = s +% {call}

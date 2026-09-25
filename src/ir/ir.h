@@ -51,6 +51,48 @@ typedef enum {
     IRT_NEVER,      // diverges (panic / unreachable) — bottom
 } IrTypeKind;
 
+// ── the effect lattice ──────────────────────────────────────────────────────────────────
+// Above IrType because a function type carries the arrow's effect row.
+// Effect row (Phase 3.3 / audit finding F1 — the general effect LATTICE that replaces the
+// PURE/PROC binary as the semantic authority on side effects). A function is pure & total
+// iff its set is empty; a `func` is exactly one whose effects avoid IO and DIVERGE. Computed
+// by an IR pass (analysis/effects.h) and propagated callee ⊆ caller. Language-neutral: any
+// front-end's function lowers to a footprint over these bits.
+typedef enum {
+    // AUDIT (effect_lattice_audit.md): Lain has NO mutable globals — top-level bindings are
+    // compile-time constants (E100) — so this bit's domain is EMPTY by language design. Its
+    // only live trigger is an OPAQUE's declared write footprint, i.e. "unmodelled code might
+    // write", which is a fail-closed signal rather than an observation. Reserved, not dead by
+    // oversight. The PARAMETER-write channel is C5's IrWriteFootprint, which is separate and
+    // live — the row was never the right shape for it.
+    // ★ RENAMED FROM IR_EFFECT_WRITE (2026-09-24). The comment above already said the domain
+    // is empty and the only live trigger is an OPAQUE's declared write footprint — so the NAME
+    // described a thing that cannot happen, while the BIT meant "unmodelled code might write".
+    // Those are different claims, and a reader had to get to the fourth line of the comment to
+    // learn which one was in force. `effects write` is no longer sayable in source for the same
+    // reason: a bound on an impossible effect is an assertion of nothing (L3).
+    IR_EFFECT_UNMODELLED_WRITE = 1 << 0,
+    IR_EFFECT_DIVERGE = 1 << 1,  // may not terminate (unbounded loop / non-well-founded recursion)
+    IR_EFFECT_RAISES  = 1 << 2,  // may panic / abort
+    // An extern's IO bit defaults from WHICH KEYWORD the programmer wrote (`extern func` is
+    // trusted pure, `extern proc` is IO) — consistent with "believed on an extern", but the
+    // one Lain-shaped default in this row: a front end with no func/proc split cannot express
+    // it. F3's `effects` clause is the neutral carrier; the keyword is only the default.
+    IR_EFFECT_IO      = 1 << 3,  // external side effects (calls a proc / extern proc)
+    IR_EFFECT_ALLOC   = 1 << 4,  // PRODUCES owned storage it did not receive — an owned
+                                 // pointer/slice return whose provenance does not root in a
+                                 // parameter. Language-neutral, and the distinction the row
+                                 // could not previously draw (mem_alloc vs mem_free).
+} IrEffectBit;
+typedef unsigned IrEffect;
+
+// ⊤ — "may do anything". Defined as the JOIN OF EVERY SAYABLE EFFECT rather than a hand-picked
+// list, which is what makes it exactly narrowable: for each bit in ⊤ there is a word the row
+// can use to take it back. IR_EFFECT_UNMODELLED_WRITE is deliberately NOT in it — `write` is
+// unsayable by language design (the row rejects it: Lain has no mutable global state), so
+// including it would impose a bound nothing could ever discharge.
+#define IR_EFFECT_TOP (IR_EFFECT_DIVERGE | IR_EFFECT_RAISES | IR_EFFECT_IO | IR_EFFECT_ALLOC)
+
 typedef struct IrType {
     IrTypeKind kind;
     // IRT_INT
@@ -99,7 +141,8 @@ typedef struct IrType {
     // and taking that advice produced a `func` that performs IO (D-42). The bound is
     // conservative in the right direction: false ("may do anything") is the default for any
     // builder that does not say otherwise.
-    bool  fn_is_total;
+    // The arrow's effect ROW (was `fn_is_total`, a two-point bound spelled by a keyword).
+    IrEffect fn_row;
     int64_t array_len;      // IRT_ARRAY fixed length (>= 0)
     // ── B4: a STATIC REFINEMENT carried ON the type ─────────────────────────
     // The interval a value of this type is known to inhabit, tighter than its width allows.
@@ -383,45 +426,6 @@ typedef struct IrParam { IrValue *value; struct IrParam *next; } IrParam;
 
 typedef enum { IR_FUNC_PURE, IR_FUNC_PROC } IrFuncKind;
 
-// Effect row (Phase 3.3 / audit finding F1 — the general effect LATTICE that replaces the
-// PURE/PROC binary as the semantic authority on side effects). A function is pure & total
-// iff its set is empty; a `func` is exactly one whose effects avoid IO and DIVERGE. Computed
-// by an IR pass (analysis/effects.h) and propagated callee ⊆ caller. Language-neutral: any
-// front-end's function lowers to a footprint over these bits.
-typedef enum {
-    // AUDIT (effect_lattice_audit.md): Lain has NO mutable globals — top-level bindings are
-    // compile-time constants (E100) — so this bit's domain is EMPTY by language design. Its
-    // only live trigger is an OPAQUE's declared write footprint, i.e. "unmodelled code might
-    // write", which is a fail-closed signal rather than an observation. Reserved, not dead by
-    // oversight. The PARAMETER-write channel is C5's IrWriteFootprint, which is separate and
-    // live — the row was never the right shape for it.
-    // ★ RENAMED FROM IR_EFFECT_WRITE (2026-09-24). The comment above already said the domain
-    // is empty and the only live trigger is an OPAQUE's declared write footprint — so the NAME
-    // described a thing that cannot happen, while the BIT meant "unmodelled code might write".
-    // Those are different claims, and a reader had to get to the fourth line of the comment to
-    // learn which one was in force. `effects write` is no longer sayable in source for the same
-    // reason: a bound on an impossible effect is an assertion of nothing (L3).
-    IR_EFFECT_UNMODELLED_WRITE = 1 << 0,
-    IR_EFFECT_DIVERGE = 1 << 1,  // may not terminate (unbounded loop / non-well-founded recursion)
-    IR_EFFECT_RAISES  = 1 << 2,  // may panic / abort
-    // An extern's IO bit defaults from WHICH KEYWORD the programmer wrote (`extern func` is
-    // trusted pure, `extern proc` is IO) — consistent with "believed on an extern", but the
-    // one Lain-shaped default in this row: a front end with no func/proc split cannot express
-    // it. F3's `effects` clause is the neutral carrier; the keyword is only the default.
-    IR_EFFECT_IO      = 1 << 3,  // external side effects (calls a proc / extern proc)
-    IR_EFFECT_ALLOC   = 1 << 4,  // PRODUCES owned storage it did not receive — an owned
-                                 // pointer/slice return whose provenance does not root in a
-                                 // parameter. Language-neutral, and the distinction the row
-                                 // could not previously draw (mem_alloc vs mem_free).
-} IrEffectBit;
-typedef unsigned IrEffect;
-
-// ⊤ — "may do anything". Defined as the JOIN OF EVERY SAYABLE EFFECT rather than a hand-picked
-// list, which is what makes it exactly narrowable: for each bit in ⊤ there is a word the row
-// can use to take it back. IR_EFFECT_UNMODELLED_WRITE is deliberately NOT in it — `write` is
-// unsayable by language design (the row rejects it: Lain has no mutable global state), so
-// including it would impose a bound nothing could ever discharge.
-#define IR_EFFECT_TOP (IR_EFFECT_DIVERGE | IR_EFFECT_RAISES | IR_EFFECT_IO | IR_EFFECT_ALLOC)
 
 // ── C5: the WRITE FOOTPRINT ─────────────────────────────────────────────────
 // The bits above are a coarse binary — IR_EFFECT_UNMODELLED_WRITE means "writes mutable GLOBAL state"

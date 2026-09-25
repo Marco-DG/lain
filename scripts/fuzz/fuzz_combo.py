@@ -160,12 +160,12 @@ if shape == "arrayof":
     # indexing were both broken through a by-reference parameter.
     n = 3
     if carrier == "var_param":
-        emit("proc setall(var xs P[3]) {",
+        emit("func setall(var xs P[3]) {",
              "    var i usize = 0",
              "    while i < 3 decreasing 3 - i {",
              f"        xs[i].x = (i as i32) +% {a}",
              "        i += 1", "    }", "}")
-        emit("proc main() i32 {",
+        emit("func main() i32 effects io, raises, alloc {",
              "    var arr P[3] = [P(0, 0), P(0, 0), P(0, 0)]",
              "    setall(var arr)",
              "    var acc = 0",
@@ -182,12 +182,12 @@ if shape == "arrayof":
              "        s = s +% xs[i].x +% xs[i].y",
              "        i += 1", "    }",
              "    return s", "}")
-        emit("proc main() i32 {",
+        emit("func main() i32 effects io, raises, alloc {",
              f"    var arr P[3] = [P({a}, {b}), P({b}, {c}), P({c}, {a})]",
              "    var acc = total(arr)")
         exp = (a + b) + (b + c) + (c + a)
     else:   # local / array_elem
-        emit("proc main() i32 {",
+        emit("func main() i32 effects io, raises, alloc {",
              f"    var arr P[3] = [P({a}, {b}), P({b}, {c}), P({c}, {a})]",
              f"    arr[1].x = {a}",
              "    var acc = arr[0].x +% arr[1].x +% arr[2].y")
@@ -203,18 +203,18 @@ else:
              "        i += 1", "    }",
              "    return s", "}")
         if carrier == "var_param":
-            emit("proc scale(var xs P[3]) {",
+            emit("func scale(var xs P[3]) {",
                  "    var i usize = 0",
                  "    while i < 3 decreasing 3 - i {",
                  f"        xs[i].y = xs[i].y +% {c}",
                  "        i += 1", "    }", "}")
-            emit("proc main() i32 {",
+            emit("func main() i32 effects io, raises, alloc {",
                  f"    var arr P[3] = [P({a}, {b}), P({b}, {c}), P({c}, {a})]",
                  "    scale(var arr)",
                  "    var acc = total(arr)")
             exp = (a+b) + (b+c) + (c+a) + 3*c
         else:
-            emit("proc main() i32 {",
+            emit("func main() i32 effects io, raises, alloc {",
                  f"    var arr P[3] = [P({a}, {b}), P({b}, {c}), P({c}, {a})]",
                  "    var acc = total(arr)")
             exp = (a+b) + (b+c) + (c+a)
@@ -223,59 +223,59 @@ else:
         # expression is evaluated, so a defer that touches the value changes what comes back.
         emit(*reader_fn("rd", "s"))
         if shape in ADTS:
-            emit(f"proc build(var s {TY}) {{", f"    defer s = {val_expr}", "    s = " +
+            emit(f"func build(var s {TY}) {{", f"    defer s = {val_expr}", "    s = " +
                  ("A.V3" if shape != "adt_nested" else "A.V3"), "}")
-            emit("proc main() i32 {",
+            emit("func main() i32 effects io, raises, alloc {",
                  f"    var v = {'A.V3'}", "    build(var v)", "    var acc = rd(v)")
             exp = read_value(val)
         else:
             fld = "p.inner.x" if shape == "nested" else "p.x"
-            emit(f"proc build(var p {TY}) {{", f"    defer {fld} = {fld} +% {c}",
+            emit(f"func build(var p {TY}) {{", f"    defer {fld} = {fld} +% {c}",
                  f"    {fld} = {fld} +% 1", "}")
-            emit("proc main() i32 {", f"    var v = {val_expr}", "    build(var v)",
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}", "    build(var v)",
                  "    var acc = " + ("v.inner.x +% v.inner.y +% v.n" if shape=="nested" else "v.x +% v.y"))
             exp = read_value(val) + 1 + c
     elif carrier == "mov_param":
         # an OWNED aggregate parameter: it must be consumed, so it is handed back out
         emit(*reader_fn("rd", "s"))
         emit(f"func take(mov s {TY}) {TY} {{", "    return mov s", "}")
-        emit("proc main() i32 {", f"    var v = {val_expr}",
+        emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
              "    var v2 = take(mov v)", "    var acc = rd(v2)")
         exp = read_value(val)
     elif carrier == "shared_param":
         emit(*reader_fn("rd", "s"))
-        emit("proc main() i32 {", f"    var v = {val_expr}", "    var acc = rd(v)")
+        emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}", "    var acc = rd(v)")
         exp = read_value(val)
     elif carrier == "var_param" and shape in ("adt_struct", "adt_nested"):
         emit(*reader_fn("rd", "s"))
-        emit("proc main() i32 {", f"    var v = {val_expr}", "    var acc = rd(v)")
+        emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}", "    var acc = rd(v)")
         exp = read_value(val)
     elif carrier == "var_param" and shape == "adt":
         # An ADT behind a MUTABLE borrow: the arm reads the payload out of a pointer, and
         # (for whole_assign) writes a whole new variant back through it.
-        emit("proc bump(var s A) {",
+        emit("func bump(var s A) {",
              "    case s {",
              f"        V1(x): s = A.V1(x +% {c})",
              f"        V2(x, y): s = A.V2(x +% {c}, y)",
              "        V3: s = A.V3",
              "    }", "}")
         emit(*reader_fn("rd", "s"))
-        emit("proc main() i32 {", f"    var v = {val_expr}", "    bump(var v)",
+        emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}", "    bump(var v)",
              "    var acc = rd(v)")
         tag, x, y = val
         exp = (x + c) if tag == "V1" else ((x + c) * y if tag == "V2" else 5)
     elif carrier == "var_param":
         if op == "whole_assign":
-            emit(f"proc reset(var s {TY}) {{", f"    s = {val_expr}", "}")
-            emit("proc main() i32 {",
+            emit(f"func reset(var s {TY}) {{", f"    s = {val_expr}", "}")
+            emit("func main() i32 effects io, raises, alloc {",
                  f"    var v = {'N(P(0, 0), 0)' if shape=='nested' else 'P(0, 0)'}",
                  "    reset(var v)",
                  "    var acc = " + ("v.inner.x +% v.inner.y +% v.n" if shape=="nested" else "v.x +% v.y"))
             exp = read_value(val)
         else:                       # write a field through the reference
             fld = "s.inner.x" if shape == "nested" else "s.x"
-            emit(f"proc bump(var s {TY}) {{", f"    {fld} = {fld} +% {c}", "}")
-            emit("proc main() i32 {", f"    var v = {val_expr}", "    bump(var v)",
+            emit(f"func bump(var s {TY}) {{", f"    {fld} = {fld} +% {c}", "}")
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}", "    bump(var v)",
                  "    var acc = " + ("v.inner.x +% v.inner.y +% v.n" if shape=="nested" else "v.x +% v.y"))
             exp = read_value(val) + c
     elif carrier == "call_result":
@@ -284,35 +284,35 @@ else:
               ("mk().x +% mk().y" if shape not in ADTS else None)
         if shape in ADTS:
             emit(*reader_fn("rd", "s"))
-            emit("proc main() i32 {", "    var acc = rd(mk())")
+            emit("func main() i32 effects io, raises, alloc {", "    var acc = rd(mk())")
             exp = read_value(val)
         else:
-            emit("proc main() i32 {", f"    var acc = {fld}")
+            emit("func main() i32 effects io, raises, alloc {", f"    var acc = {fld}")
             exp = (val[0] + val[2]) if shape == "nested" else (val[0] + val[1])
     elif carrier == "array_elem":
         emit(*reader_fn("rd", "s"))
-        emit("proc main() i32 {",
+        emit("func main() i32 effects io, raises, alloc {",
              f"    var arr {TY}[2] = [{val_expr}, {val_expr}]",
              "    var acc = rd(arr[0]) +% rd(arr[1])")
         exp = 2 * read_value(val)
     else:                            # local
         if op == "match" or shape in ADTS:
             emit(*reader_fn("rd", "s"))
-            emit("proc main() i32 {", f"    var v = {val_expr}", "    var acc = rd(v)")
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}", "    var acc = rd(v)")
             exp = read_value(val)
         elif op == "write":
             fld = "v.inner.x" if shape == "nested" else "v.x"
-            emit("proc main() i32 {", f"    var v = {val_expr}",
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
                  f"    {fld} = {fld} +% {c}",
                  "    var acc = " + ("v.inner.x +% v.inner.y +% v.n" if shape=="nested" else "v.x +% v.y"))
             exp = read_value(val) + c
         elif op == "pass_on":
             emit(*reader_fn("inner_rd", "s"))
             emit(f"func outer_rd(s {TY}) i32 {{", "    return inner_rd(s)", "}")
-            emit("proc main() i32 {", f"    var v = {val_expr}", "    var acc = outer_rd(v)")
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}", "    var acc = outer_rd(v)")
             exp = read_value(val)
         else:                        # read
-            emit("proc main() i32 {", f"    var v = {val_expr}",
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
                  "    var acc = " + ("v.inner.x +% v.inner.y +% v.n" if shape=="nested" else "v.x +% v.y"))
             exp = read_value(val)
 

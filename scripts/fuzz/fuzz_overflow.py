@@ -33,7 +33,7 @@ def gen(rng):
     a_lo, a_hi = max(a_lo, lo_t), min(a_hi, hi_t)
     b_lo, b_hi = max(b_lo, lo_t), min(b_hi, hi_t)
 
-    L = ["extern proc libc_printf(fmt *u8, ...) i32"]
+    L = ["extern func libc_printf(fmt *u8, ...) i32 effects io"]
 
     if shape in ("binop", "chain"):
         expr = f"a {op} b" if shape == "binop" else f"(a {op} b) {op} a"
@@ -50,7 +50,7 @@ def gen(rng):
         calls = [(a_hi, b_hi), (a_lo, b_lo)]
     else:  # accum — B1's shape: a running total bounded by trip count x step
         trips = rng.choice([2, 4, 8, 16, 64])
-        L.append(f"proc f(a {ty} >= {a_lo} and <= {a_hi}, b {ty} >= {b_lo} and <= {b_hi}) {ty} {{")
+        L.append(f"func f(a {ty} >= {a_lo} and <= {a_hi}, b {ty} >= {b_lo} and <= {b_hi}) {ty} {{")
         L.append(f"    var s {ty} = b")
         L.append("    var i i32 = 0")
         L.append(f"    while i < {trips} {{")
@@ -61,7 +61,7 @@ def gen(rng):
         L.append("}")
         calls = [(a_hi, b_hi), (a_lo, b_lo)]
 
-    L.append("proc main() i32 {")
+    L.append("func main() i32 effects io, raises, alloc {")
     for (x, y) in calls:
         L.append(f"    libc_printf(\"%d\\n\", f({x}, {y}) as i32)")
     L.append("    return 0")

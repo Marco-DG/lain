@@ -34,13 +34,13 @@ for ((i=0; i<N; i++)); do
     }"
     fi
     cat > "$src" <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc scan(a i32[n], n usize) i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func scan(a i32[n], n usize) i32 {
     var s i32 = 0
 $body
     return s
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var arr i32[$sz] = [$(seq -s ', ' 1 $sz)]
     libc_printf("%d\n", scan(arr, $sz))
     return 0

@@ -49,7 +49,7 @@ def gen_accept():
             "func borrow(a i32[]) i32[] {",
             "    return a",
             "}",
-            "proc main() i32 {",
+            "func main() i32 effects io, raises, alloc {",
             f"    var arr i32[{n}] = [{vals}]",
             "    var s = borrow(arr)",
         ] + scan + ["}"]
@@ -63,13 +63,13 @@ def gen_accept():
             f"func borrow(m usize >= {hi}, a i32[m]) i32[] {{",
             f"    return a[{lo}..{hi}]",
             "}",
-            "proc main() i32 {",
+            "func main() i32 effects io, raises, alloc {",
             f"    var arr i32[{n}] = [{vals}]",
             f"    var s = borrow({n}, arr)",
         ] + scan + ["}"]
     else:  # local_direct: slice a local IN THE SAME frame that scans it (no escape).
         lines += [
-            "proc main() i32 {",
+            "func main() i32 effects io, raises, alloc {",
             f"    var arr i32[{n}] = [{vals}]",
             f"    var s = arr[{lo}..{hi}]",
         ] + scan + ["}"]
@@ -86,7 +86,7 @@ def gen_reject():
             f"    var a i32[{n}] = [{vals}]",
             "    return a",                       # slice of local -> E010
             "}",
-            "proc main() i32 {",
+            "func main() i32 effects io, raises, alloc {",
             "    var s = dangling()",
             "    return s[0]",
             "}",
@@ -97,7 +97,7 @@ def gen_reject():
             "    var x = 7",
             "    return var x",                    # &local -> E010
             "}",
-            "proc main() i32 {",
+            "func main() i32 effects io, raises, alloc {",
             "    return 0",
             "}",
         ]

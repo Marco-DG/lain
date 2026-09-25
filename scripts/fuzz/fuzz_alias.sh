@@ -56,15 +56,15 @@ gen_alias() {
     fi
     OVERLAP=$overlap
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc vadd(k usize, dst i32[k], src i32[k]) {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func vadd(k usize, dst i32[k], src i32[k]) {
     var i usize = 0
     while i < k decreasing k - i {
         dst[i] = dst[i] + src[i]
         i += 1
     }
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var a i32[$n] = [$vals]
     vadd($k, a[$lo1..$((lo1+k))], a[$lo2..$((lo2+k))])
     libc_printf("%d\n", a[0])
@@ -82,8 +82,8 @@ gen_copy() {
     # a = b (copy); then mutate b[idx]; a[idx] must still equal B[idx]; return a[idx]+b[idx]
     EXPECT=$(( B[idx] + newv )); OVERLAP=0
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var b i32[$n] = [$vb]
     var a i32[$n] = [$va]
     a = b

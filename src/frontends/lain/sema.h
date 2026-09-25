@@ -3540,7 +3540,7 @@ static void mrec_walk_stmt_list(StmtList *list, void (*visit)(Decl *)) {
 ╚─────────────────────────────────────────────────────────────────*/
 
 // Defined below, next to the effect collector that shares it (D-42).
-static bool sema_call_via_fnptr(Expr *callee, bool *is_total);
+static bool sema_call_via_fnptr(Expr *callee, EffectSet *row);
 
 static bool proc_w130_eligible;       // false on any violation
 static Decl *proc_w130_self;          // decl being analyzed (to detect self-recursion)
@@ -3568,8 +3568,8 @@ static void proc_w130_visit_expr(Expr *e) {
             {   // D-42: a call through a `*proc` pointer is observably effectful, so the
                 // function is NOT eligible to be suggested as `func`. Without this, W130
                 // advised exactly the change that breaks P4.
-                bool ft = false;
-                if (sema_call_via_fnptr(callee, &ft) && !ft) { proc_w130_eligible = false; return; }
+                EffectSet ft = 0;
+                if (sema_call_via_fnptr(callee, &ft) && ft != 0) { proc_w130_eligible = false; return; }
             }
             if (callee && callee->decl) {
                 DeclKind k = callee->decl->kind;
@@ -3707,14 +3707,14 @@ static EffectSet effect_full(Decl *d);   // E2: transitive, memoized
 // (E122 / fnptr_totality_fail), so a call through one contributes nothing; a `*proc` may do
 // anything observable. This is Nielson & Nielson's latent effect, read off the type instead of
 // off a declaration that is not there.
-static bool sema_call_via_fnptr(Expr *callee, bool *is_total) {
+static bool sema_call_via_fnptr(Expr *callee, EffectSet *row) {
     if (!callee) return false;
     Type *t = callee->type;
     if ((!t || t->kind != TYPE_FUNC) && callee->decl &&
         callee->decl->kind == DECL_VARIABLE)
         t = callee->decl->as.variable_decl.type;
     if (!t || t->kind != TYPE_FUNC) return false;
-    if (is_total) *is_total = t->func_is_total;
+    if (row) *row = t->func_effects;
     return true;
 }
 
@@ -3723,15 +3723,19 @@ static void eff_visit_expr(Expr *e) {
     switch (e->kind) {
         case EXPR_CALL: {
             Expr *callee = e->as.call_expr.callee;
-            bool fnptr_total = false;
+            EffectSet fnptr_row = 0;
             if (callee && callee->kind == EXPR_IDENTIFIER && callee->as.identifier_expr.id &&
                 callee->as.identifier_expr.id->length == 5 &&
                 memcmp(callee->as.identifier_expr.id->name, "panic", 5) == 0) {
                 g_eff_acc |= EFFECT_RAISES;
-            } else if (sema_call_via_fnptr(callee, &fnptr_total)) {
-                // D-42: charge the arrow's bound, not nothing.
-                if (!fnptr_total) { g_eff_acc |= EFFECT_IO | EFFECT_RAISES | EFFECT_DIVERGE;
-                                    g_eff_opaque_div = true; }
+            } else if (sema_call_via_fnptr(callee, &fnptr_row)) {
+                // D-42: charge the arrow's bound, not nothing — and now the bound is the ROW the
+                // arrow declares rather than a hardcoded stand-in for "*proc". That stand-in was
+                // `IO|RAISES|DIVERGE`, which quietly OMITTED `alloc`: once E.6 made `alloc`
+                // consent-gated, a call through a pointer to an allocating function needed no
+                // acknowledgement. Charging the row cannot have that gap by construction.
+                g_eff_acc |= fnptr_row;
+                if (fnptr_row & EFFECT_DIVERGE) g_eff_opaque_div = true;
             } else if (callee && callee->decl) {
                 // E2: a call carries the callee's WHOLE effect set (transitive).
                 // effect_full resolves extern func -> {}, extern proc -> IO,
@@ -3903,33 +3907,14 @@ static void sema_print_effects(Decl *d) {
 
 static bool sema_w130_silent = false;  // suppress for stdlib if needed
 
-static void sema_check_proc_eligibility(Decl *d) {
-    if (!d || d->kind != DECL_PROCEDURE) return;
-    if (sema_w130_silent) return;
-    proc_w130_eligible = true;
-    proc_w130_self = d;
-    proc_w130_has_while_no_measure = false;
-    proc_w130_visit_stmt_list(d->as.function_decl.body);
-    // ★ AND THE ROW DECIDES. The bespoke walk above judges eligibility by the callee's
-    // KEYWORD (`DECL_PROCEDURE || DECL_EXTERN_PROCEDURE`), so the moment E.5 migrated every
-    // extern to `extern func … effects io`, a `proc` that calls `libc_puts` was declared to have
-    // "no observable side effect" — this warning started stating the opposite of the truth, in a
-    // program the compiler had just refused for doing IO. The walk is kept because it also
-    // detects an unbounded `while` (a reason to stay a `proc` that the row reports as diverge),
-    // but the effect row now has the final say, as it does everywhere else since E.4.
-    if (effect_full(d) != 0) proc_w130_eligible = false;
-    if (proc_w130_eligible) {
-        Id *n = d->as.function_decl.name;
-        // Skip if name is "main" — entrypoint must remain a proc (it returns
-        // i32 exit code and signals "this is the program start").
-        if (n && n->length == 4 && memcmp(n->name, "main", 4) == 0) return;
-        fprintf(stderr,
-            "[W130] '%.*s' is declared `proc` but has no observable side\n"
-            "       effect: it could be `func`. Consider downgrading to\n"
-            "       `func` for clearer intent.\n",
-            (int)n->length, n->name);
-    }
-}
+// ★ W130 IS DELETED, with the form it advised against. It said "'f' is declared `proc` but has
+// no observable side effect: it could be `func`", and `proc` can no longer be written at all — a
+// warning whose subject is unconstructible is dead weight that still has to be kept correct.
+// (It had just been caught stating the opposite of the truth: its eligibility walk judged by the
+// CALLEE's keyword, so E.5's extern migration made it report "no observable side effect" about a
+// procedure the compiler had refused for doing IO.) The judgement it approximated is the effect
+// row, which every caller already reads.
+static void sema_check_proc_eligibility(Decl *d) { (void)d; }
 
 // ── Return-path completeness ─────────────────────────────────────────────────
 // A non-void function must not fall off the end without returning a value (that
@@ -4995,6 +4980,17 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             if (dl->decl->as.function_decl.effects_declared
                 && dl->decl->as.function_decl.effects_bound != 0) {
                 EffectSet missing = ef & ~dl->decl->as.function_decl.effects_bound;
+                // The termination SEAM applies here too, and for the same reason it applies to
+                // E011: while it is active the legacy front end's DIVERGE is not the verdict, so
+                // refusing a row for failing to cover it refuses a program for a divergence the
+                // sovereign engine may well disprove. Standing it down in one of the two checks
+                // and not the other is the same rule answering differently depending on whether
+                // the programmer happened to write a clause — which is exactly what 7B.10 fixed
+                // for the codes themselves. Believed divergence (an extern's row) is never stood
+                // down, in either place.
+                if ((g_suppress_termination || g_suppress_recursion)
+                    && !dl->decl->as.function_decl.eff_opaque_diverge)
+                    missing &= ~EFFECT_DIVERGE;
                 if (missing) {
                     Id *n = dl->decl->as.function_decl.name;
                     fprintf(stderr, "[E130] Error Ln %li, Col %li: '%.*s' declares `effects` "

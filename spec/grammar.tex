@@ -34,7 +34,7 @@ token ::=
 \label{gram:keyword}
 \begin{grammar}
 keyword ::=
-    "func"   | "proc"   | "var"    | "mov"    | "type"
+    "func"   | "effects"| "var"    | "mov"    | "type"
   | "return" | "if"     | "else"   | "while"
   | "for"    | "in"     | "case"   | "import" | "use"
   | "extern" | "c_include" | "unsafe" | "comptime" | "defer"
@@ -350,11 +350,8 @@ effects-clause        ::= "effects" [ effect-name { "," effect-name } ]
 
 effect-name           ::= "io" | "diverge" | "raises" | "alloc"
 
-(* DEPRECATED: the introducer granted the effects that the row now states. *)
-procedure-declaration ::=
-    { attribute } "proc" identifier
-    "(" [ param-list ] ")" return-annotation
-    block-statement
+(* REMOVED: `proc` granted the effects that the row now states. The keyword remains
+   reserved and diagnoses the replacement. *)
 
 attribute            ::= "[" identifier [ "(" argument-list ")" ] "]" newline
 

@@ -1,6 +1,11 @@
 #ifndef PARSER_TYPE_H
 #define PARSER_TYPE_H
 
+// The arrow's effect row is parsed by the same function that parses a declaration's, which lives
+// in decl.h — included after this file. Declared here so the ONE spelling has ONE parser: a
+// second copy would be a second grammar for the same clause, which is the defect Part 7B removes.
+static bool parse_effects_clause(Parser *parser, EffectSet *out);
+
 #include "../parser.h"
 
 // Forward declaration: defined in parser/expr.h (included after this file in parser.h)
@@ -110,12 +115,17 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
         ptr_mutable = true;
     }
 
-    // *func(P..)R / *proc(P..)R — non-capturing function-pointer type.
-    // `func` encodes totality (provably terminating); `proc` may diverge.
-    if (parser_match(TOKEN_KEYWORD_FUNC) || parser_match(TOKEN_KEYWORD_PROC)) {
-      bool is_total = parser_match(TOKEN_KEYWORD_FUNC);
-      parser_advance(); // consume func/proc
-      parser_expect(TOKEN_L_PAREN, "Expected '(' after 'func'/'proc' in function-pointer type");
+    // *func(P..)R [effects ...] — non-capturing function-pointer type. The trailing row is the
+    // arrow's effect bound, in the same position and spelling as on a declaration: silence means
+    // ∅ (total and pure). `*proc(P..)R` was the two-point version of this and is gone.
+    if (parser_match(TOKEN_KEYWORD_PROC)) {
+      parser_error("`*proc(...)` was removed: a function-pointer type carries an effect ROW. "
+                   "Write `*func(...) RET effects io` — or the full `effects io, diverge, raises, "
+                   "alloc` for what `*proc` used to mean");
+    }
+    if (parser_match(TOKEN_KEYWORD_FUNC)) {
+      parser_advance(); // consume func
+      parser_expect(TOKEN_L_PAREN, "Expected '(' after 'func' in function-pointer type");
       parser_advance(); // consume '('
       TypeList *params = NULL, *tail = NULL;
       if (!parser_match(TOKEN_R_PAREN)) {
@@ -137,7 +147,8 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
           parser_match(TOKEN_QUESTION)) {
         ret = parse_type_core(arena, parser);
       }
-      return type_func(arena, params, ret, is_total);
+      EffectSet row = 0; (void)parse_effects_clause(parser, &row);
+      return type_func(arena, params, ret, row);
     }
 
     Type *inner = parse_type_core(arena, parser);

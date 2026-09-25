@@ -630,7 +630,7 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
     // recorded, exactly as for a named enum: that is the backend's choice, not the IR's.
     if (t->kind == TYPE_FUNC) {
         IrType *ft = ir_type_new(c->a, IRT_FUNC);
-        ft->fn_is_total = t->func_is_total;      // *func vs *proc — the arrow's effect bound
+        ft->fn_row = t->func_effects;            // the arrow's effect bound, as a row
         ft->elem = t->element_type ? ir_lower_type(c, t->element_type) : NULL;
         int n = 0; for (TypeList *p = t->func_params; p; p = p->next) n++;
         ft->n_fields = n;
@@ -1551,9 +1551,19 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                                             : ir_type_int(c->a, 32, true);
                         fty->n_fields = np;
                     }
-                    // The declared effect BOUND on the arrow: `func` is total, `proc` is not.
-                    fty->fn_is_total = (e->decl->kind==DECL_FUNCTION
-                                     || e->decl->kind==DECL_EXTERN_FUNCTION);
+                    // The arrow's effect bound is the referenced function's own ROW: what it
+                    // may do is what a caller through the pointer may see. `proc` (deprecated)
+                    // grants everything, which is what its keyword always meant.
+                    { bool isf = (e->decl->kind==DECL_FUNCTION || e->decl->kind==DECL_EXTERN_FUNCTION);
+                      EffectSet r = e->decl->as.function_decl.effects_declared
+                                  ? e->decl->as.function_decl.effects_bound : 0;
+                      if (!isf) r |= EFFECT_TOP;
+                      IrEffect ir = 0;
+                      if (r & EFFECT_DIVERGE) ir |= IR_EFFECT_DIVERGE;
+                      if (r & EFFECT_RAISES)  ir |= IR_EFFECT_RAISES;
+                      if (r & EFFECT_IO)      ir |= IR_EFFECT_IO;
+                      if (r & EFFECT_ALLOC)   ir |= IR_EFFECT_ALLOC;
+                      fty->fn_row = ir; }
                 }
                 if (fnm) return ir_func_ref(c->f, c->cur,
                                             ir_qualified_name(c->a, e->decl, fnm), fty);

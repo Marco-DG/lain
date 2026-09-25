@@ -221,18 +221,19 @@ func abs(x int) int >= 0 { ... }
   measure is permitted.
 \end{constraint}
 
-\section{Procedure declarations}
+\section{The entry point}
 \label{sec:decl.proc}
-\index{procedure declaration}
+\index{entry point}
 
 \pnum
-A procedure declaration introduces a \lain{proc}: a callable whose effects are
-granted by its introducer rather than by its row.  \textbf{This form is
-deprecated.}  Every effect a \lain{proc} was needed for is now stated by an
-\lain{effects} row on an ordinary \lain{func}, so the keyword grants nothing that
-the row does not, and a \lain{proc} whose row is empty draws
-\diagcode{W130}.  It is retained only until the corresponding function
-\emph{type} syntax lands.
+\textbf{\lain{proc} has been removed.}  It was an introducer that granted effects
+instead of stating them, and every effect it was needed for is now named by an
+\lain{effects} row on an ordinary \lain{func} --- including \lain{diverge}, which
+admits an unbounded loop.  The keyword remains \emph{reserved}, and using it is
+\diagcode{E100} with the replacement spelled out, so old source fails with an
+explanation rather than with "expected declaration".  The same applies to the
+function-pointer type \lain{*proc(...)}, replaced by \lain{*func(...)} with a row
+(\S\,\ref{sec:fn.distinction}).
 
 \pnum
 The entry point of every Lain program shall be declared as:

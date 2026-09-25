@@ -64,6 +64,26 @@ typedef struct Refinement {
     int64_t lo, hi;     // inclusive bounds when known
 } Refinement;
 
+// ── the effect lattice ──────────────────────────────────────────────────────────────────
+// Declared HERE, above Type, because a function-POINTER type carries an effect row (E.5/E.6):
+// the arrow's bound is part of the type, so the lattice must exist before the type does.
+typedef enum {
+    EFFECT_UNMODELLED_WRITE   = 1 << 0,  // writes mutable GLOBAL state (a hidden side effect; a var-param
+                              //   mutation is declared/exclusive, not an effect)
+    EFFECT_DIVERGE = 1 << 1,  // may not terminate: unbounded `while` or recursion
+    EFFECT_RAISES  = 1 << 2,  // `panic` (later: propagates an error value)
+    EFFECT_IO      = 1 << 3,  // calls a `proc` / `extern proc` (external side effects)
+    EFFECT_ALLOC   = 1 << 4,  // allocates from an Arena
+} Effect;
+typedef unsigned EffectSet;
+
+// ⊤ — "may do anything", the default row of a declaration with no body (E.5). It is the join of
+// every SAYABLE effect, not a hand-picked list, so that every bit in it can be taken back by a
+// word the row accepts. EFFECT_UNMODELLED_WRITE is excluded for exactly that reason: `write` is
+// rejected by the row parser (Lain has no mutable global state), so a ⊤ containing it would be
+// a bound no annotation could discharge. Mirrors IR_EFFECT_TOP.
+#define EFFECT_TOP (EFFECT_DIVERGE | EFFECT_RAISES | EFFECT_IO | EFFECT_ALLOC)
+
 typedef struct Type {
     TypeKind kind;
     OwnershipMode mode;         // Ownership semantics (owned/shared/mutable)
@@ -101,11 +121,19 @@ typedef struct Type {
        so it does not perturb borrow/deref/param lowering the way MODE_MUTABLE would. */
     bool        pointee_mutable;
 
-    /* TYPE_FUNC (non-capturing function pointer, `*func(P..)R` / `*proc(P..)R`):
-       func_params = ordered parameter types; element_type = return type (NULL = void);
-       func_is_total = true for `func` (provably terminating), false for `proc`. */
+    /* TYPE_FUNC (non-capturing function pointer, `*func(P..)R [effects ...]`):
+       func_params = ordered parameter types; element_type = return type (NULL = void).
+
+       ★ THE ARROW CARRIES A ROW, not a boolean. It used to be `func_is_total`, so the type
+       system's effect bound on a function pointer had exactly TWO points — `*func` (total and
+       pure) and `*proc` (anything) — spelled by a keyword, which is the same defect the
+       declaration side had before E.4 and one the row removes here identically:
+       `*func(i32) i32` is the bound ∅ and `*func(i32) i32 effects io` admits exactly `io`.
+       Assignment is row CONTAINMENT (the source's row ⊆ the arrow's), which subsumes the old
+       `func <: proc` subtyping, and a call through the pointer charges the arrow's row, which
+       is what an indirect call could not express before: "may print, but terminates". */
     struct TypeList *func_params;
-    bool            func_is_total;
+    EffectSet       func_effects;
 
     /* Generic type-application `Vec(i32)`: a TYPE_SIMPLE whose base_type names a
        generic type, with the concrete type arguments here (NULL = not an
@@ -255,22 +283,6 @@ typedef struct StructDecl {
 // three analyses Lain runs separately — W130 (has-effects), the emit const/pure
 // classification, and func/proc + termination — into one artifact. A `func` is
 // exactly a function whose effects avoid IO and Diverge (pure + total).
-typedef enum {
-    EFFECT_UNMODELLED_WRITE   = 1 << 0,  // writes mutable GLOBAL state (a hidden side effect; a var-param
-                              //   mutation is declared/exclusive, not an effect)
-    EFFECT_DIVERGE = 1 << 1,  // may not terminate: unbounded `while` or recursion
-    EFFECT_RAISES  = 1 << 2,  // `panic` (later: propagates an error value)
-    EFFECT_IO      = 1 << 3,  // calls a `proc` / `extern proc` (external side effects)
-    EFFECT_ALLOC   = 1 << 4,  // allocates from an Arena
-} Effect;
-typedef unsigned EffectSet;
-
-// ⊤ — "may do anything", the default row of a declaration with no body (E.5). It is the join of
-// every SAYABLE effect, not a hand-picked list, so that every bit in it can be taken back by a
-// word the row accepts. EFFECT_UNMODELLED_WRITE is excluded for exactly that reason: `write` is
-// rejected by the row parser (Lain has no mutable global state), so a ⊤ containing it would be
-// a bound no annotation could discharge. Mirrors IR_EFFECT_TOP.
-#define EFFECT_TOP (EFFECT_DIVERGE | EFFECT_RAISES | EFFECT_IO | EFFECT_ALLOC)
 
 typedef struct {
     Id*         name;           // Function name
@@ -972,14 +984,15 @@ Type *type_meta(Arena *arena) {
 }
 
 // Non-capturing function pointer type. `ret == NULL` means a void return.
-// `is_total` distinguishes `*func` (provably terminating) from `*proc`.
-Type *type_func(Arena *arena, TypeList *params, Type *ret, bool is_total) {
+// `row` is the arrow's effect bound: ∅ for a bare `*func(...)`, whatever the `effects` clause
+// names otherwise. See Type.func_effects.
+Type *type_func(Arena *arena, TypeList *params, Type *ret, EffectSet row) {
     Type *t = arena_push_aligned(arena, Type);
     t->kind          = TYPE_FUNC;
     t->mode          = MODE_SHARED;  // a bare function pointer is a shared value
     t->element_type  = ret;          // return type (NULL = void)
     t->func_params   = params;
-    t->func_is_total = is_total;
+    t->func_effects  = row;
     t->canon = t;
     return t;
 }

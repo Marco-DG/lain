@@ -1,7 +1,10 @@
-// A *proc target accepts a total func (totality subtyping: func <: proc).
+// An arrow whose row ADMITS io accepts a target that does less — row containment, which is what
+// replaced the two-point `func <: proc` subtyping. `idn` has row ∅, and ∅ ⊆ {io}.
 func idn(a i32) i32 { return a }
-func main() i32 effects diverge, io, raises {
-    var g *proc(i32) i32 = idn
+// And `main` must acknowledge `io`, because a call through the arrow charges the ARROW's row —
+// not the target's. That is the point of a bound: it is what a caller can see without looking.
+func main() i32 effects io {
+    var g *func(i32) i32 effects io = idn
     if g(5) == 5 { return 0 }
     return 1
 }

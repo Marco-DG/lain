@@ -46,9 +46,9 @@ is what every caller reads, so the acknowledgement propagates outward until some
 function is genuinely entitled to it.
 
 \begin{note}
-  A \lain{proc} declaration (\S\,\ref{sec:decl.proc}) is the deprecated form in
-  which the introducer granted the effects instead of the row.  It survives for
-  compatibility; the row is the normative mechanism.
+  \lain{proc} was the form in which the introducer granted the effects instead of
+  the row.  It has been removed (\S\,\ref{sec:decl.proc}); the row is the only
+  mechanism.
 \end{note}
 
 \pnum
@@ -75,14 +75,11 @@ func increment(var c Counter) {  // legal: mutation is local
 \end{example}
 
 \pnum
-The compiler emits \diagcode{W130} when a \lain{proc}'s effect row is empty ---
-it does no I/O, allocates nothing, cannot \lain{panic} and is provably total ---
-to suggest that it could be declared \lain{func}.  The judgement is the row's,
-not a list of syntactic conditions: a rule phrased as "no calls to another
-\lain{proc}" answers by the callee's \emph{keyword}, and so reported "no
-observable side effect" for a procedure whose every effectful callee had been
-respelled.  This is a non-blocking warning, and the \lain{proc} form it advises
-against is itself deprecated (\S\,\ref{sec:decl.proc}).
+\diagcode{W130} advised downgrading an effect-free \lain{proc} to a \lain{func}.
+It was removed with the form it advised against: a warning whose subject cannot be
+written is dead weight that still has to be kept correct --- and it had just been
+caught stating the opposite of the truth, because its eligibility test read the
+callee's \emph{keyword} rather than the callee's row.
 
 \section{Purity enforcement}
 \label{sec:fn.purity}

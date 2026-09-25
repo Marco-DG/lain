@@ -27,8 +27,8 @@ sizes=(12 16 24 36)
 # to stress was never once compiled. The bound leaves that index untouched.
 kernel() {
 cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
     var s i32 = 0
     var i usize = 0
     while i < h decreasing h - i {
@@ -41,7 +41,7 @@ proc msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
     }
     return s
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var m i32[$1] = [$(seq -s ', ' 1 $1)]
     libc_printf("%d\n", msum($2, $3, m))
     return 0

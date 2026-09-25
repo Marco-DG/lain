@@ -1,0 +1,16 @@
+// EXPECT: [E011]
+// ★ THE SEAM'S SCOPE, half one. The termination seam stands `diverge` down in BOTH effect checks
+// (E011 consent and E130 row-covers-body), because while it is active the legacy front end's
+// DIVERGE bit is not the verdict — the sovereign engine's is. That is a permissive change, so this
+// is the test that it did not become a hole: the row here omits `diverge` and the loop is genuinely
+// unbounded, and the program must still be refused — by the TERMINATION pass, at the loop, which is
+// the whole reason the seam exists (it reports better than a row complaint at the function).
+extern func libc_puts(s *u8) i32 effects io
+
+func spin(n i32) i32 effects io {
+    var i = 0
+    while i < n { i = i +% 0 }
+    libc_puts("x")
+    return i
+}
+func main() i32 effects io { return spin(3) }

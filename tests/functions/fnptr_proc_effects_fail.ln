@@ -1,5 +1,5 @@
 // EXPECT: [E011]
-// A `func` may not call through a `*proc` pointer: doing so performs whatever the target does.
+// A `func` may not call through an arrow whose ROW names an effect its own row does not.
 //
 // D-42, fixed 2026-09-16. Before, an indirect call contributed NO effects at all, because every
 // effect path keyed on `callee->decl->kind` and an indirect callee resolves to a VARIABLE, not
@@ -7,8 +7,8 @@
 // it to `func`, and taking that advice was accepted — producing a `func`, which P4 says is
 // referentially transparent and total, that prints.
 //
-// The arrow carries its own bound: `*func` targets are checked total and pure at assignment,
-// `*proc` targets are not. The control is fnptr_hof_pass.ln, where a `*func` parameter leaves
+// The arrow carries its own bound, and since E.5/E.6 that bound is a ROW rather than the two
+// points `*func`/`*proc`: `*func(i32) i32 effects io` admits io and nothing else. The control is fnptr_hof_pass.ln, where a `*func` parameter leaves
 // the caller pure and total.
 
 extern func libc_printf(fmt *u8, ...) i32 effects io
@@ -18,7 +18,7 @@ func noisy(a i32) i32 effects io {
     return a
 }
 
-func viaproc(f *proc(i32) i32, x i32) i32 {
+func viaproc(f *func(i32) i32 effects io, x i32) i32 {
     return f(x)
 }
 

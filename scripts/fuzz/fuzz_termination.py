@@ -24,11 +24,11 @@ def gen(rng):
     cmp_down = rng.choice([">", ">="])
 
     L = []
-    L.append("extern proc libc_printf(fmt *u8, ...) i32")
+    L.append("extern func libc_printf(fmt *u8, ...) i32 effects io")
     if shape == "call_reset":
         # A callee that can put the counter back. The loop's own stores look like clean
         # progress; nothing in the instruction stream shows this write.
-        L.append("proc nudge(var v i32, k i32) { v = k }")
+        L.append("func nudge(var v i32, k i32) { v = k }")
 
     if direction == "up":
         guard = f"i {cmp_up} {limit}" if side == "left" else \
@@ -79,7 +79,7 @@ def gen(rng):
     L.append("    }")
     L.append("    return n")
     L.append("}")
-    L.append("proc main() i32 {")
+    L.append("func main() i32 effects io, raises, alloc {")
     L.append(f"    libc_printf(\"%d\\n\", run({start}, 1))")
     L.append(f"    libc_printf(\"%d\\n\", run({start}, 0))")
     L.append("    return 0")

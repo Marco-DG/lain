@@ -5,7 +5,7 @@
 // GUARDED: the P2b form. Wide loads proven by the last-byte in-guard `(i+15) in buf`;
 // a scalar tail finishes the final partial chunk. Two comparisons + a branch per
 // 16-byte block, plus the tail loop.
-proc count_guarded(buf u8[4096], n u32 < 4097) u32 {
+func count_guarded(buf u8[4096], n u32 < 4097) u32 {
     var i u32 = 0
     var t u32 = 0
     while (i + 15) in buf and i +% 16 <= n {
@@ -23,7 +23,7 @@ proc count_guarded(buf u8[4096], n u32 < 4097) u32 {
 // whole 16-byte blocks to the end, over-reading the final block into the zeroed
 // pad (space≠0 so it never miscounts). ONE comparison per block, NO tail, NO
 // in-guard — the wide load is proven check-free by chaining `i < n` with `n<4097`.
-proc count_branchless(buf u8[4112], n u32 < 4097) u32 {
+func count_branchless(buf u8[4112], n u32 < 4097) u32 {
     var i u32 = 0
     var t u32 = 0
     while i < n {

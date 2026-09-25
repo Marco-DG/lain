@@ -36,8 +36,8 @@ for ((i=0; i<N; i++)); do
 
     src="$SC/t_$i.ln"
     cat > "$src" <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc bsearch(a i32[$sz], target i32) usize {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func bsearch(a i32[$sz], target i32) usize {
     var lo usize = 0
     var hi usize = $histart
     while lo < hi decreasing hi - lo {
@@ -46,7 +46,7 @@ proc bsearch(a i32[$sz], target i32) usize {
     }
     return lo
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var arr i32[$sz] = [$(seq -s ', ' 0 $((sz-1)))]
     var t i32 = 0
     var acc usize = 0

@@ -1,0 +1,15 @@
+// EXPECT: [E130]
+// ★ THE SEAM'S SCOPE, half two. BELIEVED divergence is never stood down. `getch` is an `extern`
+// with no row, so its row is ⊤ — including `diverge` — and for that divergence the termination pass
+// has nothing to point at: no loop header, no self-call. Standing it down would mean nobody
+// mentions it at all, so `eff_opaque_diverge` marks it and both checks keep it.
+//
+// The loop below terminates; the divergence is entirely the extern's, which is the point.
+extern func getch() i32
+
+func loop_forever() i32 effects io {
+    var i = 0
+    while i < 10 { i = i +% 1 }
+    return getch()
+}
+func main() i32 effects io { return loop_forever() }

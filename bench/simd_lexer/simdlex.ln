@@ -41,7 +41,7 @@ func is_alnum(c u8) bool { return is_alpha(c) or is_digit(c) }
 // plus contiguity proves the whole `[i, i+16)` load, at zero runtime cost. The
 // `i +% 16 <= n` bound keeps the SIMD path within the content (the scalar tail
 // finishes the final partial chunk).
-proc scan_to(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
+func scan_to(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
     var i u32 = start
     while (i + 15) in src and i +% 16 <= n {
         var hit u32 = @movemask(@load(u8x16, src, i) == term) & (65535 as u32)
@@ -58,7 +58,7 @@ proc scan_to(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
 // CORRECTED lexer (per the measurement): a tight SCALAR core for the short, dense
 // tokens, and SIMD invoked ONLY on long runs (here: string bodies). Matches the
 // scalar core on dense code (no per-token SIMD tax) and beats it on long strings.
-proc count_tokens_smart(src u8[4096], n u32 < 4097) u32 {
+func count_tokens_smart(src u8[4096], n u32 < 4097) u32 {
     var count u32 = 0
     var i     u32 = 0
     while i < n {
@@ -104,7 +104,7 @@ proc count_tokens_smart(src u8[4096], n u32 < 4097) u32 {
     return count
 }
 
-proc count_tokens(src u8[4096], n u32) u32 {
+func count_tokens(src u8[4096], n u32) u32 {
     var count u32 = 0
     var i     u32 = 0
     while i < n {
@@ -189,7 +189,7 @@ func kw_kind(src u8[4096], start u32 < 4090, len u32) u8 {
 // token in `kinds`, the token's start offset in `starts`, and NO length stored — a
 // token's length is the gap to the next start, or a cheap re-lex. Comments are
 // trivia (skipped, no token). Returns the token count; output caps at 1024 tokens.
-proc tokenize(src u8[4096], n u32 < 4090, var kinds u8[1024], var starts u32[1024]) u32 {
+func tokenize(src u8[4096], n u32 < 4090, var kinds u8[1024], var starts u32[1024]) u32 {
     var count u32 = 0
     var i     u32 = 0
     while i < n {

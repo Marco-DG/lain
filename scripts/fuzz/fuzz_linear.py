@@ -23,18 +23,18 @@ import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 rng = random.Random(seed)
 
-HEADER = """extern proc libc_malloc(size usize) mov *void
-extern proc libc_free(ptr mov *void)
-proc acquire() mov *u8 { unsafe { return libc_malloc(4) as *u8 } }
-proc release(p mov *u8) { unsafe { libc_free(mov p as *void) } }
-proc touch(p *u8) u8 { unsafe { return *p } }
+HEADER = """extern func libc_malloc(size usize) mov *void effects io, alloc
+extern func libc_free(ptr mov *void) effects io
+func acquire() mov *u8 effects io, alloc { unsafe { return libc_malloc(4) as *u8 } }
+func release(p mov *u8) effects io { unsafe { libc_free(mov p as *void) } }
+func touch(p *u8) u8 { unsafe { return *p } }
 type Res { mov h *u8 }
-proc rmake() Res { unsafe { return Res(libc_malloc(4) as *u8) } }
-proc rfree(mov {h} Res) { unsafe { libc_free(mov h as *void) } }
-proc rtouch(r Res) u8 { unsafe { return *r.h } }
+func rmake() Res effects io, alloc { unsafe { return Res(libc_malloc(4) as *u8) } }
+func rfree(mov {h} Res) effects io { unsafe { libc_free(mov h as *void) } }
+func rtouch(r Res) u8 { unsafe { return *r.h } }
 type Two { mov a *u8, mov b *u8 }
-proc tmake() Two { unsafe { return Two(libc_malloc(4) as *u8, libc_malloc(4) as *u8) } }
-proc tfree(mov {a, b} Two) {
+func tmake() Two effects io, alloc { unsafe { return Two(libc_malloc(4) as *u8, libc_malloc(4) as *u8) } }
+func tfree(mov {a, b} Two) effects io {
     unsafe {
         libc_free(mov a as *void)
         libc_free(mov b as *void)
@@ -141,7 +141,7 @@ def gen_accept():
     g.emit("var flag i32 = 1")
     build_valid(g)
     body = "\n".join(g.lines)
-    return "// EXPECT: accept\n" + HEADER + "\nproc main() i32 {\n" + body + "\n    return 0\n}\n"
+    return "// EXPECT: accept\n" + HEADER + "\nfunc main() i32 effects io, raises, alloc {\n" + body + "\n    return 0\n}\n"
 
 def gen_reject():
     kind = rng.choice(["leak", "double", "uaf", "loop_move", "defer_double",
@@ -185,7 +185,7 @@ def gen_reject():
         body += ["    mov r *u8 = acquire()", "    var i usize = 0",
                  "    while i < 3 decreasing 3 - i {", "        release(mov r)",
                  "        i = i + 1", "    }"]
-    return "// EXPECT: reject\n" + HEADER + "\nproc main() i32 {\n" + "\n".join(body) + "\n    return 0\n}\n"
+    return "// EXPECT: reject\n" + HEADER + "\nfunc main() i32 effects io, raises, alloc {\n" + "\n".join(body) + "\n    return 0\n}\n"
 
 if rng.random() < 0.7:
     sys.stdout.write(gen_accept())

@@ -22,8 +22,8 @@ for ((i=0; i<N; i++)); do
     sz=${sizes[$((RANDOM % ${#sizes[@]}))]}
     src="$SC/t_$i.ln"
     {
-      echo 'extern proc libc_printf(fmt *u8, ...) i32'
-      echo "proc fill(var table i32[$sz], h0 usize) {"
+      echo 'extern func libc_printf(fmt *u8, ...) i32 effects io'
+      echo "func fill(var table i32[$sz], h0 usize) {"
       echo "    var h usize = h0 & $m0"
       echo "    var k usize = 0"
       echo "    while k < $sz decreasing $sz - k {"
@@ -32,7 +32,7 @@ for ((i=0; i<N; i++)); do
       echo "        k = k + 1"
       echo "    }"
       echo "}"
-      echo 'proc main() i32 {'
+      echo 'func main() i32 effects io, raises, alloc {'
       printf "    var t i32[$sz] = ["
       for ((e=0;e<sz;e++)); do printf "%s0" "$([ $e -gt 0 ] && echo ', ')"; done
       echo "]"

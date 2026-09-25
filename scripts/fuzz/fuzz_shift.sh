@@ -20,24 +20,24 @@ for ((i=0; i<N; i++)); do
     dir=$([ $((RANDOM%2)) -eq 0 ] && echo '<<' || echo '>>')
     amt=$((RANDOM % 4))
     case $amt in
-      0) sig="proc sh(x $ty, n $ty) $ty"; body="    return x $dir n";;                 # unguarded var
-      1) sig="proc sh(x $ty, n $ty) $ty"; body="    if n < 32 {
+      0) sig="func sh(x $ty, n $ty) $ty"; body="    return x $dir n";;                 # unguarded var
+      1) sig="func sh(x $ty, n $ty) $ty"; body="    if n < 32 {
         return x $dir n
     }
     return 0";;                                                                          # guarded < width
-      2) lit=$((RANDOM % 40)); sig="proc sh(x $ty, n $ty) $ty"; body="    return x $dir $lit";;  # literal amount
-      3) sig="proc sh(x $ty, n $ty) $ty"; body="    if n < 32 and x < 2 {
+      2) lit=$((RANDOM % 40)); sig="func sh(x $ty, n $ty) $ty"; body="    return x $dir $lit";;  # literal amount
+      3) sig="func sh(x $ty, n $ty) $ty"; body="    if n < 32 and x < 2 {
         return x $dir n
     }
     return 0";;                                                                          # guarded amount+value
     esac
     src="$SC/t_$i.ln"
     cat > "$src" <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 $sig {
 $body
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var acc $ty = 0
     var n $ty = 0
     while n < 40 decreasing 40 - n {

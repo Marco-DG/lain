@@ -57,14 +57,17 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
             // conservatism, not a defence.
             //
             // The answer is the arrow's effect bound, which the type now carries: a `*func`
-            // target is verified total and pure, so a call through it contributes nothing; a
-            // `*proc` target may do anything observable. This is the same rule as IR_OPAQUE
-            // above, and it is Nielson & Nielson's latent effect read off the type.
+            // target is verified against the arrow's ROW at assignment, so a call through it
+            // contributes exactly that row — nothing for a bare `*func(...)`, whatever the
+            // `effects` clause names otherwise. This is the same rule as IR_OPAQUE above, and it
+            // is Nielson & Nielson's latent effect read off the type.
             if (!cn) {
                 IrValue *tgt = ins->n_operands >= 1 ? ins->operands[0] : NULL;
                 IrType  *tt  = tgt ? tgt->type : NULL;
-                bool total = tt && tt->kind == IRT_FUNC && tt->fn_is_total;
-                if (!total) e |= IR_EFFECT_IO | IR_EFFECT_RAISES | IR_EFFECT_DIVERGE;
+                // The arrow's ROW is charged, exactly as declared. A type that is not a
+                // function type at all (an unresolved indirect target) is ⊤, fail-closed.
+                IrEffect arrow = (tt && tt->kind == IRT_FUNC) ? tt->fn_row : IR_EFFECT_TOP;
+                e |= arrow;
                 continue;
             }
             IrFunc *callee = ireff_find(mod, cn);

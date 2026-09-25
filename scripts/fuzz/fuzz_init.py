@@ -20,12 +20,12 @@ def gen(rng):
                         "comprehension", "loop_fill_all", "loop_fill_half",
                         "branch_one", "branch_both", "struct_partial", "struct_full"])
     n = rng.choice([2, 4, 8])
-    L = ["extern proc libc_printf(fmt *u8, ...) i32"]
+    L = ["extern func libc_printf(fmt *u8, ...) i32 effects io"]
 
     if shape in ("struct_partial", "struct_full"):
         L += ["type P {", "    x i32", "    y i32", "}"]
 
-    L.append("proc main() i32 {")
+    L.append("func main() i32 effects io, raises, alloc {")
     if shape == "whole_init":
         L.append(f"    var a i32[{n}] = [{', '.join(str(i+1) for i in range(n))}]")
         L.append("    libc_printf(\"%d\\n\", a[0])")

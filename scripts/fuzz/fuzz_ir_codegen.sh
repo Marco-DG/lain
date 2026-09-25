@@ -32,10 +32,10 @@ r() { echo $(( RANDOM % $1 + ${2:-0} )); }
 gen_mutparam_scalar() {   # scalar `var` param mutation — the class that hid the miscompile
     local a=$(r 50 1) b=$(r 9 1)
     cat <<EOF
-proc bump(var x i32, k i32) {
+func bump(var x i32, k i32) {
     x = x +% k
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var v i32 = $a
     bump(var v, $b)
     bump(var v, $b)
@@ -47,10 +47,10 @@ gen_mutparam_struct() {   # struct `var` param mutation through a field
     local a=$(r 40 1) b=$(r 7 1)
     cat <<EOF
 type Box { val i32 }
-proc addto(var b Box, k i32) {
+func addto(var b Box, k i32) {
     b.val = b.val +% k
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var bx Box
     bx.val = $a
     addto(var bx, $b)
@@ -61,7 +61,7 @@ EOF
 gen_shortcircuit() {      # and/or guards — lowering changed to nested branches
     local n=$(r 20 4) t=$(r 10 1)
     cat <<EOF
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var a i32[$n] = [0 for z in 0..$n]
     var i = 0
     var hits = 0
@@ -82,7 +82,7 @@ EOF
 gen_loop_index() {        # loop + array indexing + accumulate
     local n=$(r 16 3) k=$(r 5 1)
     cat <<EOF
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var a i32[$n] = [0 for z in 0..$n]
     var i = 0
     while i < $n decreasing $n - i {
@@ -108,7 +108,7 @@ func addk(x i32, k i32) i32 {
 func twice(x i32) i32 {
     return addk(addk(x, x), 0)
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     return twice($a) % ($b + 7)
 }
 EOF
@@ -116,7 +116,7 @@ EOF
 gen_arith() {             # wrapping / div / mod mix
     local a=$(r 200 3) b=$(r 12 2)
     cat <<EOF
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var x i32 = $a
     var y i32 = $b
     var s = 0
@@ -135,7 +135,7 @@ gen_strlit() {            # string literals: STORAGE DURATION of the literal's b
     local k=$(r 4) c=$(( $(r 60) + 65 ))
     case $k in
       0) cat <<EOF
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var s = "hello"
     s[0] = $c
     return s[0] as i32
@@ -143,7 +143,7 @@ proc main() i32 {
 EOF
       ;;
       1) cat <<EOF
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var s = "abcdef"
     s[1] = $c
     s[2] = s[1]
@@ -153,14 +153,14 @@ EOF
       ;;
       2) cat <<EOF
 func first(s u8[:0]) i32 { if s.len > 0 { return s[0] as i32 } return 0 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     t = "world"
     return first(t) % 251
 }
 EOF
       ;;
       *) cat <<EOF
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var s = "xyz"
     var n = s.len as i32
     s[0] = $c
@@ -177,7 +177,7 @@ gen_defer() {             # `defer` ORDER — reverse registration, and it runs 
     local a=$(r 30 1) b=$(r 9 2) k=$(r 3)
     case $k in
       0) cat <<EOF
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var acc = $a
     defer acc = acc +% $b
     defer acc = acc *% 3
@@ -187,7 +187,7 @@ proc main() i32 {
 EOF
       ;;
       1) cat <<EOF
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var acc = $a
     var i = 0
     defer acc = acc +% 7
@@ -200,7 +200,7 @@ proc main() i32 {
 EOF
       ;;
       *) cat <<EOF
-proc pick(n i32) i32 {
+func pick(n i32) i32 {
     var acc = n
     defer acc = acc *% 2
     if n > $b {
@@ -209,7 +209,7 @@ proc pick(n i32) i32 {
     acc = acc +% $a
     return acc % 251
 }
-proc main() i32 { return pick($a) }
+func main() i32 effects io, raises, alloc { return pick($a) }
 EOF
       ;;
     esac
@@ -233,7 +233,7 @@ func val(s Sh) i32 {
     }
     return -1
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var c = Sh.Circle($a)
     var q = Sh.Rect($a, $b)
     var d = Sh.Dot
@@ -244,7 +244,7 @@ EOF
       1) cat <<EOF
 type St { On { level i32 }
  Off }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var acc = 0
     var i = 0
     while i < 6 decreasing 6 - i {
@@ -272,7 +272,7 @@ func pick(p P) i32 {
     }
     return 0
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var t = P.A($a, $b)
     var u = P.B($a)
     var v = P.C
@@ -297,7 +297,7 @@ type P {
     y i32
 }
 func mk(n i32) P { return P(n, n +% $a) }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var acc = 0
     var i = 0
     while i < 4 decreasing 4 - i {
@@ -317,7 +317,7 @@ type Q {
     n i32
 }
 func mq(n i32) Q { return Q(P(n *% 2), n +% $a) }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var s = mq($a).inner.x +% mq($a).n
     return s % 251
 }
@@ -340,14 +340,14 @@ func sum_at(a i32[$n], i usize) i32 {
     }
     return 0
 }
-proc fill(var a i32[$n], k i32) {
+func fill(var a i32[$n], k i32) {
     var i = 0
     while i < $n decreasing $n - i {
         a[i] = (i as i32 *% k) % 97
         i += 1
     }
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var a i32[$n] = [0 for z in 0..$n]
     fill(var a, $k)
     var acc = 0
@@ -369,12 +369,12 @@ gen_effectful_result() {  # ★ the ANNOTATION class: a value-returning function
     local k=$(r 3) n=$(( $(r 3) + 2 ))
     case $k in
       0) cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc noisy(x i32) i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func noisy(x i32) i32 {
     libc_printf("t%d\n", x)
     return x +% 1
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var i i32 = 0
     while i < $n {
         var t i32 = noisy(i)
@@ -385,13 +385,13 @@ proc main() i32 {
 EOF
       ;;
       1) cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func quiet(x i32) i32 { return x *% 3 }
-proc noisy(x i32) i32 {
+func noisy(x i32) i32 {
     libc_printf("u%d\n", quiet(x))
     return x
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var a i32 = noisy($n)
     var b i32 = quiet($n)
     var c i32 = noisy(b)
@@ -400,13 +400,13 @@ proc main() i32 {
 EOF
       ;;
       *) cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc tally(var acc i32, x i32) i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func tally(var acc i32, x i32) i32 {
     acc = acc +% x
     libc_printf("v%d\n", acc)
     return acc
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var s i32 = 0
     var i i32 = 0
     while i < $n {
@@ -428,15 +428,15 @@ gen_rawptr_alias() {      # ★ the RESTRICT class. Two RAW pointers to the SAME
     # 11 at -O0 and 1 at -O3, which is what makes this the shape that can falsify the rule.
     local k=$(r 2) inc=$(( $(r 9) + 1 ))
     if [ "$k" = "0" ]; then cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc bump2(p *var i32, q *var i32) i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func bump2(p *var i32, q *var i32) i32 {
     unsafe {
         *p = *p + 1
         *q = *q + $inc
         return *p
     }
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var x i32 = 0
     var r i32 = bump2(&x, &x)
     libc_printf("%d\n", r)
@@ -444,8 +444,8 @@ proc main() i32 {
 }
 EOF
     else cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc mix(p *var i32, q *var i32) i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func mix(p *var i32, q *var i32) i32 {
     unsafe {
         *p = $inc
         var a i32 = *q
@@ -453,7 +453,7 @@ proc mix(p *var i32, q *var i32) i32 {
         return *q
     }
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var x i32 = 7
     var y i32 = 3
     var s i32 = mix(&x, &x) +% mix(&x, &y)

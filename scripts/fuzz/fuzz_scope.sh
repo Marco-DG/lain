@@ -32,8 +32,8 @@ for ((i=0; i<N; i++)); do
     # fuzzer does not test; saying `+%` states which arithmetic is meant and leaves the BOUNDS
     # question, the one under test, exactly as it was.
     cat > "$src" <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc g(a i32[n], n usize) i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func g(a i32[n], n usize) i32 {
     var sum i32 = 0
     var i usize = 0
     while i < n decreasing n - i {
@@ -42,7 +42,7 @@ proc g(a i32[n], n usize) i32 {
     }
     return sum
 }
-proc h(a i32[n], n usize) i32 {
+func h(a i32[n], n usize) i32 {
     var sum i32 = 0
     var i usize = 0
     while i < n decreasing n - i {
@@ -51,7 +51,7 @@ proc h(a i32[n], n usize) i32 {
     }
     return sum
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var x i32[$s1] = [$(seq -s ', ' 1 $s1)]
     var y i32[$s2] = [$(seq -s ', ' 1 $s2)]
     var t i32 = g(x, $s1) + h(y, $s2)

@@ -874,9 +874,27 @@ extern func libc_puts(s *u8) i32 effects io    // believed; narrows the default
 extern func abs(n int) int effects             // the empty row — genuinely pure
 ```
 
-There is no separate introducer for effectful code. `proc` was that introducer and is gone: an
-effect was spelled by a keyword (`proc`), by an attribute (`@diverges`), and by this clause, and one
-concern with three spellings is what the language's own law L3 refuses.
+There is no separate introducer for effectful code. `proc` was that introducer and has been
+**removed** — an effect used to be spelled by a keyword (`proc`), by an attribute (`@diverges`),
+and by this clause, and one concern with three spellings is what the language's own law L3 refuses.
+The keyword stays reserved and tells you the replacement:
+
+```
+[E100] `proc` was removed: there is one introducer, `func`, and an effect row.
+       Write `func NAME(...) RET effects io`, or `effects diverge` for a loop the
+       compiler cannot bound. Silence means no effects at all
+```
+
+A **function-pointer type** carries a row in the same position, which is what replaced the two
+points `*func` (total and pure) and `*proc` (anything):
+
+```lain
+func apply(f *func(i32) i32 effects io, x i32) i32 effects io { return f(x) }
+```
+
+Assignment to such a pointer is row containment — the function may do no more than the arrow
+admits — and a call through it charges the arrow's row, so `apply` above must acknowledge `io` and
+nothing else. `*proc` could only have said "may do anything".
 
 ### 5.3 Parameter Modes
 
@@ -923,8 +941,8 @@ func check(valid bool) {
 > [!IMPORTANT]
 > `main` is an ordinary `func`. It carries a row like any other function — `func main() int
 > effects io` for a program that prints — and a `main` that does nothing observable needs no row
-> at all. (An earlier revision of this page required `proc main()`; that introducer no longer
-> exists.)
+> at all. (An earlier revision of this page required `proc main()`; that introducer has been
+> removed.)
 
 ### 5.5 Termination Guarantees
 

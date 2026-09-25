@@ -19,30 +19,30 @@ for ((i=0; i<N; i++)); do
     shape=$((RANDOM % 6))
     # function signature + body
     case $shape in
-      0) sig="proc dv(x i32, d i32) i32"; body="    return x $op d";;                       # unguarded → must reject
-      1) sig="proc dv(x i32, d i32) i32"; body="    if d != 0 {
+      0) sig="func dv(x i32, d i32) i32"; body="    return x $op d";;                       # unguarded → must reject
+      1) sig="func dv(x i32, d i32) i32"; body="    if d != 0 {
         return x $op d
     }
     return 0";;
-      2) sig="proc dv(x i32, d i32) i32"; body="    if d > 0 {
+      2) sig="func dv(x i32, d i32) i32"; body="    if d > 0 {
         return x $op d
     }
     return 0";;
-      3) sig="proc dv(x i32, d i32) i32"; body="    if d == 0 {
+      3) sig="func dv(x i32, d i32) i32"; body="    if d == 0 {
         return 0
     }
     return x $op d";;
-      4) sig="proc dv(x i32, d i32 != 0) i32"; body="    return x $op d";;                   # param precondition
-      5) sig="proc dv(x i32, d i32) i32"; body="    var k i32 = 7
+      4) sig="func dv(x i32, d i32 != 0) i32"; body="    return x $op d";;                   # param precondition
+      5) sig="func dv(x i32, d i32) i32"; body="    var k i32 = 7
     return x $op k";;                                                                          # constant nonzero
     esac
     src="$SC/t_$i.ln"
     cat > "$src" <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 $sig {
 $body
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var acc i32 = 0
     var d i32 = 0 - 2
     while d < 4 decreasing 4 - d {

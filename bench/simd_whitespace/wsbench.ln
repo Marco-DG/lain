@@ -10,7 +10,7 @@
 // No `unsafe`, no bounds checks emitted. `n` is assumed a multiple of 32 (the
 // benchmark buffer is); a tail loop is future work once @load is made
 // provably-safe by the P2 padded-buffer invariant.
-proc count_ws(data *u8, n usize) u64 {
+func count_ws(data *u8, n usize) u64 {
     var total u64  = 0
     var i     usize = 0
     while i +% 32 <= n {

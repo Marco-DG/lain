@@ -47,8 +47,8 @@ gen_modbounds() {   # buf[i % N] in a loop — VRA modulo-bounds proof; sum orac
     for ((i=0;i<steps;i++)); do acc=$((acc + arr[i % n])); done
     EXPECT="$acc"
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var buf = [$vals]
     var acc = 0
     var i = 0
@@ -66,8 +66,8 @@ gen_scanbounds() {  # forward scan to exact len — off-by-one → ASan OOB; sum
     for ((i=0;i<n;i++)); do v=$(r 120 1); sum=$((sum+v)); vals+="$v"; ((i<n-1)) && vals+=", "; done
     EXPECT="$sum"
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var a = [$vals]
     var s = 0
     var i = 0
@@ -84,8 +84,8 @@ gen_widen() {       # Path-F widening: i32*i32 must compute wide (no i32 UB); or
     local a=$(big) b=$(big)
     EXPECT="$((a*b)) $((a+b))"
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var x i32 = $a
     var y i32 = $b
     var p i64 = x * y
@@ -98,8 +98,8 @@ EOF
 gen_checked() {     # checked op must never UB: recovers on overflow
     local a=$(big) b=$(big) op=$(pick '+?' '-?' '*?')
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var x i32 = $a
     var y i32 = $b
     var z i32 = x $op y else 0
@@ -111,8 +111,8 @@ EOF
 gen_narrow() {      # narrow-type arithmetic: u8/u16 widening, no promotion UB
     local T=$(pick u8 u16) a=$(r 250 0) b=$(r 250 0) op=$(pick '+' '*' '+%' '+|')
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var x $T = $a
     var y $T = $b
     var z i64 = (x $op y) as i64
@@ -124,9 +124,9 @@ EOF
 gen_niche() {       # niche union round-trip must not corrupt the value
     local miss=$(pick true false) v=$(r 120 33)
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func pick(p *u8, m bool) *u8 | Gone { if m { return Gone } return p }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var r *u8 | Gone = pick("Z", $miss)
     case r { Gone: libc_printf("gone\n") else: libc_printf("%s\n", r) }
     return 0
@@ -138,8 +138,8 @@ gen_modmismatch() { # buf[i % M] with M INDEPENDENT of len — is the bounds pro
     local n=$(r 8 2) m=$(r 12 2) steps=$(r 30 1) i vals=""   # SOUND when M can exceed len?
     for ((i=0;i<n;i++)); do vals+="$(r 90 65)"; ((i<n-1)) && vals+=", "; done
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var buf = [$vals]
     var acc = 0
     var i = 0
@@ -156,8 +156,8 @@ gen_offset() {      # a[i + K] in a loop — offset-index bounds proof
     local n=$(r 12 3); local k=$(r 4 0); local steps=$(r "$n" 1); local i vals=""
     for ((i=0;i<n;i++)); do vals+="$(r 90 1)"; ((i<n-1)) && vals+=", "; done
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var a = [$vals]
     var s = 0
     var i = 0
@@ -176,8 +176,8 @@ gen_subidx() {      # sub-slice then index it — sub-slice bounds/offset soundn
     k=$(r $((hi-lo-1)) 0)
     for ((i=0;i<n;i++)); do vals+="$(r 90 1)"; ((i<n-1)) && vals+=", "; done
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var xs = [$vals]
     var s = xs[$lo..$hi]
     libc_printf("%d\n", s[$k])
@@ -189,12 +189,12 @@ gen_slicefn() {     # slice through a function, indexed via `in` guard
     local len=$(r 6 1) i s=""
     for ((i=0;i<len;i++)); do s+="$(printf '\\x%02x' $(r 90 65))"; done
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func first(d u8[:0]) i32 {
     if d.len > 0 { return d[0] as i32 }
     return -1
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     libc_printf("%d\n", first("$s"))
     return 0
 }

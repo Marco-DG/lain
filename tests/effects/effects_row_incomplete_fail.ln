@@ -1,15 +1,23 @@
-// EXPECT: [E130]
-// ★ THE ROW IS COMPLETE, which is what makes it worth reading.
+// EXPECT: [E011]
+// ★ THE ROW IS COMPLETE, which is what makes it worth reading. Widening the bound by one effect
+// does not grant the others — otherwise `effects io` would mean "stop checking effects here", and
+// a caller could not trust a signature at all. The default is ∅ for everything, so every deviation
+// appears in the row or not at all.
 //
-// This declares `io` and also diverges. Widening the bound by one effect does not grant the
-// others — otherwise `effects io` would mean "stop checking effects here", and a caller could
-// not trust a signature at all.
+// This declares `io` and also diverges, and the CODE is the interesting part:
 //
-// The default is ∅ for everything, so every deviation appears in the row or not at all.
+//   · it used to be [E130], from the declared-vs-inferred comparison ("it also has: diverge");
+//   · it is now [E011] from the TERMINATION pass, which names the loop and the three ways out.
 //
-// [E130] rather than [E011]: the declared-vs-inferred comparison catches it first and names what
-// is missing ("it also has: diverge"), which is the more useful message — E011 would only say the
-// effect is unacknowledged.
+// `diverge` is the one effect with a sovereign verdict of its own, and the termination seam stands
+// it down in BOTH effect checks so that verdict is the one heard. A row complaint at the function
+// is strictly less useful than a diagnostic at the loop header. The companion tests pin the scope
+// of that standing-down from both sides: seam_diverge_loop_still_refused_fail.ln (the loop is still
+// refused) and seam_opaque_diverge_kept_fail.ln (divergence BELIEVED from an extern's row is never
+// stood down, and reports as [E130] because nothing else would mention it).
+//
+// The row-covers-body path itself is still tested, by effects_alloc_bound_fail.ln — `alloc` has no
+// verdict of its own, so there the comparison is what speaks.
 extern func libc_printf(fmt *u8, ...) i32 effects io
 func serve(n i32) i32 effects io {
     var i i32 = 0

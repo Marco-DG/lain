@@ -46,8 +46,8 @@ gen_index() {
     local len=$(r 8 1); local k=$(r 11 0); local content=$(randstr $len)
     EXPECT=""; (( k < len )) && EXPECT=$(ord "${content:$k:1}")
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var s = "$content"
     libc_printf("%d\n", s[$k] as i32)
     return 0
@@ -61,8 +61,8 @@ gen_reassign() {
     local la=$(r 6 1); local lb=$(r 6 1); local a=$(randstr $la); local b=$(randstr $lb); local k=$(r 7 0)
     EXPECT=""; (( la == lb && k < lb )) && EXPECT=$(ord "${b:$k:1}")
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var s = "$a"
     s = "$b"
     libc_printf("%d\n", s[$k] as i32)
@@ -77,11 +77,11 @@ gen_coerce() {
     local len=$(r 9 1); local content=$(randstr $len)
     EXPECT="[$content]"
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc show(m u8[:0]) {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func show(m u8[:0]) {
     libc_printf("[%s]", m.data)
 }
-proc main() i32 {
+func main() i32 effects io, raises, alloc {
     var s = "$content"
     show(s)
     return 0
@@ -97,8 +97,8 @@ gen_subslice() {
     local content=$(randstr $len)
     EXPECT=""; local sublen=$((hi-lo)); (( k < sublen )) && EXPECT=$(ord "${content:$((lo+k)):1}")
     cat <<EOF
-extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io, raises, alloc {
     var s = "$content"
     var sub = s[$lo..$hi]
     libc_printf("%d\n", sub[$k] as i32)

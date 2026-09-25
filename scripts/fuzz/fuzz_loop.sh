@@ -47,8 +47,8 @@ for ((i=0; i<N; i++)); do
 
     src="$SC/t_$i.ln"
     {
-      echo "extern proc libc_printf(fmt *u8, ...) i32"
-      echo "proc run(a i32[$sz]) i32 {"
+      echo "extern func libc_printf(fmt *u8, ...) i32 effects io"
+      echo "func run(a i32[$sz]) i32 {"
       echo "    var i usize = 0"
       echo "    var j usize = 0"
       echo "    var s i32 = 0"
@@ -63,7 +63,7 @@ for ((i=0; i<N; i++)); do
       echo "    }"
       echo "    return s"
       echo "}"
-      echo "proc main() i32 {"
+      echo "func main() i32 effects io, raises, alloc {"
       printf "    var arr i32[$sz] = ["
       for ((e=0; e<sz; e++)); do printf "%s%d" "$([ $e -gt 0 ] && echo ', ')" "$e"; done
       echo "]"

@@ -600,7 +600,7 @@ static bool core_identical_depth(Type *a, Type *b, int depth) {
             return ma == NULL && mb == NULL;
         }
         case TYPE_FUNC: {
-            if (a->func_is_total != b->func_is_total) return false;
+            if (a->func_effects != b->func_effects) return false;   // the arrow's row is part of the type
             if (!core_identical_depth(a->element_type, b->element_type, depth + 1)) return false; // return (NULL=void)
             TypeList *pa = a->func_params, *pb = b->func_params;
             while (pa && pb) {
@@ -1515,16 +1515,23 @@ static Type *fnptr_type_of_decl(Decl *d) {
         if (!pts) pts = node; else tail->next = node;
         tail = node;
     }
-    return type_func(sema_arena, pts, d->as.function_decl.return_type, is_func);
+    // The source function's own row is what the assignment is checked against. A declared row
+    // is believed on an extern and checked on a definition, so reading it here is reading the
+    // same fact either way; where none was written the row is ∅, which is what silence means.
+    EffectSet srow = d->as.function_decl.effects_declared
+                   ? d->as.function_decl.effects_bound : 0;
+    if (!is_func) srow |= EFFECT_TOP;   // a `proc` grants everything (deprecated form)
+    return type_func(sema_arena, pts, d->as.function_decl.return_type, srow);
 }
 
 // Is a function-pointer value of type `from` assignable to target `to`?
-// Equal arity, structurally-equal parameter/return types, and totality
-// subtyping: a `*func` target (total) accepts only a total source; `*proc`
-// accepts either.
+// Equal arity, structurally-equal parameter/return types, and ROW CONTAINMENT: the source may
+// do no more than the arrow admits. This subsumes the old two-point `func <: proc` subtyping
+// (∅ ⊆ ⊤ holds, ⊤ ⊆ ∅ does not) and extends it to every intermediate row, so an arrow can now
+// say "may print, but terminates" — a bound the boolean could not express.
 static bool fnptr_types_assignable(Type *to, Type *from) {
     if (!to || !from || to->kind != TYPE_FUNC || from->kind != TYPE_FUNC) return false;
-    if (to->func_is_total && !from->func_is_total) return false;
+    if (from->func_effects & ~to->func_effects) return false;
     if ((to->element_type == NULL) != (from->element_type == NULL)) return false;
     if (to->element_type && !types_equal_exact(to->element_type, from->element_type)) return false;
     TypeList *a = to->func_params, *b = from->func_params;
@@ -1548,7 +1555,8 @@ static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col) {
     }
     if (!fnptr_types_assignable(target, from)) {
         fprintf(stderr, "[E122] Error Ln %li, Col %li: function does not match the function-pointer "
-                "type — arity, parameter/return types, or totality (`func` vs `proc`) differ.\n",
+                "type — arity, parameter/return types, or the effect row differ (the function may "
+                "do more than the arrow admits).\n",
                 (long)line, (long)col);
         diagnostic_show_line(line, col); exit(1);
     }

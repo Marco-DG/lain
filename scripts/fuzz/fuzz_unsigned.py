@@ -36,13 +36,13 @@ def gen(rng):
         exact.append(x + y if op == "+" else x - y if op == "-" else x * y)
     fits = all(0 <= v <= hi_t for v in exact)
 
-    L = ["extern proc libc_printf(fmt *u8, ...) i32",
+    L = ["extern func libc_printf(fmt *u8, ...) i32 effects io",
          f"// EXPECT_OUT: {' '.join(str(v) for v in exact)}",
          f"// FITS: {'yes' if fits else 'no'}",
          f"func f(a {ty} >= {a_lo} and <= {a_hi}, b {ty} >= {b_lo} and <= {b_hi}) {ty} {{",
          f"    return a {op} b",
          "}",
-         "proc main() i32 {"]
+         "func main() i32 effects io, raises, alloc {"]
     for (x, y) in calls:
         L.append(f"    libc_printf(\"%llu\\n\", f({x}, {y}) as u64)")
     L += ["    return 0", "}"]

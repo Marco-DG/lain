@@ -24,21 +24,26 @@ for ((i=0; i<N; i++)); do
       0) fbody="    if x < $thr {
         panic(\"low\")
     }
-    return x";;                                            # may panic
-      1) fbody="    return x + 1";;                        # pure
+    return x"; frow=" effects raises";;                     # may panic
+      1) fbody="    return x + 1"; frow="";;                # pure
       2) fbody="    if x < $thr {
         panic(\"low\")
     }
-    return x * 2";;                                        # may panic + mul
-      3) fbody="    return x";;                            # trivial pure
+    return x * 2"; frow=" effects raises";;                 # may panic + mul
+      3) fbody="    return x"; frow="";;                    # trivial pure
     esac
+    # ★ THE ROW IS PER SHAPE, and it has to be MINIMAL here. Since E.6 an unacknowledged `raises`
+    # is [E011], so the panicking shapes need `effects raises` — but a blanket row on all four
+    # would destroy the experiment: the annotation gate requires an EMPTY row for gcc's `const`,
+    # so shapes 1 and 3 must stay bare or the fuzzer would stop observing the annotation it exists
+    # to check. Half its population was already being refused before this.
     src="$SC/t_$i.ln"
     {
-      echo 'extern proc libc_printf(fmt *u8, ...) i32'
-      echo "func f(x i32) i32 {"
+      echo 'extern func libc_printf(fmt *u8, ...) i32 effects io'
+      echo "func f(x i32) i32$frow {"
       echo "$fbody"
       echo "}"
-      echo 'proc main() i32 {'
+      echo 'func main() i32 effects io, raises, alloc {'
       if [ $used -eq 1 ]; then
         echo "    var r i32 = f($arg)"
         echo '    libc_printf("r=%d\n", r)'

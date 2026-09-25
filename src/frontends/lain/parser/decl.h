@@ -240,10 +240,13 @@ Decl *parse_decl(Arena* arena, Parser* parser)
             d = parse_extern_func_decl(arena, parser);
             goto done;
         }
+        // ★ `proc` IS GONE (E.4/E.5). The token stays RESERVED so this message can exist: a
+        // removed keyword that lexes as an ordinary identifier produces "expected declaration",
+        // which tells a reader with old code nothing about where the feature went.
         if (parser_match(TOKEN_KEYWORD_PROC)) {
-            parser_advance();  // consume 'proc'
-            d = parse_extern_proc_decl(arena, parser);
-            goto done;
+            parser_error("`proc` was removed: there is one introducer, `func`, and an effect row. "
+                         "Write `extern func NAME(...) RET effects io` — and note that on an "
+                         "`extern` the row NARROWS a default of `io, diverge, raises, alloc`");
         }
         if (parser_match(TOKEN_KEYWORD_TYPE)) {
             parser_advance(); // consume 'type'
@@ -311,17 +314,9 @@ Decl *parse_decl(Arena* arena, Parser* parser)
     }
 
     if (parser_match(TOKEN_KEYWORD_PROC)) {
-        parser_advance();
-        d = parse_proc_decl(arena, parser);
-        if (d) {
-            d->as.function_decl.diverges     = decl_diverges;
-            d->as.function_decl.does_io       = decl_is_io;
-            d->as.function_decl.is_cold      = decl_is_cold;
-            d->as.function_decl.is_hot       = decl_is_hot;
-            d->as.function_decl.is_allocator = decl_is_allocator;
-            d->as.function_decl.is_noreturn  = decl_is_noreturn;
-        }
-        goto done;
+        parser_error("`proc` was removed: there is one introducer, `func`, and an effect row. "
+                     "Write `func NAME(...) RET effects io`, or `effects diverge` for a loop the "
+                     "compiler cannot bound. Silence means no effects at all");
     }
 
     if (parser_match(TOKEN_KEYWORD_VAR)) {
@@ -769,7 +764,35 @@ static bool parse_effects_clause(Parser *parser, EffectSet *out) {
         else if (l==5 && strncmp(n,"alloc",5)==0)   e |= EFFECT_ALLOC;
         else parser_error("unknown effect name (expected diverge/raises/io/alloc)");
         parser_advance();
-        if (parser_match(TOKEN_COMMA)) { parser_advance(); continue; }
+        // ★ THE COMMA IS SHARED, and the row must not swallow the enclosing list's. A row can
+        // appear inside a PARAMETER LIST now that a function-POINTER type carries one:
+        //
+        //     func viaptr(f *func(i32) i32 effects io, x i32) i32
+        //                                           ↑ this comma belongs to the parameter list
+        //
+        // Consuming it unconditionally made the parser read `x` as an effect name and reject the
+        // program. So look past the comma: continue the row only if a KNOWN effect name follows,
+        // and otherwise restore the comma for whoever owns it. The ambiguity is genuine and local,
+        // and one token of lookahead settles it — which is cheaper than giving the row a second
+        // spelling inside types, the thing Part 7B exists to avoid.
+        if (parser_match(TOKEN_COMMA)) {
+            const char *snap_cur = parser->lexer ? parser->lexer->current : NULL;
+            Token snap_tok = parser->token;
+            long snap_line = parser->line, snap_col = parser->column;
+            parser_advance();
+            bool is_effect = false;
+            if (parser_match(TOKEN_IDENTIFIER)) {
+                const char *m = parser->token.start; int ml = parser->token.length;
+                is_effect = (ml==7 && strncmp(m,"diverge",7)==0)
+                         || (ml==6 && strncmp(m,"raises",6)==0)
+                         || (ml==2 && strncmp(m,"io",2)==0)
+                         || (ml==5 && strncmp(m,"alloc",5)==0)
+                         || (ml==5 && strncmp(m,"write",5)==0);   // rejected above, with its message
+            }
+            if (is_effect) continue;
+            parser->token = snap_tok; parser->line = snap_line; parser->column = snap_col;
+            if (parser->lexer) parser->lexer->current = (char*)snap_cur;
+        }
         break;
     }
     *out = e;
