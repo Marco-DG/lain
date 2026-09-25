@@ -3910,6 +3910,14 @@ static void sema_check_proc_eligibility(Decl *d) {
     proc_w130_self = d;
     proc_w130_has_while_no_measure = false;
     proc_w130_visit_stmt_list(d->as.function_decl.body);
+    // ★ AND THE ROW DECIDES. The bespoke walk above judges eligibility by the callee's
+    // KEYWORD (`DECL_PROCEDURE || DECL_EXTERN_PROCEDURE`), so the moment E.5 migrated every
+    // extern to `extern func … effects io`, a `proc` that calls `libc_puts` was declared to have
+    // "no observable side effect" — this warning started stating the opposite of the truth, in a
+    // program the compiler had just refused for doing IO. The walk is kept because it also
+    // detects an unbounded `while` (a reason to stay a `proc` that the row reports as diverge),
+    // but the effect row now has the final say, as it does everywhere else since E.4.
+    if (effect_full(d) != 0) proc_w130_eligible = false;
     if (proc_w130_eligible) {
         Id *n = d->as.function_decl.name;
         // Skip if name is "main" — entrypoint must remain a proc (it returns

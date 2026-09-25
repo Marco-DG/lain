@@ -2295,31 +2295,10 @@ void sema_infer_expr(Expr *e) {
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
         Expr *callee = e->as.call_expr.callee;
         if (callee->decl) {
-            if ((callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE)
-                && !current_function_decl->as.function_decl.does_io
-                && !(current_function_decl->as.function_decl.effects_declared
-                     && (current_function_decl->as.function_decl.effects_bound & EFFECT_IO))) {
-                // The same rule as resolve.h's E011, and it has to be the same: a declared
-                // `effects io` row WIDENS the bound, so calling a proc is what was declared.
-                // This copy had no diagnostic code and no source position — it printed
-                // "sema error: ..." and exited — so a program that got past resolve.h died
-                // here with a message that names no line. Two checks of one rule, and only one
-                // of them was findable; they now agree, and this one says where.
-                // The same rule as resolve.h's E011, and it has to BE the same. This copy had
-                // no diagnostic code and no source position — it printed "sema error: ..." and
-                // exited — so a program that got past resolve.h died here with a message that
-                // names no line. Two checks of one rule, and only one of them findable.
-                DeclFunction *cf2 = &current_function_decl->as.function_decl;
-                fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot "
-                        "call procedure\n", e->line, e->col,
-                        (int)cf2->name->length, cf2->name->name);
-                if (cf2->effects_declared && (cf2->effects_bound & EFFECT_IO))
-                    fprintf(stderr, "       the `effects io` clause is an upper BOUND, not "
-                            "permission — a `func` is pure by definition. Declare it `proc`.\n");
-                diagnostic_show_line(e->line, e->col);
-                exit(1);
-            }
-            
+            // ★ The keyword-keyed purity check WAS DUPLICATED HERE, and the duplicate is
+            // deleted with the original (see the note in resolve.h at the same rule). The two
+            // copies had already drifted — this one carried a doubled comment, a residue of the
+            // last time someone tried to reconcile them. One rule, one place: the effect row.
             // Termination Analysis: recursion in `func` is banned UNLESS the
             // function carries a `decreasing <measure>` clause — then it is allowed
             // and each self-call is verified to strictly decrease the measure

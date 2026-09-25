@@ -110,7 +110,7 @@ never a declaration.
 \begin{laincode}
 import std.fs
 
-proc main() int {
+func main() int effects io, raises, alloc {
     var f = open_file("data.txt", "r")
     close_file(mov f)               // f is now Consumed
     f = open_file("data.txt", "r")  // OK: overwriting Consumed state
@@ -344,7 +344,7 @@ before the scope exit) and as consumed at scope exit.
 \begin{laincode}
 import std.fs
 
-proc process() int {
+func process() int effects io, raises, alloc {
     var f = open_file("data.txt", "r")
     defer { close_file(mov f) }   // f consumed at scope exit
     // ... use f ...
@@ -389,7 +389,7 @@ be $[\textit{start}, \textit{end}-1]$ throughout the body, enabling safe
 array indexing without runtime bounds checks.
 
 \pnum
-\lain{for} loops are permitted in both \lain{func} and \lain{proc}.
+\lain{for} loops are permitted whatever a function's row says: the range is the bound.
 
 \begin{constraint}
   \textit{start} and \textit{end} shall have integer types.

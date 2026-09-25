@@ -248,19 +248,26 @@ decreases on every iteration (see \S\,\ref{sec:09-statements}).
 
 \subsection*{\texttt{func}}
 \index{func}
-A pure, terminating function.  A \lain{func} shall not call a \lain{proc}
-or contain an unbounded \lain{while} loop (see \S\,\ref{sec:12-functions}).
+A function.  Its effects are those its \textbf{effect row} names, and the row's
+default is empty --- pure and terminating.  A function shall not have an effect
+its row does not name (see \S\,\ref{sec:12-functions}).
 
 \subsection*{purity}
 \index{purity}
-The property of a \lain{func}: its result depends only on its inputs and it
+The property of a function with an empty row: its result depends only on its inputs and it
 has no observable side effects on any state outside its own stack frame.
+
+\subsection*{effect row}
+\index{effect row}
+The set of effects a function may have, drawn from \lain{io}, \lain{diverge},
+\lain{raises} and \lain{alloc}.  Inferred from the body, empty by default, widened
+by an \lain{effects} clause, and a complete upper bound in either case
+(see \S\,\ref{sec:fn.distinction}).
 
 \subsection*{\texttt{proc}}
 \index{proc}
-A procedure that may have side effects.  A \lain{proc} may call other
-\lain{proc}s, perform I/O, and contain unbounded \lain{while} loops
-(see \S\,\ref{sec:12-functions}).
+\emph{Deprecated.}  A procedure whose effects are granted by its introducer rather
+than by its row (see \S\,\ref{sec:decl.proc}).
 
 \subsection*{termination}
 \index{termination}

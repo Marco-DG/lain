@@ -48,7 +48,7 @@ Recognized attribute names (closed set, version 1.1):
 \endhead
 \bottomrule
 \endlastfoot
-\tok{[fast\_math]} & \lain{func}, \lain{proc} & Enable FMA fusion (P4 opt-out, local). \\
+\tok{[fast\_math]} & any function & Enable FMA fusion (P4 opt-out, local). \\
 \tok{[private]}    & any declaration         & Module-private visibility. \\
 \end{longtable}
 
@@ -195,17 +195,30 @@ func abs(x int) int >= 0 { ... }
 \index{func purity constraints}
 
 \begin{constraint}
-  A \lain{func} shall not contain an unbounded \lain{while} loop (one
-  without a \lain{decreasing} measure)~(\diagcode{E011}).
+  A function's \lain{effects} row is an upper bound on what its body does, and its
+  default is $\emptyset$.  An effect the body has and the row does not name is
+  \illformed{}~(\diagcode{E011} where the bound is $\emptyset$,
+  \diagcode{E130} where a non-empty row understates it).  The three
+  constraints below are consequences of that one rule, not separate rules.
 \end{constraint}
 
 \begin{constraint}
-  A \lain{func} shall not call a \lain{proc} or \lain{extern proc}~(\diagcode{E011}).
+  A function shall not contain an unbounded \lain{while} loop --- one whose
+  measure is neither given by \lain{decreasing} nor inferable --- unless its row
+  names \lain{diverge}~(\diagcode{E011}/\diagcode{E082}).
 \end{constraint}
 
 \begin{constraint}
-  A \lain{func} shall not call itself directly or indirectly (mutual
-  recursion)~(\diagcode{E011}).
+  A function shall not call one whose row names an effect its own row does
+  not~(\diagcode{E011}).  The callee's \emph{introducer} is irrelevant: what is
+  refused is the effect, not the keyword that declared it.
+\end{constraint}
+
+\begin{constraint}
+  A function shall not participate in mutual recursion unless its row names
+  \lain{diverge}~(\diagcode{E011}); termination cannot be established for a cycle
+  no measure covers.  Direct self-recursion \emph{with} an inferred or given
+  measure is permitted.
 \end{constraint}
 
 \section{Procedure declarations}
@@ -213,20 +226,23 @@ func abs(x int) int >= 0 { ... }
 \index{procedure declaration}
 
 \pnum
-A procedure declaration introduces a \lain{proc}: a callable with
-unrestricted side effects.  Its syntax is identical to \lain{func} except
-for the \lain{proc} keyword.  A \lain{proc} may contain unbounded loops,
-call other \lain{proc}s, and access global mutable state.
+A procedure declaration introduces a \lain{proc}: a callable whose effects are
+granted by its introducer rather than by its row.  \textbf{This form is
+deprecated.}  Every effect a \lain{proc} was needed for is now stated by an
+\lain{effects} row on an ordinary \lain{func}, so the keyword grants nothing that
+the row does not, and a \lain{proc} whose row is empty draws
+\diagcode{W130}.  It is retained only until the corresponding function
+\emph{type} syntax lands.
 
 \pnum
 The entry point of every Lain program shall be declared as:
 
 \begin{laincode}
-proc main() int { ... }
+func main() int { ... }          // with `effects io` if it performs any
 \end{laincode}
 
 \begin{constraint}
-  A complete \emph{program} shall define exactly one \lain{proc main() int} as
+  A complete \emph{program} shall define exactly one \lain{main} returning \lain{int} as
   its entry point.  An individual module (translation unit) compiled on its own
   --- e.g.\ a library --- need not define \lain{main}: the reference compiler
   accepts a \lain{main}-less source file, and a program missing an entry point
@@ -242,8 +258,8 @@ An extern declaration introduces a C function into the Lain name space
 without providing a body.  See \S\,\ref{sec:17-interop} for full semantics.
 
 \begin{laincode}
-extern proc printf(fmt *u8, ...) int
-extern func strlen(s *u8) usize
+extern func printf(fmt *u8, ...) int effects io
+extern func strlen(s *u8) usize effects
 \end{laincode}
 
 \begin{constraint}

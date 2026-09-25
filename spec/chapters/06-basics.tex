@@ -36,7 +36,7 @@ every declaration at the local level is also a definition.
 
 \begin{example}
 \begin{laincode}
-proc f() {
+func f() {
     var x = 1
     var x = 2   // [E013]: redeclaration of 'x' is forbidden
 }
@@ -123,7 +123,7 @@ of its storage.
   \item[Static storage duration]
     Variables declared at module scope.  Storage persists for the lifetime
     of the program.  \idbehav{whether module-scope variables are zero-
-    initialized before \lain{proc main} is called}.
+    initialized before \lain{main} is called}.
 
   \item[Arena storage duration]
     Objects allocated from an explicit \lain{Arena}.  Storage persists

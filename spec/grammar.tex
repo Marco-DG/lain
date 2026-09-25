@@ -343,8 +343,14 @@ comptime-if-statement ::=
 function-declaration  ::=
     { attribute } "func" identifier
     "(" [ param-list ] ")" return-annotation
+    [ effects-clause ] [ "decreasing" expression ]
     block-statement
 
+effects-clause        ::= "effects" [ effect-name { "," effect-name } ]
+
+effect-name           ::= "io" | "diverge" | "raises" | "alloc"
+
+(* DEPRECATED: the introducer granted the effects that the row now states. *)
 procedure-declaration ::=
     { attribute } "proc" identifier
     "(" [ param-list ] ")" return-annotation

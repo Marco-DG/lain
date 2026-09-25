@@ -163,11 +163,11 @@ Reading the parameter's value automatically dereferences the pointer.
 
 \begin{example}
 \begin{laincode}
-proc increment(var n i32) {
+func increment(var n i32) {
     n = n + 1    // writes through: caller's variable is updated
 }
 
-proc main() i32 {
+func main() i32 {
     var x = 0
     increment(var x)
     return x     // x == 1
@@ -259,7 +259,7 @@ ACTIVE   & (nothing)    & all other access \\
 
 \begin{example}
 \begin{laincode}
-proc push_n(var v Vec, n int) { v.data = v.data + n }
+func push_n(var v Vec, n int) { v.data = v.data + n }
 
 var v = Vec(0, 10)
 v.push_n(v.cap)   // desugars to push_n(var v, v.cap)
@@ -310,7 +310,7 @@ through the loop body before the next iteration begins.
 \begin{laincode}
 import std.fs
 
-proc main() int {
+func main() int effects io, raises, alloc {
     var f = open_file("data.txt", "r")
     close_file(mov f)        // consumed before loop
     var i = 0

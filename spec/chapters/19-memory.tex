@@ -117,12 +117,12 @@ platform's stack overflow signal}.
 \pnum
 Heap allocation is performed exclusively through C interop
 (\S\,\ref{sec:17-interop}).  The idiomatic pattern declares the C
-\texttt{malloc}/\texttt{free} pair as \lain{extern proc}:
+\texttt{malloc}/\texttt{free} pair as an \lain{extern func} with its row:
 
 \begin{laincode}
 c_include "<stdlib.h>"
-extern proc malloc(size usize) mov *void
-extern proc free(ptr mov *void)
+extern func malloc(size usize) mov *void effects io, alloc
+extern func free(ptr mov *void) effects io
 \end{laincode}
 
 \pnum

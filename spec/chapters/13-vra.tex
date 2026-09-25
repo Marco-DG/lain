@@ -404,7 +404,7 @@ The cases checked are:
 \begin{laincode}
 func pair_sum(arr i32[>= 2]) i32 { return arr[0] + arr[1] }
 
-proc main() i32 {
+func main() i32 {
     var one i32[1] = [42]
     // pair_sum(one)        // [E087]: len 1 < required 2
     var two i32[2] = [1, 2]

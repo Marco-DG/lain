@@ -179,7 +179,7 @@ Assignments whose source value range violates the alias constraint are
 \begin{laincode}
 type Percent = int >= 0 and <= 100
 
-proc main() int {
+func main() int {
     var ok Percent = 75              // [E086 not raised]: 75 fits [0,100]
     // var bad Percent = 150         // [E086]: 150 > 100
     return 0
@@ -605,7 +605,7 @@ parameters' lengths (e.g., \lain{out i32[a.len + b.len]}), no
 \begin{example}
 \begin{laincode}
 // Source:
-proc vadd(var out i32[], a i32[out.len], b i32[out.len]) { ... }
+func vadd(var out i32[], a i32[out.len], b i32[out.len]) { ... }
 
 // C emission:
 // void vadd(size_t __len_out, int32_t * restrict out,

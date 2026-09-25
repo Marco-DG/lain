@@ -135,12 +135,17 @@ Diagnostic codes are divided into the following ranges:
 
 \diagcode{E011}
   & \S\,\ref{sec:fn.purity}
-  & \textit{impure operation in pure function '\texttt{f}'} ---
-    Issued when a \lain{func} body contains a call to a \lain{proc}; a
-    \lain{while} loop whose measure is neither given nor inferable; a direct
-    self-recursion for which no measure can be inferred; or any mutual
-    recursion.  (A direct recursion \emph{with} a well-founded measure is
-    permitted; a present-but-failing measure is \diagcode{E082}/\diagcode{E091}.)
+  & \textit{unacknowledged effect in '\texttt{f}'} ---
+    Issued when a function's body has an effect its row does not name, while its
+    bound is $\emptyset$ --- that is, while no \lain{effects} clause was written,
+    or an empty one was.  A bound of $\emptyset$ is a function's default
+    \emph{guarantee}, so violating it is this code; understating a \emph{non-empty}
+    row is \diagcode{E130}.  The effects are \lain{io}, \lain{diverge},
+    \lain{raises} and \lain{alloc}.  Also issued for a \lain{while} loop whose
+    measure is neither given nor inferable, and for a direct self-recursion for
+    which no measure can be inferred --- both sources of \lain{diverge}.  (A direct
+    recursion \emph{with} a well-founded measure is permitted; a
+    present-but-failing measure is \diagcode{E082}/\diagcode{E091}.)
     \\[4pt]
 
 \diagcode{E012}
@@ -375,7 +380,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E127} & call to an undeclared function \\[2pt]
 \diagcode{E128} & the receiver has no such member, and no function of that name is in scope for UFCS \\[2pt]
 \diagcode{E129} & \lain{assume} outside an \lain{unsafe} block --- use \lain{assert} to have the fact proven \\[2pt]
-\diagcode{E130} & a declared \lain{effects} row does not cover what the body does \\[2pt]
+\diagcode{E130} & a declared, non-empty \lain{effects} row does not cover what the body does (an empty or absent row is \diagcode{E011}) \\[2pt]
 \diagcode{E131} & an \lain{extern} declares a slice parameter --- a slice has no C representation; pass a pointer and a length \\[2pt]
 \diagcode{E132} & a struct field's refinement names another field --- relational field invariants are not implemented, and one that is ignored is an unpaid assume \\[2pt]
 \end{longtable}

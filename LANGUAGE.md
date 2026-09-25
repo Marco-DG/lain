@@ -22,7 +22,7 @@ Lain is a statically typed, compiled programming language designed for embedded 
 | **Memory Leaks** | Prevented | Linear variables must be consumed; forgetting is a compile error |
 | **Division by Zero** | Impossible | A refinement (`b int != 0`) or a live guard (`if d != 0`) must establish it |
 | **Integer Overflow** | Impossible | Checked at compile time and REJECTED (§17); `+%` wraps, `+\|` saturates, `+?` recovers — each by request |
-| **Purity Violations** | Impossible | `func` cannot call `proc`, access globals, or have unbounded loops |
+| **Purity Violations** | Impossible | an effect the row does not name is rejected: I/O, allocation, a panic, or a loop that is not provably finite |
 
 ---
 
@@ -84,8 +84,8 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `mov` | Ownership transfer (move semantics) |
 | `type` | Type definition (structs, enums, ADTs) |
 | `func` | Pure function declaration |
-| `proc` | Procedure declaration (side effects allowed) |
-| `return` | Return a value from a function/procedure |
+| `effects` | Declares a function's effect row (`io`, `diverge`, `raises`, `alloc`) |
+| `return` | Return a value from a function |
 | `if` | Conditional branch |
 | `elif` | Else-if branch |
 | `else` | Default branch in conditional/case |
@@ -588,7 +588,8 @@ var global_counter int    // Mutable global variable
 ```
 
 > [!WARNING]
-> Pure functions (`func`) **cannot** read or write global variables. Only procedures (`proc`) may access global mutable state.
+> There is no global mutable state to read or write: a top-level `var` is `[E100]`. This is why the
+> effect row has no `write` member — the bound would hold vacuously, so the row rejects the word.
 
 ### 3.5 Binding vs. Assignment Disambiguation
 
@@ -668,12 +669,12 @@ type File {
     mov handle *FILE   // Linear field -> File is linear
 }
 
-proc leak() {
+func leak() effects io, raises, alloc {
     var f = open_file("data.txt", "r")
     // ERROR [E002]: linear variable 'f' not consumed before end of scope
 }
 
-proc correct() {
+func correct() effects io, raises, alloc {
     var f = open_file("data.txt", "r")
     close_file(mov f)  // Consumed: OK
 }
@@ -714,9 +715,9 @@ Lain solves this with **two-phase borrows** (inspired by Rust RFC 2025). During 
 // The addition WRAPS: `v.data + n` on two unbounded ints is a real overflow, and this
 // example is about two-phase borrows, not about arithmetic.
 type Vec { data int, cap int }
-proc push_n(var v Vec, n int) { v.data = v.data +% n }
+func push_n(var v Vec, n int) { v.data = v.data +% n }
 
-proc main() int {
+func main() int {
     var v = Vec(0, 10)
     v.push_n(v.cap)      // OK: v.cap is a shared read during RESERVED phase
     return v.data         // 10
@@ -802,7 +803,7 @@ Functions declared with `func` are **pure, deterministic, and guaranteed to term
 
 **Restrictions:**
 - Cannot modify global state.
-- Cannot call procedures (`proc`).
+- Cannot call a function whose row names an effect this one's row does not.
 - Cannot recurse (direct recursion is a compile error).
 - Can only use `for` loops (over finite ranges) and bounded `while` loops with a termination measure. Unbounded `while` loops are banned.
 
@@ -835,24 +836,51 @@ func collatz(n int) int {
 
 The same rule governs loops — see §5.5.
 
-### 5.2 Procedures (`proc`)
+### 5.2 The effect row
 
-Procedures declared with `proc` can have side effects, perform I/O, modify global state, and recurse.
+`func` is the only introducer. A function's effects are worked out from its body by following the
+call graph, and the default is the empty row — **pure and total**. A function that deviates names
+which way, with one clause covering the whole family:
 
 ```lain
-proc log(msg u8[:0]) {
-    printf("%s\n", msg)        // Side effect: I/O
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func log_line(msg u8[:0]) effects io {
+    libc_printf("%s\n", msg.data)
 }
 
-proc fib(n int) int {
+func fib(n int >= 0 and <= 30) int {
     if n < 2 { return n }
-    return fib(n-1) + fib(n-2) // Recursion: OK in proc
+    return fib(n-1) +% fib(n-2)    // accepted: the measure is inferred
+}
+
+func main() int effects io {
+    log_line("hi")
+    return fib(5)
 }
 ```
 
+The four effects are `io`, `diverge`, `raises` and `alloc`. Two rules govern the clause:
+
+1. **Silence means the empty row.** An effect the body has and the row does not name is an error
+   (`E011` when no row was written, `E130` when one was and it understates). So the row is a
+   *complete* upper bound, and a caller can rely on what it reads.
+2. **An `extern` inverts both.** It has no body, so nothing can be inferred: its row is *believed*,
+   its default is *every* effect, and writing one NARROWS. Forgetting a row on a C function that
+   performs I/O therefore costs precision, never soundness.
+
+```lain
+extern func libc_puts(s *u8) i32 effects io    // believed; narrows the default
+extern func abs(n int) int effects             // the empty row — genuinely pure
+```
+
+There is no separate introducer for effectful code. `proc` was that introducer and is gone: an
+effect was spelled by a keyword (`proc`), by an attribute (`@diverges`), and by this clause, and one
+concern with three spellings is what the language's own law L3 refuses.
+
 ### 5.3 Parameter Modes
 
-Both `func` and `proc` support three parameter modes:
+Every function supports three parameter modes:
 
 ```lain
 func process(
@@ -867,7 +895,7 @@ See §4.1 for full semantics.
 ### 5.4 Return Types & Void Functions
 
 ```lain
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 // The refinements are not decoration: unbounded `int + int` is a real overflow at
 // INT32_MAX and does not compile. `int` is the alias of i32, and it is checked like one.
@@ -875,11 +903,11 @@ func add(a int >= 0 and <= 1000, b int >= 0 and <= 1000) int {    // Returns int
     return a + b
 }
 
-proc greet(msg u8[:0]) {        // Void (no return type)
+func greet(msg u8[:0]) effects io {    // Void (no return type)
     libc_printf("%s\n", msg.data)
 }
 
-proc main() int {               // main must always be 'proc'
+func main() int {
     return 0
 }
 ```
@@ -893,28 +921,40 @@ func check(valid bool) {
 ```
 
 > [!IMPORTANT]
-> The `main` function **must** be declared as `proc main()`. Declaring `main` as `func` is a compile error.
+> `main` is an ordinary `func`. It carries a row like any other function — `func main() int
+> effects io` for a program that prints — and a `main` that does nothing observable needs no row
+> at all. (An earlier revision of this page required `proc main()`; that introducer no longer
+> exists.)
 
 ### 5.5 Termination Guarantees
 
-| Feature | `func` | `proc` |
-|:--------|:-------|:-------|
-| Pure (no side effects) | Required | Not required |
-| `for` loops | Allowed | Allowed |
-| Unbounded `while` | Banned | Allowed |
-| Bounded `while` (`decreasing`) | Allowed | Allowed |
-| Recursion | Allowed **if provably total** | Allowed |
-| Global state access | Banned | Allowed |
-| Calling `proc` | Banned | Allowed |
-| Calling `func` | Allowed | Allowed |
-| Calling `extern func` | Allowed | Allowed |
-| Calling `extern proc` | Banned | Allowed |
+There is one introducer, so the table is no longer about two keywords — it is about what the row
+says. The left column is the default (no clause written):
+
+| Feature | default row (∅) | with the effect named |
+|:--------|:----------------|:----------------------|
+| `for` loops | allowed | allowed |
+| Bounded `while` (`decreasing`) | allowed | allowed |
+| Unbounded `while` | rejected (`E082`) | allowed under `effects diverge` |
+| Recursion | allowed **if a measure is inferred or given** | allowed under `effects diverge` |
+| Calling a function whose row has `io` | rejected (`E011`) | allowed under `effects io` |
+| Calling one that may `panic` | rejected (`E011`) | allowed under `effects raises` |
+| Calling one that allocates | rejected (`E011`) | allowed under `effects alloc` |
+| Global mutable state | does not exist in the language (`E100`) | — |
+
+The right column is not an escape hatch: naming an effect puts it in *this* function's row too, so
+it propagates to every caller, which must acknowledge it in turn or be rejected.
 
 > [!NOTE]
-> **`extern func` vs `extern proc`**: External C functions declared as `extern func` are trusted to be pure (no side effects). External C functions declared as `extern proc` may have side effects. A pure `func` can call `extern func` but not `extern proc`.
+> **An `extern`'s row is believed, and its default is every effect.** There is no body to infer
+> from, so silence is read as "may do anything" and a written row narrows it. This is the one place
+> the direction reverses, and the reason is the absence of a body rather than a special rule.
 >
-> Example: `extern func abs(n int) int` is pure, callable from `func`.
-> Example: `extern proc printf(fmt *u8, ...) int` is impure, callable only from `proc`.
+> `extern func abs(n int) int effects` — the empty row, so `abs` is pure and callable from a
+> function with no row of its own.
+> `extern func printf(fmt *u8, ...) int effects io` — performs I/O, so a caller needs `effects io`.
+> `extern func getchar() int` — *no* row, so it may do anything, and a caller must acknowledge the
+> lot (`effects io, diverge, raises, alloc`). Narrow the declaration instead.
 
 ### 5.6 Universal Function Call Syntax (UFCS)
 
@@ -925,7 +965,7 @@ func is_even(n int) bool {
     return n % 2 == 0
 }
 
-proc main() {
+func main() {
     var x = 10
     var even = x.is_even()  // Equivalent to: is_even(x)
 }
@@ -958,7 +998,7 @@ Conditions do not require parentheses. The body must be enclosed in `{ }`. The c
 
 ### 6.2 For Loops (Range-Based)
 
-For loops iterate over finite ranges. They are allowed in both `func` and `proc`.
+For loops iterate over finite ranges, so they are always allowed: the bound is the range.
 
 **Single variable form:**
 ```lain
@@ -979,10 +1019,12 @@ for i, val in 0..10 {
 
 ### 6.3 While Loops
 
-Unbounded while loops are **only allowed in `proc`** (not in `func`).
+A `while` loop must be provably finite unless the row says otherwise. The compiler infers a
+measure where it can, `decreasing <expr>` supplies one where it cannot, and `effects diverge`
+is how a function states that it genuinely may not terminate:
 
 ```lain
-proc count_up() {
+func count_up() effects io {
     var i = 0
     while i < 10 {
         libc_printf("%d ", i)
@@ -1038,7 +1080,7 @@ The measure is compile-time only; it produces no runtime overhead.
 `break` exits the innermost loop. `continue` skips to the next iteration.
 
 ```lain
-proc example() {
+func example() effects io {
     var i = 0
     while i < 10 {
         i = i + 1
@@ -1176,7 +1218,7 @@ case s {
 The `defer` statement defers execution of a block until the end of the current lexical scope. It is the primary mechanism for deterministic resource cleanup (RAII).
 
 ```lain
-proc process_file() {
+func process_file() effects io, raises, alloc {
     var f = open_file("data.txt", "r")
     defer {
         close_file(mov f)
@@ -1562,7 +1604,7 @@ After module inlining, all declarations share a flat global namespace. In the ge
 | Lain Declaration | Generated C Name |
 |:-----------------|:-----------------|
 | `func add(...)` in `main.ln` | `main_add(...)` |
-| `proc print(...)` in `std/io.ln` | `std_io_print(...)` |
+| `func print(...)` in `std/io.ln` | `std_io_print(...)` |
 | `type File` in `std/fs.ln` | `std_fs_File` |
 
 Circular imports are implicitly prevented; each module is loaded at most once.
@@ -1588,27 +1630,29 @@ c_include "<stdlib.h>"
 
 extern type FILE
 
-extern proc printf(fmt *u8, ...) int
-extern proc fopen(filename *u8, mode *u8) mov *FILE
-extern proc fclose(stream mov *FILE) int
-extern proc fputs(s *u8, stream *FILE) int
-extern proc fgets(s var *u8, n int, stream *FILE) var *u8
-extern proc libc_printf(fmt *u8, ...) int
-extern proc libc_puts(s *u8) int
+extern func printf(fmt *u8, ...) int effects io
+extern func fopen(filename *u8, mode *u8) mov *FILE effects io, alloc
+extern func fclose(stream mov *FILE) int effects io
+extern func fputs(s *u8, stream *FILE) int effects io
+extern func fgets(s var *u8, n int, stream *FILE) var *u8 effects io
+extern func libc_printf(fmt *u8, ...) int effects io
+extern func libc_puts(s *u8) int effects io
 ```
 
 > [!IMPORTANT]
-> All C standard library functions that perform I/O are declared as `extern proc` because they have side effects. A pure `func` cannot call these functions.
+> Every one of these carries `effects io`, and the two that hand back storage carry `alloc` as
+> well. The row is not decoration here: an `extern` with no row is read as doing *everything*, so
+> these declarations are what let a caller's row be as narrow as `effects io`.
 
 **`std/io.ln`** — Basic I/O:
 ```lain
 import std.c
 
-proc print(s u8[:0]) {
+func print(s u8[:0]) {
     libc_printf(s.data)
 }
 
-proc println(s u8[:0]) {
+func println(s u8[:0]) {
     libc_puts(s.data)
 }
 ```
@@ -1621,16 +1665,16 @@ type File {
     mov handle *FILE       // Owned file handle
 }
 
-proc open_file(path u8[:0], mode u8[:0]) mov File {
+func open_file(path u8[:0], mode u8[:0]) mov File {
     var raw = fopen(path.data, mode.data)
     return File(raw)
 }
 
-proc close_file(mov {handle} File) {
+func close_file(mov {handle} File) {
     fclose(handle)
 }
 
-proc write_file(f File, s u8[:0]) {
+func write_file(f File, s u8[:0]) {
     fputs(s.data, f.handle)
 }
 ```
@@ -1653,7 +1697,7 @@ All functions in `std/math` are pure (`func`), with no side effects or external 
 ```lain
 import std.option.{Option}
 
-proc main() int {
+func main() int {
     var a = Option(int).Some(42)
     var b = Option(int).None
 
@@ -1672,7 +1716,7 @@ proc main() int {
 ```lain
 import std.result.{Result}
 
-proc main() int {
+func main() int {
     var r = Result(int, int).Ok(15)
     var x = 0
     case r {
@@ -1690,8 +1734,8 @@ proc main() int {
 Lain uses a multi-pass compiler. Functions, procedures, and types can be referenced before they are declared in the source file. There is no need for forward declarations or header files.
 
 ```lain
-proc main() int { return helper() }
-proc helper() int { return 42 }      // OK: defined after use
+func main() int { return helper() }
+func helper() int { return 42 }      // OK: defined after use
 ```
 
 ---
@@ -1803,7 +1847,7 @@ unsafe {
 Raw pointers (`*int`, `*void`) bypass Lain's ownership system. **Dereferencing** a raw pointer is only allowed inside `unsafe` blocks.
 
 ```lain
-proc main() i32 {
+func main() i32 {
     var p *int = 0
 
     unsafe {
@@ -1818,7 +1862,7 @@ proc main() i32 {
 The unary address-of operator `&` creates a raw pointer to a local variable. Taking the address of a local variable is **only allowed inside an `unsafe` block**.
 
 ```lain
-proc main() int {
+func main() int {
     var x = 42
 
     unsafe {
@@ -1881,7 +1925,7 @@ Compiler errors are prefixed with error codes for easy reference:
 | `[E008]` | Linear field error | Linear struct field not properly handled |
 | `[E009]` | Immutability violation | Assigning to an immutable variable |
 | `[E010]` | Dangling reference | `return var` of a local (doesn't outlive function) |
-| `[E011]` | Purity violation | `func` calls `proc`, uses unbounded `while`, or accesses global state |
+| `[E011]` | Unacknowledged effect | the body has an effect the row does not name, and no row was written; also an unbounded `while` or a recursion with no measure |
 | `[E012]` | Type error | Type mismatch |
 | `[E013]` | Undeclared identifier | Using a variable or field that doesn't exist |
 | `[E014]` | Exhaustiveness | Non-exhaustive case: missing variant or `else` |
@@ -2029,10 +2073,10 @@ var p Point              // Stack-allocated struct
 Heap allocation is performed through C interop, using `malloc` and `free`:
 
 ```lain
-extern proc malloc(size usize) mov *void
-extern proc free(ptr mov *void)
+extern func malloc(size usize) mov *void effects io, alloc
+extern func free(ptr mov *void) effects io
 
-proc main() int {
+func main() int effects io, alloc {
     var ptr = malloc(1024)    // Heap allocation
     // ... use ptr ...
     free(mov ptr)             // Explicit deallocation
@@ -2101,7 +2145,7 @@ func widened(a i32, b i32) i64 { return a + b }   // OK: i64 holds every i32 + i
 ```
 
 ```lain
-proc narrowed(a i32, b i32) i32 {
+func narrowed(a i32, b i32) i32 {
     var s i32 = a + b     // ERROR [E086]: the sum may not fit an i32
     return s
 }
@@ -2111,7 +2155,7 @@ The compiler proves what it can from guards, refinements and loop structure, so 
 bounded arithmetic needs no annotation:
 
 ```lain
-proc bounded(a i32, b i32) i32 {
+func bounded(a i32, b i32) i32 {
     if a < 1000 and a > 0 and b < 1000 and b > 0 {
         var s i32 = a + b     // proven: at most 1998
         return s
@@ -2226,7 +2270,7 @@ The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` 
 ```lain
 import std.c.{libc_printf}
 
-proc main() int {
+func main() int effects io {
     libc_printf("Hello, World!\n")
     return 0
 }
@@ -2255,7 +2299,7 @@ func peek(data u8[:0], pos int) int {
 ```lain
 import std.fs
 
-proc process() {
+func process() {
     var f = open_file("log.txt", "w")
     defer { close_file(mov f) }   // guaranteed even on early return
 
@@ -2296,7 +2340,7 @@ func find_positive(arr i32[10]) Option(i32) {
     return Option(i32).None
 }
 
-proc main() int {
+func main() int effects io {
     var arr i32[10] = [0 for i in 0..10]
 
     case find_positive(arr) {
@@ -2377,14 +2421,14 @@ func scan_until(src u8[:0], delim u8) usize {
 | `in` | Range iteration / index bounds / bounds-proving condition (§8.3) |
 | `mov` | Ownership transfer |
 | `or` | Logical OR operator |
-| `proc` | Procedure (side effects) |
+| `effects` | Effect row (`io`, `diverge`, `raises`, `alloc`) |
 | `return` | Return value |
 | `true` | Boolean true literal |
 | `type` | Type definition |
 | `undefined` | Uninitialized variable marker |
 | `unsafe` | Unsafe block |
 | `var` | Mutable binding |
-| `while` | While loop (`proc`); bounded `while cond decreasing measure` also in `func` |
+| `while` | While loop; must be provably finite unless the row names `diverge`. `while cond decreasing measure` states the measure |
 
 **Reserved keywords** (recognized by the lexer, semantics not yet defined):
 `end`, `export`, `expr`, `macro`, `post`, `pre`, `use`.
@@ -2425,7 +2469,7 @@ Reserved for a future module visibility system, enabling `private` declarations.
 program         = { top_level_decl } ;
 
 top_level_decl  = import_decl | c_include_decl | extern_decl
-                | type_decl | var_decl | func_decl | proc_decl ;
+                | type_decl | var_decl | func_decl ;
 
 import_decl     = "import" module_path ;
 module_path     = IDENT { "." IDENT } ;
@@ -2433,15 +2477,21 @@ module_path     = IDENT { "." IDENT } ;
 c_include_decl  = "c_include" STRING_LITERAL ;
 
 extern_decl     = "extern" ( "type" IDENT
-                           | ("func" | "proc") IDENT "(" param_list ")" [type_expr] ) ;
+                           | "func" IDENT "(" param_list ")" [type_expr]
+                             [ "in" IDENT ] [ effects_clause ] ) ;
 
 type_decl       = "type" IDENT "{" type_body "}" ;
 type_body       = { field_decl | variant_decl } ;
 field_decl      = ["mov"] IDENT type_expr ;
 variant_decl    = IDENT [ "{" field_list "}" ] ;
 
-func_decl       = "func" IDENT "(" param_list ")" [type_expr [constraints]] block ;
-proc_decl       = "proc" IDENT "(" param_list ")" [type_expr [constraints]] block ;
+func_decl       = "func" IDENT "(" param_list ")" [type_expr [constraints]]
+                  [ effects_clause ] [ "decreasing" expr ] block ;
+
+(* The clause order is fixed: return type, then its refinement, then the effect row, then the
+   termination measure. Each clause qualifies the one before it. *)
+effects_clause  = "effects" [ effect_name { "," effect_name } ] ;
+effect_name     = "io" | "diverge" | "raises" | "alloc" ;
 
 param_list      = [ param { "," param } ] ;
 param           = ["var" | "mov"] IDENT type_expr [constraints] ;

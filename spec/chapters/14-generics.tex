@@ -82,8 +82,8 @@ type RingBuffer(T type, comptime N int) = type {
 \end{laincode}
 
 \begin{constraint}
-  A compile-time evaluation context (CTFE) shall not call a \lain{proc}
-  or an \lain{extern proc}; only \lain{func} calls are admissible. A
+  A compile-time evaluation context (CTFE) shall not call a function whose
+  effect row is non-empty; only calls with an empty row are admissible. A
   violation is \illformed{}~(\diagcode{E101}).
 \end{constraint}
 
@@ -126,8 +126,8 @@ func Option(T type) type {
 \end{laincode}
 
 \begin{constraint}
-  A function returning \lain{type} shall be declared as \lain{func} (not
-  \lain{proc}).
+  A function returning \lain{type} shall have an empty effect row: a type-level
+  value cannot depend on an effect.
 \end{constraint}
 
 \section{Monomorphization}

@@ -1,40 +1,55 @@
-% 12-functions.tex — Clause 12: Functions and procedures
-\chapter{Functions and procedures}
+% 12-functions.tex — Clause 12: Functions and effects
+\chapter{Functions and effects}
 \label{sec:12-functions}
 \index{function}
 \index{procedure}
 
-\section{The func/proc distinction}
+\section{The effect row}
 \label{sec:fn.distinction}
-\index{func vs proc}
+\index{effect row}
 
 \pnum
-Lain distinguishes between pure functions (\lain{func}) and side-effecting
-procedures (\lain{proc}).  This distinction is enforced statically and
-reflected in the type system.
+A function has one introducer, \lain{func}, and an \textbf{effect row}: a set drawn
+from \lain{io}, \lain{diverge}, \lain{raises} and \lain{alloc}.  The row is
+inferred from the body across the call graph, its default is $\emptyset$ --- pure
+and total --- and an \lain{effects} clause widens that default for a function that
+deviates.  The row is a \emph{complete} upper bound: an effect the body has and the
+row does not name is \illformed{}, so a caller may rely on what it reads
+(\S\,\ref{sec:fn.purity}).
 
 \begin{longtable}{@{}lll@{}}
 \toprule
-\textbf{Property} & \textbf{\lain{func}} & \textbf{\lain{proc}} \\
+\textbf{Property} & \textbf{default row ($\emptyset$)} & \textbf{with the effect named} \\
 \midrule
 \endfirsthead
 \toprule
-\textbf{Property} & \textbf{\lain{func}} & \textbf{\lain{proc}} \\
+\textbf{Property} & \textbf{default row ($\emptyset$)} & \textbf{with the effect named} \\
 \midrule
 \endhead
 \bottomrule
 \endlastfoot
-Side effects                      & forbidden          & allowed \\
-Unbounded \lain{while}            & forbidden          & allowed \\
+Observable side effects           & forbidden          & \lain{effects io} \\
+Allocation                        & forbidden          & \lain{effects alloc} \\
+\lain{panic}                      & forbidden          & \lain{effects raises} \\
+Unbounded \lain{while}            & forbidden          & \lain{effects diverge} \\
 Bounded \lain{while decreasing}   & allowed            & allowed \\
 \lain{for} loops                  & allowed            & allowed \\
 Direct recursion (with measure)   & allowed            & allowed \\
-Mutual recursion                  & forbidden          & allowed \\
-Calling \lain{proc}               & forbidden          & allowed \\
-Calling \lain{func}               & allowed            & allowed \\
-Global mutable state              & no access          & full access \\
-Termination guarantee             & yes                & no \\
+Mutual recursion                  & forbidden          & \lain{effects diverge} \\
+Global mutable state              & does not exist in the language & --- \\
+Termination guarantee             & yes                & waived by \lain{diverge} only \\
 \end{longtable}
+
+\pnum
+Naming an effect is not a local suppression.  It enters this function's row, which
+is what every caller reads, so the acknowledgement propagates outward until some
+function is genuinely entitled to it.
+
+\begin{note}
+  A \lain{proc} declaration (\S\,\ref{sec:decl.proc}) is the deprecated form in
+  which the introducer granted the effects instead of the row.  It survives for
+  compatibility; the row is the normative mechanism.
+\end{note}
 
 \pnum
 A \lain{func} is referentially transparent: calling it with the same
@@ -60,28 +75,33 @@ func increment(var c Counter) {  // legal: mutation is local
 \end{example}
 
 \pnum
-The compiler emits \diagcode{W130} when a \lain{proc} has no
-observable side effect — no calls to other \lain{proc} or
-\lain{extern proc}, no \lain{panic}, no mutable global access, no
-unbounded \lain{while}, no self-recursion — to suggest that it could
-be declared \lain{func}. This is a non-blocking warning; the
-programmer may keep it as \lain{proc} when future evolution will
-introduce effects.
+The compiler emits \diagcode{W130} when a \lain{proc}'s effect row is empty ---
+it does no I/O, allocates nothing, cannot \lain{panic} and is provably total ---
+to suggest that it could be declared \lain{func}.  The judgement is the row's,
+not a list of syntactic conditions: a rule phrased as "no calls to another
+\lain{proc}" answers by the callee's \emph{keyword}, and so reported "no
+observable side effect" for a procedure whose every effectful callee had been
+respelled.  This is a non-blocking warning, and the \lain{proc} form it advises
+against is itself deprecated (\S\,\ref{sec:decl.proc}).
 
 \section{Purity enforcement}
 \label{sec:fn.purity}
 \index{purity enforcement}
 
 \begin{constraint}
-  A \lain{func} that calls a \lain{proc} or \lain{extern proc} is
-  \illformed{}~(\diagcode{E011}).
+  A function that calls one whose effect row names an effect its own row does not
+  is \illformed{}~(\diagcode{E011}).  The callee's introducer plays no part: the
+  effect is what is refused.  Effects are transitive, so this reaches a callee
+  three layers down that a rule about direct calls would miss.
 \end{constraint}
 
 \begin{constraint}
-  A \lain{func} that contains a \lain{while} loop whose termination the
+  A function that contains a \lain{while} loop whose termination the
   implementation can neither verify from an explicit \lain{decreasing} measure
   nor establish by inferring one (\S\,\ref{sec:stmt.while.infer}) is
-  \illformed{}~(\diagcode{E011}).
+  \illformed{}~(\diagcode{E011}) \emph{unless its row names} \lain{diverge}.
+  Naming it is not a suppression: \lain{diverge} enters this function's row and
+  every caller must acknowledge it in turn.
 \end{constraint}
 
 \begin{constraint}
@@ -95,9 +115,11 @@ introduce effects.
 \end{constraint}
 
 \begin{constraint}
-  A \lain{func} that participates in a \emph{mutual}-recursion cycle is
-  \illformed{}~(\diagcode{E011}).  The implementation shall detect mutual
-  recursion by performing a depth-first search on the call graph.
+  A function that participates in a \emph{mutual}-recursion cycle is
+  \illformed{}~(\diagcode{E011}) unless its row names \lain{diverge}: no measure
+  covers such a cycle, so termination cannot be established.  The implementation
+  shall detect mutual recursion by performing a depth-first search on the call
+  graph.
 \end{constraint}
 
 \begin{note}
@@ -131,7 +153,7 @@ that does neither is reported \diagcode{E082}.  Inference never accepts a
 recursion an explicit measure could not.
 
 \pnum
-No termination analysis is performed for \lain{proc}s.
+No termination analysis is performed for a function whose row names \lain{diverge}.
 
 \section{Universal Function Call Syntax (UFCS)}
 \label{sec:fn.ufcs}
@@ -242,7 +264,7 @@ may appear in any expression position---including as the body of a
 match arm whose declared type is otherwise unrelated.
 
 \pnum
-\lain{panic} may be called from both \lain{func} and \lain{proc}
+\lain{panic} may be called from any function whose row names \lain{raises}
 contexts.  The call is deterministic (same input yields the same
 termination), so it does not violate the purity of an enclosing
 \lain{func}.

@@ -1283,34 +1283,22 @@ void sema_resolve_expr(Expr *e) {
     // This is the prerequisite for deleting `proc` (DECIDE-F): one introducer whose bound is ∅
     // by default and `effects …` to widen it. Until the clause was load-bearing, "delete
     // `proc`" had nothing to delete it in favour of.
-    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
-        Expr *callee = e->as.call_expr.callee;
-        if (callee->decl) {
-            if ((callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE)
-                && !current_function_decl->as.function_decl.does_io
-                && !(current_function_decl->as.function_decl.effects_declared
-                     && (current_function_decl->as.function_decl.effects_bound & EFFECT_IO))) {
-                DeclFunction *cf = &current_function_decl->as.function_decl;
-                fprintf(stderr, "[E011] Error Ln %li, Col %li: Pure function '%.*s' cannot call procedure\n",
-                        e->line, e->col, (int)cf->name->length, cf->name->name);
-                // ★ A ROW CANNOT BUY THE PERMISSION, and saying so is the point of this line.
-                // Measured 2026-09-24: `effects` is a BOUND — an upper limit checked against
-                // the inferred row, and genuinely useful on a `proc` (declaring `io` on one
-                // that also allocates is [E130]). The KEYWORD is the PERMISSION. Briefly today
-                // `effects io` was made to widen a func's bound, and it half-worked: IO became
-                // permitted while `effects diverge` still could not license a loop, because
-                // termination is the sovereign engine's obligation and does not read the row.
-                // One clause meaning "at most this" in one place and "allow this" in another is
-                // two mechanisms wearing one name (L3).
-                if (cf->effects_declared && (cf->effects_bound & EFFECT_IO))
-                    fprintf(stderr, "       the `effects io` clause is an upper BOUND on what "
-                            "this function does, not permission to do it — a `func` is pure by "
-                            "definition. Declare it `proc`.\n");
-                diagnostic_show_line(e->line, e->col);
-                exit(1);
-            }
-        }
-    }
+    // ★ THE KEYWORD-KEYED PURITY CHECK IS GONE (E.5/E.6). It refused a call whose CALLEE
+    // was spelled `proc`, regardless of what the callee actually does, so `proc hello() { }` —
+    // row ∅, a function that does nothing — could not be called from a pure `func`. The row
+    // subsumes it and is strictly more precise: an effect is refused when it is an effect, not
+    // when it is introduced by a particular word. Three further reasons it had to go:
+    //
+    //   · it was the last place a KEYWORD granted or refused an effect, which is what law L3
+    //     refuses and what E.4 removed everywhere else;
+    //   · it ran during RESOLVE, before the effect fixpoint, so it won the race against the
+    //     row check and its accident became a documented precedence rule (plan 7B.10) that
+    //     no longer described the language;
+    //   · it could only see a DIRECT call to a `proc`, never a `func` that does IO through
+    //     three layers — exactly the case the transitive row catches.
+    //
+    // What it had that the row did not is the CALL SITE. That is now carried by the row check
+    // instead (`eff_site_*`), so the position is kept and the precision is gained.
     break;
   case EXPR_RANGE:
     sema_resolve_expr(e->as.range_expr.start);

@@ -38,30 +38,38 @@ c_include "<stdlib.h>"
 \index{extern function}
 
 \pnum
-\lain{extern func name(params) return} declares a C function that Lain
-treats as pure.  It may be called from both \lain{func} and \lain{proc}
-contexts.
+\lain{extern func name(params) return} declares a C function.  Because an
+extern has no body, its effect row cannot be inferred; the row is therefore
+\emph{believed}, and its default is the set of \emph{all} effects
+(\lain{io}, \lain{diverge}, \lain{raises}, \lain{alloc}).  An
+\lain{effects} clause on an extern \emph{narrows} that default.
 
 \pnum
-\lain{extern proc name(params) return} declares a C function with potential
-side effects.  It may be called only from \lain{proc} contexts.
+This is the inverse of a declaration with a body, whose default row is
+$\emptyset$ and whose clause \emph{widens} it~(\S\,\ref{sec:decl.func}).
+The direction differs for one stated reason: inference is available in the
+one case and impossible in the other.  A caller of an extern acknowledges
+whatever the extern's row names, by the ordinary rule.
 
 \begin{constraint}
-  Calling an \lain{extern proc} from a \lain{func} is
-  \illformed{}~(\diagcode{E011}).
+  An \lain{extern} with no \lain{effects} clause has the row
+  \{\lain{io}, \lain{diverge}, \lain{raises}, \lain{alloc}\}.  A caller
+  whose own bound does not cover it is \illformed{}~(\diagcode{E011}).
 \end{constraint}
 
 \begin{note}
-  \textbf{Trust boundary --- I-016.}
-  An \lain{extern func} declaration is a \textit{programmer assertion}
-  that the referenced C function is pure (deterministic, no side
-  effects, no access to mutable global state).  The Lain compiler
-  cannot verify this property and trusts the declaration.  Misuse---
-  for example, declaring \lain{libc\_rand} or \lain{malloc} as
-  \lain{extern func}---is a programmer error, not a compile error, and
-  may invalidate the guarantees that depend on purity (notably P4
-  determinism for any \lain{func} that transitively calls the misdeclared
-  extern).  When in doubt, use \lain{extern proc}.
+  \textbf{Trust boundary.}
+  An extern's \lain{effects} clause is a \textit{programmer assertion} that
+  the referenced C function does no more than the row names.  The compiler
+  cannot verify it and believes it, so a wrong narrowing---declaring
+  \lain{libc\_rand} with an empty row, say---may invalidate the guarantees
+  that depend on purity (notably P4 determinism for any function that
+  transitively calls it).  What has changed is the cost of \emph{silence}:
+  omitting the clause once meant "trusted pure" (the rule once labelled I-016), so
+  forgetting it on a C function that performs I/O was a silent fail-open.
+  Omitting it now claims everything, so forgetting costs precision instead.
+  The empty row, \lain{effects} with no names, is how purity is asserted
+  deliberately.
 \end{note}
 
 \pnum
@@ -160,7 +168,7 @@ To pass a Lain string to a C function expecting \texttt{char*}, the
 
 \begin{laincode}
 c_include "<stdio.h>"
-extern proc puts(s *u8) int
+extern func puts(s *u8) int effects io
 
 var s = "hello"
 puts(s.data)   // OK: .data is *u8 = const char*
@@ -181,7 +189,7 @@ layout is unknown to Lain; it may only be used behind a pointer.
 
 \begin{laincode}
 extern type FILE
-extern proc fopen(path *u8, mode *u8) mov *FILE
+extern func fopen(path *u8, mode *u8) mov *FILE effects io, alloc
 \end{laincode}
 
 \begin{constraint}

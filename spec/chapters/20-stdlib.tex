@@ -98,17 +98,17 @@ The following C functions are declared in \lain{std.c}:
 \endhead
 \bottomrule
 \endlastfoot
-\lain{extern proc libc\_printf(fmt *u8, ...) int}
+\lain{extern func libc\_printf(fmt *u8, ...) int effects io}
   & Shared \lain{fmt}; variadic \\
-\lain{extern proc libc\_puts(s *u8) int}
+\lain{extern func libc\_puts(s *u8) int effects io}
   & Shared \lain{s} \\
-\lain{extern proc fopen(filename *u8, mode *u8) mov *FILE}
+\lain{extern func fopen(filename *u8, mode *u8) mov *FILE effects io, alloc}
   & Returns owned handle \\
-\lain{extern proc fclose(stream mov *FILE) int}
+\lain{extern func fclose(stream mov *FILE) int effects io}
   & Consumes handle \\
-\lain{extern proc fputs(s *u8, stream *FILE) int}
+\lain{extern func fputs(s *u8, stream *FILE) int effects io}
   & Shared args \\
-\lain{extern proc fgets(s var *u8, n int, stream *FILE) var *u8}
+\lain{extern func fgets(s var *u8, n int, stream *FILE) var *u8 effects io}
   & Mutable buffer \\
 \end{longtable}
 
@@ -230,7 +230,7 @@ it shall not be used after this point.
 \begin{laincode}
 import std.fs
 
-proc main() int {
+func main() int effects io, raises, alloc {
     var f = open_file("log.txt", "w")
     defer { close_file(mov f) }
     write_file(f, "Hello, world!\n")
