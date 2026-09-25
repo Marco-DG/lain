@@ -4,11 +4,11 @@
 // that the effect pass does not break compilation of the effect-bearing forms.
 // D-40: an extern takes a pointer and a length, not a slice — a slice has no C type, so the
 // declaration could not describe the callee (E131). std/ already declares its externs this way.
-extern proc print(s *u8, n usize)
+extern func print(s *u8, n usize) effects io
 func pure_add(a i32, b i32) i64 {
     return a + b
 }
-func with_panic(a i32) i32 {
+func with_panic(a i32) i32 effects raises {
     if a < 0 {
         panic("neg")
     }

@@ -8,7 +8,7 @@
 // with a body, `bor_ret_borrow_mask` reads the answer off the returns and charges the loan to
 // exactly one parameter. Without one, only the programmer can narrow it.
 type Data { x i32 }
-extern func pick(a var Data) var i32
+extern func pick(a var Data) var i32 effects
 func mutate(var d Data) { d.x = 1 }
 func use_ref(var r i32) i32 { return r }
 func main() i32 {

@@ -9,7 +9,7 @@
 // function, so `main` diverges too — declaring only `effects io` on it is [E130] ("it also has:
 // diverge"). A caller cannot inherit an effect silently; that is the difference between a row and
 // a comment.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func loop_forever(n i32) i32 effects io, diverge {
     var i i32 = 0
     while i < n { libc_printf("x") }

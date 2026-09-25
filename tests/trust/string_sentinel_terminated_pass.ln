@@ -1,7 +1,7 @@
 // A string literal is a sentinel-terminated slice: its backing buffer carries a
 // trailing NUL, so `.data` handed to a C string API (printf "%s") does not read
 // past the buffer. Executed under ASan by run_trust.sh — proves no overread.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func show(msg u8[:0]) effects io {
     libc_printf("[%s]\n", msg.data)
 }

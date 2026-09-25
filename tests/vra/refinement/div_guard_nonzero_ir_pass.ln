@@ -4,7 +4,7 @@
 // asks the CFG instead of the domain: a block reached only through the true edge of `d != 0`,
 // or only through the FALSE edge of `d == 0` (the early-return spelling), has a nonzero d.
 // The same fact stated at the entry by a parameter refinement reads identically.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func guarded(x i32, d i32) i32 {
     if d != 0 { return x / d }
     return 0

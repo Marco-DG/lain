@@ -12,7 +12,7 @@
 // Nothing caught it: gcc reports int-from-pointer as a WARNING, the broken-C gate compiles
 // with `-w`, and the seven corpus programs over this construct never READ the binding.
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type Cell {
     val i32

@@ -1,4 +1,4 @@
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 // A general add of two unconstrained i32 can overflow, so under overflow
 // prove-or-reject it uses the wrapping operator `+%` (modular) to opt in.

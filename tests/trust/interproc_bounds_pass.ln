@@ -1,4 +1,4 @@
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func get(a i32[], i usize < a.len) i32 {
     return a[i]
 }

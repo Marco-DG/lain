@@ -9,7 +9,7 @@
 //
 // A SENTINEL slice (`u8[:0]`) is exempt: it is NUL-terminated, so it genuinely is a C string.
 
-extern proc c_write(s u8[])
+extern func c_write(s u8[]) effects io
 
 func main() i32 {
     return 0

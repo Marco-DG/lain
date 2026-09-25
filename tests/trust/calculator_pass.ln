@@ -3,7 +3,7 @@
 // (expr/term/factor as procs), operator precedence, parentheses, a fixed token
 // buffer sliced to its valid count via a clamp, and `var pos` cursor threading.
 // Compiles gcc-clean, runs ASan-clean, self-checking.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 type Token {
     kind i32
     value i32

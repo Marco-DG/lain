@@ -779,6 +779,13 @@ static bool parse_effects_clause(Parser *parser, EffectSet *out) {
 Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     // function name
     parser_expect(TOKEN_IDENTIFIER, "Expected function/procedure name");
+    // ★ A FUNCTION DECL CARRIED NO POSITION, and nothing noticed until the effect row became
+    // the central mechanism: `decl_function` never set line/col, so every diagnostic that
+    // reports about a FUNCTION rather than a statement printed "Ln 0, Col 0" and showed no
+    // source line — E130 (the row does not cover the body) and the decl-level E011 among them.
+    // In a file with forty functions the message named the function and left finding it to the
+    // reader. The name token is the right anchor: it is what the message quotes.
+    long decl_line = parser->line, decl_col = parser->column;
     Id *func_name = id(arena, parser->token.length, parser->token.start);
     parser_advance();
 
@@ -1077,8 +1084,10 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     Decl *d;
     if (is_proc) {
         d = decl_procedure(arena, func_name, params, ret_type, body, false, false);
+        d->line = decl_line; d->col = decl_col;
     } else {
         d = decl_function(arena, func_name, params, ret_type, body, false, false);
+        d->line = decl_line; d->col = decl_col;
     }
     d->as.function_decl.return_constraints = return_constraints;
     d->as.function_decl.ret_borrow_of = ret_borrow_of;
@@ -1100,6 +1109,7 @@ Decl *parse_proc_decl(Arena* arena, Parser* parser) {
 
 // extern func <name>(<params>) <return> ;
 Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_proc) {
+    long decl_line = parser->line, decl_col = parser->column;   // see parse_func_proc_decl_impl
     // name
     parser_expect(TOKEN_IDENTIFIER, "Expected function/procedure name");
     Id *func_name = id(arena, parser->token.length, parser->token.start);
@@ -1185,11 +1195,13 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
     // NULL body signals extern
     if (is_proc) {
         { Decl *ed = decl_procedure(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
+          ed->line = decl_line; ed->col = decl_col;
           ed->as.function_decl.ret_borrow_of = ext_borrow_of;
           ed->as.function_decl.effects_declared = ext_eff_declared;
           ed->as.function_decl.effects_bound = ext_eff; return ed; }
     } else {
         { Decl *ed = decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
+          ed->line = decl_line; ed->col = decl_col;
           ed->as.function_decl.ret_borrow_of = ext_borrow_of;
           ed->as.function_decl.effects_declared = ext_eff_declared;
           ed->as.function_decl.effects_bound = ext_eff; return ed; }

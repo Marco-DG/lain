@@ -1,6 +1,6 @@
 // A top-level constant may infer its type from the initializer (`NAME = expr`),
 // like an in-function immutable binding — not only `NAME TYPE = expr`.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 MAX = 100
 MIN = 5
 STEP = MAX / MIN

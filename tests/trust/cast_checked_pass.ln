@@ -1,4 +1,4 @@
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func main() i32 effects io {
     var big i32 = 999
     var n u8 = big as? u8 else 255

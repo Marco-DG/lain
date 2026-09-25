@@ -9,7 +9,7 @@
 // The sovereign engine refuses it: `s + i` is exact in the widened result type, and the STORE
 // back into the u8 is where the obligation lives (Path-F). An unbounded accumulator is not a
 // precision gap — it is a real overflow, and the language's promise is prove-or-reject.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func up8(n u8) u8 {
     var s u8 = 0
     var i u8 = 0

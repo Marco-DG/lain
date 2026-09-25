@@ -10,7 +10,7 @@
 // [E130] rather than [E011]: the declared-vs-inferred comparison catches it first and names what
 // is missing ("it also has: diverge"), which is the more useful message — E011 would only say the
 // effect is unacknowledged.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func serve(n i32) i32 effects io {
     var i i32 = 0
     while i < n { libc_printf("x") }

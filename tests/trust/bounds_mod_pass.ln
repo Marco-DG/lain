@@ -1,5 +1,5 @@
 // TRUST: buf[i % 2] — literal divisor (no div-by-zero), result [0,1] < len 2.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func main() i32 effects io {
     var buf = [65, 66]
     var acc = 0

@@ -3,7 +3,7 @@
 // on the annotated parameter is still a conflict, which is what keeps the clause from
 // being an escape hatch.
 type Data { x i32 }
-extern func pick(a var Data, b var Data) var i32 in a
+extern func pick(a var Data, b var Data) var i32 in a effects
 func mutate(var d Data) { d.x = 1 }
 func use_ref(var r i32) i32 { return r }
 func main() i32 {

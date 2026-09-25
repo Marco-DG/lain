@@ -9,7 +9,7 @@
 // The diagnosis is unchanged and so is the code. What changed is that the rule now reads what the
 // function DECLARED instead of which of two keywords introduced it — and four separate checks had
 // been keyed on that keyword, every one of them invisible while `proc` existed to absorb it.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func noisy() i32 effects io {
     return libc_printf("side effect\n")
 }

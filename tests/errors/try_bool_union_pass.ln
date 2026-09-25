@@ -1,7 +1,7 @@
 // F3.4: `try` on a non-pointer (bool-payload) union. Markers sit at integer
 // sentinels of the payload, so the marker test is `== (T)sentinel`, not a
 // pointer compare — exercises the POOL_BOOL/POOL_INTEGER emit path.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func f(b bool, fail bool) bool | Nope {
     if fail { return Nope }
     return b

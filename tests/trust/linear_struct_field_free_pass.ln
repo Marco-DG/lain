@@ -3,14 +3,14 @@
 // once, `rtouch` derefs it through a shared borrow while it is still live. Under ASan
 // a double-free / use-after-free (were the per-field linear proof unsound) would trap.
 // It compiles ⇒ ownership proven ⇒ runtime must be clean.
-extern proc libc_printf(fmt *u8, ...) i32
-extern proc libc_calloc(n usize, size usize) mov *void
-extern proc libc_free(ptr mov *void)
+extern func libc_printf(fmt *u8, ...) i32 effects io
+extern func libc_calloc(n usize, size usize) mov *void effects io, alloc
+extern func libc_free(ptr mov *void) effects io
 type Res { mov h *u8 }
-func rmake() Res effects io { unsafe { return Res(libc_calloc(1, 4) as *u8) } }
+func rmake() Res effects io, alloc { unsafe { return Res(libc_calloc(1, 4) as *u8) } }
 func rfree(mov {h} Res) effects io { unsafe { libc_free(mov h as *void) } }
 func rtouch(r Res) u8 { unsafe { return *r.h } }
-func main() i32 effects io {
+func main() i32 effects io, alloc {
     var r = rmake()
     var x = rtouch(r)
     rfree(mov r)

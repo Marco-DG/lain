@@ -11,7 +11,7 @@
 // The signed row is here too: 30000*30000 happens to fit in `int`, so it is correct either
 // way — which is exactly why it belongs in the test. It pins the SPELLING, so a future
 // "simplification" back to a bare `v5 * v6` cannot pass by choosing the harmless case.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func main() i32 effects io {
     var a u16 = 60000
     var b u16 = 60000

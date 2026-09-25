@@ -1,4 +1,4 @@
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func classify(p *u8, e bool) *u8 | NotFound | Denied {
     if e { return NotFound }
     return p

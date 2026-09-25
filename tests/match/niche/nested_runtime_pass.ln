@@ -2,7 +2,7 @@
 // Verifies that case match correctly discriminates between
 // inner and outer empty variants packed into the same pointer.
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type InnerOpt {
     Some { v *u8 }

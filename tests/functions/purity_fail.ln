@@ -1,6 +1,6 @@
 // EXPECT: [E011]
 // A pure `func` must not call a `proc` — that would let it perform side effects.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func side_effect() {
     libc_printf("tick\n")

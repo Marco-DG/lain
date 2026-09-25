@@ -3689,6 +3689,7 @@ static void proc_w130_visit_stmt(Stmt *s) {
 │ every effect. Transitive callee propagation is E2.                │
 ╚──────────────────────────────────────────────────────────────────*/
 static EffectSet g_eff_acc;
+static bool      g_eff_opaque_div;   // see DeclFunction.eff_opaque_diverge
 static Decl     *g_eff_self;
 static void eff_visit_expr(Expr *e);
 static void eff_visit_stmt(Stmt *s);
@@ -3729,13 +3730,25 @@ static void eff_visit_expr(Expr *e) {
                 g_eff_acc |= EFFECT_RAISES;
             } else if (sema_call_via_fnptr(callee, &fnptr_total)) {
                 // D-42: charge the arrow's bound, not nothing.
-                if (!fnptr_total) g_eff_acc |= EFFECT_IO | EFFECT_RAISES | EFFECT_DIVERGE;
+                if (!fnptr_total) { g_eff_acc |= EFFECT_IO | EFFECT_RAISES | EFFECT_DIVERGE;
+                                    g_eff_opaque_div = true; }
             } else if (callee && callee->decl) {
                 // E2: a call carries the callee's WHOLE effect set (transitive).
                 // effect_full resolves extern func -> {}, extern proc -> IO,
                 // func/proc -> their inferred effects, and a recursion cycle ->
                 // Diverge (via the in-progress guard).
-                g_eff_acc |= effect_full(callee->decl);
+                EffectSet ce = effect_full(callee->decl);
+                g_eff_acc |= ce;
+                // BELIEVED divergence, propagated: straight from an extern's row, or inherited
+                // from a callee that got it from one.
+                if (ce & EFFECT_DIVERGE) {
+                    DeclKind ck = callee->decl->kind;
+                    if (ck == DECL_EXTERN_FUNCTION || ck == DECL_EXTERN_PROCEDURE)
+                        g_eff_opaque_div = true;
+                    else if ((ck == DECL_FUNCTION || ck == DECL_PROCEDURE)
+                             && callee->decl->as.function_decl.eff_opaque_diverge)
+                        g_eff_opaque_div = true;
+                }
             }
             eff_visit_expr(callee);
             for (ExprList *a = e->as.call_expr.args; a; a = a->next) eff_visit_expr(a->expr);
@@ -3821,8 +3834,14 @@ static void eff_visit_stmt(Stmt *s) {
 // (spec §12), so a `func` that only mutates a var param is pure & total.
 static EffectSet effect_full(Decl *d) {
     if (!d) return 0;
-    if (d->kind == DECL_EXTERN_FUNCTION) return 0;             // trusted pure (I-016)
-    if (d->kind == DECL_EXTERN_PROCEDURE) return EFFECT_IO;    // opaque external effect
+    // ★ E.5 — an extern's row is BELIEVED (no body ⇒ nothing to infer) and its DEFAULT is ⊤,
+    // "may do anything". This replaces I-016 "trusted pure", which trusted a claim nobody
+    // made: `extern func printf(fmt *u8, ...) i32` declared printf pure and total, and the
+    // corpus contained three of them. Silence is now the most pessimistic claim, so forgetting
+    // a row costs precision instead of soundness, and the keyword grants nothing (E.4).
+    if (d->kind == DECL_EXTERN_FUNCTION || d->kind == DECL_EXTERN_PROCEDURE)
+        return d->as.function_decl.effects_declared
+             ? d->as.function_decl.effects_bound : EFFECT_TOP;
     if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE) return 0;
     if (d->as.function_decl.effects_done) return d->as.function_decl.effects;
     if (d->as.function_decl.effects_in_progress)
@@ -3833,9 +3852,11 @@ static EffectSet effect_full(Decl *d) {
     d->as.function_decl.effects_in_progress = true;
 
     EffectSet saved = g_eff_acc; Decl *saved_self = g_eff_self;
-    g_eff_acc = 0; g_eff_self = d;
+    bool saved_od = g_eff_opaque_div;
+    g_eff_acc = 0; g_eff_self = d; g_eff_opaque_div = false;
     eff_visit_list(d->as.function_decl.body);
     EffectSet result = g_eff_acc;
+    d->as.function_decl.eff_opaque_diverge = g_eff_opaque_div;
     // ALLOC — the bit that was in the lattice from the start and that NOTHING EVER SET (D-14),
     // so a real allocator and a `printf` had the same row and `mem_alloc` was indistinguishable
     // from `mem_free`. A function allocates iff it PRODUCES owned storage it did not receive:
@@ -3857,7 +3878,7 @@ static EffectSet effect_full(Decl *d) {
           }
           if (!passthrough) result |= EFFECT_ALLOC;
       } }
-    g_eff_acc = saved; g_eff_self = saved_self;
+    g_eff_acc = saved; g_eff_self = saved_self; g_eff_opaque_div = saved_od;
 
     d->as.function_decl.effects = result;
     d->as.function_decl.effects_done = true;
@@ -4954,7 +4975,17 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             // which is what `extern` means), CHECKED here, because an annotation the compiler
             // trusts and never verifies is defect D-4. Declaring FEWER effects than the body
             // has is the error; declaring more is merely imprecise and allowed.
-            if (dl->decl->as.function_decl.effects_declared) {
+            // ★ E130 and E011 have DISJOINT domains, decided by whether the bound is ∅ —
+            // not by which effect it is. A bound of ∅ is `func`'s DEFAULT GUARANTEE (pure and
+            // total), whether it was written `effects` or left silent, and violating a
+            // guarantee is [E011]. A NON-EMPTY row is a CLAIM the author made, and understating
+            // it is [E130]. Before this, `effects` (empty) took the E130 path while silence took
+            // E011 — the same bound, the same defect, two codes, separated by a spelling the
+            // spec itself calls redundant (7B.8). One of the two tests here says so in its own
+            // last line: "the answer does not depend on whether the row was written as
+            // `effects` or omitted, which is the point: they declare the same bound."
+            if (dl->decl->as.function_decl.effects_declared
+                && dl->decl->as.function_decl.effects_bound != 0) {
                 EffectSet missing = ef & ~dl->decl->as.function_decl.effects_bound;
                 if (missing) {
                     Id *n = dl->decl->as.function_decl.name;
@@ -4991,10 +5022,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             // header, and an unbounded RECURSION now raises E011/E082 at the call. Note that
             // effects.h computes this very bit BY ASKING `vra_recursion_terminates` — so the
             // two were already the same analysis, delivered through a worse message.
-            if ((g_suppress_termination || g_suppress_recursion)
-                && (ef & EFFECT_DIVERGE) && !(ef & EFFECT_IO)) {
-                /* fall through: measured by the sovereign termination pass instead */
-            } else {
+            {
             // ── the DECLARED BOUND is what "forbidden" is measured against (B.1) ─────────
             // A `func` has an empty effect bound BY DEFAULT, which is what makes purity the
             // default rather than an opt-in. An `effects …` clause WIDENS that bound, and an
@@ -5026,16 +5054,36 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                                 ? dl->decl->as.function_decl.effects_bound : 0;
             consented |= (dl->decl->as.function_decl.does_io   ? EFFECT_IO      : 0)
                       |  (dl->decl->as.function_decl.diverges  ? EFFECT_DIVERGE : 0);
-            EffectSet unconsented = ef & (EFFECT_IO | EFFECT_DIVERGE) & ~consented;
+            // ★ E.6 — SILENCE MEANS ∅, FOR THE WHOLE ROW. This was `ef & (EFFECT_IO |
+            // EFFECT_DIVERGE)`, so `raises` and `alloc` were inferred, printed by
+            // --dump-effects, and checked against a row when one was written — but never
+            // REQUIRED to be written. Silence therefore meant "∅ for io and diverge, ⊤ for
+            // raises and alloc": two rules under one word, and a row a caller could not trust,
+            // since `effects io` on a callee did not mean it does not allocate. 7B.5 already
+            // said the row is a complete upper bound; this is the line that makes it one.
+            EffectSet unconsented = ef & EFFECT_TOP & ~consented;
+            // The termination SEAM stands down the DIVERGE BIT, not the whole check. It used to
+            // guard the entire block, so with the seam active an unacknowledged `alloc` rode in
+            // beside the divergence — a suppression wider than the obligation it was built for.
+            // The seam covers the two sources the sovereign engine REPORTS ON — a loop header
+            // (E082) and a self-call (E011/E082). It must not cover a divergence that arrived
+            // from a BELIEVED row, because nothing downstream will mention that one at all.
+            if ((g_suppress_termination || g_suppress_recursion)
+                && !dl->decl->as.function_decl.eff_opaque_diverge)
+                unconsented &= ~EFFECT_DIVERGE;
             if (dl->decl->kind == DECL_FUNCTION && unconsented) {
                 Id *n = dl->decl->as.function_decl.name;
-                bool io = (unconsented & EFFECT_IO) != 0;
+                char names[64]; names[0] = 0;
+                const char *sep = "";
+                if (unconsented & EFFECT_IO)      { strcat(names, sep); strcat(names, "io");      sep = ", "; }
+                if (unconsented & EFFECT_DIVERGE) { strcat(names, sep); strcat(names, "diverge"); sep = ", "; }
+                if (unconsented & EFFECT_RAISES)  { strcat(names, sep); strcat(names, "raises");  sep = ", "; }
+                if (unconsented & EFFECT_ALLOC)   { strcat(names, sep); strcat(names, "alloc");   sep = ", "; }
                 fprintf(stderr, "[E011] Error Ln %li, Col %li: `func` '%.*s' has an "
                     "unacknowledged effect (%s) — a `func` is pure and total by default.\n",
                     (long)dl->decl->line, (long)dl->decl->col,
-                    n ? (int)n->length : 1, n ? n->name : "?", io ? "IO" : "Diverge");
-                fprintf(stderr, "       write `%s` on it to say so.\n",
-                        io ? "@io" : "@diverges");
+                    n ? (int)n->length : 1, n ? n->name : "?", names);
+                fprintf(stderr, "       write `effects %s` on it to say so.\n", names);
                 diagnostic_show_line(dl->decl->line, dl->decl->col);
                 exit(1);
             }

@@ -1,7 +1,7 @@
 // Refinement alias used in proc + var + return positions; full
 // compile + run with libc.
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type Pct = i32 >= 0 and <= 100
 

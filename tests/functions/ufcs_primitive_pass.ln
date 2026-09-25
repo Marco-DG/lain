@@ -2,7 +2,7 @@
 // It used to die on a non-struct receiver with a raw internal message and no error code
 // ("sema error: unknown struct 'i32'"): the field lookup EXITS when the receiver names no
 // struct, so the UFCS fallback below it was unreachable for every primitive.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func is_even(n i32) bool { return n % 2 == 0 }
 func twice(n i32) i32 { return n *% 2 }
 func main() i32 effects io {

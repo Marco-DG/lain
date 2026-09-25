@@ -1,6 +1,6 @@
 // TRUST: try propagates a marker; the defer on the early-return (error) path must
 // run exactly once and stay memory-safe under ASan.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func step(p *u8, fail bool) *u8 | Err {
     if fail { return Err }
     return p

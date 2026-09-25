@@ -5,7 +5,7 @@
 // self-call must strictly decrease the well-founded measure — the same
 // termination discipline as a loop's `decreasing` clause. fib (n-1, n-2) and a
 // halving descent (n/2) both qualify.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func fib(n i32) i32 decreasing n {
     if n < 2 { return n }
     return fib(n - 1) +% fib(n - 2)

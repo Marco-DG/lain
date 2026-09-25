@@ -1,6 +1,6 @@
 // F3.4: pending `defer`s run on `try`'s propagate-return path — linear cleanup
 // on the error-unwind edge, exactly as an explicit `return` would do.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func step(p *u8, fail bool) *u8 | NotFound {
     if fail { return NotFound }
     return p

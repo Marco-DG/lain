@@ -1,7 +1,7 @@
 // VRA-backed termination: a loop-invariant variable step proven >= 1 makes the
 // measure strictly decrease, so `i = i + k` (k a variable, k>=1, unmodified in
 // the loop) is accepted — not just literal-constant steps.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func main() i32 effects io {
     var n usize = 10
     var i usize = 0

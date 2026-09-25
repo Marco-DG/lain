@@ -1,5 +1,5 @@
 // A whole-array literal initializes; element reads are then sound.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func main() i32 {
     var a i32[4] = [10, 20, 30, 40]
     return a[0] + a[3] - 50

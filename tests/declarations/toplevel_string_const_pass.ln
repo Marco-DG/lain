@@ -1,7 +1,7 @@
 // A top-level constant of a slice type (`u8[:0] = "…"`) must compile: its
 // Slice_<T> typedef has to be emitted BEFORE the constant, and the string literal
 // lowered to a {.data,.len} slice initializer (not `= "…"` onto a struct).
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 GREETING u8[:0] = "hello"
 NAME u8[:0] = "world"
 func main() i32 effects io {

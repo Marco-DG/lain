@@ -3150,6 +3150,18 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
             f = ir_func_new(a, nm ? ir_intern(a, nm->name, nm->length) : NULL, NULL,
                             k==DECL_EXTERN_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
             f->is_extern = true; f->src_decl = d->decl;
+            // E.5: carry the DECLARED row across the seam. Mapped bit by bit on purpose — the
+            // two enums are parallel today, and a silent `(IrEffect)eff` would turn any future
+            // divergence between them into a wrong effect rather than a compile error.
+            if (d->decl->as.function_decl.effects_declared) {
+                EffectSet e = d->decl->as.function_decl.effects_bound;
+                IrEffect r = 0;
+                if (e & EFFECT_DIVERGE) r |= IR_EFFECT_DIVERGE;
+                if (e & EFFECT_RAISES)  r |= IR_EFFECT_RAISES;
+                if (e & EFFECT_IO)      r |= IR_EFFECT_IO;
+                if (e & EFFECT_ALLOC)   r |= IR_EFFECT_ALLOC;
+                f->declared_row = r; f->has_declared_row = true;
+            }
             f->is_variadic = d->decl->as.function_decl.is_variadic;
             // An extern returning a REFERENCE lends something of the caller's, exactly as a
             // Lain function does — and this fact was recorded only in ir_lower_function, which

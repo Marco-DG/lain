@@ -11,7 +11,7 @@
 // ⚠ Twice and no more, because the hazard is circular justification — a range derived from a
 // state computed using that range proves nothing. Pass 0 never sees the refinement, so the
 // refined range is a true statement about the program, and pass 1 may use it.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func main() i32 effects io {
     var sq = [i * i for i in 0..8]
     var inc = [x + 1 for x in 1..=3]

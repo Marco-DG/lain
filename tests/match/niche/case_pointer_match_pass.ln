@@ -2,7 +2,7 @@
 // Option(*T). Compile, link, run — exit 0 means the niche layout
 // emitted is correct (no tag byte, sentinel-based discrimination).
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type OptionByte {
     Some { v *u8 }

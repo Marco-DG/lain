@@ -2,7 +2,7 @@
 // enclosing function (X coerced to its return type, defers flushed). Lets a
 // checked op's overflow leave as YOUR own niche-able marker (no `i32 | Overflow`
 // materialized), and remaps one union's marker into another's.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func compute(a i32, b i32, s *u8) *u8 | TooBig {
     p = a *? b else return TooBig
     if p > 100 { return s }

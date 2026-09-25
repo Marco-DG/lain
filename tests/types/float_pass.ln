@@ -1,6 +1,6 @@
 // Test: Float types (f32, f64)
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func main() i32 effects io {
     var a f32 = 3.14

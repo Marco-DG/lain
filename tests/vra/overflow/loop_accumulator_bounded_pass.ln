@@ -7,7 +7,7 @@
 // 15+14+…+0 = 120 needs the loop's TRIP COUNT related to the accumulator's per-iteration
 // growth — a product, not a difference, and outside an octagon. That is the real precision
 // frontier here, and it is recorded as one rather than papered over.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func up16() u16 {
     var s u16 = 0
     var i u16 = 0

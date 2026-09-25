@@ -1,10 +1,10 @@
 // TRUST: the linear type system proves single-ownership — one alloc, one free.
 // Under ASan, a double-free or use-after-free (were the linear proof unsound)
 // would trap. It compiles ⇒ ownership proven ⇒ runtime must be clean.
-extern proc libc_printf(fmt *u8, ...) i32
-extern proc libc_malloc(size usize) mov *void
-extern proc libc_free(ptr mov *void)
-func main() i32 effects io {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+extern func libc_malloc(size usize) mov *void effects io, alloc
+extern func libc_free(ptr mov *void) effects io
+func main() i32 effects io, alloc {
     var buf = libc_malloc(64)
     defer libc_free(mov buf)
     libc_printf("alloc-freed-once\n")

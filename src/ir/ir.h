@@ -416,6 +416,13 @@ typedef enum {
 } IrEffectBit;
 typedef unsigned IrEffect;
 
+// ⊤ — "may do anything". Defined as the JOIN OF EVERY SAYABLE EFFECT rather than a hand-picked
+// list, which is what makes it exactly narrowable: for each bit in ⊤ there is a word the row
+// can use to take it back. IR_EFFECT_UNMODELLED_WRITE is deliberately NOT in it — `write` is
+// unsayable by language design (the row rejects it: Lain has no mutable global state), so
+// including it would impose a bound nothing could ever discharge.
+#define IR_EFFECT_TOP (IR_EFFECT_DIVERGE | IR_EFFECT_RAISES | IR_EFFECT_IO | IR_EFFECT_ALLOC)
+
 // ── C5: the WRITE FOOTPRINT ─────────────────────────────────────────────────
 // The bits above are a coarse binary — IR_EFFECT_UNMODELLED_WRITE means "writes mutable GLOBAL state"
 // and explicitly EXCLUDES a write through a parameter, so the row could not say WHICH memory
@@ -484,6 +491,14 @@ typedef struct IrFunc {
     // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
     IrEffect   effects;
     bool       effects_done, effects_in_progress;
+    // ★ E.5 — the DECLARED row, and the ONE fact about an extern that cannot be inferred.
+    // An extern has no body, so its row is BELIEVED rather than computed, and the direction
+    // reverses: a definition's silence means ∅ and its row WIDENS, while an extern's silence
+    // means ⊤ ("may do anything") and its row NARROWS. Without this field the IR had only
+    // `kind` to go on, so `extern func printf(...)` — three of which are in the corpus — was
+    // read as PURE AND TOTAL, a claim the compiler believed about a C function that does IO.
+    IrEffect   declared_row;
+    bool       has_declared_row;
     IrWriteFootprint param_writes;
     IrRetainFootprint param_retains;           // which parameters' ADDRESSES may outlive the call
     bool              param_retains_done;

@@ -5,11 +5,11 @@ c_include "<stdlib.h>"
 // Opaque type for C's FILE struct
 extern type FILE
 
-extern proc printf(fmt *u8, ...) i32
-extern proc fopen(filename *u8, mode *u8) mov *FILE
-extern proc fclose(stream mov *FILE) i32
-extern proc fputs(s *u8, stream *FILE) i32
-extern proc fgets(s var *u8, n i32, stream *FILE) var *u8
+extern func printf(fmt *u8, ...) i32 effects io
+extern func fopen(filename *u8, mode *u8) mov *FILE effects io, alloc
+extern func fclose(stream mov *FILE) i32 effects io
+extern func fputs(s *u8, stream *FILE) i32 effects io
+extern func fgets(s var *u8, n i32, stream *FILE) var *u8 effects io
 
-extern proc libc_printf(fmt *u8, ...) i32
-extern proc libc_puts(s *u8) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
+extern func libc_puts(s *u8) i32 effects io

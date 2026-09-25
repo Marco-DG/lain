@@ -113,12 +113,19 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
     return e;
 }
 
-// Transitive effects, memoized. extern func = pure {}, extern proc = IO. A recursion cycle
-// yields DIVERGE via the in-progress guard (conservative: the IR does not carry the
-// `decreasing` measure that would let a well-founded self-call stay total — a known gap).
+// Transitive effects, memoized. An EXTERN's row is BELIEVED (there is no body to infer from)
+// and defaults to ⊤ — see below. A recursion cycle yields DIVERGE via the in-progress guard
+// (conservative: the IR does not carry the `decreasing` measure that would let a well-founded
+// self-call stay total — a known gap).
 static IrEffect ir_effects(IrFunc *f, IrFunc *mod) {
     if (!f) return 0;
-    if (f->is_extern)          return f->kind==IR_FUNC_PROC ? IR_EFFECT_IO : 0u;
+    // ★ E.5 — an extern with no row is ⊤, not ∅. It used to be `kind==PROC ? IO : 0`, i.e. the
+    // KEYWORD decided, which made `extern func printf(fmt *u8, ...) i32` a statement that
+    // printf is pure and total — believed by the front end and by the annotation pass that
+    // gates gcc's `const`/`pure`. Three such declarations were in the corpus. The keyword now
+    // decides nothing here (E.4 removed its meaning everywhere else); the ROW is the whole
+    // claim, and its absence is the most pessimistic claim rather than the most optimistic one.
+    if (f->is_extern)          return f->has_declared_row ? f->declared_row : IR_EFFECT_TOP;
     if (f->effects_done)       return f->effects;
     if (f->effects_in_progress) {
         // 3.4: a recursion cycle is DIVERGE only if no parameter is a WELL-FOUNDED MEASURE.

@@ -1,11 +1,11 @@
-extern proc abs(n i32) i32
-extern proc malloc(size usize) mov *void
-extern proc free(ptr mov *void)
-extern proc exit(status i32)
+extern func abs(n i32) i32 effects
+extern func malloc(size usize) mov *void effects io, alloc
+extern func free(ptr mov *void) effects io
+extern func exit(status i32) effects io
 
 // Also test stdlib which uses extern
 import std.io.{print, println}
-func main() i32 effects io {
+func main() i32 effects io, alloc {
     println("Testing extern keyword...")
 
     // Test abs

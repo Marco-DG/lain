@@ -1,4 +1,4 @@
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func lookup(p *u8, k i32) *u8 | NotFound | Denied {
     if k == 1 { return NotFound }
     if k == 2 { return Denied }

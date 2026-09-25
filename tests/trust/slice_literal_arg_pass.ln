@@ -13,7 +13,7 @@
 //
 // In tests/trust/ so the program is RUN and its output checked, not merely compiled.
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func show(s u8[]) effects io {
     if s.len < 2147483647 {

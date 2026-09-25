@@ -2,7 +2,7 @@
 // error that carries data; niche-less unions fall back to a tag-byte struct
 // (K discussion: worst case ties C). Construct with `Marker(v)`, destructure in
 // `case` with `Marker(x)`, and the `else` arm extracts the value payload.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func f(x i32, fail bool) i32 | ParseErr(line i32) {
     if fail { return ParseErr(42) }
     return x

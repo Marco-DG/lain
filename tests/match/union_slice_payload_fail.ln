@@ -14,7 +14,7 @@
 //
 // Refusing is the correct answer while the representation does not exist: E064 is
 // prove-or-reject for layout, and "I cannot make this zero-cost" is exactly what it says.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func pick(b bool) u8[:0] | none {
     if b { return "hi" }
     return none

@@ -2,7 +2,7 @@
 // `Reading` packs `value` (i32 in [0,1000]) with `NoData=-1` and
 // `SensorFault=-2` into a single i32, no tag byte.
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type Pressure = i32 >= 0 and <= 1000
 

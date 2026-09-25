@@ -4,7 +4,7 @@
 // inherited "may hang" for sharing it. Measured then: 173 procs did IO and terminated
 // while exempt, against 61 that actually diverge. The marker is now on the exceptions.
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func main() i32 effects diverge, io {
     var i = 0

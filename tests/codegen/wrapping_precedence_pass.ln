@@ -12,7 +12,7 @@
 // point is the answer, passing because the answer happened to be 0 and 0 is the success code.
 // The emit gate caught it by DIFFERENTIAL against the new backend, which was right all along.
 // This test asserts the VALUES.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func main() i32 effects io {
     var a u32 = 4
     var b u32 = 3

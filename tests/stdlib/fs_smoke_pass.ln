@@ -1,6 +1,6 @@
 import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
 import std.fs.{File, open_file, close_file, write_file}
-func main() i32 effects io, raises {
+func main() i32 effects io, raises, alloc {
     var msg_open = "Opening file: test_output.txt\n"
     libc_printf(msg_open.data)
     

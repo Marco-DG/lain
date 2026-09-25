@@ -12,7 +12,7 @@
 // there. Only the types WIDER than i32 were affected, which is why nothing caught it.
 //
 // The values are the test. A width regression changes them.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func neg64(a i64) i64 { return -a }
 

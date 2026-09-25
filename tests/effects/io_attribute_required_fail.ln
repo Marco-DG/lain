@@ -7,7 +7,7 @@
 // costs 173 attributes, and marking the pure set would cost 1,034. The cheap default is purity.
 //
 // The diagnostic names the fix (`write @io on it to say so`) rather than restating the rule.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func shout(x i32) i32 {
     return libc_printf("%d\n", x)
 }

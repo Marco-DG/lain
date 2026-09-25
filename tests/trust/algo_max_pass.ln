@@ -1,5 +1,5 @@
 // TRUST: a real mini-algorithm exercising bounds + comparison + accumulation.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func find_max(data u8[:0]) i32 {
     var mx = 0
     var i = 0

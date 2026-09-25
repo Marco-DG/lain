@@ -14,8 +14,8 @@
 //
 // Either way the answer does not depend on whether the row was written as `effects` or omitted,
 // which is the point: they declare the same bound.
-extern proc libc_printf(fmt *u8, ...) i32
-func noisy(s u8[:0]) effects {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func noisy(s u8[:0]) effects  {
     libc_printf(s.data)
 }
 func main() i32 { return 0 }

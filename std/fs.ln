@@ -10,7 +10,7 @@ type File {
 // The null check reads the owned pointer, so it lives in an `unsafe` block; the
 // pointer is still consumed on the success path by File(raw).
 @io
-func open_file(path u8[:0], mode u8[:0]) mov File {
+func open_file(path u8[:0], mode u8[:0]) mov File effects io, raises, alloc {
     var raw = fopen(path.data, mode.data)
     unsafe {
         if raw == 0 { panic("open_file: could not open file") }

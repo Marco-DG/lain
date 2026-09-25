@@ -265,6 +265,13 @@ typedef enum {
 } Effect;
 typedef unsigned EffectSet;
 
+// ⊤ — "may do anything", the default row of a declaration with no body (E.5). It is the join of
+// every SAYABLE effect, not a hand-picked list, so that every bit in it can be taken back by a
+// word the row accepts. EFFECT_UNMODELLED_WRITE is excluded for exactly that reason: `write` is
+// rejected by the row parser (Lain has no mutable global state), so a ⊤ containing it would be
+// a bound no annotation could discharge. Mirrors IR_EFFECT_TOP.
+#define EFFECT_TOP (EFFECT_DIVERGE | EFFECT_RAISES | EFFECT_IO | EFFECT_ALLOC)
+
 typedef struct {
     Id*         name;           // Function name
     DeclList*   params;         // Parameters (linked list or array)
@@ -277,6 +284,14 @@ typedef struct {
     // computed (`effect_full`); this lets the language STATE a bound and have it checked, so
     // "this hot path allocates nothing" becomes a compile error rather than a code review.
     // Same rule as F1: believed on an extern, CHECKED against the inferred row with a body.
+    // ★ Did this function's DIVERGE arrive from a BELIEVED row rather than from a loop or a
+    // recursion in its own body? An `extern`'s default row is ⊤ (E.5) and a bare function
+    // pointer's bound is ⊤ too, and in NEITHER case can the termination pass point at anything:
+    // there is no loop header to report E082 on and no self-call to report E011 on. The
+    // termination SEAM stands DIVERGE down precisely because the sovereign engine answers it
+    // better — so the seam must not reach this third source, or "the engine says it louder"
+    // silently becomes "nobody says it at all".
+    bool        eff_opaque_diverge;
     bool        effects_declared;
     EffectSet   effects_bound;
     Id*         ret_borrow_of;     // F1: `... var i32 in a` — the parameter the RETURNED

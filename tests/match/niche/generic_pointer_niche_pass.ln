@@ -2,7 +2,7 @@
 // monomorphizes to Option_ptr_u8 and THEN niche-optimizes to a bare pointer
 // (None = NULL, no tag byte). Proves the north-star order: monomorphize first,
 // then niche-optimize the concrete instance.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type Option(T type) {
     Some { val T }

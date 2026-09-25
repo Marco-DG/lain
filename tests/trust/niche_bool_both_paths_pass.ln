@@ -10,7 +10,7 @@
 // visible when the payload IS `true` — and the corpus's existing bool-union test called
 // `g(true, true)`, the path that works either way. One argument's difference between a green
 // suite and a miscompile.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func f(b bool, fail bool) bool | Nope {
     if fail { return Nope }
     return b

@@ -1,6 +1,6 @@
 // Test: array literal syntax [1, 2, 3]
 
-extern proc printf(fmt *u8, ...) i32
+extern func printf(fmt *u8, ...) i32 effects io
 
 func main() i32 effects io {
     var arr = [10, 20, 30, 40, 50]

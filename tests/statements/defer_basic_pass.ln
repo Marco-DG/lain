@@ -1,4 +1,4 @@
-extern proc printf(fmt *u8, ...) i32
+extern func printf(fmt *u8, ...) i32 effects io
 
 func main() effects io {
     printf("1")

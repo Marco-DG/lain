@@ -1,5 +1,5 @@
 // Test: 'in' as bounds-proving condition in while and if
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 
 // The index is a `usize` and "not found" is the LENGTH — the same idiom the README's `find`

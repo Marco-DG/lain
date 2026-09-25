@@ -1,4 +1,4 @@
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 // Optionality is `T | none` — one construct, one spelling.
 func take(x *u8 | none) i32 {
     if x { return 1 }

@@ -2,7 +2,7 @@
 // computed (--dump-effects has printed it for a while); this lets the language STATE a bound
 // and have it CHECKED, so "this path does no IO" is a compile error rather than a review note.
 // Declaring MORE than the body does is merely imprecise and allowed.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func noisy(s u8[:0]) effects io {
     libc_printf(s.data)
 }

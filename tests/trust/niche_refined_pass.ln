@@ -1,5 +1,5 @@
 type Small = i32 >= 0 and <= 9
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func classify(n Small, miss bool) Small | TooBig {
     if miss { return TooBig }
     return n

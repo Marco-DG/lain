@@ -2,7 +2,7 @@
 // `hi = mid` / `lo = mid+1` (mid = lo + (hi-lo)/2) each at least halve it. Proven
 // by the difference-measure normalizer (substitute mid, linearize to a function of
 // M = hi-lo, evaluate at the binding M=1 using the correlated X-X/D range).
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func descend(flag bool) i32 {
     var lo usize = 0
     var hi usize = 64

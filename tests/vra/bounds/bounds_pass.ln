@@ -1,7 +1,7 @@
 // Test for static bounds checking: should COMPILE and RUN successfully
 // All array accesses are provably within bounds
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func main() i32 effects io {
     // Fixed-size array (whole-array literal init)

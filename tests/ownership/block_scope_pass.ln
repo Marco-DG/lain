@@ -1,7 +1,7 @@
 // Test: Block scoping for normal (non-linear) variables
 // Variables declared inside a block should not be visible outside
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func main() i32 effects io {
     var outer = 100

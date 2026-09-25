@@ -1,6 +1,6 @@
-extern func printf(fmt *u8, ...) i32
+extern func printf(fmt *u8, ...) i32 effects io
 
-func main() {
+func main() effects io {
     var x i32
     var y i32 = 10
     

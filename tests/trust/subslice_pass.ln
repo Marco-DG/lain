@@ -1,6 +1,6 @@
 // TRUST: sub-slice bounds/offset codegen (historical bug area). s = xs[1..4]
 // must address xs[1..3]; s[2] reading past would be an ASan OOB.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func main() i32 effects io {
     var xs = [10, 20, 30, 40, 50]
     var s = xs[1..4]

@@ -1,7 +1,7 @@
 // Test: bounded while loops are allowed in pure functions (func)
 // Expected: compilation should PASS
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func count_up(n i32) i32 {
     var i = 0

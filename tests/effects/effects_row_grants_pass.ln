@@ -13,7 +13,7 @@
 //
 // The principle: effects are part of a signature, exactly like types — inferred in bodies,
 // declared in signatures, default ∅.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func shout(x i32) i32 effects io {
     return libc_printf("%d\n", x)
 }

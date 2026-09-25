@@ -4,7 +4,7 @@
 // here is a deliberate truncation, that is spelled `as%`.
 // Test: cast operator (as)
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func main() i32 effects io {
     var x i32 = 1000

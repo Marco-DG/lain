@@ -3,7 +3,7 @@
 // Description: Tests that closing a linear variable twice results in a use-after-move error.
 
 import std.fs.{File, open_file, close_file, write_file}
-func main() i32 effects io, raises {
+func main() i32 effects io, raises, alloc {
     var path = "test.txt"
     var mode = "w"
     var f = open_file(path, mode) // returns a linear value

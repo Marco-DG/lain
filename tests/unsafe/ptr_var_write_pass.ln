@@ -1,7 +1,7 @@
 // `*var T` is a WRITABLE raw pointer (mutable pointee → `T*`, not `const T*`), the
 // explicit counterpart of read-only `*T`. Writing through it (in unsafe) is valid
 // for BOTH a parameter and a local — closing the raw-pointer-write gap.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func bump(p *var i32) {
     unsafe { *p = *p + 1 }
 }

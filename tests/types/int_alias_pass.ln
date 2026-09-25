@@ -2,7 +2,7 @@
 // They exist for ergonomics: scrivere `int` quando non importa la taglia,
 // `i32` quando importa.
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 // ★ The arithmetic is REFINED, and it has to be. `func add_int(a int, b int) int` with bare
 // parameters was accepted here until 2026-09-16 and is a real overflow at INT32_MAX + 1 — it

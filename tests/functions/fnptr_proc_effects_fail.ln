@@ -11,7 +11,7 @@
 // `*proc` targets are not. The control is fnptr_hof_pass.ln, where a `*func` parameter leaves
 // the caller pure and total.
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func noisy(a i32) i32 effects io {
     libc_printf("side effect\n")

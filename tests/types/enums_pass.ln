@@ -1,6 +1,6 @@
 // Simpler enum test - enum value directly without function
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type Color {
     Red,

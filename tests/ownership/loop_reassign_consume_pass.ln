@@ -3,7 +3,7 @@
 // pattern with [E006] even when the reassign leaves no live value to leak.
 
 import std.fs.{File, open_file, close_file, write_file}
-func main() i32 effects io, raises {
+func main() i32 effects io, raises, alloc {
     var total = 0
     var i = 0
     var f = open_file("data.txt", "r")

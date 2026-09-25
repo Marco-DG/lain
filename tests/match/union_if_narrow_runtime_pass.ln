@@ -1,4 +1,4 @@
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func pick(p *u8, present bool) *u8 | none {
     if present { return p }
     return none

@@ -1,5 +1,5 @@
 // TRUST: niche-optimized `*u8 | NotFound` round-trips the value bit-exactly.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func pick(p *u8, miss bool) *u8 | NotFound {
     if miss { return NotFound }
     return p

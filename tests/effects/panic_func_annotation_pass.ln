@@ -6,7 +6,7 @@
 func pure_id(a i32) i32 {
     return a
 }
-func may_panic(x i32) i32 {
+func may_panic(x i32) i32 effects raises {
     if x < 0 {
         panic("neg")
     }

@@ -8,7 +8,7 @@
 // by analysis/report.h with the SELF-CALL's position — which the legacy diagnostic never had.
 // The three shapes below are what it must prove; recursion_ir_engine_fail.ln is what it must
 // refuse. Together they are the pair that has to exist before a permissive change lands.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 // 1. a parameter that strictly descends
 func countdown(n usize) usize {

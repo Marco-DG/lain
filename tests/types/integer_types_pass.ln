@@ -1,7 +1,7 @@
 // Test: Integer types (i8, i16, i32, i64, u8, u16, u32, u64, isize, usize)
 // These should all map to their C99 stdint.h equivalents
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func main() i32 effects io {
     var a i32 = 42

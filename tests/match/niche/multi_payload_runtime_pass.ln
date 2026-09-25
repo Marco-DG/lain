@@ -2,7 +2,7 @@
 // the error sub-variants as sentinels of the pointer pool. End-to-end
 // runtime check: Ok and each Err variant must dispatch correctly.
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type FileErr {
     NotFound

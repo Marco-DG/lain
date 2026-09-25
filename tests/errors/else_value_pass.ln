@@ -1,6 +1,6 @@
 // F3.4: `expr else fallback` yields the payload on success, or the fallback
 // value (of the payload type) when the operand is any marker.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func open_it(p *u8, fail bool) *u8 | NotFound | Denied {
     if fail { return NotFound }
     return p

@@ -10,7 +10,7 @@
 //
 // The VALUES are the point, not just that it compiles: `~` is width-defined, so the
 // answer differs per type, and a type-inference regression would change them.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func not_u8(a u8) u8    { return ~a }
 func not_u32(a u32) u32 { return ~a }

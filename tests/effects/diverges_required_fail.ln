@@ -13,7 +13,7 @@
 // So the default inverted: every loop carries the obligation, and the handful that cannot be
 // proven say `@diverges`. Across 742 corpus programs that came to TEN markers — fewer
 // annotations than before, and 173 functions gained a guarantee they did not have.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func spin(n i32) i32 {
     var i i32 = 0
     while i < n { }

@@ -1,7 +1,7 @@
 // Test for enum exhaustiveness WITHOUT else
 // All variants covered, so should compile
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type Status {
     Ready,

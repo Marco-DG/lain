@@ -10,7 +10,7 @@
 // before the resolver reached line 11. Once the sovereign engine owned the obligation, the test
 // started asserting its subject by accident of ordering — so the declaration is stated and the
 // underflow is what the test is about.)
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func main() i32 effects io {
     var x usize = 0
     var y usize = x - 1

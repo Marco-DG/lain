@@ -1,7 +1,7 @@
 // VRA folds a top-level constant's value and a narrow (u8/u16) array element's
 // range, and handles bitwise & / | — so constant-driven arithmetic that used to
 // trip the overflow prover (E086) is now provably safe.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 MASK u8 = 0x0F
 TABLE u8[4] = [10, 20, 30, 40]

@@ -1,6 +1,6 @@
 // Test: bool type with true/false literals
 
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 func main() i32 effects io {
     var x bool = true

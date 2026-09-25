@@ -2,7 +2,7 @@
 // PROVEN tier — it compiles only where the value is shown to fit. The guard is what shows
 // it, and it costs one comparison on a path that never runs for a string literal. The
 // subject is `.len` on a sentinel slice, which the guard leaves intact.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 func count(data u8[:0]) i32 {
     if data.len < 2147483647 {
         return data.len as i32

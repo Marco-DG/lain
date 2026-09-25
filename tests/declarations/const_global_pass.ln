@@ -1,7 +1,7 @@
 // Top-level compile-time constants (no keyword — a bare `NAME T = expr` at file
 // scope is a comptime constant; there are no runtime globals). Scalars, a
 // multi-line array table, cross-references, and native indexing all work.
-extern proc libc_printf(fmt *u8, ...) i32
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
 U u8 = 0x01
 L u8 = 0x02
