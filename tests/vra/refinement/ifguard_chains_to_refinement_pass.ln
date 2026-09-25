@@ -1,0 +1,41 @@
+// ★ AN `if` GUARD CHAINS THROUGH A PARAMETER'S REFINEMENT, exactly as a loop guard always did.
+//
+// `i < n` is recorded as a DIFFERENCE (`i - n <= -1`), which is the design: constraint-chaining,
+// not range-narrowing. But the call-site refinement check asks `i < 4097` — an identifier against a
+// LITERAL — and that arm consulted `i`'s interval only. The difference plus `n`'s own refinement
+// (`n < 4097`, so `n <= 4096`) gives `i <= 4095` in one step, and that derived fact was invisible:
+//
+//     while i < n { sink(i) }   // proved — the loop narrows i itself
+//     if    i < n { sink(i) }   // REFUSED — same fact, different spelling
+//
+// Two spellings of one fact with only one wired. The fix closes the difference graph against the
+// intervals wherever a range is read, so both spellings answer the same.
+func sink(start u32 < 4097) u32 { return start }
+
+func via_if(n u32 < 4097, i u32) u32 {
+    if i < n { return sink(i) }
+    return 0
+}
+
+func via_loop(n u32 < 4097) u32 {
+    var i u32 = 0
+    while i < n {
+        if i < n { return sink(i) }
+        i = i +% 1
+    }
+    return 0
+}
+
+// ...and one step further out: the bound may arrive through a variable whose own bound is itself
+// derived. `j = i + 1` with a guard on `j` bounds `i`, which is what a peek-ahead scanner writes.
+func via_peek(n u32 < 4097) u32 {
+    var i u32 = 0
+    while i < n {
+        var j u32 = i + 1
+        if j < n { return sink(j) }
+        i = i +% 1
+    }
+    return 0
+}
+
+func main() u32 { return via_if(10, 5) +% via_loop(10) +% via_peek(10) }

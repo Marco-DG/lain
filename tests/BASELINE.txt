@@ -2145,6 +2145,10 @@ at=const 4
 ### tests/vra/refinement/equal_constraint_pass.ln
 rc=0
 out=
+### tests/vra/refinement/ifguard_chains_to_refinement_pass.ln
+rc=6
+out=
+at=const 8
 ### tests/vra/refinement/len_param_refinement_pass.ln
 rc=0
 out=

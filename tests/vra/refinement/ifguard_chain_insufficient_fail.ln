@@ -1,0 +1,16 @@
+// EXPECT: [E012]
+// The companion to ifguard_chains_to_refinement_pass.ln, and the reason that one is not a hole:
+// closing a difference against an interval must TIGHTEN, never invent. Here `n < 8000`, so `i < n`
+// gives `i <= 7998` — which does NOT satisfy the callee's `start < 4097`, and the call is refused.
+//
+// The three other ways this could have gone wrong are refused too, and each was checked by hand
+// before this file was written: an UNREFINED `n` (the guard bounds nothing), the WRONG DIRECTION
+// (`i > n` says nothing about `i`'s maximum), and guard SCOPE (an empty `if i < n { }` must not
+// leave the bound in force after the body).
+func sink(start u32 < 4097) u32 { return start }
+
+func probe(n u32 < 8000, i u32) u32 {
+    if i < n { return sink(i) }
+    return 0
+}
+func main() u32 { return probe(7000, 5000) }

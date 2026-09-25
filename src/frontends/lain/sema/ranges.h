@@ -246,12 +246,72 @@ static Range range_from_refinement_constraints(ExprList *constraints) {
 // struct field `field` on a value of `struct_type`, or NULL.
 static ExprList *sema_member_field_constraints(Type *struct_type, Id *field);
 
+// ★ CLOSE THE DIFFERENCE GRAPH AGAINST THE INTERVALS. A guard `i < n` is recorded as a
+// DIFFERENCE (`i - n <= -1`), deliberately — the design note calls it constraint-chaining, not
+// range-narrowing. But only `sema_check_condition`'s ident-vs-ident arm ever reads differences, so
+// an obligation of the shape `i < 4097` (ident vs LITERAL, which is what a refinement
+// `start u32 < 4097` becomes at a call site) was answered from `i`'s interval alone. The fact
+// `i <= 4095`, derivable in one step from `i - n <= -1` and `n <= 4096`, was invisible:
+//
+//     func sink(start u32 < 4097) u32 { ... }
+//     if i < n { sink(i) }            // n u32 < 4097  → REFUSED before this
+//     while i < n { sink(i) }         // the same fact → proved, via the loop's own narrowing
+//
+// Two spellings of one fact, one of them wired. This is [[derived-facts-are-invisible]]: a fact
+// that is DERIVED rather than stored is missing for every client that does not re-close, and the
+// asymmetry shows up as an over-rejection nobody can explain from the source.
+//
+// Soundness: `v - w <= d` with `w <= w.max` gives `v <= w.max + d`, and `w - v <= d` with
+// `w >= w.min` gives `v >= w.min - d`. Both are one-directional tightenings of an upper/lower
+// bound, applied only when the other side's interval is KNOWN, with the addition guarded against
+// int64 overflow. Nothing widens.
+// `depth` bounds the recursion: the bound on `v` may come through a variable whose own bound is
+// itself derived — `j = i + 1` with a guard `j < n` and `n <= 4096` needs two steps to reach
+// `i <= 4094`, which is the shape a peek-ahead scanner writes. Two is enough for every idiom in
+// the corpus and terminates on a cyclic constraint set by construction.
+static Range range_close_against_constraints_d(RangeTable *t, Id *v, Range rg, int depth) {
+    if (!t || !v) return rg;
+    for (ConstraintEntry *c = t->constraints; c; c = c->next) {
+        if (c->nonzero) continue;
+        bool v_is_1 = range_ids_equal(c->v1, v);
+        bool v_is_2 = range_ids_equal(c->v2, v);
+        if (v_is_1 == v_is_2) continue;              // neither, or a self-edge
+        Id *ow = v_is_1 ? c->v2 : c->v1;
+        Range other = range_get(t, ow);
+        // Close the OTHER side too, whether or not it already has an interval: a KNOWN BUT LOOSE
+        // interval is the interesting case, not the absent one. `var j u32 = i +% 1` gives `j` an
+        // interval from `i`'s, so `j` was "known" and its guard-derived bound `j <= n-1 <= 4095`
+        // was never applied — the loose fact shadowed the tight one, which is the same trap as
+        // taking the first matching entry instead of the tightest.
+        if (depth > 0) other = range_close_against_constraints_d(t, ow, other, depth - 1);
+        if (!other.known) continue;
+        if (v_is_1) {
+            // v - other <= d  ⟹  v <= other.max + d
+            if (other.max <= INT64_MAX - (c->max_diff > 0 ? c->max_diff : 0)) {
+                int64_t ub = other.max + c->max_diff;
+                if (!rg.known || ub < rg.max) { rg.max = ub; if (!rg.known) rg.min = INT64_MIN; rg.known = true; }
+            }
+        } else {
+            // other - v <= d  ⟹  v >= other.min - d
+            if (other.min >= INT64_MIN + (c->max_diff > 0 ? c->max_diff : 0)) {
+                int64_t lb = other.min - c->max_diff;
+                if (!rg.known || lb > rg.min) { rg.min = lb; if (!rg.known) rg.max = INT64_MAX; rg.known = true; }
+            }
+        }
+    }
+    return rg;
+}
+static Range range_close_against_constraints(RangeTable *t, Id *v, Range rg) {
+    return range_close_against_constraints_d(t, v, rg, 2);
+}
+
 static Range sema_eval_range(Expr *e, RangeTable *t) {
     if (!e) return range_unknown();
     switch (e->kind) {
         case EXPR_LITERAL: return range_const(e->as.literal_expr.value);
         case EXPR_IDENTIFIER: {
-            Range rg = range_get(t, e->as.identifier_expr.id);
+            Range rg = range_close_against_constraints(t, e->as.identifier_expr.id,
+                                                       range_get(t, e->as.identifier_expr.id));
             if (rg.known) return rg;
             // Not in the local range table — a top-level constant contributes its
             // value (a literal init) or, failing that, its declared integer type
