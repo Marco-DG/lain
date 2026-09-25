@@ -390,7 +390,28 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                         int64_t cmax = raw.max > (int64_t)hi ? (int64_t)hi : raw.max;
                         return range_make(cmin, cmax);
                     }
-                    // Wrapping (modulo 2^N): any value in the type is possible.
+                    // Wrapping (modulo 2^N). ★ PRECISE WHEN NO WRAP IS POSSIBLE. This returned
+                    // the full type range unconditionally — sound, and maximally imprecise for an
+                    // operator that is IDIOMATIC here: `+%` is how a program states "I accept
+                    // wrapping" to be relieved of the overflow obligation, so it appears in every
+                    // counter and accumulator in the corpus, and each one poisoned every bounds
+                    // proof downstream of it. `while i < n { ... i = i +% 1 }` lost `i`'s range at
+                    // the increment.
+                    //
+                    // The modular reduction is the IDENTITY whenever the exact result cannot leave
+                    // the type, so compute the raw arithmetic range and keep it when it fits
+                    // entirely inside [lo, hi]. Otherwise fall back to the full range, exactly as
+                    // before. A wrap that cannot happen should not cost precision.
+                    { Range raw;
+                      switch (op) {
+                        case TOKEN_PLUS_PERCENT:     raw = range_add(l, r); break;
+                        case TOKEN_MINUS_PERCENT:    raw = range_sub(l, r); break;
+                        case TOKEN_ASTERISK_PERCENT: raw = range_mul(l, r); break;
+                        default:                     raw = range_unknown(); break;
+                      }
+                      if (raw.known && raw.min >= (int64_t)lo && raw.max <= (int64_t)hi)
+                          return raw;
+                    }
                     return range_make(lo, hi);
                 }
             }

@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// The companion: when a wrap IS possible the full type range is still the answer, so nothing is
+// proven. `x` is an unconstrained `u8`, so `x +% 200` ranges over [200, 455] in exact arithmetic —
+// which leaves `u8` — and the wrapped result may be any `u8` at all, including values that violate
+// `k < 100`. Refused, which is what keeps the precise case above from being a hole.
+func sink(k u8 < 100) u8 { return k }
+func probe(x u8) u8 { return sink(x +% 200) }
+func main() u8 { return probe(5) }

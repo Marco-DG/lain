@@ -2194,6 +2194,10 @@ ty=Config struct
 rc=0
 out=
 at=const 2
+### tests/vra/refinement/wrap_precise_when_no_wrap_pass.ln
+rc=2
+out=
+at=const 4
 ### tests/vra/refine_relational_param_pass.ln
 rc=0
 out=

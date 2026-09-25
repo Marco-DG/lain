@@ -1,0 +1,23 @@
+// ★ WRAPPING ARITHMETIC KEEPS ITS RANGE WHEN IT CANNOT WRAP.
+//
+// `+%` is idiomatic here: it is how a program states "I accept wrapping" and is thereby relieved of
+// the overflow obligation. So it appears in every counter and accumulator — and the range evaluator
+// answered it with the FULL TYPE RANGE unconditionally, which poisoned every bounds proof downstream
+// of an increment. `while i < n { ... i = i +% 1 }` lost `i`'s range at the increment.
+//
+// The modular reduction is the IDENTITY whenever the exact result cannot leave the type, so the raw
+// interval is kept when it fits inside the type's range, and the full range is used only when a wrap
+// is genuinely possible. `j` here is at most 4095 (from `j < n` and `n < 4097`), so `j +% 1` is at
+// most 4096 — no wrap, and the refinement `< 4097` is discharged.
+func sink(start u32 < 4097) u32 { return start }
+
+func peek(n u32 < 4097) u32 {
+    var i u32 = 0
+    while i < n {
+        var j u32 = i + 1
+        if j < n { return sink(j +% 1) }
+        i = i +% 1
+    }
+    return 0
+}
+func main() u32 { return peek(10) }
