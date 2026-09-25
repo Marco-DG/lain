@@ -202,9 +202,24 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
                     if (sym) callee_decl = sym->decl;
                 }
                 
-                // G-006: CTFE purity filter — reject non-pure callees
-                if (callee_decl && (callee_decl->kind == DECL_PROCEDURE || callee_decl->kind == DECL_EXTERN_PROCEDURE)) {
-                    fprintf(stderr, "[E101] Comptime purity error: cannot call procedure '%.*s' from comptime context (only `func` calls allowed)\n",
+                // ── G-006: CTFE purity, from the ROW rather than the keyword ─────────────
+                // Compile-time evaluation genuinely needs purity: there is no console to print
+                // to and no clock to read while the compiler runs. What it does NOT need is a
+                // keyword — the effect row already says whether a function is pure, and with one
+                // introducer there is no `proc` to look for.
+                //
+                // An `extern` is still allowed through below: with no body there is nothing to
+                // execute, and the programmer's declared row is believed (I-016).
+                bool callee_impure = false;
+                if (callee_decl && (callee_decl->kind == DECL_PROCEDURE
+                                 || callee_decl->kind == DECL_EXTERN_PROCEDURE)) callee_impure = true;
+                if (callee_decl && (callee_decl->kind == DECL_FUNCTION)
+                    && callee_decl->as.function_decl.effects_declared
+                    && callee_decl->as.function_decl.effects_bound != 0) callee_impure = true;
+                if (callee_impure) {
+                    fprintf(stderr, "[E101] Comptime purity error: cannot call '%.*s' from a "
+                            "comptime context — it declares effects, and compile-time evaluation "
+                            "has no machine to perform them on\n",
                             (int)callee_id->length, callee_id->name);
                     exit(1);
                 }

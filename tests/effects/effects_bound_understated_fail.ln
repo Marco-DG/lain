@@ -1,9 +1,21 @@
-// EXPECT: [E130]
-// Declaring FEWER effects than the body has is the error — an annotation the compiler trusts
-// and never verifies is defect D-4, so the bound is checked against the inferred row. Same
-// rule as F1's `in` clause: believed on an extern, checked wherever there is a body.
+// EXPECT: [E011]
+// ★ AN EMPTY ROW IS STILL A ROW, and it is checked like any other.
+//
+// `effects` with no names declares the bound ∅ — which is exactly what writing no clause at all
+// declares, so the clause buys nothing and the spec lists it as an anti-pattern (plan 7B.5). It is
+// not rejected outright, because the thing that makes it wrong is the same thing that makes any
+// understated row wrong: the body does more than the bound allows.
+//
+// Here the body performs IO, so the declared ∅ does not cover it — and the code is [E011], not
+// [E130], which is the precedence worth pinning: `io` and `diverge` are DEFAULT-DENIED, so an
+// unacknowledged one of those is caught before the row-covers-body comparison ever runs. [E130] is
+// what reports an understated `alloc` or `raises`, which are inferred but not denied
+// (see effects_alloc_bound_fail.ln).
+//
+// Either way the answer does not depend on whether the row was written as `effects` or omitted,
+// which is the point: they declare the same bound.
 extern proc libc_printf(fmt *u8, ...) i32
-proc noisy(s u8[:0]) effects {
+func noisy(s u8[:0]) effects {
     libc_printf(s.data)
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

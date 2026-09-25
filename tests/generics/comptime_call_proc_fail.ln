@@ -1,12 +1,19 @@
 // EXPECT: [E101]
-// Sprint 13 — G-006: comptime cannot call proc
+// ★ COMPTIME NEEDS PURITY, AND THE ROW IS WHERE PURITY IS WRITTEN.
+//
+// Compile-time evaluation genuinely cannot perform effects: there is no console to print to and
+// no clock to read while the compiler runs. The check used to look for a `proc`; with one
+// introducer there is no keyword to look for, and the effect row already says what it needs.
+//
+// `side_effect` declares `effects io`, so calling it from a type-level expression is refused —
+// same diagnosis, stated against what the function declared rather than how it was introduced.
 
-proc side_effect() i32 {
+func side_effect() i32 effects io {
     return 42
 }
 
 type Bad = side_effect()
 
-proc main() i32 {
+func main() i32 {
     return 0
 }

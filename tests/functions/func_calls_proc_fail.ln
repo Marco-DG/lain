@@ -1,16 +1,21 @@
 // EXPECT: [E011]
-// EXPECT: sema error
-// A pure `func` cannot call a side-effecting `proc`.
-
-proc do_side_effect() i32 {
-    return 42
+// ★ AN UNACKNOWLEDGED EFFECT, which is what "a func may not call a proc" always meant.
+//
+// This file used to read `func compute()` calling `proc do_side_effect()`, and the check was
+// syntactic: a DECL_FUNCTION calling a DECL_PROCEDURE. With one introducer there is no keyword to
+// compare, and the rule is stated where it belongs — against the INFERRED row. `noisy` performs
+// IO and says so; `compute` does not, and calling it is an effect `compute` never acknowledged.
+//
+// The diagnosis is unchanged and so is the code. What changed is that the rule now reads what the
+// function DECLARED instead of which of two keywords introduced it — and four separate checks had
+// been keyed on that keyword, every one of them invisible while `proc` existed to absorb it.
+extern proc libc_printf(fmt *u8, ...) i32
+func noisy() i32 effects io {
+    return libc_printf("side effect\n")
 }
-
 func compute() i32 {
-    return do_side_effect()   // func calling proc → error
+    return noisy()              // no `effects io` on compute → the effect is unacknowledged
 }
-
-proc main() i32 {
-    var _ = compute()
-    return 0
+func main() i32 effects io {
+    return compute()
 }

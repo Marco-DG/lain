@@ -1,19 +1,15 @@
 // EXPECT: [E100]
-// ★ `effects write` IS AN ASSERTION OF NOTHING, so it is no longer sayable.
+// ★ `effects write` IS AN ASSERTION OF NOTHING, so it is not sayable.
 //
-// The effect means "writes mutable GLOBAL state", and Lain has none: a top-level `var` is
-// [E100], so the bound's domain is EMPTY by language design. Declaring it was therefore always
-// satisfied — and W130 would then advise, in the same breath, downgrading the function to
-// `func` because it has no observable effect.
+// The effect means "writes mutable GLOBAL state", and Lain has none: a top-level `var` is [E100],
+// so the bound's domain is EMPTY by language design. Declaring it was therefore always satisfied,
+// and nothing rejects a claim for being merely true — which is why it survived the audit that
+// named it by three months. A vacuous bound passes every check there is.
 //
-// That is precisely what law L3 refuses: a spelling that carries no information. The effect
-// audit said so three months before this test existed, and `write` stayed sayable because
-// nothing rejects a bound that is merely vacuous — it passes every check by construction.
-//
-// The diagnostic names the two real things a programmer might have meant: mutating through a
-// `var` PARAMETER (which is in the signature, and whose write footprint is tracked by a
-// separate live mechanism) or doing IO (`effects io`).
-proc f(var x i32) effects write {
+// The diagnostic names the two real things a programmer might have meant: mutation through a `var`
+// PARAMETER, which is in the signature rather than the row (and whose write footprint is tracked
+// by a separate, live mechanism), or `effects io`.
+func f(var x i32) effects write {
     x = 1
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }
