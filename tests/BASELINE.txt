@@ -79,6 +79,10 @@ ty=Slice_u8 scalar
 rc=0
 out=
 ty=Slice_u8 scalar
+### tests/effects/io_attribute_pass.ln
+rc=2
+out=7
+ty=Slice_u8 scalar
 ### tests/effects/panic_func_annotation_pass.ln
 rc=6
 out=

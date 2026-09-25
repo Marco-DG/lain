@@ -1,0 +1,14 @@
+// EXPECT: [E011]
+// ★ THE DEFAULT IS STILL PURE, which is the half that keeps the guarantee worth having.
+//
+// Without `@io` a `func` claims no IO, so calling something that performs it is an
+// unacknowledged effect. The counting is what settles which way round the default goes: of 845
+// procs in the corpus, 1,034 functions overall are pure and 173 do IO — so marking the IO set
+// costs 173 attributes, and marking the pure set would cost 1,034. The cheap default is purity.
+//
+// The diagnostic names the fix (`write @io on it to say so`) rather than restating the rule.
+extern proc libc_printf(fmt *u8, ...) i32
+func shout(x i32) i32 {
+    return libc_printf("%d\n", x)
+}
+proc main() i32 { return shout(7) }

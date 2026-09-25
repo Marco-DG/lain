@@ -247,6 +247,16 @@ Decl *parse_decl(Arena* arena, Parser* parser)
     // whole row ([E130] on a `main` that also prints). Divergence is one rare property of one
     // declaration, which is exactly what `@cold`, `@hot` and `@noreturn` already are.
     bool decl_diverges = false;
+    // ★ `@io` — consent to perform IO, which is what `proc` says today.
+    //
+    // The endgame is ONE introducer: `func`, pure and total by default, with every deviation
+    // acknowledged by an attribute. `@io func f()` is exactly `proc f()`, so this lands first
+    // and the corpus migrates incrementally instead of in one 845-file rewrite.
+    //
+    // An annotation never tells the compiler something it could infer — effects are always
+    // inferred. Its job is CONSENT: this function deviates from a guarantee the language gives
+    // by default, and the compiler checks that the deviation was intended.
+    bool decl_is_io = false;
     if (parser_match(TOKEN_AT)) {
         parser_advance(); // consume '@'
         parser_expect(TOKEN_IDENTIFIER, "Expected annotation name after '@'");
@@ -257,7 +267,9 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         else if (alen == 9 && strncmp(aname, "allocator", 9) == 0) decl_is_allocator = true;
         else if (alen == 8 && strncmp(aname, "noreturn", 8) == 0)  decl_is_noreturn  = true;
         else if (alen == 8 && strncmp(aname, "diverges", 8) == 0)  decl_diverges     = true;
-        if (decl_is_cold || decl_is_hot || decl_is_allocator || decl_is_noreturn || decl_diverges) {
+        else if (alen == 2 && strncmp(aname, "io",       2) == 0)  decl_is_io        = true;
+        if (decl_is_cold || decl_is_hot || decl_is_allocator || decl_is_noreturn
+            || decl_diverges || decl_is_io) {
             parser_advance(); // consume annotation name
             parser_skip_eol();
         }
@@ -268,6 +280,7 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         d = parse_func_decl(arena, parser);
         if (d) {
             d->as.function_decl.diverges     = decl_diverges;
+            d->as.function_decl.does_io       = decl_is_io;
             d->as.function_decl.is_cold      = decl_is_cold;
             d->as.function_decl.is_hot       = decl_is_hot;
             d->as.function_decl.is_allocator = decl_is_allocator;
@@ -281,6 +294,7 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         d = parse_proc_decl(arena, parser);
         if (d) {
             d->as.function_decl.diverges     = decl_diverges;
+            d->as.function_decl.does_io       = decl_is_io;
             d->as.function_decl.is_cold      = decl_is_cold;
             d->as.function_decl.is_hot       = decl_is_hot;
             d->as.function_decl.is_allocator = decl_is_allocator;

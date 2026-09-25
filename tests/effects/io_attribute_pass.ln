@@ -1,0 +1,20 @@
+// ★ `@io func` ≡ `proc` — the first step to ONE INTRODUCER.
+//
+// The endgame: `func` is pure and total by DEFAULT, and every deviation is acknowledged by its
+// own attribute — `@io` to perform IO, `@diverges` to be allowed not to return. `proc` then has
+// nothing left to say and can go.
+//
+// ★ AN ANNOTATION NEVER TELLS THE COMPILER SOMETHING IT COULD INFER. Effects are always
+// inferred, here and before. The attribute's job is CONSENT: this function deviates from a
+// guarantee the language gives by default, and the compiler checks the deviation was intended.
+// That is why it is `@io` and not `effects io` — the row is a COMPLETE upper bound (declare one
+// bit, owe them all), which is right for a bound and wrong for per-property consent.
+//
+// Both spellings work while the corpus migrates. `std/` is already in this form: its eight
+// procs with bodies are `@io func` as of 2026-09-25.
+extern proc libc_printf(fmt *u8, ...) i32
+@io
+func shout(x i32) i32 {
+    return libc_printf("%d\n", x)
+}
+proc main() i32 { return shout(7) }

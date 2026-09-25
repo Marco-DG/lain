@@ -4990,13 +4990,24 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             // on one that also allocates is [E130]); the KEYWORD is the permission. A `func` is
             // pure and total by definition, so an effect in its body is forbidden however the
             // row is written — there is nothing for a bound to license.
-            if (dl->decl->kind == DECL_FUNCTION && (ef & (EFFECT_IO | EFFECT_DIVERGE))) {
+            // ── CONSENT, not a keyword ───────────────────────────────────────────────────
+            // `func` is pure and total BY DEFAULT; each deviation is acknowledged by its own
+            // attribute. `@io func f()` is exactly `proc f()`, which is why both spellings work
+            // while the corpus migrates. Effects are inferred either way — the attribute states
+            // that the deviation was intended, never what it is.
+            EffectSet consented =
+                  (dl->decl->as.function_decl.does_io   ? EFFECT_IO      : 0)
+                | (dl->decl->as.function_decl.diverges  ? EFFECT_DIVERGE : 0);
+            EffectSet unconsented = ef & (EFFECT_IO | EFFECT_DIVERGE) & ~consented;
+            if (dl->decl->kind == DECL_FUNCTION && unconsented) {
                 Id *n = dl->decl->as.function_decl.name;
-                fprintf(stderr, "[E011] Error Ln %li, Col %li: `func` '%.*s' has a forbidden "
-                    "effect (%s) — a func must be pure and total. Declare it `proc`.\n",
+                bool io = (unconsented & EFFECT_IO) != 0;
+                fprintf(stderr, "[E011] Error Ln %li, Col %li: `func` '%.*s' has an "
+                    "unacknowledged effect (%s) — a `func` is pure and total by default.\n",
                     (long)dl->decl->line, (long)dl->decl->col,
-                    n ? (int)n->length : 1, n ? n->name : "?",
-                    (ef & EFFECT_IO) ? "IO" : "Diverge");
+                    n ? (int)n->length : 1, n ? n->name : "?", io ? "IO" : "Diverge");
+                fprintf(stderr, "       write `%s` on it to say so.\n",
+                        io ? "@io" : "@diverges");
                 diagnostic_show_line(dl->decl->line, dl->decl->col);
                 exit(1);
             }
