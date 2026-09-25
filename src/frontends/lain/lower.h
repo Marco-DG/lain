@@ -1369,10 +1369,22 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
         case EXPR_MATCH: {
             Expr *val = e->as.match_expr.value;
             IrType *sumty = NULL;
+            bool vty_kind_is_scalar = false;
             { IrType *vty = ir_lower_type(c, val ? val->type : NULL);
-              if (vty && vty->kind == IRT_SUM) sumty = vty; }
-            Type *vt = val ? val->type : NULL;
-            if (!sumty && !(vt && vt->kind==TYPE_SIMPLE && vt->int_width_cache>0))
+              if (vty && vty->kind == IRT_SUM) sumty = vty;
+              vty_kind_is_scalar = vty && (vty->kind == IRT_INT || vty->kind == IRT_BOOL); }
+            // ★ ASK THE LOWERED TYPE, NOT THE AST SHAPE. This read
+            // `vt->kind==TYPE_SIMPLE && vt->int_width_cache>0`, so a `bool` scrutinee — which is
+            // not an integer and has no width — fell through to an OPAQUE placeholder, suppressing
+            // every proof over the whole function. It was the last `incomplete` function in the
+            // corpus (`tests/match/bool_exhaustive_pass.ln`, spec §15.4: `true`/`false` arms are
+            // exhaustive with no `else`), and the arm path below needs nothing special for it — a
+            // scalar arm is an `IR_CMP_EQ`, which a bool supports.
+            //
+            // Asking the IR type is also the right question for lowering to ask: what it can match
+            // on is a property of the IR, and re-deriving it from AST fields is how the two drift.
+            bool scalar_ok = vty_kind_is_scalar;
+            if (!sumty && !scalar_ok)
                 return ir_opaque_expr(c, ty, false, "match-expr-scrutinee", NULL, NULL);
             IrValue *v = ir_lower_expr(c, val);
             if (sumty && !(v && v->type && v->type->kind==IRT_SUM))
@@ -2777,11 +2789,20 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             // numeric domain can reason about.
             Expr *val = s->as.match_stmt.value;
             Type *vt = val ? val->type : NULL;
-            IrValue *v = NULL; IrType *sumty = NULL;
+            IrValue *v = NULL; IrType *sumty = NULL; bool scalar_ok = false;
             { IrType *vty = ir_lower_type(c, vt);
-              if (vty && vty->kind == IRT_SUM) sumty = vty; }
-            if (!sumty && !(vt && vt->kind==TYPE_SIMPLE && vt->int_width_cache>0)) {
-                ir_incomplete(c, sumty ? "enum-match" : "match-scrutinee"); break;
+              if (vty && vty->kind == IRT_SUM) sumty = vty;
+              // ★ ASK THE LOWERED TYPE, NOT THE AST SHAPE. This read `int_width_cache>0`, so a
+              // `bool` scrutinee — not an integer, no width — made the whole function
+              // `incomplete`, which SUPPRESSES EVERY PROOF OVER IT. It was the last incomplete
+              // function in the corpus (`bool_exhaustive_pass.ln`, spec §15.4). The arm chain
+              // below needs nothing special: a scalar arm is an `IR_CMP_EQ`, which a bool
+              // supports. Asking the IR type is also the question lowering should ask — what can
+              // be matched on is a property of the IR, and re-deriving it from AST fields is how
+              // the two drift apart.
+              scalar_ok = vty && (vty->kind == IRT_INT || vty->kind == IRT_BOOL); }
+            if (!sumty && !scalar_ok) {
+                ir_incomplete(c, "match-scrutinee"); break;
             }
             v = ir_lower_expr(c, val);
             if (sumty && !(v && v->type && v->type->kind==IRT_SUM)) { ir_incomplete(c,"enum-match"); break; }
