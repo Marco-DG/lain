@@ -4,6 +4,6 @@
 func g(a f32) f32 {
     return a + 2
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

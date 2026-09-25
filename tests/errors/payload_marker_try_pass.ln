@@ -10,7 +10,7 @@ func chain(x i32, mode i32) i32 | NotFound | ParseErr(line i32) {
     v = try step(x, mode)
     return v
 }
-proc main() i32 {
+func main() i32 effects io {
     var r i32 | NotFound | ParseErr(line i32) = chain(5, 2)
     case r {
         NotFound:       libc_printf("nf\n")

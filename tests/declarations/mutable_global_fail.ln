@@ -4,6 +4,6 @@
 // invites static-init-order hazards. Top-level bindings are compile-time
 // constants; runtime state is threaded through arguments / a context struct.
 var k i32
-proc main() i32 {
+func main() i32 {
     return 0
 }

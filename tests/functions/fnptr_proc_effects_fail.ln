@@ -13,7 +13,7 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc noisy(a i32) i32 {
+func noisy(a i32) i32 effects io {
     libc_printf("side effect\n")
     return a
 }
@@ -22,6 +22,6 @@ func viaproc(f *proc(i32) i32, x i32) i32 {
     return f(x)
 }
 
-proc main() i32 {
+func main() i32 {
     return viaproc(noisy, 1)
 }

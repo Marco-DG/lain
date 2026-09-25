@@ -4,7 +4,7 @@ func pick(p *u8, miss bool) *u8 | NotFound {
     if miss { return NotFound }
     return p
 }
-proc main() i32 {
+func main() i32 effects io {
     var r *u8 | NotFound = pick("OK", false)
     case r {
         NotFound: libc_printf("miss\n")

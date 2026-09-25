@@ -16,7 +16,7 @@
 type Inner { x i32, y i32 }
 type Outer { f0 i32, f1 i32, f2 i32, f3 i32, f4 i32, f5 i32, f6 i32, f7 i32, f8 Inner }
 
-proc main() i32 {
+func main() i32 {
     var p Outer
     p.f0 = 0
     p.f1 = 1

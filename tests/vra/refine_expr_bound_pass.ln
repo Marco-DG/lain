@@ -16,7 +16,7 @@
 // ⚠ `n usize >= 2` is not decoration. The bound's arithmetic is lowered CHECKED, so `n - 2` on
 // an unbounded usize raises the underflow obligation rather than wrapping to SIZE_MAX and
 // making the precondition vacuously true. See refine_expr_bound_underflow_fail.ln.
-proc window(a i32[n], n usize >= 2, i usize <= n - 2) i32 {
+func window(a i32[n], n usize >= 2, i usize <= n - 2) i32 {
     return a[i] +% a[i + 1]
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

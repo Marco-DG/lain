@@ -3,7 +3,7 @@
 
 import std.bump.{BumpAlloc, bump_init, bump_alloc, bump_reset, bump_remaining, bump_used}
 import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
-proc main() i32 {
+func main() i32 effects io {
     var backing u8[256]
     var bump = bump_init(var backing)
 

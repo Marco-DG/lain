@@ -5,7 +5,7 @@
 // choice — so the base has to be an ALLOCA of a struct and never an element pointer.
 type Point { x i32, y i32 }
 
-proc main() i32 {
+func main() i32 {
     var a Point[2]
     a[0].x = 1
     a[0].y = 1

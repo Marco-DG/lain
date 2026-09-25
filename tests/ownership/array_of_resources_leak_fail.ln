@@ -12,7 +12,7 @@
 
 type R { mov h *u8 }
 
-proc main() i32 {
+func main() i32 {
     var p *u8 = 0
     var a R[2] = [R(p), R(p)]
     return 0

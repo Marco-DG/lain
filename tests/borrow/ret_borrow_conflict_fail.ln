@@ -4,9 +4,9 @@
 // being an escape hatch.
 type Data { x i32 }
 extern func pick(a var Data, b var Data) var i32 in a
-proc mutate(var d Data) { d.x = 1 }
-proc use_ref(var r i32) i32 { return r }
-proc main() i32 {
+func mutate(var d Data) { d.x = 1 }
+func use_ref(var r i32) i32 { return r }
+func main() i32 {
     var p Data = Data(1)
     var q Data = Data(2)
     var r = pick(var p, var q)

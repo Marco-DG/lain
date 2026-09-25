@@ -10,7 +10,7 @@ func find_max(data u8[:0]) i32 {
     }
     return mx
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d\n", find_max("hello"))
     return 0
 }

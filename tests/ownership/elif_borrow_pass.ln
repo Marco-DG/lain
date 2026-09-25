@@ -9,7 +9,7 @@ func consume(r mov Resource) i32 {
     return mov r.handle
 }
 
-proc main() {
+func main() {
     // Test: consume mov variable in all branches of if/elif/else
     var r = Resource(42)
     var x = 0

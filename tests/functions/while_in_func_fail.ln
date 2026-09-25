@@ -17,6 +17,6 @@ func loop_forever() i32 {
     return i
 }
 
-proc main() i32 {
+func main() i32 effects diverge {
     return loop_forever()
 }

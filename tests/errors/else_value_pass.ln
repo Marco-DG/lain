@@ -9,7 +9,7 @@ func pick(p *u8, fail bool, fb *u8) *u8 {
     v = open_it(p, fail) else fb
     return v
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%s\n", pick("x", true, "DEFAULT"))
     libc_printf("%s\n", pick("REAL", false, "DEFAULT"))
     return 0

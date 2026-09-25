@@ -11,7 +11,7 @@ func lexer_peek(l Lexer) u8 {
     return l.text[l.pos]    // safe: struct invariant proves pos in text
 }
 
-proc main() i32 {
+func main() i32 effects io {
     src u8[5] = "hello"
     lex = Lexer(src, 0)
     ch = lexer_peek(lex)

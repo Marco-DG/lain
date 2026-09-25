@@ -10,7 +10,7 @@ func double(d NonZeroI32) i32 {
     return d +% d
 }
 
-proc main() i32 {
+func main() i32 {
     var d NonZeroI32 = 5
     var _ = double(d)
     return 0

@@ -2,7 +2,7 @@ extern proc libc_printf(fmt *u8, ...) i32
 func divide(a i32, b i32 != 0) i32 {
     return a / b
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d\n", divide(100, 4))
     return 0
 }

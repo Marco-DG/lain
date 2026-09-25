@@ -5,7 +5,7 @@ func open_it(p *u8, fail bool) *u8 | NotFound | Denied {
     if fail { return NotFound }
     return p
 }
-proc main() i32 {
+func main() i32 effects io, raises {
     z = open_it("z", false) else panic("must exist")
     libc_printf("%s\n", z)
     return 0

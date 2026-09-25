@@ -12,6 +12,6 @@ type Day {
     Sun
 }
 
-proc main() i32 {
+func main() i32 {
     return 0
 }

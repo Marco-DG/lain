@@ -19,7 +19,7 @@ func rd(o Outer) i32 {
     return -1
 }
 
-proc main() i32 {
+func main() i32 {
     var a = Outer(Inner.A(4), 6)
     var b = Outer(Inner.B, 3)
     if rd(a) == 10 and rd(b) == 3 { return 0 }

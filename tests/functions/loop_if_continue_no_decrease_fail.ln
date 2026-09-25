@@ -15,4 +15,4 @@ func f(n i32) i32 {
     }
     return i
 }
-proc main() i32 { return f(10) }
+func main() i32 effects diverge { return f(10) }

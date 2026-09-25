@@ -15,7 +15,7 @@ func get_id(r Resource) i32 {
     return r.id
 }
 
-proc main() i32 {
+func main() i32 {
     var p *i32 = 0
     var r = Resource(p, 42)
     

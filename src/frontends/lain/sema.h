@@ -4136,6 +4136,19 @@ static void sema_check_no_mutual_recursion(DeclList *decls) {
             // as such rather than hidden by a suppression.
             if ((g_suppress_termination || g_suppress_recursion) && mrec_found_cycle_end == d)
                 continue;
+            // ── the ROW stands this down too (E.4) ───────────────────────────────────────
+            // Mutual recursion is a real gap in the sovereign engine: it proves SELF-recursion
+            // well-founded but has no opinion on `f -> g -> f`. So `effects diverge` on such a
+            // function is the honest reading — "I cannot prove this terminates" — and refusing it
+            // anyway leaves the cycle inexpressible, which is what a recursive-descent parser
+            // needs and what the corpus's calculator is.
+            //
+            // The last of four checks keyed on `kind == DECL_FUNCTION` rather than on what the
+            // function declared. Each was invisible while `proc` existed to absorb it.
+            if (d->as.function_decl.diverges
+                || (d->as.function_decl.effects_declared
+                    && (d->as.function_decl.effects_bound & EFFECT_DIVERGE)))
+                continue;
             fprintf(stderr,
                     "[E011] Error Ln %li, Col %li: pure function '%.*s' participates in mutual recursion (via '%.*s'). "
                     "Mutual recursion breaks the termination guarantee of 'func'.\n",

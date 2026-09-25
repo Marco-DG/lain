@@ -10,6 +10,6 @@ func bad(n i32) i32 {
     return i
 }
 
-proc main() i32 {
+func main() i32 {
     return bad(10)
 }

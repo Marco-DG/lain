@@ -10,10 +10,10 @@ type Outer {
     a Inner
     b i32
 }
-proc combine(x var Outer, y Inner) {
+func combine(x var Outer, y Inner) {
     x.b = y.n
 }
-proc main() i32 {
+func main() i32 {
     var o = Outer(Inner(1), 2)
     combine(var o, o.a)
     return 0

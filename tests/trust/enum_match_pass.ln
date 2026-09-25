@@ -11,7 +11,7 @@ func name(c Color) i32 {
         Blue:  3
     }
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d\n", name(Color.Green))
     return 0
 }

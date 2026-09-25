@@ -4,7 +4,7 @@
 // recap computes (here c==4, not 10), so `arr[c-10]` = arr[-6] was "proven safe"
 // and read out of bounds (ASan: stack-buffer-underflow). Now the recap is
 // discarded when the body can break/continue/return.
-proc main() i32 {
+func main() i32 {
     var arr i32[4] = [10, 20, 30, 40]
     var c i32 = 0
     for i in 0..10 {

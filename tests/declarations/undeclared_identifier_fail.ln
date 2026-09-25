@@ -5,4 +5,4 @@
 func f() i32 {
     return zzz
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

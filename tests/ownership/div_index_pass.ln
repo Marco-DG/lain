@@ -15,7 +15,7 @@ func half_view(arr i32[> 0]) i32 {
     return acc
 }
 
-proc main() i32 {
+func main() i32 {
     var xs i32[4] = [2, 4, 6, 8]
     return half_view(xs)
 }

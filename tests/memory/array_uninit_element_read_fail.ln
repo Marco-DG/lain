@@ -11,7 +11,7 @@
 // uninitialised until a WHOLE-array value is stored. It now reads `a[1]`, which is genuinely
 // never written. Both engines reject that: [E005] from the old one, [E019] "only partially
 // initialised" from the new.
-proc main() i32 {
+func main() i32 {
     var a i32[4]
     a[0] = 5
     return a[1]

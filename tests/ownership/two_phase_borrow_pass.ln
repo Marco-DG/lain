@@ -15,7 +15,7 @@ func get_cap(v Vec) i32 {
     return v.cap
 }
 
-proc main() i32 {
+func main() i32 {
     var v = Vec(0, 10)
 
     // Two-phase borrow via UFCS: v is mutably borrowed for push_n,

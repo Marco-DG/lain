@@ -1,4 +1,4 @@
-proc classify(n i32) i32 {
+func classify(n i32) i32 {
     var r i32 = 0
     case n {
         0: r = 100
@@ -7,7 +7,7 @@ proc classify(n i32) i32 {
     }
     return r
 }
-proc main() i32 {
+func main() i32 {
     var a i32 = classify(0)
     var b i32 = classify(1)
     var c i32 = classify(5)

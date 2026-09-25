@@ -6,7 +6,7 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() i32 {
+func main() i32 effects io {
     var x i32 = 1000
     var y = x as% u8
     

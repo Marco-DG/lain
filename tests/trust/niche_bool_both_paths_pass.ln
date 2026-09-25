@@ -15,7 +15,7 @@ func f(b bool, fail bool) bool | Nope {
     if fail { return Nope }
     return b
 }
-proc main() i32 {
+func main() i32 effects io {
     var a bool | Nope = f(true, false)      // payload true — the one that collides
     case a {
         Nope: libc_printf("a=nope\n")

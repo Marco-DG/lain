@@ -4,7 +4,7 @@
 extern proc libc_printf(fmt *u8, ...) i32
 MASK u8 = 0x0F
 func lo_nibble(c u8) u8 { return c & MASK }
-proc main() i32 {
+func main() i32 {
     var r i32 = lo_nibble(0xF3) as i32 - 3
     return r
 }

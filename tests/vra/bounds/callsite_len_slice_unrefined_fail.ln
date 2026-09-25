@@ -4,5 +4,5 @@
 // must be rejected. Distinct parameter names avoid the name-keyed range-table
 // collision, so the rejection is genuinely from the unproven precondition.
 func get(arr i32[], idx usize < arr.len) i32 { return arr[idx] }
-proc fwd(xs i32[], j usize) i32 { return get(xs, j) }
-proc main() i32 { return 0 }
+func fwd(xs i32[], j usize) i32 { return get(xs, j) }
+func main() i32 { return 0 }

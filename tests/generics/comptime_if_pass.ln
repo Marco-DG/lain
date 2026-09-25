@@ -3,7 +3,7 @@
 
 extern proc printf(fmt u8[:0], ...) i32
 
-proc main() {
+func main() effects io {
     comptime if @os == 1 {
         printf("Running on Linux\n")
     } else {

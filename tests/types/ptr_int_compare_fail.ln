@@ -6,6 +6,6 @@
 func g(a *i32, b i32) bool {
     return a == b
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

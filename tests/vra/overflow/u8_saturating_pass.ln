@@ -1,6 +1,6 @@
 // Using the saturating operator +| caps to u8 max instead of overflowing.
 
-proc main() i32 {
+func main() i32 {
     var a u8 = 200
     var b u8 = 100
     var c u8 = a +| b   // 200+100=300 -> saturate to 255

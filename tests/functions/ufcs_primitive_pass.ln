@@ -5,7 +5,7 @@
 extern proc libc_printf(fmt *u8, ...) i32
 func is_even(n i32) bool { return n % 2 == 0 }
 func twice(n i32) i32 { return n *% 2 }
-proc main() i32 {
+func main() i32 effects io {
     var x = 10
     if x.is_even() {
         libc_printf("%d\n", x.twice())

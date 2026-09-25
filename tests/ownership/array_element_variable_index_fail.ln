@@ -9,7 +9,7 @@
 // That is a real extension; this test is the line it has to cross deliberately.
 type R { mov h *i32, id i32 }
 func drop_it(mov {h, id} R) { }
-proc main() i32 {
+func main() i32 {
     var p *i32 = 0
     var a R[2] = [R(p, 1), R(p, 2)]
     var i usize = 0

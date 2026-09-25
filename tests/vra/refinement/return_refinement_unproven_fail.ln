@@ -6,6 +6,6 @@
 func f() i32 >= 0 {
     return 0 -% 7
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

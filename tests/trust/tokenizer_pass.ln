@@ -9,7 +9,7 @@ type Token {
     value i32
 }
 func is_digit(c u8) bool { return c >= 48 and c <= 57 }
-proc tokenize(src u8[], var out Token[m], m usize) usize <= m effects diverge {
+func tokenize(src u8[], var out Token[m], m usize) usize <= m effects diverge {
     var n usize = 0
     var i usize = 0
     while i < src.len {
@@ -48,7 +48,7 @@ proc tokenize(src u8[], var out Token[m], m usize) usize <= m effects diverge {
     }
     return n
 }
-proc main() i32 {
+func main() i32 effects diverge {
     var src = "12 + 34 * 5"
     var toks Token[16] = [Token(0, 0) for x in 0..16]
     var count = tokenize(src, var toks, 16)

@@ -14,7 +14,7 @@ func f(a i32[n], n usize) i32 {
     }
     return a[j]
 }
-proc main() i32 {
+func main() i32 {
     var a i32[3] = [1, 2, 3]
     return f(a, 3)
 }

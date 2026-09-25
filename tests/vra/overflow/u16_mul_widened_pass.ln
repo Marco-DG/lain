@@ -6,7 +6,7 @@
 func big(a u16, b u16) bool {
     return a * b > 1000000000
 }
-proc main() i32 {
+func main() i32 {
     var r = big(65535, 65535)
     return 0
 }

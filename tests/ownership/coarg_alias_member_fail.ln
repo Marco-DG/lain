@@ -11,10 +11,10 @@ type Outer {
     sub Inner
     tag i32
 }
-proc f(x var Inner, y Outer) {
+func f(x var Inner, y Outer) {
     x.v = y.tag
 }
-proc main() i32 {
+func main() i32 {
     var b = Outer(Inner(0), 5)
     f(var b.sub, b)
     return 0

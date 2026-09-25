@@ -4,7 +4,7 @@ func classify(n Small, miss bool) Small | TooBig {
     if miss { return TooBig }
     return n
 }
-proc main() i32 {
+func main() i32 effects io {
     var r Small | TooBig = classify(7, false)
     case r {
         TooBig: libc_printf("big\n")

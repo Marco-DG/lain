@@ -10,7 +10,7 @@ func drop(mov {ptr} Resource) {
     // destruct to consume
 }
 
-proc main() i32 {
+func main() i32 {
     var r = Resource(0)
     // r is linear (has mov field) but never consumed
     // ERROR: linear variable not consumed before return

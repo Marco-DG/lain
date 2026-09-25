@@ -8,7 +8,7 @@
 func slide(src i32[> 0], out i32[src.len - 1]) {
     for i in 0..out.len { out[i] = src[i] }
 }
-proc main() i32 {
+func main() i32 {
     var xs i32[4] = [1, 2, 3, 4]
     var ys i32[3] = [0, 0, 0]
     slide(xs, ys)

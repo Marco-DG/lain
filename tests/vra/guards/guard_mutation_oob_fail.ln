@@ -4,7 +4,7 @@
 // `i` out of bounds, so the `i in a` guard is stale and `a[i]` must be rejected
 // (previously it silently emitted an out-of-bounds read). Mutations in NESTED
 // scopes (if/while/for bodies) are caught too — see char_guard_mutation_nested_fail.
-proc t(a u8[16]) u8 {
+func t(a u8[16]) u8 effects diverge {
     var i u32 = 0
     var r u8 = 0
     while i in a {
@@ -14,4 +14,4 @@ proc t(a u8[16]) u8 {
     }
     return r
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

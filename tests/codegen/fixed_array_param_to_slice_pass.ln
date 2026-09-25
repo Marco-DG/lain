@@ -11,11 +11,11 @@ func take(s i32[]) usize {
     return s.len
 }
 
-proc forward(a i32[4]) usize {
+func forward(a i32[4]) usize {
     return take(a)
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var arr i32[4] = [1, 2, 3, 4]
     // `forward` returns an unbounded `usize` as far as a caller can tell, so `as` — the
     // PROVEN tier — will not take it. The subject here is the emitted C, not the cast.

@@ -14,6 +14,6 @@ type Reading {
     SensorFault
 }
 
-proc main() i32 {
+func main() i32 {
     return 0
 }

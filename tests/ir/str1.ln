@@ -1,7 +1,7 @@
-proc take(s u8[:0]) usize {
+func take(s u8[:0]) usize {
     return s.len
 }
-proc main() i32 {
+func main() i32 {
     if take("hello") == 5 {
         return 0
     }

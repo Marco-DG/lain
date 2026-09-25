@@ -6,7 +6,7 @@ func absorb(b u8) i32 {
     return 0
 }
 
-proc main() i32 {
+func main() i32 {
     var x u16 = 300         // OK in u16
     var _ = absorb(x)       // ERROR: x range [0, 65535] doesn't fit u8 param
     return 0

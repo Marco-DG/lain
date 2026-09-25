@@ -18,7 +18,7 @@ func lexer_advance(var l Lexer) u8 {
     return ch
 }
 
-proc main() i32 {
+func main() i32 effects io {
     src u8[5] = "hello"
     lex = Lexer(src, 0)
     c0 = lexer_current(lex)

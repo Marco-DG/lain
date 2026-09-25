@@ -9,7 +9,7 @@ type RGB {
     b u8
 }
 
-proc main() i32 {
+func main() i32 {
     var big u16 = 500
     var p = RGB(big, 0, 0)   // big doesn't fit u8 field
     var _p = p

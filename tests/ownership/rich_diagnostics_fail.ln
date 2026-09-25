@@ -18,7 +18,7 @@ type Resource {
 func drop(mov {id} Resource) {
 }
 
-proc main() i32 {
+func main() i32 {
     var p *u8 = 0
     var r = Resource(p)
     // Intentionally not consuming r — should get rich diagnostic

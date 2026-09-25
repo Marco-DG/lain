@@ -9,7 +9,7 @@ func quad(n i32) i32 {
     return square(square(n))
 }
 
-proc main() i32 {
+func main() i32 {
     var _ = quad(3)
     return 0
 }

@@ -9,7 +9,7 @@ type Option(T type) {
     None
 }
 
-proc main() i32 {
+func main() i32 {
     var s Option(*u8) = Option(*u8).Some("hi")
     var n Option(*u8) = Option(*u8).None
     var r1 = case s { Some(v): 10  None: 20 }

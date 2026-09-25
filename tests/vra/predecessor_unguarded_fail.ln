@@ -6,7 +6,7 @@
 // `i - 1` at i == 0 is SIZE_MAX, so the INDEX EXPRESSION is what is ill-defined, and the
 // out-of-bounds read is its consequence. Both codes reject; this one says which edit
 // fixes the program (guard `i > 0`), which the bounds code cannot.
-proc f(a i32[n], n usize) i32 {
+func f(a i32[n], n usize) i32 {
     var s i32 = 0
     var i usize = 0
     while i < n decreasing n - i {
@@ -15,4 +15,4 @@ proc f(a i32[n], n usize) i32 {
     }
     return s
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

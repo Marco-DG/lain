@@ -10,4 +10,4 @@ func loopy(n i32, flag i32) i32 {
     }
     return i
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

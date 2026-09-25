@@ -10,7 +10,7 @@ type P {
     x i32
 }
 
-proc setall(var xs P[3]) {
+func setall(var xs P[3]) {
     var i usize = 0
     while i < 3 decreasing 3 - i {
         xs[i].x = (i as i32) +% 1
@@ -18,7 +18,7 @@ proc setall(var xs P[3]) {
     }
 }
 
-proc main() i32 {
+func main() i32 {
     var a P[3] = [P(0), P(0), P(0)]
     setall(var a)
     if a[0].x == 1 and a[1].x == 2 and a[2].x == 3 { return 0 }

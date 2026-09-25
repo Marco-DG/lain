@@ -21,7 +21,7 @@ func shared_val(s Sh) i32 {
     return -1
 }
 
-proc mutate(var s Sh) {
+func mutate(var s Sh) {
     case s {
         Circle(r): s = Sh.Circle(r +% 1)
         Rect(w, h): s = Sh.Rect(w, h)
@@ -29,7 +29,7 @@ proc mutate(var s Sh) {
     }
 }
 
-proc main() i32 {
+func main() i32 {
     var c = Sh.Circle(10)
     var q = Sh.Rect(6, 7)
     var d = Sh.Dot

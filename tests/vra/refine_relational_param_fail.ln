@@ -5,7 +5,7 @@
 // composing the relation gets no further than "i is at most some unknown j". Refusing is right,
 // and this test is what stops a future widening of the relational rule from concluding a bound
 // out of a chain that has no anchor.
-proc pick(a i32[n], n usize, j usize, i usize <= j) i32 {
+func pick(a i32[n], n usize, j usize, i usize <= j) i32 {
     return a[i]
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

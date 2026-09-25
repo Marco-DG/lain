@@ -18,7 +18,7 @@ func get(b Box, a i32[4]) i32 {
 func inc(b Box) i32 {
     return b.pct + 1
 }
-proc main() i32 {
+func main() i32 {
     var b = Box(2, 50)
     var xs i32[4] = [10, 20, 30, 40]
     return get(b, xs)

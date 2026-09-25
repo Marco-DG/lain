@@ -9,7 +9,7 @@ func read_cfg(p *u8, fail bool) *u8 | NotFound | Denied {
     f = try open_it(p, fail)
     return f
 }
-proc main() i32 {
+func main() i32 effects io {
     var r *u8 | NotFound | Denied = read_cfg("f", false)
     case r {
         NotFound: libc_printf("nf\n")

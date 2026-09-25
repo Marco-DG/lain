@@ -13,13 +13,13 @@ type Box {
     }
     Empty
 }
-proc noop() {
+func noop() {
     var x = 0
 }
-proc t(b mov Box) {
+func t(b mov Box) {
     case b {
         Full(ptr): noop()
         Empty: noop()
     }
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

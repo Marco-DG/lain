@@ -3,10 +3,10 @@
 type Vec {
     x i32
 }
-proc bump(var v Vec) {
+func bump(var v Vec) {
     v.x = v.x + 1
 }
-proc main() i32 {
+func main() i32 {
     var a = Vec(1)
     bump(a)
     return a.x

@@ -5,4 +5,4 @@
 func bad(m usize) usize <= m {
     return m + 1
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

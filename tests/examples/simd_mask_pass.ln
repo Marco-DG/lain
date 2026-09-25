@@ -3,7 +3,7 @@
 // `@ctz`/`@clz`/`@popcount` scan it. The 16-wide path uses x86-64 baseline SSE2
 // (`_mm_movemask_epi8`), so it compiles with no `-mavx2`; the scalar bit builtins
 // lower to `__builtin_ctz/clz/popcount` and are fully portable.
-proc main() i32 {
+func main() i32 {
     var d u8x16 = [7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0]
     var s u8x16 = [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]
 

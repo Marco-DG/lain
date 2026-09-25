@@ -5,7 +5,7 @@
 // copy moves p, so `libc_free(mov p)` is a use-after-move (E002 already-consumed).
 extern proc libc_malloc(n usize) mov *u8
 extern proc libc_free(p mov *u8)
-proc main() i32 {
+func main() i32 effects io {
     var p = libc_malloc(16)
     var q = p
     libc_free(mov p)

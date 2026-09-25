@@ -13,7 +13,7 @@
 //
 // element_range_subslice_fail.ln is the direction that matters: a callee that rewrites the
 // array through the slice makes the join stale, and must keep failing.
-proc main() i32 {
+func main() i32 {
     var xs i32[5] = [10, 20, 30, 40, 50]
     var s = xs[1..4]
     var t = s[1..3]

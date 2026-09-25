@@ -4,7 +4,7 @@
 type SmallPos = i32 >= 1 and <= 10
 type NonZero = i32 != 0
 
-proc main() i32 {
+func main() i32 {
     var p SmallPos = 5
     var n NonZero = 42
     return 0

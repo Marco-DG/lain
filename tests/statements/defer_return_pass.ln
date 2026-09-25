@@ -1,16 +1,16 @@
 extern proc printf(fmt *u8, ...) i32
 
-proc test_ret() i32 {
+func test_ret() i32 effects io {
     defer printf("2")
     return 42
 }
 
-proc test_void() {
+func test_void() effects io {
     defer printf("4")
     return
 }
 
-proc main() {
+func main() effects io {
     printf("1")
     var x = test_ret()
     printf("3")

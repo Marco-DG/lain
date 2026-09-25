@@ -18,7 +18,7 @@ func total(a u8[4096]) i32 {
     }
     return s
 }
-proc main() i32 {
+func main() i32 {
     var buf u8[4096] = [0 for x in 0..4096]
     if total(buf) == 0 { return 0 }
     return 1

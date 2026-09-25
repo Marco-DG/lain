@@ -8,12 +8,12 @@ type Data {
 
 func drop(mov {value} Data) { }
 
-proc consume_data(var d Data, mov other Data) {
+func consume_data(var d Data, mov other Data) {
     d.value = other.value
     drop(mov other)
 }
 
-proc main() i32 {
+func main() i32 {
     var d = Data(42)
     var e = Data(99)
 

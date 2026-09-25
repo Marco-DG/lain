@@ -8,7 +8,7 @@ func lo(m usize) usize <= m {
     if m == 0 { return 0 }
     return m - 1
 }
-proc main() i32 {
+func main() i32 {
     var a i32[8] = [0 for z in 0..8]
     // pick(5) <= 5 < 8 and lo(3) <= 2 < 8 both prove in bounds
     return a[pick(5)] + a[lo(3)]

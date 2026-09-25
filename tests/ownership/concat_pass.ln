@@ -21,7 +21,7 @@ func concat(na usize < 4096, a i32[na], nb usize < 4096, b i32[nb], out i32[na +
     }
 }
 
-proc main() i32 {
+func main() i32 {
     var xs i32[2] = [1, 2]
     var ys i32[3] = [3, 4, 5]
     var zs i32[5] = [0, 0, 0, 0, 0]

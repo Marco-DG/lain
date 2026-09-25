@@ -12,7 +12,7 @@
 //
 // The fix a user should reach for is in the diagnostic: constrain the source length.
 // dependent_size_guarded_pass.ln is that program, and it compiles.
-proc run(n usize >= 0 and <= 4) i32 {
+func run(n usize >= 0 and <= 4) i32 {
     var xs i32[4] = [1, 2, 3, 4]
     var a = xs[0..n]
     var b = xs[0..n]
@@ -22,4 +22,4 @@ proc run(n usize >= 0 and <= 4) i32 {
 func slide(src i32[], out i32[src.len - 1]) {
     for i in 0..out.len { out[i] = src[i] }
 }
-proc main() i32 { return run(0) }
+func main() i32 { return run(0) }

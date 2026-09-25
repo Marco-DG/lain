@@ -6,7 +6,7 @@ func clamp_id(x Pct) Pct {
     return x
 }
 
-proc main() i32 {
+func main() i32 {
     var p Pct = 50
     var q = clamp_id(p)
     var _q = q

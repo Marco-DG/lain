@@ -1,5 +1,5 @@
 import std.math.{min, max, abs, clamp}
-proc main() i32 {
+func main() i32 {
     var a = min(3, 7)
     var b = max(3, 7)
     var c = abs(0 - 5)

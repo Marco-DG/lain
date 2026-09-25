@@ -18,7 +18,7 @@
 type H { mov p *i32 }
 type R { mov h1 H, mov h2 H }
 func drop_h(mov {p} H) { }
-proc main() i32 {
+func main() i32 {
     var q *i32 = 0
     var a R[1] = [R(H(q), H(q))]
     drop_h(mov a[0].h1)

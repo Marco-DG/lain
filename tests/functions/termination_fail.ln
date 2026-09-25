@@ -9,6 +9,6 @@ func spin(n i32) i32 {
     return spin(n)
 }
 
-proc main() i32 {
+func main() i32 effects diverge {
     return spin(5)
 }

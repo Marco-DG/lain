@@ -7,7 +7,7 @@ type RGB {
     b u8
 }
 
-proc main() i32 {
+func main() i32 {
     var p RGB
     var big u16 = 500
     p.r = big   // u16 range doesn't fit u8 field

@@ -3,7 +3,7 @@ type Shape {
     Circle { radius i32 }
     Rectangle { width i32, height i32 }
 }
-proc main() i32 {
+func main() i32 effects io {
     var r = Shape.Rectangle(6, 7)
     case r {
         Circle(rad):     libc_printf("c %d\n", rad)

@@ -2,7 +2,7 @@
 // @movemask ∈ [0, 2^N). So ordinary (non-wrapping) arithmetic on a population
 // count no longer false-trips [E086] — the "safety obstructs the perfect code"
 // flaw #6, now closed. (16-wide movemask = baseline SSE2, harness-safe.)
-proc main() i32 {
+func main() i32 {
     var d u8x16 = [7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0]
     var s u8x16 = [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]
 

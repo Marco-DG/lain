@@ -5,6 +5,6 @@
 func f(p *i32) *u8 {
     return p
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

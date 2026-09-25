@@ -9,10 +9,10 @@
 // The third condition is coverage: every index in [0, len) must be written by a store the scan
 // can see, or declared by an IR_INIT fact. Without it a load could read an element nothing
 // wrote, and the join would describe a value that element never held.
-proc bump(var v i32[2], k i32) { v[0] = k }
-proc f(k i32) i32 {
+func bump(var v i32[2], k i32) { v[0] = k }
+func f(k i32) i32 {
     var a i32[2] = [1, 2]
     bump(var a, k)
     return a[0] + a[1]
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

@@ -10,7 +10,7 @@
 // `i + k < n` for a constant k >= 0 is `i < n - k` over the integers, so T is recovered against
 // a limit lowered by k. Here: n < 4096, elements are i8, so the total is within [-4096*128,
 // 4096*127] and fits i32 with room to spare.
-proc sum_pairs(a i8[n], n usize < 4096) i32 {
+func sum_pairs(a i8[n], n usize < 4096) i32 {
     var s i32 = 0
     var i usize = 0
     while i + 1 < n decreasing n - i {
@@ -20,4 +20,4 @@ proc sum_pairs(a i8[n], n usize < 4096) i32 {
     return s
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

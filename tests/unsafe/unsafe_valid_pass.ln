@@ -3,7 +3,7 @@
 
 
 
-proc main() {
+func main() {
     var ptr *i32 = 0// null pointer representation, or use malloc
 
     unsafe {

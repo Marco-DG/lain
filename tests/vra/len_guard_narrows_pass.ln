@@ -20,7 +20,7 @@ func nonempty2(a i32[n], n usize) i32 {
     }
     return 0
 }
-proc main() i32 {
+func main() i32 {
     var a i32[3] = [7, 8, 9]
     if first(a, 3) == 7 {
         if at(a, 3, 2) == 9 {

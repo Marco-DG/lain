@@ -4,7 +4,7 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc impure_action() {
+func impure_action() {
     libc_printf("Side effect!\n")
 }
 
@@ -14,6 +14,6 @@ func pure_function() i32 {
     return 0
 }
 
-proc main() i32 {
+func main() i32 {
     return pure_function()
 }

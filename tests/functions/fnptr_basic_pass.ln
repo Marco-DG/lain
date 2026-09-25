@@ -2,7 +2,7 @@
 func choose(a i32, b i32) i32 {
     return a
 }
-proc main() i32 {
+func main() i32 {
     var f *func(i32, i32) i32 = choose
     if f(7, 9) == 7 { return 0 }
     return 1

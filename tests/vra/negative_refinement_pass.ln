@@ -18,7 +18,7 @@ type Delta {
 func shift(d Delta, a i32[17]) i32 {
     return a[(d.v + 8) as usize]
 }
-proc main() i32 {
+func main() i32 {
     var xs i32[17] = [0 for k in 0..17]
     var d = Delta(-8)
     return clamp_to_byte(-100) as i32 +% 100 +% shift(d, xs)

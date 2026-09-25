@@ -5,7 +5,7 @@ type Point {
     y u8
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var p = Point(10, 20)
     
     // Test manual destructuring / access

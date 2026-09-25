@@ -3,4 +3,4 @@
 func clamp_prod(a i32, b i32) i32 {
     return (a % 10) * (b % 10)
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

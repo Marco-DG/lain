@@ -11,7 +11,7 @@ func sum() i32 {
     }
     return s
 }
-proc main() i32 {
+func main() i32 {
     if sum() == 16 { return 0 }
     return 1
 }

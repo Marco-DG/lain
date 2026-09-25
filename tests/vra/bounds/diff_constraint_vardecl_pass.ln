@@ -5,8 +5,8 @@
 // hi=lo, lo<__len_a  =>  hi<__len_a) — so the forwarded check(a, hi) is accepted
 // with NO runtime bounds check. If the seeding regresses, this fails E012.
 func check(a i32[], hi usize < a.len) i32 { return a[hi] }
-proc test(a i32[], lo usize < a.len) i32 {
+func test(a i32[], lo usize < a.len) i32 {
     var hi = lo
     return check(a, hi)
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

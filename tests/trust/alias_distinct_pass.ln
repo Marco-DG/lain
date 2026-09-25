@@ -4,14 +4,14 @@
 // relying on an engine that was not looking.
 // TRUST: distinct arrays into restrict'd params — sound, and the result is correct.
 extern proc libc_printf(fmt *u8, ...) i32
-proc vadd(n usize, dst i32[n], src i32[n]) {
+func vadd(n usize, dst i32[n], src i32[n]) {
     var i usize = 0
     while i < n decreasing n - i {
         dst[i] = dst[i] +% src[i]
         i += 1
     }
 }
-proc main() i32 {
+func main() i32 effects io {
     var a i32[4] = [1, 2, 3, 4]
     var b i32[4] = [10, 20, 30, 40]
     vadd(4, a, b)

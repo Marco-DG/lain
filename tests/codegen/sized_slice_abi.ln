@@ -36,6 +36,6 @@ func concat_prefix(na usize < 4096, a i32[na], nb usize < 4096, b i32[nb], out i
     }
 }
 
-proc main() i32 {
+func main() i32 {
     return 0
 }

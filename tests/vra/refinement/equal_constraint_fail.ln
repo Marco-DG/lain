@@ -3,7 +3,7 @@
 
 type Zero = i32 == 0
 
-proc main() i32 {
+func main() i32 {
     var z Zero = 1
     var _z = z
     return 0

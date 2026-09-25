@@ -14,7 +14,7 @@ func depth(n usize) usize decreasing n {
     if n < 1 { return 0 }
     return depth(n / 2) +% 1
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d %d\n", fib(10), depth(16) as% i32)
     return 0
 }

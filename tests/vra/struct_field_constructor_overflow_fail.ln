@@ -4,7 +4,7 @@
 // ACTUAL values, not merely make the struct look known: doubling this one does not fit i32.
 type Point { x i32, y i32 }
 
-proc main() i32 {
+func main() i32 {
     var p = Point(2000000000, 4)
     return p.x + p.x
 }

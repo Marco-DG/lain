@@ -5,4 +5,4 @@ func classify(p *u8, err bool) *u8 | NotFound | Denied {
     if err { return NotFound }
     return p
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

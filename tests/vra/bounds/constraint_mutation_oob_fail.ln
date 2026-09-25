@@ -4,7 +4,7 @@
 // prove `src[i]`. That constraint goes stale the moment `i` is reassigned, so
 // `while i < n { i = i +% 1000; src[i] }` must be REJECTED — the mutated `i` is
 // out of range and the chained proof must not survive the mutation.
-proc t(src u8[4096], n u32 < 4097) u8 {
+func t(src u8[4096], n u32 < 4097) u8 effects diverge {
     var i u32 = 0
     var r u8 = 0
     while i < n {
@@ -14,4 +14,4 @@ proc t(src u8[4096], n u32 < 4097) u8 {
     }
     return r
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

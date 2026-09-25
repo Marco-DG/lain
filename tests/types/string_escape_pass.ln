@@ -4,7 +4,7 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("he said \"hi\"\n")
     libc_printf("tab:\there\n")
     libc_printf("backslash: \\\n")

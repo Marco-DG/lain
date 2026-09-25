@@ -10,4 +10,4 @@ func use_bad(seed usize) i32 {
     }
     return a[x]
 }
-proc main() i32 { return use_bad(5) }
+func main() i32 { return use_bad(5) }

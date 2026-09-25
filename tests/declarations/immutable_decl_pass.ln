@@ -4,7 +4,7 @@ type Point {
     y i32
 }
 
-proc main() i32 {
+func main() i32 effects io {
     a i32 = 42
     b u8 = 10
     c usize = 100

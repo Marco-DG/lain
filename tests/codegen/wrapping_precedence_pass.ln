@@ -13,7 +13,7 @@
 // The emit gate caught it by DIFFERENTIAL against the new backend, which was right all along.
 // This test asserts the VALUES.
 extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+func main() i32 effects io {
     var a u32 = 4
     var b u32 = 3
     var w u32 = a +% (b & 1)        // 4 + 1 = 5, not (4+3)&1 = 1

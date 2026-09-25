@@ -13,10 +13,10 @@
 // replaced, because it looks like progress.
 type R { mov h *i32, id i32 }
 func drop_it(mov {h, id} R) { }
-proc drain(mov a R[2]) {
+func drain(mov a R[2]) {
     drop_it(mov a[0])
 }
-proc main() i32 {
+func main() i32 {
     var p *i32 = 0
     var a R[2] = [R(p, 1), R(p, 2)]
     drain(mov a)

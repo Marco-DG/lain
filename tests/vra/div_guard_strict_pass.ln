@@ -1,9 +1,9 @@
 // The other direction of div_guard_nonstrict_fail.ln: the STRICT `i < n / 2` does prove
 // n >= 2, so `n - 1 - i` is underflow-free and `a[n - 1 - i]` is in bounds. Without this
 // inference the two-pointer reverse is rejected on its own index expression.
-proc f(a i32[n], n usize) i32 {
+func f(a i32[n], n usize) i32 {
     var i usize = 0
     if i < n / 2 { return a[n - 1 - i] }
     return 0
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

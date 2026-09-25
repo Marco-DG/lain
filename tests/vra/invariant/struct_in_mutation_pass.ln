@@ -4,7 +4,7 @@ type Buf {
     pos  usize in data
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var data u8[5]
     var b = Buf(data, 0)
     b.pos = 2       // OK: 2 < 5, invariant preserved

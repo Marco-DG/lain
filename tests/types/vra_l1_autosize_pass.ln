@@ -8,7 +8,7 @@ func compute() u8 {
     return y
 }
 
-proc main() i32 {
+func main() i32 {
     var v = compute()
     return 0
 }

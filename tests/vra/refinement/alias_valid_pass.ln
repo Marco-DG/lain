@@ -3,7 +3,7 @@ type Pct = i32 >= 0 and <= 100
 func f(p Pct) Pct {
     return p
 }
-proc main() i32 {
+func main() i32 {
     var p Pct = 50
     return f(p)
 }

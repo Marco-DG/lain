@@ -7,7 +7,7 @@ func pick(t i32[4]) i32 {
     return t[0]
 }
 
-proc div_guarded(t i32[4], a i32 >= 0 and <= 1000) i32 {
+func div_guarded(t i32[4], a i32 >= 0 and <= 1000) i32 {
     var d = pick(t)
     if d != 0 {
         d = pick(t)
@@ -16,4 +16,4 @@ proc div_guarded(t i32[4], a i32 >= 0 and <= 1000) i32 {
     return 0
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

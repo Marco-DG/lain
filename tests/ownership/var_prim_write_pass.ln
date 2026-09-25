@@ -3,11 +3,11 @@
 // Was: E009 ("cannot assign to immutable variable").
 // n + 1 wraps (`+%`) since n is an unconstrained i32.
 
-proc add_one(var n i32) {
+func add_one(var n i32) {
     n = n +% 1
 }
 
-proc main() i32 {
+func main() i32 {
     var x i32 = 41
     add_one(var x)
     return x

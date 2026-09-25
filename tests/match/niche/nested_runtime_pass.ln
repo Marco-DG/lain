@@ -16,7 +16,7 @@ type OuterResult {
     OutOfMemory
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var r1 = OuterResult.NotFound
     var r2 = OuterResult.Permission
     var r3 = OuterResult.OutOfMemory

@@ -2,10 +2,10 @@
 // trailing NUL, so `.data` handed to a C string API (printf "%s") does not read
 // past the buffer. Executed under ASan by run_trust.sh — proves no overread.
 extern proc libc_printf(fmt *u8, ...) i32
-proc show(msg u8[:0]) {
+func show(msg u8[:0]) effects io {
     libc_printf("[%s]\n", msg.data)
 }
-proc main() i32 {
+func main() i32 effects io {
     var s = "hello"
     show(s)
     show("world")

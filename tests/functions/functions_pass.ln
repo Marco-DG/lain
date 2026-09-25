@@ -6,12 +6,12 @@ func add(a i32, b i32) i32 {
 
 // Fibonacci grows exponentially and overflows i32, so the recursive sum wraps
 // (`+%`). n >= 0 keeps the n-1 / n-2 index arithmetic in range.
-proc fib(n i32 >= 0) i32 {
+func fib(n i32 >= 0) i32 effects diverge {
     if n < 2 { return n }
     return fib(n-1) +% fib(n-2)
 }
 
-proc main() i32 {
+func main() i32 effects diverge, io {
     libc_printf("add(10, 20) = %d\n", add(10, 20))
     libc_printf("fib(10) = %d\n", fib(10))
     return 0

@@ -6,6 +6,6 @@
 func clamp_to_byte(a i32 >= -100 and <= 100) i8 {
     return a as i8
 }
-proc main() i32 {
+func main() i32 {
     return clamp_to_byte(-999) as i32
 }

@@ -12,7 +12,7 @@ func peek(b Box(i32)) i32 {
         None: 0
     }
 }
-proc main() i32 {
+func main() i32 {
     var b Box(i32) = Box(i32, Option(i32).Some(5))
     if peek(b) == 5 { return 0 }
     return 1

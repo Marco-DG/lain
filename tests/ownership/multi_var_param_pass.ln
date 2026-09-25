@@ -15,7 +15,7 @@ func read_data(d Data) i32 {
     return d.x
 }
 
-proc main() i32 {
+func main() i32 {
     var da Data
     var db Data
     da.x = 10

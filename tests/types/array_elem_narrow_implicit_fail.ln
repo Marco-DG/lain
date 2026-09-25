@@ -6,6 +6,6 @@ func mk(a i32) i32 {
     xs u8[2] = [a, a]
     return 0
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

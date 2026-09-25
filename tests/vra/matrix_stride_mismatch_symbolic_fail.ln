@@ -2,7 +2,7 @@
 // SOUNDNESS: the flattened-2D recognizer requires the index stride to MATCH the
 // array's second dimension. Here the array is sized `h*w2` but the index strides by
 // `w` (!= w2), so the `i*w` overflow is NOT exempt and is rejected — no over-proof.
-proc f(a i32[h * w2], h usize, w usize, w2 usize) i32 {
+func f(a i32[h * w2], h usize, w usize, w2 usize) i32 {
     var i usize = 0
     while i < h decreasing h - i {
         var j usize = 0
@@ -14,4 +14,4 @@ proc f(a i32[h * w2], h usize, w usize, w2 usize) i32 {
     }
     return 0
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

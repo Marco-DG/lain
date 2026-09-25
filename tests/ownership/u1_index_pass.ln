@@ -7,7 +7,7 @@ func pick2(pair i32[2], b u1) i32 {
     return pair[b as i32]
 }
 
-proc main() i32 {
+func main() i32 {
     var p i32[2] = [10, 20]
     return pick2(p, 1)
 }

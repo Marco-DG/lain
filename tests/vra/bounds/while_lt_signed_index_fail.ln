@@ -4,7 +4,7 @@
 // Here `i` is a SIGNED i32 seeded from a parameter, so it may be negative; the
 // chain proves i < n <= 4095 but cannot prove i >= 0, so `src[i]` must be
 // rejected. (Only an unsigned index or a VRA-proven non-negative one qualifies.)
-proc scan(src u8[4096], n i32 < 4096, istart i32) u8 {
+func scan(src u8[4096], n i32 < 4096, istart i32) u8 effects diverge {
     var i i32 = istart
     var r u8 = 0
     while i < n {
@@ -13,4 +13,4 @@ proc scan(src u8[4096], n i32 < 4096, istart i32) u8 {
     }
     return r
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

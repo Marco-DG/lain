@@ -12,7 +12,7 @@
 //
 // The refusing side is affine_recap_multistep_fail.ln — with TWO updates per iteration the
 // bound would be an undercount, and it must not apply.
-proc main() i32 {
+func main() i32 {
     var a i32[3] = [10, 20, 30]
     a[0] = 5
     var s i32 = 0

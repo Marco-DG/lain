@@ -3,7 +3,7 @@ func classify(p *u8, e bool) *u8 | NotFound | Denied {
     if e { return NotFound }
     return p
 }
-proc main() i32 {
+func main() i32 effects io {
     var ok *u8 | NotFound | Denied = classify("hi", false)
     var bad *u8 | NotFound | Denied = classify("hi", true)
     // Every marker is matched explicitly, so the `else` arm is provably the

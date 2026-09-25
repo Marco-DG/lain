@@ -3,8 +3,8 @@
 // has no fixed width, so narrowing it to i32 can lose data (a length can exceed
 // 2^31); an unproven usize -> i32 is rejected. reject_lossy_int_conversion
 // previously skipped platform-type sources entirely (a silent-truncation hole).
-proc f(a usize) i32 {
+func f(a usize) i32 {
     var x i32 = a
     return x
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

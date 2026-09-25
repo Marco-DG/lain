@@ -14,9 +14,9 @@
 // proven say `@diverges`. Across 742 corpus programs that came to TEN markers — fewer
 // annotations than before, and 173 functions gained a guarantee they did not have.
 extern proc libc_printf(fmt *u8, ...) i32
-proc spin(n i32) i32 {
+func spin(n i32) i32 {
     var i i32 = 0
     while i < n { }
     return libc_printf("%d\n", i)
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

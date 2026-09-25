@@ -8,7 +8,7 @@ type Pair {
     mov right *i32
 }
 
-proc main() i32 {
+func main() i32 {
     var p *i32 = 0
     var q *i32 = 0
     var pair = Pair(p, q)

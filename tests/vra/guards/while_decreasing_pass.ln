@@ -11,7 +11,7 @@ func count_down(n i32 >= 0) i32 {
     return k
 }
 
-proc main() i32 {
+func main() i32 {
     var _ = count_down(5)
     return 0
 }

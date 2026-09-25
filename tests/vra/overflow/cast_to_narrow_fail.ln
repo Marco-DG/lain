@@ -9,7 +9,7 @@
 // narrowing cannot lose information without saying so. The other three tiers are TOTAL and owe
 // nothing: `as?` traps, `as%` wraps, `as|` clamps. See cast_to_narrow_pass.ln for the spelling
 // that means what this program was doing.
-proc main() i32 {
+func main() i32 {
     var big u16 = 500
     var narrow u8 = big as u8
     return 0

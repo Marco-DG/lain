@@ -17,7 +17,7 @@ type Data {
     value i32
 }
 
-proc main() i32 {
+func main() i32 {
     var data Data
     data.value = 42
     var ref = var data.value

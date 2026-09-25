@@ -4,4 +4,4 @@
 // binding is immutable, so its refinement cannot have been invalidated.
 func need_nz(b i32 != 0) i32 { return 100 / b }
 func fwd(n i32 != 0) i32 { return need_nz(n) }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

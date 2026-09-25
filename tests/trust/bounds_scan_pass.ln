@@ -14,7 +14,7 @@ func sum_all(data u8[:0]) i32 {
     }
     return s
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d\n", sum_all("ABC"))
     return 0
 }

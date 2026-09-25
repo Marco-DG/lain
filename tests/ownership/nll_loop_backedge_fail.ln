@@ -25,7 +25,7 @@ func get_ref(var d Data) var i32 {
 func consume_ref(var r i32) {
 }
 
-proc main() i32 {
+func main() i32 effects diverge {
     var data Data
     data.value = 42
     var ref = get_ref(var data)

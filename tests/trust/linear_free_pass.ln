@@ -4,7 +4,7 @@
 extern proc libc_printf(fmt *u8, ...) i32
 extern proc libc_malloc(size usize) mov *void
 extern proc libc_free(ptr mov *void)
-proc main() i32 {
+func main() i32 effects io {
     var buf = libc_malloc(64)
     defer libc_free(mov buf)
     libc_printf("alloc-freed-once\n")

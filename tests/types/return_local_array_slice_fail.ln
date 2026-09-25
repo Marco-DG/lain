@@ -6,6 +6,6 @@ func bad() i32[] {
     var xs i32[3] = [1, 2, 3]
     return xs
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

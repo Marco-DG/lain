@@ -12,7 +12,7 @@ type Reading {
     SensorFault
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var r1 = Reading.NoData
     var r2 = Reading.SensorFault
     var r3 = Reading.Ok(500)

@@ -7,8 +7,8 @@
 type Vec { x i32, y i32 }
 func length(v Vec) i32 { return v.x }
 func idf(n i32) i32 { return n }
-proc scale(var v Vec, factor i32) { v.x = v.x *% factor }
-proc main() i32 {
+func scale(var v Vec, factor i32) { v.x = v.x *% factor }
+func main() i32 {
     var v = Vec(2, 3)
     scale(var v, idf(length(v)))
     return v.x

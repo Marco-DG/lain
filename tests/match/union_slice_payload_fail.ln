@@ -19,7 +19,7 @@ func pick(b bool) u8[:0] | none {
     if b { return "hi" }
     return none
 }
-proc main() i32 {
+func main() i32 {
     var r u8[:0] | none = pick(true)
     case r {
         none: libc_printf("none\n")

@@ -2,7 +2,7 @@
 // `none` is the absent marker. No `?`, no `nil`.
 func take_present(p *u8) *u8 | none { return p }
 func get_absent()      *u8 | none { return none }
-proc main() i32 {
+func main() i32 {
     var a *u8 | none = none
     var b *u8 | none = get_absent()
     return 0

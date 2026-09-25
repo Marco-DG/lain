@@ -6,7 +6,7 @@
 type P {
     x u32
 }
-proc bump(p *P) {
+func bump(p *P) {
     p.x = p.x +% 1
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

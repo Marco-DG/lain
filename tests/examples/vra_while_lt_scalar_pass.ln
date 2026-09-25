@@ -3,7 +3,7 @@
 // the loop condition and chains it with `n`'s range (`n < 4096`): i <= n-1 <=
 // 4094 < 4096, so `src[i]` is in bounds. Crucially this does NOT narrow `i`'s
 // own range, so an ordinary `i +% 1`/`i +% k` never spuriously trips overflow.
-proc scan(src u8[4096], n u32 < 4096, term u8) u32 {
+func scan(src u8[4096], n u32 < 4096, term u8) u32 effects diverge {
     var i u32 = 0
     while i < n {
         if src[i] == term { return i }
@@ -11,7 +11,7 @@ proc scan(src u8[4096], n u32 < 4096, term u8) u32 {
     }
     return n
 }
-proc main() i32 {
+func main() i32 effects diverge {
     var buf u8[4096]
     var k u32 = 0
     while k < 4096 {

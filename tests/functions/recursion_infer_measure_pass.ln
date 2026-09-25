@@ -18,7 +18,7 @@ func cnt(n i32) i32 {
     if n <= 0 { return 0 }
     return cnt(n / 2) +% 1
 }
-proc main() i32 {
+func main() i32 {
     // fib(10) == 55, cnt(16) == 5  → exit 0 on success
     if fib(10) == 55 {
         if cnt(16) == 5 {

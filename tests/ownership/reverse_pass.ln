@@ -9,7 +9,7 @@ func reverse(arr i32[], out i32[arr.len]) {
     }
 }
 
-proc main() i32 {
+func main() i32 {
     var xs i32[4] = [1, 2, 3, 4]
     var ys i32[4] = [0, 0, 0, 0]
     reverse(xs, ys)

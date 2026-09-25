@@ -6,7 +6,7 @@ type Color {
     Red
     Blue
 }
-proc main() i32 {
+func main() i32 {
     var a = Color.Red
     var b = Color.Blue
     var c = a + b

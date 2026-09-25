@@ -8,7 +8,7 @@ func clamp(x i32) Weight {
     if x > 255 { return 255 }
     return x
 }
-proc main() i32 {
+func main() i32 effects io {
     var a = clamp(300)
     var b = clamp(0 - 9)
     var c = clamp(70)

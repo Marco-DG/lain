@@ -3,9 +3,9 @@
 // The teeth for checked_mul_keeps_value_pass.ln. Carrying a copy's interval must not invent one:
 // these operands are refined only to i32's own range, so the checked multiply's result is
 // anything that fits i32 and doubling it does not.
-proc twice(a i32, b i32) i32 {
+func twice(a i32, b i32) i32 {
     var p = a *? b else 0
     return p + p
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

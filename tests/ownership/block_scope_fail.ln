@@ -17,4 +17,4 @@ func test_block() {
         // No close_file(x) -> Should trigger linearity error at the end of the block
     }
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

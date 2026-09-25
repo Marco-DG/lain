@@ -7,7 +7,7 @@
 // The loaded value is one of the source cell's values, so the source's own element join bounds
 // it. That join is over every store to the source anywhere in the function, and an escaping
 // cell has already been dropped, which is what makes borrowing it sound.
-proc main() i32 {
+func main() i32 {
     var b i32[4] = [5, 6, 7, 8]
     var a i32[4] = b
     var c i32[4] = a          // a copy of a copy: needs a second round

@@ -9,7 +9,7 @@ func get_or(o Option(i32), d i32) i32 {
         None: d
     }
 }
-proc main() i32 {
+func main() i32 {
     var s Option(i32) = Option(i32).Some(5)
     var n Option(i32) = Option(i32).None
     if get_or(s, 0) == 5 {

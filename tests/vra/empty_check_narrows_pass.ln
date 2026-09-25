@@ -16,7 +16,7 @@ func amax(a i32[n], n usize) i32 {
     }
     return m
 }
-proc main() i32 {
+func main() i32 {
     var a i32[5] = [3, 9, 2, 7, 5]
     if amax(a, 5) == 9 {
         return 0

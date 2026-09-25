@@ -9,7 +9,7 @@ type Outer {
     b i32
 }
 func rd(p Outer) i32 { return p.b }
-proc main() i32 {
+func main() i32 {
     var p Outer
     p.a.x = 1
     p.b = 2

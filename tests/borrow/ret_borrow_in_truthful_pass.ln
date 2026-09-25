@@ -6,4 +6,4 @@ type Data { x i32 }
 func pick(a var Data, b var Data) var i32 in a {
     return var a.x
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

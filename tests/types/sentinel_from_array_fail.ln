@@ -3,10 +3,10 @@
 // arbitrary fixed `u8[N]` buffer has no such terminator — coercing it to `u8[:0]`
 // would let printf "%s"/open/strlen read past the buffer (leaking memory). Reject.
 extern proc libc_printf(fmt *u8, ...) i32
-proc show(msg u8[:0]) {
+func show(msg u8[:0]) effects io {
     libc_printf("%s\n", msg.data)
 }
-proc main() i32 {
+func main() i32 effects io {
     var buf u8[5] = [65, 66, 67, 68, 69]
     show(buf)
     return 0

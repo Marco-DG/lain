@@ -2,13 +2,13 @@
 // This test simply verifies the panic call compiles and the program structure
 // is valid. Full runtime verification requires running the binary.
 
-proc maybe_panic(x i32) i32 {
+func maybe_panic(x i32) i32 effects raises {
     if x < 0 {
         panic("negative")
     }
     return x
 }
 
-proc main() i32 {
+func main() i32 effects raises {
     return maybe_panic(7)
 }

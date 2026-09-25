@@ -5,7 +5,7 @@
 // in-guarded element writes (`count in kinds` proves `kinds[count]`). The borrow
 // checker proves the three arrays don't alias, so all get `restrict`. This is the
 // core of the lexer's SoA `tokenize` (kinds[] 1B + starts[] 4B, no length stored).
-proc fill_soa(n u32 <= 256, var kinds u8[256], var starts u32[256]) u32 {
+func fill_soa(n u32 <= 256, var kinds u8[256], var starts u32[256]) u32 effects diverge {
     var count u32 = 0
     var i     u32 = 0
     while i < n {
@@ -19,7 +19,7 @@ proc fill_soa(n u32 <= 256, var kinds u8[256], var starts u32[256]) u32 {
     return count
 }
 
-proc main() i32 {
+func main() i32 effects diverge {
     var k u8[256]  = [0 for x in 0..256]
     var s u32[256] = [0 for x in 0..256]
     return fill_soa(10, var k, var s) as i32     // 10 entries written

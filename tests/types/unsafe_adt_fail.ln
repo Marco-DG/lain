@@ -9,7 +9,7 @@ type Shape {
     }
 }
 
-proc main() i32 {
+func main() i32 {
     var s = Shape.Circle(10)
     
     // Access directly outside unsafe block (should FAIL)

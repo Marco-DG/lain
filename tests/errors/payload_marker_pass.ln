@@ -7,7 +7,7 @@ func f(x i32, fail bool) i32 | ParseErr(line i32) {
     if fail { return ParseErr(42) }
     return x
 }
-proc main() i32 {
+func main() i32 effects io {
     var r i32 | ParseErr(line i32) = f(7, true)
     case r {
         ParseErr(line): libc_printf("err line=%d\n", line)

@@ -5,7 +5,7 @@ func find(p *u8) *u8 | NotFound {
     if 1 == 1 { return p }
     return NotFound
 }
-proc main() i32 {
+func main() i32 {
     var r *u8 | NotFound = find("x")
     case r {
         NotFound: return 1

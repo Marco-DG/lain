@@ -6,7 +6,7 @@ func at(a i32[], i i32) i32 {
     if i < 0 or i >= a.len { return 0 - 1 }
     return a[i]
 }
-proc main() i32 {
+func main() i32 {
     var xs i32[3] = [10, 20, 30]
     return at(xs, 1)
 }

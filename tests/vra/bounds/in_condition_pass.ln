@@ -25,7 +25,7 @@ func peek_safe(data u8[:0], pos i32) i32 {
     return 0
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var result = find_char("hello", 'l')
     libc_printf("find_char: %zu\n", result)
     libc_printf("peek_safe: %d\n", peek_safe("abc", 1))

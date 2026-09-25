@@ -4,7 +4,7 @@
 // first; the first is covered by checking the counter's initial value directly. An entry value
 // the compiler cannot see could already be at the type's maximum, and then `i + 1` overflows
 // before the loop has run once.
-proc sw(a i32[n], n usize, start usize) i32 {
+func sw(a i32[n], n usize, start usize) i32 effects diverge {
     var s i32 = 0
     var i usize = start
     while i + 1 < n {
@@ -14,4 +14,4 @@ proc sw(a i32[n], n usize, start usize) i32 {
     return s
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

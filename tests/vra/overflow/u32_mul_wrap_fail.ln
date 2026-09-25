@@ -6,4 +6,4 @@
 func g(a u32, b u32) u32 {
     return a * b
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

@@ -12,7 +12,7 @@ type Wrapper {
     mov h Handle
 }
 
-proc main() i32 {
+func main() i32 {
     var p *i32 = 0
     // Test 1: Direct linear struct
     var h1 = Handle(p)

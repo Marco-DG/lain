@@ -4,7 +4,7 @@ func parse(x i32, bad bool) i32 | ParseErr(line i32) {
     if bad { return ParseErr(1234) }
     return x
 }
-proc main() i32 {
+func main() i32 effects io {
     var r i32 | ParseErr(line i32) = parse(7, true)
     case r {
         ParseErr(line): libc_printf("%d\n", line)

@@ -6,6 +6,6 @@ type SmallIdx = i32 >= 0 and <= 9
 func get(a i32[10], i SmallIdx) i32 {
     return a[i]
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

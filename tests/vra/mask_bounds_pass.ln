@@ -2,7 +2,7 @@
 // AND clears bits and a non-negative mask keeps the result non-negative and <= mask.
 // This proves the ubiquitous masked-index / gather idiom in bounds check-free, even
 // when x's own range is unknown (a runtime array element).
-proc gather(a i32[64], idx u32[8]) i32 {
+func gather(a i32[64], idx u32[8]) i32 {
     var s i32 = 0
     var i usize = 0
     while i < 8 decreasing 8 - i {
@@ -12,4 +12,4 @@ proc gather(a i32[64], idx u32[8]) i32 {
     }
     return s
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

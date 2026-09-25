@@ -6,11 +6,11 @@ type Resource {
     mov handle i32
 }
 
-proc consume(r mov Resource) i32 {
+func consume(r mov Resource) i32 {
     return mov r.handle
 }
 
-proc main() {
+func main() {
     var r = Resource(42)
     var x = 0
     var result = 0

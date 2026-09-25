@@ -6,4 +6,4 @@ func f(n i32 >= 0 and <= 1000, flag i32) i32 {
     }
     return i
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

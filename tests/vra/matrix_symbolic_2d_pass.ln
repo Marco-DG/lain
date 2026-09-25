@@ -11,7 +11,7 @@
 // (`i*w+j <= h*w-1 < h*w = len`) AND the intermediate `i*w` cannot overflow (`i*w <
 // h*w = len`, a valid usize). `len == h*w` is a sized-slice precondition whose
 // PROVABLE mismatches are caught by the E087 call-site check (same model as `a[n]`).
-proc msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
+func msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
     var s i32 = 0
     var i usize = 0
     while i < h decreasing h - i {
@@ -24,7 +24,7 @@ proc msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
     }
     return s
 }
-proc main() i32 {
+func main() i32 {
     var m i32[12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     return msum(3, 4, m)
 }

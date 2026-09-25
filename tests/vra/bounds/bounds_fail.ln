@@ -3,7 +3,7 @@
 // Test for static bounds checking: should FAIL compilation
 // Index 5 is out of bounds for array of size 5 (valid: 0-4)
 
-proc main() i32 {
+func main() i32 {
     var arr i32[5]
     arr[0] = 10
     

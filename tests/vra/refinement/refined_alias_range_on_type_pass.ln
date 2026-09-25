@@ -5,5 +5,5 @@
 // so discharges the `!= 0` divisor precondition with no runtime check.
 type Pos = i32 >= 1 and <= 9
 func d(a i32, b i32 != 0) i32 { return a / b }
-proc f(n Pos) i32 { return d(100, n) }
-proc main() i32 { return 0 }
+func f(n Pos) i32 { return d(100, n) }
+func main() i32 { return 0 }

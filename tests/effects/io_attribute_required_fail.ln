@@ -11,4 +11,4 @@ extern proc libc_printf(fmt *u8, ...) i32
 func shout(x i32) i32 {
     return libc_printf("%d\n", x)
 }
-proc main() i32 { return shout(7) }
+func main() i32 { return shout(7) }

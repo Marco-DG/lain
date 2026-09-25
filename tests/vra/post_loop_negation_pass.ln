@@ -10,7 +10,7 @@ func last_to_first(a i32[n], n usize) i32 {
     }
     return a[j]
 }
-proc main() i32 {
+func main() i32 {
     var a i32[3] = [7, 8, 9]
     if last_to_first(a, 3) == 7 {
         return 0

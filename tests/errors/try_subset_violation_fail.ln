@@ -8,4 +8,4 @@ func read_cfg(p *u8, fail bool) *u8 | NotFound {
     f = try open_it(p, fail)
     return f
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

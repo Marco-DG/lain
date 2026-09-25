@@ -4,4 +4,4 @@ func f(x i32) i32 {
     y = x else 0
     return y
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

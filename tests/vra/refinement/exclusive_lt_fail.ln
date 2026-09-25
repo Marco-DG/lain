@@ -3,7 +3,7 @@
 
 type StrictlyLess10 = i32 < 10
 
-proc main() i32 {
+func main() i32 {
     var v StrictlyLess10 = 10   // 10 violates < 10
     return 0
 }

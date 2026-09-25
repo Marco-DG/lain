@@ -3,7 +3,7 @@ c_include "stdlib.h"
 extern func printf(fmt *u8, ...) i32
 extern proc exit(status i32)
 
-proc main() {
+func main() effects io {
     var c = 'A'
     
     // Test multi-value and range patterns using expressions

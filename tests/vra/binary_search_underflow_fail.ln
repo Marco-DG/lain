@@ -10,7 +10,7 @@
 // intervals; an unsigned-underflowing subtraction is abstracted to unknown
 // rather than the misleading small negative range, so no bogus bound on `hi`
 // survives and `a[mid]` cannot be proven in bounds — rejected, not miscompiled.
-proc bad(a i32[8], target i32) usize {
+func bad(a i32[8], target i32) usize {
     var lo usize = 0
     var hi usize = 8
     while lo < hi decreasing hi - lo {
@@ -19,4 +19,4 @@ proc bad(a i32[8], target i32) usize {
     }
     return lo
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

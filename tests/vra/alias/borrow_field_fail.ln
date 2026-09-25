@@ -5,7 +5,7 @@
 // with no test over it. Rejecting is fail-closed until the borrow checker can carry a
 // loan through a field; `*var T` + `unsafe` is the working spelling meanwhile.
 type Holder { r var usize }
-proc main() i32 {
+func main() i32 {
     var x usize = 7
     var h Holder = Holder(var x)
     return 0

@@ -1,4 +1,4 @@
-proc main() i32 {
+func main() i32 {
     var a i32[5] = [0, 0, 0, 0, 0]
     for i in 0..5 {
         a[i] = 10

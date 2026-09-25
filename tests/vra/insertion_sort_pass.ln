@@ -3,7 +3,7 @@
 // slice a[n]. The bounds prover chains `j <= i` (var j = i) + `i < n` (outer guard)
 // to `j < n`, and the offset -1 (a[j-1]) shifts the constraint threshold, with the
 // lower bound `j-1 >= 0` supplied by the `j > 0` guard.
-proc isort(var a i32[n], n usize) {
+func isort(var a i32[n], n usize) {
     var i usize = 1
     while i < n decreasing n - i {
         var j usize = i
@@ -18,7 +18,7 @@ proc isort(var a i32[n], n usize) {
         i = i + 1
     }
 }
-proc main() i32 {
+func main() i32 {
     var a i32[4] = [3, 1, 4, 2]
     isort(var a, 4)
     return a[0]

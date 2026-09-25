@@ -6,7 +6,7 @@ func max(T type, a T, b T) T {
 func idn(T type, x T) T {
     return x
 }
-proc main() i32 {
+func main() i32 {
     if max(3, 5) == 5 {
         if idn(42) == 42 { return 0 }
     }

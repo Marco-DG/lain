@@ -10,7 +10,7 @@ func diff(a NonNeg, b NonNeg) u32 {
     return 0
 }
 
-proc main() i32 {
+func main() i32 {
     var _ = diff(10, 3)
     return 0
 }

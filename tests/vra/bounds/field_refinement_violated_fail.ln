@@ -14,7 +14,7 @@ type Box {
 func get(b Box, a i32[4]) i32 {
     return a[b.v]
 }
-proc main() i32 {
+func main() i32 {
     var b = Box(99, 50)
     var xs i32[4] = [10, 20, 30, 40]
     return get(b, xs)

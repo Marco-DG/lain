@@ -8,7 +8,7 @@ type Shape {
     Point
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var c = Shape.Circle(10)
     var r = Shape.Rectangle(10, 20)
     var p = Shape.Point

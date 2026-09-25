@@ -1,4 +1,4 @@
-proc main() {
+func main() {
     var x i32
     x = 10
     var y = x

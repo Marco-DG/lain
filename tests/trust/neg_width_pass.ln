@@ -16,7 +16,7 @@ extern proc libc_printf(fmt *u8, ...) i32
 
 func neg64(a i64) i64 { return -a }
 
-proc main() i32 {
+func main() i32 effects io {
     var a i64 = 5000000000                  // 5e9, past i32
     libc_printf("%lld\n", neg64(a))         // -5000000000
 

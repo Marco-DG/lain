@@ -5,7 +5,7 @@ extern proc libc_printf(fmt *u8, ...) i32
 func greeting() u8[:0] {
     return "hi there"
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("[%s]\n", greeting().data)
     return 0
 }

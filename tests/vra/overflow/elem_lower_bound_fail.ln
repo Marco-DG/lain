@@ -15,7 +15,7 @@
 // The subject is preserved by giving the table a ZERO: the element range is the array-wide
 // join [0, 40], so `TABLE[k] - 1` really can be -1 and `xs[j]` really can read xs[-1].
 TABLE u8[4] = [0, 20, 30, 40]
-proc main() i32 {
+func main() i32 {
     var xs i32[256] = [0 for k in 0..256]
     var j i32 = TABLE[0] as i32 - 1
     return xs[j]

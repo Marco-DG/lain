@@ -19,7 +19,7 @@ func up8(n u8) u8 {
     }
     return s
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d\n", up8(200) as i32)
     return 0
 }

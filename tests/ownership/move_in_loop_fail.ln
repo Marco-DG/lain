@@ -5,7 +5,7 @@
 // spec §11: consuming a linear variable declared OUTSIDE a loop from INSIDE the loop
 // body is rejected — the loop may run more than once, which would double-consume.
 import std.mem.{mem_alloc, mem_free}
-proc t() {
+func t() effects alloc, diverge, io {
     var r = mem_alloc(8)
     var i = 0
     while i < 3 {
@@ -13,4 +13,4 @@ proc t() {
         i = i +% 1
     }
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

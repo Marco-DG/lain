@@ -9,7 +9,7 @@ func get_ref(var d Data) var i32 {
     return var d.value
 }
 
-proc main() i32 {
+func main() i32 {
     var data Data
     data.value = 42
     

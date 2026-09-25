@@ -22,7 +22,7 @@ func ref_val(var c Cell) var i32 {
     return var c.val
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var c Cell
     c.val = 7
     var r = ref_val(var c)

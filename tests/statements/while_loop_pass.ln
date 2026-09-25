@@ -6,7 +6,7 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() i32 effects diverge, io {
+func main() i32 effects diverge, io {
     var i = 0
     libc_printf("Testing while loop (0 to 9):\n")
     while i < 10 {

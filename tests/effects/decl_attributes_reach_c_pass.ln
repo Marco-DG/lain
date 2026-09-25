@@ -34,6 +34,6 @@ func fresh() *var u8 {
     var p *var u8 = 0
     return p
 }
-proc main() i32 {
+func main() i32 {
     return rare_path() +% inner_loop(1)
 }

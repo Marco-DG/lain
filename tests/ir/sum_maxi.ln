@@ -19,7 +19,7 @@ func maxi(a i32, b i32) i32 {
     }
     return b
 }
-proc main() i32 {
+func main() i32 {
     if sum(5) == 10 {
         return 0
     }

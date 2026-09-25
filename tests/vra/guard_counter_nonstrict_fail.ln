@@ -3,7 +3,7 @@
 // Teeth for guard_counter_offset_pass.ln. The comparison must be STRICT: `i + 1 <= n` gives
 // i_prev <= n - 1 rather than n - 2, so i = i_prev + 1 <= n and `i + 1` reaches n + 1, which
 // leaves the type when n is at its maximum.
-proc sw(a i32[n], n usize) i32 {
+func sw(a i32[n], n usize) i32 effects diverge {
     var s i32 = 0
     var i usize = 0
     while i + 1 <= n {
@@ -13,4 +13,4 @@ proc sw(a i32[n], n usize) i32 {
     return s
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

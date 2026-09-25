@@ -5,13 +5,13 @@ func step(p *u8, fail bool) *u8 | Err {
     if fail { return Err }
     return p
 }
-proc work(p *u8, fail bool) *u8 | Err {
+func work(p *u8, fail bool) *u8 | Err effects io {
     defer libc_printf("cleanup\n")
     v = try step(p, fail)
     libc_printf("past\n")
     return v
 }
-proc main() i32 {
+func main() i32 effects io {
     var r *u8 | Err = work("x", true)
     case r {
         Err:  libc_printf("got Err\n")

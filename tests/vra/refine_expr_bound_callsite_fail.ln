@@ -9,8 +9,8 @@
 // callee would prove more, and nothing would emit the assert — an unlicensed assume, which is
 // the one hazard the contract machinery exists to prevent. Here `i = 9` against `n = 4` is
 // refused.
-proc window(a i32[n], n usize >= 2, i usize <= n - 2) i32 { return a[i] +% a[i + 1] }
-proc main() i32 {
+func window(a i32[n], n usize >= 2, i usize <= n - 2) i32 { return a[i] +% a[i + 1] }
+func main() i32 {
     var arr i32[4] = [1, 2, 3, 4]
     return window(arr, 4, 9)
 }

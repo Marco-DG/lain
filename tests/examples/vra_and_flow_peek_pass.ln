@@ -3,7 +3,7 @@
 // natural peek `j < n and src[j] == X` proves `src[j]` with NO `in`-guard — the
 // `j < n` conjunct chains with `n < 4097` on the u8[4096] buffer. This is what
 // lets a lexer's lookahead read the next byte idiomatically.
-proc find_pair(src u8[4096], n u32 < 4097) u32 {
+func find_pair(src u8[4096], n u32 < 4097) u32 effects diverge {
     var i u32 = 0
     while i < n {
         var j u32 = i +% 1
@@ -12,7 +12,7 @@ proc find_pair(src u8[4096], n u32 < 4097) u32 {
     }
     return n
 }
-proc main() i32 {
+func main() i32 effects diverge {
     var buf u8[4096]
     var k u32 = 0
     while k < 4096 {

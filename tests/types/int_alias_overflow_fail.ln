@@ -8,7 +8,7 @@ func add_int(a int, b int) int {
     return a + b
 }
 
-proc main() i32 {
+func main() i32 {
     var x int = 2147483647
     return add_int(x, 1)
 }

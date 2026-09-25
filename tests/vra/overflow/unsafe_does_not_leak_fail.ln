@@ -2,7 +2,7 @@
 // LAINFLAGS: --engine=ir-full
 // The other direction: an `unsafe` block waives the obligations INSIDE it and nothing more.
 // The same addition after the block is still an overflow the compiler must refuse.
-proc main() i32 {
+func main() i32 {
     var a u8 = 200
     var b u8 = 100
     unsafe {

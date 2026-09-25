@@ -14,7 +14,7 @@ func unwrap(o Option(i32)) i32 {
         None: 0
     }
 }
-proc main() i32 {
+func main() i32 {
     if unwrap(some(7)) == 7 { return 0 }
     return 1
 }

@@ -2,7 +2,7 @@
 // constants and guards `i < H`, `j < W`. The stride W is constant so `i*W` is a bounded
 // linear expression (no overflow) and `i*W+j < H*W` proves. (Symbolic dimensions a[h*w]
 // are the nonlinear frontier — still rejected.)
-proc sum(a i32[64]) i32 {
+func sum(a i32[64]) i32 {
     var s i32 = 0
     var i usize = 0
     while i < 8 decreasing 8 - i {
@@ -15,4 +15,4 @@ proc sum(a i32[64]) i32 {
     }
     return s
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

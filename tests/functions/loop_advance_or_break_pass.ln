@@ -16,7 +16,7 @@ func scan_number(s u8[], i usize) i32 {
     }
     return val
 }
-proc main() i32 {
+func main() i32 {
     var src = "42x"
     if scan_number(src, 0) == 42 {
         return 0

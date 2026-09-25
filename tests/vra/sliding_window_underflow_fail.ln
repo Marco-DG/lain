@@ -10,7 +10,7 @@
 // true over Z, false in u64 the moment a < b. It now states nothing unless `a >= b` is
 // provable, which is why the GUARDED forms (`hi - lo` under `lo < hi`, `n - 1` behind
 // `if n == 0 { return }`) keep their exact relation and lose no precision.
-proc sw(a i32[n], n usize) i32 {
+func sw(a i32[n], n usize) i32 {
     var s i32 = 0
     var i usize = 0
     while i < n - 1 decreasing n - 1 - i {
@@ -19,4 +19,4 @@ proc sw(a i32[n], n usize) i32 {
     }
     return s
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

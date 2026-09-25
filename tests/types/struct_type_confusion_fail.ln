@@ -11,6 +11,6 @@ type B {
 func f(a A) B {
     return a
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

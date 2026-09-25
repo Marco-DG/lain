@@ -12,6 +12,6 @@ func may_panic(x i32) i32 {
     }
     return x
 }
-proc main() i32 {
+func main() i32 effects raises {
     return pure_id(2) + may_panic(4)
 }

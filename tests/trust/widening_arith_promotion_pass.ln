@@ -12,7 +12,7 @@
 // way — which is exactly why it belongs in the test. It pins the SPELLING, so a future
 // "simplification" back to a bare `v5 * v6` cannot pass by choosing the harmless case.
 extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+func main() i32 effects io {
     var a u16 = 60000
     var b u16 = 60000
     var p u32 = a * b            // 3_600_000_000 — exceeds int, fits u32

@@ -3,7 +3,7 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() i32 {
+func main() i32 effects io {
     // Fixed-size array (whole-array literal init)
     var arr i32[5] = [10, 20, 30, 40, 50]  // Max valid index is 4 for array of 5
 

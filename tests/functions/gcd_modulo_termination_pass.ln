@@ -11,6 +11,6 @@ func gcd(a0 usize, b0 usize) usize {
     }
     return a
 }
-proc main() i32 {
+func main() i32 {
     return gcd(48, 36) as i32
 }

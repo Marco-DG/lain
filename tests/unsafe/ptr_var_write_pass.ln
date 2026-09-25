@@ -2,10 +2,10 @@
 // explicit counterpart of read-only `*T`. Writing through it (in unsafe) is valid
 // for BOTH a parameter and a local — closing the raw-pointer-write gap.
 extern proc libc_printf(fmt *u8, ...) i32
-proc bump(p *var i32) {
+func bump(p *var i32) {
     unsafe { *p = *p + 1 }
 }
-proc main() i32 {
+func main() i32 effects io {
     var x i32 = 10
     bump(&x)
     unsafe {

@@ -4,8 +4,8 @@
 // so the forwarded check(a, hi) must be rejected — the seeding proves only true
 // relations, and the call-site precondition stays fail-closed.
 func check(a i32[], hi usize < a.len) i32 { return a[hi] }
-proc test(a i32[], lo usize < a.len) i32 {
+func test(a i32[], lo usize < a.len) i32 {
     var hi = lo + 1
     return check(a, hi)
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

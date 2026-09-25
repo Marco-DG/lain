@@ -1,5 +1,5 @@
 import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
-proc main() i32 {
+func main() i32 effects io {
     pi i32 = 314
     var counter i32 = 0
     counter = counter + pi

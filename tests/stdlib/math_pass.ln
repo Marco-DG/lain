@@ -1,6 +1,6 @@
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() i32 {
+func main() i32 effects io {
     var a = 10
     var b = 3
     libc_printf("10 + 3 = %d\n", a + b)

@@ -2,7 +2,7 @@
 
 import std.mem.{libc_malloc, libc_free, libc_calloc, libc_realloc, mem_alloc, mem_free, mem_alloc_zeroed}
 import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
-proc main() i32 {
+func main() i32 effects alloc, io {
     // Basic alloc + free
     var buf = mem_alloc(64)
     mem_free(mov buf)

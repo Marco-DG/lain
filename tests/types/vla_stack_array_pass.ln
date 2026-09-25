@@ -2,7 +2,7 @@
 // real stack array (a C VLA `T a[n]`), NOT a slice: native indexing and
 // `a.len == n`. Bounded indexing under a guard (`i < n`) is proven safe by VRA —
 // this fills the buffer with no `unsafe` and no bounds error.
-proc fill(n usize) usize {
+func fill(n usize) usize {
     var a u8[n]
     var i usize = 0
     while i < n decreasing n - i {
@@ -11,6 +11,6 @@ proc fill(n usize) usize {
     }
     return a.len
 }
-proc main() i32 {
+func main() i32 {
     return fill(4) as i32
 }

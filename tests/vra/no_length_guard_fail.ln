@@ -11,4 +11,4 @@ func f(a u8[], b u8[]) i32 {
     }
     return 1
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

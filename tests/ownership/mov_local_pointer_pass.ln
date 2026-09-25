@@ -5,7 +5,7 @@
 extern proc acquire() mov *u8
 extern proc release(p mov *u8)
 
-proc main() i32 {
+func main() i32 effects io {
     mov p *u8 = acquire()
     release(mov p)
     return 0

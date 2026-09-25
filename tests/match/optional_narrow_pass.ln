@@ -5,4 +5,4 @@ func via_if(x *u8 | none) i32 {
     if x { return use_it(x) }
     return 0
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

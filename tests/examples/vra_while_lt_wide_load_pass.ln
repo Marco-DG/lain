@@ -5,7 +5,7 @@
 // So the 16-byte load needs NO tail guard and NO runtime check — the padding
 // headroom (n <= CAP-15) is proven statically. Verified sound at runtime under
 // ASan+UBSan.
-proc count_spaces(src u8[4096], n u32 < 4081) u32 {
+func count_spaces(src u8[4096], n u32 < 4081) u32 effects diverge {
     var i u32 = 0
     var t u32 = 0
     while i < n {
@@ -14,7 +14,7 @@ proc count_spaces(src u8[4096], n u32 < 4081) u32 {
     }
     return t
 }
-proc main() i32 {
+func main() i32 effects diverge {
     var buf u8[4096]
     var k u32 = 0
     while k < 4096 {

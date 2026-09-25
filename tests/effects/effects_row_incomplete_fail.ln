@@ -16,4 +16,4 @@ func serve(n i32) i32 effects io {
     while i < n { libc_printf("x") }
     return i
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

@@ -13,4 +13,4 @@ type BumpLike {
     pos usize <= cap
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

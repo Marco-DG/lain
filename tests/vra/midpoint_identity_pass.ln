@@ -15,7 +15,7 @@ func mid(lo usize, hi usize) usize {
     if lo < hi { return lo + (hi - lo) / 2 }
     return lo
 }
-proc main() i32 {
+func main() i32 {
     if mid(2, 8) == 5 { return 0 }
     return 1
 }

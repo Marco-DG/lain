@@ -8,6 +8,6 @@ func test(x i32, y i32 > x) i32 {
     return require_lt(x, y)
 }
 
-proc main() i32 {
+func main() i32 {
     return 0
 }

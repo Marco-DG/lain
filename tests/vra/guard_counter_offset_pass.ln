@@ -12,7 +12,7 @@
 // cannot state, so it is proved syntactically. At every header entry after the first, the
 // previous visit had `i_prev + 1 < n`, so i_prev <= n - 2, so i = i_prev + 1 <= n - 1, so
 // `i + 1 <= n <= typemax`. On the first entry i is 0 and `0 + 1` is checked directly.
-proc sw(a i32[n], n usize) i32 {
+func sw(a i32[n], n usize) i32 {
     var s i32 = 0
     var i usize = 0
     while i + 1 < n decreasing n - i {
@@ -22,4 +22,4 @@ proc sw(a i32[n], n usize) i32 {
     return s
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

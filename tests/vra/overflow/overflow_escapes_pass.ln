@@ -8,7 +8,7 @@ func sat_abs(x i32) i32 >= 0 {
     return x
 }
 func bounded_add(a i32 >= 0 and <= 1000, b i32 >= 0 and <= 1000) i32 { return a + b }
-proc main() i32 {
+func main() i32 {
     var w = wrap_add(2000000000, 2000000000)
     var s = sat_abs(0 -| 5)
     var bd = bounded_add(3, 4)

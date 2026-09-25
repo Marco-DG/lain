@@ -4,7 +4,7 @@
 //   as? (checked)    -> runtime bounds check, handled inline by `else` (F3.4/Q1)
 //   as| (saturating) -> clamp to the target type's [min, max]
 // v = 42 is in-range for u8, so this also runs correctly if executed.
-proc main() i32 {
+func main() i32 effects raises {
     var v i32 = 42
     var p = v as u8
     var w = v as% u8

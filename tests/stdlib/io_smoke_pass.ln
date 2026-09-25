@@ -1,5 +1,5 @@
 import std.io.{print, println}
-proc main() i32 {
+func main() i32 effects io {
     println("Hello World!")
     print("Partial line... ")
     println("Done.")

@@ -19,7 +19,7 @@ func up16() u16 {
     }
     return s
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d\n", up16() as i32)
     return 0
 }

@@ -6,6 +6,6 @@ func bad() *i32 {
     var x i32 = 5
     return &x
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

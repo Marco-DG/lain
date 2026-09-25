@@ -6,6 +6,6 @@
 func f(a i32[n]) i32 {
     return n
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

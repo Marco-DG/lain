@@ -5,7 +5,7 @@
 type Pressure = i32 >= 0 and <= 1000
 type Percent = i32 >= 0 and <= 100
 
-proc main() i32 {
+func main() i32 {
     var p Pressure = 500       // OK: 500 in [0, 1000]
     var q Percent = 75          // OK: 75 in [0, 100]
     return 0

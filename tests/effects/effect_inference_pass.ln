@@ -17,15 +17,15 @@ func with_panic(a i32) i32 {
 func mutates(var c i32) {
     c = c +% 1
 }
-proc does_io() {
+func does_io() effects io {
     msg = "hi"
     print(msg.data, msg.len)
 }
-proc diverges(n i32) i32 {
+func diverges(n i32) i32 effects diverge {
     var i = 0
     while i < n {
         i = i +% 1
     }
     return i
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

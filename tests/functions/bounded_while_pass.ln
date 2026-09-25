@@ -11,7 +11,7 @@ func count_up(n i32) i32 {
     return i
 }
 
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("Result: %d\n", count_up(10))
     return 0
 }

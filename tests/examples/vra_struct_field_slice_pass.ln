@@ -11,7 +11,7 @@ type Buf {
 }
 func is_sp(c u8) bool { return c == 32 }
 func is_az(c u8) bool { return c >= 97 and c <= 122 }
-proc count_words(l *Buf) u32 effects diverge {
+func count_words(l *Buf) u32 effects diverge {
     var i u32 = 0
     var words u32 = 0
     while i < l.src.len {
@@ -25,7 +25,7 @@ proc count_words(l *Buf) u32 effects diverge {
     }
     return words
 }
-proc main() i32 {
+func main() i32 effects diverge {
     var b u8[16]
     var k u32 = 0
     while k < 16 {

@@ -9,7 +9,7 @@
 // a conditional store, a second statement in the body, a different index expression, and a
 // loop that fills a different array. Widen any one of those and this program compiles and
 // reads uninitialised memory.
-proc main() i32 {
+func main() i32 {
     var a i32[8]
     for k in 0..4 { a[k] = 7 }
     return a[7]

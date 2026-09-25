@@ -6,7 +6,7 @@
 // on a usize at n == 0 and is rejected for THAT reason (C-7), which would have made this test
 // pass for a reason it does not describe — the bounds over-reach it exists to pin would have
 // gone untested. Written this way the guard is sound and E085 is the only obligation left.
-proc f(a i32[n], n usize) i32 {
+func f(a i32[n], n usize) i32 {
     var s i32 = 0
     var i usize = 0
     while i + 1 < n decreasing n - i {
@@ -15,4 +15,4 @@ proc f(a i32[n], n usize) i32 {
     }
     return s
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

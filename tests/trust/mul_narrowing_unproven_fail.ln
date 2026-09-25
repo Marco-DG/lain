@@ -12,4 +12,4 @@ type Vec {
 func dot(a Vec, b Vec) i32 {
     return a.x * b.x + a.y * b.y
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

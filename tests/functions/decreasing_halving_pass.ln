@@ -2,7 +2,7 @@
 // guard keeps n >= 1 (`while n > 0`), strictly decreases the measure — the
 // canonical divide-and-conquer loop is now proven to terminate.
 extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+func main() i32 effects io {
     var n usize = 64
     var c = 0
     while n > 0 decreasing n {

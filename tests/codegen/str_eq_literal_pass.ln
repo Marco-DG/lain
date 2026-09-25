@@ -2,10 +2,10 @@
 // length check + memcmp. Previously the lowering checked TOKEN_EQUAL (the
 // assignment token) instead of TOKEN_EQUAL_EQUAL, so it never fired and emitted a
 // raw struct `==` that gcc rejects.
-proc f(s u8[:0]) i32 {
+func f(s u8[:0]) i32 {
     if s == "hi" { return 1 }
     return 0
 }
-proc main() i32 {
+func main() i32 {
     return f("hi")
 }

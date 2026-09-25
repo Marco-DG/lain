@@ -4,7 +4,7 @@
 extern proc libc_printf(fmt *u8, ...) i32
 GREETING u8[:0] = "hello"
 NAME u8[:0] = "world"
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d %d\n", GREETING.len as i32, NAME.len as i32)
     return 0
 }

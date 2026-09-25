@@ -15,7 +15,7 @@ func read_resource(r Resource) i32 {
     return r.id
 }
 
-proc main() i32 {
+func main() i32 {
     var r Resource
     r.id = 42
     defer drop(mov r)

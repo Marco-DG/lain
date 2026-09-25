@@ -1,5 +1,5 @@
 import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
-proc main() i32 {
+func main() i32 effects io {
     x = 42
     y = 10 as u8
     libc_printf("x=%d y=%d\n", x, y as i32)

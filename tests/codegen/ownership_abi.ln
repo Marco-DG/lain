@@ -23,6 +23,6 @@ func get_x(var v Vec2) var i32 {
     return var v.x
 }
 
-proc main() i32 {
+func main() i32 {
     return 0
 }

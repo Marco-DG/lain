@@ -15,7 +15,7 @@ type FileResult {
     Err { e FileErr }
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var r1 = FileResult.Err(FileErr.NotFound)
     var r2 = FileResult.Err(FileErr.Permission)
     var r3 = FileResult.Err(FileErr.OOM)

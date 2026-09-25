@@ -1,9 +1,9 @@
 // Inside `unsafe` the programmer has taken responsibility, so `assume` is allowed — and it
 // gives the analyzer a fact it cannot infer: `a[i]` proves check-free with it and not without.
-proc probe(i usize, a i32[16]) i32 {
+func probe(i usize, a i32[16]) i32 {
     unsafe {
         assume(i < 16)
     }
     return a[i]
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

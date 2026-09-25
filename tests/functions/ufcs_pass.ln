@@ -12,7 +12,7 @@ func get_val(c Counter) i32 {
     return c.val
 }
 
-proc main() i32 {
+func main() i32 {
     var my_counter = Counter(10)
     
     // Test UFCS passing var implictly

@@ -7,7 +7,7 @@
 // Measured by scripts/fuzz/fuzz_init.sh as the ONLY over-strict shape it could produce
 // (8 of 8 in a 60-program run), which is what named the idiom instead of leaving a vague
 // sense that the pass was strict. The refusing side is pinned by loop_fill_partial_fail.ln.
-proc main() i32 {
+func main() i32 {
     var a i32[8]
     for k in 0..8 { a[k] = 7 }
     return a[7] - 7

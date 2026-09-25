@@ -18,7 +18,7 @@ func mix(a int >= 0 and <= 1000, b i32 >= 0 and <= 1000) i32 {
     return a + b
 }
 
-proc main() int {
+func main() int effects io {
     var x int = 10
     var y i32 = 20
     var z = add_int(x, 5)

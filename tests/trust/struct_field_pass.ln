@@ -3,7 +3,7 @@ type Point {
     x i32
     y i32
 }
-proc main() i32 {
+func main() i32 effects io {
     var p Point
     p.x = 3
     p.y = 4

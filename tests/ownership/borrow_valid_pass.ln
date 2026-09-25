@@ -10,7 +10,7 @@ func consume_resource(mov r Resource) Resource {
     return mov r
 }
 
-proc main() i32 {
+func main() i32 {
     var res Resource
     res.data = 42
     

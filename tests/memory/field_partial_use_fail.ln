@@ -5,7 +5,7 @@ type Point {
     y i32
 }
 func sum(p Point) i32 { return p.x }
-proc main() i32 {
+func main() i32 {
     var p Point
     p.x = 5
     return sum(p)

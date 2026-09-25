@@ -4,11 +4,11 @@
 // After fix: [VRA] bounds error.
 // EXPECT: [VRA]
 
-proc take(arr u8[]) i32 {
+func take(arr u8[]) i32 {
     return arr[5]
 }
 
-proc main() i32 {
+func main() i32 {
     var buf u8[10]
     var i = 0
     while i < 10 decreasing 10 - i {

@@ -1,7 +1,7 @@
 // EXPECT: [E085]
 // SOUNDNESS: the flattened index must match the array size — `a[i*9+j]` (stride 9)
 // over a[64] reaches ~70 > 64. Rejected, not miscompiled.
-proc f(a i32[64]) i32 {
+func f(a i32[64]) i32 {
     var s i32 = 0
     var i usize = 0
     while i < 8 decreasing 8 - i {
@@ -14,4 +14,4 @@ proc f(a i32[64]) i32 {
     }
     return s
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

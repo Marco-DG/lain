@@ -4,6 +4,6 @@
 func get(a i32[], i usize in a) i32 {
     return a[i]
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

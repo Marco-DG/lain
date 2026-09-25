@@ -6,7 +6,7 @@ type Color {
     Red
     Green
 }
-proc main() i32 {
+func main() i32 {
     var c = Color.Red
     var n = c as i32
     return 0

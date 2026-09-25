@@ -1,6 +1,6 @@
 extern proc printf(fmt *u8, ...) i32
 
-proc main() {
+func main() effects diverge, io {
     var i = 0
     while i < 3 {
         defer printf("-%d-", i)

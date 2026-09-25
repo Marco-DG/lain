@@ -7,7 +7,7 @@ func add_one(n i32 >= 0 and <= 1000) i32 {
     return n + 1
 }
 
-proc main() i32 {
+func main() i32 {
     var small i32 = 100
     var d1 = add_one(small)       // 100 satisfies [0, 1000]; VRA proves 101 fits
     return 0

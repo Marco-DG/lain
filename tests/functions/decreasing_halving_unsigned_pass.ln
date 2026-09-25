@@ -19,7 +19,7 @@ func halve(n0 usize) usize {
     }
     return steps
 }
-proc main() i32 {
+func main() i32 {
     if halve(1024) == 11 { return 0 }
     return 1
 }

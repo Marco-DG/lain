@@ -6,7 +6,7 @@ func peek(var n i32) i32 {
     return n
 }
 
-proc main() i32 {
+func main() i32 {
     var x i32 = 42
     return peek(var x)
 }

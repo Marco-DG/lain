@@ -8,4 +8,4 @@ type Box {
     ptr *u8 | none
     tag i32
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

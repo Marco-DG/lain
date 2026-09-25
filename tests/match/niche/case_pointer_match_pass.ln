@@ -9,7 +9,7 @@ type OptionByte {
     None
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var none_val = OptionByte.None
     var some_val = OptionByte.Some("hi")
 

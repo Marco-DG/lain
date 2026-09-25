@@ -9,7 +9,7 @@ func ring_fill(buf i32[> 0], src i32[], out i32[src.len]) {
     }
 }
 
-proc main() i32 {
+func main() i32 {
     var ring i32[3] = [10, 20, 30]
     var src  i32[5] = [0, 0, 0, 0, 0]
     var out  i32[5] = [0, 0, 0, 0, 0]

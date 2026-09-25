@@ -14,4 +14,4 @@ func sum_pairs(a i8[n], n usize) i32 {
     return s
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

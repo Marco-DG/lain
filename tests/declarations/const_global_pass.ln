@@ -12,7 +12,7 @@ FLAGS u8[8] = [
     U, L, U|L, MASK
 ]
 
-proc main() i32 {
+func main() i32 effects io {
     var m u8 = MASK
     var f u8 = FLAGS[2]
     libc_printf("MASK=%d FLAGS[2]=%d\n", m, f)

@@ -9,7 +9,7 @@ func unwrap_or(r Result(i32, i32), fallback i32) i32 {
         Err(c): fallback
     }
 }
-proc main() i32 {
+func main() i32 {
     var r Result(i32, i32) = Result(i32, i32).Ok(7)
     var e Result(i32, i32) = Result(i32, i32).Err(99)
     if unwrap_or(r, 0) == 7 {

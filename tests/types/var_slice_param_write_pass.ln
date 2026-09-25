@@ -5,10 +5,10 @@
 // The other half of var_slice_param_reassign_fail.ln: REBINDING a `var` slice parameter is
 // refused, writing THROUGH it is not. An element store is what the decomposed
 // `(length, pointer)` ABI exists to make fast, and the caller sees every one of them.
-proc zero(var s i32[]) {
+func zero(var s i32[]) {
     for i in 0..s.len { s[i] = 0 }
 }
-proc main() i32 {
+func main() i32 {
     var a i32[4] = [1, 2, 3, 4]
     var s = a[0..4]
     zero(var s)

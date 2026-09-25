@@ -7,4 +7,4 @@ func f(lo usize, hi usize) i32 decreasing hi - lo {
     }
     return 0
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

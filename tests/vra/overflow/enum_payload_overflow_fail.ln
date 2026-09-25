@@ -5,7 +5,7 @@ type Shape {
     Circle { radius u8 }
     Square
 }
-proc main() i32 {
+func main() i32 {
     var c = Shape.Circle(300)
     return 0
 }

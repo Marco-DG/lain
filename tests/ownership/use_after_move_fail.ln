@@ -11,7 +11,7 @@ func transfer(mov item Item) Item {
     return mov item
 }
 
-proc main() i32 {
+func main() i32 {
     // Declare as mutable to allow init (and move tracks consumption)
     var myitem Item
     myitem.id = 42

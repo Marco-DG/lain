@@ -4,9 +4,9 @@
 // invent a range where the source has none: `src` is a parameter, its elements are arbitrary
 // i32, and the sum of two of them really can overflow. A copy carries the source's facts, and
 // when the source has no facts it carries none.
-proc f(src i32[4]) i32 {
+func f(src i32[4]) i32 {
     var a i32[4] = src
     return a[2] + a[3]
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

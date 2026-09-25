@@ -7,10 +7,10 @@ extern proc libc_printf(fmt *u8, ...) i32
 extern proc libc_calloc(n usize, size usize) mov *void
 extern proc libc_free(ptr mov *void)
 type Res { mov h *u8 }
-proc rmake() Res { unsafe { return Res(libc_calloc(1, 4) as *u8) } }
-proc rfree(mov {h} Res) { unsafe { libc_free(mov h as *void) } }
-proc rtouch(r Res) u8 { unsafe { return *r.h } }
-proc main() i32 {
+func rmake() Res effects io { unsafe { return Res(libc_calloc(1, 4) as *u8) } }
+func rfree(mov {h} Res) effects io { unsafe { libc_free(mov h as *void) } }
+func rtouch(r Res) u8 { unsafe { return *r.h } }
+func main() i32 effects io {
     var r = rmake()
     var x = rtouch(r)
     rfree(mov r)

@@ -15,7 +15,7 @@ type Q {
 func mk(n i32) P { return P(n, n +% 1) }
 func mq(n i32) Q { return Q(P(n *% 2, 0), n +% 3) }
 
-proc main() i32 {
+func main() i32 {
     var acc = 0
     var i = 0
     while i < 3 decreasing 3 - i {

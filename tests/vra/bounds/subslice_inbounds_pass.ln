@@ -1,6 +1,6 @@
 // In-bounds sub-slicing of a slice must still be accepted and produce correct
 // values (regression guard for the size_expr bounds extension).
-proc main() i32 {
+func main() i32 {
     var a i32[4] = [1, 2, 3, 4]
     var s = a[0..4]
     var t = s[2..4]

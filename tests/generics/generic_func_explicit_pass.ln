@@ -7,7 +7,7 @@ func dup(T type, a T) T {
     var x T = a
     return x
 }
-proc main() i32 {
+func main() i32 {
     if pick(i32, 7, 9) == 7 {
         if dup(i32, 42) == 42 { return 0 }
     }

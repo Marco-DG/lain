@@ -22,7 +22,7 @@ func rd(s S) i32 {
     return -1
 }
 
-proc main() i32 {
+func main() i32 {
     var q = S.Pt(P(3, 4))
     var r = S.Pair(5, 6)
     var n = S.None

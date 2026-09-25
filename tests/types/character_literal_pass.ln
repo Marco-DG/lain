@@ -2,7 +2,7 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() i32 {
+func main() i32 effects io {
     var ch = 'A'
     libc_printf("char: %c\n", ch)
     libc_printf("char as i32: %d\n", ch)

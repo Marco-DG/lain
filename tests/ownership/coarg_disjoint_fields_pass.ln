@@ -8,10 +8,10 @@ type Outer {
     sub Inner
     other Inner
 }
-proc f(x var Inner, y Inner) {
+func f(x var Inner, y Inner) {
     x.v = 1
 }
-proc main() i32 {
+func main() i32 {
     var b = Outer(Inner(0), Inner(0))
     f(var b.sub, b.other)
     return 0

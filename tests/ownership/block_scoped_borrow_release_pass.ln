@@ -9,7 +9,7 @@ func tweak(var c Cell) {
     c.val = c.val +% 1
 }
 
-proc main() i32 {
+func main() i32 {
     var c Cell
     c.val = 0
     if 1 == 1 {

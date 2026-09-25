@@ -7,4 +7,4 @@ func f(r *u8 | NotFound | Denied) i32 {
     if r { return use_it(r) }
     return 0
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

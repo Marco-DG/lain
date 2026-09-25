@@ -16,7 +16,7 @@ func bad_loop(n i32) i32 {
     return i
 }
 
-proc main() i32 {
+func main() i32 {
     var _ = bad_loop(5)
     return 0
 }

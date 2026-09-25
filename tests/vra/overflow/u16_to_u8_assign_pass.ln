@@ -2,7 +2,7 @@
 
 type SmallU16 = u16 >= 0 and <= 100
 
-proc main() i32 {
+func main() i32 {
     var s SmallU16 = 50
     var u u8 = s as u8   // explicit cast; the constraint guarantees fit
     var _u = u

@@ -4,12 +4,12 @@
 // Path-F puts the overflow obligation. `unchecked` was documented on "ELEM_PTR / arithmetic"
 // and only ever set on the element pointer, so `unsafe { var c u8 = a + b }` still fired.
 // The companion negative is right below: the same expression OUTSIDE the block is refused.
-proc inside(a u8, b u8) u8 {
+func inside(a u8, b u8) u8 {
     unsafe {
         var c u8 = a + b
         return c
     }
 }
-proc main() i32 {
+func main() i32 {
     return inside(200, 100) as i32
 }

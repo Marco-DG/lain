@@ -6,7 +6,7 @@ func widen_inc(x u8) u8 {
     return t        // boundary check fails here
 }
 
-proc main() i32 {
+func main() i32 {
     var _ = widen_inc(255)
     return 0
 }

@@ -3,7 +3,7 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc main() i32 {
+func main() i32 effects io {
     var outer = 100
     
     if 1 {

@@ -2,7 +2,7 @@
 // SOUNDNESS: `hi` starts at 64 but the array has only 8 elements, so the
 // midpoint index reaches up to 63 — out of bounds. The invariant `hi <= 8`
 // does NOT hold (entry hi=64), so `a[mid]` is correctly rejected.
-proc bad(a i32[8], target i32) usize {
+func bad(a i32[8], target i32) usize {
     var lo usize = 0
     var hi usize = 64
     while lo < hi decreasing hi - lo {
@@ -11,4 +11,4 @@ proc bad(a i32[8], target i32) usize {
     }
     return lo
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

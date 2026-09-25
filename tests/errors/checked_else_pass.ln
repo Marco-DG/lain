@@ -2,7 +2,7 @@
 // (zero-cost preserved). `+?`/`as?` compute; on overflow/out-of-range the value
 // is the arm (a fallback, or `panic` for the explicit abort bridge).
 extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+func main() i32 effects io, raises {
     var a i32 = 2000000000
     s = a +? a else 0
     libc_printf("%d\n", s)

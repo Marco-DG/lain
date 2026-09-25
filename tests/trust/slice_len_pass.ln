@@ -9,7 +9,7 @@ func count(data u8[:0]) i32 {
     }
     return -1
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d\n", count("hello"))
     return 0
 }

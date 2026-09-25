@@ -13,7 +13,7 @@
 // the second false proof in B1. s0 now comes from the stores OUTSIDE the loop, so an
 // accumulator that starts anywhere but zero is bounded from where it actually starts.
 // accum_trip_bound_pass.ln is the other direction: s0 there really is 0, and it still proves.
-proc f(a i32 >= 1 and <= 1073741823, b i32 >= 1 and <= 3) i32 {
+func f(a i32 >= 1 and <= 1073741823, b i32 >= 1 and <= 3) i32 effects diverge {
     var s i32 = b
     var i i32 = 0
     while i < 2 {
@@ -22,4 +22,4 @@ proc f(a i32 >= 1 and <= 1073741823, b i32 >= 1 and <= 3) i32 {
     }
     return s
 }
-proc main() i32 { return f(1073741823, 3) }
+func main() i32 effects diverge { return f(1073741823, 3) }

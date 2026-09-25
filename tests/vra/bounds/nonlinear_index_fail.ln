@@ -7,4 +7,4 @@
 func at(m i32[], cols i32 >= 0 and < 1000, r i32 >= 0 and < 1000, c i32 >= 0 and < 1000) i32 {
     return m[r * cols + c]
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

@@ -3,7 +3,7 @@
 // dangling fat pointer (ASan: stack-use-after-return). The bare `return local`
 // form was caught; the `local[a..b]` slice form was not. Slice a parameter or an
 // owned buffer instead.
-proc make() u8[] {
+func make() u8[] effects diverge {
     var b u8[8]
     var k u32 = 0
     while k < 8 {
@@ -12,4 +12,4 @@ proc make() u8[] {
     }
     return b[0..8]
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

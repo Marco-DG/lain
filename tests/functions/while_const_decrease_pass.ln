@@ -16,7 +16,7 @@ func scan(n usize) usize {
     }
     return steps
 }
-proc main() i32 {
+func main() i32 {
     if scan(10) == 8 { return 0 }
     return 1
 }

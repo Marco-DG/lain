@@ -7,8 +7,8 @@ type Two {
     a u8[]
     b u8[]
 }
-proc t(l *Two, i u32) u8 {
+func t(l *Two, i u32) u8 {
     if i < l.a.len and l.b[i] == 0 { return 1 }
     return 0
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

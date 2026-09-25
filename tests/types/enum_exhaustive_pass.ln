@@ -9,7 +9,7 @@ type Status {
     Done
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var s = Status.Running
     
     // All 3 variants covered, no else needed!

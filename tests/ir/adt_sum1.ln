@@ -16,7 +16,7 @@ func area_ish(s Shape) i32 {
     return -1
 }
 
-proc main() i32 {
+func main() i32 {
     var c = Shape.Circle(10)
     var r = Shape.Rectangle(6, 7)
     var p = Shape.Point

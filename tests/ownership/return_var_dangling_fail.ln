@@ -6,5 +6,5 @@ func ret_var() var i32 {
     return var x
 }
 
-proc main() {
+func main() {
 }

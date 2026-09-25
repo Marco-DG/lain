@@ -16,7 +16,7 @@ func outer(fail bool, s *u8) *u8 | Denied {
     v = inner(fail, s) else return Denied
     return v
 }
-proc main() i32 {
+func main() i32 effects io {
     var r *u8 | TooBig = compute(2000000000, 2000000000, "ok")
     case r {
         TooBig: libc_printf("TooBig\n")

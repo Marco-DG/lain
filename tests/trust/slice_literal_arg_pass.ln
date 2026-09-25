@@ -15,13 +15,13 @@
 
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc show(s u8[]) {
+func show(s u8[]) effects io {
     if s.len < 2147483647 {
         libc_printf("%d\n", s.len as i32)
     }
 }
 
-proc main() i32 {
+func main() i32 effects io {
     show("hello")
     var t u8[] = "hi!"
     show(t)

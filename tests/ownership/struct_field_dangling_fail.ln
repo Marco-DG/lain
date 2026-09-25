@@ -7,11 +7,11 @@ type Lexer {
     cursor i32
 }
 
-proc bad() Lexer {
+func bad() Lexer {
     var local = "hello"
     return Lexer(local, 0)        // [E010] text borrows from local
 }
 
-proc main() i32 {
+func main() i32 {
     return 0
 }

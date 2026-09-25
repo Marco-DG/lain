@@ -12,9 +12,9 @@
 // `dbl(2)` above it is bindable and `dbl(k)` is not; if the tight answer leaked from the first
 // to the second, `t[dbl(k)]` would be "proven" for an argument that can be anything.
 func dbl(a i32) i32 { return a +% a }
-proc f(k i32) i32 {
+func f(k i32) i32 {
     var t i32[8] = [0, 1, 2, 3, 4, 5, 6, 7]
     var good i32 = t[dbl(2)]
     return good + t[dbl(k)]
 }
-proc main() i32 { return f(1) }
+func main() i32 { return f(1) }

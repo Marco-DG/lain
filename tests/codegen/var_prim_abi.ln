@@ -4,7 +4,7 @@
 //   - read emits (*n) not bare n
 //   - forwarding passes the raw pointer (no &)
 
-proc write_int(var out i32, val i32) {
+func write_int(var out i32, val i32) {
     out = val
 }
 
@@ -12,10 +12,10 @@ func read_int(var n i32) i32 {
     return n
 }
 
-proc forward(var x i32, val i32) {
+func forward(var x i32, val i32) {
     write_int(var x, val)
 }
 
-proc main() i32 {
+func main() i32 {
     return 0
 }

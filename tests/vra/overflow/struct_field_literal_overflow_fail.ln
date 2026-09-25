@@ -4,7 +4,7 @@
 type S {
     x u8
 }
-proc main() i32 {
+func main() i32 {
     var s = S(300)
     return 0
 }

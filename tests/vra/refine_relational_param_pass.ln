@@ -9,7 +9,7 @@
 // a parameter by another PARAMETER — every relational test used a literal or a `.len` — so the
 // composition was one refactor away from being lost silently, and the plan still listed C3 as
 // unbuilt. A capability nobody exercises is indistinguishable from one nobody has.
-proc pick(a i32[n], n usize, j usize < n, i usize <= j) i32 {
+func pick(a i32[n], n usize, j usize < n, i usize <= j) i32 {
     return a[i] +% a[j]
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

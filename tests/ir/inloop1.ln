@@ -1,7 +1,7 @@
 // The running total is over the elements of an UNBOUNDED slice, so it is a real overflow:
 // the diagnostic asks for a bound on the count, the element or the total and this has none.
 // The subject is the `i in data` bounds proof, so the addition is explicitly wrapping.
-proc total(data i32[]) i32 {
+func total(data i32[]) i32 effects diverge {
     var s i32 = 0
     var i usize = 0
     while i in data {
@@ -10,7 +10,7 @@ proc total(data i32[]) i32 {
     }
     return s
 }
-proc main() i32 {
+func main() i32 effects diverge {
     var a i32[4] = [10, 20, 30, 40]
     if total(a) == 100 {
         return 0

@@ -10,7 +10,7 @@ func g(b bool, fail bool) bool | Nope {
     x = try f(b, fail)
     return x
 }
-proc main() i32 {
+func main() i32 effects io {
     var r bool | Nope = g(true, true)
     case r {
         Nope: libc_printf("nope\n")

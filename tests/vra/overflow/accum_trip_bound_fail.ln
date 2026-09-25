@@ -12,4 +12,4 @@ func total(a u8[4096]) u8 {
     }
     return s
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

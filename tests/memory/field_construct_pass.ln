@@ -7,7 +7,7 @@ type Point {
     y i32 >= 0 and <= 1000
 }
 func sum(p Point) i32 { return p.x + p.y }
-proc main() i32 {
+func main() i32 {
     var p Point
     p.x = 5
     p.y = 6

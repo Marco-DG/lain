@@ -13,4 +13,4 @@ func fourth(arr i32[> 3]) i32 {
     return arr[3]
 }
 
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

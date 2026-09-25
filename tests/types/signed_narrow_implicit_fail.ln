@@ -5,6 +5,6 @@
 func narrow(a i32) i8 {
     return a
 }
-proc main() i32 {
+func main() i32 {
     return 0
 }

@@ -4,7 +4,7 @@
 // the symbol table. Binding it as a variable cannot shadow the type: a later read
 // resolves back to the type and formerly emitted broken C ("unhandled expression
 // type") with NO diagnostic. Must reject the binding cleanly instead.
-proc main() i32 {
+func main() i32 {
     var i32 usize = 0
     var y usize = i32
     return 0

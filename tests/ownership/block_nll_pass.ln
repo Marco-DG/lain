@@ -9,7 +9,7 @@ func get_id(var r Resource) i32 {
     return r.id
 }
 
-proc main() i32 {
+func main() i32 {
     var r = Resource(42)
     
     if r.id > 0 {

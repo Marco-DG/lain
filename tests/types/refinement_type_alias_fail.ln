@@ -4,7 +4,7 @@
 
 type Percent = i32 >= 0 and <= 100
 
-proc main() i32 {
+func main() i32 {
     var p Percent = 150        // 150 > 100 → constraint violated
     return 0
 }

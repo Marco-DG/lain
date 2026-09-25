@@ -5,16 +5,16 @@
 // or only through the FALSE edge of `d == 0` (the early-return spelling), has a nonzero d.
 // The same fact stated at the entry by a parameter refinement reads identically.
 extern proc libc_printf(fmt *u8, ...) i32
-proc guarded(x i32, d i32) i32 {
+func guarded(x i32, d i32) i32 {
     if d != 0 { return x / d }
     return 0
 }
-proc early(x i32, d i32) i32 {
+func early(x i32, d i32) i32 {
     if d == 0 { return 0 }
     return x / d
 }
 func refined(a i32, b i32 != 0) i32 { return a / b }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d\n", guarded(100, 5) + early(100, 4) + refined(100, 2))
     return 0
 }

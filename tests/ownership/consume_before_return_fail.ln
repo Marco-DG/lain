@@ -10,5 +10,5 @@
 type R {
     mov h *u8
 }
-proc sink(mov r R) { }
-proc main() i32 { return 0 }
+func sink(mov r R) { }
+func main() i32 { return 0 }

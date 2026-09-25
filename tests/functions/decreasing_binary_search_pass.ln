@@ -3,7 +3,7 @@
 // by the difference-measure normalizer (substitute mid, linearize to a function of
 // M = hi-lo, evaluate at the binding M=1 using the correlated X-X/D range).
 extern proc libc_printf(fmt *u8, ...) i32
-proc descend(flag bool) i32 {
+func descend(flag bool) i32 {
     var lo usize = 0
     var hi usize = 64
     while lo < hi decreasing hi - lo {
@@ -12,7 +12,7 @@ proc descend(flag bool) i32 {
     }
     return lo as i32
 }
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%d\n", descend(false))
     return 0
 }

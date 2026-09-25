@@ -11,7 +11,7 @@
 // started asserting its subject by accident of ordering — so the declaration is stated and the
 // underflow is what the test is about.)
 extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+func main() i32 effects io {
     var x usize = 0
     var y usize = x - 1
     libc_printf("%zu\n", y)

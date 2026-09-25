@@ -6,6 +6,6 @@ type Pct = i32 >= 0 and <= 100
 func f(p Pct) i32 {
     return p
 }
-proc main() i32 {
+func main() i32 {
     return f(200)
 }

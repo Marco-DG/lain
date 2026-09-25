@@ -3,7 +3,7 @@
 // invalidated when `i` is mutated in a NESTED scope, not just the same one. The
 // inner `if` moves `i` out of range; a branch's scope-restore must not re-expose
 // the stale `i < n`, so `src[i]` in the while-body must be rejected.
-proc t(src u8[4096], n u32 < 4097) u8 {
+func t(src u8[4096], n u32 < 4097) u8 effects diverge {
     var i u32 = 0
     var r u8 = 0
     while i < n {
@@ -13,4 +13,4 @@ proc t(src u8[4096], n u32 < 4097) u8 {
     }
     return r
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

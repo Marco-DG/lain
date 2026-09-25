@@ -11,7 +11,7 @@
 //     and reads later, so the READ's own field_ptr wiped what the store had just put there.
 type Point { x i32, y i32 }
 
-proc main() i32 {
+func main() i32 {
     var p = Point(3, 4)
     return p.x + p.y - 7
 }

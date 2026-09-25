@@ -5,12 +5,12 @@ func step(p *u8, fail bool) *u8 | NotFound {
     if fail { return NotFound }
     return p
 }
-proc work(p *u8, fail bool) *u8 | NotFound {
+func work(p *u8, fail bool) *u8 | NotFound effects io {
     defer libc_printf("cleanup\n")
     f = try step(p, fail)
     return f
 }
-proc main() i32 {
+func main() i32 effects io {
     var r *u8 | NotFound = work("p", true)
     case r {
         NotFound: libc_printf("nf\n")

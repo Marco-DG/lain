@@ -9,7 +9,7 @@ func half(p Pct) Pct {
     return p / 2
 }
 
-proc main() i32 {
+func main() i32 effects io {
     var x Pct = 80
     var h = half(x)
     libc_printf("%d -> %d\n", x, h)

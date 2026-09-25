@@ -6,7 +6,7 @@ func add_i32(a Vec(4, i32), b Vec(4, i32)) Vec(4, i32) {
     return a + b
 }
 
-proc main() i32 {
+func main() i32 {
     var a Vec(4, i32) = [1, 2, 3, 4]
     var b i32x4        = [10, 20, 30, 40]   // sugar `i32x4` == Vec(4, i32) — interop
     var c Vec(4, i32) = add_i32(a, b)

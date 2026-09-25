@@ -9,9 +9,9 @@
 // exactly one parameter. Without one, only the programmer can narrow it.
 type Data { x i32 }
 extern func pick(a var Data) var i32
-proc mutate(var d Data) { d.x = 1 }
-proc use_ref(var r i32) i32 { return r }
-proc main() i32 {
+func mutate(var d Data) { d.x = 1 }
+func use_ref(var r i32) i32 { return r }
+func main() i32 {
     var d Data = Data(5)
     var r = pick(var d)
     mutate(var d)          // conflicts: `r` still borrows d below

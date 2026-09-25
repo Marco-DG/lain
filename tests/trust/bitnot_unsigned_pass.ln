@@ -17,7 +17,7 @@ func not_u32(a u32) u32 { return ~a }
 func not_u64(a u64) u64 { return ~a }
 func not_i32(a i32) i32 { return ~a }
 
-proc main() i32 {
+func main() i32 effects io {
     libc_printf("%u\n",   not_u8(5) as u32)       // 255 - 5   = 250
     libc_printf("%u\n",   not_u32(0))             // 2^32 - 1  = 4294967295
     libc_printf("%u\n",   not_u32(12))            // 2^32 - 13 = 4294967283

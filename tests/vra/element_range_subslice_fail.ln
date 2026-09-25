@@ -9,13 +9,13 @@
 //
 // Writing a KNOWN value through a subslice is fine and stays proven: that store is one the
 // scan sees, and it joins in like any other.
-proc zero(var s i32[]) {
+func zero(var s i32[]) {
     for i in 0..s.len { s[i] = 0 }
 }
-proc f() i32 {
+func f() i32 {
     var a i32[4] = [1, 2, 3, 4]
     var s = a[0..4]
     zero(var s)
     return a[0] + a[3]
 }
-proc main() i32 { return f() }
+func main() i32 { return f() }

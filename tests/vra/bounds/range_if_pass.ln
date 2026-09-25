@@ -10,6 +10,6 @@ func test_if(x i32, y i32) i32 {
     return 0
 }
 
-proc main() i32 {
+func main() i32 {
     return 0
 }

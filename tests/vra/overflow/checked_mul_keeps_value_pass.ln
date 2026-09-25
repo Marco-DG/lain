@@ -8,7 +8,7 @@
 //
 // The copy now carries the source's interval outright. The closure it needs was already being
 // paid for one line above.
-proc main() i32 {
+func main() i32 effects raises {
     var a i32 = 10
     var b i32 = 3
     var p = a *? b else panic("overflow")

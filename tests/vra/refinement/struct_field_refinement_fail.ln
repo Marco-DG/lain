@@ -5,7 +5,7 @@
 type Config {
     pct i32 >= 0 and <= 100
 }
-proc main() i32 {
+func main() i32 {
     var c = Config(200)
     return 0
 }

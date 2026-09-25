@@ -41,7 +41,7 @@ func span(lo usize, hi usize) usize {
     return 0
 }
 
-proc main() i32 {
+func main() i32 effects diverge, io {
     libc_printf("%d %d %d\n", countdown(5) as% i32, depth(16) as% i32, span(0, 8) as% i32)
     return 0
 }

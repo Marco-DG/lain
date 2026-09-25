@@ -10,7 +10,7 @@
 // and proved `arr[30]` on a 21-element array. The query now requires exactly ONE
 // accumulating store and at most one other (the initialiser) — `s0 + T*delta` describes
 // one update per iteration and says nothing when there are two.
-proc main() i32 {
+func main() i32 {
     var arr i32[21] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
     var x i32 = 0
     for i in 0..10 {

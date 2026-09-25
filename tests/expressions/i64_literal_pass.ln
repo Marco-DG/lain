@@ -2,7 +2,7 @@
 // a 32-bit int, so `var x i64 = 5000000000` silently became 705032704. Now it is
 // int64_t and round-trips correctly.
 extern proc libc_printf(fmt *u8, ...) i32
-proc main() i32 {
+func main() i32 effects io {
     var x i64 = 5000000000
     libc_printf("%lld\n", x)
     return 0

@@ -2,7 +2,7 @@
 // tests/safety/unsafe_fail_deref.ln
 // Test that pointer dereferencing fails outside unsafe blocks
 
-proc main() {
+func main() {
     var p *i32 = 0
     var x i32 = *p// Should fail here
 }

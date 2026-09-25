@@ -2,7 +2,7 @@
 // A pure `func` must not call a `proc` — that would let it perform side effects.
 extern proc libc_printf(fmt *u8, ...) i32
 
-proc side_effect() {
+func side_effect() {
     libc_printf("tick\n")
 }
 
@@ -11,7 +11,7 @@ func pure_add(a i32, b i32) i32 {
     return a + b
 }
 
-proc main() i32 {
+func main() i32 {
     var x = pure_add(10, 20)
     return 0
 }

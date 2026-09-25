@@ -14,7 +14,7 @@ func kw(src u8[4096], start u32 < 4090, len u32) u8 {
     return KIND_IDENT
 }
 
-proc main() i32 {
+func main() i32 {
     var buf u8[4096] = [0 for x in 0..4096]
     buf[0] = 102                                  // 'f'
     buf[1] = 117                                  // 'u'

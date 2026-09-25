@@ -13,4 +13,4 @@ func load(p *u8, f1 bool, f2 bool) *u8 | NotFound | ParseErr {
     b = try parse_it(a, f2)
     return b
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

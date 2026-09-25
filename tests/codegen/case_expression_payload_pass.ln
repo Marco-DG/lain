@@ -13,7 +13,7 @@ func unwrap_or(r R, fallback i32) i32 {
         Err(c): fallback
     }
 }
-proc main() i32 {
+func main() i32 {
     var a = unwrap_or(R.Ok(42), 0)
     var b = unwrap_or(R.Err(7), 99)
     if a == 42 { if b == 99 { return 0 } }

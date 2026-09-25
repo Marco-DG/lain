@@ -11,6 +11,6 @@ func divide(a i32) i32 {
     return a / nonzero()   // divisor range now known to be >= 1 → no [E015]
 }
 
-proc main() i32 {
+func main() i32 {
     return divide(10)
 }

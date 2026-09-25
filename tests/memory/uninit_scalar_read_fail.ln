@@ -3,7 +3,7 @@
 // accepted: the E005 gate only covered linear/`` vars). Now scalars
 // and pointers are covered too, via the linearity table's definite-assignment
 // tracking (assignment sets initialized; if/else requires BOTH branches).
-proc main() i32 {
+func main() i32 {
     var x i32
     return x
 }

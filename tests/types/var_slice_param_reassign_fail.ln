@@ -11,8 +11,8 @@
 // this was the one place the `var` rule quietly failed.
 //
 // Writing THROUGH the slice is unaffected: see var_slice_param_write_pass.ln.
-proc shrink(var s i32[], src i32[]) { s = src[0..1] }
-proc main() i32 {
+func shrink(var s i32[], src i32[]) { s = src[0..1] }
+func main() i32 {
     var a i32[8] = [1, 2, 3, 4, 5, 6, 7, 8]
     var s = a[0..8]
     shrink(var s, a)

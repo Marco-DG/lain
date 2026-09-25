@@ -3,7 +3,7 @@
 // passed by reference, so they never take a `*`: write `T[]`, `T[n]`, `T[N]`, or
 // `T[:S]` with no `*`. `*` is reserved for raw pointers (`*T`, `*void`, function
 // pointers). Here `*u8[]` (a `*` before a slice) is rejected.
-proc f(s *u8[]) usize {
+func f(s *u8[]) usize {
     return s.len
 }
-proc main() i32 { return 0 }
+func main() i32 { return 0 }

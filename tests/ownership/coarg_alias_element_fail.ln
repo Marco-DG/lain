@@ -11,12 +11,12 @@
 //   (b) `sema_expr_root_id` did not unwrap the borrow wrapper, so `var a[i]` reported NO
 //       root at all and every `var`-borrowed argument silently skipped the check — exactly
 //       the arguments that carry the hazard.
-proc mix(var x i32, var y i32) {
+func mix(var x i32, var y i32) {
     x = x +% 10
     y = y +% 100
     x = x +% y
 }
-proc main() i32 {
+func main() i32 {
     var a i32[4] = [1, 2, 3, 4]
     var i usize = 2
     mix(var a[i], var a[i])

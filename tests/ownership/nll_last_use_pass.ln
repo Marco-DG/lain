@@ -14,7 +14,7 @@ func read_data(d Data) i32 {
     return d.value
 }
 
-proc main() i32 {
+func main() i32 {
     var data Data
     data.value = 42
     

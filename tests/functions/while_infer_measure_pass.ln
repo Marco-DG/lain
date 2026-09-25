@@ -32,7 +32,7 @@ func span(lo i32 >= 0 and <= 1000000, hi i32 >= 0 and <= 1000000) i32 {
     }
     return c
 }
-proc main() i32 {
+func main() i32 {
     // up(5)=10, down(5)=15, span(2,7)=5  → 10+15+5 = 30; return 0 on success
     if up(5) == 10 {
         if down(5) == 15 {
