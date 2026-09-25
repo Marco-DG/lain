@@ -7,8 +7,12 @@
 #   · contains `// ERROR` or an `[Exxx]` code  → it ILLUSTRATES a rejection and must FAIL
 #   · otherwise                                → it must COMPILE
 #
-# Blocks that are fragments (no `proc main`) are wrapped: top-level declarations get a `main`
-# appended, statement fragments get wrapped in one. A fragment that cannot be made into a
+# Blocks that are fragments (no `func main`) are wrapped: top-level declarations get a `main`
+# appended, statement fragments get wrapped in one. The wrapper's row is `io, raises, alloc` and
+# deliberately NOT `diverge`: since E.6 every effect must be acknowledged, so a wrapper with a
+# bare row would fail fragments for the wrapper's own reasons — but `diverge` is the one effect
+# that carries a PROOF OBLIGATION, and granting it would quietly stop the gate demanding that a
+# documented loop terminates. A fragment that cannot be made into a
 # program is reported as UNCHECKED rather than quietly passed — an unchecked example is a
 # claim nobody is testing, which is how the build command in the README's own Quick Start
 # came to be missing `-I src` for four months.
@@ -74,9 +78,9 @@ for f in "$TMP"/b*.txt; do
     if [ $selfcontained -eq 1 ]; then
         printf '%s\n' "$body" > "$prog"
     elif echo "$body" | grep -qE '^\s*(proc|func|type|extern|import|c_include)\b'; then
-        { printf '%s\n' "$body"; printf 'proc main() i32 { return 0 }\n'; } > "$prog"
+        { printf '%s\n' "$body"; printf 'func main() i32 effects io, raises, alloc { return 0 }\n'; } > "$prog"
     elif [ -n "$(echo "$body" | tr -d '[:space:]')" ]; then
-        { printf 'proc main() i32 {\n'; printf '%s\n' "$body"; printf '    return 0\n}\n'; } > "$prog"
+        { printf 'func main() i32 effects io, raises, alloc {\n'; printf '%s\n' "$body"; printf '    return 0\n}\n'; } > "$prog"
     else
         unchecked=$((unchecked+1))
         case "$page" in README.md) unchecked_readme=$((unchecked_readme+1)) ;;

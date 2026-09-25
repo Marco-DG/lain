@@ -200,7 +200,7 @@ type Buffer {
 }
 func release(mov {data, len} Buffer) { }
 
-proc main() i32 {
+func main() i32 {
     var p *u8 = 0
     var b = Buffer(p, 0)
     release(mov b)
@@ -218,7 +218,7 @@ type Buffer {
 }
 func release(mov {data, len} Buffer) { }
 
-proc main() i32 {
+func main() i32 {
     var p *u8 = 0
     var b = Buffer(p, 0)    // E003: linear field 'data' of 'b' was not consumed
     return 0
@@ -254,7 +254,7 @@ type Data { x i32 }
 
 func pick_x(var a Data, var b Data) var i32 { return var a.x }
 
-proc main() i32 {
+func main() i32 {
     var p = Data(1)
     var q = Data(2)
     var r = pick_x(var p, var q)
@@ -290,7 +290,7 @@ Below is the same loop compiled twice. The only difference is whether `restrict`
 through to gcc (`-O3 -march=x86-64-v3`):
 
 ```lain
-proc vadd(out var i32[], a i32[out.len], b i32[out.len]) {
+func vadd(out var i32[], a i32[out.len], b i32[out.len]) {
     var i usize = 0
     while i < out.len {
         out[i] = a[i] +% b[i]
@@ -383,7 +383,7 @@ search over a runtime length is still rejected.
 A parameter's length can be written as an expression over the other parameters:
 
 ```lain
-proc vadd(var out i32[], a i32[out.len], b i32[out.len]) {
+func vadd(var out i32[], a i32[out.len], b i32[out.len]) {
     for i in 0..out.len {
         out[i] = a[i] +% b[i]
     }
@@ -404,7 +404,7 @@ declared length is itself arithmetic: `h * w` on two unbounded `usize`s overflow
 needs a named parameter to attach to.
 
 ```lain
-proc msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
+func msum(h usize < 4096, w usize < 4096, a i32[h * w]) i32 {
     var s i32 = 0
     var i usize = 0
     while i < h {
@@ -428,7 +428,7 @@ comparison, so the same analysis handles it and there is no SIMD-specific reason
 the compiler:
 
 ```lain
-proc scan(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
+func scan(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
     var i u32 = start
     while (i + 15) in src and i +% 16 <= n {
         var hit u32 = @movemask(@load(u8x16, src, i) == term) & (65535 as u32)
@@ -578,19 +578,55 @@ func collatz(n int) int {
 }
 ```
 
-A `proc` is allowed to loop forever. That is what separates the two.
+Termination is the default, and `effects diverge` is how a function opts out of it — the same
+clause that admits any other effect, so nothing here is special-cased:
+
+```lain
+extern func libc_putchar(c i32) i32 effects io
+
+func serve(fd i32) effects io, diverge {
+    while 1 { libc_putchar(fd) }
+}
+```
+
+That row is not a suppression. It is a fact about `serve` that every caller inherits: a `func`
+with no `diverge` in its row cannot call it without saying so.
 
 ---
 
 # 6. Effect System
 
-Every function gets a set of effects drawn from `{Write, Diverge, Raises, IO, Alloc}`, worked
-out by following the call graph. You can declare what a function is allowed to do with
-`effects …`, and the compiler checks the declaration instead of trusting it:
+Every function gets a set of effects drawn from `{diverge, raises, io, alloc}`, worked out by
+following the call graph. `func` is the only introducer and its default is the empty set, so a
+function that deviates says which way with `effects …` — one clause for the whole family:
+
+```lain
+extern func libc_malloc(n usize) mov *void effects io, alloc
+
+func dup(n usize) mov *void effects io, alloc { return libc_malloc(n) }
+
+func must_parse(ok bool) i32 effects raises {
+    if ok { return 1 }
+    panic("bad")
+}
+```
+
+**Silence means the empty set, and the row is a complete upper bound.** Those are one rule read
+from two sides: an effect the body has and the row does not name is an error, so a caller can
+trust what it reads. Omitting the clause is the strongest claim, not the quietest one:
 
 ```
-[E130] Error: 'talk' declares `effects` that do not cover what its body does —
+[E130] Error Ln 12, Col 6: 'talk' declares `effects` that do not cover what its body does —
        it also has: io.
+```
+
+An `extern` is the one place the rule inverts, for the one reason that it has no body: nothing can
+be inferred, so its row is BELIEVED, its default is *every* effect, and writing a row NARROWS it.
+Forgetting one on a C function that does I/O therefore costs precision, never soundness:
+
+```lain
+extern func libc_printf(fmt *u8, ...) i32 effects io    // believed; narrows
+extern func abs(n i32) i32 effects                      // the empty row: genuinely pure
 ```
 
 ## An empty effect set lifts a call out of a loop
@@ -609,7 +645,7 @@ func scale(x i32, y i32) i32 {
     return a *% 1274126177
 }
 
-proc apply(out var i32[], p i32, q i32) {
+func apply(out var i32[], p i32, q i32) {
     var i usize = 0
     while i < out.len {
         out[i] = out[i] +% scale(p, q)
