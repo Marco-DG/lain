@@ -2911,7 +2911,13 @@ static void walk_stmt(Stmt *s) {
                         ok = sema_verify_bounded_while_impl(s, false);
                         if (!ok) s->as.while_stmt.measure = NULL;  // discard; not provable
                     }
-                    if (!ok && !g_suppress_termination) {
+                    // E.4 prerequisite: `effects diverge` also stands this down — the row is
+                    // how a function says it may not terminate, and this check predates it.
+                    bool may_div = current_function_decl
+                                && (current_function_decl->as.function_decl.diverges
+                                 || (current_function_decl->as.function_decl.effects_declared
+                                  && (current_function_decl->as.function_decl.effects_bound & EFFECT_DIVERGE)));
+                    if (!ok && !g_suppress_termination && !may_div) {
                         // Not inferable: emit E011 (add explicit `decreasing` or use proc).
                         fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination "
                                 "measure are not allowed in pure function '%.*s'. "

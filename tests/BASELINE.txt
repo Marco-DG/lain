@@ -112,6 +112,10 @@ ty=Slice_u8 scalar
 rc=2
 out=7
 ty=Slice_u8 scalar
+### tests/effects/func_diverges_via_row_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
 ### tests/effects/io_attribute_pass.ln
 rc=2
 out=7

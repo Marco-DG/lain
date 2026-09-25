@@ -176,13 +176,15 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         Id *id = d->as.function_decl.name;
         Type *rt = d->as.function_decl.return_type;
 
-        // Phase 3: Purity & Test Refactoring
-        // Reject `func main` and enforce `proc main`
-        if (d->kind == DECL_FUNCTION && id->length == 4 && strncmp(id->name, "main", 4) == 0) {
-            fprintf(stderr, "[E013] Error Ln %li, Col %li: 'main' must be a procedure ('proc'), not a pure function ('func').\n", d->line, d->col);
-            diagnostic_show_line(d->line, d->col);
-            exit(1);
-        }
+        // ⚠ `func main` USED TO BE REJECTED, requiring `proc main`. That rule belonged to the
+        // two-keyword world: with one introducer (plan 7B) `main` is a `func` like everything
+        // else, declaring `effects io` when it prints and nothing when it does not — and a `main`
+        // that is genuinely pure and total is a perfectly good program, which the old rule
+        // forbade for no reason it could state.
+        //
+        // What the rule was really protecting is unchanged and enforced elsewhere: `main`'s
+        // effects still have to be ACKNOWLEDGED, so `func main()` that prints without
+        // `effects io` is [E011]. The keyword was never what made that work.
 
         // Returning a FIXED-size array by value (`func f() i32[4]`) is not yet
         // supported and, left unchecked, emits broken C: the Fixed_T_N struct
@@ -921,7 +923,18 @@ void sema_resolve_stmt(Stmt *s) {
     // UNLESS the condition consists entirely of pointer-in-arr guards (p in arr where
     // p has TYPE_POINTER): the walk phase will auto-synthesize the measure from the
     // monotone pointer decrement pattern.
-    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {
+    // ── E.4 PREREQUISITE: the loop ban must read the ROW, not the keyword ────────────────
+    // `func` is pure and total by default, and `effects diverge` is how a function says it may
+    // not terminate (plan 7B). Keying this on `kind == DECL_FUNCTION` alone meant that once
+    // `proc` starts disappearing, every migrated loop became an error with a message telling the
+    // programmer to "use 'proc'" — advice for a keyword that is going away.
+    //
+    // The sovereign engine raises the real obligation per loop header (analysis/vra.h) and reads
+    // `may_diverge`; this front-end check is the older, coarser one and now agrees with it.
+    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION
+        && !current_function_decl->as.function_decl.diverges
+        && !(current_function_decl->as.function_decl.effects_declared
+             && (current_function_decl->as.function_decl.effects_bound & EFFECT_DIVERGE))) {
         if (!s->as.while_stmt.measure) {
             // Structural scan: an `expr in expr` guard OR a relational comparison
             // (`i < n`, `i >= k`, …) in the condition → defer to the walk phase,
