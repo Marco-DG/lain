@@ -1501,12 +1501,10 @@ static Variant *lookup_adt_variant(DeclEnum *adt, Id *variant_name) {
 │ Function-pointer typing (non-capturing `*func`/`*proc`)            │
 ╚──────────────────────────────────────────────────────────────────*/
 
-// Synthesize the function-pointer type of a function/procedure decl.
+// Synthesize the function-pointer type of a function decl.
 static Type *fnptr_type_of_decl(Decl *d) {
     if (!d) return NULL;
-    bool is_func = (d->kind == DECL_FUNCTION || d->kind == DECL_EXTERN_FUNCTION);
-    bool is_proc = (d->kind == DECL_PROCEDURE || d->kind == DECL_EXTERN_PROCEDURE);
-    if (!is_func && !is_proc) return NULL;
+    if (d->kind != DECL_FUNCTION && d->kind != DECL_EXTERN_FUNCTION) return NULL;
     TypeList *pts = NULL, *tail = NULL;
     for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
         Type *pt = (p->decl && p->decl->kind == DECL_VARIABLE)
@@ -1520,7 +1518,6 @@ static Type *fnptr_type_of_decl(Decl *d) {
     // same fact either way; where none was written the row is ∅, which is what silence means.
     EffectSet srow = d->as.function_decl.effects_declared
                    ? d->as.function_decl.effects_bound : 0;
-    if (!is_func) srow |= EFFECT_TOP;   // a `proc` grants everything (deprecated form)
     return type_func(sema_arena, pts, d->as.function_decl.return_type, srow);
 }
 
@@ -1654,7 +1651,7 @@ static bool sema_arg_const_span(Expr *e, long long *lo, long long *hi) {
     return false;
 }
 static void check_call_aliasing(Decl *callee, ExprList *args, isize line, isize col) {
-    if (!callee || (callee->kind != DECL_FUNCTION && callee->kind != DECL_PROCEDURE)) return;
+    if (!callee || (callee->kind != DECL_FUNCTION)) return;
     DeclList *params = callee->as.function_decl.params;
     StmtList *body   = callee->as.function_decl.body;
     Id  *ids[64]; bool wr[64]; Expr *aex[64]; int n = 0;
@@ -2078,9 +2075,8 @@ void sema_infer_expr(Expr *e) {
         int ulen = e->as.member_expr.member->length < 255 ? e->as.member_expr.member->length : 255;
         memcpy(ubuf, e->as.member_expr.member->name, ulen); ubuf[ulen] = '\0';
         Symbol *usym = sema_lookup(ubuf);
-        if (usym && usym->decl && (usym->decl->kind == DECL_FUNCTION || usym->decl->kind == DECL_PROCEDURE
-                                || usym->decl->kind == DECL_EXTERN_FUNCTION
-                                || usym->decl->kind == DECL_EXTERN_PROCEDURE)) {
+        if (usym && usym->decl && (usym->decl->kind == DECL_FUNCTION
+                                || usym->decl->kind == DECL_EXTERN_FUNCTION)) {
             e->type = NULL;   // the parent EXPR_CALL turns this into `member(target, …)`
             return;
         }
@@ -2106,7 +2102,7 @@ void sema_infer_expr(Expr *e) {
         memcpy(mbuf, e->as.member_expr.member->name, mlen);
         mbuf[mlen] = '\0';
         Symbol *sym = sema_lookup(mbuf);
-        if (sym && sym->decl && (sym->decl->kind == DECL_FUNCTION || sym->decl->kind == DECL_PROCEDURE || sym->decl->kind == DECL_EXTERN_FUNCTION || sym->decl->kind == DECL_EXTERN_PROCEDURE)) {
+        if (sym && sym->decl && (sym->decl->kind == DECL_FUNCTION || sym->decl->kind == DECL_EXTERN_FUNCTION)) {
             // It might be a UFCS method call (e.g., `l.consume()`).
             // We leave `e->type = NULL`. The parent `EXPR_CALL` will detect this
             // and rewrite the AST to `consume(l)`.
@@ -2132,11 +2128,11 @@ void sema_infer_expr(Expr *e) {
     // and take the result type from the pointer's return type.
     {
       Decl *cd = e->as.call_expr.callee->decl;
-      bool callee_is_direct_fn = cd && (cd->kind == DECL_FUNCTION || cd->kind == DECL_PROCEDURE ||
-                                        cd->kind == DECL_EXTERN_FUNCTION || cd->kind == DECL_EXTERN_PROCEDURE);
+      bool callee_is_direct_fn = cd && (cd->kind == DECL_FUNCTION ||
+                                        cd->kind == DECL_EXTERN_FUNCTION);
       // Soundness of the emitted `restrict`: a mutated reference parameter must not
       // be aliased by another argument (exclusive borrow). Walk-gated, direct calls.
-      if (sema_walk_phase && cd && (cd->kind == DECL_FUNCTION || cd->kind == DECL_PROCEDURE))
+      if (sema_walk_phase && cd && (cd->kind == DECL_FUNCTION))
           check_call_aliasing(cd, e->as.call_expr.args, e->line, e->col);
       Type *fnty = e->as.call_expr.callee->type;
       if (!callee_is_direct_fn && fnty && fnty->kind == TYPE_FUNC) {
@@ -2241,7 +2237,7 @@ void sema_infer_expr(Expr *e) {
         mbuf[mlen] = '\0';
         
         Symbol *sym = sema_lookup(mbuf);
-        if (sym && sym->decl && (sym->decl->kind == DECL_FUNCTION || sym->decl->kind == DECL_PROCEDURE || sym->decl->kind == DECL_EXTERN_FUNCTION || sym->decl->kind == DECL_EXTERN_PROCEDURE)) {
+        if (sym && sym->decl && (sym->decl->kind == DECL_FUNCTION || sym->decl->kind == DECL_EXTERN_FUNCTION)) {
             // It is a valid function! We convert the AST node to represent a UFCS call.
             // 1. Change the callee to simply be the function identifier
             Expr *new_callee = arena_push(sema_arena, Expr);
@@ -2352,7 +2348,7 @@ void sema_infer_expr(Expr *e) {
     // Argument count check — skip extern functions (may be variadic like printf)
     {
         Decl *cd = e->as.call_expr.callee->decl;
-        if (cd && (cd->kind == DECL_FUNCTION || cd->kind == DECL_PROCEDURE)) {
+        if (cd && (cd->kind == DECL_FUNCTION)) {
             int n_params = 0, n_args = 0;
             for (DeclList *p = cd->as.function_decl.params; p; p = p->next) n_params++;
             for (ExprList *a = e->as.call_expr.args; a; a = a->next) n_args++;
@@ -2394,10 +2390,8 @@ void sema_infer_expr(Expr *e) {
             exit(1);
         }
     }
-    if (callee_decl && (callee_decl->kind == DECL_FUNCTION || 
-                        callee_decl->kind == DECL_PROCEDURE ||
-                        callee_decl->kind == DECL_EXTERN_FUNCTION || 
-                        callee_decl->kind == DECL_EXTERN_PROCEDURE)) {
+    if (callee_decl && (callee_decl->kind == DECL_FUNCTION ||
+                        callee_decl->kind == DECL_EXTERN_FUNCTION)) {
         
         int param_idx = 0;
         DeclList *params = callee_decl->as.function_decl.params;

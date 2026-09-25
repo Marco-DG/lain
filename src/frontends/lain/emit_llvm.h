@@ -177,7 +177,6 @@ static int emit_llvm(DeclList *program, const char *out_file) {
     for (DeclList *dl = program; dl; dl = dl->next) {
         Decl *d = dl->decl;
         if (d && d->kind == DECL_FUNCTION) ll_func(d);
-        else if (d && d->kind == DECL_PROCEDURE) ll_func(d);  // same shape here
     }
     fclose(llf);
     return ll_unsupported;

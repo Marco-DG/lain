@@ -1,0 +1,12 @@
+// ★ THE ROW GOVERNS BOTH SOURCES OF DIVERGENCE. `effects diverge` licensed an unbounded LOOP but
+// not an unbounded RECURSION, so one effect had two sources and the row governed only one — a
+// function that declared it may not terminate was still refused for recursing, and the diagnostic
+// advised declaring it `proc`, a keyword that no longer exists.
+//
+// `spin` recurses with `n` unchanged, so no measure exists and none can be inferred. The row says
+// so, and that is the whole point of writing it.
+func spin(n i32) i32 effects diverge {
+    if n == 0 { return 0 }
+    return spin(n)
+}
+func main() i32 effects diverge { return spin(0) }

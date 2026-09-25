@@ -130,9 +130,7 @@ DeclList* parse_decl_list(Arena *arena, Parser *parser);
 Decl *   parse_decl(Arena *arena, Parser *parser);
 Decl *   parse_var_decl(Arena *arena, Parser *parser);
 Decl *   parse_func_decl(Arena *arena, Parser *parser);
-Decl *   parse_proc_decl(Arena *arena, Parser *parser); // New
 Decl *   parse_extern_func_decl(Arena *arena, Parser *parser);
-Decl *   parse_extern_proc_decl(Arena *arena, Parser *parser); // New
 Decl *   parse_extern_type_decl(Arena *arena, Parser *parser); // New
 Decl *   parse_type_decl(Arena *arena, Parser *parser);
 Decl *   parse_import_decl(Arena *arena, Parser *parser);
@@ -799,7 +797,8 @@ static bool parse_effects_clause(Parser *parser, EffectSet *out) {
     return true;
 }
 
-Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
+// One introducer, so no `is_proc`: `proc` is rejected at the dispatch site (E100).
+Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
     // function name
     parser_expect(TOKEN_IDENTIFIER, "Expected function/procedure name");
     // ★ A FUNCTION DECL CARRIED NO POSITION, and nothing noticed until the effect row became
@@ -1104,14 +1103,8 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     parser_expect(TOKEN_R_BRACE, "Expected '}' at end of body");
     parser_advance();
 
-    Decl *d;
-    if (is_proc) {
-        d = decl_procedure(arena, func_name, params, ret_type, body, false, false);
-        d->line = decl_line; d->col = decl_col;
-    } else {
-        d = decl_function(arena, func_name, params, ret_type, body, false, false);
-        d->line = decl_line; d->col = decl_col;
-    }
+    Decl *d = decl_function(arena, func_name, params, ret_type, body, false, false);
+    d->line = decl_line; d->col = decl_col;
     d->as.function_decl.return_constraints = return_constraints;
     d->as.function_decl.ret_borrow_of = ret_borrow_of;
     d->as.function_decl.effects_declared = eff_declared;
@@ -1121,18 +1114,14 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
 }
 
 Decl *parse_func_decl(Arena* arena, Parser* parser) {
-    return parse_func_proc_decl_impl(arena, parser, false);
-}
-
-Decl *parse_proc_decl(Arena* arena, Parser* parser) {
-    return parse_func_proc_decl_impl(arena, parser, true);
+    return parse_func_decl_impl(arena, parser);
 }
 
 
 
 // extern func <name>(<params>) <return> ;
-Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_proc) {
-    long decl_line = parser->line, decl_col = parser->column;   // see parse_func_proc_decl_impl
+Decl *parse_extern_func_decl_impl(Arena *arena, Parser *parser) {
+    long decl_line = parser->line, decl_col = parser->column;   // see parse_func_decl_impl
     // name
     parser_expect(TOKEN_IDENTIFIER, "Expected function/procedure name");
     Id *func_name = id(arena, parser->token.length, parser->token.start);
@@ -1216,27 +1205,16 @@ Decl *parse_extern_func_proc_decl_impl(Arena *arena, Parser *parser, bool is_pro
     parser_advance();
 
     // NULL body signals extern
-    if (is_proc) {
-        { Decl *ed = decl_procedure(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
-          ed->line = decl_line; ed->col = decl_col;
-          ed->as.function_decl.ret_borrow_of = ext_borrow_of;
-          ed->as.function_decl.effects_declared = ext_eff_declared;
-          ed->as.function_decl.effects_bound = ext_eff; return ed; }
-    } else {
-        { Decl *ed = decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
-          ed->line = decl_line; ed->col = decl_col;
-          ed->as.function_decl.ret_borrow_of = ext_borrow_of;
-          ed->as.function_decl.effects_declared = ext_eff_declared;
-          ed->as.function_decl.effects_bound = ext_eff; return ed; }
-    }
+    Decl *ed = decl_function(arena, func_name, params, ret_type, /*body=*/NULL, true, is_variadic);
+    ed->line = decl_line; ed->col = decl_col;
+    ed->as.function_decl.ret_borrow_of = ext_borrow_of;
+    ed->as.function_decl.effects_declared = ext_eff_declared;
+    ed->as.function_decl.effects_bound = ext_eff;
+    return ed;
 }
 
 Decl *parse_extern_func_decl(Arena *arena, Parser *parser) {
-    return parse_extern_func_proc_decl_impl(arena, parser, false);
-}
-
-Decl *parse_extern_proc_decl(Arena *arena, Parser *parser) {
-    return parse_extern_func_proc_decl_impl(arena, parser, true);
+    return parse_extern_func_decl_impl(arena, parser);
 }
 
 Decl *parse_extern_type_decl(Arena *arena, Parser *parser) {

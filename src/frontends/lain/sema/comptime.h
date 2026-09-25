@@ -211,8 +211,7 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
                 // An `extern` is still allowed through below: with no body there is nothing to
                 // execute, and the programmer's declared row is believed (I-016).
                 bool callee_impure = false;
-                if (callee_decl && (callee_decl->kind == DECL_PROCEDURE
-                                 || callee_decl->kind == DECL_EXTERN_PROCEDURE)) callee_impure = true;
+
                 if (callee_decl && (callee_decl->kind == DECL_FUNCTION)
                     && callee_decl->as.function_decl.effects_declared
                     && callee_decl->as.function_decl.effects_bound != 0) callee_impure = true;

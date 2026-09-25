@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
     int mism=0, n=0;
     for (DeclList *d=program; d; d=d->next) {
         if (!d->decl) continue;
-        if ((d->decl->kind!=DECL_FUNCTION && d->decl->kind!=DECL_PROCEDURE) ||
+        if ((d->decl->kind!=DECL_FUNCTION) ||
             !d->decl->as.function_decl.body) continue;
         Id *nm=d->decl->as.function_decl.name; if (!nm) continue;
         IrFunc *f=NULL;

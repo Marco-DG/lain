@@ -1,0 +1,13 @@
+// EXPECT: [E082]
+// ...and the row does NOT excuse a measure the programmer WROTE. `effects diverge` waives the
+// obligation the compiler would have raised on its own, but `decreasing n` is a claim, and a claim
+// the compiler does not check reads as verified (D-44). Here `n` does not shrink, so the written
+// measure fails and the program is refused despite the row.
+//
+// This is the same rule the loop path already applied (`f->may_diverge && !b->has_measure`), now
+// applied to recursion — which is what makes the two sources one mechanism.
+func spin(n i32) i32 effects diverge decreasing n {
+    if n == 0 { return 0 }
+    return spin(n)
+}
+func main() i32 effects diverge { return spin(1) }

@@ -213,7 +213,7 @@ static int sema_check_undeclared(DeclList *decls, const char *file) {
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
         if (!d || decl_is_generic_template(d)) continue;
-        if (d->kind == DECL_FUNCTION || d->kind == DECL_PROCEDURE) {
+        if (d->kind == DECL_FUNCTION) {
             if (d->as.function_decl.is_extern) continue;
             und_stmt_list(d->as.function_decl.body);
         } else if (d->kind == DECL_VARIABLE) {

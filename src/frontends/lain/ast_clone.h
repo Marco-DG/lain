@@ -331,9 +331,7 @@ Decl *clone_decl(Arena *arena, Decl *d) {
             new_d->as.variable_decl.constraints = clone_expr_list(arena, d->as.variable_decl.constraints);
             break;
         case DECL_FUNCTION:
-        case DECL_PROCEDURE:
         case DECL_EXTERN_FUNCTION:
-        case DECL_EXTERN_PROCEDURE:
             new_d->as.function_decl.name = clone_id(arena, d->as.function_decl.name);
             new_d->as.function_decl.params = clone_decl_list(arena, d->as.function_decl.params);
             new_d->as.function_decl.return_type = clone_type(arena, d->as.function_decl.return_type);

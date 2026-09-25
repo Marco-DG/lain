@@ -151,12 +151,13 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                             c->had_measure
                               ? "the `decreasing` measure is not provably well-founded here"
                               : "this recursion is not provably terminating");
-                    fprintf(stderr, "       a `func` must be total, so some parameter has to "
-                                    "shrink toward a base case on every self-call\n"
+                    fprintf(stderr, "       a function is total by default, so some parameter has "
+                                    "to shrink toward a base case on every self-call\n"
                                     "       the engine looks for one that strictly decreases "
                                     "AND is bounded below (`>= 0`, or an unsigned type)\n"
                                     "       name it with `decreasing <param>`, guard the base "
-                                    "case, or declare the function `proc`\n");
+                                    "case, or write `effects diverge` to say it may not "
+                                    "terminate\n");
                 } else {
                     // Annex B again, and the same rule as the recursive case above: E011 is a
                     // loop "whose measure is neither given nor inferable", E082 one whose

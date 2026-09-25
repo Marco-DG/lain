@@ -213,10 +213,13 @@ typedef struct TypeList {
 
 typedef enum {
     DECL_VARIABLE,
+    // ★ DECL_PROCEDURE and DECL_EXTERN_PROCEDURE are DELETED with the `proc` keyword. Nothing
+    // could construct them once the parser rejected `proc`, and an unconstructible kind is worse
+    // than dead code: every `k == DECL_FUNCTION || k == DECL_PROCEDURE` chain still READ as though
+    // two kinds of callable existed, which is exactly the two-mechanism picture the effect row
+    // replaced. 43 such disjuncts are gone with them.
     DECL_FUNCTION,
-    DECL_PROCEDURE,
     DECL_EXTERN_FUNCTION,
-    DECL_EXTERN_PROCEDURE,
     DECL_STRUCT,
     DECL_ENUM,
     DECL_IMPORT,
@@ -1095,26 +1098,9 @@ Decl *decl_function(Arena *arena, Id *name, DeclList *params, Type *return_type,
     return d;
 }
 
-Decl *decl_procedure(Arena *arena, Id *name, DeclList *params, Type *return_type, StmtList *body, bool is_extern, bool is_variadic) {
-    Decl *d = arena_push_aligned(arena, Decl);
-    d->attributes = NULL;
-    d->is_private = false;
-    d->defining_module = NULL;
-    d->kind = is_extern ? DECL_EXTERN_PROCEDURE : DECL_PROCEDURE;
-    d->as.function_decl.name = name;
-    d->as.function_decl.params = params;
-    d->as.function_decl.return_type = return_type;
-    d->as.function_decl.body = body;
-    d->as.function_decl.pre_contracts = NULL;
-    d->as.function_decl.post_contracts = NULL;
-    d->as.function_decl.return_constraints = NULL;
-    d->as.function_decl.ret_borrow_of = NULL;
-    d->as.function_decl.effects_declared = false;
-    d->as.function_decl.effects_bound = 0;
-    d->as.function_decl.is_extern   = is_extern;
-    d->as.function_decl.is_variadic = is_variadic;
-    return d;
-}
+// `decl_procedure` is DELETED with the `proc` keyword: with one introducer there is one
+// constructor, and a factory for a DeclKind nothing can produce is a live-looking path
+// into a dead one.
 
 Decl* decl_struct(Arena* arena, Id* name, DeclList* fields) {
     Decl* d = arena_push_aligned(arena, Decl);

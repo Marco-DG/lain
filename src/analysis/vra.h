@@ -3529,7 +3529,15 @@ static Vra *vra_analyze(IrFunc *f) {
     // ("stand the legacy check down only where the new engine speaks") kept the legacy checks
     // on for exactly that reason. It speaks. Raising the obligation here is what lets it be
     // heard — and is what unblocks standing the legacy recursion checks down.
-    if (f->kind == IR_FUNC_PURE) {
+    // ★ AND THE ROW GOVERNS BOTH SOURCES OF DIVERGENCE. `effects diverge` licensed an unbounded
+    // LOOP (the line above) but not an unbounded RECURSION, so one effect had two sources and the
+    // row governed one of them — a function that declared it may not terminate was still refused
+    // for recursing, with a diagnostic that said "a `func` must be total" and advised declaring it
+    // `proc`. Same condition as the loop, for the same reason, including the part that matters:
+    // a WRITTEN `decreasing` measure is still checked even under the row, because a claim the
+    // compiler does not check reads as verified (D-44).
+    if (f->may_diverge && !f->has_decreasing) { /* the row states it; no obligation */ }
+    else if (f->kind == IR_FUNC_PURE) {
         IrInstr *site = vra_self_call_site(f);
         if (site) {
             VraCheck c; memset(&c,0,sizeof c);

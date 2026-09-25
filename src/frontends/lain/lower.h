@@ -106,7 +106,7 @@ static IrName *ir_qualified_name(Arena *a, Decl *d, Id *nm) {
     // was (see the emitter's extern note). `libc_puts` is `puts` in someone else's object file;
     // qualifying it produced a link error against `lib_b_libc_puts`. The rule is the same one,
     // arriving from the other side: what crosses the boundary keeps the boundary's spelling.
-    if (d && (d->kind==DECL_EXTERN_FUNCTION || d->kind==DECL_EXTERN_PROCEDURE))
+    if (d && (d->kind==DECL_EXTERN_FUNCTION))
         return ir_intern(a, nm->name, nm->length);
     const char *mod = d ? d->defining_module : NULL;
     if (!mod || !*mod) return ir_intern(a, nm->name, nm->length);   // the root module
@@ -1521,8 +1521,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // A function NAME used as a VALUE — `var f *func(i32,i32) i32 = choose`. It is
             // neither a local nor a constant, and with no case here it became an OPAQUE
             // unknown, so the pointer was never actually stored.
-            if (e->decl && (e->decl->kind==DECL_FUNCTION || e->decl->kind==DECL_PROCEDURE
-                         || e->decl->kind==DECL_EXTERN_FUNCTION || e->decl->kind==DECL_EXTERN_PROCEDURE)) {
+            if (e->decl && (e->decl->kind==DECL_FUNCTION
+                         || e->decl->kind==DECL_EXTERN_FUNCTION)) {
                 Id *fnm = e->decl->as.function_decl.name;
                 // The SAME identity the definition and every call site use — a function
                 // referenced as a value is the same function, and a second naming scheme here
@@ -1947,8 +1947,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // callee is the authority; the expression type is the fallback for a callee we
             // cannot resolve (indirect calls, declless builtins).
             IrType *cret = NULL;
-            if (callee && (callee->kind==DECL_FUNCTION || callee->kind==DECL_PROCEDURE
-                        || callee->kind==DECL_EXTERN_FUNCTION || callee->kind==DECL_EXTERN_PROCEDURE))
+            if (callee && (callee->kind==DECL_FUNCTION
+                        || callee->kind==DECL_EXTERN_FUNCTION))
                 cret = ir_lower_borrow_binding_type(c, callee->as.function_decl.return_type);
             IrType *rty = ((e->type && e->type->kind!=TYPE_SIMPLE) || (ty->kind!=IRT_UNIT)) ? ty
                         : (cret && cret->kind!=IRT_UNIT ? cret : NULL);
@@ -3153,9 +3153,9 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
         // skipped the function ENTIRELY: no definition in the emitted C, and every call to it
         // an undefined symbol at link time. A Lain function always has a body (an extern is a
         // different DeclKind), so the presence of statements is not the question.
-        if (k==DECL_FUNCTION || k==DECL_PROCEDURE) {
+        if (k==DECL_FUNCTION) {
             f = ir_lower_function(d->decl, program, a);
-        } else if (k==DECL_EXTERN_FUNCTION || k==DECL_EXTERN_PROCEDURE) {
+        } else if (k==DECL_EXTERN_FUNCTION) {
             Id *nm = d->decl->as.function_decl.name;
             f = ir_func_new(a, nm ? ir_intern(a, nm->name, nm->length) : NULL, NULL,
                             k==DECL_EXTERN_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);

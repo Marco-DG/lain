@@ -169,9 +169,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
       }
   
       case DECL_EXTERN_FUNCTION:
-      case DECL_EXTERN_PROCEDURE:
-      case DECL_FUNCTION:
-      case DECL_PROCEDURE: {
+      case DECL_FUNCTION: {
         // function name + return type → insert into sema_globals
         Id *id = d->as.function_decl.name;
         Type *rt = d->as.function_decl.return_type;
@@ -193,7 +191,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         // (fail-closed) instead. Slice returns (`i32[n]`, array_len == -1, emitted
         // as a Slice_<T> struct) and `var` output parameters are the supported
         // ways to hand back array data.
-        if ((d->kind == DECL_FUNCTION || d->kind == DECL_PROCEDURE) &&
+        if ((d->kind == DECL_FUNCTION) &&
             rt && rt->kind == TYPE_ARRAY && rt->array_len > 0) {
             fprintf(stderr, "[E088] Error Ln %li, Col %li: '%.*s' returns a fixed-size array "
                     "by value, which is not supported. Return a slice ('T[n]') or write the "
@@ -208,7 +206,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         rawf[id->length] = '\0';
   
         char *cnamef;
-        if (d->kind == DECL_EXTERN_FUNCTION || d->kind == DECL_EXTERN_PROCEDURE) {
+        if (d->kind == DECL_EXTERN_FUNCTION) {
             // D-40: an EXTERN may not take a plain dynamic slice. There is no C type for one,
             // so the declaration could not tell the truth about the callee whatever it emitted:
             // it was declared `const Slice_u8*` while the call site passed the decomposed data
@@ -1268,7 +1266,7 @@ void sema_resolve_expr(Expr *e) {
     // ── Purity: a `func` may not call a `proc` UNLESS it declared the effect (B.1) ────────
     //
     // ★ THE DECLARED ROW HAD TO START MEANING SOMETHING. This check was purely syntactic —
-    // DECL_FUNCTION calling DECL_PROCEDURE, refused regardless of any `effects` clause — so
+    // a `func` calling a `proc`, refused regardless of any `effects` clause — so
     // `func f() i32 effects io` was rejected identically to `func f() i32`. The clause could
     // therefore never be satisfied by anything but the empty row: it narrowed nothing and
     // widened nothing, which made `effects` on a `func` ANOTHER ASSERTION OF NOTHING, the same

@@ -484,8 +484,7 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
         case EXPR_CALL: {
             // B.2: interprocedural VRA via return_constraints.
             Decl *callee_decl = e->as.call_expr.callee ? e->as.call_expr.callee->decl : NULL;
-            if (callee_decl && (callee_decl->kind == DECL_FUNCTION ||
-                                callee_decl->kind == DECL_PROCEDURE)) {
+            if (callee_decl && (callee_decl->kind == DECL_FUNCTION)) {
                 return sema_range_from_call(e, t);
             }
             return range_unknown();

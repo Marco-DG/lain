@@ -144,8 +144,8 @@ static Decl *find_function_decl_by_mangled_or_raw(const char *mangled) {
             Decl *d = dl->decl;
             if (!d) continue;
             // Also check procedures and externs since they can take linear args
-            if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE && 
-                d->kind != DECL_EXTERN_FUNCTION && d->kind != DECL_EXTERN_PROCEDURE) continue;
+            if (d->kind != DECL_FUNCTION && 
+                d->kind != DECL_EXTERN_FUNCTION) continue;
             
             Id *fid = d->as.function_decl.name;
             if (!fid) continue;
@@ -166,8 +166,8 @@ static Decl *find_function_decl_by_mangled_or_raw(const char *mangled) {
         for (DeclList *dl = mn->decls; dl; dl = dl->next) {
             Decl *d = dl->decl;
             if (!d) continue;
-            if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE && 
-                d->kind != DECL_EXTERN_FUNCTION && d->kind != DECL_EXTERN_PROCEDURE) continue;
+            if (d->kind != DECL_FUNCTION && 
+                d->kind != DECL_EXTERN_FUNCTION) continue;
             
             Id *fid = d->as.function_decl.name;
             if (!fid) continue;
@@ -225,7 +225,7 @@ static void spell_check_call(Expr *e) {
     Expr *callee = e->as.call_expr.callee;
     Decl *fn = NULL;
     if (callee && callee->decl &&
-        (callee->decl->kind == DECL_FUNCTION || callee->decl->kind == DECL_PROCEDURE))
+        (callee->decl->kind == DECL_FUNCTION))
         fn = callee->decl;
     if (!fn && callee && callee->kind == EXPR_IDENTIFIER && callee->as.identifier_expr.id) {
         Id *cid = callee->as.identifier_expr.id;
@@ -234,7 +234,7 @@ static void spell_check_call(Expr *e) {
         memcpy(buf, cid->name, (size_t)n); buf[n] = '\0';
         fn = find_function_decl_by_mangled_or_raw(buf);
     }
-    if (!fn || (fn->kind != DECL_FUNCTION && fn->kind != DECL_PROCEDURE)) return;
+    if (!fn || (fn->kind != DECL_FUNCTION)) return;
 
     DeclList *params = fn->as.function_decl.params;
     ExprList *args   = e->as.call_expr.args;
@@ -325,7 +325,7 @@ static void spell_walk_stmt(Stmt *s) {
 }
 
 static void sema_check_call_spelling(Decl *d) {
-    if (!d || (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE)) return;
+    if (!d || (d->kind != DECL_FUNCTION)) return;
     spell_walk_stmt_list(d->as.function_decl.body);
 }
 

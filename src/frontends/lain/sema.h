@@ -3572,10 +3572,6 @@ static void proc_w130_visit_expr(Expr *e) {
                 if (sema_call_via_fnptr(callee, &ft) && ft != 0) { proc_w130_eligible = false; return; }
             }
             if (callee && callee->decl) {
-                DeclKind k = callee->decl->kind;
-                if (k == DECL_PROCEDURE || k == DECL_EXTERN_PROCEDURE) {
-                    proc_w130_eligible = false; return;
-                }
                 if (callee->decl == proc_w130_self) {
                     // Self-recursion: func disallows it.
                     proc_w130_eligible = false; return;
@@ -3747,9 +3743,9 @@ static void eff_visit_expr(Expr *e) {
                 // from a callee that got it from one.
                 if (ce & EFFECT_DIVERGE) {
                     DeclKind ck = callee->decl->kind;
-                    if (ck == DECL_EXTERN_FUNCTION || ck == DECL_EXTERN_PROCEDURE)
+                    if (ck == DECL_EXTERN_FUNCTION)
                         g_eff_opaque_div = true;
-                    else if ((ck == DECL_FUNCTION || ck == DECL_PROCEDURE)
+                    else if ((ck == DECL_FUNCTION)
                              && callee->decl->as.function_decl.eff_opaque_diverge)
                         g_eff_opaque_div = true;
                 }
@@ -3843,10 +3839,10 @@ static EffectSet effect_full(Decl *d) {
     // made: `extern func printf(fmt *u8, ...) i32` declared printf pure and total, and the
     // corpus contained three of them. Silence is now the most pessimistic claim, so forgetting
     // a row costs precision instead of soundness, and the keyword grants nothing (E.4).
-    if (d->kind == DECL_EXTERN_FUNCTION || d->kind == DECL_EXTERN_PROCEDURE)
+    if (d->kind == DECL_EXTERN_FUNCTION)
         return d->as.function_decl.effects_declared
              ? d->as.function_decl.effects_bound : EFFECT_TOP;
-    if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE) return 0;
+    if (d->kind != DECL_FUNCTION) return 0;
     if (d->as.function_decl.effects_done) return d->as.function_decl.effects;
     if (d->as.function_decl.effects_in_progress)
         // Recursion cycle → Diverge, UNLESS a `func` carries a `decreasing`
@@ -4350,7 +4346,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
         if (!d || decl_is_generic_template(d)) continue;
-        if (d->kind == DECL_FUNCTION || d->kind == DECL_PROCEDURE) {
+        if (d->kind == DECL_FUNCTION) {
             mono_resolve_signature(d);
         } else if (d->kind == DECL_STRUCT) {   // lower `T | markers` / Vec(i32) field types
             for (DeclList *f = d->as.struct_decl.fields; f; f = f->next)
@@ -4393,7 +4389,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             }
             continue;
         }
-        if (d->kind != DECL_FUNCTION && d->kind != DECL_PROCEDURE) continue;
+        if (d->kind != DECL_FUNCTION) continue;
         // Generic templates are never processed directly — only their concrete
         // monomorphized instances (appended to this same list) are.
         if (decl_is_generic_template(d)) continue;
@@ -4960,7 +4956,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     //    is populated everywhere (needed for callee-kind effect detection).
     for (DeclList *dl = decls; dl; dl = dl->next) {
         if (!dl->decl) continue;
-        if (dl->decl->kind == DECL_FUNCTION || dl->decl->kind == DECL_PROCEDURE) {
+        if (dl->decl->kind == DECL_FUNCTION) {
             EffectSet ef = effect_full(dl->decl);   // transitive; memoized + stored
             if (sema_dump_effects) sema_print_effects(dl->decl);
             // F3: a DECLARED effect bound is an upper bound the body must respect. Same rule
@@ -5092,9 +5088,6 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 exit(1);
             }
             }
-        }
-        if (dl->decl->kind == DECL_PROCEDURE) {
-            sema_check_proc_eligibility(dl->decl);
         }
     }
 }
