@@ -48,6 +48,15 @@ for f in $(find tests std -name '*.ln' -type f | sort); do
     echo "### $f"
     echo "rc=$rc"
     printf '%s\n' "$out" | sed 's/^/out=/'
+    # ★ EVERY C ATTRIBUTE THE PROGRAM CARRIES, counted per kind. This column exists because
+    # deleting src/emit/ silently dropped `cold`, `hot`, `noreturn` and `malloc`: the AST emitter
+    # wrote them, the IR backend did not, `annot_gate` — the only instrument that compared
+    # annotations — was retired in the same commit, and behaviour is identical because they are
+    # hints. The baseline was then recorded from the backend that had already lost them, so it
+    # could not see the loss either. A proof that reaches the optimizer is the project's whole
+    # claim; a column that counts them is the cheapest way to notice when one stops arriving.
+    grep -ohE '__attribute__\(\(([a-z_]+)' "$TMP/o.c" | sed 's/__attribute__((//' \
+      | sort | uniq -c | awk '{print "at="$2" "$1}'
     # Every type the program declares, classified by how it is REPRESENTED.
     for nm in $(grep -ohE '^(typedef .*|\}) *[A-Za-z_][A-Za-z0-9_]*;' "$TMP/o.c" \
                 | sed -E 's/.*[^A-Za-z0-9_]([A-Za-z_][A-Za-z0-9_]*);/\1/' | sort -u); do

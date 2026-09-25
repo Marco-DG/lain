@@ -1,0 +1,25 @@
+// ★ THE ROW IS THE ONLY THING THAT GRANTS AN EFFECT (plan Part 7B, E.1).
+//
+// `effects io, diverge` widens the default bound of ∅ — exactly as `effects alloc` and
+// `effects raises` always did. Before 2026-09-25 `io` was granted by the `proc` KEYWORD and
+// `diverge` by an ATTRIBUTE, so one family of facts was spelled three different ways.
+//
+// ⚠ THIS FILE REPLACES `func_effects_row_is_a_bound_fail.ln`, which asserted the opposite a day
+// earlier. That test was not wrong then: the row really was a bound and not a permission, and
+// making only `io` widen while `diverge` did not was incoherent — which is why it was reverted.
+// The fix was to make BOTH widen, not to make neither. A test that encodes a design decision has
+// to be replaced when the decision changes, and saying so here is cheaper than leaving a reader
+// to reconcile two tests.
+//
+// The principle: effects are part of a signature, exactly like types — inferred in bodies,
+// declared in signatures, default ∅.
+extern proc libc_printf(fmt *u8, ...) i32
+func shout(x i32) i32 effects io {
+    return libc_printf("%d\n", x)
+}
+func serve(n i32) i32 effects io, diverge {
+    var i i32 = 0
+    while i < n { libc_printf("x") }
+    return i
+}
+proc main() i32 { return shout(7) }

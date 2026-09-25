@@ -16,16 +16,14 @@
 // `ir_lower_cond_br`, which puts each conjunct's fact on its own edge.
 //
 // Both orders are checked: the index guard is the FIRST conjunct here and the SECOND below.
-@diverges
-proc first(a i32[100]) i32 {
+proc first(a i32[100]) i32 effects diverge {
     var i usize = 0
     var s i32 = 0
     while i < 100 and s < 5 { s = s +% a[i]
         i = i + 1 }
     return s
 }
-@diverges
-proc second(a i32[100]) i32 {
+proc second(a i32[100]) i32 effects diverge {
     var i usize = 0
     var s i32 = 0
     while s < 5 and i < 100 { s = s +% a[i]

@@ -1,38 +1,58 @@
 ### tests/borrow/ret_borrow_in_truthful_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
+at=returns_nonnull 2
 ty=Data struct
 ### tests/codegen/case_expression_payload_pass.ln
 rc=0
 out=
+at=const 2
 ty=R struct
 ### tests/codegen/const_attr_pointer_reader_pass.ln
 rc=0
 out=
+at=pure 2
 ### tests/codegen/fixed_array_param_to_slice_pass.ln
 rc=0
 out=4
+at=access 2
+at=nonnull 4
+at=pure 4
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
 ### tests/codegen/ownership_abi.ln
 rc=0
 out=
+at=nonnull 6
+at=pure 4
+at=returns_nonnull 2
 ty=Vec2 struct
 ### tests/codegen/sized_slice_abi.ln
 rc=0
 out=
+at=access 14
+at=nonnull 6
 ty=Slice_i32 scalar
 ### tests/codegen/str_eq_literal_pass.ln
 rc=1
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/codegen/struct_array_field_index_pass.ln
 rc=0
 out=
+at=nonnull 4
+at=pure 2
 ty=M struct
 ### tests/codegen/var_prim_abi.ln
 rc=0
 out=
+at=nonnull 6
+at=pure 2
 ### tests/codegen/wrapping_precedence_pass.ln
 rc=0
 out=5 3 4 5
@@ -71,6 +91,13 @@ ty=Slice_u8 scalar
 rc=0
 out=Passed.
 ty=Slice_u8 scalar
+### tests/effects/decl_attributes_reach_c_pass.ln
+rc=2
+out=
+at=cold 2
+at=const 6
+at=hot 2
+at=malloc 2
 ### tests/effects/diverges_attribute_pass.ln
 rc=0
 out=
@@ -78,6 +105,12 @@ ty=Slice_u8 scalar
 ### tests/effects/effects_bound_honest_pass.ln
 rc=0
 out=
+at=access 4
+at=nonnull 4
+ty=Slice_u8 scalar
+### tests/effects/effects_row_grants_pass.ln
+rc=2
+out=7
 ty=Slice_u8 scalar
 ### tests/effects/io_attribute_pass.ln
 rc=2
@@ -86,6 +119,7 @@ ty=Slice_u8 scalar
 ### tests/effects/panic_func_annotation_pass.ln
 rc=6
 out=
+at=const 2
 ty=Slice_u8 scalar
 ### tests/errors/checked_else_pass.ln
 rc=0
@@ -96,12 +130,14 @@ ty=Slice_u8 scalar
 ### tests/errors/else_panic_pass.ln
 rc=0
 out=z
+at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound_Denied scalar
 ### tests/errors/else_return_pass.ln
 rc=0
 out=TooBig
 out=Denied
+at=pure 6
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_Denied scalar
 ty=__U_ptr_u8_NotFound scalar
@@ -110,6 +146,7 @@ ty=__U_ptr_u8_TooBig scalar
 rc=0
 out=DEFAULT
 out=REAL
+at=pure 4
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound_Denied scalar
 ### tests/errors/near_type_name_var_pass.ln
@@ -119,21 +156,25 @@ out=
 rc=0
 out=err line=42
 out=ok=7
+at=const 2
 ty=Slice_u8 scalar
 ty=__U_i32_ParseErr_i32 struct
 ### tests/errors/payload_marker_try_pass.ln
 rc=0
 out=line=99
+at=const 4
 ty=Slice_u8 scalar
 ty=__U_i32_NotFound_ParseErr_i32 struct
 ### tests/errors/try_bool_union_pass.ln
 rc=0
 out=nope
+at=const 4
 ty=Slice_u8 scalar
 ty=__U_bool_Nope scalar
 ### tests/errors/try_chain_pass.ln
 rc=0
 out=
+at=pure 6
 ty=__U_ptr_u8_NotFound scalar
 ty=__U_ptr_u8_NotFound_ParseErr scalar
 ty=__U_ptr_u8_ParseErr scalar
@@ -141,79 +182,112 @@ ty=__U_ptr_u8_ParseErr scalar
 rc=0
 out=cleanup
 out=nf
+at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
 ### tests/errors/try_propagate_pass.ln
 rc=0
 out=ok=f
+at=pure 4
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound_Denied scalar
 ### tests/errors/try_widen_pass.ln
 rc=0
 out=
+at=pure 4
 ty=__U_ptr_u8_NotFound scalar
 ty=__U_ptr_u8_NotFound_ParseErr scalar
 ### tests/errors/union_infer_annotated_pass.ln
 rc=0
 out=
+at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
 ### tests/examples/fixed_array_arg_pass.ln
 rc=7
 out=
+at=nonnull 4
+at=pure 4
 ### tests/examples/kw_match_pass.ln
 rc=1
 out=
+at=nonnull 2
+at=pure 2
 ### tests/examples/refine_ident_bound_pass.ln
 rc=42
 out=
+at=const 2
 ### tests/examples/simd_lexer_pass.ln
 rc=1
 out=
+at=const 8
+at=nonnull 2
+at=vector_size 2
 ### tests/examples/simd_load_checked_pass.ln
 rc=32
 out=
+at=vector_size 2
 ### tests/examples/simd_load_pass.ln
 rc=1
 out=
+at=vector_size 2
 ### tests/examples/simd_mask_pass.ln
 rc=25
 out=
+at=vector_size 2
 ### tests/examples/simd_scan_proven_pass.ln
 rc=50
 out=
+at=nonnull 2
+at=pure 2
+at=vector_size 2
 ### tests/examples/simd_splat_store_pass.ln
 rc=16
 out=
+at=vector_size 2
 ### tests/examples/simd_vec_pass.ln
 rc=11
 out=
+at=const 2
+at=vector_size 2
 ### tests/examples/simd_vra_count_pass.ln
 rc=32
 out=
+at=vector_size 2
 ### tests/examples/soa_output_pass.ln
 rc=10
 out=
+at=nonnull 2
 ### tests/examples/vra_and_flow_peek_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/examples/vra_struct_field_slice_pass.ln
 rc=0
 out=
+at=const 4
 ty=Buf struct
 ty=Slice_u8 scalar
 ### tests/examples/vra_while_lt_scalar_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/examples/vra_while_lt_wide_load_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
+at=vector_size 2
 ### tests/expressions/attribute_fast_math_pass.ln
 rc=12
 out=
+at=const 2
 ### tests/expressions/attribute_multiple_pass.ln
 rc=6
 out=
+at=const 2
 ### tests/expressions/bitwise_pass.ln
 rc=0
 out=12 & 10 = 8
@@ -243,6 +317,7 @@ ty=Slice_u8 scalar
 ### tests/expressions/null_compare_pass.ln
 rc=0
 out=
+at=pure 2
 ### tests/expressions/numeric_literals_pass.ln
 rc=0
 out=255 165 493 1000000
@@ -253,17 +328,21 @@ out=
 ### tests/functions/all_paths_return_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/functions/bounded_while_pass.ln
 rc=0
 out=Result: 10
+at=const 2
 ty=Slice_u8 scalar
 ### tests/functions/decreasing_binary_search_pass.ln
 rc=0
 out=0
+at=const 2
 ty=Slice_u8 scalar
 ### tests/functions/decreasing_both_paths_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/functions/decreasing_halving_pass.ln
 rc=0
 out=7
@@ -274,9 +353,11 @@ out=
 ### tests/functions/decreasing_halving_unsigned_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/functions/decreasing_ok_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/functions/decreasing_var_step_pass.ln
 rc=0
 out=10
@@ -284,69 +365,93 @@ ty=Slice_u8 scalar
 ### tests/functions/fnptr_basic_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/functions/fnptr_hof_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/functions/fnptr_proc_target_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/functions/func_proc_pass.ln
 rc=0
 out=Result: 30
+at=const 2
 ty=Slice_u8 scalar
 ### tests/functions/func_pure_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/functions/func_recursion_decreasing_pass.ln
 rc=0
 out=55 5
+at=const 4
 ty=Slice_u8 scalar
 ### tests/functions/functions_pass.ln
 rc=0
 out=add(10, 20) = 30
 out=fib(10) = 55
+at=const 4
 ty=Slice_u8 scalar
 ### tests/functions/gcd_modulo_termination_pass.ln
 rc=12
 out=
+at=const 2
 ### tests/functions/loop_advance_or_break_pass.ln
 rc=0
 out=
+at=access 2
+at=const 2
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/functions/popcount_shift_termination_pass.ln
 rc=8
 out=
+at=const 2
 ### tests/functions/recursion_diff_measure_pass.ln
 rc=3
 out=
+at=nonnull 2
+at=pure 2
 ### tests/functions/recursion_infer_measure_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/functions/recursion_ir_engine_pass.ln
 rc=0
 out=1 5 0
+at=const 6
 ty=Slice_u8 scalar
 ### tests/functions/string_return_pass.ln
 rc=0
 out=[hi there]
+at=const 2
 ty=Slice_u8 scalar
 ### tests/functions/termination_pass.ln
 rc=45
 out=
+at=const 2
 ### tests/functions/ufcs_pass.ln
 rc=15
 out=
+at=nonnull 4
+at=pure 2
 ty=Counter struct
 ### tests/functions/ufcs_primitive_pass.ln
 rc=0
 out=20
+at=const 4
 ty=Slice_u8 scalar
 ### tests/functions/while_const_decrease_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/functions/while_infer_measure_pass.ln
 rc=0
 out=
+at=const 6
 ### tests/generics/comptime_if_pass.ln
 rc=0
 out=Running on Linux
@@ -355,37 +460,47 @@ ty=Slice_u8 scalar
 ### tests/generics/generic_combinator_pass.ln
 rc=0
 out=
+at=const 4
 ty=Option_i32 struct
 ### tests/generics/generic_enum_option_pass.ln
 rc=0
 out=
+at=const 2
 ty=Option_i32 struct
 ### tests/generics/generic_enum_result_pass.ln
 rc=0
 out=
+at=const 2
 ty=Result_i32_i32 struct
 ### tests/generics/generic_func_explicit_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/generics/generic_func_infer_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/generics/generic_nested_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ty=Box_i32 struct
 ty=Option_i32 struct
 ### tests/generics/generic_option_map_pass.ln
 rc=0
 out=
+at=const 4
 ty=Option_i32 struct
 ### tests/generics/generic_std_option_pass.ln
 rc=0
 out=
+at=const 6
 ty=Option_i32 struct
 ### tests/generics/generic_std_result_pass.ln
 rc=0
 out=
+at=const 8
 ty=Option_i32 struct
 ty=Result_i32_i32 struct
 ### tests/generics/generic_struct_infer_pass.ln
@@ -395,14 +510,18 @@ ty=Pair_i32 struct
 ### tests/generics/generic_struct_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ty=Pair_i32 struct
 ### tests/ir/adt_sum1.ln
 rc=0
 out=
+at=const 2
 ty=Shape struct
 ### tests/ir/alias1.ln
 rc=0
 out=
+at=const 2
 ### tests/ir/array1.ln
 rc=0
 out=
@@ -427,30 +546,46 @@ out=
 ### tests/ir/inloop1.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/ir/match1.ln
 rc=0
 out=
+at=const 2
 ### tests/ir/rvalue_field1.ln
 rc=0
 out=
+at=const 4
 ty=P struct
 ty=Q struct
 ### tests/ir/shortcircuit1.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/ir/slice1.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/ir/str1.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/ir/struct1.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ty=Vec struct
 ### tests/ir/subslice1.ln
 rc=0
@@ -459,9 +594,11 @@ ty=Slice_i32 scalar
 ### tests/ir/sum_maxi.ln
 rc=0
 out=
+at=const 4
 ### tests/match/bool_exhaustive_pass.ln
 rc=1
 out=
+at=const 2
 ### tests/match/match_advanced_pass.ln
 rc=0
 out=Kind is: 1
@@ -537,41 +674,53 @@ out=
 ### tests/match/optional_construct_pass.ln
 rc=0
 out=
+at=const 2
+at=pure 2
 ty=__U_ptr_u8_none scalar
 ### tests/match/optional_narrow_pass.ln
 rc=0
 out=
+at=const 2
+at=pure 2
 ty=__U_ptr_u8_none scalar
 ### tests/match/range_pattern_exclusive_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/match/union_case_runtime_pass.ln
 rc=0
 out=ok=hi
 out=bad=nf
+at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound_Denied scalar
 ### tests/match/union_construct_pass.ln
 rc=0
 out=
+at=pure 2
 ty=__U_ptr_u8_NotFound_Denied scalar
 ### tests/match/union_if_narrow_runtime_pass.ln
 rc=0
 out=a=some
+at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_none scalar
 ### tests/match/union_optionality_unify_pass.ln
 rc=0
 out=take(a)=1 take(b)=0 (want 1 0)
+at=const 2
+at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_none scalar
 ### tests/match/union_passthrough_pass.ln
 rc=0
 out=
+at=const 4
 ty=__U_ptr_u8_NotFound_Denied scalar
 ### tests/match/union_pointer_layout_pass.ln
 rc=0
 out=
+at=const 2
 ty=__U_ptr_u8_NotFound_Denied scalar
 ### tests/match/union_struct_field_pass.ln
 rc=0
@@ -593,24 +742,33 @@ out=
 ### tests/memory/field_branch_merge_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ty=Point struct
 ### tests/memory/field_construct_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ty=Point struct
 ### tests/memory/field_nested_branch_merge_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ty=Inner struct
 ty=Outer struct
 ### tests/memory/field_nested_construct_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ty=Inner struct
 ty=Outer struct
 ### tests/memory/fixed_array_outparam_pass.ln
 rc=99
 out=
+at=nonnull 2
 ### tests/memory/loop_fill_whole_pass.ln
 rc=0
 out=
@@ -623,11 +781,15 @@ out=
 ### tests/modules/module_alias_pass.ln
 rc=0
 out=via alias
+at=access 4
+at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/modules/module_qualified_access_pass.ln
 rc=0
 out=hi
 out=also unqualified
+at=access 4
+at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/ownership/array_element_consume_pass.ln
 rc=0
@@ -641,14 +803,18 @@ ty=R struct
 ### tests/ownership/array_whole_move_pass.ln
 rc=0
 out=
+at=nonnull 2
 ty=R struct
 ### tests/ownership/block_nll_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ty=Resource struct
 ### tests/ownership/block_scoped_borrow_release_pass.ln
 rc=0
 out=
+at=nonnull 2
 ty=Cell struct
 ### tests/ownership/block_scope_pass.ln
 rc=0
@@ -662,30 +828,44 @@ ty=Slice_u8 scalar
 ### tests/ownership/borrow_basic_pass.ln
 rc=11
 out=
+at=nonnull 4
+at=pure 2
 ty=Point struct
 ### tests/ownership/borrow_pass.ln
 rc=11
 out=
+at=const 2
+at=nonnull 4
+at=pure 2
 ty=Counter struct
 ### tests/ownership/borrow_valid_pass.ln
 rc=0
 out=
+at=const 2
+at=nonnull 2
+at=pure 2
 ty=Resource struct
 ### tests/ownership/coarg_alias_element_disjoint_pass.ln
 rc=0
 out=
+at=nonnull 2
 ### tests/ownership/coarg_alias_subslice_disjoint_pass.ln
 rc=6
 out=
+at=access 4
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/ownership/coarg_disjoint_fields_pass.ln
 rc=0
 out=
+at=nonnull 2
 ty=Inner struct
 ty=Outer struct
 ### tests/ownership/concat_pass.ln
 rc=1
 out=
+at=access 6
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/ownership/defer_consume_pass.ln
 rc=0
@@ -694,26 +874,38 @@ ty=Resource struct
 ### tests/ownership/defer_consume_scope_pass.ln
 rc=42
 out=
+at=nonnull 2
+at=pure 2
 ty=Resource struct
 ### tests/ownership/dependent_size_guarded_pass.ln
 rc=0
 out=
+at=access 4
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/ownership/direct_var_borrow_pass.ln
 rc=43
 out=
+at=nonnull 4
+at=pure 2
 ty=Data struct
 ### tests/ownership/div_index_pass.ln
 rc=12
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/ownership/elif_borrow_pass.ln
 rc=0
 out=
+at=const 2
 ty=Resource struct
 ### tests/ownership/field_consume_pass.ln
 rc=42
 out=
+at=nonnull 2
+at=pure 2
 ty=Resource struct
 ### tests/ownership/immutability_pass.ln
 rc=20
@@ -721,10 +913,14 @@ out=
 ### tests/ownership/len_minus1_pass.ln
 rc=3
 out=
+at=access 4
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/ownership/loop_reassign_consume_pass.ln
 rc=134
 out=
+at=access 6
+at=nonnull 4
 ty=File struct
 ty=Slice_u8 scalar
 ### tests/ownership/match_borrow_pass.ln
@@ -733,84 +929,131 @@ out=
 ### tests/ownership/mod_index_pass.ln
 rc=10
 out=
+at=access 6
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/ownership/move_basic_pass.ln
 rc=0
 out=
+at=const 2
 ty=Resource struct
 ### tests/ownership/mov_syntax_pass.ln
 rc=0
 out=
+at=const 2
 ty=Foo struct
 ### tests/ownership/multi_var_param_pass.ln
 rc=0
 out=
+at=nonnull 4
+at=pure 4
+at=returns_nonnull 2
 ty=Data struct
 ### tests/ownership/multi_var_param_precise_pass.ln
 rc=0
 out=
+at=nonnull 6
+at=pure 6
+at=returns_nonnull 2
 ty=Data struct
 ### tests/ownership/nll_last_use_pass.ln
 rc=42
 out=
+at=nonnull 4
+at=pure 4
+at=returns_nonnull 2
 ty=Data struct
 ### tests/ownership/nll_while_pass.ln
 rc=0
 out=
+at=nonnull 4
+at=pure 2
 ty=Lexer struct
 ### tests/ownership/owner_reassign_after_release_pass.ln
 rc=99
 out=
+at=nonnull 2
+at=pure 2
+at=returns_nonnull 2
 ty=Data struct
 ### tests/ownership/ownership_pass.ln
 rc=0
 out=Point(10, 20)
 out=Point(11, 21)
 out=Moved Point(11, 21)
+at=nonnull 4
 ty=Point struct
 ty=Slice_u8 scalar
 ### tests/ownership/reborrow_chain_pass.ln
 rc=100
 out=
+at=nonnull 4
+at=pure 4
+at=returns_nonnull 2
 ty=Data struct
 ### tests/ownership/reborrow_pass.ln
 rc=42
 out=
+at=nonnull 6
+at=pure 6
+at=returns_nonnull 4
 ty=Data struct
 ### tests/ownership/return_borrow_var_param_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
+at=returns_nonnull 2
 ty=Cell struct
 ### tests/ownership/return_slice_borrows_active_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/ownership/return_slice_borrows_param_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/ownership/reverse_pass.ln
 rc=4
 out=
+at=access 4
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/ownership/scalar_var_shared_pass.ln
 rc=6
 out=
+at=nonnull 2
 ### tests/ownership/sequential_borrow_pass.ln
 rc=0
 out=
+at=nonnull 4
+at=pure 2
 ty=Counter struct
 ### tests/ownership/sized_literal_pass.ln
 rc=0
 out=
+at=access 6
+at=nonnull 6
+at=pure 6
 ty=Slice_i32 scalar
 ### tests/ownership/slide_pass.ln
 rc=1
 out=
+at=access 4
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/ownership/struct_field_param_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Lexer struct
 ty=Slice_u8 scalar
 ### tests/ownership/subslice_pass.ln
@@ -820,26 +1063,37 @@ ty=Slice_i32 scalar
 ### tests/ownership/two_phase_borrow_pass.ln
 rc=20
 out=
+at=nonnull 4
+at=pure 2
 ty=Vec struct
 ### tests/ownership/two_shared_same_call_pass.ln
 rc=5
 out=
+at=nonnull 2
+at=pure 2
 ty=Vec struct
 ### tests/ownership/u1_index_pass.ln
 rc=20
 out=
+at=nonnull 2
+at=pure 2
 ### tests/ownership/var_prim_forward_pass.ln
 rc=42
 out=
+at=nonnull 4
 ### tests/ownership/var_prim_read_pass.ln
 rc=42
 out=
+at=nonnull 2
+at=pure 2
 ### tests/ownership/var_prim_write_pass.ln
 rc=42
 out=
+at=nonnull 2
 ### tests/ownership/var_struct_whole_write_pass.ln
 rc=0
 out=
+at=nonnull 4
 ty=P struct
 ### tests/statements/control_flow_pass.ln
 rc=0
@@ -891,6 +1145,9 @@ ty=Slice_u8 scalar
 ### tests/stdlib/bump_smoke_pass.ln
 rc=0
 out=bump: ok
+at=access 2
+at=nonnull 10
+at=pure 6
 ty=BumpAlloc struct
 ty=Slice_u8 scalar
 ### tests/stdlib/c_include_smoke_pass.ln
@@ -903,6 +1160,8 @@ out=Testing extern keyword...
 out=abs(-42) = 42 (OK)
 out=malloc and free (OK)
 out=All extern tests passed.
+at=access 4
+at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/stdlib/fs_smoke_pass.ln
 rc=0
@@ -910,15 +1169,20 @@ out=Opening file: test_output.txt
 out=Writing to file...
 out=Closing file...
 out=Done.
+at=access 6
+at=nonnull 4
 ty=File struct
 ty=Slice_u8 scalar
 ### tests/stdlib/import_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/stdlib/io_smoke_pass.ln
 rc=0
 out=Hello World!
 out=Partial line... Done.
+at=access 4
+at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/stdlib/math_pass.ln
 rc=0
@@ -931,12 +1195,15 @@ ty=Slice_u8 scalar
 ### tests/stdlib/math_smoke_pass.ln
 rc=0
 out=
+at=const 8
 ### tests/stdlib/math_test_pass.ln
 rc=0
 out=
+at=const 8
 ### tests/stdlib/private_pub_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/trust/adt_payload_pass.ln
 rc=0
 out=r 42
@@ -945,10 +1212,15 @@ ty=Slice_u8 scalar
 ### tests/trust/algo_max_pass.ln
 rc=0
 out=111
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/trust/alias_distinct_pass.ln
 rc=0
 out=11 22 33 44
+at=access 4
+at=nonnull 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
 ### tests/trust/bitnot_unsigned_pass.ln
@@ -959,10 +1231,14 @@ out=4294967283
 out=18446744073709551615
 out=18446744073709551614
 out=-13
+at=const 8
 ty=Slice_u8 scalar
 ### tests/trust/borrow_write_reaches_owner_pass.ln
 rc=0
 out=42
+at=nonnull 2
+at=pure 2
+at=returns_nonnull 2
 ty=Cell struct
 ty=Slice_u8 scalar
 ### tests/trust/bounds_edge_pass.ln
@@ -980,10 +1256,16 @@ ty=Slice_u8 scalar
 ### tests/trust/bounds_scan_pass.ln
 rc=0
 out=198
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/trust/calculator_pass.ln
 rc=0
 out=
+at=access 10
+at=const 2
+at=nonnull 8
 ty=Slice_Token scalar
 ty=Slice_u8 scalar
 ty=Token struct
@@ -998,60 +1280,77 @@ ty=Slice_u8 scalar
 ### tests/trust/div_early_return_guard_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/trust/div_guard_ne_zero_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/trust/div_safe_pass.ln
 rc=0
 out=25
+at=const 2
 ty=Slice_u8 scalar
 ### tests/trust/enum_match_pass.ln
 rc=0
 out=2
+at=const 2
 ty=Color scalar
 ty=Slice_u8 scalar
 ### tests/trust/interproc_bounds_pass.ln
 rc=0
 out=30
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
 ### tests/trust/local_slice_scan_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/trust/mul_narrowing_provable_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/trust/mul_narrowing_wrapping_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/trust/neg_width_pass.ln
 rc=0
 out=-5000000000
 out=5000000000
 out=-4294967296
 out=-7
+at=const 2
 ty=Slice_u8 scalar
 ### tests/trust/niche_bool_both_paths_pass.ln
 rc=0
 out=a=1
 out=b=0
 out=c=nope
+at=const 2
 ty=Slice_u8 scalar
 ty=__U_bool_Nope scalar
 ### tests/trust/niche_multi_pass.ln
 rc=0
 out=denied
+at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound_Denied scalar
 ### tests/trust/niche_refined_pass.ln
 rc=0
 out=7
+at=const 2
 ty=Slice_u8 scalar
 ty=__U_Small_TooBig scalar
 ### tests/trust/niche_union_pass.ln
 rc=0
 out=OK
+at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
 ### tests/trust/overflow_checked_pass.ln
@@ -1073,11 +1372,13 @@ ty=Slice_u8 scalar
 ### tests/trust/payload_marker_pass.ln
 rc=0
 out=1234
+at=const 2
 ty=Slice_u8 scalar
 ty=__U_i32_ParseErr_i32 struct
 ### tests/trust/return_range_pass.ln
 rc=0
 out=255 0 70
+at=const 2
 ty=Slice_u8 scalar
 ### tests/trust/saturating_pass.ln
 rc=0
@@ -1086,22 +1387,31 @@ ty=Slice_u8 scalar
 ### tests/trust/shift_unsigned_high_bit_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/trust/shift_variable_guarded_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/trust/slice_len_pass.ln
 rc=0
 out=5
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/trust/slice_literal_arg_pass.ln
 rc=0
 out=5
 out=3
+at=access 2
+at=nonnull 2
 ty=Slice_u8 scalar
 ### tests/trust/string_sentinel_terminated_pass.ln
 rc=0
 out=[hello]
 out=[world]
+at=access 2
+at=nonnull 2
 ty=Slice_u8 scalar
 ### tests/trust/struct_field_pass.ln
 rc=0
@@ -1116,6 +1426,9 @@ ty=Slice_u8 scalar
 ### tests/trust/tokenizer_pass.ln
 rc=0
 out=
+at=access 4
+at=const 2
+at=nonnull 2
 ty=Slice_Token scalar
 ty=Slice_u8 scalar
 ty=Token struct
@@ -1123,11 +1436,13 @@ ty=Token struct
 rc=0
 out=cleanup
 out=got Err
+at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_Err scalar
 ### tests/trust/usize_underflow_guarded_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/trust/widening_arith_promotion_pass.ln
 rc=0
 out=3600000000
@@ -1140,15 +1455,20 @@ ty=Slice_u8 scalar
 ### tests/types/adt_array_param_pass.ln
 rc=0
 out=
+at=nonnull 2
 ty=P struct
 ### tests/types/adt_match_member_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ty=Inner struct
 ty=Outer struct
 ### tests/types/adt_match_param_pass.ln
 rc=0
 out=
+at=const 2
+at=nonnull 2
 ty=Sh struct
 ### tests/types/adt_pass.ln
 rc=0
@@ -1158,11 +1478,14 @@ ty=Slice_u8 scalar
 ### tests/types/adt_struct_payload_pass.ln
 rc=0
 out=
+at=const 2
 ty=P struct
 ty=S struct
 ### tests/types/array_decay_pass.ln
 rc=104
 out=
+at=nonnull 2
+at=pure 2
 ### tests/types/array_literal_pass.ln
 rc=0
 out=arr[0]=10, arr[2]=30, arr[4]=50
@@ -1211,6 +1534,7 @@ ty=Slice_u8 scalar
 ### tests/types/float_int_literal_promote_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/types/float_pass.ln
 rc=0
 out=f32: 3.140000
@@ -1221,6 +1545,7 @@ ty=Slice_u8 scalar
 ### tests/types/int_alias_pass.ln
 rc=0
 out=z=15 w=30 f=3.000000 g=4.500000
+at=const 4
 ty=Slice_u8 scalar
 ### tests/types/integer_iN_arbitrary_pass.ln
 rc=0
@@ -1241,6 +1566,7 @@ out=
 ### tests/types/overflow_boundary_safe_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/types/overflow_operators_pass.ln
 rc=0
 out=
@@ -1284,6 +1610,8 @@ out=Length: 14
 out=Content: Hello Sentinel
 out=Length: 8
 out=Content: Explicit
+at=access 2
+at=nonnull 2
 ty=Slice_u8 scalar
 ### tests/types/structs_pass.ln
 rc=0
@@ -1303,17 +1631,22 @@ ty=Slice_u8 scalar
 ### tests/types/var_slice_param_write_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/types/vla_stack_array_pass.ln
 rc=4
 out=
+at=const 2
 ty=Slice_u8 scalar
 ### tests/types/vra_l1_autosize_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/types/vra_l2_int_concretize_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/unsafe/ptr_var_write_pass.ln
 rc=0
 out=111
@@ -1331,26 +1664,39 @@ out=
 ### tests/verification/assert_proven_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/verification/assume_in_unsafe_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/accum_bound_after_loop_pass.ln
 rc=0
 out=
 ### tests/vra/accum_offset_guard_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i8 scalar
 ### tests/vra/alias/call_does_not_erase_guard_pass.ln
 rc=0
 out=
+at=nonnull 4
+at=pure 2
 ### tests/vra/binary_search_in_loop_pass.ln
 rc=0
 out=idx=3
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/vra/bounded_counter_return_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/vra/bounds/bounds_pass.ln
 rc=0
@@ -1359,53 +1705,80 @@ ty=Slice_u8 scalar
 ### tests/vra/bounds/call_result_slice_len_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 4
+at=pure 4
 ty=Slice_i32 scalar
 ### tests/vra/bounds/dependent_array_pass.ln
 rc=0
 out=
+at=access 6
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/vra/bounds/diff_constraint_vardecl_pass.ln
 rc=0
 out=
+at=access 4
+at=nonnull 4
+at=pure 4
 ty=Slice_i32 scalar
 ### tests/vra/bounds/equation_constraints_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/bounds/field_refinement_read_pass.ln
 rc=30
 out=
+at=nonnull 4
+at=pure 4
 ty=Box struct
 ### tests/vra/bounds/in_condition_pass.ln
 rc=0
 out=find_char: 2
 out=peek_safe: 98
+at=access 4
+at=nonnull 4
+at=pure 4
 ty=Slice_u8 scalar
 ### tests/vra/bounds/in_field_forwarded_pass.ln
 rc=0
 out=
+at=access 4
+at=nonnull 4
+at=pure 4
 ty=Slice_u8 scalar
 ### tests/vra/bounds/in_keyword_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/bounds/interprocedural_return_range_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/bounds/or_guard_bounds_pass.ln
 rc=20
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/bounds/range_if_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/bounds/range_linear_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/bounds/range_relational_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/bounds/return_constraints_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/bounds/sub_slice_empty_pass.ln
 rc=0
 out=
@@ -1421,22 +1794,32 @@ ty=Slice_i32 scalar
 ### tests/vra/bounds/vra_body_return_inference_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/bounds/vra_loop_lower_bound_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/callsite_return_range_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/correlated_div_range_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/div_guard_strict_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/element_range_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/element_range_subslice_pass.ln
 rc=0
 out=
@@ -1447,20 +1830,29 @@ out=
 ### tests/vra/empty_check_narrows_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/fixed_array_len_guard_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/guard_counter_offset_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/guards/affine_loop_post_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/guards/affine_step_neg_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/guards/and_chain_in_guard_pass.ln
 rc=0
 out=
@@ -1470,9 +1862,13 @@ out=
 ### tests/vra/guards/constraint_param_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/guards/guarded_compound_index_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/guards/if_narrows_then_branch_pass.ln
 rc=0
@@ -1480,6 +1876,9 @@ out=
 ### tests/vra/guards/in_guard_dynamic_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/guards/in_guard_narrows_pass.ln
 rc=0
@@ -1490,32 +1889,47 @@ out=
 ### tests/vra/guards/return_constrained_to_unsigned_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/guards/subtraction_widened_explicit_cast_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/guards/vra_len_guard_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/guards/vra_reverse_plain_slice_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/guards/while_decreasing_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/insertion_sort_pass.ln
 rc=1
 out=
+at=access 2
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/vra/invariant/struct_in_basic_pass.ln
 rc=0
 out=ch=h
+at=nonnull 2
+at=pure 2
 ty=Lexer struct
 ty=Slice_u8 scalar
 ### tests/vra/invariant/struct_in_interprocedural_pass.ln
 rc=0
 out=h
+at=nonnull 4
+at=pure 2
 ty=Lexer struct
 ty=Slice_u8 scalar
 ### tests/vra/invariant/struct_in_mutation_pass.ln
@@ -1526,51 +1940,80 @@ ty=Slice_u8 scalar
 ### tests/vra/length_equality_guard_pass.ln
 rc=0
 out=
+at=access 4
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/vra/len_guard_narrows_pass.ln
 rc=0
 out=
+at=access 6
+at=nonnull 6
+at=pure 6
 ty=Slice_i32 scalar
 ### tests/vra/lhs_offset_guard_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/vra/loop_reverse_index_pass.ln
 rc=28
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/mask_bounds_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/masked_ring_index_pass.ln
 rc=42
 out=
+at=nonnull 2
 ### tests/vra/matrix_const_stride_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/matrix_symbolic_2d_pass.ln
 rc=78
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/midpoint_identity_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/midpoint_in_bounds_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/negative_refinement_pass.ln
 rc=0
 out=
+at=const 2
+at=nonnull 2
+at=pure 2
 ty=Delta struct
 ### tests/vra/offset_condition_measure_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/vra/one_armed_clamp_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/overflow/accum_trip_bound_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/overflow/cast_to_narrow_pass.ln
 rc=0
 out=
@@ -1585,26 +2028,34 @@ ty=Slice_u8 scalar
 ### tests/vra/overflow/loop_accumulator_bounded_pass.ln
 rc=0
 out=120
+at=const 2
 ty=Slice_u8 scalar
 ### tests/vra/overflow/mixed_signed_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/overflow/overflow_cond_widened_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/overflow/overflow_escapes_pass.ln
 rc=0
 out=
+at=const 6
 ### tests/vra/overflow/overflow_mul_widened_pass.ln
 rc=0
 out=
 ### tests/vra/overflow/saturating_in_loop_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/overflow/u16_mul_widened_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/overflow/u16_to_u8_assign_pass.ln
 rc=0
 out=
@@ -1620,39 +2071,57 @@ out=
 ### tests/vra/overflow/unsafe_waives_narrowing_pass.ln
 rc=44
 out=
+at=const 2
 ### tests/vra/overflow/usize_widen_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/overflow/vra_const_folding_pass.ln
 rc=0
 out=
 ### tests/vra/overflow/vra_return_range_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/overflow/widening_pass.ln
 rc=0
 out=
 ### tests/vra/post_loop_negation_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/refine_expr_bound_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/refinement/alias_param_seeds_bounds_pass.ln
 rc=0
 out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/refinement/alias_valid_pass.ln
 rc=50
 out=
+at=const 2
 ### tests/vra/refinement/callsite_len_forwarded_pass.ln
 rc=0
 out=
+at=access 4
+at=nonnull 4
+at=pure 4
 ty=Slice_i32 scalar
 ### tests/vra/refinement/callsite_len_same_name_pass.ln
 rc=0
 out=
+at=access 4
+at=nonnull 4
+at=pure 4
 ty=Slice_i32 scalar
 ### tests/vra/refinement/composed_constraints_pass.ln
 rc=0
@@ -1660,39 +2129,52 @@ out=
 ### tests/vra/refinement/div_guard_nonzero_ir_pass.ln
 rc=0
 out=95
+at=const 6
 ty=Slice_u8 scalar
 ### tests/vra/refinement/divisor_range_proven_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/refinement/equal_constraint_pass.ln
 rc=0
 out=
 ### tests/vra/refinement/len_param_refinement_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/refinement/nonzero_guard_via_slot_pass.ln
 rc=0
 out=
+at=nonnull 4
+at=pure 4
 ### tests/vra/refinement/nonzero_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/refinement/refined_alias_range_on_type_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/refinement/refinement_narrow_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/refinement/refinement_reflexivity_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/refinement/refinement_runtime_alias_pass.ln
 rc=0
 out=80 -> 40
+at=const 2
 ty=Slice_u8 scalar
 ### tests/vra/refinement/return_refinement_proven_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/refinement/struct_field_refinement_pass.ln
 rc=0
 out=
@@ -1700,16 +2182,24 @@ ty=Config struct
 ### tests/vra/refinement/within_bound_pass.ln
 rc=0
 out=
+at=const 2
 ### tests/vra/refine_relational_param_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/return_refinement_param_pass.ln
 rc=0
 out=
+at=const 4
 ### tests/vra/sliding_window_pass.ln
 rc=0
 out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_i32 scalar
 ### tests/vra/struct_field_cell_pass.ln
 rc=0
@@ -1722,7 +2212,11 @@ ty=Point struct
 ### tests/vra/two_pointer_reverse_pass.ln
 rc=5
 out=
+at=access 2
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/vra/while_and_conjunct_pass.ln
 rc=0
 out=
+at=nonnull 4
+at=pure 2

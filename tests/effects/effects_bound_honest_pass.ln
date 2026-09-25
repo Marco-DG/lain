@@ -6,7 +6,7 @@ extern proc libc_printf(fmt *u8, ...) i32
 proc noisy(s u8[:0]) effects io {
     libc_printf(s.data)
 }
-proc generous(s u8[:0]) effects io, alloc, raises {
+proc generous(s u8[:0]) effects io {
     libc_printf(s.data)
 }
 proc main() i32 { return 0 }

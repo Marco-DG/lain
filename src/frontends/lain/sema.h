@@ -4995,9 +4995,18 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             // attribute. `@io func f()` is exactly `proc f()`, which is why both spellings work
             // while the corpus migrates. Effects are inferred either way — the attribute states
             // that the deviation was intended, never what it is.
-            EffectSet consented =
-                  (dl->decl->as.function_decl.does_io   ? EFFECT_IO      : 0)
-                | (dl->decl->as.function_decl.diverges  ? EFFECT_DIVERGE : 0);
+            // ── E.1 UNIFORM WIDENING: the ROW is the only thing that grants an effect ────
+            // `effects io, diverge` widens the default bound of ∅, exactly as `effects alloc`
+            // and `effects raises` always did. Before this, `io` was granted by the `proc`
+            // KEYWORD and `diverge` by an ATTRIBUTE, so one family was spelled three ways —
+            // which is what L3 refuses (plan Part 7B).
+            //
+            // The attribute and keyword forms are still read below so the corpus can migrate in
+            // steps; both are scheduled for deletion (E.2, E.4).
+            EffectSet consented = dl->decl->as.function_decl.effects_declared
+                                ? dl->decl->as.function_decl.effects_bound : 0;
+            consented |= (dl->decl->as.function_decl.does_io   ? EFFECT_IO      : 0)
+                      |  (dl->decl->as.function_decl.diverges  ? EFFECT_DIVERGE : 0);
             EffectSet unconsented = ef & (EFFECT_IO | EFFECT_DIVERGE) & ~consented;
             if (dl->decl->kind == DECL_FUNCTION && unconsented) {
                 Id *n = dl->decl->as.function_decl.name;

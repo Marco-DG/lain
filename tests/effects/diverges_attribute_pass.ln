@@ -8,8 +8,7 @@
 // Divergence is one rare property of one declaration. That is exactly what `@cold`, `@hot` and
 // `@noreturn` already are, so it joins them and leaves the row alone.
 extern proc libc_printf(fmt *u8, ...) i32
-@diverges
-proc serve(n i32) i32 {
+proc serve(n i32) i32 effects diverge, io {
     var i i32 = 0
     while i < n { }
     return libc_printf("%d\n", i)

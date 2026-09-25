@@ -2296,7 +2296,9 @@ void sema_infer_expr(Expr *e) {
         Expr *callee = e->as.call_expr.callee;
         if (callee->decl) {
             if ((callee->decl->kind == DECL_PROCEDURE || callee->decl->kind == DECL_EXTERN_PROCEDURE)
-                && !current_function_decl->as.function_decl.does_io) {
+                && !current_function_decl->as.function_decl.does_io
+                && !(current_function_decl->as.function_decl.effects_declared
+                     && (current_function_decl->as.function_decl.effects_bound & EFFECT_IO))) {
                 // The same rule as resolve.h's E011, and it has to be the same: a declared
                 // `effects io` row WIDENS the bound, so calling a proc is what was declared.
                 // This copy had no diagnostic code and no source position — it printed

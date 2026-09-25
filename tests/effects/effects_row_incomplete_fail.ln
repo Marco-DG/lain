@@ -1,0 +1,19 @@
+// EXPECT: [E130]
+// ★ THE ROW IS COMPLETE, which is what makes it worth reading.
+//
+// This declares `io` and also diverges. Widening the bound by one effect does not grant the
+// others — otherwise `effects io` would mean "stop checking effects here", and a caller could
+// not trust a signature at all.
+//
+// The default is ∅ for everything, so every deviation appears in the row or not at all.
+//
+// [E130] rather than [E011]: the declared-vs-inferred comparison catches it first and names what
+// is missing ("it also has: diverge"), which is the more useful message — E011 would only say the
+// effect is unacknowledged.
+extern proc libc_printf(fmt *u8, ...) i32
+func serve(n i32) i32 effects io {
+    var i i32 = 0
+    while i < n { libc_printf("x") }
+    return i
+}
+proc main() i32 { return 0 }

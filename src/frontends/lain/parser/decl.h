@@ -21,15 +21,33 @@ static bool is_comparison_op(TokenKind kind) {
 
 // Q-017 attribute parsing: [name] or [name(args)]
 // Whitelist of known attribute names (lista chiusa pre-1.0):
+// ★ ONE SYNTAX FOR DECLARATION METADATA (plan 7B.3, E.3). `[cold]`, `[hot]`, `[allocator]` and
+// `[noreturn]` join `[private]`, `[packed]` and `[fast_math]`; the `@` forms are accepted for now
+// and scheduled for removal. `@` keeps exactly one job — a compiler BUILTIN in expression
+// position (`@os`, `@load`, `@splat`) — because a sigil that means one thing before a
+// declaration and another inside an expression is two mechanisms sharing a character.
 static bool is_known_attribute(const char *name, isize len) {
     if (len == 9 && strncmp(name, "fast_math", 9) == 0) return true;
     if (len == 7 && strncmp(name, "private",   7) == 0) return true;
     if (len == 6 && strncmp(name, "packed",    6) == 0) return true;
+    if (len == 4 && strncmp(name, "cold",      4) == 0) return true;
+    if (len == 3 && strncmp(name, "hot",       3) == 0) return true;
+    if (len == 9 && strncmp(name, "allocator", 9) == 0) return true;
+    if (len == 8 && strncmp(name, "noreturn",  8) == 0) return true;
     return false;
 }
 
 // Parse zero or more attributes [name] / [name(args)]. Returns linked list (or NULL).
 // Sets is_private flag if [private] is encountered.
+// Is `name` among the parsed bracket attributes? Used to set the per-declaration flags that the
+// `@` forms used to set, so `[cold]` and `@cold` mean the same thing while the corpus migrates.
+static bool attrs_have(Attr *a, const char *name, isize len) {
+    for (; a; a = a->next)
+        if (a->name && a->name->length == len && strncmp(a->name->name, name, (size_t)len) == 0)
+            return true;
+    return false;
+}
+
 static Attr *parse_attributes(Arena *arena, Parser *parser, bool *out_is_private) {
     Attr *head = NULL;
     Attr **tail = &head;
@@ -49,7 +67,7 @@ static Attr *parse_attributes(Arena *arena, Parser *parser, bool *out_is_private
 
         // Validate against whitelist
         if (!is_known_attribute(name->name, name->length)) {
-            fprintf(stderr, "[E103] Error Ln %li, Col %li: unknown attribute '%.*s' (known: fast_math, private)\n",
+            fprintf(stderr, "[E103] Error Ln %li, Col %li: unknown attribute '%.*s' (known: private, packed, fast_math, cold, hot, allocator, noreturn)\n",
                     parser->line, parser->column, (int)name->length, name->name);
             exit(1);
         }
@@ -236,9 +254,12 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         return NULL;
     }
 
-    // @cold / @hot / @allocator / @noreturn annotations before func/proc
-    bool decl_is_cold = false, decl_is_hot = false;
-    bool decl_is_allocator = false, decl_is_noreturn = false;
+    // Declaration metadata, from the BRACKET form (`[cold]`) with the `@` form still accepted.
+    // E.3 of plan 7B: one syntax per family, and `@` keeps only its builtin job.
+    bool decl_is_cold      = attrs_have(attrs, "cold", 4);
+    bool decl_is_hot       = attrs_have(attrs, "hot", 3);
+    bool decl_is_allocator = attrs_have(attrs, "allocator", 9);
+    bool decl_is_noreturn  = attrs_have(attrs, "noreturn", 8);
     // ★ `@diverges` — the one exception to "every loop terminates".
     //
     // It is an ATTRIBUTE and not an `effects diverge` clause, and the difference was measured
@@ -979,8 +1000,6 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
         parser_advance();
     }
 
-    EffectSet eff_bound = 0; bool eff_declared = parse_effects_clause(parser, &eff_bound);
-
     // --- return type constraints (equation-style): int >= 0, int >= lo and <= hi ---
     ExprList *return_constraints = NULL;
     if (ret_type && is_comparison_op(parser->token.kind)) {
@@ -1028,6 +1047,14 @@ Decl *parse_func_proc_decl_impl(Arena* arena, Parser* parser, bool is_proc) {
     // NOTE: pre/post keywords removed - use equation-style constraints instead:
     // - Parameters: func div(a int, b int != 0) int
     // - Return: func abs(x int) int >= 0
+
+    // ── THE CLAUSE ORDER IS rettype -> refinement -> effects -> decreasing (plan 7B.3) ──
+    // This call used to sit BEFORE the return-constraint block, which made
+    // `func f(m usize) usize <= m effects raises` a parse error: the refinement ran first in the
+    // grammar but second in the natural reading, so the two clauses could not both appear. Every
+    // corpus function with a refined return type was therefore unable to declare an effect at
+    // all — invisible while `proc` granted IO, and immediately fatal once the row had to.
+    EffectSet eff_bound = 0; bool eff_declared = parse_effects_clause(parser, &eff_bound);
 
     // Optional `decreasing <measure>` clause — permits recursion in a `func`
     // (which is otherwise total and recursion-free): each self-call must strictly

@@ -453,6 +453,14 @@ typedef struct IrFunc {
     // did IO and terminated while being exempt from the check, against 61 that actually
     // diverge — and no function in `std/` needs the permission at all.
     bool       may_diverge;
+    // ── OPTIMIZER METADATA THE FRONT END DECLARED ────────────────────────────────────────
+    // ⚠ These were LOST when src/emit/ was deleted (2026-09-23): the AST emitter wrote
+    // `__attribute__((cold))`, `((hot))` and `((noreturn))`, the IR never carried them, and the
+    // one gate that compared annotations — `annot_gate` — was retired in the same commit. The
+    // baseline was then recorded from the backend that had already dropped them, so it could not
+    // see the loss either. Behaviour is identical (they are hints), which is exactly why nothing
+    // caught it: the same blind spot as D-62, one subsystem over.
+    bool       is_cold, is_hot, is_noreturn, is_allocator;
     bool       is_extern;   // declaration only (no body) — a trusted boundary
     bool       is_variadic; // `...` — a C-style variadic boundary (printf and friends). The
                             // IR must carry it or the emitter cannot declare the function at

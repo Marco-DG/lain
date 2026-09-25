@@ -14,6 +14,8 @@
 #include "annot.h"   // Stage IV: the proofs, expressed as C the optimizer can use
 #include "layout.h"  // D-62: how a sum is REPRESENTED — decided once, below the IR
 
+static void ir_emit_decl_attrs(const IrFunc *f, FILE *o);   // fwd: [cold]/[hot]/[allocator]/[noreturn]
+
 // round a non-standard integer width up to a standard C width
 static int ir_c_stdbits(int bits) { return bits<=8?8 : bits<=16?16 : bits<=32?32 : 64; }
 
@@ -552,6 +554,7 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
         IrCAnnot an = ir_c_annot(f, mod);
         if (an.const_attr)     fputs("__attribute__((const)) ", o);
         else if (an.pure_attr) fputs("__attribute__((pure)) ", o);
+        ir_emit_decl_attrs(f, o);   // [cold] / [hot] / [allocator] / [noreturn]
         // A borrow can never be null, and gcc uses that to delete null tests and propagate
         // non-nullness into callers. Theorems, not promises — see annot.h.
         if (ir_func_c_nonnull(f))         fputs("__attribute__((nonnull)) ", o);
@@ -696,7 +699,21 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
 // forward declaration line for a function (so callers link regardless of order)
 
 
+// ── THE METADATA THE FRONT END DECLARED (restored 2026-09-25) ─────────────────────────────
+// `[cold]`, `[hot]`, `[allocator]`, `[noreturn]`. The AST emitter wrote these and the IR
+// backend did not, so deleting src/emit/ dropped them silently — behaviour is identical, and
+// the one gate that compared annotations went out in the same commit. `malloc` is the one that
+// is more than a hint: it tells the optimizer the returned pointer aliases nothing.
+static void ir_emit_decl_attrs(const IrFunc *f, FILE *o) {
+    if (!f) return;
+    if (f->is_cold)      fputs("__attribute__((cold)) ", o);
+    if (f->is_hot)       fputs("__attribute__((hot)) ", o);
+    if (f->is_allocator) fputs("__attribute__((malloc, returns_nonnull)) ", o);
+    if (f->is_noreturn)  fputs("__attribute__((noreturn)) ", o);
+}
+
 static void ir_emit_proto_c(IrFunc *f, IrFunc *mod, FILE *o) {
+    ir_emit_decl_attrs(f, o);
     if (f->name->length==4 && strncmp(f->name->name,"main",4)==0) return;
     IrCAnnot an = ir_c_annot(f, mod);
     if (an.const_attr)     fputs("__attribute__((const)) ", o);

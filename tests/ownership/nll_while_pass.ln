@@ -18,8 +18,7 @@ func consume(var l Lexer) i32 {
     return l.pos
 }
 
-@diverges
-proc test_nll_while() {
+proc test_nll_while() effects diverge {
     var l = Lexer(0)
     
     // The peek(l) creates a shared borrow of `l`.

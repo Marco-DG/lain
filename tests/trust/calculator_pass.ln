@@ -10,8 +10,7 @@ type Token {
 }
 func is_digit(c u8) bool { return c >= 48 and c <= 57 }
 
-@diverges
-proc tokenize(src u8[], var out Token[m], m usize) usize <= m {
+proc tokenize(src u8[], var out Token[m], m usize) usize <= m effects diverge {
     var n usize = 0
     var i usize = 0
     while i < src.len {
@@ -72,8 +71,7 @@ proc parse_factor(toks Token[], var pos usize) i32 {
     return 0
 }
 
-@diverges
-proc parse_term(toks Token[], var pos usize) i32 {
+proc parse_term(toks Token[], var pos usize) i32 effects diverge {
     var left = parse_factor(toks, var pos)
     while pos < toks.len {
         var k = toks[pos].kind
@@ -93,8 +91,7 @@ proc parse_term(toks Token[], var pos usize) i32 {
     return left
 }
 
-@diverges
-proc parse_expr(toks Token[], var pos usize) i32 {
+proc parse_expr(toks Token[], var pos usize) i32 effects diverge {
     var left = parse_term(toks, var pos)
     while pos < toks.len {
         var k = toks[pos].kind

@@ -1,0 +1,39 @@
+// ★ THE DECLARATION ATTRIBUTES MUST REACH THE EMITTED C — and for two days they did not.
+//
+// `[cold]`, `[hot]`, `[allocator]` and `[noreturn]` are the project's claim in miniature: a fact
+// the front end knows, handed to the optimizer so it can act on it. The AST emitter wrote them.
+// The IR backend never carried them, so deleting src/emit/ on 2026-09-23 dropped all four —
+// silently, because:
+//
+//   · behaviour is identical (three of them are hints, so no program's output changes)
+//   · `annot_gate`, the ONLY instrument that compared annotations, was retired in the same commit
+//   · `tests/BASELINE.txt` was then recorded from the backend that had already lost them
+//
+// Three independent ways to not notice, all created at once. The same shape as D-62: a
+// representation loss that behaviour cannot see.
+//
+// ★ AND WHEN THE BASELINE GAINED AN `at=` COLUMN, IT STILL DID NOT BITE — because no corpus
+// program used any of these attributes. A column that counts something nothing produces reports
+// zero forever. THIS FILE is what makes it bite; removing the emission now moves the baseline.
+//
+// `[allocator]` is the one that is more than a hint: it becomes `malloc, returns_nonnull`, which
+// tells the optimizer the returned pointer aliases nothing.
+[cold]
+func rare_path() i32 {
+    return 0
+}
+[hot]
+func inner_loop(x i32) i32 {
+    return x +% 1
+}
+[allocator]
+func fresh() *var u8 {
+    // No allocator call: the point is that the ATTRIBUTE reaches the C, and the baseline's
+    // build step only defines libc_printf/libc_puts — a program it cannot link is a program it
+    // silently skips, which is how the first version of this test failed to protect anything.
+    var p *var u8 = 0
+    return p
+}
+proc main() i32 {
+    return rare_path() +% inner_loop(1)
+}
