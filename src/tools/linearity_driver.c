@@ -36,7 +36,8 @@ int main(int argc, char **argv) {
     for (int i=2;i<argc;i++){ if(!strcmp(argv[i],"--quiet")) quiet=true; else if(!strcmp(argv[i],"--reject")) reject=true; }
     // --reject: stand the LEGACY ownership checks down so sema completes on a program it
     // would exit() on, letting us measure whether the NEW passes catch the same violation.
-    g_suppress_ownership = reject;
+    sema_suppress_legacy_checks();
+    g_suppress_ownership = reject;   // the ONE flag this driver deliberately toggles
     Arena fa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena aa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);

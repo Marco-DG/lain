@@ -46,11 +46,11 @@ int main(int argc, char **argv) {
     // A meter that blames the wrong component does not produce a wrong number, it produces a
     // wrong TARGET — the same failure `precision_loss.sh` had with its glob. Matching the
     // compiler's configuration is what makes a refusal here mean what it says.
-    g_suppress_ownership  = true;
     /* g_vra_suppress_bounds: the legacy bounds pass (src/sema/bounds.h) was deleted
        2026-09-23 — there is nothing left to suppress. */
-    g_suppress_termination = true;
-    g_suppress_overflow   = true;
+    // All four, via the shared setter: this driver set three and omitted `recursion`, so it
+    // refused recursive programs the compiler accepts and the refusals were read as IR gaps.
+    sema_suppress_legacy_checks();
     // The flags below are kept so a caller can still ask the OLD question explicitly.
     //
     // --reject: stand the LEGACY ownership checks down so lowering completes on a program

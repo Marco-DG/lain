@@ -180,6 +180,34 @@ bool g_suppress_recursion = false;
 // why that boundary is the whole discipline.
 bool g_suppress_overflow = false;
 
+// ★ ONE PLACE SETS THE SEAM, because every standalone driver was setting a DIFFERENT SUBSET and
+// therefore front-ending a slightly different language than the compiler:
+//
+//     main.c            ownership, recursion, termination, overflow   (all four)
+//     lower_driver      ownership,            termination, overflow
+//     vra_driver                              termination, overflow
+//     incomplete_driver ownership
+//     linearity_driver  ownership
+//     effects_driver    (none)
+//
+// The surveys and fuzzers are built on those drivers, so each measured a variant of the language
+// and the numbers were not comparable with each other or with the compiler. It showed up as
+// `ir_incomplete_survey.sh` reporting "UNMEASURED files = 3": the three were refused by
+// `incomplete_driver` with the LEGACY message "recursion is not allowed in pure function", which
+// the compiler no longer emits at all — including a test that the compiler accepts, because the
+// driver does not honour the effect row. A skip bucket in a survey is data
+// ([[fuzzer-skip-count-is-data]]), and this one was pointing at a measurement fault, not a gap.
+//
+// These four flags stand the last of the old engine's checks down. They are set unconditionally,
+// so those blocks are unreachable, and they are marked for removal AS A UNIT — which this single
+// call site makes a one-line change instead of a hunt.
+static void sema_suppress_legacy_checks(void) {
+    g_suppress_ownership   = true;
+    g_suppress_recursion   = true;
+    g_suppress_termination = true;
+    g_suppress_overflow    = true;
+}
+
 #include "sema/scope.h"
 #include "sema/resolve.h"
 #include "sema/typecheck.h"

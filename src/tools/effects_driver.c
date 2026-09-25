@@ -37,6 +37,7 @@ static void fmt(unsigned e, char *out) {
 }
 
 int main(int argc, char **argv) {
+    sema_suppress_legacy_checks();   // front-end the compiler's language, not the old one
     if (argc < 2) { fprintf(stderr, "usage: %s <file.ln> [--quiet]\n", argv[0]); return 2; }
     bool quiet = (argc>=3 && strcmp(argv[2],"--quiet")==0);
     Arena file_arena=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);

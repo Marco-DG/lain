@@ -54,6 +54,12 @@ int main(int argc, char **argv) {
     // lived behind E082/E011 and had to be found by reading the code.
     g_suppress_termination = suppress;
     g_suppress_overflow  = suppress;
+    // RECURSION is part of the same termination family and was never set here, so a recursive
+    // program was refused by the legacy check even under --suppress and its new-engine verdict
+    // stayed invisible — the exact blind spot --suppress exists to remove. Ownership is not what
+    // this driver measures, and a legacy ownership refusal here is a skip, not a finding.
+    g_suppress_recursion = suppress;
+    g_suppress_ownership = true;
     sema_resolve_module(prog,mod,&sa);
 
     int total=0, proven=0;
