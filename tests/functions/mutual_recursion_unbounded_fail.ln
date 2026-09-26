@@ -1,0 +1,13 @@
+// EXPECT: [E011]
+// And the measure must be BOUNDED BELOW, not merely decreasing. These are `i32`, so `ev(-1)` runs
+// forever: `n` falls past the `n == 0` base case without limit. A ranking needs a floor, and the
+// check requires one — an unsigned type, or a `>= 0` refinement.
+func ev(n i32) i32 {
+    if n == 0 { return 1 }
+    return od(n -% 1)
+}
+func od(n i32) i32 {
+    if n == 0 { return 0 }
+    return ev(n -% 1)
+}
+func main() i32 { return ev(4) }

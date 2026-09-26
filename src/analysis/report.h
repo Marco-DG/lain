@@ -29,60 +29,6 @@ static void ir_diag(const char *file, isize line, isize col, const char *code, c
 // global on entry and NULLS IT ON EXIT, so reading it here gave the first function a module
 // and every one after it nothing — the co-argument aliasing check silently stopped running
 // after the first callee, which is exactly where `mix(var x, var x)` lives.
-// ── MUTUAL RECURSION: the sovereign engine's own opinion ─────────────────────────────────────
-// `vra_recursion_terminates` reasons about SELF-calls, so `f -> g -> f` drew no obligation from the
-// engine at all — and the termination seam STRIPS the front end's DIVERGE bit on the assumption that
-// the engine will speak. Measured 2026-09-26 by disabling the one legacy check that was still
-// refusing these: `func ping(n) { return pong(n) }  func pong(n) { return ping(n) }` was ACCEPTED,
-// and it never terminates. So a single check in `src/frontends/lain/sema.h` was the only thing
-// standing between the corpus and a non-terminating `func`.
-//
-// The engine cannot yet PROVE a mutual cycle well-founded — that needs a ranking over the cycle, not
-// over one function — so its honest opinion is "I cannot prove this". That is an obligation, which is
-// what the seam rule requires ([[seam-only-where-engine-opines]]) and what lets the legacy check go.
-// A function whose row names `diverge` has already said the same thing and is left alone.
-//
-// Walked with an explicit visited set rather than a bare recursion: a call graph with shared callees
-// makes the naive version exponential, and a depth cap would trade that for silent under-reporting.
-static bool ir_mutual_cycle_site(IrFunc *f, IrFunc *mod, IrInstr **site) {
-    if (!f || !mod) return false;
-    int n = 0; for (IrFunc *g = mod; g; g = g->next) n++;
-    if (n <= 0) return false;
-    IrFunc **idx = (IrFunc**)calloc((size_t)n, sizeof *idx);
-    bool   *seen = (bool*)  calloc((size_t)n, sizeof *seen);
-    IrFunc **stk = (IrFunc**)calloc((size_t)n, sizeof *stk);
-    if (!idx || !seen || !stk) { free(idx); free(seen); free(stk); return false; }
-    { int k = 0; for (IrFunc *g = mod; g; g = g->next) idx[k++] = g; }
-    bool found = false;
-    // Seed with f's DIRECT callees other than f itself: a self-call is the other analysis's
-    // business, and seeding with f would report every self-recursive function as mutual.
-    for (IrBlock *b = f->blocks; b && !found; b = b->next)
-        for (IrInstr *i = b->instrs; i && !found; i = i->next) {
-            if (i->op != IR_CALL || !i->aux.callee) continue;
-            IrFunc *c = ireff_find(mod, i->aux.callee);
-            if (!c || c == f) continue;
-            // Can this callee reach f again? Then f lies on a cycle through c.
-            int top = 0; for (int k = 0; k < n; k++) seen[k] = false;
-            stk[top++] = c;
-            while (top > 0 && !found) {
-                IrFunc *cur = stk[--top];
-                int ci = -1; for (int k = 0; k < n; k++) if (idx[k] == cur) { ci = k; break; }
-                if (ci < 0 || seen[ci]) continue;
-                seen[ci] = true;
-                for (IrBlock *cb = cur->blocks; cb && !found; cb = cb->next)
-                    for (IrInstr *ci2 = cb->instrs; ci2 && !found; ci2 = ci2->next) {
-                        if (ci2->op != IR_CALL || !ci2->aux.callee) continue;
-                        IrFunc *cc = ireff_find(mod, ci2->aux.callee);
-                        if (!cc) continue;
-                        if (cc == f) { found = true; if (site) *site = i; break; }
-                        if (top < n) stk[top++] = cc;
-                    }
-            }
-        }
-    free(idx); free(seen); free(stk);
-    return found;
-}
-
 static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool numeric) {
     int n = 0;
 
@@ -145,23 +91,6 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     }
     borrow_free(B);
 
-    // MUTUAL RECURSION is a module-level fact, so it is raised here (where `mod` is in scope)
-    // rather than inside the per-function VRA. Reported at the call that closes the cycle, which
-    // is the line a programmer can act on.
-    if (mod && !f->may_diverge && !f->is_extern) {
-        IrInstr *site = NULL;
-        if (ir_mutual_cycle_site(f, mod, &site)) {
-            ir_diag(file, site ? site->line : 0, site ? site->col : 0, "E011",
-                    "this call closes a mutual-recursion cycle, and no ranking over the cycle "
-                    "can be inferred");
-            fprintf(stderr, "       a function is total by default; the engine proves SELF-recursion "
-                            "well-founded but has no ranking for `f -> g -> f`\n"
-                            "       restructure it as one recursive function with a measure, or write "
-                            "`effects diverge` to say it may not terminate\n");
-            n++;
-        }
-    }
-
     if (!numeric) return n;   // the old engine still owns bounds/overflow/division
     Vra *V = vra_analyze(f);
     for (int i = 0; i < V->nchecks; i++) {
@@ -219,9 +148,19 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                     // carries the source fact (`IrFunc.has_decreasing`) so it can tell them
                     // apart rather than picking one and being wrong about half the programs.
                     ir_diag(file, c->line, c->col, c->had_measure ? "E082" : "E011",
-                            c->had_measure
+                            c->mutual
+                              ? "this call closes a mutual-recursion cycle, and no ranking over the "
+                                "cycle can be inferred"
+                              : c->had_measure
                               ? "the `decreasing` measure is not provably well-founded here"
                               : "this recursion is not provably terminating");
+                    if (c->mutual)
+                        fprintf(stderr,
+                            "       the engine ranks a 2-cycle when a parameter does not grow on "
+                            "either edge and falls on one\n"
+                            "       give the cycle a measure that shrinks per lap and is bounded "
+                            "below, or write `effects diverge`\n");
+                    else
                     fprintf(stderr, "       a function is total by default, so some parameter has "
                                     "to shrink toward a base case on every self-call\n"
                                     "       the engine looks for one that strictly decreases "

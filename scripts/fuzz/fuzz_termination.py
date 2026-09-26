@@ -16,7 +16,7 @@ def gen(rng):
     side      = rng.choice(["left", "right"])          # counter left or right of the guard
     direction = rng.choice(["up", "down"])
     shape     = rng.choice(["single", "two_arm", "one_arm", "const_exit", "call_reset",
-                            "mask", "halve"])
+                            "mask", "halve", "mutual"])
     start, limit = (0, rng.choice([1, 4, 8, 16])) if direction == "up" else \
                    (rng.choice([1, 4, 8, 16]), 0)
     step = rng.choice([1, 2, 3])
@@ -69,6 +69,32 @@ def gen(rng):
     if shape in ("mask", "halve"):
         guard = "i > 0" if side == "left" else "0 < i"
         start, limit = rng.choice([7, 15, 31, 255]), 0
+
+    # ★ MUTUAL RECURSION, the shape the engine learned to RANK on 2026-09-26. The cycle has to be
+    # `run <-> mu_b` rather than two helpers, because the harness reads the verdict for the function
+    # called `run` and only executes a program whose `run` was PROVEN — which is precisely the oracle
+    # this needs: a proven cycle that runs forever trips the timeout and is reported UNSOUND.
+    #
+    # The two steps are drawn independently and include 0, so the generator produces all three
+    # cases: strict on both edges, strict on one (a pass-through edge, which the per-lap rule must
+    # accept), and strict on NEITHER — which never terminates and must be refused.
+    if shape == "mutual":
+        s1 = rng.choice([0, 1, 2])
+        s2 = rng.choice([0, 1, 2])
+        L.append("func run(x0 i32, flag i32) i32 {")
+        L.append("    if x0 <= 0 { return 0 }")
+        L.append(f"    return mu_b(x0 -% {s1}, flag)")
+        L.append("}")
+        L.append("func mu_b(y i32, flag i32) i32 {")
+        L.append("    if y <= 0 { return 1 }")
+        L.append(f"    return run(y -% {s2}, flag)")
+        L.append("}")
+        L.append("func main() i32 effects io, raises, alloc {")
+        L.append(f"    libc_printf(\"%d\\n\", run({max(start,1)}, 1))")
+        L.append(f"    libc_printf(\"%d\\n\", run({max(start,1)}, 0))")
+        L.append("    return 0")
+        L.append("}")
+        return "\n".join(L) + "\n"
 
     L.append("func run(x0 i32, flag i32) i32 {")
     L.append(f"    var i i32 = x0")

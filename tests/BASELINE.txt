@@ -417,6 +417,9 @@ ty=Slice_u8 scalar
 rc=33
 out=
 at=const 12
+### tests/functions/mutual_recursion_ranked_pass.ln
+rc=3
+out=
 ### tests/functions/popcount_shift_termination_pass.ln
 rc=8
 out=

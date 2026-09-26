@@ -1,0 +1,16 @@
+// EXPECT: [E011]
+// The companion: NO ranking exists, so the obligation stands. Neither edge decreases anything —
+// `xx(n)` calls `yy(n)` and `yy(n)` calls `xx(n)` — and the two base cases can never both be
+// reached, so this runs forever. Refused at the call that closes the cycle.
+//
+// Without this file the ranked pass case would not distinguish "the engine found a ranking" from
+// "the engine stopped asking once it saw a cycle it recognised".
+func xx(n u32) u32 {
+    if n == 0 { return 1 }
+    return yy(n)
+}
+func yy(n u32) u32 {
+    if n == 99 { return 0 }
+    return xx(n)
+}
+func main() u32 { return xx(4) }

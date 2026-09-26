@@ -22,6 +22,22 @@
 #include <string.h>
 
 static IrFunc *vra_mod = NULL;   // module for callee lookup; NULL disables the query
+// ★ RE-ENTRANCY GUARD for the mutual-cycle obligation. It is raised INSIDE `vra_analyze`, next to the
+// self-call one, and ranking a cycle requires analysing the OTHER function in it — so the naive
+// version recursed for ever and segfaulted on the first cycle it met. (It worked while the obligation
+// lived in `report.h`, which runs after the analysis; moving it in so the driver could see the verdict
+// is what exposed this.) While set, the inner analyses skip the obligation, which is exactly right:
+// the cycle is one fact and one function raises it.
+static bool vra_in_mutual_check = false;
+// The same by-content lookup, but against a module passed in rather than the global — the
+// mutual-cycle walk is handed its module explicitly so it does not depend on `vra_mod` being set.
+static IrFunc *vra_find_in(IrFunc *mod, const IrName *n) {
+    if (!n || !mod) return NULL;
+    for (IrFunc *g=mod; g; g=g->next)
+        if (g->name && g->name->length==n->length && memcmp(g->name->name,n->name,(size_t)n->length)==0)
+            return g;
+    return NULL;
+}
 static IrFunc *vra_find_func(const IrName *n) {
     if (!n || !vra_mod) return NULL;
     // by CONTENT — ir_intern allocates a fresh IrName per call despite its name
@@ -114,6 +130,7 @@ typedef struct {
     // measure, a well-founded ranking over the self-call's arguments), and a user needs to be
     // told which one failed: the loop answer is E082 and the recursive one is E011.
     bool     recursion;
+    bool     mutual;         // the recursion is a CYCLE through another function, not a self-call
     // Did the source write a `decreasing` clause? Annex B makes the CODE depend on it — E011
     // for a recursion with no inferable measure, E082 for one whose measure is present and
     // fails — so the engine has to carry the distinction to be normatively right.
@@ -3109,6 +3126,9 @@ static IrInstr *vra_self_call_site(IrFunc *f) {
     return NULL;
 }
 static bool vra_recursion_terminates(Vra *V, IrFunc *f);   // fwd — defined after the domain helpers
+static bool vra_mutual_cycle_edges(IrFunc *f, IrFunc *mod, IrInstr **site,
+                                   IrFunc **via, IrInstr **back);            // fwd
+static bool vra_mutual_cycle_terminates(IrFunc *f, IrFunc *g, IrInstr *cfg, IrInstr *cgf);  // fwd
 
 // The function's entry state: each integer parameter's type interval, intersected with any
 // call-site binding. Factored out because the fixpoint now runs TWICE (see vpass) and pass 1
@@ -3549,6 +3569,23 @@ static Vra *vra_analyze(IrFunc *f) {
             c.line = site->line; c.col = site->col;
             c.ok = vra_recursion_terminates(V, f);
             vra_add_check(V, c);
+        } else if (vra_mod && !vra_in_mutual_check) {
+            // ★ MUTUAL RECURSION IS AN ORDINARY OBLIGATION, raised here beside the self-call one
+            // rather than as a bespoke diagnostic in report.h. That placement was not cosmetic: a
+            // finding invented in the reporter is invisible to every other client, and
+            // `fuzz_termination` — which reads the vra driver's verdict for `run` and then EXECUTES
+            // what was proven — silently SKIPPED 24 of 200 generated programs because no verdict
+            // line existed for the shape. A skip bucket is data; this one said the new proof was
+            // not being fuzzed at all.
+            IrInstr *msite = NULL, *mback = NULL; IrFunc *mvia = NULL;
+            if (vra_mutual_cycle_edges(f, vra_mod, &msite, &mvia, &mback) && msite) {
+                VraCheck c; memset(&c,0,sizeof c);
+                c.kind = VRA_TERMINATION; c.recursion = true; c.mutual = true; c.at = msite;
+                c.had_measure = f->has_decreasing;
+                c.line = msite->line; c.col = msite->col;
+                c.ok = (mvia && mback) && vra_mutual_cycle_terminates(f, mvia, msite, mback);
+                vra_add_check(V, c);
+            }
         }
     }
     // RETURN RANGE: union the interval of every returned value, read from that block's
@@ -3900,6 +3937,164 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
 //
 // Names come from IrValue.src_name where lowering recorded one. They are DIAGNOSTIC only —
 // the analysis is keyed on ids, and that is the whole point of the rebuild.
+// ── MUTUAL RECURSION: the sovereign engine's own opinion ─────────────────────────────────────
+// `vra_recursion_terminates` reasons about SELF-calls, so `f -> g -> f` drew no obligation from the
+// engine at all — and the termination seam STRIPS the front end's DIVERGE bit on the assumption that
+// the engine will speak. Measured 2026-09-26 by disabling the one legacy check that was still
+// refusing these: `func ping(n) { return pong(n) }  func pong(n) { return ping(n) }` was ACCEPTED,
+// and it never terminates. So a single check in `src/frontends/lain/sema.h` was the only thing
+// standing between the corpus and a non-terminating `func`.
+//
+// The engine cannot yet PROVE a mutual cycle well-founded — that needs a ranking over the cycle, not
+// over one function — so its honest opinion is "I cannot prove this". That is an obligation, which is
+// what the seam rule requires ([[seam-only-where-engine-opines]]) and what lets the legacy check go.
+// A function whose row names `diverge` has already said the same thing and is left alone.
+//
+// Walked with an explicit visited set rather than a bare recursion: a call graph with shared callees
+// makes the naive version exponential, and a depth cap would trade that for silent under-reporting.
+static bool vra_mutual_cycle_edges(IrFunc *f, IrFunc *mod, IrInstr **site,
+                                   IrFunc **via, IrInstr **back) {
+    if (!f || !mod) return false;
+    int n = 0; for (IrFunc *g = mod; g; g = g->next) n++;
+    if (n <= 0) return false;
+    IrFunc **idx = (IrFunc**)calloc((size_t)n, sizeof *idx);
+    bool   *seen = (bool*)  calloc((size_t)n, sizeof *seen);
+    IrFunc **stk = (IrFunc**)calloc((size_t)n, sizeof *stk);
+    if (!idx || !seen || !stk) { free(idx); free(seen); free(stk); return false; }
+    { int k = 0; for (IrFunc *g = mod; g; g = g->next) idx[k++] = g; }
+    bool found = false;
+    // Seed with f's DIRECT callees other than f itself: a self-call is the other analysis's
+    // business, and seeding with f would report every self-recursive function as mutual.
+    for (IrBlock *b = f->blocks; b && !found; b = b->next)
+        for (IrInstr *i = b->instrs; i && !found; i = i->next) {
+            if (i->op != IR_CALL || !i->aux.callee) continue;
+            IrFunc *c = vra_find_in(mod, i->aux.callee);
+            if (!c || c == f) continue;
+            // Can this callee reach f again? Then f lies on a cycle through c.
+            int top = 0; for (int k = 0; k < n; k++) seen[k] = false;
+            stk[top++] = c;
+            while (top > 0 && !found) {
+                IrFunc *cur = stk[--top];
+                int ci = -1; for (int k = 0; k < n; k++) if (idx[k] == cur) { ci = k; break; }
+                if (ci < 0 || seen[ci]) continue;
+                seen[ci] = true;
+                for (IrBlock *cb = cur->blocks; cb && !found; cb = cb->next)
+                    for (IrInstr *ci2 = cb->instrs; ci2 && !found; ci2 = ci2->next) {
+                        if (ci2->op != IR_CALL || !ci2->aux.callee) continue;
+                        IrFunc *cc = vra_find_in(mod, ci2->aux.callee);
+                        if (!cc) continue;
+                        if (cc == f) {
+                            found = true;
+                            if (site) *site = i;         // f's own call that enters the cycle
+                            if (via)  *via  = cur;       // the function that closes it
+                            if (back) *back = ci2;       // and the call that closes it
+                            break;
+                        }
+                        if (top < n) stk[top++] = cc;
+                    }
+            }
+        }
+    free(idx); free(seen); free(stk);
+    return found;
+}
+
+// ── MUTUAL RECURSION: A RANKING OVER THE CYCLE ──────────────────────────────────────────────
+// `vra_recursion_terminates` reasons about a SELF-call: some parameter strictly shrinks and is
+// bounded below. A cycle `f -> g -> f` has no self-call, so until now the engine could only say "I
+// cannot rank this" — which is an honest obligation but refuses a shape the language needs, most
+// obviously a recursive-descent parser and the textbook `even`/`odd` pair.
+//
+// The facts COMPOSE, which is what makes this tractable without a new domain. At f's call to g the
+// octagon can prove `arg[kg] < f.param[kf]`; at g's call back to f it can prove
+// `arg[kf] < g.param[kg]`. Chaining the two:
+//
+//     f.param[kf]  >  arg[kg] = g.param[kg]  >  arg[kf] = f.param[kf]   (next time round)
+//
+// so the value threaded through positions (kf, kg) strictly decreases once per lap, and if it is
+// bounded below the cycle is well-founded. Both halves are ordinary octagon queries at a program
+// POINT, exactly as the self-call rule makes them — no four-variable relation, no new lattice.
+//
+// Searched over PAIRS of positions rather than assuming they match: `even(n)` calling `odd(n-1)`
+// happens to use position 0 on both sides, but a parser's `expr(src, i)` calling `term(src, i)`
+// threads its index through position 1, and a helper may take its arguments in another order.
+//
+// Fail-closed: anything unproven leaves the obligation standing, so a wrong answer here costs
+// precision and never soundness. Limited to a 2-cycle deliberately — that is what the corpus and
+// every idiom in the language limits document actually contain, and a longer chain is the same
+// composition applied more times, which can be added when something needs it.
+// `strict` distinguishes the two questions a lap needs: every edge must be NON-INCREASING, and at
+// least one must strictly DECREASE. Requiring strict on every edge is the obvious rule and it is
+// wrong — it refuses a cycle that threads its measure through a pass-through edge, which is what a
+// pair like `p1(x,y) -> p2(y,x-1) -> p1(b,a)` does: the decrease happens once per lap, not twice.
+static bool vra_edge_shrinks(Vra *V, IrFunc *caller, IrInstr *call,
+                             int k_param, int j_arg, bool strict) {
+    if (!V || !caller || !call) return false;
+    IrParam *p = caller->params; int idx = 0;
+    while (p && idx < k_param) { p = p->next; idx++; }
+    if (!p || !p->value || !p->value->type || p->value->type->kind != IRT_INT) return false;
+    IrValue *pv = p->value;
+    if (pv->id < 0 || pv->id >= V->nvar) return false;
+    if (j_arg < 0 || j_arg >= call->n_operands) return false;
+    IrValue *arg = call->operands[j_arg];
+    if (!arg || arg->id < 0 || arg->id >= V->nvar) return false;
+
+    int dim = 2*V->noct;
+    int64_t *scratch = malloc((size_t)V->dsz*8);
+    if (!scratch) return false;
+    const int *oct_map_saved = oct_map; oct_map = V->odim;
+    bool proved = false;
+    for (IrBlock *b = caller->blocks; b && !proved; b = b->next) {
+        if (!V->reached[b->id] || !V->in[b->id]) continue;
+        bool holds_here = false, saw = false;
+        memcpy(scratch, V->in[b->id], (size_t)V->dsz*8);
+        Octagon W = { V->noct, dim, scratch };
+        oct_close(&W);
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (i == call) {
+                oct_close(&W);                       // the descent fact is usually DERIVED
+                bool shrinks = vra_diff_ub(V, &W, arg->id, pv->id) <= (strict ? -1 : 0);
+                int64_t lo, hi; bool hl, hh;
+                vra_interval(V, &W, pv->id, &lo, &hl, &hi, &hh);
+                bool grounded = (hl && lo >= 0) || !pv->type->is_signed;
+                saw = true; holds_here = shrinks && grounded;
+                break;
+            }
+            vra_transfer_instr(V, &W, i);
+        }
+        if (saw) { proved = holds_here; break; }      // the call appears once; that block decides
+    }
+    free(scratch); oct_map = oct_map_saved;
+    return proved;
+}
+
+// Can the 2-cycle f --cfg--> g --cgf--> f be ranked? Analyses both functions and searches the
+// position pairs.
+static bool vra_mutual_cycle_terminates(IrFunc *f, IrFunc *g, IrInstr *cfg, IrInstr *cgf) {
+    if (!f || !g || !cfg || !cgf) return false;
+    int nf = 0, ng = 0;
+    for (IrParam *p = f->params; p; p = p->next) nf++;
+    for (IrParam *p = g->params; p; p = p->next) ng++;
+    if (nf == 0 || ng == 0 || nf > 16 || ng > 16) return false;
+    bool guard_saved = vra_in_mutual_check;
+    vra_in_mutual_check = true;                 // the inner analyses must not re-raise the cycle
+    Vra *Vf = vra_analyze(f); if (!Vf) { vra_in_mutual_check = guard_saved; return false; }
+    Vra *Vg = vra_analyze(g); if (!Vg) { vra_free(Vf); vra_in_mutual_check = guard_saved; return false; }
+    bool ok = false;
+    for (int kf = 0; kf < nf && !ok; kf++)
+        for (int kg = 0; kg < ng && !ok; kg++) {
+            // Over one lap the measure must not GROW on either edge and must FALL on at least one.
+            // That is well-foundedness exactly: total change <= -1 per lap, with a floor, so the
+            // cycle cannot run forever.
+            if (!vra_edge_shrinks(Vf, f, cfg, kf, kg, false)) continue;
+            if (!vra_edge_shrinks(Vg, g, cgf, kg, kf, false)) continue;
+            if (vra_edge_shrinks(Vf, f, cfg, kf, kg, true) ||
+                vra_edge_shrinks(Vg, g, cgf, kg, kf, true)) ok = true;
+        }
+    vra_free(Vf); vra_free(Vg);
+    vra_in_mutual_check = guard_saved;
+    return ok;
+}
+
 static void vra_dump_val(Vra *V, int id, FILE *o) {
     IrValue *v = (id>=0 && id<V->nvar) ? V->val[id] : NULL;
     if (v && v->src_name) fprintf(o, "%%%d:%.*s", id, (int)v->src_name->length, v->src_name->name);

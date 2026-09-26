@@ -1,0 +1,44 @@
+// ★ A MUTUAL CYCLE CAN NOW BE PROVEN TERMINATING, not merely refused.
+//
+// The self-call rule asks: does some parameter strictly shrink at every self-call, and is it bounded
+// below? A cycle `f -> g -> f` has no self-call, so the engine could only say "I cannot rank this" —
+// honest, but it refused the textbook pair and every recursive-descent parser.
+//
+// The facts COMPOSE, which is why this needs no new domain. At `is_even`'s call the octagon proves
+// `n - 1 < n`; at `is_odd`'s call it proves the same; chaining them, the value threaded through the
+// two positions falls once per lap and `u32` grounds it at 0. Both halves are ordinary octagon
+// queries at a program point.
+//
+// `p1`/`p2` is the case that made the rule right: it threads its measure through SWAPPED positions
+// and decreases only ONCE per lap, so "strict on every edge" — the obvious rule — refuses it. Well
+// foundedness needs non-increasing on each edge and strict on at least one, and that is what is
+// implemented. All three pairs here were RUN to confirm they terminate.
+func is_even(n u32) u32 {
+    if n == 0 { return 1 }
+    return is_odd(n - 1)
+}
+func is_odd(n u32) u32 {
+    if n == 0 { return 0 }
+    return is_even(n - 1)
+}
+
+func p1(x u32, y u32) u32 {
+    if x == 0 { return y }
+    return p2(y, x - 1)
+}
+func p2(a u32, b u32) u32 {
+    if b == 0 { return a }
+    return p1(b, a)
+}
+
+// one edge passes its measure through unchanged; the lap still falls
+func aa(n u32) u32 {
+    if n == 0 { return 1 }
+    return bb(n - 1)
+}
+func bb(n u32) u32 {
+    if n == 0 { return 0 }
+    return aa(n)
+}
+
+func main() u32 { return is_even(4) +% p1(3, 2) +% aa(4) }
