@@ -135,6 +135,22 @@ static Args args_parse(int argc, char** argv)
             args.output_file = argv[++i];
         } else if (strncmp(argv[i], "--target=", 9) == 0) {
             args.target_triple = argv[i] + 9;
+        } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            // ★ AN UNKNOWN FLAG IS AN ERROR, not a filename. This branch used to be the
+            // catch-all `args.filename = argv[i]`, so `lain --dump-effcts prog.ln` set the
+            // filename to the typo, then to `prog.ln`, and compiled in SILENCE with the dump
+            // never happening — the user concludes the feature is missing. The same typo AFTER
+            // the filename produced "Cannot open module file '--dump-effcts.ln'", which is
+            // confusing rather than wrong. readme_gate tests the opposite direction (a flag the
+            // docs name that the binary rejects) and cannot see this one.
+            fprintf(stderr, "Error: unknown option '%s'.\n", argv[i]);
+            fprintf(stderr, "       accepted: -o <file> --target=<triple> --dump-ast --dump-niche "
+                            "--dump-effects --dump-octagon\n"
+                            "                 --no-w130 --no-line-directives --emit-llvm "
+                            "(refuses; the C backend is the complete one)\n"
+                            "       accepted and ignored (one engine, one backend): --engine=... "
+                            "--backend=...\n");
+            exit(1);
         } else {
             args.filename = argv[i];
         }
