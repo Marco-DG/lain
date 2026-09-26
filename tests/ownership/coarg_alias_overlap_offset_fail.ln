@@ -1,0 +1,27 @@
+// EXPECT: [E087]
+// ★ A LIVE MISCOMPILE, half two — observable, not merely undefined:
+//
+//     -O0 -> 4 6 9 12        -O2 -> 4 6 8 10
+//
+// `a[2..6]` and `a[0..4]` overlap at elements 2 and 3, and `vadd` writes its first parameter. The
+// program was accepted, both parameters emitted `restrict`, and gcc vectorised on the strength of
+// that promise — so the program's meaning changed with the optimisation level.
+//
+// The cause: a SLICE was canonicalised as a POINT. `a[2..6]` lowers to `make_slice(elem_ptr a, 2)`
+// and the place walk skipped the `make_slice` as "same storage, no projection", leaving the place
+// "element 2" against "element 0" — two distinct CONSTANT indices, hence provably disjoint, hence no
+// conflict. An index projection now carries the slice's SPAN and overlap is a range question. The
+// front end's own E087 had this right before the check moved to the IR (`sema_arg_const_span`,
+// disjoint iff `ihi <= jlo || jhi <= ilo`); the span reasoning was lost in the move.
+func vadd(n usize, dst var i32[n], src i32[n]) {
+    var i usize = 0
+    while i < n {
+        dst[i] = dst[i] +% src[i]
+        i = i + 1
+    }
+}
+func main() i32 {
+    var a i32[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    vadd(4, var a[2..6], a[0..4])
+    return a[2]
+}

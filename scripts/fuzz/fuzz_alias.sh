@@ -57,10 +57,10 @@ gen_alias() {
     OVERLAP=$overlap
     cat <<EOF
 extern func libc_printf(fmt *u8, ...) i32 effects io
-func vadd(k usize, dst i32[k], src i32[k]) {
+func vadd(k usize, dst var i32[k], src i32[k]) {
     var i usize = 0
     while i < k decreasing k - i {
-        dst[i] = dst[i] + src[i]
+        dst[i] = dst[i] +% src[i]
         i += 1
     }
 }
@@ -95,7 +95,7 @@ EOF
 }
 
 GENS=(gen_alias gen_copy)
-acc=0 rej=0 crash=0 brokenc=0 miscompile=0 unsound=0 wrongcopy=0
+acc=0 rej=0 crash=0 brokenc=0 miscompile=0 unsound=0 wrongcopy=0; missedrej=0
 for ((it=0; it<N; it++)); do
     g="${GENS[$((RANDOM % ${#GENS[@]}))]}"
     EXPECT=""; OVERLAP=0
@@ -105,8 +105,18 @@ for ((it=0; it<N; it++)); do
     if (( rc == 1 )); then rej=$((rej+1)); continue; fi            # fail-closed reject — fine
     if (( rc != 0 )); then crash=$((crash+1)); cp "$src" "$BUGDIR/aexit_${it}.ln"; echo "ODD EXIT ($g)"; continue; fi
     acc=$((acc+1))
-    # accepted: an OVERLAPPING alias that Lain accepted is already suspect — the
-    # -O0/-O3 differential below will convict it if it actually miscompiles.
+    # ★ AN ACCEPTED OVERLAP IS THE BUG, whether or not this gcc exploits it. The -O0/-O3
+    # differential below is a real oracle but a WEAK one: it convicts only when the optimiser
+    # happens to vectorise, so a genuine `restrict` violation can pass for reasons that have
+    # nothing to do with the compiler being right. Passing one pointer to two `restrict`
+    # parameters is undefined behaviour by the standard, so prove-or-reject demands a refusal.
+    # This is the deterministic half, and it is what would have caught the whole-array and
+    # overlapping-sub-slice holes on the first run instead of never.
+    if (( OVERLAP == 1 )); then
+        missedrej=$((missedrej+1)); cp "$src" "$BUGDIR/amissedrej_${it}.ln"
+        echo "⚠ MISSED-REJECTION ($g): an OVERLAPPING alias with a written destination was accepted"
+        continue
+    fi
     if ! $CC -O0 $DEFS -o "$TDIR/o0" "$TDIR/f.c" 2>"$TDIR/gcc.err"; then
         brokenc=$((brokenc+1)); cp "$src" "$BUGDIR/abrokenc_${it}.ln"; cp "$TDIR/f.c" "$BUGDIR/abrokenc_${it}.c"
         echo "BROKEN-C ($g): $(grep -m1 error: "$TDIR/gcc.err")"; continue
@@ -128,7 +138,7 @@ for ((it=0; it<N; it++)); do
 done
 echo "=============================================================="
 echo "ALIAS-FUZZ $N iters:  accepted=$acc  rejected(fail-closed)=$rej"
-echo "  bugs:  crashes=$crash  broken-C=$brokenc  ALIAS-MISCOMPILE=$miscompile  UNSOUND=$unsound  wrong-result=$wrongcopy"
+echo "  bugs:  crashes=$crash  broken-C=$brokenc  ALIAS-MISCOMPILE=$miscompile  UNSOUND=$unsound  wrong-result=$wrongcopy  MISSED-REJECTION=$missedrej"
 echo "=============================================================="
-(( crash + brokenc + miscompile + unsound + wrongcopy > 0 )) && { echo "repros in fuzz_bugs/"; exit 1; }
+(( crash + brokenc + miscompile + unsound + wrongcopy + missedrej > 0 )) && { echo "repros in fuzz_bugs/"; exit 1; }
 exit 0

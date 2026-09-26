@@ -1,0 +1,26 @@
+// EXPECT: [E087]
+// ★ A LIVE HOLE, half one. `addto(var x, x)` passes one array to two parameters of a call that
+// WRITES one of them. Both lower to `int32_t* restrict`, so the emitted `addto(v0, v0)` hands one
+// pointer to two `restrict` parameters — undefined behaviour by the C standard, whatever a given
+// optimiser does with it.
+//
+// Accepted until 2026-09-26 because the borrow pass's loan classifier enumerated the aggregate
+// kinds as `IRT_PTR || IRT_STRUCT || IRT_SLICE` and omitted `IRT_ARRAY`, so an array argument was
+// not a loan and the co-argument check never compared two of them. `annot.h` — the code that emits
+// the `restrict` — DOES count a decayed fixed array as a reference. Two lists had to agree about
+// what a reference is and only one was maintained.
+//
+// The sibling shape `vadd(4, a, a[0..4])` (coarg_alias_subslice_fail.ln) was always caught, because
+// there the two places share a base offset; this one needed the array kind to be a loan at all.
+func addto(var out i32[4], a i32[4]) {
+    var i usize = 0
+    while i < 4 {
+        out[i] = out[i] +% a[i]
+        i = i + 1
+    }
+}
+func main() i32 {
+    var x i32[4] = [1, 2, 3, 4]
+    addto(var x, x)
+    return x[0]
+}

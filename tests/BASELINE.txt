@@ -852,6 +852,13 @@ at=const 2
 at=nonnull 2
 at=pure 2
 ty=Resource struct
+### tests/ownership/coarg_alias_disjoint_offset_pass.ln
+rc=34
+out=
+at=access 4
+at=nonnull 4
+at=pure 2
+ty=Slice_i32 scalar
 ### tests/ownership/coarg_alias_element_disjoint_pass.ln
 rc=0
 out=

@@ -102,7 +102,21 @@ static bool bor_arg_loan_ex(Borrow *B, IrFunc *callee, int k, IrValue *arg, IrPl
     // is what makes `ms(var a, a)` and `v.push_n(v.cap)` legal (the two-phase pattern: the
     // mutable borrow is merely RESERVED while the copy is read). An aggregate parameter
     // (ptr / struct / slice) IS a live reference for the call's duration.
-    bool is_borrow = (pt->kind==IRT_PTR || pt->kind==IRT_STRUCT || pt->kind==IRT_SLICE);
+    // ★ IRT_ARRAY BELONGS IN THIS LIST, and its absence was a soundness hole. A fixed-array
+    // parameter is passed BY REFERENCE and the backend lowers it to `int32_t* restrict` —
+    // `annot.h` says so explicitly ("a DECAYED fixed-array reference" returns true from the
+    // restrict predicate). This list enumerated three aggregate kinds and omitted the fourth, so
+    // an array argument was not a loan at all, the co-argument check never compared two of them,
+    // and `addto(var x, x)` was ACCEPTED — emitting `e087_addto(v0, v0)` against a signature whose
+    // two parameters are both `restrict`. Passing one pointer to two `restrict` parameters is
+    // undefined behaviour whatever the optimiser happens to do with it today.
+    //
+    // Two lists had to agree about what a reference is and only one of them was maintained. The
+    // legacy front end's E087 covered the gap until its seam stood it down, which is why this was
+    // reachable at all — [[seam-only-where-engine-opines]]: the seam is legitimate only where the
+    // new engine emits the obligation, and here it did not.
+    bool is_borrow = (pt->kind==IRT_PTR || pt->kind==IRT_STRUCT || pt->kind==IRT_SLICE
+                   || pt->kind==IRT_ARRAY);
     // A MOVE is an access too, and the strongest one: `conflict(res, mov res)` reads res
     // through one parameter while consuming it through another, leaving the first looking at
     // a moved-from value. Folding moves into the borrow framework as an access (design §2)

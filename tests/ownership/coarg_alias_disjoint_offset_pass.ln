@@ -1,0 +1,30 @@
+// The precision half, and the reason the two _fail siblings are not over-rejection: two sub-slices
+// of one array that are provably APART are legal and must stay legal — `restrict` is violated by
+// overlap, not by sharing a root. `[0,2)` and `[2,4)` touch without overlapping, and `dot(b, b)`
+// passes one array twice to a callee that writes NEITHER, which the write footprint permits.
+//
+// Disjointness is claimed only from constants on both sides. The slice length is emitted as
+// `sub hi, lo` rather than a bare constant, so the place reader folds one level of constant add/sub
+// — without that no length in the corpus is constant and this file would be refused.
+func vadd(n usize, dst var i32[n], src i32[n]) {
+    var i usize = 0
+    while i < n {
+        dst[i] = dst[i] +% src[i]
+        i = i + 1
+    }
+}
+func dot(a i32[4], b i32[4]) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < 4 {
+        s = s +% a[i] *% b[i]
+        i = i + 1
+    }
+    return s
+}
+func main() i32 {
+    var a i32[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    vadd(2, var a[0..2], a[2..4])
+    var b i32[4] = [1, 2, 3, 4]
+    return a[0] +% dot(b, b)
+}
