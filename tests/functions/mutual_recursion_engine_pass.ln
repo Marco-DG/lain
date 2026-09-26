@@ -1,0 +1,23 @@
+// The sovereign engine owns mutual recursion as of 2026-09-26, and this file pins the cases it must
+// NOT report. The detector walks the IR call graph from each of `f`'s direct callees looking for a
+// path back to `f`, with an explicit visited set — a naive recursion would be exponential on a shared
+// callee, and a depth cap would trade that for silent under-reporting.
+//
+// Three shapes that are not cycles and must stay accepted:
+//   · a CHAIN            top -> mid -> leaf
+//   · a DIAMOND          a1 -> leaf, a2 -> leaf   (a shared callee is not a cycle)
+//   · SELF-recursion     handled by the ranking analysis, not by this one — seeding the walk with
+//                        `f` itself instead of its callees would report every recursive function
+func leaf(n i32) i32 { return n +% 1 }
+func mid(n i32) i32  { return leaf(n) }
+func top(n i32) i32  { return mid(n) }
+
+func a1(n i32) i32 { return leaf(n) }
+func a2(n i32) i32 { return leaf(n) }
+
+func fact(n u64) u64 {
+    if n <= 1 { return 1 }
+    return n *% fact(n -% 1)
+}
+
+func main() u64 { return fact(4) +% (top(1) +% a1(2) +% a2(3) as u64) }

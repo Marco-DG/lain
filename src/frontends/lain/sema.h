@@ -4196,78 +4196,16 @@ static void sema_check_no_value_cycle(Decl *d) {
     }
 }
 
-static void sema_check_no_mutual_recursion(DeclList *decls) {
-    for (DeclList *dl = decls; dl; dl = dl->next) {
-        Decl *d = dl->decl;
-        if (!d || d->kind != DECL_FUNCTION) continue;
-        // Skip generic templates — only their concrete instances are checked.
-        if (decl_is_generic_template(d)) continue;
-
-        // Fresh state per root
-        mrec_stack_len = 0;
-        mrec_visited_len = 0;
-        mrec_found_cycle_start = NULL;
-        mrec_found_cycle_end = NULL;
-
-        mrec_visited[mrec_visited_len++] = d;
-        mrec_stack[mrec_stack_len++] = d;
-        mrec_current_source = d;
-        mrec_walk_stmt_list(d->as.function_decl.body, mrec_edge_visit);
-        mrec_stack_len = 0;
-
-        if (mrec_found_cycle_start && mrec_found_cycle_start != d) {
-            // Cycle not rooted at d: we'll report it when iterating reaches the root.
-            // Skip this one and let the canonical entry raise the error.
-            continue;
-        }
-        if (mrec_found_cycle_start == d) {
-            // A SELF-recursion (fib → fib) carrying a `decreasing <measure>` clause
-            // is permitted — its termination is verified per call site in
-            // typecheck.h (check_recursion_measure). Only report genuine
-            // multi-function cycles here (measure descent across a mutual cycle is
-            // not yet supported).
-            if (d->as.function_decl.decreasing_measure && mrec_found_cycle_end == d)
-                continue;
-            // ── THE SEAM'S BOUNDARY, AND IT IS EXACTLY HERE ─────────────────────────────────
-            // `mrec_found_cycle_end == d` is a SELF-cycle (f → f). The sovereign engine answers
-            // that one — `vra_self_call_site` finds the call and `vra_recursion_terminates`
-            // looks for a well-founded ranking — so under the seam it should speak instead of
-            // this check. A cycle through OTHER functions (f → g → f) it does not answer at
-            // all: the self-call scan keys on the function's own name. Standing this down for
-            // a mutual cycle would report "no obligation" where the truth is "nobody looked",
-            // which is the one thing the seam rule forbids.
-            //
-            // So the boundary is not "recursion" but "SELF-recursion", and it is drawn here
-            // rather than in the seam's declaration because this is the only site that can tell
-            // the two apart. Mutual recursion is a real gap in the sovereign engine, recorded
-            // as such rather than hidden by a suppression.
-            if ((g_suppress_termination || g_suppress_recursion) && mrec_found_cycle_end == d)
-                continue;
-            // ── the ROW stands this down too (E.4) ───────────────────────────────────────
-            // Mutual recursion is a real gap in the sovereign engine: it proves SELF-recursion
-            // well-founded but has no opinion on `f -> g -> f`. So `effects diverge` on such a
-            // function is the honest reading — "I cannot prove this terminates" — and refusing it
-            // anyway leaves the cycle inexpressible, which is what a recursive-descent parser
-            // needs and what the corpus's calculator is.
-            //
-            // The last of four checks keyed on `kind == DECL_FUNCTION` rather than on what the
-            // function declared. Each was invisible while `proc` existed to absorb it.
-            if (d->as.function_decl.diverges
-                || (d->as.function_decl.effects_declared
-                    && (d->as.function_decl.effects_bound & EFFECT_DIVERGE)))
-                continue;
-            fprintf(stderr,
-                    "[E011] Error Ln %li, Col %li: pure function '%.*s' participates in mutual recursion (via '%.*s'). "
-                    "Mutual recursion breaks the termination guarantee of 'func'.\n",
-                    (long)d->line, (long)d->col,
-                    (int)d->as.function_decl.name->length, d->as.function_decl.name->name,
-                    mrec_found_cycle_end ? (int)mrec_found_cycle_end->as.function_decl.name->length : 0,
-                    mrec_found_cycle_end ? mrec_found_cycle_end->as.function_decl.name->name : "?");
-            diagnostic_show_line(d->line, d->col);
-            exit(1);
-        }
-    }
-}
+// ★ THE LEGACY MUTUAL-RECURSION CHECK IS DELETED, and it was the LAST legacy analysis check with
+// no successor in the sovereign engine. The seam strips the front end's DIVERGE bit on the
+// assumption that the engine speaks, and for `f -> g -> f` it did not — measured by disabling this
+// function: `func ping(n) { return pong(n) }  func pong(n) { return ping(n) }` was ACCEPTED, and it
+// never terminates. The engine now raises the obligation itself (`ir_mutual_cycle_site` in
+// analysis/report.h), at the call that closes the cycle, so this can go.
+//
+// Its judgement was also coarser in a way worth recording: it keyed on DECL_FUNCTION and reported at
+// the function, while the engine walks the IR call graph and reports at the CALL. The generic-template
+// skip it needed is unnecessary there, because only instantiated functions reach the IR at all.
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
    INDEX COUNTERS INFER `usize`
@@ -5047,7 +4985,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // 3) F-020: detect mutual recursion involving pure functions.
     // Direct recursion is already rejected in typecheck.h; here we catch
     // indirect cycles (f -> g -> f) that break the P4 termination guarantee.
-    sema_check_no_mutual_recursion(decls);
+    /* mutual recursion: now the sovereign engine's obligation (analysis/report.h) */
 
     // 4) W130 + F3.3 effect inference. Run AFTER per-function resolve so Expr.decl
     //    is populated everywhere (needed for callee-kind effect detection).
