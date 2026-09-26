@@ -818,6 +818,29 @@ ordinary work rather than a redesign.
   it), or the total (a wider accumulator, widening the addend too). Or say which arithmetic you
   meant: `+%` wraps, `+|` saturates. The diagnostic names all four.
 
+  Bounding the element is the one that reads best, and it needs no new syntax — a refinement
+  ALIAS is an element type:
+
+  ```lain
+  type Small = i32 >= 0 and <= 1000
+
+  func total(a Small[64]) i32 {
+      var s i32 = 0
+      var i usize = 0
+      while i < 64 {
+          s = s + a[i]          // proves: 64 x 1000 = 64000, which fits i32
+          i = i + 1
+      }
+      return s
+  }
+  ```
+
+  The emitted C for `total` contains no check, no trap and no branch on the index, and gcc
+  receives it as `__attribute__((pure)) __attribute__((nonnull))`. Widen `Small` to `<= 100000000`
+  and the same function is refused again — the bound is multiplied by the trip count, not merely
+  noted. And the bound is enforced where the values are produced: storing `5000` into a `Small`
+  element is `[E086]`, at construction, at a later store, and through a `var` parameter.
+
 - **No concurrency.** Single-threaded before 1.0, so "no data races" is a consequence of that
   rather than something achieved. An interrupt-aware model is planned.
 

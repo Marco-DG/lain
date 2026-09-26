@@ -1,0 +1,31 @@
+// ★ THE CANONICAL BOUNDED ACCUMULATOR PROVES CHECK-FREE, and it needs no new syntax to say so.
+//
+// A running total's bound is `start + trips x step`, a PRODUCT, which no relational domain holds — so
+// the engine asks for one of the three factors to be bounded. Bounding the ELEMENT is the one that
+// reads best, and a refinement ALIAS already expresses it: `Small` carries the bound, `Small[64]`
+// carries it per element, and the engine multiplies the trip count by it (64 x 1000 = 64000, which
+// fits i32).
+//
+// This was tracked as an open design question ("the accumulator question") on the assumption that
+// element bounds were inexpressible and a new clause would be needed. Measured 2026-09-26: the
+// capability is already here, sound, and check-free — the emitted C for `total` contains no check, no
+// trap and no branch on the index, and gcc receives it as `pure` + `nonnull`.
+//
+// The companions pin that the bound is USED rather than assumed: accumulator_refined_too_wide_fail.ln
+// (a bound too wide to fit still overflows) and refined_element_store_fail.ln (a store that violates
+// the element bound is refused, so the proof rests on something the compiler checked).
+type Small = i32 >= 0 and <= 1000
+
+func total(a Small[64]) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < 64 {
+        s = s + a[i]
+        i = i + 1
+    }
+    return s
+}
+func main() i32 {
+    var x Small[64] = [1 for i in 0..64]
+    return total(x)
+}

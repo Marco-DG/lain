@@ -49,6 +49,19 @@ for n, (path, ln, body) in enumerate(blocks):
 print(len(blocks))
 PY
 
+# ★ A FENCE INSIDE A BLOCKQUOTE IS INVISIBLE TO THE EXTRACTOR, which matches a line whose stripped
+# form is exactly ```` ```lain ````. Inside a `>` block the line reads `> ```lain` and is skipped — so an
+# example written there is an UNVERIFIABLE claim that does not even show up in the unverifiable count.
+# There were zero of them until one was added by accident on 2026-09-26, which is exactly when to make
+# the shape impossible rather than to remember not to use it.
+blockquoted=$(grep -c '^> *```lain' README.md LANGUAGE.md | awk -F: '{s+=$2} END {print s+0}')
+if [ "$blockquoted" -ne 0 ]; then
+    echo "FAIL: $blockquoted \`\`\`lain fence(s) inside a blockquote — the extractor cannot see them."
+    grep -n '^> *```lain' README.md LANGUAGE.md
+    echo "      Move the example out of the '>' block so it is checked."
+    exit 1
+fi
+
 ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
 unchecked_readme=0 unchecked_lang=0 falseclaim=0
 for f in "$TMP"/b*.txt; do

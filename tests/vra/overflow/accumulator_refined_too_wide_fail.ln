@@ -1,0 +1,20 @@
+// EXPECT: [E086]
+// The element bound is USED, not assumed: widen it and the same accumulator is refused again.
+// 64 x 100000000 does not fit i32, so the running total can overflow and the refusal is correct.
+// Without this file the pass case would not distinguish "the engine multiplied the trip count by the
+// element bound" from "the engine stopped looking once a refinement was present".
+type Big = i32 >= 0 and <= 100000000
+
+func total(a Big[64]) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < 64 {
+        s = s + a[i]
+        i = i + 1
+    }
+    return s
+}
+func main() i32 {
+    var x Big[64] = [1 for i in 0..64]
+    return total(x)
+}

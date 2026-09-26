@@ -2184,8 +2184,31 @@ func bounded(a i32, b i32) i32 {
 
 > [!WARNING]
 > An **unbounded accumulator is a real overflow** and is rejected: `while i < n { s = s + i }`
-> can exceed `s`'s type for a large enough `n`. Give the accumulator a guard, a wider type, or
-> use `+%` if wrapping is what you mean.
+> can exceed `s`'s type for a large enough `n`. A total's bound is `start + trips × step`, a
+> product, so bound one of the three factors: the trip count (a length with a refinement), the
+> **element**, or the total (a wider accumulator, widening the addend too) — or use `+%` if
+> wrapping is what you mean.
+>
+
+Bounding the element needs no special syntax, because a refinement **alias is an element type**:
+
+```lain
+type Small = i32 >= 0 and <= 1000
+
+func total(a Small[64]) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < 64 {
+        s = s + a[i]          // proves: 64 × 1000 = 64000 fits i32
+        i = i + 1
+    }
+    return s
+}
+```
+
+The bound is multiplied by the trip count, not merely noted — widen `Small` and the same function is
+refused — and it is enforced where the values are produced, so the proof rests on a checked fact
+rather than a believed one.
 
 ---
 

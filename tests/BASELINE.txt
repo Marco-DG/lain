@@ -2032,6 +2032,11 @@ rc=0
 out=
 at=nonnull 2
 at=pure 2
+### tests/vra/overflow/accumulator_refined_element_pass.ln
+rc=64
+out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/overflow/cast_to_narrow_pass.ln
 rc=0
 out=

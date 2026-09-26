@@ -1,0 +1,17 @@
+// EXPECT: [E086]
+// An element refinement is ENFORCED, which is what the accumulator proof rests on. A store of 5000
+// into a `Small` element is refused — at construction, at a later store, and through a `var`
+// parameter (all three were checked; this file pins the store form).
+//
+// Were it merely believed, `accumulator_refined_element_pass.ln` would be a proof about a bound
+// nothing maintains — the shape of a fail-open that reads as a guarantee.
+type Small = i32 >= 0 and <= 1000
+
+func put(var a Small[4], v i32) {
+    a[0] = v
+}
+func main() i32 {
+    var x Small[4] = [1, 2, 3, 4]
+    put(var x, 5000)
+    return x[0]
+}
