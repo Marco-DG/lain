@@ -9,7 +9,7 @@ OUT="${TMPDIR:-/tmp}/lain_wsbench.$$"
 mkdir -p "$OUT"
 
 # Build the compiler if needed, then lower the kernel to C.
-[ -x "$LAIN" ] || gcc -std=c99 -O2 -o "$LAIN" "$ROOT/src/main.c" -I "$ROOT/src"
+[ -x "$LAIN" ] || gcc -std=c99 -O2 -o "$LAIN" "$ROOT/src/frontends/lain/main.c" -I "$ROOT/src"
 "$LAIN" "$HERE/wsbench.ln" -o "$OUT/wsbench_kernel.c"
 
 for CC in gcc clang; do

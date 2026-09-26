@@ -11,7 +11,7 @@ bash bench/autovec/run.sh
 ## What happens
 
 ```lain
-proc add_slices(n usize, a i32[n], b i32[n], var out i32[n]) {
+func add_slices(n usize, a i32[n], b i32[n], var out i32[n]) {
     for i in 0..n { out[i] = a[i] +% b[i] }
 }
 ```

@@ -5,7 +5,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 LAIN="$ROOT/lain"
 
-[[ -x "$LAIN" ]] || gcc -std=c99 -O2 -o "$LAIN" "$ROOT/src/main.c" -I "$ROOT/src"
+[[ -x "$LAIN" ]] || gcc -std=c99 -O2 -o "$LAIN" "$ROOT/src/frontends/lain/main.c" -I "$ROOT/src"
 
 # Lain → C (both scans proven check-free: 0 [E085] expected). Invoke with a
 # RELATIVE path from the repo root: symbol mangling is path-derived, and the

@@ -11,7 +11,7 @@ bash bench/simd_whitespace/run.sh
 ## Kernel (`wsbench.ln`)
 
 ```lain
-proc count_ws(data *u8, n usize) u64 {
+func count_ws(data *u8, n usize) u64 {
     var total u64 = 0
     var i usize = 0
     while i +% 32 <= n {
