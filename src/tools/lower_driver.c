@@ -50,24 +50,15 @@ int main(int argc, char **argv) {
        2026-09-23 — there is nothing left to suppress. */
     // All four, via the shared setter: this driver set three and omitted `recursion`, so it
     // refused recursive programs the compiler accepts and the refusals were read as IR gaps.
-    sema_suppress_legacy_checks();
     // The flags below are kept so a caller can still ask the OLD question explicitly.
     //
     // --reject: stand the LEGACY ownership checks down so lowering completes on a program
     // the old engine would exit() on. Lets the IR of a fail-test be inspected.
-    for (int i=1;i<argc;i++) {
-        if (!strcmp(argv[i],"--reject")) g_suppress_ownership = true;
-        // --suppress-bounds: stand the LEGACY bounds checker down too, so a program only the
-        // NEW engine proves can still be EMITTED and run. Without it the new VRA's own proofs
-        // are unfalsifiable — nothing can execute a program the old engine refuses.
-        /* --suppress-bounds: accepted and ignored; the legacy bounds pass is gone. */
-        // --suppress-term: same seam for the legacy TERMINATION diagnostics. Needed to
-        // EMIT a program the old engine refuses on those grounds, which is the only way
-        // to execute one and check that a loop proven terminating actually terminates
-        // (scripts/fuzz/fuzz_termination.sh).
-        if (!strcmp(argv[i],"--suppress-term")) g_suppress_termination = true;
-        if (!strcmp(argv[i],"--suppress-ovf")) g_suppress_overflow = true;
-    }
+    /* --reject / --suppress-bounds / --suppress-term / --suppress-ovf all stood a LEGACY check
+       down so the IR of a program the old engine refused could still be lowered, emitted and RUN —
+       which is the only way to execute a program only the new engine proves. Every one of those
+       checks is now deleted, so all four are accepted as no-ops: the callers (fuzz_termination.sh,
+       fuzz_vra.sh, the surveys) keep working unchanged, and there is no flag left to set. */
     if (argc < 2) { fprintf(stderr, "usage: %s <file.ln>\n", argv[0]); return 2; }
     Arena file_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena ast_arena  = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);

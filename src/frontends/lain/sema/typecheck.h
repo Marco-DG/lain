@@ -197,95 +197,16 @@ int type_integer_range(Type *t, long long *out_lo, long long *out_hi) {
     return 0;
 }
 
-// Q-002 Phase 5 (extended): check if a value's VRA range fits the
-// target integer type's natural range. Returns true if check passed
-// (or was skipped: unsafe block, unknown range, unbounded range).
-// On violation, emits E086 with helpful suggestions and exits.
+// ★ `check_value_fits_type` IS DELETED. It was the legacy BOUNDARY-FIT check — "does this value's
+// range fit the target type" — at assignment, return, call argument, struct field initialiser, enum
+// payload, arithmetic result, negation and cast. With the seam set it returned true immediately, so
+// every one of those rejections was already dead, and the sovereign engine answers them as
+// VRA_OVERFLOW / vra_check_narrow. Each site was verified with a written violation the engine refuses
+// before this came out, which is what closes D-47 (it recorded three of them as UNCOVERED).
 //
-// `context` describes the boundary site for the error message
-// (e.g., "assignment to", "return from function", "argument to").
-// `target_label` identifies the specific target (variable name,
-// parameter name, etc.) for the error.
-bool check_value_fits_type(Range r, Type *target_type,
-                           isize line, isize col,
-                           const char *context, const char *target_label);
-bool check_value_fits_type(Range r, Type *target_type,
-                           isize line, isize col,
-                           const char *context, const char *target_label) {
-    if (sema_in_unsafe_block) return true;
-    if (g_suppress_overflow) return true;   // seam: deferred to the new IR VRA (VRA_OVERFLOW)
-    if (!r.known) return true;
-    // Skip if range is effectively unbounded — VRA may have widened from
-    // an unconstrained value, so a range whose extremum sits within a
-    // small window of LLONG_MIN/LLONG_MAX is treated as "no info".
-    // The window absorbs arithmetic from type-max constants
-    // (e.g. `n - 2` widens to [LLONG_MIN+2, LLONG_MAX-2]).
-    //
-    // ★ THE WINDOW IS PER-BOUND, NOT PER-RANGE. Testing them together made ONE
-    // unknown end excuse the OTHER, and that is a memory-safety hole rather than a
-    // precision choice: an unrefined `n usize` has range [0, LLONG_MAX], so `n - 1`
-    // is [-1, LLONG_MAX-1] — a min of -1 that is exact and below usize's 0, skipped
-    // because the max happens to be large. `while i < n - 1 { a[i] }` then compiled
-    // with no diagnostic and read out of bounds at n == 0, since the underflowed
-    // bound is UINT64_MAX (ASan-confirmed stack-buffer-overflow, and the guard is
-    // what wraps, so the index check the array access does never sees it).
-    // A bound near an extremum is no information about THAT side. A bound that is
-    // not stays evidence, whatever the other end does.
-    const long long UNBOUNDED_WINDOW = 4096;
-    bool lo_unknown = r.min <= LLONG_MIN + UNBOUNDED_WINDOW;
-    bool hi_unknown = r.max >= LLONG_MAX - UNBOUNDED_WINDOW;
-    if (lo_unknown && hi_unknown) return true;
-    long long tlo, thi;
-    if (!target_type || !type_integer_range(target_type, &tlo, &thi)) return true;
-    if ((!lo_unknown && r.min < tlo) || (!hi_unknown && r.max > thi)) {
-        const char *type_name = "?";
-        int type_len = 1;
-        if (target_type->kind == TYPE_SIMPLE && target_type->base_type) {
-            type_name = target_type->base_type->name;
-            type_len = (int)target_type->base_type->length;
-        }
-        // An UNSIGNED value going below zero is its own failure and reads nothing like an
-        // overflow: it wraps UPWARD, to a number near the type maximum, so the usual advice
-        // ("widen the target type") makes the wrapped value larger rather than fixing
-        // anything. Say what actually happens and name the edits that work. The case that
-        // motivates this is `n - 1` used as a loop bound, where the wrap turns a loop that
-        // should not run into one that runs SIZE_MAX times.
-        if (!lo_unknown && r.min < tlo && tlo == 0) {
-            fprintf(stderr,
-                "[E086] Error Ln %li, Col %li: this subtraction can go below zero, and '%.*s' "
-                "is unsigned.\n"
-                "       The result can be as low as %lld. On an unsigned type that is not a "
-                "negative\n"
-                "       number but a very large one: -1 becomes the type's maximum.\n"
-                "       Options to resolve:\n"
-                "         (a) Guard the subtraction: `if a > b { ... a - b ... }`.\n"
-                "         (b) Rewrite so nothing is subtracted: `i + 1 < n` in place of "
-                "`i < n - 1`.\n"
-                "         (c) Refine the operand where it is declared: `n usize > 0`.\n"
-                "         (d) Use a wrapping (-%%) or saturating (-|) operator if the wrap is "
-                "intended.\n",
-                (long)line, (long)col, type_len, type_name,
-                (long long)r.min);
-            diagnostic_show_line(line, col);
-            exit(1);
-        }
-        fprintf(stderr,
-            "[E086] Error Ln %li, Col %li: %s '%s' would overflow target type '%.*s'.\n"
-            "       Value range [%lld, %lld] does not fit type range [%lld, %lld].\n"
-            "       Options to resolve:\n"
-            "         (a) Widen the target type (e.g., u16 instead of u8).\n"
-            "         (b) Use a wrapping operator: +%%, -%%, *%% (modular).\n"
-            "         (c) Use a saturating operator: +|, -|, *| (clamp).\n"
-            "         (d) Tighten input constraints so VRA can prove safety.\n",
-            (long)line, (long)col, context,
-            target_label ? target_label : "",
-            type_len, type_name,
-            (long long)r.min, (long long)r.max, tlo, thi);
-        diagnostic_show_line(line, col);
-        exit(1);
-    }
-    return true;
-}
+// Its fail-open WINDOW is worth remembering rather than mourning: a range whose extremum sat within
+// 4096 of INT64_MAX was treated as "no info", which is how an unsigned product wrap was missed once.
+// A per-site obligation in the IR has no such window.
 
 // P2/S3: true static integer-type subsumption — does EVERY value of `from`
 // fit in `to`? Compares the exact [lo,hi] type ranges, so it is correct for
@@ -374,25 +295,11 @@ static void reject_lossy_int_conversion(Type *from, Type *to, Range r, Expr *src
     if (flo >= tlo && fhi <= thi) return;                // statically safe widening
     if (flo >= tlo && fhi <= thi) return;                // statically safe widening
     if (range_proves_int_fit(r, to)) return;             // VRA proved the narrowing safe
-    // Seam: this IS Path-F's narrowing obligation, which the new engine answers with
-    // vra_check_narrow, so deferring it is deferring to something that actually looks.
-    if (g_suppress_overflow) return;
-    const char *fn = (from->base_type) ? from->base_type->name : "?";
-    int fl = (from->base_type) ? (int)from->base_type->length : 1;
-    const char *tn = (to->base_type) ? to->base_type->name : "?";
-    int tl = (to->base_type) ? (int)to->base_type->length : 1;
-    fprintf(stderr,
-        "[E086] Error Ln %li, Col %li: %s '%s' implicitly converts '%.*s' to '%.*s', "
-        "which may lose information.\n"
-        "       Source type range [%lld, %lld] does not fit target range [%lld, %lld].\n"
-        "       Options to resolve:\n"
-        "         (a) Use an explicit cast: 'value as %.*s' (truncates).\n"
-        "         (b) Use a wrapping (+%%) or saturating (+|) operator.\n"
-        "         (c) Constrain the source so VRA can prove it fits.\n",
-        (long)line, (long)col, ctx, label ? label : "",
-        fl, fn, tl, tn, flo, fhi, tlo, thi, tl, tn);
-    diagnostic_show_line(line, col);
-    exit(1);
+    // Path-F's implicit-narrowing diagnostic is DELETED. The new engine answers it with
+    // `vra_check_narrow`, verified at every narrowing site the old check covered: assignment,
+    // return, call argument, struct field initialiser and enum payload — each refused with a
+    // written violation before this line came out.
+    return;
 }
 
 // Rank in the implicit widening order (Q-002 extended).
@@ -1308,7 +1215,6 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
         return;
     }
 
-    check_value_fits_type(r, to, line, col, ctx, label);
     reject_float_int_mismatch(from, to, line, col, ctx, label);
     reject_lossy_int_conversion(from, to, r, src_expr, line, col, ctx, label);
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
@@ -1579,6 +1485,7 @@ static bool sema_expr_rooted_at(Expr *e, Id *pn) {
     }
     return false;
 }
+
 static bool sema_body_writes_id(StmtList *body, Id *pn) {
     for (StmtList *b = body; b; b = b->next) {
         Stmt *s = b->stmt; if (!s) continue;
@@ -1593,126 +1500,14 @@ static bool sema_body_writes_id(StmtList *body, Id *pn) {
     }
     return false;
 }
-// Root identifier of a reference-arg expression: walks index/member/deref chains
-// so `a`, `a[i]`, `a[0..4]`, `a.f`, `*a` all report root `a`. This is what the E087
-// aliasing check must key on — NOT a bare identifier, or a sub-slice/element/field
-// expression sneaks an alias of a mutated array past the check (`vadd(4, a, a[0..4])`
-// lowered `src` to `a+0`, aliasing the `restrict` `dst`, a silent -O3 miscompile).
-static Id *sema_expr_root_id(Expr *e) {
-    while (e) {
-        if (e->kind == EXPR_IDENTIFIER) return e->as.identifier_expr.id;
-        else if (e->kind == EXPR_INDEX)  e = e->as.index_expr.target;
-        else if (e->kind == EXPR_MEMBER) e = e->as.member_expr.target;
-        else if (e->kind == EXPR_DEREF)  e = e->as.deref_expr.expr;
-        // A borrow WRAPPER is not a different object: `var a[i]` and `mov a[i]` both root
-        // at `a`. Not unwrapping them meant every `var`-borrowed argument reported NO root,
-        // so the aliasing check silently skipped exactly the arguments that carry the
-        // hazard — the mutable ones.
-        else if (e->kind == EXPR_MUT)    e = e->as.mut_expr.expr;
-        else if (e->kind == EXPR_MOVE)   e = e->as.move_expr.expr;
-        else return NULL;
-    }
-    return NULL;
-}
-// If `e` is `root[lo..hi]` with COMPILE-TIME-CONSTANT bounds, report the half-open
-// span [*lo,*hi) and return true. Otherwise return false — an unknown/whole-object
-// span, which must be treated as "covers everything" (conservative: may alias).
-// Two args over the same root are safe to pass to restrict'd params ONLY when both
-// spans are constant and disjoint (`a[0..4]` vs `a[4..8]`) — never rejecting that
-// correct code, while still catching every possibly-overlapping pair.
-static bool sema_arg_const_span(Expr *e, long long *lo, long long *hi) {
-    // See through the borrow wrapper, exactly as the root walk does — `var a[0..4]` and
-    // `var a[k]` describe the same spans their unwrapped forms do.
-    while (e && (e->kind == EXPR_MUT || e->kind == EXPR_MOVE))
-        e = (e->kind == EXPR_MUT) ? e->as.mut_expr.expr : e->as.move_expr.expr;
-    if (e && e->kind == EXPR_INDEX && e->as.index_expr.index &&
-        e->as.index_expr.index->kind == EXPR_RANGE) {
-        ExprRange *r = &e->as.index_expr.index->as.range_expr;
-        if (r->start && r->start->kind == EXPR_LITERAL &&
-            r->end   && r->end->kind   == EXPR_LITERAL) {
-            *lo = (long long)r->start->as.literal_expr.value;
-            *hi = (long long)r->end->as.literal_expr.value + (r->inclusive ? 1 : 0);
-            return true;
-        }
-        return false;
-    }
-    // A single ELEMENT `root[k]` spans [k, k+1). Fold k through the range table rather than
-    // demanding a literal, so `var i = 1; var j = 5; f(var a[i], var a[j])` stays legal —
-    // the indices are constants the analysis already knows, just not syntactically.
-    if (e && e->kind == EXPR_INDEX && e->as.index_expr.index) {
-        Expr *ix = e->as.index_expr.index;
-        Range r;
-        if (ix->kind == EXPR_LITERAL)
-            r = (Range){ ix->as.literal_expr.value, ix->as.literal_expr.value, true };
-        else if (sema_ranges) r = sema_eval_range(ix, sema_ranges);
-        else                  r = range_unknown();
-        if (r.known && r.min == r.max) { *lo = (long long)r.min; *hi = (long long)r.min + 1; return true; }
-    }
-    return false;
-}
-static void check_call_aliasing(Decl *callee, ExprList *args, isize line, isize col) {
-    if (!callee || (callee->kind != DECL_FUNCTION)) return;
-    DeclList *params = callee->as.function_decl.params;
-    StmtList *body   = callee->as.function_decl.body;
-    Id  *ids[64]; bool wr[64]; Expr *aex[64]; int n = 0;
-    ExprList *a = args; DeclList *p = params;
-    while (a && p && n < 64) {
-        Decl *pv = p->decl;
-        Id *root = a->expr ? sema_expr_root_id(a->expr) : NULL;
-        ids[n] = NULL; wr[n] = false; aex[n] = a->expr;
-        if (pv && pv->kind == DECL_VARIABLE && root) {
-            Type *pt = pv->as.variable_decl.type;
-            // Which parameters carry the hazard? Exactly those that lower to a C `restrict`
-            // POINTER. That is not only arrays/slices/pointers: a MUTABLE SCALAR param is
-            // emitted `int32_t * restrict` too, and it was excluded here — so
-            // `swap2(var a[i], var a[i])` (the same element through two mutable scalar
-            // params) passed the check entirely and emitted aliasing restrict pointers.
-            // DEMONSTRATED MISCOMPILE, not a theoretical one: -O0 gave 226 and -O1/-O2/-O3
-            // gave 116 on the same program.
-            // (A SHARED non-primitive lowers to `const T* restrict`; two aliasing READS
-            // are not UB, and the `wr[]` test below already requires a writer.)
-            bool restrict_param =
-                (pt && (pt->kind == TYPE_ARRAY || pt->kind == TYPE_SLICE || pt->kind == TYPE_POINTER))
-             || (pt && pt->mode == MODE_MUTABLE);
-            if (restrict_param) {
-                ids[n] = root;
-                wr[n]  = (pt->mode == MODE_MUTABLE) ||
-                         sema_body_writes_id(body, pv->as.variable_decl.name);
-            }
-        }
-        n++; a = a->next; p = p->next;
-    }
-    for (int i = 0; i < n; i++) {
-        if (!ids[i]) continue;
-        for (int j = i + 1; j < n; j++) {
-            if (!ids[j]) continue;
-            if (ids[i]->length != ids[j]->length ||
-                memcmp(ids[i]->name, ids[j]->name, (size_t)ids[i]->length) != 0 ||
-                !(wr[i] || wr[j]))
-                continue;
-            // Same root, at least one mutated → possible alias. Exempt only when
-            // both args are constant, disjoint sub-ranges of that root.
-            long long ilo, ihi, jlo, jhi;
-            bool ispan = sema_arg_const_span(aex[i], &ilo, &ihi);
-            bool jspan = sema_arg_const_span(aex[j], &jlo, &jhi);
-            if (ispan && jspan && (ihi <= jlo || jhi <= ilo)) continue;
-            // The differential seam covers this too: it is a REJECTION the new engine must
-            // be measurable against, and exiting here meant every aliasing program stopped
-            // before the new borrow pass ever ran. That artifact produced two wrong readings
-            // before it was noticed — the driver reported "accepted" for a program that had
-            // never been analysed.
-            if (g_suppress_ownership) return;
-            fprintf(stderr, "[E087] Error Ln %li, Col %li: array '%.*s' reaches two parameters "
-                    "of the same call (directly or via a slice/element/field), at least one of "
-                    "which mutates it. The callee borrows its reference parameters as non-aliasing "
-                    "(they lower to `restrict`); aliasing a mutated one is undefined behaviour. "
-                    "Pass distinct arrays, or provably-disjoint constant sub-slices.\n",
-                    (long)line, (long)col, (int)ids[i]->length, ids[i]->name);
-            diagnostic_show_line(line, col);
-            exit(1);
-        }
-    }
-}
+
+// ★ `check_call_aliasing` IS DELETED WHOLE. Every path through it now ends in `continue` — the
+// sovereign borrow pass owns co-argument aliasing, correctly as of 2026-09-26. What is worth keeping
+// from it is written down where the replacement lives: the SPAN test it did with
+// `sema_arg_const_span` (disjoint iff `ihi <= jlo || jhi <= ilo`) is the reasoning the IR version had
+// lost, and recovering it is what fixed the overlapping-sub-slice miscompile. A check that moves does
+// not inherit the reasoning that was never written down as its own rule.
+
 
 // Fail-closed check for a value-fallback `else` arm: it must convert to the
 // result type (the payload T, or a checked op's value type). A `panic` arm
@@ -1898,20 +1693,12 @@ static void check_recursion_measure(Decl *fn, Expr *call) {
     Range mr = sema_eval_range(m, sema_ranges);
     bool wellfounded = mr.known && mr.min >= 0;
     if (!strict || !wellfounded) {
-        // Same seam as the no-measure case above: this is a TERMINATION VERDICT, and the
-        // sovereign engine now returns one for recursion. (E091 above is NOT seam-guarded —
-        // the shape of a `decreasing` clause is front-end policy, not a termination question,
-        // and the new engine has no opinion about it.)
-        if (g_suppress_termination || g_suppress_recursion) return;
-        fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify the recursion in `func` "
-                "'%.*s' terminates. The `decreasing %.*s` measure must be provably >= 0 and "
-                "strictly smaller in every self-call. %s\n",
-                (long)call->line, (long)call->col,
-                (int)fn->as.function_decl.name->length, fn->as.function_decl.name->name,
-                (int)mvar->length, mvar->name,
-                !strict ? "This call does not make it strictly smaller."
-                        : "It is not provably non-negative here — guard the base case (e.g. `if n < 1 { … }` before recursing) or use an unsigned measure.");
-        diagnostic_show_line(call->line, call->col); exit(1);
+        // The legacy E082 for a failing recursion measure is DELETED. It is a TERMINATION VERDICT
+        // and the sovereign engine returns one (`vra_self_call_site` + `vra_recursion_terminates`,
+        // reported by analysis/report.h), which distinguishes a measure that is absent from one
+        // that is present and failing — the distinction Annex B makes normative. (E091, the SHAPE
+        // of a `decreasing` clause, stays: that is front-end policy, not a termination question.)
+        return;
     }
 }
 
@@ -2130,10 +1917,8 @@ void sema_infer_expr(Expr *e) {
       Decl *cd = e->as.call_expr.callee->decl;
       bool callee_is_direct_fn = cd && (cd->kind == DECL_FUNCTION ||
                                         cd->kind == DECL_EXTERN_FUNCTION);
-      // Soundness of the emitted `restrict`: a mutated reference parameter must not
-      // be aliased by another argument (exclusive borrow). Walk-gated, direct calls.
-      if (sema_walk_phase && cd && (cd->kind == DECL_FUNCTION))
-          check_call_aliasing(cd, e->as.call_expr.args, e->line, e->col);
+      // Soundness of the emitted `restrict` — a mutated reference parameter must not be aliased by
+      // another argument — is the sovereign borrow pass's obligation now (analysis/borrow.h, phase A).
       Type *fnty = e->as.call_expr.callee->type;
       if (!callee_is_direct_fn && fnty && fnty->kind == TYPE_FUNC) {
         TypeList *pt = fnty->func_params;
@@ -2316,17 +2101,13 @@ void sema_infer_expr(Expr *e) {
                 Expr *inferred = infer_recursion_measure(current_function_decl);
                 if (inferred) {
                     current_function_decl->as.function_decl.decreasing_measure = inferred;
-                } else if (!g_suppress_termination && !g_suppress_recursion) {
-                    // SEAM (extended 2026-09-17): the sovereign engine now raises a recursion
-                    // obligation of its own — `vra_self_call_site` + `vra_recursion_terminates`,
-                    // reported as E011 by analysis/report.h. Until it did, standing this check
-                    // down would have deferred to nothing and reported "no obligation" where the
-                    // truth was "nobody looked", which is why the seam's scope note said LOOPS
-                    // ONLY. That note is now obsolete and the scope is the whole subject.
-                    fprintf(stderr, "[E011] Error: recursion is not allowed in pure function '%.*s' (a `func` must be total; recursion cannot guarantee termination). Add a `decreasing <measure>` clause to permit it.\n",
-                            (int)current_function_decl->as.function_decl.name->length, current_function_decl->as.function_decl.name->name);
-                    exit(1);
                 }
+                // No `else`: the sovereign engine raises the recursion obligation
+                // (`vra_self_call_site` + `vra_recursion_terminates`, reported by
+                // analysis/report.h) and says it with a position and the three ways out. The
+                // legacy message here had none of that — "recursion is not allowed in pure
+                // function 'f'" with no line — and it is deleted. Inference still runs above,
+                // because a measure it can synthesise is what keeps ordinary recursion clause-free.
             }
         }
     }
@@ -2832,8 +2613,6 @@ void sema_infer_expr(Expr *e) {
                     if (ln2 > 159) ln2 = 159;
                     if (ln2) memcpy(lbuf, fn2->name, ln2);
                     lbuf[ln2] = '\0';
-                    check_value_fits_type(r, field_ty, a->expr->line, a->expr->col,
-                        "struct field initialization", lbuf);
                 } else if (field_ty && arg_ty &&
                     !types_compatible(arg_ty, field_ty)) {
                     Id *fname = f->decl->as.variable_decl.name;
@@ -2857,8 +2636,6 @@ void sema_infer_expr(Expr *e) {
                     if (n > 159) n = 159;
                     if (n) memcpy(buf, fname->name, n);
                     buf[n] = '\0';
-                    check_value_fits_type(r, field_ty, a->expr->line, a->expr->col,
-                        "struct field initialization", buf);
                 }
                 // G5: enforce field refinement constraints at construction
                 // (`type Config { pct i32 >= 0 and <= 100 }`), so the invariant
@@ -3339,16 +3116,11 @@ void sema_infer_expr(Expr *e) {
             if (aop2 == TOKEN_ASTERISK && !e->idx2d_ovf_ok) {
                 Range lrg = sema_eval_range(e->as.binary_expr.left, sema_ranges);
                 Range rrg = sema_eval_range(e->as.binary_expr.right, sema_ranges);
-                if (!op_product_fits(lrg, rrg, check_ty) && !g_suppress_overflow) {
-                    fprintf(stderr, "[E086] Error Ln %li, Col %li: multiplication would "
-                        "overflow target type — the product range exceeds the type's range. "
-                        "Use a wrapping (*%%) or saturating (*|) operator, widen the type, or "
-                        "constrain the operands.\n", dl, dc);
-                    diagnostic_show_line(dl, dc);
-                    exit(1);
-                }
+                // The legacy wide/unsigned product check is DELETED: the sovereign engine refuses
+                // both shapes (`u32` 1e5*1e5 and the `u64` 5e9*5e9 case this block was added for),
+                // verified with each before removal.
+                (void)lrg; (void)rrg;
             }
-            check_value_fits_type(rr, check_ty, dl, dc, "arithmetic result of", "");
         }
     }
     break;
@@ -3426,7 +3198,6 @@ void sema_infer_expr(Expr *e) {
                           : (e->as.unary_expr.right ? (long)e->as.unary_expr.right->line : e->line);
                 long dc = e->line > 0 ? e->col
                           : (e->as.unary_expr.right ? (long)e->as.unary_expr.right->col : e->col);
-                check_value_fits_type(rr, ot, dl, dc, "negation result of", "");
             }
         }
     }
@@ -3708,7 +3479,6 @@ void sema_infer_expr(Expr *e) {
         int sb = 0, tb = 0; bool ss = false, ts = false;
         if (parse_iN_uN(src, &sb, &ss) && parse_iN_uN(tgt, &tb, &ts) && sb > tb) {
             Range r = sema_eval_range(e->as.cast_expr.expr, sema_ranges);
-            check_value_fits_type(r, tgt, e->line, e->col, "cast of", "");
         }
     }
     Type *src_u = src, *tgt_u = tgt;

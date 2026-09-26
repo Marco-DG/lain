@@ -129,7 +129,6 @@ int main(int argc, char **argv) {
     // that no longer exist, so it would have silently compiled with NO ownership, bounds or
     // overflow checking at all — a fail-open with a friendly name. A flag whose implementation
     // has been deleted must be deleted with it.
-    sema_suppress_legacy_checks();
 
     vra_dump_enabled = args.dump_octagon;
 

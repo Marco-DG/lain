@@ -110,103 +110,7 @@ static PtrInitIdxEntry *sema_ptr_init_idx = NULL;
 // false when the measure is not a two-identifier difference (caller emits E091).
 static bool verify_recursion_expr_measure(Decl *fn, Expr *call);
 
-// Suppression seam for the LEGACY ownership checks (mirrors g_vra_suppress_bounds in
-// bounds.h). When set, resolve.h's dangling-return check and linearity.h's whole checker
-// stand down, so the Phase 3 differential can measure the NEW IR linearity/borrow passes on
-// programs the old engine would exit() on. Set ONLY by that driver — never in the compiler.
-bool g_suppress_ownership = false;
-// ── SEAM: legacy TERMINATION checks (mirrors g_vra_suppress_bounds for E085) ─────────────
-// The old engine exit()s on E080/E081/E082/E011 before the sovereign IR passes run, so for
-// every program it refuses the NEW engine's verdict is unobservable — through the compiler,
-// the corpus, and the differential gate alike. That blind spot hid THREE false proofs
-// (2026-09-09): a rising counter proved terminating because the guard's predicate was not
-// reversed, a counter a callee resets, and B1's trip count built on the same. All three had to
-// be found by reading the code, because no harness could reach them.
-//
-// Set ONLY by the analysis drivers and surveys, never by the shipping compiler: with it on,
-// the program is analysed rather than rejected, so the new engine's ACCEPT direction can be
-// measured on exactly the programs that used to be invisible. Termination is the new engine's
-// own subject area, which is what makes extending the seam here legitimate (session 68's rule:
-// a skip is a hole only when the blocking diagnostic is in the gate's OWN subject area).
-// SCOPE (widened 2026-09-17): LOOPS **AND RECURSION**.
-//
-// It used to read LOOPS ONLY, on the stated ground that the sovereign pass "has no analysis of
-// RECURSION at all", so standing the legacy recursion checks down would defer to nothing and
-// report "no obligation" where the honest answer is "nobody looked". The rule was right and the
-// premise was false: `vra_recursion_terminates` has been in vra.h the whole time — a real
-// well-founded ranking check, a parameter that strictly descends at every self-call (read from
-// the octagon, so `n/2` and `n-k` both count) and is grounded below. It had ONE caller,
-// analysis/effects.h, which used it to decide DIVERGE, and it never produced a user-facing
-// verdict. An analysis whose result nobody can observe is indistinguishable from one that does
-// not exist, and it was recorded as not existing in two places.
-//
-// It now raises an obligation (vra_analyze emits a VRA_TERMINATION check with `recursion` set;
-// analysis/report.h reports it as E011), so the seam covers it by the same rule that used to
-// exclude it: stand a legacy check down exactly where the new engine speaks.
-//
-// STILL OUTSIDE THE SEAM: E091, the shape of a `decreasing` clause. That is front-end policy —
-// which spellings of a measure the language accepts — not a termination verdict, and the new
-// engine has no opinion about it.
-bool g_suppress_termination = false;
-// ── SEAM: legacy RECURSION checks ONLY (E011 no-measure, E082 non-descent) ───────────────
-// Separate from the loop seam above, and the separation was bought with three corpus failures.
-//
-// The sovereign engine emits a termination obligation for a LOOP only inside a `func`, because
-// totality is a `func` requirement and a `proc` may loop forever. But a `decreasing` clause is
-// a CLAIM THE PROGRAMMER WROTE, and the language accepts it on any loop — including in a
-// `proc`, where the old engine verified it and the new one says nothing at all. Standing the
-// whole loop family down therefore silently dropped three such claims (a zero step, a signed
-// halving, a binary search that sticks at hi-lo == 1): all three programs are asserted to be
-// REFUSED and all three compiled. That is the seam rule violated in the one direction it
-// exists to prevent, caught by the corpus rather than by reasoning.
-//
-// So the shipping compiler stands down exactly the RECURSION half, which is the half the
-// sovereign engine now answers for every case it accepts (`vra_self_call_site` +
-// `vra_recursion_terminates`, reported as E011 by analysis/report.h). The loop half keeps
-// running until the sovereign engine has an opinion about a written measure in a `proc` —
-// which is a language question (what does `decreasing` mean outside a `func`?) and not a
-// porting one.
-bool g_suppress_recursion = false;
-// ── SEAM: legacy ARITHMETIC-OVERFLOW checks (the E086 family) ────────────────────────────
-// Same purpose and same limits as the two above. 47 corpus programs are stopped by E086 before
-// the sovereign pass runs — the largest blocked bucket in phase3's breakdown — and B1's false
-// proof of 2026-09-09 lived in exactly that shadow.
-//
-// SCOPE: the ARITHMETIC sites only, `check_value_fits_type` and the wide-multiply check, both
-// of which the new engine answers with a VRA_OVERFLOW obligation. E086 is also emitted for a
-// shift amount out of range, for a refinement-alias violation and for a struct-field
-// refinement; the shift one has NO IR obligation at all, so suppressing it would report "no
-// obligation" where the truth is "nobody looked". Left alone. See g_suppress_termination for
-// why that boundary is the whole discipline.
-bool g_suppress_overflow = false;
 
-// ★ ONE PLACE SETS THE SEAM, because every standalone driver was setting a DIFFERENT SUBSET and
-// therefore front-ending a slightly different language than the compiler:
-//
-//     main.c            ownership, recursion, termination, overflow   (all four)
-//     lower_driver      ownership,            termination, overflow
-//     vra_driver                              termination, overflow
-//     incomplete_driver ownership
-//     linearity_driver  ownership
-//     effects_driver    (none)
-//
-// The surveys and fuzzers are built on those drivers, so each measured a variant of the language
-// and the numbers were not comparable with each other or with the compiler. It showed up as
-// `ir_incomplete_survey.sh` reporting "UNMEASURED files = 3": the three were refused by
-// `incomplete_driver` with the LEGACY message "recursion is not allowed in pure function", which
-// the compiler no longer emits at all — including a test that the compiler accepts, because the
-// driver does not honour the effect row. A skip bucket in a survey is data
-// ([[fuzzer-skip-count-is-data]]), and this one was pointing at a measurement fault, not a gap.
-//
-// These four flags stand the last of the old engine's checks down. They are set unconditionally,
-// so those blocks are unreachable, and they are marked for removal AS A UNIT — which this single
-// call site makes a one-line change instead of a hunt.
-static void sema_suppress_legacy_checks(void) {
-    g_suppress_ownership   = true;
-    g_suppress_recursion   = true;
-    g_suppress_termination = true;
-    g_suppress_overflow    = true;
-}
 
 #include "sema/scope.h"
 #include "sema/resolve.h"
@@ -1687,38 +1591,25 @@ static int measure_scan_body(StmtList *body, MeasureVar *vars, int nvar) {
 
 // Top-level verification for a bounded while loop
 // Verify a bounded `while` has a valid termination measure. When `emit` is true,
-// a failed check prints its diagnostic and exits (the explicit-`decreasing` path).
-// When `emit` is false, it returns false silently instead — this lets the auto-
-// inference synthesize a candidate measure, try it, and fall back cleanly if the
-// candidate does not hold. Returns true iff the measure is verified.
-static bool sema_verify_bounded_while_impl(Stmt *s, bool emit) {
+// Returns true iff the measure is verified. It no longer REPORTS anything: E080/E081/E082 are the
+// sovereign termination pass's, so the `emit` parameter that once chose between "print and exit" and
+// "fail silently" had only one live value and is gone. The verdict is still used, by the measure
+// INFERENCE, which synthesises a candidate and keeps it only if it holds.
+static bool sema_verify_bounded_while_impl(Stmt *s) {
     Expr *cond    = s->as.while_stmt.cond;
     Expr *measure = s->as.while_stmt.measure;
     if (!measure) return true;
 
     // Check 1: condition implies measure >= 0
     if (!sema_verify_measure_nonneg(cond, measure)) {
-        if (!emit) return false;
-        if (g_suppress_termination) return false;
-        fprintf(stderr, "[E080] Error Ln %li, Col %li: cannot verify that the termination measure "
-                "is non-negative when the loop condition holds.\n"
-                "  Hint: use 'while a < b : b - a { ... }' so the condition implies the measure is positive.\n",
-                s->line, s->col);
-        diagnostic_show_line(s->line, s->col);
-        exit(1);
+        return false;   // E080/E081/E082 are the sovereign termination pass's now
     }
 
     // Check 2: body strictly decreases the measure
     MeasureVar vars[MAX_MEASURE_VARS];
     int nvar = measure_extract_vars(measure, vars, MAX_MEASURE_VARS);
     if (nvar == 0) {
-        if (!emit) return false;
-        if (g_suppress_termination) return false;
-        fprintf(stderr, "[E081] Error Ln %li, Col %li: cannot extract variables from termination measure.\n"
-                "  Hint: the measure must reference identifiers or struct fields.\n",
-                s->line, s->col);
-        diagnostic_show_line(s->line, s->col);
-        exit(1);
+        return false;   // E080/E081/E082 are the sovereign termination pass's now
     }
 
     g_term_loop_body = s->as.while_stmt.body;   // for invariant-step VRA queries
@@ -1749,19 +1640,11 @@ static bool sema_verify_bounded_while_impl(Stmt *s, bool emit) {
     g_term_loop_cond = NULL;
     g_term_measure_a = g_term_measure_b = NULL; g_term_measure_expr = NULL; g_term_ndefs = 0;
     if (result <= 0) {
-        if (!emit) return false;
-        if (g_suppress_termination) return false;
-        fprintf(stderr, "[E082] Error Ln %li, Col %li: cannot verify that the termination measure "
-                "strictly decreases on each iteration.\n"
-                "  Hint: the loop body must contain an assignment that decreases the measure "
-                "(e.g., 'pos += 1' when measure is 'size - pos').\n",
-                s->line, s->col);
-        diagnostic_show_line(s->line, s->col);
-        exit(1);
+        return false;   // E080/E081/E082 are the sovereign termination pass's now
     }
     return true;
 }
-static void sema_verify_bounded_while(Stmt *s) { (void)sema_verify_bounded_while_impl(s, true); }
+static void sema_verify_bounded_while(Stmt *s) { (void)sema_verify_bounded_while_impl(s); }
 
 // Synthesize a termination measure from a relational loop condition `L OP R`:
 //   L <  R  or  L <= R   →   R - L   (L rises toward R)
@@ -3005,26 +2888,16 @@ static void walk_stmt(Stmt *s) {
                     if (cand) {
                         s->as.while_stmt.measure = cand;
                         sema_infer_expr(cand);
-                        ok = sema_verify_bounded_while_impl(s, false);
+                        ok = sema_verify_bounded_while_impl(s);
                         if (!ok) s->as.while_stmt.measure = NULL;  // discard; not provable
                     }
-                    // E.4 prerequisite: `effects diverge` also stands this down — the row is
-                    // how a function says it may not terminate, and this check predates it.
-                    bool may_div = current_function_decl
-                                && (current_function_decl->as.function_decl.diverges
-                                 || (current_function_decl->as.function_decl.effects_declared
-                                  && (current_function_decl->as.function_decl.effects_bound & EFFECT_DIVERGE)));
-                    if (!ok && !g_suppress_termination && !may_div) {
-                        // Not inferable: emit E011 (add explicit `decreasing` or use proc).
-                        fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination "
-                                "measure are not allowed in pure function '%.*s'. "
-                                "Add 'decreasing <measure>' or use 'proc'.\n",
-                                s->line, s->col,
-                                (int)current_function_decl->as.function_decl.name->length,
-                                current_function_decl->as.function_decl.name->name);
-                        diagnostic_show_line(s->line, s->col);
-                        exit(1);
-                    }
+                    // The legacy "loop without a measure is E011" rejection is DELETED: the
+                    // sovereign termination pass raises that obligation per loop HEADER and names
+                    // the three ways out, and its advice is current (this one still said "or use
+                    // `proc`"). Inference still runs, because a measure it can synthesise is what
+                    // keeps the ubiquitous counting loop free of a clause — only the diagnostic
+                    // moved.
+                    (void)ok;
                 }
             }
 
@@ -5019,8 +4892,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 // the programmer happened to write a clause — which is exactly what 7B.10 fixed
                 // for the codes themselves. Believed divergence (an extern's row) is never stood
                 // down, in either place.
-                if ((g_suppress_termination || g_suppress_recursion)
-                    && !dl->decl->as.function_decl.eff_opaque_diverge)
+                // TERMINATION IS THE ENGINE'S, so the row never complains about `diverge` — except
+                // where the divergence is BELIEVED (an extern's ⊤ row), which the termination pass
+                // has nothing to point at and nothing else would mention.
+                if (!dl->decl->as.function_decl.eff_opaque_diverge)
                     missing &= ~EFFECT_DIVERGE;
                 if (missing) {
                     Id *n = dl->decl->as.function_decl.name;
@@ -5103,8 +4978,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             // The seam covers the two sources the sovereign engine REPORTS ON — a loop header
             // (E082) and a self-call (E011/E082). It must not cover a divergence that arrived
             // from a BELIEVED row, because nothing downstream will mention that one at all.
-            if ((g_suppress_termination || g_suppress_recursion)
-                && !dl->decl->as.function_decl.eff_opaque_diverge)
+            if (!dl->decl->as.function_decl.eff_opaque_diverge)
                 unconsented &= ~EFFECT_DIVERGE;
             if (dl->decl->kind == DECL_FUNCTION && unconsented) {
                 Id *n = dl->decl->as.function_decl.name;

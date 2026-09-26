@@ -193,15 +193,16 @@ iteration.
 to the while semantics above, the implementation shall statically verify:
 
 \begin{enumerate}
-  \item \textbf{Non-negativity} (\diagcode{E080}): the implementation shall
-        prove that $M \geq 0$ whenever \textit{cond} is true.
-  \item \textbf{Analyzable measure} (\diagcode{E081}): $M$ shall be in a form
-        from which the termination checker can extract the variables it
-        depends on.  A measure the checker cannot analyze at all is rejected
-        with \diagcode{E081}.  (A well-formed measure that merely fails to
-        stay non-negative or to decrease --- including a constant, or one
-        over variables the body never assigns --- is reported by
-        \diagcode{E080}.)
+  \item \textbf{Bounded below} (\diagcode{E082}): the implementation shall
+        prove that $M$ cannot decrease without limit.
+  \item \textbf{Analyzable measure} (\diagcode{E082}): $M$ shall be in a form
+        the implementation can analyse.  A measure it cannot analyse at all ---
+        including a constant, or one over variables the body never assigns ---
+        is rejected, and so is one that is merely not provably well-founded:
+        both are \diagcode{E082}, because one termination obligation with one
+        source reports them.  (Two earlier codes, \texttt{E080} and
+        \texttt{E081}, separated these sub-cases when a second termination
+        checker existed in the front end; they are withdrawn, see Annex B.)
   \item \textbf{Strict decrease} (\diagcode{E082}): the implementation
         shall prove that every execution of \textit{body} strictly
         decreases the value of $M$, \emph{except} along paths that leave the

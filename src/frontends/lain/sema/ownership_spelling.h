@@ -330,9 +330,9 @@ static void sema_check_call_spelling(Decl *d) {
 }
 
 
-// The front end's per-function hook. It used to be a 2,000-line ownership pass with the
-// spelling walk bolted on the front under `g_suppress_ownership`; the pass is gone and the
-// walk is all that is left, so the seam goes with it — there is nothing left to suppress.
+// The front end's per-function hook. It used to be a 2,000-line ownership pass with the spelling
+// walk bolted on the front under a suppression flag; the pass is gone, the flag is gone (2026-09-26,
+// with the rest of the legacy analysis half), and the walk is all that is left.
 static void sema_check_function_linearity(Decl *d) { sema_check_call_spelling(d); }
 
 

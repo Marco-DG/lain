@@ -850,11 +850,10 @@ void sema_resolve_stmt(Stmt *s) {
             if (root->decl && root->decl->kind == DECL_VARIABLE) {
                 is_param = root->decl->as.variable_decl.is_parameter;
             }
-            if (!is_param && !g_suppress_ownership) {   // seam: deferred to the new IR borrow pass
-                fprintf(stderr, "[E010] Error Ln %li, Col %li: Returning a mutable reference ('var') to a local variable is forbidden (dangling pointer)\n", s->line, s->col);
-                diagnostic_show_line(s->line, s->col);
-                exit(1);
-            }
+            // The legacy E010 is DELETED: the sovereign borrow pass reports a dangling return
+            // itself (verified with `return var b.v` on a local, which it refuses), and it can see
+            // the cases this could not — it reasons over places rather than the syntactic root.
+            (void)is_param;
         }
     }
     break;

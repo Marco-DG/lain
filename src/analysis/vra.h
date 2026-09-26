@@ -3399,8 +3399,11 @@ static Vra *vra_analyze(IrFunc *f) {
                 // theoretical: `take(300)` where `take(x u8)`, `S(300)` where `S.x` is `u8`,
                 // and `Shape.Circle(300)` where the payload is `u8` all compiled under the
                 // sovereign engine alone. Seven corpus programs asserted those refusals and
-                // the legacy engine was the only thing still making them, which is why
-                // `g_suppress_overflow` could not stand down (D-47).
+                // the legacy engine was the only thing still making them, which is what D-47
+                // recorded. Closed 2026-09-26: all five narrowing sites (assignment, return, call
+                // argument, struct field initialiser, enum payload) were each re-tested with a
+                // written violation and are refused here, so the legacy overflow half — and the
+                // flag that stood it down — are deleted.
                 //
                 // They are one rule, not three, and they are written as one deliberately: a
                 // LIST OF SITES is exactly the shape that hides a missing entry — the same

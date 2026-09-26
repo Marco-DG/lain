@@ -26,7 +26,7 @@ Diagnostic codes are divided into the following ranges:
 \endlastfoot
 \diagcode{E001}–\diagcode{E010}, \diagcode{E016}--\diagcode{E019} & Ownership and lifetime \\
 \diagcode{E011}–\diagcode{E015}, \diagcode{E060} & Purity, safety, and verification \\
-\diagcode{E080}–\diagcode{E082} & Bounded while verification \\
+\diagcode{E082} & Bounded while verification \\
 \diagcode{E083}–\diagcode{E087} & Array/slice safety and integer boundaries \\
 \diagcode{E084}, \diagcode{E101}--\diagcode{E130} & Modules, attributes, generics, packing, ADT access, effects, verification \\
 \diagcode{E100}                 & Miscellaneous \\
@@ -183,7 +183,7 @@ Diagnostic codes are divided into the following ranges:
 \end{longtable}
 
 % -------------------------------------------------------------------------
-\section*{Bounded while verification (\diagcode{E080}–\diagcode{E082})}
+\section*{Bounded while verification (\diagcode{E082})}
 % -------------------------------------------------------------------------
 
 \begin{longtable}{@{}p{1.5cm}p{3.5cm}p{7.5cm}@{}}
@@ -198,29 +198,27 @@ Diagnostic codes are divided into the following ranges:
 \bottomrule
 \endlastfoot
 
-\diagcode{E080}
-  & \S\,\ref{sec:stmt.while.bounded}
-  & \textit{termination measure not proven non-negative} ---
-    Issued when the compiler cannot prove that the \lain{decreasing}
-    expression is $\geq 0$ whenever the loop condition holds.
-    \\[4pt]
-
-\diagcode{E081}
-  & \S\,\ref{sec:stmt.while.bounded}
-  & \textit{cannot extract variables from termination measure} ---
-    Issued when the \lain{decreasing} expression is in a form the checker
-    cannot analyze.  (A constant or otherwise non-decreasing measure is
-    reported by \diagcode{E080}.)
-    \\[4pt]
-
 \diagcode{E082}
   & \S\,\ref{sec:stmt.while.bounded}, \S\,\ref{sec:fn.termination}
-  & \textit{termination measure not proven to decrease} ---
-    Issued when the compiler cannot verify that every looping-back path
+  & \textit{termination measure not proven well-founded} ---
+    Issued when the implementation cannot verify that every looping-back path
     through the loop body strictly decreases the measure by at least 1
     (paths that \lain{break}/\lain{return} out are exempt), or that every
     self-call of a directly-recursive \lain{func} makes its measure strictly
-    smaller and keeps it non-negative.
+    smaller, or that the measure is bounded below.  A measure the
+    implementation cannot analyse at all is this code as well.
+
+    \begin{note}
+      \texttt{E080} (\textit{measure not proven non-negative}) and
+      \texttt{E081} (\textit{cannot extract variables from measure}) were
+      separate codes for two sub-cases of this one, issued by a second
+      termination checker in the front end.  That checker is removed and the
+      obligation has a single source, so the two codes are withdrawn: an
+      absent or uninferable measure is \diagcode{E011}, a present one that
+      cannot be shown well-founded is \diagcode{E082}, and nothing else is
+      reported.  A conforming implementation shall not issue
+      \texttt{E080} or \texttt{E081}.
+    \end{note}
     \\[4pt]
 
 \diagcode{E091}

@@ -46,20 +46,11 @@ int main(int argc, char **argv) {
     char *mod=drv_modname(&aa,path);
     DeclList *prog=load_module(&fa,&aa,mod);
     if(!prog){ fprintf(stderr,"load failed\n"); return 1; }
-    /* g_vra_suppress_bounds: the legacy bounds pass (src/sema/bounds.h) was deleted
-       2026-09-23 — there is nothing left to suppress. */
+    /* --suppress once stood the LEGACY bounds/termination/overflow checks down so a program only
+       the NEW engine proves could still be measured. Those checks are deleted, so there is nothing
+       left to suppress and the option is accepted as a no-op — callers (fuzz_vra.sh) keep working
+       and the flag it set no longer exists. */
     (void)suppress;
-    // ...and the TERMINATION diagnostics, for the same reason: a program the old engine
-    // refuses is one whose new-engine verdict nothing can otherwise see. Three false proofs
-    // lived behind E082/E011 and had to be found by reading the code.
-    g_suppress_termination = suppress;
-    g_suppress_overflow  = suppress;
-    // RECURSION is part of the same termination family and was never set here, so a recursive
-    // program was refused by the legacy check even under --suppress and its new-engine verdict
-    // stayed invisible — the exact blind spot --suppress exists to remove. Ownership is not what
-    // this driver measures, and a legacy ownership refusal here is a skip, not a finding.
-    g_suppress_recursion = suppress;
-    g_suppress_ownership = true;
     sema_resolve_module(prog,mod,&sa);
 
     int total=0, proven=0;
