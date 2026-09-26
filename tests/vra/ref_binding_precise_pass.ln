@@ -1,0 +1,14 @@
+// A write through a reference binding to a scalar is a write to that scalar — EXACTLY, not a
+// havoc. The binding's slot is stored once, so the pointer it holds names n's cell, and the
+// octagon updates that cell: `r = 2; r = r + 1` leaves n == 3 and `a[n]` is proven. Before, every
+// read through r was unknown, so the checked `r + 1` itself was refused (E086) — the canonical use
+// of a reference binding was unusable without `+%`.
+func main() i32 {
+    var a i32[5] = [0, 1, 2, 3, 4]
+    var n usize = 4
+    var r = var n
+    r = 2
+    r = r + 1
+    r += 1
+    return a[n]
+}

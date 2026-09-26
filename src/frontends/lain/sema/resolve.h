@@ -529,16 +529,21 @@ void sema_resolve_stmt(Stmt *s) {
       // "neither in variables nor in object fields" — which Lain had adopted for fields only.
       //
       // This removes no working feature: the construct has never compiled correctly.
-      if (rhs->kind == EXPR_MUT) {
-          Id *nm = s->as.var_stmt.name;
-          fprintf(stderr, "[E126] Error Ln %li, Col %li: '%.*s' binds a mutable borrow (`var`), "
-              "which cannot be stored — a reference lives only for the call that creates it. "
-              "Bind the value instead, or pass the borrow directly to the function that needs it.\n",
-              (long)s->line, (long)s->col,
-              nm ? (int)nm->length : 1, nm ? nm->name : "?");
-          diagnostic_show_line(s->line, s->col);
-          exit(1);
-      }
+      // ★ A.3 / DECIDE-G (Marco, 2026-09-17): `var r = var p.x` is a SCOPED REFERENCE BINDING,
+      // and it is admitted. The rejection above this line's history (D-30) was right about the
+      // SYMPTOM and wrong about the cure: the construct emitted `int32_t ref = &(d.value);` —
+      // a value-typed local initialised with an address — because resolution stripped the
+      // binding's `var` mode. D-38 had already found and fixed exactly that for the CALL form
+      // (`var r = f(var x)`) by keeping MODE_MUTABLE so the backend emits `T*`; the direct form
+      // was rejected instead of given the same fix. It is given it below — and the READ side,
+      // which neither form had (a read of the binding used the pointer as the value), is
+      // lowered through the slot by `ir_ref_binding_ptr` in lower.h.
+      //
+      // What stays refused is what DECIDE-G said stays refused: STORING a reference in an
+      // aggregate (a field of reference type is still E126 at the type declaration), and letting
+      // one ESCAPE (E010 from the borrow pass). A local binding's loan ends at its last use
+      // (NLL), and the borrow pass holds the place for exactly that long — a write or read of
+      // the owner while the reference is still used later is a conflict.
       if (sema_ranges) {
           // Range analysis moved to typecheck phase
       }
@@ -570,7 +575,7 @@ void sema_resolve_stmt(Stmt *s) {
           // Exception: TYPE_POINTER with MODE_MUTABLE is a mutable thin pointer
           // (from `&arr[k]`) — preserve mutability so it emits without const.
           if (ty && ty->mode == MODE_MUTABLE && ty->kind != TYPE_POINTER
-              && rhs->kind != EXPR_CALL) {
+              && rhs->kind != EXPR_CALL && rhs->kind != EXPR_MUT) {
               Type *stripped = arena_push_aligned(sema_arena, Type);
               *stripped = *ty;
               stripped->mode = MODE_SHARED;

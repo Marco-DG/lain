@@ -1,0 +1,15 @@
+// EXPECT: [E085]
+// An array's ELEMENT RANGE is the join of every value stored into it, and the seed finds those
+// stores by walking each store's address back to the array — through a load only when the slot
+// it reads was written ONCE. `q` is written twice, so `*q = 100` is invisible to that walk; with
+// no call in the function the seed took the direct stores as complete, `idx[1] ∈ [0, 1]` was
+// believed, and `a[idx[1]]` was PROVEN while it reads a[100]. A store through an unattributable
+// pointer now forfeits the range exactly as a call does. Present before reference bindings.
+func main() i32 {
+    var a i32[4] = [0, 1, 2, 3]
+    var idx usize[2] = [0, 1]
+    var q *var usize = &idx[0]
+    q = &idx[1]
+    unsafe { *q = 100 }
+    return a[idx[1]]
+}

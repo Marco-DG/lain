@@ -1,0 +1,18 @@
+// EXPECT: [E085]
+// The same havoc must reach a `var` PARAMETER's cell: the guard `x < 4` proves `a[x]` (without
+// the write this is accepted), and `r = 100` through a binding to x must take that fact away, or
+// `a[x]` reads a[100]. Parameter cells are in the havoced set because the prepass marks them
+// escaped — their storage is the caller's.
+func f(x var usize, a i32[4]) i32 {
+    if x < 4 {
+        var r = var x
+        r = 100
+        return a[x]
+    }
+    return 0
+}
+func main() i32 {
+    var n usize = 1
+    var a i32[4] = [0, 1, 2, 3]
+    return f(var n, a)
+}

@@ -296,6 +296,46 @@ static void spell_walk_expr(Expr *e) {
     }
 }
 
+/* ★ THE RETURN IS THE CALL SITE'S DUAL. A function typed `var T` returns a BORROW, and for a
+   copied T that is an address. Every documented and tested form spells it `return var p.x`,
+   but nothing required the `var`: `func f(d var i32) var i32 { return d }` was accepted, the
+   value 3 was returned where an address belonged, and the caller's first write through the
+   result SEGFAULTED. `return d.value`, `return a[i]` and `return 5` did the same. The IR cannot
+   tell these apart from the intended form after the fact — the return type says pointer and
+   the expression lowers to a value — so, like E017, it is a rule about the source text.
+
+   Accepted: `return var <place>`, and a call that itself returns `var T` (passing a borrow on).
+   A slice, array or pointer already travels as its data pointer, so `var` there is not an
+   address-of and the rule does not apply. */
+static Type *spell_ret_type = NULL;
+
+static void spell_check_return(Stmt *s) {
+    Type *rt = spell_ret_type;
+    Expr *v  = s->as.return_stmt.value;
+    if (!rt || rt->mode != MODE_MUTABLE || !v) return;
+    if (rt->kind == TYPE_SLICE || rt->kind == TYPE_ARRAY || rt->kind == TYPE_POINTER) return;
+    if (v->kind == EXPR_MUT) return;
+    if (v->kind == EXPR_CALL && v->type && v->type->mode == MODE_MUTABLE) return;
+    Id *own = spell_owner_of(v);
+    long ln = (long)(v->line ? v->line : s->line), cl = (long)(v->line ? v->col : s->col);
+    if (own && v->kind == EXPR_IDENTIFIER)
+        fprintf(stderr, "[E017] Error Ln %li, Col %li: returning '%.*s' from a function that "
+                "returns a mutable reference ('var') requires explicit 'var' — write "
+                "`return var %.*s`.\n", ln, cl, (int)own->length, own->name,
+                (int)own->length, own->name);
+    else if (own)                             // a field path: name the root, not a wrong fix
+        fprintf(stderr, "[E017] Error Ln %li, Col %li: returning a place inside '%.*s' from a "
+                "function that returns a mutable reference ('var') requires explicit 'var' "
+                "before it (`return var %.*s.field`).\n", ln, cl, (int)own->length, own->name,
+                (int)own->length, own->name);
+    else
+        fprintf(stderr, "[E017] Error Ln %li, Col %li: a function that returns a mutable "
+                "reference ('var') must return a borrow of a place (`return var p.x`) or a "
+                "call that returns one; this returns a value.\n", ln, cl);
+    diagnostic_show_line(ln, cl);
+    exit(1);
+}
+
 static void spell_walk_stmt(Stmt *s) {
     if (!s) return;
     switch (s->kind) {
@@ -303,7 +343,7 @@ static void spell_walk_stmt(Stmt *s) {
     case STMT_ASSIGN: spell_walk_expr(s->as.assign_stmt.target);
                       spell_walk_expr(s->as.assign_stmt.expr); break;
     case STMT_EXPR:   spell_walk_expr(s->as.expr_stmt.expr); break;
-    case STMT_RETURN: spell_walk_expr(s->as.return_stmt.value); break;
+    case STMT_RETURN: spell_check_return(s); spell_walk_expr(s->as.return_stmt.value); break;
     case STMT_IF:     spell_walk_expr(s->as.if_stmt.cond);
                       spell_walk_stmt_list(s->as.if_stmt.then_body);
                       spell_walk_stmt_list(s->as.if_stmt.else_branch); break;
@@ -326,7 +366,9 @@ static void spell_walk_stmt(Stmt *s) {
 
 static void sema_check_call_spelling(Decl *d) {
     if (!d || (d->kind != DECL_FUNCTION)) return;
+    spell_ret_type = d->as.function_decl.return_type;
     spell_walk_stmt_list(d->as.function_decl.body);
+    spell_ret_type = NULL;
 }
 
 

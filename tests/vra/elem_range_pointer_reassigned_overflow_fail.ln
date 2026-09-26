@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// The same unseen store, read as ARITHMETIC: the believed range [1, 2] made `idx[0] + idx[1]`
+// provably free of overflow, the emitted C computed it in 64 bits and returned it as i32, and the
+// program answered -2147483648 — no sanitizer fires, because the narrowing is defined C.
+func main() i32 {
+    var idx i32[2] = [1, 2]
+    var q *var i32 = &idx[0]
+    q = &idx[1]
+    unsafe { *q = 2147483647 }
+    return idx[0] + idx[1]
+}

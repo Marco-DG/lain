@@ -754,6 +754,45 @@ compiler can see. `while read(data) < 10` alone is refused for TERMINATION (`E01
 the call's result to the body's work, which is a separate obligation from the borrow one being
 demonstrated here.
 
+**Reference bindings.** A borrow can also be *named*: `var x = var p.x` binds `x` to the place
+`p.x`, and `var r = get_ref(var ctx)` binds `r` to the reference a function returns. Reading `x`
+reads `p.x`; assigning `x` writes it. The loan lasts until the binding's last use, exactly like
+the call-site borrows above, and while it lasts nothing else may touch the place — read, write or
+borrow (`E004`). Different fields, and elements at different constant indices, are different
+places.
+
+```lain
+type P { x i32, y i32 }
+
+func main() i32 {
+    var p = P(1, 2)
+    var x = var p.x          // x names p.x
+    var y = var p.y          // OK: p.y is a different place
+    x = 7
+    y = 8
+    var n usize = 4
+    var r = var n
+    r = r + 1                // writes n, and the compiler knows n is now 5
+    return p.x +% p.y        // 15: x and y are no longer used, so p is free again
+}
+```
+
+```lain
+type P { x i32, y i32 }
+
+func main() i32 {
+    var p = P(1, 2)
+    var q = var p
+    p.y = 5                  // E004: q is used on the next line, so p is still lent out
+    q.x = 3
+    return 0
+}
+```
+
+A binding to a local may not outlive the function (`E010`), and a function returning `var T`
+hands a binding back as `return var r` (`E017` without the `var`). A struct field cannot hold one
+(`E126`).
+
 ### 4.6 Caller-Site Annotations
 
 When calling a function, the caller must explicitly annotate `var` and `mov` to signal the intended ownership:

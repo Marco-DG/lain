@@ -1,0 +1,15 @@
+// EXPECT: [E004]
+// Exclusivity is over ACCESSES, and a read is one: the owner may not be READ while a mutable
+// reference to it is still going to be used. The region check looked at stores and calls only,
+// so this was accepted — and it looked refused, because `r = 9` drew an E004 of its own (the
+// region mistook a write through r for a rival to r's own loan). Both are fixed; the E004 is now
+// at `var t = p.x`, where the violation is.
+type P { x i32, y i32 }
+func main() i32 {
+    var p P = P(1, 2)
+    var r = var p.x
+    r = 9
+    var t = p.x
+    r = 10
+    return t
+}

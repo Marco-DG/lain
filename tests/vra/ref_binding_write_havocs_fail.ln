@@ -1,0 +1,12 @@
+// EXPECT: [E085]
+// A write through a reference must reach the facts about its referent. The octagon's store
+// transfer handled stores to an alloca, a field of one and a `var` parameter, and did NOTHING for
+// a store through any other pointer — so `r = 200` left `n ∈ [4,4]` and `a[n]` was PROVEN, a read
+// of a[200]. ASan did not notice (the read lands 800 bytes past the array, beyond its redzone).
+func main() i32 {
+    var a i32[5] = [0, 0, 0, 0, 0]
+    var n usize = 4
+    var r = var n
+    r = 200
+    return a[n]
+}

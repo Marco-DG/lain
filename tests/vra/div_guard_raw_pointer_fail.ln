@@ -1,0 +1,14 @@
+// EXPECT: [E015]
+// A `d != 0` guard is invalidated by anything that can write d before the division. The matcher
+// knew direct stores and calls; `*q = 0` through `q = &d` is neither, so the guard survived and
+// `100 / d` divided by zero (SIGFPE) in an accepted program.
+func f(k i32) i32 {
+    var d i32 = k
+    if d != 0 {
+        var q *var i32 = &d
+        unsafe { *q = 0 }
+        return 100 / d
+    }
+    return 0
+}
+func main() i32 { return f(5) }

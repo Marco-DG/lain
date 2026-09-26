@@ -1,17 +1,12 @@
-// EXPECT: [E126]
-// A mutable borrow cannot be STORED IN A LOCAL. (Was `direct_var_borrow_fail.ln` asserting
-// [E004]; the construct it used has never compiled, so what it locked was unreachable.)
+// EXPECT: [E004]
+// A reference binding holds its place for as long as it is USED — the owner may not be written
+// underneath it.
 //
-// ADJUDICATED 2026-09-15 while writing local/thesis/chapters/02-borrow.tex. `var ref = var
-// data.value` emitted `int32_t ref = &(data.value);` — gcc only WARNS on that, so a truncated
-// address was stored in an int and no gate saw it. The whole-struct form emitted
-// `P r = &(a);`, a hard gcc error (D-30).
-//
-// E126 already rejected the same construct as a struct FIELD. Extending it to locals makes the
-// restriction uniform, which is the point: the borrow checker is call-site-scoped BECAUSE a
-// reference cannot be stored. It is also exactly the axiom of mutable value semantics —
-// references live only for the call that creates them, stored neither in variables nor in
-// object fields.
+// This file asserted [E126] from 2026-09-15 to 2026-09-26: a mutable borrow could not be stored
+// in a local, because `var ref = var data.value` emitted `int32_t ref = &(data.value);`. DECIDE-G
+// (A.3) admitted the binding and gave it the representation D-38 had already given the
+// returned-borrow form, so what this file now locks is the rule that stays: exclusivity over the
+// binding's live range (NLL). `ref` is used after `data.value = 7`, so that write is a conflict.
 
 type Data {
     value i32
@@ -21,5 +16,7 @@ func main() i32 {
     var data Data
     data.value = 42
     var ref = var data.value
+    data.value = 7
+    ref = 1
     return 0
 }

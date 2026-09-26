@@ -1,0 +1,86 @@
+// A REFERENCE BINDING names what it points at — for READS as well as writes.
+//
+// A.3 / DECIDE-G admitted `var r = var p.x`. The IR had already lowered the returned-borrow form
+// (`var r = get(var d)`) with a slot that holds an ADDRESS, and only the write path knew that:
+// `r = 9` stored through the pointer, but a read of `r` used the POINTER as the value. With the
+// committed compiler of 2026-09-26, `var k = r` after `var r = get(var d)` returned 84 instead
+// of 4 (an address truncated to i32), and a struct-typed returned borrow emitted C gcc rejects.
+// No test read a binding, so none saw it. Every line below reads one.
+
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type P { x i32, y i32 }
+type D { value i32 }
+type W { p P }
+
+func get(d var D) var i32 { return var d.value }
+func get_p(w var W) var P { return var w.p }
+func twice(x i32) i32 { return x +% x }
+func bump(x var i32) { x = x +% 1 }
+func fill(p var P) {
+    var a = var p.x          // bindings into a PARAMETER's fields: disjoint, so both may live
+    var b = var p.y
+    a = 30
+    b = 40
+    a = a +% b
+}
+
+func main() i32 effects io {
+    // a local binding: write through, read through, pass by value, copy out
+    var n i32 = 4
+    var r = var n
+    r = 5
+    var k = r
+    libc_printf("%d %d\n", twice(r), k)
+    r = r +% 1
+    libc_printf("%d\n", n)
+
+    // a returned borrow read by value (84 before the fix)
+    var d D = D(4)
+    var g = get(var d)
+    var c = g
+    g = 9
+    libc_printf("%d %d\n", c, d.value)
+
+    // a struct binding: field writes and reads through it
+    var p P = P(1, 2)
+    var q = var p
+    q.x = 5
+    q.y = q.x +% 1
+    libc_printf("%d %d\n", p.x, p.y)
+
+    // a struct-typed returned borrow (broken C before the fix)
+    var w W = W(P(1, 2))
+    var qp = get_p(var w)
+    qp.x = 7
+    libc_printf("%d\n", w.p.x)
+
+    // disjoint fields and constant elements are separate places
+    var s P = P(0, 0)
+    var sx = var s.x
+    var sy = var s.y
+    sx = 7
+    sy = 8
+    sx = sx +% sy
+    libc_printf("%d %d\n", s.x, s.y)
+    var a i32[4] = [1, 2, 3, 4]
+    var a0 = var a[0]
+    var a1 = var a[1]
+    a0 = 10
+    a1 = 20
+    libc_printf("%d %d\n", a[0], a[1])
+
+    // a reborrow, then the outer reference once the inner one is dead
+    var m i32 = 1
+    var rm = var m
+    var rm2 = var rm
+    rm2 = 6
+    rm = rm +% 1
+    bump(var rm)
+    libc_printf("%d\n", m)
+
+    var f P = P(0, 0)
+    fill(var f)
+    libc_printf("%d %d\n", f.x, f.y)
+    return 0
+}

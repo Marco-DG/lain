@@ -1,0 +1,18 @@
+// EXPECT: [E004]
+// Two live mutable references to the same field of a `var` PARAMETER. The loan for a field or
+// element binding was created only for places rooted in a LOCAL, so a parameter's field got no
+// loan at all and this was accepted; the disjoint case (`var a = var p.x; var b = var p.y`) is
+// accepted and is exercised in tests/trust/ref_binding_read_through_pass.ln.
+type P { x i32, y i32 }
+func f(p var P) {
+    var a = var p.x
+    var b = var p.x
+    a = 1
+    b = 2
+    a = 3
+}
+func main() i32 {
+    var q P = P(0, 0)
+    f(var q)
+    return q.x
+}

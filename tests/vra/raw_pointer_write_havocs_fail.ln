@@ -1,0 +1,11 @@
+// EXPECT: [E085]
+// The same false proof, reached WITHOUT reference bindings: a store through a raw pointer to `n`.
+// The write itself is memory-safe (q points at n); the proof that followed it was not — `a[n]`
+// was accepted with n == 100. Present in the compiler before reference bindings existed.
+func main() i32 {
+    var a i32[4] = [0, 1, 2, 3]
+    var n usize = 1
+    var q *var usize = &n
+    unsafe { *q = 100 }
+    return a[n]
+}

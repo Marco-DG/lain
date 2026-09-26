@@ -1,0 +1,12 @@
+// EXPECT: [E004]
+// A borrow of a WHOLE local has no field/element address instruction to key the loan on, so
+// `var q = var p` created no loan at all and `p = P(3, 4)` under a live q was accepted. The loan
+// is now created at the store into the binding's slot.
+type P { x i32, y i32 }
+func main() i32 {
+    var p P = P(1, 2)
+    var q = var p
+    p = P(3, 4)
+    q.x = 7
+    return p.x
+}

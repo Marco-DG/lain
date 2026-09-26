@@ -191,6 +191,9 @@ typedef struct {
     // therefore stable across sweeps, which is what keeps the B1 query off the hot path —
     // vra_range asks this before doing anything expensive.
     bool    *accum_cell;
+    // For each ALLOCA slot: the value id of its ONLY store, or -1 when it is stored zero or
+    // several times. Read by vra_ref_target — see there.
+    int     *uniq_store;
     VraCheck *checks; int nchecks, cap_checks;
 } Vra;
 
@@ -340,6 +343,32 @@ static int vra_field_cell_base(Vra *V, int v) {
     if (!bv || !bv->type || bv->type->kind != IRT_PTR || !bv->type->elem ||
         bv->type->elem->kind != IRT_STRUCT) return -1;
     return base;
+}
+
+// ★ A POINTER LOADED FROM A ONCE-WRITTEN SLOT NAMES THE CELL THAT WAS STORED THERE. A reference
+// binding (`var r = var n`) lowers to a slot holding n's address, and every use of r loads that
+// slot and goes through it — so to this domain every read of r was unknown and every write was
+// an unattributable store that forgets all escaped cells. `r = 0; n + 1` could not prove what
+// `n = 0; n + 1` proves. The slot is written exactly once, so the loaded pointer IS that
+// address, and the access is an access to that cell: exact, not an approximation. The same rule
+// vra_array_root already applies to arrays (and bor_unique_store_value to places).
+//
+// Only the LOAD/STORE transfer consults this. The loop rules scan stores SYNTACTICALLY, and
+// they must keep seeing a write through a reference as the opaque writer it is to them
+// (vra_cell_opaque_write) — resolving it there would hide a counter reset from the scan.
+static int vra_ref_target(Vra *V, int addr) {
+    if (addr < 0 || addr >= V->nvar || !V->uniq_store) return addr;
+    IrInstr *d = V->def[addr];
+    if (!d || d->op != IR_LOAD || d->n_operands < 1 || !d->operands[0]) return addr;
+    int slot = d->operands[0]->id;
+    if (slot < 0 || slot >= V->nvar || !V->def[slot] || V->def[slot]->op != IR_ALLOCA) return addr;
+    int held = V->uniq_store[slot];
+    if (held < 0 || held >= V->nvar) return addr;
+    IrInstr *hd = V->def[held];
+    if (hd && hd->op == IR_ALLOCA && hd->aux.alloca_ty &&
+        (hd->aux.alloca_ty->kind == IRT_INT || hd->aux.alloca_ty->kind == IRT_BOOL)) return held;
+    if (vra_is_param_cell(V, held)) return held;
+    return addr;
 }
 
 // Every field cell of `base` becomes unknown. Used wherever the whole struct is written with
@@ -504,11 +533,16 @@ static void vra_seed_element_ranges_round(Vra *V) {
             // write footprint which cells a particular callee touches. `zero(var s)` really
             // does rewrite the array through the slice, and the join from before the call is
             // then stale — that case must keep failing, and does.
+            //
+            // ...and a store through an UNATTRIBUTABLE pointer is the other thing — a reference
+            // binding (`var r = var xs[1]; r = 100`) or a raw pointer writes the array with an
+            // IR_STORE whose address does not root at the cell, so the scan below never counts it.
             if (V->escaped && V->escaped[cell]) {
                 bool anycall = false;
                 for (IrBlock *bc=V->f->blocks; bc && !anycall; bc=bc->next)
                     for (IrInstr *ic=bc->instrs; ic; ic=ic->next)
-                        if (ic->op==IR_CALL) { anycall = true; break; }
+                        if (ic->op==IR_CALL || (ic->op==IR_STORE && ic->n_operands>=2 &&
+                            vra_arg_cell(V, ic->operands[0]) == VRA_ARG_UNKNOWN)) { anycall = true; break; }
                 if (anycall) { ok[cell]=false; continue; }
             }
             int len = (int)at->array_len;
@@ -924,7 +958,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             break;
         case IR_LOAD: {
             if (r<0) break;
-            int cell = ins->n_operands ? ins->operands[0]->id : -1;
+            int cell = ins->n_operands ? vra_ref_target(V, ins->operands[0]->id) : -1;
             if (vra_field_cell_base(V, cell) >= 0) {        // a field of a local struct
                 vra_assign_copy(V, W, r, vra_canon_cell(V, cell));
                 break;
@@ -951,7 +985,24 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
         }
         case IR_STORE: {
             if (ins->n_operands<2) break;
-            int cell = ins->operands[0]->id;
+            // ★ A STORE THROUGH A POINTER THIS DOMAIN CANNOT ATTRIBUTE WRITES A CELL IT CANNOT
+            // NAME. The cases below all name their cell (an alloca, a field of one, a `var`
+            // parameter); anything else fell off the end of this case and changed NOTHING, so
+            //     var n usize = 4 ;  var r = var n ;  r = 200 ;  a[n]      // a is i32[5]
+            // kept `n ∈ [4,4]` and PROVED a read of a[200] — and so did `unsafe { *q = 100 }`
+            // through `q = &n`, which predates reference bindings. A call already assumes an
+            // unattributable address may be any escaped cell; a store through one is the same
+            // unknown writer without the call. (`var` parameter cells are in that set: the
+            // prepass marks them escaped, since the storage is the caller's.)
+            int cell = vra_ref_target(V, ins->operands[0]->id);   // through a reference binding
+            if (cell == ins->operands[0]->id &&
+                vra_arg_cell(V, ins->operands[0]) == VRA_ARG_UNKNOWN) {
+                for (int c2=0; c2<V->nvar; c2++)
+                    if (V->escaped && V->escaped[c2]) {
+                        oct_forget(W, c2); vra_forget_fields_of(V, W, c2);
+                    }
+                break;
+            }
             if (vra_field_cell_base(V, cell) >= 0) {        // a field of a local struct
                 vra_assign_copy(V, W, vra_canon_cell(V, cell), ins->operands[1]->id);
                 break;
@@ -2111,10 +2162,18 @@ static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid) {
         // Anything that could write the slot between the guard and the use invalidates it.
         // Deliberately coarse: the whole block, not just the instructions before the use, and
         // any call at all once the cell has escaped.
+        //
+        // ...and so can a store through a pointer this analysis cannot attribute, once the cell
+        // has escaped: `if d != 0 { var r = var d; r = 0; return 100 / d }` — and the same with
+        // `unsafe { *q = 0 }` through `q = &d` — kept the guard and divided by zero (SIGFPE).
+        // An unattributable store is the call's unknown writer without the call.
         if (vcell >= 0)
             for (IrInstr *q=b->instrs; q; q=q->next) {
                 if (q->op==IR_STORE && q->n_operands>=1 && q->operands[0]->id==vcell) return false;
-                if (q->op==IR_CALL && vcell<V->nvar && V->escaped && V->escaped[vcell]) return false;
+                bool esc = vcell<V->nvar && V->escaped && V->escaped[vcell];
+                if (q->op==IR_CALL && esc) return false;
+                if (q->op==IR_STORE && q->n_operands>=1 && esc &&
+                    vra_arg_cell(V, q->operands[0]) == VRA_ARG_UNKNOWN) return false;
             }
         IrEdge *e = b->preds;
         if (!e || e->next) return false;                     // not a single-predecessor chain
@@ -2448,11 +2507,20 @@ static bool vra_step_decreases(Vra *V, int cell, IrInstr *vd) {
 // `V->escaped` is the same set the memory model already havocs at every call, and if nothing
 // in the loop calls anything then nothing can exercise the escape while the loop runs — so
 // the guard costs no precision on the ordinary case, where a counter's address never leaves.
+//
+// A call is not the only thing that can exercise the escape. A store through a pointer this
+// analysis cannot attribute — a raw `*q = 0` with `q = &i`, or a reference binding's write —
+// moves the counter with no store TO THE CELL to find: `while i < 10 { unsafe { *q = 0 }
+// i = i + 1 }` read as a clean +1 per iteration and was PROVEN TERMINATING. It never ends.
 static bool vra_cell_opaque_write(Vra *V, int cell, int nbb, const char *inloop) {
     if (cell < 0 || cell >= V->nvar || !V->escaped || !V->escaped[cell]) return false;
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         if (!(b->id>=0 && b->id<nbb && inloop[b->id])) continue;
-        for (IrInstr *st=b->instrs; st; st=st->next) if (st->op==IR_CALL) return true;
+        for (IrInstr *st=b->instrs; st; st=st->next) {
+            if (st->op==IR_CALL) return true;
+            if (st->op==IR_STORE && st->n_operands>=1 &&
+                vra_arg_cell(V, st->operands[0]) == VRA_ARG_UNKNOWN) return true;
+        }
     }
     return false;
 }
@@ -3220,6 +3288,20 @@ static Vra *vra_analyze(IrFunc *f) {
     V->cret_lo=calloc(V->nvar,sizeof(int64_t)); V->cret_hi=calloc(V->nvar,sizeof(int64_t));
     V->cret_state=calloc(V->nvar,sizeof(signed char));
     V->accum_cell=calloc(V->nvar,sizeof(bool));
+    V->uniq_store=malloc(V->nvar*sizeof(int));
+    if (V->uniq_store) {
+        int *cnt = calloc(V->nvar, sizeof(int));
+        for (int q=0;q<V->nvar;q++) V->uniq_store[q] = -1;
+        for (IrBlock *b=f->blocks; b && cnt; b=b->next)
+            for (IrInstr *i=b->instrs; i; i=i->next)
+                if (i->op==IR_STORE && i->n_operands>=2 && i->operands[0] && i->operands[1]) {
+                    int sl = i->operands[0]->id;
+                    if (sl>=0 && sl<V->nvar && ++cnt[sl]==1) V->uniq_store[sl] = i->operands[1]->id;
+                }
+        for (int q=0;q<V->nvar && cnt;q++) if (cnt[q]!=1) V->uniq_store[q] = -1;
+        if (!cnt) { free(V->uniq_store); V->uniq_store = NULL; }
+        free(cnt);
+    }
     vra_prepass(V);
     vra_seed_element_ranges(V);
     for (int i=0;i<nb;i++) V->in[i]=malloc(V->dsz*sizeof(int64_t));
@@ -4169,7 +4251,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->odim); free(V->checks); free(V);
+    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->uniq_store); free(V->odim); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H

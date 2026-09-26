@@ -12,7 +12,9 @@
 #
 #   SHAPE    what the aggregate is        struct / ADT / nested struct / array-of-struct
 #   CARRIER  how the value gets there     local / shared param / var param / mov param /
-#                                         call result (an rvalue) / array element
+#                                         call result (an rvalue) / array element /
+#                                         reference binding (`var r = var v`, A.3) /
+#                                         field reference (`var r = var v.x`)
 #   OP       what is done with it         read a field / write a field / whole-assign /
 #                                         match / pass it on
 #
@@ -33,7 +35,8 @@ def r(lo, hi): return rng.randint(lo, hi)
 
 # ── the three axes ───────────────────────────────────────────────────────────
 SHAPES   = ["struct", "adt", "adt_struct", "nested", "arrayof", "sliceof", "adt_nested"]
-CARRIERS = ["local", "shared_param", "var_param", "mov_param", "call_result", "array_elem"]
+CARRIERS = ["local", "shared_param", "var_param", "mov_param", "call_result", "array_elem",
+            "ref_binding", "ref_field"]
 OPS      = ["read", "write", "whole_assign", "match", "pass_on", "defer"]
 
 shape   = rng.choice(SHAPES)
@@ -52,6 +55,12 @@ if shape == "sliceof": op = "read"
 # `mov` transfers ownership, so it composes with a read/pass, not with an in-place write
 if carrier == "mov_param" and op in ("write", "whole_assign"): op = "read"
 if shape == "arrayof" and op in ("match", "whole_assign", "defer", "pass_on"): op = "write"
+# A reference binding is exercised through what is done WITH it; a deferred use of one is not a
+# shape this fuzzer models, and a field reference names a SCALAR, so it has no match/whole form.
+if carrier in ("ref_binding", "ref_field") and op == "defer": op = "write"
+if carrier == "ref_field" and (shape in ADTS or shape == "sliceof"): carrier = "ref_binding"
+if carrier == "ref_field" and op in ("match", "whole_assign", "pass_on"): op = "write"
+if carrier == "ref_binding" and shape == "sliceof": carrier = "shared_param"
 
 a, b, c = r(1, 9), r(1, 9), r(1, 9)
 L = []                       # program lines
@@ -186,6 +195,15 @@ if shape == "arrayof":
              f"    var arr P[3] = [P({a}, {b}), P({b}, {c}), P({c}, {a})]",
              "    var acc = total(arr)")
         exp = (a + b) + (b + c) + (c + a)
+    elif carrier in ("ref_binding", "ref_field"):
+        # a reference to an ELEMENT of an array of structs (or to that element's field)
+        tgt = "var arr[1]" if carrier == "ref_binding" else "var arr[1].x"
+        wr  = f"    r.x = {a}" if carrier == "ref_binding" else f"    r = {a}"
+        emit("func main() i32 effects io, raises, alloc {",
+             f"    var arr P[3] = [P({a}, {b}), P({b}, {c}), P({c}, {a})]",
+             f"    var r = {tgt}", wr,
+             "    var acc = arr[0].x +% arr[1].x +% arr[2].y")
+        exp = a + a + a
     else:   # local / array_elem
         emit("func main() i32 effects io, raises, alloc {",
              f"    var arr P[3] = [P({a}, {b}), P({b}, {c}), P({c}, {a})]",
@@ -278,6 +296,61 @@ else:
             emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}", "    bump(var v)",
                  "    var acc = " + ("v.inner.x +% v.inner.y +% v.n" if shape=="nested" else "v.x +% v.y"))
             exp = read_value(val) + c
+    elif carrier == "ref_field":
+        # `var r = var v.x` — a SCALAR reference into the aggregate; written, then read back
+        # through the binding and through the owner once the binding is dead.
+        fld = "v.inner.x" if shape == "nested" else "v.x"
+        whole = "v.inner.x +% v.inner.y +% v.n" if shape == "nested" else "v.x +% v.y"
+        emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
+             f"    var r = var {fld}")
+        if op == "read":
+            emit("    var t = r", f"    var acc = t +% {c}")
+            exp = val[0] + c
+        else:                                   # write
+            emit(f"    r = r +% {c}", f"    var acc = {whole}")
+            exp = read_value(val) + c
+    elif carrier == "ref_binding":
+        # `var r = var v` — a reference to the WHOLE aggregate, used in place of v.
+        whole_r = "r.inner.x +% r.inner.y +% r.n" if shape == "nested" else "r.x +% r.y"
+        whole_v = "v.inner.x +% v.inner.y +% v.n" if shape == "nested" else "v.x +% v.y"
+        if shape in ADTS:
+            emit(*reader_fn("rd", "s"))
+            if op == "whole_assign":
+                emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
+                     "    var r = var v", "    r = A.V3", "    var acc = rd(v)")
+                exp = 5
+            elif op == "pass_on" and shape == "adt":
+                emit("func bump(var s A) {", "    case s {",
+                     f"        V1(x): s = A.V1(x +% {c})", f"        V2(x, y): s = A.V2(x +% {c}, y)",
+                     "        V3: s = A.V3", "    }", "}")
+                emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
+                     "    var r = var v", "    bump(var r)", "    var acc = rd(v)")
+                tag, x, y = val
+                exp = (x + c) if tag == "V1" else ((x + c) * y if tag == "V2" else 5)
+            else:                               # read / match: the binding's VALUE, by value
+                emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
+                     "    var r = var v", "    var acc = rd(r)")
+                exp = read_value(val)
+        elif op == "whole_assign":
+            zero = "N(P(0, 0), 0)" if shape == "nested" else "P(0, 0)"
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {zero}",
+                 "    var r = var v", f"    r = {val_expr}", f"    var acc = {whole_v}")
+            exp = read_value(val)
+        elif op == "pass_on":
+            fld = "s.inner.x" if shape == "nested" else "s.x"
+            emit(f"func bump(var s {TY}) {{", f"    {fld} = {fld} +% {c}", "}")
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
+                 "    var r = var v", "    bump(var r)", f"    var acc = {whole_v}")
+            exp = read_value(val) + c
+        elif op == "write":
+            fld = "r.inner.x" if shape == "nested" else "r.x"
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
+                 "    var r = var v", f"    {fld} = {fld} +% {c}", f"    var acc = {whole_v}")
+            exp = read_value(val) + c
+        else:                                   # read through the binding
+            emit("func main() i32 effects io, raises, alloc {", f"    var v = {val_expr}",
+                 "    var r = var v", f"    var acc = {whole_r}")
+            exp = read_value(val)
     elif carrier == "call_result":
         emit(f"func mk() {TY} {{", f"    return {val_expr}", "}")
         fld = "mk().inner.x +% mk().n" if shape == "nested" else \

@@ -177,6 +177,14 @@ static bool ir_place_overlaps(const IrPlace *a, const IrPlace *b) {
                 }
                 continue;   // unknown offset or length ⇒ may overlap (fail-closed)
             }
+            // Two CONSTANT points are decided by their constants: different ⇒ disjoint, equal ⇒
+            // the same element, so the question moves to the next projection. `var r = var a[0]`
+            // beside `var s = var a[1]` was refused because only the VRA oracle was asked, and
+            // it is not installed for every client of this predicate.
+            if (x->off_known && y->off_known) {
+                if (x->off != y->off) return false;
+                continue;
+            }
             if (ir_place_index_provably_disjoint(x->index, y->index)) return false;
         }
     }

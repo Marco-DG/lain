@@ -48,16 +48,22 @@ int main(void){
     IrValue *xa = ir_field_ptr(f,e,x,0,i32); // x.f0
     IrValue *xb = ir_field_ptr(f,e,x,1,i32); // x.f1
     IrValue *xa2= ir_field_ptr(f,e,x,0,i32); // x.f0 again (distinct SSA value, same place)
-    IrValue *i  = ir_const_int(f,e,0,i32);
-    IrValue *j  = ir_const_int(f,e,1,i32);
+    // i and j are UNKNOWN indices (parameters), which is what the conservative case is about.
+    // They were once the constants 0 and 1 — but two constants are decided by value, so that
+    // spelling stopped testing "unknown" the day the predicate learned to compare constants.
+    IrValue *i  = ir_add_param(f, i32, nm("i"));
+    IrValue *j  = ir_add_param(f, i32, nm("j"));
     IrValue *ai = ir_elem_ptr(f,e,a,i,i32);  // a[i]
     IrValue *aj = ir_elem_ptr(f,e,a,j,i32);  // a[j]
+    IrValue *c0 = ir_const_int(f,e,0,i32), *c1 = ir_const_int(f,e,1,i32), *c1b = ir_const_int(f,e,1,i32);
+    IrValue *a0 = ir_elem_ptr(f,e,a,c0,i32), *a1 = ir_elem_ptr(f,e,a,c1,i32), *a1b = ir_elem_ptr(f,e,a,c1b,i32);
     IrValue *p  = ir_add_param(f, ir_type_new(&A,IRT_PTR), nm("p"));
     ir_set_ret(e,NULL);
 
     int nvar; IrInstr **def = mkdef(f,&nvar);
     #define P(v) ir_place_of(def,nvar,(v))
     IrPlace px=P(x), py=P(y), pxa=P(xa), pxb=P(xb), pxa2=P(xa2), pai=P(ai), paj=P(aj), pp=P(p);
+    IrPlace pa0=P(a0), pa1=P(a1), pa1b=P(a1b);
 
     pexpect("x vs x                        (same local)",        ir_place_overlaps(&px,&px),   true);
     pexpect("x vs y                        (distinct locals)",   ir_place_overlaps(&px,&py),   false);
@@ -69,6 +75,10 @@ int main(void){
 
     // Without the numeric bridge, distinct indices must be assumed to alias.
     pexpect("a[i] vs a[j]  WITHOUT numeric bridge (conservative)", ir_place_overlaps(&pai,&paj), true);
+    // Two CONSTANT indices need no oracle: different constants are different elements, and
+    // equal ones (two SSA values, one element) are the same.
+    pexpect("a[0] vs a[1]  constants, no bridge",                 ir_place_overlaps(&pa0,&pa1),  false);
+    pexpect("a[1] vs a[1]  constants (2 SSA), no bridge",         ir_place_overlaps(&pa1,&pa1b), true);
     // ★ the beyond-Rust seam: with a disjointness oracle, they separate.
     ir_place_index_disjoint_fn = fake_disjoint;
     pexpect("a[i] vs a[j]  WITH numeric bridge (i != j proven)",   ir_place_overlaps(&pai,&paj), false);

@@ -49,6 +49,63 @@ static IrValue *bor_unique_store_value(IrFunc *f, IrValue *slot) {
     return n==1 ? found : NULL;
 }
 
+// The SLOT a place was reached through, when its root is a pointer LOADED from a local slot —
+// the shape of every use of a reference binding (`r = 9`, `q.x = 5` after `var q = var p`).
+// NULL when the root is anything else.
+static IrValue *bor_deref_slot(IrInstr **def, int nvar, const IrPlace *t) {
+    if (!t->valid || t->base_kind != IRPB_DEREF || t->base_id < 0 || t->base_id >= nvar) return NULL;
+    IrInstr *ld = def[t->base_id];
+    if (!ld || ld->op != IR_LOAD || ld->n_operands < 1 || !ld->operands[0]) return NULL;
+    IrValue *slot = ld->operands[0];
+    if (slot->id < 0 || slot->id >= nvar || !def[slot->id] || def[slot->id]->op != IR_ALLOCA) return NULL;
+    return slot;
+}
+
+static IrValue *bor_unique_store_value(IrFunc *f, IrValue *slot);   // fwd
+// Is an access at place `t` made THROUGH the reference held in `slot` — directly, or through a
+// REBORROW of it (`var r2 = var r` stores the pointer loaded from r's slot into r2's)? Such an
+// access is the loan being used, not a rival to it: `var r2 = var r; r2 = 6; r = r +% 1` wrote
+// through r2 inside r's live region and was refused as a conflict with r itself.
+static bool bor_through_carrier(IrFunc *f, IrInstr **def, int nvar, const IrPlace *t, IrValue *slot) {
+    if (!slot) return false;
+    IrValue *x = bor_deref_slot(def, nvar, t);
+    for (int guard = 0; x && guard < 32; guard++) {
+        if (x == slot) return true;
+        IrValue *held = bor_unique_store_value(f, x);           // what x's binding was given
+        IrInstr *hd = (held && held->id >= 0 && held->id < nvar) ? def[held->id] : NULL;
+        if (!hd || hd->op != IR_LOAD || hd->n_operands < 1) return false;
+        IrValue *y = hd->operands[0];                           // ...the pointer another slot held
+        if (!y || y->id < 0 || y->id >= nvar || !def[y->id] || def[y->id]->op != IR_ALLOCA) return false;
+        x = y;
+    }
+    return false;
+}
+
+// ★ A WRITE THROUGH A REFERENCE BINDING HAS A KNOWN TARGET. `r = 7` after `var r = var p.x` stores
+// through a pointer LOADED from r's slot, and `ir_place_of` reads any load as a pointer of unknown
+// provenance (IRPB_DEREF), which "may alias anything". So with two bindings to DISJOINT fields —
+// `var r = var p.x` and `var s = var p.y` — a write through r was reported as conflicting with s's
+// loan on p.y, "conflicting borrows of the same value", although the two places cannot overlap.
+//
+// The binding's slot is written EXACTLY ONCE (its initialiser), so the pointer it holds is the place
+// that initialiser named, and a write through it touches that place — extended by whatever field
+// path the write adds (`q.x = 5` through `var q = var p` is p.x). Only a UNIQUE store qualifies: a
+// slot written twice might point at either referent, and then the conservative DEREF reading
+// stands. Sound in the direction that matters — it can only narrow a DEREF to the one place the
+// slot provably holds, and only when that place has a named root (a local or a parameter).
+static IrPlace bor_place_through_binding(IrFunc *f, IrInstr **def, int nvar, IrValue *ptr) {
+    IrPlace t = ir_place_of(def, nvar, ptr);
+    IrValue *slot = bor_deref_slot(def, nvar, &t);
+    if (!slot) return t;
+    IrValue *held = bor_unique_store_value(f, slot);
+    if (!held || held->id < 0 || held->id >= nvar) return t;
+    IrPlace r = ir_place_of(def, nvar, held);
+    if (!r.valid || r.base_kind == IRPB_DEREF) return t;      // a local's or a parameter's place
+    if (r.nproj + t.nproj > IR_PLACE_MAX_PROJ) return t;          // too deep to name: stay DEREF
+    for (int i = 0; i < t.nproj; i++) r.proj[r.nproj++] = t.proj[i];
+    return r;
+}
+
 static bool bor_roots_local(IrFunc *f, IrInstr **def, int nvar, IrValue *v) {
     for (int guard=0; v && v->id>=0 && v->id<nvar && guard<100000; guard++) {
         IrInstr *d = def[v->id];
@@ -485,7 +542,18 @@ static int bor_succs(IrBlock *b, IrBlock **out) {
     return n;
 }
 
+// A DEFINITION of the carrier ends the old loan's liveness rather than extending it: the store
+// that (re)initialises the slot — `var r = var i` inside a loop body runs again on the next
+// iteration — or the instruction that defines the carrying value. Counting that store as a USE
+// made the loan live across the back edge, so the loop condition's read of `i` sat inside the
+// PREVIOUS iteration's region and `while i < 10 { var r = var i; r = 0; i = i + 1 }` drew E004
+// on a reference that was already dead.
+static bool bor_instr_kills(IrInstr *i, IrValue *val, IrValue *slot) {
+    if (slot && i->op == IR_STORE && i->n_operands >= 1 && i->operands[0] == slot) return true;
+    return val && i->result == val;
+}
 static bool bor_instr_uses(IrInstr *i, IrValue *val, IrValue *slot) {
+    if (bor_instr_kills(i, val, slot)) return false;
     for (int o = 0; o < i->n_operands; o++) {
         IrValue *op = i->operands[o];
         if (!op) continue;
@@ -501,16 +569,22 @@ static void bor_live_sets(IrFunc *f, IrBlock *newb, IrValue *val, IrValue *slot,
     if (L->nb > BOR_MAX_BLOCKS) L->nb = BOR_MAX_BLOCKS;
     for (int i = 0; i < L->nb; i++) { L->reach_use[i] = false; L->from_new[i] = false; }
 
+    // A block decides for itself when its first carrier event is a use (live) or a kill (dead
+    // on entry, whatever follows); only a block with neither inherits from its successors.
+    bool killed[BOR_MAX_BLOCKS];
     for (IrBlock *b = f->blocks; b; b = b->next) {
         if (b->id < 0 || b->id >= L->nb) continue;
-        for (IrInstr *i = b->instrs; i; i = i->next)
-            if (bor_instr_uses(i, val, slot)) { L->reach_use[b->id] = true; break; }
+        killed[b->id] = false;
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (bor_instr_uses(i, val, slot))  { L->reach_use[b->id] = true; break; }
+            if (bor_instr_kills(i, val, slot)) { killed[b->id] = true;       break; }
+        }
     }
     IrBlock *sc[4];
     for (bool ch = true; ch; ) {                       // backward: use reachable from entry
         ch = false;
         for (IrBlock *b = f->blocks; b; b = b->next) {
-            if (b->id < 0 || b->id >= L->nb || L->reach_use[b->id]) continue;
+            if (b->id < 0 || b->id >= L->nb || L->reach_use[b->id] || killed[b->id]) continue;
             int ns = bor_succs(b, sc);
             for (int k = 0; k < ns; k++)
                 if (sc[k]->id >= 0 && sc[k]->id < L->nb && L->reach_use[sc[k]->id]) {
@@ -536,8 +610,10 @@ static void bor_live_sets(IrFunc *f, IrBlock *newb, IrValue *val, IrValue *slot,
 // live; otherwise it is live iff a use is reachable from some successor.
 static bool bor_live_at(IrBlock *b, IrInstr *at, IrValue *val, IrValue *slot, BorLive *L) {
     if (b->id < 0 || b->id >= L->nb || !L->from_new[b->id]) return false;
-    for (IrInstr *i = at->next; i; i = i->next)
+    for (IrInstr *i = at->next; i; i = i->next) {
         if (bor_instr_uses(i, val, slot)) return true;
+        if (bor_instr_kills(i, val, slot)) return false;   // a new loan starts here
+    }
     IrBlock *sc[4]; int ns = bor_succs(b, sc);
     for (int k = 0; k < ns; k++)
         if (sc[k]->id >= 0 && sc[k]->id < L->nb && L->reach_use[sc[k]->id]) return true;
@@ -559,13 +635,41 @@ static bool bor_carrier_used_anywhere(IrFunc *f, IrInstr *create, IrValue *val, 
     return false;
 }
 
+// Is `v` the SLOT of a reference binding — an alloca whose contents are a mutable borrow
+// (`var q = var p`)? Lowering types it `*var (*var T)` with the inner pointer marked borrowed,
+// which a raw `*var T` local is not.
+static bool bor_is_ref_slot(Borrow *B, IrValue *v) {
+    if (!v || v->id < 0 || v->id >= B->nvar || !B->def[v->id]) return false;
+    IrInstr *d = B->def[v->id];
+    IrType  *t = (d->op == IR_ALLOCA) ? d->aux.alloca_ty : NULL;
+    return t && t->kind == IRT_PTR && t->ptr_mut && t->borrowed;
+}
+
 static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
     BorSeq s; bor_linearize(f, &s);
     for (int k=0;k<s.n;k++) {
         IrInstr *ins = s.ins[k];
-        if (!ins->result) continue;
         IrPlace src[8]; int nsrc = 0;
-        if (ins->op == IR_CALL) {
+        // What keeps the loan alive: uses of `carrier` (the borrowing value) or of `slot`.
+        IrValue *carrier = ins->result, *slot = NULL;
+        if (ins->op == IR_STORE && ins->n_operands >= 2 && bor_is_ref_slot(B, ins->operands[0])) {
+            // ★ A BORROW OF A WHOLE PLACE HAS NO ADDRESS INSTRUCTION OF ITS OWN. `var q = var p`
+            // stores p's slot itself, `var r = var x` stores a `var` parameter's pointer, and
+            // `var r2 = var r` stores the pointer r holds — none of them is the field/element
+            // address the branch below recognises, so none created a loan, and `p = P(3, 4)` or
+            // a read of `p.y` while q was still used went unchecked. The loan is created where
+            // the binding is: the store into its slot. Field/element addresses and returned
+            // borrows keep their own branches (they have a creating instruction to key on).
+            IrValue *held = ins->operands[1];
+            IrInstr *hd = (held && held->id >= 0 && held->id < B->nvar) ? B->def[held->id] : NULL;
+            if (hd && (hd->op == IR_FIELD_PTR || hd->op == IR_ELEM_PTR || hd->op == IR_CALL)) continue;
+            IrPlace p = bor_place_through_binding(f, B->def, B->nvar, held);
+            if (!p.valid || p.base_kind == IRPB_DEREF) continue;   // an address we cannot name
+            src[nsrc++] = p;
+            slot = ins->operands[0]; carrier = NULL;
+        } else if (!ins->result) {
+            continue;
+        } else if (ins->op == IR_CALL) {
             IrFunc *callee = bor_find_func(mod, ins->aux.callee);
             if (!callee || !ir_ret_is_borrow(callee)) continue;  // the return must BORROW a parameter
             // Loans on every place passed to a parameter the RETURN may borrow from. The mask
@@ -586,20 +690,23 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
             // a loan would make `a[i] = v` conflict with itself).
             if (!bor_result_slot(&s, k, ins->result)) continue;
             IrPlace p = ir_place_of(B->def, B->nvar, ins->result);
-            if (!p.valid || p.base_kind != IRPB_LOCAL) continue;
+            // A PARAMETER's field is as nameable a place as a local's: `var a = var p.x` inside
+            // `f(p var P)` holds p.x exactly as it would a local's. Keyed on LOCAL only, two live
+            // bindings to the same parameter field created no loan at all and were accepted.
+            if (!p.valid || p.base_kind == IRPB_DEREF) continue;
             src[nsrc++] = p;
         } else continue;
         if (!nsrc) continue;
-        IrValue *slot = bor_result_slot(&s, k, ins->result);
-        if (bor_last_use(&s, k, ins->result, slot) < 0 &&
-            !bor_carrier_used_anywhere(f, ins, ins->result, slot))
+        if (!slot) slot = bor_result_slot(&s, k, ins->result);
+        if (bor_last_use(&s, k, carrier, slot) < 0 &&
+            !bor_carrier_used_anywhere(f, ins, carrier, slot))
             continue;                                 // reference never used ⇒ no live region
 
         // D-36: the region is LIVENESS OVER THE CFG, not the index range (k, last]. Walk every
         // block reachable from the creating one and test each instruction for liveness, so an
         // instruction that follows the creation only across a BACK EDGE is inside the region.
         BorLive live;
-        bor_live_sets(f, bor_block_of(f, ins), ins->result, slot, &live);
+        bor_live_sets(f, bor_block_of(f, ins), carrier, slot, &live);
         for (IrBlock *ob = f->blocks; ob; ob = ob->next) {
             if (ob->id < 0 || ob->id >= live.nb || !live.from_new[ob->id]) continue;
             bool after_creation = (ob != bor_block_of(f, ins));
@@ -608,7 +715,7 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
                     if (other == ins) after_creation = true;
                     continue;
                 }
-                if (!bor_live_at(ob, other, ins->result, slot, &live)) continue;
+                if (!bor_live_at(ob, other, carrier, slot, &live)) continue;
             // A DIRECT WRITE conflicts with a live loan just as a second borrow does — the
             // conflict rule (design §1.4) is over ACCESSES, not over calls. Loans were only
             // ever created and checked at call arguments, so `r = get_ref(var d); d.value = 99`
@@ -617,11 +724,40 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
             // The store that CREATES the carrier (`store ref, <the borrow>`) targets the
             // carrier slot, not the borrowed place, so it cannot self-conflict; and a write
             // THROUGH the reference roots at the carrier for the same reason.
+            //
+            // ★ ...and a write through THIS reference is a USE of the loan, not a rival to it.
+            // The old exemption compared the target's root with the carrier slot, but a write
+            // through the reference stores via a pointer LOADED from that slot, whose place is
+            // a DEREF rooted at the load — never the slot — so the exemption could not fire.
+            // It went unnoticed because the write was always the reference's LAST use, where it
+            // is no longer live; `r = 9; r = r +% 1` refused its own first line.
             if (other->op == IR_STORE && other->n_operands>=1 && other->operands[0]) {
-                IrPlace t = ir_place_of(B->def, B->nvar, other->operands[0]);
+                IrPlace t0 = ir_place_of(B->def, B->nvar, other->operands[0]);
+                if (slot && bor_through_carrier(f, B->def, B->nvar, &t0, slot)) continue;
+                IrPlace t = bor_place_through_binding(f, B->def, B->nvar, other->operands[0]);
                 if (!(slot && t.base_kind==IRPB_LOCAL && t.base_id==slot->id))
                     for (int q=0;q<nsrc;q++)
                         if (ir_place_overlaps(&src[q], &t)) { bor_add(B, other->line, other->col, 4); return; }
+                continue;
+            }
+            // ★ A READ of the borrowed place conflicts too — exclusivity is over ACCESSES, and a
+            // load is one. Only stores and calls were checked, so `var r = var p.x; r = 9;
+            // var t = p.x; r = 10` read the owner under a live mutable reference and was
+            // accepted. (It LOOKED rejected: the E004 came from `r = 9`, which the region then
+            // mistook for a rival to its own loan — one bug hiding another.) Loading the carrier
+            // slot itself, or through the pointer it holds, is the reference being used.
+            if (other->op == IR_LOAD && other->n_operands>=1 && other->operands[0]) {
+                IrPlace t0 = ir_place_of(B->def, B->nvar, other->operands[0]);
+                if (slot && t0.base_kind==IRPB_LOCAL && t0.base_id==slot->id) continue;
+                if (slot && bor_through_carrier(f, B->def, B->nvar, &t0, slot)) continue;
+                IrPlace t = bor_place_through_binding(f, B->def, B->nvar, other->operands[0]);
+                // A read through an UNRESOLVED pointer is not charged. Every way such a pointer can
+                // reach the borrowed place — another reference, a call's returned borrow — was
+                // itself a conflicting access when it was created, and was refused there; charging
+                // the read again would refuse every load through any pointer while a loan lives.
+                if (t.base_kind == IRPB_DEREF) continue;
+                for (int q=0;q<nsrc;q++)
+                    if (ir_place_overlaps(&src[q], &t)) { bor_add(B, other->line, other->col, 4); return; }
                 continue;
             }
             if (other->op != IR_CALL) continue;
@@ -631,6 +767,7 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
                 IrPlace p; bool m;
                 if (!bor_arg_loan(B, oc, a, other->operands[a], &p, &m)) continue;
                 if (slot && other->op==IR_CALL && p.base_kind==IRPB_LOCAL && p.base_id==slot->id) continue; // using the ref itself
+                if (bor_through_carrier(f, B->def, B->nvar, &p, slot)) continue;  // ...or passing it on
                 for (int q=0;q<nsrc;q++)
                     if (ir_place_overlaps(&src[q], &p)) { bor_add(B, other->line, other->col, 4); return; }
             }

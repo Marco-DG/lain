@@ -1,0 +1,13 @@
+// EXPECT: [E017]
+// A function typed `var T` returns a BORROW, and the return must say so: `return var d`.
+// Nothing required it. This was accepted, returned the VALUE 3 where an address belonged, and
+// the caller's first write through the result segfaulted. (`return d.value`, `return a[i]` and
+// `return 5` did the same.) E017 is the call site's rule — a mutable borrow is spelled `var` —
+// applied to the return, which is the call site's dual.
+func f(d var i32) var i32 { return d }
+func main() i32 {
+    var n i32 = 3
+    var x = f(var n)
+    x = 7
+    return n
+}

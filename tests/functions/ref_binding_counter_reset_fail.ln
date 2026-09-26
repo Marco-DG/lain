@@ -1,0 +1,14 @@
+// EXPECT: [E011]
+// A loop counter reset THROUGH A REFERENCE: the loop never ends. The loop rules scan stores to
+// the counter's cell syntactically, so a write through a pointer must count as an opaque writer
+// there (as a call does) — or `i = i + 1` reads as clean progress and the loop is PROVEN to
+// terminate. The raw-pointer form of this was proven terminating and hung before 2026-09-26.
+func main() i32 {
+    var i usize = 0
+    while i < 10 {
+        var r = var i
+        r = 0
+        i = i +% 1
+    }
+    return 0
+}

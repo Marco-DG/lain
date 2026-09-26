@@ -1,6 +1,6 @@
-// The supported way to hand a mutable borrow to the code that needs it: pass it at the call,
-// where it lives for exactly that call. Storing it in a local is [E126]
-// (see direct_var_borrow_fail.ln).
+// Two ways to hand a mutable borrow to the code that needs it: pass it at the call, where it
+// lives for exactly that call, or bind it (`var r = var data.value`, A.3), where it lives until
+// its last use. The owner is untouchable while the binding is live (direct_var_borrow_fail.ln).
 
 type Data {
     value i32
@@ -18,5 +18,8 @@ func main() i32 {
     var data Data
     data.value = 42
     set_to(var data.value)
+    var r = var data.value
+    r = r +% 1
+    set_to(var r)
     return read_data(data)
 }

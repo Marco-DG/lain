@@ -226,6 +226,46 @@ var y = read(data)         // OK: borrow has expired
 \end{laincode}
 \end{example}
 
+\section{Reference bindings}
+\label{sec:own.refbind}
+\index{reference binding}
+\index{var binding!of a borrow}
+
+\pnum
+A declaration \lain{var r = var P}, where \lain{P} is a place (a local, a field path, an
+element, or a \lain{var} parameter), or \lain{var r = f(...)} where \lain{f} returns
+\lain{var T}, binds \lain{r} to a \textbf{mutable borrow} of that place.  Reading \lain{r}
+yields the value at the place; assigning to \lain{r} (or to a field of it) writes the place;
+\lain{var r} passes the borrow on.  \lain{var r2 = var r} is a \textit{reborrow}: uses of
+\lain{r2} are uses of \lain{r}'s loan.
+
+\pnum
+The loan lasts until the binding's last use (\S\ref{sec:own.nll}).  While it is live, any
+other access to an overlapping place --- a read, a write, or a borrow --- violates the
+read-write lock invariant (\S\ref{sec:own.rwlock}) and shall be diagnosed [E004].  Distinct
+fields, and elements at distinct constant indices, are distinct places; elements at indices
+not proven distinct are assumed to overlap.
+
+\pnum
+A binding to storage owned by the function shall not be returned [E010].  A function whose
+return type is \lain{var T} shall return \lain{var P} or a call that itself returns
+\lain{var T} [E017].  A struct field shall not hold a mutable borrow [E126].
+
+\begin{example}
+\begin{laincode}
+var p = P(1, 2)
+var x = var p.x
+var y = var p.y          // OK: p.x and p.y are disjoint
+x = 7
+y = 8
+var t = p.x              // OK: x and y are dead here (NLL)
+
+var q = var p
+p.y = 5                  // error [E004]: q is used below
+q.x = 3
+\end{laincode}
+\end{example}
+
 \section{Two-phase borrows}
 \label{sec:own.two-phase}
 \index{two-phase borrow}

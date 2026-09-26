@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// The accumulator rule bounds `s = s + 1` over 4 iterations by the trip count — valid only if
+// nothing else writes s. `*q = 2147483647` does, through a raw pointer, and the next `s + 1`
+// overflows; it was accepted as provably free of overflow.
+func main() i32 {
+    var s i32 = 0
+    var i usize = 0
+    var q *var i32 = &s
+    while i < 4 {
+        s = s + 1
+        unsafe { *q = 2147483647 }
+        i = i + 1
+    }
+    return s
+}

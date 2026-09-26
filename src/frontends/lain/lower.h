@@ -192,6 +192,21 @@ static IrLocal *ir_env_find(LowerCtx *c, Id *name) {
             strncmp(l->name->name, name->name, (size_t)name->length) == 0) return l;
     return NULL;
 }
+// ★ A REFERENCE BINDING NAMES WHAT ITS SLOT POINTS AT. `var r = var p.x` and `var r = get(var d)`
+// bind r to a BORROW of a copied type, so r's slot holds an ADDRESS (`*var i32`, marked
+// `borrowed` by ir_lower_borrow_binding_type). Only the write path knew that: `r = 9` stored
+// through the pointer, but every READ of r loaded the slot and used the POINTER as the value —
+// `twice(r)` passed an address truncated to i32 (128 instead of 10), `var k = r` copied one
+// (84 instead of 4), `return r +% 1` did arithmetic on it, and `q.x` on a struct binding took a
+// field of the slot and emitted C gcc rejects. A `var` PARAMETER never had the defect because
+// its pointer IS its slot. The binding keeps its slot (borrow.h's loan liveness is keyed on it),
+// and every use goes one level further instead — `ir_lower_addr` yields the referent's address,
+// a read loads from there. This predicate is the one place that says which locals those are:
+// a raw `*var T` local is not borrowed, and a `var` parameter's slot holds the value's type.
+static IrType *ir_ref_binding_ptr(const IrLocal *l) {
+    IrType *sv = (l && l->slot && !l->aggregate && l->slot->type) ? l->slot->type->elem : NULL;
+    return (sv && sv->kind == IRT_PTR && sv->ptr_mut && sv->borrowed && sv->elem) ? sv : NULL;
+}
 static void ir_env_add(LowerCtx *c, Id *name, IrValue *slot, IrValue *param) {
     IrLocal *l = arena_push_aligned(c->a, IrLocal);
     l->name = name; l->slot = slot; l->param = param; l->aggregate = false;
@@ -1119,6 +1134,8 @@ static IrType *ir_struct_of(IrType *t) {
 static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
     if (e->kind == EXPR_IDENTIFIER) {
         IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
+        IrType  *rp = ir_ref_binding_ptr(l);
+        if (rp) return ir_load(c->f, c->cur, l->slot, rp);    // the REFERENT's address
         if (l && l->slot) return l->slot;
         // A binding that is a VALUE with no home slot — a match-arm payload (`case s { Pt(p):
         // ... p.x ... }`) or a by-value parameter — still needs an address when a field is
@@ -1514,6 +1531,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
             if (l && l->param) return l->param;
             if (l && l->aggregate) return l->slot;   // array/slice base pointer, read directly
+            { IrType *rp = ir_ref_binding_ptr(l);    // a reference binding reads its REFERENT
+              if (rp) return ir_load(c->f, c->cur, ir_load(c->f, c->cur, l->slot, rp), rp->elem); }
             if (l && l->slot)  return ir_load(c->f, c->cur, l->slot,
                                               l->slot->type->elem ? l->slot->type->elem : ty);
             // A bare variant (`return NotFound`). resolve.h rewrites the identifier to
@@ -2137,21 +2156,9 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
         case EXPR_MUT: {                                // `var lv`: a mutable borrow
             Expr *inner = e->as.mut_expr.expr;
             IrType *it = inner ? ir_lower_type(c, inner->type) : NULL;
-            // ★ A LOCAL THAT IS ALREADY A BORROW HOLDS THE POINTER — pass it, do not address
-            // it again. `var r = pick_x(var p, var q)` binds r to a RETURNED borrow, so r's
-            // slot has type `**i32`; taking its address for `use_ref(var r)` passed `**i32`
-            // where `*i32` was declared. The pointer is already in the slot, so the borrow is
-            // a LOAD.
-            //
-            // Told apart by the same predicate the store case uses (see "WRITING THROUGH A
-            // BORROW BINDING"): a slot whose value is itself a mutable pointer to a copied
-            // type. A plain `var x i32 = 5` is not that — its slot holds an i32.
-            if (inner && inner->kind==EXPR_IDENTIFIER) {
-                IrLocal *l = ir_env_find(c, inner->as.identifier_expr.id);
-                IrType *sv = (l && l->slot && l->slot->type) ? l->slot->type->elem : NULL;
-                if (sv && sv->kind==IRT_PTR && sv->ptr_mut && ir_mut_by_address(sv->elem))
-                    return ir_load(c->f, c->cur, l->slot, sv);
-            }
+            // A local that is already a borrow (`var r = var p.x`, `var r = pick(var a, var b)`)
+            // holds the pointer; `use_ref(var r)` passes it, not the address of r's slot.
+            // ir_lower_addr does that for every reference binding (ir_ref_binding_ptr).
             // a COPIED type (struct or scalar) must travel as its ADDRESS or the callee's
             // writes are lost; a slice/array/ptr already shares its data, so pass the value.
             if (ir_mut_by_address(it)) return ir_lower_addr(c, inner);
@@ -2553,23 +2560,10 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                   }
               } }
             IrValue *addr = ir_lower_addr(c, s->as.assign_stmt.target);
-            // ★ WRITING THROUGH A BORROW BINDING. `var r = f(var c)` where f returns `var i32`
-            // binds r to a POINTER, so its slot is `**i32` and `r = 42` must store through the
-            // pointer the slot holds, not over it. Without this the assignment overwrote the
-            // borrow itself and the owner never saw the write — the program printed 7 instead
-            // of 42, which is precisely the defect D-38 fixed in the AST-based emitter and
-            // which the IR then reproduced from its own side.
-            //
-            // A plain `var x i32 = 5` is NOT this: its slot holds an i32 and the mode says
-            // mutable BINDING, not borrow. The two are told apart by the same predicate the
-            // binding used — a borrow is a pointer only where the value would otherwise be
-            // copied (ir_mut_by_address).
-            { Type *tt2 = s->as.assign_stmt.target ? s->as.assign_stmt.target->type : NULL;
-              IrType *slotv = addr && addr->type ? addr->type->elem : NULL;
-              if (tt2 && tt2->mode == MODE_MUTABLE && slotv && slotv->kind == IRT_PTR &&
-                  slotv->ptr_mut && ir_mut_by_address(slotv->elem))
-                  addr = ir_load(c->f, c->cur, addr, slotv);
-            }
+            // Writing through a reference binding (`var r = f(var c); r = 42`) stores into the
+            // referent, not over the pointer in r's slot: ir_lower_addr already resolves r to
+            // the address it holds (ir_ref_binding_ptr). Without that the owner never saw the
+            // write — D-38, which the AST emitter fixed first and the IR then reproduced.
             ir_store(c->f, c->cur, addr, ir_lower_expr(c, s->as.assign_stmt.expr));
             if (c->cur->instrs_tail) c->cur->instrs_tail->unchecked = c->unsafe;
             break;

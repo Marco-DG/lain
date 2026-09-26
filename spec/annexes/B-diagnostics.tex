@@ -350,7 +350,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \endlastfoot
 \diagcode{E008} & cannot move a value that is currently borrowed \\[2pt]
 \diagcode{E009} & cannot mutate a field through a raw (shared) pointer --- use a \lain{var} borrow \\[2pt]
-\diagcode{E017} & passing to a \lain{var} parameter requires explicit \lain{var} at the call site \\[2pt]
+\diagcode{E017} & a mutable borrow is spelled \lain{var}: passing to a \lain{var} parameter requires it at the call site, and a function returning \lain{var T} must \lain{return var} a place (or a call returning one) \\[2pt]
 \diagcode{E018} & a function can reach its end without returning a value \\[2pt]
 \diagcode{E019} & use of a partially-initialized value \\[2pt]
 \diagcode{E060} & pointer dereference outside an \lain{unsafe} block \\[2pt]
@@ -374,7 +374,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E088} & a function returns a fixed-size array by value --- return a slice or write through a \lain{var} parameter \\[2pt]
 \diagcode{E089} & a non-terminated value used where a sentinel-terminated type is required \\[2pt]
 \diagcode{E090} & assignment between fixed-length strings of different lengths \\[2pt]
-\diagcode{E126} & a mutable borrow (\lain{var}) stored in a struct field or bound to a local --- a reference lives only for the call that creates it \\[2pt]
+\diagcode{E126} & a mutable borrow (\lain{var}) stored in a struct field --- a field would outlive any loan the borrow checker can bound (a \emph{local} binding, \lain{var r = var p.x}, is admitted and held until its last use) \\[2pt]
 \diagcode{E127} & call to an undeclared function \\[2pt]
 \diagcode{E128} & the receiver has no such member, and no function of that name is in scope for UFCS \\[2pt]
 \diagcode{E129} & \lain{assume} outside an \lain{unsafe} block --- use \lain{assert} to have the fact proven \\[2pt]

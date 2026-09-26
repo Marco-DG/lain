@@ -1,0 +1,9 @@
+// EXPECT: [E010]
+// A reference binding to a LOCAL may not leave the function that owns the local.
+type P { x i32, y i32 }
+func leak() var i32 {
+    var p P = P(1, 2)
+    var r = var p.x
+    return var r
+}
+func main() i32 { return 0 }

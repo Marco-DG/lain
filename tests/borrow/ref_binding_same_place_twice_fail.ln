@@ -1,0 +1,11 @@
+// EXPECT: [E004]
+// Two live mutable references to ONE place. `a[1]` and `a[1]` are two SSA values naming the same
+// element — the constant-index rule says "same element", not "different values, so disjoint".
+func main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var r = var a[1]
+    var s = var a[1]
+    r = 7
+    s = 8
+    return a[1]
+}

@@ -1,0 +1,13 @@
+// EXPECT: [E011]
+// `*q = 0` resets the counter through a raw pointer every iteration, so this never terminates.
+// It was PROVEN terminating (the binary hung): the loop rules treated only a CALL as something
+// that can write an escaped counter with no store to the counter's own cell to see.
+func main() i32 {
+    var i usize = 0
+    var q *var usize = &i
+    while i < 10 {
+        unsafe { *q = 0 }
+        i = i +% 1
+    }
+    return 0
+}

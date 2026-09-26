@@ -1,0 +1,10 @@
+// EXPECT: [E085]
+// The precise half's partner: the same exact update refuses when the value it computes is out of
+// range. n becomes 5 through r, and a has 5 elements.
+func main() i32 {
+    var a i32[5] = [0, 1, 2, 3, 4]
+    var n usize = 4
+    var r = var n
+    r = r + 1
+    return a[n]
+}
