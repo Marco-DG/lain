@@ -731,14 +731,28 @@ Two-phase borrows do **not** permit moves or mutable writes during the reserved 
 Borrows expire at their **last use**, not at the end of the lexical scope. This makes many common patterns valid that a purely scope-based system would reject.
 
 ```lain
-var data = Buffer(0)
+type Buffer { n i32 }
+func read(b Buffer) i32 { return b.n }
+func mutate(var b Buffer) { b.n = b.n +% 1 }
 
-// OK: The shared borrow `read(data)` expires after evaluation.
-// It does not conflict with the mutable borrow `mutate(var data)` inside the loop body.
-while read(data) < 10 {
-    mutate(var data)
+func main() i32 {
+    var data = Buffer(0)
+    var guard i32 = 0
+    // OK: the shared borrow `read(data)` expires after evaluation, so it does not conflict
+    // with the mutable borrow `mutate(var data)` in the loop body.
+    while guard < 10 {
+        if read(data) >= 10 { break }
+        mutate(var data)
+        guard = guard + 1
+    }
+    return data.n              // 10
 }
 ```
+
+The counter is not part of the borrow lesson — it is there because the loop needs a bound the
+compiler can see. `while read(data) < 10` alone is refused for TERMINATION (`E011`): nothing relates
+the call's result to the body's work, which is a separate obligation from the borrow one being
+demonstrated here.
 
 ### 4.6 Caller-Site Annotations
 
