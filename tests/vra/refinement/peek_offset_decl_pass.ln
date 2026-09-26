@@ -1,0 +1,32 @@
+// ★ AN OFFSET DECLARATION IS A RELATION, and the peek-ahead scan is the shape that needs it.
+//
+// `x = y + c` (an ASSIGNMENT) recorded both halves of the equality; `var x = y + c` (a DECLARATION)
+// recorded only `x`'s interval. So a scanner that peeks one byte ahead had no edge from `j` back to
+// `i`, and a guard on `j` bounded nothing else — one fact, two spellings, one of them wired, which
+// is the same asymmetry as the `if`/`while` guard one statement kind up.
+//
+// The wrapping spelling is the idiomatic one (`+%` is how a program is relieved of the overflow
+// obligation), and it is admitted under a side condition the compiler CHECKS: the equality is exact
+// exactly when the sum cannot leave the type, and `i` is at most 4095 here.
+func sink(start u32 < 4097) u32 { return start }
+
+func peek_checked(n u32 < 4097) u32 {
+    var i u32 = 0
+    while i < n {
+        var j u32 = i + 1
+        if j < n { return sink(i + 2) }
+        i = i +% 1
+    }
+    return 0
+}
+
+func peek_wrapping(n u32 < 4097) u32 {
+    var i u32 = 0
+    while i < n {
+        var j u32 = i +% 1
+        if j < n { return sink(i +% 2) }
+        i = i +% 1
+    }
+    return 0
+}
+func main() u32 { return peek_checked(10) +% peek_wrapping(10) }

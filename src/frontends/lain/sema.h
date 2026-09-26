@@ -2326,6 +2326,75 @@ static void walk_stmt(Stmt *s) {
 
                 range_set(sema_ranges, s->as.var_stmt.name, r);
 
+                // ★ AN OFFSET DECLARATION IS A RELATION, and only ASSIGNMENT recorded it. `x = y + c`
+                // stored both halves of the equality (`x - y <= c` and `y - x <= -c`), while
+                // `var x = y + c` stored only `x`'s INTERVAL — so a peek-ahead scanner, which is the
+                // canonical shape
+                //
+                //     var j = i + 1
+                //     if j < n { ... a[i + 2] ... }      // bound on `i` must come through `j`
+                //
+                // had no edge from `j` back to `i`, and the guard on `j` bounded nothing else. One
+                // fact, two spellings, one of them wired: the same asymmetry as the `if`/`while`
+                // guard above, one statement kind down.
+                //
+                // `+`/`-` only. The WRAPPING forms are deliberately excluded: if `y +% c` wraps then
+                // `x < y`, so `y - x <= -c` is false, and recording it would be unsound. (The
+                // wrap-free case is provable but needs the side condition checked here, which is a
+                // separate step — see the plan's 7B.21.)
+                if (sema_ranges && s->as.var_stmt.name && s->as.var_stmt.expr &&
+                    s->as.var_stmt.expr->kind == EXPR_BINARY) {
+                    Expr *ie = s->as.var_stmt.expr;
+                    TokenKind iop = ie->as.binary_expr.op;
+                    Expr *il = ie->as.binary_expr.left, *ir = ie->as.binary_expr.right;
+                    Id *nm = s->as.var_stmt.name;
+                    if (il && ir && il->kind == EXPR_IDENTIFIER && ir->kind == EXPR_LITERAL &&
+                        (iop == TOKEN_PLUS || iop == TOKEN_MINUS)) {
+                        int64_t k = ir->as.literal_expr.value;
+                        if (iop == TOKEN_MINUS) k = -k;
+                        constraint_add(sema_ranges, nm, il->as.identifier_expr.id,  k);
+                        constraint_add(sema_ranges, il->as.identifier_expr.id, nm, -k);
+                    } else if (il && ir && il->kind == EXPR_LITERAL && ir->kind == EXPR_IDENTIFIER &&
+                               iop == TOKEN_PLUS) {
+                        int64_t k = il->as.literal_expr.value;
+                        constraint_add(sema_ranges, nm, ir->as.identifier_expr.id,  k);
+                        constraint_add(sema_ranges, ir->as.identifier_expr.id, nm, -k);
+                    }
+                    // ...and the WRAPPING form, under a side condition the compiler CHECKS. `var j =
+                    // i +% 1` is the idiomatic increment here — `+%` is how a program is relieved of
+                    // the overflow obligation — so excluding it outright leaves the common spelling
+                    // of the common shape unprovable. The equality `j = i + k` is exact exactly when
+                    // the sum cannot leave the type; then, and only then, both halves are recorded.
+                    // When a wrap IS possible, nothing is recorded: the partial direction that
+                    // survives a wrap depends on the sign of `k` and is easy to state wrongly, and a
+                    // missing fact costs precision while a wrong one costs soundness.
+                    else if (il && ir && il->kind == EXPR_IDENTIFIER && ir->kind == EXPR_LITERAL &&
+                             (iop == TOKEN_PLUS_PERCENT || iop == TOKEN_MINUS_PERCENT)) {
+                        int64_t k = ir->as.literal_expr.value;
+                        if (iop == TOKEN_MINUS_PERCENT) k = -k;
+                        long long tlo, thi;
+                        Range yr = sema_eval_range(il, sema_ranges);
+                        // The arithmetic happens in the OPERAND's type, so that is what can wrap.
+                        Type *aty = il->type ? il->type : s->as.var_stmt.type;
+                        bool no_wrap = false;
+                        if (yr.known && aty && type_integer_range(aty, &tlo, &thi) &&
+                            k >= -1000000 && k <= 1000000) {    /* keeps the sums below overflow */
+                            // Clamp to the type before testing: a derived bound often knows only
+                            // ONE side (closing a difference gives an upper bound and leaves the
+                            // lower at INT64_MIN), and the type supplies the other for free — the
+                            // value is of this type, so intersecting with its range cannot widen.
+                            int64_t ymin = yr.min < (int64_t)tlo ? (int64_t)tlo : yr.min;
+                            int64_t ymax = yr.max > (int64_t)thi ? (int64_t)thi : yr.max;
+                            if (ymin <= ymax)
+                                no_wrap = (ymin + k >= (int64_t)tlo) && (ymax + k <= (int64_t)thi);
+                        }
+                        if (no_wrap) {
+                            constraint_add(sema_ranges, nm, il->as.identifier_expr.id,  k);
+                            constraint_add(sema_ranges, il->as.identifier_expr.id, nm, -k);
+                        }
+                    }
+                }
+
                 // Seed a synthetic __len_<name> entry for a LOCAL dynamic-slice
                 // variable, mirroring the __len_PARAM seeding for slice parameters.
                 // This lets the canonical scan `while i < s.len { s[i] }` (and an

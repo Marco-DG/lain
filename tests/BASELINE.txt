@@ -2165,6 +2165,10 @@ at=pure 4
 rc=0
 out=
 at=const 2
+### tests/vra/refinement/peek_offset_decl_pass.ln
+rc=4
+out=
+at=const 6
 ### tests/vra/refinement/refined_alias_range_on_type_pass.ln
 rc=0
 out=

@@ -1,0 +1,20 @@
+// EXPECT: [E012]
+// The companion, and the reason the pass case is not a hole: the recorded relation must DIE when
+// either variable is reassigned. Here `i` moves by 5000 after `j = i +% 1` was recorded, so the
+// guard `j < 50` says nothing about the current `i` — and `sink(i)` is refused.
+//
+// Without invalidation this would prove `i <= 48` about a value that is at least 5000, which is a
+// silent out-of-range argument rather than a wrong number: exactly the shape a mutation-invalidation
+// bug takes. The second control is in peek_offset_decl_pass.ln, where nothing mutates between.
+func sink(k u32 < 100) u32 { return k }
+func probe(n u32 < 4097) u32 {
+    var i u32 = 0
+    while i < n {
+        var j u32 = i +% 1
+        i = i +% 5000
+        if j < 50 { return sink(i) }
+        i = i +% 1
+    }
+    return 0
+}
+func main() u32 { return probe(10) }
