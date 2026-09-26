@@ -465,7 +465,9 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                     } else {
                         parser_error("Expected number or identifier after comparison operator");
                     }
-                    *fctail = expr_list(arena, expr_binary(arena, op, field_expr, rhs));
+                    { Expr *fc = expr_binary(arena, op, field_expr, rhs);
+                      fc->line = parser->line; fc->col = parser->column;
+                      *fctail = expr_list(arena, fc); }
                     fctail = &(*fctail)->next;
                     if (parser_match(TOKEN_KEYWORD_AND)) {
                         parser_advance();
@@ -646,6 +648,7 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
                         parser_error("Expected number or identifier in type alias refinement");
                     }
                     Expr *constraint = expr_binary(arena, op, base_type_expr, rhs);
+                    constraint->line = parser->line; constraint->col = parser->column;
                     *ctail = expr_list(arena, constraint);
                     ctail = &(*ctail)->next;
                     if (parser_match(TOKEN_KEYWORD_AND)) {
@@ -909,6 +912,7 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
                     
                     do {
                         TokenKind op = parser->token.kind;
+                        long cst_line = parser->line, cst_col = parser->column;  // the clause's anchor
                         parser_advance();  // consume operator
                         
                         // Parse the RHS (literal or identifier). A NEGATIVE bound is folded
@@ -978,8 +982,14 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
                             rhs = expr_binary(arena, aop, rhs, term);
                         }
 
-                        // Create binary constraint expression
+                        // Create binary constraint expression. ★ WITH A POSITION: a refinement
+                        // clause is an ordinary expression to every later pass, so a diagnostic about
+                        // it (`a i32[4] >= 0` — `>=` is not defined on an array) reported
+                        // "Ln 0, Col 0" and showed no source line. Same omission as `decl_function`'s
+                        // missing line/col, one construct over; the constraint's own token is the
+                        // anchor a reader needs.
                         Expr *constraint = expr_binary(arena, op, param_expr, rhs);
+                        constraint->line = cst_line; constraint->col = cst_col;
                         *ctail = expr_list(arena, constraint);
                         ctail = &(*ctail)->next;
                         
@@ -1058,6 +1068,7 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
             
             // Create binary constraint expression: result op rhs
             Expr *constraint = expr_binary(arena, op, result_expr, rhs);
+            constraint->line = parser->line; constraint->col = parser->column;
             *rc_tail = expr_list(arena, constraint);
             rc_tail = &(*rc_tail)->next;
             

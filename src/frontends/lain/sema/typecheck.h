@@ -2978,10 +2978,24 @@ void sema_infer_expr(Expr *e) {
                 if (!str_lit_cmp) {
                     const char *what = (is_nominal_aggregate(alt) || is_nominal_aggregate(art))
                                        ? "struct/enum" : "array/slice";
+                    // ★ TELL THE TRUTH ABOUT THE SHAPE IN FRONT OF YOU. `a i32[4] >= 0 and <= 1000`
+                    // reaches here as an ordinary comparison, and "implement a method instead" is
+                    // advice for a different mistake entirely — the programmer is trying to bound the
+                    // ELEMENTS, which the language cannot express. Saying so is worth more than a
+                    // hint that cannot be followed.
+                    bool elem_refine_attempt =
+                        !eqop && (alt && (alt->kind == TYPE_ARRAY || alt->kind == TYPE_SLICE)) &&
+                        e->as.binary_expr.right &&
+                        e->as.binary_expr.right->kind == EXPR_LITERAL;
                     fprintf(stderr, "[E012] Error Ln %li, Col %li: operator '%s' is not "
-                        "defined on %s types%s. Implement a method instead.\n",
+                        "defined on %s types%s.%s\n",
                         (long)e->line, (long)e->col, token_kind_to_str(bop), what,
-                        eqop ? " (compare a slice against a string literal, or write a helper)" : "");
+                        eqop ? " (compare a slice against a string literal, or write a helper)" : "",
+                        elem_refine_attempt
+                          ? "\n       A refinement here would bound the ARRAY, and there is no element"
+                            "\n       refinement: write the bound on the element TYPE (`a u8[64]`, or a"
+                            "\n       refined alias) or check the values where they are produced."
+                          : " Implement a method instead.");
                     diagnostic_show_line(e->line, e->col);
                     exit(1);
                 }
