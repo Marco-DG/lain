@@ -1,0 +1,27 @@
+// EXPECT: [E002]
+// A generic body that DUPLICATES its argument is fine at i32 and a double move at a linear T.
+// `Pair(T, x, x)` loads x twice before either operand escapes, so the escape guard (there for
+// the `mov` lowering) dropped the second one: accepted, and the concrete form of this program
+// double-freed under ASan.
+type Resource {
+    mov ptr *i32
+}
+func drop(mov {ptr} Resource) {
+}
+type Pair(T type) {
+    mov a T
+    mov b T
+}
+func dup(T type, mov x T) Pair(T) {
+    return Pair(T, x, x)
+}
+func split(mov {a, b} Pair(Resource)) {
+    drop(mov a)
+    drop(mov b)
+}
+func main() i32 {
+    var x i32 = 0
+    var p = dup(Resource, Resource(&x))
+    split(mov p)
+    return 0
+}

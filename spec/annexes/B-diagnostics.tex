@@ -150,9 +150,13 @@ Diagnostic codes are divided into the following ranges:
 
 \diagcode{E012}
   & \S\,\ref{sec:interop.pointers}
-  & \textit{pointer cast outside unsafe block} ---
-    Issued when a pointer-to-pointer or integer-to-pointer cast occurs
-    outside an \lain{unsafe} block.
+  & \textit{type or constraint violation} ---
+    Issued when a value does not have the type its context requires (an
+    argument, a constructor field, a return, an operand), when a refinement
+    at a call site cannot be proven, and when a pointer-to-pointer or
+    integer-to-pointer cast occurs outside an \lain{unsafe} block.  The
+    message names which; a test that expects \diagcode{E012} should say which
+    it means, since the code alone does not.
     \\[4pt]
 
 \diagcode{E013}

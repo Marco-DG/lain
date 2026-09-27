@@ -1,0 +1,17 @@
+// EXPECT: [E003]
+// PARAMETRIC LINEARITY, the leak half: `Box(T)` is linear iff T is. Instantiated at a linear T
+// the box carries the obligation of its content, whether or not its field is spelled `mov` —
+// linearity is a property of the instantiated TYPE, which monomorphisation makes concrete.
+type Resource {
+    mov ptr *i32
+}
+func drop(mov {ptr} Resource) {
+}
+type Box(T type) {
+    v T
+}
+func main() i32 {
+    var x i32 = 0
+    var b = Box(Resource, Resource(&x))
+    return 0
+}

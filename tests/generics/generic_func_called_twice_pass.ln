@@ -1,0 +1,13 @@
+// A generic function called TWICE at the same type argument, each result bound without an
+// annotation. The second call reused the instance under the name its declaration had since
+// been qualified to (`mod_ident_i32`), which the symbol table does not know — so its type
+// inferred to nothing and `b` was later "undeclared" (E106). It never worked; the corpus only
+// ever called each instantiation once.
+func ident(T type, x T) T { return x }
+func main() i32 {
+    var a = ident(i32, 3)
+    var b = ident(i32, 4)
+    var c = ident(5)
+    if a +% b +% c == 12 { return 0 }
+    return 1
+}

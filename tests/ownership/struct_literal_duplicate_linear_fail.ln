@@ -1,0 +1,19 @@
+// EXPECT: [E002]
+// `Two(x, x)` puts ONE linear value into TWO owning fields. Both operands are loaded before
+// either escapes, so neither load saw a consumed slot and the second escape was silently
+// dropped: accepted, and with a malloc'd pointer the program double-freed (ASan). `Two(x, mov
+// x)` was the same hole with the other spelling.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+type Two { mov a Res, mov b Res }
+func split(mov {a, b} Two) {
+    rfree(mov a)
+    rfree(mov b)
+}
+func main() i32 {
+    var n i32 = 0
+    var x = Res(&n)
+    var t = Two(x, x)
+    split(mov t)
+    return 0
+}

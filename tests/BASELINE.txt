@@ -471,11 +471,30 @@ rc=0
 out=Running on Linux
 out=Done
 ty=Slice_u8 scalar
+### tests/generics/generic_box_linear_consumed_pass.ln
+rc=0
+out=
+ty=Box_Resource struct
+ty=Resource struct
+### tests/generics/generic_box_plain_is_free_pass.ln
+rc=10
+out=
+ty=Box_i32 struct
 ### tests/generics/generic_combinator_pass.ln
 rc=0
 out=
 at=const 4
 ty=Option_i32 struct
+### tests/generics/generic_destruct_param_pass.ln
+rc=0
+out=
+at=const 2
+ty=Box_i32 struct
+### tests/generics/generic_dup_plain_pass.ln
+rc=6
+out=
+at=const 2
+ty=Pair_i32 struct
 ### tests/generics/generic_enum_option_pass.ln
 rc=0
 out=
@@ -486,6 +505,10 @@ rc=0
 out=
 at=const 2
 ty=Result_i32_i32 struct
+### tests/generics/generic_func_called_twice_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/generics/generic_func_explicit_pass.ln
 rc=0
 out=
@@ -494,6 +517,10 @@ at=const 4
 rc=0
 out=
 at=const 4
+### tests/generics/generic_mov_param_consumes_pass.ln
+rc=0
+out=
+ty=Resource struct
 ### tests/generics/generic_nested_pass.ln
 rc=0
 out=
@@ -937,6 +964,11 @@ out=
 at=access 4
 at=nonnull 2
 ty=Slice_i32 scalar
+### tests/ownership/linear_field_copy_out_rest_pass.ln
+rc=0
+out=
+ty=Res struct
+ty=Two struct
 ### tests/ownership/loop_reassign_consume_pass.ln
 rc=134
 out=

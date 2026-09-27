@@ -1,0 +1,15 @@
+// A destructuring parameter in a GENERIC function, explicit and inferred. The instance DROPPED
+// it (only DECL_VARIABLE parameters were carried over), so `unbox` counted zero value
+// arguments and both calls were refused with E124.
+type Box(T type) {
+    v T
+}
+func unbox(T type, {v} Box(T)) T {
+    return v
+}
+func main() i32 {
+    var b = Box(i32, 7)
+    var c = Box(i32, 1)
+    if unbox(i32, b) +% unbox(c) == 8 { return 0 }
+    return 1
+}

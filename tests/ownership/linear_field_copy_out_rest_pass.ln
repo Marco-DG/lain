@@ -1,0 +1,14 @@
+// The companion: after copying `t.a` out, the rest of t is still t's to consume. The obligation
+// is per leaf, so this is discharged and not a leak.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+type Two { mov a Res, mov b Res }
+func main() i32 {
+    var n i32 = 0
+    var m i32 = 0
+    var t = Two(Res(&n), Res(&m))
+    var z = t.a
+    rfree(mov z)
+    rfree(mov t.b)
+    return 0
+}

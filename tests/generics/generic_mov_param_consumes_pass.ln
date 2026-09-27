@@ -1,0 +1,18 @@
+// A generic `mov x T` parameter OWNS its argument in every instance. Substitution replaced `T`
+// with the concrete type and DROPPED the use's mode, so the instance's parameter became a SHARED
+// borrow: the caller built a temporary to lend, the instance never owned what it consumed, and
+// this correct program was refused with E003 — in the CALLER.
+type Resource {
+    mov ptr *i32
+}
+func drop(mov {ptr} Resource) {
+}
+func sink(T type, mov x T) {
+    drop(mov x)
+}
+func main() i32 {
+    var x i32 = 0
+    var r = Resource(&x)
+    sink(Resource, mov r)
+    return 0
+}

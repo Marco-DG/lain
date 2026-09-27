@@ -1,0 +1,21 @@
+// EXPECT: [E002]
+// `var z = t.a` copies a LINEAR field out, which moves it — nothing recorded that, so consuming
+// z and then t released t.a twice (ASan double-free, accepted). The escape now consumes the
+// loaded place's leaves: `mov t` is a second move of t.a. Consuming the REST (`mov t.b`) is
+// fine, and ref: tests/ownership/linear_field_copy_out_rest_pass.ln.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+type Two { mov a Res, mov b Res }
+func split(mov {a, b} Two) {
+    rfree(mov a)
+    rfree(mov b)
+}
+func main() i32 {
+    var n i32 = 0
+    var m i32 = 0
+    var t = Two(Res(&n), Res(&m))
+    var z = t.a
+    rfree(mov z)
+    split(mov t)
+    return 0
+}

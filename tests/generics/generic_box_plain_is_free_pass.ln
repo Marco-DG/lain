@@ -1,0 +1,11 @@
+// PARAMETRIC LINEARITY, the other instantiation: `Box(i32)` is NOT linear even though the
+// field is declared `mov v T` — the mode is the field's, the obligation is T's. It may be copied
+// and dropped.
+type Box(T type) {
+    mov v T
+}
+func main() i32 {
+    var b = Box(i32, 5)
+    var c = b
+    return c.v +% b.v
+}

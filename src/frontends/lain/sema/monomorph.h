@@ -209,6 +209,41 @@ static char *mono_dup(const char *s, size_t n) {
     return p;
 }
 
+// ★ A PARAMETER'S OR RETURN'S MODE BELONGS TO THE USE, NOT TO THE TYPE ARGUMENT. `mov x T` is a
+// type parameter carrying MODE_OWNED; substituting returned the concrete type as-is, at the
+// default mode, so the instance's parameter became a SHARED borrow. The caller's
+// `sink(Resource, mov r)` then built a temporary to lend, the instance never owned what it
+// consumed, and a correct program was refused with E003 — in the CALLER. `x var T` lost its
+// write-back the same way (refused with E009), and a `var T` return its borrow.
+//
+// Deliberately NOT applied to struct FIELDS: there the obligation is T's own (`Box(T)` is linear
+// iff T is), and a `mov v T` field is what permits a box to HOLD a linear T — not a request that
+// `Box(i32)` be linear.
+static Type *mono_subst_keep_mode(Type *t, SubstCtx *ctx) {
+    if (!t) return t;
+    OwnershipMode m0 = t->mode;
+    Type *r = mono_subst_type(t, ctx);
+    if (r && m0 != MODE_SHARED && r->mode != m0) {
+        Type *m = arena_push_aligned(sema_arena, Type);
+        *m = *r; m->mode = m0;
+        return m;
+    }
+    return r;
+}
+
+// ★ A PARAMETER'S TYPE LIVES IN ONE OF TWO PLACES. A destructuring parameter (`mov {v} Box(T)`)
+// is a DECL_DESTRUCT, not a DECL_VARIABLE, and every loop in this file asked for the variable
+// kind alone. So its type was never resolved (`func open(mov {v} Box(i32))` kept the GENERIC `Box`
+// and emitted C gcc rejects), never substituted, and — in a generic function's instance — the
+// parameter was DROPPED outright, so `unbox(T type, {v} Box(T))` counted zero value arguments.
+// One accessor, used wherever a parameter's type is read or rewritten.
+static Type **mono_param_type_slot(Decl *d) {
+    if (!d) return NULL;
+    if (d->kind == DECL_VARIABLE) return &d->as.variable_decl.type;
+    if (d->kind == DECL_DESTRUCT) return &d->as.destruct_decl.type;
+    return NULL;
+}
+
 // Build a specialized function instance: clone the template, drop the type
 // parameters, substitute the type-param names → concrete types in the remaining
 // parameter types, the return type, and the body; rename to inst_id.
@@ -217,16 +252,17 @@ static Decl *mono_instantiate_function(Decl *tmpl, SubstCtx *ctx, Id *inst_id) {
     inst->as.function_decl.name = inst_id;
     DeclList *newp = NULL, *nt = NULL;
     for (DeclList *p = inst->as.function_decl.params; p; p = p->next) {
-        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
-        Type *pt = p->decl->as.variable_decl.type;
+        Type **slot = mono_param_type_slot(p->decl);
+        if (!slot) continue;
+        Type *pt = *slot;
         if (pt && pt->kind == TYPE_META) continue;            // drop the type parameter
-        p->decl->as.variable_decl.type = mono_subst_type(pt, ctx);
+        *slot = mono_subst_keep_mode(pt, ctx);
         DeclList *node = decl_list(sema_arena, p->decl);
         if (!newp) newp = node; else nt->next = node;
         nt = node;
     }
     inst->as.function_decl.params = newp;
-    inst->as.function_decl.return_type = mono_subst_type(inst->as.function_decl.return_type, ctx);
+    inst->as.function_decl.return_type = mono_subst_keep_mode(inst->as.function_decl.return_type, ctx);
     for (StmtList *b = inst->as.function_decl.body; b; b = b->next) mono_subst_stmt(b->stmt, ctx);
     return inst;
 }
@@ -450,9 +486,10 @@ static Type *mono_resolve_type_apps(Type *t) {
 // Resolve type-applications across a function's signature (param + return types).
 static void mono_resolve_signature(Decl *d) {
     if (!d || (d->kind != DECL_FUNCTION)) return;
-    for (DeclList *p = d->as.function_decl.params; p; p = p->next)
-        if (p->decl && p->decl->kind == DECL_VARIABLE)
-            p->decl->as.variable_decl.type = mono_resolve_type_apps(p->decl->as.variable_decl.type);
+    for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
+        Type **slot = mono_param_type_slot(p->decl);
+        if (slot) *slot = mono_resolve_type_apps(*slot);
+    }
     d->as.function_decl.return_type = mono_resolve_type_apps(d->as.function_decl.return_type);
 }
 
@@ -592,9 +629,12 @@ static bool sema_monomorphize_call(Expr *call) {
     Id   *tp_names[MONO_MAX_TPARAMS]; int ntp = 0;
     DeclList *vparams[64]; int nvp = 0;
     for (DeclList *p = tmpl->as.function_decl.params; p; p = p->next) {
-        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
-        Type *pt = p->decl->as.variable_decl.type;
-        if (pt && pt->kind == TYPE_META) { if (ntp < MONO_MAX_TPARAMS) tp_names[ntp++] = p->decl->as.variable_decl.name; }
+        Type **slot = mono_param_type_slot(p->decl);
+        if (!slot) continue;
+        Type *pt = *slot;
+        if (pt && pt->kind == TYPE_META && p->decl->kind == DECL_VARIABLE) {
+            if (ntp < MONO_MAX_TPARAMS) tp_names[ntp++] = p->decl->as.variable_decl.name;
+        }
         else if (nvp < 64) vparams[nvp++] = p;
     }
 
@@ -634,7 +674,7 @@ static bool sema_monomorphize_call(Expr *call) {
                 Type *ft = fnptr_type_of_decl(a->expr->decl);
                 if (ft) argt = ft;
             }
-            mono_unify(vparams[i]->decl->as.variable_decl.type, argt, &ctx, tp_names, ntp);
+            mono_unify(*mono_param_type_slot(vparams[i]->decl), argt, &ctx, tp_names, ntp);
             ExprList *node = arena_push(sema_arena, ExprList);
             node->expr = a->expr; node->next = NULL;
             if (!new_args) new_args = node; else na_tail->next = node;
@@ -675,7 +715,14 @@ static bool sema_monomorphize_call(Expr *call) {
     Decl *inst = existing ? existing->decl : NULL;
     Id *inst_id;
     if (existing) {
-        inst_id = inst->as.function_decl.name;
+        // ★ THE SYMBOL IS KEYED BY THE RAW NAME, so the rewritten call must carry the raw name.
+        // This used the instance DECL's name, which by the second call has been qualified to its
+        // C name (`mod_ident_i32`) — a name the symbol table does not know — so the call's type
+        // inferred to nothing, and `var b = ident(i32, 4)` after `var a = ident(i32, 3)` left
+        // `b` without a type and later "undeclared" (E106). Calling a generic function twice at
+        // the same type argument, with an unannotated binding, never worked.
+        char *raw2 = mono_dup(rawbuf, strlen(rawbuf));
+        inst_id = id(sema_arena, (isize)strlen(raw2), raw2);
     } else {
         char *raw = mono_dup(rawbuf, strlen(rawbuf));
         inst_id = id(sema_arena, (isize)strlen(raw), raw);

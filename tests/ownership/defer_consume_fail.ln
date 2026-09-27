@@ -1,6 +1,11 @@
-// EXPECT: [E012]
+// EXPECT: [E003]
 // Phase 4 Test: No defer, no consume — FAIL
 // Linear variable (mov field) without any consumption should fail.
+//
+// Until 2026-09-27 this test asserted [E012] and built the value as `Resource(0)`: an integer
+// passed to a POINTER field, which is refused for that reason first. So it locked a type error
+// and never reached the leak it names. A code-only oracle cannot tell the difference; the value is
+// now built from a real address, and the refusal is the leak.
 
 type Resource {
     mov ptr *i32
@@ -11,7 +16,8 @@ func drop(mov {ptr} Resource) {
 }
 
 func main() i32 {
-    var r = Resource(0)
+    var x i32 = 0
+    var r = Resource(&x)
     // r is linear (has mov field) but never consumed
     // ERROR: linear variable not consumed before return
     return 0

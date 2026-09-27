@@ -1,0 +1,12 @@
+// The same generic body at a non-linear T: duplicating an i32 is a copy.
+type Pair(T type) {
+    a T
+    b T
+}
+func dup(T type, x T) Pair(T) {
+    return Pair(T, x, x)
+}
+func main() i32 {
+    var p = dup(i32, 3)
+    return p.a +% p.b
+}

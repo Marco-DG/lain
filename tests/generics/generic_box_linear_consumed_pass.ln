@@ -1,0 +1,21 @@
+// PARAMETRIC LINEARITY, the discharge half: a linear `Box(Resource)` taken apart by a
+// destructuring parameter. That spelling used to emit C gcc rejects: the parameter's type
+// application was never resolved (monomorphisation read only DECL_VARIABLE parameters), so
+// `open` took the GENERIC `Box`, whose field is `void*`.
+type Resource {
+    mov ptr *i32
+}
+func drop(mov {ptr} Resource) {
+}
+type Box(T type) {
+    mov v T
+}
+func open(mov {v} Box(Resource)) {
+    drop(mov v)
+}
+func main() i32 {
+    var x i32 = 0
+    var b = Box(Resource, Resource(&x))
+    open(mov b)
+    return 0
+}

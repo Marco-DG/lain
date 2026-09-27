@@ -514,7 +514,7 @@ void sema_resolve_stmt(Stmt *s) {
     if (rhs) {
       sema_resolve_expr(rhs);
       sema_infer_expr(rhs);
-      // D-30: a mutable borrow may not be STORED IN A LOCAL either. E126 rejected it as a
+      // HISTORY (superseded by A.3, below) — D-30: a mutable borrow may not be STORED IN A LOCAL either. E126 rejected it as a
       // struct FIELD; the same construct as a local binding was accepted and emitted C that
       // does not compile — `var r = var a` gives `P r = &(a);`, an "invalid initializer".
       // The scalar case was worse because it was SILENT: `var ref = var d.value` emits

@@ -3041,9 +3041,18 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
                       && (fn->as.function_decl.effects_bound & EFFECT_DIVERGE));
     cc.fdecl = fn;      // for callee-side return-ensures asserts
     cc.f = f; cc.cur = f->entry;
+    // ★ THE POSITION CURSOR IS GLOBAL, so it must be re-anchored per function. Instructions take
+    // their line from `ir_cur_line`, which only statements and expressions advance — so the
+    // parameter spills at the top of a function inherited whatever the PREVIOUSLY lowered
+    // function left there. `func ignore(T type, mov x T) { }` instantiated for a linear T
+    // reported its unconsumed `x` (E003) at `return 0` in main, a line of a different function;
+    // the concrete spelling had no position at all. The function's header is where it starts,
+    // and each parameter's own declaration is where an obligation on it originates.
+    if (fn->line) { ir_cur_line = fn->line; ir_cur_col = fn->col; }
     f->ret_type = ir_lower_borrow_binding_type(&cc, fn->as.function_decl.return_type);
     for (DeclList *p = fn->as.function_decl.params; p; p = p->next) {
         if (!p->decl) continue;
+        if (p->decl->line) { ir_cur_line = p->decl->line; ir_cur_col = p->decl->col; }
         // A DESTRUCTURING parameter — `close_file(mov {handle} File)` — is one parameter that
         // binds field names directly. It was dropped ENTIRELY: the function lowered with no
         // parameters at all while its call sites still passed an argument, so the IR

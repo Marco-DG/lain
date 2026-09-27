@@ -1,0 +1,16 @@
+// EXPECT: [E003]
+// ...and an instance that does NOT consume its owned parameter leaks it. The report is at the
+// parameter `x` (line 10), not at whatever line the previously lowered function left in the
+// position cursor — it was `return 0` in main.
+type Resource {
+    mov ptr *i32
+}
+func drop(mov {ptr} Resource) {
+}
+func ignore(T type, mov x T) {
+}
+func main() i32 {
+    var x i32 = 0
+    ignore(Resource, Resource(&x))
+    return 0
+}

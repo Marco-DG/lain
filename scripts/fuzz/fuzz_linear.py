@@ -39,7 +39,26 @@ func tfree(mov {a, b} Two) effects io {
         libc_free(mov a as *void)
         libc_free(mov b as *void)
     }
-}"""
+}
+type Box(T type) { mov v T }
+type Pair2(T type) { mov a T, mov b T }
+func unbox(T type, mov {v} Box(T)) T { return mov v }
+func gpass(T type, mov x T) T { return mov x }
+func gsink(T type, mov x T) effects io { rfree(mov x) }
+func gsplit(T type, mov {a, b} Pair2(T)) effects io {
+    rfree(mov a)
+    rfree(mov b)
+}
+func gdup(T type, mov x T) Pair2(T) { return Pair2(T, x, x) }
+func gforget(T type, mov x T) { }"""
+# ★ GENERIC INSTANTIATION (added 2026-09-27, the gate for parametric linearity, plan 7C.1). The
+# templates above are checked only where they are instantiated — monomorphisation — so the same
+# `Box(T)` must be linear at `Res` and free at `u8`, and a generic body that duplicates or
+# forgets its argument must be refused exactly at the linear instantiation. Before this, the
+# generator could not reach a single generic program, and three holes lived there: a `mov x T`
+# parameter lost its mode in the instance (a correct program refused in the CALLER), a
+# destructuring parameter of a generic type emitted broken C, and `Pair2(T, x, x)` duplicated a
+# resource (double free, accepted).
 
 class Gen:
     def __init__(self, rng):
@@ -111,6 +130,32 @@ class Gen:
         self.emit(f"var {t} = tmake()")
         self.emit(f"tfree(mov {t})")
 
+    # generic instantiation at the LINEAR type: box it, pass it through, take it apart.
+    def generic_life(self):
+        k = self.rng.random()
+        if k < 0.35:
+            b, r = f"bx{self.u()}", f"gr{self.u()}"
+            self.emit(f"var {b} = Box(Res, rmake())")
+            self.emit(f"var {r} = unbox(Res, mov {b})")
+            if self.rng.random() < 0.5:
+                self.emit(f"var t{self.u()} = rtouch({r})")
+            self.emit(f"gsink(Res, mov {r})" if self.rng.random() < 0.5 else f"rfree(mov {r})")
+        elif k < 0.65:
+            p = f"gp{self.u()}"
+            self.emit(f"var {p} = Pair2(Res, rmake(), rmake())")
+            self.emit(f"gsplit(Res, mov {p})")
+        else:
+            r = f"gq{self.u()}"
+            self.emit(f"var {r} = gpass(Res, rmake())")
+            self.emit(f"gsink(Res, mov {r})")
+
+    # ...and at a NON-linear type the same templates copy freely: `Box(u8)` is not linear.
+    def generic_plain(self):
+        a, b = f"bu{self.u()}", f"bv{self.u()}"
+        self.emit(f"var {a} = Box(u8, {self.rng.randint(0, 9)})")
+        self.emit(f"var {b} = {a}")
+        self.emit(f"var t{self.u()} = {a}.v +% {b}.v")
+
     # move-chain: move an owned ptr into a second var, consume the second.
     def move_chain(self):
         a = f"a{self.u()}"
@@ -131,10 +176,14 @@ def build_valid(g):
             g.loop_scoped()
         elif pick < 0.76:
             g.array_life()
-        elif pick < 0.88:
+        elif pick < 0.84:
             g.two_field_life()
-        else:
+        elif pick < 0.90:
             g.move_chain()
+        elif pick < 0.97:
+            g.generic_life()
+        else:
+            g.generic_plain()
 
 def gen_accept():
     g = Gen(rng)
@@ -146,7 +195,8 @@ def gen_accept():
 def gen_reject():
     kind = rng.choice(["leak", "double", "uaf", "loop_move", "defer_double",
                        "unbalanced", "cond_double", "struct_double",
-                       "array_partial", "array_double", "nested_partial"])
+                       "array_partial", "array_double", "nested_partial",
+                       "generic_leak", "generic_dup", "generic_forget", "generic_uaf"])
     body = ["    var flag i32 = 1"]
     if kind == "leak":
         body.append("    mov r *u8 = acquire()")            # never consumed -> E003
@@ -181,6 +231,15 @@ def gen_reject():
         # in silence. Two linear fields is the minimum shape that can tell the difference.
         body += ["    var tw Two[1] = [tmake()]",
                  "    unsafe { libc_free(mov tw[0].a as *void) }"]   # E003 — .b leaks
+    elif kind == "generic_leak":
+        body += ["    var bx = Box(Res, rmake())"]                           # E003
+    elif kind == "generic_dup":
+        body += ["    var p = gdup(Res, rmake())", "    gsplit(Res, mov p)"]  # E002 in gdup
+    elif kind == "generic_forget":
+        body += ["    gforget(Res, rmake())"]                               # E003 in gforget
+    elif kind == "generic_uaf":
+        body += ["    var r = rmake()", "    gsink(Res, mov r)",
+                 "    var t = rtouch(r)"]                                   # E001
     else:  # loop_move: consume an outer-scope resource inside a loop
         body += ["    mov r *u8 = acquire()", "    var i usize = 0",
                  "    while i < 3 decreasing 3 - i {", "        release(mov r)",
