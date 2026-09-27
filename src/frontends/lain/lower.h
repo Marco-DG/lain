@@ -2142,7 +2142,13 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             IrValue *v = ir_lower_expr(c, src);
             if (src && src->kind==EXPR_IDENTIFIER) {
                 IrLocal *l = ir_env_find(c, src->as.identifier_expr.id);
-                if (l && l->slot) ir_consume(c->f, c->cur, l->slot);   // slot is now moved-from
+                // `mov r` on a REFERENCE BINDING moves what r refers to — the consume must name
+                // that place, not r's slot. Naming the slot marked the binding "moved" while the
+                // owner stayed live, so `var r = var t.a; rfree(mov r); split(mov t)` freed t.a
+                // twice. (The linearity pass then refuses the move itself: r is a borrow, E020.)
+                IrType *rp = ir_ref_binding_ptr(l);
+                if (rp) ir_consume(c->f, c->cur, ir_load(c->f, c->cur, l->slot, rp));
+                else if (l && l->slot) ir_consume(c->f, c->cur, l->slot);   // slot is now moved-from
             } else if (src && (src->kind==EXPR_MEMBER || src->kind==EXPR_INDEX)) {
                 // `mov r.handle` consumes a FIELD, and emitting nothing for it lost the fact
                 // entirely — the struct then looked unconsumed at every return. A move

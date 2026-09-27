@@ -1,0 +1,14 @@
+// EXPECT: [E021]
+// Assigning over a linear value that still holds a resource loses it. The store re-initialised
+// the place and nothing asked what it held: accepted, and LeakSanitizer reported the first
+// resource. Consume it first (see overwrite_after_move_pass.ln).
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+func main() i32 {
+    var n i32 = 0
+    var m i32 = 0
+    var x = Res(&n)
+    x = Res(&m)
+    rfree(mov x)
+    return 0
+}

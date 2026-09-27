@@ -1,3 +1,9 @@
+### tests/borrow/ref_binding_linear_read_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
+ty=Res struct
 ### tests/borrow/ret_borrow_in_truthful_pass.ln
 rc=0
 out=
@@ -471,6 +477,15 @@ rc=0
 out=Running on Linux
 out=Done
 ty=Slice_u8 scalar
+### tests/generics/generic_arg_spelling_pass.ln
+rc=0
+out=
+at=const 2
+at=nonnull 2
+at=pure 2
+ty=Box_i32 struct
+ty=Box_u64 struct
+ty=Option_i32 struct
 ### tests/generics/generic_box_linear_consumed_pass.ln
 rc=0
 out=
@@ -533,6 +548,11 @@ rc=0
 out=
 at=const 4
 ty=Option_i32 struct
+### tests/generics/generic_return_unannotated_pass.ln
+rc=0
+out=
+at=const 2
+ty=Option_i32 struct
 ### tests/generics/generic_std_option_pass.ln
 rc=0
 out=
@@ -554,6 +574,14 @@ out=
 at=nonnull 2
 at=pure 2
 ty=Pair_i32 struct
+### tests/generics/generic_type_alias_pass.ln
+rc=0
+out=
+at=const 2
+at=nonnull 2
+at=pure 2
+ty=Option_i32 struct
+ty=Pair_u8 struct
 ### tests/ir/adt_sum1.ln
 rc=0
 out=
@@ -1022,6 +1050,10 @@ out=
 at=nonnull 4
 at=pure 2
 ty=Lexer struct
+### tests/ownership/overwrite_after_move_pass.ln
+rc=0
+out=
+ty=Res struct
 ### tests/ownership/owner_reassign_after_release_pass.ln
 rc=99
 out=

@@ -149,6 +149,22 @@ class Gen:
             self.emit(f"var {r} = gpass(Res, rmake())")
             self.emit(f"gsink(Res, mov {r})")
 
+    # BORROWS of a resource (added 2026-09-27): a reference binding read and released through
+    # its owner, and a resource re-acquired only after it was consumed. Both must stay clean;
+    # the reject stream carries their violating twins (E020 move-out, E021 overwrite).
+    def borrow_life(self):
+        x, r = f"bx{self.u()}", f"br{self.u()}"
+        if self.rng.random() < 0.5:
+            self.emit(f"var {x} = rmake()")
+            self.emit(f"var {r} = var {x}")
+            self.emit(f"var t{self.u()} = rtouch({r})")
+            self.emit(f"rfree(mov {x})")
+        else:
+            self.emit(f"var {x} = rmake()")
+            self.emit(f"rfree(mov {x})")
+            self.emit(f"{x} = rmake()")
+            self.emit(f"rfree(mov {x})")
+
     # ...and at a NON-linear type the same templates copy freely: `Box(u8)` is not linear.
     def generic_plain(self):
         a, b = f"bu{self.u()}", f"bv{self.u()}"
@@ -180,10 +196,12 @@ def build_valid(g):
             g.two_field_life()
         elif pick < 0.90:
             g.move_chain()
-        elif pick < 0.97:
+        elif pick < 0.95:
             g.generic_life()
-        else:
+        elif pick < 0.97:
             g.generic_plain()
+        else:
+            g.borrow_life()
 
 def gen_accept():
     g = Gen(rng)
@@ -196,8 +214,10 @@ def gen_reject():
     kind = rng.choice(["leak", "double", "uaf", "loop_move", "defer_double",
                        "unbalanced", "cond_double", "struct_double",
                        "array_partial", "array_double", "nested_partial",
-                       "generic_leak", "generic_dup", "generic_forget", "generic_uaf"])
+                       "generic_leak", "generic_dup", "generic_forget", "generic_uaf",
+                       "move_out_param", "copy_out_ref", "overwrite_live", "overwrite_param"])
     body = ["    var flag i32 = 1"]
+    extra = ""
     if kind == "leak":
         body.append("    mov r *u8 = acquire()")            # never consumed -> E003
         if rng.random() < 0.5:
@@ -231,6 +251,17 @@ def gen_reject():
         # in silence. Two linear fields is the minimum shape that can tell the difference.
         body += ["    var tw Two[1] = [tmake()]",
                  "    unsafe { libc_free(mov tw[0].a as *void) }"]   # E003 — .b leaks
+    elif kind == "move_out_param":
+        extra = "func vsteal(x var Res) effects io { rfree(mov x) }\n"
+        body += ["    var r = rmake()", "    vsteal(var r)", "    rfree(mov r)"]      # E020
+    elif kind == "copy_out_ref":
+        body += ["    var x = rmake()", "    var r = var x", "    var y = r",
+                 "    rfree(mov y)", "    rfree(mov x)"]                          # E020
+    elif kind == "overwrite_live":
+        body += ["    var x = rmake()", "    x = rmake()", "    rfree(mov x)"]       # E021
+    elif kind == "overwrite_param":
+        extra = "func vreset(x var Res) effects io, alloc { x = rmake() }\n"
+        body += ["    var r = rmake()", "    vreset(var r)", "    rfree(mov r)"]      # E021
     elif kind == "generic_leak":
         body += ["    var bx = Box(Res, rmake())"]                           # E003
     elif kind == "generic_dup":
@@ -244,7 +275,7 @@ def gen_reject():
         body += ["    mov r *u8 = acquire()", "    var i usize = 0",
                  "    while i < 3 decreasing 3 - i {", "        release(mov r)",
                  "        i = i + 1", "    }"]
-    return "// EXPECT: reject\n" + HEADER + "\nfunc main() i32 effects io, raises, alloc {\n" + "\n".join(body) + "\n    return 0\n}\n"
+    return "// EXPECT: reject\n" + HEADER + "\n" + extra + "func main() i32 effects io, raises, alloc {\n" + "\n".join(body) + "\n    return 0\n}\n"
 
 if rng.random() < 0.7:
     sys.stdout.write(gen_accept())

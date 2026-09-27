@@ -251,6 +251,13 @@ A binding to storage owned by the function shall not be returned [E010].  A func
 return type is \lain{var T} shall return \lain{var P} or a call that itself returns
 \lain{var T} [E017].  A struct field shall not hold a mutable borrow [E126].
 
+\pnum
+A borrow --- a reference binding, or a \lain{var} or shared parameter --- lends a place; it
+does not own it.  A linear value shall not be moved out through one, by \lain{mov} or by a
+whole-value copy [E020], and a linear place reached through one shall not be assigned [E021]:
+the resource there is the owner's, and it would be lost.  The same assignment to a place the
+function owns is refused while the place may still hold a resource [E021].
+
 \begin{example}
 \begin{laincode}
 var p = P(1, 2)

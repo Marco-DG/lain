@@ -1,0 +1,16 @@
+// EXPECT: [E020]
+// A `var` parameter LENDS its place; it does not own it. Moving the resource out left the caller
+// holding it too, and the caller's own release double-freed (ASan) — accepted, and older than any
+// of the reference work: the consume named the parameter's pointer and nothing asked whose it was.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+func steal(x var Res) {
+    rfree(mov x)
+}
+func main() i32 {
+    var n i32 = 0
+    var x = Res(&n)
+    steal(var x)
+    rfree(mov x)
+    return 0
+}

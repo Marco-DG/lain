@@ -1,0 +1,14 @@
+// EXPECT: [E020]
+// The same through a SHARED parameter: a struct travels by address, so `x Res` is a borrow too.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+func steal(x Res) {
+    rfree(mov x)
+}
+func main() i32 {
+    var n i32 = 0
+    var x = Res(&n)
+    steal(x)
+    rfree(mov x)
+    return 0
+}

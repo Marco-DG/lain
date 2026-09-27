@@ -51,9 +51,13 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
             if (superseded) continue;
         }
         const char *code = fi->code==1 ? "E001" : fi->code==2 ? "E002"
-                         : fi->code==16 ? "E016" : "E003";
+                         : fi->code==16 ? "E016" : fi->code==20 ? "E020"
+                         : (fi->code==21 || fi->code==22) ? "E021" : "E003";
         const char *msg  = fi->code==1 ? "use of a value that was already moved"
                          : fi->code==2 ? "this value is moved twice"
+                         : fi->code==20 ? "cannot move out of a borrow — this place is lent to the function, not owned by it; its owner still holds it"
+                         : fi->code==21 ? "this assignment overwrites a linear value that still holds a resource, which is then lost — consume it first (`mov`)"
+                         : fi->code==22 ? "this assignment overwrites a linear value through a borrow — the resource there is the owner's, it cannot be consumed here, and it would be lost"
                          : fi->code==16 ? "consumed on some paths but not others"
                          : "a linear value is not consumed before it goes out of scope";
         ir_diag(file, fi->line, fi->col, code, msg);

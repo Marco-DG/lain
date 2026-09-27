@@ -1,0 +1,13 @@
+// Taking a reference to a linear local LENDS it: `var r = var x` stores x's ADDRESS, and counting
+// that store as an escape of x made every read-then-release through a reference E002.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+func peek(r Res) i32 { return 1 }
+func main() i32 {
+    var n i32 = 0
+    var x = Res(&n)
+    var r = var x
+    var k = peek(r)
+    rfree(mov x)
+    return k -% 1
+}

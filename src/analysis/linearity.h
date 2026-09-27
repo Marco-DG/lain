@@ -30,7 +30,7 @@
 typedef struct { int8_t n; int16_t step[LIN_MAX_PATH]; } LinPath;
 
 
-typedef struct { int slot; isize line, col; int code; } LinFinding;  // 1=E001, 2=E002, 3=E003 leak
+typedef struct { int slot; isize line, col; int code; } LinFinding;  // 1=E001, 2=E002, 3=E003 leak, 20=E020 move out of a borrow
 
 typedef struct {
     IrFunc     *f;
@@ -43,6 +43,11 @@ typedef struct {
     LinPath   **slot_leaf;  // slot -> its obligation leaves (the location tree, A.2)
     int        *slot_nleaf; // how many; -1 = the type needs more than can be represented
     bool       *load_clean; // load_clean[value] = its LOAD read a place nothing had consumed yet
+    // HOLD: leaves that currently HOLD a resource on some path — set by a store, cleared by a
+    // consume or an escape, union at joins. It is not derivable from the consumption state:
+    // "consumed on some path" and "initialised on some path" may be different paths.
+    uint64_t   *hold;       // the running mask while a block is replayed (NULL: not tracked)
+    uint64_t  **hold_in;    // per-block entry masks, a MAY fixpoint of their own
     LinFinding *finds; int nfinds, cap;
 } Lin;
 
@@ -309,6 +314,27 @@ static int lin_root_slot(Lin *L, IrValue *v, int depth) {
 // `release(mov r)` tested `st & leafmask` and found nothing, so a double free through an
 // escape was ACCEPTED. Three corpus tests caught it immediately — defer_double_consume,
 // defer_double_defer and linear_copy_double_free — which is what they are for.
+// ★ E020: IS THIS ADDRESS REACHED THROUGH A BORROW? A place under a pointer this function does
+// not OWN — a `var` or shared by-address parameter, a reference binding, a returned borrow — is
+// lent, not given: moving out of it leaves the owner holding a resource that is already gone.
+// `func steal(x var Res) { rfree(mov x) }` (and the same with `x Res`) was ACCEPTED, and the
+// caller's own `rfree(mov x)` then double-freed — a hole in the ownership model itself, older
+// than any of the reference work. Lowering marks every such pointer type `borrowed`; walking the
+// projections back to it answers the question for a field or element of the borrowed place too.
+static bool lin_through_borrow(Lin *L, IrValue *addr) {
+    for (int g = 0; addr && g < 32; g++) {
+        IrType *t = addr->type;
+        if (t && t->kind == IRT_PTR && t->borrowed) return true;
+        IrInstr *d = (addr->id >= 0 && addr->id < L->nvar) ? L->def[addr->id] : NULL;
+        if (!d) return false;
+        if ((d->op == IR_FIELD_PTR || d->op == IR_ELEM_PTR || d->op == IR_CAST) && d->n_operands >= 1) {
+            addr = d->operands[0]; continue;
+        }
+        return false;
+    }
+    return false;
+}
+
 // Is `v` the value of the `mov` lowering — a LOAD immediately followed by a CONSUME of the same
 // place? Then the consume already accounted for this move and an escape of `v` must not count
 // it again.
@@ -335,6 +361,17 @@ static bool lin_value_is_linear(const IrValue *v) {
 // OWNER (a store, a constructor, an owned argument, a return). A destructure (`case b` escapes
 // its scrutinee for the tag and again for the payload) is one move, and passes false.
 static void lin_escape(Lin *L, IrValue *v, uint64_t *st, bool dup, bool report, isize line, isize col) {
+    // A whole LINEAR value copied out of a borrowed place into a new owner is a move out of the
+    // borrow (`var y = r`, `Two(x, ..)` with x a `var` parameter). The `mov` form reports at its
+    // CONSUME, so its own load is skipped here.
+    if (dup && report && v && v->id >= 0 && v->id < L->nvar) {
+        IrInstr *d0 = L->def[v->id];
+        if (d0 && d0->op == IR_LOAD && d0->n_operands >= 1 && lin_value_is_linear(v) &&
+            lin_through_borrow(L, d0->operands[0]) && !lin_load_then_consume(L, v)) {
+            lin_add(L, -1, line, col, 20);
+            return;
+        }
+    }
     int sl = lin_root_slot(L, v, 0);
     if (sl>=0 && sl<L->nvar) {
         if (st[sl]) {
@@ -352,6 +389,7 @@ static void lin_escape(Lin *L, IrValue *v, uint64_t *st, bool dup, bool report, 
         int n = L->slot_nleaf[sl];
         uint64_t leaves = (n > 0) ? ((n >= 63) ? ~(1ull<<LIN_WHOLE_BIT) : ((1ull<<n) - 1u)) : 0;
         st[sl] = (1ull<<LIN_WHOLE_BIT) | leaves;
+        if (L->hold) L->hold[sl] &= ~((1ull<<LIN_WHOLE_BIT) | leaves);
         return;
     }
     // ★ A WHOLE LINEAR VALUE LOADED OUT OF A FIELD MOVES THAT FIELD. `var z = t.a` copies the
@@ -372,6 +410,7 @@ static void lin_escape(Lin *L, IrValue *v, uint64_t *st, bool dup, bool report, 
         return;
     }
     st[sl] |= m;
+    if (L->hold) L->hold[sl] &= ~m;
 }
 
 // Apply one block's instructions to `st` (consumption masks) — the transfer function. When
@@ -403,13 +442,37 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
                 // slot is ALREADY moved here and re-flagging it would be a spurious E002. A
                 // genuine second read (`var r = p`) is caught at its own LOAD by the moved-use
                 // check below, which is the more precise report anyway.
-                lin_escape(L, o1, st, true, report, ins->line, ins->col);   // storing it elsewhere is an escape
+                // ...except into a REFERENCE BINDING's slot, which holds the ADDRESS of a place,
+                // not its value: `var r = var x` lends x, it does not move it. Counting it as an
+                // escape refused every read-then-release through a reference with E002.
+                IrInstr *td = (o0->id>=0 && o0->id<L->nvar) ? L->def[o0->id] : NULL;
+                bool into_ref = td && td->op==IR_ALLOCA && td->aux.alloca_ty &&
+                                td->aux.alloca_ty->kind==IRT_PTR && td->aux.alloca_ty->borrowed;
+                if (!into_ref)
+                    lin_escape(L, o1, st, true, report, ins->line, ins->col);   // storing it elsewhere is an escape
                 { uint64_t m; int sl = lin_place_of(L, o0, &m);          // a store RE-INITIALISES
-                  if (sl>=0) st[sl] &= ~m; }   // every leaf under the written place is live again
+                  // ★ E021: AN ASSIGNMENT OVER A RESOURCE LOSES IT. `x = Res(acquire())` while x
+                  // still held one, `t.a = …` over a live field, and — through a borrow, where
+                  // the old value can never have been moved out (E020) — `x = …` on a `var`
+                  // parameter or a reference binding: all ACCEPTED, each leaking the previous
+                  // resource (LeakSanitizer). The store re-initialised the leaves and nothing
+                  // asked what they held. Only a leak-relevant place is judged: overwriting a
+                  // linear value that owns nothing releasable loses nothing.
+                  if (report && o1 && lin_value_is_linear(o1) && !into_ref) {
+                      if (lin_through_borrow(L, o0)) lin_add(L, -1, ins->line, ins->col, 22);
+                      else if (L->hold && sl>=0 && sl<L->nvar && L->linsl[sl] && (L->hold[sl] & m))
+                          lin_add(L, sl, ins->line, ins->col, 21);
+                  }
+                  if (sl>=0) st[sl] &= ~m;     // every leaf under the written place is live again
+                  if (sl>=0 && L->hold && L->movesl[sl]) L->hold[sl] |= m; }
             }
             continue;
         }
         if (ins->op==IR_CONSUME) {                       // `mov` — consume the PLACE it names
+            if (report && o0 && lin_through_borrow(L, o0)) {  // E020 — see lin_through_borrow
+                lin_add(L, -1, ins->line, ins->col, 20);
+                continue;
+            }
             uint64_t m; int sl = o0 ? lin_place_of(L, o0, &m) : -1;
             if (sl>=0 && sl<L->nvar && m) {
                 // Any leaf under this place that is ALREADY consumed makes this a second move
@@ -417,6 +480,7 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
                 // while `mov a[0].h1; mov a[0].h2` is not.
                 if (report && (st[sl] & m)) lin_add(L, sl, ins->line, ins->col, 2);
                 st[sl] |= m;
+                if (L->hold) L->hold[sl] &= ~m;
             }
             continue;
         }
@@ -624,6 +688,35 @@ static Lin *lin_analyze(IrFunc *f) {
             }
         }
     }
+    // HOLD fixpoint (see Lin.hold): replay each block from its converged MAY in-state with the
+    // hold mask threaded through, and union the result into each successor.
+    L->hold_in = calloc(L->nb,sizeof(uint64_t*));
+    for (int i=0;i<L->nb;i++) L->hold_in[i]=calloc(L->nvar,sizeof(uint64_t));
+    { uint64_t *hcur = malloc(L->nvar*sizeof(uint64_t));
+      bool hch = true; int hsw = 0;
+      while (hch) {
+        if (hsw++ > LAIN_FIXPOINT_BOUND(L->nb, L->nvar)) LAIN_FIXPOINT_EXHAUSTED("linearity", L->nb, L->nvar);
+        hch = false;
+        for (IrBlock *b=f->blocks; b; b=b->next) {
+            memcpy(tmp, L->in[b->id], L->nvar*sizeof(uint64_t));
+            memcpy(hcur, L->hold_in[b->id], L->nvar*sizeof(uint64_t));
+            L->hold = hcur; lin_run_block(L, b, tmp, false); L->hold = NULL;
+            IrBlock *succ[3]={0,0,0}; int ns=0;
+            switch (b->term.kind) {
+                case IR_TERM_BR:      succ[ns++]=b->term.a; break;
+                case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
+                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                default: break;
+            }
+            for (int k=0;k<ns;k++){ IrBlock *sb=succ[k]; if(!sb) continue;
+                uint64_t *hi=L->hold_in[sb->id];
+                for (int v=0;v<L->nvar;v++) if ((hi[v]|hcur[v]) != hi[v]){ hi[v]|=hcur[v]; hch=true; }
+            }
+        }
+      }
+      free(hcur); }
+
     // A second, MUST fixpoint over the SAME transfer function, differing only in the merge:
     // INTERSECTION instead of union. The two lattices answer different questions and the pass
     // needs both — asking one of them twice is what left conditional consumption invisible.
@@ -738,7 +831,10 @@ static Lin *lin_analyze(IrFunc *f) {
     // reporting sweep: replay each block from its converged in-state
     for (IrBlock *b=f->blocks; b; b=b->next) {
         memcpy(out, L->in[b->id], L->nvar*sizeof(uint64_t));
-        lin_run_block(L, b, out, true);
+        uint64_t *hrep = malloc(L->nvar*sizeof(uint64_t));
+        memcpy(hrep, L->hold_in[b->id], L->nvar*sizeof(uint64_t));
+        L->hold = hrep; lin_run_block(L, b, out, true); L->hold = NULL;
+        free(hrep);
         if (b->term.kind==IR_TERM_RET) {
             memcpy(must, inmust[b->id], L->nvar*sizeof(uint64_t));
             if (seen[b->id]) lin_run_block(L, b, must, false);
@@ -777,6 +873,7 @@ static Lin *lin_analyze(IrFunc *f) {
     return L;
 }
 static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in);
-    for(int i=0;i<L->nvar;i++) free(L->slot_leaf[i]); free(L->slot_leaf); free(L->slot_nleaf); free(L->slot_ty); free(L->linsl); free(L->movesl); free(L->load_clean); free(L->def); free(L->finds); free(L); }
+    for(int i=0;i<L->nvar;i++) free(L->slot_leaf[i]); free(L->slot_leaf); free(L->slot_nleaf); free(L->slot_ty); if (L->hold_in) { for(int i=0;i<L->nb;i++) free(L->hold_in[i]); free(L->hold_in); }
+    free(L->linsl); free(L->movesl); free(L->load_clean); free(L->def); free(L->finds); free(L); }
 
 #endif // LAIN_LINEARITY_H

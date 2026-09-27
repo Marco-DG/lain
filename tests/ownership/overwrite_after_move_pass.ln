@@ -1,0 +1,13 @@
+// Reassigning a linear local AFTER it was consumed is re-initialisation, not a leak — including
+// on a path where it was consumed in both arms of a branch.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+func main() i32 {
+    var n i32 = 0
+    var flag i32 = 1
+    var x = Res(&n)
+    if flag == 1 { rfree(mov x) } else { rfree(mov x) }
+    x = Res(&n)
+    rfree(mov x)
+    return 0
+}

@@ -1,0 +1,13 @@
+// EXPECT: [E020]
+// A whole-value COPY of a linear value out of a borrow is a move out of it, spelled without `mov`.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+func main() i32 {
+    var n i32 = 0
+    var x = Res(&n)
+    var r = var x
+    var y = r
+    rfree(mov y)
+    rfree(mov x)
+    return 0
+}

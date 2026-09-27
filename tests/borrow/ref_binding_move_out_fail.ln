@@ -1,0 +1,20 @@
+// EXPECT: [E020]
+// Moving out through a REFERENCE BINDING. `mov r` consumed r's own slot, so the owner's field
+// stayed live and `split(mov t)` freed t.a again (ASan). The consume now names what r refers
+// to, and the linearity pass refuses the move: r is a borrow.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+type Two { mov a Res, mov b Res }
+func split(mov {a, b} Two) {
+    rfree(mov a)
+    rfree(mov b)
+}
+func main() i32 {
+    var n i32 = 0
+    var m i32 = 0
+    var t = Two(Res(&n), Res(&m))
+    var r = var t.a
+    rfree(mov r)
+    split(mov t)
+    return 0
+}

@@ -24,7 +24,7 @@ Diagnostic codes are divided into the following ranges:
 \endhead
 \bottomrule
 \endlastfoot
-\diagcode{E001}–\diagcode{E010}, \diagcode{E016}--\diagcode{E019} & Ownership and lifetime \\
+\diagcode{E001}–\diagcode{E010}, \diagcode{E016}--\diagcode{E021} & Ownership and lifetime \\
 \diagcode{E011}–\diagcode{E015}, \diagcode{E060} & Purity, safety, and verification \\
 \diagcode{E082} & Bounded while verification \\
 \diagcode{E083}–\diagcode{E087} & Array/slice safety and integer boundaries \\
@@ -34,7 +34,7 @@ Diagnostic codes are divided into the following ranges:
 \end{longtable}
 
 % -------------------------------------------------------------------------
-\section*{Ownership and lifetime diagnostics (\diagcode{E001}–\diagcode{E010}, \diagcode{E016})}
+\section*{Ownership and lifetime diagnostics (\diagcode{E001}–\diagcode{E010}, \diagcode{E016}, \diagcode{E020}–\diagcode{E021})}
 % -------------------------------------------------------------------------
 
 \begin{longtable}{@{}p{1.5cm}p{3.5cm}p{7.5cm}@{}}
@@ -113,6 +113,25 @@ Diagnostic codes are divided into the following ranges:
     but not in others, leaving an ambiguous state at the join point.
     Field-level inconsistency on linear struct fields is reported with
     the same code.
+    \\[4pt]
+
+\diagcode{E020}
+  & \S\,\ref{sec:own.refbind}
+  & \textit{cannot move out of a borrow} ---
+    Issued when a \lain{mov}, or a whole-value copy of a linear value, takes
+    its operand from a place the function does not own: a \lain{var} or
+    shared parameter, a reference binding, a returned borrow, or a field or
+    element of one.  The owner still holds the resource; moving it out would
+    leave two owners.
+    \\[4pt]
+
+\diagcode{E021}
+  & \S\,\ref{sec:own.diag}
+  & \textit{assignment overwrites a linear value that still holds a resource}
+    --- Issued when a linear place is assigned while it may still hold a
+    resource, which would be lost.  Consume it first.  Through a borrow the
+    old value can never have been consumed (\diagcode{E020}), so any such
+    assignment is refused.
     \\[4pt]
 
 \end{longtable}

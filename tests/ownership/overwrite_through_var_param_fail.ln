@@ -1,0 +1,15 @@
+// EXPECT: [E021]
+// Through a borrow the old value can never have been moved out (E020), so assigning a linear place
+// reached through one ALWAYS loses the owner's resource.
+type Res { mov h *i32 }
+func rfree(mov {h} Res) { }
+func reset(x var Res, p *i32) {
+    x = Res(p)
+}
+func main() i32 {
+    var n i32 = 0
+    var x = Res(&n)
+    reset(var x, &n)
+    rfree(mov x)
+    return 0
+}
