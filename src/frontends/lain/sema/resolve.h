@@ -63,6 +63,8 @@ static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col);
 static bool sema_monomorphize_call(Expr *call);
 // Defined in monomorph.h; resolves generic type-applications `Vec(i32)` in a type.
 static Type *mono_resolve_type_apps(Type *t);
+static Type *mono_alias_target(Id *n);
+static Type *mono_arg_to_type(Expr *e);
 static void  mono_resolve_signature(Decl *d);
 void sema_resolve_expr(Expr *e); // forward
 
@@ -392,6 +394,37 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         const char *old_path = current_module_path;
         current_module_path = safe_module_path;
         
+        // ★ `type PairU8 = Pair(u8)` names a TYPE, but in expression position `Pair(u8)` reads as
+        // a CONSTRUCTOR call with one field value — refused with "wrong number of arguments to
+        // construct generic 'Pair'". (An enum has a type-reference path; a struct did not.) In
+        // an alias's right-hand side a generic struct applied to types, one per type parameter,
+        // can only be the type application, so say so before anything evaluates it.
+        {
+          Expr *rx = d->as.type_alias_decl.expr;
+          if (rx && rx->kind == EXPR_CALL && rx->as.call_expr.callee &&
+              rx->as.call_expr.callee->kind == EXPR_IDENTIFIER) {
+            Id *gn = rx->as.call_expr.callee->as.identifier_expr.id;
+            char gb[224]; snprintf(gb, sizeof gb, "%.*s", (int)gn->length, gn->name);
+            Symbol *gs = sema_lookup(gb);
+            if (gs && gs->decl && gs->decl->kind == DECL_STRUCT && decl_is_generic_template(gs->decl)) {
+              int ntp = 0, na = 0; bool all_types = true;
+              for (DeclList *tp = gs->decl->as.struct_decl.type_params; tp; tp = tp->next) ntp++;
+              TypeList *tl = NULL, **tt = &tl;
+              for (ExprList *a = rx->as.call_expr.args; a; a = a->next, na++) {
+                sema_resolve_expr(a->expr);
+                Type *ta = mono_arg_to_type(a->expr);
+                if (!ta) { all_types = false; break; }
+                *tt = arena_push_aligned(sema_arena, TypeList); (*tt)->type = ta; (*tt)->next = NULL;
+                tt = &(*tt)->next;
+              }
+              if (all_types && na == ntp && ntp > 0) {
+                rx->kind = EXPR_TYPE;
+                rx->as.type_expr.type_value = mono_resolve_type_apps(type_application(sema_arena, gn, tl));
+                rx->type = NULL;
+              }
+            }
+          }
+        }
         sema_resolve_expr(d->as.type_alias_decl.expr);
         Expr* eval_rhs = comptime_evaluate_expr(sema_arena, d->as.type_alias_decl.expr, NULL);
         
@@ -1119,6 +1152,23 @@ void sema_resolve_expr(Expr *e) {
           e->decl = sym->decl;
           e->is_global = true;
           break;
+      }
+      // D-18: an alias of a struct or enum names that TYPE in expression position too, so
+      // `OptInt.Some(42)` reaches the constructor path exactly as `Option(i32).Some(42)` does.
+      if (sym->decl && sym->decl->kind == DECL_TYPE_ALIAS) {
+          Type *at = mono_alias_target(e->as.identifier_expr.id);
+          if (at && at->base_type) {
+              char tb[224]; snprintf(tb, sizeof tb, "%.*s", (int)at->base_type->length, at->base_type->name);
+              Symbol *ts = sema_lookup(tb);
+              if (ts && ts->decl) {
+                  e->kind = EXPR_TYPE;
+                  e->as.type_expr.type_value = at;
+                  e->type = NULL;
+                  e->decl = ts->decl;
+                  e->is_global = true;
+                  break;
+              }
+          }
       }
 
       // Instead of pointing at sym->c_name (which may get freed),

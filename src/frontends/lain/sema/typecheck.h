@@ -2712,7 +2712,12 @@ void sema_infer_expr(Expr *e) {
             e->type = e->as.call_expr.callee->type;
         }
     } else {
-        e->type = e->as.call_expr.callee->type;
+        // A function's symbol type is its RETURN type as declared, captured before the
+        // declaration's type applications were resolved: `func f() Option(i32)` reached the
+        // caller as the GENERIC `Option`, so `var o = f()` declared an `Option` and assigned it an
+        // `Option_i32` — C that gcc rejects. Only annotated bindings ever worked. Resolve here.
+        Type *rt = e->as.call_expr.callee->type;
+        e->type = (rt && rt->kind == TYPE_SIMPLE && rt->type_args) ? mono_resolve_type_apps(rt) : rt;
     }
     break;
   }

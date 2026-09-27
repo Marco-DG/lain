@@ -1,0 +1,21 @@
+// D-17: an instance is keyed by the TYPE, not by how its argument was spelled. `int` is `i32`,
+// `usize` is `u64` (the IR lowers them to the same width and sign), but the mangled name came
+// from the argument as written: `Option(int)` and `Option(i32)` were two incompatible types, and
+// `Box(usize, 5)` was not even accepted — `usize` was not recognised as a type argument.
+type Option(T type) {
+    Some { v T }
+    Nothing
+}
+type Box(T type) { v T }
+func f() Option(int) { return Option(i32).Some(1) }
+func g(b Box(u64)) u64 { return b.v }
+func main() i32 {
+    var o = f()
+    var b = Box(usize, 5)
+    var c Box(i32) = Box(int, 2)
+    case o {
+        Some(v): if v == 1 and g(b) == 5 and c.v == 2 { return 0 }
+        Nothing: return 1
+    }
+    return 1
+}

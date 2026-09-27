@@ -182,13 +182,31 @@ static void mono_subst_stmt(Stmt *s, SubstCtx *ctx) {
 
 // Append one type argument's mangling to buf (a stable, valid C identifier
 // fragment): i32→"i32", *u8→"ptr_u8", T[]→"arr_i32", user Foo→"Foo".
+// ★ D-17: AN INSTANCE IS KEYED BY THE TYPE, NOT BY HOW IT WAS SPELLED. `int` IS `i32` (and
+// `float` is `f32`, `usize`/`isize` are `u64`/`i64` — the IR's name table lowers them to the
+// same width and sign), but the mangled name came from the argument AS WRITTEN, so
+// `Option(int)` and `Option(i32)` were two instances and two incompatible types in one program:
+// `func f() Option(int) { return Option(i32).Some(1) }` was refused with E012.
+static const char *mono_canonical_scalar(const Id *n) {
+    if (!n) return NULL;
+    static const char *alias[][2] = { {"int","i32"}, {"float","f32"}, {"usize","u64"},
+                                      {"isize","i64"}, {NULL,NULL} };
+    for (int i = 0; alias[i][0]; i++)
+        if ((size_t)n->length == strlen(alias[i][0]) &&
+            memcmp(n->name, alias[i][0], (size_t)n->length) == 0) return alias[i][1];
+    return NULL;
+}
+
 static void mono_mangle_type(Type *t, char *buf, size_t cap) {
     if (!t) { snprintf(buf, cap, "?"); return; }
     switch (t->kind) {
-        case TYPE_SIMPLE:
+        case TYPE_SIMPLE: {
+            const char *canon = mono_canonical_scalar(t->base_type);
+            if (canon) { snprintf(buf, cap, "%s", canon); break; }
             snprintf(buf, cap, "%.*s", t->base_type ? (int)t->base_type->length : 1,
                      t->base_type ? t->base_type->name : "?");
             break;
+        }
         case TYPE_POINTER: {
             char inner[128]; mono_mangle_type(t->element_type, inner, sizeof inner);
             snprintf(buf, cap, "ptr_%s", inner); break;
@@ -282,6 +300,18 @@ static void mono_bind(SubstCtx *ctx, Id *name, Type *concrete) {
 static Type *mono_arg_to_type(Expr *e) {
     if (!e) return NULL;
     if (e->kind == EXPR_TYPE) return e->as.type_expr.type_value;
+    // `usize` / `isize` are builtin types but deliberately NOT rewritten to type-values by the
+    // resolver, so they stay legal as binding names (tests/errors/near_type_name_var_pass.ln).
+    // In a type-argument position, a name that is NOT bound is the type: `Box(usize, 5)` was
+    // refused with "expects a leading type argument". A local named `usize` still wins.
+    if (e->kind == EXPR_IDENTIFIER && !e->decl && e->as.identifier_expr.id) {
+        Id *n = e->as.identifier_expr.id;
+        bool is_sz = n->length == 5 && (memcmp(n->name, "usize", 5) == 0 || memcmp(n->name, "isize", 5) == 0);
+        if (is_sz) {
+            char raw[6]; memcpy(raw, n->name, 5); raw[5] = '\0';
+            if (!sema_lookup(raw)) return type_simple(sema_arena, n);
+        }
+    }
     if (e->kind == EXPR_DEREF) {
         Type *inner = mono_arg_to_type(e->as.deref_expr.expr);
         return inner ? type_pointer(sema_arena, inner) : NULL;
@@ -449,6 +479,24 @@ static Type *union_lower(Type *u) {
     return ity;
 }
 
+// The struct/enum type an alias names, resolved — or NULL when `n` is not an alias of one.
+static Type *mono_resolve_type_apps(Type *t);
+static Type *mono_alias_target(Id *n) {
+    if (!n || n->length >= 224) return NULL;
+    char nb[224]; snprintf(nb, sizeof nb, "%.*s", (int)n->length, n->name);
+    Symbol *sym = sema_lookup(nb);
+    if (!sym || !sym->decl || sym->decl->kind != DECL_TYPE_ALIAS || !sym->type) return NULL;
+    Type *at = sym->type;
+    if (at->kind != TYPE_SIMPLE || !at->base_type) return NULL;
+    if (at->type_args) at = mono_resolve_type_apps(at);
+    if (!at || !at->base_type || at->base_type->length >= 224) return NULL;
+    char tb[224]; snprintf(tb, sizeof tb, "%.*s", (int)at->base_type->length, at->base_type->name);
+    Symbol *ts = sema_lookup(tb);
+    if (!ts || !ts->decl || (ts->decl->kind != DECL_STRUCT && ts->decl->kind != DECL_ENUM)) return NULL;
+    if (decl_is_generic_template(ts->decl)) return NULL;
+    return at;
+}
+
 static Type *mono_resolve_type_apps(Type *t) {
     if (!t) return t;
     if (t->kind == TYPE_UNION) {                 // `T | markers` → niche'd anonymous enum
@@ -478,6 +526,21 @@ static Type *mono_resolve_type_apps(Type *t) {
         Decl *inst = mono_type_instance(tmpl, &ctx, suffix);
         Id *iname = (inst->kind == DECL_STRUCT) ? inst->as.struct_decl.name : inst->as.enum_decl.type_name;
         return type_simple(sema_arena, iname);
+    }
+    // ★ D-18: AN ALIAS OF A STRUCT OR ENUM IS THAT TYPE. `type OptInt = Option(i32)` declared a
+    // name that worked nowhere the type did: as a parameter (`o OptInt`) a `case` on it was
+    // "non-exhaustive" because nothing mapped the name to the enum, and as a constructor
+    // (`OptInt.Some(42)`) it fell to direct field access (E125). Resolve it to the type it names
+    // — the use's mode kept. A REFINEMENT alias (`type Small = i32 >= 0 …`) names no struct or
+    // enum and is untouched: its constraints live on the alias and are read from there.
+    if (t->kind == TYPE_SIMPLE && !t->type_args && t->base_type) {
+        Type *at = mono_alias_target(t->base_type);
+        if (at) {
+            if (at->mode == t->mode) return at;
+            Type *m = arena_push_aligned(sema_arena, Type);
+            *m = *at; m->mode = t->mode;
+            return m;
+        }
     }
     if (t->element_type) t->element_type = mono_resolve_type_apps(t->element_type);
     return t;

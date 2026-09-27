@@ -1,0 +1,17 @@
+// A function RETURNING a generic instance, its result bound WITHOUT an annotation. The callee's
+// symbol type was captured before its type applications were resolved, so `var o = f()`
+// declared the GENERIC `Option` and assigned it an `Option_i32` — C that gcc rejects. The corpus
+// only ever annotated such bindings.
+type Option(T type) {
+    Some { v T }
+    Nothing
+}
+func f() Option(i32) { return Option(i32).Some(7) }
+func main() i32 {
+    var o = f()
+    case o {
+        Some(v): if v == 7 { return 0 }
+        Nothing: return 1
+    }
+    return 1
+}

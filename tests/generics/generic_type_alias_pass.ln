@@ -1,0 +1,29 @@
+// D-18: an alias of a generic instantiation is that type, everywhere. `OptInt.Some(42)` fell to
+// "direct ADT field access" (E125) and a `case` on an `OptInt` parameter was "non-exhaustive"
+// (E014) — the alias named a type in neither position. (A fix was written and reverted once
+// because the OLD emitter produced broken C for it; that emitter is gone.)
+type Option(T type) {
+    Some { v T }
+    Nothing
+}
+type Pair(T type) {
+    a T
+    b T
+}
+type OptInt = Option(i32)
+type PairU8 = Pair(u8)
+func get(o OptInt) i32 {
+    case o {
+        Some(v): return v
+        Nothing: return 0
+    }
+    return 0
+}
+func sum(p PairU8) u8 { return p.a +% p.b }
+func main() i32 {
+    var a = OptInt.Some(40)
+    var n OptInt = OptInt.Nothing
+    var p = PairU8(1, 1)
+    if get(a) +% get(n) +% (sum(p) as i32) == 42 { return 0 }
+    return 1
+}
