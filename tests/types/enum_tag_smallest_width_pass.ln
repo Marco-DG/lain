@@ -1,0 +1,34 @@
+// A plain enumeration is the smallest unsigned integer that holds its tags. The emitter's own
+// comment said so and every enumeration was an int32_t, so the hand-written lexer's token
+// {kind, pos u32, len u16} was 12 bytes. With a one-byte kind AND the fields ordered widest
+// first — the language keeps declaration order, so the order is the programmer's to choose —
+// it is the 8 bytes the lexer asked for.
+type TokenKind {
+    Eof
+    Ident
+    Number
+    Plus
+    Minus
+    Star
+    Slash
+    LParen
+    RParen
+    Assign
+    Unknown
+}
+type TokenNarrowFirst {
+    kind TokenKind
+    pos u32
+    len u16
+}
+type Token {
+    pos u32
+    len u16
+    kind TokenKind
+}
+func main() i32 {
+    if @sizeof(TokenKind) != 1 { return 1 }
+    if @sizeof(TokenNarrowFirst) != 12 { return 2 }    // alignment padding after the kind
+    if @sizeof(Token) != 8 { return 3 }
+    return 0
+}

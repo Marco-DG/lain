@@ -196,6 +196,14 @@ IrValue *ir_opaque(IrFunc *f, IrBlock *b, IrType *rt, bool writes, const char *w
 }
 
 // A bit intrinsic (ctz/clz/popcount): one integer operand, an integer result.
+// @sizeof / @alignof: the value is the C backend's own answer (`sizeof`, `_Alignof`), so the
+// layout it reports is the layout the program has, by construction.
+IrValue *ir_sizeof(IrFunc *f, IrBlock *b, IrType *of, bool align) {
+    IrInstr *ins = ir_instr(f, align ? IR_ALIGNOF : IR_SIZEOF, ir_type_int(f->arena, 64, false), 0);
+    ins->aux.alloca_ty = of;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_bitcount(IrFunc *f, IrBlock *b, IrOp op, IrValue *x, IrType *t) {
     IrInstr *ins = ir_instr(f, op, t, 1);
     ins->operands[0] = x;

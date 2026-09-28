@@ -556,6 +556,8 @@ typedef enum {
     BUILTIN_SPLAT,           // @splat(T, x)       → a vector T with every lane = x
     BUILTIN_STORE,           // @store(ptr, off, v)→ write vector v to ptr+off (sizeof(v) bytes)
     BUILTIN_SHUFFLE,         // @shuffle(tbl, idx) → per-lane table lookup (pshufb): r[i]=tbl[idx[i]]
+    BUILTIN_SIZEOF,          // @sizeof(T)  → usize: the size of T as the C backend lays it out
+    BUILTIN_ALIGNOF,         // @alignof(T) → usize: its alignment
 } BuiltinKind;
 
 typedef struct {

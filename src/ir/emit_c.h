@@ -328,6 +328,18 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                             fprintf(o, "){ v%d, v%d };\n", i->operands[0]->id, i->operands[1]->id); break;
         case IR_STR_CONST:  fprintf(o, "  v%d = (uint8_t*)", i->result->id);
                             ir_emit_cstr(i->aux.str.bytes, i->aux.str.len, o); fputs(";\n", o); break;
+        case IR_SIZEOF: case IR_ALIGNOF: {
+            // An ARRAY type has no C name to put inside sizeof(); its size is N elements, with
+            // no padding between them, and its alignment is its element's.
+            IrType *qt = i->aux.alloca_ty;
+            int64_t n = 1;
+            while (qt && qt->kind == IRT_ARRAY) { n *= (qt->array_len > 0 ? qt->array_len : 0); qt = qt->elem; }
+            fprintf(o, "  v%d = (uint64_t)", i->result->id);
+            if (i->op == IR_SIZEOF) fprintf(o, "%lld * ", (long long)n);
+            fputs(i->op == IR_SIZEOF ? "sizeof(" : "_Alignof(", o);
+            ir_ctype(qt, o); fputs(");\n", o);
+            break;
+        }
         case IR_CTZ: case IR_CLZ: case IR_POPCOUNT:
             fprintf(o, "  v%d = (uint32_t)%s((unsigned)(v%d));\n", i->result->id,
                     i->op==IR_CTZ ? "__builtin_ctz" : i->op==IR_CLZ ? "__builtin_clz"
@@ -843,7 +855,15 @@ static void ir_emit_one_sum_body(IrType *st, FILE *o) {
     IrLayout L = ir_layout_of(st);
     if (L.packed) {
         if (L.all_empty) {   // a plain enumeration: the smallest integer that holds it
-            fprintf(o, "typedef int32_t %.*s;\n", (int)nm->length, nm->name);
+            // ...which is what this comment always said and the code never did: every
+            // enumeration was an int32_t, so an 11-kind TokenKind made a {kind, pos u32, len u16}
+            // token 12 bytes where `uint8_t` and field order make it 8 (the lexer report). The
+            // tag values are 0..n-1, so an unsigned type of the smallest width holds them; no
+            // sum niche-packs INTO a plain enumeration (layout.h gives it no backing), so no
+            // sentinel depends on the width.
+            int nv = st->n_fields;
+            const char *ct = nv <= 256 ? "uint8_t" : nv <= 65536 ? "uint16_t" : "uint32_t";
+            fprintf(o, "typedef %s %.*s;\n", ct, (int)nm->length, nm->name);
         } else {
             fputs("typedef ", o); ir_layout_backing_ctype(L.backing, o);
             fprintf(o, " %.*s;\n", (int)nm->length, nm->name);
@@ -931,6 +951,11 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
         for (int k=0;k<vt.n;k++) vt.v[k]=NULL;
         ir_collect_vals(f, &vt);
         for (int id=0; id<vt.n; id++) if (vt.v[id]) ir_ts_visit(&ts, vt.v[id]->type);
+        // A type named only inside @sizeof/@alignof is carried by no value, and must still be
+        // declared before the expression that measures it.
+        for (IrBlock *b=f->blocks; b; b=b->next)
+            for (IrInstr *i=b->instrs; i; i=i->next)
+                if ((i->op==IR_SIZEOF || i->op==IR_ALIGNOF) && i->aux.alloca_ty) ir_ts_visit(&ts, i->aux.alloca_ty);
     }
     for (int i=0;i<ts.n_struct;i++){ IrName *nm=ts.structs[i]->sname;
         // A PACKED sum is not a struct — it is a typedef for its backing type, emitted whole

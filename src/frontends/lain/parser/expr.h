@@ -623,6 +623,20 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
             parser_expect(TOKEN_R_PAREN, "Expected ')' after the builtin argument");
             parser_advance(); // consume ')'
             return expr_builtin_arg(arena, bk, arg);
+        } else if ((len == 6 && strncmp(name, "sizeof", 6) == 0) ||
+                   (len == 7 && strncmp(name, "alignof", 7) == 0)) {
+            // @sizeof(T) / @alignof(T) — a TYPE's size and alignment, as the C backend lays it
+            // out. A layout claim written as a comment (`// 8 bytes`) drifts silently; one
+            // written as `@sizeof(Token)` in a test is checked every build.
+            bool is_size = (len == 6);
+            parser_expect(TOKEN_L_PAREN, is_size ? "Expected '(' after '@sizeof'" : "Expected '(' after '@alignof'");
+            parser_advance();
+            Type *t = parse_type(arena, parser);
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after the type");
+            parser_advance();
+            Expr *e = expr_builtin(arena, is_size ? BUILTIN_SIZEOF : BUILTIN_ALIGNOF);
+            e->as.builtin_expr.vec_type = t;
+            return e;
         } else {
             fprintf(stderr, "Error Ln %li, Col %li: Unknown builtin '@%.*s'\n",
                     parser->line, parser->column, (int)len, name);

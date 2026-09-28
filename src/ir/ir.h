@@ -229,6 +229,7 @@ typedef enum {
     // LLVM cttz/ctlz/ctpop), so they are ops rather than opaque calls — and the numeric
     // domain gets an exact range for free: all three land in [0, width].
     IR_CTZ, IR_CLZ, IR_POPCOUNT,
+    IR_SIZEOF, IR_ALIGNOF,          // no operands; aux.alloca_ty is the type asked about
     // comparison → Bool
     IR_ICMP,                // aux.cmp : the predicate
     // aggregates / slices / memory

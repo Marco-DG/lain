@@ -219,19 +219,33 @@ layout.
 \idbehav{The exact size and alignment of each type is implementation-defined,
 following the C99 ABI of the target platform}.
 
+\pnum
+\lain{@sizeof(T)} and \lain{@alignof(T)} are expressions of type \lain{usize} whose values
+are the size and alignment of \lain{T} as laid out for the target: the C99 \texttt{sizeof}
+and \texttt{\_Alignof} of the type the implementation emits for \lain{T}. A layout claim
+written as a comment is not checked; one written as \lain{@sizeof(Token) == 8} in a test is.
+
 \section{ADT and enum layout}
 \label{sec:mem.adt-layout}
 \index{ADT layout}
 \index{enum layout}
 
 \pnum
-An enum type is emitted as a C \texttt{enum} wrapped in a named struct so
-that each enum type is nominally distinct in the C translation:
+A \textit{plain enumeration} --- an enum type none of whose variants carries a payload ---
+is emitted as the smallest unsigned integer type that holds its variants: \texttt{uint8\_t}
+for up to 256 variants, \texttt{uint16\_t} for up to 65\,536, \texttt{uint32\_t} otherwise.
+The variants are the values \(0, 1, \ldots, n-1\) in declaration order. Each enum type is
+still nominally distinct in the language; the C translation names it with its own
+\texttt{typedef}:
 
 \begin{verbatim}
-typedef enum { Color_Red, Color_Green, Color_Blue } Color_Tag;
-typedef struct { Color_Tag tag; } Color;
+typedef uint8_t Color;           // Red = 0, Green = 1, Blue = 2
 \end{verbatim}
+
+\pnum
+Because struct fields keep their declaration order (\S\,\ref{sec:mem.alignment}), the
+programmer controls the padding a narrow enumeration leaves: \lain{\{pos u32, len u16, kind
+Kind\}} is 8 bytes where \lain{\{kind Kind, pos u32, len u16\}} is 12.
 
 \pnum
 An ADT type uses a niche-based encoding whenever a zero-cost

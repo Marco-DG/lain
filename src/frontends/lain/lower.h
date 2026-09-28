@@ -2320,6 +2320,12 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // argument — semantically the identity, so lowering them away is faithful.
             if (bk==BUILTIN_LIKELY || bk==BUILTIN_UNLIKELY)
                 return ir_lower_expr(c, e->as.builtin_expr.arg);
+            if (bk==BUILTIN_SIZEOF || bk==BUILTIN_ALIGNOF) {
+                IrType *qt = ir_lower_type(c, e->as.builtin_expr.vec_type);
+                if (!qt || qt->kind == IRT_UNIT)
+                    return ir_opaque_expr(c, ty, false, "sizeof-of-unknown-type", NULL, NULL);
+                return ir_sizeof(c->f, c->cur, qt, bk==BUILTIN_ALIGNOF);
+            }
             // Fall through to the same placeholder the default case uses. A bare `break`
             // here exited the switch and ran off the end of a non-void function — undefined
             // behaviour that returned a garbage IrValue*, which the VRA then dereferenced

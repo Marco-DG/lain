@@ -1319,6 +1319,12 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             }
             break;
         }
+        case IR_SIZEOF: case IR_ALIGNOF:
+            // A complete C object type has size >= 1 and alignment >= 1; nothing more is claimed,
+            // because the number is the C compiler's, not this analysis's.
+            if (r<0) break;
+            oct_forget(W, r); oct_add_lb(W, r, 1);
+            break;
         case IR_CTZ: case IR_CLZ: case IR_POPCOUNT: {
             // A bit intrinsic lands in [0, W] where W is the OPERAND's width — exactly the
             // fact that makes `a[@popcount(mask)]` provable without a runtime check. Modelled

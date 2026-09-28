@@ -1,0 +1,18 @@
+// @sizeof(T) and @alignof(T): a type's size and alignment as the C backend lays it out. The
+// value is C's own `sizeof` / `_Alignof`, so it is the layout the program has by construction —
+// which makes a layout claim CHECKABLE. The lexer this was asked for carried `// 16 Bytes` and
+// `// 8 bytes` comments; @sizeof measured them at 24 and 12.
+// (Sizes below are the x86-64 C ABI's: a slice is a pointer and a length.)
+type Only {
+    a u64
+    b u8
+}
+func main() i32 {
+    if @sizeof(u8) != 1 or @sizeof(u16) != 2 or @sizeof(u32) != 4 or @sizeof(u64) != 8 { return 1 }
+    if @sizeof(bool) != 1 { return 2 }
+    if @sizeof(u8[5]) != 5 or @sizeof(u32[3]) != 12 { return 3 }       // arrays: no padding
+    if @sizeof(u8[]) != 16 { return 4 }                                 // {data, len}
+    if @sizeof(Only) != 16 or @alignof(Only) != 8 { return 5 }         // tail padding to align 8
+    if @alignof(u16) != 2 { return 6 }
+    return 0
+}

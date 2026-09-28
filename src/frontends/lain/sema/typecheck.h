@@ -3033,6 +3033,14 @@ void sema_infer_expr(Expr *e) {
             u32_ty = type_simple(sema_arena, uid);
         }
         e->type = u32_ty;
+    } else if (bk == BUILTIN_SIZEOF || bk == BUILTIN_ALIGNOF) {
+        static Type *usize_ty = NULL;
+        if (!usize_ty) {
+            Id *uid = arena_push_aligned(sema_arena, Id);
+            uid->name = "usize"; uid->length = 5;
+            usize_ty = type_simple(sema_arena, uid);
+        }
+        e->type = usize_ty;
     } else if (bk == BUILTIN_LOAD || bk == BUILTIN_SPLAT || bk == BUILTIN_STORE ||
                bk == BUILTIN_SHUFFLE) {
         if (e->as.builtin_expr.arg)  sema_infer_expr(e->as.builtin_expr.arg);

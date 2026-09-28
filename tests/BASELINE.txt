@@ -1668,6 +1668,12 @@ rc=0
 out=Color is Red
 ty=Color scalar
 ty=Slice_u8 scalar
+### tests/types/enum_tag_smallest_width_pass.ln
+rc=0
+out=
+ty=Token struct
+ty=TokenKind scalar
+ty=TokenNarrowFirst struct
 ### tests/types/float_int_literal_promote_pass.ln
 rc=0
 out=
@@ -1731,6 +1737,11 @@ out=
 ### tests/types/refinement_type_alias_pass.ln
 rc=0
 out=
+### tests/types/sizeof_alignof_pass.ln
+rc=0
+out=
+ty=Only struct
+ty=Slice_u8 scalar
 ### tests/types/slice_codegen_pass.ln
 rc=7
 out=
