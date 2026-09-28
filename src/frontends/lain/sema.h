@@ -2194,7 +2194,7 @@ static void walk_stmt(Stmt *s) {
                                     case TOKEN_BANG_EQUAL:                fits = (r.min > k || r.max < k); break;
                                     default: fits = true; break;
                                 }
-                                if (!fits) {
+                                if (LAIN_LEGACY_ANALYSIS && !fits) {
                                     fprintf(stderr,
                                         "[E086] Error Ln %li, Col %li: assignment to '%.*s' violates refinement constraint of type alias '%s': value range [%lld, %lld] does not satisfy the alias constraint.\n",
                                         s->line, s->col,
@@ -3149,7 +3149,7 @@ static void walk_stmt(Stmt *s) {
                                 // G5: enforce the field's refinement constraints on
                                 // REASSIGNMENT too (`c.pct = 200` must satisfy pct's
                                 // `>= 0 and <= 100`), not just at construction.
-                                if (sf->decl->as.variable_decl.constraints && sema_ranges &&
+                                if (LAIN_LEGACY_ANALYSIS && sf->decl->as.variable_decl.constraints && sema_ranges &&
                                     !sema_in_unsafe_block) {
                                     Expr *frhs = s->as.assign_stmt.expr;
                                     Range r = (frhs && frhs->kind == EXPR_LITERAL)
@@ -3380,7 +3380,7 @@ static void walk_stmt(Stmt *s) {
                     // it. `result == 1` means proven; 0 (violated) or -1 (unknown,
                     // e.g. unbounded/wrapping) must both be rejected — a refinement
                     // it can't prove is a lie that defeats callers' bounds proofs.
-                    if (result != 1 && !sema_in_unsafe_block) {
+                    if (LAIN_LEGACY_ANALYSIS && result != 1 && !sema_in_unsafe_block) {
                         fprintf(stderr, "[E086] Error Ln %li, Col %li: return value cannot be proven "
                             "to satisfy the function's return refinement (range [%lld, %lld]). Constrain "
                             "the inputs or narrow the value so VRA can prove it.\n",

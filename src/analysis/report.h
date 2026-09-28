@@ -130,6 +130,15 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                         "         the element  a narrower element type, or a refinement on it\n"
                         "         the total    a wider accumulator, widening the addend too\n"
                         "       or say which arithmetic you meant: `+%%` wraps, `+|` saturates\n");
+                } else if (c->shift == 1) {
+                    ir_diag(file, c->line, c->col, "E086",
+                            "shift amount is not provably within the operand's width (valid 0..width-1)");
+                } else if (c->shift == 3) {
+                    ir_diag(file, c->line, c->col, "E086",
+                            "signed division may overflow — TYPE_MIN / -1 is undefined");
+                } else if (c->shift == 2) {
+                    ir_diag(file, c->line, c->col, "E086",
+                            "signed left shift may overflow — a bit can reach the sign (`1 << 31` on an i32 is UB)");
                 } else {
                     ir_diag(file, c->line, c->col, "E086",
                             "arithmetic is not provably free of overflow");
@@ -139,7 +148,17 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 ir_diag(file, c->line, c->col, "E015", "divisor is not provably non-zero");
                 n++; break;
             case VRA_PRECOND:
-                ir_diag(file, c->line, c->col, "E012", "a required precondition is not established here");
+                if (c->diag == 85)
+                    ir_diag(file, c->line, c->col, "E085",
+                            "index argument is not provably within the bounds of the array it is `in`");
+                else if (c->diag == 86)
+                    ir_diag(file, c->line, c->col, "E086",
+                            "return value cannot be proven to satisfy the function's return refinement");
+                else if (c->diag == 87)
+                    ir_diag(file, c->line, c->col, "E087",
+                            "argument does not satisfy the parameter's sized-slice constraint");
+                else
+                    ir_diag(file, c->line, c->col, "E012", "a required precondition is not established here");
                 n++; break;
             case VRA_TERMINATION:
                 // One obligation, two arguments, two codes — the identity a user already knows.

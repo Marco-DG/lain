@@ -4,6 +4,15 @@
 #define SEMA_RESOLVE_H
 
 
+// ★ THE LEGACY ANALYSIS SWITCH (plan Part 7G, 2026-09-28). The front end still answered, from the
+// OLD range analysis (sema_eval_range), obligations the IR engine also raises — division, shifts,
+// index arguments, refinement assignments/returns/fields, dependent sizes, loop measures. It runs
+// first and exits, so for these the IR's (more precise) verdict was never reached: dividing by a
+// field was refused even after `p.d = 5`. Every such site is gated on this macro; each is deleted
+// once the IR is shown to raise the same obligation. 0 since 2026-09-28 (the IR raises them all).
+#ifndef LAIN_LEGACY_ANALYSIS
+#define LAIN_LEGACY_ANALYSIS 0
+#endif
 #include "../ast.h"
 #include "../ast_clone.h"
 #include "comptime.h" // CTFE engine
@@ -994,7 +1003,7 @@ void sema_resolve_stmt(Stmt *s) {
                     }
                 }
             }
-            if (!deferrable) {
+            if (LAIN_LEGACY_ANALYSIS && !deferrable) {
                 fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination measure "
                         "are not allowed in pure function '%.*s'. "
                         "Add 'decreasing <measure>' or use 'proc'.\n",

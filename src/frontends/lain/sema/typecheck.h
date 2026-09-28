@@ -877,7 +877,7 @@ static ExprList *alias_constraints_for(Type *t) {
 // check_conversion, this makes refinement aliases sound at EVERY boundary.
 static void check_type_alias_constraints(Type *to, Range r, isize line, isize col,
                                          const char *ctx, const char *label) {
-    if (sema_in_unsafe_block || !r.known) return;
+    if (!LAIN_LEGACY_ANALYSIS || sema_in_unsafe_block || !r.known) return;
     if (!to || to->kind != TYPE_SIMPLE || !to->base_type) return;
     if ((size_t)to->base_type->length >= 256) return;
 
@@ -2214,7 +2214,7 @@ void sema_infer_expr(Expr *e) {
                 }
                 
                 (void)arr_type;
-                if (idx_arg && arr_arg && sema_walk_phase) {
+                if (LAIN_LEGACY_ANALYSIS && idx_arg && arr_arg && sema_walk_phase) {
                     // P2/S3 (fail-CLOSED): the `in <arr>` invariant is 0 <= idx <
                     // arr.len. idx >= 0 holds for a usize; prove idx < arr.len at the
                     // CALL site — interval for a fixed array, or difference-constraint
@@ -2569,7 +2569,7 @@ void sema_infer_expr(Expr *e) {
                                 }
                             }
                         }
-                        if (e87_fail) {
+                        if (LAIN_LEGACY_ANALYSIS && e87_fail) {
                             fprintf(stderr, "[E087] Error Ln %li, Col %li: %s.\n",
                                     (long)e87_parg->line, (long)e87_parg->col, e87_msg);
                             diagnostic_show_line(e87_parg->line, e87_parg->col);
@@ -2640,7 +2640,7 @@ void sema_infer_expr(Expr *e) {
                 // G5: enforce field refinement constraints at construction
                 // (`type Config { pct i32 >= 0 and <= 100 }`), so the invariant
                 // holds for every constructed value.
-                if (f->decl->as.variable_decl.constraints && sema_ranges &&
+                if (LAIN_LEGACY_ANALYSIS && f->decl->as.variable_decl.constraints && sema_ranges &&
                     !sema_in_unsafe_block) {
                     Range r = (a->expr->kind == EXPR_LITERAL)
                         ? (Range){ a->expr->as.literal_expr.value, a->expr->as.literal_expr.value, true }
@@ -2809,7 +2809,7 @@ void sema_infer_expr(Expr *e) {
                 Range dr = sema_eval_range(rhs, sema_ranges);
                 if (dr.known && dr.min == 0 && dr.max == 0) is_zero = true;
             }
-            if (is_zero) {
+            if (LAIN_LEGACY_ANALYSIS && is_zero) {
                 fprintf(stderr, "[E015] Error Ln %li, Col %li: division or modulo by zero.\n",
                         (long)e->line, (long)e->col);
                 diagnostic_show_line(e->line, e->col);
@@ -2823,7 +2823,7 @@ void sema_infer_expr(Expr *e) {
     // the shift amount must be PROVEN in [0, width-1] — by a literal or by VRA —
     // else reject. A variable amount whose range is unknown or reaches the width
     // was previously accepted and was UB at runtime. `unsafe` opts out.
-    if (!sema_in_unsafe_block) {
+    if (LAIN_LEGACY_ANALYSIS && !sema_in_unsafe_block) {
         TokenKind sop = e->as.binary_expr.op;
         if (sop == TOKEN_SHIFT_LEFT || sop == TOKEN_SHIFT_RIGHT) {
             Expr *lhs = e->as.binary_expr.left;
@@ -2892,7 +2892,7 @@ void sema_infer_expr(Expr *e) {
     // prove-or-reject policy; `unsafe` opts out. A divisor is proven by VRA (range
     // excludes 0) or a `!= 0` refinement/param constraint. This also rejects a
     // PROVABLE signed TYPE_MIN / -1 — the one signed-division overflow that is UB.
-    if (!sema_in_unsafe_block && sema_walk_phase && sema_ranges) {
+    if (LAIN_LEGACY_ANALYSIS && !sema_in_unsafe_block && sema_walk_phase && sema_ranges) {
         TokenKind op = e->as.binary_expr.op;
         Expr *lhs = e->as.binary_expr.left;
         if ((op == TOKEN_SLASH || op == TOKEN_PERCENT) &&
@@ -3361,7 +3361,7 @@ void sema_infer_expr(Expr *e) {
             Expr *re = e->as.index_expr.index->as.range_expr.end;
             Expr *len_expr = expr_binary(sema_arena, TOKEN_MINUS, re, rs);
             e->type = type_sized_array(sema_arena, t->element_type, len_expr, TOKEN_EQUAL_EQUAL);
-            if (!sema_in_unsafe_block &&
+            if (!sema_in_unsafe_block &&           // syntactic (Annex B E087 (1)): stays in the front end
                 rs && re &&
                 rs->kind == EXPR_LITERAL && re->kind == EXPR_LITERAL) {
                 long long sv = (long long)rs->as.literal_expr.value;

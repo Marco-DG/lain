@@ -572,6 +572,7 @@ static IrType *ir_refine_int_type_from(LowerCtx *c, IrType *base, ExprList *cons
     if (!constraints) return base;
     if (!irtype_int_range(base, &lo, &hi)) return base;
     int64_t nlo = lo, nhi = hi; bool got = false;
+    bool ne = false; int64_t nek = 0;
     for (ExprList *cn = constraints; cn; cn = cn->next) {
         Expr *e = cn->expr;
         {
@@ -584,6 +585,15 @@ static IrType *ir_refine_int_type_from(LowerCtx *c, IrType *base, ExprList *cons
                 case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (k   < nhi) { nhi = k;   got = true; } break;
                 case TOKEN_ANGLE_BRACKET_RIGHT:       if (k+1 > nlo) { nlo = k+1; got = true; } break;
                 case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (k   > nlo) { nlo = k;   got = true; } break;
+                // `type Zero = i32 == 0` is the interval [0,0]. It was skipped, so the alias
+                // constrained nothing and `var z Zero = 1` was refused only by the front end's
+                // legacy check.
+                case TOKEN_EQUAL_EQUAL:
+                    if (k > nlo) nlo = k;
+                    if (k < nhi) nhi = k;
+                    got = true; break;
+                case TOKEN_BANG_EQUAL:
+                    ne = true; nek = k; got = true; break;
                 default: break;
             }
         }
@@ -592,6 +602,7 @@ static IrType *ir_refine_int_type_from(LowerCtx *c, IrType *base, ExprList *cons
     IrType *r = ir_type_new(c->a, IRT_INT);
     *r = *base;
     r->has_refine = true; r->refine_lo = nlo; r->refine_hi = nhi;
+    if (ne) { r->has_ne = true; r->refine_ne = nek; }
     return r;
 }
 
@@ -955,7 +966,7 @@ static void ir_lower_return_ensures_assert(LowerCtx *c, IrValue *v) {
         IrCmp cmp;
         if (rv && rv->type && rv->type->kind==IRT_INT &&
             ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp))
-            ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, v, rv));
+            ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, v, rv), 86);   // return refinement
     }
 }
 
@@ -1029,10 +1040,24 @@ static void ir_lower_call_requires(LowerCtx *c, Decl *callee, IrInstr *call) {
                 if (!q->decl || q->decl->kind!=DECL_VARIABLE) continue;
                 Id *qn=q->decl->as.variable_decl.name;
                 if (qn && qn->length==inf->length && strncmp(qn->name,inf->name,(size_t)qn->length)==0) {
+                    // ★ THE ASSERT MUST COVER EVERY CASE THE ENTRY ASSUMES. The callee assumes
+                    // `pos < len` for a SLICE and for a FIXED array (constant length); this side
+                    // asserted for slices only, so `get(arr i32[10], i i32 in arr)` called as
+                    // `get(arr, 15)` gave the callee an assumption nobody proved — an unlicensed
+                    // assume, hidden only because the front end's legacy check refused the call
+                    // first. The length comes from the callee's DECLARED type, the same fact the
+                    // entry side reads off the parameter.
                     if (jdx < call->n_operands) {
                         IrValue *aarr = call->operands[jdx];
+                        Type *qt = q->decl->as.variable_decl.type;
+                        IrValue *len = NULL;
                         if (aarr && aarr->type && aarr->type->kind==IRT_SLICE)
-                            ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, arg, ir_slice_len(c->f,c->cur,aarr)));
+                            len = ir_slice_len(c->f, c->cur, aarr);
+                        else if (qt && qt->kind==TYPE_ARRAY && qt->array_len > 0)
+                            len = ir_const_int(c->f, c->cur, qt->array_len, ir_type_int(c->a,64,false));
+                        else if (aarr && aarr->type && aarr->type->kind==IRT_ARRAY && aarr->type->array_len > 0)
+                            len = ir_const_int(c->f, c->cur, aarr->type->array_len, ir_type_int(c->a,64,false));
+                        if (len) ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, arg, len), 85);
                     }
                     break;
                 }
@@ -1111,11 +1136,11 @@ static void ir_lower_call_slice_len_requires(LowerCtx *c, Decl *callee, IrInstr 
         IrValue *rv = ir_resolve_len_expr(c, callee, call, pty->size_expr, ir_type_int(c->a,64,false));
         if (!rv || !rv->type || rv->type->kind!=IRT_INT) continue;  // fail-closed
         if (pty->size_relop == TOKEN_EQUAL_EQUAL) {                 // len == expr ⇒ both dirs
-            ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_UGE, L, rv));
-            ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULE, L, rv));
+            ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_UGE, L, rv), 87);
+            ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULE, L, rv), 87);
         } else { IrCmp cmp;
             if (ir_tok_cmp(pty->size_relop, false, &cmp))
-                ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, L, rv));
+                ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, L, rv), 87);
         }
     }
 }

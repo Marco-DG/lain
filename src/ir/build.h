@@ -142,7 +142,15 @@ void ir_assume(IrFunc *f, IrBlock *b, IrValue *cond) {
 void ir_assert(IrFunc *f, IrBlock *b, IrValue *cond) {
     IrInstr *ins = ir_instr(f, IR_ASSERT, NULL, 1);
     ins->operands[0] = cond;
+    ins->aux.imm = 0;                 // the obligation's diagnostic class; 0 = a precondition (E012)
     ir_emit(b, ins);
+}
+// An assert that states a SPECIFIC obligation the spec gives its own code: an index bound (85),
+// a return refinement (86), a sized-slice argument (87). The obligation is the same `assert`; the
+// code is what the user is told it WAS, and Annex B fixes those codes by meaning.
+void ir_assert_coded(IrFunc *f, IrBlock *b, IrValue *cond, int code) {
+    ir_assert(f, b, cond);
+    if (b && b->instrs_tail) b->instrs_tail->aux.imm = code;
 }
 // `consume(slot)` — Phase 3.2: `mov x` invalidates x's storage; op[0] is the moved-from
 // slot. The linearity pass reads it; codegen ignores it. No result.

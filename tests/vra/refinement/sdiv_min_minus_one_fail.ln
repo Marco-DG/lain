@@ -1,0 +1,5 @@
+// EXPECT: [E086]
+// Signed `TYPE_MIN / -1` overflows (UB; SIGFPE on x86). With the legacy front-end check gone the
+// IR states the obligation itself: a divisor PROVABLY -1 over a dividend that can reach TYPE_MIN.
+func f(x i32) i32 { return x / -1 }
+func main() i32 { return 0 }

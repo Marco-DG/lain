@@ -1,0 +1,9 @@
+// ...and the same type PROVES a divisor by itself: `a / d` with `d NonZero` needs no guard,
+// and the caller's argument is checked against the type where it narrows into it.
+type NonZero = i32 != 0
+func div(a i32, d NonZero) i32 { return a / d }
+func main() i32 {
+    var z NonZero = 4
+    if div(100, z) == 25 { return 0 }
+    return 1
+}

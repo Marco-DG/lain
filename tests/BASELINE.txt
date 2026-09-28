@@ -2266,6 +2266,10 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
+### tests/vra/refinement/ne_alias_divisor_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/vra/refinement/nonzero_guard_via_slot_pass.ln
 rc=0
 out=

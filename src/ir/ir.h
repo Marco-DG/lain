@@ -159,6 +159,11 @@ typedef struct IrType {
     // constraint written on the parameter did, because that path goes through the assumes.
     bool    has_refine;
     int64_t refine_lo, refine_hi;
+    // ...and ONE EXCLUDED VALUE, which an interval cannot hold: `type NonZero = i32 != 0`. Without
+    // it the alias constrained nothing in the IR — a store of 0 was refused only by the front
+    // end's legacy check — and a divisor of the type proved nothing.
+    bool    has_ne;
+    int64_t refine_ne;
     // linearity/multiplicity qualifier (Phase 3.2 / B5 substrate) — a value of a `linear`
     // type must be consumed exactly once (an owned resource: `mov`d, freed, or returned).
     // Language-neutral: Lain's owned modes and Rust's affine owners both lower to this.

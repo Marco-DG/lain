@@ -135,6 +135,11 @@ typedef struct {
     // for a recursion with no inferable measure, E082 for one whose measure is present and
     // fails — so the engine has to carry the distinction to be normatively right.
     bool     had_measure;
+    // A VRA_OVERFLOW check about a SHIFT: 1 = the amount is not provably in [0, width-1],
+    // 2 = a signed left shift may carry a bit into/through the sign. Both are UB in the C the
+    // backend emits, and each needs its own sentence.
+    int      shift;
+    int      diag;           // VRA_PRECOND: the assert's diagnostic class (85/86/87; 0 = E012)
     int64_t  line, col;
 } VraCheck;
 
@@ -2069,6 +2074,9 @@ static bool vra_type_may_lose(const IrType *from, const IrType *to) {
     if (!from || !to || from->kind != IRT_INT || to->kind != IRT_INT) return false;
     int64_t flo, fhi, tlo, thi;
     if (!irtype_int_range(from, &flo, &fhi) || !irtype_int_range(to, &tlo, &thi)) return false;
+    // A target that EXCLUDES a value the source may hold can lose it too (`NonZero` from i32).
+    if (to->has_ne && !(from->has_ne && from->refine_ne == to->refine_ne) &&
+        flo <= to->refine_ne && to->refine_ne <= fhi) return true;
     return !(tlo <= flo && fhi <= thi);       // the target does NOT contain the source's range
 }
 
@@ -2084,6 +2092,10 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
     VraCheck c; memset(&c,0,sizeof c);
     c.kind = VRA_OVERFLOW; c.at = at; c.line = line; c.col = col;
     c.ok = (vlo >= tlo) && (vhi <= thi);
+    if (c.ok && target->has_ne) {                          // the excluded value must be excluded
+        bool from_ne = val->type->has_ne && val->type->refine_ne == target->refine_ne;
+        if (!from_ne && vlo <= target->refine_ne && target->refine_ne <= vhi) c.ok = false;
+    }
     // B1: the domain cannot bound a running total, because the bound is a PRODUCT of the trip
     // count and the step. Derive it outside the domain and hand back the interval.
     if (!c.ok) c.ok = vra_accum_info(V, W, val, &c, tlo, thi);
@@ -2182,6 +2194,38 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     if (!c.ok && ins->result) c.ok = vra_accum_info(V, W, ins->result, &c, tlo, thi);
     vra_add_check(V, c);
 }
+// ★ SHIFTS RAISED NO OBLIGATION IN THIS ENGINE. `x << n` with n unproven, `x >> 32` on a u32, and
+// `1 << 31` on an i32 are undefined behaviour in the C the backend emits, and only the front
+// end's LEGACY range check refused them — so they were answered by the old engine alone, and
+// the IR's verdict was never asked. Two obligations, the ones the legacy check stated:
+//   · the AMOUNT is in [0, width-1] (any shift);
+//   · a SIGNED left shift fits: `x << n` is `x * 2^n`, and a bit reaching the sign is UB.
+// An unsigned left shift discards bits by definition and is not checked. `unsafe` waives both.
+static void vra_check_shift(Vra *V, Octagon *W, IrInstr *ins) {
+    if (ins->unchecked || ins->n_operands < 2) return;
+    IrValue *a = ins->operands[0], *b = ins->operands[1];
+    if (!a || !b || !a->type || a->type->kind != IRT_INT) return;
+    int bits = a->type->bits;
+    if (bits <= 0 || bits > 64) return;
+    int64_t blo, bhi; vra_range(V, W, b, &blo, &bhi);
+    VraCheck c; memset(&c,0,sizeof c); c.kind = VRA_OVERFLOW; c.at = ins;
+    c.line = ins->line; c.col = ins->col; c.shift = 1;
+    c.ok = (blo >= 0) && (bhi <= bits - 1);
+    vra_add_check(V, c);
+    if (!c.ok) return;                                   // the value question needs a bounded n
+    if (ins->op != IR_SHL || !a->type->is_signed) return;
+    IrType *tt = (ins->result && ins->result->type) ? ins->result->type : a->type;
+    int64_t tlo, thi; if (!irtype_int_range(tt, &tlo, &thi)) return;
+    int64_t alo, ahi; vra_range(V, W, a, &alo, &ahi);
+    __int128 m = (__int128)1 << bhi;                     // the extreme magnitudes are at n = bhi
+    __int128 rlo = (__int128)alo * m, rhi = (__int128)ahi * m;
+    if (rlo > rhi) { __int128 t = rlo; rlo = rhi; rhi = t; }
+    VraCheck v; memset(&v,0,sizeof v); v.kind = VRA_OVERFLOW; v.at = ins;
+    v.line = ins->line; v.col = ins->col; v.shift = 2;
+    v.ok = (alo > -OCT_INF/2) && (ahi < OCT_INF/2) && rlo >= (__int128)tlo && rhi <= (__int128)thi;
+    vra_add_check(V, v);
+}
+
 // Division/remainder: the divisor must be provably non-zero.
 // ★ `d != 0` IS A FACT, and an interval cannot hold it: excluding a point from the middle of
 // a range is not an interval, and it is not an octagon constraint either — which is why
@@ -2256,11 +2300,31 @@ static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid) {
     }
     return false;
 }
+static int vra_sdiv_may_trap_count = 0;   // measurement: divisions the STRICT rule would refuse
 static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
     if (ins->n_operands<2 || ins->unchecked) return;         // `unsafe` waives it, as for bounds
     int64_t lo,hi; vra_range(V,W,ins->operands[1],&lo,&hi);
+    // ★ SIGNED TYPE_MIN / -1 overflows (UB; SIGFPE on x86). Stated here as the legacy front-end
+    // check stated it — the divisor is provably EXACTLY -1 and the dividend can reach TYPE_MIN —
+    // so this engine refuses what that check refused. (A divisor that merely MAY be -1 is not
+    // refused: that is the language's current, deliberate trade, recorded in plan Part 7G.)
+    if ((ins->op==IR_SDIV || ins->op==IR_SREM) && ins->operands[0] && ins->operands[0]->type &&
+        ins->operands[0]->type->kind==IRT_INT && ins->operands[0]->type->is_signed) {
+        int64_t tlo, thi, alo, ahi;
+        if (irtype_int_range(ins->operands[0]->type, &tlo, &thi)) {
+            vra_range(V, W, ins->operands[0], &alo, &ahi);
+            if (lo <= -1 && -1 <= hi && alo <= tlo) vra_sdiv_may_trap_count++;
+            if (lo == -1 && hi == -1 && alo <= tlo) {
+                VraCheck m; memset(&m,0,sizeof m); m.kind = VRA_OVERFLOW; m.at = ins;
+                m.line = ins->line; m.col = ins->col; m.shift = 3; m.ok = false;
+                vra_add_check(V, m);
+            }
+        }
+    }
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_DIVZERO; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.ok = (lo>0) || (hi<0);                                // 0 ∉ [lo,hi]
+    { IrType *dt = ins->operands[1]->type;                  // a `!= 0` TYPE is a proof by itself
+      if (!c.ok && dt && dt->has_ne && dt->refine_ne == 0) c.ok = true; }
     if (!c.ok) c.ok = vra_guarded_nonzero(V, at, ins->operands[1]->id);
     vra_add_check(V, c);
 }
@@ -2329,6 +2393,7 @@ static void vra_check_assert(Vra *V, Octagon *W, IrInstr *ins) {
     IrInstr *ic = V->def[ins->operands[0]->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return;
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_PRECOND; c.at=ins; c.line=ins->line; c.col=ins->col;
+    c.diag = (int)ins->aux.imm;
     c.ok = vra_icmp_holds(V, W, ic->operands[0]->id, ic->operands[1]->id, ic->aux.cmp);
     vra_add_check(V, c);
 }
@@ -3530,6 +3595,7 @@ static Vra *vra_analyze(IrFunc *f) {
                 case IR_MAKE_SLICE: oct_close(&W); vra_check_subslice(V,&W,ins); break;
                 case IR_ASSERT: oct_close(&W); vra_check_assert(V,&W,ins); break;
                 case IR_ADD: case IR_SUB: case IR_MUL: oct_close(&W); vra_check_overflow(V,&W,ins); break;
+                case IR_SHL: case IR_LSHR: case IR_ASHR: oct_close(&W); vra_check_shift(V,&W,ins); break;
                 // Path-F's other half: the widened result meets a narrower slot HERE.
                 case IR_STORE: {
                     if (ins->n_operands < 2) break;

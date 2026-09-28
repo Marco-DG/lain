@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// A `!=` refinement alias is enforced by the IR. `type NonZero = i32 != 0` constrained nothing in
+// the IR — an interval cannot exclude a point from its middle — so storing 0 was refused only by
+// the front end's legacy range check. The type now carries the excluded value, and a narrowing
+// into it must prove the value is not that one.
+type NonZero = i32 != 0
+func main() i32 {
+    var z NonZero = 0
+    var w = z
+    return 0
+}
