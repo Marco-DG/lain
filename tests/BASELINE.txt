@@ -1823,6 +1823,9 @@ at=const 2
 rc=0
 out=
 at=const 2
+### tests/types/wrapping_arithmetic_widths_pass.ln
+rc=0
+out=
 ### tests/unsafe/ptr_var_write_pass.ln
 rc=0
 out=111

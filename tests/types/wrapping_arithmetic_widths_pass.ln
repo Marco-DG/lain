@@ -1,0 +1,35 @@
+// Wrapping arithmetic `+% -% *%` is DEFINED — the result modulo 2^N — at every width. It was
+// emitted as a plain C `(a + b)`: signed overflow, undefined in C, so gcc -O2 computed
+// `i64::MIN -% 1` wrongly; u16 `*%` promoted to `int` and overflowed there (60000 * 60000);
+// and an odd width was not wrapped at all — `u4 +% 1` on 15 gave 16. Run under UBSan by
+// the corpus harness, every line below is a boundary.
+func main() i32 {
+    var a8 i8 = 127
+    if a8 +% 1 != -128 { return 1 }
+    var b8 i8 = -128
+    if b8 -% 1 != 127 { return 2 }
+    if b8 *% -1 != -128 { return 3 }
+    var c16 i16 = 32767
+    if c16 *% 2 != -2 { return 4 }
+    var u16a u16 = 60000
+    if u16a *% u16a != 41984 { return 5 }
+    var u8a u8 = 255
+    if u8a +% 1 != 0 { return 6 }
+    var z u32 = 0
+    if z -% 1 != 4294967295 { return 7 }
+    var z64 u64 = 0
+    var m64 = z64 -% 1
+    if m64 +% 2 != 1 { return 8 }
+    var s64 i64 = -9223372036854775807 - 1
+    if s64 -% 1 != 9223372036854775807 { return 9 }
+    var u4a u4 = 15
+    if u4a +% 1 != 0 { return 10 }
+    var u4b u4 = 3
+    if u4b -% 5 != 14 { return 11 }
+    var i7a i7 = 63
+    if i7a +% 1 != -64 { return 12 }
+    var i7b i7 = -64
+    if i7b -% 1 != 63 { return 13 }
+    if i7b *% 3 != -64 { return 14 }
+    return 0
+}

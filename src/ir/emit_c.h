@@ -160,6 +160,36 @@ static const char *ir_arith_c(IrOp op) {
         case IR_SHL:return "<<"; case IR_LSHR: case IR_ASHR:return ">>"; default:return "+"; }
 }
 
+// ── WRAPPING ARITHMETIC MUST NOT BE C SIGNED OVERFLOW ───────────────────────────────────────
+// `+% -% *%` promise the result modulo 2^N. They were emitted as a plain `(a + b)`, which on a
+// signed C type is UNDEFINED when it overflows — UBSan: "2147483647 + 1 cannot be represented
+// in type 'int'" — so the operator that exists to make overflow defined compiled to the one
+// construct C leaves undefined; gcc may assume it never happens (loop reasoning, `x + 1 > x`).
+// The emitted C is compiled with no `-fwrapv` (the documented recipe is a plain `gcc`). An
+// unsigned u16 `*%` was undefined too: both operands promote to `int` and 60000 * 60000 does not
+// fit there.
+//
+// So: compute in an UNSIGNED type at least as wide as `unsigned int` (where C defines wrap
+// around), then bring the bits back — a plain conversion for a standard width (modular in every
+// compiler this targets: gcc and clang define it), a mask for an odd unsigned width (u4), and a
+// mask plus sign extension for an odd signed one (i7).
+static void ir_emit_modular(IrInstr *i, FILE *o) {
+    IrType *rt = i->result->type;
+    int n = rt->bits > 0 ? rt->bits : 32;
+    const char *U = n > 32 ? "uint64_t" : "uint32_t";
+    bool std_w = (n == 8 || n == 16 || n == 32 || n == 64);
+    unsigned long long mask = (n >= 64) ? ~0ULL : ((1ULL << n) - 1);
+    unsigned long long sb = 1ULL << (n - 1);
+    char core[160];
+    snprintf(core, sizeof core, "(%s)v%d %s (%s)v%d", U, i->operands[0]->id, ir_arith_c(i->op),
+             U, i->operands[1]->id);
+    fprintf(o, "  v%d = (", i->result->id); ir_ctype(rt, o); fputs(")", o);
+    if (std_w)                 fprintf(o, "(%s);\n", core);                              // (T)(a op b)
+    else if (!rt->is_signed)   fprintf(o, "((%s) & 0x%llxULL);\n", core, mask);        // mask to N bits
+    else                       fprintf(o, "((((%s) & 0x%llxULL) ^ 0x%llxULL) - 0x%llxULL);\n",
+                                       core, mask, sb, sb);                             // + sign-extend
+}
+
 // emit bytes as a C string literal (3-digit octal for anything unsafe, so a
 // following digit can never extend the escape)
 static void ir_emit_cstr(const char *s, int len, FILE *o) {
@@ -539,6 +569,12 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             break;
         }
         default:
+            if (i->n_operands == 2 && i->result && i->wrap == IR_WRAP_MODULAR &&
+                (i->op == IR_ADD || i->op == IR_SUB || i->op == IR_MUL) &&
+                i->result->type && i->result->type->kind == IRT_INT) {
+                ir_emit_modular(i, o);
+                break;
+            }
             if (i->n_operands == 2 && i->result) {
                 fprintf(o, "  v%d = ", i->result->id);
                 // Same reason as the vector comparison above: a mask's LANE SIGNEDNESS is
