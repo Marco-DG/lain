@@ -3920,6 +3920,11 @@ static Vra *vra_analyze(IrFunc *f) {
         if (f->may_diverge && !b->has_measure) continue;
         VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
         c.had_measure = b->has_measure;
+        // The loop's POSITION: its header's condition. The check had none, so E011 printed
+        // "Error:" with no line — in a file with several loops, no way to tell which.
+        { IrInstr *hc = (b->term.cond && b->term.cond->id>=0 && b->term.cond->id<V->nvar)
+                        ? V->def[b->term.cond->id] : NULL;
+          if (hc) { c.line = hc->line; c.col = hc->col; } }
         vra_add_check(V, c);
     }
     // ── RECURSION: the same obligation, one level up ────────────────────────────────────────
