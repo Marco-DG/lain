@@ -1,0 +1,7 @@
+// EXPECT: [E086]
+// At 64 bits there is no wider type to compute in, so the division itself owes the fact: the
+// dividend is not TYPE_MIN or the divisor is not -1. `/%` or `/|` say what to do instead.
+func divide(a i64, b i64 != 0) i64 {
+    return a / b
+}
+func main() i32 { return 0 }

@@ -1467,12 +1467,15 @@ Lain uses **equation-style type constraints** to statically verify function requ
 Constraints on parameters are written directly after the type:
 
 ```lain
-func safe_div(a int, b int != 0) int {
-    return a / b
+func safe_div(a int, b int != 0) i64 {
+    return a / b          // i32 / i32 is an i33: TYPE_MIN / -1 is 2^31, and an i64 holds it
 }
 ```
 
-The compiler verifies at each call site that `b` cannot be zero:
+The compiler verifies at each call site that `b` cannot be zero. (The quotient is returned wide
+because one signed quotient does not fit its operands' type — `TYPE_MIN / -1`. Returning an `int`
+instead needs a fact that rules it out, such as `b int > 0`, or an explicit policy: `a /% b`
+wraps, `a /| b` saturates.)
 ```lain
 safe_div(10, 2)     // OK: 2 != 0
 safe_div(10, 0)     // ERROR: 0 violates b != 0

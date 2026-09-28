@@ -285,10 +285,13 @@ sums the operand widths --- e.g. \lain{u8 + u8} yields \lain{u9}, \lain{u8 - u8}
 yields \lain{i10}, \lain{i32 + i32} yields \lain{i33}, and \lain{i32 * i32} yields
 \lain{i64}.  When the required width would exceed 64 bits (the \lain{i128}
 ceiling), the result type is the higher-rank operand and the operation is subject
-to the overflow diagnostic below.  The other binary operators (\lain{/}, \lain{\%},
-\lain{\&}, \lain{|}, \lain{\^}, \lain{<<}, \lain{>>}) yield the higher-rank operand
-type.  Overflow therefore becomes possible only at a \emph{narrowing}
-(\S\,\ref{sec:types.overflow}).
+to the overflow diagnostic below.  A \emph{signed} \lain{/} widens by one bit ---
+\lain{i32 / i32} yields \lain{i33} --- because exactly one quotient does not fit its
+operands' type, \(\mathrm{TYPE\_MIN} / {-1}\); an unsigned \lain{/} and every
+\lain{\%} keep the higher-rank operand type (a remainder is smaller in magnitude than its
+divisor).  The other binary operators (\lain{\&}, \lain{|}, \lain{\^}, \lain{<<},
+\lain{>>}) yield the higher-rank operand type.  Overflow therefore becomes possible only
+at a \emph{narrowing} (\S\,\ref{sec:types.overflow}).
 
 \begin{example}
 \begin{laincode}
@@ -329,8 +332,8 @@ proving the range, widening the target, or choosing an explicit overflow policy:
 \endlastfoot
 proven (default)     & \lain{x as T}\quad(narrows only if proven, else \diagcode{E086}) \\
 checked (traps)      & \lain{x as? T},\quad \lain{a +? b}, \lain{a -? b}, \lain{a *? b} \\
-wrapping (modular)   & \lain{x as\% T},\quad \lain{a +\% b}, \lain{a -\% b}, \lain{a *\% b} \\
-saturating (clamp)   & \lain{x as| T},\quad \lain{a +| b}, \lain{a -| b}, \lain{a *| b} \\
+wrapping (modular)   & \lain{x as\% T},\quad \lain{a +\% b}, \lain{a -\% b}, \lain{a *\% b}, \lain{a /\% b} \\
+saturating (clamp)   & \lain{x as| T},\quad \lain{a +| b}, \lain{a -| b}, \lain{a *| b}, \lain{a /| b} \\
 \end{longtable}
 
 \pnum
@@ -338,7 +341,17 @@ A checked form performs a run-time bounds check and terminates the program
 (\lain{panic}) on overflow.  A wrapping form uses two's-complement modular
 arithmetic.  A saturating form clamps to the target type's minimum or maximum.
 The checked and wrapping/saturating \emph{operators} keep the operand type (they
-do not auto-widen).
+do not auto-widen).  For division the only overflowing case is
+\(\mathrm{TYPE\_MIN} / {-1}\): \lain{/\%} yields \(\mathrm{TYPE\_MIN}\) and \lain{/|}
+yields \(\mathrm{TYPE\_MAX}\); every other quotient is the ordinary one.
+
+\begin{constraint}
+  Where no wider type exists --- a signed \lain{/} or \lain{\%} on 64-bit operands --- the
+  operation itself must be proven not to divide \(\mathrm{TYPE\_MIN}\) by \({-1}\): the
+  dividend's range excludes \(\mathrm{TYPE\_MIN}\) or the divisor's excludes \({-1}\).
+  Otherwise the program is \illformed{}~(\diagcode{E086}).  There is no implicit run-time
+  check; \lain{/\%} and \lain{/|} state what the programmer means.
+\end{constraint}
 
 \begin{constraint}
   An implicit conversion between integer types and floating-point types is

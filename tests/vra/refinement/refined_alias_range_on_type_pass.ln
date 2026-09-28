@@ -3,7 +3,11 @@
 // type_integer_range — previously that query returned "unknown" for an alias.
 // Here `Pos = i32 >= 1 and <= 9` carries [1,9] on its type, which excludes 0 and
 // so discharges the `!= 0` divisor precondition with no runtime check.
+// DECIDE-M (2026-09-28): a signed quotient needs one bit more than its operands — `a / b`
+// with a possibly TYPE_MIN dividend over a divisor that may be -1 is 2^31, which no i32
+// holds (and was a C division trapping at -O0, a silent value at -O2). The result is i64
+// here so this test stays about what it tests: the divisor.
 type Pos = i32 >= 1 and <= 9
-func d(a i32, b i32 != 0) i32 { return a / b }
-func f(n Pos) i32 { return d(100, n) }
+func d(a i32, b i32 != 0) i64 { return a / b }
+func f(n Pos) i64 { return d(100, n) }
 func main() i32 { return 0 }

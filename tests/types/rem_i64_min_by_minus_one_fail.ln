@@ -1,0 +1,6 @@
+// EXPECT: [E086]
+// ...and so does a 64-bit `%`: C's TYPE_MIN % -1 is undefined because TYPE_MIN / -1 is.
+func rem(a i64, b i64 != 0) i64 {
+    return a % b
+}
+func main() i32 { return 0 }

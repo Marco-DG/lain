@@ -1359,8 +1359,39 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             oct_close(W);
             int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
             oct_forget(W, r);
-            if (hl && alo>=0 && V->cknown[b] && V->cval[b]>0)
+            if (hl && alo>=0 && V->cknown[b] && V->cval[b]>0) {
                 vra_div_facts(V, W, r, a, V->cval[b], alo,hl,ahi,hh);
+                break;
+            }
+            // ★ ANY OTHER SIGNED QUOTIENT (DECIDE-M). It was UNKNOWN, which cost nothing while a
+            // quotient kept its operand's type; once `/` widens (i32 / i32 : i33), an unknown
+            // quotient cannot narrow back and every `q i32 = a / b` would be refused. Truncating
+            // division is monotone in each operand on each side of zero, so its extremes are at
+            // the corners of the box — per sign of the divisor, zero itself excluded (dividing
+            // by it is a separate obligation). In i128, because MIN / -1 is the corner that
+            // matters.
+            { int64_t Alo, Ahi, Blo, Bhi;
+              vra_range(V, W, ins->operands[0], &Alo, &Ahi);
+              vra_range(V, W, ins->operands[1], &Blo, &Bhi);
+              __int128 qlo = 0, qhi = 0; bool any = false;
+              int64_t parts[2][2]; int np = 0;
+              if (Bhi >= 1)  { parts[np][0] = Blo > 1 ? Blo : 1;   parts[np][1] = Bhi;              np++; }
+              if (Blo <= -1) { parts[np][0] = Blo;                  parts[np][1] = Bhi < -1 ? Bhi : -1; np++; }
+              for (int k = 0; k < np; k++)
+                  for (int ia = 0; ia < 2; ia++)
+                      for (int ib = 0; ib < 2; ib++) {
+                          __int128 q = (__int128)(ia ? Ahi : Alo) / (__int128)parts[k][ib];
+                          if (!any || q < qlo) qlo = q;
+                          if (!any || q > qhi) qhi = q;
+                          any = true;
+                      }
+              int64_t tlo, thi;
+              if (any && ins->result->type && irtype_int_range(ins->result->type, &tlo, &thi)) {
+                  if (ins->wrap == IR_WRAP_MODULAR && qhi > thi) { qlo = tlo; qhi = thi; } // MIN/-1 wraps to MIN
+                  if (qlo < tlo) qlo = tlo;                                                  // saturate, or no
+                  if (qhi > thi) qhi = thi;                                                  // defined value out
+                  if (qlo <= qhi) { oct_add_lb(W, r, (int64_t)qlo); oct_add_ub(W, r, (int64_t)qhi); }
+              } }
             break;
         }
         case IR_UREM: {  // x % b  (unsigned)  ⇒  0 ≤ r < b   (b > 0 in any defined exec;
@@ -1380,6 +1411,21 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 oct_add_lb(W,r, (hl&&alo>=0)?0:-(c-1)); oct_add_ub(W,r,c-1);
             } else if (hl && alo>=0) {                     // non-const divisor, a ≥ 0, b > 0 in
                 oct_add_lb(W,r,0); vra_add_diff_le(V,W,r,b,-1);   // any defined exec ⇒ 0 ≤ r < b
+            } else {
+                // ★ The general remainder (DECIDE-M): it takes the dividend's sign, and its
+                // magnitude is below both |b| and |a| + 1. Needed once `%` is computed in i64 and
+                // narrowed back: the narrowing is proven by exactly this.
+                int64_t Alo, Ahi, Blo, Bhi;
+                vra_range(V, W, ins->operands[0], &Alo, &Ahi);
+                vra_range(V, W, ins->operands[1], &Blo, &Bhi);
+                __int128 mb = (__int128)(Blo < 0 ? -(__int128)Blo : Blo);
+                __int128 mb2 = (__int128)(Bhi < 0 ? -(__int128)Bhi : Bhi);
+                if (mb2 > mb) mb = mb2;
+                __int128 rlo = Alo < 0 ? (-(mb - 1) > Alo ? -(mb - 1) : Alo) : 0;
+                __int128 rhi = Ahi > 0 ? ((mb - 1) < Ahi ? (mb - 1) : Ahi) : 0;
+                if (mb >= 1 && rlo <= rhi && rlo >= INT64_MIN && rhi <= INT64_MAX) {
+                    oct_add_lb(W, r, (int64_t)rlo); oct_add_ub(W, r, (int64_t)rhi);
+                }
             }
             break;
         }
@@ -2417,24 +2463,43 @@ static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
     // check stated it — the divisor is provably EXACTLY -1 and the dividend can reach TYPE_MIN —
     // so this engine refuses what that check refused. (A divisor that merely MAY be -1 is not
     // refused: that is the language's current, deliberate trade, recorded in plan Part 7G.)
-    if ((ins->op==IR_SDIV || ins->op==IR_SREM) && ins->operands[0] && ins->operands[0]->type &&
+    // ★ DECIDE-M (Marco, 2026-09-28). The divisor used to have to be PROVABLY exactly -1 for this
+    // to be refused, so a possibly-TYPE_MIN dividend over a possibly-(-1) divisor compiled to a
+    // plain C division: SIGFPE at -O0, a silent value at -O2. Now the obligation is the fact
+    // itself — not (dividend = TYPE_MIN and divisor = -1) — and it is owed only where the
+    // division happens at the operand's own width: a widened `/` (i32 / i32 : i33) and a `%`
+    // below 64 bits are computed where the case is an ordinary value, and `/%` `/|` define it.
+    if ((ins->op==IR_SDIV || ins->op==IR_SREM) && ins->wrap == IR_WRAP_CHECK &&
+        ins->operands[0] && ins->operands[0]->type &&
         ins->operands[0]->type->kind==IRT_INT && ins->operands[0]->type->is_signed) {
+        IrType *dt = ins->operands[0]->type, *rt = ins->result ? ins->result->type : NULL;
+        bool widened = rt && rt->kind==IRT_INT && rt->bits > dt->bits;
         int64_t tlo, thi, alo, ahi;
-        if (irtype_int_range(ins->operands[0]->type, &tlo, &thi)) {
+        if (!widened && irtype_int_range(dt, &tlo, &thi)) {
             vra_range(V, W, ins->operands[0], &alo, &ahi);
-            if (lo <= -1 && -1 <= hi && alo <= tlo) vra_sdiv_may_trap_count++;
-            if (lo == -1 && hi == -1 && alo <= tlo) {
-                VraCheck m; memset(&m,0,sizeof m); m.kind = VRA_OVERFLOW; m.at = ins;
-                m.line = ins->line; m.col = ins->col; m.shift = 3; m.ok = false;
-                vra_add_check(V, m);
-            }
+            bool divisor_may_be_m1 = (lo <= -1 && -1 <= hi);
+            if (divisor_may_be_m1 && alo <= tlo) vra_sdiv_may_trap_count++;
+            VraCheck m; memset(&m,0,sizeof m); m.kind = VRA_OVERFLOW; m.at = ins;
+            m.line = ins->line; m.col = ins->col; m.shift = 3;
+            m.ok = !(divisor_may_be_m1 && alo <= tlo);
+            vra_add_check(V, m);
         }
     }
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_DIVZERO; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.ok = (lo>0) || (hi<0);                                // 0 ∉ [lo,hi]
-    { IrType *dt = ins->operands[1]->type;                  // a `!= 0` TYPE is a proof by itself
+    // The divisor as the program wrote it: a signed `%` is computed on a WIDENED copy
+    // (DECIDE-M), and a widening cast keeps zero and non-zero exactly, so the facts about the
+    // original — its `!= 0` type, a guard on it — are facts about the copy.
+    IrValue *dv = ins->operands[1];
+    for (int g = 0; g < 4 && dv && dv->id >= 0 && dv->id < V->nvar; g++) {
+        IrInstr *dd = V->def[dv->id];
+        if (!dd || dd->op != IR_CAST || dd->n_operands < 1 ||
+            (dd->aux.cast_kind != IR_CAST_SEXT && dd->aux.cast_kind != IR_CAST_ZEXT)) break;
+        dv = dd->operands[0];
+    }
+    { IrType *dt = dv ? dv->type : NULL;                     // a `!= 0` TYPE is a proof by itself
       if (!c.ok && dt && dt->has_ne && dt->refine_ne == 0) c.ok = true; }
-    if (!c.ok) c.ok = vra_guarded_nonzero(V, at, ins->operands[1]->id);
+    if (!c.ok && dv) c.ok = vra_guarded_nonzero(V, at, dv->id);
     vra_add_check(V, c);
 }
 

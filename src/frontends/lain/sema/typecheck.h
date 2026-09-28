@@ -349,13 +349,24 @@ static Type *make_int_type(int width, bool is_signed) {
 // multiply sums the operand widths. Beyond 64 bits (the i128 ceiling) we fall
 // back to max(operands) and the op-level overflow check still guards it. Platform
 // types (usize/isize) and non-fixed-width operands are not widened.
+static Type *resolve_type_alias(Type *t);   // fwd
 static Type *path_f_result_type(Type *a, Type *b, TokenKind op) {
     int wa, wb; bool sa, sb;
+    // A division by an ALIAS of a signed integer (`type NonZero = i32 != 0`) is a division by
+    // that integer, and must widen like one — or its TYPE_MIN / -1 case stays at native width.
+    if (op == TOKEN_SLASH) { a = resolve_type_alias(a); b = resolve_type_alias(b); }
     if (!parse_iN_uN(a, &wa, &sa) || !parse_iN_uN(b, &wb, &sb))
         return wider_integer_type(a, b);
     bool rsigned = (op == TOKEN_MINUS) || sa || sb;
     int w;
-    if (op == TOKEN_ASTERISK) {
+    if (op == TOKEN_SLASH) {
+        // DECIDE-M: a SIGNED quotient needs one bit more than its operands — only
+        // TYPE_MIN / -1 uses it, and that is exactly the case C leaves undefined. Computed in
+        // the widened type the operation has no UB; the question moves to the narrowing, where
+        // the quotient's range decides it. An unsigned quotient never exceeds its dividend.
+        if (!(sa && sb)) return wider_integer_type(a, b);
+        w = (wa > wb ? wa : wb) + 1;
+    } else if (op == TOKEN_ASTERISK) {
         w = wa + wb;                                   // product: sum of widths
     } else { // + or -
         if (rsigned) {
@@ -2357,7 +2368,8 @@ void sema_infer_expr(Expr *e) {
                                 || aop == TOKEN_ASTERISK_PERCENT || aop == TOKEN_PLUS_PIPE
                                 || aop == TOKEN_MINUS_PIPE || aop == TOKEN_ASTERISK_PIPE
                                 || aop == TOKEN_PLUS_QUESTION || aop == TOKEN_MINUS_QUESTION
-                                || aop == TOKEN_ASTERISK_QUESTION);
+                                || aop == TOKEN_ASTERISK_QUESTION
+                                || aop == TOKEN_SLASH_PERCENT || aop == TOKEN_SLASH_PIPE);
             if (is_wrap_or_sat && lt && is_integer_type(lt)) {
                 e->type = lt;
                 // Q1: a checked op (`+?`/`-?`/`*?`) must be handled inline by `else`
@@ -2371,11 +2383,17 @@ void sema_infer_expr(Expr *e) {
                     diagnostic_show_line(e->line, e->col);
                     exit(1);
                 }
+            } else if (aop == TOKEN_SLASH && lt && rt && is_integer_type(resolve_type_alias(lt)) &&
+                       is_integer_type(resolve_type_alias(rt))) {
+                // a division by an alias of an integer widens like one (path_f_result_type)
+                e->type = path_f_result_type(lt, rt, aop);
             } else if (lt && rt && is_integer_type(lt) && is_integer_type(rt)) {
                 // F3.5 Path-F: +,-,* widen to a type that holds the result (no
                 // op-level overflow); other ops (/, %, &, |, ^, <<, >>) keep the
                 // max-operand rule (their result already fits the wider operand).
-                if (aop == TOKEN_PLUS || aop == TOKEN_MINUS || aop == TOKEN_ASTERISK) {
+                if (aop == TOKEN_SLASH) {
+                    e->type = path_f_result_type(lt, rt, aop);   // signed: one bit wider
+                } else if (aop == TOKEN_PLUS || aop == TOKEN_MINUS || aop == TOKEN_ASTERISK) {
                     e->type = path_f_result_type(lt, rt, aop);
                     // Keystone rung 2: propagate the interval through +,-,* by
                     // interval arithmetic on the operands' intervals, so the result

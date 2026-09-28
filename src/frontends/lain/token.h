@@ -66,6 +66,8 @@ typedef enum {
     TOKEN_PLUS_PIPE,       // +|  saturating add
     TOKEN_MINUS_PIPE,      // -|  saturating sub
     TOKEN_ASTERISK_PIPE,   // *|  saturating mul
+    TOKEN_SLASH_PERCENT,   // /%  wrapping divide (MIN /% -1 == MIN)
+    TOKEN_SLASH_PIPE,      // /|  saturating divide (MIN /| -1 == MAX)
     TOKEN_PLUS_QUESTION,   // +?  checked add (traps on overflow)
     TOKEN_MINUS_QUESTION,  // -?  checked sub
     TOKEN_ASTERISK_QUESTION,// *? checked mul
@@ -226,6 +228,8 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_SHIFT_RIGHT_EQUAL:           return "TOKEN_SHIFT_RIGHT_EQUAL";
         case TOKEN_AT:                          return "TOKEN_AT";
         case TOKEN_PLUS_PERCENT:                return "TOKEN_PLUS_PERCENT";
+        case TOKEN_SLASH_PERCENT:               return "TOKEN_SLASH_PERCENT";
+        case TOKEN_SLASH_PIPE:                  return "TOKEN_SLASH_PIPE";
         case TOKEN_MINUS_PERCENT:               return "TOKEN_MINUS_PERCENT";
         case TOKEN_ASTERISK_PERCENT:            return "TOKEN_ASTERISK_PERCENT";
         case TOKEN_PLUS_QUESTION:               return "TOKEN_PLUS_QUESTION";
@@ -323,6 +327,8 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_SHIFT_RIGHT_EQUAL:           return ">>=";
         case TOKEN_AT:                          return "@";
         case TOKEN_PLUS_PERCENT:                return "+%";
+        case TOKEN_SLASH_PERCENT:               return "/%";
+        case TOKEN_SLASH_PIPE:                  return "/|";
         case TOKEN_MINUS_PERCENT:               return "-%";
         case TOKEN_ASTERISK_PERCENT:            return "*%";
         case TOKEN_PLUS_QUESTION:               return "+?";

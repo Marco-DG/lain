@@ -1170,6 +1170,10 @@ static bool ir_bin_op(TokenKind t, bool sgn, IrOp *op, IrWrapMode *wrap) {
         case TOKEN_PLUS_PERCENT: *op=IR_ADD; *wrap=IR_WRAP_MODULAR; return true;
         case TOKEN_MINUS_PERCENT:*op=IR_SUB; *wrap=IR_WRAP_MODULAR; return true;
         case TOKEN_ASTERISK_PERCENT: *op=IR_MUL; *wrap=IR_WRAP_MODULAR; return true;
+        // DECIDE-M: division with an explicit policy for the one case that overflows,
+        // TYPE_MIN / -1 — `/%` wraps it to MIN, `/|` saturates it to MAX. Unsigned, both are `/`.
+        case TOKEN_SLASH_PERCENT: *op= sgn?IR_SDIV:IR_UDIV; *wrap= sgn?IR_WRAP_MODULAR:IR_WRAP_CHECK; return true;
+        case TOKEN_SLASH_PIPE:    *op= sgn?IR_SDIV:IR_UDIV; *wrap= sgn?IR_WRAP_SATURATE:IR_WRAP_CHECK; return true;
         default: return false;
     }
 }
@@ -1944,6 +1948,26 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             IrOp op; IrWrapMode wrap; IrCmp cmp;
             if (ir_cmp_op(e->as.binary_expr.op, sgn, &cmp)) return ir_icmp(c->f,c->cur,cmp,x,y);
             if (ir_bin_op(e->as.binary_expr.op, sgn, &op, &wrap)) {
+                // DECIDE-M: a SIGNED remainder never overflows mathematically, but C's `%` is
+                // undefined at TYPE_MIN % -1 (because TYPE_MIN / -1 is). Below 64 bits it is
+                // computed in i64, where that case is an ordinary 0, and narrowed back — exact,
+                // since |a % b| < |b|. At 64 bits there is no wider type and the op keeps the
+                // obligation (vra_check_divzero).
+                if (op == IR_SREM && wrap == IR_WRAP_CHECK && ty && ty->kind==IRT_INT &&
+                    ty->is_signed && ty->bits < 64 && x && y && x->type && y->type &&
+                    x->type->kind==IRT_INT && y->type->kind==IRT_INT) {
+                    IrType *w64 = ir_type_int(c->a, 64, true);
+                    IrValue *xw = x, *yw = y;
+                    if (x->type->bits < 64) { IrInstr *cx = ir_instr(c->f, IR_CAST, w64, 1); cx->operands[0] = x;
+                        cx->aux.cast_kind = x->type->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT; ir_emit(c->cur, cx); xw = cx->result; }
+                    if (y->type->bits < 64) { IrInstr *cy = ir_instr(c->f, IR_CAST, w64, 1); cy->operands[0] = y;
+                        cy->aux.cast_kind = y->type->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT; ir_emit(c->cur, cy); yw = cy->result; }
+                    IrValue *rw = ir_binop(c->f, c->cur, IR_SREM, xw, yw, w64);
+                    c->cur->instrs_tail->unchecked = c->unsafe;
+                    IrInstr *ct = ir_instr(c->f, IR_CAST, ty, 1); ct->operands[0] = rw;
+                    ct->aux.cast_kind = IR_CAST_TRUNC; ir_emit(c->cur, ct);
+                    return ct->result;
+                }
                 IrValue *r = ir_binop(c->f,c->cur,op,x,y,ty);
                 c->cur->instrs_tail->wrap = wrap;
                 // `unchecked` is documented on IR_ELEM_PTR *and arithmetic* — but only the

@@ -1,0 +1,13 @@
+// The same division proves wherever the case is excluded or has room: a positive divisor, a
+// dividend that is not TYPE_MIN, or a result wide enough to hold 2^31 — which it then holds.
+func by_positive(a i32, b i32 > 0) i32 { return a / b }
+func not_min(a i32 > -2147483648, b i32 != 0) i32 { return a / b }
+func wide(a i32, b i32 != 0) i64 { return a / b }
+func main() i32 {
+    var mn i32 = -2147483647 - 1
+    if by_positive(-7, 2) != -3 { return 1 }
+    if not_min(7, -1) != -7 { return 2 }
+    if wide(mn, -1) != 2147483648 { return 3 }
+    if wide(mn, 2) != -1073741824 { return 4 }
+    return 0
+}

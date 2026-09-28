@@ -4,17 +4,21 @@
 // asks the CFG instead of the domain: a block reached only through the true edge of `d != 0`,
 // or only through the FALSE edge of `d == 0` (the early-return spelling), has a nonzero d.
 // The same fact stated at the entry by a parameter refinement reads identically.
+// DECIDE-M (2026-09-28): a signed quotient needs one bit more than its operands — `a / b`
+// with a possibly TYPE_MIN dividend over a divisor that may be -1 is 2^31, which no i32
+// holds (and was a C division trapping at -O0, a silent value at -O2). The result is i64
+// here so this test stays about what it tests: the divisor.
 extern func libc_printf(fmt *u8, ...) i32 effects io
-func guarded(x i32, d i32) i32 {
+func guarded(x i32, d i32) i64 {
     if d != 0 { return x / d }
     return 0
 }
-func early(x i32, d i32) i32 {
+func early(x i32, d i32) i64 {
     if d == 0 { return 0 }
     return x / d
 }
-func refined(a i32, b i32 != 0) i32 { return a / b }
+func refined(a i32, b i32 != 0) i64 { return a / b }
 func main() i32 effects io {
-    libc_printf("%d\n", guarded(100, 5) + early(100, 4) + refined(100, 2))
+    libc_printf("%lld\n", guarded(100, 5) + early(100, 4) + refined(100, 2))
     return 0
 }

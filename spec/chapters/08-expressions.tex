@@ -36,8 +36,8 @@ precedence.  All operators listed on the same row have equal precedence.
 1 (high) & \lain{()} \lain{[]} \lain{.}              & left  & (context-dependent) \\
 2        & unary \lain{-} \lain{!} \lain{mov}        & right & (operand type) \\
 3        & \lain{as}                                  & left  & target type \\
-4        & \lain{*} \lain{/} \lain{\%}                & left  & wider operand type \\
-5        & \lain{+} \lain{-}                          & left  & wider operand type \\
+4        & \lain{*} \lain{/} \lain{\%} and their \lain{\%}/\lain{|}/\lain{?} forms & left  & \S\,\ref{sec:types.rank} \\
+5        & \lain{+} \lain{-} and their \lain{\%}/\lain{|}/\lain{?} forms & left  & \S\,\ref{sec:types.rank} \\
 6        & \lain{<<} \lain{>>}                        & left  & left operand type \\
 7        & \lain{\&}                                  & left  & wider operand type \\
 8        & \texttt{\textasciicircum}                                & left  & wider operand type \\
@@ -81,16 +81,18 @@ variable.
 \pnum
 The binary arithmetic operators are \lain{+} (addition), \lain{-}
 (subtraction), \lain{*} (multiplication), \lain{/} (division), and
-\lain{\%} (remainder).  The result type is the wider of the two operand
-types (\S\,\ref{sec:types.rank}).
+\lain{\%} (remainder).  Their result types are given in \S\,\ref{sec:types.rank}: \lain{+},
+\lain{-}, \lain{*} and a signed \lain{/} widen so the operation cannot overflow; the forms
+with an explicit policy (\lain{+\%}, \lain{/|}, \ldots, \S\,\ref{sec:types.overflow}) keep the
+operand type.
 
 \pnum
 Integer division truncates toward zero.  \lain{f32}/\lain{f64} division
 follows IEEE~754.
 
 \begin{constraint}
-  Integer division or remainder where the divisor is statically provable to
-  be zero (via value range analysis, \S\,\ref{sec:13-vra}) is
+  Integer division or remainder where the divisor is not provably non-zero (by value range
+  analysis, a \lain{!= 0} refinement, or a dominating guard; \S\,\ref{sec:13-vra}) is
   \illformed{}~(\diagcode{E015}).
 \end{constraint}
 

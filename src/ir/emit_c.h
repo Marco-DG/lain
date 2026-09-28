@@ -569,6 +569,23 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             break;
         }
         default:
+            // `/%` and `/|` (DECIDE-M): the divisor -1 is the only one that can overflow, and it
+            // is spelled out — a negation, except at TYPE_MIN, which wraps to itself or saturates
+            // to MAX. No C division ever sees TYPE_MIN / -1.
+            if (i->n_operands == 2 && i->result && i->op == IR_SDIV && i->wrap != IR_WRAP_CHECK &&
+                i->result->type && i->result->type->kind == IRT_INT) {
+                int64_t tlo, thi; irtype_int_range(i->result->type, &tlo, &thi);
+                int a = i->operands[0]->id, b = i->operands[1]->id, r = i->result->id;
+                char mn[48], at[48];
+                snprintf(mn, sizeof mn, "(%lldLL - 1)", (long long)(tlo + 1));
+                if (i->wrap == IR_WRAP_SATURATE) snprintf(at, sizeof at, "%lldLL", (long long)thi);
+                else snprintf(at, sizeof at, "%s", mn);
+                fprintf(o, "  v%d = (v%d == -1) ? ((v%d == %s) ? (", r, b, a, mn);
+                ir_ctype(i->result->type, o); fprintf(o, ")%s : (", at);
+                ir_ctype(i->result->type, o); fprintf(o, ")-v%d) : (", a);
+                ir_ctype(i->result->type, o); fprintf(o, ")(v%d / v%d);\n", a, b);
+                break;
+            }
             if (i->n_operands == 2 && i->result && i->wrap == IR_WRAP_MODULAR &&
                 (i->op == IR_ADD || i->op == IR_SUB || i->op == IR_MUL) &&
                 i->result->type && i->result->type->kind == IRT_INT) {

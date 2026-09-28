@@ -1,7 +1,11 @@
 // ...and the same type PROVES a divisor by itself: `a / d` with `d NonZero` needs no guard,
 // and the caller's argument is checked against the type where it narrows into it.
+// DECIDE-M (2026-09-28): a signed quotient needs one bit more than its operands — `a / b`
+// with a possibly TYPE_MIN dividend over a divisor that may be -1 is 2^31, which no i32
+// holds (and was a C division trapping at -O0, a silent value at -O2). The result is i64
+// here so this test stays about what it tests: the divisor.
 type NonZero = i32 != 0
-func div(a i32, d NonZero) i32 { return a / d }
+func div(a i32, d NonZero) i64 { return a / d }
 func main() i32 {
     var z NonZero = 4
     if div(100, z) == 25 { return 0 }

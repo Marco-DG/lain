@@ -1667,6 +1667,14 @@ rc=0
 out=Point: x=10, y=20
 ty=Point struct
 ty=Slice_u8 scalar
+### tests/types/div_quotient_proven_pass.ln
+rc=0
+out=
+at=const 6
+### tests/types/div_wrapping_saturating_pass.ln
+rc=0
+out=
+at=const 12
 ### tests/types/enum_exhaustive_pass.ln
 rc=0
 out=Running

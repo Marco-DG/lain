@@ -104,6 +104,8 @@ int get_precedence(TokenKind op) {
         case TOKEN_ASTERISK_PERCENT:   // *%  wrapping mul (Q-002)
         case TOKEN_ASTERISK_PIPE:      // *|  saturating mul (Q-002)
         case TOKEN_ASTERISK_QUESTION:  // *?  checked mul (F3.5)
+        case TOKEN_SLASH_PERCENT:      // /%  wrapping divide (DECIDE-M)
+        case TOKEN_SLASH_PIPE:         // /|  saturating divide (DECIDE-M)
             return 10;
 
         // + -   → precedence 9

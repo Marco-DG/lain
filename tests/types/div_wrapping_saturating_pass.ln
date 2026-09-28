@@ -1,0 +1,25 @@
+// `/%` and `/|` (DECIDE-M) complete the operator family for division: TYPE_MIN / -1 wraps to
+// TYPE_MIN or saturates to TYPE_MAX, and every other quotient is the ordinary one. A signed `%`
+// below 64 bits is computed wide, so TYPE_MIN % -1 is 0, not a trap. Run under UBSan.
+func wdiv(a i32, b i32 != 0) i32 { return a /% b }
+func sdiv(a i32, b i32 != 0) i32 { return a /| b }
+func rem(a i32, b i32 != 0) i32 { return a % b }
+func quot(a i32, b i32 != 0) i64 { return a / b }
+func wdiv64(a i64, b i64 != 0) i64 { return a /% b }
+func sdiv64(a i64, b i64 != 0) i64 { return a /| b }
+func main() i32 {
+    var mn i32 = -2147483647 - 1
+    if wdiv(mn, -1) != mn { return 1 }
+    if sdiv(mn, -1) != 2147483647 { return 2 }
+    if rem(mn, -1) != 0 { return 3 }
+    if quot(mn, -1) != 2147483648 { return 4 }
+    if wdiv(7, -2) != -3 { return 5 }
+    if sdiv(-7, 2) != -3 { return 6 }
+    if rem(-7, 3) != -1 { return 7 }
+    if wdiv(20, 5) != 4 { return 8 }
+    var mn64 i64 = -9223372036854775807 - 1
+    if wdiv64(mn64, -1) != mn64 { return 9 }
+    if sdiv64(mn64, -1) != 9223372036854775807 { return 10 }
+    if wdiv64(mn64, 2) != -4611686018427387904 { return 11 }
+    return 0
+}

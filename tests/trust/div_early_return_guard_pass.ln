@@ -1,6 +1,10 @@
 // The common early-return guard: after `if d == 0 { return }`, the negated fact
 // `d != 0` carries to the rest of the function, so the later divide proves safe.
-func f(x i32, d i32) i32 {
+// DECIDE-M (2026-09-28): a signed quotient needs one bit more than its operands — `a / b`
+// with a possibly TYPE_MIN dividend over a divisor that may be -1 is 2^31, which no i32
+// holds (and was a C division trapping at -O0, a silent value at -O2). The result is i64
+// here so this test stays about what it tests: the divisor.
+func f(x i32, d i32) i64 {
     if d == 0 {
         return -1
     }

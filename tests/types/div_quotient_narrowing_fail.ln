@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// DECIDE-M: a signed quotient is one bit wider than its operands (i32 / i32 : i33), because
+// TYPE_MIN / -1 is 2^31. Returning it as an i32 is a narrowing, and with a dividend that may be
+// TYPE_MIN over a divisor that may be -1 it is not proven. It used to compile to a plain C
+// division: SIGFPE at -O0, a silent value at -O2.
+func divide(a i32, b i32 != 0) i32 {
+    return a / b
+}
+func main() i32 { return 0 }

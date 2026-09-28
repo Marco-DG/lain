@@ -1,8 +1,12 @@
+// DECIDE-M (2026-09-28): a signed quotient needs one bit more than its operands — `a / b`
+// with a possibly TYPE_MIN dividend over a divisor that may be -1 is 2^31, which no i32
+// holds (and was a C division trapping at -O0, a silent value at -O2). The result is i64
+// here so this test stays about what it tests: the divisor.
 extern func libc_printf(fmt *u8, ...) i32 effects io
-func divide(a i32, b i32 != 0) i32 {
+func divide(a i32, b i32 != 0) i64 {
     return a / b
 }
 func main() i32 effects io {
-    libc_printf("%d\n", divide(100, 4))
+    libc_printf("%lld\n", divide(100, 4))
     return 0
 }

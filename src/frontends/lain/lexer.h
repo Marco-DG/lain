@@ -289,6 +289,10 @@ Token lexer_next(Lexer* lexer) {
             
                     case '=':
                         RETURN_TOKEN(TOKEN_SLASH_EQUAL);
+                    case '%':
+                        RETURN_TOKEN(TOKEN_SLASH_PERCENT);   // `/%` wrapping divide
+                    case '|':
+                        RETURN_TOKEN(TOKEN_SLASH_PIPE);      // `/|` saturating divide
             
                     default:
                         lexer->current--;
