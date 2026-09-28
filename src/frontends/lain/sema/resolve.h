@@ -9,11 +9,8 @@
 // index arguments, refinement assignments/returns/fields, dependent sizes, the `while` rule. They
 // were measured against the IR with a switch, the IR's gaps closed, the switch turned off, and the
 // code deleted. The obligations are the IR's (src/analysis/vra.h); what remains here is syntax.
-// The call-site refinement checks (E012 "Constraint violation") — the next seam of Part 7G, gated
-// for measurement against the IR's own call-site asserts. 0 since 2026-09-28.
-#ifndef LAIN_LEGACY_CONSTRAINTS
-#define LAIN_LEGACY_CONSTRAINTS 0
-#endif
+// The call-site refinement checks (E012 "Constraint violation") followed on 2026-09-28: measured
+// against the IR's call-site asserts, switched off (27e5559), and deleted.
 #include "../ast.h"
 #include "../ast_clone.h"
 #include "comptime.h" // CTFE engine
