@@ -842,6 +842,22 @@ void sema_resolve_stmt(Stmt *s) {
         s->as.var_stmt.is_mutable = false;
         sema_resolve_stmt(s);
         return;
+      } else if (sym->is_mutable && sym->type && sym->type->mode == MODE_MUTABLE &&
+                 (sym->type->kind == TYPE_SLICE ||
+                  (sym->type->kind == TYPE_ARRAY && sym->type->array_len < 0))) {
+        // ★ A REFERENCE BINDING TO A SLICE is a mutable VIEW of the slice's elements — the same
+        // thing a `var u8[]` parameter is (a slice already carries its data pointer, so a borrow
+        // of one travels as itself: ir_lower_borrow_binding_type). Reassigning it as a whole
+        // therefore rebinds the VIEW and leaves the slice it was taken from untouched:
+        // `var r = var s; r = small` compiled, and s was still the long slice — while the spec
+        // says assigning to a reference binding writes the place. The parameter spelling has
+        // been refused for exactly this since the decomposed slice ABI; one rule for both.
+        fprintf(stderr, "[E009] Error Ln %li, Col %li: cannot reassign '%s' as a whole: it is a `var` "
+                "borrow of a slice, which lends the slice's ELEMENTS.\n"
+                "       Write through it (`%s[i] = v`), or assign the slice it was taken from.\n",
+                s->line, s->col, raw, raw);
+        diagnostic_show_line(s->line, s->col);
+        exit(1);
       } else if (!sym->is_mutable) {
         // Exception: var T parameter (mutable borrow) — assignment is write-through,
         // not rebind. The caller's value is modified via the pointer.

@@ -1,0 +1,14 @@
+// EXPECT: [E009]
+// A reference binding to a SLICE is a mutable view of the slice's elements — what a `var u8[]`
+// parameter is — because a slice already carries its data pointer and a borrow of one travels
+// as itself. Reassigning the binding as a whole therefore rebound the VIEW: `r = small`
+// compiled and left `s` the long slice, while the reference-binding rule says an assignment to
+// `r` writes the place. The parameter spelling was already refused for this; now both are.
+func main() i32 {
+    var big u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    var small u8[2] = [9, 9]
+    var s u8[] = big
+    var r = var s
+    r = small
+    return 0
+}

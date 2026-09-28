@@ -1100,6 +1100,10 @@ at=nonnull 6
 at=pure 6
 at=returns_nonnull 4
 ty=Data struct
+### tests/ownership/ref_binding_slice_elements_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
 ### tests/ownership/return_borrow_var_param_pass.ln
 rc=0
 out=

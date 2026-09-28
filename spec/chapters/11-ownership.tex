@@ -240,6 +240,12 @@ yields the value at the place; assigning to \lain{r} (or to a field of it) write
 \lain{r2} are uses of \lain{r}'s loan.
 
 \pnum
+A slice already carries its data pointer, so \lain{var r = var s} for a slice \lain{s} lends
+the slice's \emph{elements}: \lain{r[i] = v} writes them.  Reassigning \lain{r} as a whole is
+\illformed{} [E009], exactly as for a \lain{var} slice parameter --- it would rebind the view
+and leave \lain{s} unchanged.
+
+\pnum
 The loan lasts until the binding's last use (\S\ref{sec:own.nll}).  While it is live, any
 other access to an overlapping place --- a read, a write, or a borrow --- violates the
 read-write lock invariant (\S\ref{sec:own.rwlock}) and shall be diagnosed [E004].  Distinct
