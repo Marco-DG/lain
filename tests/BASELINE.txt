@@ -379,6 +379,11 @@ at=const 2
 rc=0
 out=10
 ty=Slice_u8 scalar
+### tests/functions/field_bound_loop_terminates_pass.ln
+rc=0
+out=
+at=nonnull 2
+ty=B struct
 ### tests/functions/field_counter_terminates_pass.ln
 rc=0
 out=
@@ -2005,6 +2010,10 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
+### tests/vra/field_bound_accumulator_pass.ln
+rc=8
+out=
+ty=B struct
 ### tests/vra/field_counter_fixpoint_converges_pass.ln
 rc=0
 out=

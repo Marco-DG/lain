@@ -2544,6 +2544,7 @@ static void vra_natural_loop(Vra *V, IrBlock *H, int nb, char *inloop);   // fwd
 // Sound because both ways the cell could change are excluded: a STORE anywhere in the natural
 // loop, and a call writing through an ESCAPED address. `V->escaped` is precisely the set the
 // memory model already havocs at every call, for this same reason.
+static bool vra_cell_opaque_write(Vra *V, int cell, int nbb, const char *inloop);   // fwd
 static bool vra_loop_invariant_d(Vra *V, IrValue *val, IrBlock *H, int depth);
 static bool vra_loop_invariant(Vra *V, IrValue *val, IrBlock *H) {
     return vra_loop_invariant_d(V, val, H, 0);
@@ -2581,6 +2582,29 @@ static bool vra_loop_invariant_d(Vra *V, IrValue *val, IrBlock *H, int depth) {
     if (V->defblk[val->id]>=0 && V->defblk[val->id] < Hid) return true;
     if (d->op==IR_LOAD && d->n_operands>=1) {
         int cell = d->operands[0]->id;
+        // ★ ...AND A FIELD the loop never writes: `while b.len < b.cap`, `while l.pos < l.end`.
+        // Its stores are to the CANONICAL cell (a fresh field_ptr per mention), a whole-struct
+        // store to the base writes it too, and so does anything that writes the base opaquely —
+        // the same three writers the counter rule counts.
+        int fbase = vra_is_scalar_cell(V, cell) ? -1 : vra_field_cell_base(V, cell);
+        if (fbase >= 0) {
+            int ccell = vra_canon_cell(V, cell);
+            int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+            char *body = malloc((size_t)nbb);
+            if (!body) return false;
+            vra_natural_loop(V, H, nbb, body);
+            bool written = false;
+            for (IrBlock *b=V->f->blocks; b && !written; b=b->next) {
+                if (!(b->id>=0 && b->id<nbb && body[b->id])) continue;
+                for (IrInstr *st=b->instrs; st; st=st->next)
+                    if (st->op==IR_STORE && st->n_operands>=2 &&
+                        (st->operands[0]->id == fbase ||
+                         vra_canon_cell(V, st->operands[0]->id) == ccell)) { written = true; break; }
+            }
+            if (!written) written = vra_cell_opaque_write(V, fbase, nbb, body);
+            free(body);
+            return !written;
+        }
         if (!vra_is_scalar_cell(V, cell)) return false;
         if (cell>=0 && cell<V->nvar && V->escaped && V->escaped[cell]) return false;
         int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;

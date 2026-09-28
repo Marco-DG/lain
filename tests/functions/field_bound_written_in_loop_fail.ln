@@ -1,0 +1,19 @@
+// EXPECT: [E011]
+// ...and a bound the loop DOES write is not: here a call handed the struct grows `cap` every
+// iteration, so the guard is not a fixed target. The three writers of a field — a store to it,
+// a whole-struct store, a call handed the base — are each checked; this is the call.
+type B {
+    len usize
+    cap usize
+}
+func grow(b var B) {
+    if b.cap < 100 { b.cap = b.cap + 1 }
+}
+func main() i32 {
+    var b = B(0, 8)
+    while b.len < b.cap {
+        b.len = b.len + 1
+        grow(var b)
+    }
+    return 0
+}

@@ -1,0 +1,15 @@
+// A field bound the loop cannot write gives the loop a TRIP COUNT, and the trip count bounds an
+// accumulator: s is a u8, and at most 8 iterations run, so `s + 1` never overflows.
+type B {
+    len usize
+    cap usize
+}
+func main() i32 {
+    var b = B(0, 8)
+    var s u8 = 0
+    while b.len < b.cap {
+        s = s + 1
+        b.len = b.len + 1
+    }
+    return s as i32
+}

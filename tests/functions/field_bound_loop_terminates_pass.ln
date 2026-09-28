@@ -1,0 +1,19 @@
+// A loop bound that is a struct FIELD the loop never writes is loop-invariant: `while b.len <
+// b.cap` terminates by the same rule as `while i < n`. The bound had to be a scalar local (the
+// rule knew allocas only), so the Buf-like loop was E011 — on a local and on a `var` parameter.
+type B {
+    len usize
+    cap usize
+}
+func fill(b var B) {
+    while b.len < b.cap { b.len = b.len + 1 }
+}
+func main() i32 {
+    var b = B(0, 8)
+    while b.len < b.cap { b.len = b.len + 1 }
+    if b.len != 8 { return 1 }
+    var c = B(2, 8)
+    fill(var c)
+    if c.len != 8 { return 2 }
+    return 0
+}
