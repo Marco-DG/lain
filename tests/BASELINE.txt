@@ -1741,6 +1741,12 @@ out=
 ### tests/types/refinement_type_alias_pass.ln
 rc=0
 out=
+### tests/types/saturating_i64_pass.ln
+rc=0
+out=
+### tests/types/saturating_u64_pass.ln
+rc=0
+out=
 ### tests/types/sizeof_alignof_pass.ln
 rc=0
 out=

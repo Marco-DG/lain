@@ -1,0 +1,22 @@
+// Signed saturating arithmetic at 64 bits, at both ends of the range — including MIN *| -1,
+// the one product whose magnitude does not fit, which must clamp to MAX, not trap.
+func main() i32 {
+    var mx i64 = 9223372036854775807
+    var mn i64 = -9223372036854775807 - 1
+    if mx +| 1 != mx { return 1 }
+    if mn +| -1 != mn { return 2 }
+    if mn -| 1 != mn { return 3 }
+    if mx -| -1 != mx { return 4 }
+    if mn *| -1 != mx { return 5 }
+    if mn *| 2 != mn { return 6 }
+    var x i64 = -3
+    if x *| 4 != -12 { return 7 }
+    if x *| -4 != 12 { return 8 }
+    if mx *| -2 != mn { return 9 }
+    var z i64 = 0
+    if z *| mn != 0 { return 10 }
+    var y i64 = 10
+    if y -| 20 != -10 { return 11 }
+    if y +| -20 != -10 { return 12 }
+    return 0
+}

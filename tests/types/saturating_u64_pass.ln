@@ -1,0 +1,21 @@
+// Saturating arithmetic at 64 bits. `+| -| *|` on u64/usize/i64/isize was E100 "unhandled-binop":
+// the lowering widened to i64 and clamped, which exists only up to 32 bits — and usize is the
+// index type, where clamping is most wanted. The overflow test now comes first and the operation
+// second (the CERT INT32-C forms), so no step can overflow; every edge below is at a boundary.
+func main() i32 {
+    var z u64 = 0
+    var mx u64 = z -% 1
+    var a u64 = mx -% 5
+    if a +| 3 != mx -% 2 { return 1 }
+    if a +| 10 != mx { return 2 }
+    var b u64 = 3
+    if b -| 5 != 0 { return 3 }
+    if b -| 2 != 1 { return 4 }
+    var big u64 = 4294967296
+    if big *| big != mx { return 5 }
+    if big *| 2 != 8589934592 { return 6 }
+    if z *| mx != 0 { return 7 }
+    var u usize = 5
+    if u +| 1 != 6 { return 8 }
+    return 0
+}

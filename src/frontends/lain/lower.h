@@ -1321,6 +1321,107 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e);
 // Scoped to that one statement on purpose. A general CSE over the function would be a bigger
 // change with a bigger blast radius, and the problem is not general: it is that a guard and its
 // own measure are two spellings of the same quantities, written in one line by one programmer.
+
+// ── SATURATING ARITHMETIC AT 64 BITS ────────────────────────────────────────────────────────
+// The ≤32-bit expansion widens to i64 and clamps; at 64 bits there is no wider type, so `x +| 1`
+// on a usize was E100 "unhandled-binop" — the index type, where clamping is most wanted. Here the
+// OVERFLOW TEST comes first and the operation second, each operation guarded so it cannot
+// overflow (the CERT INT32-C forms), and so each carries no obligation of its own (`unchecked`,
+// as in `unsafe`: the guard IS the proof). The result is stored to a cell from each arm.
+static IrValue *ir_sat_op(LowerCtx *c, IrOp op, IrValue *a, IrValue *b, IrType *t) {
+    IrValue *r = ir_binop(c->f, c->cur, op, a, b, t);
+    if (c->cur->instrs_tail) c->cur->instrs_tail->unchecked = true;
+    return r;
+}
+// if (cond) { cell = then_v } else { continue in a fresh block }: returns the else block.
+static void ir_sat_arm(LowerCtx *c, IrValue *cond, IrValue *cell, IrValue *then_v, IrBlock *join) {
+    IrBlock *tb = ir_new_block(c->f), *eb = ir_new_block(c->f);
+    ir_set_br_cond(c->cur, cond, tb, eb);
+    c->cur = tb; ir_store(c->f, c->cur, cell, then_v); ir_set_br(c->cur, join);
+    c->cur = eb;
+}
+static IrValue *ir_sat_cast(LowerCtx *c, IrValue *v, IrType *t) {
+    if (!v || !v->type || v->type == t || (v->type->kind==IRT_INT && v->type->bits==t->bits &&
+                                           v->type->is_signed==t->is_signed)) return v;
+    IrInstr *cv = ir_instr(c->f, IR_CAST, t, 1); cv->operands[0] = v;
+    cv->aux.cast_kind = (v->type->kind==IRT_INT && v->type->is_signed) ? IR_CAST_SEXT : IR_CAST_ZEXT;
+    if (v->type->kind==IRT_INT && v->type->bits > t->bits) cv->aux.cast_kind = IR_CAST_TRUNC;
+    ir_emit(c->cur, cv);
+    return cv->result;
+}
+static IrValue *ir_lower_saturating64(LowerCtx *c, TokenKind op, Expr *L, Expr *R, IrType *t,
+                                      int64_t lo, int64_t hi) {
+    IrValue *a = ir_sat_cast(c, ir_lower_expr(c, L), t), *b = ir_sat_cast(c, ir_lower_expr(c, R), t);
+    IrValue *cell = ir_alloca(c->f, c->cur, t);
+    IrBlock *join = ir_new_block(c->f);
+    IrValue *MX = ir_const_int(c->f, c->cur, hi, t), *MN = ir_const_int(c->f, c->cur, lo, t);
+    IrValue *Z  = ir_const_int(c->f, c->cur, 0, t);
+    bool sg = t->is_signed;
+    // u64's MAX is 2^64-1, which the numeric domain (i64-based: irtype_int_range clamps an
+    // unsigned 64-bit type to INT64_MAX) cannot represent. Taken from `hi` it saturated at 2^63-1;
+    // written as a constant it would read as -1 and could make an arm look dead. Computed as
+    // `0 -% 1` it is the right bit pattern, and to the analysis an honest unknown.
+    if (!sg) {
+        IrValue *one = ir_const_int(c->f, c->cur, 1, t);
+        MX = ir_binop(c->f, c->cur, IR_SUB, Z, one, t);
+        if (c->cur->instrs_tail) c->cur->instrs_tail->wrap = IR_WRAP_MODULAR;
+    }
+    IrCmp GT = sg ? IR_CMP_SGT : IR_CMP_UGT, LT = sg ? IR_CMP_SLT : IR_CMP_ULT;
+    if (!sg) {
+        if (op == TOKEN_PLUS_PIPE) {            // a > MAX - b  →  MAX
+            ir_sat_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, IR_SUB, MX, b, t)), cell, MX, join);
+            ir_store(c->f, c->cur, cell, ir_sat_op(c, IR_ADD, a, b, t));
+        } else if (op == TOKEN_MINUS_PIPE) {    // a < b  →  0
+            ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, a, b), cell, Z, join);
+            ir_store(c->f, c->cur, cell, ir_sat_op(c, IR_SUB, a, b, t));
+        } else {                                // b != 0 && a > MAX / b  →  MAX
+            ir_sat_arm(c, ir_icmp(c->f, c->cur, IR_CMP_EQ, b, Z), cell, Z, join);
+            ir_sat_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, IR_UDIV, MX, b, t)), cell, MX, join);
+            ir_store(c->f, c->cur, cell, ir_sat_op(c, IR_MUL, a, b, t));
+        }
+    } else if (op == TOKEN_PLUS_PIPE || op == TOKEN_MINUS_PIPE) {
+        bool add = (op == TOKEN_PLUS_PIPE);
+        // add: b > 0 may overflow up (a > MAX - b), b <= 0 down (a < MIN - b)
+        // sub: b < 0 may overflow up (a > MAX + b), b >= 0 down (a < MIN + b)
+        IrBlock *pos = ir_new_block(c->f), *neg = ir_new_block(c->f);
+        IrValue *up_side = add ? ir_icmp(c->f, c->cur, GT, b, Z) : ir_icmp(c->f, c->cur, LT, b, Z);
+        ir_set_br_cond(c->cur, up_side, pos, neg);
+        c->cur = pos;
+        ir_sat_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, add ? IR_SUB : IR_ADD, MX, b, t)), cell, MX, join);
+        ir_store(c->f, c->cur, cell, ir_sat_op(c, add ? IR_ADD : IR_SUB, a, b, t)); ir_set_br(c->cur, join);
+        c->cur = neg;
+        ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, a, ir_sat_op(c, add ? IR_SUB : IR_ADD, MN, b, t)), cell, MN, join);
+        ir_store(c->f, c->cur, cell, ir_sat_op(c, add ? IR_ADD : IR_SUB, a, b, t));
+    } else {                                    // signed *|: CERT INT32-C, by the operands' signs
+        IrBlock *apos = ir_new_block(c->f), *anp = ir_new_block(c->f);
+        ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, GT, a, Z), apos, anp);
+        IrBlock *mul = ir_new_block(c->f);
+        c->cur = apos; {                        // a > 0
+            IrBlock *bp = ir_new_block(c->f), *bn = ir_new_block(c->f);
+            ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, GT, b, Z), bp, bn);
+            c->cur = bp;  ir_sat_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, IR_SDIV, MX, b, t)), cell, MX, join); ir_set_br(c->cur, mul);
+            c->cur = bn;  ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, b, ir_sat_op(c, IR_SDIV, MN, a, t)), cell, MN, join); ir_set_br(c->cur, mul);
+        }
+        c->cur = anp; {                         // a <= 0
+            IrBlock *bp = ir_new_block(c->f), *bn = ir_new_block(c->f);
+            ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, GT, b, Z), bp, bn);
+            c->cur = bp;  ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, a, ir_sat_op(c, IR_SDIV, MN, b, t)), cell, MN, join); ir_set_br(c->cur, mul);
+            c->cur = bn;  {                     // a <= 0, b <= 0: overflow iff a != 0 && b < MAX / a
+                IrBlock *nz = ir_new_block(c->f);
+                ir_sat_arm(c, ir_icmp(c->f, c->cur, IR_CMP_EQ, a, Z), cell, Z, join);
+                (void)nz;
+                ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, b, ir_sat_op(c, IR_SDIV, MX, a, t)), cell, MX, join);
+                ir_set_br(c->cur, mul);
+            }
+        }
+        c->cur = mul;
+        ir_store(c->f, c->cur, cell, ir_sat_op(c, IR_MUL, a, b, t));
+    }
+    ir_set_br(c->cur, join);
+    c->cur = join;
+    return ir_load(c->f, c->cur, cell, t);
+}
+
 static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
     if (c && c->cse_n > 0 && e && !c->cse_recording) {
         for (int i = 0; i < c->cse_n; i++)
@@ -1814,6 +1915,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     c->cur = jn2;
                     return ir_load(c->f, c->cur, cell, rt3);
                 }
+                if (rt3 && rt3->kind==IRT_INT && irtype_int_range(rt3,&slo,&shi) && rt3->bits==64)
+                    return ir_lower_saturating64(c, e->as.binary_expr.op, L, R, rt3, slo, shi);
             }
             // Short-circuit `and` / `or`: the right operand must NOT be evaluated when
             // the left already decides the result (correctness — it may guard a deref/
