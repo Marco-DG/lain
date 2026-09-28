@@ -123,6 +123,39 @@ void sema_build_path(Expr *e, char *buf, size_t cap) {
 /*─────────────────────────────────────────────────────────────────╗
 │ Build‑scope: register every top‑level Decl + types           │
 ╚─────────────────────────────────────────────────────────────────*/
+
+// A relational field refinement this compiler ENFORCES (see the E132 site): `f CMP g` with g an
+// integer field, or `f CMP g.len` with g a slice or fixed-array field; f an integer; CMP one of
+// < <= > >=; g not f itself.
+static bool sema_field_relation_ok(Decl *sd, Decl *fdecl, Expr *con) {
+    if (!sd || !fdecl || !con || con->kind != EXPR_BINARY) return false;
+    TokenKind op = con->as.binary_expr.op;
+    if (op != TOKEN_ANGLE_BRACKET_LEFT && op != TOKEN_ANGLE_BRACKET_LEFT_EQUAL &&
+        op != TOKEN_ANGLE_BRACKET_RIGHT && op != TOKEN_ANGLE_BRACKET_RIGHT_EQUAL) return false;
+    Expr *rhs = con->as.binary_expr.right;
+    bool is_len = false;
+    if (rhs && rhs->kind == EXPR_MEMBER) {
+        Id *m = rhs->as.member_expr.member;
+        if (!m || m->length != 3 || strncmp(m->name, "len", 3) != 0) return false;
+        is_len = true; rhs = rhs->as.member_expr.target;
+    }
+    if (!rhs || rhs->kind != EXPR_IDENTIFIER || !rhs->as.identifier_expr.id) return false;
+    Id *gn = rhs->as.identifier_expr.id, *fn = fdecl->as.variable_decl.name;
+    if (fn && fn->length == gn->length && strncmp(fn->name, gn->name, gn->length) == 0) return false;
+    Type *ft = fdecl->as.variable_decl.type;
+    if (!ft || ft->kind != TYPE_SIMPLE) return false;
+    for (DeclList *g = sd->as.struct_decl.fields; g; g = g->next) {
+        if (!g->decl || g->decl->kind != DECL_VARIABLE) continue;
+        Id *n = g->decl->as.variable_decl.name;
+        if (!n || n->length != gn->length || strncmp(n->name, gn->name, gn->length) != 0) continue;
+        Type *gt = g->decl->as.variable_decl.type;
+        if (!gt) return false;
+        if (is_len) return gt->kind == TYPE_SLICE || gt->kind == TYPE_ARRAY;
+        return gt->kind == TYPE_SIMPLE;
+    }
+    return false;
+}
+
 void sema_build_scope(DeclList *decls, const char *module_path) {
     // ––––––– Instead of “sema_clear_table()”, use:
     sema_clear_globals();
@@ -289,12 +322,20 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         // they are, say so. Nothing in std/ or tests/ uses the form, so refusing it costs
         // nothing, and refusing what is not checked is the same rule the IR applies when it
         // marks a function `incomplete` rather than passing it silently.
+        //
+        // ★ BUILT (2026-09-28) for the two forms a struct needs: `field CMP other` (two integer
+        // fields: `len usize <= cap`) and `field CMP other.len` (a POSITION: `pos usize <=
+        // src.len`), CMP one of < <= > >=. They are enforced exactly like the `in` invariant —
+        // asserted at construction and at every write to either field, assumed at reads, and a
+        // `var` reference to either field is refused — see ir_field_relations in lower.h. Any
+        // other shape still names something that is not checked, and is still refused.
         for (DeclList *f = d->as.struct_decl.fields; f; f = f->next) {
             if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
             for (ExprList *c = f->decl->as.variable_decl.constraints; c; c = c->next) {
                 if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
                 Expr *rhs = c->expr->as.binary_expr.right;
                 if (!rhs || rhs->kind == EXPR_LITERAL) continue;
+                if (sema_field_relation_ok(d, f->decl, c->expr)) continue;
                 Id *fnm = f->decl->as.variable_decl.name;
                 fprintf(stderr,
                     "[E132] Error Ln %li, Col %li: field '%.*s' of struct '%.*s' has a refinement "

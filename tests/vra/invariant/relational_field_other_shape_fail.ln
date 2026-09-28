@@ -1,0 +1,9 @@
+// EXPECT: [E132]
+// Only the two ENFORCED shapes are admitted — `f CMP g` for an integer field g, and
+// `f CMP g.len` for a slice or array field g. Anything else still names something nothing
+// checks, and stays refused.
+type T {
+    a u8[]
+    n usize <= a
+}
+func main() i32 { return 0 }

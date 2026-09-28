@@ -1,0 +1,16 @@
+// EXPECT: [E121]
+// Construction must establish the relation: pos 5 over a 4-byte source.
+type Lexer {
+    src u8[]
+    pos usize <= src.len
+}
+type Buf {
+    cap usize
+    len usize <= cap
+}
+func bump(x var usize) { x = 99 }
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    l = Lexer(buf, 5)
+    return 0
+}

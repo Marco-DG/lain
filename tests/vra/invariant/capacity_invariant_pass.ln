@@ -1,0 +1,16 @@
+// `len usize <= cap` — a relation between two integer fields, the other relational form.
+type Buf {
+    cap usize
+    len usize <= cap
+}
+func push(b var Buf) {
+    if b.len < b.cap { b.len = b.len + 1 }
+}
+func room(b Buf) usize { return b.cap - b.len }     // no underflow: len <= cap is known
+func main() i32 {
+    var b = Buf(4, 3)
+    push(var b)
+    push(var b)                                     // full: the guard refuses to grow
+    if room(b) != 0 { return 1 }
+    return 0
+}

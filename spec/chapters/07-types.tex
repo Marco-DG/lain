@@ -679,6 +679,69 @@ field type (\S\,\ref{sec:types.compat}).
   Field-by-field comparison must be performed explicitly.
 \end{constraint}
 
+\subsection{Field invariants}
+\label{sec:types.struct.invariants}
+\index{field invariant}
+\index{struct invariant}
+
+\pnum
+A field declaration may state a fact about the field's value for the whole life of every value
+of the struct type. Three forms are provided:
+\begin{itemize}
+  \item \lain{pos usize in text} --- an \emph{index} invariant: \lain{pos} is a valid index into
+        the slice or array field \lain{text} (\(\lain{pos} < \lain{text.len}\));
+  \item \lain{pos usize <= src.len} --- a \emph{position} invariant: \lain{pos} compared with the
+        length of the slice or array field \lain{src}, by \lain{<}, \lain{<=}, \lain{>} or
+        \lain{>=};
+  \item \lain{len usize <= cap} --- a relation between two integer fields, by the same four
+        comparisons.
+\end{itemize}
+A refinement against a literal (\lain{pct i32 <= 100}) is a plain field refinement
+(\S\,\ref{sec:types.constrained}) and is not a field invariant.
+
+\pnum
+An index invariant cannot hold for an empty container. A position invariant can:
+\lain{pos usize <= src.len} admits \(\lain{pos} = 0\) over an empty source and
+\(\lain{pos} = \lain{src.len}\) at its end, which is the state a scanner is in at end of input.
+
+\begin{constraint}
+  A field invariant shall hold wherever a value of the struct type is built, and after every
+  write to either field it relates. A construction or a field write at which it is not proven is
+  \illformed{}~(\diagcode{E121}).
+\end{constraint}
+
+\begin{constraint}
+  A \lain{var} reference to a field that a field invariant relates --- a \lain{var} argument
+  (\lain{f(var s.pos)}) or a reference binding (\lain{var r = var s.pos}) --- is
+  \illformed{}~(\diagcode{E121}): a write through it would not be checked against the invariant.
+  Pass the whole struct as \lain{var} instead; writes to its fields are checked.
+\end{constraint}
+
+\begin{constraint}
+  A field refinement naming another field in any other shape --- another comparison, a field of
+  another kind, an expression --- is \illformed{}~(\diagcode{E132}).
+\end{constraint}
+
+\pnum
+Because every write that could break a field invariant is checked, the invariant is a fact at
+every read of the field: \lain{c.text[c.pos]} needs no bounds check under
+\lain{pos usize in text}, and \lain{b.cap - b.len} needs no underflow check under
+\lain{len usize <= cap}.
+
+\begin{example}
+\begin{laincode}
+type Lexer {
+    src u8[]
+    pos usize <= src.len         // position: 0 <= pos <= src.len
+}
+func lexer_new(text u8[:0]) Lexer { return Lexer(text, 0) }   // OK even for ""
+func advance(l var Lexer) {
+    if l.pos < l.src.len { l.pos = l.pos + 1 }                 // keeps the invariant
+}
+func bad(l var Lexer) { l.pos = l.pos + 1 }                   // refused: unguarded
+\end{laincode}
+\end{example}
+
 \section{Enum types}
 \label{sec:types.enum}
 \index{enum type}

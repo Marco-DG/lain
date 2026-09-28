@@ -462,6 +462,16 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                         Id *rid = id(arena, parser->token.length, parser->token.start);
                         parser_advance();
                         rhs = expr_identifier(arena, rid);
+                        // `pos usize <= src.len` — another field's LENGTH, the POSITION
+                        // invariant a lexer needs (EOF is pos == len). Only `.len` is meaningful
+                        // on a field here; resolve decides what the name refers to.
+                        if (parser_match(TOKEN_DOT)) {
+                            parser_advance();
+                            parser_expect(TOKEN_IDENTIFIER, "Expected `len` after '.' in a field refinement");
+                            Id *mid = id(arena, parser->token.length, parser->token.start);
+                            parser_advance();
+                            rhs = expr_member(arena, rhs, mid);
+                        }
                     } else {
                         parser_error("Expected number or identifier after comparison operator");
                     }

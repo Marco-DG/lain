@@ -1,0 +1,17 @@
+// EXPECT: [E121]
+// ...and so must a write to the OTHER field: a 2-byte source under pos 4.
+type Lexer {
+    src u8[]
+    pos usize <= src.len
+}
+type Buf {
+    cap usize
+    len usize <= cap
+}
+func bump(x var usize) { x = 99 }
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var l = Lexer(buf, 4)
+    l.src = buf[0..2]
+    return 0
+}

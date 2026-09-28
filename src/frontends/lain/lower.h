@@ -866,6 +866,66 @@ static bool ir_tok_cmp(TokenKind op, bool sgn, IrCmp *out) {
     }
 }
 
+// ── RELATIONAL FIELD INVARIANTS (`pos usize <= src.len`, `len usize <= cap`) ─────────────
+// A field refinement naming ANOTHER field (resolve.h admits `f CMP g` and `f CMP g.len`). It
+// is the `in` invariant generalised: a promise about the value for its whole life, so it is
+// ASSERTED where it could stop holding — construction, and a write to EITHER field — and
+// ASSUMED where it is read. A `var` reference to either field is refused in the front end,
+// because a write through one is not a write this lowering sees.
+typedef struct { IrCmp cmp; int other; bool is_len; } IrFieldRel;
+static int ir_field_relations(LowerCtx *c, IrType *sty, int fidx, IrFieldRel *out, int max) {
+    if (!sty || sty->kind!=IRT_STRUCT || fidx<0 || fidx>=sty->n_fields || !sty->field_names || !sty->sname) return 0;
+    Id sn; sn.name = sty->sname->name; sn.length = sty->sname->length;
+    Decl *sd = ir_find_struct_decl(c, &sn);
+    if (!sd || sd->kind != DECL_STRUCT) return 0;
+    int k = 0; Decl *fd = NULL;
+    for (DeclList *fl = sd->as.struct_decl.fields; fl; fl = fl->next) {
+        if (!fl->decl || fl->decl->kind != DECL_VARIABLE) continue;
+        if (k == fidx) { fd = fl->decl; break; }
+        k++;
+    }
+    if (!fd) return 0;
+    IrType *ft = sty->fields[fidx];
+    bool sgn = ft && ft->kind==IRT_INT && ft->is_signed;
+    int n = 0;
+    for (ExprList *cn = fd->as.variable_decl.constraints; cn && n < max; cn = cn->next) {
+        Expr *con = cn->expr;
+        if (!con || con->kind != EXPR_BINARY) continue;
+        Expr *rhs = con->as.binary_expr.right;
+        bool is_len = false;
+        if (rhs && rhs->kind == EXPR_MEMBER) { is_len = true; rhs = rhs->as.member_expr.target; }
+        if (!rhs || rhs->kind != EXPR_IDENTIFIER || !rhs->as.identifier_expr.id) continue;
+        Id *gn = rhs->as.identifier_expr.id;
+        int oj = -1;
+        for (int q = 0; q < sty->n_fields; q++) {
+            IrName *qn = sty->field_names[q];
+            if (qn && qn->length == gn->length && strncmp(qn->name, gn->name, (size_t)gn->length) == 0) { oj = q; break; }
+        }
+        IrCmp cmp;
+        if (oj < 0 || oj == fidx || !ir_tok_cmp(con->as.binary_expr.op, sgn, &cmp)) continue;
+        out[n].cmp = cmp; out[n].other = oj; out[n].is_len = is_len; n++;
+    }
+    return n;
+}
+// The relation's right-hand side, from the OTHER field's value: that value itself, or its length.
+static IrValue *ir_field_rel_rhs(LowerCtx *c, IrValue *ov, IrType *oty, bool is_len, IrType *ity) {
+    if (!ov || !oty) return NULL;
+    if (!is_len) return (oty->kind == IRT_INT) ? ov : NULL;
+    if (oty->kind == IRT_SLICE && ov->type && ov->type->kind == IRT_SLICE) return ir_slice_len(c->f, c->cur, ov);
+    if (oty->kind == IRT_ARRAY && oty->array_len >= 0)
+        return ir_const_int(c->f, c->cur, oty->array_len, ity ? ity : ir_type_int(c->a,64,false));
+    return NULL;
+}
+// ...read from memory: the other field of the struct at `base`.
+static IrValue *ir_field_rel_rhs_at(LowerCtx *c, IrValue *base, IrType *sty, IrFieldRel *r, IrType *ity) {
+    IrType *oty = sty->fields[r->other];
+    if (!oty) return NULL;
+    if (r->is_len && oty->kind == IRT_ARRAY)
+        return ir_field_rel_rhs(c, base, oty, true, ity);          // a constant: no load needed
+    IrValue *ov = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, r->other, oty), oty);
+    return ir_field_rel_rhs(c, ov, oty, r->is_len, ity);
+}
+
 // B4-lite (dependent lengths): a slice/dynamic-array param whose type carries a length
 // constraint `i32[m]` / `i32[>= n]` / `i32[out.len]` becomes an entry
 // `assume(slice_len(p) relop <expr>)` — connecting the runtime length to the symbol.
@@ -1954,6 +2014,14 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                         ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, v, len));
                     }
                 }
+                // ...and a RELATIONAL field invariant, consumed the same way.
+                { IrFieldRel rels[8];
+                  int nr = (v->type && v->type->kind==IRT_INT) ? ir_field_relations(c, sty, fidx, rels, 8) : 0;
+                  IrValue *base = nr ? ir_lower_addr(c, tgt) : NULL;
+                  for (int q = 0; base && q < nr; q++) {
+                      IrValue *rv = ir_field_rel_rhs_at(c, base, sty, &rels[q], v->type);
+                      if (rv) ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, rels[q].cmp, v, rv));
+                  } }
                 return v;
             }
             // a field we could not resolve: a READ of unknown storage, no write.
@@ -2021,6 +2089,17 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                         len = ir_const_int(c->f, c->cur, argx[cidx]->type->array_len, fs[fi]->type);
                     if (!len) continue;
                     ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, fs[fi], len), 121);
+                }
+                // A RELATIONAL field invariant is established here too, from the operands.
+                for (int fi=0; fi<n && fi<ty->n_fields; fi++) {
+                    IrFieldRel rels[8];
+                    int nr = ir_field_relations(c, ty, fi, rels, 8);
+                    for (int q = 0; q < nr; q++) {
+                        int oj = rels[q].other;
+                        if (oj >= n || !fs[fi] || !fs[oj]) continue;
+                        IrValue *rv = ir_field_rel_rhs(c, fs[oj], ty->fields[oj], rels[q].is_len, fs[fi]->type);
+                        if (rv) ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, rels[q].cmp, fs[fi], rv), 121);
+                    }
                 }
                 return ir_struct_new(c->f, c->cur, ty, fs, n);
             }
@@ -2461,6 +2540,36 @@ static void ir_lower_field_invariant_asserts(LowerCtx *c, IrInstr *fp, IrValue *
         IrValue *jv = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, j, jt), jt);
         IrValue *len = ir_container_len(c, v, v->type, jt);
         if (len) ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, jv, len), 121);
+    }
+    // RELATIONAL invariants. The field written is either the constrained one (its new value must
+    // satisfy the relation against the other's CURRENT value) or the one a relation names (every
+    // field constrained against it must satisfy the relation against the NEW value). In both, the
+    // relation held before the store — every write that could break it is asserted — so it is
+    // assumed on the old values first: that is what proves `b.len = b.len + 1` under
+    // `if b.len < b.cap`, and `l.pos = l.pos + 1` under `if l.pos < l.src.len`.
+    { IrFieldRel rels[8];
+      int nr = (ft && ft->kind == IRT_INT) ? ir_field_relations(c, sty, fi, rels, 8) : 0;
+      for (int q = 0; q < nr; q++) {
+          IrValue *rv = ir_field_rel_rhs_at(c, base, sty, &rels[q], ft);
+          if (!rv) continue;
+          IrValue *old = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, fi, ft), ft);
+          ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, rels[q].cmp, old, rv));
+          if (v->type->kind == IRT_INT)
+              ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, rels[q].cmp, v, rv), 121);
+      } }
+    for (int j = 0; j < sty->n_fields; j++) {
+        if (j == fi) continue;
+        IrFieldRel rels[8];
+        IrType *jt = sty->fields[j];
+        int nr = (jt && jt->kind == IRT_INT) ? ir_field_relations(c, sty, j, rels, 8) : 0;
+        for (int q = 0; q < nr; q++) {
+            if (rels[q].other != fi) continue;
+            IrValue *jv = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, j, jt), jt);
+            IrValue *orv = ir_field_rel_rhs_at(c, base, sty, &rels[q], jt);
+            if (orv) ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, rels[q].cmp, jv, orv));
+            IrValue *nrv = ir_field_rel_rhs(c, v, sty->fields[fi], rels[q].is_len, jt);
+            if (nrv) ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, rels[q].cmp, jv, nrv), 121);
+        }
     }
 }
 

@@ -1512,6 +1512,31 @@ static void sema_check_mut_invariant_field(Expr *e) {
     Symbol *ss = sema_lookup(sn);
     if (!ss || !ss->decl || ss->decl->kind != DECL_STRUCT) return;
     Id *fld = m->as.member_expr.member;
+    // A RELATIONAL field invariant (`pos usize <= src.len`, `len usize <= cap`) is kept the same
+    // way, so a reference to either of its fields escapes it the same way.
+    for (DeclList *sf = ss->decl->as.struct_decl.fields; sf; sf = sf->next) {
+        if (!sf->decl || sf->decl->kind != DECL_VARIABLE) continue;
+        Id *fn = sf->decl->as.variable_decl.name;
+        if (!fn) continue;
+        for (ExprList *cn = sf->decl->as.variable_decl.constraints; cn; cn = cn->next) {
+            Expr *con = cn->expr;
+            if (!con || con->kind != EXPR_BINARY) continue;
+            Expr *rhs = con->as.binary_expr.right;
+            if (rhs && rhs->kind == EXPR_MEMBER) rhs = rhs->as.member_expr.target;
+            if (!rhs || rhs->kind != EXPR_IDENTIFIER || !rhs->as.identifier_expr.id) continue;
+            Id *gn = rhs->as.identifier_expr.id;
+            bool is_f = fn->length == fld->length && strncmp(fn->name, fld->name, fn->length) == 0;
+            bool is_g = gn->length == fld->length && strncmp(gn->name, fld->name, gn->length) == 0;
+            if (!is_f && !is_g) continue;
+            fprintf(stderr, "[E121] Error Ln %li, Col %li: a `var` reference to `%.*s` can break the struct's "
+                    "invariant on `%.*s` (it relates `%.*s` to `%.*s`) — a write through the reference is "
+                    "not checked against it. Pass the whole struct as `var` instead; its field writes "
+                    "are checked.\n", (long)e->line, (long)e->col, (int)fld->length, fld->name,
+                    (int)fn->length, fn->name, (int)fn->length, fn->name, (int)gn->length, gn->name);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        }
+    }
     for (DeclList *sf = ss->decl->as.struct_decl.fields; sf; sf = sf->next) {
         if (!sf->decl || sf->decl->kind != DECL_VARIABLE) continue;
         Id *fn = sf->decl->as.variable_decl.name, *in = sf->decl->as.variable_decl.in_field;

@@ -1,0 +1,34 @@
+// A POSITION invariant: `pos usize <= src.len`. A lexer's state is pos in [0, len] — an empty
+// source has a lexer, and EOF is pos == len — which the INDEX invariant (`pos usize in src`,
+// pos < len) cannot express: `Lexer(text, 0)` over a possibly-empty text is refused under `in`,
+// correctly. The relational form was E132 ("not implemented") until 2026-09-28; it is enforced
+// like `in` — asserted at construction and at every write to either field, assumed at reads,
+// and a `var` reference to either field is refused.
+type Lexer {
+    src u8[]
+    pos usize <= src.len
+}
+func lexer_new(text u8[:0]) Lexer { return Lexer(text, 0) }
+func at_end(l Lexer) bool { return l.pos == l.src.len }
+func peek(l Lexer) u8 {
+    if l.pos < l.src.len { return l.src[l.pos] }
+    return 0
+}
+func advance(l var Lexer) {
+    if l.pos < l.src.len { l.pos = l.pos + 1 }
+}
+func skip_all(l var Lexer) {
+    while l.pos < l.src.len {
+        l.pos = l.pos + 1
+    }
+}
+func main() i32 {
+    var empty = lexer_new("")
+    if !at_end(empty) { return 1 }
+    var l = lexer_new("abc")
+    advance(var l)
+    if peek(l) != 98 { return 2 }
+    skip_all(var l)
+    if !at_end(l) { return 3 }
+    return 0
+}
