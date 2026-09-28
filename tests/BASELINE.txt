@@ -327,6 +327,10 @@ ty=Slice_u8 scalar
 rc=0
 out=5000000000
 ty=Slice_u8 scalar
+### tests/expressions/logical_not_pass.ln
+rc=0
+out=
+at=const 6
 ### tests/expressions/null_compare_pass.ln
 rc=0
 out=
@@ -374,6 +378,19 @@ at=const 2
 ### tests/functions/decreasing_var_step_pass.ln
 rc=0
 out=10
+ty=Slice_u8 scalar
+### tests/functions/field_counter_terminates_pass.ln
+rc=0
+out=
+at=nonnull 4
+ty=Lexer struct
+ty=Slice_u8 scalar
+### tests/functions/field_counter_with_pure_call_pass.ln
+rc=0
+out=
+at=const 2
+at=nonnull 2
+ty=Lexer struct
 ty=Slice_u8 scalar
 ### tests/functions/fnptr_basic_pass.ln
 rc=0

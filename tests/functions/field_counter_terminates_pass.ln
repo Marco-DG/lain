@@ -1,0 +1,31 @@
+// A loop whose counter is a struct FIELD terminates by the same rule as a scalar counter — the
+// lexer's main loop. It was E011: the loop rule required a scalar ALLOCA, and the guard's
+// `l.pos` and the body's are different field_ptrs, so no store matched. They are one canonical
+// cell. A `var` struct PARAMETER is included: a store through it named no cell at all (it read
+// as an unattributable write that erased every fact), so `l.pos = l.pos + 1` taught nothing.
+type Lexer {
+    src u8[]
+    pos usize
+}
+func skip_all(l var Lexer) {
+    while l.pos < l.src.len {
+        l.pos = l.pos + 1
+    }
+}
+func skip_space(l var Lexer) {
+    while l.pos < l.src.len {
+        if l.src[l.pos] != 32 { return }
+        l.pos = l.pos + 1
+    }
+}
+func main() i32 {
+    var buf u8[4] = [32, 32, 3, 4]
+    var a = Lexer(buf, 0)
+    while a.pos < a.src.len { a.pos = a.pos + 1 }
+    var b = Lexer(buf, 1)
+    skip_all(var b)
+    var c = Lexer(buf, 0)
+    skip_space(var c)
+    if a.pos != 4 or b.pos != 4 or c.pos != 2 { return 1 }
+    return 0
+}

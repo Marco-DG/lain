@@ -45,12 +45,13 @@ for ((k=0; k<N; k++)); do
     # Suffix-matched: D-54 made function identity module-qualified, so the driver prints
     # `t_run`, and `^\s+run\s+` matched nothing from that day on — 200/200 skipped, reported
     # as "bugs: UNSOUND=0". See the same fix in fuzz_vra.sh.
-    v=$("$SC/vradrv" "$prog" --suppress 2>/dev/null | awk '$1 ~ /(^|_)run$/ && $2=="termination"' | head -1)
+    # ...and `spin`: a counter in a `var` struct PARAMETER lives in a callee (`run` builds the
+    # struct and calls `spin(var c)`), so `run` has no loop of its own. Reading `run` alone
+    # skipped every such program — 43 of 200 the day the family was added, reported beside
+    # "UNSOUND=0". Every termination verdict of the two must be PROVEN for the program to be.
+    v=$("$SC/vradrv" "$prog" --suppress 2>/dev/null | awk '$1 ~ /(^|_)(run|spin)$/ && $2=="termination"')
     [ -z "$v" ] && { skipped=$((skipped+1)); continue; }
-    case "$v" in
-        *"PROVEN check-free"*) ;;
-        *) notproven=$((notproven+1)); continue ;;
-    esac
+    if echo "$v" | grep -qv "PROVEN check-free"; then notproven=$((notproven+1)); continue; fi
     proven=$((proven+1))
 
     "$SC/lowerdrv" "$prog" --emit-c --suppress-term > "$SC/t.c" 2>/dev/null || { skipped=$((skipped+1)); continue; }

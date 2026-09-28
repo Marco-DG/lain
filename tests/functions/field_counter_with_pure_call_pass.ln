@@ -1,0 +1,24 @@
+// The lexer's loop as it is actually written: a field counter, and a helper call on the current
+// character. The call used to erase everything known about the `var` struct parameter (it
+// PERSISTS — its address is the caller's) and read as an opaque writer of the counter, so the
+// loop was neither overflow-proven nor terminating. A callee that writes only what it owns or is
+// handed — `is_space` writes nothing — cannot reach it: Lain has no mutable globals and no stored
+// references, so only a stashed raw pointer could, and that is exactly what the test excludes.
+type Lexer {
+    src u8[]
+    pos usize
+}
+func is_space(c u8) bool { return c == 32 }
+func skip_space(l var Lexer) {
+    while l.pos < l.src.len {
+        if !is_space(l.src[l.pos]) { return }
+        l.pos = l.pos + 1
+    }
+}
+func main() i32 {
+    var buf u8[4] = [32, 32, 3, 4]
+    var l = Lexer(buf, 0)
+    skip_space(var l)
+    if l.pos != 2 { return 1 }
+    return 0
+}

@@ -1,0 +1,19 @@
+// EXPECT: [E011]
+// Reset through a reference binding: the write goes through a pointer loaded from r's slot,
+// which the loop rule treats as an opaque writer of the (escaped) base.
+type Lexer {
+    src u8[]
+    pos usize
+}
+func reset(l var Lexer) { l.pos = 0 }
+func zero(x var usize) { x = 0 }
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var l = Lexer(buf, 0)
+    while l.pos < l.src.len {
+        l.pos = l.pos + 1
+        var r = var l.pos
+        r = 0
+    }
+    return 0
+}

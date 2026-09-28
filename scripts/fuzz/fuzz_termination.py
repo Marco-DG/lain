@@ -16,7 +16,14 @@ def gen(rng):
     side      = rng.choice(["left", "right"])          # counter left or right of the guard
     direction = rng.choice(["up", "down"])
     shape     = rng.choice(["single", "two_arm", "one_arm", "const_exit", "call_reset",
-                            "mask", "halve", "mutual"])
+                            "mask", "halve", "mutual", "whole_reset"])
+    # ★ WHERE THE COUNTER LIVES (2026-09-28). Every loop here counted in a scalar local, and the
+    # engine's loop rule then learned FIELD counters (`while l.pos < l.src.len`) — whose
+    # opaque writers are different: a whole-struct store, a call handed the struct, a store
+    # through a `var` struct parameter. None of those had a generator.
+    store     = rng.choice(["local", "local", "field", "param"])
+    if shape == "whole_reset" and store == "local":
+        store = "field"
     start, limit = (0, rng.choice([1, 4, 8, 16])) if direction == "up" else \
                    (rng.choice([1, 4, 8, 16]), 0)
     step = rng.choice([1, 2, 3])
@@ -64,6 +71,9 @@ def gen(rng):
         body.append("        i = i & (i -% 1)")
     elif shape == "halve":
         body.append("        i = i / 2")
+    elif shape == "whole_reset":                   # the counter reset by a WHOLE-STRUCT store
+        body.append(f"        i = i {d}% {step}")
+        body.append(f"        c = C({start}, 0)")
 
     # `mask`/`halve` only fall toward 0, so force the guard to match or they never terminate.
     if shape in ("mask", "halve"):
@@ -96,15 +106,34 @@ def gen(rng):
         L.append("}")
         return "\n".join(L) + "\n"
 
-    L.append("func run(x0 i32, flag i32) i32 {")
-    L.append(f"    var i i32 = x0")
-    L.append("    var n i32 = 0")
-    L.append(f"    while {guard} {{")
-    L.append("        n = n +% 1")
-    L += body
-    L.append("    }")
-    L.append("    return n")
-    L.append("}")
+    if store != "local":
+        import re
+        fld = lambda t: re.sub(r"\bi\b", "c.i", t)
+        guard = fld(guard); body = [fld(b) for b in body]
+        L.insert(1, "type C {\n    i i32\n    pad i32\n}")
+    if store == "param":
+        L.append("func spin(c var C, flag i32) i32 {")
+        L.append("    var n i32 = 0")
+        L.append(f"    while {guard} {{")
+        L.append("        n = n +% 1")
+        L += body
+        L.append("    }")
+        L.append("    return n")
+        L.append("}")
+        L.append("func run(x0 i32, flag i32) i32 {")
+        L.append("    var c = C(x0, 0)")
+        L.append("    return spin(var c, flag)")
+        L.append("}")
+    else:
+        L.append("func run(x0 i32, flag i32) i32 {")
+        L.append("    var i i32 = x0" if store == "local" else "    var c = C(x0, 0)")
+        L.append("    var n i32 = 0")
+        L.append(f"    while {guard} {{")
+        L.append("        n = n +% 1")
+        L += body
+        L.append("    }")
+        L.append("    return n")
+        L.append("}")
     L.append("func main() i32 effects io, raises, alloc {")
     L.append(f"    libc_printf(\"%d\\n\", run({start}, 1))")
     L.append(f"    libc_printf(\"%d\\n\", run({start}, 0))")

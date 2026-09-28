@@ -1797,6 +1797,13 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
         case EXPR_UNARY: {
             IrValue *x = ir_lower_expr(c, e->as.unary_expr.right);
             if (e->as.unary_expr.op == TOKEN_MINUS) { IrInstr *ins=ir_instr(c->f,IR_NEG,ty,1); ins->operands[0]=x; ir_emit(c->cur,ins); return ins->result; }
+            // `!x` is LOGICAL not — `x == 0` — and `~x` is bitwise. Both lowered to IR_BNOT, which
+            // the backend emits as `~`: on a C `_Bool` holding 1 that is -2, which is TRUE, so
+            // `var b bool = true; if !b { … }` took the branch, and so did `!f()` and `!(x == 5)`.
+            // A silent miscompile of every negated boolean, in the shipping compiler until
+            // 2026-09-28 (the corpus's `!` uses happened to sit where the value did not matter).
+            if (e->as.unary_expr.op == TOKEN_BANG && x && x->type)
+                return ir_icmp(c->f, c->cur, IR_CMP_EQ, x, ir_const_int(c->f, c->cur, 0, x->type));
             IrInstr *ins=ir_instr(c->f,IR_BNOT,ty,1); ins->operands[0]=x; ir_emit(c->cur,ins); return ins->result;
         }
         case EXPR_INDEX: {

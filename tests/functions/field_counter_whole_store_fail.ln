@@ -1,0 +1,18 @@
+// EXPECT: [E011]
+// A WHOLE-STRUCT store writes the counter field with no per-field store: `l = Lexer(buf, 0)`
+// resets pos every iteration. The loop rule counts a store to the base as a non-progress write.
+type Lexer {
+    src u8[]
+    pos usize
+}
+func reset(l var Lexer) { l.pos = 0 }
+func zero(x var usize) { x = 0 }
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var l = Lexer(buf, 0)
+    while l.pos < l.src.len {
+        l.pos = l.pos + 1
+        l = Lexer(buf, 0)
+    }
+    return 0
+}

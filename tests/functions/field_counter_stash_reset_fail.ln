@@ -1,0 +1,27 @@
+// EXPECT: [E011]
+// A field counter reset through a raw pointer stashed in a struct the loop hands to a call: the
+// callee writes l.pos without being handed l. Must not be proven terminating — it never ends.
+type L {
+    src u8[]
+    pos usize
+}
+type H {
+    p *var usize
+}
+func g(h H) {
+    unsafe { *h.p = 0 }
+}
+func spin(l var L, h H) {
+    while l.pos < l.src.len {
+        l.pos = l.pos + 1
+        g(h)
+    }
+}
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var l = L(buf, 0)
+    var q *var usize = &l.pos
+    h = H(q)
+    spin(var l, h)
+    return 0
+}

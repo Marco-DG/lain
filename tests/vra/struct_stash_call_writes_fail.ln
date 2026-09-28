@@ -1,0 +1,20 @@
+// EXPECT: [E085]
+// A call that is not handed `n` can still write it through a raw pointer STASHED in memory it is
+// handed. The call transfer keeps a persisting cell across a call only when the callee writes
+// nothing but what it owns or is handed (ir_func_writes_only_owned) — and `*h.p = 100` stores
+// through a pointer loaded from memory, which fails that test, here and through `outer`.
+type H {
+    p *var usize
+}
+func inner(h H) {
+    unsafe { *h.p = 100 }
+}
+func outer(h H) { inner(h) }
+func main() i32 {
+    var a i32[4] = [0, 1, 2, 3]
+    var n usize = 1
+    var q *var usize = &n
+    h = H(q)
+    outer(h)
+    return a[n]
+}

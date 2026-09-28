@@ -1,0 +1,30 @@
+// `!` is LOGICAL not. It lowered to the same IR op as bitwise `~`, which the backend emits as
+// `~`: on a C `_Bool` holding 1 that is -2 — TRUE — so every negated true boolean took the
+// branch. `var b bool = true; if !b { return 3 }` returned 3. The whole corpus and std contained
+// no logical `!` at all, which is how a miscompile of a basic operator survived every gate.
+// Each form below is a different way the operand reaches `!`: a variable, a call, a comparison,
+// a bound value, and a negation of a negation.
+func t() bool { return true }
+func f() bool { return false }
+func is_zero(x i32) bool { return x == 0 }
+func main() i32 effects diverge {
+    var b bool = true
+    if !b { return 1 }
+    if !t() { return 2 }
+    if !is_zero(0) { return 3 }
+    x = 5
+    if !(x == 5) { return 4 }
+    c = is_zero(1)
+    if !(!c) { return 5 }
+    if !f() {
+        var done = false
+        var n i32 = 0
+        while !done {
+            n = n +% 1
+            if n == 3 { done = true }
+        }
+        if n != 3 { return 6 }
+        return 0
+    }
+    return 7
+}

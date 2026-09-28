@@ -1531,6 +1531,12 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                         vra_forget_fields_of(V, W, cell);
                     }
                 } else {
+                    // (a) needs a callee that can reach memory it was not handed. Without mutable
+                    // globals or stored references that takes a stash — a pointer loaded from
+                    // memory and written through — which ir_func_writes_only_owned rules out,
+                    // transitively. `is_space(l.src[l.pos])` inside a lexer loop kept l.pos.
+                    bool reaches_stash = !(cal && vra_mod && ir_func_writes_only_owned(cal, vra_mod));
+                    if (reaches_stash)
                     for (int cell=0; cell<V->nvar; cell++) if (V->persist[cell]) {
                         oct_forget(W, cell); vra_forget_fields_of(V, W, cell);
                     }
@@ -2751,7 +2757,20 @@ static bool vra_cell_opaque_write(Vra *V, int cell, int nbb, const char *inloop)
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         if (!(b->id>=0 && b->id<nbb && inloop[b->id])) continue;
         for (IrInstr *st=b->instrs; st; st=st->next) {
-            if (st->op==IR_CALL) return true;
+            // A call writes the cell only if it is HANDED it (in a position the callee writes),
+            // or reaches it through a stash — the IR_CALL transfer's own two questions. Any call
+            // at all was the old answer, which refused `while l.pos < l.src.len { if
+            // !is_space(l.src[l.pos]) { return } l.pos = l.pos + 1 }` — the lexer's loop.
+            if (st->op==IR_CALL) {
+                IrFunc *cal = vra_find_func(st->aux.callee);
+                if (!cal || !vra_mod || !ir_func_writes_only_owned(cal, vra_mod)) return true;
+                IrWriteFootprint cw = ir_param_writes(cal, vra_mod);
+                for (int k=0; k<st->n_operands; k++) {
+                    if (k < 64 && !((cw>>k)&1u)) continue;
+                    int ac = vra_arg_cell(V, st->operands[k]);
+                    if (ac == cell || ac == VRA_ARG_UNKNOWN) return true;
+                }
+            }
             if (st->op==IR_STORE && st->n_operands>=1 &&
                 vra_arg_cell(V, st->operands[0]) == VRA_ARG_UNKNOWN) return true;
         }
@@ -2961,7 +2980,25 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         }
         if (!ivd || ivd->op!=IR_LOAD || ivd->n_operands<1) continue;
         int cell=ivd->operands[0]->id;
-        if (!vra_is_scalar_cell(V,cell)) continue;
+        // ── A FIELD COUNTER ─────────────────────────────────────────────────────────────
+        // `while l.pos < l.src.len { l.pos = l.pos + 1 }` is the lexer's main loop, and it was
+        // refused: the counter had to be a scalar ALLOCA, and even as a field the guard's
+        // `l.pos` and the body's are different field_ptrs, so no store matched. They name ONE
+        // canonical cell (cellcanon), and that is what is compared below. Three things change
+        // with it, each load-bearing:
+        //   · a store to the BASE itself (`l = L(...)`) writes the field with no per-field
+        //     store to find — it is a non-progress write, and refuses the loop;
+        //   · the opaque-writer test (a call, an unattributable store) is asked of the BASE,
+        //     which is what escapes — the field_ptr never does;
+        //   · a `var` struct parameter's base is always escaped (the caller owns it), so any
+        //     call in the loop refuses — conservative, and exactly the scalar rule's reading.
+        int fbase = -1;
+        if (!vra_is_scalar_cell(V,cell)) {
+            fbase = vra_field_cell_base(V, cell);
+            if (fbase < 0) continue;
+        }
+        int ccell = vra_canon_cell(V, cell);
+        #define VRA_SAME_CELL(x) (fbase < 0 ? (x) == cell : vra_canon_cell(V, (x)) == ccell)
         if (!vra_loop_invariant(V,bnd,H)) continue;
         bool lt=(p==IR_CMP_SLT||p==IR_CMP_ULT||p==IR_CMP_SLE||p==IR_CMP_ULE);
         bool gt=(p==IR_CMP_SGT||p==IR_CMP_UGT||p==IR_CMP_SGE||p==IR_CMP_UGE);
@@ -2994,12 +3031,14 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
                 // same set the memory model havocs at every call, and if nothing in the loop
                 // calls anything then nothing can exercise the escape while the loop runs.
                 if (st->op==IR_CALL) has_call = true;
-                if (st->op!=IR_STORE || st->n_operands<2 || st->operands[0]->id!=cell) continue;
+                if (st->op==IR_STORE && st->n_operands>=2 && fbase >= 0 &&
+                    st->operands[0]->id == fbase) { bad = true; break; }   // whole-struct write
+                if (st->op!=IR_STORE || st->n_operands<2 || !VRA_SAME_CELL(st->operands[0]->id)) continue;
                 bool ok_step = false;
                 IrInstr *vd=V->def[st->operands[1]->id];
                 if (vd && (vd->op==IR_ADD||vd->op==IR_SUB) && vd->n_operands>=2) {
                     IrInstr *ld=V->def[vd->operands[0]->id]; int c=vd->operands[1]->id;
-                    if (ld && ld->op==IR_LOAD && ld->operands[0]->id==cell) {
+                    if (ld && ld->op==IR_LOAD && VRA_SAME_CELL(ld->operands[0]->id)) {
                         if (V->cknown[c]) {
                             int64_t stp = (vd->op==IR_ADD)? V->cval[c] : -V->cval[c];
                             ok_step = (lt && stp>0) || (gt && stp<0);
@@ -3066,8 +3105,9 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
             }
         }
         (void)has_call;
+        #undef VRA_SAME_CELL
         if (bad || !anyprog) { free(body); free(prog); continue; }
-        if (vra_cell_opaque_write(V, cell, nbb, body)) {
+        if (vra_cell_opaque_write(V, fbase >= 0 ? fbase : cell, nbb, body)) {
             free(body); free(prog); continue;          // the callee may write the counter
         }
         bool ok = vra_progress_on_every_path(V, H, nbb, body, prog);
