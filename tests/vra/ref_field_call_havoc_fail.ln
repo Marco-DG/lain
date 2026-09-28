@@ -1,0 +1,12 @@
+// EXPECT: [E085]
+// A reference HANDED TO A CALL is an ordinary escape: the callee may write the field, so its
+// facts are gone and `a[q.i]` is not provable. (Here `set` writes 200.)
+type Q { i usize, j usize }
+func set(x var usize) { x = 200 }
+func main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var q = Q(0, 0)
+    var r = var q.i
+    set(var r)
+    return a[q.i]
+}

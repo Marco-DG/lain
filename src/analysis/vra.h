@@ -194,6 +194,11 @@ typedef struct {
     // For each ALLOCA slot: the value id of its ONLY store, or -1 when it is stored zero or
     // several times. Read by vra_ref_target — see there.
     int     *uniq_store;
+    // strict_esc[cell]: the cell's address escaped by a route OTHER than a benign reference
+    // binding (see vra_store_is_benign_ref). `escaped` stays the conservative union that every
+    // havoc, loop rule and guard matcher reads; only the field-cell precondition reads this.
+    bool    *strict_esc;
+    bool     marking_benign;   // set while marking the value of a benign reference store
     VraCheck *checks; int nchecks, cap_checks;
 } Vra;
 
@@ -233,6 +238,7 @@ static void vra_mark_addr(Vra *V, IrValue *v, bool persist, int depth) {
     if (d->op == IR_ALLOCA) {
         V->escaped[v->id] = true;
         if (persist) V->persist[v->id] = true;
+        if (V->strict_esc && !V->marking_benign) V->strict_esc[v->id] = true;
         return;
     }
     switch (d->op) {
@@ -325,7 +331,8 @@ static int vra_field_cell_base(Vra *V, int v) {
     if (bd) {
         if (bd->op != IR_ALLOCA || !bd->aux.alloca_ty ||
             bd->aux.alloca_ty->kind != IRT_STRUCT) return -1;
-        if (V->escaped && V->escaped[base]) return -1;
+        // strictly escaped — a reference binding's benign escape keeps the fields modelled
+        if (V->strict_esc ? V->strict_esc[base] : (V->escaped && V->escaped[base])) return -1;
         return base;
     }
     // ★ ...OR A STRUCT PARAMETER. No defining instruction means a parameter, and a `var B`
@@ -368,6 +375,7 @@ static int vra_ref_target(Vra *V, int addr) {
     if (hd && hd->op == IR_ALLOCA && hd->aux.alloca_ty &&
         (hd->aux.alloca_ty->kind == IRT_INT || hd->aux.alloca_ty->kind == IRT_BOOL)) return held;
     if (vra_is_param_cell(V, held)) return held;
+    if (vra_field_cell_base(V, held) >= 0) return held;     // a field of a modelled struct
     return addr;
 }
 
@@ -599,6 +607,51 @@ static void vra_seed_element_ranges(Vra *V) {
     for (int round = 0; round < 3; round++) vra_seed_element_ranges_round(V);
 }
 
+// ★ A REFERENCE BINDING'S ESCAPE IS NOT AN ESCAPE TO THE FIELD MODEL. `var x = var p.x` stores
+// p.x's address into x's slot, which marks p escaped — and an escaped struct has no field cells,
+// so every read of p.x (and every read through x) was unknown: `x = 7; y = x + 1` was E086. The
+// address went nowhere but a slot that is written ONCE and whose every load is used only as the
+// address of a direct LOAD or STORE — and each of those is resolved to the field cell exactly
+// (vra_ref_target). Such a store is BENIGN: nothing can reach p.x except through accesses this
+// domain sees. Anything else — the loaded pointer passed to a call, stored, returned, projected
+// further, consumed — and it is an ordinary escape.
+//
+// Only the FIELD-CELL precondition is relaxed. `escaped` is still set, so every havoc, loop
+// rule and guard matcher keyed on it stays exactly as conservative as before.
+static bool vra_store_is_benign_ref(Vra *V, IrInstr *st) {
+    if (!st || st->op != IR_STORE || st->n_operands < 2 || !V->uniq_store) return false;
+    IrValue *slot = st->operands[0], *held = st->operands[1];
+    if (!slot || !held || slot->id < 0 || slot->id >= V->nvar) return false;
+    IrInstr *sd = V->def[slot->id];
+    IrType *at = (sd && sd->op == IR_ALLOCA) ? sd->aux.alloca_ty : NULL;
+    if (!at || at->kind != IRT_PTR || !at->borrowed) return false;       // a reference slot
+    if (V->uniq_store[slot->id] != held->id) return false;               // written exactly once
+    // every use of the slot is this store or a LOAD of it; every such load is used only as the
+    // ADDRESS operand of a load or a store
+    for (IrBlock *b = V->f->blocks; b; b = b->next) {
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            for (int k = 0; k < i->n_operands; k++) {
+                IrValue *o = i->operands[k];
+                if (!o) continue;
+                if (o == slot) {
+                    if (i == st && k == 0) continue;
+                    if (i->op == IR_LOAD && k == 0) continue;
+                    return false;
+                }
+                IrInstr *od = (o->id >= 0 && o->id < V->nvar) ? V->def[o->id] : NULL;
+                if (od && od->op == IR_LOAD && od->n_operands >= 1 && od->operands[0] == slot) {
+                    bool addr_use = (k == 0) && (i->op == IR_LOAD || i->op == IR_STORE);
+                    if (!addr_use) return false;
+                }
+            }
+        }
+        IrValue *tc = b->term.cond;                       // a returned / branched-on pointer
+        IrInstr *td = (tc && tc->id >= 0 && tc->id < V->nvar) ? V->def[tc->id] : NULL;
+        if (td && td->op == IR_LOAD && td->n_operands >= 1 && td->operands[0] == slot) return false;
+    }
+    return true;
+}
+
 static void vra_prepass(Vra *V) {
     for (IrParam *p=V->f->params; p; p=p->next)
         if (p->value && p->value->id>=0 && p->value->id<V->nvar) V->val[p->value->id]=p->value;
@@ -720,6 +773,7 @@ static void vra_prepass(Vra *V) {
                          (p->value->type && p->value->type->kind==IRT_PTR &&
                           p->value->type->elem && p->value->type->elem->kind==IRT_STRUCT))) {
             V->escaped[p->value->id] = true;
+            if (V->strict_esc) V->strict_esc[p->value->id] = true;
             // ...and PERSISTS: the storage is the caller's, and we cannot see whether the
             // caller stashed its address somewhere a callee of ours can reach. (Recovering
             // these needs a call-site summary — the one precision the oracle leaves on the
@@ -754,7 +808,9 @@ static void vra_prepass(Vra *V) {
                     if (k>=64 || ((cr>>k)&1u)) vra_mark_persist(V, ins->operands[k]);
                 }
             } else if (ins->op == IR_STORE && ins->n_operands>=2) {
+                V->marking_benign = vra_store_is_benign_ref(V, ins);
                 vra_mark_persist(V, ins->operands[1]);   // an address stored into memory PERSISTS
+                V->marking_benign = false;
             }
         }
         if (b->term.kind == IR_TERM_RET) vra_mark_persist(V, b->term.cond);   // outlives us
@@ -3288,6 +3344,7 @@ static Vra *vra_analyze(IrFunc *f) {
     V->cret_lo=calloc(V->nvar,sizeof(int64_t)); V->cret_hi=calloc(V->nvar,sizeof(int64_t));
     V->cret_state=calloc(V->nvar,sizeof(signed char));
     V->accum_cell=calloc(V->nvar,sizeof(bool));
+    V->strict_esc=calloc(V->nvar,sizeof(bool)); V->marking_benign=false;
     V->uniq_store=malloc(V->nvar*sizeof(int));
     if (V->uniq_store) {
         int *cnt = calloc(V->nvar, sizeof(int));
@@ -4251,7 +4308,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
-    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->uniq_store); free(V->odim); free(V->checks); free(V);
+    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->uniq_store); free(V->strict_esc); free(V->odim); free(V->checks); free(V);
 }
 
 #endif // LAIN_VRA_H

@@ -1,0 +1,11 @@
+// EXPECT: [E085]
+// The precise half's partner: the write through the reference IS the field's value, so 200 is
+// out of range for a 4-element array.
+type Q { i usize, j usize }
+func main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var q = Q(0, 0)
+    var r = var q.i
+    r = 200
+    return a[q.i]
+}

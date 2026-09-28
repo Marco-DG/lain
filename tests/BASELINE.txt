@@ -2205,6 +2205,11 @@ ty=Slice_i32 scalar
 ### tests/vra/ref_binding_precise_pass.ln
 rc=4
 out=
+### tests/vra/ref_field_precise_pass.ln
+rc=0
+out=
+ty=P struct
+ty=Q struct
 ### tests/vra/refine_expr_bound_pass.ln
 rc=0
 out=

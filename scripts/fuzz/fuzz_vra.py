@@ -20,7 +20,8 @@ def gen(rng):
     kind = rng.choice(["midpoint", "divsub", "retrange", "divconst", "midpoint_wide",
                        "loop_scan", "loop_scan", "loop_unbounded",
                        "alias", "alias", "alias",
-                       "signedidx", "signedidx"])
+                       "signedidx", "signedidx",
+                       "fieldref", "fieldref", "fieldref"])
     # Large arrays matter: the widening bug this fuzzer must catch is a SLOT COLLISION, and
     # which slot collides depends on how many values the function has. But an explicit literal
     # costs one trivially-proven obligation PER ELEMENT, so the initializer is a comprehension
@@ -205,6 +206,41 @@ func probe(a i32[{N}]) i32 {{
     }}
     return 0
 }}"""
+        call = "probe(arr)"
+
+    elif kind == "fieldref":
+        # ★ A REFERENCE TO A STRUCT FIELD (added 2026-09-28). `var r = var q.i` escapes q into a
+        # reference slot, and the field model treats that escape as BENIGN — q keeps its field
+        # cells — because every access through r is resolved to q.i exactly. That relaxes an
+        # escape precondition the domain relies on, so it gets an executing oracle: writes through
+        # the reference with values on both sides of the bound, crossed with a guard, a write to
+        # the OTHER field, a call handed the reference, a direct write after it, and a whole-struct
+        # overwrite. Whatever is proven runs under ASan.
+        seed  = rng.randint(0, max(0, N - 1))
+        v     = rng.choice([0, N // 2, N - 1, N, N + 5])
+        shape = rng.choice(["write", "write", "after_guard", "other_field", "call",
+                            "then_direct", "whole"])
+        if shape == "write":
+            core = ["var r = var q.i", f"r = {v}", "return a[q.i]"]
+        elif shape == "after_guard":
+            core = [f"if q.i < {N} {{", "    var r = var q.i",
+                    f"    r = {rng.choice([N - 1, N])}", "    return a[q.i]", "}", "return 0"]
+        elif shape == "other_field":
+            core = ["var r = var q.j", f"r = {N + 100}",
+                    f"if q.i < {N} {{ return a[q.i] }}", "return 0"]
+        elif shape == "call":
+            core = ["var r = var q.i", "bump(var r)", "return a[q.i]"]
+        elif shape == "then_direct":
+            core = ["var r = var q.i", f"r = {v}", "q.i = q.i +% 1", "return a[q.i]"]
+        else:  # whole
+            core = ["var r = var q.i", "r = 1", f"q = Q({v}, 0)", "return a[q.i]"]
+        lines = [f"func bump(var x usize) {{ x = {N} }}",
+                 "type Q { i usize, j usize }",
+                 f"func probe(a i32[{N}]) i32 {{",
+                 f"    var q = Q({seed}, 0)"]
+        lines += ["    " + c for c in core]
+        lines += ["}"]
+        body = "\n".join(lines)
         call = "probe(arr)"
 
     else:  # retrange — the index comes from a helper's return value

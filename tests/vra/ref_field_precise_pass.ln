@@ -1,0 +1,22 @@
+// A reference to a struct FIELD is precise. `var x = var p.x` stores p.x's address into x's slot,
+// which marked p escaped — and an escaped struct has no field cells, so every read of p.x and
+// through x was unknown: the checked `x + 1` below was E086 and `a[p.i]` E085. The address goes
+// nowhere but a once-written slot whose loads are only ever load/store addresses, so every
+// access is resolved to the field cell; the struct keeps its fields. (A call, or the reference
+// handed to one, still havocs them — see ref_field_call_havoc_fail.ln.)
+type P { x i32, y i32 }
+type Q { i usize, j usize }
+func main() i32 {
+    var p = P(1, 2)
+    var x = var p.x
+    var y = var p.y
+    x = 7
+    y = x + 1
+    var a i32[4] = [1, 2, 3, 4]
+    var q = Q(0, 0)
+    var r = var q.i
+    r = 2
+    q.i = q.i + 1
+    if p.x + p.y == 15 and a[q.i] == 4 { return 0 }
+    return 1
+}
