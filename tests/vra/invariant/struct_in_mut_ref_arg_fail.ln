@@ -1,0 +1,21 @@
+// EXPECT: [E121]
+// A `var` reference to an invariant field writes it where the invariant's check cannot see:
+// `bump` stores to a bare `var usize`, which carries no promise. The call is accepted, `c.pos`
+// becomes 4 over a four-byte slice, and `peek` reads past the buffer (ASan:
+// stack-buffer-overflow, accepted by the committed compiler before 2026-09-28). Every field
+// write is checked where it happens, so the reference itself is refused; pass the whole
+// struct (`var c`) and the write inside the callee is checked instead.
+type Cur {
+    text u8[]
+    pos usize in text
+}
+func peek(c Cur) u8 {
+    return c.text[c.pos]
+}
+func bump(x var usize) { x = 4 }
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var c = Cur(buf, 0)
+    bump(var c.pos)
+    return peek(c) as i32
+}

@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// The reverse, and worse: an ARRAY passed where a `usize` is declared was accepted and the
+// emitted C compiled — the callee received the array's ADDRESS as the integer.
+func take(k usize) usize { return k }
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    n = take(buf)
+    return 0
+}

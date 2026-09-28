@@ -1,0 +1,21 @@
+// EXPECT: [E085]
+// A call handed the struct may replace its slice field: `shrink` makes w.s two elements long,
+// and `n` — read before the call — is the OLD length. The single-length model kept it, and
+// `w.s[n - 1]` read past `small` (ASan). A call that may write the base is a writer of the field.
+type W {
+    s u8[]
+    k usize
+}
+func shrink(w var W, t u8[]) { w.s = t }
+func main() i32 {
+    var big u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    var small u8[2] = [1, 2]
+    var w = W(big, 0)
+    n = w.s.len
+    shrink(var w, small)
+    if n > 0 {
+        x = w.s[n - 1]
+        return x as i32
+    }
+    return 0
+}

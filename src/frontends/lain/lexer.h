@@ -362,6 +362,7 @@ Token lexer_next(Lexer* lexer) {
             case STATE_AMPERSAND:
                 switch (c) {
                     case '=':           RETURN_TOKEN(TOKEN_AMPERSAND_EQUAL);
+                    case '&':           RETURN_TOKEN(TOKEN_AMPERSAND_AMPERSAND);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_AMPERSAND);
                 }
@@ -370,6 +371,7 @@ Token lexer_next(Lexer* lexer) {
             case STATE_PIPE:
                 switch (c) {
                     case '=':           RETURN_TOKEN(TOKEN_PIPE_EQUAL);
+                    case '|':           RETURN_TOKEN(TOKEN_PIPE_PIPE);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_PIPE);
                 }

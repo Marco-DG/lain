@@ -1,0 +1,18 @@
+// EXPECT: [E085]
+// ...and a WHOLE-STRUCT reassignment replaces it too: `w = W(small, 0)`.
+type W {
+    s u8[]
+    k usize
+}
+func main() i32 {
+    var big u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    var small u8[2] = [1, 2]
+    var w = W(big, 0)
+    n = w.s.len
+    w = W(small, 0)
+    if n > 0 {
+        x = w.s[n - 1]
+        return x as i32
+    }
+    return 0
+}

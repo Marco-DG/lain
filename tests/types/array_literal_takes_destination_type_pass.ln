@@ -1,0 +1,24 @@
+// An array literal takes the element type of where it goes. `[1, 2, 3, 4]` types as i32[4] (its
+// elements are literals), and outside a declaration nothing retyped it: lowering materialised an
+// int32_t[4], and a `u8[4]` parameter, a `u8[]` slice or a struct's `u8[4]` field received its
+// BYTES — `third([1, 2, 3, 4])` returned 0, not 3. Accepted and silently wrong since before
+// 2026-09-28 for arguments; exposed at construction and slice declaration when those boundaries
+// were given the shared conversion relation.
+type L {
+    xs u8[4]
+    k usize
+}
+func third(a u8[4]) u8 { return a[2] }
+func third_s(a u8[]) u8 {
+    if a.len > 2 { return a[2] }
+    return 0
+}
+func main() i32 {
+    l = L([1, 2, 3, 4], 9)
+    s u8[] = [1, 2, 3, 4]
+    if third([1, 2, 3, 4]) != 3 { return 1 }
+    if third_s([1, 2, 3, 4]) != 3 { return 2 }
+    if l.xs[2] != 3 or l.k != 9 { return 3 }
+    if s[2] != 3 or s.len != 4 { return 4 }
+    return 0
+}

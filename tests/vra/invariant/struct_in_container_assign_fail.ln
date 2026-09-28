@@ -1,0 +1,16 @@
+// EXPECT: [E121]
+// The other half of the same invariant: replacing the CONTAINER with a shorter one breaks it too.
+// pos is 3; the new text has length 2.
+type Cur {
+    text u8[]
+    pos usize in text
+}
+func peek(c Cur) u8 {
+    return c.text[c.pos]
+}
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var c = Cur(buf, 3)
+    c.text = buf[0..2]
+    return peek(c) as i32
+}

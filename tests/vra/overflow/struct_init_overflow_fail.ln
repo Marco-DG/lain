@@ -1,7 +1,8 @@
-// EXPECT: [E012]
-// Struct constructor argument with incompatible type is caught
-// by the earlier type-compatibility check (E012) before Phase 5
-// would fire. Either way the program is rejected.
+// EXPECT: [E086]
+// A u16 that does not fit a u8 field is refused. It was E012 — the constructor had a private
+// type-compatibility check of its own — and is now E086, the code every other boundary gives the
+// same narrowing (`take_u8(big)` says E086 too): struct construction uses the one conversion
+// relation since 2026-09-28. Either way the program is rejected.
 
 type RGB {
     r u8

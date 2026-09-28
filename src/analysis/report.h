@@ -154,6 +154,9 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 else if (c->diag == 86)
                     ir_diag(file, c->line, c->col, "E086",
                             "return value cannot be proven to satisfy the function's return refinement");
+                else if (c->diag == 121)
+                    ir_diag(file, c->line, c->col, "E121",
+                            "the struct's `in` invariant is not proven here — the index must stay below its container's length (at construction, and after every write to either field)");
                 else if (c->diag == 87)
                     ir_diag(file, c->line, c->col, "E087",
                             "argument does not satisfy the parameter's sized-slice constraint");

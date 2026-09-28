@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// Each element is checked against the destination's element type, as in a declaration: 300 is
+// not a u8. The argument boundary accepted it (and would have stored the low byte).
+func third(a u8[4]) u8 { return a[2] }
+func main() i32 {
+    n = third([1, 2, 300, 4])
+    return 0
+}

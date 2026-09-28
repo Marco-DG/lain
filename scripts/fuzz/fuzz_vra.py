@@ -21,7 +21,8 @@ def gen(rng):
                        "loop_scan", "loop_scan", "loop_unbounded",
                        "alias", "alias", "alias",
                        "signedidx", "signedidx",
-                       "fieldref", "fieldref", "fieldref"])
+                       "fieldref", "fieldref", "fieldref",
+                       "slicefield", "slicefield", "slicefield"])
     # Large arrays matter: the widening bug this fuzzer must catch is a SLOT COLLISION, and
     # which slot collides depends on how many values the function has. But an explicit literal
     # costs one trivially-proven obligation PER ELEMENT, so the initializer is a comprehension
@@ -241,6 +242,46 @@ func probe(a i32[{N}]) i32 {{
         lines += ["    " + c for c in core]
         lines += ["}"]
         body = "\n".join(lines)
+        call = "probe(arr)"
+
+    elif kind == "slicefield":
+        # ★ A SLICE FIELD REWRITTEN between a length read and a use (2026-09-28). The model gives
+        # a slice field ONE length for the whole function, which is only sound while the field
+        # holds one slice for its whole life — and three writers were not counted: the
+        # constructor's whole-struct store, a whole-struct reassignment, and a call handed the
+        # struct. Each proved a read past a shorter array (ASan). No generator here produced a
+        # struct with a slice field that is rewritten, so every fuzzer read zero.
+        #
+        # Each slice views its OWN exact-length array, so a read past the current slice is a
+        # read past an allocation — which ASan sees. (A subslice of one big array would keep the
+        # stale-length read inside valid memory, and the false proof would run clean.)
+        A = rng.randint(1, 12); B = rng.randint(1, 12)
+        first, second = rng.choice([("x", "y"), ("y", "x")])
+        rew   = rng.choice(["store", "whole", "call", "none"])
+        when  = rng.choice(["before", "after"])        # the .len read, relative to the rewrite
+        idx   = rng.choice(["len", "len", "const"])
+        K     = rng.randint(0, 13)
+        rewrite = {"store": f"    w.s = {second}",
+                   "whole": f"    w = W({second}, 0)",
+                   "call":  f"    replace(var w, {second})",
+                   "none":  ""}[rew]
+        read_n  = "    n = w.s.len"
+        pre  = [read_n, rewrite] if when == "before" else [rewrite, read_n]
+        use  = ("    if n > 0 {\n        return w.s[n - 1]\n    }\n    return 0" if idx == "len"
+                else f"    if n > 0 {{\n        return w.s[{K}]\n    }}\n    return 0")
+        lines = "\n".join(l for l in pre if l)
+        body = f"""type W {{
+    s i32[]
+    k usize
+}}
+func replace(w var W, t i32[]) {{ w.s = t }}
+func probe(a i32[{N}]) i32 {{
+    var x i32[{A}] = [0 for z in 0..{A}]
+    var y i32[{B}] = [0 for z in 0..{B}]
+    var w = W({first}, 0)
+{lines}
+{use}
+}}"""
         call = "probe(arr)"
 
     else:  # retrange — the index comes from a helper's return value

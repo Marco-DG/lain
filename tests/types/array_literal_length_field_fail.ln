@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// ...and at construction: five elements for a `u8[4]` field.
+type L {
+    xs u8[4]
+    k usize
+}
+func main() i32 {
+    l = L([1, 2, 3, 4, 5], 1)
+    return 0
+}

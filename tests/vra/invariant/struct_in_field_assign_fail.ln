@@ -1,0 +1,19 @@
+// EXPECT: [E121]
+// A struct's `in` invariant is a promise every READ relies on: `c.text[c.pos]` is proven because
+// `pos usize in text` says pos < text.len. Construction asserted it; ASSIGNING the field did not
+// (the legacy front-end check covered fixed-array containers only and accepted a slice
+// container unconditionally). So `c.pos = 5` over a 4-byte slice compiled, and `peek` read past
+// the buffer — ASan: stack-buffer-overflow, in an accepted program.
+type Cur {
+    text u8[]
+    pos usize in text
+}
+func peek(c Cur) u8 {
+    return c.text[c.pos]
+}
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var c = Cur(buf, 0)
+    c.pos = 5
+    return peek(c) as i32
+}

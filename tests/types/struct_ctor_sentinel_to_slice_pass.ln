@@ -1,0 +1,16 @@
+// A `u8[:0]` is a `u8[]` — the sentinel is dropped, never gained. Every boundary accepted that
+// conversion except struct construction, which kept a private check of its own and refused
+// `Lexer(text, 0)` (reported by the hand-written lexer). One conversion relation now.
+type Lexer {
+    src u8[]
+    pos usize
+}
+func lexer_new(text u8[:0]) Lexer {
+    return Lexer(text, 0)
+}
+func main() i32 {
+    l = lexer_new("abc")
+    w = Lexer("abcd", 1)
+    if l.src.len != 3 or w.src.len != 4 or w.pos != 1 { return 1 }
+    return 0
+}

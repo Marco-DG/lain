@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// Lain spells logical AND `and`. C's `&&` lexed as two `&` tokens, so `a == 2 && b == 1` parsed
+// as `(a == 2) & ((&b) == 1)` — an ADDRESS-OF — and was refused as "incompatible operand types
+// '*u8' and 'i32'" at Ln 0. The diagnostic now names the spelling, where it was written.
+func main() i32 {
+    var a u8 = 0
+    var b u8 = 0
+    if a == 2 && b == 1 { return 1 }
+    return 0
+}

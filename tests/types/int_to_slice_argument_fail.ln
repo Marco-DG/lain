@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// An integer where a slice is declared has no representation in common with it. The argument
+// boundary let it through (only nominal and pointer confusions were refused there) and the
+// emitted C did not compile; struct construction refused the same thing. One relation now.
+func len_of(s u8[]) usize { return s.len }
+func main() i32 {
+    n = len_of(5)
+    return 0
+}

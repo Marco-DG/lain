@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// A sequence converts only to a sequence of the SAME element type: an `i32[4]` is not a `u8[]`.
+func len_of(s u8[]) usize { return s.len }
+func main() i32 {
+    var xs i32[4] = [1, 2, 3, 4]
+    n = len_of(xs)
+    return 0
+}

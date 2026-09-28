@@ -272,7 +272,16 @@ static int vra_arg_cell(Vra *V, IrValue *v) {
     for (int guard=0; v && v->id>=0 && v->id<V->nvar && guard<10000; guard++) {
         IrInstr *d = V->def[v->id];
         if (!d) {   // no defining instruction ⇒ a parameter; its own value IS the cell
-            return vra_is_param_cell(V, v->id) ? v->id
+            // ...and a STRUCT parameter's value is the base its field cells hang off
+            // (vra_field_cell_base), so `l.pos = v` through `l var L` names that base. It was
+            // UNKNOWN: every write to a field of a `var` struct parameter was treated as an
+            // unattributable store — it havocked every escaped cell and never assigned the
+            // field, so `l.pos = l.pos + 1` in a lexer taught the domain nothing and read as
+            // an opaque writer to every loop rule. The memory is the caller's, reachable here
+            // only through this parameter: a store rooted at it can write nothing else.
+            bool sparam = v->type && v->type->kind==IRT_PTR && v->type->elem &&
+                          v->type->elem->kind==IRT_STRUCT;
+            return (vra_is_param_cell(V, v->id) || sparam) ? v->id
                  : (v->type && (v->type->kind==IRT_PTR || v->type->kind==IRT_SLICE))
                    ? VRA_ARG_UNKNOWN : VRA_ARG_VALUE;
         }
@@ -685,6 +694,71 @@ static void vra_prepass(Vra *V) {
                 }
             done: ;
         }
+    // ESCAPE AND PERSISTENCE FIRST. The slice-length rules below ask whether anything but a store
+    // can write a slice FIELD's base — a call through an escaped or persisting address — so they
+    // need these sets, and nothing here needs anything the slice-length section computes.
+    // A `var` scalar parameter points at storage the CALLER owns, so anything we hand the
+    // pointer to may write it: it havocs at a call exactly like an escaped alloca.
+    // ...and so does a `var` STRUCT parameter, now that its FIELDS are cells. It was marked
+    // neither escaped nor persisting, because before field cells it carried no numeric fact
+    // worth havocing — a pointer to a struct has no range. With `a.room` tracked, skipping it
+    // meant a callee could set a field out of range and the caller kept the value from before
+    // the call. Same storage relationship as the scalar case, so the same treatment.
+    for (IrParam *p=V->f->params; p; p=p->next)
+        if (p->value && (vra_is_param_cell(V, p->value->id) ||
+                         (p->value->type && p->value->type->kind==IRT_PTR &&
+                          p->value->type->elem && p->value->type->elem->kind==IRT_STRUCT))) {
+            V->escaped[p->value->id] = true;
+            if (V->strict_esc) V->strict_esc[p->value->id] = true;
+            // ...and PERSISTS: the storage is the caller's, and we cannot see whether the
+            // caller stashed its address somewhere a callee of ours can reach. (Recovering
+            // these needs a call-site summary — the one precision the oracle leaves on the
+            // table. It costs nothing today: this is exactly the old blanket behaviour.)
+            V->persist[p->value->id] = true;
+        }
+    // Mark every alloca whose ADDRESS escapes. Provenance is followed through the
+    // address-forming ops, so `f(&s.field)` escapes `s` too. A store's TARGET (operand 0) is
+    // an ordinary write and does NOT escape; a store's VALUE (operand 1) does.
+    for (IrBlock *b=V->f->blocks; b; b=b->next) {
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op == IR_SHAPE && ins->n_operands >= 3) {
+                int b = ins->operands[0]->id;
+                int rank = ins->n_operands - 1;
+                if (rank > VRA_MAX_RANK) rank = VRA_MAX_RANK;
+                if (b>=0 && b<V->nvar) {
+                    V->shape_rank[b] = rank;
+                    for (int k=0;k<rank;k++) V->shape_ext[b][k] = ins->operands[1+k]->id;
+                }
+                continue;
+            }
+            if (ins->op == IR_CALL || ins->op == IR_OPAQUE) {
+                // ★ THE ALIAS ORACLE, first half. Handing an address to a call is not the same
+                // as losing it: the callee can write it DURING the call, and afterwards only if
+                // it RETAINED it. An unresolvable callee or an opaque retains everything.
+                IrFunc *callee = (ins->op==IR_CALL) ? vra_find_func(ins->aux.callee) : NULL;
+                IrRetainFootprint cr = (ins->op==IR_OPAQUE) ? ~(IrRetainFootprint)0
+                                     : (callee && vra_mod) ? ir_param_retains(callee, vra_mod)
+                                                           : ~(IrRetainFootprint)0;
+                for (int k=0;k<ins->n_operands;k++) {
+                    bool keeps = k>=64 || ((cr>>k)&1u);
+                    // An address handed to a RESOLVED call that does not keep it is benign for
+                    // the field cells: the call transfer forgets a base's fields whenever the
+                    // callee writes it (or cannot be seen), so there is no write here that a
+                    // field cell could miss. `peek(l)` after `l.pos = l.pos + 1` no longer
+                    // un-models `l.pos` for the whole function.
+                    V->marking_benign = !keeps && ins->op == IR_CALL && callee != NULL;
+                    vra_mark_escape(V, ins->operands[k]);
+                    V->marking_benign = false;
+                    if (keeps) vra_mark_persist(V, ins->operands[k]);
+                }
+            } else if (ins->op == IR_STORE && ins->n_operands>=2) {
+                V->marking_benign = vra_store_is_benign_ref(V, ins);
+                vra_mark_persist(V, ins->operands[1]);   // an address stored into memory PERSISTS
+                V->marking_benign = false;
+            }
+        }
+        if (b->term.kind == IR_TERM_RET) vra_mark_persist(V, b->term.cond);   // outlives us
+    }
     int *cell_len = malloc(V->nvar*sizeof(int));
     for (int i=0;i<V->nvar;i++) cell_len[i]=-1;
     // How many times is each slice cell STORED? A cell's canonical length is only meaningful
@@ -699,6 +773,58 @@ static void vra_prepass(Vra *V) {
         for (IrInstr *ins=b->instrs; ins; ins=ins->next)
             if (ins->op==IR_STORE && ins->n_operands>=2 && vra_is_slice_cell(V, ins->operands[0]->id))
                 cell_stores[vra_canon_cell(V, ins->operands[0]->id)]++;
+    // ★ A SLICE FIELD HAS WRITERS THAT ARE NOT STORES TO IT. The count above sees only stores
+    // whose target IS the field, and a field is also written by
+    //   · a WHOLE-STRUCT store to its base — the constructor (`var w = W(small, 0)`) and every
+    //     `w = …` reassignment;
+    //   · the CALLER, for a parameter's field: the value on entry is a store the body never sees;
+    //   · a CALL that may write the base (the same alias oracle the IR_CALL transfer uses: a
+    //     resolved callee writing that argument, an unresolved one, or any call once the base
+    //     PERSISTS), and an unattributable store once it has escaped.
+    // Missing them made "stored exactly once" false, and a flow-insensitive length is only sound
+    // under it: `w = W(small, 0); x = w.s[5]; w.s = big` gave the EARLIER read the LATER slice's
+    // length 8 and proved an out-of-bounds read of `small` (ASan). The same with `shrink(var w,
+    // small)` between a `.len` read and the access, and with `w = W(small, 0)`. All three were
+    // reachable before 2026-09-28 and hidden only because `W(buf, 0)` itself miscompiled.
+    for (int c = 0; c < V->nvar; c++) {
+        if (vra_canon_cell(V, c) != c || !vra_is_slice_cell(V, c)) continue;
+        IrInstr *fd = V->def[c];
+        if (!fd || fd->op != IR_FIELD_PTR || fd->n_operands < 1) continue;
+        int base = fd->operands[0]->id;
+        if (base < 0 || base >= V->nvar) continue;
+        if (!V->def[base]) cell_stores[c]++;                          // a parameter: entry value
+        bool other_writer = false;
+        for (IrBlock *b=V->f->blocks; b && !other_writer; b=b->next)
+            for (IrInstr *ins=b->instrs; ins && !other_writer; ins=ins->next) {
+                if (ins->op==IR_STORE && ins->n_operands>=2) {
+                    if (ins->operands[0]->id == base) cell_stores[c]++;   // whole-struct store
+                    else if (V->escaped[base] &&
+                             vra_arg_cell(V, ins->operands[0]) == VRA_ARG_UNKNOWN) other_writer = true;
+                } else if (ins->op==IR_CALL || ins->op==IR_OPAQUE) {
+                    // A PERSISTING base may be written by a call it was not handed — through a
+                    // stash — unless the callee writes only what it owns or is handed.
+                    if (V->persist[base] && (ins->op==IR_OPAQUE ? ins->aux.opaque.writes :
+                            !(vra_mod && ir_func_writes_only_owned(vra_find_func(ins->aux.callee), vra_mod)))) {
+                        other_writer = true; break;
+                    }
+                    if (ins->op==IR_OPAQUE) {
+                        if (!ins->aux.opaque.writes) continue;
+                        for (int k=0;k<ins->n_operands;k++)
+                            if (vra_arg_cell(V, ins->operands[k]) == base ||
+                                vra_arg_cell(V, ins->operands[k]) == VRA_ARG_UNKNOWN) other_writer = true;
+                        continue;
+                    }
+                    IrFunc *cal = vra_find_func(ins->aux.callee);
+                    IrWriteFootprint cw = (cal && vra_mod) ? ir_param_writes(cal, vra_mod) : ~(IrWriteFootprint)0;
+                    for (int k=0;k<ins->n_operands && !other_writer;k++) {
+                        int ac = vra_arg_cell(V, ins->operands[k]);
+                        bool writes_k = (k >= 64) || ((cw >> k) & 1u);
+                        if (writes_k && (ac == base || ac == VRA_ARG_UNKNOWN)) other_writer = true;
+                    }
+                }
+            }
+        if (other_writer) cell_stores[c] += 2;
+    }
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (ins->op==IR_MAKE_SLICE && ins->result && ins->n_operands>=2) {
@@ -766,60 +892,6 @@ static void vra_prepass(Vra *V) {
             }
     free(cell_len); free(cell_stores);
 
-    // A `var` scalar parameter points at storage the CALLER owns, so anything we hand the
-    // pointer to may write it: it havocs at a call exactly like an escaped alloca.
-    // ...and so does a `var` STRUCT parameter, now that its FIELDS are cells. It was marked
-    // neither escaped nor persisting, because before field cells it carried no numeric fact
-    // worth havocing — a pointer to a struct has no range. With `a.room` tracked, skipping it
-    // meant a callee could set a field out of range and the caller kept the value from before
-    // the call. Same storage relationship as the scalar case, so the same treatment.
-    for (IrParam *p=V->f->params; p; p=p->next)
-        if (p->value && (vra_is_param_cell(V, p->value->id) ||
-                         (p->value->type && p->value->type->kind==IRT_PTR &&
-                          p->value->type->elem && p->value->type->elem->kind==IRT_STRUCT))) {
-            V->escaped[p->value->id] = true;
-            if (V->strict_esc) V->strict_esc[p->value->id] = true;
-            // ...and PERSISTS: the storage is the caller's, and we cannot see whether the
-            // caller stashed its address somewhere a callee of ours can reach. (Recovering
-            // these needs a call-site summary — the one precision the oracle leaves on the
-            // table. It costs nothing today: this is exactly the old blanket behaviour.)
-            V->persist[p->value->id] = true;
-        }
-    // Mark every alloca whose ADDRESS escapes. Provenance is followed through the
-    // address-forming ops, so `f(&s.field)` escapes `s` too. A store's TARGET (operand 0) is
-    // an ordinary write and does NOT escape; a store's VALUE (operand 1) does.
-    for (IrBlock *b=V->f->blocks; b; b=b->next) {
-        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
-            if (ins->op == IR_SHAPE && ins->n_operands >= 3) {
-                int b = ins->operands[0]->id;
-                int rank = ins->n_operands - 1;
-                if (rank > VRA_MAX_RANK) rank = VRA_MAX_RANK;
-                if (b>=0 && b<V->nvar) {
-                    V->shape_rank[b] = rank;
-                    for (int k=0;k<rank;k++) V->shape_ext[b][k] = ins->operands[1+k]->id;
-                }
-                continue;
-            }
-            if (ins->op == IR_CALL || ins->op == IR_OPAQUE) {
-                // ★ THE ALIAS ORACLE, first half. Handing an address to a call is not the same
-                // as losing it: the callee can write it DURING the call, and afterwards only if
-                // it RETAINED it. An unresolvable callee or an opaque retains everything.
-                IrFunc *callee = (ins->op==IR_CALL) ? vra_find_func(ins->aux.callee) : NULL;
-                IrRetainFootprint cr = (ins->op==IR_OPAQUE) ? ~(IrRetainFootprint)0
-                                     : (callee && vra_mod) ? ir_param_retains(callee, vra_mod)
-                                                           : ~(IrRetainFootprint)0;
-                for (int k=0;k<ins->n_operands;k++) {
-                    vra_mark_escape(V, ins->operands[k]);
-                    if (k>=64 || ((cr>>k)&1u)) vra_mark_persist(V, ins->operands[k]);
-                }
-            } else if (ins->op == IR_STORE && ins->n_operands>=2) {
-                V->marking_benign = vra_store_is_benign_ref(V, ins);
-                vra_mark_persist(V, ins->operands[1]);   // an address stored into memory PERSISTS
-                V->marking_benign = false;
-            }
-        }
-        if (b->term.kind == IR_TERM_RET) vra_mark_persist(V, b->term.cond);   // outlives us
-    }
 }
 
 // copy `src == dst` (equal values) into octagon o
@@ -1082,7 +1154,15 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             // constructor spelling of a struct proves nothing while the field-by-field
             // spelling of the same struct proves everything. Reading the fields here was
             // tried and is unreachable; the fix belongs in lowering and is not yet found.
-            if (d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_STRUCT) {
+            // ...and a STRUCT PARAMETER is a base too (vra_arg_cell names it): `l = m` through
+            // `l var L` writes every field of the caller's struct. Missing this case is a FALSE
+            // PROOF — `l.k = 5; l = m; l.k - 5` kept k = 5 — the moment a store through the
+            // parameter stopped being an unattributable (havoc-everything) write.
+            IrValue *cv0 = V->val[cell];
+            bool sparam_base = !d && cv0 && cv0->type && cv0->type->kind==IRT_PTR &&
+                               cv0->type->elem && cv0->type->elem->kind==IRT_STRUCT;
+            if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_STRUCT)
+                || sparam_base) {
                 IrInstr *sn = V->def[ins->operands[1]->id];
                 if (sn && sn->op != IR_STRUCT_NEW) sn = NULL;
                 for (int q=0; q<V->nvar; q++) {
@@ -3488,8 +3568,31 @@ static Vra *vra_analyze(IrFunc *f) {
             if (inloop && !(b->id>=0 && b->id<nb && inloop[b->id])) continue;
             for (IrInstr *ins=b->instrs; ins; ins=ins->next)
                 if (ins->op==IR_STORE && ins->n_operands>=1 && ins->operands[0]->id < V->nvar) {
-                    int sl = V->odim[ins->operands[0]->id];
+                    int a = ins->operands[0]->id;
+                    int sl = V->odim[a];
                     if (sl >= 0) mod[sl]=1;
+                    // ★ MARK THE SLOT THE TRANSFER WRITES, not the one the store names. A field
+                    // store's address is a fresh FIELD_PTR each iteration, but the transfer writes
+                    // the CANONICAL cell (the first FIELD_PTR with that base and index), and a
+                    // store through a reference binding writes the cell the reference holds. Only
+                    // the named slot was marked, so the cell really written was never widened:
+                    // `while l.pos < l.src.len { l.pos = l.pos + 1 }` climbed one step per sweep
+                    // and hit the fixpoint bound — an internal error on the simplest lexer loop.
+                    int t = vra_canon_cell(V, vra_ref_target(V, a));
+                    if (t>=0 && t<V->nvar && V->odim[t] >= 0) mod[V->odim[t]]=1;
+                    // A WHOLE-STRUCT store writes every field cell of the base with no per-field
+                    // store to find (`l = L(l.src, l.pos + 1)` assigns them from the constructor's
+                    // operands), so each of them is modified too.
+                    IrInstr *ad = (a>=0) ? V->def[a] : NULL;
+                    if (ad && ad->op==IR_ALLOCA && ad->aux.alloca_ty &&
+                        ad->aux.alloca_ty->kind==IRT_STRUCT)
+                        for (IrBlock *fb=f->blocks; fb; fb=fb->next)
+                            for (IrInstr *fp=fb->instrs; fp; fp=fp->next)
+                                if (fp->op==IR_FIELD_PTR && fp->n_operands>=1 && fp->result &&
+                                    fp->operands[0]->id==a) {
+                                    int fc = vra_canon_cell(V, fp->result->id);
+                                    if (fc>=0 && fc<V->nvar && V->odim[fc] >= 0) mod[V->odim[fc]]=1;
+                                }
                 }
         }
         free(inloop);

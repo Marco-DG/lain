@@ -1,0 +1,18 @@
+// EXPECT: [E085]
+// A slice field's length is modelled as one value for the whole function only while the field
+// holds ONE slice for its whole life. The count that checked "stored exactly once" saw only
+// stores whose target was the field itself — not the constructor's whole-struct store — so here
+// the field looked stored once, by the LATER `w.s = big`, and that store's length 8 was given to
+// the EARLIER read of a 2-element slice: `w.s[5]` was proven and read past `small` (ASan).
+type W {
+    s u8[]
+    k usize
+}
+func main() i32 {
+    var big u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    var small u8[2] = [1, 2]
+    var w = W(small, 0)
+    x = w.s[5]
+    w.s = big
+    return x as i32
+}

@@ -1,0 +1,21 @@
+// An assignment that KEEPS the invariant is accepted: a guarded index. (In its own function: a
+// slice field written twice in one function — at construction and again — has no single length
+// the analysis may assume across both, which is the rule that stopped a later, longer store from
+// proving an earlier read.)
+type Cur {
+    text u8[]
+    pos usize in text
+}
+func peek(c Cur) u8 {
+    return c.text[c.pos]
+}
+func seek(c var Cur, k usize) {
+    if k < c.text.len { c.pos = k }
+}
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var c = Cur(buf, 0)
+    seek(var c, 3)
+    if peek(c) == 4 { return 0 }
+    return 1
+}

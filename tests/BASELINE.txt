@@ -1594,10 +1594,26 @@ at=pure 2
 rc=0
 out=arr[0]=10, arr[2]=30, arr[4]=50
 ty=Slice_u8 scalar
+### tests/types/array_literal_takes_destination_type_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 4
+at=pure 4
+ty=L struct
+ty=Slice_u8 scalar
 ### tests/types/arrays_pass.ln
 rc=0
 out=arr[0]=10, arr[1]=20
 ty=Slice_u8 scalar
+### tests/types/array_to_slice_every_boundary_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 6
+at=pure 6
+ty=Slice_u8 scalar
+ty=W struct
 ### tests/types/bool_pass.ln
 rc=0
 out=x is true
@@ -1716,6 +1732,19 @@ out=Length: 8
 out=Content: Explicit
 at=access 2
 at=nonnull 2
+ty=Slice_u8 scalar
+### tests/types/struct_ctor_array_field_layout_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
+ty=W struct
+### tests/types/struct_ctor_sentinel_to_slice_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 2
+at=pure 2
+ty=Lexer struct
 ty=Slice_u8 scalar
 ### tests/types/structs_pass.ln
 rc=0
@@ -1938,6 +1967,13 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
+### tests/vra/field_counter_fixpoint_converges_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 6
+ty=L struct
+ty=Slice_u8 scalar
 ### tests/vra/fixed_array_len_guard_pass.ln
 rc=0
 out=
@@ -2022,6 +2058,13 @@ out=
 at=access 2
 at=nonnull 2
 ty=Slice_i32 scalar
+### tests/vra/invariant/struct_in_assign_ok_pass.ln
+rc=0
+out=
+at=nonnull 4
+at=pure 2
+ty=Cur struct
+ty=Slice_u8 scalar
 ### tests/vra/invariant/struct_in_basic_pass.ln
 rc=0
 out=ch=h
@@ -2040,6 +2083,13 @@ ty=Slice_u8 scalar
 rc=0
 out=pos=2
 ty=Buf struct
+ty=Slice_u8 scalar
+### tests/vra/invariant/struct_in_reset_and_share_pass.ln
+rc=0
+out=
+at=nonnull 6
+at=pure 2
+ty=Lexer struct
 ty=Slice_u8 scalar
 ### tests/vra/length_equality_guard_pass.ln
 rc=0
@@ -2342,6 +2392,11 @@ ty=Point struct
 rc=0
 out=
 ty=Point struct
+### tests/vra/struct_param_field_store_pass.ln
+rc=0
+out=
+at=nonnull 6
+ty=L struct
 ### tests/vra/two_pointer_reverse_pass.ln
 rc=5
 out=

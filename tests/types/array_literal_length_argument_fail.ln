@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// A fixed destination needs exactly its length, as a declaration does. `third([1, 2, 3])` for a
+// `u8[4]` parameter was accepted: a 3-element temporary the callee may read at index 3.
+func last(a u8[4]) u8 { return a[3] }
+func main() i32 {
+    n = last([1, 2, 3])
+    return 0
+}

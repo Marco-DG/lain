@@ -1,0 +1,17 @@
+// EXPECT: [E121]
+// The same hole through a reference BINDING: `r = 4` writes c.pos through r, and no assignment
+// to `c.pos` ever appears for the invariant check to see. Refused at the reference.
+type Cur {
+    text u8[]
+    pos usize in text
+}
+func peek(c Cur) u8 {
+    return c.text[c.pos]
+}
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var c = Cur(buf, 0)
+    var r = var c.pos
+    r = 4
+    return peek(c) as i32
+}

@@ -1,0 +1,36 @@
+// A fixed array flows into a slice at SIX boundaries, and each must build a real slice —
+// data pointer AND length. Until 2026-09-28 only the call argument did (ir_coerce_repr existed
+// for exactly this and was applied at one site):
+//   · struct construction  `W(buf, 7)` → `(W){ buf, 7 }`: C's brace elision put 7 in s.len
+//                           and 0 in k — a SILENT MISCOMPILE, every later field shifted
+//   · typed declaration    `s u8[] = buf`    → C that gcc rejects
+//   · return               `return b`        → C that gcc rejects
+//   · assignment           `w.s = buf`       → refused (E085), taken for an array copy
+// Exit 0 only if every slice has length 4 and every neighbouring field kept its value.
+type W {
+    s u8[]
+    k usize
+}
+func len_of(s u8[]) usize { return s.len }
+func back(b u8[4]) u8[] { return b }
+func mk(b u8[4]) W { return W(b, 7) }
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var two u8[2] = [8, 9]
+    w1 = W(buf, 7)                      // construction from a local
+    w2 = mk(buf)                        // construction from a fixed-array parameter
+    s3 u8[] = buf                       // typed declaration
+    s4 = back(buf)                      // return
+    var w5 = W(two[0..2], 7)
+    w5.s = buf                          // field assignment
+    var s6 u8[] = two
+    s6 = buf                            // local assignment
+    if w1.s.len != 4 or w1.k != 7 { return 1 }
+    if w2.s.len != 4 or w2.k != 7 { return 2 }
+    if len_of(s3) != 4 { return 3 }
+    if len_of(s4) != 4 { return 4 }
+    if w5.s.len != 4 or w5.k != 7 { return 5 }
+    if len_of(s6) != 4 { return 6 }
+    if len_of(buf) != 4 { return 7 }    // the argument, which always worked
+    return 0
+}

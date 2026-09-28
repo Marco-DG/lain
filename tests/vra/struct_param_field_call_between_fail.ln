@@ -1,0 +1,20 @@
+// EXPECT: [E085]
+// A call handed the struct may write any field: `setk` puts k at 9, so the fact `l.k = 2` is gone
+// and `l.xs[l.k]` is out of bounds. (Through a nested call too — the write footprint is transitive.)
+type L {
+    xs u8[4]
+    k usize
+    d i32
+}
+func setk(l var L) { l.k = 9 }
+func via(l var L) { setk(var l) }
+func f(l var L) u8 {
+    l.k = 2
+    via(var l)
+    return l.xs[l.k]
+}
+func main() i32 {
+    var l = L([1, 2, 3, 4], 0, 1)
+    n = f(var l)
+    return 0
+}

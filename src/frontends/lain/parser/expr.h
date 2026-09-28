@@ -63,12 +63,26 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
     while (true) {
         TokenKind op = parser->token.kind;
 
+        // `&&` and `||` are C's spellings. Lain's are `and` and `or`, and the C ones used to
+        // lex as TWO tokens — `a == 2 && b == 1` parsed as `(a == 2) & (&b == 1)`, an
+        // address-of, and was refused as "incompatible operand types '*u8' and 'i32'" at
+        // Ln 0. Say what was meant, where it was written.
+        if (op == TOKEN_AMPERSAND_AMPERSAND)
+            _parser_expect(parser, true, "`&&` is not an operator in Lain: logical AND is spelled `and`");
+        if (op == TOKEN_PIPE_PIPE)
+            _parser_expect(parser, true, "`||` is not an operator in Lain: logical OR is spelled `or`");
+
         int prec = get_precedence(op);
         if (prec < precedence) break;
 
+        // The OPERATOR's position, as C compilers report it. A sub-expression had none: only
+        // the whole expression and identifiers were stamped, so every diagnostic about an
+        // inner operation said Ln 0.
+        isize op_line = parser->line, op_col = parser->column;
         parser_advance();  // consume this operator
         Expr *right = parse_binary_expr(arena, parser, prec + 1);
         left = expr_binary(arena, op, left, right);
+        left->line = op_line; left->col = op_col;
 
         // Handle postfix `as` cast after each binary sub-expression
         if (parser_match(TOKEN_KEYWORD_AS)) {
@@ -83,7 +97,18 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
 
 
 // <op> <expr>
+static Expr *parse_unary_expr_inner(Arena* arena, Parser* parser);
 Expr *parse_unary_expr(Arena* arena, Parser* parser)
+{
+    // A unary node takes the position of its first token (see the binary loop's note).
+    isize u_line = parser->line, u_col = parser->column;
+    if (parser_match(TOKEN_AMPERSAND_AMPERSAND))
+        _parser_expect(parser, true, "`&&` is not an operator in Lain: logical AND is spelled `and`");
+    Expr *e = parse_unary_expr_inner(arena, parser);
+    if (e && e->line == 0) { e->line = u_line; e->col = u_col; }
+    return e;
+}
+static Expr *parse_unary_expr_inner(Arena* arena, Parser* parser)
 {
     // -, !, ~  (arithmetic/logic unary)
     if (parser_match(TOKEN_MINUS) || parser_match(TOKEN_BANG) || parser_match(TOKEN_TILDE)) {

@@ -1,0 +1,26 @@
+// Two lexer idioms the field-store rule must ACCEPT.
+//   · `l.pos = 0` in a callee. 0 is below the length only if the container is non-empty — and
+//     it is: the invariant held before the store (every write that could break it is checked),
+//     so the old pos was a valid index. The rule assumes exactly that.
+//   · a guarded advance, then handing the struct to a READ-ONLY call. Passing `l` takes its
+//     address, which used to disable the field model for the whole function and refuse the
+//     advance before it. A callee that neither writes nor keeps the address cannot change it.
+type Lexer {
+    src u8[]
+    pos usize in src
+}
+func peek(l Lexer) u8 { return l.src[l.pos] }
+func reset(l var Lexer) { l.pos = 0 }
+func advance_and_peek(l var Lexer) u8 {
+    if l.pos + 1 < l.src.len { l.pos = l.pos + 1 }
+    return peek(l)
+}
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    var l = Lexer(buf, 0)
+    a = advance_and_peek(var l)
+    reset(var l)
+    b = peek(l)
+    if a == 2 and b == 1 { return 0 }
+    return 1
+}

@@ -48,6 +48,8 @@ typedef enum {
     TOKEN_AMPERSAND_EQUAL,
     TOKEN_PIPE,
     TOKEN_PIPE_EQUAL,
+    TOKEN_AMPERSAND_AMPERSAND, // `&&` — not an operator; lexed only to say `and`
+    TOKEN_PIPE_PIPE,           // `||` — likewise, `or`
     TOKEN_CARET,
     TOKEN_CARET_EQUAL,
     TOKEN_PERCENT,
@@ -212,6 +214,8 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_AMPERSAND_EQUAL:             return "TOKEN_AMPERSAND_EQUAL";
         case TOKEN_PIPE:                        return "TOKEN_PIPE";
         case TOKEN_PIPE_EQUAL:                  return "TOKEN_PIPE_EQUAL";
+        case TOKEN_AMPERSAND_AMPERSAND:         return "TOKEN_AMPERSAND_AMPERSAND";
+        case TOKEN_PIPE_PIPE:                   return "TOKEN_PIPE_PIPE";
         case TOKEN_CARET:                       return "TOKEN_CARET";
         case TOKEN_CARET_EQUAL:                 return "TOKEN_CARET_EQUAL";
         case TOKEN_PERCENT:                     return "TOKEN_PERCENT";
@@ -307,6 +311,8 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_AMPERSAND_EQUAL:             return "&=";
         case TOKEN_PIPE:                        return "|";
         case TOKEN_PIPE_EQUAL:                  return "|=";
+        case TOKEN_AMPERSAND_AMPERSAND:         return "&&";
+        case TOKEN_PIPE_PIPE:                   return "||";
         case TOKEN_CARET:                       return "^";
         case TOKEN_CARET_EQUAL:                 return "^=";
         case TOKEN_PERCENT:                     return "%";

@@ -818,14 +818,35 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e);
 //   array → slice     a fixed array decays where a slice is expected.
 // The call path grew both of these one at a time; naming them once is what lets STRUCT and
 // VARIANT construction have them too — `OptionByte.Some("hi")` needed exactly this.
+//
+// ★ ONE relation, applied at EVERY boundary: call argument, struct and variant construction,
+// typed declaration, assignment, return. Until 2026-09-28 the call path kept its own copy (the
+// only complete one) and struct construction, declaration, assignment and return had none —
+// `W(buf, 7)` built `(W){ buf, 7 }` and C's brace elision put 7 in the slice's LENGTH.
 static IrValue *ir_coerce_repr(LowerCtx *c, IrValue *v, IrType *want, Expr *src) {
     if (!v || !v->type || !want) return v;
     if (want->kind==IRT_PTR && v->type->kind==IRT_SLICE)
         return ir_slice_data(c->f, c->cur, v, want->elem ? want->elem : v->type->elem);
-    if (want->kind==IRT_SLICE && v->type->kind==IRT_PTR) {
-        int64_t ne = (src && src->type && src->type->kind==TYPE_ARRAY) ? src->type->array_len : 0;
+    // A decayed array's base points at an ELEMENT; a pointer to a whole slice or struct (a `var`
+    // parameter's value) is not an array and must not be rewrapped as a zero-length one. The
+    // SOURCE's type says which: an array of structs decays to a pointer to a struct too.
+    bool src_arr = src && src->type && src->type->kind == TYPE_ARRAY;
+    bool elem_ptr = v->type->kind==IRT_PTR && (src_arr ||
+                    !(v->type->elem && (v->type->elem->kind==IRT_SLICE || v->type->elem->kind==IRT_STRUCT)));
+    if (want->kind==IRT_SLICE && (elem_ptr || v->type->kind==IRT_ARRAY)) {
+        IrValue *data = v;
+        int64_t ne;
+        if (v->type->kind==IRT_ARRAY) {
+            // ★ A FIXED-ARRAY PARAMETER IS AN ARRAY VALUE, not a pointer, and its length is IN
+            // the type — better than the pointer case's reading of the AST.
+            ne = v->type->array_len;
+            IrValue *z = ir_const_int(c->f, c->cur, 0, ir_type_int(c->a,64,false));
+            data = ir_elem_ptr(c->f, c->cur, v, z, v->type->elem);
+        } else {
+            ne = (src && src->type && src->type->kind==TYPE_ARRAY) ? src->type->array_len : 0;
+        }
         IrValue *ln = ir_const_int(c->f, c->cur, ne, ir_type_int(c->a,64,false));
-        return ir_make_slice(c->f, c->cur, v, ln, want->elem);
+        return ir_make_slice(c->f, c->cur, data, ln, want->elem);
     }
     return v;
 }
@@ -1951,8 +1972,15 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // from the positional field args (in declaration order).
             if (callee && callee->kind == DECL_STRUCT && ty && ty->kind==IRT_STRUCT) {
                 IrValue **fs = arena_push_many_aligned(c->a, IrValue*, n>0?n:1);
+                // Each argument takes its FIELD's representation. This was the one boundary
+                // ir_coerce_repr was written for and never applied at: `W(buf, 7)` with `buf
+                // u8[4]` and `s u8[]` built `(W){ buf, 7 }`, and C's brace elision filled
+                // s.data = buf, s.len = 7, k = 0 — every later field shifted by one word, in
+                // an accepted program. The call path decays an array; this path passed the
+                // pointer through.
                 int k=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next,k++)
-                    fs[k] = ir_lower_expr(c, a->expr);
+                    fs[k] = ir_coerce_repr(c, ir_lower_expr(c, a->expr),
+                                           k < ty->n_fields ? ty->fields[k] : NULL, a->expr);
                 // the `in` invariant, DISCHARGED: building the value is where the promise is
                 // made, so that is where it must be proven. Without this the assume at every
                 // read would be a fact the IR never checks — a front end could then hand the
@@ -1961,7 +1989,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 for (int fi=0; fi<n && fi<ty->n_fields && fi<64; fi++) {
                     IrType *cty2 = NULL;
                     int cidx = ir_field_in_target(c, ty, fi, &cty2);
-                    if (cidx < 0 || cidx >= n || cidx >= 64 || !cty2 || cty2->kind!=IRT_SLICE) continue;
+                    if (cidx < 0 || cidx >= n || cidx >= 64 || !cty2) continue;
+                    if (cty2->kind!=IRT_SLICE && cty2->kind!=IRT_ARRAY) continue;
                     if (!fs[fi] || !fs[fi]->type || fs[fi]->type->kind!=IRT_INT) continue;
                     if (!fs[cidx] || !fs[cidx]->type) continue;
                     // The container's length. A slice carries it; a FIXED ARRAY coerced into
@@ -1971,12 +2000,20 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     // read-side assume would be unpaid, so the site is left unverified rather
                     // than silently passed (tracked as a gap, not as a proof).
                     IrValue *len = NULL;
-                    if (fs[cidx]->type->kind==IRT_SLICE) len = ir_slice_len(c->f, c->cur, fs[cidx]);
+                    // A FIXED-ARRAY container field has its length in its type. It was skipped
+                    // here, which was harmless only while nothing assumed the invariant for one;
+                    // the field-store rule assumes the OLD value is in range (that is what proves
+                    // `l.pos = 0`), and an unchecked `Buf(d, 10)` over `u8[5]` then assumed
+                    // 10 < 5 and proved everything after it, `d[20]` included.
+                    if (cty2->kind==IRT_ARRAY) {
+                        if (cty2->array_len >= 0)
+                            len = ir_const_int(c->f, c->cur, cty2->array_len, fs[fi]->type);
+                    } else if (fs[cidx]->type->kind==IRT_SLICE) len = ir_slice_len(c->f, c->cur, fs[cidx]);
                     else if (argx[cidx] && argx[cidx]->type && argx[cidx]->type->kind==TYPE_ARRAY
                              && argx[cidx]->type->array_len >= 0)
                         len = ir_const_int(c->f, c->cur, argx[cidx]->type->array_len, fs[fi]->type);
                     if (!len) continue;
-                    ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, fs[fi], len));
+                    ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, fs[fi], len), 121);
                 }
                 return ir_struct_new(c->f, c->cur, ty, fs, n);
             }
@@ -2092,37 +2129,12 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     }
                 }
                 IrValue *av = ir_lower_expr(c, a->expr);
-                // a fixed array decays to a slice when the callee expects one
+                // a fixed array decays to a slice where the callee expects one, and a slice to its
+                // data pointer where a `*T` is declared (`libc_printf("x")`) — ir_coerce_repr,
+                // the relation every boundary shares.
                 if (pp && pp->decl && pp->decl->kind==DECL_VARIABLE) {
                     IrType *ptype = ir_lower_type(c, pp->decl->as.variable_decl.type);
-                    if (ptype && ptype->kind==IRT_SLICE && av->type &&
-                        (av->type->kind==IRT_PTR || av->type->kind==IRT_ARRAY)) {
-                        IrValue *data = av;
-                        int64_t ne;
-                        if (av->type->kind==IRT_ARRAY) {
-                            // ★ A FIXED-ARRAY PARAMETER IS AN ARRAY VALUE, not a pointer. Only the
-                            // pointer case was handled, so forwarding one to a slice parameter
-                            // passed `[4]i32` where `[]i32` was declared — the IR said so, and the
-                            // IR's own C backend then emitted a bare pointer for a Slice_i32
-                            // argument, which does not compile. The old backend hid it by working
-                            // from the AST. The length is IN the type here, which is better than
-                            // the pointer case's guess from the AST.
-                            ne = av->type->array_len;
-                            IrValue *z = ir_const_int(c->f, c->cur, 0, ir_type_int(c->a,64,false));
-                            data = ir_elem_ptr(c->f, c->cur, av, z, av->type->elem);
-                        } else {
-                            ne = (a->expr->type && a->expr->type->kind==TYPE_ARRAY) ? a->expr->type->array_len : 0;
-                        }
-                        IrValue *ln = ir_const_int(c->f, c->cur, ne, ir_type_int(c->a,64,false));
-                        av = ir_make_slice(c->f, c->cur, data, ln, ptype->elem);
-                    }
-                    // ...and the REVERSE decay, which was missing: a parameter declared `*u8`
-                    // given a string literal got the whole SLICE by value. `libc_printf("x")`
-                    // passed a two-word struct where a pointer was expected, which is not just
-                    // a type error in the emitted C but the wrong thing at the ABI. Pass the
-                    // data pointer, which is what the declared type asks for.
-                    else if (ptype && ptype->kind==IRT_PTR && av->type && av->type->kind==IRT_SLICE)
-                        av = ir_slice_data(c->f, c->cur, av, ptype->elem ? ptype->elem : av->type->elem);
+                    av = ir_coerce_repr(c, av, ptype, a->expr);
                 }
                 ins->operands[i] = av;
                 if (pp) pp = pp->next;
@@ -2385,6 +2397,66 @@ static void ir_lower_flush_defers(LowerCtx *c) {
     c->in_defer = false;
 }
 
+// ★ A STORE TO A FIELD MUST KEEP THE STRUCT'S `in` INVARIANT. `pos usize in text` is read as a FACT
+// (every load of `pos` assumes `pos < text.len`, which is what proves `c.text[c.pos]`), so every
+// write that could break it must pay for it. Construction asserted it; ASSIGNMENT did not — the
+// legacy front-end E121 covered fixed-array containers only and accepted a slice container
+// unconditionally — so `c.pos = 5` over a 4-byte slice compiled and the proven read overflowed
+// the buffer (ASan). Two ways to break it, both asserted here:
+//   · storing the `in` field itself: the new value must be < len(container);
+//   · storing the CONTAINER: every field that is `in` it must be < the new length.
+static IrInstr *ir_def_in_block(IrBlock *b, IrValue *v) {
+    for (IrInstr *i = b ? b->instrs : NULL; i; i = i->next) if (i->result == v) return i;
+    return NULL;
+}
+static IrValue *ir_container_len(LowerCtx *c, IrValue *cv, IrType *cty, IrType *ity) {
+    if (!cty) return NULL;
+    if (cty->kind == IRT_SLICE && cv) return ir_slice_len(c->f, c->cur, cv);
+    if (cty->kind == IRT_ARRAY && cty->array_len >= 0)     // `u8[0]` has no valid index at all
+        return ir_const_int(c->f, c->cur, cty->array_len, ity ? ity : ir_type_int(c->a,64,false));
+    return NULL;
+}
+// `fp` is the target's defining instruction, captured BEFORE the right-hand side was lowered: an
+// `and`/`or` or a conditional there opens new blocks, and a lookup afterwards would miss it and
+// silently emit no assert — fail-open.
+static void ir_lower_field_invariant_asserts(LowerCtx *c, IrInstr *fp, IrValue *v) {
+    if (!fp || fp->op != IR_FIELD_PTR || fp->n_operands < 1 || !v || !v->type) return;
+    IrValue *base = fp->operands[0];
+    IrType *bt = base && base->type ? base->type : NULL;
+    IrType *sty = ir_struct_of(bt && bt->kind == IRT_PTR ? bt->elem : bt);
+    if (!sty || sty->kind != IRT_STRUCT) return;
+    int fi = fp->aux.field_idx;
+    if (fi < 0 || fi >= sty->n_fields) return;
+    // The FIELD's declared type, never the assigned value's: `b.pos = 3` assigns an i32 literal
+    // to a usize field, and a field pointer typed from the value was `int32_t *` over a
+    // `uint64_t` field — C that gcc rejects.
+    IrType *ft = sty->fields[fi];
+    IrType *cty = NULL;
+    int cidx = ir_field_in_target(c, sty, fi, &cty);
+    if (cidx >= 0 && cty && ft && ft->kind == IRT_INT && v->type->kind == IRT_INT) {
+        IrValue *cv = (cty->kind == IRT_SLICE)
+            ? ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, cidx, cty), cty) : NULL;
+        IrValue *len = ir_container_len(c, cv, cty, ft);
+        if (len) {
+            // The invariant HELD before this store — every write that could break it is asserted
+            // (construction, this rule, the container rule below) — so the old value is below the
+            // length. That is what lets `l.pos = 0` prove: it says the container is not empty.
+            IrValue *old = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, fi, ft), ft);
+            ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, old, len));
+            ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, v, len), 121);
+        }
+    }
+    for (int j = 0; j < sty->n_fields; j++) {
+        IrType *c2 = NULL;
+        if (j == fi || ir_field_in_target(c, sty, j, &c2) != fi) continue;
+        IrType *jt = sty->fields[j];
+        if (!jt || jt->kind != IRT_INT) continue;
+        IrValue *jv = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, j, jt), jt);
+        IrValue *len = ir_container_len(c, v, v->type, jt);
+        if (len) ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, jv, len), 121);
+    }
+}
+
 static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
     if (s && s->line) { ir_cur_line = s->line; ir_cur_col = s->col; }
     if (!s || ir_is_set_term(c->cur)) return;   // dead code after a terminator
@@ -2559,7 +2631,9 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 IrValue *ln = ir_const_int(c->f, c->cur, n, idxt);
                 ir_store(c->f, c->cur, slot, ir_make_slice(c->f, c->cur, buf, ln, u8t));
             } else if (vinit) {
-                ir_store(c->f, c->cur, slot, ir_lower_expr(c, vinit));
+                // `s u8[] = buf` — the DECLARED type's representation (see ir_coerce_repr). The
+                // array's base pointer was stored into the slice slot: C that gcc rejects.
+                ir_store(c->f, c->cur, slot, ir_coerce_repr(c, ir_lower_expr(c, vinit), slot_ty, vinit));
             }
             ir_env_add(c, s->as.var_stmt.name, slot, NULL);
             break;
@@ -2572,8 +2646,11 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             { Type *tt = s->as.assign_stmt.target ? s->as.assign_stmt.target->type : NULL;
               IrType *at = tt ? ir_lower_type(c, tt) : NULL;
               // sema does not always type an assignment's LHS, and the RHS is the same array
-              // type by construction — so ask it when the target has nothing to say.
-              if (!at || at->kind != IRT_ARRAY) {
+              // type by construction — so ask it when the target has nothing to say. ONLY then:
+              // a target typed as a SLICE (`w.s = buf`) is not an array copy but a decay, and
+              // asking the RHS here turned it into an element-wise copy into a slice of
+              // unknown length — refused as E085 on a correct program.
+              if (!at) {
                   Type *st2 = s->as.assign_stmt.expr ? s->as.assign_stmt.expr->type : NULL;
                   IrType *st3 = st2 ? ir_lower_type(c, st2) : NULL;
                   if (st3 && st3->kind == IRT_ARRAY) at = st3;
@@ -2601,7 +2678,15 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             // referent, not over the pointer in r's slot: ir_lower_addr already resolves r to
             // the address it holds (ir_ref_binding_ptr). Without that the owner never saw the
             // write — D-38, which the AST emitter fixed first and the IR then reproduced.
-            ir_store(c->f, c->cur, addr, ir_lower_expr(c, s->as.assign_stmt.expr));
+            { IrInstr *tdef = (addr && c->cur) ? ir_def_in_block(c->cur, addr) : NULL;
+              IrValue *rv0 = ir_lower_expr(c, s->as.assign_stmt.expr);
+              // The target's representation, read from the address: sema does not always type
+              // an assignment's LHS, and the slot or field the address names always has one.
+              // `w.s = buf` stored the array's base pointer into a slice.
+              if (addr && addr->type && addr->type->kind==IRT_PTR && addr->type->elem)
+                  rv0 = ir_coerce_repr(c, rv0, addr->type->elem, s->as.assign_stmt.expr);
+              if (!c->unsafe) ir_lower_field_invariant_asserts(c, tdef, rv0);
+              ir_store(c->f, c->cur, addr, rv0); }
             if (c->cur->instrs_tail) c->cur->instrs_tail->unchecked = c->unsafe;
             break;
         }
@@ -2620,6 +2705,9 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             // the value first made the new pipeline return 5, a silent miscompile.
             ir_lower_flush_defers(c);
             IrValue *rv = s->as.return_stmt.value ? ir_lower_expr(c, s->as.return_stmt.value) : NULL;
+            // `return buf` from a function returning `u8[]`: the declared return type's
+            // representation (see ir_coerce_repr) — a bare base pointer was returned as a slice.
+            if (rv) rv = ir_coerce_repr(c, rv, c->f->ret_type, s->as.return_stmt.value);
             if (rv) ir_lower_return_ensures_assert(c, rv);   // callee proves its own ensures
             ir_set_ret(c->cur, rv);
             break;

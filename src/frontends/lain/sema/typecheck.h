@@ -792,12 +792,38 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
               || types_equal_exact(other, ptr->element_type);               // T[N] -> *T[N]
         if (!ok && t_ptr && is_zero_int_literal(src_expr)) ok = true;    // null idiom: 0 -> *T
     } else {
-        // Neither is a pointer. Reject nominal (struct/enum) confusion — a
-        // distinct struct/enum, or a struct-vs-scalar. Pure-scalar mismatches
-        // (bool<->int, which share a representation) are deferred to the full
-        // subsumption relation.
-        if (!is_nominal_aggregate(f) && !is_nominal_aggregate(t)) return;
-        ok = types_compatible(f, t);   // same struct/enum name (mode-agnostic) is fine
+        // Neither is a pointer. Every boundary goes through here — argument, construction,
+        // declaration, assignment, return — so this is where "these two types have no
+        // representation in common" is decided, ONCE. It used to stop at nominal confusion
+        // and let the rest through: `take(5)` for a `u8[]` parameter compiled to C that gcc
+        // rejects, and `take(buf)` for a `usize` passed a POINTER as the integer and ran. (`take(1)`
+        // for a `bool` contradicts the spec too — 07-types: an implicit integer/bool
+        // conversion is ill-formed.) The struct constructor had a stricter check of its own —
+        // stricter in the right places, and wrong about `W("abcd", 1)`. One relation now.
+        //
+        // NOT YET the integer/bool half of that rule: the front end types `true`, `false` and
+        // every comparison as i32, so refusing int→bool here would refuse `var b bool = false`.
+        // Booleans must be typed `bool` first (plan 7H, L6).
+        bool f_seq = (f->kind == TYPE_ARRAY || f->kind == TYPE_SLICE);
+        bool t_seq = (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE);
+        // (A vector type is neither a sequence nor a scalar here — an array literal initialises
+        // one — so the sequence rule is asked only against a scalar or a nominal type.)
+        bool f_scal = is_castable_scalar(f) || is_nominal_aggregate(f);
+        bool t_scal = is_castable_scalar(t) || is_nominal_aggregate(t);
+        if ((f_seq && (t_seq || t_scal)) || (t_seq && (f_seq || f_scal))) {
+            // a sequence flows only into a sequence of the SAME element type: an array decays
+            // to a slice, a `u8[:0]` is a `u8[]` (the sentinel is dropped, never gained — see
+            // reject_sentinel_fabrication), and an element type never converts.
+            // An array LITERAL (or comprehension) is exempt from the element rule: its
+            // elements are literals typed by default (`[1, 2]` is `i32[2]`) and each one is
+            // checked against the element type where the literal is declared.
+            bool lit = src_expr && (src_expr->kind == EXPR_ARRAY_LITERAL ||
+                                    src_expr->kind == EXPR_ARRAY_COMPREHENSION);
+            ok = f_seq && t_seq && (lit || types_equal_exact(f->element_type, t->element_type));
+        } else {
+            if (!is_nominal_aggregate(f) && !is_nominal_aggregate(t)) return;
+            ok = types_compatible(f, t);   // same struct/enum name (mode-agnostic) is fine
+        }
     }
     if (ok) return;
     char fb[128], tb[128];
@@ -1097,6 +1123,49 @@ static void reject_fixed_string_length_mismatch(Type *from, Type *to,
 static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
                              isize line, isize col,
                              const char *ctx, const char *label) {
+    // ★ AN ARRAY LITERAL TAKES THE DESTINATION'S ELEMENT TYPE. `[1, 2, 3, 4]` types as i32[4]
+    // (its elements are literals), and outside a declaration nothing retyped it: lowering then
+    // materialised an int32_t[4], and a `u8[4]` parameter, a `u8[]` slice or a struct's `u8[4]`
+    // field received its BYTES — `third([1, 2, 3, 4])` read 0 where it meant 3, accepted and
+    // silently wrong. Here the destination is known, so each element is checked against the
+    // element type (a value that does not fit is refused, as in a declaration) and the literal
+    // is retyped to it, which is what lowering reads.
+    if (src_expr && src_expr->kind == EXPR_ARRAY_LITERAL && to) {
+        Type *tt = to;
+        while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
+        tt = tt ? resolve_type_alias(tt) : NULL;
+        if (tt && (tt->kind == TYPE_ARRAY || tt->kind == TYPE_SLICE) && tt->element_type) {
+            int n = 0;
+            for (ExprList *el = src_expr->as.array_literal_expr.elements; el; el = el->next, n++) {
+                Expr *x = el->expr;
+                if (!x || !x->type) continue;
+                Range er = (x->kind == EXPR_LITERAL)
+                    ? (Range){ x->as.literal_expr.value, x->as.literal_expr.value, true }
+                    : (sema_ranges ? sema_eval_range(x, sema_ranges) : range_unknown());
+                check_conversion(x->type, tt->element_type, er, x, x->line, x->col,
+                                 "array element", label);
+            }
+            // A FIXED destination needs exactly its length, as a declaration does: a shorter
+            // literal handed to a `u8[4]` parameter is a 3-element temporary the callee may read
+            // at index 3.
+            if (tt->kind == TYPE_ARRAY && tt->array_len >= 0 && n != tt->array_len) {
+                fprintf(stderr, "[E012] Error Ln %li, Col %li: array literal has %d element(s) but "
+                        "the %s%s%s has fixed length %lld.\n", (long)line, (long)col, n,
+                        ctx ? ctx : "destination", label && *label ? " " : "", label ? label : "",
+                        (long long)tt->array_len);
+                diagnostic_show_line(line, col);
+                exit(1);
+            }
+            if (src_expr->type && src_expr->type->kind == TYPE_ARRAY) {
+                Type *nt = arena_push_aligned(sema_arena, Type);
+                *nt = *src_expr->type;
+                nt->element_type = tt->element_type;
+                nt->array_len = n;
+                src_expr->type = nt;
+            }
+            return;          // the element checks ARE this conversion
+        }
+    }
     // `T | markers` coercion: a union proven present (narrowed by `if r`) is used
     // as its payload T; using it unnarrowed where a non-union is expected is
     // rejected (it may be a marker). Construction (value/marker -> union) is done
@@ -1613,6 +1682,41 @@ static void check_recursion_measure(Decl *fn, Expr *call) {
         return;
     }
 }
+
+// A `var` reference to a field that takes part in an `in` invariant is refused. The invariant is
+// kept by checking every WRITE to the field or its container at the write (E121 in the IR), and a
+// write through a reference is not a write to the field as far as that check can see: the callee,
+// or the binding, stores to a bare `var usize`. `bump(var c.pos)` with `x = 4` in `bump` read four
+// bytes past a four-byte slice under ASan, and was accepted. Passing the whole struct (`var c`)
+// keeps every write where the check sees it.
+static void sema_check_mut_invariant_field(Expr *e) {
+    Expr *m = e ? e->as.mut_expr.expr : NULL;
+    if (!m || m->kind != EXPR_MEMBER || !m->as.member_expr.target || !m->as.member_expr.member) return;
+    Type *ot = m->as.member_expr.target->type;
+    if (!ot || ot->kind != TYPE_SIMPLE || !ot->base_type) return;
+    char sn[256]; int snl = (int)ot->base_type->length;
+    if (snl >= (int)sizeof(sn)) return;
+    memcpy(sn, ot->base_type->name, snl); sn[snl] = '\0';
+    Symbol *ss = sema_lookup(sn);
+    if (!ss || !ss->decl || ss->decl->kind != DECL_STRUCT) return;
+    Id *fld = m->as.member_expr.member;
+    for (DeclList *sf = ss->decl->as.struct_decl.fields; sf; sf = sf->next) {
+        if (!sf->decl || sf->decl->kind != DECL_VARIABLE) continue;
+        Id *fn = sf->decl->as.variable_decl.name, *in = sf->decl->as.variable_decl.in_field;
+        if (!fn || !in) continue;
+        bool is_idx = fn->length == fld->length && strncmp(fn->name, fld->name, fn->length) == 0;
+        bool is_cnt = in->length == fld->length && strncmp(in->name, fld->name, in->length) == 0;
+        if (!is_idx && !is_cnt) continue;
+        fprintf(stderr, "[E121] Error Ln %li, Col %li: a `var` reference to `%.*s` can break the struct's "
+                "invariant `%.*s in %.*s` — a write through the reference is not checked against it. "
+                "Pass the whole struct as `var` instead; its field writes are checked.\n",
+                (long)e->line, (long)e->col, (int)fld->length, fld->name,
+                (int)fn->length, fn->name, (int)in->length, in->name);
+        diagnostic_show_line(e->line, e->col);
+        exit(1);
+    }
+}
+
 
 void sema_infer_expr(Expr *e) {
   if (!e) return;
@@ -2283,18 +2387,21 @@ void sema_infer_expr(Expr *e) {
                     if (ln2 > 159) ln2 = 159;
                     if (ln2) memcpy(lbuf, fn2->name, ln2);
                     lbuf[ln2] = '\0';
-                } else if (field_ty && arg_ty &&
-                    !types_compatible(arg_ty, field_ty)) {
+                } else if (field_ty && arg_ty && sema_walk_phase) {
+                    // THE BOUNDARY RELATION every other boundary uses (check_conversion). A
+                    // private `types_compatible` test here refused `Lexer(text, 0)` for a
+                    // `u8[:0]` text and a `u8[]` field — a conversion every argument, declaration
+                    // and assignment accepts — while the IR then mis-built the array case it
+                    // did accept. Walk phase only, as for arguments: ranges are not built yet
+                    // during resolve.
                     Id *fname = f->decl->as.variable_decl.name;
-                    fprintf(stderr,
-                            "[E012] Error Ln %li, Col %li: struct '%.*s' field '%.*s' type mismatch at argument %d.\n",
-                            (long)e->line, (long)e->col,
-                            (int)callee_decl->as.struct_decl.name->length,
-                            callee_decl->as.struct_decl.name->name,
-                            (int)fname->length, fname->name,
-                            field_count + 1);
-                    diagnostic_show_line(e->line, e->col);
-                    exit(1);
+                    char fl[160]; int fln = fname ? (int)fname->length : 0;
+                    if (fln > 159) fln = 159;
+                    if (fln) memcpy(fl, fname->name, fln);
+                    fl[fln] = '\0';
+                    Range r = sema_ranges ? sema_eval_range(a->expr, sema_ranges) : range_unknown();
+                    check_conversion(arg_ty, field_ty, r, a->expr, a->expr->line, a->expr->col,
+                                     "struct field", fl);
                 }
                 // Q-002 Phase 5: overflow-at-boundary (struct field init).
                 if (sema_walk_phase && sema_ranges && field_ty
@@ -2965,6 +3072,7 @@ void sema_infer_expr(Expr *e) {
   case EXPR_MUT:
     sema_infer_expr(e->as.mut_expr.expr);
     e->type = type_mut(sema_arena, e->as.mut_expr.expr->type);
+    if (sema_walk_phase && !sema_in_unsafe_block) sema_check_mut_invariant_field(e);
     break;
 
   case EXPR_CAST: {

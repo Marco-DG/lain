@@ -1,0 +1,19 @@
+// A SILENT MISCOMPILE, until 2026-09-28: constructing a struct with a fixed array where a slice
+// field is declared built `(W){ buf, 7 }` — the array's base pointer where a two-word slice
+// belongs — and C's brace elision filled s.data = buf, s.len = 7, k = 0. Every field after the
+// slice shifted by one word, the program compiled cleanly, and the analysis believed s.len = 4.
+// Found because a lexer's guarded advance never advanced: `l.src.len` was the position.
+type W {
+    s u8[]
+    k usize
+    tag u8
+}
+func main() i32 {
+    var buf u8[4] = [1, 2, 3, 4]
+    w = W(buf, 7, 9)
+    if w.s.len != 4 { return 1 }
+    if w.k != 7 { return 2 }
+    if w.tag != 9 { return 3 }
+    if w.s[3] != 4 { return 4 }
+    return 0
+}

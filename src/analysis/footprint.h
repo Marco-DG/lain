@@ -110,6 +110,54 @@ static IrWriteFootprint ir_param_writes(IrFunc *f, IrFunc *mod) {
     return w;
 }
 
+// ── OWNED-ONLY WRITES: can this function write memory it was NOT handed? ──────────────────
+// Lain has no mutable globals (spec 12) and no stored references (E126), so a function reaches
+// memory only through its parameters and its own locals — UNLESS it stores through a pointer it
+// loaded from memory (a stashed raw pointer, unsafe code), writes opaquely, has no visible body
+// (extern), or calls something that does. This answers "can a call that was not handed a
+// persisting base write it?": for a callee whose every store roots at a parameter or a local
+// alloca — transitively — no. That is what keeps `is_space(l.src[i])` from erasing what the
+// caller knows about `l.src`, soundly: the persistence it would otherwise have to assume is a
+// stash only unsafe code can make, and unsafe code fails this test.
+static bool ir_func_writes_only_owned_v(IrFunc *f, IrFunc *mod, IrFunc **seen, int *nseen) {
+    if (!f || f->is_extern) return false;
+    for (int q = 0; q < *nseen; q++) if (seen[q] == f) return true;   // on the stack: its own
+    if (*nseen >= 256) return false;                                   // body is being checked
+    seen[(*nseen)++] = f;
+    int nvar = f->next_value_id>0?f->next_value_id:1;
+    IrInstr **def = calloc(nvar, sizeof(IrInstr*));
+    if (!def) return false;
+    for (IrBlock *b=f->blocks;b;b=b->next)
+        for (IrInstr *i=b->instrs;i;i=i->next)
+            if (i->result && i->result->id>=0 && i->result->id<nvar) def[i->result->id]=i;
+    bool ok = true;
+    for (IrBlock *b=f->blocks; b && ok; b=b->next)
+        for (IrInstr *i=b->instrs; i && ok; i=i->next) {
+            if (i->op == IR_STORE && i->n_operands>=1) {
+                IrValue *v = i->operands[0];
+                for (int g=0; v && v->id>=0 && v->id<nvar && g<10000; g++) {
+                    IrInstr *d = def[v->id];
+                    if (!d) break;                                  // a parameter: handed
+                    if (d->op == IR_ALLOCA) break;                  // its own local
+                    if (d->op==IR_ELEM_PTR || d->op==IR_FIELD_PTR || d->op==IR_SLICE_DATA ||
+                        d->op==IR_MAKE_SLICE) { v = d->n_operands>=1 ? d->operands[0] : NULL; continue; }
+                    ok = false; break;                              // loaded / computed address
+                }
+            } else if (i->op == IR_OPAQUE && i->aux.opaque.writes) {
+                ok = false;
+            } else if (i->op == IR_CALL) {
+                IrFunc *callee = ireff_find(mod, i->aux.callee);
+                if (!callee || !ir_func_writes_only_owned_v(callee, mod, seen, nseen)) ok = false;
+            }
+        }
+    free(def);
+    return ok;
+}
+static bool ir_func_writes_only_owned(IrFunc *f, IrFunc *mod) {
+    IrFunc *seen[256]; int n = 0;
+    return ir_func_writes_only_owned_v(f, mod, seen, &n);
+}
+
 // ── RETENTION footprint: does a parameter's ADDRESS outlive the call? ────────────────────
 // The alias oracle in vra.h wants to stop havocing every escaped cell at every call and havoc
 // only what THIS call can reach. That is sound exactly when a callee cannot squirrel an address

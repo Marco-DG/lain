@@ -14,7 +14,9 @@ func lexer_current(l Lexer) u8 {
 
 func lexer_advance(var l Lexer) u8 {
     ch = l.text[l.pos]      // safe: same invariant
-    l.pos = l.pos + 1
+    // Guarded: an unguarded `l.pos = l.pos + 1` breaks the invariant at the last character and
+    // is refused (struct_in_advance_unguarded_fail). It was accepted until 2026-09-28.
+    if l.pos + 1 < l.text.len { l.pos = l.pos + 1 }
     return ch
 }
 

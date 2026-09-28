@@ -1,0 +1,21 @@
+// EXPECT: [E086]
+// The other half of attributing a store through a `var` struct parameter: a WHOLE-STRUCT store
+// through it (`l = m`) writes every field, so the fact `l.k = 5` must go. It did not, for the one
+// build where the parameter became attributable and this case was missed — `l.k - 5` was proven
+// with k unknown. Locked here.
+type L {
+    xs u8[4]
+    k usize
+    d i32
+}
+func f(l var L, m L) usize {
+    l.k = 5
+    l = m
+    return l.k - 5
+}
+func main() i32 {
+    var l = L([1, 2, 3, 4], 0, 1)
+    m = L([1, 2, 3, 4], 0, 1)
+    n = f(var l, m)
+    return 0
+}

@@ -1,0 +1,16 @@
+// EXPECT: [E121]
+// Construction must establish the invariant for a FIXED-ARRAY container too. It was checked for
+// slices only — harmless while nothing assumed it for arrays, but the field-store rule assumes
+// the OLD value is in range (that is what proves `l.pos = 0`). Unchecked, `Buf(d, 10)` over a
+// `u8[5]` made that assume `10 < 5`, and everything after it was proven: `d[20]` compiled.
+type Buf {
+    data u8[5]
+    pos usize in data
+}
+func main() i32 {
+    var d u8[5] = [1, 2, 3, 4, 5]
+    var b = Buf(d, 10)
+    b.pos = 0
+    var k usize = 20
+    return d[k] as i32
+}
