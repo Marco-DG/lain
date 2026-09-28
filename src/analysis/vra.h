@@ -2226,6 +2226,23 @@ static void vra_check_shift(Vra *V, Octagon *W, IrInstr *ins) {
     vra_add_check(V, v);
 }
 
+// ★ NEGATION HAD NO OBLIGATION. `-x` on an i32 is exact in ℤ (the transfer above records r = -x),
+// but nothing compared that result with its TYPE: `func f(x i32) i32 { return -x }` compiled, and
+// f(-2147483648) is UB (UBSan: "negation of -2147483648 cannot be represented"). Unary `-` was
+// prove-or-reject in the old engine and the obligation did not survive the move to the IR — the
+// same gap the shift checks had. `0 -% x` is the wrapping spelling; `unsafe` waives it.
+static void vra_check_neg(Vra *V, Octagon *W, IrInstr *ins) {
+    if (ins->unchecked || ins->n_operands < 1 || !ins->result) return;
+    IrType *tt = ins->result->type; int64_t tlo, thi;
+    if (!tt || tt->kind != IRT_INT || !irtype_int_range(tt, &tlo, &thi)) return;
+    int64_t xlo, xhi; vra_range(V, W, ins->operands[0], &xlo, &xhi);
+    __int128 rlo = -(__int128)xhi, rhi = -(__int128)xlo;
+    VraCheck c; memset(&c,0,sizeof c); c.kind = VRA_OVERFLOW; c.at = ins;
+    c.line = ins->line; c.col = ins->col;
+    c.ok = rlo >= (__int128)tlo && rhi <= (__int128)thi;
+    vra_add_check(V, c);
+}
+
 // Division/remainder: the divisor must be provably non-zero.
 // ★ `d != 0` IS A FACT, and an interval cannot hold it: excluding a point from the middle of
 // a range is not an interval, and it is not an octagon constraint either — which is why
@@ -2388,13 +2405,29 @@ static bool vra_icmp_holds(Vra *V, Octagon *W, int a, int b, IrCmp cmp) {
     }
 }
 // Discharge an IR_ASSERT (its operand is a bool; when an icmp, check it holds).
-static void vra_check_assert(Vra *V, Octagon *W, IrInstr *ins) {
+static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid);   // fwd
+static void vra_check_assert(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
     if (ins->n_operands<1) return;
     IrInstr *ic = V->def[ins->operands[0]->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return;
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_PRECOND; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.diag = (int)ins->aux.imm;
     c.ok = vra_icmp_holds(V, W, ic->operands[0]->id, ic->operands[1]->id, ic->aux.cmp);
+    // `x != k` cannot be read off an octagon (a hole is not a difference bound). It holds when
+    // the value's TYPE excludes k, or — for k == 0 — when an entry assume or a dominating guard
+    // says so: the same facts the division check reads. This is what lets a `d != 0` parameter
+    // be forwarded to another `!= 0` parameter.
+    if (!c.ok && ic->aux.cmp == IR_CMP_NE) {
+        IrValue *x = ic->operands[0], *k = ic->operands[1];
+        bool kc = k && k->id>=0 && k->id<V->nvar && V->cknown[k->id];
+        int64_t kv = kc ? V->cval[k->id] : 0;
+        if (kc && x->type && x->type->has_ne && x->type->refine_ne == kv) c.ok = true;
+        if (!c.ok && kc && kv == 0) c.ok = vra_guarded_nonzero(V, at, x->id);
+        if (!c.ok && kc) {                                   // [lo,hi] that misses k
+            int64_t lo, hi; vra_range(V, W, x, &lo, &hi);
+            if (kv < lo || kv > hi) c.ok = true;
+        }
+    }
     vra_add_check(V, c);
 }
 
@@ -3593,9 +3626,10 @@ static Vra *vra_analyze(IrFunc *f) {
                     vra_check_elem(V,&W,ins); break;
                 }
                 case IR_MAKE_SLICE: oct_close(&W); vra_check_subslice(V,&W,ins); break;
-                case IR_ASSERT: oct_close(&W); vra_check_assert(V,&W,ins); break;
+                case IR_ASSERT: oct_close(&W); vra_check_assert(V,&W,ins,b); break;
                 case IR_ADD: case IR_SUB: case IR_MUL: oct_close(&W); vra_check_overflow(V,&W,ins); break;
                 case IR_SHL: case IR_LSHR: case IR_ASHR: oct_close(&W); vra_check_shift(V,&W,ins); break;
+                case IR_NEG: oct_close(&W); vra_check_neg(V,&W,ins); break;
                 // Path-F's other half: the widened result meets a narrower slot HERE.
                 case IR_STORE: {
                     if (ins->n_operands < 2) break;

@@ -1026,7 +1026,13 @@ static void ir_lower_call_requires(LowerCtx *c, Decl *callee, IrInstr *call) {
             Expr *con=cn->expr;
             if (!con || con->kind!=EXPR_BINARY) continue;
             IrCmp cmp;
-            if (!ir_tok_cmp(con->as.binary_expr.op, arg->type->is_signed, &cmp)) continue;
+            // `==` and `!=` are preconditions too. Skipping them left the callee's entry
+            // `assume(d != 0)` (ir_lower_param_refinements) with nothing asserting it: `f(0)` to
+            // `f(d i32 != 0)` was refused only by the front end's legacy E012 check, and the
+            // callee's `a / d` was PROVEN on an assumption nobody discharged.
+            if (con->as.binary_expr.op == TOKEN_EQUAL_EQUAL) cmp = IR_CMP_EQ;
+            else if (con->as.binary_expr.op == TOKEN_BANG_EQUAL) cmp = IR_CMP_NE;
+            else if (!ir_tok_cmp(con->as.binary_expr.op, arg->type->is_signed, &cmp)) continue;
             IrValue *rv = ir_resolve_contract_rhs(c, callee, call, con->as.binary_expr.right, arg->type);
             if (rv && rv->type && rv->type->kind==IRT_INT)
                 ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, arg, rv));
@@ -3031,7 +3037,13 @@ static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl
                 ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_NE, pv, rvn));
             continue;
         }
-        if (!ir_tok_cmp(con->as.binary_expr.op, sgn, &cmp)) continue;   // skip ==
+        if (con->as.binary_expr.op == TOKEN_EQUAL_EQUAL) {           // `n u32 == 4`: the dual of
+            IrValue *rve = ir_lower_refinement_rhs(c, rhs, pv->type);   // the call-site EQ assert
+            if (rve && rve->type && rve->type->kind==IRT_INT)
+                ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_EQ, pv, rve));
+            continue;
+        }
+        if (!ir_tok_cmp(con->as.binary_expr.op, sgn, &cmp)) continue;
         IrValue *rv = ir_lower_refinement_rhs(c, rhs, pv->type);   // literal / a.len / param
         if (rv && rv->type && rv->type->kind==IRT_INT)
             ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, pv, rv));

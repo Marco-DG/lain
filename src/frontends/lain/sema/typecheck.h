@@ -2093,7 +2093,8 @@ void sema_infer_expr(Expr *e) {
             
 
 
-            if (p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.constraints) {
+            if (LAIN_LEGACY_CONSTRAINTS &&
+                p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.constraints) {
                 // ... (inner logic) ...
                 // Find the argument for this parameter (LHS of constraint)
                 Expr *lhs_arg = NULL;

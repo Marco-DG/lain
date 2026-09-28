@@ -12,9 +12,14 @@
 // there. Only the types WIDER than i32 were affected, which is why nothing caught it.
 //
 // The values are the test. A width regression changes them.
+//
+// The refinement on `a` is the other half of the lesson. `-a` on an UNBOUNDED i64 is undefined at
+// a == i64::MIN, and until 2026-09-28 nothing refused it: the old engine checked negation only
+// below 32 bits, and the IR raised no obligation for IR_NEG at all. Stating that `a` is not the
+// minimum is what makes the negation provable; every value below satisfies it.
 extern func libc_printf(fmt *u8, ...) i32 effects io
 
-func neg64(a i64) i64 { return -a }
+func neg64(a i64 >= -1000000000000000000) i64 { return -a }
 
 func main() i32 effects io {
     var a i64 = 5000000000                  // 5e9, past i32
