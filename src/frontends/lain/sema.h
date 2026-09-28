@@ -2161,51 +2161,6 @@ static void walk_stmt(Stmt *s) {
                     }
                 }
 
-                // Q-002 refinement type alias propagation:
-                // If the variable's type is a TYPE_SIMPLE pointing to a
-                // type alias with constraints (e.g., `type Pressure = int >= 0 and <= 1000`),
-                // apply each constraint to the source range, narrowing it
-                // and emitting E086 on violation.
-                if (sema_ranges && s->as.var_stmt.type
-                    && s->as.var_stmt.type->kind == TYPE_SIMPLE
-                    && s->as.var_stmt.type->base_type
-                    && !sema_in_unsafe_block && r.known) {
-                    char tnam[256];
-                    isize tl = s->as.var_stmt.type->base_type->length;
-                    if (tl < (isize)sizeof(tnam)) {
-                        memcpy(tnam, s->as.var_stmt.type->base_type->name, tl);
-                        tnam[tl] = '\0';
-                        Symbol *tsym = sema_lookup(tnam);
-                        if (tsym && tsym->decl && tsym->decl->kind == DECL_TYPE_ALIAS
-                            && tsym->decl->as.type_alias_decl.constraints) {
-                            for (ExprList *c = tsym->decl->as.type_alias_decl.constraints; c; c = c->next) {
-                                if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
-                                TokenKind op = c->expr->as.binary_expr.op;
-                                Expr *rhs = c->expr->as.binary_expr.right;
-                                if (!rhs || rhs->kind != EXPR_LITERAL) continue;
-                                long long k = rhs->as.literal_expr.value;
-                                bool fits = true;
-                                switch (op) {
-                                    case TOKEN_ANGLE_BRACKET_LEFT_EQUAL: fits = (r.max <= k); break;  // <=
-                                    case TOKEN_ANGLE_BRACKET_LEFT:        fits = (r.max <  k); break;  // <
-                                    case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: fits = (r.min >= k); break;  // >=
-                                    case TOKEN_ANGLE_BRACKET_RIGHT:       fits = (r.min >  k); break;  // >
-                                    case TOKEN_EQUAL_EQUAL:               fits = (r.min == k && r.max == k); break;
-                                    case TOKEN_BANG_EQUAL:                fits = (r.min > k || r.max < k); break;
-                                    default: fits = true; break;
-                                }
-                                if (LAIN_LEGACY_ANALYSIS && !fits) {
-                                    fprintf(stderr,
-                                        "[E086] Error Ln %li, Col %li: assignment to '%.*s' violates refinement constraint of type alias '%s': value range [%lld, %lld] does not satisfy the alias constraint.\n",
-                                        s->line, s->col,
-                                        (int)s->as.var_stmt.name->length, s->as.var_stmt.name->name,
-                                        tnam, (long long)r.min, (long long)r.max);
-                                    exit(1);
-                                }
-                            }
-                        }
-                    }
-                }
 
                 range_set(sema_ranges, s->as.var_stmt.name, r);
 
@@ -3146,42 +3101,6 @@ static void walk_stmt(Stmt *s) {
                                 Id *fn = sf->decl->as.variable_decl.name;
                                 if (!fn || fn->length != fld_name->length ||
                                     strncmp(fn->name, fld_name->name, fn->length) != 0) continue;
-                                // G5: enforce the field's refinement constraints on
-                                // REASSIGNMENT too (`c.pct = 200` must satisfy pct's
-                                // `>= 0 and <= 100`), not just at construction.
-                                if (LAIN_LEGACY_ANALYSIS && sf->decl->as.variable_decl.constraints && sema_ranges &&
-                                    !sema_in_unsafe_block) {
-                                    Expr *frhs = s->as.assign_stmt.expr;
-                                    Range r = (frhs && frhs->kind == EXPR_LITERAL)
-                                        ? (Range){ frhs->as.literal_expr.value, frhs->as.literal_expr.value, true }
-                                        : (frhs ? sema_eval_range(frhs, sema_ranges) : range_unknown());
-                                    if (r.known) {
-                                        for (ExprList *fc = sf->decl->as.variable_decl.constraints; fc; fc = fc->next) {
-                                            if (!fc->expr || fc->expr->kind != EXPR_BINARY) continue;
-                                            Expr *crhs = fc->expr->as.binary_expr.right;
-                                            if (!crhs || crhs->kind != EXPR_LITERAL) continue;
-                                            long long k = crhs->as.literal_expr.value;
-                                            bool fits = true;
-                                            switch (fc->expr->as.binary_expr.op) {
-                                                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  fits = (r.max <= k); break;
-                                                case TOKEN_ANGLE_BRACKET_LEFT:        fits = (r.max <  k); break;
-                                                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: fits = (r.min >= k); break;
-                                                case TOKEN_ANGLE_BRACKET_RIGHT:       fits = (r.min >  k); break;
-                                                case TOKEN_EQUAL_EQUAL:               fits = (r.min == k && r.max == k); break;
-                                                case TOKEN_BANG_EQUAL:                fits = (r.min > k || r.max < k); break;
-                                                default: break;
-                                            }
-                                            if (!fits) {
-                                                fprintf(stderr, "[E086] Error Ln %li, Col %li: assignment to field "
-                                                    "'%.*s' value range [%lld, %lld] violates its refinement "
-                                                    "constraint.\n", (long)s->line, (long)s->col,
-                                                    (int)fn->length, fn->name, (long long)r.min, (long long)r.max);
-                                                diagnostic_show_line(s->line, s->col);
-                                                exit(1);
-                                            }
-                                        }
-                                    }
-                                }
                                 Id *in_fld = sf->decl->as.variable_decl.in_field;
                                 if (!in_fld) break; // field found but no invariant
                                 // Build synthetic EXPR_MEMBER for obj.container
@@ -3348,49 +3267,6 @@ static void walk_stmt(Stmt *s) {
                 }
             }
             
-            // Check equation-style return constraints: func f() int >= 0
-            if (current_function_decl && current_function_decl->as.function_decl.return_constraints) {
-                Range ret_range = sema_eval_range(s->as.return_stmt.value, sema_ranges);
-                
-                for (ExprList *rc = current_function_decl->as.function_decl.return_constraints; rc; rc = rc->next) {
-                    int result;
-                    // A refinement stated over a PARAMETER (`result <op> m`) cannot be
-                    // checked by comparing independent ranges — that loses the fact that
-                    // `result` IS the returned expression. Prove it against the returned
-                    // expression directly (syntactic p/p±k, or the constraint graph).
-                    Expr *rce = rc->expr;
-                    Expr *rrhs = (rce && rce->kind == EXPR_BINARY) ? rce->as.binary_expr.right : NULL;
-                    bool param_rhs = rrhs && rrhs->kind == EXPR_IDENTIFIER &&
-                        !(rrhs->as.identifier_expr.id->length == 6 &&
-                          strncmp(rrhs->as.identifier_expr.id->name, "result", 6) == 0);
-                    if (param_rhs) {
-                        // Prove the p-correlated forms (return p, p±k, v with v<=p);
-                        // fall back to the range comparison for a literal / bounded
-                        // return (`return 0` under `<= m`, sound via ranges).
-                        result = return_proves_param_relop(s->as.return_stmt.value,
-                                     rce->as.binary_expr.op,
-                                     rrhs->as.identifier_expr.id, sema_ranges);
-                        if (result != 1)
-                            result = sema_check_post_condition(rc->expr, ret_range, sema_ranges);
-                    } else {
-                        result = sema_check_post_condition(rc->expr, ret_range, sema_ranges);
-                    }
-                    // PROVE-OR-REJECT: the compiler TRUSTS a return refinement to
-                    // narrow every caller's VRA, so the body must PROVABLY satisfy
-                    // it. `result == 1` means proven; 0 (violated) or -1 (unknown,
-                    // e.g. unbounded/wrapping) must both be rejected — a refinement
-                    // it can't prove is a lie that defeats callers' bounds proofs.
-                    if (LAIN_LEGACY_ANALYSIS && result != 1 && !sema_in_unsafe_block) {
-                        fprintf(stderr, "[E086] Error Ln %li, Col %li: return value cannot be proven "
-                            "to satisfy the function's return refinement (range [%lld, %lld]). Constrain "
-                            "the inputs or narrow the value so VRA can prove it.\n",
-                            (long)s->line, (long)s->col,
-                            (long long)ret_range.min, (long long)ret_range.max);
-                        diagnostic_show_line(s->line, s->col);
-                        exit(1);
-                    }
-                }
-            }
             break;
         case STMT_MATCH: {
             sema_infer_expr(s->as.match_stmt.value);

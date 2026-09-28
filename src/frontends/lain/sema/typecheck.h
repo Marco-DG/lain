@@ -697,52 +697,12 @@ static bool value_fits(Type *from, Range r, Type *to) {
 // is then a single call, not a bespoke block, and every precondition of the same
 // shape shares one proof path. Call sites keep their own diagnostics.
 
-// Is `operand` proven NONZERO? True iff VRA proves its range excludes 0, a live
-// `!= 0` guard marker covers it, or it is a variable with a `!= 0` constraint.
-static bool op_proven_nonzero(Expr *operand) {
-    if (!operand) return false;
-    Range r = sema_eval_range(operand, sema_ranges);
-    if (r.known && (r.min > 0 || r.max < 0)) return true;
-    if (operand->kind == EXPR_IDENTIFIER &&
-        constraint_has_nonzero(sema_ranges, operand->as.identifier_expr.id))
-        return true;
-    if (operand->kind == EXPR_IDENTIFIER) {
-        Decl *d = operand->decl;
-        if (d && d->kind == DECL_VARIABLE && d->as.variable_decl.constraints) {
-            for (ExprList *c = d->as.variable_decl.constraints; c; c = c->next) {
-                if (c->expr->kind == EXPR_BINARY &&
-                    c->expr->as.binary_expr.op == TOKEN_BANG_EQUAL &&
-                    c->expr->as.binary_expr.right->kind == EXPR_LITERAL &&
-                    c->expr->as.binary_expr.right->as.literal_expr.value == 0)
-                    return true;
-            }
-        }
-    }
-    return false;
-}
-
 // Is `operand`'s proven interval ⊆ [lo, hi]? `*out` returns the interval so the
 // caller can shape its diagnostic (unknown vs out-of-range).
 static bool op_proven_in_range(Expr *operand, int64_t lo, int64_t hi, Range *out) {
     Range r = operand ? sema_eval_range(operand, sema_ranges) : range_unknown();
     if (out) *out = r;
     return r.known && r.min >= lo && r.max <= hi;
-}
-
-// Does the exact product interval of `a` × `b` fit `ty`'s integer range? Computed
-// in 128-bit so a genuinely-overflowing wide product is not masked by i64
-// saturation. Shared by `*` overflow and left-shift overflow (`x << n` = x·2^n).
-// Returns true (don't reject) when either operand range or the target is unknown.
-static bool op_product_fits(Range a, Range b, Type *ty) {
-    long long tlo, thi;
-    if (!a.known || !b.known || !type_integer_range(ty, &tlo, &thi)) return true;
-    __int128 c1 = (__int128)a.min * b.min, c2 = (__int128)a.min * b.max;
-    __int128 c3 = (__int128)a.max * b.min, c4 = (__int128)a.max * b.max;
-    __int128 pmin = c1, pmax = c1;
-    if (c2 < pmin) pmin = c2; if (c2 > pmax) pmax = c2;
-    if (c3 < pmin) pmin = c3; if (c3 > pmax) pmax = c3;
-    if (c4 < pmin) pmin = c4; if (c4 > pmax) pmax = c4;
-    return pmin >= (__int128)tlo && pmax <= (__int128)thi;
 }
 
 // Strict structural type equality (NO widening, NO decay). Used where variance
@@ -866,52 +826,6 @@ static ExprList *alias_constraints_for(Type *t) {
     return NULL;
 }
 
-// P2/S3 (unification): enforce a refinement-type-alias's refinement on a value
-// whose VRA range is r flowing into a slot of type `to`. This is the boundary
-// half of the subsumption relation `r ⊑ refine(to)`. The INTERVAL component is
-// now read from the type itself (`type_refine_interval`, the S2 `refine` field)
-// rather than re-derived from a private op→bound switch — one source of truth,
-// shared with `type_integer_range`. Only the DISEQUALITY residual (`!= k`), which
-// an interval cannot represent, is still read from the alias's constraint list.
-// No-op for non-alias types, unknown range, or inside unsafe. Riding inside
-// check_conversion, this makes refinement aliases sound at EVERY boundary.
-static void check_type_alias_constraints(Type *to, Range r, isize line, isize col,
-                                         const char *ctx, const char *label) {
-    if (!LAIN_LEGACY_ANALYSIS || sema_in_unsafe_block || !r.known) return;
-    if (!to || to->kind != TYPE_SIMPLE || !to->base_type) return;
-    if ((size_t)to->base_type->length >= 256) return;
-
-    // The target's interval CONSTRAINT comes from its refinement-ALIAS definition,
-    // not the raw `refine` field — which now also carries a value's known interval
-    // (a literal's [k,k]) that must NOT be mistaken for a constraint on the target.
-    ExprList *cs = alias_constraints_for(to);
-    Range crange = cs ? range_from_refinement_constraints(cs) : range_unknown();
-    bool interval_ok = !crange.known || (r.min >= crange.min && r.max <= crange.max);
-
-    // Disequality residual (`x != k`): not expressible as an interval, so read it
-    // from the alias constraints directly. `r` satisfies `!= k` iff it excludes k.
-    bool diseq_ok = true;
-    for (ExprList *c = cs; c; c = c->next) {
-        if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
-        if (c->expr->as.binary_expr.op != TOKEN_BANG_EQUAL) continue;
-        Expr *rhs = c->expr->as.binary_expr.right;
-        if (!rhs || rhs->kind != EXPR_LITERAL) continue;
-        long long k = rhs->as.literal_expr.value;
-        if (!(r.min > k || r.max < k)) { diseq_ok = false; break; }
-    }
-
-    if (!interval_ok || !diseq_ok) {
-        char tnam[256];
-        memcpy(tnam, to->base_type->name, to->base_type->length);
-        tnam[to->base_type->length] = '\0';
-        fprintf(stderr, "[E086] Error Ln %li, Col %li: %s '%s' violates refinement "
-            "constraint of type alias '%s': value range [%lld, %lld] does not satisfy it.\n",
-            (long)line, (long)col, ctx, label ? label : "", tnam,
-            (long long)r.min, (long long)r.max);
-        diagnostic_show_line(line, col);
-        exit(1);
-    }
-}
 
 // P2/S4: evaluate a dependent size expression (e.g. `a.len + b.len`) to a Range
 // by resolving each `param.len` to the actual argument's length at a call site.
@@ -1210,17 +1124,15 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     // `value_fits` and only discharge the disequality residual (`!= k`, not an
     // interval). Behavior-preserving: a false verdict (non-integer, unknown/unfitting
     // range) falls through to the full checks below.
-    if (value_fits(from, r, to)) {
-        check_type_alias_constraints(to, r, line, col, ctx, label);
-        return;
-    }
+    if (value_fits(from, r, to)) return;
 
     reject_float_int_mismatch(from, to, line, col, ctx, label);
     reject_lossy_int_conversion(from, to, r, src_expr, line, col, ctx, label);
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
     reject_sentinel_fabrication(from, to, src_expr, line, col, ctx);
     reject_fixed_string_length_mismatch(from, to, line, col);
-    check_type_alias_constraints(to, r, line, col, ctx, label);
+    // (A refinement ALIAS's own constraint is the IR's obligation: the alias lowers to a refined
+    // type — an interval, plus an excluded value for `!=` — enforced where a value narrows into it.)
 
     // Dual-run (measurement only, behind LAIN_KEYSTONE_DUALRUN — zero behavior
     // change). Reaching here means the scattered checks ACCEPTED an integer→integer
@@ -2179,82 +2091,6 @@ void sema_infer_expr(Expr *e) {
         
         for (DeclList *p = params; p; p = p->next) {
             
-            // Check 'in' field constraint
-            if (p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.in_field) {
-                Id *arr_name = p->decl->as.variable_decl.in_field;
-                
-                // Find the argument for this parameter (index)
-                Expr *idx_arg = NULL;
-                int a_idx = 0;
-                for (ExprList *a = e->as.call_expr.args; a; a = a->next) {
-                    if (a_idx == param_idx) { idx_arg = a->expr; break; }
-                    a_idx++;
-                }
-                
-                // Find the array argument by name
-                int arr_param_idx = 0;
-                Type *arr_type = NULL;
-                Expr *arr_arg = NULL;
-                for (DeclList *arr_p = params; arr_p; arr_p = arr_p->next) {
-                    if (arr_p->decl->kind == DECL_VARIABLE) {
-                        Id *an = arr_p->decl->as.variable_decl.name;
-                        if (an->length == arr_name->length &&
-                            strncmp(an->name, arr_name->name, an->length) == 0) {
-                            arr_type = arr_p->decl->as.variable_decl.type;
-                            // Get corresponding arg for array
-                            int aa_idx = 0;
-                            for (ExprList *aa = e->as.call_expr.args; aa; aa = aa->next) {
-                                if (aa_idx == arr_param_idx) { arr_arg = aa->expr; break; }
-                                aa_idx++;
-                            }
-                            break;
-                        }
-                    }
-                    arr_param_idx++;
-                }
-                
-                (void)arr_type;
-                if (LAIN_LEGACY_ANALYSIS && idx_arg && arr_arg && sema_walk_phase) {
-                    // P2/S3 (fail-CLOSED): the `in <arr>` invariant is 0 <= idx <
-                    // arr.len. idx >= 0 holds for a usize; prove idx < arr.len at the
-                    // CALL site — interval for a fixed array, or difference-constraint
-                    // for a symbolic slice / guarded index — else reject. The old
-                    // check only fired for a known-constant length AND a known index
-                    // range, so an unbounded/symbolic forward was an unchecked
-                    // out-of-bounds read inside the callee (ASan-confirmed). Reuses the
-                    // same prover as the `i < a.len` refinement. Walk-phase-gated so it
-                    // cannot false-positive before VRA is populated.
-                    Range idx_range = sema_eval_range(idx_arg, sema_ranges);
-                    if (idx_range.known && idx_range.min < 0) {
-                        fprintf(stderr, "[E085] Error Ln %li, Col %li: index may be negative: range [%ld, %ld].\n",
-                                (long)idx_arg->line, (long)idx_arg->col,
-                                (long)idx_range.min, (long)idx_range.max);
-                        diagnostic_show_line(idx_arg->line, idx_arg->col);
-                        exit(1);
-                    }
-                    // Synthetic `arr_name.len` member for the shared prover.
-                    Id *lm = arena_push_aligned(sema_arena, Id);
-                    lm->name = "len"; lm->length = 3;
-                    Expr *aid = arena_push_aligned(sema_arena, Expr);
-                    aid->kind = EXPR_IDENTIFIER; aid->as.identifier_expr.id = arr_name;
-                    Expr *lenE = arena_push_aligned(sema_arena, Expr);
-                    lenE->kind = EXPR_MEMBER;
-                    lenE->as.member_expr.target = aid;
-                    lenE->as.member_expr.member = lm;
-                    if (!callsite_len_precond_proven(idx_arg, lenE,
-                                TOKEN_ANGLE_BRACKET_LEFT, params, e->as.call_expr.args)) {
-                        fprintf(stderr, "[E085] Error Ln %li, Col %li: index argument cannot be proven "
-                            "within the bounds of '%.*s' (the `in %.*s` invariant). Constrain the index "
-                            "(a literal, a bounded local, an `if`/loop guard, or a matching parameter "
-                            "refinement) so VRA can discharge it.\n",
-                            (long)idx_arg->line, (long)idx_arg->col,
-                            (int)arr_name->length, arr_name->name,
-                            (int)arr_name->length, arr_name->name);
-                        diagnostic_show_line(idx_arg->line, idx_arg->col);
-                        exit(1);
-                    }
-                }
-            }
 
 
             if (p->decl->kind == DECL_VARIABLE && p->decl->as.variable_decl.constraints) {
@@ -2411,173 +2247,6 @@ void sema_infer_expr(Expr *e) {
                         "argument to parameter", buf);
                 }
             }
-            // E087: verify sized-slice length constraints at call site.
-            // Conservative: only fires when a violation is statically provable.
-            if (sema_walk_phase && sema_ranges && p->decl->kind == DECL_VARIABLE) {
-                Type *e87_ptype = p->decl->as.variable_decl.type;
-                if (e87_ptype && e87_ptype->kind == TYPE_ARRAY &&
-                    e87_ptype->array_len == -1 && e87_ptype->size_expr) {
-                    Expr *e87_parg = NULL;
-                    { int e87_ai = 0;
-                      for (ExprList *e87_a = e->as.call_expr.args; e87_a; e87_a = e87_a->next) {
-                          if (e87_ai == param_idx) { e87_parg = e87_a->expr; break; }
-                          e87_ai++;
-                      }
-                    }
-                    if (e87_parg) {
-                        Id *e87_pname = p->decl->as.variable_decl.name;
-                        // Determine arg's concrete length as a Range
-                        Range e87_alen = range_unknown();
-                        if (e87_parg->type && e87_parg->type->kind == TYPE_ARRAY &&
-                            e87_parg->type->array_len >= 0)
-                            e87_alen = range_const(e87_parg->type->array_len);
-                        if (!e87_alen.known && e87_parg->kind == EXPR_IDENTIFIER) {
-                            Id *aid = e87_parg->as.identifier_expr.id;
-                            char lk[272]; int lklen = 6 + (int)aid->length;
-                            if (lklen < (int)sizeof(lk)) {
-                                memcpy(lk, "__len_", 6);
-                                memcpy(lk + 6, aid->name, aid->length);
-                                for (RangeEntry *re = sema_ranges->head; re; re = re->next) {
-                                    if (re->var->length == lklen &&
-                                        strncmp(re->var->name, lk, lklen) == 0)
-                                    { e87_alen = re->range; break; }
-                                }
-                            }
-                        }
-                        bool e87_fail = false;
-                        char e87_msg[320]; e87_msg[0] = '\0';
-                        if (e87_ptype->size_relop == TOKEN_ANGLE_BRACKET_RIGHT ||
-                            e87_ptype->size_relop == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL) {
-                            // i32[> k] / i32[>= k] with literal k
-                            if (e87_ptype->size_expr->kind == EXPR_LITERAL) {
-                                int64_t k = e87_ptype->size_expr->as.literal_expr.value;
-                                int64_t req = k + (e87_ptype->size_relop == TOKEN_ANGLE_BRACKET_RIGHT ? 1 : 0);
-                                if (e87_alen.known && e87_alen.max < req) {
-                                    snprintf(e87_msg, sizeof(e87_msg),
-                                        "argument for '%.*s' has length at most %ld"
-                                        " but constraint requires length %s %ld",
-                                        (int)e87_pname->length, e87_pname->name,
-                                        (long)e87_alen.max,
-                                        e87_ptype->size_relop == TOKEN_ANGLE_BRACKET_RIGHT ? ">" : ">=",
-                                        (long)k);
-                                    e87_fail = true;
-                                }
-                            }
-                        } else if (e87_ptype->size_relop == TOKEN_EQUAL_EQUAL) {
-                            if (e87_ptype->size_expr->kind == EXPR_LITERAL) {
-                                // i32[k]: arg.len must equal k
-                                int64_t k = e87_ptype->size_expr->as.literal_expr.value;
-                                if (e87_alen.known &&
-                                    (e87_alen.min > k || e87_alen.max < k)) {
-                                    snprintf(e87_msg, sizeof(e87_msg),
-                                        "argument for '%.*s' has length [%ld,%ld]"
-                                        " but constraint requires length == %ld",
-                                        (int)e87_pname->length, e87_pname->name,
-                                        (long)e87_alen.min, (long)e87_alen.max,
-                                        (long)k);
-                                    e87_fail = true;
-                                }
-                            } else if (e87_ptype->size_expr->kind == EXPR_MEMBER &&
-                                       e87_ptype->size_expr->as.member_expr.member->length == 3 &&
-                                       strncmp(e87_ptype->size_expr->as.member_expr.member->name, "len", 3) == 0 &&
-                                       e87_ptype->size_expr->as.member_expr.target->kind == EXPR_IDENTIFIER) {
-                                // i32[ref.len]: find ref param and compare concrete lengths
-                                Id *ref_pid = e87_ptype->size_expr->as.member_expr.target->as.identifier_expr.id;
-                                Expr *ref_arg = NULL;
-                                int rpi = 0;
-                                for (DeclList *rp = params; rp; rp = rp->next) {
-                                    if (rp->decl->kind == DECL_VARIABLE) {
-                                        Id *rpn = rp->decl->as.variable_decl.name;
-                                        if (rpn->length == ref_pid->length &&
-                                            strncmp(rpn->name, ref_pid->name, rpn->length) == 0) {
-                                            int ri = 0;
-                                            for (ExprList *ra = e->as.call_expr.args; ra; ra = ra->next) {
-                                                if (ri++ == rpi) { ref_arg = ra->expr; break; }
-                                            }
-                                            break;
-                                        }
-                                    }
-                                    rpi++;
-                                }
-                                if (ref_arg) {
-                                    Range ref_len = range_unknown();
-                                    if (ref_arg->type && ref_arg->type->kind == TYPE_ARRAY &&
-                                        ref_arg->type->array_len >= 0)
-                                        ref_len = range_const(ref_arg->type->array_len);
-                                    if (!ref_len.known && ref_arg->kind == EXPR_IDENTIFIER) {
-                                        Id *rid = ref_arg->as.identifier_expr.id;
-                                        char rk[272]; int rklen = 6 + (int)rid->length;
-                                        if (rklen < (int)sizeof(rk)) {
-                                            memcpy(rk, "__len_", 6);
-                                            memcpy(rk + 6, rid->name, rid->length);
-                                            for (RangeEntry *re = sema_ranges->head; re; re = re->next) {
-                                                if (re->var->length == rklen &&
-                                                    strncmp(re->var->name, rk, rklen) == 0)
-                                                { ref_len = re->range; break; }
-                                            }
-                                        }
-                                    }
-                                    // Fire only when both sides are concrete point values that differ
-                                    if (e87_alen.known && ref_len.known &&
-                                        e87_alen.min == e87_alen.max &&
-                                        ref_len.min == ref_len.max &&
-                                        e87_alen.min != ref_len.min) {
-                                        Id *disp = (ref_arg->kind == EXPR_IDENTIFIER)
-                                                   ? ref_arg->as.identifier_expr.id : ref_pid;
-                                        snprintf(e87_msg, sizeof(e87_msg),
-                                            "argument for '%.*s' has length %ld"
-                                            " but constraint requires == %.*s.len (%ld)",
-                                            (int)e87_pname->length, e87_pname->name,
-                                            (long)e87_alen.min,
-                                            (int)disp->length, disp->name,
-                                            (long)ref_len.min);
-                                        e87_fail = true;
-                                    }
-                                }
-                            } else {
-                                // General dependent size (e.g. `a.len + b.len`): evaluate
-                                // it against the actual argument lengths and require the
-                                // passed length to match. Closes the OOB where a wrong-
-                                // length array is passed for `out i32[a.len + b.len]`.
-                                Range req = eval_callsite_size_range(e87_ptype->size_expr,
-                                                                     params, e->as.call_expr.args);
-                                // ★ A DEPENDENT SIZE THAT CAN GO NEGATIVE IS AN OOB, and the
-                                // equality check below cannot see it: that check needs BOTH
-                                // lengths to be exact constants, so a dynamic length skipped
-                                // it entirely. `out i32[src.len - 1]` with a runtime-length
-                                // `src` then compiled, and at src.len == 0 the callee's
-                                // `out.len` is SIZE_MAX — the loop runs and reads off the end
-                                // (ASan: stack-buffer-overflow). Same shape as the sliding
-                                // window of 2026-09-09: the wrapped value becomes a BOUND, so
-                                // nothing downstream checks it.
-                                if (req.known && req.min < 0) {
-                                    snprintf(e87_msg, sizeof(e87_msg),
-                                        "dependent size for '%.*s' can be negative (as low as %ld)"
-                                        " — on a usize that is a huge length, not an error."
-                                        " Constrain the source length, e.g. `src i32[> 0]`",
-                                        (int)e87_pname->length, e87_pname->name, (long)req.min);
-                                    e87_fail = true;
-                                }
-                                if (!e87_fail && e87_alen.known && req.known &&
-                                    e87_alen.min == e87_alen.max && req.min == req.max &&
-                                    e87_alen.min != req.min) {
-                                    snprintf(e87_msg, sizeof(e87_msg),
-                                        "argument for '%.*s' has length %ld but the dependent size requires length %ld",
-                                        (int)e87_pname->length, e87_pname->name,
-                                        (long)e87_alen.min, (long)req.min);
-                                    e87_fail = true;
-                                }
-                            }
-                        }
-                        if (LAIN_LEGACY_ANALYSIS && e87_fail) {
-                            fprintf(stderr, "[E087] Error Ln %li, Col %li: %s.\n",
-                                    (long)e87_parg->line, (long)e87_parg->col, e87_msg);
-                            diagnostic_show_line(e87_parg->line, e87_parg->col);
-                            exit(1);
-                        }
-                    }
-                }
-            }
             param_idx++;
         }
     } else if (callee_decl && callee_decl->kind == DECL_STRUCT) {
@@ -2636,45 +2305,6 @@ void sema_infer_expr(Expr *e) {
                     if (n > 159) n = 159;
                     if (n) memcpy(buf, fname->name, n);
                     buf[n] = '\0';
-                }
-                // G5: enforce field refinement constraints at construction
-                // (`type Config { pct i32 >= 0 and <= 100 }`), so the invariant
-                // holds for every constructed value.
-                if (LAIN_LEGACY_ANALYSIS && f->decl->as.variable_decl.constraints && sema_ranges &&
-                    !sema_in_unsafe_block) {
-                    Range r = (a->expr->kind == EXPR_LITERAL)
-                        ? (Range){ a->expr->as.literal_expr.value, a->expr->as.literal_expr.value, true }
-                        : sema_eval_range(a->expr, sema_ranges);
-                    if (r.known) {
-                        for (ExprList *c = f->decl->as.variable_decl.constraints; c; c = c->next) {
-                            if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
-                            Expr *rhs = c->expr->as.binary_expr.right;
-                            if (!rhs || rhs->kind != EXPR_LITERAL) continue;
-                            long long k = rhs->as.literal_expr.value;
-                            bool fits = true;
-                            switch (c->expr->as.binary_expr.op) {
-                                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  fits = (r.max <= k); break;
-                                case TOKEN_ANGLE_BRACKET_LEFT:        fits = (r.max <  k); break;
-                                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: fits = (r.min >= k); break;
-                                case TOKEN_ANGLE_BRACKET_RIGHT:       fits = (r.min >  k); break;
-                                case TOKEN_EQUAL_EQUAL:               fits = (r.min == k && r.max == k); break;
-                                case TOKEN_BANG_EQUAL:                fits = (r.min > k || r.max < k); break;
-                                default: break;
-                            }
-                            if (!fits) {
-                                Id *fnm = f->decl->as.variable_decl.name;
-                                fprintf(stderr, "[E086] Error Ln %li, Col %li: struct '%.*s' field '%.*s' "
-                                    "value range [%lld, %lld] violates its refinement constraint.\n",
-                                    (long)e->line, (long)e->col,
-                                    (int)callee_decl->as.struct_decl.name->length,
-                                    callee_decl->as.struct_decl.name->name,
-                                    (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
-                                    (long long)r.min, (long long)r.max);
-                                diagnostic_show_line(e->line, e->col);
-                                exit(1);
-                            }
-                        }
-                    }
                 }
             }
             f = f->next;
@@ -2797,143 +2427,8 @@ void sema_infer_expr(Expr *e) {
         }
     }
 
-    // Division/modulo by a definitely-zero divisor (a literal 0, or a value VRA
-    // proves is exactly 0) is undefined behavior in ANY context — reject in func
-    // AND proc (the func-only totality check below is a stricter superset).
-    {
-        TokenKind dop = e->as.binary_expr.op;
-        if (dop == TOKEN_SLASH || dop == TOKEN_PERCENT) {
-            Expr *rhs = e->as.binary_expr.right;
-            bool is_zero = rhs && rhs->kind == EXPR_LITERAL && rhs->as.literal_expr.value == 0;
-            if (!is_zero && sema_ranges && rhs) {
-                Range dr = sema_eval_range(rhs, sema_ranges);
-                if (dr.known && dr.min == 0 && dr.max == 0) is_zero = true;
-            }
-            if (LAIN_LEGACY_ANALYSIS && is_zero) {
-                fprintf(stderr, "[E015] Error Ln %li, Col %li: division or modulo by zero.\n",
-                        (long)e->line, (long)e->col);
-                diagnostic_show_line(e->line, e->col);
-                exit(1);
-            }
-        }
-    }
 
-    // Shift by an amount that is negative or >= the bit width of the left operand
-    // is undefined behavior (gcc: "shift count >= width of type"). Prove-or-reject:
-    // the shift amount must be PROVEN in [0, width-1] — by a literal or by VRA —
-    // else reject. A variable amount whose range is unknown or reaches the width
-    // was previously accepted and was UB at runtime. `unsafe` opts out.
-    if (LAIN_LEGACY_ANALYSIS && !sema_in_unsafe_block) {
-        TokenKind sop = e->as.binary_expr.op;
-        if (sop == TOKEN_SHIFT_LEFT || sop == TOKEN_SHIFT_RIGHT) {
-            Expr *lhs = e->as.binary_expr.left;
-            Expr *rhs = e->as.binary_expr.right;
-            int bits; bool sgn;
-            if (rhs && lhs && lhs->type && parse_iN_uN(lhs->type, &bits, &sgn)) {
-                if (rhs->kind == EXPR_LITERAL) {
-                    long long n = rhs->as.literal_expr.value;
-                    if (n < 0 || n >= bits) {
-                        fprintf(stderr, "[E086] Error Ln %li, Col %li: shift amount %lld is out of "
-                            "range for a %d-bit operand (valid range 0..%d).\n",
-                            (long)e->line, (long)e->col, n, bits, bits - 1);
-                        diagnostic_show_line(e->line, e->col);
-                        exit(1);
-                    }
-                } else if (sema_walk_phase && sema_ranges) {
-                    Range sr;
-                    if (!op_proven_in_range(rhs, 0, bits - 1, &sr)) {
-                        if (!sr.known)
-                            fprintf(stderr, "[E086] Error Ln %li, Col %li: shift amount is not proven "
-                                "in range for a %d-bit operand (valid 0..%d) — its range is unknown. "
-                                "Constrain or guard it, or wrap the shift in an `unsafe` block.\n",
-                                (long)e->line, (long)e->col, bits, bits - 1);
-                        else
-                            fprintf(stderr, "[E086] Error Ln %li, Col %li: shift amount range [%ld, %ld] "
-                                "is out of range for a %d-bit operand (valid 0..%d). Constrain or guard "
-                                "it, or wrap the shift in an `unsafe` block.\n",
-                                (long)e->line, (long)e->col, (long)sr.min, (long)sr.max, bits, bits - 1);
-                        diagnostic_show_line(e->line, e->col);
-                        exit(1);
-                    }
-                }
-            }
-            // Signed left-shift OVERFLOW: `x << n` on a signed operand is `x * 2^n`,
-            // and shifting a set bit into/through the sign bit is UB (e.g.
-            // `1i32 << 31`). Treat it like `*` overflow — prove the result fits the
-            // type, else reject (unsigned operands, wrapping, or `unsafe` opt out).
-            if (sop == TOKEN_SHIFT_LEFT && lhs && lhs->type &&
-                parse_iN_uN(lhs->type, &bits, &sgn) && sgn &&
-                sema_walk_phase && sema_ranges) {
-                Range xr = sema_eval_range(lhs, sema_ranges);
-                Range nr = (rhs && rhs->kind == EXPR_LITERAL)
-                             ? range_make(rhs->as.literal_expr.value, rhs->as.literal_expr.value)
-                             : sema_eval_range(rhs, sema_ranges);
-                // `x << n` = x · 2^n; the extreme magnitudes are all at n = nr.max,
-                // so checking the product against a 2^nr.max multiplier bounds the
-                // whole result set. Reuses the shared wide-product overflow proof.
-                if (xr.known && nr.known && nr.min >= 0 && nr.max < 63) {
-                    int64_t p2max = (int64_t)1 << nr.max;
-                    if (!op_product_fits(xr, range_make(p2max, p2max), lhs->type)) {
-                        fprintf(stderr, "[E086] Error Ln %li, Col %li: signed left shift may overflow — "
-                            "the shifted value can exceed the operand type's range (UB, e.g. `1 << 31`). "
-                            "Use an unsigned operand, a wrapping op, constrain the value, or `unsafe`.\n",
-                            (long)e->line, (long)e->col);
-                        diagnostic_show_line(e->line, e->col);
-                        exit(1);
-                    }
-                }
-            }
-        }
-    }
 
-    // Division/modulo prove-or-reject (ALL contexts, func AND proc): the divisor
-    // must be PROVEN nonzero, else the divide can trap (SIGFPE) at runtime — a bare
-    // `x / d` on an unproven `d` is a safety fail-open. Consistent with the overflow
-    // prove-or-reject policy; `unsafe` opts out. A divisor is proven by VRA (range
-    // excludes 0) or a `!= 0` refinement/param constraint. This also rejects a
-    // PROVABLE signed TYPE_MIN / -1 — the one signed-division overflow that is UB.
-    if (LAIN_LEGACY_ANALYSIS && !sema_in_unsafe_block && sema_walk_phase && sema_ranges) {
-        TokenKind op = e->as.binary_expr.op;
-        Expr *lhs = e->as.binary_expr.left;
-        if ((op == TOKEN_SLASH || op == TOKEN_PERCENT) &&
-            lhs && lhs->type && is_integer_type(lhs->type)) {
-            Range rhs_range = sema_eval_range(e->as.binary_expr.right, sema_ranges);
-
-            if (!op_proven_nonzero(e->as.binary_expr.right)) {
-                if (!rhs_range.known)
-                    fprintf(stderr, "[E015] Error Ln %li, Col %li: division/modulo by a divisor "
-                        "that is not proven nonzero (its range is unknown). Guard it (`if d != 0`), "
-                        "constrain it (`d int != 0`), or wrap the divide in an `unsafe` block.\n",
-                        (long)e->line, (long)e->col);
-                else
-                    fprintf(stderr, "[E015] Error Ln %li, Col %li: division/modulo by a divisor "
-                        "whose range [%ld, %ld] includes zero. Guard it (`if d != 0`), constrain "
-                        "it (`d int != 0`), or wrap the divide in an `unsafe` block.\n",
-                        (long)e->line, (long)e->col, (long)rhs_range.min, (long)rhs_range.max);
-                diagnostic_show_line(e->line, e->col);
-                exit(1);
-            }
-
-            // Provable signed TYPE_MIN / -1 (UB): the divisor is provably EXACTLY
-            // -1 and the dividend's range reaches the type minimum. Requiring the
-            // divisor to be exactly -1 (not merely "could be -1") keeps ordinary
-            // signed division by a `!= 0` divisor usable — only a literal/proven
-            // `/ -1` over a possibly-TYPE_MIN dividend is the clear, provable UB.
-            int bits; bool sgn; long long tlo, thi;
-            Range lhs_range = sema_eval_range(lhs, sema_ranges);
-            if (parse_iN_uN(lhs->type, &bits, &sgn) && sgn &&
-                type_integer_range(lhs->type, &tlo, &thi) &&
-                lhs_range.known && lhs_range.min <= tlo &&
-                rhs_range.known && rhs_range.min == -1 && rhs_range.max == -1) {
-                fprintf(stderr, "[E086] Error Ln %li, Col %li: signed division may overflow — "
-                    "TYPE_MIN / -1 is undefined. Constrain the divisor (e.g. `d > 0`) or the "
-                    "dividend, or wrap the divide in an `unsafe` block.\n",
-                    (long)e->line, (long)e->col);
-                diagnostic_show_line(e->line, e->col);
-                exit(1);
-            }
-        }
-    }
 
     // Struct equality check: == and != on struct/enum types is a compile error (§8.8)
     {

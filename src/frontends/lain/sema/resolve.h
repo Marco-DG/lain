@@ -4,15 +4,11 @@
 #define SEMA_RESOLVE_H
 
 
-// ★ THE LEGACY ANALYSIS SWITCH (plan Part 7G, 2026-09-28). The front end still answered, from the
-// OLD range analysis (sema_eval_range), obligations the IR engine also raises — division, shifts,
-// index arguments, refinement assignments/returns/fields, dependent sizes, loop measures. It runs
-// first and exits, so for these the IR's (more precise) verdict was never reached: dividing by a
-// field was refused even after `p.d = 5`. Every such site is gated on this macro; each is deleted
-// once the IR is shown to raise the same obligation. 0 since 2026-09-28 (the IR raises them all).
-#ifndef LAIN_LEGACY_ANALYSIS
-#define LAIN_LEGACY_ANALYSIS 0
-#endif
+// ★ PLAN PART 7G (2026-09-28): twelve checks here, in typecheck.h and in sema.h decided analysis
+// obligations from the OLD range analysis and exited before the IR ran — division, shifts, `in`
+// index arguments, refinement assignments/returns/fields, dependent sizes, the `while` rule. They
+// were measured against the IR with a switch, the IR's gaps closed, the switch turned off, and the
+// code deleted. The obligations are the IR's (src/analysis/vra.h); what remains here is syntax.
 #include "../ast.h"
 #include "../ast_clone.h"
 #include "comptime.h" // CTFE engine
@@ -963,59 +959,6 @@ void sema_resolve_stmt(Stmt *s) {
   }
   
   case STMT_WHILE: {
-    // Purity: while loops without a termination measure are banned in pure functions,
-    // UNLESS the condition consists entirely of pointer-in-arr guards (p in arr where
-    // p has TYPE_POINTER): the walk phase will auto-synthesize the measure from the
-    // monotone pointer decrement pattern.
-    // ── E.4 PREREQUISITE: the loop ban must read the ROW, not the keyword ────────────────
-    // `func` is pure and total by default, and `effects diverge` is how a function says it may
-    // not terminate (plan 7B). Keying this on `kind == DECL_FUNCTION` alone meant that once
-    // `proc` starts disappearing, every migrated loop became an error with a message telling the
-    // programmer to "use 'proc'" — advice for a keyword that is going away.
-    //
-    // The sovereign engine raises the real obligation per loop header (analysis/vra.h) and reads
-    // `may_diverge`; this front-end check is the older, coarser one and now agrees with it.
-    if (current_function_decl && current_function_decl->kind == DECL_FUNCTION
-        && !current_function_decl->as.function_decl.diverges
-        && !(current_function_decl->as.function_decl.effects_declared
-             && (current_function_decl->as.function_decl.effects_bound & EFFECT_DIVERGE))) {
-        if (!s->as.while_stmt.measure) {
-            // Structural scan: an `expr in expr` guard OR a relational comparison
-            // (`i < n`, `i >= k`, …) in the condition → defer to the walk phase,
-            // which auto-synthesizes and verifies a measure (`n - i` etc.). Only a
-            // condition with no such shape (e.g. `while true`, `while flag`) is
-            // genuinely un-inferable and rejected early.
-            bool deferrable = false;
-            {
-                Expr *stk[16]; int top = 0; stk[top++] = s->as.while_stmt.cond;
-                while (top > 0) {
-                    Expr *e = stk[--top];
-                    if (!e || e->kind != EXPR_BINARY) continue;
-                    TokenKind op = e->as.binary_expr.op;
-                    if (op == TOKEN_KEYWORD_IN ||
-                        op == TOKEN_ANGLE_BRACKET_LEFT || op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL ||
-                        op == TOKEN_ANGLE_BRACKET_RIGHT || op == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL) {
-                        deferrable = true; break;
-                    }
-                    if (op == TOKEN_KEYWORD_AND && top < 14) {
-                        stk[top++] = e->as.binary_expr.left;
-                        stk[top++] = e->as.binary_expr.right;
-                    }
-                }
-            }
-            if (LAIN_LEGACY_ANALYSIS && !deferrable) {
-                fprintf(stderr, "[E011] Error Ln %li, Col %li: 'while' loops without a termination measure "
-                        "are not allowed in pure function '%.*s'. "
-                        "Add 'decreasing <measure>' or use 'proc'.\n",
-                        s->line, s->col,
-                        (int)current_function_decl->as.function_decl.name->length,
-                        current_function_decl->as.function_decl.name->name);
-                diagnostic_show_line(s->line, s->col);
-                exit(1);
-            }
-            // deferrable: the walk phase auto-infers + verifies the measure, or emits E011
-        }
-    }
     // Resolve condition, measure, and body
     sema_resolve_expr(s->as.while_stmt.cond);
     if (s->as.while_stmt.measure) {
