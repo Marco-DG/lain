@@ -4,6 +4,9 @@ local/
 
 # The compiler itself, and anything a build leaves behind.
 lain
+# ...but `lain` above also matched the SOURCE directory src/frontends/lain/: its tracked files
+# were unaffected, and a NEW file created there was silently ignored (git add refused it).
+!/src/frontends/lain/
 *.o
 *.obj
 *.exe

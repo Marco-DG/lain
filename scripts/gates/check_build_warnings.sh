@@ -24,7 +24,9 @@ UNITS="src/frontends/lain/main.c src/tools/vra_driver.c src/tools/linearity_driv
 bad=0
 for u in $UNITS; do
     [ -f "$u" ] || continue
-    all=$(gcc -std=c99 -Wall -Wextra $FATAL -c -o /dev/null "$u" -I src 2>&1)
+    # -O2, as the Makefile builds: -Wmaybe-uninitialized needs the optimiser's dataflow, so
+    # checking at -O0 checked a build nobody runs and saw fewer of the bugs it exists for.
+    all=$(gcc -std=c99 -O2 -Wall -Wextra $FATAL -c -o /dev/null "$u" -I src 2>&1)
     rc=$?
     # A compile ERROR must fail the gate too. Grepping only for the warning list made
     # errors INVISIBLE — a unit that does not build reports "no warnings", which is the

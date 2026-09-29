@@ -8,7 +8,11 @@
 #   make clean
 
 CC      ?= gcc
-CFLAGS  ?= -std=c99 -Wall -Wextra
+# -O2: the compiler analyses every function with a cubic closure, and at -O0 that was the whole
+# cost. Measured 2026-09-29: bench/simd_lexer/simdlex.ln 5896 s at -O0, 48 s at -O2; the
+# 925-program corpus 269 s -> 79 s, with IDENTICAL verdicts. For a debugger:
+#   make CFLAGS="-std=c99 -O0 -g -Wall -Wextra"
+CFLAGS  ?= -std=c99 -O2 -Wall -Wextra
 SRC      = src/frontends/lain/main.c
 BIN      = lain
 
