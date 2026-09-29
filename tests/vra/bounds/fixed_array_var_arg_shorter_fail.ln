@@ -1,0 +1,10 @@
+// EXPECT: [E087]
+// SOUNDNESS: the same missing obligation through a `var` parameter is an out-of-bounds WRITE.
+func setlast(var a i32[8]) {
+    a[7] = 1
+}
+func main() i32 {
+    var one i32[1] = [5]
+    setlast(var one)
+    return one[0]
+}

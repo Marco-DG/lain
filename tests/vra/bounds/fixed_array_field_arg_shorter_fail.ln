@@ -1,0 +1,12 @@
+// EXPECT: [E087]
+// SOUNDNESS: a short array FIELD passed to a longer fixed-array parameter.
+type Box {
+    d i32[1]
+}
+func last(a i32[8]) i32 {
+    return a[7]
+}
+func main() i32 {
+    b = Box([5])
+    return last(b.d)
+}

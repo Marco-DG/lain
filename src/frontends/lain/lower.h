@@ -1271,6 +1271,61 @@ static void ir_lower_call_slice_len_requires(LowerCtx *c, Decl *callee, IrInstr 
     }
 }
 
+// ── A CONSTANT-LENGTH ARRAY PARAMETER IS A LENGTH PRECONDITION TOO ─────────────────────────
+// `func last(a i32[8]) i32 { return a[7] }` proves a[7] from the TYPE: the callee's body is
+// right to trust that `a` has 8 elements. Nothing at the call site made that true. The sized
+// form `T[expr]` asserts `len(arg) relop expr` above, but a constant N (`array_len >= 0`, no
+// size_expr) was skipped, and only an array LITERAL argument was measured (front end, E012):
+//     var one i32[1] = [5]; return last(one)        compiled, and read 7 elements past the end
+//     setlast(var one) with `var a i32[8]`           compiled, and WROTE past the end
+//     last(b.d) on a field `d i32[1]`                compiled, same
+//     last(s) on a slice `s i32[]`                   emitted C gcc rejects (2 args for 1)
+// (ASan: stack-buffer-overflow; found 2026-09-29 by fuzz_bsearch's slice carrier.)
+//
+// The obligation is `len(arg) >= N`, not `==`: the callee touches N elements and no more, so a
+// longer array is safe, and passing a prefix of a bigger array stays legal as it always was.
+// A fixed-array argument's length is a constant from its source TYPE; a slice's is its runtime
+// length, and the slice's DATA pointer is what a fixed-array parameter receives. An argument
+// whose length cannot be read is refused (assert false): trusting it is the hole being closed.
+static void ir_lower_call_fixed_len_requires(LowerCtx *c, Decl *callee, IrInstr *call, ExprList *args) {
+    if (!callee || callee->kind==DECL_STRUCT) return;
+    int idx = 0;
+    ExprList *a = args;
+    for (DeclList *p=callee->as.function_decl.params; p && a; p=p->next, a=a->next, idx++) {
+        if (idx >= call->n_operands) break;
+        if (!p->decl || p->decl->kind!=DECL_VARIABLE) continue;
+        Type *pty = p->decl->as.variable_decl.type;
+        if (!pty || pty->kind!=TYPE_ARRAY || pty->array_len<0 || pty->size_expr) continue;
+        IrValue *arg = call->operands[idx];
+        if (!arg || !arg->type) continue;
+        Expr *ax = a->expr;
+        while (ax && (ax->kind==EXPR_MUT || ax->kind==EXPR_MOVE))          // `var x` / `mov x` pass x
+            ax = ax->kind==EXPR_MUT ? ax->as.mut_expr.expr : ax->as.move_expr.expr;
+        IrType *u64 = ir_type_int(c->a, 64, false);
+        if (arg->type->kind==IRT_SLICE) {                                 // runtime length: prove it
+            IrValue *L = ir_slice_len(c->f, c->cur, arg);
+            IrValue *N = ir_const_int(c->f, c->cur, pty->array_len, u64);
+            ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_UGE, L, N), 87);
+            IrType *el = ir_lower_type(c, pty->element_type);
+            call->operands[idx] = ir_slice_data(c->f, c->cur, arg, el ? el : arg->type->elem);
+            continue;
+        }
+        int64_t len = -1;                                                 // a constant: decide it HERE
+        if (ax && ax->type && ax->type->kind==TYPE_ARRAY && ax->type->array_len>=0) len = ax->type->array_len;
+        else if (arg->type->kind==IRT_ARRAY && arg->type->array_len>=0)    len = arg->type->array_len;
+        // ★ NOTHING IS EMITTED WHEN THE CONSTANT SUFFICES. `drain(mov a)` on an aggregate lowers
+        // to `consume %a; call drain(%a)`, and linearity accepts the call's use of %a only when
+        // the consume is the instruction RIGHT BEFORE it (D-35). A statically true assert
+        // between the two turned every whole-array move into a false E001.
+        if (len >= pty->array_len) continue;
+        // Too short, or a length that cannot be read (fail CLOSED): a refuted assert. Rejected
+        // either way, so what it sits between no longer matters.
+        IrValue *L = ir_const_int(c->f, c->cur, len < 0 ? 0 : len, u64);
+        IrValue *N = ir_const_int(c->f, c->cur, pty->array_len, u64);
+        ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_UGE, L, N), 87);
+    }
+}
+
 // address of an lvalue (identifier slot / index / member) — for assignment + index.
 // `p.f` where `p : *T` implicitly DEREFERENCES, exactly as C's `->` does. The lowering used
 // the target's own type for the field lookup, so a member of a pointer-to-struct resolved to
@@ -2473,6 +2528,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             }
             ir_lower_call_requires(c, callee, ins);   // contracts: prove the callee's scalar preconditions
             ir_lower_call_slice_len_requires(c, callee, ins);  // …and its sized-slice length preconditions
+            if (!indirect)                                     // …and its constant-length arrays
+                ir_lower_call_fixed_len_requires(c, callee, ins, e->as.call_expr.args);
             ir_emit(c->cur, ins);
             if (ins->result) ir_lower_return_ensures(c, callee, ins->result, ins);  // contracts: learn the ensures
             return ins->result ? ins->result : ir_const_int(c->f,c->cur,0,ir_type_int(c->a,32,true));

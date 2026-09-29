@@ -1,0 +1,11 @@
+// EXPECT: [E087]
+// SOUNDNESS: `last` proves a[7] from its parameter TYPE `i32[8]`, so the call owes `len >= 8`.
+// A 1-element array VARIABLE compiled before 2026-09-29 (only an array literal was measured)
+// and read 7 elements past the end (ASan: stack-buffer-overflow).
+func last(a i32[8]) i32 {
+    return a[7]
+}
+func main() i32 {
+    var one i32[1] = [5]
+    return last(one)
+}

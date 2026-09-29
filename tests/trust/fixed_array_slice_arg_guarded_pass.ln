@@ -1,0 +1,20 @@
+// TRUST: a slice passed to a constant-length array parameter, behind a length guard, executed.
+// The parameter `a i32[8]` lets the callee prove a[7] from its type, so the CALL owes
+// `s.len >= 8`; the guard proves it, and the callee receives the slice's data pointer. Before
+// 2026-09-29 this call emitted C gcc rejected (two arguments for one) and, unguarded, compiled
+// with no length obligation at all.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func last(a i32[8]) i32 {
+    return a[7]
+}
+func g(s i32[]) i32 {
+    if s.len < 8 { return 0 }
+    return last(s)
+}
+func main() i32 effects io {
+    var ten i32[10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    var three i32[3] = [1, 2, 3]
+    var big i32[64] = [1 for z in 0..64]
+    libc_printf("%d %d %d\n", g(ten), g(three), last(big))
+    return 0
+}

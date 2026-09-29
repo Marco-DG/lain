@@ -1,0 +1,14 @@
+// EXPECT: [E087]
+// SOUNDNESS: a slice of unknown length passed to `a i32[8]` with no guard. Before 2026-09-29
+// this emitted C gcc rejected; with the call fixed, it must still be refused until `s.len >= 8`
+// is proven (see tests/trust/fixed_array_slice_arg_guarded_pass.ln for the proven form).
+func last(a i32[8]) i32 {
+    return a[7]
+}
+func g(s i32[]) i32 {
+    return last(s)
+}
+func main() i32 {
+    var one i32[1] = [5]
+    return g(one)
+}

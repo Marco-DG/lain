@@ -1423,6 +1423,14 @@ out=2
 at=const 2
 ty=Color scalar
 ty=Slice_u8 scalar
+### tests/trust/fixed_array_slice_arg_guarded_pass.ln
+rc=0
+out=7 0 1
+at=access 2
+at=nonnull 4
+at=pure 4
+ty=Slice_i32 scalar
+ty=Slice_u8 scalar
 ### tests/trust/i64_min_divisor_pass.ln
 rc=0
 out=
