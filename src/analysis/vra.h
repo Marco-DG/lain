@@ -3837,7 +3837,18 @@ static void vra_seed_entry(Vra *V, IrFunc *f, int dim) {
       }
     }
 
+// ★ ONE ANALYSIS, READ BY EVERY PASS THAT CAN. A program's functions were each analysed about
+// four times — the report, the borrow pass's disjointness queries, the effects pass's
+// termination question at emission, and callee summaries: 23 runs for 6 functions in the
+// calculator, 88% of the time in oct_close. The report now shares its analysis with the borrow
+// pass (vra_shared_*), and a top-level analysis leaves the loop-termination answer on the
+// function for the effects pass (vra_loops_summary). Nested analyses (a callee summary, a
+// mutual-recursion check) leave nothing: they run under guards a top-level one does not.
+static int     vra_depth = 0;
+static IrFunc *vra_shared_f = NULL;     // the function whose analysis the borrow pass may reuse
+static Vra    *vra_shared_V = NULL;
 static Vra *vra_analyze(IrFunc *f) {
+    vra_depth++;
     Vra *V = calloc(1, sizeof *V);
     V->f=f; V->nvar = f->next_value_id>0 ? f->next_value_id : 1;
     // ── VARIABLE PACKING (2.2). Only values that can appear in a numeric relation get an
@@ -4357,7 +4368,14 @@ static Vra *vra_analyze(IrFunc *f) {
     for (int i=0;i<nb;i++) if (loopmod[i]) free(loopmod[i]);
     free(loopmod);
     free(W_m); free(T_m); free(J_m); free(D_m);
+    if (vra_depth == 1 && vra_mod) {
+        bool all = !f->incomplete;
+        for (IrBlock *b=f->blocks; b && all; b=b->next)
+            if (b->is_loop_header && !vra_loop_terminates(V, b)) all = false;
+        f->vra_loops_summary = all ? 1 : 2;
+    }
     oct_map = oct_map_saved;
+    vra_depth--;
     return V;
 }
 
@@ -4480,6 +4498,7 @@ typedef struct {
     IrBlock  *blk;      // the block being examined
     IrInstr  *at;       // the instruction the query is about (replay stops BEFORE it)
     int64_t  *scratch;  // dsz doubles, reused across queries
+    bool      shared;   // V is the report's analysis (vra_shared_V): not ours to free
 } VraDisjoint;
 
 // Are `a` and `b` PROVABLY different values at the current point? Conservative: false means
@@ -4509,10 +4528,11 @@ static bool vra_index_disjoint(void *vctx, IrValue *a, IrValue *b) {
 }
 
 static VraDisjoint *vra_disjoint_open(IrFunc *f) {
-    Vra *V = vra_analyze(f);
+    bool shared = (vra_shared_f == f && vra_shared_V);
+    Vra *V = shared ? vra_shared_V : vra_analyze(f);
     if (!V) return NULL;
     VraDisjoint *D = calloc(1, sizeof *D);
-    D->V = V; D->scratch = malloc((size_t)V->dsz*8);
+    D->V = V; D->scratch = malloc((size_t)V->dsz*8); D->shared = shared;
     ir_place_index_disjoint_fn  = vra_index_disjoint;
     ir_place_index_disjoint_ctx = D;
     return D;
@@ -4521,7 +4541,8 @@ static void vra_disjoint_close(VraDisjoint *D) {
     ir_place_index_disjoint_fn  = NULL;
     ir_place_index_disjoint_ctx = NULL;
     if (!D) return;
-    vra_free(D->V); free(D->scratch); free(D);
+    if (!D->shared) vra_free(D->V);
+    free(D->scratch); free(D);
 }
 
 // ── 3.4: RECURSION TERMINATION ──────────────────────────────────────────────────────────

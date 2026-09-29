@@ -504,6 +504,9 @@ typedef struct IrFunc {
     // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
     IrEffect   effects;
     bool       effects_done, effects_in_progress;
+    // Set by a TOP-LEVEL vra_analyze: 1 = every loop proven to terminate, 2 = not, 0 = not yet
+    // asked. The effects pass reads it instead of analysing the function a second time.
+    unsigned char vra_loops_summary;
     // ★ E.5 — the DECLARED row, and the ONE fact about an extern that cannot be inferred.
     // An extern has no body, so its row is BELIEVED rather than computed, and the direction
     // reverses: a definition's silence means ∅ and its row WIDENS, while an extern's silence

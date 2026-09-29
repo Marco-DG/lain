@@ -109,6 +109,12 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
 
     // DIVERGE: any loop the analyzer can't prove terminates. Uses vra_loop_terminates
     // DIRECTLY (not the func-gated VRA_TERMINATION obligation), so it applies to procs too.
+    // The answer a top-level analysis already left on the function (vra.h, vra_loops_summary),
+    // when there is one — the same analysis, not a second run of it.
+    if (f->vra_loops_summary) {
+        if (f->vra_loops_summary == 2) e |= IR_EFFECT_DIVERGE;
+        return e;
+    }
     Vra *V = vra_analyze(f);
     for (IrBlock *b=f->blocks; b; b=b->next)
         if (b->is_loop_header && !vra_loop_terminates(V, b)) { e |= IR_EFFECT_DIVERGE; break; }

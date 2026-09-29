@@ -38,7 +38,11 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     // borrow and move the same place in one call (E008). Both are true; only the second says
     // what the programmer did wrong, and the first is an artefact of `mov` being lowered as a
     // use. Emission order is unchanged; only the analysis order and this suppression are new.
+    // One range analysis serves the borrow pass's disjointness queries and the report below.
+    Vra *V = numeric ? vra_analyze(f) : NULL;
+    vra_shared_f = V ? f : NULL; vra_shared_V = V;
     Borrow *B = borrow_analyze_mod(f, mod);
+    vra_shared_f = NULL; vra_shared_V = NULL;
 
     Lin *L = lin_analyze(f);
     for (int i = 0; i < L->nfinds; i++) {
@@ -96,7 +100,6 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     borrow_free(B);
 
     if (!numeric) return n;   // the old engine still owns bounds/overflow/division
-    Vra *V = vra_analyze(f);
     for (int i = 0; i < V->nchecks; i++) {
         VraCheck *c = &V->checks[i];
         if (c->ok) continue;                       // proved check-free: nothing to say
