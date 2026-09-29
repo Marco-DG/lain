@@ -366,11 +366,14 @@ gen_effectful_result() {  # ★ the ANNOTATION class: a value-returning function
     # such a call outright, so if the effect row is wrong the print (or the abort) vanishes at
     # -O3 and survives at -O0. There is no other shape that can falsify those two attributes,
     # and until this existed the differential compiled at -O0 only — it could not have seen it.
+    # ★ The effectful functions must SAY `effects io`. Written before `proc` was removed, they did
+    # not, and from 2026-09-25 every program this generator made was refused (E011) — the one
+    # shape that can falsify `pure`/`const` had judged nothing for four days.
     local k=$(r 3) n=$(( $(r 3) + 2 ))
     case $k in
       0) cat <<EOF
 extern func libc_printf(fmt *u8, ...) i32 effects io
-func noisy(x i32) i32 {
+func noisy(x i32) i32 effects io {
     libc_printf("t%d\n", x)
     return x +% 1
 }
@@ -387,7 +390,7 @@ EOF
       1) cat <<EOF
 extern func libc_printf(fmt *u8, ...) i32 effects io
 func quiet(x i32) i32 { return x *% 3 }
-func noisy(x i32) i32 {
+func noisy(x i32) i32 effects io {
     libc_printf("u%d\n", quiet(x))
     return x
 }
@@ -401,7 +404,7 @@ EOF
       ;;
       *) cat <<EOF
 extern func libc_printf(fmt *u8, ...) i32 effects io
-func tally(var acc i32, x i32) i32 {
+func tally(var acc i32, x i32) i32 effects io {
     acc = acc +% x
     libc_printf("v%d\n", acc)
     return acc
