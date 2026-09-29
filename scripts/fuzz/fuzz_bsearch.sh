@@ -18,16 +18,34 @@ RANDOM=$seed
 crashes=0; unsound=0; accepted=0; rejected=0
 
 sizes=(4 8 16 32 64)
+slice_gens=0
 for ((i=0; i<N; i++)); do
     sz=${sizes[$((RANDOM % ${#sizes[@]}))]}
-    # hi-start: sometimes the true length (sound), sometimes off (must reject)
-    case $((RANDOM % 4)) in
-        0) histart=$sz;;
-        1) histart=$((sz - 1));;
-        2) histart=$((sz + RANDOM % 40));;   # too big → a[mid] OOB if accepted
-        3) histart=$sz;;
-    esac
-    (( histart < 1 )) && histart=1
+    # ★ THE CARRIER. Every program used to search a FIXED array, where hi <= 64 and plain
+    # intervals bound the midpoint: the relational proof this fuzzer exists for was never needed,
+    # and binary search over a SLICE was refused (false E086) with this fuzzer at zero. Half the
+    # programs now search `a i32[]` with hi derived from `a.len`, which only the midpoint
+    # identity and the loop invariant can prove, and main calls it on arrays of several lengths.
+    if (( RANDOM % 2 )); then
+        carrier="a i32[]"; slice_gens=$((slice_gens+1))
+        # a second, 1-element array: the slice leg must hold at every length, not one
+        one_call=$'\n        acc = acc +% bsearch(one, t)'
+        case $((RANDOM % 4)) in
+            0|3) histart="a.len";;
+            1) histart="a.len - 1";;                    # underflows at len 0, short by one
+            2) histart="a.len + $((1 + RANDOM % 40))";; # too big → a[mid] OOB if accepted
+        esac
+    else
+        carrier="a i32[$sz]"; one_call=""   # a fixed parameter takes only its own length
+        # hi-start: sometimes the true length (sound), sometimes off (must reject)
+        case $((RANDOM % 4)) in
+            0) histart=$sz;;
+            1) histart=$((sz - 1));;
+            2) histart=$((sz + RANDOM % 40));;   # too big → a[mid] OOB if accepted
+            3) histart=$sz;;
+        esac
+        (( histart < 1 )) && histart=1
+    fi
     # updates
     loU=("mid + 1" "mid")
     hiU=("mid" "mid + 1" "mid - 1")
@@ -37,7 +55,7 @@ for ((i=0; i<N; i++)); do
     src="$SC/t_$i.ln"
     cat > "$src" <<EOF
 extern func libc_printf(fmt *u8, ...) i32 effects io
-func bsearch(a i32[$sz], target i32) usize {
+func bsearch($carrier, target i32) usize {
     var lo usize = 0
     var hi usize = $histart
     while lo < hi decreasing hi - lo {
@@ -48,10 +66,11 @@ func bsearch(a i32[$sz], target i32) usize {
 }
 func main() i32 effects io, raises, alloc {
     var arr i32[$sz] = [$(seq -s ', ' 0 $((sz-1)))]
+    var one i32[1] = [0]
     var t i32 = 0
     var acc usize = 0
     while t < $((sz + 4)) decreasing $((sz + 4)) - t {
-        acc = acc + bsearch(arr, t)
+        acc = acc +% bsearch(arr, t)$one_call
         t = t + 1
     }
     libc_printf("%zu\n", acc)
@@ -92,7 +111,7 @@ EOF
     fi
 done
 
-echo "fuzz_bsearch: gens=$N accepted=$accepted rejected=$rejected"
+echo "fuzz_bsearch: gens=$N (slice carrier: $slice_gens) accepted=$accepted rejected=$rejected"
 echo "  bugs:  broken-C=$crashes  UNSOUND=$unsound"
 rm -rf "$SC"
 [ $((crashes + unsound)) -eq 0 ]

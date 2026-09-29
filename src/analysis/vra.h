@@ -1392,9 +1392,14 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                     if (dv<0 || dv>=V->nvar || !V->cknown[dv] || V->cval[dv] < 1) continue;
                     IrInstr *sd2 = V->def[qd->operands[0]->id];
                     if (!sd2 || sd2->op!=IR_SUB || sd2->n_operands<2 || !vra_zexact(V, sd2)) continue;
-                    if (sd2->operands[1]->id != lo_) continue;          // (b − a), same a
+                    // (b − a), same a: the same VALUE, not the same SSA id. Each mention of a
+                    // variable is its own load, so `lo + (hi - lo) / 2` has two ids for `lo`;
+                    // equal in the closed octagon means equal here (see vra_check_overflow).
+                    int av  = sd2->operands[1]->id;
                     int hi_ = sd2->operands[0]->id;
                     oct_close(W);
+                    if (av != lo_ && !(vra_diff_ub(V, W, av, lo_) <= 0 &&
+                                       vra_diff_ub(V, W, lo_, av) <= 0)) continue;
                     if (vra_diff_ub(V, W, lo_, hi_) > 0) continue;      // a ≤ b not provable
                     vra_add_diff_le(V, W, r, hi_, 0);                   // r ≤ b
                     vra_add_diff_le(V, W, lo_, r, 0);                   // r ≥ a
@@ -2466,7 +2471,15 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
             if (dv<0 || dv>=V->nvar || !V->cknown[dv] || V->cval[dv] < 1) continue;
             IrInstr *sd2 = V->def[qd->operands[0]->id];
             if (!sd2 || sd2->op!=IR_SUB || sd2->n_operands<2 || !vra_zexact(V, sd2)) continue;
-            if (sd2->operands[1]->id != lv->id) continue;              // the SAME `a`
+            // The SAME `a`, as a VALUE rather than as an SSA id. `lo + (hi - lo) / 2` lowers to
+            // two loads of `lo` (one per mention), so the ids differ whenever `lo` is a variable,
+            // and the identity only ever fired where plain intervals already sufficed. Binary
+            // search over a SLICE was refused with a false E086 for exactly this reason. Two
+            // values the closed octagon holds equal (a - a' <= 0 and a' - a <= 0) are the same
+            // number at this point, and SSA values never change afterwards.
+            int av = sd2->operands[1]->id;
+            if (av != lv->id && !(vra_diff_ub(V, W, av, lv->id) <= 0 &&
+                                  vra_diff_ub(V, W, lv->id, av) <= 0)) continue;
             if (vra_diff_ub(V, W, lv->id, sd2->operands[0]->id) > 0) continue;   // a <= b?
             int64_t hlo, hhi; vra_range(V, W, sd2->operands[0], &hlo, &hhi);
             int64_t llo, lhi2; vra_range(V, W, lv, &llo, &lhi2); (void)lhi2;

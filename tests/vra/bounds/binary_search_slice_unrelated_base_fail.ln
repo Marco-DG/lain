@@ -1,0 +1,16 @@
+// EXPECT: [E086]
+// SOUNDNESS: the midpoint identity `a + (b - a)/D in [a, b]` needs the SAME `a` on both sides.
+// Since 2026-09-29 "same" means equal in the octagon rather than the same SSA id; `other` is a
+// different value (other <= hi, but other != lo), so `lo + (hi - other)/2` can exceed hi and
+// must stay refused.
+func f(a i32[], t i32, other usize) usize {
+    var lo usize = 0
+    var hi usize = a.len
+    while lo < hi {
+        if other > hi { return 0 }
+        var mid usize = lo + (hi - other) / 2
+        if a[mid] < t { lo = mid + 1 } else { hi = mid }
+    }
+    return lo
+}
+func main() i32 { return 0 }

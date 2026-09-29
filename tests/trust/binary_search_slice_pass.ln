@@ -1,0 +1,26 @@
+// TRUST: binary search over a SLICE, executed. `hi` starts at `a.len`, which only the midpoint
+// identity (`lo + (hi - lo) / 2` lies in [lo, hi] when lo <= hi) and the loop invariant
+// `0 <= lo <= hi <= a.len` can bound, so `a[mid]` and `mid + 1` are proven with no constant in
+// sight. Refused with a false E086 until 2026-09-29: `lo` is loaded once per mention, and the
+// identity compared SSA ids instead of values. Every corpus binary search used a fixed array,
+// where plain intervals already bound 64, so nothing noticed.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func lower_bound(a i32[], t i32) usize {
+    var lo usize = 0
+    var hi usize = a.len
+    while lo < hi {
+        var mid usize = lo + (hi - lo) / 2
+        if a[mid] < t { lo = mid + 1 } else { hi = mid }
+    }
+    return lo
+}
+func main() i32 effects io {
+    var one i32[1] = [5]
+    var seven i32[7] = [1, 3, 5, 7, 9, 11, 13]
+    var t i32 = 0
+    while t < 15 {
+        libc_printf("%zu %zu\n", lower_bound(one, t), lower_bound(seven, t))
+        t = t + 1
+    }
+    return 0
+}
