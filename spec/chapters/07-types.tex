@@ -223,9 +223,11 @@ type GpioModer {
 \begin{itemize}
   \item Construction: \lain{GpioModer(1, 2, 3, 0)} packs the four
         2-bit fields into the container.
-  \item Read: \lain{r.pin1} extracts bits 2-3 via shift-and-mask.
+  \item Read: \lain{r.pin1} extracts bits 2-3 via shift-and-mask; an \lain{iN} field is
+        sign-extended.
   \item Write: \lain{r.pin1 = v} updates bits 2-3, leaving other
         fields unchanged.
+  \item The whole struct is the container integer: it is copied, passed and returned as one.
 \end{itemize}
 
 \begin{constraint}
@@ -239,11 +241,20 @@ type GpioModer {
   exceed 64. Otherwise \illformed{}~(\diagcode{E121}).
 \end{constraint}
 
+\begin{constraint}
+  A field of a \tok{[packed]} struct has no address. A \lain{var} reference to one
+  (\lain{f(var r.pin1)}, \lain{var x = var r.pin1}) or its address (\lain{\&r.pin1}) is
+  \illformed{}~(\diagcode{E121}), inside \lain{unsafe} as well: this is a property of the
+  representation, not a safety policy. A \lain{var} reference to the whole struct is well-formed.
+\end{constraint}
+
 \begin{note}
   This feature targets embedded use cases: hardware registers,
   packed network protocols, codec implementations. The reference
-  implementation emits a scalar typedef plus inline getter/setter
-  functions for each field.
+  implementation emits the container as a scalar typedef and every access inline:
+  shift-and-mask reads, read-modify-write stores, and construction by OR-ing the shifted
+  fields. The layout can be asserted where the type is declared:
+  \lain{assert @sizeof(GpioModer) == 1} (\S\,\ref{sec:decl.static-assert}).
 \end{note}
 
 \subsection{Integer rank and widening}

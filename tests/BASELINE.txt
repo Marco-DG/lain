@@ -1499,6 +1499,14 @@ ty=Slice_u8 scalar
 rc=0
 out=2000000000
 ty=Slice_u8 scalar
+### tests/trust/packed_struct_bits_pass.ln
+rc=0
+out=
+at=const 12
+at=nonnull 2
+ty=Header scalar
+ty=Signed scalar
+ty=Wide scalar
 ### tests/trust/payload_marker_pass.ln
 rc=0
 out=1234
@@ -1772,15 +1780,15 @@ out=
 ### tests/types/packed_mixed_widths_pass.ln
 rc=0
 out=
-ty=Header struct
+ty=Header scalar
 ### tests/types/packed_struct_pass.ln
 rc=0
 out=
-ty=GpioModer struct
+ty=GpioModer scalar
 ### tests/types/packed_struct_reconstruct_pass.ln
 rc=0
 out=
-ty=GpioModer struct
+ty=GpioModer scalar
 ### tests/types/paradigm_b_widening_pass.ln
 rc=0
 out=

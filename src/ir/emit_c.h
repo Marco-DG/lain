@@ -316,6 +316,9 @@ static void ir_emit_sentinel_cmp(IrType *back, int vid, long long sent, FILE *o)
         fprintf(o, "v%d == (", vid), ir_layout_backing_ctype(back, o), fprintf(o, ")%lldll", sent);
 }
 
+static IrInstr *ir_pk_of(IrValue *p);                  // [packed] field access (below)
+static void ir_emit_packed_load(IrInstr *i, FILE *o);
+static void ir_emit_packed_store(IrInstr *i, FILE *o);
 static void ir_emit_instr_c(IrInstr *i, FILE *o) {
     switch (i->op) {
         case IR_CONST:
@@ -339,6 +342,7 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                                   i->operands[0]->id, i->operands[1]->id); break;
         case IR_FIELD_PTR: {   // base is a struct pointer; name the field from its type
             IrType *st = i->operands[0]->type ? i->operands[0]->type->elem : NULL;
+            if (st && ir_struct_layout(st).packed) break;   // bits, not an address: see ir_pk_of
             IrName *fn = (st && st->kind==IRT_STRUCT && i->aux.field_idx < st->n_fields)
                      ? st->field_names[i->aux.field_idx] : NULL;
             // An ARRAY field is already a base pointer once named — C decays it — so taking
@@ -355,6 +359,7 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
         // alignment the address need not have — memcpy is the well-defined spelling and gcc
         // turns it into the single instruction anyway.
         case IR_LOAD:
+            if (ir_pk_of(i->operands[0])) { ir_emit_packed_load(i, o); break; }
             if (i->result->type && i->result->type->kind==IRT_VECTOR
                 && i->operands[0]->type && i->operands[0]->type->elem
                 && i->operands[0]->type->elem->kind != IRT_VECTOR)
@@ -363,6 +368,7 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             else fprintf(o, "  v%d = *v%d;\n", i->result->id, i->operands[0]->id);
             break;
         case IR_STORE:
+            if (ir_pk_of(i->operands[0])) { ir_emit_packed_store(i, o); break; }
             if (i->operands[1]->type && i->operands[1]->type->kind==IRT_VECTOR
                 && i->operands[0]->type && i->operands[0]->type->elem
                 && i->operands[0]->type->elem->kind != IRT_VECTOR)
@@ -529,6 +535,15 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                     i->operands[0]->id, i->operands[1]->id, i->operands[0]->id);
             break;
         case IR_STRUCT_NEW: {
+            { IrStructLayout PL = ir_struct_layout(i->result->type);
+              if (PL.packed) {                  // OR the fields, each masked, into place
+                  fprintf(o, "  v%d = (uint%d_t)(0", i->result->id, PL.container_bits);
+                  for (int k = 0; k < i->n_operands && k < PL.n; k++)
+                      fprintf(o, " | (((uint64_t)v%d & 0x%llxULL) << %d)", i->operands[k]->id,
+                              PL.width[k] >= 64 ? ~0ULL : ((1ULL << PL.width[k]) - 1), PL.off[k]);
+                  fputs(");\n", o);
+                  break;
+              } }
             // An ARRAY field cannot be initialised from a pointer in a C compound literal, and
             // the IR's uniform model gives every array value as its decayed base. So brace the
             // array fields empty and COPY them in — which is what `M([10,20,30,40], 4)` means.
@@ -655,7 +670,61 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
     }
 }
 
+// A FIELD_PTR into a [packed] struct names BITS, not an address: it is emitted as nothing, and the
+// LOAD or STORE through it becomes shift-and-mask on the container its base points to. The front
+// end refuses every other use (a `var` reference, `&`), and ir_emit_func_c checks that none
+// reached here — an escaping one would be a pointer to nothing.
+static IrInstr **ir_pk_tab = NULL;      // value id -> its [packed] FIELD_PTR, per function
+static int       ir_pk_n   = 0;
+static IrInstr *ir_pk_of(IrValue *p) {
+    return (p && ir_pk_tab && p->id >= 0 && p->id < ir_pk_n) ? ir_pk_tab[p->id] : NULL;
+}
+static void ir_pk_build(IrFunc *f, Arena *a) {
+    ir_pk_n = f->next_value_id > 0 ? f->next_value_id : 0;
+    ir_pk_tab = ir_pk_n ? arena_push_many_aligned(a, IrInstr*, ir_pk_n) : NULL;
+    for (int k = 0; k < ir_pk_n; k++) ir_pk_tab[k] = NULL;
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (i->op != IR_FIELD_PTR || i->n_operands < 1 || !i->result) continue;
+            IrValue *bv = i->operands[0];
+            IrType *st = (bv && bv->type) ? bv->type->elem : NULL;
+            if (st && ir_struct_layout(st).packed && i->result->id < ir_pk_n) ir_pk_tab[i->result->id] = i;
+        }
+    // Fail closed: a packed field's "address" may only be what a LOAD reads or a STORE writes.
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            for (int q = 0; q < i->n_operands; q++) {
+                if (!ir_pk_of(i->operands[q])) continue;
+                if ((i->op == IR_LOAD || i->op == IR_STORE) && q == 0) continue;
+                fprintf(stderr, "[E121] Error: a field of a [packed] struct is used as an address "
+                        "(%s) — it is bits inside an integer and has none. (internal: the front end "
+                        "should have refused this)\n", i->op == IR_CALL ? "passed to a call" : "an address use");
+                exit(1);
+            }
+}
+static void ir_emit_packed_load(IrInstr *i, FILE *o) {
+    IrInstr *fp = ir_pk_of(i->operands[0]);
+    IrStructLayout L = ir_struct_layout(fp->operands[0]->type->elem);
+    int k = fp->aux.field_idx, w = L.width[k];
+    unsigned long long m = w >= 64 ? ~0ULL : ((1ULL << w) - 1);
+    fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o); fputs(")", o);
+    if (L.sgn[k] && w < 64)                 // sign-extend the field's top bit
+        fprintf(o, "((int64_t)(((((uint64_t)*v%d >> %d) & 0x%llxULL) ^ 0x%llxULL) - 0x%llxULL));\n",
+                fp->operands[0]->id, L.off[k], m, 1ULL << (w - 1), 1ULL << (w - 1));
+    else
+        fprintf(o, "(((uint64_t)*v%d >> %d) & 0x%llxULL);\n", fp->operands[0]->id, L.off[k], m);
+}
+static void ir_emit_packed_store(IrInstr *i, FILE *o) {
+    IrInstr *fp = ir_pk_of(i->operands[0]);
+    IrStructLayout L = ir_struct_layout(fp->operands[0]->type->elem);
+    int k = fp->aux.field_idx, w = L.width[k], b = fp->operands[0]->id;
+    unsigned long long m = w >= 64 ? ~0ULL : ((1ULL << w) - 1);
+    fprintf(o, "  *v%d = (uint%d_t)(((uint64_t)*v%d & ~(0x%llxULL << %d)) | (((uint64_t)v%d & 0x%llxULL) << %d));\n",
+            b, L.container_bits, b, m, L.off[k], i->operands[1]->id, m, L.off[k]);
+}
+
 static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
+    ir_pk_build(f, a);
     bool is_main = f->name->length==4 && strncmp(f->name->name,"main",4)==0;
     // signature
     if (is_main) fputs("int main(void)", o);
@@ -991,6 +1060,11 @@ static void ir_emit_one_sum_body(IrType *st, FILE *o) {
 static void ir_emit_one_struct_body(IrType *st, FILE *o) {
     if (st->kind == IRT_SUM) { ir_emit_one_sum_body(st, o); return; }
     IrName *nm = st->sname;
+    { IrStructLayout PL = ir_struct_layout(st);
+      if (PL.packed) {                      // [packed]: the whole struct IS one integer
+          fprintf(o, "typedef uint%d_t %.*s;\n", PL.container_bits, (int)nm->length, nm->name);
+          return;
+      } }
     fprintf(o, "struct %.*s { ", (int)nm->length, nm->name);
     for (int fi=0; fi<st->n_fields; fi++) {
         IrType *ft = st->fields[fi]; IrName *fn = st->field_names[fi];
@@ -1067,6 +1141,7 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
         // that (and name a struct that is never defined), exactly as it would for a packed
         // struct in the old backend.
         if (ts.structs[i]->kind == IRT_SUM && ir_layout_of(ts.structs[i]).packed) continue;
+        if (ir_struct_layout(ts.structs[i]).packed) continue;   // a [packed] struct is a typedef too
         fprintf(o, "typedef struct %.*s %.*s;\n", (int)nm->length, nm->name, (int)nm->length, nm->name); }
     for (int i=0;i<ts.n_fn;i++) {          // function-pointer typedefs
         IrType *ft = ts.fns[i];

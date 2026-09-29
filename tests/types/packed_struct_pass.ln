@@ -1,6 +1,6 @@
 // Sprint 19: [packed] struct with bit-exact layout.
-// `GpioModer` packs 16 × 2-bit fields into a single uint32_t.
-// Constructor packs values; per-field getters extract them.
+// `GpioModer` packs 4 × 2-bit fields into a single uint8_t — asserted below, and checked by the C
+// compiler every build. (Until DECIDE-N it was an ordinary 4-byte struct and nothing said so.)
 
 [packed]
 type GpioModer {
@@ -9,6 +9,7 @@ type GpioModer {
     pin2 u2
     pin3 u2
 }
+assert @sizeof(GpioModer) == 1
 
 func main() i32 {
     var r = GpioModer(1, 2, 3, 0)

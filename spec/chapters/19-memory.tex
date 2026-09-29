@@ -211,10 +211,10 @@ Lain inherits ISO/IEC~9899 (C17) alignment and padding rules:
 \end{itemize}
 
 \pnum
-Lain does not provide layout control annotations.  There is no
-\texttt{\#pragma pack} equivalent, no \texttt{alignas}, and no
-\texttt{repr(packed)}.  The layout is always the platform-default C99
-layout.
+Lain provides one layout control annotation: \tok{[packed]}, which lays a struct of integer
+fields out bit-exactly inside one integer (\S\,\ref{sec:types.packed-future}). There is no
+\texttt{\#pragma pack} equivalent and no \texttt{alignas}; every other struct has the
+platform-default C99 layout.
 
 \idbehav{The exact size and alignment of each type is implementation-defined,
 following the C99 ABI of the target platform}.

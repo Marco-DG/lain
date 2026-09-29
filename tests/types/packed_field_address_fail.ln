@@ -1,0 +1,15 @@
+// EXPECT: [E121]
+// ...and neither does `&` of one — in `unsafe` too, because this is representation, not a safety
+// policy: the C would take the address of a bitfield.
+[packed]
+type G {
+    a u2
+    b u6
+}
+func main() i32 {
+    var r = G(1, 2)
+    unsafe {
+        var p = &r.b
+    }
+    return 0
+}

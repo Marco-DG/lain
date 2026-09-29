@@ -1,0 +1,10 @@
+// EXPECT: [E121]
+// A [packed] struct is ONE integer, and the largest container is 64 bits (spec 07).
+[packed]
+type W {
+    a u64
+    b u1
+}
+func main() i32 {
+    return 0
+}

@@ -1655,6 +1655,27 @@ static void check_recursion_measure(Decl *fn, Expr *call) {
     }
 }
 
+// A field of a [packed] struct is BITS inside one integer: it has no address, so a `var` reference
+// (`f(var r.pin1)`, `var x = var r.pin1`) or an `&r.pin1` has nothing to point at — in `unsafe`
+// too, because this is representation, not a safety policy (the C would be `&` of a bitfield).
+static void sema_check_packed_field_addr(Expr *m, isize line, isize col, const char *what) {
+    if (!m || m->kind != EXPR_MEMBER || !m->as.member_expr.target || !m->as.member_expr.member) return;
+    Type *ot = m->as.member_expr.target->type;
+    while (ot && ot->kind == TYPE_COMPTIME) ot = ot->element_type;
+    if (!ot || ot->kind != TYPE_SIMPLE || !ot->base_type) return;
+    char sn[256]; int snl = (int)ot->base_type->length;
+    if (snl >= (int)sizeof(sn)) return;
+    memcpy(sn, ot->base_type->name, snl); sn[snl] = '\0';
+    Symbol *ss = sema_lookup(sn);
+    if (!ss || !ss->decl || ss->decl->kind != DECL_STRUCT || !ss->decl->as.struct_decl.is_packed) return;
+    Id *fld = m->as.member_expr.member;
+    fprintf(stderr, "[E121] Error Ln %li, Col %li: %s to `%.*s`, a field of [packed] struct `%s` — it is bits "
+            "inside one integer and has no address. Read it, assign it, or pass the whole struct.\n",
+            (long)line, (long)col, what, (int)fld->length, fld->name, sn);
+    diagnostic_show_line(line, col);
+    exit(1);
+}
+
 // A `var` reference to a field that takes part in an `in` invariant is refused. The invariant is
 // kept by checking every WRITE to the field or its container at the write (E121 in the IR), and a
 // write through a reference is not a write to the field as far as that check can see: the callee,
@@ -3001,6 +3022,7 @@ void sema_infer_expr(Expr *e) {
   case EXPR_MUT:
     sema_infer_expr(e->as.mut_expr.expr);
     e->type = type_mut(sema_arena, e->as.mut_expr.expr->type);
+    if (sema_walk_phase) sema_check_packed_field_addr(e->as.mut_expr.expr, e->line, e->col, "a `var` reference");
     if (sema_walk_phase && !sema_in_unsafe_block) sema_check_mut_invariant_field(e);
     break;
 
@@ -3076,6 +3098,7 @@ void sema_infer_expr(Expr *e) {
     sema_addr_of_context = true;
     sema_infer_expr(e->as.addr_expr.expr);
     sema_addr_of_context = _prev_addr_of;
+    if (sema_walk_phase) sema_check_packed_field_addr(e->as.addr_expr.expr, e->line, e->col, "`&`");
     Type *inner = e->as.addr_expr.expr ? e->as.addr_expr.expr->type : NULL;
     if (inner) {
         e->type = type_pointer(sema_arena, inner);

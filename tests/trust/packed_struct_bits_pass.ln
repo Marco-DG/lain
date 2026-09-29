@@ -1,0 +1,65 @@
+// [packed] RESTORED (DECIDE-N). Deleting the AST emitter (cf702c5) lost bit-exact packing: the IR
+// backend emitted an ordinary struct, and the three packed tests — asserting nothing about layout —
+// stayed green. Now the layout is asserted where the type is declared (module-scope `assert`,
+// checked by the C compiler), and the bits are checked here at run time: construction, reads, a
+// write that must leave its neighbours alone, sign extension of an iN field, a 64-bit container,
+// and a write through a `var` of the whole struct.
+[packed]
+type Header {
+    version  u4
+    flag     u1
+    priority u3
+    length   u8
+}
+assert @sizeof(Header) == 2
+[packed]
+type Signed {
+    lo i3
+    hi i5
+}
+assert @sizeof(Signed) == 1
+[packed]
+type Wide {
+    a u40
+    b i24
+}
+assert @sizeof(Wide) == 8
+func c1() bool {
+    var h = Header(7, 1, 5, 200)
+    return h.version == 7 and h.flag == 1 and h.priority == 5 and h.length == 200
+}
+func c2() bool {
+    var h = Header(7, 1, 5, 200)
+    h.priority = 2
+    return h.version == 7 and h.flag == 1 and h.priority == 2 and h.length == 200
+}
+func c3() bool {
+    var s = Signed(-4, 15)
+    return s.lo == -4 and s.hi == 15
+}
+func c4() bool {
+    var s = Signed(3, -16)
+    s.lo = -1
+    return s.lo == -1 and s.hi == -16
+}
+func c5() bool {
+    var w = Wide(1099511627775, -8388608)
+    return w.a == 1099511627775 and w.b == -8388608
+}
+func set_length(h var Header) {
+    h.length = 9
+}
+func c6() bool {
+    var h = Header(1, 0, 0, 0)
+    set_length(var h)
+    return h.length == 9 and h.version == 1 and h.flag == 0
+}
+func main() i32 {
+    if !c1() { return 1 }
+    if !c2() { return 2 }
+    if !c3() { return 3 }
+    if !c4() { return 4 }
+    if !c5() { return 5 }
+    if !c6() { return 6 }
+    return 0
+}

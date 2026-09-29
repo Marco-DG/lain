@@ -1,0 +1,10 @@
+// EXPECT: [E121]
+// Every field of a [packed] struct is an iN/uN of a declared width (spec 07).
+[packed]
+type H {
+    a u2
+    f bool
+}
+func main() i32 {
+    return 0
+}

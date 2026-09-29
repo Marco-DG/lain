@@ -180,6 +180,9 @@ typedef struct IrType {
     // here would make a sum indistinguishable from a pointer with an odd range and
     // destroy the discrimination every analysis depends on.
     IrName *sname;          // struct/sum name (identity + C typedef name) — IR-owned
+    bool    packed_decl;    // IRT_STRUCT declared `[packed]`: bit-exact layout was ASKED FOR.
+                            // The layout itself is a query (layout.h ir_struct_layout), like a
+                            // sum's niche; this records only what the program declared.
     struct IrType **fields; // lowered field types / variant payloads, in declaration order
     IrName **field_names;   // field / variant names
     int   n_fields;         // field count, or VARIANT count for IRT_SUM

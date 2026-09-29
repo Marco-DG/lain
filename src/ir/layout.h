@@ -158,4 +158,37 @@ static IrLayout ir_layout_of(IrType *sum) {
     return L;
 }
 
+// ── A `[packed]` STRUCT: bit-exact fields in one integer (spec 07, DECIDE-N) ──────────────────
+// Fields in declaration order from bit 0, each exactly its declared width, in the smallest of
+// uint8/16/32/64_t that holds the total. The emitter reads a field by shift and mask (sign-
+// extending an iN), writes one by read-modify-write, and builds one by OR-ing shifted fields.
+// It was the old AST emitter's behaviour, lost when src/emit/ was deleted (cf702c5) — the IR
+// backend emitted an ordinary struct and the three [packed] tests, asserting nothing about
+// layout, stayed green.
+#define IR_PACKED_MAX_FIELDS 64
+typedef struct {
+    bool packed;              // a valid [packed] layout: every field an integer, total <= 64 bits
+    int  container_bits;      // 8, 16, 32 or 64
+    int  n;
+    int  off[IR_PACKED_MAX_FIELDS], width[IR_PACKED_MAX_FIELDS];
+    bool sgn[IR_PACKED_MAX_FIELDS];
+} IrStructLayout;
+static IrStructLayout ir_struct_layout(const IrType *st) {
+    IrStructLayout L; memset(&L, 0, sizeof L);
+    if (!st || st->kind != IRT_STRUCT || !st->packed_decl || st->n_fields <= 0 ||
+        st->n_fields > IR_PACKED_MAX_FIELDS) return L;
+    int bit = 0;
+    for (int k = 0; k < st->n_fields; k++) {
+        IrType *ft = st->fields[k];
+        if (!ft || ft->kind != IRT_INT || ft->bits < 1 || ft->bits > 64) return L;   // sema: E121
+        L.off[k] = bit; L.width[k] = ft->bits; L.sgn[k] = ft->is_signed;
+        bit += ft->bits;
+    }
+    if (bit > 64) return L;                                                          // sema: E121
+    L.n = st->n_fields;
+    L.container_bits = bit <= 8 ? 8 : bit <= 16 ? 16 : bit <= 32 ? 32 : 64;
+    L.packed = true;
+    return L;
+}
+
 #endif // LAIN_IR_LAYOUT_H

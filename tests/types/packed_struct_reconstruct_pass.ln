@@ -1,7 +1,6 @@
-// Sprint 19: packed struct mutation via explicit reconstruction.
-// Lain rejects implicit setter rewriting (`r.pin1 = 9`) to maintain
-// P5 "no hidden magic". To modify a packed field, reconstruct the
-// struct explicitly — the bit-shift+mask cost is visible.
+// Sprint 19: packed struct mutation via explicit reconstruction. (This comment used to say Lain
+// REJECTS `r.pin1 = 9`; nothing ever did, and spec 07 defines that write — a read-modify-write
+// of bits 2-3. Reconstruction is simply the other way to spell it.)
 
 [packed]
 type GpioModer {
@@ -10,6 +9,7 @@ type GpioModer {
     pin2 u2
     pin3 u2
 }
+assert @sizeof(GpioModer) == 1
 
 func main() i32 {
     var r = GpioModer(1, 2, 3, 0)

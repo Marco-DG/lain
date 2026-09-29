@@ -1,0 +1,17 @@
+// EXPECT: [E121]
+// A field of a [packed] struct is bits inside one integer: it has no address, so a `var` reference
+// to it has nothing to point at. Pass the whole struct as `var` (its field writes are
+// read-modify-writes of the container).
+[packed]
+type G {
+    a u2
+    b u6
+}
+func bump(x var u6) {
+    x = x +% 1
+}
+func main() i32 {
+    var r = G(1, 2)
+    bump(var r.b)
+    return 0
+}

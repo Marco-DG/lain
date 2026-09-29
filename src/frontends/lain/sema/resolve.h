@@ -355,6 +355,44 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
             }
         }
 
+        // [packed] (spec 07, DECIDE-N): every field an iN/uN, at most 64 bits in all — the whole
+        // struct is ONE integer (ir/layout.h). Anything else has no bit-exact layout (E121).
+        if (d->as.struct_decl.is_packed) {
+            int total = 0; isize over_line = d->line, over_col = d->col;
+            for (DeclList *f = d->as.struct_decl.fields; f; f = f->next) {
+                if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
+                Type *ft = f->decl->as.variable_decl.type;
+                int bits = 0;
+                if (ft && ft->kind == TYPE_SIMPLE && ft->base_type && ft->base_type->length >= 2 &&
+                    (ft->base_type->name[0] == 'u' || ft->base_type->name[0] == 'i')) {
+                    for (isize q = 1; q < ft->base_type->length; q++) {
+                        char ch = ft->base_type->name[q];
+                        if (ch < '0' || ch > '9') { bits = 0; break; }
+                        bits = bits * 10 + (ch - '0');
+                    }
+                }
+                Id *fnm = f->decl->as.variable_decl.name;
+                if (bits < 1 || bits > 64) {
+                    fprintf(stderr, "[E121] Error Ln %li, Col %li: field '%.*s' of [packed] struct '%.*s' is not "
+                            "an iN/uN integer — a packed struct is bits inside one integer, so its fields "
+                            "must be integers of a declared width (spec 07).\n", (long)f->decl->line,
+                            (long)f->decl->col, (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
+                            (int)id->length, id->name);
+                    diagnostic_show_line(f->decl->line, f->decl->col);
+                    exit(1);
+                }
+                total += bits;
+                if (total > 64 && over_line == d->line) { over_line = f->decl->line; over_col = f->decl->col; }
+            }
+            if (total > 64) {
+                fprintf(stderr, "[E121] Error Ln %li, Col %li: [packed] struct '%.*s' needs %d bits — more "
+                        "than the 64 of the largest container (spec 07).\n", (long)over_line, (long)over_col,
+                        (int)id->length, id->name, total);
+                diagnostic_show_line(over_line, over_col);
+                exit(1);
+            }
+        }
+
         // ★ A SLICE FIELD'S LENGTH is bounded inside its brackets, by a literal: `src u8[<= 4096]`
         // (DECIDE-P; lower.h ir_field_len_bound). Two other spellings parsed and were SILENTLY
         // IGNORED — a length tied to another field or an expression (`u8[<= cap]`, `u8[n]`), and a

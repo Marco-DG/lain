@@ -502,6 +502,32 @@ The operand must be a `bool` constant — literals, named constants, operators, 
 `@alignof` ([E133] otherwise). A false one is [E134]: from Lain when it can compute the value,
 and from the C compiler (a `_Static_assert` carrying the same code) when it measures a type.
 
+**Bit-exact packing — `[packed]`:**
+A struct of `iN`/`uN` fields can be laid out bit-exactly in one integer — hardware registers,
+protocol headers. Fields go in declaration order from bit 0, and the container is the smallest of
+`uint8/16/32/64_t` that holds them:
+
+```lain
+[packed]
+type Header {
+    version u4
+    flag u1
+    priority u3
+    length u8
+}
+assert @sizeof(Header) == 2
+func main() i32 {
+    var h = Header(7, 1, 5, 200)
+    h.priority = 2
+    if h.version != 7 or h.priority != 2 { return 1 }
+    return 0
+}
+```
+
+A read is a shift and a mask (an `iN` field is sign-extended); a write is a read-modify-write that
+leaves the other fields alone. A field has no address, so a `var` reference to it or `&` of it is
+[E121] — pass the whole struct instead.
+
 ### 2.8 Algebraic Data Types (ADTs)
 
 Lain uses a unified syntax for enums, tagged unions, and algebraic data types. All are defined with `type`.
