@@ -1,0 +1,16 @@
+// EXPECT: [E086]
+// The control for tests/trust/slice_len_bound_lexer_pass.ln: without a bound on the source's
+// LENGTH, `pos + 1` on a u32 position is not provably free of overflow — the source may exceed
+// 4 GB, and `pos u32 <= src.len` then admits pos = 2^32 - 1. Correctly refused.
+type Lexer {
+    src u8[]
+    pos u32 <= src.len
+}
+func step(var l Lexer) {
+    if l.pos < l.src.len {
+        l.pos = l.pos + 1
+    }
+}
+func main() i32 {
+    return 0
+}

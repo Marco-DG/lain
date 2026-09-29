@@ -1,0 +1,12 @@
+// EXPECT: [E121]
+// ...and wherever the field is written. (A `var` reference cannot rebind a slice — E009 — and an
+// element write keeps the length, so these are the only writers.)
+type Src {
+    s u8[<= 3]
+}
+func put(var x Src, p u8[]) {
+    x.s = p
+}
+func main() i32 {
+    return 0
+}

@@ -1,0 +1,25 @@
+// DECIDE-P: a lexer's narrow position over its source. `pos u32 <= src.len` alone cannot prove
+// `pos + 1` — src.len is a usize, and over a source past 4 GB a u32 increment overflows — so the
+// source's length is BOUNDED where the field is declared, in the grammar a parameter already uses
+// for its length (`a i32[>= 2]`). The bound is proven wherever the field is written (E121) and
+// assumed wherever it is read.
+type Lexer {
+    src u8[<= 4294967295]
+    pos u32 <= src.len
+}
+func skip_spaces(var l Lexer) {
+    while l.pos < l.src.len and l.src[l.pos] == 32 {
+        l.pos = l.pos + 1
+    }
+}
+func from(text u8[]) Lexer {
+    if text.len <= 4294967295 { return Lexer(text, 0) }
+    return Lexer(text[0..0], 0)
+}
+func main() i32 {
+    var buf u8[6] = [32, 32, 32, 97, 98, 99]
+    var l = from(buf)
+    skip_spaces(var l)
+    if l.pos != 3 { return 1 }
+    return 0
+}

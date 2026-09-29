@@ -1,0 +1,9 @@
+// EXPECT: [E132]
+// A scalar refinement written AFTER a slice type bounds nothing a slice has, and was silently
+// ignored: it read as a fact and was not one. A slice's length is bounded inside its brackets.
+type Src {
+    s u8[] <= 4096
+}
+func main() i32 {
+    return 0
+}

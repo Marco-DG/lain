@@ -1551,6 +1551,14 @@ at=const 2
 rc=0
 out=
 at=const 2
+### tests/trust/slice_len_bound_lexer_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 4
+at=pure 2
+ty=Lexer struct
+ty=Slice_u8 scalar
 ### tests/trust/slice_len_pass.ln
 rc=0
 out=5

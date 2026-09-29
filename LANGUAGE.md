@@ -445,6 +445,39 @@ type File {
 }
 ```
 
+**Field invariants:**
+A field may state a fact that holds for the struct's whole life. It is proven wherever the value
+is built or the field is written ([E121] otherwise), and it is a fact wherever the field is read:
+
+- `pos usize in text` — `pos` is a valid index into the slice or array field `text`;
+- `pos u32 <= src.len` — a position against another field's length (`<`, `<=`, `>`, `>=`);
+- `len usize <= cap` — a relation between two integer fields;
+- `src u8[<= 4294967295]` — a bound on a slice field's length, in the brackets, as for a parameter.
+
+```lain
+type Lexer {
+    src u8[<= 4294967295]
+    pos u32 <= src.len
+}
+func skip_spaces(var l Lexer) {
+    while l.pos < l.src.len and l.src[l.pos] == 32 {
+        l.pos = l.pos + 1
+    }
+}
+func main() i32 {
+    var buf u8[4] = [32, 32, 97, 98]
+    var l = Lexer(buf, 0)
+    skip_spaces(var l)
+    if l.pos != 2 { return 1 }
+    return 0
+}
+```
+
+The length bound is what lets `pos` be a `u32`: without it, `src.len` is a `usize` and
+`l.pos + 1` could overflow over a source past 4 GB. A `var` reference to a field an invariant
+relates (`bump(var l.pos)`) is refused, since a write through it would escape the check; pass the
+struct (`var l`) instead.
+
 **Layout, and asserting it:**
 `@sizeof(T)` and `@alignof(T)` are the size and alignment of `T` as the C compiler lays it out
 (`usize`). A layout claim belongs in the program, not in a comment — a module-scope `assert`

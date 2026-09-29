@@ -907,6 +907,40 @@ static int ir_field_relations(LowerCtx *c, IrType *sty, int fidx, IrFieldRel *ou
     }
     return n;
 }
+// ── A SLICE FIELD'S LENGTH BOUND: `src u8[<= 4294967295]` (DECIDE-P) ────────────────────────
+// The grammar a parameter already uses for its length (`a i32[>= 2]`), on a field, where it is a
+// promise for the value's whole life. It is ASSERTED where the length can change — construction
+// and a store to the field — and ASSUMED where the field is read. Nothing else can change it: a
+// `var` reference to a slice cannot rebind it (E009) and an element write keeps the length.
+// It is the fact a narrow position needs: `pos u32 <= src.len` proves `pos + 1` only if src.len
+// fits a u32, and a usize length says nothing of the kind (Marco's lexer, "max file ~4 GB").
+static bool ir_field_len_bound(LowerCtx *c, IrType *sty, int fidx, IrCmp *cmp, int64_t *k) {
+    if (!sty || sty->kind!=IRT_STRUCT || fidx<0 || fidx>=sty->n_fields || !sty->sname) return false;
+    Id sn; sn.name = sty->sname->name; sn.length = sty->sname->length;
+    Decl *sd = ir_find_struct_decl(c, &sn);
+    if (!sd || sd->kind != DECL_STRUCT) return false;
+    int q = 0; Decl *fd = NULL;
+    for (DeclList *fl = sd->as.struct_decl.fields; fl; fl = fl->next) {
+        if (!fl->decl || fl->decl->kind != DECL_VARIABLE) continue;
+        if (q == fidx) { fd = fl->decl; break; }
+        q++;
+    }
+    Type *t = fd ? fd->as.variable_decl.type : NULL;
+    if (!t || t->kind != TYPE_ARRAY || t->array_len >= 0 || !t->size_expr ||
+        t->size_expr->kind != EXPR_LITERAL) return false;
+    if (t->size_relop == TOKEN_EQUAL_EQUAL) *cmp = IR_CMP_EQ;
+    else if (!ir_tok_cmp(t->size_relop, false, cmp)) return false;
+    *k = t->size_expr->as.literal_expr.value;
+    return true;
+}
+static void ir_field_len_bound_fact(LowerCtx *c, IrType *sty, int fidx, IrValue *sv, bool assert_it) {
+    IrCmp cmp; int64_t k;
+    if (!sv || !sv->type || sv->type->kind != IRT_SLICE || !ir_field_len_bound(c, sty, fidx, &cmp, &k)) return;
+    IrValue *len  = ir_slice_len(c->f, c->cur, sv);
+    IrValue *cond = ir_icmp(c->f, c->cur, cmp, len, ir_const_int(c->f, c->cur, k, len->type));
+    if (assert_it) ir_assert_coded(c->f, c->cur, cond, 121);
+    else           ir_assume(c->f, c->cur, cond);
+}
 // The relation's right-hand side, from the OTHER field's value: that value itself, or its length.
 static IrValue *ir_field_rel_rhs(LowerCtx *c, IrValue *ov, IrType *oty, bool is_len, IrType *ity) {
     if (!ov || !oty) return NULL;
@@ -2211,6 +2245,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 if (fty && fty->kind==IRT_ARRAY && addr && addr->type
                     && addr->type->kind==IRT_ARRAY) return addr;
                 IrValue *v = ir_load(c->f, c->cur, addr, fty ? fty : ty);
+                ir_field_len_bound_fact(c, sty, fidx, v, false);      // a slice's length bound, consumed
                 // the `in` invariant, consumed: this field is a valid index into that one
                 IrType *cty2 = NULL;
                 int cidx = ir_field_in_target(c, sty, fidx, &cty2);
@@ -2298,6 +2333,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     if (!len) continue;
                     ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, fs[fi], len), 121);
                 }
+                // ...and so is a slice field's length bound.
+                for (int fi=0; fi<n && fi<ty->n_fields; fi++) ir_field_len_bound_fact(c, ty, fi, fs[fi], true);
                 // A RELATIONAL field invariant is established here too, from the operands.
                 for (int fi=0; fi<n && fi<ty->n_fields; fi++) {
                     IrFieldRel rels[8];
@@ -2740,6 +2777,7 @@ static void ir_lower_field_invariant_asserts(LowerCtx *c, IrInstr *fp, IrValue *
     // to a usize field, and a field pointer typed from the value was `int32_t *` over a
     // `uint64_t` field — C that gcc rejects.
     IrType *ft = sty->fields[fi];
+    ir_field_len_bound_fact(c, sty, fi, v, true);                // a new slice keeps its length bound
     IrType *cty = NULL;
     int cidx = ir_field_in_target(c, sty, fi, &cty);
     if (cidx >= 0 && cty && ft && ft->kind == IRT_INT && v->type->kind == IRT_INT) {

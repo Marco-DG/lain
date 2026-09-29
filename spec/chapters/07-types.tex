@@ -713,10 +713,21 @@ of the struct type. Three forms are provided:
         length of the slice or array field \lain{src}, by \lain{<}, \lain{<=}, \lain{>} or
         \lain{>=};
   \item \lain{len usize <= cap} --- a relation between two integer fields, by the same four
-        comparisons.
+        comparisons;
+  \item \lain{src u8[<= 4294967295]} --- a \emph{length bound} on a slice field: its length
+        compared with an integer literal, written inside the brackets as for a parameter
+        (\lain{a i32[>= 2]}), by \lain{<}, \lain{<=}, \lain{>}, \lain{>=} or \lain{==}.
 \end{itemize}
 A refinement against a literal (\lain{pct i32 <= 100}) is a plain field refinement
 (\S\,\ref{sec:types.constrained}) and is not a field invariant.
+
+\pnum
+A length bound is what a \emph{narrow} position needs: \lain{pos u32 <= src.len} does not make
+\lain{pos + 1} fit a \lain{u32} when \lain{src.len} is a \lain{usize}, since a longer source admits
+\(\lain{pos} = 2^{32}-1\); bounding \lain{src} to at most \(2^{32}-1\) bytes does. A slice field's
+length changes only when the field (or the whole struct) is written --- a \lain{var} reference
+cannot rebind a slice (\diagcode{E009}) and an element write keeps the length --- so those writes
+are where it is checked.
 
 \pnum
 An index invariant cannot hold for an empty container. A position invariant can:
@@ -738,7 +749,10 @@ An index invariant cannot hold for an empty container. A position invariant can:
 
 \begin{constraint}
   A field refinement naming another field in any other shape --- another comparison, a field of
-  another kind, an expression --- is \illformed{}~(\diagcode{E132}).
+  another kind, an expression --- is \illformed{}~(\diagcode{E132}).  So is a slice field whose
+  length is bounded by anything but a literal (other than the struct's own generic parameter,
+  \lain{type Buf(N usize) \{ data u8[N] \}}), and a refinement written after a slice type
+  (\lain{src u8[] <= 4096}), which bounds nothing a slice has.
 \end{constraint}
 
 \pnum

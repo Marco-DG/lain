@@ -1,0 +1,12 @@
+// EXPECT: [E121]
+// A slice field's length bound holds for the value's whole life, so it is proven where the value
+// is built: an unbounded parameter cannot become a `u8[<= 3]` field.
+type Src {
+    s u8[<= 3]
+}
+func mk(p u8[]) Src {
+    return Src(p)
+}
+func main() i32 {
+    return 0
+}
