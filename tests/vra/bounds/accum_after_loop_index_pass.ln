@@ -1,0 +1,13 @@
+// The companion to accum_after_loop_index_fail.ln: counted from the loop's ENTRY the trip count
+// is 200, so after the loop s is in [100, 300] — and indexing a 301-element array with it is
+// proven, check-free. The fix narrowed nothing that was true.
+func main() i32 {
+    var a u8[301] = [1 for k in 0..301]
+    var s u16 = 100
+    var i u32 = 0
+    while i < 200 {
+        s = s + 1
+        i = i + 1
+    }
+    return a[s] as i32 - 1
+}

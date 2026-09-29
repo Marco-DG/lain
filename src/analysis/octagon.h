@@ -92,8 +92,24 @@ static void oct_tighten(Octagon *o, int i, int j, int64_t c) {
     int bi=oct_bar(j), bj=oct_bar(i);
     int64_t *b = oct_at(o,bi,bj);          if (c < *b) *b = c;
 }
-static void oct_add_ub(Octagon *o, int v, int64_t c)  { oct_tighten(o, oct_neg(v), oct_pos(v), 2*c);  }   //  v ≤ c
-static void oct_add_lb(Octagon *o, int v, int64_t c)  { oct_tighten(o, oct_pos(v), oct_neg(v), -2*c); }   //  v ≥ c
+// ★ A UNARY BOUND IS STORED DOUBLED, so it must be clamped BEFORE the doubling. `2*c` on
+// c = INT64_MAX is −2 in two's complement (and undefined in C): `var x i64 = 9223372036854775807`
+// was recorded as x ≤ −1, `if x < 0 { return }` read as always taken, and the rest of the
+// function was dead — a division by zero after it compiled. i64::MIN became x ≥ 0 the same way.
+// Outside ±OCT_INF/2 a bound is WEAKENED toward the representable range, never strengthened:
+// an upper bound above it is dropped and one below it raised to the floor; a lower bound the
+// mirror image. The constant table keeps the exact value for every reader that asks it.
+#define OCT_BOUND_MAX (OCT_INF/2 - 1)
+static void oct_add_ub(Octagon *o, int v, int64_t c)  {                                         //  v ≤ c
+    if (c > OCT_BOUND_MAX) return;
+    if (c < -OCT_BOUND_MAX) c = -OCT_BOUND_MAX;
+    oct_tighten(o, oct_neg(v), oct_pos(v), 2*c);
+}
+static void oct_add_lb(Octagon *o, int v, int64_t c)  {                                         //  v ≥ c
+    if (c < -OCT_BOUND_MAX) return;
+    if (c > OCT_BOUND_MAX) c = OCT_BOUND_MAX;
+    oct_tighten(o, oct_pos(v), oct_neg(v), -2*c);
+}
 static void oct_add_const(Octagon *o, int v, int64_t c){ oct_add_ub(o,v,c); oct_add_lb(o,v,c); }          //  v = c
 // v_a − v_b ≤ c
 static void oct_add_diff_le(Octagon *o, int a, int b, int64_t c) { oct_tighten(o, oct_pos(b), oct_pos(a), c); }

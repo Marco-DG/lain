@@ -1,0 +1,28 @@
+// A wrapping step IS a step where it cannot wrap — and the guard is what says so. Under `i < n`
+// the counter is at most n - 1 when it steps, so `i +% 1` cannot pass the top of u8; under
+// `i > 0` it is at least 1, so `i -% 1` cannot pass the bottom. Both loops are proven
+// terminating from the same fact that proves their steps exact (see the _fail twins).
+func up(n u8) i32 {
+    var i u8 = 0
+    while i < n {
+        i = i +% 1
+    }
+    return 0
+}
+func down(n u8) i32 {
+    var i u8 = n
+    while i > 0 {
+        i = i -% 1
+    }
+    return 0
+}
+func count_down(n u64) u64 {
+    if n <= 1 { return 1 }
+    return count_down(n -% 1)
+}
+func main() i32 {
+    if up(200) != 0 { return 1 }
+    if down(200) != 0 { return 2 }
+    if count_down(5) != 1 { return 3 }
+    return 0
+}

@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// A running total's bound is s0 + T*delta, derived over the integers — sound for a wrapping
+// accumulator only if that bound fits the accumulator's own type (then no step wrapped). Here it
+// does not: 100 + 200 steps of +% 1 is 300 over the integers, and at run time s ends at 44. Read
+// as [100, 255] inside u8, the bound made `s - 100` look like it fits a u8; it is -56.
+func main() i32 {
+    var s u8 = 100
+    var i u32 = 0
+    while i < 200 {
+        s = s +% 1
+        i = i + 1
+    }
+    var t u8 = s - 100
+    return t as i32
+}

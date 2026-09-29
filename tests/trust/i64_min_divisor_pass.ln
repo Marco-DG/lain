@@ -1,0 +1,13 @@
+// i64::MIN has no literal; it is written `-9223372036854775807 - 1`. Its value is outside the
+// octagon's usable range, so as an interval it read as unknown and `a /% MIN` was refused as a
+// possible division by zero. A negation or `+ - *` of constants is now folded into the constant
+// table, which holds every i64 exactly.
+func main() i32 {
+    var a i64 = 9223372036854775806
+    var m i64 = (-9223372036854775807 - 1)
+    var q = a /% m
+    if q != 0 { return 1 }
+    var r = m /% -1
+    if r != m { return 2 }
+    return 0
+}

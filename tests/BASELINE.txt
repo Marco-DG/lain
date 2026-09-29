@@ -494,6 +494,10 @@ at=const 2
 rc=0
 out=
 at=const 6
+### tests/functions/wrapping_step_termination_pass.ln
+rc=0
+out=
+at=const 6
 ### tests/generics/comptime_if_pass.ln
 rc=0
 out=Running on Linux
@@ -1407,6 +1411,9 @@ out=2
 at=const 2
 ty=Color scalar
 ty=Slice_u8 scalar
+### tests/trust/i64_min_divisor_pass.ln
+rc=0
+out=
 ### tests/trust/interproc_bounds_pass.ln
 rc=0
 out=30
@@ -1885,6 +1892,9 @@ out=
 at=access 2
 at=nonnull 2
 ty=Slice_i32 scalar
+### tests/vra/bounds/accum_after_loop_index_pass.ln
+rc=0
+out=
 ### tests/vra/bounds/bounds_pass.ln
 rc=0
 out=arr[0]=10, arr[4]=50, arr[3]=40
@@ -2265,6 +2275,9 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=const 2
+### tests/vra/overflow/modular_accumulator_bounded_pass.ln
+rc=0
+out=
 ### tests/vra/overflow/overflow_cond_widened_pass.ln
 rc=0
 out=

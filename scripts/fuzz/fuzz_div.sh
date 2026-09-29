@@ -70,4 +70,7 @@ done
 echo "fuzz_div: gens=$N accepted=$accepted rejected=$rejected"
 echo "  bugs:  broken-C=$brokenc  UNSOUND=$unsound"
 rm -rf "$SC"
+# A run that accepted (almost) nothing judged (almost) nothing, and must not print a zero. Twice
+# this harness reported "bugs: 0" over 0 accepted programs (2026-09-19, 2026-09-28).
+[ $accepted -lt $((N / 10)) ] && { echo "  ★ FUZZER DID NOT RUN: $accepted/$N accepted — this report says nothing"; exit 1; }
 [ $((brokenc + unsound)) -eq 0 ]

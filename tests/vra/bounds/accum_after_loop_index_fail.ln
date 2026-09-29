@@ -1,0 +1,16 @@
+// EXPECT: [E085]
+// B1 bounds a running total by s0 + T*delta. T was computed from the loop counter's value WHERE
+// THE BOUND WAS ASKED: after this loop i is 200, so T came out 0 and s — 300 at run time — was
+// bounded at its entry value 100. `a[s]` on 101 elements compiled check-free and read out of
+// bounds (a 199-byte overrun, past ASan's stack redzone, so even the sanitizer stayed quiet).
+// T now counts from the counter's value on ENTRY to the loop.
+func main() i32 {
+    var a u8[101] = [0 for k in 0..101]
+    var s u16 = 100
+    var i u32 = 0
+    while i < 200 {
+        s = s + 1
+        i = i + 1
+    }
+    return a[s] as i32
+}

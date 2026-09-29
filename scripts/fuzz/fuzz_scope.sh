@@ -31,6 +31,12 @@ for ((i=0; i<N; i++)); do
     # 250, reported as "bugs: 0". The rejection was correct and it was about something this
     # fuzzer does not test; saying `+%` states which arithmetic is meant and leaves the BOUNDS
     # question, the one under test, exactly as it was.
+    #
+    # ★ AND `+%` IN main TOO. `var t i32 = g(..) + h(..)` was accepted only because the range
+    # analysis read the `+%` running totals as integers and so bounded g's result — a false
+    # proof: with x = [2147483647, 0, 0, 0], `g(x, 4) + 1` compiled into an i32 and wrapped
+    # negative. Fixed 2026-09-28, which refused all 250 programs — accepted=0 again, for the
+    # opposite reason. The totals are modular; their SUM is too.
     cat > "$src" <<EOF
 extern func libc_printf(fmt *u8, ...) i32 effects io
 func g(a i32[n], n usize) i32 {
@@ -54,7 +60,7 @@ func h(a i32[n], n usize) i32 {
 func main() i32 effects io, raises, alloc {
     var x i32[$s1] = [$(seq -s ', ' 1 $s1)]
     var y i32[$s2] = [$(seq -s ', ' 1 $s2)]
-    var t i32 = g(x, $s1) + h(y, $s2)
+    var t i32 = g(x, $s1) +% h(y, $s2)
     libc_printf("%d\n", t)
     return 0
 }
@@ -76,4 +82,7 @@ done
 echo "fuzz_scope: gens=$N accepted=$accepted rejected=$rejected"
 echo "  bugs:  broken-C=$brokenc  UNSOUND=$unsound"
 rm -rf "$SC"
+# A run that accepted (almost) nothing judged (almost) nothing, and must not print a zero. Twice
+# this harness reported "bugs: 0" over 0 accepted programs (2026-09-19, 2026-09-28).
+[ $accepted -lt $((N / 10)) ] && { echo "  ★ FUZZER DID NOT RUN: $accepted/$N accepted — this report says nothing"; exit 1; }
 [ $((brokenc + unsound)) -eq 0 ]

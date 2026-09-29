@@ -1,0 +1,14 @@
+// EXPECT: [E011]
+// `i +% 1` is not a +1 step: at 255 it wraps to 0, and under `i <= n` with n == 255 the loop
+// never ends. The termination rule read every `add` as integer arithmetic, so it proved this
+// loop terminating — and the function was emitted `const`, a promise to gcc that it returns.
+func spin(n u8) i32 {
+    var i u8 = 0
+    while i <= n {
+        i = i +% 1
+    }
+    return 0
+}
+func main() i32 {
+    return spin(10)
+}

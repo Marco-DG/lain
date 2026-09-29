@@ -1,0 +1,14 @@
+// EXPECT: [E015]
+// A wrapping result is its value MODULO 2^N. The range analysis recorded it over the integers:
+// -2147483647 -% 191808860 read as -2339292507, which is EMPTY inside i32, so the check below
+// failed on every path as far as the analysis could tell, and everything after it was dead to
+// it — this division by zero compiled. fuzz_wrap found it (2026-09-28) as a u32 multiply that
+// overflowed at run time under a "proof".
+func main() i32 {
+    var a i32 = -2147483647
+    var b i32 = 191808860
+    var r = a -% b
+    if r != 1955674789 { return 2 }
+    var d i32 = 0
+    return 5 /% d
+}

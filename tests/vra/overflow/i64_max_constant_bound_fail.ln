@@ -1,0 +1,12 @@
+// EXPECT: [E015]
+// The octagon stores a unary bound DOUBLED, and doubled INT64_MAX without a range check: in two's
+// complement 2 * 9223372036854775807 is -2, so x was recorded as x <= -1. The guard below then
+// read as always taken, the rest of the function was dead to the analysis, and this division by
+// zero compiled. i64::MIN became x >= 0 the same way. A bound past the representable range is
+// now weakened toward it, never flipped.
+func main() i32 {
+    var x i64 = 9223372036854775807
+    if x < 0 { return 1 }
+    var d i32 = 0
+    return 5 /% d
+}

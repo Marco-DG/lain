@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// The same B1 trip count, read after the loop, where it came out 0: s was "proven" to be its
+// entry value 100, so this narrowing to u8 compiled — and truncated 300 to 44.
+func main() i32 {
+    var s u16 = 100
+    var i u32 = 0
+    while i < 200 {
+        s = s + 1
+        i = i + 1
+    }
+    var t u8 = s
+    return t as i32
+}

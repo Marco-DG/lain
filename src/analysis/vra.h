@@ -155,6 +155,7 @@ typedef struct {
     IrValue **val;      // val[val id] = the value itself (for its TYPE — see vra_range)
     int     *defblk;    // defblk[val id] = id of the block defining it (-1 = param)
     int64_t *cval; bool *cknown;   // constant values (from IR_CONST)
+    bool    *modwrap;  // a MODULAR +,−,× that MAY wrap: its ℤ reading is false (vra_zexact)
     int     *slicelen;  // slice value id → its canonical length var (−1 = none)
     int     *cellcanon; // value id → canonical id of the PLACE it names (field_ptr aliasing)
     bool    *subslice_gep;  // elem_ptr result feeding a make_slice (a subslice start,
@@ -206,6 +207,20 @@ typedef struct {
     bool     marking_benign;   // set while marking the value of a benign reference store
     VraCheck *checks; int nchecks, cap_checks;
 } Vra;
+
+// ★ DOES THIS OPERATION'S RESULT EQUAL ITS VALUE OVER ℤ? Every structural rule in this file —
+// the midpoint identity, a loop's `i + 1` step, an accumulator's delta, a slice's `hi − lo`
+// length — reads an `add`/`sub`/`mul` as integer arithmetic. A CHECK-mode operation earns that
+// reading from its own overflow obligation. A MODULAR one (`+% −% *%`) has none, and where it
+// wraps the reading is false: `i = i +% 1` under `while i <= n` was a +1 step toward n, so
+// `spin(255)` on a u8 was PROVEN TERMINATING (and emitted `const`) while it looped forever.
+// A modular operation qualifies only once the check pass has shown, at the converged state,
+// that it cannot wrap; until then (and during the fixpoint) `modwrap` says it may.
+static bool vra_zexact(const Vra *V, const IrInstr *d) {
+    if (!d || d->wrap != IR_WRAP_MODULAR) return true;
+    if (!d->result || d->result->id < 0 || d->result->id >= V->nvar || !V->modwrap) return false;
+    return !V->modwrap[d->result->id];
+}
 
 // ── small helpers ────────────────────────────────────────────────────────────
 static int vra_var(IrValue *v) { return v ? v->id : -1; }
@@ -678,6 +693,50 @@ static void vra_prepass(Vra *V) {
                               V->val[ins->result->id]=ins->result; }
             if (ins->op==IR_CONST && ins->result){ V->cknown[ins->result->id]=true; V->cval[ins->result->id]=ins->aux.imm; }
         }
+    // A NEGATED CONSTANT is a constant. A negative literal is `-` applied to a positive one, and
+    // left as an octagon interval it was exact only while it fit the octagon's usable range
+    // (about 2^60: OCT_INF is INT64_MAX/4 and bounds are stored doubled) — so
+    // `var x i63 = -2875414689009298395` could not be shown to fit an i63, though it is a
+    // literal. The constant table has no such limit. Block order defines before it uses.
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+            if (ins->op==IR_NEG && ins->result && ins->n_operands>=1 && ins->operands[0] &&
+                ins->operands[0]->id>=0 && ins->operands[0]->id<V->nvar &&
+                V->cknown[ins->operands[0]->id] && V->cval[ins->operands[0]->id] != INT64_MIN) {
+                V->cknown[ins->result->id] = true;
+                V->cval[ins->result->id] = -V->cval[ins->operands[0]->id];
+            }
+            if ((ins->op==IR_ADD || ins->op==IR_SUB || ins->op==IR_MUL) &&
+                ins->wrap==IR_WRAP_MODULAR && ins->result && ins->result->id>=0 && ins->result->id<V->nvar)
+                V->modwrap[ins->result->id] = true;
+            // ...and so is `+ − ×` of two constants, which is how i64::MIN has to be written
+            // (`-9223372036854775807 - 1`: there is no literal for it). Its value is outside the
+            // octagon's usable range, so as an interval it read as UNKNOWN — `x /% MIN` was
+            // "divisor not provably non-zero". Folded where the value is the operation's: a
+            // checked result that fits its type (one that does not fails its own obligation), or
+            // a modular one reduced to the type's width. A u64 above i64::MAX has no cval.
+            if ((ins->op==IR_ADD || ins->op==IR_SUB || ins->op==IR_MUL) && ins->n_operands>=2 &&
+                ins->result && ins->result->type && ins->result->type->kind==IRT_INT &&
+                ins->result->type->bits>=1 && ins->result->type->bits<=64 &&
+                ins->operands[0] && ins->operands[1] &&
+                ins->operands[0]->id>=0 && ins->operands[0]->id<V->nvar && V->cknown[ins->operands[0]->id] &&
+                ins->operands[1]->id>=0 && ins->operands[1]->id<V->nvar && V->cknown[ins->operands[1]->id]) {
+                __int128 x = V->cval[ins->operands[0]->id], y = V->cval[ins->operands[1]->id];
+                __int128 z = ins->op==IR_ADD ? x + y : ins->op==IR_SUB ? x - y : x * y;
+                IrType *t = ins->result->type; int nb = t->bits;
+                __int128 tlo = t->is_signed ? -((__int128)1 << (nb-1)) : 0;
+                __int128 thi = t->is_signed ? ((__int128)1 << (nb-1)) - 1 : ((__int128)1 << nb) - 1;
+                bool ok = (z >= tlo && z <= thi);
+                if (!ok && ins->wrap == IR_WRAP_MODULAR) {
+                    unsigned __int128 m = ((unsigned __int128)1 << nb) - 1, u = (unsigned __int128)z & m;
+                    z = (t->is_signed && (u >> (nb-1)) & 1) ? (__int128)u - ((__int128)1 << nb) : (__int128)u;
+                    ok = true;
+                }
+                if (ok && z >= INT64_MIN && z <= INT64_MAX) {
+                    V->cknown[ins->result->id] = true; V->cval[ins->result->id] = (int64_t)z;
+                }
+            }
+        }
     V->cellcanon = malloc((size_t)V->nvar*sizeof(int));
     for (int i=0;i<V->nvar;i++) V->cellcanon[i]=i;
     for (IrBlock *b=V->f->blocks; b; b=b->next)
@@ -963,12 +1022,85 @@ static void vra_add_diff_le(Vra *V, Octagon *W, int a, int b, int64_t c) {   // 
     if (c >= OCT_INF) return;
     bool ac = (a>=0 && a<V->nvar && V->cknown[a]), bc = (b>=0 && b<V->nvar && V->cknown[b]);
     if (ac && bc) return;                                  // both known: nothing to record
-    if (bc)      oct_add_ub(W, a, V->cval[b] + c);         // a ≤ const + c
-    else if (ac) oct_add_lb(W, b, V->cval[a] - c);         // b ≥ const − c
+    int64_t k;                                             // (a sum that leaves int64 bounds nothing)
+    if (bc)      { if (!__builtin_add_overflow(V->cval[b], c, &k)) oct_add_ub(W, a, k); }   // a ≤ const + c
+    else if (ac) { if (!__builtin_sub_overflow(V->cval[a], c, &k)) oct_add_lb(W, b, k); }   // b ≥ const − c
     else         oct_add_diff_le(W, a, b, c);
 }
 
 static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir);  // fwd
+
+// ★ A MODULAR `+% −% *%` IS ℤ ARITHMETIC ONLY WHERE IT CANNOT WRAP. The transfers record the
+// result over ℤ — `r = a − b` — which a CHECK-mode operation may do because its obligation
+// proves no wrap happened. A modular operation has no obligation: wrapping is its DEFINED
+// behaviour, so the ℤ fact is false exactly when the operator does the one thing it exists for.
+// `-2147483647 -% 191808860` is 1955674789 at run time and −2339292507 over ℤ; read back through
+// the i32 type range that is an EMPTY interval, so `if r != 1955674789 { return 2 }` was taken on
+// every path and the code after it was dead to the analysis — every later obligation discharged
+// vacuously. fuzz_wrap found it as a u32 multiply that overflowed at run time under a "proof".
+//
+// may_wrap: true unless the ℤ result provably stays inside the type (then it IS the modular
+// result). u64's range is clamped to INT64_MAX here (the domain is i64-based), so a u64 result
+// above it counts as a possible wrap — conservative, never a false "cannot wrap".
+static bool vra_bound_fits(int64_t c) { return c > -(OCT_INF/2) && c < OCT_INF/2; }
+static bool vra_modular_may_wrap_c(Vra *V, Octagon *W, IrInstr *ins, __int128 *c0, bool *exact) {
+    IrType *t = ins->result ? ins->result->type : NULL;
+    int64_t tlo, thi;
+    *exact = false; *c0 = 0;
+    if (ins->n_operands < 2 || !t || t->kind != IRT_INT || t->bits < 1 || t->bits > 64 ||
+        !irtype_int_range(t, &tlo, &thi)) return true;
+    oct_close(W);
+    int64_t alo, ahi, blo, bhi;
+    vra_range(V, W, ins->operands[0], &alo, &ahi);
+    vra_range(V, W, ins->operands[1], &blo, &bhi);
+    // A u64 read as INT64_MAX is UNBOUNDED — its real top is 2^64−1 — and so is the type's.
+    // Reading the clamp as a bound would call `n -% 1` under `n > 1` a possible wrap (it cannot
+    // wrap at any n ≥ 1) and `x +% 1` near 2^63 safe (it is not); the true top gets both right.
+    const __int128 U64MAX = ((__int128)1 << 64) - 1;
+    __int128 A0 = alo, A1 = ahi, B0 = blo, B1 = bhi, T0 = tlo, T1 = thi;
+    IrType *xa = ins->operands[0]->type, *xb = ins->operands[1]->type;
+    if (xa && xa->kind == IRT_INT && !xa->is_signed && xa->bits >= 64 && ahi == INT64_MAX) A1 = U64MAX;
+    if (xb && xb->kind == IRT_INT && !xb->is_signed && xb->bits >= 64 && bhi == INT64_MAX) B1 = U64MAX;
+    if (!t->is_signed && t->bits >= 64) T1 = U64MAX;
+    __int128 c[4]; bool ovf = false;
+    for (int k = 0; k < 4; k++) {
+        __int128 x = (k & 2) ? A1 : A0, y = (k & 1) ? B1 : B0;
+        if (ins->op == IR_MUL) ovf |= __builtin_mul_overflow(x, y, &c[k]);   // |x|,|y| ≤ 2^64
+        else c[k] = ins->op == IR_ADD ? x + y : x - y;
+    }
+    *c0 = c[0]; *exact = (alo == ahi && blo == bhi && A1 == ahi && B1 == bhi);
+    if (ovf) return true;
+    __int128 lo = c[0], hi = c[0];
+    for (int k = 1; k < 4; k++) { if (c[k] < lo) lo = c[k]; if (c[k] > hi) hi = c[k]; }
+    return !(lo >= T0 && hi <= T1);
+}
+static bool vra_modular_may_wrap(Vra *V, Octagon *W, IrInstr *ins) {
+    __int128 c0; bool exact;
+    return vra_modular_may_wrap_c(V, W, ins, &c0, &exact);
+}
+// The transfer: false = cannot wrap, run the exact ℤ transfer; true = handled here — the wrapped
+// value when both operands are exact, the type's range when not.
+static bool vra_modular_wraps(Vra *V, Octagon *W, IrInstr *ins, int r) {
+    __int128 c0; bool exact;
+    if (!vra_modular_may_wrap_c(V, W, ins, &c0, &exact)) return false;
+    IrType *t = ins->result ? ins->result->type : NULL;
+    int64_t tlo, thi;
+    if (!t || t->kind != IRT_INT || t->bits < 1 || t->bits > 64 || !irtype_int_range(t, &tlo, &thi))
+        return true;
+    if (exact) {
+        uint64_t m = t->bits == 64 ? ~0ull : ((1ull << t->bits) - 1);
+        uint64_t u = (uint64_t)(unsigned __int128)c0 & m;
+        bool rep = true; int64_t v;
+        if (t->is_signed) v = (t->bits < 64 && ((u >> (t->bits - 1)) & 1)) ? (int64_t)(u | ~m) : (int64_t)u;
+        else if (u > (uint64_t)INT64_MAX) { rep = false; v = 0; }   // u64 above i64: unrepresentable
+        else v = (int64_t)u;
+        if (rep && vra_bound_fits(v)) { oct_add_const(W, r, v); return true; }
+    }
+    if (vra_bound_fits(tlo)) oct_add_lb(W, r, tlo);
+    else if (!t->is_signed) oct_add_lb(W, r, 0);
+    if (vra_bound_fits(thi)) oct_add_ub(W, r, thi);
+    return true;
+}
 static void vra_free(Vra *V);                                                    // fwd (phase D)
 static bool vra_dump_enabled = false;   // --dump-octagon: print the converged state
 static void vra_dump_state(Vra *V, FILE *o);   // fwd
@@ -1071,7 +1203,7 @@ static bool vra_same_value(Vra *V, const Octagon *W, int x, int y) {
 static void vra_add_via_diff(Vra *V, Octagon *W, int r, int a, int q) {
     for (int d=0; d<V->nvar; d++) {
         IrInstr *dd = V->def[d];
-        if (!dd || dd->op != IR_SUB || dd->n_operands < 2) continue;
+        if (!dd || dd->op != IR_SUB || dd->n_operands < 2 || !vra_zexact(V, dd)) continue;
         if (!dd->operands[0] || !dd->operands[1]) continue;
         if (!vra_same_value(V, W, dd->operands[1]->id, a)) continue;   // d = B − a′ with a′ = a
         int B = dd->operands[0]->id;
@@ -1186,6 +1318,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             int a=ins->operands[0]->id, b=ins->operands[1]->id;
             bool ac=V->cknown[a], bc=V->cknown[b], isadd=(ins->op==IR_ADD);
             oct_forget(W, r);
+            if (ins->wrap == IR_WRAP_MODULAR && vra_modular_wraps(V, W, ins, r)) break;
             // ★ AN UNSIGNED SUBTRACTION THAT MAY UNDERFLOW HAS NO ℤ RELATION TO STATE.
             // The transfers below record `r = a − b` exactly, which is true over ℤ and FALSE
             // in u64 the moment `a < b`: `hi = mid − 1` with mid = 0 is SIZE_MAX, not −1. The
@@ -1226,7 +1359,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                     int dv = qd->operands[1]->id;
                     if (dv<0 || dv>=V->nvar || !V->cknown[dv] || V->cval[dv] < 1) continue;
                     IrInstr *sd2 = V->def[qd->operands[0]->id];
-                    if (!sd2 || sd2->op!=IR_SUB || sd2->n_operands<2) continue;
+                    if (!sd2 || sd2->op!=IR_SUB || sd2->n_operands<2 || !vra_zexact(V, sd2)) continue;
                     if (sd2->operands[1]->id != lo_) continue;          // (b − a), same a
                     int hi_ = sd2->operands[0]->id;
                     oct_close(W);
@@ -1266,6 +1399,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             int a=ins->operands[0]->id, b=ins->operands[1]->id;   // a[i*W + j], W constant
             bool ac=V->cknown[a], bc=V->cknown[b];
             oct_forget(W, r);
+            if (ins->wrap == IR_WRAP_MODULAR && vra_modular_wraps(V, W, ins, r)) break;
             if (ac && bc) { int64_t v; if (vra_safe_scale(V->cval[a],V->cval[b],&v)) oct_add_const(W,r,v); break; }
             // S2: `i * e1` where e1 is a region's innermost EXTENT — the row-major stride.
             // Given 0 ≤ i < e0 and e1 ≥ 0 and len == e0*e1 (true by construction, the shape
@@ -1899,14 +2033,14 @@ static int vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out) {
 static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx) {
     if (sbase<0 || sbase>=V->nvar || V->shape_rank[sbase] != 2) return false;   // rank-2 for now
     IrInstr *d = (idx>=0 && idx<V->nvar) ? V->def[idx] : NULL;
-    if (!d || d->op != IR_ADD || d->n_operands < 2) return false;
+    if (!d || d->op != IR_ADD || d->n_operands < 2 || !vra_zexact(V, d)) return false;
     int e0 = V->shape_ext[sbase][0], e1 = V->shape_ext[sbase][1];
     // match ADD(MUL(i, e1), j)  — and the commuted forms
     for (int side=0; side<2; side++) {
         IrValue *mulv = d->operands[side], *jv = d->operands[1-side];
         if (!mulv || !jv) continue;
         IrInstr *m = V->def[mulv->id];
-        if (!m || m->op != IR_MUL || m->n_operands < 2) continue;
+        if (!m || m->op != IR_MUL || m->n_operands < 2 || !vra_zexact(V, m)) continue;
         int i_id = -1;
         if      (m->operands[1]->id == e1) i_id = m->operands[0]->id;
         else if (m->operands[0]->id == e1) i_id = m->operands[1]->id;
@@ -2012,8 +2146,8 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
                 if (!yd || yd->op != IR_ADD || yd->n_operands < 2 || y == lenvar) continue;
                 if (vra_same_value(V, W, lenvar, y)) { lnd = yd; break; }
             }
-        if (ixd && ixd->op==IR_ADD && ixd->n_operands>=2 &&
-            lnd && lnd->op==IR_ADD && lnd->n_operands>=2) {
+        if (ixd && ixd->op==IR_ADD && ixd->n_operands>=2 && vra_zexact(V, ixd) &&
+            lnd && lnd->op==IR_ADD && lnd->n_operands>=2 && vra_zexact(V, lnd)) {
             for (int si=0; si<2 && !c.hi_ok; si++)
                 for (int sl=0; sl<2 && !c.hi_ok; sl++) {
                     int shared_i = ixd->operands[si]->id,  other_i = ixd->operands[1-si]->id;
@@ -2105,7 +2239,7 @@ static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) 
     // themselves queried this way.
     if (v->id>=0 && v->id<V->nvar && vra_range_depth < 3) {
         IrInstr *d0 = V->def[v->id];
-        if (d0 && (d0->op==IR_ADD || d0->op==IR_SUB || d0->op==IR_MUL) && d0->n_operands>=2) {
+        if (d0 && (d0->op==IR_ADD || d0->op==IR_SUB || d0->op==IR_MUL) && d0->n_operands>=2 && vra_zexact(V, d0)) {
             vra_range_depth++;
             int64_t xlo,xhi,ylo,yhi;
             vra_range(V, W, d0->operands[0], &xlo, &xhi);
@@ -2289,7 +2423,7 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
             int dv = qd->operands[1]->id;
             if (dv<0 || dv>=V->nvar || !V->cknown[dv] || V->cval[dv] < 1) continue;
             IrInstr *sd2 = V->def[qd->operands[0]->id];
-            if (!sd2 || sd2->op!=IR_SUB || sd2->n_operands<2) continue;
+            if (!sd2 || sd2->op!=IR_SUB || sd2->n_operands<2 || !vra_zexact(V, sd2)) continue;
             if (sd2->operands[1]->id != lv->id) continue;              // the SAME `a`
             if (vra_diff_ub(V, W, lv->id, sd2->operands[0]->id) > 0) continue;   // a <= b?
             int64_t hlo, hhi; vra_range(V, W, sd2->operands[0], &hlo, &hhi);
@@ -2526,7 +2660,7 @@ static void vra_check_subslice(Vra *V, Octagon *W, IrInstr *ms) {
         clen = ndd->operands[0]->type->array_len;
     int hi=-1;
     IrInstr *lend = V->def[ms->operands[1]->id];
-    if (lend && lend->op==IR_SUB && lend->n_operands>=2 && lend->operands[1]->id==lo) hi=lend->operands[0]->id; // len = hi − lo
+    if (lend && lend->op==IR_SUB && lend->n_operands>=2 && vra_zexact(V, lend) && lend->operands[1]->id==lo) hi=lend->operands[0]->id; // len = hi − lo
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_BOUNDS; c.at=ms; c.line=ms->line; c.col=ms->col;
     int64_t llo,lhi; bool lhl,lhh; vra_interval(V, W,lo,&llo,&lhl,&lhi,&lhh);
     c.lo_ok = lhl && llo>=0;                                          // 0 ≤ lo
@@ -2823,7 +2957,7 @@ static bool vra_step_decreases(Vra *V, int cell, IrInstr *vd) {
             // `x & (x − 1)` — clears the lowest set bit, so it is strictly below x for x ≥ 1.
             if (!op0_is_cell || nops < 2) return false;
             IrInstr *sub = V->def[vd->operands[1]->id];
-            if (!sub || sub->op!=IR_SUB || sub->n_operands<2) return false;
+            if (!sub || sub->op!=IR_SUB || sub->n_operands<2 || !vra_zexact(V, sub)) return false;
             IrInstr *ls = V->def[sub->operands[0]->id];
             int one = sub->operands[1]->id;
             return ls && ls->op==IR_LOAD && ls->n_operands>=1 && ls->operands[0]->id==cell
@@ -3067,7 +3201,7 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         // exactly when `i` rises, so the predicate's direction is unchanged and the bound moves
         // by a constant. Progress is then checked on the CELL, as before — which is the part
         // that must not be relaxed, because it is what the counter actually is.
-        if (ivd && (ivd->op==IR_ADD || ivd->op==IR_SUB) && ivd->n_operands>=2) {
+        if (ivd && (ivd->op==IR_ADD || ivd->op==IR_SUB) && ivd->n_operands>=2 && vra_zexact(V, ivd)) {
             IrValue *a0=ivd->operands[0], *a1=ivd->operands[1];
             bool c1 = a1 && a1->id>=0 && a1->id<V->nvar && V->cknown[a1->id];
             IrInstr *ld = (a0 && a0->id>=0 && a0->id<V->nvar) ? V->def[a0->id] : NULL;
@@ -3131,7 +3265,7 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
                 if (st->op!=IR_STORE || st->n_operands<2 || !VRA_SAME_CELL(st->operands[0]->id)) continue;
                 bool ok_step = false;
                 IrInstr *vd=V->def[st->operands[1]->id];
-                if (vd && (vd->op==IR_ADD||vd->op==IR_SUB) && vd->n_operands>=2) {
+                if (vd && (vd->op==IR_ADD||vd->op==IR_SUB) && vd->n_operands>=2 && vra_zexact(V, vd)) {
                     IrInstr *ld=V->def[vd->operands[0]->id]; int c=vd->operands[1]->id;
                     if (ld && ld->op==IR_LOAD && VRA_SAME_CELL(ld->operands[0]->id)) {
                         if (V->cknown[c]) {
@@ -3265,7 +3399,7 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
     // works against a limit lowered by k. k is subtracted from the BOUND rather than added to
     // the start: the start may be unknown, the bound is what has to be finite anyway.
     int64_t off = 0;
-    if (ivd && ivd->op==IR_ADD && ivd->n_operands>=2) {
+    if (ivd && ivd->op==IR_ADD && ivd->n_operands>=2 && vra_zexact(V, ivd)) {
         IrInstr *ld = V->def[ivd->operands[0]->id];
         int k = ivd->operands[1]->id;
         if (ld && ld->op==IR_LOAD && ld->n_operands>=1 &&
@@ -3282,19 +3416,41 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
     int64_t blo,bhi; vra_range(V,W,bnd,&blo,&bhi); (void)blo;
     if (bhi >= INT64_MAX/2) return false;             // an unbounded limit bounds nothing
     bhi -= off;                                       // `i + k < n`  ==>  `i < n - k`
-    int64_t ilo,ihi; bool hl,hh; vra_interval(V,W,cell,&ilo,&hl,&ihi,&hh); (void)ihi; (void)hh;
-    if (!hl) ilo = 0;
-
     int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
     char *body = malloc((size_t)nbb); if (!body) return false;
     vra_natural_loop(V, H, nbb, body);
+    // ★ THE START IS THE COUNTER'S VALUE ON ENTRY, not at the question. This read the cell's
+    // interval in W — the state where the bound is ASKED — and T = limit − start then counts the
+    // trips still to come, not the trips taken. After `while i < 200 { s = s + 1; i = i + 1 }`
+    // i is 200, so T was 0 and s — 300 at run time — was bounded at its entry value 100:
+    // `var t u8 = s` compiled and truncated, and `a[s]` on 101 elements read out of bounds
+    // under a proof. Inside the loop any guard that raised i's lower bound shrank T the same
+    // way. And an unknown start was taken as 0. The start is now joined over the stores OUTSIDE
+    // the loop, and each stored VALUE is read in W: it is an SSA value and never changes, so what
+    // W knows of it held when it was stored — unlike the counter CELL, which W sees after the
+    // very trips it is asked to count. (Read from its TYPE instead, `var d i32 = 0 - 2` started
+    // at −2^31 and every fuzz_div program lost its bound.)
+    int64_t ilo = INT64_MAX; bool any_start = false;
+    for (IrBlock *b2=V->f->blocks; b2; b2=b2->next) {
+        if (b2->id>=0 && b2->id<nbb && body[b2->id]) continue;
+        for (IrInstr *st=b2->instrs; st; st=st->next) {
+            if (st->op!=IR_STORE || st->n_operands<2 || st->operands[0]->id!=cell) continue;
+            IrValue *sv = st->operands[1];
+            int64_t vlo, vhi;
+            if (!sv || !sv->type || sv->type->kind != IRT_INT) { free(body); return false; }
+            vra_range(V, W, sv, &vlo, &vhi);
+            if (vlo < ilo) ilo = vlo;
+            any_start = true;
+        }
+    }
+    if (!any_start || ilo <= INT64_MIN/4) { free(body); return false; }
     int64_t step = 0; int nupd = 0;
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         if (!(b->id>=0 && b->id<nbb && body[b->id])) continue;
         for (IrInstr *st=b->instrs; st; st=st->next) {
             if (st->op!=IR_STORE || st->n_operands<2 || st->operands[0]->id!=cell) continue;
             IrInstr *vd=V->def[st->operands[1]->id];
-            if (vd && vd->op==IR_ADD && vd->n_operands>=2) {
+            if (vd && vd->op==IR_ADD && vd->n_operands>=2 && vra_zexact(V, vd)) {
                 IrInstr *ld=V->def[vd->operands[0]->id]; int k=vd->operands[1]->id;
                 if (ld && ld->op==IR_LOAD && ld->operands[0]->id==cell &&
                     k>=0 && k<V->nvar && V->cknown[k] && V->cval[k] > 0) { step=V->cval[k]; nupd++; }
@@ -3307,6 +3463,7 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
     if (opaque) return false;          // a call may reset the counter: T is not a trip count
     if (nupd != 1 || step <= 0) return false;
     if (bhi < ilo) { *T = 0; return true; }
+    if (bhi - ilo > INT64_MAX/2) return false;         // no trip count worth the name
     *T = (bhi - ilo + step - 1) / step;                // ceil((limit − start) / step)
     return *T >= 0;
 }
@@ -3371,7 +3528,7 @@ static bool vra_guard_counter_fits(Vra *V, Octagon *W, IrInstr *ins, int64_t thi
                     continue;
                 }
                 IrInstr *vd = V->def[st->operands[1]->id];
-                if (vd && vd->op == IR_ADD && vd->n_operands >= 2) {
+                if (vd && vd->op == IR_ADD && vd->n_operands >= 2 && vra_zexact(V, vd)) {
                     IrInstr *l2 = V->def[vd->operands[0]->id]; int a2 = vd->operands[1]->id;
                     if (l2 && l2->op == IR_LOAD && l2->operands[0]->id == cell &&
                         a2 >= 0 && a2 < V->nvar && V->cknown[a2]) { step = V->cval[a2]; nupd++; }
@@ -3462,6 +3619,18 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
     return true;
 }
 
+// ★ A MODULAR ACCUMULATOR (`count = count +% d`) is bounded by the same argument ONLY if the
+// bound fits the step's own type: then no partial sum s0 + k·d left the type, so no iteration
+// wrapped and each one computed the ℤ sum — induction on k. A bound that leaves the type says
+// nothing, because the value that left it came back in somewhere else.
+static bool vra_accum_fits_step(Vra *V, IrValue *val, int64_t lo, int64_t hi) {
+    IrInstr *d = (val && val->id >= 0 && val->id < V->nvar) ? V->def[val->id] : NULL;
+    if (!d || d->wrap != IR_WRAP_MODULAR) return true;
+    int64_t tlo, thi;
+    if (!d->result || !irtype_int_range(d->result->type, &tlo, &thi)) return false;
+    return lo >= tlo && hi <= thi;
+}
+
 // Same computation, but it reports what it found even when the bound does not hold — that is
 // what the diagnostic needs.
 static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
@@ -3483,6 +3652,7 @@ static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
     int64_t lo, hi;
     if (__builtin_add_overflow(s0lo, alo, &lo)) return false;
     if (__builtin_add_overflow(s0hi, ahi, &hi)) return false;
+    if (!vra_accum_fits_step(V, val, lo, hi)) return false;
     return lo >= tlo && hi <= thi;
 }
 
@@ -3537,7 +3707,8 @@ static bool vra_cell_accum_range(Vra *V, Octagon *W, int cell, int64_t *lo, int6
             if (ahi < 0) ahi = 0;
             int64_t l, h;
             if (!__builtin_add_overflow(s0lo, alo, &l) &&
-                !__builtin_add_overflow(s0hi, ahi, &h) && l <= h) {
+                !__builtin_add_overflow(s0hi, ahi, &h) && l <= h &&
+                vra_accum_fits_step(V, acc, l, h)) {
                 *lo = l; *hi = h; ok = true;
             }
         }
@@ -3646,6 +3817,7 @@ static Vra *vra_analyze(IrFunc *f) {
     V->def=calloc(V->nvar,sizeof(IrInstr*)); V->defblk=calloc(V->nvar,sizeof(int));
     V->val=calloc(V->nvar,sizeof(IrValue*));
     V->cval=calloc(V->nvar,sizeof(int64_t)); V->cknown=calloc(V->nvar,sizeof(bool));
+    V->modwrap=calloc(V->nvar,sizeof(bool));
     V->slicelen=calloc(V->nvar,sizeof(int)); V->subslice_gep=calloc(V->nvar,sizeof(bool));
     V->escaped=calloc(V->nvar,sizeof(bool));
     V->persist=calloc(V->nvar,sizeof(bool));
@@ -3846,7 +4018,14 @@ static Vra *vra_analyze(IrFunc *f) {
     }
     // final pass: discharge index obligations against the converged in-states
     for (IrBlock *b=f->blocks; b; b=b->next) {
-        if (!V->reached[b->id]) continue;
+        if (!V->reached[b->id]) {
+            // An operation that never runs cannot wrap — the same reachability every other
+            // obligation in this pass is discharged by.
+            for (IrInstr *ins=b->instrs; ins; ins=ins->next)
+                if (ins->wrap == IR_WRAP_MODULAR && ins->result && ins->result->id >= 0 &&
+                    ins->result->id < V->nvar) V->modwrap[ins->result->id] = false;
+            continue;
+        }
         memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; oct_close(&W);
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             switch (ins->op) {
@@ -3865,7 +4044,12 @@ static Vra *vra_analyze(IrFunc *f) {
                 }
                 case IR_MAKE_SLICE: oct_close(&W); vra_check_subslice(V,&W,ins); break;
                 case IR_ASSERT: oct_close(&W); vra_check_assert(V,&W,ins,b); break;
-                case IR_ADD: case IR_SUB: case IR_MUL: oct_close(&W); vra_check_overflow(V,&W,ins); break;
+                case IR_ADD: case IR_SUB: case IR_MUL:
+                    oct_close(&W); vra_check_overflow(V,&W,ins);
+                    if (ins->wrap == IR_WRAP_MODULAR && ins->result && ins->result->id >= 0 &&
+                        ins->result->id < V->nvar)
+                        V->modwrap[ins->result->id] = vra_modular_may_wrap(V, &W, ins);
+                    break;
                 case IR_SHL: case IR_LSHR: case IR_ASHR: oct_close(&W); vra_check_shift(V,&W,ins); break;
                 case IR_NEG: oct_close(&W); vra_check_neg(V,&W,ins); break;
                 // Path-F's other half: the widened result meets a narrower slot HERE.
@@ -4650,7 +4834,7 @@ static void vra_dump_state(Vra *V, FILE *o) {
 static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
-    free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown);
+    free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown); free(V->modwrap);
     free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->uniq_store); free(V->strict_esc); free(V->odim); free(V->checks); free(V);
 }
 
