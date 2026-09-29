@@ -1471,6 +1471,14 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
+### tests/trust/mask_symbolic_len_pass.ln
+rc=0
+out=1340
+at=access 2
+at=nonnull 2
+at=pure 2
+ty=Slice_i32 scalar
+ty=Slice_u8 scalar
 ### tests/trust/mul_narrowing_provable_pass.ln
 rc=0
 out=

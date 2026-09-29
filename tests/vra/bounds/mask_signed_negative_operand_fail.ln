@@ -1,0 +1,7 @@
+// EXPECT: [E086]
+// SOUNDNESS: `x & y <= y` holds only for a NON-NEGATIVE y. A signed operand that may be negative
+// (sign bit set) bounds nothing, so the result may be negative and the cast to an index fails.
+func f(a i32[8], x i32, y i32) i32 {
+    return a[(x & y) as usize]
+}
+func main() i32 { return 0 }

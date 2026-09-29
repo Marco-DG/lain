@@ -1,0 +1,8 @@
+// EXPECT: [E085]
+// SOUNDNESS: `x & y <= y` bounds a mask by a runtime length, but `a.len` itself is not a valid
+// index: x & a.len can EQUAL a.len (x = a.len). Only `a.len - 1` is in bounds.
+func f(a i32[], x usize) i32 {
+    if a.len == 0 { return 0 }
+    return a[x & a.len]
+}
+func main() i32 { return 0 }

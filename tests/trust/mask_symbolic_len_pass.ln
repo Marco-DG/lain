@@ -1,0 +1,22 @@
+// TRUST: a mask by a RUNTIME length, executed. `x & (a.len - 1)` is at most `a.len - 1` for any
+// len >= 1 (the bits of x & y are a subset of y's), so `a[x & (a.len - 1)]` is in bounds for
+// every length, power of two or not. Only a CONSTANT mask was known before 2026-09-29, so this
+// ring-buffer index was refused (E085) while rustc -O, clang -O3 and gcc -O3 all delete its
+// check (local bounds matrix, shape b5). The five-element array is the non-power-of-two case.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func ring(a i32[], x usize) i32 {
+    if a.len == 0 { return 0 }
+    return a[x & (a.len - 1)]
+}
+func main() i32 effects io {
+    var four i32[4] = [10, 11, 12, 13]
+    var five i32[5] = [20, 21, 22, 23, 24]
+    var x usize = 0
+    var s i32 = 0
+    while x < 40 {
+        s = s +% ring(four, x) +% ring(five, x)
+        x = x + 1
+    }
+    libc_printf("%d\n", s)
+    return 0
+}

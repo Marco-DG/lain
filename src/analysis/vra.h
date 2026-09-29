@@ -1513,6 +1513,26 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             oct_forget(W, r);
             if      (V->cknown[b] && V->cval[b]>=0){ oct_add_lb(W,r,0); oct_add_ub(W,r,V->cval[b]); }
             else if (V->cknown[a] && V->cval[a]>=0){ oct_add_lb(W,r,0); oct_add_ub(W,r,V->cval[a]); }
+            // ★ A SYMBOLIC MASK BOUNDS THE RESULT TOO. The bits of `x & y` are a subset of y's, so
+            // for a NON-NEGATIVE y, 0 <= x & y <= y, whatever x is: one octagon difference,
+            // r - y <= 0. Only the constant form was known, so `a[x & (a.len - 1)]` (a ring
+            // buffer whose length is a runtime power of two, and in bounds for ANY len >= 1) was
+            // refused, while rustc -O, clang and gcc all delete that check (bounds matrix, b5).
+            // Per operand: a negative y (signed, sign bit set) bounds nothing and is skipped.
+            for (int side=0; side<2; side++) {
+                int y = side ? b : a;
+                IrValue *yv = ins->operands[side ? 1 : 0];
+                if (V->cknown[y] || !yv || !yv->type || yv->type->kind!=IRT_INT) continue;
+                bool nonneg = !yv->type->is_signed;
+                if (!nonneg) {
+                    oct_close(W);
+                    int64_t ylo, yhi; bool hl, hh; vra_interval(V, W, y, &ylo,&hl,&yhi,&hh);
+                    nonneg = hl && ylo >= 0;
+                }
+                if (!nonneg) continue;
+                oct_add_lb(W, r, 0);
+                vra_add_diff_le(V, W, r, y, 0);                 // r <= y
+            }
             break;
         }
         case IR_UDIV: {  // x / b  — in any defined exec (b > 0, x ≥ 0)

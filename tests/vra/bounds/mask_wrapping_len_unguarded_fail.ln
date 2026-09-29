@@ -1,0 +1,9 @@
+// EXPECT: [E085]
+// SOUNDNESS: `x & y <= y` must not see through a WRAPPING subtraction. At a.len == 0 the mask
+// `a.len -% 1` is 2^64 - 1, so the index is x itself and out of bounds. db62f7e keeps a wrapping
+// result from carrying "a.len - 1"; this pins that the symbolic-mask rule (2026-09-29) did not
+// reopen it. With `if a.len == 0 { return 0 }` first, the mask cannot wrap and the access proves.
+func f(a i32[], x usize) i32 {
+    return a[x & (a.len -% 1)]
+}
+func main() i32 { return 0 }
