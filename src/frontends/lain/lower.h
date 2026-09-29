@@ -3629,8 +3629,61 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
 // declaration-only stub (is_extern, no body) for each extern func/proc so an
 // interprocedural pass (effects, and later borrow/linearity) can classify calls to them
 // WITHOUT consulting the AST — the module is self-contained. Returns the list head.
+static IrSAExpr *ir_lower_static_expr(LowerCtx *c, Expr *e) {
+    if (!e) return NULL;
+    if (e->kind == EXPR_CAST) return ir_lower_static_expr(c, e->as.cast_expr.expr);
+    if (e->kind == EXPR_IDENTIFIER && e->decl && e->decl->kind == DECL_VARIABLE &&
+        !e->decl->as.variable_decl.is_mutable && e->decl->as.variable_decl.init &&
+        c->const_depth < 16) {                         // a named constant: its initialiser
+        c->const_depth++;
+        IrSAExpr *x = ir_lower_static_expr(c, e->decl->as.variable_decl.init);
+        c->const_depth--;
+        return x;
+    }
+    IrSAExpr *x = arena_push_aligned(c->a, IrSAExpr);
+    memset(x, 0, sizeof *x);
+    switch (e->kind) {
+        case EXPR_LITERAL: x->kind = IR_SA_CONST; x->value = e->as.literal_expr.value; break;
+        case EXPR_CHAR:    x->kind = IR_SA_CONST; x->value = (unsigned char)e->as.char_expr.value; break;
+        case EXPR_BUILTIN:
+            x->kind = e->as.builtin_expr.builtin_kind == BUILTIN_SIZEOF ? IR_SA_SIZEOF : IR_SA_ALIGNOF;
+            x->type = ir_lower_type(c, e->as.builtin_expr.vec_type);
+            break;
+        case EXPR_UNARY:
+            x->kind = IR_SA_UNARY;
+            x->op = e->as.unary_expr.op == TOKEN_MINUS ? "-" : e->as.unary_expr.op == TOKEN_BANG ? "!" : "~";
+            x->l = ir_lower_static_expr(c, e->as.unary_expr.right);
+            break;
+        case EXPR_BINARY: {
+            x->kind = IR_SA_BINARY;
+            switch (e->as.binary_expr.op) {
+                case TOKEN_KEYWORD_AND: x->op = "&&"; break;
+                case TOKEN_KEYWORD_OR:  x->op = "||"; break;
+                default: x->op = token_kind_to_str(e->as.binary_expr.op); break;   // + - * / % & | ^ == != < <= > >=
+            }
+            x->l = ir_lower_static_expr(c, e->as.binary_expr.left);
+            x->r = ir_lower_static_expr(c, e->as.binary_expr.right);
+            break;
+        }
+        default: x->kind = IR_SA_CONST; x->value = 0; break;   // sema refused anything else (E133)
+    }
+    return x;
+}
+
 static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
     IrFunc *head=NULL, *tail=NULL;
+    // DECIDE-O: the module-scope asserts, in source order, for the emitter. Reset first: the
+    // driver may lower a module more than once.
+    ir_static_asserts = NULL;
+    { IrStaticAssert **sa_tail = &ir_static_asserts;
+      LowerCtx sc = {0}; sc.a = a; sc.globals = program;
+      for (DeclList *d = program; d; d = d->next) {
+          if (!d->decl || d->decl->kind != DECL_STATIC_ASSERT) continue;
+          IrStaticAssert *s = arena_push_aligned(a, IrStaticAssert);
+          s->cond = ir_lower_static_expr(&sc, d->decl->as.static_assert_decl.cond);
+          s->line = d->decl->line; s->col = d->decl->col; s->next = NULL;
+          *sa_tail = s; sa_tail = &s->next;
+      } }
     for (DeclList *d = program; d; d = d->next) {
         if (!d->decl) continue;
         IrFunc *f = NULL;

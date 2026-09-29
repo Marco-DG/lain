@@ -223,7 +223,9 @@ following the C99 ABI of the target platform}.
 \lain{@sizeof(T)} and \lain{@alignof(T)} are expressions of type \lain{usize} whose values
 are the size and alignment of \lain{T} as laid out for the target: the C99 \texttt{sizeof}
 and \texttt{\_Alignof} of the type the implementation emits for \lain{T}. A layout claim
-written as a comment is not checked; one written as \lain{@sizeof(Token) == 8} in a test is.
+written as a comment is not checked; one written as a module-scope
+\lain{assert @sizeof(Token) == 8} (\S\,\ref{sec:decl.static-assert}) is, every time the program
+is built.
 
 \section{ADT and enum layout}
 \label{sec:mem.adt-layout}

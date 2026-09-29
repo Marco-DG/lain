@@ -1,0 +1,10 @@
+// EXPECT: [E133]
+// Nothing runs at module scope, so the predicate must be a constant: a call is a run-time value,
+// and belongs in an `assert(...)` inside a function, where the range analysis must prove it.
+func k() i32 {
+    return 1
+}
+assert k() == 1
+func main() i32 {
+    return 0
+}

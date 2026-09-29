@@ -268,6 +268,48 @@ extern func strlen(s *u8) usize effects
   declarations.  User-defined variadic functions are \illformed{}.
 \end{constraint}
 
+\section{Module-scope assertions}
+\label{sec:decl.static-assert}
+\index{static assertion}
+\index{assert!module scope}
+
+\pnum
+A module-scope \lain{assert} states a fact about the program's constants and the layout of its
+types, where they are declared:
+
+\begin{laincode}
+type Token {
+    kind u8
+    len  u16
+    pos  u32
+}
+BUF usize = 64
+assert @sizeof(Token) == 8
+assert BUF % 16 == 0
+\end{laincode}
+
+\pnum
+Its operand is a \emph{constant expression}: integer and character literals; named immutable
+module-level constants whose initialisers are constant expressions; \lain{@sizeof(T)} and
+\lain{@alignof(T)} (\S\,\ref{sec:mem.alignment}); the arithmetic, bitwise, comparison and logical
+operators; and \lain{as}.  Its value is computed over the integers, not in the width of any one
+type.
+
+\begin{constraint}
+  The operand of a module-scope \lain{assert} shall be a constant expression of type
+  \lain{bool}; otherwise the program is \illformed{}~(\diagcode{E133}).  A value that exists only
+  at run time is asserted inside a function, where it is an obligation the value-range analysis
+  must discharge (\S\,\ref{sec:13-vra}).
+\end{constraint}
+
+\begin{constraint}
+  A module-scope assertion whose value is \lain{false} makes the program \illformed{}
+  (\diagcode{E134}).  When the operand involves \lain{@sizeof} or \lain{@alignof} its value is
+  the target C compiler's, and the implementation shall have that compiler decide it: the
+  reference implementation emits a C \texttt{\_Static\_assert} carrying \diagcode{E134}.
+  Otherwise the implementation decides it itself.
+\end{constraint}
+
 \section{Comptime declarations}
 \label{sec:decl.comptime}
 \index{comptime declaration}

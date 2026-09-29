@@ -445,6 +445,30 @@ type File {
 }
 ```
 
+**Layout, and asserting it:**
+`@sizeof(T)` and `@alignof(T)` are the size and alignment of `T` as the C compiler lays it out
+(`usize`). A layout claim belongs in the program, not in a comment — a module-scope `assert`
+states it where the type is declared, and a constant with no layout in it is checked by Lain
+at once:
+
+```lain
+type Token {
+    kind u8
+    len u16
+    pos u32
+}
+BUF usize = 64
+assert @sizeof(Token) == 8
+assert BUF % 16 == 0
+func main() i32 {
+    return 0
+}
+```
+
+The operand must be a `bool` constant — literals, named constants, operators, `as`, `@sizeof`,
+`@alignof` ([E133] otherwise). A false one is [E134]: from Lain when it can compute the value,
+and from the C compiler (a `_Static_assert` carrying the same code) when it measures a type.
+
 ### 2.8 Algebraic Data Types (ADTs)
 
 Lain uses a unified syntax for enums, tagged unions, and algebraic data types. All are defined with `type`.

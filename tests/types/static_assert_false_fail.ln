@@ -1,0 +1,7 @@
+// EXPECT: [E134]
+// A module-scope assert with no layout in it is decided by Lain, at once.
+BUF usize = 60
+assert BUF % 16 == 0
+func main() i32 {
+    return 0
+}

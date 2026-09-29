@@ -1791,6 +1791,10 @@ ty=Slice_u8 scalar
 rc=7
 out=
 ty=Slice_i32 scalar
+### tests/types/static_assert_layout_pass.ln
+rc=0
+out=
+ty=Token struct
 ### tests/types/string_escape_pass.ln
 rc=0
 out=he said "hi"

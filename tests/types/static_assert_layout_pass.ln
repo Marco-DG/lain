@@ -1,0 +1,18 @@
+// A module-scope `assert` (DECIDE-O): a claim about constants and LAYOUT, written where the type
+// is declared, so it cannot drift the way `// 8 bytes` does. A plain constant is decided by Lain
+// (static_assert_false_fail.ln); one that measures a type becomes a C `_Static_assert`, decided by
+// the C compiler — the only party that knows the number — every time the emitted C is built.
+type Token {
+    kind u8
+    len u16
+    pos u32
+}
+BUF usize = 64
+assert @sizeof(Token) == 8
+assert @alignof(Token) == 4
+assert @sizeof(Token) * 8 == BUF
+assert BUF % 16 == 0 and BUF > 0
+assert @sizeof(Token) - 16 < 0          // a signed question, as in Lain: C does not wrap it
+func main() i32 {
+    return 0
+}

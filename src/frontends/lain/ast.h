@@ -228,7 +228,12 @@ typedef enum {
     DECL_DESTRUCT,
     DECL_EXTERN_TYPE,
     DECL_TYPE_ALIAS, // New: type Name = Expr
+    DECL_STATIC_ASSERT, // module-scope `assert <constant expression>` (DECIDE-O)
 } DeclKind;
+
+typedef struct {
+    struct Expr *cond;   // a bool constant expression: literals, operators, @sizeof, @alignof
+} DeclStaticAssert;
 
 typedef struct {
     Id *name;
@@ -365,6 +370,7 @@ typedef struct Decl {
         DeclDestruct    destruct_decl;
         DeclExternType  extern_type_decl;
         DeclTypeAlias   type_alias_decl;
+        DeclStaticAssert static_assert_decl;
     } as;
     isize line;  // NEW
     isize col;   // NEW

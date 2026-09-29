@@ -4097,6 +4097,13 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             }
             continue;
         }
+        if (d->kind == DECL_STATIC_ASSERT) {
+            sema_clear_locals();
+            Expr *sc = d->as.static_assert_decl.cond;
+            if (sc) { sema_resolve_expr(sc); sema_infer_expr(sc); }
+            sema_check_static_assert(d);
+            continue;
+        }
         if (d->kind != DECL_FUNCTION) continue;
         // Generic templates are never processed directly — only their concrete
         // monomorphized instances (appended to this same list) are.

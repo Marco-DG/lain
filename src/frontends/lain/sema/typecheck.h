@@ -872,6 +872,129 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
     exit(1);
 }
 
+// ── DECIDE-O: A MODULE-SCOPE `assert` ────────────────────────────────────────────────────────
+// The predicate must be a CONSTANT: literals, arithmetic, comparisons, `and`/`or`/`!`, `as`, and
+// @sizeof/@alignof. A predicate with no layout in it is decided here (E134 when false). One that
+// measures a type is decided by the C compiler, the only party that knows the number; the
+// lowering hands it to the emitter as a `_Static_assert` carrying the same code.
+// A NAMED constant — an immutable module-level `N i32 = 64` — is a constant expression too:
+// `assert BUF % 16 == 0` is the commonest layout claim there is. Its initialiser stands in for it
+// (a C `static const` is not a C constant expression, so the emitter substitutes it as well).
+static Expr *sa_named_constant(Expr *e) {
+    if (!e || e->kind != EXPR_IDENTIFIER || !e->decl || e->decl->kind != DECL_VARIABLE) return NULL;
+    if (e->decl->as.variable_decl.is_mutable) return NULL;
+    return e->decl->as.variable_decl.init;
+}
+static int sa_depth = 0;
+static bool sa_is_const(Expr *e, bool *layout) {
+    if (!e) return false;
+    switch (e->kind) {
+        case EXPR_LITERAL: case EXPR_CHAR: return true;
+        case EXPR_IDENTIFIER: {
+            Expr *init = sa_named_constant(e);
+            if (!init || sa_depth > 16) return false;      // a cycle is not a constant
+            sa_depth++; bool ok = sa_is_const(init, layout); sa_depth--;
+            return ok;
+        }
+        case EXPR_BUILTIN:
+            if (e->as.builtin_expr.builtin_kind == BUILTIN_SIZEOF ||
+                e->as.builtin_expr.builtin_kind == BUILTIN_ALIGNOF) { *layout = true; return true; }
+            return false;
+        case EXPR_UNARY: {
+            TokenKind op = e->as.unary_expr.op;
+            return (op == TOKEN_MINUS || op == TOKEN_BANG || op == TOKEN_TILDE) &&
+                   sa_is_const(e->as.unary_expr.right, layout);
+        }
+        case EXPR_BINARY: {
+            switch (e->as.binary_expr.op) {
+                case TOKEN_PLUS: case TOKEN_MINUS: case TOKEN_ASTERISK: case TOKEN_SLASH:
+                case TOKEN_PERCENT: case TOKEN_AMPERSAND: case TOKEN_PIPE: case TOKEN_CARET:
+                case TOKEN_EQUAL_EQUAL: case TOKEN_BANG_EQUAL:
+                case TOKEN_ANGLE_BRACKET_LEFT: case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:
+                case TOKEN_ANGLE_BRACKET_RIGHT: case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:
+                case TOKEN_KEYWORD_AND: case TOKEN_KEYWORD_OR:
+                    return sa_is_const(e->as.binary_expr.left, layout) &&
+                           sa_is_const(e->as.binary_expr.right, layout);
+                default: return false;
+            }
+        }
+        case EXPR_CAST: return e->as.cast_expr.kind == CAST_PROVEN && sa_is_const(e->as.cast_expr.expr, layout);
+        default: return false;
+    }
+}
+// Evaluate a layout-free constant over the integers (a comparison is 0/1). False on a division
+// by zero or a value past 128 bits, which the caller reports as not constant.
+static bool sa_eval(Expr *e, __int128 *v) {
+    __int128 a, b;
+    switch (e->kind) {
+        case EXPR_LITERAL: *v = e->as.literal_expr.value; return true;
+        case EXPR_CHAR:    *v = (unsigned char)e->as.char_expr.value; return true;
+        case EXPR_CAST:    return sa_eval(e->as.cast_expr.expr, v);
+        case EXPR_IDENTIFIER: {
+            Expr *init = sa_named_constant(e);
+            if (!init || sa_depth > 16) return false;
+            sa_depth++; bool ok = sa_eval(init, v); sa_depth--;
+            return ok;
+        }
+        case EXPR_UNARY:
+            if (!sa_eval(e->as.unary_expr.right, &a)) return false;
+            *v = e->as.unary_expr.op == TOKEN_MINUS ? -a : e->as.unary_expr.op == TOKEN_BANG ? !a : ~a;
+            return true;
+        case EXPR_BINARY: {
+            TokenKind op = e->as.binary_expr.op;
+            if (!sa_eval(e->as.binary_expr.left, &a)) return false;
+            if (op == TOKEN_KEYWORD_AND && !a) { *v = 0; return true; }
+            if (op == TOKEN_KEYWORD_OR  &&  a) { *v = 1; return true; }
+            if (!sa_eval(e->as.binary_expr.right, &b)) return false;
+            switch (op) {
+                case TOKEN_PLUS: *v = a + b; return true;
+                case TOKEN_MINUS: *v = a - b; return true;
+                case TOKEN_ASTERISK: *v = a * b; return true;
+                case TOKEN_SLASH: if (!b) return false; *v = a / b; return true;
+                case TOKEN_PERCENT: if (!b) return false; *v = a % b; return true;
+                case TOKEN_AMPERSAND: *v = a & b; return true;
+                case TOKEN_PIPE: *v = a | b; return true;
+                case TOKEN_CARET: *v = a ^ b; return true;
+                case TOKEN_EQUAL_EQUAL: *v = a == b; return true;
+                case TOKEN_BANG_EQUAL: *v = a != b; return true;
+                case TOKEN_ANGLE_BRACKET_LEFT: *v = a < b; return true;
+                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL: *v = a <= b; return true;
+                case TOKEN_ANGLE_BRACKET_RIGHT: *v = a > b; return true;
+                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: *v = a >= b; return true;
+                case TOKEN_KEYWORD_AND: case TOKEN_KEYWORD_OR: *v = (b != 0); return true;
+                default: return false;
+            }
+        }
+        default: return false;
+    }
+}
+static void sema_check_static_assert(Decl *d) {
+    Expr *c = d->as.static_assert_decl.cond;
+    bool layout = false;
+    if (!c || !c->type || !is_bool_type(c->type) || !sa_is_const(c, &layout)) {
+        fprintf(stderr, "[E133] Error Ln %li, Col %li: a module-scope `assert` takes a `bool` CONSTANT "
+                "expression — literals, operators, `as`, `@sizeof(T)` and `@alignof(T)`. A value that "
+                "exists only at run time is an `assert(...)` inside a function.\n",
+                (long)d->line, (long)d->col);
+        diagnostic_show_line(d->line, d->col);
+        exit(1);
+    }
+    if (layout) return;                       // the C compiler decides it (_Static_assert)
+    __int128 v;
+    if (!sa_eval(c, &v)) {
+        fprintf(stderr, "[E133] Error Ln %li, Col %li: this module-scope `assert` cannot be evaluated "
+                "(a division by zero?).\n", (long)d->line, (long)d->col);
+        diagnostic_show_line(d->line, d->col);
+        exit(1);
+    }
+    if (!v) {
+        fprintf(stderr, "[E134] Error Ln %li, Col %li: module-scope assertion is false.\n",
+                (long)d->line, (long)d->col);
+        diagnostic_show_line(d->line, d->col);
+        exit(1);
+    }
+}
+
 // Return a refinement type alias's constraint list if `t` names one, else NULL.
 // (Constraints live on the DECL_TYPE_ALIAS, not on the using declaration.)
 static ExprList *alias_constraints_for(Type *t) {

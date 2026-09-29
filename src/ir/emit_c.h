@@ -1033,8 +1033,15 @@ static void ir_emit_struct_body_deps(IrTypeSet *ts, int i, bool *done, FILE *o) 
 // Forward-declare every struct, then slices (which only need the struct *pointer*),
 // then the full struct bodies in reverse discovery order (a by-value nested struct
 // is discovered after its container, so reverse puts the inner one first).
+static void ir_sa_visit_types(IrTypeSet *ts, IrSAExpr *x) {
+    if (!x) return;
+    if ((x->kind == IR_SA_SIZEOF || x->kind == IR_SA_ALIGNOF) && x->type) ir_ts_visit(ts, x->type);
+    ir_sa_visit_types(ts, x->l); ir_sa_visit_types(ts, x->r);
+}
 static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     IrTypeSet ts = {0};
+    // A type measured only by a module-scope assert is carried by no value either.
+    for (IrStaticAssert *s = ir_static_asserts; s; s = s->next) ir_sa_visit_types(&ts, s->cond);
     for (IrFunc *f=funcs; f; f=f->next) {
         // ★ AN EXTERN HAS NO VALUES. `next_value_id` is 0 for a declaration with no body, and
         // the arena refuses a zero-count push — so a program whose only aggregates came from
@@ -1131,9 +1138,36 @@ static int ir_emit_refuse_opaque(IrFunc *funcs, const char *file) {
     return n;
 }
 
+// Every operand is widened to `long long`, so C computes what Lain means: `@sizeof(T) - 16 < 0`
+// is a signed question in Lain (Path F), and in C's size_t it would wrap and answer false.
+static void ir_emit_sa_expr(IrSAExpr *x, FILE *o) {
+    if (!x) { fputs("0", o); return; }
+    switch (x->kind) {
+        case IR_SA_CONST:
+            if (x->value == INT64_MIN) fputs("(-9223372036854775807LL - 1)", o);
+            else fprintf(o, "%lldLL", (long long)x->value);
+            break;
+        case IR_SA_SIZEOF: case IR_SA_ALIGNOF:
+            fputs(x->kind == IR_SA_SIZEOF ? "((long long)sizeof(" : "((long long)_Alignof(", o);
+            ir_ctype(x->type, o); fputs("))", o);
+            break;
+        case IR_SA_UNARY:  fprintf(o, "(%s", x->op); ir_emit_sa_expr(x->l, o); fputc(')', o); break;
+        case IR_SA_BINARY: fputc('(', o); ir_emit_sa_expr(x->l, o); fprintf(o, " %s ", x->op);
+                           ir_emit_sa_expr(x->r, o); fputc(')', o); break;
+    }
+}
+
 void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
     fputs("#include <stdint.h>\n#include <stddef.h>\n\n", o);
     ir_emit_type_decls(funcs, o, a);
+    // DECIDE-O: after every type is complete, so `sizeof` measures the real layout. The message
+    // carries the diagnostic code Lain would have printed had it known the number.
+    for (IrStaticAssert *s = ir_static_asserts; s; s = s->next) {
+        fputs("_Static_assert(", o); ir_emit_sa_expr(s->cond, o);
+        fprintf(o, ", \"[E134] Ln %lld, Col %lld: module-scope assertion is false\");\n",
+                (long long)s->line, (long long)s->col);
+    }
+    if (ir_static_asserts) fputc('\n', o);
     // `panic` is a declless builtin — it has no Lain declaration, so nothing declares it in
     // the generated C either and every `else panic(...)` failed to LINK. The old backend
     // inlines fprintf+abort at the site; emit one helper instead, and only when it is used,

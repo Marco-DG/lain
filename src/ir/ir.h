@@ -567,6 +567,25 @@ static inline bool ir_ret_is_borrow(const IrFunc *f) {
     return f && f->ret_type && f->ret_type->borrowed && !f->ret_type->is_raw;
 }
 
+// ── A MODULE-SCOPE `assert` (DECIDE-O) ───────────────────────────────────────────────────────
+// A claim over constants and LAYOUT, checked by the C compiler as a `_Static_assert`: @sizeof and
+// @alignof are the C compiler's numbers, so no IR value can hold them at compile time. A tiny
+// expression tree rather than instructions, because a C constant expression is what it must be.
+typedef enum { IR_SA_CONST, IR_SA_SIZEOF, IR_SA_ALIGNOF, IR_SA_UNARY, IR_SA_BINARY } IrSAKind;
+typedef struct IrSAExpr {
+    IrSAKind kind;
+    int64_t  value;               // IR_SA_CONST
+    IrType  *type;                // IR_SA_SIZEOF / IR_SA_ALIGNOF
+    const char *op;               // the C operator, for UNARY / BINARY
+    struct IrSAExpr *l, *r;
+} IrSAExpr;
+typedef struct IrStaticAssert {
+    IrSAExpr *cond;
+    int64_t   line, col;
+    struct IrStaticAssert *next;
+} IrStaticAssert;
+static IrStaticAssert *ir_static_asserts = NULL;   // set by ir_lower_module, read by the emitter
+
 typedef struct IrModule {
     IrFunc  *funcs;
     void    *types;         // TODO(2.9): IR-OWNED type table (struct/enum descriptors);

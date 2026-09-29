@@ -230,6 +230,21 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         goto done;
     }
 
+    // DECIDE-O: `assert <constant expression>` at module scope — a claim about the program's
+    // constants and LAYOUT (`assert @sizeof(Token) == 8`). Inside a function `assert(p)` is an
+    // obligation the range analysis must prove; here nothing runs, so it is checked where the
+    // number is known: by Lain for a plain constant, by the C compiler for @sizeof/@alignof.
+    if (parser_match(TOKEN_KEYWORD_ASSERT))
+    {
+        isize line = parser->line, col = parser->column;
+        parser_advance();
+        d = arena_push_aligned(arena, Decl);
+        d->kind = DECL_STATIC_ASSERT;
+        d->as.static_assert_decl.cond = parse_expr(arena, parser);
+        d->line = line; d->col = col;
+        goto done;
+    }
+
     // extern func …
     if (parser_match(TOKEN_KEYWORD_EXTERN)) {
         parser_advance();  // consume 'extern'
