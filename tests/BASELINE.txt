@@ -1409,6 +1409,10 @@ rc=0
 out=25
 at=const 2
 ty=Slice_u8 scalar
+### tests/trust/div_wrapping_saturating_pass.ln
+rc=0
+out=
+at=const 12
 ### tests/trust/enum_match_pass.ln
 rc=0
 out=2
@@ -1525,10 +1529,16 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=const 24
+### tests/trust/saturating_i64_pass.ln
+rc=0
+out=
 ### tests/trust/saturating_pass.ln
 rc=0
 out=255
 ty=Slice_u8 scalar
+### tests/trust/saturating_u64_pass.ln
+rc=0
+out=
 ### tests/trust/shift_unsigned_high_bit_pass.ln
 rc=0
 out=
@@ -1593,6 +1603,9 @@ rc=0
 out=3600000000
 out=900000000
 ty=Slice_u8 scalar
+### tests/trust/wrapping_arithmetic_widths_pass.ln
+rc=0
+out=
 ### tests/trust/wrapping_pass.ln
 rc=0
 out=4
@@ -1686,10 +1699,6 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=const 6
-### tests/types/div_wrapping_saturating_pass.ln
-rc=0
-out=
-at=const 12
 ### tests/types/enum_exhaustive_pass.ln
 rc=0
 out=Running
@@ -1769,12 +1778,6 @@ out=
 ### tests/types/refinement_type_alias_pass.ln
 rc=0
 out=
-### tests/types/saturating_i64_pass.ln
-rc=0
-out=
-### tests/types/saturating_u64_pass.ln
-rc=0
-out=
 ### tests/types/sizeof_alignof_pass.ln
 rc=0
 out=
@@ -1846,9 +1849,6 @@ at=const 2
 rc=0
 out=
 at=const 2
-### tests/types/wrapping_arithmetic_widths_pass.ln
-rc=0
-out=
 ### tests/unsafe/ptr_var_write_pass.ln
 rc=0
 out=111
