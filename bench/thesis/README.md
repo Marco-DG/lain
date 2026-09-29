@@ -37,6 +37,10 @@ time — **the same safety, at check-free speed.**
   no-alias vectorization via runtime *versioning*, so the proof-derived `restrict` is
   only ~1.02x there. The large, reliable win is eliminating the runtime *checks* a safe
   language/build would otherwise insert — which is what (A) vs (B) measures.
-- **gcc already eliminates *simple* bounds checks** (a plain `for i<n` over a fixed
-  array). Lain's advantage is proving the checks gcc *cannot* — data-dependent indices
-  like the masked gather here — and doing it for *every* access, soundly, by default.
+- **This kernel's bounds check is one optimisers already remove.** `idx[i] & (N-1)` is
+  below N by its known bits: with the check written by hand, gcc -O3 and clang -O3 delete
+  it, and rustc -O deletes it for the same indexing (measured 2026-09-29). So the ~4.6x is
+  the price of `-fsanitize=undefined,bounds`, which also checks every signed add and
+  multiply, not the price of a bounds check. Lain's advantage is the checks optimisers
+  cannot remove, the relational ones (a binary search's `mid < hi <= len`, a length stated
+  as a precondition), and proving them for *every* access, soundly, by default.
