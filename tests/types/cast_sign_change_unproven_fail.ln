@@ -1,0 +1,10 @@
+// EXPECT: [E086]
+// A signedness change is a narrowing (spec 07): u32 values above 2^31 - 1 have no i32. The
+// proven tier `as` owed its obligation only when the WIDTH shrank, so this reinterpreted
+// silently — f(4294967295) returned -1. The explicit policies are `as%`, `as|` and `as?`.
+func f(x u32) i32 {
+    return x as i32
+}
+func main() i32 {
+    return 0
+}

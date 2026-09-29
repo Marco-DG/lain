@@ -41,5 +41,5 @@ func main() i32 effects diverge {
     var buf u8[4096] = [32 for i in 0..4096]     // all spaces
     buf[10] = 97                                  // 'a'
     buf[11] = 98                                  // 'b'
-    return count_tokens(buf, 20) as i32           // one token ("ab")
+    return count_tokens(buf, 20) as| i32          // one token ("ab"); u32 -> i32 needs a policy
 }

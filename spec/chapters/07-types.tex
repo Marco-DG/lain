@@ -331,15 +331,19 @@ proving the range, widening the target, or choosing an explicit overflow policy:
 \bottomrule
 \endlastfoot
 proven (default)     & \lain{x as T}\quad(narrows only if proven, else \diagcode{E086}) \\
-checked (traps)      & \lain{x as? T},\quad \lain{a +? b}, \lain{a -? b}, \lain{a *? b} \\
+checked (\lain{else}) & \lain{x as? T},\quad \lain{a +? b}, \lain{a -? b}, \lain{a *? b} \\
 wrapping (modular)   & \lain{x as\% T},\quad \lain{a +\% b}, \lain{a -\% b}, \lain{a *\% b}, \lain{a /\% b} \\
 saturating (clamp)   & \lain{x as| T},\quad \lain{a +| b}, \lain{a -| b}, \lain{a *| b}, \lain{a /| b} \\
 \end{longtable}
 
 \pnum
-A checked form performs a run-time bounds check and terminates the program
-(\lain{panic}) on overflow.  A wrapping form uses two's-complement modular
-arithmetic.  A saturating form clamps to the target type's minimum or maximum.
+A checked form performs a run-time test and, on overflow, evaluates its \lain{else} arm ---
+a fallback value, a \lain{return}, or \lain{panic(...)}, which terminates the program; a
+checked form without \lain{else} is \illformed{}~(\diagcode{E067}).  A wrapping form uses
+two's-complement modular arithmetic.  A saturating form clamps to the target type's minimum or
+maximum.  Every form is defined at every integer width, odd widths included: a wrapping result
+is reduced modulo \(2^N\) for the type's own \(N\), not for the width of the machine type that
+holds it.
 The checked and wrapping/saturating \emph{operators} keep the operand type (they
 do not auto-widen).  For division the only overflowing case is
 \(\mathrm{TYPE\_MIN} / {-1}\): \lain{/\%} yields \(\mathrm{TYPE\_MIN}\) and \lain{/|}

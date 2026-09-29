@@ -1,0 +1,11 @@
+// EXPECT: [E015]
+// `as|` CHANGES a value that does not fit, so the cast is not a copy. The range analysis copied
+// the source through it: 300 as| u8 read as 300, EMPTY inside u8, and the check below made the
+// rest of the function dead to the analysis — this division by zero compiled.
+func main() i32 {
+    var x i32 = 300
+    var r = x as| u8
+    if r != 255 { return 2 }
+    var d i32 = 0
+    return 5 /% d
+}

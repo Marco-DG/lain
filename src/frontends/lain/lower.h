@@ -1353,9 +1353,25 @@ static IrValue *ir_sat_cast(LowerCtx *c, IrValue *v, IrType *t) {
     ir_emit(c->cur, cv);
     return cv->result;
 }
-static IrValue *ir_lower_saturating64(LowerCtx *c, TokenKind op, Expr *L, Expr *R, IrType *t,
-                                      int64_t lo, int64_t hi) {
-    IrValue *a = ir_sat_cast(c, ir_lower_expr(c, L), t), *b = ir_sat_cast(c, ir_lower_expr(c, R), t);
+// An OVERFLOW arm: saturating, store the bound and join; checked (`bad` set), leave for the
+// `else` arm. A shortcut arm (a factor is 0) is not an overflow and always stores its value.
+static void ir_ovf_arm(LowerCtx *c, IrValue *cond, IrValue *cell, IrValue *then_v, IrBlock *join,
+                       IrBlock *bad) {
+    if (!bad) { ir_sat_arm(c, cond, cell, then_v, join); return; }
+    IrBlock *eb = ir_new_block(c->f);
+    ir_set_br_cond(c->cur, cond, bad, eb);
+    c->cur = eb;
+}
+// ── THE GUARDED EXPANSION, AT ANY WIDTH ─────────────────────────────────────────────────────
+// Written for 64 bits, where there is no wider type to compute in, and now the expansion for
+// every width the widen-and-clamp form cannot serve: 33..63 (E100 "unhandled-binop" until
+// 2026-09-28 — `i48 +| 1`, `u33 +? x else 0`) and u32 MULTIPLY, whose product needs 64 bits of
+// magnitude and so does not fit the signed i64 it was computed in (fuzz_wrap: 4294967295 *
+// 4294967294, a C signed overflow under UBSan). `op` is the saturating token; `bad`, when set,
+// makes it the CHECKED operator: overflow leaves for the caller's `else` arm instead of clamping.
+static IrValue *ir_lower_guarded(LowerCtx *c, TokenKind op, IrValue *a0, IrValue *b0, IrType *t,
+                                 int64_t lo, int64_t hi, IrBlock *bad) {
+    IrValue *a = ir_sat_cast(c, a0, t), *b = ir_sat_cast(c, b0, t);
     IrValue *cell = ir_alloca(c->f, c->cur, t);
     IrBlock *join = ir_new_block(c->f);
     IrValue *MX = ir_const_int(c->f, c->cur, hi, t), *MN = ir_const_int(c->f, c->cur, lo, t);
@@ -1364,8 +1380,9 @@ static IrValue *ir_lower_saturating64(LowerCtx *c, TokenKind op, Expr *L, Expr *
     // u64's MAX is 2^64-1, which the numeric domain (i64-based: irtype_int_range clamps an
     // unsigned 64-bit type to INT64_MAX) cannot represent. Taken from `hi` it saturated at 2^63-1;
     // written as a constant it would read as -1 and could make an arm look dead. Computed as
-    // `0 -% 1` it is the right bit pattern, and to the analysis an honest unknown.
-    if (!sg) {
+    // `0 -% 1` it is the right bit pattern, and to the analysis an honest unknown. Below 64 bits
+    // `hi` is exact and stays a constant.
+    if (!sg && t->bits >= 64) {
         IrValue *one = ir_const_int(c->f, c->cur, 1, t);
         MX = ir_binop(c->f, c->cur, IR_SUB, Z, one, t);
         if (c->cur->instrs_tail) c->cur->instrs_tail->wrap = IR_WRAP_MODULAR;
@@ -1373,14 +1390,14 @@ static IrValue *ir_lower_saturating64(LowerCtx *c, TokenKind op, Expr *L, Expr *
     IrCmp GT = sg ? IR_CMP_SGT : IR_CMP_UGT, LT = sg ? IR_CMP_SLT : IR_CMP_ULT;
     if (!sg) {
         if (op == TOKEN_PLUS_PIPE) {            // a > MAX - b  →  MAX
-            ir_sat_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, IR_SUB, MX, b, t)), cell, MX, join);
+            ir_ovf_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, IR_SUB, MX, b, t)), cell, MX, join, bad);
             ir_store(c->f, c->cur, cell, ir_sat_op(c, IR_ADD, a, b, t));
         } else if (op == TOKEN_MINUS_PIPE) {    // a < b  →  0
-            ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, a, b), cell, Z, join);
+            ir_ovf_arm(c, ir_icmp(c->f, c->cur, LT, a, b), cell, Z, join, bad);
             ir_store(c->f, c->cur, cell, ir_sat_op(c, IR_SUB, a, b, t));
         } else {                                // b != 0 && a > MAX / b  →  MAX
             ir_sat_arm(c, ir_icmp(c->f, c->cur, IR_CMP_EQ, b, Z), cell, Z, join);
-            ir_sat_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, IR_UDIV, MX, b, t)), cell, MX, join);
+            ir_ovf_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, IR_UDIV, MX, b, t)), cell, MX, join, bad);
             ir_store(c->f, c->cur, cell, ir_sat_op(c, IR_MUL, a, b, t));
         }
     } else if (op == TOKEN_PLUS_PIPE || op == TOKEN_MINUS_PIPE) {
@@ -1391,10 +1408,10 @@ static IrValue *ir_lower_saturating64(LowerCtx *c, TokenKind op, Expr *L, Expr *
         IrValue *up_side = add ? ir_icmp(c->f, c->cur, GT, b, Z) : ir_icmp(c->f, c->cur, LT, b, Z);
         ir_set_br_cond(c->cur, up_side, pos, neg);
         c->cur = pos;
-        ir_sat_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, add ? IR_SUB : IR_ADD, MX, b, t)), cell, MX, join);
+        ir_ovf_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, add ? IR_SUB : IR_ADD, MX, b, t)), cell, MX, join, bad);
         ir_store(c->f, c->cur, cell, ir_sat_op(c, add ? IR_ADD : IR_SUB, a, b, t)); ir_set_br(c->cur, join);
         c->cur = neg;
-        ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, a, ir_sat_op(c, add ? IR_SUB : IR_ADD, MN, b, t)), cell, MN, join);
+        ir_ovf_arm(c, ir_icmp(c->f, c->cur, LT, a, ir_sat_op(c, add ? IR_SUB : IR_ADD, MN, b, t)), cell, MN, join, bad);
         ir_store(c->f, c->cur, cell, ir_sat_op(c, add ? IR_ADD : IR_SUB, a, b, t));
     } else {                                    // signed *|: CERT INT32-C, by the operands' signs
         IrBlock *apos = ir_new_block(c->f), *anp = ir_new_block(c->f);
@@ -1403,18 +1420,16 @@ static IrValue *ir_lower_saturating64(LowerCtx *c, TokenKind op, Expr *L, Expr *
         c->cur = apos; {                        // a > 0
             IrBlock *bp = ir_new_block(c->f), *bn = ir_new_block(c->f);
             ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, GT, b, Z), bp, bn);
-            c->cur = bp;  ir_sat_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, IR_SDIV, MX, b, t)), cell, MX, join); ir_set_br(c->cur, mul);
-            c->cur = bn;  ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, b, ir_sat_op(c, IR_SDIV, MN, a, t)), cell, MN, join); ir_set_br(c->cur, mul);
+            c->cur = bp;  ir_ovf_arm(c, ir_icmp(c->f, c->cur, GT, a, ir_sat_op(c, IR_SDIV, MX, b, t)), cell, MX, join, bad); ir_set_br(c->cur, mul);
+            c->cur = bn;  ir_ovf_arm(c, ir_icmp(c->f, c->cur, LT, b, ir_sat_op(c, IR_SDIV, MN, a, t)), cell, MN, join, bad); ir_set_br(c->cur, mul);
         }
         c->cur = anp; {                         // a <= 0
             IrBlock *bp = ir_new_block(c->f), *bn = ir_new_block(c->f);
             ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, GT, b, Z), bp, bn);
-            c->cur = bp;  ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, a, ir_sat_op(c, IR_SDIV, MN, b, t)), cell, MN, join); ir_set_br(c->cur, mul);
+            c->cur = bp;  ir_ovf_arm(c, ir_icmp(c->f, c->cur, LT, a, ir_sat_op(c, IR_SDIV, MN, b, t)), cell, MN, join, bad); ir_set_br(c->cur, mul);
             c->cur = bn;  {                     // a <= 0, b <= 0: overflow iff a != 0 && b < MAX / a
-                IrBlock *nz = ir_new_block(c->f);
                 ir_sat_arm(c, ir_icmp(c->f, c->cur, IR_CMP_EQ, a, Z), cell, Z, join);
-                (void)nz;
-                ir_sat_arm(c, ir_icmp(c->f, c->cur, LT, b, ir_sat_op(c, IR_SDIV, MX, a, t)), cell, MX, join);
+                ir_ovf_arm(c, ir_icmp(c->f, c->cur, LT, b, ir_sat_op(c, IR_SDIV, MX, a, t)), cell, MX, join, bad);
                 ir_set_br(c->cur, mul);
             }
         }
@@ -1424,6 +1439,15 @@ static IrValue *ir_lower_saturating64(LowerCtx *c, TokenKind op, Expr *L, Expr *
     ir_set_br(c->cur, join);
     c->cur = join;
     return ir_load(c->f, c->cur, cell, t);
+}
+// The widen-and-clamp form computes in i64, which holds every ±, and every × but u32 × u32.
+static bool ir_widen_serves(IrType *t, TokenKind op) {
+    return t->bits <= 32 && !(!t->is_signed && t->bits == 32 &&
+                              (op == TOKEN_ASTERISK_PIPE || op == TOKEN_ASTERISK_QUESTION));
+}
+static TokenKind ir_checked_as_sat(TokenKind op) {
+    return op == TOKEN_PLUS_QUESTION ? TOKEN_PLUS_PIPE
+         : op == TOKEN_MINUS_QUESTION ? TOKEN_MINUS_PIPE : TOKEN_ASTERISK_PIPE;
 }
 
 static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
@@ -1470,18 +1494,72 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             if (!is_try && opx && expr_is_checked_op(opx)) {
                 IrType *rt2 = ir_lower_type(c, opx->type);
                 int64_t tlo, thi;
-                if (rt2 && rt2->kind==IRT_INT && irtype_int_range(rt2, &tlo, &thi) && rt2->bits <= 32) {
+                // ★ BEYOND THE WIDENED FORM. `+? -? *?` computed in i64, so they stopped at 32 bits
+                // (E100 above) and u32 `*?` overflowed i64 itself; `as?` widened its SOURCE to i64,
+                // so a u64 above i64::MAX became negative and "fit" — `x as? i32 else 0` on 2^64−1
+                // gave −1. Where the widened form does not serve, the operator is the guarded
+                // expansion with its overflow arms routed to `else`, and `as?` compares the source
+                // against the target's bounds IN THE SOURCE'S OWN TYPE, where every value is exact.
+                bool wide_ok = rt2 && rt2->kind==IRT_INT && irtype_int_range(rt2, &tlo, &thi) &&
+                               (opx->kind == EXPR_CAST ? false
+                                : ir_widen_serves(rt2, opx->as.binary_expr.op));
+                if (!wide_ok && rt2 && rt2->kind==IRT_INT && rt2->bits <= 64 &&
+                    irtype_int_range(rt2, &tlo, &thi)) {
+                    IrValue *cell2 = ir_alloca(c->f, c->cur, rt2);
+                    IrBlock *bad2 = ir_new_block(c->f), *jn2 = ir_new_block(c->f);
+                    if (opx->kind == EXPR_CAST) {
+                        IrValue *sv = ir_lower_expr(c, opx->as.cast_expr.expr);
+                        IrType *S = sv ? sv->type : NULL;
+                        if (!S || S->kind != IRT_INT)
+                            return ir_opaque_expr(c, ty, false, "checked-cast-non-int", NULL, NULL);
+                        int sb = S->bits, db = rt2->bits;
+                        __int128 smin = S->is_signed ? -((__int128)1 << (sb-1)) : 0;
+                        __int128 smax = S->is_signed ? ((__int128)1 << (sb-1)) - 1 : ((__int128)1 << sb) - 1;
+                        __int128 dmax = rt2->is_signed ? ((__int128)1 << (db-1)) - 1 : ((__int128)1 << db) - 1;
+                        __int128 lo2 = tlo, hi2 = (!rt2->is_signed && db >= 64) ? dmax : (__int128)thi;
+                        if (lo2 > smin) {             // below the target: only a signed source
+                            IrBlock *nb = ir_new_block(c->f);
+                            ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, IR_CMP_SLT, sv,
+                                           ir_const_int(c->f, c->cur, (int64_t)lo2, S)), bad2, nb);
+                            c->cur = nb;
+                        }
+                        if (hi2 < smax) {             // above the target, compared in S's signedness
+                            IrBlock *nb = ir_new_block(c->f);
+                            ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, S->is_signed ? IR_CMP_SGT : IR_CMP_UGT,
+                                           sv, ir_const_int(c->f, c->cur, (int64_t)hi2, S)), bad2, nb);
+                            c->cur = nb;
+                        }
+                        IrInstr *nr = ir_instr(c->f, IR_CAST, rt2, 1); nr->operands[0] = sv;
+                        nr->aux.cast_kind = sb > db ? IR_CAST_TRUNC : sb < db
+                                          ? (S->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT) : IR_CAST_BITCAST;
+                        nr->unchecked = true;         // the two tests above ARE the proof
+                        ir_emit(c->cur, nr);
+                        ir_store(c->f, c->cur, cell2, nr->result);
+                    } else {
+                        IrValue *la = ir_lower_expr(c, opx->as.binary_expr.left);
+                        IrValue *ra = ir_lower_expr(c, opx->as.binary_expr.right);
+                        IrValue *okv = ir_lower_guarded(c, ir_checked_as_sat(opx->as.binary_expr.op),
+                                                        la, ra, rt2, tlo, thi, bad2);
+                        ir_store(c->f, c->cur, cell2, okv);
+                    }
+                    ir_set_br(c->cur, jn2);
+                    c->cur = bad2;
+                    if (e->as.else_expr.arm_is_return) {
+                        IrValue *rv = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
+                        ir_lower_flush_defers(c);
+                        ir_set_ret(c->cur, rv);
+                    } else {
+                        IrValue *av = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
+                        if (e->as.else_expr.is_panic) ir_set_unreachable(c->cur);
+                        else { if (av) ir_store(c->f, c->cur, cell2, av); ir_set_br(c->cur, jn2); }
+                    }
+                    c->cur = jn2;
+                    return ir_load(c->f, c->cur, cell2, rt2);
+                }
+                if (wide_ok) {
                     IrType *w = ir_type_int(c->a, 64, true);            // ℤ-widened operands
                     IrValue *wide = NULL;
-                    if (opx->kind == EXPR_CAST) {
-                        // `x as? T else E` — a checked NARROWING. Same test, one operand:
-                        // does the source VALUE land inside the target type's interval?
-                        IrValue *sv = ir_lower_expr(c, opx->as.cast_expr.expr);
-                        bool ssgn = sv && sv->type && sv->type->kind==IRT_INT && sv->type->is_signed;
-                        IrInstr *cs = ir_instr(c->f, IR_CAST, w, 1); cs->operands[0]=sv;
-                            cs->aux.cast_kind = ssgn ? IR_CAST_SEXT : IR_CAST_ZEXT; ir_emit(c->cur, cs);
-                        wide = cs->result;
-                    } else {
+                    {
                     IrValue *la = ir_lower_expr(c, opx->as.binary_expr.left);
                     IrValue *ra = ir_lower_expr(c, opx->as.binary_expr.right);
                     // Widen by the OPERAND's signedness: sign-extending a u32 near its top
@@ -1888,7 +1966,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
              || e->as.binary_expr.op==TOKEN_ASTERISK_PIPE) {
                 IrType *rt3 = ir_lower_type(c, e->type);
                 int64_t slo, shi;
-                if (rt3 && rt3->kind==IRT_INT && irtype_int_range(rt3,&slo,&shi) && rt3->bits<=32) {
+                if (rt3 && rt3->kind==IRT_INT && irtype_int_range(rt3,&slo,&shi) &&
+                    ir_widen_serves(rt3, e->as.binary_expr.op)) {
                     IrType *w = ir_type_int(c->a, 64, true);
                     IrCastKind ck = rt3->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT;
                     IrValue *la = ir_lower_expr(c, L), *ra = ir_lower_expr(c, R);
@@ -1919,8 +1998,10 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     c->cur = jn2;
                     return ir_load(c->f, c->cur, cell, rt3);
                 }
-                if (rt3 && rt3->kind==IRT_INT && irtype_int_range(rt3,&slo,&shi) && rt3->bits==64)
-                    return ir_lower_saturating64(c, e->as.binary_expr.op, L, R, rt3, slo, shi);
+                if (rt3 && rt3->kind==IRT_INT && irtype_int_range(rt3,&slo,&shi) && rt3->bits<=64) {
+                    IrValue *la = ir_lower_expr(c, L), *ra = ir_lower_expr(c, R);
+                    return ir_lower_guarded(c, e->as.binary_expr.op, la, ra, rt3, slo, shi, NULL);
+                }
             }
             // Short-circuit `and` / `or`: the right operand must NOT be evaluated when
             // the left already decides the result (correctness — it may guard a deref/
@@ -2378,15 +2459,24 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // Only the PROVEN tier owes the obligation. `as%` truncates modularly and `as|`
             // clamps: both are total, and asking them to prove they fit would be asking them
             // to prove they are unnecessary.
+            //
+            // ★ THE TIER TRAVELS ON THE CAST'S WRAP MODE, and the kind is only the widths. The
+            // tier used to survive as nothing but "not TRUNC", so nothing downstream could tell
+            // the policies apart: `as|` was emitted as the plain C conversion and did not clamp
+            // (300 as| u8 was 44), `as%` to an odd width did not wrap (300 as% u4 was 44), and
+            // the range analysis copied the SOURCE value through all three. And the PROVEN tier
+            // owed its obligation only when the width shrank, so a signedness change —
+            // `4294967295 as i32`, `u8 200 as i8` — reinterpreted silently, though spec 07 makes
+            // it a narrowing like any other. The obligation now follows the VALUES (any cast that
+            // may lose one, vra_check_narrow), not the kind.
             IrType *st = x ? x->type : NULL;
             CastKind tier = e->as.cast_expr.kind;
             if (st && dt && st->kind==IRT_INT && dt->kind==IRT_INT) {
-                if (st->bits > dt->bits)
-                    ins->aux.cast_kind = (tier == CAST_PROVEN) ? IR_CAST_TRUNC : IR_CAST_BITCAST;
-                else if (st->bits < dt->bits)
-                    ins->aux.cast_kind = st->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT;
-                else
-                    ins->aux.cast_kind = IR_CAST_BITCAST;   // same width: a reinterpretation
+                if (st->bits > dt->bits)      ins->aux.cast_kind = IR_CAST_TRUNC;
+                else if (st->bits < dt->bits) ins->aux.cast_kind = st->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT;
+                else                          ins->aux.cast_kind = IR_CAST_BITCAST;   // same width
+                ins->wrap = tier == CAST_WRAPPING   ? IR_WRAP_MODULAR
+                          : tier == CAST_SATURATING ? IR_WRAP_SATURATE : IR_WRAP_CHECK;
             } else {
                 ins->aux.cast_kind = IR_CAST_BITCAST;
             }

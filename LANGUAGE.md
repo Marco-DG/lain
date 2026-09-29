@@ -1377,11 +1377,15 @@ var y = x as u8           // Narrow i32 to u8; 200 fits, so it is exact
 var big = 42 as i64       // Widen int to i64
 var n = 'A' as int        // char to int: 65
 // `300 as u8` is [E086]: `as` narrows only where the value is PROVEN to fit. The other
-// three tiers say what to do when it does not — `as?` panics, `as%` wraps, `as|` clamps.
+// three tiers say what to do when it does not — `as?` takes its `else` arm, `as%` wraps,
+// `as|` clamps.
 ```
 
 **Rules:**
-- Conversions between integer types are always allowed (truncation may occur).
+- An integer conversion keeps the value wherever the target holds it. Where it may not — a
+  narrowing, or a signedness change such as `u32` to `i32` or `usize` to `i64` — `as` needs a
+  proof ([E086] otherwise), and `as?`, `as%`, `as|` state what happens to a value that does not
+  fit.
 - Pointer casts (`*int as *void`) require an `unsafe` block.
 - Non-numeric casts (e.g., struct to int) are not allowed.
 
@@ -1432,9 +1436,10 @@ var b = n as u8      // Explicit: int -> u8
 
 // `as` is the PROVEN tier: it narrows only where VRA can show the value fits, and is
 // [E086] otherwise — `var n int = 300` then `n as u8` does not compile, and neither does
-// an unbounded `u32` narrowed to `u8`. To narrow a value you cannot bound, say which
-// behaviour you mean: `as?` checks at run time and panics, `as%` truncates modulo 2^N,
-// `as|` clamps. Spec §8, cast tiers.
+// an unbounded `u32` narrowed to `u8`, or converted to `i32` (a signedness change narrows
+// too). To narrow a value you cannot bound, say which behaviour you mean: `as?` checks at
+// run time and takes its `else` arm, `as%` truncates modulo 2^N, `as|` clamps. Spec §8,
+// cast tiers.
 ```
 
 **Float/int (explicit, requires `as`):**

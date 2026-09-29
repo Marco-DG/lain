@@ -1,9 +1,10 @@
-// usize -> i64/u64 is a widening (usize fits the 64-bit target), so it is allowed
-// with no cast. The escape for a real narrowing is an explicit cast tier
-// (`a as i32`, `a as? i32`, ...).
+// usize -> u64 is a widening (usize is at most 64 bits), so it needs no cast. usize -> i64 is
+// NOT: spec 07 gives usize the range [0, 2^N - 1], whose top half no i64 holds — this file said
+// otherwise until 2026-09-28, and f(2^64 - 1) returned -1 (usize_to_i64_fail.ln). The escape is
+// an explicit cast tier.
 func f(a usize) i64 {
-    var x i64 = a
     var y u64 = a
+    var x i64 = a as? i64 else -1
     return x
 }
 func main() i32 { return 0 }

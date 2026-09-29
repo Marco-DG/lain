@@ -1,0 +1,85 @@
+// `+| -| *|` and `+? -? *?` at the widths their widen-to-i64 expansion cannot serve. Until
+// 2026-09-28 widths 33..63 were E100 ("unhandled-binop"), checked operators stopped at 32 bits,
+// and a u32 multiply computed its product in the SIGNED i64, where 4294967295 * 4294967294 is a
+// C signed overflow. They now share the guarded expansion 64 bits already used: the overflow
+// test first, then the operation, which the test has proven cannot overflow.
+func c1() bool {
+    var a u32 = 4294967295
+    var b u32 = 4294967294
+    var r = a *| b
+    return r == 4294967295
+}
+func c2() bool {
+    var a u32 = 4294967295
+    var b u32 = 4294967294
+    var r = a *? b else 7
+    return r == 7
+}
+func c3() bool {
+    var d u32 = 65535
+    var e u32 = 65537
+    var r = d *? e else 7
+    return r == 4294967295
+}
+func c4() bool {
+    var g i48 = 140737488355327
+    var r = g +| 1
+    return r == 140737488355327
+}
+func c5() bool {
+    var g i48 = 140737488355327
+    var r = g +? 1 else 5
+    return r == 5
+}
+func c6() bool {
+    var i i40 = -549755813888
+    var r = i *| -1
+    return r == 549755813887
+}
+func c7() bool {
+    var j u33 = 0
+    var r = j -| 1
+    return r == 0
+}
+func c8() bool {
+    var j u33 = 0
+    var r = j -? 1 else 9
+    return r == 9
+}
+func c9() bool {
+    var l i64 = 9223372036854775807
+    var r = l +? 1 else 11
+    return r == 11
+}
+func c10() bool {
+    var n i64 = -3037000500
+    var o i64 = 3037000500
+    var r = n *? o else 12
+    return r == 12
+}
+func c11() bool {
+    var p u63 = 9223372036854775806
+    var r = p +| 5
+    return r == 9223372036854775807
+}
+func c12() bool {
+    var q i48 = -16777216
+    var s i48 = 8388608
+    var r = q *? s else 13
+    return r == -140737488355328
+}
+func main() i32 {
+    if !c1() { return 1 }
+    if !c2() { return 2 }
+    if !c3() { return 3 }
+    if !c4() { return 4 }
+    if !c5() { return 5 }
+    if !c6() { return 6 }
+    if !c7() { return 7 }
+    if !c8() { return 8 }
+    if !c9() { return 9 }
+    if !c10() { return 10 }
+    if !c11() { return 11 }
+    if !c12() { return 12 }
+    return 0
+}

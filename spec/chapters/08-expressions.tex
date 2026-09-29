@@ -209,8 +209,9 @@ while l.pos in l.src and (l.src[l.pos] as int) != '"' {
 
 \pnum
 The expression \lain{expr as T} explicitly converts the value of
-\textit{expr} to type \lain{T}.  A narrowing integer cast carries an
-\emph{overflow policy} chosen by the cast tier
+\textit{expr} to type \lain{T}.  An integer cast whose target cannot hold every value of the
+source --- a narrowing, or a signedness change such as \lain{u32} to \lain{i32} or \lain{usize}
+to \lain{i64} --- carries an \emph{overflow policy} chosen by the cast tier
 (\S\,\ref{sec:types.overflow}):
 
 \begin{longtable}{@{}lll@{}}
@@ -221,7 +222,7 @@ The expression \lain{expr as T} explicitly converts the value of
 \bottomrule
 \endlastfoot
 proven     & \lain{as}  & narrows only if VRA proves it fits, else \diagcode{E086} \\
-checked    & \lain{as?} & run-time bounds check; \lain{panic} (abort) on overflow \\
+checked    & \lain{as?} & run-time bounds check; the \lain{else} arm on overflow \\
 wrapping   & \lain{as\%}& two's-complement modular truncation \\
 saturating & \lain{as|} & clamp to the minimum or maximum of \lain{T} \\
 \end{longtable}
@@ -240,7 +241,7 @@ The following casts are permitted:
 \endhead
 \bottomrule
 \endlastfoot
-integer & integer & Truncation (narrowing) or extension (widening) \\
+integer & integer & The same value where \lain{T} holds it; otherwise the tier's policy \\
 integer & float   & Nearest representable value (IEEE~754) \\
 float   & integer & Truncation toward zero \\
 float   & float   & Precision change \\

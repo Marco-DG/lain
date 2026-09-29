@@ -1074,6 +1074,38 @@ static bool vra_modular_may_wrap_c(Vra *V, Octagon *W, IrInstr *ins, __int128 *c
     for (int k = 1; k < 4; k++) { if (c[k] < lo) lo = c[k]; if (c[k] > hi) hi = c[k]; }
     return !(lo >= T0 && hi <= T1);
 }
+// ★ `as%` AND `as|` CHANGE THE VALUE THAT DOES NOT FIT, so the cast is a copy only where the
+// source provably fits — the same reason as a modular operation above. Read as a copy, `300 as| u8`
+// was 300, EMPTY inside u8, and the code after `if r != 255 { return }` was dead to the analysis.
+// Returns false when the copy is exact; otherwise states the result and returns true.
+static bool vra_cast_policy(Vra *V, Octagon *W, IrInstr *ins, int r) {
+    IrValue *x = ins->operands[0]; IrType *t = ins->result ? ins->result->type : NULL;
+    int64_t tlo, thi, lo, hi;
+    oct_forget(W, r);
+    if (!t || !x || !x->type || x->type->kind != IRT_INT || t->kind != IRT_INT ||
+        !irtype_int_range(t, &tlo, &thi)) return true;
+    oct_close(W);
+    vra_range(V, W, x, &lo, &hi);
+    bool u64dst = !t->is_signed && t->bits >= 64;
+    bool above  = !x->type->is_signed && x->type->bits >= 64 && hi == INT64_MAX;  // may exceed i64
+    if (lo >= tlo && hi <= thi && (!above || u64dst)) return false;
+    if (ins->wrap == IR_WRAP_MODULAR && lo == hi && !above) {
+        uint64_t m = t->bits >= 64 ? ~0ull : ((1ull << t->bits) - 1), u = (uint64_t)lo & m;
+        bool rep = true; int64_t v;
+        if (t->is_signed) v = (t->bits < 64 && ((u >> (t->bits - 1)) & 1)) ? (int64_t)(u | ~m) : (int64_t)u;
+        else if (u > (uint64_t)INT64_MAX) { rep = false; v = 0; }
+        else v = (int64_t)u;
+        if (rep && vra_bound_fits(v)) { oct_add_const(W, r, v); return true; }
+    }
+    int64_t nlo = tlo, nhi = thi;
+    if (ins->wrap == IR_WRAP_SATURATE) {       // a clamp is monotone: clamp the bounds
+        nlo = lo < tlo ? tlo : lo > thi ? thi : lo;
+        nhi = above ? thi : hi < tlo ? tlo : hi > thi ? thi : hi;
+    }
+    if (vra_bound_fits(nlo)) oct_add_lb(W, r, nlo); else if (!t->is_signed) oct_add_lb(W, r, 0);
+    if (vra_bound_fits(nhi) && !(u64dst && nhi == INT64_MAX)) oct_add_ub(W, r, nhi);
+    return true;
+}
 static bool vra_modular_may_wrap(Vra *V, Octagon *W, IrInstr *ins) {
     __int128 c0; bool exact;
     return vra_modular_may_wrap_c(V, W, ins, &c0, &exact);
@@ -1664,7 +1696,10 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
         case IR_CAST:
             if (r>=0){ // treat as a copy (widenings preserve value; a narrowing that
                        // changes it would be a separate proven-safe obligation)
-                if (vra_is_int(ins->result) && ins->n_operands) vra_assign_copy(V, W, r, ins->operands[0]->id);
+                if (vra_is_int(ins->result) && ins->n_operands) {
+                    if (ins->wrap != IR_WRAP_CHECK && vra_cast_policy(V, W, ins, r)) break;
+                    vra_assign_copy(V, W, r, ins->operands[0]->id);
+                }
                 else oct_forget(W, r);
             }
             break;
@@ -2349,6 +2384,11 @@ static bool vra_type_may_lose(const IrType *from, const IrType *to) {
     // A target that EXCLUDES a value the source may hold can lose it too (`NonZero` from i32).
     if (to->has_ne && !(from->has_ne && from->refine_ne == to->refine_ne) &&
         flo <= to->refine_ne && to->refine_ne <= fhi) return true;
+    // ★ u64 HOLDS 2^63 .. 2^64−1, which the i64-based domain clamps away: irtype_int_range gives
+    // u64 the range [0, INT64_MAX], and read literally that is inside i64 — so `y i64 = x` on a
+    // u64 owed NOTHING, and f(2^64 − 1) returned −1. Only a u64 target holds those values.
+    if (!from->is_signed && from->bits >= 64 && fhi == INT64_MAX && !(!to->is_signed && to->bits >= 64))
+        return true;
     return !(tlo <= flo && fhi <= thi);       // the target does NOT contain the source's range
 }
 
@@ -2364,6 +2404,8 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
     VraCheck c; memset(&c,0,sizeof c);
     c.kind = VRA_OVERFLOW; c.at = at; c.line = line; c.col = col;
     c.ok = (vlo >= tlo) && (vhi <= thi);
+    // A u64 read as INT64_MAX is UNBOUNDED, not at INT64_MAX (see vra_type_may_lose).
+    if (!val->type->is_signed && val->type->bits >= 64 && vhi == INT64_MAX) c.ok = false;
     if (c.ok && target->has_ne) {                          // the excluded value must be excluded
         bool from_ne = val->type->has_ne && val->type->refine_ne == target->refine_ne;
         if (!from_ne && vlo <= target->refine_ne && target->refine_ne <= vhi) c.ok = false;
@@ -4066,7 +4108,9 @@ static Vra *vra_analyze(IrFunc *f) {
                     break;
                 }
                 case IR_CAST:
-                    if (ins->n_operands >= 1 && ins->aux.cast_kind == IR_CAST_TRUNC
+                    // Any CHECK-mode cast that may lose a value owes the proof — the kind says
+                    // only how the bits move, and a same-width signedness change moves none.
+                    if (ins->n_operands >= 1 && ins->wrap == IR_WRAP_CHECK
                         && ins->result && ins->result->type) {
                         oct_close(&W);
                         vra_check_narrow(V,&W, ins->operands[0], ins->result->type,

@@ -190,6 +190,47 @@ static void ir_emit_modular(IrInstr *i, FILE *o) {
                                        core, mask, sb, sb);                             // + sign-extend
 }
 
+// `as%` and `as|` (F3.5): a cast with a POLICY for the value that does not fit. Both were the
+// plain C conversion, which is neither: it does not clamp, and at an odd width it does not wrap
+// either — the container is wider than the type (300 as% u4 stored 44).
+//   as%  modular: through uint64_t (defined), masked and sign-extended at an odd width;
+//   as|  clamp:   compared in the SOURCE's signedness, so no comparison mixes signs.
+static void ir_emit_c_int128(__int128 v, FILE *o) {
+    if (v > (__int128)INT64_MAX)      fprintf(o, "%lluULL", (unsigned long long)v);
+    else if (v == (__int128)INT64_MIN) fputs("(-9223372036854775807LL - 1)", o);
+    else                              fprintf(o, "%lldLL", (long long)v);
+}
+static void ir_emit_cast_policy(IrInstr *i, FILE *o) {
+    IrType *st = i->operands[0]->type, *dt = i->result->type;
+    int sb = st->bits > 0 ? st->bits : 32, db = dt->bits > 0 ? dt->bits : 32;
+    int v = i->operands[0]->id, r = i->result->id;
+    if (i->wrap == IR_WRAP_MODULAR) {
+        bool std_w = (db == 8 || db == 16 || db == 32 || db == 64);
+        unsigned long long mask = db >= 64 ? ~0ULL : ((1ULL << db) - 1), sbit = 1ULL << (db - 1);
+        fprintf(o, "  v%d = (", r); ir_ctype(dt, o); fputs(")", o);
+        if (std_w)              fprintf(o, "(uint64_t)v%d;\n", v);
+        else if (!dt->is_signed) fprintf(o, "((uint64_t)v%d & 0x%llxULL);\n", v, mask);
+        else                    fprintf(o, "((((uint64_t)v%d & 0x%llxULL) ^ 0x%llxULL) - 0x%llxULL);\n",
+                                        v, mask, sbit, sbit);
+        return;
+    }
+    __int128 smin = st->is_signed ? -((__int128)1 << (sb - 1)) : 0;
+    __int128 smax = st->is_signed ? ((__int128)1 << (sb - 1)) - 1 : ((__int128)1 << sb) - 1;
+    __int128 tmin = dt->is_signed ? -((__int128)1 << (db - 1)) : 0;
+    __int128 tmax = dt->is_signed ? ((__int128)1 << (db - 1)) - 1 : ((__int128)1 << db) - 1;
+    const char *cmp_t = st->is_signed ? "(int64_t)" : "(uint64_t)";
+    fprintf(o, "  v%d = ", r);
+    if (tmax < smax) {
+        fprintf(o, "(%sv%d > ", cmp_t, v); ir_emit_c_int128(tmax, o); fputs(") ? (", o);
+        ir_ctype(dt, o); fputs(")", o); ir_emit_c_int128(tmax, o); fputs(" : ", o);
+    }
+    if (tmin > smin) {                         // only a signed source reaches below 0
+        fprintf(o, "(%sv%d < ", cmp_t, v); ir_emit_c_int128(tmin, o); fputs(") ? (", o);
+        ir_ctype(dt, o); fputs(")", o); ir_emit_c_int128(tmin, o); fputs(" : ", o);
+    }
+    fputs("(", o); ir_ctype(dt, o); fprintf(o, ")v%d;\n", v);
+}
+
 // emit bytes as a C string literal (3-digit octal for anything unsafe, so a
 // following digit can never extend the escape)
 static void ir_emit_cstr(const char *s, int len, FILE *o) {
@@ -540,7 +581,10 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
         }
         case IR_NEG:    fprintf(o, "  v%d = -v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_BNOT:   fprintf(o, "  v%d = ~v%d;\n", i->result->id, i->operands[0]->id); break;
-        case IR_CAST:   fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
+        case IR_CAST:   if (i->wrap != IR_WRAP_CHECK && i->n_operands == 1 && i->operands[0]->type &&
+                            i->operands[0]->type->kind == IRT_INT && i->result->type &&
+                            i->result->type->kind == IRT_INT) { ir_emit_cast_policy(i, o); break; }
+                        fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
                         fprintf(o, ")v%d;\n", i->operands[0]->id); break;
         case IR_CALL: {
             fputs("  ", o);

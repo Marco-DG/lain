@@ -1,0 +1,126 @@
+// The cast tiers at the values where they DIFFER: out of range for the target. Until 2026-09-28
+// `as|` did not clamp — it was the plain C conversion, so 300 as| u8 gave 44 and -5 as| u8 gave
+// 251 — `as%` to an odd width did not wrap (300 as% u4 gave 44, a value no u4 holds), and `as?`
+// widened a u64 source into i64, where 2^64 - 1 became -1 and "fit" an i32. cast_tiers_pass casts
+// only 42, in range for every tier, so none of this had ever run. One function per check keeps
+// each analysis small (the octagon's cost is cubic in the live variables of ONE function).
+func c1() bool {
+    var x i32 = 300
+    var r = x as| u8
+    return r == 255
+}
+func c2() bool {
+    var y i32 = -5
+    var r = y as| u8
+    return r == 0
+}
+func c3() bool {
+    var x i32 = 300
+    var r = x as% u8
+    return r == 44
+}
+func c4() bool {
+    var y i32 = -5
+    var r = y as% u8
+    return r == 251
+}
+func c5() bool {
+    var x i32 = 300
+    var r = x as% u4
+    return r == 12
+}
+func c6() bool {
+    var x i32 = 300
+    var r = x as| u4
+    return r == 15
+}
+func c7() bool {
+    var y i32 = -5
+    var r = y as% i3
+    return r == 3
+}
+func c8() bool {
+    var y i32 = -5
+    var r = y as| i3
+    return r == -4
+}
+func c9() bool {
+    var z u8 = 200
+    var r = z as| i8
+    return r == 127
+}
+func c10() bool {
+    var z u8 = 200
+    var r = z as% i8
+    return r == -56
+}
+func c11() bool {
+    var w u32 = 4294967295
+    var r = w as| i8
+    return r == 127
+}
+func c12() bool {
+    var w u32 = 4294967295
+    var r = w as% i33
+    return r == 4294967295
+}
+func c13() bool {
+    var y i32 = -5
+    var r = y as| u64
+    return r == 0
+}
+func c14() bool {
+    var zero u64 = 0
+    var big = zero -% 1
+    var r = big as? i32 else 7
+    return r == 7
+}
+func c15() bool {
+    var zero u64 = 0
+    var big = zero -% 1
+    var r = big as| i64
+    return r == 9223372036854775807
+}
+func c16() bool {
+    var zero u64 = 0
+    var big = zero -% 1
+    var r = big as% i64
+    return r == -1
+}
+func c17() bool {
+    var w u32 = 4294967295
+    var r = w as? i32 else 9
+    return r == 9
+}
+func c18() bool {
+    var y i32 = -5
+    var r = y as? u8 else 3
+    return r == 3
+}
+func c19() bool {
+    var x i32 = 300
+    var r = x as? i16 else 1
+    return r == 300
+}
+func main() i32 {
+    if !c1() { return 1 }
+    if !c2() { return 2 }
+    if !c3() { return 3 }
+    if !c4() { return 4 }
+    if !c5() { return 5 }
+    if !c6() { return 6 }
+    if !c7() { return 7 }
+    if !c8() { return 8 }
+    if !c9() { return 9 }
+    if !c10() { return 10 }
+    if !c11() { return 11 }
+    if !c12() { return 12 }
+    if !c13() { return 13 }
+    if !c14() { return 14 }
+    if !c15() { return 15 }
+    if !c16() { return 16 }
+    if !c17() { return 17 }
+    if !c18() { return 18 }
+    if !c19() { return 19 }
+    return 0
+}

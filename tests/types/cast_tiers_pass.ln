@@ -1,9 +1,10 @@
 // F3.5 tiered casts: as / as% / as? / as| all parse, type-check, and emit.
-//   as  (proven)     -> plain modular truncation (future: strict prove-or-reject)
-//   as% (wrapping)   -> plain modular truncation, explicit opt-out
+//   as  (proven)     -> must be proven to fit, including a signedness change (else E086)
+//   as% (wrapping)   -> modular truncation, explicit opt-out
 //   as? (checked)    -> runtime bounds check, handled inline by `else` (F3.4/Q1)
 //   as| (saturating) -> clamp to the target type's [min, max]
-// v = 42 is in-range for u8, so this also runs correctly if executed.
+// v = 42 is in range for u8, so no policy is exercised here: the out-of-range values, where the
+// tiers differ, are in tests/trust/cast_policy_boundaries_pass.ln, which RUNS them.
 func main() i32 effects raises {
     var v i32 = 42
     var p = v as u8

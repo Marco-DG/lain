@@ -1,0 +1,12 @@
+// EXPECT: [E086]
+// usize -> i64 is a signedness change that loses usize's top half (spec 07: usize is
+// [0, 2^N - 1]). It was accepted as a widening until 2026-09-28: the range analysis gives u64 the
+// range [0, INT64_MAX] because its domain is i64-based, and read as a bound rather than as
+// "unbounded" that made u64 look contained in i64 — so f(2^64 - 1) returned -1.
+func f(a usize) i64 {
+    var x i64 = a
+    return x
+}
+func main() i32 {
+    return 0
+}

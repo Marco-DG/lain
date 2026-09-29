@@ -449,7 +449,7 @@ at=const 12
 rc=3
 out=
 ### tests/functions/popcount_shift_termination_pass.ln
-rc=8
+rc=0
 out=
 at=const 2
 ### tests/functions/recursion_diff_measure_pass.ln
@@ -1388,6 +1388,10 @@ ty=Token struct
 rc=0
 out=255
 ty=Slice_u8 scalar
+### tests/trust/cast_policy_boundaries_pass.ln
+rc=0
+out=
+at=const 38
 ### tests/trust/comprehension_pass.ln
 rc=0
 out=0 7
@@ -1517,6 +1521,10 @@ rc=0
 out=255 0 70
 at=const 2
 ty=Slice_u8 scalar
+### tests/trust/saturating_checked_widths_pass.ln
+rc=0
+out=
+at=const 24
 ### tests/trust/saturating_pass.ln
 rc=0
 out=255
