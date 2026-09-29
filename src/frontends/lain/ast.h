@@ -625,6 +625,7 @@ typedef struct {
 typedef struct {
     int64_t     value;  // Literal integer value (64-bit; was 32-bit int — truncated
                         // any literal above 2^31-1, e.g. i64/u64 constants).
+    bool        is_bool;// `true` / `false`: value 1 / 0, typed `bool` (not an integer)
 } ExprLiteral;
 
 typedef struct {

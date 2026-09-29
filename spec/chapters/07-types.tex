@@ -391,7 +391,9 @@ operations is NaN.  These are defined behaviors in Lain.
 \index{boolean type}
 
 \pnum
-\lain{bool} has exactly two values: \lain{true} and \lain{false}.
+\lain{bool} has exactly two values: \lain{true} and \lain{false}.  Every boolean the language
+makes has this type: the literals, the comparisons, \lain{in}, and \lain{and}, \lain{or} and
+\lain{!} (\S\,\ref{sec:expr.logical}); none of them is an integer.
 \lain{bool} is stored as a single byte; its exact representation is
 \idbehav{whether \lain{true} is 1 or any non-zero value}.
 
@@ -411,7 +413,7 @@ ergonomic only and does not extend to other contexts.
 \begin{laincode}
 var n int = read_count()
 if n { ... }        // OK: integer in condition, non-zero is true
-var b bool = n      // [E100]: not a value conversion
+var b bool = n      // [E012]: not a value conversion; write n != 0
 \end{laincode}
 \end{example}
 

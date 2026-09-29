@@ -238,14 +238,13 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         return expr_match(arena, value, first, is_borrowed);
     }
 
-    // Boolean literals
-    if (parser_match(TOKEN_KEYWORD_TRUE)) {
+    // Boolean literals — values 1 and 0, but typed `bool` (see the EXPR_LITERAL typing)
+    if (parser_match(TOKEN_KEYWORD_TRUE) || parser_match(TOKEN_KEYWORD_FALSE)) {
+        bool v = parser_match(TOKEN_KEYWORD_TRUE);
         parser_advance();
-        return expr_literal(arena, 1);
-    }
-    if (parser_match(TOKEN_KEYWORD_FALSE)) {
-        parser_advance();
-        return expr_literal(arena, 0);
+        Expr *b = expr_literal(arena, v ? 1 : 0);
+        b->as.literal_expr.is_bool = true;
+        return b;
     }
     if (parser_match(TOKEN_KEYWORD_NIL)) {
         parser_error("`nil` is retired — write `none` (the marker) for the absent case of `T | none`.");

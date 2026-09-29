@@ -1331,6 +1331,12 @@ a <= b     // Less than or equal
 a >= b     // Greater than or equal
 ```
 
+A comparison is a `bool`, not an integer — as are `true`, `false`, `x in a` and the logical
+operators below. A `bool` never converts to or from an integer implicitly (spec 07): returning
+`a < b` from an `i32` function, `n + (a < b)`, `take(1)` for a `bool` parameter and `flag == 1`
+are all [E012]. Convert explicitly: `(a < b) as i32`, `n as bool` (which is `n != 0`). An integer
+is still accepted as an `if` / `while` condition, where non-zero is true.
+
 ### 7.3 Logical Operators
 
 Lain uses keyword-based logical operators:
@@ -1340,6 +1346,9 @@ x > 0 and x < 100    // Logical AND
 x == 0 or x == 1     // Logical OR
 !condition            // Logical NOT
 ```
+
+Their operands are `bool` (spec 08): `x and n` with an integer `n`, or `!n`, is [E012] — write
+`n != 0`.
 
 ### 7.4 Bitwise Operators
 
@@ -1351,6 +1360,8 @@ a ^ b      // Bitwise XOR
 a << n     // Left shift
 a >> n     // Right shift
 ```
+
+The bitwise operators take integers. On two booleans, write `and` / `or` / `!=` (spec 08).
 
 ### 7.5 Compound Assignment
 

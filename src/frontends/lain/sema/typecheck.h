@@ -56,6 +56,22 @@ Type *get_builtin_i32_type(void) {
   return int_ty;
 }
 
+// ★ `bool` IS NOT AN INTEGER (spec 07: "an implicit conversion between integer types and bool
+// is ill-formed"). The front end typed `true`, `false`, every comparison and every `and`/`or`/`!`
+// as i32, so the rule could not be enforced — refusing int→bool would have refused
+// `var b bool = false` — and `take(true)` for a usize, `take(1)` for a bool, `return a < b` from
+// an i32 function and `n + (a < b)` all compiled. A boolean is now typed `bool` where it is made.
+static Type *get_builtin_bool_type(void) {
+  static Type *bool_ty = NULL;
+  if (!bool_ty) {
+    Id *id = arena_push_aligned(sema_arena, Id);
+    id->name = "bool";
+    id->length = 4;
+    bool_ty = type_simple(sema_arena, id);
+  }
+  return bool_ty;
+}
+
 Type *get_builtin_u8_type(void) {
   static Type *u8_ty = NULL;
   if (!u8_ty) {
@@ -101,6 +117,12 @@ static bool is_integer_type(Type *t) {
     // `int` documented alias of i32.
     if (len == 3 && memcmp(n, "int", 3) == 0) return true;
     return false;
+}
+
+static bool is_bool_type(Type *t) {
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
+    return t->base_type->length == 4 && memcmp(t->base_type->name, "bool", 4) == 0;
 }
 
 static bool is_float_type(Type *t) {
@@ -812,16 +834,18 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
         // conversion is ill-formed.) The struct constructor had a stricter check of its own —
         // stricter in the right places, and wrong about `W("abcd", 1)`. One relation now.
         //
-        // NOT YET the integer/bool half of that rule: the front end types `true`, `false` and
-        // every comparison as i32, so refusing int→bool here would refuse `var b bool = false`.
-        // Booleans must be typed `bool` first (plan 7H, L6).
+        // AND the integer/bool half of that rule, now that booleans are typed `bool` where they
+        // are made: `take(true)` for a usize and `take(1)` for a bool are refused, as spec 07
+        // says; `as` converts explicitly.
         bool f_seq = (f->kind == TYPE_ARRAY || f->kind == TYPE_SLICE);
         bool t_seq = (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE);
         // (A vector type is neither a sequence nor a scalar here — an array literal initialises
         // one — so the sequence rule is asked only against a scalar or a nominal type.)
         bool f_scal = is_castable_scalar(f) || is_nominal_aggregate(f);
         bool t_scal = is_castable_scalar(t) || is_nominal_aggregate(t);
-        if ((f_seq && (t_seq || t_scal)) || (t_seq && (f_seq || f_scal))) {
+        if ((is_bool_type(f) && is_integer_type(t)) || (is_integer_type(f) && is_bool_type(t))) {
+            ok = false;
+        } else if ((f_seq && (t_seq || t_scal)) || (t_seq && (f_seq || f_scal))) {
             // a sequence flows only into a sequence of the SAME element type: an array decays
             // to a slice, a `u8[:0]` is a `u8[]` (the sentinel is dropped, never gained — see
             // reject_sentinel_fabrication), and an element type never converts.
@@ -1079,6 +1103,8 @@ static void check_comparison_operands(Type *lt, Type *rt, Expr *le, Expr *re,
     bool bad = false;
     if ((is_float_type(l) && is_integer_type(r)) || (is_integer_type(l) && is_float_type(r))) {
         bad = true;                                          // float vs int
+    } else if ((is_bool_type(l) && is_integer_type(r)) || (is_integer_type(l) && is_bool_type(r))) {
+        bad = true;                                          // bool vs int: `flag == 1`
     } else if (l_ptr || r_ptr) {
         if (l_ptr && r_ptr) {
             if (types_equal_exact(l->element_type, r->element_type)) return;  // same pointee
@@ -2230,7 +2256,7 @@ void sema_infer_expr(Expr *e) {
 
     // 'in' operator: result is bool, skip other checks
     if (e->as.binary_expr.op == TOKEN_KEYWORD_IN) {
-        e->type = get_builtin_i32_type();
+        e->type = get_builtin_bool_type();
         break;
     }
 
@@ -2351,8 +2377,35 @@ void sema_infer_expr(Expr *e) {
                 e->as.binary_expr.right->type, e->as.binary_expr.left,
                 e->as.binary_expr.right, token_kind_to_str(bop), e->line, e->col);
         }
+        if ((bop == TOKEN_KEYWORD_AND || bop == TOKEN_KEYWORD_OR) && !sema_in_unsafe_block) {
+            // spec 08: the operands of `and` and `or` shall have type bool.
+            for (int side = 0; side < 2; side++) {
+                Expr *o = side ? e->as.binary_expr.right : e->as.binary_expr.left;
+                if (o && o->type && !is_bool_type(o->type)) {
+                    char tb[128]; type_describe(o->type, tb, sizeof tb);
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: an operand of `%s` has type '%s', not `bool` "
+                            "(spec 08) — compare it: `n != 0`.\n", (long)o->line, (long)o->col,
+                            bop == TOKEN_KEYWORD_AND ? "and" : "or", tb);
+                    diagnostic_show_line(o->line, o->col);
+                    exit(1);
+                }
+            }
+        }
         if (is_cmp || bop == TOKEN_KEYWORD_AND || bop == TOKEN_KEYWORD_OR) {
-            e->type = get_builtin_i32_type();
+            e->type = get_builtin_bool_type();
+        } else if (is_bool_type(e->as.binary_expr.left->type) || is_bool_type(e->as.binary_expr.right->type)) {
+            // Arithmetic — and bitwise, whose operands spec 08 requires to be integers — on a
+            // boolean is an implicit bool→integer conversion (spec 07). `and` / `or` are the
+            // boolean operators.
+            if (!sema_in_unsafe_block) {
+                fprintf(stderr, "[E012] Error Ln %li, Col %li: `%s` on a `bool` operand — a boolean is not an "
+                        "integer (spec 07); use `and` / `or`, or convert explicitly: `(a < b) as i32`.\n",
+                        (long)e->line, (long)e->col, token_kind_to_str(bop));
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            } else {
+                e->type = get_builtin_i32_type();
+            }
         } else {
             Type *lt = e->as.binary_expr.left->type;
             Type *rt = e->as.binary_expr.right->type;
@@ -2522,6 +2575,17 @@ void sema_infer_expr(Expr *e) {
         }
     } else {
         e->type = get_builtin_i32_type();
+        if (e->as.unary_expr.op == TOKEN_BANG) {                                      // logical not
+            e->type = get_builtin_bool_type();
+            Expr *o = e->as.unary_expr.right;                  // spec 08: its operand is a bool
+            if (o && o->type && !is_bool_type(o->type) && !sema_in_unsafe_block) {
+                char tb[128]; type_describe(o->type, tb, sizeof tb);
+                fprintf(stderr, "[E012] Error Ln %li, Col %li: `!` applied to '%s', not `bool` (spec 08) — "
+                        "compare it: `n == 0`.\n", (long)e->line, (long)e->col, tb);
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
+        }
         // ★ BITWISE COMPLEMENT KEEPS ITS OPERAND'S TYPE. Every non-deref unary landed on
         // i32 here, which is wrong for `~` on any other integer type and wrong in a way
         // that only bites the UNSIGNED ones: `~x` on a uN is (2^N−1)−x, a value of that
@@ -2640,6 +2704,7 @@ void sema_infer_expr(Expr *e) {
   }
 
   case EXPR_LITERAL: {
+    if (e->as.literal_expr.is_bool) { e->type = get_builtin_bool_type(); break; }
     // Keystone: an integer literal carries its exact value as its type's interval
     // ({ν:i32 | ν=k}), so a boundary can prove `k <: Digit` by subsumption without
     // consulting the name-keyed range table. A fresh copy — never mutate the shared

@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// A comparison is a `bool`, and returning it from an `i32` function is an implicit bool→integer
+// conversion. It compiled while comparisons were typed i32. Write `(a < b) as i32`.
+func less(a i32, b i32) i32 {
+    return a < b
+}
+func main() i32 {
+    return less(1, 2)
+}

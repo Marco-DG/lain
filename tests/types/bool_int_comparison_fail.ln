@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// `flag == 1` compares a boolean with an integer — the same implicit conversion, in a comparison.
+func is_set(flag bool) bool {
+    return flag == 1
+}
+func main() i32 {
+    if is_set(true) { return 0 }
+    return 1
+}

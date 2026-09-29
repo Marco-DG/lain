@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// Arithmetic on a boolean — counting with `n + (a < b)` — converts it to an integer implicitly.
+// Spec 07 requires the conversion to be written: `n + (a < b) as i32`.
+func count_less(a i32, b i32) i32 {
+    var n i32 = 0
+    n = n + (a < b)
+    return n
+}
+func main() i32 {
+    return count_less(1, 2) - 1
+}

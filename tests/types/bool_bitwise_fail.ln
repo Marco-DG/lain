@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// The bitwise operators take integers (spec 08) and a boolean is not one. `and` and `or` are the
+// boolean operators; `(a < b) & (c < d)` was accepted only while comparisons were typed i32.
+func both(a i32, b i32) bool {
+    return (a < b) & (b < 10)
+}
+func main() i32 {
+    if both(1, 2) { return 0 }
+    return 1
+}

@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// An integer is not a boolean (spec 07: an implicit conversion between integer types and bool is
+// ill-formed). `true` and `false` used to be integer literals and every comparison an i32, so the
+// rule could not be enforced and `take(1)` for a `bool` compiled. Say `n != 0`, or `n as bool`.
+func take(x bool) bool {
+    return x
+}
+func main() i32 {
+    if take(1) { return 1 }
+    return 0
+}

@@ -1,0 +1,43 @@
+// Booleans are typed `bool` where they are made — `true`, `false`, every comparison, `and`, `or`
+// and `!` — and convert to and from integers only through `as` (spec 07). What stays legal:
+// booleans through variables, parameters and returns; `and`, `or`, `!` and `==`/`!=` between
+// booleans; `in` (a bounds test) as a boolean; an INTEGER as an `if`/`while` condition
+// (non-zero is true, spec 07's one relaxation); and `as` both ways, where `n as bool` is `n != 0`.
+// Bitwise `& | ^` stay integer-only (spec 08), as `and`, `or` and `!` stay boolean-only.
+func between(x i32, lo i32, hi i32) bool {
+    return x >= lo and x <= hi
+}
+func xor(a bool, b bool) bool {
+    return a != b
+}
+func count_true(a bool, b bool, c bool) i32 {
+    return (a as i32) + (b as i32) + (c as i32)
+}
+func main() i32 {
+    var t = true
+    var f bool = false
+    if !t { return 1 }
+    if f { return 2 }
+    if !between(5, 1, 9) { return 3 }
+    if between(10, 1, 9) { return 4 }
+    if !xor(t, f) { return 5 }
+    if xor(t, t) { return 6 }
+    var both = (3 < 4) and (4 < 5)
+    if !both { return 7 }
+    var either = f or (2 > 1)
+    if !either { return 8 }
+    var arr i32[4] = [1, 2, 3, 4]
+    var j usize = 2
+    var ok = j in arr
+    if !ok { return 14 }
+    if count_true(t, f, 1 < 2) != 2 { return 9 }
+    var n i32 = 7
+    if n as bool == false { return 10 }
+    var z i32 = 0
+    if z as bool { return 11 }
+    if n { } else { return 12 }
+    var k i32 = 0
+    while k < 3 { k = k + 1 }
+    if (k == 3) as i32 != 1 { return 13 }
+    return 0
+}

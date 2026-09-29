@@ -1348,6 +1348,10 @@ out=18446744073709551614
 out=-13
 at=const 8
 ty=Slice_u8 scalar
+### tests/trust/bool_typing_pass.ln
+rc=0
+out=
+at=const 6
 ### tests/trust/borrow_write_reaches_owner_pass.ln
 rc=0
 out=42
