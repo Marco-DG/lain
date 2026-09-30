@@ -1055,8 +1055,13 @@ static void ir_lower_return_ensures(LowerCtx *c, Decl *callee, IrValue *v, IrIns
             }
         }
         IrCmp cmp;
-        if (rv && ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp))
-            ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, v, rv));
+        if (rv && ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp)) {
+            // A Lain callee PROVES its return refinement (E012 at each return); an extern's is
+            // believed, so the fact is the programmer's word, not the compiler's.
+            IrValue *cv = ir_icmp(c->f, c->cur, cmp, v, rv);
+            if (callee->as.function_decl.body) ir_assume(c->f, c->cur, cv);
+            else                               ir_assume_trusted(c->f, c->cur, cv);
+        }
     }
 }
 
@@ -3474,7 +3479,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             // OBLIGATION the numeric analysis must discharge (and reports if it cannot); an
             // `assume` is a GIVEN it may use. Same node, opposite directions.
             IrValue *cv = ir_lower_expr(c, s->as.assert_stmt.cond);
-            if (cv) { if (s->as.assert_stmt.is_assume) ir_assume(c->f, c->cur, cv);
+            if (cv) { if (s->as.assert_stmt.is_assume) ir_assume_trusted(c->f, c->cur, cv);
                       else                             ir_assert(c->f, c->cur, cv); }
             break;
         }

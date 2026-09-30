@@ -137,6 +137,15 @@ void ir_assume(IrFunc *f, IrBlock *b, IrValue *cond) {
     ins->operands[0] = cond;
     ir_emit(b, ins);
 }
+// A TRUSTED assume: a fact the PROGRAMMER states (`assume` in `unsafe`, an extern's declared
+// return range) rather than one the compiler establishes. The analyses read both alike; only the
+// C emission differs: an established fact is handed to gcc, a trusted one is not (emit_c.h).
+void ir_assume_trusted(IrFunc *f, IrBlock *b, IrValue *cond) {
+    IrInstr *ins = ir_instr(f, IR_ASSUME, NULL, 1);
+    ins->operands[0] = cond;
+    ins->aux.imm = 1;
+    ir_emit(b, ins);
+}
 // `assert(cond)` — cond (a bool) is an OBLIGATION the analysis must discharge here
 // (a precondition, a user assert). No result.
 void ir_assert(IrFunc *f, IrBlock *b, IrValue *cond) {

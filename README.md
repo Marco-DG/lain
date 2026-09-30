@@ -490,23 +490,61 @@ func get(a i32[n], n usize, i usize < n) i32 {
 ```
 
 `i usize < n` is checked at every call. Inside, nothing is left to check, and the proof is
-handed on to gcc as an assumption:
+handed on to gcc as an assumption. This is the emitted C for `get.ln`, with the local
+declarations left out. The slice arrives as its length and pointer, `v1` is `n` and `v2` is `i`:
 
 ```c
-__attribute__((access(read_only, 1, 2))) __attribute__((pure)) __attribute__((nonnull))
-int32_t ip_get(const int32_t * restrict a, size_t n, size_t i) {
-    if (i >= n) __builtin_unreachable();
-    return a[i];
+__attribute__((pure)) __attribute__((nonnull)) __attribute__((access(read_only, 2, 1)))
+int32_t get_get(size_t __len_v0, int32_t* restrict __ptr_v0, uint64_t v1, uint64_t v2) {
+  Slice_i32 v0 = { __ptr_v0, __len_v0 };
+ L0: ;
+  v3 = v0.len;
+  v4 = (v3 <= v1);
+  v5 = (v3 >= v1);
+  v6 = (v2 < v1);
+  if (!(v4 & v5 & v6)) __builtin_unreachable();
+  v7 = v0.data;
+  v8 = &v7[v2];
+  v9 = *v8;
+  return v9;
 }
+```
+
+The facts go to gcc as ONE conjoined condition, because gcc 13 ignores an unreachable-guard
+whose variable was already used by an earlier one. The assumption is not decoration. In a
+callee that loops, it removes the test for an empty loop that gcc would otherwise have to keep:
+
+```lain
+func dot(a i32[n], b i32[n], n usize >= 4) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i < n {
+        s = s +% (a[i] *% b[i])
+        i = i + 1
+    }
+    return s
+}
+```
+
+```asm
+; without the hint (n unknown)   ; with `if (!(... & n >= 4)) __builtin_unreachable();`
+dot_dot:                          dot_dot:
+  endbr64                           endbr64
+  test %r8,%r8                      xor  %eax,%eax
+  je   <return 0>                   xor  %edi,%edi
+  xor  %eax,%eax                  loop:
+  xor  %edi,%edi                    mov  (%rsi,%rax,4),%edx
+loop:                               imul (%rcx,%rax,4),%edx
+  mov  (%rsi,%rax,4),%edx           ...
 ```
 
 The same guarantee in C has to be a runtime check, because the callee cannot see who called it:
 
 ```asm
 ; Lain                          ; C: if (i >= n) abort();      ; Rust: a[i]
-ip_get:                         get_checked:                    get_rs:
+get_get:                        get_checked:                    get_rs:
   endbr64                         endbr64                         cmp  %rsi,%rdx
-  mov  (%rdi,%rdx,4),%eax         cmp  %rsi,%rdx                  jae  <panic>
+  mov  (%rsi,%rcx,4),%eax         cmp  %rsi,%rdx                  jae  <panic>
   ret                             jae  <abort>                    mov  (%rdi,%rdx,4),%eax
                                   mov  (%rdi,%rdx,4),%eax         ret
                                   ret                             ...panic landing pad

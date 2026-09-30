@@ -319,6 +319,26 @@ static void ir_emit_sentinel_cmp(IrType *back, int vid, long long sent, FILE *o)
 static IrInstr *ir_pk_of(IrValue *p);                  // [packed] field access (below)
 static void ir_emit_packed_load(IrInstr *i, FILE *o);
 static void ir_emit_packed_store(IrInstr *i, FILE *o);
+// ★ A FACT THE COMPILER ESTABLISHED IS HANDED TO GCC. A refinement is checked at every call, a
+// struct invariant at every construction and store, a callee's return range in the callee: at
+// the assume it holds, and `if (!c) __builtin_unreachable()` lets gcc use it (a removed `n == 0`
+// guard, a dropped defensive branch). From cf702c5 until this, nothing was emitted: the
+// comparison went into a temporary nobody read, while README's "Where no optimiser can follow"
+// quoted the deleted backend's hint. A TRUSTED assume (the programmer's `assume`, an extern's
+// return range) is not handed on: a wrong one stays a wrong answer instead of becoming undefined
+// behaviour gcc exploits, which is what the deleted backend did too.
+// ONE HINT PER RUN, conjoined. gcc 13 turns an unreachable guard into a range only when no use
+// of the variable precedes the guard, so after `if (!(len <= n)) unreachable` a following
+// `if (!(n >= 4)) unreachable` was ignored and the zero-trip test stayed in `dot`; as one
+// `if (!(a & b & c))` all three are used. A hint about SSA values may move LATER in its block,
+// never earlier, so deferring it to the end of the run is sound.
+static void ir_emit_hints(int *hint, int *nh, FILE *o) {
+    if (*nh == 0) return;
+    fputs("  if (!(", o);
+    for (int k = 0; k < *nh; k++) fprintf(o, "%sv%d", k ? " & " : "", hint[k]);
+    fputs(")) __builtin_unreachable();\n", o);
+    *nh = 0;
+}
 static void ir_emit_instr_c(IrInstr *i, FILE *o) {
     switch (i->op) {
         case IR_CONST:
@@ -353,7 +373,8 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             else    fprintf(o, "  v%d = %sv%d->f%d;\n", i->result->id, amp, i->operands[0]->id, i->aux.field_idx);
             break;
         }
-        case IR_ASSUME: case IR_ASSERT: case IR_CONSUME: break;  // verification-only; no runtime code
+        case IR_ASSUME: case IR_ASSERT: case IR_CONSUME: break;  // verification-only; an established
+                                                                 // assume's HINT: see ir_emit_hints
         // A WIDE access reads/writes more than the pointer's element type: a 16-lane vector
         // load through a `uint8_t*`. `*p` is a type error there, and a cast would assert an
         // alignment the address need not have — memcpy is the well-defined spelling and gcc
@@ -841,7 +862,22 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
     // blocks
     for (IrBlock *b=f->blocks; b; b=b->next) {
         fprintf(o, " L%d: ;\n", b->id);
-        for (IrInstr *i=b->instrs; i; i=i->next) ir_emit_instr_c(i, o);
+        int hint[32], nh = 0;
+        for (IrInstr *i=b->instrs; i; i=i->next) {
+            if (i->op == IR_ASSUME) {
+                if (i->aux.imm == 0 && i->n_operands >= 1 && i->operands[0]) {
+                    if (nh == 32) ir_emit_hints(hint, &nh, o);
+                    hint[nh++] = i->operands[0]->id;
+                }
+                continue;
+            }
+            // Only the comparisons that feed the next assume may come between; anything else
+            // (a division by the parameter, a load through it) must already see the fact.
+            if (nh && i->op != IR_ICMP && i->op != IR_CONST && i->op != IR_SLICE_LEN)
+                ir_emit_hints(hint, &nh, o);
+            ir_emit_instr_c(i, o);
+        }
+        ir_emit_hints(hint, &nh, o);
         switch (b->term.kind) {
             // IR_TERM_BR is the ZERO value of the enum, so an UNTERMINATED block reads as a
             // branch to nowhere. Emitting `goto L(null)` crashed the emitter; the honest

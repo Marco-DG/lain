@@ -326,7 +326,8 @@ typedef enum {
     // TOTAL: there is no "gave up here" bit, only a declared unknown.
     IR_OPAQUE,
     // verification layer (Phase 2.9 — the assume/assert substrate)
-    IR_ASSUME,              // op[0] = a bool that HOLDS here (guard/refinement/precondition)
+    IR_ASSUME,              // op[0] = a bool that HOLDS here (guard/refinement/precondition);
+                            //   aux.imm 0 = the compiler establishes it, 1 = TRUSTED (the programmer's)
     IR_ASSERT,              // op[0] = a bool the analysis must DISCHARGE (obligation)
     // linearity (Phase 3.2) — `mov x` invalidates x's storage here; the source becomes
     // moved-from. op[0] = the consumed slot/value. A no-op at run time (codegen ignores it).
