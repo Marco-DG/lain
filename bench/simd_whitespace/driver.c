@@ -11,7 +11,8 @@
 #include <stdlib.h>
 #include <time.h>
 
-extern uint64_t wsbench_count_ws(const uint8_t *data, uintptr_t n); /* Lain SIMD kernel */
+/* The Lain kernel takes a slice, passed as its length then its data pointer. */
+extern uint64_t wsbench_count_ws(size_t n, uint8_t *data);        /* Lain SIMD kernel */
 
 static uint64_t count_ws_scalar(const uint8_t *data, size_t n) {
     uint64_t t = 0;
@@ -30,12 +31,12 @@ int main(void) {
     for (size_t i = 0; i < n; i++)                   /* ~14% spaces, deterministic */
         buf[i] = (i % 7 == 0) ? ' ' : (uint8_t)('a' + (i & 15));
 
-    uint64_t a = wsbench_count_ws(buf, n), b = count_ws_scalar(buf, n);
+    uint64_t a = wsbench_count_ws(n, buf), b = count_ws_scalar(buf, n);
     printf("verify: simd=%llu scalar=%llu %s\n",
            (unsigned long long)a, (unsigned long long)b, a == b ? "MATCH" : "MISMATCH!");
 
     int iters = 8; volatile uint64_t sink = 0;
-    double t0 = now(); for (int k = 0; k < iters; k++) sink += wsbench_count_ws(buf, n); double t1 = now();
+    double t0 = now(); for (int k = 0; k < iters; k++) sink += wsbench_count_ws(n, buf); double t1 = now();
     double t2 = now(); for (int k = 0; k < iters; k++) sink += count_ws_scalar(buf, n); double t3 = now();
     double gb = (double)n * iters / 1e9;
     printf("Lain SIMD : %6.2f GB/s\n", gb / (t1 - t0));

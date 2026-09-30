@@ -17,10 +17,11 @@
 typedef struct { uint8_t  data[4096]; } Fixed_u8_4096;
 typedef struct { uint8_t  data[1024]; } Fixed_u8_1024;
 typedef struct { uint32_t data[1024]; } Fixed_u32_1024;
-extern uint32_t simdlex_count_tokens(const Fixed_u8_4096*, uint32_t);        /* naive */
-extern uint32_t simdlex_count_tokens_smart(const Fixed_u8_4096*, uint32_t);  /* corrected */
+/* A fixed-array parameter (`src u8[4096]`) is passed as a pointer to its first element. */
+extern uint32_t simdlex_count_tokens(uint8_t*, uint32_t);        /* naive */
+extern uint32_t simdlex_count_tokens_smart(uint8_t*, uint32_t);  /* corrected */
 /* SoA output: kinds[] (1B) + starts[] (4B), no length stored */
-extern uint32_t simdlex_tokenize(const Fixed_u8_4096*, uint32_t, Fixed_u8_1024*, Fixed_u32_1024*);
+extern uint32_t simdlex_tokenize(uint8_t*, uint32_t, uint8_t*, uint32_t*);
 
 /* string+comment-aware scalar reference — same token semantics as count_tokens_smart */
 static uint32_t ref_smart(const uint8_t *s, uint32_t n){
@@ -44,11 +45,11 @@ static int fails=0;
 static uint32_t fill(Fixed_u8_4096*b,const char*u){uint32_t n=0,ul=(uint32_t)strlen(u);memset(b,0,sizeof*b);while(n+ul<4000){memcpy(b->data+n,u,ul);n+=ul;}return n;}
 static void check(const char*label,const char*code){
     Fixed_u8_4096 b; memset(&b,0,sizeof b); uint32_t n=(uint32_t)strlen(code); memcpy(b.data,code,n);
-    uint32_t s=simdlex_count_tokens_smart(&b,n), r=ref_smart(b.data,n);
+    uint32_t s=simdlex_count_tokens_smart(b.data,n), r=ref_smart(b.data,n);
     if(s!=r)fails++; printf("  %-22s smart=%2u ref=%2u %s\n",label,s,r,s==r?"OK":"MISMATCH");
 }
-static double mbps(uint32_t(*f)(const Fixed_u8_4096*,uint32_t),const Fixed_u8_4096*b,uint32_t n,int it){
-    volatile uint32_t sink=0; double t0=now(); for(int k=0;k<it;k++)sink+=f(b,n); double t1=now(); (void)sink;
+static double mbps(uint32_t(*f)(uint8_t*,uint32_t),Fixed_u8_4096*b,uint32_t n,int it){
+    volatile uint32_t sink=0; double t0=now(); for(int k=0;k<it;k++)sink+=f(b->data,n); double t1=now(); (void)sink;
     return (double)n*it/1e9/(t1-t0);
 }
 static void bench(const char*label,const char*unit){
@@ -77,7 +78,7 @@ int main(void){
         Fixed_u8_4096 s; memset(&s,0,sizeof s); uint32_t n=(uint32_t)strlen(code); memcpy(s.data,code,n);
         static Fixed_u8_1024 kinds; static Fixed_u32_1024 starts;
         static const char *KN[5]={"Ident","Number","Op","String","Keyword"};
-        uint32_t cnt=simdlex_tokenize(&s,n,&kinds,&starts);
+        uint32_t cnt=simdlex_tokenize(s.data,n,kinds.data,starts.data);
         printf("  %u tokens:", cnt);
         for(uint32_t t=0;t<cnt;t++) printf(" %s@%u", KN[kinds.data[t]], starts.data[t]);
         printf("\n  (keywords func/return distinguished from identifiers)\n");
