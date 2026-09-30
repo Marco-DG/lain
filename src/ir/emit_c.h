@@ -517,12 +517,14 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             fputs(" };\n", o);
             break;
         }
-        case IR_VEC_MOVEMASK: {   // the ISA's own lane-predicate reduction
+        case IR_VEC_MOVEMASK: {   // the ISA's own lane-predicate reduction, where there is one
             IrType *vt = i->operands[0]->type;
             int lanes = vt ? (int)vt->array_len : 16;
-            fprintf(o, "  v%d = (uint32_t)%s((%s)v%d);\n", i->result->id,
-                    lanes >= 32 ? "_mm256_movemask_epi8" : "_mm_movemask_epi8",
-                    lanes >= 32 ? "__m256i" : "__m128i", i->operands[0]->id);
+            if (lanes == 16 || lanes == 32)
+                fprintf(o, "  v%d = LAIN_MOVEMASK_%d(v%d);\n", i->result->id, lanes, i->operands[0]->id);
+            else
+                fprintf(o, "  v%d = lain_movemask_bytes((const unsigned char *)&v%d, %d);\n",
+                        i->result->id, i->operands[0]->id, lanes);
             break;
         }
         case IR_FUNC_REF: fprintf(o, "  v%d = ", i->result->id);
@@ -1248,11 +1250,33 @@ void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
     // inlines fprintf+abort at the site; emit one helper instead, and only when it is used,
     // so a module that never panics is unchanged.
     { bool needs_x86 = false;                 // only when a movemask is actually emitted
+      // ★ PORTABLY. This emitted `_mm_movemask_epi8` and <immintrin.h> unconditionally, so any
+      // program using @movemask failed to COMPILE on ARM (aarch64, Apple silicon) — and a
+      // 32-lane one failed on x86 too without -mavx2. The intrinsic is used where the target has
+      // it; elsewhere each lane's top bit is collected by a loop gcc vectorises (NEON included).
+      // LAIN_PORTABLE_SIMD forces the portable path, which is how it is tested on x86.
       for (IrFunc *f=funcs; f && !needs_x86; f=f->next)
         for (IrBlock *b=f->blocks; b && !needs_x86; b=b->next)
           for (IrInstr *i=b->instrs; i; i=i->next)
             if (i->op==IR_VEC_MOVEMASK) { needs_x86 = true; break; }
-      if (needs_x86) fputs("#include <immintrin.h>\n\n", o); }
+      if (needs_x86) fputs(
+        "static inline uint32_t lain_movemask_bytes(const unsigned char *p, int n) {\n"
+        "    uint32_t m = 0;\n"
+        "    for (int k = 0; k < n; k++) m |= (uint32_t)(p[k] >> 7) << k;\n"
+        "    return m;\n"
+        "}\n"
+        "#if defined(__SSE2__) && !defined(LAIN_PORTABLE_SIMD)\n"
+        "#include <immintrin.h>\n"
+        "#define LAIN_MOVEMASK_16(v) ((uint32_t)_mm_movemask_epi8((__m128i)(v)))\n"
+        "#else\n"
+        "#define LAIN_MOVEMASK_16(v) lain_movemask_bytes((const unsigned char *)&(v), 16)\n"
+        "#endif\n"
+        "#if defined(__AVX2__) && !defined(LAIN_PORTABLE_SIMD)\n"
+        "#include <immintrin.h>\n"
+        "#define LAIN_MOVEMASK_32(v) ((uint32_t)_mm256_movemask_epi8((__m256i)(v)))\n"
+        "#else\n"
+        "#define LAIN_MOVEMASK_32(v) lain_movemask_bytes((const unsigned char *)&(v), 32)\n"
+        "#endif\n\n", o); }
     { IrInstr *pc = NULL;
       for (IrFunc *f=funcs; f && !pc; f=f->next)
         for (IrBlock *b=f->blocks; b && !pc; b=b->next)
