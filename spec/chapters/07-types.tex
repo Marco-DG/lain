@@ -182,8 +182,8 @@ Assignments whose source value range violates the alias constraint are
 type Percent = int >= 0 and <= 100
 
 func main() int {
-    var ok Percent = 75              // [E086 not raised]: 75 fits [0,100]
-    // var bad Percent = 150         // [E086]: 150 > 100
+    var ok Percent = 75              // accepted: 75 fits [0, 100]
+    // var bad Percent = 150         // refused, E086: 150 > 100
     return 0
 }
 \end{laincode}
@@ -861,7 +861,13 @@ func lexer_new(text u8[:0]) Lexer { return Lexer(text, 0) }   // OK even for ""
 func advance(l var Lexer) {
     if l.pos < l.src.len { l.pos = l.pos + 1 }                 // keeps the invariant
 }
-func bad(l var Lexer) { l.pos = l.pos + 1 }                   // refused: unguarded
+\end{laincode}
+\begin{laincode}
+type Lexer {
+    src u8[]
+    pos usize <= src.len
+}
+func bad(l var Lexer) { l.pos = l.pos + 1 }   // ERROR: E121 (and E086), unguarded
 \end{laincode}
 \end{example}
 

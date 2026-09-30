@@ -19,32 +19,46 @@
 #
 #   bash readme_gate.sh            # exit 0 = every checkable example does what it says
 #   bash readme_gate.sh -v         # ...and print each failure's source
+#   bash readme_gate.sh [-v] --pages F...   # the same judgement over other pages (spec_gate
+#                                  # uses it for the specification's examples); a line
+#                                  # `<!-- file:line -->` before a block names its origin
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 LAIN=./lain
-VERBOSE=0; [ "${1:-}" = "-v" ] && VERBOSE=1
+VERBOSE=0; PAGES=(README.md LANGUAGE.md); DEFAULT_PAGES=1
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -v) VERBOSE=1 ;;
+        --pages) shift; PAGES=("$@"); DEFAULT_PAGES=0; break ;;
+    esac
+    shift
+done
 [ -x "$LAIN" ] || { echo "build first: gcc -std=c99 -o lain src/frontends/lain/main.c -I src"; exit 2; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP" "$ROOT/_readme_gate_tmp.ln" "$ROOT/_readme_gate_tmp.c"' EXIT
 
-python3 - "$TMP" <<'PY'
+python3 - "$TMP" "${PAGES[@]}" <<'PY'
 import re, sys, os
 tmp = sys.argv[1]
 src = []
-for path in ("README.md", "LANGUAGE.md"):
+for path in sys.argv[2:]:
     for i, line in enumerate(open(path).read().split("\n"), 1):
         src.append((path, i, line))
-blocks, cur, start, where = [], None, 0, ""
+blocks, cur, start, where, origin = [], None, 0, "", None
 for path, i, line in src:
     if cur is None:
+        m = re.match(r"\s*<!-- (\S+):(\d+) -->\s*$", line)
+        if m: origin = (m.group(1), int(m.group(2))); continue
         if line.strip() == "```lain":
-            cur, start, where = [], i, path
+            cur = []
+            if origin: (where, start), origin = origin, None
+            else:      where, start = path, i
     else:
         if line.strip() == "```":
             blocks.append((where, start, "\n".join(cur))); cur = None
         else:
             cur.append(line)
 for n, (path, ln, body) in enumerate(blocks):
-    tag = path.replace("/", "%")
+    tag = path.replace("/", "%").replace("_", "~")      # `_` separates the name's fields
     open(os.path.join(tmp, "b%04d_%s_%d.txt" % (n, tag, ln)), "w").write(body)
 print(len(blocks))
 PY
@@ -54,19 +68,19 @@ PY
 # example written there is an UNVERIFIABLE claim that does not even show up in the unverifiable count.
 # There were zero of them until one was added by accident on 2026-09-26, which is exactly when to make
 # the shape impossible rather than to remember not to use it.
-blockquoted=$(grep -c '^> *```lain' README.md LANGUAGE.md | awk -F: '{s+=$2} END {print s+0}')
+blockquoted=$(cat "${PAGES[@]}" | grep -c '^> *```lain')
 if [ "$blockquoted" -ne 0 ]; then
     echo "FAIL: $blockquoted \`\`\`lain fence(s) inside a blockquote — the extractor cannot see them."
-    grep -n '^> *```lain' README.md LANGUAGE.md
+    grep -n '^> *```lain' "${PAGES[@]}"
     echo "      Move the example out of the '>' block so it is checked."
     exit 1
 fi
 
 ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
-unchecked_readme=0 unchecked_lang=0 falseclaim=0
+unchecked_readme=0 unchecked_lang=0 unchecked_other=0 falseclaim=0
 for f in "$TMP"/b*.txt; do
     ln=${f##*_}; ln=${ln%.txt}
-    page=${f%_*}; page=${page##*_}; page=${page//%//}
+    page=${f%_*}; page=${page##*_}; page=${page//%//}; page=${page//\~/_}
     body=$(cat "$f")
     # what does the block CLAIM?
     # A block CLAIMS to be an error only when the marker follows real CODE on that line.
@@ -96,8 +110,9 @@ for f in "$TMP"/b*.txt; do
         { printf 'func main() i32 effects io, raises, alloc {\n'; printf '%s\n' "$body"; printf '    return 0\n}\n'; } > "$prog"
     else
         unchecked=$((unchecked+1))
-        case "$page" in README.md) unchecked_readme=$((unchecked_readme+1)) ;;
-                        *)         unchecked_lang=$((unchecked_lang+1))     ;; esac
+        case "$page" in README.md)   unchecked_readme=$((unchecked_readme+1)) ;;
+                        LANGUAGE.md) unchecked_lang=$((unchecked_lang+1))     ;;
+                        *)           unchecked_other=$((unchecked_other+1))   ;; esac
         continue
     fi
     out=$("$LAIN" "$prog" -o "$ROOT/_readme_gate_tmp.c" 2>&1); rc=$?
@@ -122,8 +137,9 @@ for f in "$TMP"/b*.txt; do
             echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'
         fi
         unchecked=$((unchecked+1))
-        case "$page" in README.md) unchecked_readme=$((unchecked_readme+1)) ;;
-                        *)         unchecked_lang=$((unchecked_lang+1))     ;; esac
+        case "$page" in README.md)   unchecked_readme=$((unchecked_readme+1)) ;;
+                        LANGUAGE.md) unchecked_lang=$((unchecked_lang+1))     ;;
+                        *)           unchecked_other=$((unchecked_other+1))   ;; esac
         [ $VERBOSE -eq 1 ] && { echo "  UNVERIFIABLE $page:$ln"
                                 echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'; }
         continue
@@ -151,6 +167,7 @@ done
 # by nothing — and `--dump-octagon` sat in the README for weeks without existing in the binary.
 # A flag name is a claim about the compiler like any other, so it gets tested like any other.
 flag_bad=0
+[ $DEFAULT_PAGES -eq 1 ] && \
 for flag in $(grep -ohE '\-\-[a-z][a-z-]*(=[a-z-]+)?' README.md LANGUAGE.md 2>/dev/null | sort -u); do
     grep -qF "\"$flag\"" src/frontends/lain/args.h && continue
     grep -qE "\"${flag%%=*}=\"" src/frontends/lain/args.h && continue          # --target=<triple> style
@@ -160,7 +177,7 @@ for flag in $(grep -ohE '\-\-[a-z][a-z-]*(=[a-z-]+)?' README.md LANGUAGE.md 2>/d
 done
 
 echo "=================================================================="
-echo "README examples"
+if [ $DEFAULT_PAGES -eq 1 ]; then echo "README examples"; else echo "Examples in ${PAGES[*]}"; fi
 echo "  compile as documented   : $ok"
 echo "  REJECTED but documented : $fail      ← the README is wrong here"
 echo "  illustrate an error, and do fail : $expfail_ok"
@@ -172,6 +189,7 @@ echo "  illustrate an error, but COMPILE : $expfail_bad   ← the README is wron
 echo "  UNVERIFIABLE fragments   : $unchecked   ← not noise: a claim nobody tests"
 echo "      README.md   : $unchecked_readme   <- must stay 0"
 echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a regression"
+[ $DEFAULT_PAGES -eq 0 ] && echo "      other pages : $unchecked_other   <- a backlog, not a regression"
 echo "  FLAGS named but not accepted : $flag_bad   ← a claim about the binary, now tested"
 echo "  fragments drawing a PROOF diagnostic : $falseclaim   ← a false SAFETY claim, must stay 0"
 echo "=================================================================="

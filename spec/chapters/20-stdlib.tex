@@ -228,11 +228,11 @@ it shall not be used after this point.
 
 \begin{example}
 \begin{laincode}
-import std.fs
+import std.fs.{open_file, close_file, write_file}
 
 func main() int effects io, raises, alloc {
     var f = open_file("log.txt", "w")
-    defer { close_file(mov f) }
+    defer close_file(mov f)
     write_file(f, "Hello, world!\n")
     return 0
 }

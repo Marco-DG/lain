@@ -30,8 +30,8 @@ It is used to:
 conforming implementation shall guarantee --- not the abstract domain or
 algorithm used to achieve it.}  The domain and algorithm are an implementation
 concern; the reference design (a relational abstract interpreter over the
-octagon domain, run as a fixpoint over a control-flow graph) is given in the
-companion VRA design annex.  Any analysis satisfying the contract below
+octagon domain, run as a fixpoint over a control-flow graph) is described,
+informatively, in \S\,\ref{sec:vra.reference}.  Any analysis satisfying the contract below
 conforms, whether it reasons with intervals, difference bounds, octagons, or a
 stronger relational domain.
 
@@ -218,7 +218,7 @@ approximation.
 func nonzero() int >= 1 { return 42 }
 
 func divide(a int) int {
-    return a / nonzero()   // divisor range known >= 1: no [E015]
+    return a / nonzero()   // the divisor is known >= 1, so no divisor diagnostic
 }
 \end{laincode}
 \end{example}
@@ -240,20 +240,18 @@ an unknown range.
 The following limitations are known and accepted:
 
 \begin{enumerate}
-  \item VRA does not track general integer value ranges of struct fields: a
-        field's value range is unknown (a field read through a pointer always
-        is).  Two narrower field properties \emph{are} tracked --- per-field
-        \emph{initialization} (definite assignment, \S\,\ref{sec:own.diag}) and
-        a struct field's \emph{slice length} within an \lain{and}-scope (to
-        prove indexing of a field slice).
+  \item A struct field is tracked like a variable from the point the function
+        itself stores it.  Its value on ENTRY --- through a \lain{var} parameter
+        or a pointer --- is unknown beyond what its declared invariant
+        (\S\,\ref{sec:types.struct}) states.
   \item VRA does not track ranges across loop-carried dependences with
         non-linear measures.
-  \item The analysis reasons over $\mathbb{Z}$: its arithmetic does not wrap.
-        This is consistent with the language, because an operation that could
-        overflow is \illformed{}~(\S\,\ref{sec:lex.overflow}) and the operators
-        that \emph{do} wrap or saturate are written explicitly and carry no
-        obligation.  A program whose correctness depends on wrapping shall say
-        so with \tok{+\%}; the analysis then makes no claim about the value.
+  \item The analysis reasons over $\mathbb{Z}$.  This is consistent with the
+        language, because an operation that could overflow is
+        \illformed{}~(\S\,\ref{sec:lex.overflow}) and the operators that
+        \emph{do} wrap or saturate are written explicitly and carry no
+        obligation.  Such an operator's result is known exactly when the
+        analysis can show it does not wrap, and not at all otherwise.
   \item Floating-point values are not tracked by VRA.
 \end{enumerate}
 
@@ -402,7 +400,7 @@ The cases checked are:
 
 \begin{example}
 \begin{laincode}
-func pair_sum(arr i32[>= 2]) i32 { return arr[0] + arr[1] }
+func pair_sum(arr i32[>= 2]) i32 { return arr[0] +% arr[1] }
 
 func main() i32 {
     var one i32[1] = [42]
@@ -430,117 +428,68 @@ expression:
         \texttt{\_\_len\_b} $\leq$ \texttt{\_\_len\_name}.
 \end{itemize}
 
-These constraints are available to the VRA throughout the function body,
-enabling the Omega Test (\S\,\ref{sec:vra.omega}) to discharge complex
-indexing patterns.
+These constraints are available to the VRA throughout the function body
+(\S\,\ref{sec:vra.reference} shows two patterns they prove).
 
-\section{VRA analysis levels}
-\label{sec:vra.levels}
-\index{VRA!analysis levels}
-
-\pnum
-Lain's VRA applies four escalating analysis levels at each bounds-check
-site.  The levels are tried in order; if one succeeds (the check is proved
-safe), the remaining levels are skipped.
-
-\begin{description}[leftmargin=2em]
-  \item[L1 — Interval arithmetic.]
-    Each variable is represented by an interval $[\ell, u]$.
-    The check passes if the interval of the index falls within
-    $[0, \mathit{arr.len} - 1]$ directly.
-
-  \item[L2 — Difference constraints.]
-    A system of difference constraints of the form
-    $x - y \leq c$ is maintained.  The check passes if the constraint
-    system can derive the required bound in one step.
-
-  \item[L3 — One-step bridge (transitivity).]
-    Two-hop transitivity: if $v_1 - X \leq a$ and $X - v_2 \leq b$
-    are both known, the checker derives $v_1 - v_2 \leq a + b$ without
-    running the full Fourier-Motzkin algorithm.  Handles patterns such
-    as \lain{i < src.len - 1} via the chain
-    $i < \mathit{src.len}$ and $\mathit{src.len} - 1 < \mathit{src.len}$.
-
-  \item[L4 — Fourier-Motzkin linear arithmetic (Omega Test).]
-    Full linear arithmetic elimination over all VRA variables.
-    See \S\,\ref{sec:vra.omega}.
-\end{description}
+\section{The reference implementation (informative)}
+\label{sec:vra.reference}
+\index{VRA!reference implementation}
 
 \pnum
-All four levels are polynomial time.  No SMT solver is used.
-
-\section{Omega Test — Fourier-Motzkin prover (VRA level 4)}
-\label{sec:vra.omega}
-\index{Omega Test}
-\index{Fourier-Motzkin}
-\index{VRA!level 4}
+This section is informative. It says how the reference compiler meets the contract above, so
+that the precision a program may rely on is concrete. Every example in it is compiled by the
+specification's gate.
 
 \pnum
-When L1–L3 fail to discharge a bounds check, the implementation invokes
-the \textit{Omega Test}: a self-contained Fourier-Motzkin linear
-arithmetic prover (roughly 410 lines in \texttt{src/sema/omega.h}, no external
-dependencies).
+\textbf{Domain.} An abstract interpreter over the \emph{octagon} domain. Every tracked integer
+quantity --- an SSA value, a local variable's cell, a field of a local struct, the length of a
+slice --- is a dimension, and a state is a conjunction of constraints $\pm x \pm y \leq c$. That
+includes intervals ($x \leq c$, $-x \leq c$) and differences ($x - y \leq c$). Unary bounds are
+kept exactly within $\pm 2^{60}$ and only weakened beyond it, never strengthened. A table of
+compile-time constants gives exact values alongside.
 
 \pnum
-\textbf{Proof method (proof by contradiction).}
-To prove $\mathit{index} < \mathit{bound}$:
-
-\begin{enumerate}
-  \item Decompose both expressions into linear forms
-        $\sum_i c_i \cdot x_i + k$ over named variables.
-        References to \lain{x.len} are mapped to the synthetic VRA
-        variable \texttt{\_\_len\_x}.
-  \item Form the negated query: $\mathit{bound} - \mathit{index} \leq 0$.
-  \item Extract all VRA range and difference constraints that mention
-        the variables appearing in the query.
-  \item Run Fourier-Motzkin variable elimination.  Each step crosses
-        upper-bound inequalities with lower-bound inequalities to
-        produce a system with one fewer variable.
-  \item If the resulting constant system contains an inequality
-        $0 \leq c$ with $c < 0$, the system is UNSAT: the negation
-        is impossible, so $\mathit{index} < \mathit{bound}$ always holds.
-\end{enumerate}
+\textbf{Closure.} The constraints are kept under integer \emph{tight closure} (shortest paths,
+then unary bounds tightened to integers, then strengthening), so a fact implied by others is as
+available as one stated directly. After a step adds a few constraints to a closed state, the
+closure is updated through the new constraints only.
 
 \pnum
-The prover also supports non-negativity queries: to prove
-$\mathit{expr} \geq 0$, it shows that $\mathit{expr} \leq -1$, combined
-with VRA constraints, is UNSAT.
+\textbf{Control flow.} The analysis runs to a fixpoint over the control-flow graph of the IR,
+refining the state along each branch by its condition, and widening at loop headers with
+thresholds taken from the loop's own constants. A branch the state makes impossible is dead: its
+obligations hold vacuously and it takes no part in a termination argument.
 
 \pnum
-\textbf{Example patterns proved by the Omega Test.}
+\textbf{Arithmetic.} A checked operation is modelled over $\mathbb{Z}$, which is exact because
+its overflow is an obligation. A wrapping or saturating operation is modelled exactly when the
+state shows it cannot wrap: \lain{x +\% 1} with \lain{x} known to be 6 is 7. When it may wrap,
+its relation to the operands is dropped.
+
+\pnum
+\textbf{Beyond the domain.} Facts the octagon cannot hold are computed alongside and handed
+back as bounds: a running total's range as the loop's trip count times its step; a divisor's
+non-zero-ness from a \lain{!= 0} refinement or guard; a remainder's and a logical shift's bound
+by their operand; the range of \lain{@movemask}.
+
+\pnum
+\textbf{Examples} the reference implementation proves. \lain{reverse} proves as written.
+\lain{concat} needs its inputs' lengths bounded: without a bound, the parameter type's own
+\lain{a.len + b.len} may overflow a \lain{usize}, and that is refused (\diagcode{E086}).
 
 \begin{example}
 \begin{laincode}
-// concat: out[j + a.len] with j < b.len and out.len == a.len + b.len
-// FM eliminates j; the cross-pair (j < b.len, j >= b.len) gives 0 <= -1 (UNSAT).
-func concat(a i32[], b i32[], out i32[a.len + b.len]) {
-    for j in 0..b.len {
-        out[j + a.len] = b[j]   // proved safe by Omega
-    }
-}
-
-// reverse: out[n - i - 1] with n = arr.len and i < n
-// FM eliminates n and __len_arr; reduces to (i <= -1) AND (i >= 0) (UNSAT).
 func reverse(arr i32[], out i32[arr.len]) {
     var n = arr.len
     for i in 0..n {
-        out[n - i - 1] = arr[i]   // proved safe by Omega
+        out[n - i - 1] = arr[i]   // n - i - 1 is in [0, n - 1] since i < n
+    }
+}
+
+func concat(a i32[<= 1000000], b i32[<= 1000000], out i32[a.len + b.len]) {
+    for j in 0..b.len {
+        out[j + a.len] = b[j]     // j + a.len < b.len + a.len == out.len
     }
 }
 \end{laincode}
 \end{example}
-
-\pnum
-\textbf{Equality propagation for local length aliases.}
-When the body contains \lain{var n = x.len}, the compiler registers the
-equality $n - \mathtt{\_\_len\_x} = 0$ (expressed as two difference
-constraints) so the Omega Test can cancel \lain{n} and
-\texttt{\_\_len\_x} in the same linear form.
-
-\pnum
-\textbf{Conservatism.}
-If the FM buffer overflows (more than 80 inequalities in the working
-system), the prover gives up and returns \textit{unknown}; the check
-then falls through to E085 as if L4 had not fired.  This bound is
-unreachable for the small systems (2--6 variables, 5--15 inequalities)
-typical of slice manipulation code.

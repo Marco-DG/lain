@@ -108,7 +108,7 @@ never a declaration.
 
 \begin{example}
 \begin{laincode}
-import std.fs
+import std.fs.{open_file, close_file}
 
 func main() int effects io, raises, alloc {
     var f = open_file("data.txt", "r")

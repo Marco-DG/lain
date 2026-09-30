@@ -239,7 +239,7 @@ function-pointer type \lain{*proc(...)}, replaced by \lain{*func(...)} with a ro
 The entry point of every Lain program shall be declared as:
 
 \begin{laincode}
-func main() int { ... }          // with `effects io` if it performs any
+func main() int { return 0 }     // with `effects io` if it performs any
 \end{laincode}
 
 \begin{constraint}

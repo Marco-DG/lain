@@ -84,6 +84,43 @@ if command -v latexmk >/dev/null 2>&1 || command -v pdflatex >/dev/null 2>&1; th
   fi
 fi
 
+# ── The specification's EXAMPLES do what they say ────────────────────────────────────────────
+# ★ The spec's 69 `laincode` examples were checked by NOTHING (readme_gate reads README.md and
+# LANGUAGE.md) until 2026-09-30, when running them found 11 false claims in the normative text:
+# a stale `import std.fs`, `defer { … }` that does not parse, examples refused for arithmetic
+# that can overflow, and two SECTIONS (the L1–L4 "VRA levels" and the "Omega Test") that
+# described the analysis engine deleted on 09-26. Each example is judged exactly as the README's
+# are (readme_gate --pages): an `// ERROR`/`[Exxx]` block must fail, any other must compile, and
+# a fragment drawing a proof diagnostic is a false safety claim.
+ex="SKIPPED (no ./lain; build first)"; exfail=0
+if [ -x ./lain ]; then
+  ETMP=$(mktemp -d)
+  python3 - "$ETMP/spec.md" spec/chapters/*.tex spec/annexes/*.tex <<'PY'
+import sys, os
+out, md = sys.argv[1], []
+for path in sys.argv[2:]:
+    cur = None
+    for i, l in enumerate(open(path).read().split("\n"), 1):
+        if cur is None and l.strip().startswith("\\begin{laincode}"): cur, start = [], i
+        elif cur is not None and l.strip().startswith("\\end{laincode}"):
+            md += ["<!-- %s:%d -->" % (os.path.basename(path), start), "```lain"] + cur + ["```", ""]
+            cur = None
+        elif cur is not None: cur.append(l)
+open(out, "w").write("\n".join(md))
+PY
+  bash scripts/gates/readme_gate.sh --pages "$ETMP/spec.md" > "$ETMP/ex.out" 2>&1; exrc=$?
+  nok=$(grep -o 'compile as documented *: *[0-9]*' "$ETMP/ex.out" | grep -o '[0-9]*$')
+  nfail=$(grep -o 'illustrate an error, and do fail *: *[0-9]*' "$ETMP/ex.out" | grep -o '[0-9]*$')
+  nun=$(grep -o 'UNVERIFIABLE fragments *: *[0-9]*' "$ETMP/ex.out" | grep -o '[0-9]*$')
+  if [ $exrc -eq 0 ]; then
+    ex="hold ($nok compile, $nfail illustrate an error and fail, $nun unverifiable fragments)"
+  else
+    exfail=1; ex="FAIL — an example does not do what the spec says:"
+    grep '★' "$ETMP/ex.out" | sed 's/^/  /'
+  fi
+  rm -rf "$ETMP"
+fi
+
 echo "=================================================================="
 echo "Annex B vs the compiler"
 echo "  codes emitted        : $(echo "$emitted" | grep -c .)"
@@ -91,5 +128,6 @@ echo "  codes documented     : $(echo "$documented" | grep -c .)"
 echo "  MISSING from the annex : $nm"
 echo "  PHANTOM in the annex   : $np"
 echo "The specification build: $bs"
+echo "The specification's examples: $ex"
 echo "=================================================================="
-[ "$nm" -eq 0 ] && [ "$np" -eq 0 ] && [ "$bfail" -eq 0 ] && exit 0 || exit 1
+[ "$nm" -eq 0 ] && [ "$np" -eq 0 ] && [ "$bfail" -eq 0 ] && [ "$exfail" -eq 0 ] && exit 0 || exit 1

@@ -69,7 +69,7 @@ mutation pattern).
 type Counter { val i32 }
 
 func increment(var c Counter) {  // legal: mutation is local
-    c.val = c.val + 1
+    c.val = c.val +% 1
 }
 \end{laincode}
 \end{example}

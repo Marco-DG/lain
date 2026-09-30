@@ -164,7 +164,7 @@ Reading the parameter's value automatically dereferences the pointer.
 \begin{example}
 \begin{laincode}
 func increment(var n i32) {
-    n = n + 1    // writes through: caller's variable is updated
+    n = n +% 1   // writes through: caller's variable is updated
 }
 
 func main() i32 {
@@ -361,7 +361,7 @@ through the loop body before the next iteration begins.
 
 \begin{example}
 \begin{laincode}
-import std.fs
+import std.fs.{open_file, close_file}
 
 func main() int effects io, raises, alloc {
     var f = open_file("data.txt", "r")
