@@ -1669,6 +1669,14 @@ rc=0
 out=20 40
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/termination_call_progress_pass.ln
+rc=0
+out=
+at=const 4
+### tests/trust/termination_dead_edge_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/trust/tokenizer_pass.ln
 rc=0
 out=

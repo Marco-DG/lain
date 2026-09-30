@@ -1,0 +1,19 @@
+// A path the state rules out is not a path around the loop. After `if i >= n { break }` the
+// guard `if i < n` always holds, so its false edge — which moves nothing — cannot be taken; the
+// fixpoint drops it, and now the termination check does too. The lexer's shape. Runs: exit 0.
+func f(n u32 < 100) u32 {
+    var i u32 = 0
+    var k u32 = 0
+    while i < n {
+        if i >= n { break }
+        if i < n {
+            i = i + 2
+            k = k + 1
+        }
+    }
+    return k
+}
+func main() i32 {
+    if f(10) != 5 { return 1 }
+    return 0
+}

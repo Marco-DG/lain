@@ -1,0 +1,15 @@
+// EXPECT: [E011]
+// A call that never moves the counter BACK is not progress by itself: `adv` may return its
+// start, and then this loop runs forever. A monotone store is allowed on a path only when
+// that path also moves the counter forward.
+func adv(n u32 < 100, s u32 < 100) u32 >= s {
+    return s
+}
+func f(n u32 < 100) u32 {
+    var i u32 = 0
+    while i < n {
+        i = adv(n, i)
+    }
+    return i
+}
+func main() i32 { return (f(5) as i32) -% 5 }

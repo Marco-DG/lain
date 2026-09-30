@@ -1,0 +1,23 @@
+// A counter may move forward through a CALL's proven result. `adv` returns at least its start
+// (its return refinement, proven in its body), so `i = adv(n, i)` never moves i back and the
+// `+ 1` after it moves it on: every iteration advances. The rule recognised `i = i ± step` by its
+// spelling and refused this; the analysis now reads the order of stored value and counter from
+// the converged state. This is the scanner's shape (`i = scan_to(...)`). Runs: exit 0.
+func adv(n u32 < 100, s u32 < 100) u32 >= s {
+    if s + 3 < n { return s + 3 }
+    return s
+}
+func count(n u32 < 100) u32 {
+    var i u32 = 0
+    var k u32 = 0
+    while i < n {
+        i = adv(n, i)
+        i = i + 1
+        k = k + 1
+    }
+    return k
+}
+func main() i32 {
+    if count(20) != 5 { return 1 }
+    return 0
+}

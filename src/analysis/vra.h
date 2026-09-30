@@ -3015,10 +3015,38 @@ static int vra_succs(IrBlock *b, IrBlock **out) {
 // not a failure to progress. Optimistic initialisation (true everywhere but H) with an AND
 // meet is the greatest fixpoint, which is the correct one for "on all paths": an inner cycle
 // with no progress drives itself to false rather than assuming its own conclusion.
+// ★ AN EDGE THE STATE MAKES IMPOSSIBLE IS NOT A PATH. `if i >= n { break }` then
+// `if i < n { … }` is the lexer's shape, and the second guard's false edge cannot be taken — the
+// fixpoint knows it (its refined state is ⊥ and the edge is dropped there). This walk read the
+// CFG alone, so that dead edge was a path around the loop with no progress on it, and the loop
+// was refused. An edge counts only if the converged state, replayed through its source and
+// refined by the edge's guard, is not ⊥ — the fixpoint's own test. An unreached block has none.
+static bool vra_edge_live(Vra *V, IrBlock *q, int k) {
+    if (!V->in || !V->reached || !V->reached[q->id] || !V->in[q->id]) return false;
+    if (q->term.kind != IR_TERM_BR_COND || !q->term.cond) return true;
+    int64_t *sc = malloc((size_t)V->dsz*8);
+    if (!sc) return true;                                     // unknown: keep the edge
+    memcpy(sc, V->in[q->id], (size_t)V->dsz*8);
+    Octagon E = { V->noct, 2*V->noct, sc };
+    oct_close(&E);
+    for (IrInstr *x=q->instrs; x; x=x->next) vra_transfer_instr(V,&E,x);
+    oct_close(&E);
+    vra_refine_guard(V, &E, q->term.cond, k==0);
+    oct_close(&E);
+    bool live = !oct_is_bottom(&E);
+    free(sc);
+    return live;
+}
 static bool vra_progress_on_every_path(Vra *V, IrBlock *H, int nbb,
                                        const char *inloop, const char *prog) {
     char *seen = malloc((size_t)nbb);
     if (!seen) return false;                                  // fail closed
+    char *live = malloc((size_t)nbb*2);                       // live[q*2+k]: edge q → succ k
+    if (!live) { free(seen); return false; }
+    for (IrBlock *q=V->f->blocks; q; q=q->next) {
+        if (!(q->id>=0 && q->id<nbb && inloop[q->id])) continue;
+        live[q->id*2] = vra_edge_live(V, q, 0); live[q->id*2+1] = vra_edge_live(V, q, 1);
+    }
     for (int i=0;i<nbb;i++) seen[i]=1;
     if (H->id>=0 && H->id<nbb) seen[H->id]=0;
     for (int round=0; round<=nbb+1; round++) {
@@ -3031,7 +3059,7 @@ static bool vra_progress_on_every_path(Vra *V, IrBlock *H, int nbb,
                 if (!(q->id>=0 && q->id<nbb && inloop[q->id])) continue;
                 IrBlock *sc[2]; int ns=vra_succs(q,sc);
                 bool is_pred=false;
-                for (int k=0;k<ns;k++) if (sc[k] && sc[k]->id==b->id) is_pred=true;
+                for (int k=0;k<ns;k++) if (sc[k] && sc[k]->id==b->id && live[q->id*2+k]) is_pred=true;
                 if (!is_pred) continue;
                 if (!(seen[q->id] || prog[q->id])) v=0;
             }
@@ -3039,18 +3067,21 @@ static bool vra_progress_on_every_path(Vra *V, IrBlock *H, int nbb,
         }
         if (!changed) break;
     }
-    bool any=false, ok=true;
+    bool any=false, anydead=false, ok=true;
     for (IrBlock *q=V->f->blocks; q && ok; q=q->next) {
         if (!(q->id>=0 && q->id<nbb && inloop[q->id])) continue;
         IrBlock *sc[2]; int ns=vra_succs(q,sc);
         for (int k=0;k<ns;k++) {
             if (!sc[k] || sc[k]->id!=H->id) continue;
+            if (!live[q->id*2+k]) { anydead=true; continue; }
             any=true;
             if (!(seen[q->id] || prog[q->id])) ok=false;
         }
     }
-    free(seen);
-    return ok && any;
+    free(seen); free(live);
+    // No LIVE back edge while some exist: the body cannot return to the header, so the loop
+    // runs at most once — `while i < n { if i < n { return … } i = i + 1 }`. It terminates.
+    return ok && (any || anydead);
 }
 
 // `a CMP b` read as `b CMP' a`. Needed because the counter may sit on EITHER side of the
@@ -3313,6 +3344,40 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
                         ok_step = !holds;               // guard now false -> the loop exits
                     }
                 }
+                // ── A STORE THE DOMAIN ORDERS AGAINST THE CELL ───────────────────────────────
+                // `i = scan_to(src, n, i, 42)` (a callee whose return refinement says `>= start`)
+                // and `i = r + 1` after it are the scanner's shape, and both were refused: the
+                // rules above recognise `cell ± step` by its SPELLING. The converged state at the
+                // store knows more. Replayed to just before it, the octagon bounds `cell − v`:
+                //   ≤ −1  the store moves the counter forward by at least one — PROGRESS;
+                //   ≤ 0   it never moves it back — allowed, but not progress by itself.
+                // Every path must still pass a progress store, so each iteration moves the
+                // counter by ≥ 1 and none moves it back: the same argument as `cell + k`, with
+                // the order read from the domain instead of the syntax. (For a falling counter,
+                // the mirror image.) A wrapping `+%` that may wrap has no such relation (the
+                // transfer drops it under modwrap), so it cannot pass here.
+                bool mono_only = false;
+                if (!ok_step && b->id >= 0 && V->in[b->id]) {
+                    int sv = st->operands[1]->id;
+                    int dcell = (fbase < 0) ? cell : ccell;
+                    int64_t *sc2 = malloc((size_t)V->dsz*8);
+                    if (sc2 && sv >= 0 && sv < V->nvar) {
+                        memcpy(sc2, V->in[b->id], (size_t)V->dsz*8);
+                        Octagon SW2 = { V->noct, 2*V->noct, sc2 };
+                        oct_close(&SW2);
+                        for (IrInstr *q=b->instrs; q && q!=st; q=q->next) vra_transfer_instr(V,&SW2,q);
+                        oct_close(&SW2);
+                        if (!oct_is_bottom(&SW2)) {
+                            // cell − v ≤ d  and  v − cell ≤ e
+                            int64_t d = oct_get(&SW2, oct_pos(sv), oct_pos(dcell));
+                            int64_t e = oct_get(&SW2, oct_pos(dcell), oct_pos(sv));
+                            if (lt) { if (d <= -1) ok_step = true; else if (d <= 0) mono_only = true; }
+                            else    { if (e <= -1) ok_step = true; else if (e <= 0) mono_only = true; }
+                        }
+                    }
+                    free(sc2);
+                }
+                if (mono_only) continue;                // neither progress nor a step back
                 if (!ok_step) { bad = true; break; }   // a store that is not progress
                 prog[b->id] = 1; anyprog = true;
             }

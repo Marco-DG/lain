@@ -1,0 +1,15 @@
+// EXPECT: [E011]
+// A store that may move the counter back undoes the step before it: `back` returns at most
+// its argument, and 0 here, so the loop never ends.
+func back(s u32 < 100) u32 <= s {
+    return 0
+}
+func f(n u32 < 100) u32 {
+    var i u32 = 0
+    while i < n {
+        i = i + 1
+        i = back(i)
+    }
+    return i
+}
+func main() i32 { return (f(5) as i32) -% 5 }

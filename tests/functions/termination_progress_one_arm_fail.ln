@@ -1,0 +1,15 @@
+// EXPECT: [E011]
+// Progress on one arm only: when `c` is false no store moves i forward, so every path must
+// still be checked, not just the one with the step.
+func adv(n u32 < 100, s u32 < 100) u32 >= s {
+    return s
+}
+func f(n u32 < 100, c bool) u32 {
+    var i u32 = 0
+    while i < n {
+        i = adv(n, i)
+        if c { i = i + 1 }
+    }
+    return i
+}
+func main() i32 { return (f(5, true) as i32) -% 5 }
