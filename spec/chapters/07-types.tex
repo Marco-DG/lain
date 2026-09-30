@@ -719,7 +719,7 @@ A field declaration may state a fact about the field's value for the whole life 
 of the struct type. Three forms are provided:
 \begin{itemize}
   \item \lain{pos usize in text} --- an \emph{index} invariant: \lain{pos} is a valid index into
-        the slice or array field \lain{text} (\(\lain{pos} < \lain{text.len}\));
+        the slice or array field \lain{text} (\lain{pos < text.len});
   \item \lain{pos usize <= src.len} --- a \emph{position} invariant: \lain{pos} compared with the
         length of the slice or array field \lain{src}, by \lain{<}, \lain{<=}, \lain{>} or
         \lain{>=};
@@ -735,15 +735,15 @@ A refinement against a literal (\lain{pct i32 <= 100}) is a plain field refineme
 \pnum
 A length bound is what a \emph{narrow} position needs: \lain{pos u32 <= src.len} does not make
 \lain{pos + 1} fit a \lain{u32} when \lain{src.len} is a \lain{usize}, since a longer source admits
-\(\lain{pos} = 2^{32}-1\); bounding \lain{src} to at most \(2^{32}-1\) bytes does. A slice field's
+\lain{pos} \(= 2^{32}-1\); bounding \lain{src} to at most \(2^{32}-1\) bytes does. A slice field's
 length changes only when the field (or the whole struct) is written --- a \lain{var} reference
 cannot rebind a slice (\diagcode{E009}) and an element write keeps the length --- so those writes
 are where it is checked.
 
 \pnum
 An index invariant cannot hold for an empty container. A position invariant can:
-\lain{pos usize <= src.len} admits \(\lain{pos} = 0\) over an empty source and
-\(\lain{pos} = \lain{src.len}\) at its end, which is the state a scanner is in at end of input.
+\lain{pos usize <= src.len} admits \lain{pos == 0} over an empty source and
+\lain{pos == src.len} at its end, which is the state a scanner is in at end of input.
 
 \begin{constraint}
   A field invariant shall hold wherever a value of the struct type is built, and after every

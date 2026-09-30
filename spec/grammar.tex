@@ -92,7 +92,7 @@ bool-literal     ::= "true" | "false"
 \end{grammar}
 
 \subsection*{§5.9 Operators and punctuators}
-\label{gram:operator}
+\label{gram:operator}\label{gram:punctuator}
 \begin{grammar}
 operator         ::=
     "+"  | "-"  | "*"  | "/"  | "%"
@@ -113,7 +113,7 @@ punctuator       ::=
 % =========================================================================
 
 \section*{§6 Program structure grammar}
-\label{gram:program}
+\label{gram:program}\label{gram:import-declaration}
 \begin{grammar}
 program              ::= { top-level-declaration }
 top-level-declaration ::=
@@ -174,7 +174,7 @@ relational-op    ::= ">=" | "<=" | ">" | "<" | "=="
 % =========================================================================
 
 \section*{§8 Expression grammar}
-\label{gram:expression}
+\label{gram:expression}\label{gram:match-expression}
 \begin{grammar}
 expression           ::= assignment-expression
 

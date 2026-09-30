@@ -49,11 +49,47 @@ np=$(echo "$phantom" | grep -c . || true)
 [ "$nm" -gt 0 ] && { echo "MISSING from Annex B (emitted, never specified):"; echo "$missing" | sed 's/^/  /'; }
 [ "$np" -gt 0 ] && { echo "PHANTOM in Annex B (specified, never emitted):"; echo "$phantom" | sed 's/^/  /'; }
 
+# ── The specification BUILDS, and the committed PDF IS that build ─────────────────────────────
+# ★ Nothing built the spec until 2026-09-30. From 4f46b35 (09-28) on, `\(\lain{pos} < ...\)` put
+# \lstinline in math mode, a LaTeX error; spec/Makefile said so and exited 1, and the PDF it had
+# written anyway was committed nine times. Every one had NO table of contents and 205-212
+# section references printed as "§ ??". The Annex B check above passed throughout: it reads the
+# .tex, never the document. So: build a clean copy, require zero errors and zero undefined or
+# duplicate references, and require the committed PDF to say what that build says (text
+# compared, date lines ignored; a different TeX Live may break lines differently).
+bs="SKIPPED (no latexmk/pdflatex)"; bfail=0
+if command -v latexmk >/dev/null 2>&1 || command -v pdflatex >/dev/null 2>&1; then
+  STMP=$(mktemp -d); trap 'rm -rf "$STMP"' EXIT
+  cp -r spec "$STMP/spec"; make -s -C "$STMP/spec" clean >/dev/null 2>&1; rm -f "$STMP/spec/lain-spec.pdf"
+  make -C "$STMP/spec" > "$STMP/build.out" 2>&1; brc=$?
+  LOG="$STMP/spec/lain-spec.log"
+  nerr=$(grep -ac '^! ' "$LOG" 2>/dev/null); nerr=${nerr:-0}
+  nref=$(grep -aE "[Rr]eference .* undefined|Citation .* undefined|multiply.defined" "$LOG" 2>/dev/null | grep -vc 'There were'); nref=${nref:-0}
+  if [ "$brc" -ne 0 ] || [ "$nerr" -gt 0 ] || [ "$nref" -gt 0 ] || [ ! -f "$STMP/spec/lain-spec.pdf" ]; then
+    bfail=1; bs="FAILS (make rc=$brc, $nerr LaTeX errors, $nref undefined/duplicate references)"
+    grep -aE -A3 '^! ' "$LOG" 2>/dev/null | head -12 | sed 's/^/  /'
+    grep -aE "[Rr]eference .* undefined|multiply.defined" "$LOG" 2>/dev/null | grep -v 'There were' | head -6 | sed 's/^/  /'
+  elif command -v pdftotext >/dev/null 2>&1; then
+    D='^(January|February|March|April|May|June|July|August|September|October|November|December) [0-9]{1,2}, [0-9]{4}$'
+    pdftotext -q "$STMP/spec/lain-spec.pdf" - | grep -vE "$D" > "$STMP/built.txt"
+    pdftotext -q spec/lain-spec.pdf - 2>/dev/null | grep -vE "$D" > "$STMP/committed.txt"
+    if cmp -s "$STMP/built.txt" "$STMP/committed.txt"; then
+      bs="holds ($(grep -c . "$STMP/built.txt") text lines; the committed PDF is the build of these sources)"
+    else
+      bfail=1; bs="STALE — spec/lain-spec.pdf is not the build of the sources: run make -C spec"
+      diff "$STMP/committed.txt" "$STMP/built.txt" | head -8 | sed 's/^/  /'
+    fi
+  else
+    bs="builds clean (0 errors, 0 undefined references); PDF comparison SKIPPED (no pdftotext)"
+  fi
+fi
+
 echo "=================================================================="
 echo "Annex B vs the compiler"
 echo "  codes emitted        : $(echo "$emitted" | grep -c .)"
 echo "  codes documented     : $(echo "$documented" | grep -c .)"
 echo "  MISSING from the annex : $nm"
 echo "  PHANTOM in the annex   : $np"
+echo "The specification build: $bs"
 echo "=================================================================="
-[ "$nm" -eq 0 ] && [ "$np" -eq 0 ] && exit 0 || exit 1
+[ "$nm" -eq 0 ] && [ "$np" -eq 0 ] && [ "$bfail" -eq 0 ] && exit 0 || exit 1
