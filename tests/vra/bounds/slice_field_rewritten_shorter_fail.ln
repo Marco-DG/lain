@@ -1,0 +1,20 @@
+// EXPECT: [E085]
+// The soundness half of flow-sensitive slice lengths: a length read BEFORE the field is rewritten
+// to a shorter slice says nothing about the new one. n is 5, the field then views 3 elements, and
+// `w.s[n - 1]` reads past them.
+type W {
+    s i32[]
+    k usize
+}
+func probe() i32 {
+    var x i32[3] = [1, 2, 3]
+    var y i32[5] = [4, 5, 6, 7, 8]
+    var w = W(y, 0)
+    var n = w.s.len
+    w.s = x
+    if n > 0 { return w.s[n - 1] }
+    return 0
+}
+func main() i32 {
+    return probe() - 8
+}

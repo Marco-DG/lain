@@ -1623,6 +1623,12 @@ out=3
 at=access 2
 at=nonnull 2
 ty=Slice_u8 scalar
+### tests/trust/slice_rewritten_length_pass.ln
+rc=0
+out=
+at=const 6
+ty=Slice_i32 scalar
+ty=W struct
 ### tests/trust/string_sentinel_terminated_pass.ln
 rc=0
 out=[hello]

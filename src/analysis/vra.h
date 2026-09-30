@@ -313,17 +313,6 @@ static int vra_arg_cell(Vra *V, IrValue *v) {
     return VRA_ARG_UNKNOWN;
 }
 
-static bool vra_is_slice_cell(Vra *V, int v) {
-    IrInstr *d = (v>=0 && v<V->nvar) ? V->def[v] : NULL;
-    if (!d) return false;
-    if (d->op==IR_ALLOCA) return d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_SLICE;
-    // A slice-typed FIELD is a cell too. It was not one, so nothing about a struct's slice
-    // field ever propagated — `l.text[l.pos]` had no length for `l.text` at all.
-    if (d->op==IR_FIELD_PTR)
-        return d->result && d->result->type && d->result->type->elem
-            && d->result->type->elem->kind==IRT_SLICE;
-    return false;
-}
 // The same PLACE reached twice is two different SSA values: `l.text` lowers to a fresh
 // field_ptr at each mention. Keyed by value id, the length learned at one mention was
 // invisible at the next — which is exactly what made the struct `in` invariant useless, since
@@ -354,7 +343,7 @@ static int vra_field_cell_base(Vra *V, int v) {
     if (!d || d->op != IR_FIELD_PTR || d->n_operands < 1) return -1;
     IrType *rt = d->result ? d->result->type : NULL;
     if (!rt || rt->kind != IRT_PTR || !rt->elem ||
-        (rt->elem->kind != IRT_INT && rt->elem->kind != IRT_BOOL)) return -1;
+        (rt->elem->kind != IRT_INT && rt->elem->kind != IRT_BOOL && rt->elem->kind != IRT_SLICE)) return -1;
     int base = d->operands[0]->id;
     IrInstr *bd = (base>=0 && base<V->nvar) ? V->def[base] : NULL;
     if (bd) {
@@ -818,138 +807,26 @@ static void vra_prepass(Vra *V) {
         }
         if (b->term.kind == IR_TERM_RET) vra_mark_persist(V, b->term.cond);   // outlives us
     }
-    int *cell_len = malloc(V->nvar*sizeof(int));
-    for (int i=0;i<V->nvar;i++) cell_len[i]=-1;
-    // How many times is each slice cell STORED? A cell's canonical length is only meaningful
-    // while the cell holds one slice for its whole life. `s = borrow(big); if i < s.len { s =
-    // borrow(small); return s[i] }` reassigns to a SHORTER slice, and a length cached from the
-    // first must not survive it — that is a false proof and an out-of-bounds read. The count
-    // is what makes both directions safe: exactly one store ⇒ the stored slice's length is the
-    // cell's; ZERO stores ⇒ a stack VLA, whose length comes from the slice_len seeding below;
-    // anything else ⇒ no canonical length at all.
-    int *cell_stores = calloc((size_t)V->nvar, sizeof(int));
-    for (IrBlock *b=V->f->blocks; b; b=b->next)
-        for (IrInstr *ins=b->instrs; ins; ins=ins->next)
-            if (ins->op==IR_STORE && ins->n_operands>=2 && vra_is_slice_cell(V, ins->operands[0]->id))
-                cell_stores[vra_canon_cell(V, ins->operands[0]->id)]++;
-    // ★ A SLICE FIELD HAS WRITERS THAT ARE NOT STORES TO IT. The count above sees only stores
-    // whose target IS the field, and a field is also written by
-    //   · a WHOLE-STRUCT store to its base — the constructor (`var w = W(small, 0)`) and every
-    //     `w = …` reassignment;
-    //   · the CALLER, for a parameter's field: the value on entry is a store the body never sees;
-    //   · a CALL that may write the base (the same alias oracle the IR_CALL transfer uses: a
-    //     resolved callee writing that argument, an unresolved one, or any call once the base
-    //     PERSISTS), and an unattributable store once it has escaped.
-    // Missing them made "stored exactly once" false, and a flow-insensitive length is only sound
-    // under it: `w = W(small, 0); x = w.s[5]; w.s = big` gave the EARLIER read the LATER slice's
-    // length 8 and proved an out-of-bounds read of `small` (ASan). The same with `shrink(var w,
-    // small)` between a `.len` read and the access, and with `w = W(small, 0)`. All three were
-    // reachable before 2026-09-28 and hidden only because `W(buf, 0)` itself miscompiled.
-    for (int c = 0; c < V->nvar; c++) {
-        if (vra_canon_cell(V, c) != c || !vra_is_slice_cell(V, c)) continue;
-        IrInstr *fd = V->def[c];
-        if (!fd || fd->op != IR_FIELD_PTR || fd->n_operands < 1) continue;
-        int base = fd->operands[0]->id;
-        if (base < 0 || base >= V->nvar) continue;
-        if (!V->def[base]) cell_stores[c]++;                          // a parameter: entry value
-        bool other_writer = false;
-        for (IrBlock *b=V->f->blocks; b && !other_writer; b=b->next)
-            for (IrInstr *ins=b->instrs; ins && !other_writer; ins=ins->next) {
-                if (ins->op==IR_STORE && ins->n_operands>=2) {
-                    if (ins->operands[0]->id == base) cell_stores[c]++;   // whole-struct store
-                    else if (V->escaped[base] &&
-                             vra_arg_cell(V, ins->operands[0]) == VRA_ARG_UNKNOWN) other_writer = true;
-                } else if (ins->op==IR_CALL || ins->op==IR_OPAQUE) {
-                    // A PERSISTING base may be written by a call it was not handed — through a
-                    // stash — unless the callee writes only what it owns or is handed.
-                    if (V->persist[base] && (ins->op==IR_OPAQUE ? ins->aux.opaque.writes :
-                            !(vra_mod && ir_func_writes_only_owned(vra_find_func(ins->aux.callee), vra_mod)))) {
-                        other_writer = true; break;
-                    }
-                    if (ins->op==IR_OPAQUE) {
-                        if (!ins->aux.opaque.writes) continue;
-                        for (int k=0;k<ins->n_operands;k++)
-                            if (vra_arg_cell(V, ins->operands[k]) == base ||
-                                vra_arg_cell(V, ins->operands[k]) == VRA_ARG_UNKNOWN) other_writer = true;
-                        continue;
-                    }
-                    IrFunc *cal = vra_find_func(ins->aux.callee);
-                    IrWriteFootprint cw = (cal && vra_mod) ? ir_param_writes(cal, vra_mod) : ~(IrWriteFootprint)0;
-                    for (int k=0;k<ins->n_operands && !other_writer;k++) {
-                        int ac = vra_arg_cell(V, ins->operands[k]);
-                        bool writes_k = (k >= 64) || ((cw >> k) & 1u);
-                        if (writes_k && (ac == base || ac == VRA_ARG_UNKNOWN)) other_writer = true;
-                    }
-                }
-            }
-        if (other_writer) cell_stores[c] += 2;
+    // ★ A SLICE'S LENGTH IS FLOW-SENSITIVE: its own octagon dimension. Every slice VALUE, slice
+    // PARAMETER and slice CELL (an alloca or a struct field) has one, holding the length — set by
+    // make_slice, copied by a store into a cell and by a load out of one, read by slice_len —
+    // exactly the transfer shape a scalar cell has for its value. This replaced a prepass that
+    // gave each slice cell ONE length for the whole function, sound only while the cell was
+    // stored once: a slice field rewritten anywhere had no length at all, even at reads after
+    // the rewrite (fuzz_vra `slicefield`: 37 of 63 safe variants refused), and every writer that
+    // is not a store (a constructor, a whole-struct store, a call handed the base, the entry
+    // value) had to be counted by hand to keep the single-store rule sound. The octagon already
+    // has every one of those writers as a transfer.
+    for (int i = 0; i < V->nvar; i++) {
+        IrValue *vv = V->val ? V->val[i] : NULL;
+        V->slicelen[i] = (vv && vv->type && vv->type->kind == IRT_SLICE && V->odim[i] >= 0) ? i : -1;
     }
     for (IrBlock *b=V->f->blocks; b; b=b->next)
-        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next)
             if (ins->op==IR_MAKE_SLICE && ins->result && ins->n_operands>=2) {
-                V->slicelen[ins->result->id] = ins->operands[1]->id;      // {data,len}: len is the length var
                 IrInstr *dd = V->def[ins->operands[0]->id];               // subslice start (vs array→slice decay)
                 if (dd && dd->op==IR_ELEM_PTR) V->subslice_gep[ins->operands[0]->id] = true;
             }
-            else if (ins->op==IR_SLICE_LEN && ins->result && ins->n_operands>=1) {
-                // A cell only learned its length from a STORE, so a stack VLA — allocated and
-                // never assigned — had none anywhere. Seed it from a `.len` read on a load out
-                // of the cell, but ONLY for a cell nothing stores to: a stored slice's own
-                // length var is the better representative, because it is the one the rest of
-                // the octagon already relates to the buffer.
-                int s=ins->operands[0]->id;
-                IrInstr *sd = V->def[s];
-                if (sd && sd->op==IR_LOAD && sd->n_operands>=1) {
-                    int cell = vra_canon_cell(V, sd->operands[0]->id);
-                    // ★ ...or for a cell whose ONE store brought no length with it. A slice
-                    // returned by a call — `var s = borrow(arr)` — is stored with no length var
-                    // of its own, so requiring zero stores left the cell with none at all and
-                    // `s[i]` under `i < s.len` reported "no length is known here": a guard that
-                    // settles the access whatever the length turns out to be, refused because
-                    // the length had no name. The `.len` read gives it one. The single-store
-                    // rule is what makes this the same slice at every load, and it is the same
-                    // rule the store-derived length below already relies on.
-                    if (vra_is_slice_cell(V,cell) && cell_len[cell]<0 &&
-                        (cell_stores[cell]==0 || cell_stores[cell]==1))
-                        cell_len[cell]=ins->result->id;
-                }
-            }
-            else if (ins->op==IR_STORE && ins->n_operands>=2) {
-                int cell=vra_canon_cell(V, ins->operands[0]->id), v=ins->operands[1]->id;
-                if (vra_is_slice_cell(V,cell)) {
-                    int sl = (cell_stores[cell]==1) ? V->slicelen[v] : -1;
-                    // Do not CLOBBER a `.len`-derived length with "none": a stored slice's own
-                    // length var is the better representative only when it has one. More than
-                    // one store still forces -1 — different stores mean different slices, and
-                    // then no single name describes the cell's length.
-                    if (sl >= 0 || cell_stores[cell] != 1) cell_len[cell] = sl;
-                }
-            }
-        }
-    // A SECOND pass for the loads. The scan is linear, but a cell's length is not necessarily
-    // learned before the first load out of it — `l.text[l.pos]` loads `text` to index it and
-    // only then reads `.len` for the invariant, so a one-pass propagation saw nothing. The
-    // length of a cell is a property of the whole function, not of a program point (that is
-    // exactly why the single-store rule above has to be enforced), so collecting first and
-    // propagating second is the honest order.
-    for (IrBlock *b=V->f->blocks; b; b=b->next)
-        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
-            if (ins->op!=IR_LOAD || !ins->result || ins->n_operands<1) continue;
-            int cell=vra_canon_cell(V, ins->operands[0]->id);
-            if (vra_is_slice_cell(V,cell) && cell_len[cell]>=0 && V->slicelen[ins->result->id]<0)
-                V->slicelen[ins->result->id]=cell_len[cell];
-        }
-    // THIRD, and only now: a bare `.len` read names the length of a slice that still has no
-    // canonical one. This has to come LAST. Run before the propagation above, it claimed the
-    // loaded value for a fresh slice_len result and locked out the store's length var — the
-    // one every other constraint is stated against — which silently un-proved `buf[1..4]`.
-    for (IrBlock *b=V->f->blocks; b; b=b->next)
-        for (IrInstr *ins=b->instrs; ins; ins=ins->next)
-            if (ins->op==IR_SLICE_LEN && ins->result && ins->n_operands>=1) {
-                int s=ins->operands[0]->id;
-                if (V->slicelen[s]<0) V->slicelen[s]=ins->result->id;
-            }
-    free(cell_len); free(cell_stores);
 
 }
 
@@ -1634,11 +1511,15 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
         }
         case IR_SLICE_LEN: {
             if (r<0) break;
-            oct_forget(W, r); oct_add_lb(W, r, 0);                 // a length is ≥ 0
-            int s = ins->operands[0]->id, canon = V->slicelen[s];
-            if (canon>=0 && canon!=r) vra_assign_copy(V, W, r, canon); // all len reads agree
+            oct_forget(W, r);
+            int s = ins->operands[0]->id, canon = V->slicelen[s];     // the slice's own dimension
+            if (canon>=0 && canon!=r) vra_assign_copy(V, W, r, canon);
+            oct_add_lb(W, r, 0);                                        // a length is ≥ 0
             break;
         }
+        case IR_MAKE_SLICE:     // {data, len}: the slice's dimension IS its length
+            if (r>=0 && ins->n_operands>=2) { vra_assign_copy(V, W, r, ins->operands[1]->id); oct_add_lb(W, r, 0); }
+            break;
         case IR_SUM_TAG: {
             // A discriminant is an ORDINARY INTEGER in [0, variants−1] — ir.h says so as the
             // reason discrimination is exact — and the domain was forgetting it. Stating it
@@ -3913,7 +3794,7 @@ static Vra *vra_analyze(IrFunc *f) {
         // did nothing at all.
         bool cell = pt->kind==IRT_PTR && pt->ptr_mut && pt->elem
                  && (pt->elem->kind==IRT_INT || pt->elem->kind==IRT_BOOL);
-        if (pt->kind==IRT_INT || pt->kind==IRT_BOOL || cell)
+        if (pt->kind==IRT_INT || pt->kind==IRT_BOOL || pt->kind==IRT_SLICE || cell)
             V->odim[p->value->id] = V->noct++;
     }
     for (IrBlock *b=f->blocks; b; b=b->next)
@@ -3931,9 +3812,12 @@ static Vra *vra_analyze(IrFunc *f) {
                 // does. A superset of what the transfer will actually use — the narrow gate
                 // needs V->def and V->escaped, which the prepass has not run yet.
                 keep = rv->type && rv->type->kind==IRT_PTR && rv->type->elem &&
-                       (rv->type->elem->kind==IRT_INT || rv->type->elem->kind==IRT_BOOL);
+                       (rv->type->elem->kind==IRT_INT || rv->type->elem->kind==IRT_BOOL ||
+                        rv->type->elem->kind==IRT_SLICE);
             else
-                keep = rv->type && (rv->type->kind==IRT_INT || rv->type->kind==IRT_BOOL);
+                // ★ A SLICE's dimension is its LENGTH (see vra_prepass, "flow-sensitive").
+                keep = rv->type && (rv->type->kind==IRT_INT || rv->type->kind==IRT_BOOL ||
+                                    rv->type->kind==IRT_SLICE);
             if (keep) V->odim[rv->id] = V->noct++;
         }
     if (V->noct == 0) V->noct = 1;                 // never size the matrix to zero

@@ -1,0 +1,51 @@
+// A slice's length is FLOW-SENSITIVE: after a slice field or a slice variable is rewritten, reads
+// see the new slice's length. It used to be one length per cell for the whole function, so any
+// cell stored twice had no length at all — each function below was refused (fuzz_vra slicefield:
+// the safe variants accepted went from 39 of 176 to 151). Each slice views its own exact-length
+// array, so a read past the current slice would be a read past an allocation (ASan).
+type W {
+    s i32[]
+    k usize
+}
+func last_after_store() i32 {
+    var x i32[3] = [1, 2, 3]
+    var y i32[5] = [4, 5, 6, 7, 8]
+    var w = W(x, 0)
+    w.s = y
+    var n = w.s.len
+    if n > 0 { return w.s[n - 1] }
+    return 0
+}
+func guarded_after_whole() i32 {
+    var x i32[3] = [1, 2, 3]
+    var y i32[5] = [4, 5, 6, 7, 8]
+    var w = W(y, 0)
+    var n = w.s.len
+    w = W(x, 0)
+    if n > 0 and n <= w.s.len { return w.s[n - 1] }
+    return w.s[2]
+}
+func sum_both() i32 {
+    var x i32[3] = [1, 2, 3]
+    var y i32[5] = [4, 5, 6, 7, 8]
+    var s i32[] = x
+    var t i32 = 0
+    var i usize = 0
+    while i < s.len {
+        t = t +% s[i]
+        i = i + 1
+    }
+    s = y
+    i = 0
+    while i < s.len {
+        t = t +% s[i]
+        i = i + 1
+    }
+    return t
+}
+func main() i32 {
+    if last_after_store() != 8 { return 1 }
+    if guarded_after_whole() != 3 { return 2 }
+    if sum_both() != 36 { return 3 }
+    return 0
+}
