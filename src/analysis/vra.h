@@ -501,7 +501,7 @@ static void vra_seed_element_ranges_round(Vra *V) {
     }
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         bool replay = Wm && V->reached && V->reached[b->id] && V->in && V->in[b->id];
-        if (replay) { memcpy(Wm, V->in[b->id], (size_t)V->dsz*8); Wv.clean=V->inclosed && V->inclosed[b->id]; oct_close(&Wv); }
+        if (replay) { memcpy(Wm, V->in[b->id], (size_t)V->dsz*8); oct_set_clean(&Wv, V->inclosed && V->inclosed[b->id]); oct_close(&Wv); }
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (replay && ins->op != IR_STORE) vra_transfer_instr(V, &Wv, ins);
             if (ins->op != IR_STORE || ins->n_operands < 2) {
@@ -4009,7 +4009,7 @@ static Vra *vra_analyze(IrFunc *f) {
             // each edge's copy of W below, although most of them were copies of a matrix closed a
             // moment before: 70% of the closures that followed a copy or a join were such
             // re-closures of a closed state.
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=V->inclosed[b->id];
+            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; oct_set_clean(&W, V->inclosed[b->id]);
             oct_close(&W);
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
@@ -4018,7 +4018,7 @@ static Vra *vra_analyze(IrFunc *f) {
             else if (b->term.kind==IR_TERM_BR_COND){ succ[0]=b->term.a; succ[1]=b->term.b; ns=2; guarded=true; cond=b->term.cond; }
             for (int k=0;k<ns;k++) {
                 IrBlock *s=succ[k]; if(!s) continue;
-                memcpy(T_m, W_m, V->dsz*8); T.nvar=V->noct; T.dim=dim; T.clean=W.clean;
+                memcpy(T_m, W_m, V->dsz*8); T.nvar=V->noct; T.dim=dim; oct_set_clean(&T, W.clean);
                 if (guarded){ vra_refine_guard(V,&T,cond,k==0); oct_close(&T); }
                 if (oct_is_bottom(&T)) continue;
                 if (!V->reached[s->id]) { memcpy(V->in[s->id],T_m,V->dsz*8); V->inclosed[s->id]=T.clean; V->reached[s->id]=true; changed=true; continue; }
@@ -4027,7 +4027,7 @@ static Vra *vra_analyze(IrFunc *f) {
                 // The pointwise max of two tightly closed octagons is tightly closed (Miné; the
                 // unary entries stay even). A widened one is not.
                 bool jclosed = V->inclosed[s->id] && T.clean;
-                if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); J.clean=false; jclosed=false; }
+                if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); oct_set_clean(&J, false); jclosed=false; }
                 if (!oct_leq(&J,&In)){ memcpy(V->in[s->id],J_m,V->dsz*8); V->inclosed[s->id]=jclosed; changed=true; }
             }
         }
@@ -4053,7 +4053,7 @@ static Vra *vra_analyze(IrFunc *f) {
                     ins->result->id < V->nvar) V->modwrap[ins->result->id] = false;
             continue;
         }
-        memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=V->inclosed[b->id]; oct_close(&W);
+        memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; oct_set_clean(&W, V->inclosed[b->id]); oct_close(&W);
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             switch (ins->op) {
                 // a constant index into a FIXED array is fully decidable from constants
@@ -4292,7 +4292,7 @@ static Vra *vra_analyze(IrFunc *f) {
             if (b->term.kind!=IR_TERM_RET) continue;
             if (!b->term.cond) { all=false; continue; }
             if (!V->reached[b->id]) continue;          // unreachable: contributes nothing
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=V->inclosed[b->id];
+            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; oct_set_clean(&W, V->inclosed[b->id]);
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
             int64_t lo,hi; vra_range(V,&W,b->term.cond,&lo,&hi);

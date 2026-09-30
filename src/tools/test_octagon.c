@@ -3,7 +3,7 @@
 // point set; here we enumerate every point in a small box and check the claims
 // directly. This is the yardstick from local/internal/design/vra-octagon.md §2.3/§7.
 //
-//   gcc -std=c99 -O2 -o /tmp/test_octagon src/analysis/test_octagon.c -I src && /tmp/test_octagon
+//   gcc -std=c99 -O2 -o test_octagon src/tools/test_octagon.c -I src && ./test_octagon   (run_ir_tests.sh runs it)
 #include "analysis/octagon.h"
 #include <stdio.h>
 #include <time.h>
@@ -214,6 +214,57 @@ int main(void) {
         CHECK(oct_is_bottom(&T), "x = 1/2 not detected as empty over Z");
         CHECK(gamma_empty(&T), "declared empty but gamma nonempty");
     }
+
+    // 12. INCREMENTAL CLOSURE = FULL CLOSURE. A closed octagon, then random tightenings (and
+    //     forgets, and more tightenings than the pending list holds): closed incrementally
+    //     (A, clean before the edits) it must equal the same edits closed in full (B, marked
+    //     dirty), entry for entry, empty or not. Eight variables, constants up to
+    //     ±40, no γ enumeration: this checks EQUALITY, which a γ property cannot see.
+    int incr_trials = 0, incr_bottom = 0;
+    {
+        enum { NB = 8, DB = 2*NB };
+        static int64_t ma[DB*DB], mb[DB*DB];
+        for (int t=0; t<20000; t++) {
+            Octagon A={0}, B={0};
+            oct_init_top(&A, NB, ma);
+            int K = rand()%12;
+            for (int q=0;q<K;q++) {
+                int a=rand()%NB, b=rand()%NB, c=(rand()%81)-40;
+                switch (rand()%5) {
+                    case 0: oct_add_ub(&A,a,c); break;
+                    case 1: oct_add_lb(&A,a,c); break;
+                    case 2: if(a!=b) oct_add_diff_le(&A,a,b,c); break;
+                    case 3: oct_add_sum_le(&A,a,b,c); break;
+                    case 4: oct_add_negsum_le(&A,a,b,c); break;
+                }
+            }
+            oct_close(&A);
+            if (oct_is_bottom(&A)) continue;
+            int E = 1 + rand()%(t%7==0 ? 30 : 5);          // sometimes past OCT_PEND_MAX
+            memcpy(mb, ma, sizeof ma); B.nvar=NB; B.dim=DB; B.m=mb; oct_set_clean(&B, false);
+            for (int q=0;q<E;q++) {
+                int a=rand()%NB, b=rand()%NB, c=(rand()%81)-40, op=rand()%7;
+                Octagon *X[2] = {&A, &B};
+                for (int w=0; w<2; w++) switch (op) {
+                    case 0: oct_add_ub(X[w],a,c); break;
+                    case 1: oct_add_lb(X[w],a,c); break;
+                    case 2: if(a!=b) oct_add_diff_le(X[w],a,b,c); break;
+                    case 3: oct_add_sum_le(X[w],a,b,c); break;
+                    case 4: oct_add_negsum_le(X[w],a,b,c); break;
+                    case 5: oct_add_const(X[w],a,c); break;
+                    case 6: oct_forget(X[w],a); break;
+                }
+            }
+            oct_close(&A); oct_close(&B);
+            bool ba = oct_is_bottom(&A), bb = oct_is_bottom(&B);
+            CHECK(ba == bb, "incremental and full closure disagree on emptiness");
+            if (ba) incr_bottom++; else incr_trials++;
+            // ⊥ included: the same matrix, not merely the same emptiness (a dead-code query
+            // reads a ⊥ matrix's entries).
+            CHECK(memcmp(ma, mb, sizeof ma) == 0, "incremental closure differs from the full closure");
+        }
+    }
+    printf("octagon: incremental = full closure on %d satisfiable edit sequences and %d empty ones, entry for entry\n", incr_trials, incr_bottom);
 
     if (fails==0) printf("octagon: ALL PROPERTIES HOLD over %d random trials (box [-%d,%d]^%d) + tightness/integer cases\n", trials, R,R,NV);
     else          printf("octagon: %d FAILURES\n", fails);

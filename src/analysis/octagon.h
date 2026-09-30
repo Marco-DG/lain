@@ -41,7 +41,19 @@ typedef struct {
     // every aggregate initializer: a writer that forgets to clear it can only cost a closure's
     // PRECISION (a skipped close leaves valid but looser bounds), never soundness.
     bool     clean;
+    // ★ INCREMENTAL: the matrix was closed, and since then only the entries listed in `pend`
+    // (each with its coherent twin) have been tightened. Re-closing then needs only the paths
+    // through those edges, O(dim²) each, instead of O(dim³): after the known-closed skips, 99%
+    // of the remaining closure work was of exactly this shape — a closed state plus the two or
+    // three constraints one transfer adds. `incr` false is the safe value (full closure) and the
+    // default of every aggregate initializer; oct_set_clean is how a writer that replaces the
+    // matrix says what it knows.
+    bool     incr;
+    int      npend;
+    int      pend[16];  // row*dim + col of each tightened entry
 } Octagon;
+#define OCT_PEND_MAX 16
+static inline void oct_set_clean(Octagon *o, bool closed) { o->clean = closed; o->incr = false; o->npend = 0; }
 
 // ── VARIABLE PACKING (rebuild item 2.2) ──────────────────────────────────────
 // The octagon's cost is cubic in its dimension and its storage quadratic, and the dimension
@@ -80,23 +92,29 @@ static inline int64_t  oct_get(const Octagon *o, int i, int j) {
 // ── construction ─────────────────────────────────────────────────────────────
 // ⊤ (no constraints): all +∞ off the diagonal, 0 on it.
 static void oct_init_top(Octagon *o, int nvar, int64_t *storage) {
-    o->nvar = nvar; o->dim = 2*nvar; o->m = storage; o->clean = false;
+    o->nvar = nvar; o->dim = 2*nvar; o->m = storage; oct_set_clean(o, false);
     for (int i=0;i<o->dim;i++)
         for (int j=0;j<o->dim;j++)
             *oct_at(o,i,j) = (i==j) ? 0 : OCT_INF;
 }
 static void oct_copy(Octagon *dst, const Octagon *src) {
-    dst->nvar=src->nvar; dst->dim=src->dim; dst->clean=false;
+    dst->nvar=src->nvar; dst->dim=src->dim; oct_set_clean(dst, false);
     memcpy(dst->m, src->m, (size_t)src->dim*src->dim*sizeof(int64_t));
 }
 
 // ── constraint setters (all go through the coherent tighten) ─────────────────
 // Tighten m[i][j] (and its coherent twin m[bar j][bar i]) to ≤ c.
 static void oct_tighten(Octagon *o, int i, int j, int64_t c) {
-    if (c >= OCT_INF) return;
-    int64_t *a = oct_at(o,i,j);            if (c < *a) { *a = c; o->clean = false; }
+    if (c >= OCT_INF || i < 0 || j < 0) return;          // an untracked dimension absorbs it
+    bool changed = false;
+    int64_t *a = oct_at(o,i,j);            if (c < *a) { *a = c; changed = true; }
     int bi=oct_bar(j), bj=oct_bar(i);
-    int64_t *b = oct_at(o,bi,bj);          if (c < *b) { *b = c; o->clean = false; }
+    int64_t *b = oct_at(o,bi,bj);          if (c < *b) { *b = c; changed = true; }
+    if (!changed) return;
+    if (o->clean) { o->clean = false; o->incr = true; o->npend = 0; }
+    if (!o->incr) return;
+    if (o->npend < OCT_PEND_MAX) o->pend[o->npend++] = i*o->dim + j;
+    else o->incr = false;                                 // too many: the full closure is cheaper
 }
 // ★ A UNARY BOUND IS STORED DOUBLED, so it must be clamped BEFORE the doubling. `2*c` on
 // c = INT64_MAX is −2 in two's complement (and undefined in C): `var x i64 = 9223372036854775807`
@@ -138,8 +156,110 @@ static void oct_add_negsum_le(Octagon *o, int a, int b, int64_t c){ oct_tighten(
 // authoritative middle-end at that cost, and nothing had measured it because the corpus's
 // programs are small. Restricting the loops to the active set is exact, not approximate.
 static int *oct_active_scratch = NULL; static int oct_active_cap = 0;
+
+// INCREMENTAL CLOSURE of a closed matrix after the pending tightenings (Bagnara, Hill, Zaffanella,
+// "An improved tight closure algorithm for integer octagonal constraints", 2008). Each pending
+// entry is the edge i→j of weight c together with its coherent twin bar j→bar i. The matrix was
+// closed without them, so a shortest path uses each at most once, and
+//   a ⇝ j through a new edge:     P1[a] = min(m[a][i] + c,  m[a][bar j] + c + m[bar i][i] + c)
+//   a ⇝ bar i through a new edge: P2[a] = min(m[a][bar j] + c,  m[a][i] + c + m[j][bar j] + c)
+//   m[a][b] = min(m[a][b], P1[a] + m[j][b], P2[a] + m[bar i][b])
+// all read before the edge's update. Processing the edges one after another is exact even though
+// the later ones are still in the matrix raw: each step's matrix is sound and at least as tight
+// as the closure so far. The shortest-path closure is then tightened and strengthened by the SAME
+// pass as the full closure, which is Bagnara's tight closure: the two agree entry for entry on a
+// satisfiable octagon (src/tools/test_octagon.c checks it on random ones). Every entry written
+// is a real path's length, so the result is sound whatever the inputs.
+// It returns false, the matrix restored, and the caller closes in full, in two cases:
+//  • a NEGATIVE CYCLE (⊥). Floyd–Warshall spreads it through every entry it reaches, this
+//    update only along the new edges; both are ⊥, but a query in the dead code after an
+//    infeasible `assume` read the two differently (tests/vra/invariant/struct_in_fixed_ctor_fail
+//    gained an E085). Every entry the path phase writes is logged, and undone. A ⊥ that only
+//    the integer strengthening produces needs no undo: without a negative cycle the path
+//    closure is canonical, and the strengthening pass below is the full closure's own.
+//  • an entry within a factor 4 of -OCT_INF, where a sum of four could overflow.
+static int64_t *oct_incr_vec = NULL; static int oct_incr_cap = 0;
+static int64_t *oct_undo = NULL; static size_t oct_undo_n = 0, oct_undo_cap = 0;
+static void oct_undo_all(Octagon *o) {
+    while (oct_undo_n > 0) { oct_undo_n -= 2; o->m[oct_undo[oct_undo_n]] = oct_undo[oct_undo_n+1]; }
+}
+static bool oct_close_incr(Octagon *o) {
+    int d = o->dim;
+    if (oct_incr_cap < d) {
+        oct_incr_vec = (int64_t*)realloc(oct_incr_vec, (size_t)4*d*sizeof(int64_t));
+        oct_incr_cap = d;
+    }
+    if (oct_active_cap < 2*d) {
+        oct_active_scratch = (int*)realloc(oct_active_scratch, (size_t)2*d*sizeof(int));
+        oct_active_cap = 2*d;
+    }
+    int64_t *P1 = oct_incr_vec, *P2 = P1 + d, *B1 = P2 + d, *B2 = B1 + d;
+    int *rows = oct_active_scratch, *cols = rows + d;
+    const int64_t LO = -(OCT_INF/4);
+    oct_undo_n = 0;
+    for (int t = 0; t < o->npend; t++) {
+        int i = o->pend[t] / d, j = o->pend[t] % d;
+        int64_t c = oct_get(o, i, j);                 // current: a forget (⊤) or a later tighten wins
+        if (c >= OCT_INF) continue;
+        int bi = oct_bar(i), bj = oct_bar(j);
+        int64_t jj = oct_get(o, j, bj), ii = oct_get(o, bi, i);
+        if (c < LO || (jj < OCT_INF && jj < LO) || (ii < OCT_INF && ii < LO)) { oct_undo_all(o); return false; }
+        int nr = 0, nc = 0;
+        for (int a = 0; a < d; a++) {
+            int64_t ai = oct_get(o, a, i), abj = oct_get(o, a, bj);
+            int64_t jb = oct_get(o, j, a), bib = oct_get(o, bi, a);
+            if ((ai < OCT_INF && ai < LO) || (abj < OCT_INF && abj < LO) ||
+                (jb < OCT_INF && jb < LO) || (bib < OCT_INF && bib < LO)) { oct_undo_all(o); return false; }
+            int64_t p1 = OCT_INF, p2 = OCT_INF;
+            if (ai  < OCT_INF) { p1 = ai + c;  if (jj < OCT_INF) p2 = ai + c + jj + c; }
+            if (abj < OCT_INF) { int64_t q = abj + c; if (q < p2) p2 = q;
+                                 if (ii < OCT_INF) { q = abj + c + ii + c; if (q < p1) p1 = q; } }
+            P1[a] = p1 < OCT_INF ? p1 : OCT_INF;  P2[a] = p2 < OCT_INF ? p2 : OCT_INF;
+            B1[a] = jb; B2[a] = bib;
+            if (P1[a] < OCT_INF || P2[a] < OCT_INF) rows[nr++] = a;
+            if (jb < OCT_INF || bib < OCT_INF) cols[nc++] = a;
+        }
+        for (int ra = 0; ra < nr; ra++) { int a = rows[ra];
+            int64_t p1 = P1[a], p2 = P2[a], *row = &o->m[(size_t)a*d];
+            for (int cb = 0; cb < nc; cb++) { int b = cols[cb];
+                int64_t sp = OCT_INF;
+                if (p1 < OCT_INF && B1[b] < OCT_INF) sp = p1 + B1[b];
+                if (p2 < OCT_INF && B2[b] < OCT_INF) { int64_t q = p2 + B2[b]; if (q < sp) sp = q; }
+                if (sp < row[b]) {
+                    if (oct_undo_n + 2 > oct_undo_cap) {
+                        oct_undo_cap = oct_undo_cap ? 2*oct_undo_cap : 1024;
+                        oct_undo = (int64_t*)realloc(oct_undo, oct_undo_cap*sizeof(int64_t));
+                    }
+                    oct_undo[oct_undo_n++] = (int64_t)a*d + b; oct_undo[oct_undo_n++] = row[b];
+                    row[b] = sp;
+                }
+            }
+        }
+    }
+    for (int x = 0; x < d; x++)
+        if (oct_get(o, x, x) < 0) { oct_undo_all(o); return false; }   // a negative cycle: ⊥
+    // tighten + strengthen: the full closure's pass, over the dimensions that have a unary bound
+    // (every one of them is in the full closure's active set, and no other contributes).
+    int nu = 0, nv = 0;
+    for (int x = 0; x < d; x++) {
+        if (oct_get(o, x, oct_bar(x)) < OCT_INF) rows[nu++] = x;
+        if (oct_get(o, oct_bar(x), x) < OCT_INF) cols[nv++] = x;
+    }
+    for (int ia = 0; ia < nu; ia++) { int i = rows[ia];
+        int64_t a = oct_get(o, i, oct_bar(i));
+        for (int ja = 0; ja < nv; ja++) { int j = cols[ja];
+            int64_t b = oct_get(o, oct_bar(j), j);
+            int64_t s = oct_fdiv2(a) + oct_fdiv2(b);
+            int64_t *ij = oct_at(o, i, j);
+            if (s < *ij) *ij = s;
+        }
+    }
+    return true;
+}
+
 static void oct_close(Octagon *o) {
     if (o->clean) return;                  // closed, and nothing tightened since
+    if (o->incr && oct_close_incr(o)) { oct_set_clean(o, true); return; }
     int d = o->dim;
     if (oct_active_cap < d) {
         oct_active_scratch = (int*)realloc(oct_active_scratch, (size_t)d*sizeof(int));
@@ -181,7 +301,7 @@ static void oct_close(Octagon *o) {
             if (s < *ij) *ij = s;
         }
     }
-    o->clean = true;
+    oct_set_clean(o, true);
 }
 
 // ⊥ test — a variable's own dimension shows a negative self-distance.
@@ -193,14 +313,14 @@ static bool oct_is_bottom(const Octagon *o) {
 // ── lattice operations (operands assumed closed) ─────────────────────────────
 // Join ⊔ — entrywise max: the tightest octagon containing both (the φ merge).
 static void oct_join(Octagon *dst, const Octagon *a, const Octagon *b) {
-    dst->nvar=a->nvar; dst->dim=a->dim; dst->clean=false;
+    dst->nvar=a->nvar; dst->dim=a->dim; oct_set_clean(dst, false);
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++)
             *oct_at(dst,i,j) = oct_max64(oct_get(a,i,j), oct_get(b,i,j));
 }
 // Meet ⊓ — entrywise min (adds both constraint sets); caller re-closes.
 static void oct_meet(Octagon *dst, const Octagon *a, const Octagon *b) {
-    dst->nvar=a->nvar; dst->dim=a->dim; dst->clean=false;
+    dst->nvar=a->nvar; dst->dim=a->dim; oct_set_clean(dst, false);
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++)
             *oct_at(dst,i,j) = oct_min64(oct_get(a,i,j), oct_get(b,i,j));
@@ -208,7 +328,7 @@ static void oct_meet(Octagon *dst, const Octagon *a, const Octagon *b) {
 // Widening ∇ — keep a's entry where b does not exceed it, else drop to +∞.
 // Guarantees termination of the ascending chain (no re-closing of the result).
 static void oct_widen(Octagon *dst, const Octagon *a, const Octagon *b) {
-    dst->nvar=a->nvar; dst->dim=a->dim; dst->clean=false;
+    dst->nvar=a->nvar; dst->dim=a->dim; oct_set_clean(dst, false);
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++) {
             int64_t av=oct_get(a,i,j), bv=oct_get(b,i,j);
@@ -239,7 +359,7 @@ static void oct_widen(Octagon *dst, const Octagon *a, const Octagon *b) {
 // terminating because each entry climbs a finite ladder before reaching ⊤.
 static void oct_widen_thr(Octagon *dst, const Octagon *a, const Octagon *b, const char *mod,
                           const int64_t *thr, int nthr) {
-    dst->nvar=a->nvar; dst->dim=a->dim; dst->clean=false;
+    dst->nvar=a->nvar; dst->dim=a->dim; oct_set_clean(dst, false);
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++) {
             int64_t av=oct_get(a,i,j), bv=oct_get(b,i,j);
