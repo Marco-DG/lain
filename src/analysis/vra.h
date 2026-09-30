@@ -497,7 +497,7 @@ static void vra_seed_element_ranges_round(Vra *V) {
     }
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         bool replay = Wm && V->reached && V->reached[b->id] && V->in && V->in[b->id];
-        if (replay) { memcpy(Wm, V->in[b->id], (size_t)V->dsz*8); oct_close(&Wv); }
+        if (replay) { memcpy(Wm, V->in[b->id], (size_t)V->dsz*8); Wv.clean=false; oct_close(&Wv); }
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (replay && ins->op != IR_STORE) vra_transfer_instr(V, &Wv, ins);
             if (ins->op != IR_STORE || ins->n_operands < 2) {
@@ -4000,7 +4000,7 @@ static Vra *vra_analyze(IrFunc *f) {
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             if (!V->reached[b->id]) continue;
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim;
+            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=false;
             oct_close(&W);
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
@@ -4009,13 +4009,13 @@ static Vra *vra_analyze(IrFunc *f) {
             else if (b->term.kind==IR_TERM_BR_COND){ succ[0]=b->term.a; succ[1]=b->term.b; ns=2; guarded=true; cond=b->term.cond; }
             for (int k=0;k<ns;k++) {
                 IrBlock *s=succ[k]; if(!s) continue;
-                memcpy(T_m, W_m, V->dsz*8); T.nvar=V->noct; T.dim=dim;
+                memcpy(T_m, W_m, V->dsz*8); T.nvar=V->noct; T.dim=dim; T.clean=false;
                 if (guarded){ vra_refine_guard(V,&T,cond,k==0); oct_close(&T); }
                 if (oct_is_bottom(&T)) continue;
                 if (!V->reached[s->id]) { memcpy(V->in[s->id],T_m,V->dsz*8); V->reached[s->id]=true; changed=true; continue; }
                 Octagon In={V->noct,dim,V->in[s->id]};
                 oct_join(&J,&In,&T);
-                if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); }
+                if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); J.clean=false; }
                 if (!oct_leq(&J,&In)){ memcpy(V->in[s->id],J_m,V->dsz*8); changed=true; }
             }
         }
@@ -4041,7 +4041,7 @@ static Vra *vra_analyze(IrFunc *f) {
                     ins->result->id < V->nvar) V->modwrap[ins->result->id] = false;
             continue;
         }
-        memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; oct_close(&W);
+        memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=false; oct_close(&W);
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             switch (ins->op) {
                 // a constant index into a FIXED array is fully decidable from constants
@@ -4280,7 +4280,7 @@ static Vra *vra_analyze(IrFunc *f) {
             if (b->term.kind!=IR_TERM_RET) continue;
             if (!b->term.cond) { all=false; continue; }
             if (!V->reached[b->id]) continue;          // unreachable: contributes nothing
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim;
+            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=false;
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
             int64_t lo,hi; vra_range(V,&W,b->term.cond,&lo,&hi);

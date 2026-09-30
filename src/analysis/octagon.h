@@ -35,6 +35,12 @@ typedef struct {
     int      nvar;   // number of variables
     int      dim;    // 2*nvar
     int64_t *m;      // dim×dim, row-major; m[i*dim+j]
+    // ★ KNOWN CLOSED: nothing has tightened the matrix since the last oct_close, so closing it
+    // again changes nothing (the closure is idempotent). 88% of the analysis was oct_close and
+    // about half of those calls were such no-ops. FALSE is the safe value, and the default of
+    // every aggregate initializer: a writer that forgets to clear it can only cost a closure's
+    // PRECISION (a skipped close leaves valid but looser bounds), never soundness.
+    bool     clean;
 } Octagon;
 
 // ── VARIABLE PACKING (rebuild item 2.2) ──────────────────────────────────────
@@ -74,13 +80,13 @@ static inline int64_t  oct_get(const Octagon *o, int i, int j) {
 // ── construction ─────────────────────────────────────────────────────────────
 // ⊤ (no constraints): all +∞ off the diagonal, 0 on it.
 static void oct_init_top(Octagon *o, int nvar, int64_t *storage) {
-    o->nvar = nvar; o->dim = 2*nvar; o->m = storage;
+    o->nvar = nvar; o->dim = 2*nvar; o->m = storage; o->clean = false;
     for (int i=0;i<o->dim;i++)
         for (int j=0;j<o->dim;j++)
             *oct_at(o,i,j) = (i==j) ? 0 : OCT_INF;
 }
 static void oct_copy(Octagon *dst, const Octagon *src) {
-    dst->nvar=src->nvar; dst->dim=src->dim;
+    dst->nvar=src->nvar; dst->dim=src->dim; dst->clean=false;
     memcpy(dst->m, src->m, (size_t)src->dim*src->dim*sizeof(int64_t));
 }
 
@@ -88,9 +94,9 @@ static void oct_copy(Octagon *dst, const Octagon *src) {
 // Tighten m[i][j] (and its coherent twin m[bar j][bar i]) to ≤ c.
 static void oct_tighten(Octagon *o, int i, int j, int64_t c) {
     if (c >= OCT_INF) return;
-    int64_t *a = oct_at(o,i,j);            if (c < *a) *a = c;
+    int64_t *a = oct_at(o,i,j);            if (c < *a) { *a = c; o->clean = false; }
     int bi=oct_bar(j), bj=oct_bar(i);
-    int64_t *b = oct_at(o,bi,bj);          if (c < *b) *b = c;
+    int64_t *b = oct_at(o,bi,bj);          if (c < *b) { *b = c; o->clean = false; }
 }
 // ★ A UNARY BOUND IS STORED DOUBLED, so it must be clamped BEFORE the doubling. `2*c` on
 // c = INT64_MAX is −2 in two's complement (and undefined in C): `var x i64 = 9223372036854775807`
@@ -133,6 +139,7 @@ static void oct_add_negsum_le(Octagon *o, int a, int b, int64_t c){ oct_tighten(
 // programs are small. Restricting the loops to the active set is exact, not approximate.
 static int *oct_active_scratch = NULL; static int oct_active_cap = 0;
 static void oct_close(Octagon *o) {
+    if (o->clean) return;                  // closed, and nothing tightened since
     int d = o->dim;
     if (oct_active_cap < d) {
         oct_active_scratch = (int*)realloc(oct_active_scratch, (size_t)d*sizeof(int));
@@ -174,6 +181,7 @@ static void oct_close(Octagon *o) {
             if (s < *ij) *ij = s;
         }
     }
+    o->clean = true;
 }
 
 // ⊥ test — a variable's own dimension shows a negative self-distance.
@@ -185,14 +193,14 @@ static bool oct_is_bottom(const Octagon *o) {
 // ── lattice operations (operands assumed closed) ─────────────────────────────
 // Join ⊔ — entrywise max: the tightest octagon containing both (the φ merge).
 static void oct_join(Octagon *dst, const Octagon *a, const Octagon *b) {
-    dst->nvar=a->nvar; dst->dim=a->dim;
+    dst->nvar=a->nvar; dst->dim=a->dim; dst->clean=false;
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++)
             *oct_at(dst,i,j) = oct_max64(oct_get(a,i,j), oct_get(b,i,j));
 }
 // Meet ⊓ — entrywise min (adds both constraint sets); caller re-closes.
 static void oct_meet(Octagon *dst, const Octagon *a, const Octagon *b) {
-    dst->nvar=a->nvar; dst->dim=a->dim;
+    dst->nvar=a->nvar; dst->dim=a->dim; dst->clean=false;
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++)
             *oct_at(dst,i,j) = oct_min64(oct_get(a,i,j), oct_get(b,i,j));
@@ -200,7 +208,7 @@ static void oct_meet(Octagon *dst, const Octagon *a, const Octagon *b) {
 // Widening ∇ — keep a's entry where b does not exceed it, else drop to +∞.
 // Guarantees termination of the ascending chain (no re-closing of the result).
 static void oct_widen(Octagon *dst, const Octagon *a, const Octagon *b) {
-    dst->nvar=a->nvar; dst->dim=a->dim;
+    dst->nvar=a->nvar; dst->dim=a->dim; dst->clean=false;
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++) {
             int64_t av=oct_get(a,i,j), bv=oct_get(b,i,j);
@@ -231,7 +239,7 @@ static void oct_widen(Octagon *dst, const Octagon *a, const Octagon *b) {
 // terminating because each entry climbs a finite ladder before reaching ⊤.
 static void oct_widen_thr(Octagon *dst, const Octagon *a, const Octagon *b, const char *mod,
                           const int64_t *thr, int nthr) {
-    dst->nvar=a->nvar; dst->dim=a->dim;
+    dst->nvar=a->nvar; dst->dim=a->dim; dst->clean=false;
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++) {
             int64_t av=oct_get(a,i,j), bv=oct_get(b,i,j);
