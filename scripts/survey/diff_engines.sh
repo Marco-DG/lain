@@ -14,14 +14,15 @@
 #      least COMPILES (to an object — link/extern resolution is out of scope). This
 #      is the Phase-1 progress metric, not a pass/fail gate.
 #
-# Build once, then run from the repo root:
-#   gcc -std=c99 -o /tmp/lowerdrv src/tools/lower_driver.c -I src
 #   bash diff_engines.sh
 set -u
 cd "$(dirname "$0")/../.."
-DRV="${LOWERDRV:-/tmp/lowerdrv}"
-[ -x "$DRV" ] || { echo "build the driver first: gcc -std=c99 -o $DRV src/tools/lower_driver.c -I src"; exit 2; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+# ★ Built from THIS tree unless LOWERDRV names a driver you built. This survey used whatever sat at
+# /tmp/lowerdrv until 2026-09-30: a binary from another checkout, or from before the last change,
+# measured in silence.
+DRV="${LOWERDRV:-$TMP/lowerdrv}"
+[ -n "${LOWERDRV:-}" ] || gcc -std=c99 -w -o "$DRV" src/tools/lower_driver.c -I src || { echo "build lowerdrv failed"; exit 2; }
 
 # ── 1. behavioural gate ──────────────────────────────────────────────────────
 echo "── behavioural gate: tests/ir/*.ln through the NEW pipeline ──"

@@ -14,7 +14,8 @@
 #   bash ir_coverage.sh --worst    # also list the files with the most unmodelled functions
 set -u
 cd "$(dirname "$0")/../.."
-DRV=/tmp/lowerdrv
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+DRV="$TMP/lowerdrv"
 gcc -std=c99 -o "$DRV" src/tools/lower_driver.c -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
 WORST=0; [ "${1:-}" = "--worst" ] && WORST=1
 

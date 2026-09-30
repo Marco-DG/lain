@@ -18,10 +18,15 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
-VRADRV="${VRADRV:-/tmp/vradrv}"; LOWERDRV="${LOWERDRV:-/tmp/lowerdrv_vra}"
 CC="${CC:-gcc}"; N="${1:-300}"
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+# ★ The drivers are built INSIDE this run's temp dir. They were built at fixed /tmp paths until
+# 2026-09-30, and two runs from two trees overwrote each other's binary mid-run: a copy WITH the
+# flow-sensitive slice length reported proven=160 because half its programs were judged by a
+# driver built from a tree WITHOUT it (the isolated rerun gives 163). Set VRADRV/LOWERDRV only
+# to choose where they go.
+VRADRV="${VRADRV:-$TMP/vradrv}"; LOWERDRV="${LOWERDRV:-$TMP/lowerdrv}"
 gcc -std=c99 -o "$VRADRV"   src/tools/vra_driver.c -I src 2>/dev/null || { echo "build vradrv failed"; exit 2; }
 gcc -std=c99 -o "$LOWERDRV" src/tools/lower_driver.c     -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
 

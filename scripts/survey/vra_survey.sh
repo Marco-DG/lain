@@ -5,9 +5,12 @@
 # so this measures how close the new engine's precision is on real indexing patterns.
 set -u
 cd "$(cd "$(dirname "$0")/../.." && pwd)"
-DRV="${VRADRV:-/tmp/vradrv}"
-[ -x "$DRV" ] || { echo "build first: gcc -std=c99 -o $DRV src/tools/vra_driver.c -I src"; exit 2; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+# ★ Built from THIS tree unless VRADRV names a driver you built. This survey used whatever sat at
+# /tmp/vradrv until 2026-09-30: a binary from another checkout, or from before the last change,
+# measured in silence.
+DRV="${VRADRV:-$TMP/vradrv}"
+[ -n "${VRADRV:-}" ] || gcc -std=c99 -w -o "$DRV" src/tools/vra_driver.c -I src || { echo "build vradrv failed"; exit 2; }
 prog_ok=0 prog_partial=0 prog_skip=0
 bounds_ok=0 bounds_tot=0
 : > "$TMP/partial.list"

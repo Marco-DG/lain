@@ -20,10 +20,12 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
-LAIN="$ROOT/lain"; LOWERDRV="${LOWERDRV:-/tmp/lowerdrv}"
+LAIN="$ROOT/lain"
 CC="${CC:-gcc}"; N="${1:-200}"
 DEFS="-Dlibc_printf=printf -Dlibc_malloc=malloc -Dlibc_free=free"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+# Built in this run's temp dir, not a fixed /tmp path another run can overwrite (see fuzz_vra.sh).
+LOWERDRV="${LOWERDRV:-$TMP/lowerdrv}"
 [ -x "$LAIN" ] || { echo "build first: gcc -std=c99 -o lain src/frontends/lain/main.c -I src"; exit 2; }
 gcc -std=c99 -o "$LOWERDRV" src/tools/lower_driver.c -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
 

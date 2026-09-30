@@ -7,6 +7,9 @@
 #   bash run_ir_tests.sh          # exit 0 = all IR analysis unit tests pass
 set -u
 cd "$(dirname "$0")/../.."
+# Each binary is built in this run's temp dir. At /tmp/$t, two runs from two trees could each
+# build test_octagon and run the OTHER's: its 24 s run is a wide window (see fuzz_vra.sh).
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail=0
 for t in test_octagon test_vra test_place test_linearity test_borrow test_definite_init test_ir; do
     src="src/tools/$t.c"
@@ -14,11 +17,11 @@ for t in test_octagon test_vra test_place test_linearity test_borrow test_defini
     # test_octagon enumerates a 13^3 box 40,000 times against gamma. Unoptimised that
     # is 2m07s; at -O2 it is 24s, so it gets the flag its own header documents.
     opt=""; [ "$t" = "test_octagon" ] && opt="-O2"
-    if ! gcc -std=c99 $opt -o "/tmp/$t" "$src" -I src 2>/dev/null; then
+    if ! gcc -std=c99 $opt -o "$TMP/$t" "$src" -I src 2>/dev/null; then
         echo "BUILD FAILED: $t"; fail=1; continue
     fi
     echo "── $t ──"
-    if ! "/tmp/$t"; then echo "  ^^ $t FAILED"; fail=1; fi
+    if ! "$TMP/$t"; then echo "  ^^ $t FAILED"; fail=1; fi
 done
 echo "=================================================================="
 [ $fail -eq 0 ] && echo "IR analysis unit tests: ALL PASSED" || echo "IR analysis unit tests: FAILURES"

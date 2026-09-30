@@ -8,9 +8,10 @@
 #   bash ir_incomplete_survey.sh [N]      # N = how many *_pass.ln files to scan (default 300)
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
-N="${1:-300}"; DRV=/tmp/lain_incdrv
+N="${1:-300}"
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+DRV="$TMP/incdrv"; WHY="$TMP/why"
 gcc -std=c99 -w -o "$DRV" src/tools/incomplete_driver.c -I src || { echo "build failed"; exit 2; }
-WHY=$(mktemp); trap 'rm -f "$WHY"' EXIT
 T=0; I=0; F=0; unmeasured=0
 for f in $(find tests -name "*_pass.ln" | head -"$N"); do
   out=$(timeout 10 "$DRV" "$f" 2>/dev/null) || { unmeasured=$((unmeasured+1)); continue; }

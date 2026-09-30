@@ -13,9 +13,10 @@
 #   bash cmin_gate.sh
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
-CMIN="${CMIN:-/tmp/cmin}"; CC="${CC:-gcc}"
-gcc -std=c99 -o "$CMIN" src/frontends/cmin/cmin.c -I src 2>/dev/null || { echo "build cmin failed"; exit 2; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+# Built in this run's temp dir, not a fixed /tmp path another run can overwrite (see fuzz_vra.sh).
+CMIN="${CMIN:-$TMP/cmin}"; CC="${CC:-gcc}"
+gcc -std=c99 -o "$CMIN" src/frontends/cmin/cmin.c -I src 2>/dev/null || { echo "build cmin failed"; exit 2; }
 fail=0
 
 # ── analyses: file  expected-code ("none" = must be clean) ────────────────────
