@@ -3711,6 +3711,46 @@ static bool vra_accum_fits_step(Vra *V, IrValue *val, int64_t lo, int64_t hi) {
     return lo >= tlo && hi <= thi;
 }
 
+// ★ IS THIS A RUNNING TOTAL? The diagnostic below explains an accumulator ("it starts in ... each
+// iteration adds ... bound the count, the element, or the total") and it was printed for ANY
+// loop-carried `x + d` whose check failed — a binary search's midpoint, a window's `i + w`, a
+// stride-2 guard — sending the user to fix the wrong thing (O-5, local/ambrus/ISSUES.md). A running
+// total is stored BACK into the cell it read (`s = s + d`), and it is not the loop's own counter
+// (a cell the header's condition reads is bounded by the guard, not by a trip count).
+static bool vra_is_running_total(Vra *V, IrValue *val, IrBlock *H) {
+    IrInstr *add = (val && val->id >= 0 && val->id < V->nvar) ? V->def[val->id] : NULL;
+    if (!add || add->n_operands < 1) return false;
+    IrInstr *ld = V->def[add->operands[0]->id];
+    if (!ld || ld->op != IR_LOAD || ld->n_operands < 1) return false;
+    int cell = vra_canon_cell(V, ld->operands[0]->id);
+    int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+    char *body = malloc((size_t)nbb); if (!body) return false;
+    vra_natural_loop(V, H, nbb, body);
+    bool back = false;
+    for (IrBlock *b = V->f->blocks; b && !back; b = b->next) {
+        if (!(b->id >= 0 && b->id < nbb && body[b->id])) continue;
+        for (IrInstr *st = b->instrs; st; st = st->next)
+            if (st->op == IR_STORE && st->n_operands >= 2 && st->operands[1] == val &&
+                vra_canon_cell(V, st->operands[0]->id) == cell) { back = true; break; }
+    }
+    free(body);
+    if (!back) return false;
+    IrInstr *ic = (H->term.kind == IR_TERM_BR_COND && H->term.cond) ? V->def[H->term.cond->id] : NULL;
+    for (int q = 0; ic && ic->op == IR_ICMP && q < ic->n_operands && q < 2; q++) {
+        IrInstr *d = V->def[ic->operands[q]->id];
+        for (int hop = 0; d && hop < 4; hop++) {                  // peel `i + k`, casts
+            if (d->op == IR_LOAD && d->n_operands >= 1) {
+                if (vra_canon_cell(V, d->operands[0]->id) == cell) return false;   // the counter
+                break;
+            }
+            if ((d->op == IR_CAST || d->op == IR_ADD || d->op == IR_SUB) && d->n_operands >= 1)
+                d = V->def[d->operands[0]->id];
+            else break;
+        }
+    }
+    return true;
+}
+
 // Same computation, but it reports what it found even when the bound does not hold — that is
 // what the diagnostic needs.
 static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
@@ -3718,7 +3758,7 @@ static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
     IrBlock *H = NULL; int64_t s0lo, s0hi, dlo, dhi, T;
     if (!vra_accum_delta(V, W, val, &H, &s0lo, &s0hi, &dlo, &dhi)) return false;
     bool haveT = vra_loop_trips(V, W, H, &T);
-    if (c) {
+    if (c && vra_is_running_total(V, val, H)) {
         c->accum = true; c->accum_dlo = dlo; c->accum_dhi = dhi;
         c->accum_s0lo = s0lo; c->accum_s0hi = s0hi;
         c->accum_T = haveT ? T : -1;                 // -1 = the trip count is not bounded
