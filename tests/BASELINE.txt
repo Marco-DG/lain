@@ -1570,6 +1570,10 @@ ty=D struct
 ty=P struct
 ty=Slice_u8 scalar
 ty=W struct
+### tests/trust/remainder_below_dividend_pass.ln
+rc=0
+out=
+at=const 6
 ### tests/trust/return_range_pass.ln
 rc=0
 out=255 0 70

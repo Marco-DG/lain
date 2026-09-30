@@ -1,0 +1,20 @@
+// A remainder never exceeds its dividend: `x % k <= x` for an unsigned x (and a non-negative
+// signed one), and `x >> s <= x` likewise. Recorded as a RELATION to x, not only as a bound, it
+// proves the rounding-down idioms below with nothing known about x. All three were E086: the
+// unsigned subtraction's `n >= n % 3` was not a fact anything knew.
+func round_down_3(n usize) usize {
+    return n - n % 3
+}
+func round_down_k(n usize, k usize) usize {
+    if k == 0 { return n }
+    return n - n % k
+}
+func upper_half(n usize) usize {
+    return n - (n >> 1)
+}
+func main() i32 {
+    if round_down_3(10) != 9 { return 1 }
+    if round_down_k(10, 4) != 8 { return 2 }
+    if upper_half(10) != 5 { return 3 }
+    return 0
+}

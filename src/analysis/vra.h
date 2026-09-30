@@ -1591,12 +1591,16 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             oct_add_lb(W, r, 0);
             if (V->cknown[b] && V->cval[b]>0) oct_add_ub(W, r, V->cval[b]-1);  // absolute ≤ c−1
             else vra_add_diff_le(V,W, r, b, -1);                                 // relative r < b
+            // ...and r ≤ x: a remainder never exceeds its dividend. Without it `n - n % 3` on a
+            // usize was E086 — the subtraction's `n ≥ n % 3` was not a fact anything knew.
+            vra_add_diff_le(V,W, r, ins->operands[0]->id, 0);
             break;
         }
         case IR_SREM: {  // signed a % c  ⇒  −(c−1) ≤ r ≤ c−1 (tighter to [0,c−1] if a≥0)
             if (r<0) break;
             int a=ins->operands[0]->id, b=ins->operands[1]->id; oct_forget(W, r);
             int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
+            if (hl && alo >= 0) vra_add_diff_le(V,W, r, a, 0);   // a ≥ 0 ⇒ r ≤ a, as for UREM
             if (V->cknown[b] && V->cval[b]>0){
                 int64_t c=V->cval[b];
                 oct_add_lb(W,r, (hl&&alo>=0)?0:-(c-1)); oct_add_ub(W,r,c-1);
@@ -1624,8 +1628,9 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (r<0) break;
             int a=ins->operands[0]->id; oct_forget(W,r);
             int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
-            if (hl&&alo>=0){ oct_add_lb(W,r,0); if(hh) oct_add_ub(W,r,ahi); }  // 0 ≤ r ≤ a
-            break;
+            if (hl&&alo>=0){ oct_add_lb(W,r,0); if(hh) oct_add_ub(W,r,ahi);    // 0 ≤ r ≤ a — and
+                             vra_add_diff_le(V,W, r, a, 0); }                   // as a RELATION, so
+            break;                                                // `n - (n >> 1)` needs no bound on n
         }
         case IR_SLICE_LEN: {
             if (r<0) break;

@@ -1,0 +1,12 @@
+// EXPECT: [E015]
+// ...but not for a NEGATIVE dividend: -7 % 3 is -1, above -7. `r <= x` is added only where x is
+// provably non-negative, so the check below is reachable to the analysis and the division by
+// zero after it is still refused. Had the relation been added unconditionally, `r <= x` would
+// read as always true, everything after it as dead, and this program would compile.
+func main() i32 {
+    var x i32 = -7
+    var r = x % 3
+    if r <= x { return 1 }
+    var d i32 = 0
+    return 5 /% d
+}
