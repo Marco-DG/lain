@@ -1,0 +1,27 @@
+// A hex, binary or octal literal is a BIT PATTERN: its 64 bits, as a two's-complement i64. They
+// were read with strtoll, which CLAMPS instead of keeping the bits, so `0xcbf29ce484222325`
+// (FNV-1a's 64-bit offset basis) compiled as 0x7FFFFFFFFFFFFFFF — a silently wrong constant, and
+// every mask or pattern with the top bit set with it. `as% u64` takes the bits as the u64.
+func fnv_low_byte() i32 {
+    var h u64 = 0xcbf29ce484222325 as% u64
+    return (h & 255) as% i32
+}
+func min_i64() bool {
+    var x i64 = 0x8000000000000000
+    return x == -9223372036854775807 - 1
+}
+func all_ones() bool {
+    var m u64 = 0xFFFF_FFFF_FFFF_FFFF as% u64
+    return m +% 1 == 0
+}
+func top_bit_binary() bool {
+    var b = 0b1000000000000000000000000000000000000000000000000000000000000000
+    return b < 0
+}
+func main() i32 {
+    if fnv_low_byte() != 37 { return 1 }
+    if !min_i64() { return 2 }
+    if !all_ones() { return 3 }
+    if !top_bit_binary() { return 4 }
+    return 0
+}

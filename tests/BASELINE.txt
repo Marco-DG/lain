@@ -1453,6 +1453,10 @@ at=nonnull 4
 at=pure 4
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/hex_literal_bits_pass.ln
+rc=0
+out=
+at=const 8
 ### tests/trust/i64_min_divisor_pass.ln
 rc=0
 out=

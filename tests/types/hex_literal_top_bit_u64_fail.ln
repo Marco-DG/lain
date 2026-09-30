@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// A hex literal with the top bit set is a NEGATIVE i64 bit pattern, and a u64 cannot hold it
+// implicitly. It used to be clamped to i64::MAX and stored as that — a different constant, with no
+// diagnostic. Say `0xcbf29ce484222325 as% u64` to take the bits as the u64.
+func main() i32 {
+    var h u64 = 0xcbf29ce484222325
+    return (h & 1) as% i32
+}

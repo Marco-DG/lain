@@ -227,6 +227,19 @@ An underscore (\texttt{\_}) may appear between any two digits of an integer
 literal as a visual separator.  It has no effect on the value.
 
 \pnum
+A hexadecimal, octal or binary literal denotes a \emph{bit pattern} of at most 64 bits, read as a
+two's-complement \lain{i64}: \lain{0x7FFF\_FFFF\_FFFF\_FFFF} is the largest \lain{i64} and
+\lain{0x8000\_0000\_0000\_0000} the smallest.  A pattern with the top bit set is therefore
+negative, and a \lain{u64} context does not accept it implicitly; \lain{as\%} takes the same bits
+as the unsigned value, e.g.\ \lain{0xcbf29ce484222325 as\% u64}.  A decimal literal denotes its
+value, which shall fit in \lain{i64}.
+
+\begin{constraint}
+  A hexadecimal, octal or binary literal of more than 64 bits, or a decimal literal outside the
+  range of \lain{i64}, is \illformed{}~(\diagcode{E086}).
+\end{constraint}
+
+\pnum
 The type of an integer literal is inferred from context (see
 \S\,\ref{sec:07-types}).  In the absence of type context, the default type
 is \lain{int}.

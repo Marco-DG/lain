@@ -214,19 +214,32 @@ static long long parse_numeric_literal(const char *start, long length) {
     }
     buf[j] = '\0';
 
-    // Non-decimal bases are bit-pattern notations and keep their original
-    // conversion (a full u64 literal representation is a separate follow-up).
+    // Non-decimal bases are BIT-PATTERN notations: the 64 bits written, as a two's-complement i64
+    // (a full u64 literal representation is a separate follow-up). They were read with strtoll,
+    // which does not keep the bits — it CLAMPS: `0xcbf29ce484222325` (FNV-1a's offset basis)
+    // compiled as 0x7FFFFFFFFFFFFFFF, a silently wrong constant, and so did every mask and
+    // pattern with the top bit set. Read unsigned, the bits are exact: the top bit set makes the
+    // i64 negative, so `var h u64 = 0xcbf2...` is refused (E086) rather than wrong, and
+    // `0xcbf29ce484222325 as% u64` is the u64 constant. More than 64 bits is refused outright.
     // Decimal literals must fit the i64 value model; strtoll otherwise clamps to
     // LLONG_MAX (which fits i64, so the E086 boundary check never fires) — this
     // is what let `99999999999999999999` wrap in silently.
-    if (j >= 2 && buf[0] == '0' && (buf[1] == 'b' || buf[1] == 'B')) {
-        return strtoll(buf + 2, NULL, 2);
-    }
-    if (j >= 2 && buf[0] == '0' && (buf[1] == 'o' || buf[1] == 'O')) {
-        return strtoll(buf + 2, NULL, 8);
-    }
-    if (j >= 2 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')) {
-        return strtoll(buf, NULL, 16);
+    {
+        int base = 0, skip = 0;
+        if (j >= 2 && buf[0] == '0' && (buf[1] == 'b' || buf[1] == 'B')) { base = 2;  skip = 2; }
+        if (j >= 2 && buf[0] == '0' && (buf[1] == 'o' || buf[1] == 'O')) { base = 8;  skip = 2; }
+        if (j >= 2 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')) { base = 16; skip = 2; }
+        if (base) {
+            errno = 0;
+            unsigned long long u = strtoull(buf + skip, NULL, base);
+            if (truncated || errno == ERANGE) {
+                fprintf(stderr, "[E086] Error: integer literal '%.*s' has more than 64 bits.\n",
+                        (int)length, start);
+                exit(1);
+            }
+            long long bits; memcpy(&bits, &u, sizeof bits);      // the pattern, two's complement
+            return bits;
+        }
     }
     errno = 0;
     long long value = strtoll(buf, NULL, 10);
