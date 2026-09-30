@@ -1,0 +1,7 @@
+// EXPECT: [E100]
+// A vector is a C `vector_size` type, which gcc and clang build only at a power-of-two size:
+// `u8x3` compiled and emitted C neither accepts. The lane count must be a power of two.
+func main() i32 {
+    var v u8x3 = [1, 2, 3]
+    return v[0] as i32
+}

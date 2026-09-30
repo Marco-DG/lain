@@ -824,8 +824,48 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e);
 // typed declaration, assignment, return. Until 2026-09-28 the call path kept its own copy (the
 // only complete one) and struct construction, declaration, assignment and return had none —
 // `W(buf, 7)` built `(W){ buf, 7 }` and C's brace elision put 7 in the slice's LENGTH.
+// An array literal of exactly N elements, built as the N-lane vector `vt` (NULL otherwise).
+static IrValue *ir_lower_vec_literal(LowerCtx *c, Expr *lit, IrType *vt) {
+    int n = 0; for (ExprList *el = lit->as.array_literal_expr.elements; el; el = el->next) n++;
+    if (n <= 0 || n != (int)vt->array_len) return NULL;
+    IrValue **lanes = arena_push_many_aligned(c->a, IrValue*, n);
+    int k = 0;
+    for (ExprList *el = lit->as.array_literal_expr.elements; el; el = el->next, k++)
+        lanes[k] = ir_lower_expr(c, el->expr);
+    return ir_struct_new(c->f, c->cur, vt, lanes, n);
+}
 static IrValue *ir_coerce_repr(LowerCtx *c, IrValue *v, IrType *want, Expr *src) {
     if (!v || !v->type || !want) return v;
+    // A vector comparison's MASK has signed lanes of the operands' width (ir_icmp: the ISA's
+    // convention); Lain types it as the operands' vector. Where the two met — `var m u8x16 =
+    // a == 7`, an argument, a field, a return — the C was `Vec_16_u8 = Vec_16_i8`, which gcc
+    // refuses. Same shape, integer lanes, different signedness: a bit-cast.
+    if (want->kind==IRT_VECTOR && v->type->kind==IRT_VECTOR && want->array_len==v->type->array_len &&
+        want->elem && v->type->elem && want->elem->kind==IRT_INT && v->type->elem->kind==IRT_INT &&
+        want->elem->bits==v->type->elem->bits && want->elem->is_signed!=v->type->elem->is_signed) {
+        IrInstr *cv = ir_instr(c->f, IR_CAST, want, 1);
+        cv->operands[0] = v; cv->aux.cast_kind = IR_CAST_BITCAST;
+        ir_emit(c->cur, cv);
+        return cv->result;
+    }
+    // An ARRAY LITERAL where a VECTOR is wanted — `Pair([5, 6, 7, 8], 9)` into a u32x4 field.
+    // The literal types as an array and was materialised as one, so the field received the
+    // array's BASE POINTER: garbage lanes under gcc, and C clang refuses. Only a declaration
+    // built the vector (from its declared type). Here the lanes are read back out of the
+    // materialised array, so no element expression is evaluated twice.
+    if (want->kind==IRT_VECTOR && src && src->kind==EXPR_ARRAY_LITERAL &&
+        (v->type->kind==IRT_PTR || v->type->kind==IRT_ARRAY) && v->type->elem) {
+        int n = 0; for (ExprList *el = src->as.array_literal_expr.elements; el; el = el->next) n++;
+        if (n == (int)want->array_len && n > 0) {
+            IrValue **lanes = arena_push_many_aligned(c->a, IrValue*, n);
+            for (int k = 0; k < n; k++) {
+                IrValue *ix = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,64,false));
+                IrValue *p  = ir_elem_ptr(c->f, c->cur, v, ix, v->type->elem);
+                lanes[k] = ir_load(c->f, c->cur, p, v->type->elem);
+            }
+            return ir_struct_new(c->f, c->cur, want, lanes, n);
+        }
+    }
     if (want->kind==IRT_PTR && v->type->kind==IRT_SLICE)
         return ir_slice_data(c->f, c->cur, v, want->elem ? want->elem : v->type->elem);
     // A decayed array's base points at an ELEMENT; a pointer to a whole slice or struct (a `var`
@@ -1365,7 +1405,25 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
     // nothing at all. The dereference is exactly the identity on addresses.
     if (e->kind == EXPR_DEREF) return ir_lower_expr(c, e->as.deref_expr.expr);
     if (e->kind == EXPR_INDEX) {
-        IrValue *base = ir_lower_expr(c, e->as.index_expr.target);
+        Expr    *tgt  = e->as.index_expr.target;
+        IrType  *tty  = (tgt && tgt->type) ? ir_lower_type(c, tgt->type) : NULL;
+        IrValue *base;
+        // ★ A LANE IS ADDRESSED IN THE VECTOR, NOT IN A COPY OF IT. An array has no value in
+        // this model, so lowering it yields its address; a vector IS a value, so lowering it
+        // LOADED a copy and the lane pointer pointed into that copy. A read got the right lane;
+        // `v[2] = 30` wrote the copy and was silently lost (the program returned the old
+        // lane, at -O0 as at -O2). An addressable vector is addressed; an rvalue one is
+        // materialised, the rule EXPR_MEMBER already follows for a struct.
+        if (tty && tty->kind == IRT_VECTOR) {
+            bool addressable = tgt->kind==EXPR_IDENTIFIER || tgt->kind==EXPR_MEMBER
+                            || tgt->kind==EXPR_INDEX     || tgt->kind==EXPR_DEREF;
+            if (addressable) base = ir_lower_addr(c, tgt);
+            else {
+                IrValue *v = ir_lower_expr(c, tgt);
+                base = ir_alloca(c->f, c->cur, tty);
+                ir_store(c->f, c->cur, base, v);
+            }
+        } else base = ir_lower_expr(c, tgt);
         IrValue *idx  = ir_lower_expr(c, e->as.index_expr.index);
         IrType  *elem = ir_lower_type(c, e->type);
         if (base->type && base->type->kind == IRT_SLICE)
@@ -2120,7 +2178,18 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                       : (R->type && R->type->kind==TYPE_SIMPLE && R->type->int_width_cache>0) ? R->type
                       : e->type;
             bool sgn = !(sty && sty->kind==TYPE_SIMPLE && sty->int_width_cache>0 && !sty->int_signed_cache);
-            IrValue *x = ir_lower_expr(c,L), *y = ir_lower_expr(c,R);
+            // An ARRAY LITERAL beside a vector (`a - [1, 1, 1, 1]`) is that vector: it types as
+            // an array, so it was materialised as one and its BASE POINTER met the vector —
+            // C that gcc refuses (`vector - pointer`), or, once a scalar operand was cast to the
+            // lane type, a pointer broadcast into every lane. Built lane by lane instead.
+            IrType *lvt = L->type ? ir_lower_type(c, L->type) : NULL;
+            IrType *rvt = R->type ? ir_lower_type(c, R->type) : NULL;
+            IrValue *x = (L->kind==EXPR_ARRAY_LITERAL && rvt && rvt->kind==IRT_VECTOR)
+                       ? ir_lower_vec_literal(c, L, rvt) : NULL;
+            if (!x) x = ir_lower_expr(c, L);
+            IrValue *y = (R->kind==EXPR_ARRAY_LITERAL && lvt && lvt->kind==IRT_VECTOR)
+                       ? ir_lower_vec_literal(c, R, lvt) : NULL;
+            if (!y) y = ir_lower_expr(c, R);
             IrOp op; IrWrapMode wrap; IrCmp cmp;
             if (ir_cmp_op(e->as.binary_expr.op, sgn, &cmp)) return ir_icmp(c->f,c->cur,cmp,x,y);
             if (ir_bin_op(e->as.binary_expr.op, sgn, &op, &wrap)) {

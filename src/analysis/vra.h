@@ -2032,6 +2032,9 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
         clen = bd->aux.alloca_ty->array_len;                          // local fixed array or vector
     else if (base->type && (base->type->kind==IRT_ARRAY || base->type->kind==IRT_VECTOR))
         clen = base->type->array_len;                                // fixed-length value (e.g. a param)
+    else if (base->type && base->type->kind==IRT_PTR && base->type->elem &&
+             base->type->elem->kind==IRT_VECTOR)
+        clen = base->type->elem->array_len;           // a lane of a vector reached by address (a field)
     int shape_base = -1;
     if (bd && bd->op==IR_SLICE_DATA && bd->n_operands>=1) {
         int s = bd->operands[0]->id; if (V->slicelen[s]>=0) lenvar=V->slicelen[s];
@@ -2441,6 +2444,22 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
 static void vra_check_shift(Vra *V, Octagon *W, IrInstr *ins) {
     if (ins->unchecked || ins->n_operands < 2) return;
     IrValue *a = ins->operands[0], *b = ins->operands[1];
+    // ★ A VECTOR SHIFT HAD NO OBLIGATION: `v << k` with k unproven, and `v << 40` on u32 lanes,
+    // compiled — undefined in C lane by lane (UBSan does not instrument vector shifts, so nothing
+    // said so). A SCALAR amount is judged like a scalar shift's; an amount per LANE cannot be,
+    // since the domain has no lane ranges, so it is refused. The lanes themselves wrap
+    // (emitted through the unsigned type), so there is no value question.
+    if (a && a->type && a->type->kind == IRT_VECTOR && a->type->elem && a->type->elem->kind == IRT_INT) {
+        int lb = a->type->elem->bits;
+        VraCheck c; memset(&c,0,sizeof c); c.kind = VRA_OVERFLOW; c.at = ins;
+        c.line = ins->line; c.col = ins->col; c.shift = 1;
+        if (b && b->type && b->type->kind == IRT_INT) {
+            int64_t blo, bhi; vra_range(V, W, b, &blo, &bhi);
+            c.ok = (blo >= 0) && (bhi <= lb - 1);
+        } else c.ok = false;
+        vra_add_check(V, c);
+        return;
+    }
     if (!a || !b || !a->type || a->type->kind != IRT_INT) return;
     int bits = a->type->bits;
     if (bits <= 0 || bits > 64) return;

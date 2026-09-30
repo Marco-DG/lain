@@ -18,6 +18,27 @@ static Type *parse_type_core(Arena *arena, Parser *parser);
 // ordinary type name). The element must be a scalar primitive iN/uN (N=1..64) or
 // f32/f64 — no primitive contains an 'x', so splitting at the first 'x' is safe,
 // and a user type like `foox3` fails the primitive check and stays a plain name.
+// A vector is a C `vector_size` type, which gcc and clang accept only at a POWER-OF-TWO size:
+// `u8x3` compiled and emitted C neither compiler builds ("number of vector components 3 not a
+// power of two"), and a 3-bit lane (`u3x4`) computed `vector_size(0)`. The lane count must be a
+// power of two, at most 64, and a lane an 8/16/32/64-bit integer or f32/f64.
+static void vector_shape_check(Parser *parser, Type *elem, isize lanes) {
+    const char *why = NULL;
+    if (lanes < 1 || lanes > 64 || (lanes & (lanes - 1)) != 0)
+        why = "a vector's lane count must be a power of two, from 1 to 64";
+    else if (!elem || elem->kind != TYPE_SIMPLE || !elem->base_type)
+        why = "a vector's lane must be an integer or float type";
+    else {
+        signed char w = 0; bool sg = false;
+        const char *n = elem->base_type->name; isize ln = elem->base_type->length;
+        bool fl = ln == 3 && (strncmp(n, "f32", 3) == 0 || strncmp(n, "f64", 3) == 0);
+        ast_parse_int_width(n, ln, &w, &sg);
+        if (!fl && !(w == 8 || w == 16 || w == 32 || w == 64))
+            why = "a vector's lane must be an 8, 16, 32 or 64-bit integer, or f32/f64";
+    }
+    if (why) _parser_error(parser, why);
+}
+
 static Type *try_parse_vector_sugar(Arena *arena, const char *name, isize len) {
     isize xp = -1;
     for (isize k = 1; k < len - 1; k++) if (name[k] == 'x') { xp = k; break; }
@@ -219,7 +240,7 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
   // Only a bare, unqualified name (start.start == end.start ⇒ no dotted qualifier).
   if (start.start == end.start) {
     Type *sugar = try_parse_vector_sugar(arena, end.start, end.length);
-    if (sugar) return sugar;
+    if (sugar) { vector_shape_check(parser, sugar->element_type, sugar->array_len); return sugar; }
   }
 
   // Builtin SIMD vector `Vec(N, T)` — N lanes of element type T. Recognized here,
@@ -238,6 +259,7 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
     Type *elem = parse_type_core(arena, parser);
     parser_expect(TOKEN_R_PAREN, "Vec(N, T): expected ')' after the element type");
     parser_advance();
+    vector_shape_check(parser, elem, lanes);
     return type_vector(arena, lanes, elem);
   }
 

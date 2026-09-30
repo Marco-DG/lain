@@ -2752,7 +2752,7 @@ void sema_infer_expr(Expr *e) {
         if (e->as.unary_expr.op == TOKEN_TILDE || e->as.unary_expr.op == TOKEN_MINUS) {
             Type *ot = e->as.unary_expr.right ? e->as.unary_expr.right->type : NULL;
             while (ot && ot->kind == TYPE_COMPTIME) ot = ot->element_type;
-            if (ot && is_integer_type(ot)) e->type = ot;
+            if (ot && (is_integer_type(ot) || ot->kind == TYPE_VECTOR)) e->type = ot;
         }
         // Unary negation overflow: `-x` overflows at the type minimum
         // (e.g. -INT_MIN is not representable). Check against the operand's
@@ -3255,6 +3255,21 @@ void sema_infer_expr(Expr *e) {
         sema_infer_expr(e->as.builtin_expr.arg);
         // @ctz/@clz/@popcount take an integer; @movemask takes a Vec(N,u8). All
         // yield a u32 (a bit count, or a lane bitmask).
+        // ★ @movemask READS BYTES. Its lane test is a byte's top bit, and on `u32x4 == 2` it
+        // read the first four BYTES (lane 0 alone): [1,2,3,4] == 2 gave 0, not 0b0010, silently.
+        // A u8x64 would need 64 bits in a u32. So: 8-bit lanes, at most 32 of them.
+        if (bk == BUILTIN_MOVEMASK) {
+            Type *mt = sema_unwrap_type(e->as.builtin_expr.arg->type);
+            int mb = 0; bool ms = false;
+            if (mt && (mt->kind != TYPE_VECTOR || !parse_iN_uN(mt->element_type, &mb, &ms) ||
+                       mb != 8 || mt->array_len > 32)) {
+                fprintf(stderr, "[E100] Error Ln %li, Col %li: @movemask takes a vector of at most 32 "
+                        "8-bit lanes (u8x16, u8x32): its bits are the lanes' top bits.\n",
+                        (long)e->line, (long)e->col);
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
+        }
         static Type *u32_ty = NULL;
         if (!u32_ty) {
             Id *uid = arena_push_aligned(sema_arena, Id);

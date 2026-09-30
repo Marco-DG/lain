@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// A vector shift's amount must be below the lane width, as a scalar shift's must: `v << 40` on
+// u32 lanes is undefined in C lane by lane, and compiled with no diagnostic (UBSan does not
+// instrument vector shifts).
+func main() i32 {
+    var a u32x4 = [1, 2, 3, 4]
+    var r u32x4 = a << 40
+    return (r[0] & 1) as i32
+}

@@ -1,0 +1,28 @@
+// A lane of a vector is read AND written in the vector itself. The lane pointer pointed into a
+// loaded COPY, so `v[2] = 30` was silently lost (returned the old lane at -O0 and -O2), and a
+// scalar operand of a vector operation (`x & k`, k a variable) was emitted as an int32_t that
+// gcc and clang refuse to convert. Each check has its own return code.
+type Pair {
+    v u32x4
+    n u32
+}
+func lane(v u32x4, k usize < 4) u32 {
+    return v[k]
+}
+func main() i32 {
+    var v u32x4 = [1, 2, 3, 4]
+    v[2] = 30
+    if v[2] != 30 { return 1 }
+    if v[0] != 1 { return 2 }
+    if lane(v, 2) != 30 { return 3 }
+    var p = Pair([5, 6, 7, 8], 9)
+    p.v[1] = 60
+    if p.v[1] != 60 { return 4 }
+    if p.v[3] != 8 { return 5 }
+    var x u8x16 = [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 255]
+    var k u8 = 15
+    var y u8x16 = (x >> 4) & k
+    if y[15] != 15 { return 6 }
+    if y[1] != 2 { return 7 }
+    return 0
+}

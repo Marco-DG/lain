@@ -150,9 +150,21 @@ static void ir_arith_operand_c(IrInstr *i, int k, FILE *o) {
     if (rt && ot && rt->kind == IRT_INT && ot->kind == IRT_INT && rt->bits > ot->bits) {
         fputc('(', o); ir_ctype(rt, o); fputc(')', o);
     }
+    // A SCALAR operand of a vector operation takes the LANE type, as the vector comparison's
+    // does: `(x >> 4) & 15` on a u8x16 held the 15 in an int32_t, and gcc and clang both refuse
+    // "conversion of scalar int32_t to vector involves truncation" for a variable operand.
+    if (rt && ot && rt->kind == IRT_VECTOR && rt->elem && ot->kind == IRT_INT) {
+        fputc('(', o); ir_ctype(rt->elem, o); fputc(')', o);
+    }
     fprintf(o, "v%d", i->operands[k]->id);
 }
 
+// The unsigned vector type of a vector's shape, spelled inline: `uint32_t
+// __attribute__((vector_size(16)))`. Used to make a signed lane's arithmetic wrap.
+static void ir_vec_unsigned_ctype(const IrType *vt, FILE *o) {
+    int bits = vt->elem ? vt->elem->bits : 32;
+    fprintf(o, "uint%d_t __attribute__((vector_size(%d)))", bits, (int)vt->array_len * bits / 8);
+}
 static const char *ir_arith_c(IrOp op) {
     switch (op) { case IR_ADD:return "+"; case IR_SUB:return "-"; case IR_MUL:return "*";
         case IR_SDIV: case IR_UDIV:return "/"; case IR_SREM: case IR_UREM:return "%";
@@ -358,8 +370,22 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                  fprintf(o, "  v%d = slot%d;\n",  i->result->id, i->result->id);
             else fprintf(o, "  v%d = &slot%d;\n", i->result->id, i->result->id);
             break;
-        case IR_ELEM_PTR: fprintf(o, "  v%d = &v%d[v%d];\n", i->result->id,
-                                  i->operands[0]->id, i->operands[1]->id); break;
+        case IR_ELEM_PTR: {
+            // A LANE of a vector: the base points at the vector, and `&p[k]` would be the k-th
+            // VECTOR. The lane is `(lane *)p + k` (a vector type aliases its lane type in gcc
+            // and clang). `&v[k]` on a vector VALUE is a gcc extension clang refuses.
+            IrType *bt = i->operands[0]->type;
+            IrType *vt = (bt && bt->kind==IRT_PTR && bt->elem && bt->elem->kind==IRT_VECTOR) ? bt->elem
+                       : (bt && bt->kind==IRT_VECTOR) ? bt : NULL;
+            if (vt && vt->elem) {
+                fprintf(o, "  v%d = (", i->result->id); ir_ctype(vt->elem, o);
+                fprintf(o, " *)%sv%d + v%d;\n", bt->kind==IRT_VECTOR ? "&" : "",
+                        i->operands[0]->id, i->operands[1]->id);
+                break;
+            }
+            fprintf(o, "  v%d = &v%d[v%d];\n", i->result->id, i->operands[0]->id, i->operands[1]->id);
+            break;
+        }
         case IR_FIELD_PTR: {   // base is a struct pointer; name the field from its type
             IrType *st = i->operands[0]->type ? i->operands[0]->type->elem : NULL;
             if (st && ir_struct_layout(st).packed) break;   // bits, not an address: see ir_pk_of
@@ -617,7 +643,15 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             }
             break;
         }
-        case IR_NEG:    fprintf(o, "  v%d = -v%d;\n", i->result->id, i->operands[0]->id); break;
+        case IR_NEG:
+            if (i->result->type && i->result->type->kind == IRT_VECTOR && i->result->type->elem &&
+                i->result->type->elem->kind == IRT_INT && i->result->type->elem->is_signed) {
+                fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
+                fputs(")(-(", o); ir_vec_unsigned_ctype(i->result->type, o);
+                fprintf(o, ")v%d);\n", i->operands[0]->id);         // lane-wise wrap, as above
+                break;
+            }
+            fprintf(o, "  v%d = -v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_BNOT:   fprintf(o, "  v%d = ~v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_CAST:   if (i->wrap != IR_WRAP_CHECK && i->n_operands == 1 && i->operands[0]->type &&
                             i->operands[0]->type->kind == IRT_INT && i->result->type &&
@@ -672,6 +706,31 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                 (i->op == IR_ADD || i->op == IR_SUB || i->op == IR_MUL) &&
                 i->result->type && i->result->type->kind == IRT_INT) {
                 ir_emit_modular(i, o);
+                break;
+            }
+            // ★ A VECTOR'S LANES WRAP (the language's rule: sema exempts vector arithmetic from
+            // the overflow check for that reason). On SIGNED lanes the C `+ - * <<` is signed
+            // overflow, undefined: UBSan, on `i32x4 + i32x4` at 2147483647, "signed integer
+            // overflow ... cannot be represented in type 'int'". Through the unsigned vector
+            // type it is the wrap the language promises — the scalar `+%` rule, lane-wise.
+            if (i->n_operands == 2 && i->result && i->result->type &&
+                i->result->type->kind == IRT_VECTOR && i->result->type->elem &&
+                i->result->type->elem->kind == IRT_INT && i->result->type->elem->is_signed &&
+                (i->op == IR_ADD || i->op == IR_SUB || i->op == IR_MUL || i->op == IR_SHL) &&
+                i->operands[0]->type && i->operands[1]->type &&
+                (i->operands[0]->type->kind == IRT_VECTOR || i->operands[0]->type->kind == IRT_INT) &&
+                (i->operands[1]->type->kind == IRT_VECTOR || i->operands[1]->type->kind == IRT_INT)) {
+                IrType *vt = i->result->type;
+                fprintf(o, "  v%d = (", i->result->id); ir_ctype(vt, o); fputs(")(", o);
+                for (int k = 0; k < 2; k++) {
+                    IrType *ot = i->operands[k]->type;
+                    if (k) fprintf(o, " %s ", ir_arith_c(i->op));
+                    fputc('(', o);
+                    if (ot && ot->kind == IRT_VECTOR) ir_vec_unsigned_ctype(vt, o);
+                    else fprintf(o, "uint%d_t", vt->elem->bits);
+                    fprintf(o, ")v%d", i->operands[k]->id);
+                }
+                fputs(");\n", o);
                 break;
             }
             if (i->n_operands == 2 && i->result) {

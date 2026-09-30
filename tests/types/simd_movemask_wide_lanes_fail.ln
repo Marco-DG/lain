@@ -1,0 +1,7 @@
+// EXPECT: [E100]
+// @movemask's bits are the top bits of 8-bit lanes. On u32 lanes it read the first four BYTES
+// (lane 0 alone), so `[1, 2, 3, 4] == 2` gave 0, not 0b0010, with no diagnostic.
+func main() i32 {
+    var a u32x4 = [1, 2, 3, 4]
+    return @movemask(a == 2) as i32
+}

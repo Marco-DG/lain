@@ -1,0 +1,20 @@
+// A vector's lanes WRAP, signed ones included: that is why vector arithmetic carries no overflow
+// obligation. The C `+ - * <<` and unary `-` on a signed lane are signed overflow, undefined
+// (UBSan: "signed integer overflow ... in type 'int'"), so they are emitted through the unsigned
+// vector type. This runs under -fsanitize=undefined; each check has its own return code.
+func main() i32 {
+    var a i32x4 = [2147483647, -2147483648, 5, -7]
+    var s i32x4 = a + a
+    if s[0] != -2 { return 1 }
+    if s[1] != 0 { return 2 }
+    var d i32x4 = a - [1, 1, 1, 1]
+    if d[1] != 2147483647 { return 3 }
+    var m i32x4 = a * 3
+    if m[0] != 2147483645 { return 4 }
+    var n i32x4 = -a
+    if n[1] != -2147483648 { return 5 }
+    if n[3] != 7 { return 6 }
+    var l i32x4 = a << 1
+    if l[0] != -2 { return 7 }
+    return 0
+}

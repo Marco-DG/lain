@@ -262,7 +262,7 @@ at=vector_size 2
 rc=11
 out=
 at=const 2
-at=vector_size 2
+at=vector_size 4
 ### tests/examples/simd_vra_count_pass.ln
 rc=32
 out=
@@ -1605,6 +1605,21 @@ at=const 2
 rc=0
 out=
 at=const 2
+### tests/trust/simd_lane_write_pass.ln
+rc=0
+out=
+at=const 2
+at=vector_size 2
+ty=Pair struct
+### tests/trust/simd_mask_value_pass.ln
+rc=0
+out=
+at=const 2
+at=vector_size 2
+### tests/trust/simd_signed_lanes_wrap_pass.ln
+rc=0
+out=
+at=vector_size 8
 ### tests/trust/slice_len_bound_lexer_pass.ln
 rc=0
 out=

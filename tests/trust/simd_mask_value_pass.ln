@@ -1,0 +1,18 @@
+// A lane comparison's mask is a vector of the operands' type: all ones (255 for u8) where the
+// comparison holds, 0 elsewhere. It crosses every boundary as that type. The IR's mask has
+// signed lanes (the ISA's convention), so `var m u8x16 = a == 7` emitted `Vec_16_u8 = Vec_16_i8`,
+// which gcc refuses; declaration, argument and assignment are each checked here.
+func count_set(m u8x16) u32 {
+    return @popcount(@movemask(m))
+}
+func main() i32 {
+    var a u8x16 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 7]
+    var m u8x16 = a == 7
+    if m[6] != 255 { return 1 }
+    if m[0] != 0 { return 2 }
+    if count_set(a == 7) != 2 { return 3 }
+    m = a == 1
+    if m[0] != 255 { return 4 }
+    if m[15] != 0 { return 5 }
+    return 0
+}
