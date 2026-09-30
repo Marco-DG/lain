@@ -151,6 +151,10 @@ typedef struct {
     int      dsz;       // octagon storage per block = dim*dim
     int64_t **in;       // in[bid] : entry octagon storage (NULL = unreached)
     bool    *reached;
+    // in[bid] is KNOWN CLOSED: it was stored from a closed state, or from the join of two
+    // closed states, and not widened since. Loading it then needs no closure. False is the safe
+    // value, and the only one a write that does not know sets (see Octagon.clean).
+    bool    *inclosed;
     IrInstr **def;      // def[val id] = producing instruction (NULL for params)
     IrValue **val;      // val[val id] = the value itself (for its TYPE — see vra_range)
     int     *defblk;    // defblk[val id] = id of the block defining it (-1 = param)
@@ -497,7 +501,7 @@ static void vra_seed_element_ranges_round(Vra *V) {
     }
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         bool replay = Wm && V->reached && V->reached[b->id] && V->in && V->in[b->id];
-        if (replay) { memcpy(Wm, V->in[b->id], (size_t)V->dsz*8); Wv.clean=false; oct_close(&Wv); }
+        if (replay) { memcpy(Wm, V->in[b->id], (size_t)V->dsz*8); Wv.clean=V->inclosed && V->inclosed[b->id]; oct_close(&Wv); }
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (replay && ins->op != IR_STORE) vra_transfer_instr(V, &Wv, ins);
             if (ins->op != IR_STORE || ins->n_operands < 2) {
@@ -3745,6 +3749,7 @@ static bool vra_mutual_cycle_terminates(IrFunc *f, IrFunc *g, IrInstr *cfg, IrIn
 // start pass 1 inside pass 0's conclusions.
 static void vra_seed_entry(Vra *V, IrFunc *f, int dim) {
     Octagon E={V->noct,dim,V->in[f->entry->id]}; oct_init_top(&E,V->noct,E.m);
+    V->inclosed[f->entry->id] = false;          // seeded constraint by constraint, never closed
       // seed each integer parameter's type interval (a usize is ≥ 0, etc.). Skip a
       // bound whose doubled DBM entry would overflow (e.g. u64's ~2^63 upper).
       int pidx = 0;
@@ -3828,7 +3833,7 @@ static Vra *vra_analyze(IrFunc *f) {
     const int *oct_map_saved = oct_map;
     oct_map = V->odim;
     int nb=f->next_block_id;
-    V->in=calloc(nb,sizeof(int64_t*)); V->reached=calloc(nb,sizeof(bool));
+    V->in=calloc(nb,sizeof(int64_t*)); V->reached=calloc(nb,sizeof(bool)); V->inclosed=calloc(nb,sizeof(bool));
     V->def=calloc(V->nvar,sizeof(IrInstr*)); V->defblk=calloc(V->nvar,sizeof(int));
     V->val=calloc(V->nvar,sizeof(IrValue*));
     V->cval=calloc(V->nvar,sizeof(int64_t)); V->cknown=calloc(V->nvar,sizeof(bool));
@@ -4000,7 +4005,11 @@ static Vra *vra_analyze(IrFunc *f) {
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             if (!V->reached[b->id]) continue;
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=false;
+            // ★ A copy of a closed matrix is closed. Each block's in-state was re-closed here, and
+            // each edge's copy of W below, although most of them were copies of a matrix closed a
+            // moment before: 70% of the closures that followed a copy or a join were such
+            // re-closures of a closed state.
+            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=V->inclosed[b->id];
             oct_close(&W);
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
@@ -4009,14 +4018,17 @@ static Vra *vra_analyze(IrFunc *f) {
             else if (b->term.kind==IR_TERM_BR_COND){ succ[0]=b->term.a; succ[1]=b->term.b; ns=2; guarded=true; cond=b->term.cond; }
             for (int k=0;k<ns;k++) {
                 IrBlock *s=succ[k]; if(!s) continue;
-                memcpy(T_m, W_m, V->dsz*8); T.nvar=V->noct; T.dim=dim; T.clean=false;
+                memcpy(T_m, W_m, V->dsz*8); T.nvar=V->noct; T.dim=dim; T.clean=W.clean;
                 if (guarded){ vra_refine_guard(V,&T,cond,k==0); oct_close(&T); }
                 if (oct_is_bottom(&T)) continue;
-                if (!V->reached[s->id]) { memcpy(V->in[s->id],T_m,V->dsz*8); V->reached[s->id]=true; changed=true; continue; }
+                if (!V->reached[s->id]) { memcpy(V->in[s->id],T_m,V->dsz*8); V->inclosed[s->id]=T.clean; V->reached[s->id]=true; changed=true; continue; }
                 Octagon In={V->noct,dim,V->in[s->id]};
                 oct_join(&J,&In,&T);
-                if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); J.clean=false; }
-                if (!oct_leq(&J,&In)){ memcpy(V->in[s->id],J_m,V->dsz*8); changed=true; }
+                // The pointwise max of two tightly closed octagons is tightly closed (Miné; the
+                // unary entries stay even). A widened one is not.
+                bool jclosed = V->inclosed[s->id] && T.clean;
+                if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); J.clean=false; jclosed=false; }
+                if (!oct_leq(&J,&In)){ memcpy(V->in[s->id],J_m,V->dsz*8); V->inclosed[s->id]=jclosed; changed=true; }
             }
         }
     }
@@ -4041,7 +4053,7 @@ static Vra *vra_analyze(IrFunc *f) {
                     ins->result->id < V->nvar) V->modwrap[ins->result->id] = false;
             continue;
         }
-        memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=false; oct_close(&W);
+        memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=V->inclosed[b->id]; oct_close(&W);
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             switch (ins->op) {
                 // a constant index into a FIXED array is fully decidable from constants
@@ -4280,7 +4292,7 @@ static Vra *vra_analyze(IrFunc *f) {
             if (b->term.kind!=IR_TERM_RET) continue;
             if (!b->term.cond) { all=false; continue; }
             if (!V->reached[b->id]) continue;          // unreachable: contributes nothing
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=false;
+            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; W.clean=V->inclosed[b->id];
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
             int64_t lo,hi; vra_range(V,&W,b->term.cond,&lo,&hi);
@@ -4861,7 +4873,7 @@ static void vra_dump_state(Vra *V, FILE *o) {
 static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
-    free(V->in); free(V->reached); free(V->def); free(V->defblk); free(V->cval); free(V->cknown); free(V->modwrap);
+    free(V->in); free(V->reached); free(V->inclosed); free(V->def); free(V->defblk); free(V->cval); free(V->cknown); free(V->modwrap);
     free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->uniq_store); free(V->strict_esc); free(V->odim); free(V->checks); free(V);
 }
 
