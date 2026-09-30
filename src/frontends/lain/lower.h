@@ -2692,9 +2692,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             return ir_load(c->f, c->cur, p, ty);
         }
         case EXPR_BUILTIN: {
-            // The SCALAR bit intrinsics are ordinary integer ops. (@movemask/@load/@store/
-            // @shuffle are SIMD and stay unlowered — off the North Star, and they need a
-            // vector type in the IR.)
+            // The SCALAR bit intrinsics are ordinary integer ops; the SIMD ones (@load/@store/
+            // @splat/@movemask/@shuffle) lower below, on IRT_VECTOR.
             BuiltinKind bk = e->as.builtin_expr.builtin_kind;
             if (bk==BUILTIN_CTZ || bk==BUILTIN_CLZ || bk==BUILTIN_POPCOUNT) {
                 IrValue *x = ir_lower_expr(c, e->as.builtin_expr.arg);
@@ -2761,7 +2760,28 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     return ir_vec_movemask(c->f, c->cur, v,
                                            ty && ty->kind==IRT_INT ? ty : ir_type_int(c->a,32,false));
             }
-            // @shuffle remains unmodelled. A @store WRITES memory, so declare the footprint.
+            if (bk==BUILTIN_SHUFFLE) {
+                IrValue *tv = e->as.builtin_expr.arg  ? ir_lower_expr(c, e->as.builtin_expr.arg)  : NULL;
+                IrValue *iv = e->as.builtin_expr.arg2 ? ir_lower_expr(c, e->as.builtin_expr.arg2) : NULL;
+                if (tv && iv && tv->type && tv->type->kind==IRT_VECTOR &&
+                    iv->type && iv->type->kind==IRT_VECTOR) {
+                    IrValue *r = ir_vec_shuffle(c->f, c->cur, tv, iv);
+                    // An index spelled `e & K`, K a constant below N, is in range in every lane:
+                    // an unsigned `& K` is at most K. That is the classifier idiom
+                    // (`(x >> 4) & 15`), and gcc keeps the zeroing's three instructions next to
+                    // pshufb unless told. Per-lane ranges in the analysis would generalise this.
+                    Expr *ie = e->as.builtin_expr.arg2;
+                    if (ie && ie->kind == EXPR_BINARY && ie->as.binary_expr.op == TOKEN_AMPERSAND) {
+                        Expr *kx = ie->as.binary_expr.right->kind == EXPR_LITERAL ? ie->as.binary_expr.right
+                                 : ie->as.binary_expr.left->kind  == EXPR_LITERAL ? ie->as.binary_expr.left : NULL;
+                        if (kx && kx->as.literal_expr.value >= 0 &&
+                            kx->as.literal_expr.value < (int64_t)tv->type->array_len)
+                            c->cur->instrs_tail->aux.imm = 1;
+                    }
+                    return r;
+                }
+            }
+            // Anything else here is unmodelled. A @store WRITES memory, so declare the footprint.
             return ir_opaque_expr(c, ty, true, "simd-builtin",
                                   e->as.builtin_expr.arg ? ir_lower_expr(c, e->as.builtin_expr.arg) : NULL, NULL);
         }

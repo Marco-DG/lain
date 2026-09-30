@@ -1616,6 +1616,10 @@ rc=0
 out=
 at=const 2
 at=vector_size 2
+### tests/trust/simd_shuffle_pass.ln
+rc=0
+out=
+at=vector_size 3
 ### tests/trust/simd_signed_lanes_wrap_pass.ln
 rc=0
 out=

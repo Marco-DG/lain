@@ -1,0 +1,35 @@
+// @shuffle(t, idx): lane i is t[idx[i]] when idx[i] < N, and 0 otherwise (plan 7H.2, DECIDE-Q).
+// TOTAL: an out-of-range lane is 0 (ARM NEON `tbl`, Rust `swizzle_dyn`), never another entry and
+// never undefined, so a shuffle states no obligation. Each check has its own return code.
+func main() i32 {
+    var t   u8x16 = [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115]
+    var rev u8x16 = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+    var e1  u8x16 = [115, 114, 113, 112, 111, 110, 109, 108, 107, 106, 105, 104, 103, 102, 101, 100]
+    if @movemask(@shuffle(t, rev) == e1) != 65535 { return 1 }
+
+    // out of range: 16, 200, 255, 17, 128, 99, 31, 64, 32, 250 all read as 0
+    var oob u8x16 = [16, 200, 255, 17, 0, 1, 2, 3, 128, 99, 31, 15, 64, 32, 250, 16]
+    var e2  u8x16 = [0, 0, 0, 0, 100, 101, 102, 103, 0, 0, 0, 115, 0, 0, 0, 0]
+    if @movemask(@shuffle(t, oob) == e2) != 65535 { return 2 }
+
+    // the classifier idiom: a byte's high nibble looks up its class in a 16-entry table
+    var cls u8x16 = [0, 0, 1, 2, 3, 3, 4, 4, 5, 5, 5, 5, 5, 5, 5, 6]
+    var x   u8x16 = [32, 48, 65, 97, 10, 127, 128, 255, 0, 15, 16, 240, 90, 57, 122, 200]
+    var e3  u8x16 = [1, 2, 3, 4, 0, 4, 5, 6, 0, 0, 0, 6, 3, 2, 4, 5]
+    if @movemask(@shuffle(cls, (x >> 4) & 15) == e3) != 65535 { return 3 }
+
+    // `& 31` does NOT bound a lane below 16: 20 & 31 = 20, which must still read as 0 (an index
+    // masked with K < N is emitted without the zeroing; K = 31 is not such a mask)
+    var w  u8x16 = [20, 1, 17, 2, 31, 3, 16, 4, 52, 5, 63, 6, 48, 7, 36, 8]
+    var e8 u8x16 = [0, 101, 0, 102, 0, 103, 0, 104, 0, 105, 0, 106, 0, 107, 104, 108]
+    if @movemask(@shuffle(t, w & 31) == e8) != 65535 { return 8 }
+    // a wider lane: u32x4 indexed by u32x4, an index far past N is 0 too
+    var t4 u32x4 = [10, 20, 30, 40]
+    var ix u32x4 = [3, 4, 0, 4000000000]
+    var r4 u32x4 = @shuffle(t4, ix)
+    if r4[0] != 40 { return 4 }
+    if r4[1] != 0 { return 5 }
+    if r4[2] != 10 { return 6 }
+    if r4[3] != 0 { return 7 }
+    return 0
+}

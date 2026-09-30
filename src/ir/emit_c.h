@@ -574,6 +574,31 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                         i->result->id, i->operands[0]->id, lanes);
             break;
         }
+        case IR_VEC_SHUFFLE: {
+            // Lane i = idx[i] < N ? t[idx[i]] : 0. GCC's __builtin_shuffle reads an index modulo
+            // N, so the mask zeroes exactly the out-of-range lanes (with SSSE3 that is pshufb and
+            // a compare). Clang has no variable-index __builtin_shuffle; the lane loop is the same
+            // function, written out. The ISA is the C compiler's flag, never the language's.
+            IrType *vt = i->result->type; int nl = vt ? (int)vt->array_len : 0;
+            int r = i->result->id, t = i->operands[0]->id, x = i->operands[1]->id;
+            if (i->aux.imm == 1) {     // every index is below N (lower.h): no zeroing to do
+                fputs("#if defined(__GNUC__) && !defined(__clang__)\n", o);
+                fprintf(o, "  v%d = __builtin_shuffle(v%d, v%d);\n", r, t, x);
+                fputs("#else\n", o);
+                fprintf(o, "  for (int lk = 0; lk < %d; lk++) v%d[lk] = v%d[v%d[lk]];\n", nl, r, t, x);
+                fputs("#endif\n", o);
+                break;
+            }
+            fputs("#if defined(__GNUC__) && !defined(__clang__)\n", o);
+            fprintf(o, "  v%d = (", r); ir_ctype(vt, o);
+            fprintf(o, ")(__builtin_shuffle(v%d, v%d) & (", t, x); ir_ctype(vt, o);
+            fprintf(o, ")(v%d < %d));\n", x, nl);
+            fputs("#else\n", o);
+            fprintf(o, "  for (int lk = 0; lk < %d; lk++) v%d[lk] = v%d[lk] < %d ? v%d[v%d[lk]] : 0;\n",
+                    nl, r, x, nl, t, x);
+            fputs("#endif\n", o);
+            break;
+        }
         case IR_FUNC_REF: fprintf(o, "  v%d = ", i->result->id);
                           ir_emit_fname(i->aux.callee, o); fputs(";\n", o); break;
         // Two slices are equal iff same length and same bytes. `memcmp` is the C spelling of

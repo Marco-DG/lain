@@ -247,6 +247,9 @@ typedef enum {
     IR_VEC_MOVEMASK,        // op[0] = a Vec(N,u8) ; result : u32 — one bit per lane's sign.
                             // Language-neutral: "reduce a lane-wise predicate to a bitmask" is
                             // what every SIMD ISA calls it, not a Lain idea.
+    IR_VEC_SHUFFLE,         // op[0] = table Vec(N,T), op[1] = index Vec(N,U), U the unsigned T-width
+                            // type ; result Vec(N,T): lane i = idx[i] < N ? table[idx[i]] : 0. TOTAL:
+                            // an out-of-range lane is 0 (NEON tbl, Rust swizzle_dyn), never UB.
     IR_FIELD_PTR,           // op[0] = base ; aux.field_idx
     IR_ELEM_PTR,            // op[0] = base (array/slice), op[1] = index ; BOUNDS proven here
     IR_SLICE_LEN,           // op[0] = slice ; result : the length value (first-class)

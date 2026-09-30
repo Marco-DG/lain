@@ -368,6 +368,12 @@ IrValue *ir_vec_movemask(IrFunc *f, IrBlock *b, IrValue *v, IrType *t) {
     ir_emit(b, ins);
     return ins->result;
 }
+IrValue *ir_vec_shuffle(IrFunc *f, IrBlock *b, IrValue *tbl, IrValue *idx) {
+    IrInstr *ins = ir_instr(f, IR_VEC_SHUFFLE, tbl->type, 2);
+    ins->operands[0] = tbl; ins->operands[1] = idx;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_elem_ptr(IrFunc *f, IrBlock *b, IrValue *base, IrValue *idx, IrType *elem) {
     IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = elem;
     IrInstr *ins = ir_instr(f, IR_ELEM_PTR, pt, 2);

@@ -23,6 +23,8 @@ The types of Lain are organized as follows:
   \item \textit{Slice types}: dynamically-sized views into contiguous memory,
         including sized slice types with static length constraints
         (\S\,\ref{sec:types.slice});
+  \item \textit{Vector types}: a fixed number of lanes, operated on lane by lane
+        (\S\,\ref{sec:types.vector});
   \item \textit{Struct types}: named product types (\S\,\ref{sec:types.struct});
   \item \textit{Enum types}: simple enumerations (\S\,\ref{sec:types.enum});
   \item \textit{ADT types}: sum types with associated data (\S\,\ref{sec:types.adt});
@@ -642,6 +644,83 @@ func vadd(var out i32[], a i32[out.len], b i32[out.len]) { ... }
 //           const int32_t* a, const int32_t* b);
 \end{laincode}
 \end{example}
+
+\section{Vector types}
+\label{sec:types.vector}
+\index{type!vector}\index{SIMD}
+
+\pnum
+\lain{Vec(N, T)} is a value of \lain{N} \emph{lanes} of type \lain{T}, held and passed whole.
+\lain{T}x\lain{N} is the same type: \lain{u8x16} is \lain{Vec(16, u8)}, \lain{i32x4} is
+\lain{Vec(4, i32)}. A vector may be a local, a parameter, a return value or a struct field.
+
+\begin{constraint}
+  \lain{N} shall be a power of two from 1 to 64, and \lain{T} an 8, 16, 32 or 64-bit integer
+  type, or \lain{f32} or \lain{f64} (\diagcode{E100}).
+\end{constraint}
+
+\pnum
+A vector is built from an array literal of exactly \lain{N} elements where a vector is
+expected: a declaration, an argument, a field, a return, or an operand beside a vector
+(\lain{a - [1, 1, 1, 1]}). \lain{@splat(V, x)} is the vector of type \lain{V} with \lain{x} in
+every lane.
+
+\pnum
+The arithmetic, bitwise and shift operators and the comparisons apply lane by lane, and a
+scalar operand applies to every lane. Integer lanes \emph{wrap}: a lane's result is taken modulo
+$2^w$ for a $w$-bit lane, including unary \lain{-}, so vector arithmetic carries no overflow
+obligation. Two obligations remain, as on scalars:
+\begin{itemize}
+  \item a division or remainder's divisor shall be provably non-zero (\diagcode{E015}); a
+        scalar divisor is judged like a scalar's, while a vector divisor cannot be proven,
+        because the analysis holds no per-lane facts;
+  \item a shift's amount shall be a scalar provably in $[0, w-1]$ (\diagcode{E086}); an amount
+        given per lane is refused for the same reason.
+\end{itemize}
+
+\pnum
+A comparison yields a \emph{mask} of the operands' vector type: every bit of a lane is set
+where the comparison holds and clear where it does not (255 and 0 for \lain{u8} lanes).
+
+\pnum
+\lain{v[k]} is lane \lain{k} of \lain{v}, read or written in place. \lain{k} shall be provably
+less than \lain{N} (\diagcode{E085}).
+
+\pnum
+\lain{@load(V, b, i)} reads the \lain{N} elements of \lain{b} starting at element \lain{i} into
+a vector of type \lain{V}, and \lain{@store(b, i, v)} writes \lain{v}'s lanes there. For an
+array or slice \lain{b} the obligation is \lain{i + N <= b.len} (\diagcode{E085}). A raw pointer
+has no length, so a load or store through one is allowed only inside \lain{unsafe}.
+
+\pnum
+\lain{@movemask(v)} is the \lain{u32} whose bit \lain{k} is the top bit of lane \lain{k}: of a
+mask, the lanes where the comparison held.
+
+\begin{constraint}
+  The operand of \lain{@movemask} shall be a vector of at most 32 lanes of 8 bits
+  (\diagcode{E100}).
+\end{constraint}
+
+\pnum
+\lain{@shuffle(t, idx)} is a table lookup: lane \lain{k} of the result is
+\lain{t[idx[k]]} when \lain{idx[k] < N}, and 0 otherwise. It is total: an index out of range
+reads 0, never another lane and never an undefined value, so it states no obligation. This is
+the behaviour of ARM NEON's \texttt{tbl} and of Rust's \texttt{swizzle\_dyn}; on x86 with SSSE3
+it is \texttt{pshufb}. The classifier idiom \lain{@shuffle(tbl, (x >> 4) & 15)} indexes a
+16-entry table by each byte's high nibble.
+
+\begin{constraint}
+  \lain{t} shall be a vector of integer lanes and \lain{idx} a vector of as many lanes of the
+  unsigned integer type of the same width: \lain{u8x16} for a \lain{u8x16} or \lain{i8x16}
+  table, \lain{u32x4} for a \lain{u32x4} table (\diagcode{E100}).
+\end{constraint}
+
+\pnum
+The language names no instruction set. A vector is translated to a C \texttt{vector\_size}
+type; the C compiler's target flags choose the instructions, and the same program builds for
+x86-64 and AArch64. \lain{@movemask} uses the SSE2 or AVX2 intrinsic where the target defines
+it and a portable loop elsewhere; \lain{@shuffle} uses \texttt{\_\_builtin\_shuffle} under GCC
+and a lane loop elsewhere.
 
 \section{Struct types}
 \label{sec:types.struct}

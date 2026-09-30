@@ -3290,6 +3290,31 @@ void sema_infer_expr(Expr *e) {
         if (e->as.builtin_expr.arg)  sema_infer_expr(e->as.builtin_expr.arg);
         if (e->as.builtin_expr.arg2) sema_infer_expr(e->as.builtin_expr.arg2);
         if (e->as.builtin_expr.arg3) sema_infer_expr(e->as.builtin_expr.arg3);
+        // @shuffle(t, idx) (DECIDE-Q): `t` a vector of integer lanes, `idx` as many lanes of the
+        // UNSIGNED type of the same width — u8x16 for a u8x16 or i8x16 table, u32x4 for u32x4.
+        // The result is t's type. An index lane >= N gives 0, so there is no obligation to state.
+        if (bk == BUILTIN_SHUFFLE && e->as.builtin_expr.arg && e->as.builtin_expr.arg2) {
+            Type *tt = sema_unwrap_type(e->as.builtin_expr.arg->type);
+            Type *it = sema_unwrap_type(e->as.builtin_expr.arg2->type);
+            if (tt && it) {
+                int tb = 0, ib = 0; bool ts = false, is = false; const char *why = NULL;
+                if (tt->kind != TYPE_VECTOR || !parse_iN_uN(tt->element_type, &tb, &ts))
+                    why = "the table must be a vector of integer lanes";
+                else if (it->kind != TYPE_VECTOR || !parse_iN_uN(it->element_type, &ib, &is))
+                    why = "the index must be a vector of unsigned integer lanes";
+                else if (it->array_len != tt->array_len)
+                    why = "the index must have as many lanes as the table";
+                else if (is || ib != tb)
+                    why = "the index lanes must be the unsigned type of the table's lane width "
+                          "(u8 lanes for an 8-bit table, u32 lanes for a 32-bit one)";
+                if (why) {
+                    fprintf(stderr, "[E100] Error Ln %li, Col %li: @shuffle: %s.\n",
+                            (long)e->line, (long)e->col, why);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+            }
+        }
         if (bk == BUILTIN_LOAD || bk == BUILTIN_SPLAT)
             e->type = e->as.builtin_expr.vec_type;                 // result is the vector T
         else if (bk == BUILTIN_SHUFFLE)
