@@ -1,0 +1,25 @@
+// Handwritten by Marco De Groskovskaja
+// License: MIT
+// 22/09/2026
+
+OCT_INF i128 = 0x1FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF // 1/4 of I128_MAX
+
+type Octagon {
+    n_vars  u32
+    m       i128[]
+}
+
+func dim(oct Octagon) u32 {
+    2 * oct.n_vars
+}
+
+func oct_add_ub(o Octagon, ) {
+    oct_tighten(o, oct_neg(v), oct_pos(v), 2*c)
+}   //  v ≤ c
+
+
+static void oct_add_ub(Octagon *o, int v, int64_t c) {
+oct_tighten(o, oct_neg(v), oct_pos(v), 2*c);
+}
+For n program variables, the matrix has size 2n × 2n = 4n2 entries.
+Every relational inequality ±x ± y ≤ c maps to a single entry m[i][j] in this flat array.

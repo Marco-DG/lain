@@ -1,0 +1,187 @@
+// Handwritten by:  Marco De Groskovskaja
+// License:         MIT
+// Date:            2026/09/22
+
+/* u128 */
+
+type u128 {
+    lo u64
+    hi u64
+}
+
+func u64_as_u128(a u64) u128 {
+    u128(a, 0)
+}
+
+func u128_add(a u128, b u128) u128 {
+    lo    u64 = a.lo +% b.lo
+    carry u64 = (lo < a.lo) as u64
+    hi    u64 = a.hi +% b.hi +% carry
+    u128(lo, hi)
+}
+
+func u128_sub(a u128, b u128) u128 {
+    lo     u64 = a.lo -% b.lo
+    borrow u64 = (a.lo < b.lo) as u64
+    hi     u64 = a.hi -% b.hi -% borrow
+    u128(lo, hi)
+}
+
+func u128_lt(a u128, b u128) bool {
+    if a.hi != b.hi {
+        a.hi < b.hi
+    } else {
+        a.lo < b.lo
+    }
+}
+
+func u128_gt(a u128, b u128) bool { u128_lt(b, a) }
+func u128_le(a u128, b u128) bool { !u128_lt(b, a) }
+func u128_ge(a u128, b u128) bool { !u128_lt(a, b) }
+func u128_eq(a u128, b u128) bool { (a.hi == b.hi) and (a.lo == b.lo) }
+
+func u128_and(a u128, b u128) u128 { u128(a.lo & b.lo, a.hi & b.hi) }
+func u128_or(a u128, b u128) u128 { u128(a.lo | b.lo, a.hi | b.hi) }
+func u128_xor(a u128, b u128) u128 { u128(a.lo ^ b.lo, a.hi ^ b.hi) }
+func u128_not(a u128) u128 { u128(~a.lo, ~a.hi) }
+
+func u128_shl(a u128, n u32) u128 {
+    if n == 0 {
+        a
+    } else if n < 64 {
+        lo u64 = a.lo << n
+        hi u64 = (a.hi << n) | (a.lo >> (64 - n))
+        u128(lo, hi)
+    } else if n < 128 {
+        u128(0, a.lo << (n - 64))
+    } else {
+        u128(0, 0)
+    }
+}
+
+func u128_shr(a u128, n u32) u128 {
+    if n == 0 {
+        a
+    } else if n < 64 {
+        lo u64 = (a.lo >> n) | (a.hi << (64 - n))
+        hi u64 = a.hi >> n
+        u128(lo, hi)
+    } else if n < 128 {
+        u128(a.hi >> (n - 64), 0)
+    } else {
+        u128(0, 0)
+    }
+}
+
+func mul64_to_128(a u64, b u64) u128 {
+    a_lo u64 = a & 0xFFFFFFFF
+    a_hi u64 = a >> 32
+    b_lo u64 = b & 0xFFFFFFFF
+    b_hi u64 = b >> 32
+
+    p0 u64 = a_lo *% b_lo
+    p1 u64 = a_lo *% b_hi
+    p2 u64 = a_hi *% b_lo
+    p3 u64 = a_hi *% b_hi
+
+    mid u64 = p1 +% (p0 >> 32)
+    mid_sum u64 = mid +% p2
+    carry u64 = if mid_sum < p2 { 1 << 32 } else { 0 }
+
+    lo u64 = (p0 & 0xFFFFFFFF) | (mid_sum << 32)
+    hi u64 = p3 +% (mid_sum >> 32) +% carry
+    u128(lo, hi)
+}
+
+func u128_mul_wrap(a u128, b u128) u128 {
+    p  u128 = mul64_to_128(a.lo, b.lo)
+    hi u64  = p.hi +% (a.lo *% b.hi) +% (a.hi *% b.lo)
+    u128(p.lo, hi)
+}
+
+func u128_min(a u128, b u128) u128 { if u128_lt(a, b) { a } else { b } }
+func u128_max(a u128, b u128) u128 { if u128_gt(a, b) { a } else { b } }
+
+/* i128 */
+
+type i128 {
+    lo u64
+    hi u64
+}
+
+func i64_as_i128(a i64) i128 {
+    i128(a as u64, (a >> 63) as u64)
+}
+
+func i128_is_neg(a i128) bool {
+    (a.hi as i64) < 0
+}
+
+func i128_neg(a i128) i128 {
+    diff u128 = u128_sub(u128(0, 0), u128(a.lo, a.hi))
+    i128(diff.lo, diff.hi)
+}
+
+func i128_abs(a i128) i128 {
+    if i128_is_neg(a) {
+        i128_neg(a)
+    } else {
+        a
+    }
+}
+
+func i128_add(a i128, b i128) i128 {
+    sum u128 = u128_add(u128(a.lo, a.hi), u128(b.lo, b.hi))
+    i128(sum.lo, sum.hi)
+}
+
+func i128_sub(a i128, b i128) i128 {
+    diff u128 = u128_sub(u128(a.lo, a.hi), u128(b.lo, b.hi))
+    i128(diff.lo, diff.hi)
+}
+
+func i128_lt(a i128, b i128) bool {
+    a_hi i64 = a.hi as i64
+    b_hi i64 = b.hi as i64
+
+    if a_hi != b_hi {
+        a_hi < b_hi
+    } else {
+        a.lo < b.lo
+    }
+}
+
+func i128_gt(a i128, b i128) bool { i128_lt(b, a) }
+func i128_le(a i128, b i128) bool { !i128_lt(b, a) }
+func i128_ge(a i128, b i128) bool { !i128_lt(a, b) }
+func i128_eq(a i128, b i128) bool { (a.hi == b.hi) and (a.lo == b.lo) }
+
+func i128_mul_wrap(a i128, b i128) i128 {
+    p u128 = u128_mul_wrap(u128(a.lo, a.hi), u128(b.lo, b.hi))
+    i128(p.lo, p.hi)
+}
+
+func i128_shl(a i128, n u32) i128 {
+    r u128 = u128_shl(u128(a.lo, a.hi), n)
+    i128(r.lo, r.hi)
+}
+
+func i128_sar(a i128, n u32) i128 {
+    if n == 0 {
+        a
+    } else if n < 64 {
+        lo u64 = (a.lo >> n) | (a.hi << (64 - n))
+        hi u64 = ((a.hi as i64) >> n) as u64
+        i128(lo, hi)
+    } else if n < 128 {
+        sign_fill u64 = if i128_is_neg(a) { ~0 as u64 } else { 0 }
+        lo u64 = ((a.hi as i64) >> (n - 64)) as u64
+        i128(lo, sign_fill)
+    } else {
+        sign_fill u64 = if i128_is_neg(a) { ~0 as u64 } else { 0 }
+        i128(sign_fill, sign_fill)
+    }
+}
+
+func i128_min(a i128, b i128) i128 { if i128_lt(a, b) { a } else { b } }
+func i128_max(a i128, b i128) i128 { if i128_gt(a, b) { a } else { b } }

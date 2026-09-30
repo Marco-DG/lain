@@ -20,6 +20,19 @@
 import token.{Token, TokenKind}
 import ctype.{is_alpha, is_alnum, is_digit, is_space}
 
+/*
+define {
+    Text type = u8[]
+    Pos  type = u32 in Text
+}
+
+type Lexer {          // 16 Bytes
+    src Text          // A slice is {data, len}
+    pos Pos    // Max file size is ~ 4 GB
+                      // Unused padding is 4 bytes
+}
+*/
+
 type Lexer {          // 16 Bytes
     src u8[]          // A slice is {data, len}
     pos u32 in src    // Max file size is ~ 4 GB
@@ -28,7 +41,7 @@ type Lexer {          // 16 Bytes
 
 func lexer_new(text u8[:0]) Lexer {
     return Lexer(text, 0)
-}
+}   
 
 func lexer_next(l *Lexer) Token {
     // ...

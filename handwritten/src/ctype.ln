@@ -1,6 +1,6 @@
-// Handwritten by Marco De Groskovskaja
-// License: MIT
-// 15/08/2025
+// Handwritten by:  Marco De Groskovskaja
+// License:         MIT
+// Date:            2026/08/15
 
 U  u8 = 0x01  // upper
 L  u8 = 0x02  // lower
