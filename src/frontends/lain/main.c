@@ -79,6 +79,17 @@ int main(int argc, char **argv) {
     // untouched — the project convention is to invoke lain from the repo root
     // with a relative path so that std/ resolves correctly.
     if (args.filename && args.filename[0] == '/') {
+        // ★ ...but `-o` names a file relative to where the user IS, not to where the source is.
+        // Resolved after the chdir, `lain /abs/src/x.ln -o out.c` wrote /abs/src/out.c — into
+        // the source tree (probe files landed in tests/types/ this way, twice). Every other
+        // compiler resolves -o against the working directory; so does this one now.
+        static char out_abs[4096];
+        if (args.output_file && args.output_file[0] != '/') {
+            char cwd[4096];
+            if (getcwd(cwd, sizeof cwd) &&
+                (size_t)snprintf(out_abs, sizeof out_abs, "%s/%s", cwd, args.output_file) < sizeof out_abs)
+                args.output_file = out_abs;
+        }
         const char *fname = args.filename;
         const char *last_sep = NULL;
         for (const char *p = fname; *p; p++) {
