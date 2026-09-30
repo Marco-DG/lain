@@ -431,6 +431,11 @@ gen_rawptr_alias() {      # ★ the RESTRICT class. Two RAW pointers to the SAME
     # promises nothing of the kind for `*T` in `unsafe` — only for borrows, where the borrow
     # checker has refused the aliasing program. Emit restrict here and the same binary prints
     # 11 at -O0 and 1 at -O3, which is what makes this the shape that can falsify the rule.
+    # ★ THE ALIAS ARRIVES THROUGH A COPY. Passing `&x` twice is refused before the backend is
+    # reached (E004, the co-argument rule), so until 2026-09-30 every program this generator
+    # wrote was refused and it judged NOTHING (100% "old-rejected"). A pointer copied into a
+    # variable first is accepted, and aliases just the same at run time: that is the program
+    # the -O0/-O3 differential below needs, and it is what a raw pointer is for.
     local k=$(r 2) inc=$(( $(r 9) + 1 ))
     if [ "$k" = "0" ]; then cat <<EOF
 extern func libc_printf(fmt *u8, ...) i32 effects io
@@ -443,7 +448,8 @@ func bump2(p *var i32, q *var i32) i32 {
 }
 func main() i32 effects io, raises, alloc {
     var x i32 = 0
-    var r i32 = bump2(&x, &x)
+    var q *var i32 = &x
+    var r i32 = bump2(&x, q)
     libc_printf("%d\n", r)
     return 0
 }
@@ -461,7 +467,8 @@ func mix(p *var i32, q *var i32) i32 {
 func main() i32 effects io, raises, alloc {
     var x i32 = 7
     var y i32 = 3
-    var s i32 = mix(&x, &x) +% mix(&x, &y)
+    var q *var i32 = &x
+    var s i32 = mix(&x, q) +% mix(&x, &y)
     libc_printf("%d\n", s)
     return 0
 }
