@@ -27,6 +27,10 @@ typedef struct { isize line, col; int code; } BorrowFinding;
 typedef struct { IrFunc *f; IrInstr **def; int nvar; BorrowFinding *finds; int nfinds, cap; } Borrow;
 
 static void bor_add(Borrow *B, isize line, isize col, int code) {
+    // A deferred statement is replayed at every exit: one write through a reference is one E009.
+    if (code == 9)
+        for (int k = 0; k < B->nfinds; k++)
+            if (B->finds[k].code == 9 && B->finds[k].line == line && B->finds[k].col == col) return;
     if (B->nfinds==B->cap){ B->cap=B->cap?B->cap*2:4; B->finds=realloc(B->finds,B->cap*sizeof*B->finds); }
     B->finds[B->nfinds++] = (BorrowFinding){line,col,code};
 }
@@ -788,12 +792,18 @@ typedef struct {
 // read a dead frame. An extern has no body: its result borrows what its type says
 // (bor_ret_borrow_mask), and it is believed to keep nothing else. Memoized per module; a
 // recursive cycle answers "every parameter" (fail-closed).
-typedef struct { IrFunc *f; uint64_t ret, keep; int state; } BorSum;
+// and, for E009 (immutable storage), what it WRITES through them:
+//   wsh   the parameters whose referent it writes (`d[0] = 9` through a slice parameter);
+//   wdp   the parameters through which it writes storage a reference HELD in them points to
+//         (`t = b.s  t[0] = 9` for a by-value `b Box`), so a struct passed `var` whose callee
+//         writes only its own fields does not count as writing what its slices point into.
+typedef struct { IrFunc *f; uint64_t ret, keep, wsh, wdp; int state; } BorSum;
 #define BOR_SUM_MAX 4096
 static BorSum  bor_sums[BOR_SUM_MAX];
 static int     bor_nsums;
 static IrFunc *bor_sums_mod;
 static void bor_summary(IrFunc *callee, IrFunc *mod, uint64_t *ret, uint64_t *keep);
+static void bor_summary_w(IrFunc *callee, IrFunc *mod, uint64_t *wsh, uint64_t *wdp);
 
 static bool bor_holds_ref(const IrType *t, int depth) {
     if (!t || depth > 16) return false;
@@ -1011,8 +1021,124 @@ static bool bor_walk(BorEsc *E, IrValue *v0, uint64_t *params) {
 
 // One pass over f: what each slot may hold, then the three sinks. With B it reports E010 for
 // every reference to a local that reaches one; it always fills f's summary (*ret, *keep).
-static void bor_escape_pass(Borrow *B, IrFunc *f, IrFunc *mod, uint64_t *ret, uint64_t *keep) {
-    *ret = 0; *keep = 0;
+static bool bor_is_ref(const IrType *t) {
+    return t && (t->kind == IRT_PTR || t->kind == IRT_SLICE || t->kind == IRT_ARRAY);
+}
+// The parameters a write through `a` changes: *sh those whose referent it writes, *dp those
+// through which it reaches storage by a reference held inside them (a by-value aggregate's
+// references, or one read out of a parameter's referent).
+static void bor_write_params(BorEsc *E, IrValue *a, bool deep0, uint64_t *sh, uint64_t *dp) {
+    char *seen = calloc((size_t)E->nvar * 2, 1);
+    IrValue **wv = malloc((size_t)E->nvar * 2 * sizeof *wv); char *wd = malloc((size_t)E->nvar * 2);
+    if (!seen || !wv || !wd) { free(seen); free(wv); free(wd); *sh = *dp = ~(uint64_t)0; return; }
+    int top = 0;
+#define BOR_WPUSH(x, dd) do { IrValue *x_ = (x); bool d_ = (dd); if (x_ && x_->id >= 0 && x_->id < E->nvar && !seen[x_->id * 2 + d_]) { seen[x_->id * 2 + d_] = 1; wv[top] = x_; wd[top++] = d_; } } while (0)
+    BOR_WPUSH(a, deep0);
+    while (top > 0) {
+        --top; IrValue *v = wv[top]; bool deep = wd[top];
+        IrInstr *d = E->def[v->id];
+        if (!d) {
+            int pi = E->pidx[v->id];
+            if (pi < 0) continue;
+            uint64_t bit = pi < 64 ? (uint64_t)1 << pi : ~(uint64_t)0;
+            if (deep || !bor_is_ref(v->type)) *dp |= bit; else *sh |= bit;
+            continue;
+        }
+        switch (d->op) {
+            case IR_ALLOCA: break;                                // the frame's own storage
+            case IR_FIELD_PTR: case IR_ELEM_PTR: case IR_SLICE_DATA: case IR_MAKE_SLICE:
+            case IR_SUBSLICE: case IR_CAST: case IR_SUM_PAYLOAD:
+                if (d->n_operands >= 1) BOR_WPUSH(d->operands[0], deep);
+                break;
+            case IR_PHI:
+                for (IrPhiArg *p = d->phi_args; p; p = p->next) BOR_WPUSH(p->value, deep);
+                break;
+            case IR_LOAD: {                    // a copy of what was stored, or a reference read
+                const BorTargets *t = bor_targets(E, d->n_operands >= 1 ? d->operands[0] : NULL);
+                for (int k = 0; k < t->n; k++) {               // out of the caller's storage
+                    BorVals *L = &E->stored[t->slots[k]];
+                    for (int j = 0; j < L->n; j++) BOR_WPUSH(L->v[j], deep);
+                }
+                if (t->outliving && d->n_operands >= 1) BOR_WPUSH(d->operands[0], true);
+                break;
+            }
+            case IR_CALL: {
+                IrFunc *callee = bor_callee(E, d);
+                uint64_t rm = ~(uint64_t)0, km;
+                if (callee) bor_summary(callee, E->mod, &rm, &km);
+                int a0 = bor_call_arg0(d);
+                for (int k = a0; k < d->n_operands; k++)
+                    if (k - a0 >= 64 || ((rm >> (k - a0)) & 1u)) BOR_WPUSH(d->operands[k], deep);
+                break;
+            }
+            case IR_CONST: case IR_STR_CONST: case IR_FUNC_REF: case IR_OPAQUE:
+            case IR_SUM_TAG: case IR_SLICE_LEN: case IR_ICMP:
+                break;
+            default:
+                for (int k = 0; k < d->n_operands; k++)
+                    if (d->operands[k] && bor_holds_ref(d->operands[k]->type, 0)) BOR_WPUSH(d->operands[k], deep);
+                break;
+        }
+    }
+#undef BOR_WPUSH
+    free(seen); free(wv); free(wd);
+}
+static int32_t bor_slot_seal(BorEsc *E, int slot) {
+    IrInstr *d = (slot >= 0 && slot < E->nvar) ? E->def[slot] : NULL;
+    return d && d->op == IR_ALLOCA ? d->seal : 0;
+}
+// Does a write through a reference HELD in or by v (not v's own referent) reach immutable
+// storage whose seal is not `own`?
+static bool bor_deep_hits_seal(BorEsc *E, IrValue *v, int32_t own) {
+    char *seen = calloc((size_t)E->nvar, 1);
+    IrValue **wl = malloc((size_t)(E->nvar > 0 ? E->nvar : 1) * sizeof *wl);
+    if (!seen || !wl) { free(seen); free(wl); return true; }
+    int top = 0; bool hit = false;
+#define BOR_DPUSH(x) do { IrValue *x_ = (x); if (x_ && x_->id >= 0 && x_->id < E->nvar && !seen[x_->id] && bor_holds_ref(x_->type, 0)) { seen[x_->id] = 1; wl[top++] = x_; } } while (0)
+    if (bor_is_ref(v->type)) {                                   // what its referent holds
+        const BorTargets *t = bor_targets(E, v);
+        for (int s = 0; s < t->n; s++) { BorVals *L = &E->stored[t->slots[s]]; for (int j = 0; j < L->n; j++) BOR_DPUSH(L->v[j]); }
+    } else BOR_DPUSH(v);
+    while (top > 0 && !hit) {
+        IrValue *x = wl[--top];
+        if (bor_is_ref(x->type)) {                               // a reference: where it points,
+            const BorTargets *t = bor_targets(E, x);             // and what is held there
+            for (int s = 0; s < t->n; s++) {
+                int32_t sl = bor_slot_seal(E, t->slots[s]);
+                if (sl && sl != own) { hit = true; break; }
+                BorVals *L = &E->stored[t->slots[s]]; for (int j = 0; j < L->n; j++) BOR_DPUSH(L->v[j]);
+            }
+            continue;
+        }
+        IrInstr *d = E->def[x->id];                              // an aggregate: its references
+        if (!d) continue;
+        switch (d->op) {
+            case IR_LOAD: {
+                const BorTargets *t = bor_targets(E, d->n_operands >= 1 ? d->operands[0] : NULL);
+                for (int s = 0; s < t->n; s++) { BorVals *L = &E->stored[t->slots[s]]; for (int j = 0; j < L->n; j++) BOR_DPUSH(L->v[j]); }
+                break;
+            }
+            case IR_PHI: for (IrPhiArg *p = d->phi_args; p; p = p->next) BOR_DPUSH(p->value); break;
+            case IR_CALL: {
+                IrFunc *callee = bor_callee(E, d);
+                uint64_t rm = ~(uint64_t)0, km;
+                if (callee) bor_summary(callee, E->mod, &rm, &km);
+                int a0 = bor_call_arg0(d);
+                for (int k = a0; k < d->n_operands; k++)
+                    if (k - a0 >= 64 || ((rm >> (k - a0)) & 1u)) BOR_DPUSH(d->operands[k]);
+                break;
+            }
+            default: for (int k = 0; k < d->n_operands; k++) BOR_DPUSH(d->operands[k]); break;
+        }
+    }
+#undef BOR_DPUSH
+    free(seen); free(wl);
+    return hit;
+}
+
+static void bor_escape_pass(Borrow *B, IrFunc *f, IrFunc *mod, uint64_t *ret, uint64_t *keep,
+                            uint64_t *wsh, uint64_t *wdp) {
+    *ret = 0; *keep = 0; *wsh = 0; *wdp = 0;
     BorEsc E; memset(&E, 0, sizeof E);
     E.f = f; E.mod = mod; E.nvar = f->next_value_id > 0 ? f->next_value_id : 1;
     E.def = calloc((size_t)E.nvar, sizeof *E.def);
@@ -1020,7 +1146,7 @@ static void bor_escape_pass(Borrow *B, IrFunc *f, IrFunc *mod, uint64_t *ret, ui
     E.tg = calloc((size_t)E.nvar, sizeof *E.tg);
     E.direct = calloc((size_t)E.nvar, sizeof *E.direct);
     E.stored = calloc((size_t)E.nvar, sizeof *E.stored);
-    if (!E.def || !E.pidx || !E.tg || !E.direct || !E.stored) { *ret = *keep = ~(uint64_t)0; goto done; }
+    if (!E.def || !E.pidx || !E.tg || !E.direct || !E.stored) { *ret = *keep = *wsh = *wdp = ~(uint64_t)0; goto done; }
     for (int k = 0; k < E.nvar; k++) E.pidx[k] = -1;
     { int pi = 0;
       for (IrParam *p = f->params; p; p = p->next, pi++)
@@ -1066,6 +1192,43 @@ static void bor_escape_pass(Borrow *B, IrFunc *f, IrFunc *mod, uint64_t *ret, ui
     // the sinks
     for (IrBlock *b = f->blocks; b; b = b->next) {
         for (IrInstr *i = b->instrs; i; i = i->next) {
+            // E009: what this instruction writes, for the summary, and whether it reaches
+            // immutable storage from outside the seal that initialises it
+            if (i->op == IR_STORE && i->n_operands >= 2) {
+                bor_write_params(&E, i->operands[0], false, wsh, wdp);
+                const BorTargets *t = bor_targets(&E, i->operands[0]);
+                bool hit = false;
+                for (int s = 0; !hit && s < t->n; s++) {
+                    int32_t sl = bor_slot_seal(&E, t->slots[s]);
+                    if (sl && sl != i->seal) hit = true;
+                }
+                if (B && hit) bor_add(B, i->line, i->col, 9);
+            } else if (i->op == IR_CALL) {
+                IrFunc *callee = bor_callee(&E, i);
+                uint64_t ws = ~(uint64_t)0, wd = ~(uint64_t)0;
+                if (callee) bor_summary_w(callee, mod, &ws, &wd);
+                int a0 = bor_call_arg0(i);
+                bool reported = false;
+                for (int k = a0; k < i->n_operands; k++) {
+                    IrValue *a = i->operands[k]; int ak = k - a0;
+                    if (!a) continue;
+                    bool sh = ak >= 64 || ((ws >> ak) & 1u), dp = ak >= 64 || ((wd >> ak) & 1u);
+                    if (sh) bor_write_params(&E, a, false, wsh, wdp);
+                    if (dp) bor_write_params(&E, a, true, wsh, wdp);
+                    // ee32cee reports an immutable array passed straight to a writing parameter
+                    if (!B || reported || (ak < 64 && ((i->ro_args >> ak) & 1u))) continue;
+                    if (sh && bor_is_ref(a->type)) {
+                        const BorTargets *t = bor_targets(&E, a);
+                        for (int s = 0; s < t->n && !reported; s++) {
+                            int32_t sl = bor_slot_seal(&E, t->slots[s]);
+                            if (sl && sl != i->seal) { bor_add(B, i->line, i->col, 9); reported = true; }
+                        }
+                    }
+                    if (dp && !reported && bor_holds_ref(a->type, 0) && bor_deep_hits_seal(&E, a, i->seal)) {
+                        bor_add(B, i->line, i->col, 9); reported = true;
+                    }
+                }
+            }
             if (i->op == IR_STORE && i->n_operands >= 2) {        // into storage the caller owns
                 IrValue *val = i->operands[1];
                 if (!val || !bor_holds_ref(val->type, 0)) continue;
@@ -1130,15 +1293,38 @@ static void bor_summary(IrFunc *callee, IrFunc *mod, uint64_t *ret, uint64_t *ke
     if (bor_nsums == BOR_SUM_MAX) return;
     int me = bor_nsums++;
     bor_sums[me].f = callee; bor_sums[me].state = 1;
-    uint64_t r, kp;
-    bor_escape_pass(NULL, callee, mod, &r, &kp);
-    bor_sums[me].ret = r; bor_sums[me].keep = kp; bor_sums[me].state = 2;
+    bor_sums[me].wsh = bor_sums[me].wdp = ~(uint64_t)0;            // in progress: everything
+    uint64_t r, kp, ws, wd;
+    bor_escape_pass(NULL, callee, mod, &r, &kp, &ws, &wd);
+    bor_sums[me].ret = r; bor_sums[me].keep = kp; bor_sums[me].wsh = ws; bor_sums[me].wdp = wd;
+    bor_sums[me].state = 2;
     *ret = r; *keep = kp;
+}
+// What a callee writes through its parameters. An extern is believed by its TYPES: a `*var T`,
+// an array or a slice parameter (an output reference) may be written, through anything it
+// reaches; a `*T` may not.
+static void bor_summary_w(IrFunc *callee, IrFunc *mod, uint64_t *wsh, uint64_t *wdp) {
+    *wsh = *wdp = ~(uint64_t)0;
+    if (!callee) return;
+    if (callee->is_extern) {
+        uint64_t m = 0; int k = 0;
+        for (IrParam *p = callee->params; p; p = p->next, k++) {
+            IrType *t = p->value ? p->value->type : NULL;
+            if (k < 64 && t && ((t->kind == IRT_PTR && t->ptr_mut) || t->kind == IRT_ARRAY || t->kind == IRT_SLICE))
+                m |= (uint64_t)1 << k;
+        }
+        *wsh = *wdp = m;
+        return;
+    }
+    uint64_t r, kp;
+    bor_summary(callee, mod, &r, &kp);                            // fills the memo entry
+    for (int k = 0; k < bor_nsums; k++)
+        if (bor_sums[k].f == callee && bor_sums[k].state == 2) { *wsh = bor_sums[k].wsh; *wdp = bor_sums[k].wdp; return; }
 }
 
 static void bor_check_escapes(Borrow *B, IrFunc *f, IrFunc *mod) {
-    uint64_t r, k;
-    bor_escape_pass(B, f, mod, &r, &k);
+    uint64_t r, k, ws, wd;
+    bor_escape_pass(B, f, mod, &r, &k, &ws, &wd);
 }
 
 static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {

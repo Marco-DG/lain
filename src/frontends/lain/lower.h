@@ -909,6 +909,27 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
 }
 
 // forward
+// ★ AN IMMUTABLE BINDING'S STORAGE IS IMMUTABLE BY ANY PATH. sema refuses a write that NAMES it
+// (`a[0] = 9`, E009), but a slice of it kept in a `var` binding or handed back by a call was
+// written freely: `var s = xs[0..2]  s[0] = 9` changed `xs`. What lowering emits for the binding
+// is its initialisation; everything it emitted is stamped with one seal (ir.h), and a write
+// that reaches the storage from anywhere else is refused (borrow.h) and, at run time, a proof
+// failure in the interpreter. A module constant's per-use copy is sealed the same way.
+static int32_t ir_seal_next = 0;
+typedef struct { IrBlock *b0; IrInstr *t0; IrBlock *last; } IrSealMark;
+static IrSealMark ir_seal_open(LowerCtx *c) {
+    IrSealMark m = { c->cur, c->cur ? c->cur->instrs_tail : NULL, c->f->blocks_tail };
+    return m;
+}
+static void ir_seal_stamp(IrInstr *i, int32_t id) {
+    if (!i->seal && (i->op == IR_ALLOCA || i->op == IR_STORE || i->op == IR_CALL)) i->seal = id;
+}
+static void ir_seal_close(LowerCtx *c, IrSealMark m) {        // an inner seal keeps its own id
+    int32_t id = ++ir_seal_next;
+    if (m.b0) for (IrInstr *i = m.t0 ? m.t0->next : m.b0->instrs; i; i = i->next) ir_seal_stamp(i, id);
+    for (IrBlock *b = m.last ? m.last->next : c->f->blocks; b; b = b->next)
+        if (b != m.b0) for (IrInstr *i = b->instrs; i; i = i->next) ir_seal_stamp(i, id);
+}
 static IrValue *ir_lower_expr(LowerCtx *c, Expr *e);
 // Coerce a value into the representation a DECLARED slot asks for. Two coercions the
 // language performs implicitly and the IR must make explicit:
@@ -2259,6 +2280,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                         ir_init_fact(c->f, c->cur, agg);
                         return agg;
                     }
+                    IrSealMark sm = ir_seal_open(c);      // a module constant: immutable storage
                     IrValue *agg = ir_alloca_array(c->f, c->cur, ty);
                     int k = 0;
                     c->const_depth++;
@@ -2270,6 +2292,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     }
                     c->const_depth--;
                     ir_init_fact(c->f, c->cur, agg);      // every element is written
+                    ir_seal_close(c, sm);
                     return agg;
                 }
                 if (g) { c->const_depth++;
@@ -3254,7 +3277,17 @@ static void ir_lower_field_invariant_asserts(LowerCtx *c, IrInstr *fp, IrValue *
     }
 }
 
+static void ir_lower_stmt_body(LowerCtx *c, Stmt *s);
 static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
+    if (s && s->kind == STMT_VAR && !s->as.var_stmt.is_mutable && c->f && !ir_is_set_term(c->cur)) {
+        IrSealMark m = ir_seal_open(c);
+        ir_lower_stmt_body(c, s);
+        ir_seal_close(c, m);
+        return;
+    }
+    ir_lower_stmt_body(c, s);
+}
+static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
     if (s && s->line) { ir_cur_line = s->line; ir_cur_col = s->col; }
     if (!s || ir_is_set_term(c->cur)) return;   // dead code after a terminator
     switch (s->kind) {

@@ -1,0 +1,51 @@
+// The allowed side of E009 through a reference (tests/statements/immutable_*_fail.ln): a `var`
+// binding's storage may be written through a slice kept in another `var` binding or handed back
+// by a call; a COPY of an immutable array is new storage; a `var` struct holding a slice of
+// immutable text may be passed to a callee that writes only its own fields (a lexer's position);
+// and an immutable binding inside a loop is initialised afresh on each iteration. Each check has
+// its own exit code; every write here is also held to account by the interpreter, which treats
+// an immutable binding's storage as read-only after its initialiser.
+type Lx {
+    src u8[]
+    pos usize
+}
+func advance(l var Lx) {
+    if l.pos < l.src.len { l.pos = l.pos + 1 }
+}
+func w(d i32[]) {
+    if d.len > 0 { d[0] = 9 }
+}
+func id(d i32[]) i32[] {
+    return d
+}
+func first(d i32[]) i32 {
+    if d.len == 0 { return 0 }
+    return d[0]
+}
+func main() i32 {
+    var xs i32[2] = [1, 2]
+    var s = xs[0..2]
+    s[0] = 7
+    if xs[0] != 7 { return 1 }
+    w(id(xs[0..2]))
+    if xs[0] != 9 { return 2 }
+    ys i32[2] = [3, 4]
+    var c = ys
+    c[0] = 5
+    if c[0] != 5 or ys[0] != 3 { return 3 }
+    if first(id(ys[0..2])) != 3 { return 4 }
+    text u8[3] = [97, 98, 99]
+    var l = Lx(text[0..3], 0)
+    advance(var l)
+    advance(var l)
+    if l.pos != 2 or text[0] != 97 { return 5 }
+    var t i32 = 0
+    var i i32 = 0
+    while i < 3 {
+        zs i32[2] = [i, i]
+        t = t +% zs[1]
+        i = i + 1
+    }
+    if t != 3 { return 6 }
+    return 0
+}

@@ -384,7 +384,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \bottomrule
 \endlastfoot
 \diagcode{E008} & cannot move a value that is currently borrowed \\[2pt]
-\diagcode{E009} & cannot mutate a field through a raw pointer in safe code --- use a \lain{var} borrow; or a write through a read-only raw pointer \lain{*T}, inside \lain{unsafe} too (\S\,\ref{sec:unsafe.enables}) \\[2pt]
+\diagcode{E009} & cannot mutate a field through a raw pointer in safe code --- use a \lain{var} borrow; or a write through a read-only raw pointer \lain{*T}, inside \lain{unsafe} too (\S\,\ref{sec:unsafe.enables}); or a write that reaches an immutable binding's or a module constant's storage through a reference, by any path (\S\,\ref{sec:stmt.assign}) \\[2pt]
 \diagcode{E017} & a mutable borrow is spelled \lain{var}: passing to a \lain{var} parameter requires it at the call site, and a function returning \lain{var T} must \lain{return var} a place (or a call returning one) \\[2pt]
 \diagcode{E018} & a function can reach its end without returning a value \\[2pt]
 \diagcode{E019} & use of a partially-initialized value \\[2pt]

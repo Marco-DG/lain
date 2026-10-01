@@ -105,6 +105,12 @@ never a declaration.
   array or slice \emph{parameter} is an output reference: its elements may be written, so an
   immutable array (or a module constant) shall not be passed to one that the callee writes,
   directly or through a further call; an \lain{extern} is assumed to write it~(\diagcode{E009}).
+  Immutability belongs to the \emph{storage}: no write shall reach an immutable binding's
+  storage, or a module constant's, by any path, whether through a slice or reference kept in a
+  \lain{var} binding (\lain{var s = xs[0..2]  s[0] = 9}), handed back by a call
+  (\lain{w(id(xs[0..2]))}), or held in a struct whose callee writes through it, other than the
+  binding's own initialiser~(\diagcode{E009}). A copy (\lain{var c = xs}) is new storage and
+  may be written.
 \end{constraint}
 
 \begin{constraint}

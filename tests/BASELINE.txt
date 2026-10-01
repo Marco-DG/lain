@@ -1565,6 +1565,15 @@ at=const 8
 ### tests/trust/i64_min_divisor_pass.ln
 rc=0
 out=
+### tests/trust/immutable_storage_pass.ln
+rc=0
+out=
+at=access 6
+at=nonnull 8
+at=pure 4
+ty=Lx struct
+ty=Slice_i32 scalar
+ty=Slice_u8 scalar
 ### tests/trust/interproc_bounds_pass.ln
 rc=0
 out=30

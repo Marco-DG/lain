@@ -55,7 +55,8 @@ typedef struct IVal {
     IrName  *fn;           // IV_FUNC
 } IVal;
 
-struct IObj { IVal root; bool live, ro, heap, raw; const char *what; struct IObj *frame_next; };
+struct IObj { IVal root; bool live, ro, heap, raw; const char *what; struct IObj *frame_next;
+              int32_t seal; };   // an immutable binding's storage: written only by its seal (ir.h)
 
 typedef struct IFrame { IrFunc *f; IVal *v; int nv; IObj *objs; struct IFrame *up; } IFrame;
 
@@ -171,6 +172,8 @@ static void iv_shape(IVal *v, IrType *t, bool owned) {
 
 // ── objects and pointers ────────────────────────────────────────────────────────────────
 static IFrame *ii_frame = NULL;
+// The seal whose initialisation is running a CALL: its callee may write that binding's storage.
+static int32_t ii_open_seal = 0;
 static IObj *ii_new_obj(IrType *elem, int64_t count, const char *what) {
     IObj *o = calloc(1, sizeof *o);
     o->live = true; o->what = what;
@@ -672,9 +675,11 @@ static void ii_exec(IrInstr *ins) {
             if (ins->n_operands >= 1) count = (int64_t)iv_get(ii_val(ins->operands[0], ins), ii_ty(ins->operands[0]), ins);
             if (at && at->kind == IRT_ARRAY && ins->n_operands == 0) {
                 IObj *o = ii_new_obj(at->elem, at->array_len, "an array in a frame");
+                o->seal = ins->seal;
                 r.k = IV_PTR; r.p = ip_of(o, 0);
             } else {
                 IObj *o = ii_new_obj(at, count, "a local in a frame");
+                o->seal = ins->seal;
                 r.k = IV_PTR; r.p = ip_of(o, 0);
             }
             break;
@@ -702,6 +707,12 @@ static void ii_exec(IrInstr *ins) {
             IVal *v = ii_val(ins->operands[1], ins);
             IrType *pt = ii_ty(ins->operands[0]), *vt = ii_ty(ins->operands[1]);
             if (p.o && p.o->ro) II_PROOF(ins, "a write to read-only storage");
+            // An immutable binding's storage, written from outside its initialisation: the
+            // check E009 makes statically (borrow.h), held to account here.
+            if (p.o && p.o->seal && p.o->seal != ins->seal && p.o->seal != ii_open_seal) {
+                if (ins->unchecked) II_UB(ins, "a write to immutable storage");
+                II_PROOF(ins, "a write to immutable storage (a binding without `var`, or a module constant) outside its initialisation");
+            }
             if (vt && vt->kind == IRT_VECTOR && pt && pt->elem && pt->elem->kind != IRT_VECTOR) {   // a wide store
                 for (int k = 0; k < v->n; k++) { IPtr q = p; q.p[q.d - 1] += k; IVal *c = ip_cell(&q, ins); iv_free_owned(c); iv_copy(c, &v->e[k], true); }
                 return;
@@ -888,8 +899,11 @@ static void ii_exec(IrInstr *ins) {
                 II_UNSUP(ins, "a call to %.*s, which the module does not define", ins->aux.callee ? (int)ins->aux.callee->length : 1, ins->aux.callee ? ins->aux.callee->name : "?");
             }
             IVal ret; memset(&ret, 0, sizeof ret); ret.k = IV_UNIT;
+            int32_t open_saved = ii_open_seal;
+            if (ins->seal) ii_open_seal = ins->seal;              // part of a binding's initialiser
             if (g->is_extern) ii_extern(g, args, na, ins->operands + a0, &ret, ins);
             else ii_call(g, args, na, &ret, ins);
+            ii_open_seal = open_saved;
             if (ins->result) ii_set(ins->result, &ret);
             return;
         }
@@ -1025,7 +1039,7 @@ static int ir_interpret_call(IrFunc *f, IrFunc *mod, const char *file, IVal *arg
     // globals still name a frame on a stack that is gone. The next call (compile-time evaluation
     // runs many) then attached its objects to it: stack-use-after-return under ASan (found by the
     // soundness harness's memory shapes). Reset them as a normal return would.
-    if (setjmp(s.stop)) { ist = NULL; ii_frame = NULL; ii_cur_f = NULL; ii_frame_allocs = NULL;
+    if (setjmp(s.stop)) { ist = NULL; ii_frame = NULL; ii_cur_f = NULL; ii_frame_allocs = NULL; ii_open_seal = 0;
                           *used = s.steps; return s.status ? s.status : 98; }
     IVal ret; memset(&ret, 0, sizeof ret);
     ii_call(f, args, nargs, &ret, NULL);

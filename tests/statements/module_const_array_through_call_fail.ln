@@ -1,0 +1,18 @@
+// EXPECT: [E009]
+// EXPECT-TEXT: reached through a reference
+// Immutable storage written by a path sema cannot see: a module constant, sliced by a callee and
+// handed back, then written. sema refuses a write that NAMES the constant; this one reaches it
+// through a reference, so it compiled. The write landed in a per-use stack copy, so `TBL[0]` still
+// read 1; now that a table's slice is a view of its read-only static object, it would write
+// .rodata. Refused (E009).
+TBL i32[2] = [1, 2]
+func w(d i32[]) {
+    if d.len > 0 { d[0] = 9 }
+}
+func idw(d i32[2]) i32[] {
+    return d[0..2]
+}
+func main() i32 {
+    w(idw(TBL))
+    return TBL[0]
+}

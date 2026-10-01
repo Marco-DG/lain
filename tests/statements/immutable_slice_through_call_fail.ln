@@ -1,0 +1,17 @@
+// EXPECT: [E009]
+// EXPECT-TEXT: reached through a reference
+// Immutable storage written by a path sema cannot see: a slice of it handed back by a call, then
+// written by another. sema refuses a write that NAMES the binding; this one reaches it through a
+// reference, so it compiled and main returned 9 (in the C and under `lain --interpret`). The write
+// is refused (E009).
+func w(d i32[]) {
+    if d.len > 0 { d[0] = 9 }
+}
+func id(d i32[]) i32[] {
+    return d
+}
+func main() i32 {
+    xs i32[2] = [1, 2]
+    w(id(xs[0..2]))
+    return xs[0]
+}

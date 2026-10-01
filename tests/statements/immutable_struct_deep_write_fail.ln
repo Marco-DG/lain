@@ -1,0 +1,19 @@
+// EXPECT: [E009]
+// EXPECT-TEXT: reached through a reference
+// A `var` struct holding a slice of an immutable array, passed to a callee that writes THROUGH
+// the slice (`l.src[0] = 0`): the struct is mutable, the storage its slice points into is not.
+// It compiled and main returned 0. A callee that writes only the struct's own fields is
+// accepted (tests/trust/immutable_storage_pass.ln).
+type Lx {
+    src u8[]
+    pos usize
+}
+func clobber(l var Lx) {
+    if l.src.len > 0 { l.src[0] = 0 }
+}
+func main() i32 {
+    text u8[3] = [97, 98, 99]
+    var l = Lx(text[0..3], 0)
+    clobber(var l)
+    return text[0] as i32
+}

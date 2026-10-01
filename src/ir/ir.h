@@ -393,6 +393,11 @@ typedef struct IrInstr {
     } aux;
     IrPhiArg  *phi_args;    // IR_PHI
     bool       unchecked;   // ELEM_PTR / arithmetic inside an `unsafe` block
+    // IMMUTABLE STORAGE (E009). An immutable binding's initialisation is one SEAL: every
+    // IR_ALLOCA, IR_STORE and IR_CALL its lowering emitted carries the same nonzero id. A slot
+    // with a seal is immutable, and a write may reach it only from an instruction of the same
+    // seal (its initialiser); 0 is ordinary, writable storage.
+    int32_t    seal;
     // IR_ALLOCA of a module constant TABLE: the array IS this static read-only object, with
     // these elements, rather than a fresh local initialised by a store per element. Every
     // analysis keeps reading it as an array of known length; the emitter points at a

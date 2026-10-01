@@ -87,8 +87,10 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
         // E004, so every dangling return was reported as a borrow conflict — the analysis
         // knew, and the last step threw it away.
         const char *bcode = fi->code==10 ? "E010" : fi->code==11 ? "E124"
-                          : fi->code==87 ? "E087" : fi->code==8 ? "E008" : "E004";
+                          : fi->code==87 ? "E087" : fi->code==8 ? "E008" : fi->code==9 ? "E009" : "E004";
         const char *bmsg  = fi->code==10 ? "this reference would outlive the value it borrows"
+                          : fi->code==9  ? "this writes storage declared immutable (a binding without "
+                                           "`var`, or a module constant), reached through a reference"
                           : fi->code==11 ? "the `in` clause claims this result borrows less "
                                            "than the body actually does"
                           : fi->code==87 ? "this array reaches two parameters of the same call"

@@ -1,0 +1,21 @@
+// EXPECT: [E009]
+// EXPECT-TEXT: reached through a reference
+// A deferred statement runs at every exit, after the binding's initialiser: a write it makes
+// through a reference into immutable storage is refused like any other, and reported once
+// although it is replayed at both returns.
+func w(d i32[]) {
+    if d.len > 0 { d[0] = 9 }
+}
+func id(d i32[]) i32[] {
+    return d
+}
+func f(c bool) i32 {
+    xs i32[2] = [1, 2]
+    defer w(id(xs[0..2]))
+    if c { return 1 }
+    return 2
+}
+func main() i32 {
+    if f(true) != 1 { return 1 }
+    return 0
+}
