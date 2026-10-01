@@ -252,87 +252,9 @@ static bool int_type_subsumes(Type *from, Type *to) {
     return flo >= tlo && fhi <= thi;
 }
 
-// True ONLY when VRA has proven a concrete bounded range for the source that
-// fits `to`. Unlike check_value_fits_type, the fail-open cases (unknown or
-// effectively-unbounded range) return FALSE here — "not proven safe", rather
-// than "assume safe". This is the positive half needed to close the narrowing
-// hole without also silencing genuine refinement narrowing.
-static bool range_proves_int_fit(Range r, Type *to) {
-    if (!r.known) return false;
-    const long long W = 4096;
-    if (r.min <= LLONG_MIN + W || r.max >= LLONG_MAX - W) return false;
-    long long tlo, thi;
-    if (!type_integer_range(to, &tlo, &thi)) return false;
-    return r.min >= tlo && r.max <= thi;
-}
-
-// P2/S3: reject an implicit LOSSY integer conversion at a boundary. A fixed
-// width narrowing or signedness change is permitted only when it is either
-// statically safe (from <: to) or VRA-proven to fit; otherwise it needs an
-// explicit `as` cast (or a wrapping/saturating operator). This closes the
-// hole where signed / u64 sources — whose bare-parameter VRA range is
-// effectively unbounded — slipped past check_value_fits_type silently
-// (e.g. `func f(a i32) i8 { return a }` truncated with no diagnostic).
-// usize/isize (platform-dependent width) are left to other checks.
-// True if `e`'s value is produced (transitively through +/- and casts/unary) by a
-// plain `*`. A multiplication narrowed back to a smaller type is the truncation-
-// prone case (`i32*i32 -> i64 -> i32`), so it must NOT take the ergonomic arith-
-// widened bypass — it faces the range-based lossy check (accepted only if the
-// value's range proves it fits). Additive chains (`x = x + 1`), array reads
-// (`sq[7]` — the product was already bound away), and the wrapping/saturating `*%`
-// / `*|` escapes are opaque here and keep the ergonomic bypass.
-static bool expr_contains_arith_mul(Expr *e) {
-    if (!e) return false;
-    switch (e->kind) {
-        case EXPR_BINARY: {
-            TokenKind op = e->as.binary_expr.op;
-            if (op == TOKEN_ASTERISK) return true;
-            if (op == TOKEN_PLUS || op == TOKEN_MINUS)
-                return expr_contains_arith_mul(e->as.binary_expr.left) ||
-                       expr_contains_arith_mul(e->as.binary_expr.right);
-            return false;
-        }
-        case EXPR_UNARY: return expr_contains_arith_mul(e->as.unary_expr.right);
-        case EXPR_CAST:  return expr_contains_arith_mul(e->as.cast_expr.expr);
-        default:         return false;
-    }
-}
-
-static void reject_lossy_int_conversion(Type *from, Type *to, Range r, Expr *src_expr,
-                                        isize line, isize col,
-                                        const char *ctx, const char *label) {
-    if (sema_in_unsafe_block) return;
-    if (from == to) return;                              // interned identity: same type
-    // F3.5 Path-F: a widened arithmetic result narrowing back to an operand-width
-    // type is judged by the window policy (check_value_fits_type, already called
-    // at this boundary) — which still catches a KNOWN overflow — not the
-    // fail-closed lossy check. Keeps `x = x + 1` ergonomic; a genuine truncation
-    // of a non-widened value (`i32 -> i8`) is unaffected. EXCEPT a product: a
-    // multiplication narrowed back down is truncation-prone (`dot`, `v.x*factor`),
-    // so it does NOT get the bypass — it must prove its range fits (below).
-    if (from && from->arith_widened && !expr_contains_arith_mul(src_expr)) return;
-    if (!is_integer_type(from) || !is_integer_type(to)) return;
-    long long flo, fhi, tlo, thi;
-    if (!type_integer_range(from, &flo, &fhi)) {
-        // usize/isize source has no fixed width, but narrowing it to a fixed-width
-        // target can still lose data (a length can exceed i32). Judge it with a
-        // conservative platform range so the narrowing is not silently accepted;
-        // usize -> i64/u64 stays a safe widening, usize -> i32 needs proof or a cast.
-        bool from_unsigned = from->base_type && from->base_type->length >= 1 &&
-                             from->base_type->name[0] == 'u';
-        flo = from_unsigned ? 0 : LLONG_MIN;
-        fhi = LLONG_MAX;
-    }
-    if (!type_integer_range(to,   &tlo, &thi)) return;   // usize/isize target: don't judge
-    if (flo >= tlo && fhi <= thi) return;                // statically safe widening
-    if (flo >= tlo && fhi <= thi) return;                // statically safe widening
-    if (range_proves_int_fit(r, to)) return;             // VRA proved the narrowing safe
-    // Path-F's implicit-narrowing diagnostic is DELETED. The new engine answers it with
-    // `vra_check_narrow`, verified at every narrowing site the old check covered: assignment,
-    // return, call argument, struct field initialiser and enum payload — each refused with a
-    // written violation before this line came out.
-    return;
-}
+// An implicit integer narrowing is the IR's question now (vra_check_narrow, at every narrowing
+// site: assignment, return, argument, field, payload). The front end's reject_lossy_int_conversion
+// returned on every path once that landed, and was deleted with its two helpers.
 
 // Rank in the implicit widening order (Q-002 extended).
 // Rank is essentially the container bit-width category:
@@ -1494,7 +1416,6 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     if (value_fits(from, r, to)) return;
 
     reject_float_int_mismatch(from, to, line, col, ctx, label);
-    reject_lossy_int_conversion(from, to, r, src_expr, line, col, ctx, label);
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
     reject_sentinel_fabrication(from, to, src_expr, line, col, ctx);
     reject_fixed_string_length_mismatch(from, to, line, col);
