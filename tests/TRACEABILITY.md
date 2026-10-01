@@ -9,6 +9,12 @@ mismatch, understand why, decide fix-compiler vs correct-spec, ask when intent i
 
 - `feature_scenario_pass.ln` / `feature_scenario_fail.ln` — every standalone test.
 - Every `_fail` carries `// EXPECT: [EXXX]`. Target: a `// spec: §N` header per test.
+- A `_fail` may also carry **`// EXPECT-TEXT: <substring>`**, which must appear in the output.
+  The code says *which rule* refused the program; the text says the message *explains* it. That
+  second property had nothing testing it until now, and it is the half a user actually reads:
+  a correct code attached to a message that does not say what to do is a diagnostic that fails
+  the person who hit it. Use it wherever the wording is the point — a message naming the fix, a
+  message that must not regress to a generic one.
 - No `char_` prefix — the directory names the feature.
 - **Exempt** (not pass/fail tests, names must stay stable): *fixtures* (imported helper
   modules, e.g. `stdlib/dummy.ln`) and *snapshots* (`codegen/*` with a `.grep` sidecar).
