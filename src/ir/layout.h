@@ -47,6 +47,15 @@ typedef struct {
 
 static IrLayout ir_layout_of(IrType *sum);   // forward: the cascade recurses
 
+// A payload the packed paths can carry as the sum itself: they convert with a C cast `(T)v`,
+// which C allows for a scalar and refuses for a struct, a slice or an array.
+static bool ir_layout_scalar(IrType *t) {
+    if (!t) return false;
+    if (t->kind == IRT_INT || t->kind == IRT_BOOL || t->kind == IRT_PTR || t->kind == IRT_FLOAT)
+        return true;
+    return t->kind == IRT_SUM && ir_layout_of(t).packed;    // a scalar typedef itself
+}
+
 // The single field of a payload-carrying variant, or NULL when the variant is payload-less
 // or carries more than one field (which no niche in this scheme can encode).
 static IrType *ir_layout_single_field(IrType *sum, int k) {
@@ -121,26 +130,39 @@ static IrLayout ir_layout_of(IrType *sum) {
     IrLayout L = {0};
     L.primary = -1;
     if (!sum || sum->kind != IRT_SUM || sum->n_fields <= 0) return L;
-    if (sum->n_fields > IR_LAYOUT_MAX_VARIANTS) return L;
 
     for (int k = 0; k < sum->n_fields; k++) {
         if (sum->fields[k]) { L.payload_count++; if (L.primary < 0) L.primary = k; }
         else                  L.empty_count++;
     }
 
-    // Every variant payload-less: a plain integer, sentinels 0,1,2,... in declaration order.
+    // Every variant payload-less: a plain integer whose values are the ordinals 0,1,2,... in
+    // declaration order, so it needs no sentinel table and no cap. ★ This was decided AFTER the
+    // cap below, and a plain enum of 65 variants or more came out as `struct { int32_t tag; }`,
+    // four bytes where spec 19 promises one, with every gate green (the behaviour is the same).
+    // The tables are still filled where they fit; the emitter reads the ordinal, not the table.
     if (L.payload_count == 0) {
         L.packed = true; L.all_empty = true;
-        for (int k = 0, n = 0; k < sum->n_fields; k++) {
-            L.sentinel[k] = n++; L.has_sentinel[k] = true;
+        for (int k = 0; k < sum->n_fields && k < IR_LAYOUT_MAX_VARIANTS; k++) {
+            L.sentinel[k] = k; L.has_sentinel[k] = true;
         }
         return L;
     }
+    if (sum->n_fields > IR_LAYOUT_MAX_VARIANTS) { L.primary = -1; return L; }
 
     // More than one payload, or a payload with more than one field: nothing to pack into.
     if (L.payload_count != 1) { L.primary = -1; return L; }
     IrType *back = ir_layout_single_field(sum, L.primary);
     if (!back) { L.primary = -1; return L; }
+
+    // ONE variant, carrying one field, and nothing else: the sum IS its payload, with nothing to
+    // tell apart and so nothing to store. It asked for a pool all the same, and `{ Only { x i32 } }`
+    // got a tag because an i32 has no spare values, which it was never going to need. Only a
+    // SCALAR payload: the packed paths convert with a C cast, which a struct or a slice refuses.
+    if (L.empty_count == 0 && ir_layout_scalar(back)) {
+        L.packed = true; L.backing = back;
+        return L;
+    }
 
     L.pool = ir_pool_for(back);
     if (L.pool.kind == POOL_EMPTY || (long long)L.empty_count > L.pool.size) {

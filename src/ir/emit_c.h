@@ -534,6 +534,10 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             IrType *st = i->result->type;
             int k = i->aux.sum.variant;
             {   IrLayout L = ir_layout_of(st);
+                if (L.packed && L.all_empty) {         // a plain enumeration: the ordinal
+                    fprintf(o, "  v%d = (", i->result->id); ir_ctype(st, o); fprintf(o, ")%lldll;\n", (long long)k);
+                    break;
+                }
                 if (L.packed) {
                     fprintf(o, "  v%d = (", i->result->id); ir_ctype(st, o); fputs(")", o);
                     if (L.has_sentinel[k]) {

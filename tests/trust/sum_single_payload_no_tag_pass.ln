@@ -1,0 +1,26 @@
+// A sum with ONE variant, carrying one scalar field, and nothing else is its payload: there is no
+// other variant to tell it from, so there is nothing to store. layout.h asked the payload for
+// spare values anyway, and `{ Only { x i32 } }` got an int32_t tag because an i32 has none,
+// which it never needed. The module asserts check the C layout, the run checks the value.
+type Count { Only { n i32 } }
+type Flag { Set { on bool } }
+assert @sizeof(Count) == 4
+assert @sizeof(Flag) == 1
+func make(v i32) Count {
+    return Count.Only(v)
+}
+func read(c Count) i32 {
+    case c {
+        Only(n): return n
+    }
+}
+func is_on(f Flag) bool {
+    case f {
+        Set(on): return on
+    }
+}
+func main() i32 {
+    if read(make(41)) != 41 { return 1 }
+    if is_on(Flag.Set(true)) != true { return 2 }
+    return 0
+}
