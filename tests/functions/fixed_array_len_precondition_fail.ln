@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// The precondition `i usize < a.len` over a fixed array is now asserted at the call: 4096 is
+// not below 4096. (Before, nothing resolved a fixed array's `.len`, so the call asserted nothing.)
+func at(a u8[4096], i usize < a.len) u8 { return a[i] }
+func main() i32 {
+    var b u8[4096] = [0 for k in 0..4096]
+    return at(b, 4096) as i32
+}

@@ -1448,6 +1448,12 @@ out=2
 at=const 2
 ty=Color scalar
 ty=Slice_u8 scalar
+### tests/trust/fixed_array_len_refinement_pass.ln
+rc=0
+out=
+at=nonnull 8
+at=pure 8
+ty=L struct
 ### tests/trust/fixed_array_slice_arg_guarded_pass.ln
 rc=0
 out=7 0 1

@@ -1018,7 +1018,16 @@ static IrValue *ir_lower_refinement_rhs(LowerCtx *c, Expr *rhs, IrType *fallback
     (void)fallback_ty;
     if (rhs->kind==EXPR_MEMBER && rhs->as.member_expr.member && rhs->as.member_expr.member->length==3
         && strncmp(rhs->as.member_expr.member->name,"len",3)==0) {
+        // ★ `.len` of a FIXED array is its constant length. Only a slice's was resolved, so
+        // `i usize < a.len` over `a u8[4096]` gave the callee no assume (and the call site no
+        // assert — the precondition was silently a no-op) while `i usize < 4096` proved.
+        Type *at = rhs->as.member_expr.target ? rhs->as.member_expr.target->type : NULL;
+        while (at && at->kind == TYPE_COMPTIME) at = at->element_type;
+        if (at && at->kind == TYPE_ARRAY && at->array_len >= 0)
+            return ir_const_int(c->f, c->cur, at->array_len, ir_type_int(c->a,64,false));
         IrValue *tv = ir_lower_expr(c, rhs->as.member_expr.target);
+        if (tv && tv->type && tv->type->kind==IRT_ARRAY && tv->type->array_len >= 0)
+            return ir_const_int(c->f, c->cur, tv->type->array_len, ir_type_int(c->a,64,false));
         return (tv && tv->type && tv->type->kind==IRT_SLICE) ? ir_slice_len(c->f, c->cur, tv) : NULL;
     }
     return ir_lower_expr(c, rhs);
@@ -1123,7 +1132,15 @@ static IrValue *ir_contract_rhs_in_callee(LowerCtx *c, Expr *rhs, IrType *ty) {
     IrLocal *l = ir_env_find(c, nm);
     IrValue *pv = (l && l->param) ? l->param : NULL;         // a parameter, as at the call site
     if (!pv) return NULL;
-    if (is_len) return (pv->type && pv->type->kind==IRT_SLICE) ? ir_slice_len(c->f, c->cur, pv) : NULL;
+    if (is_len) {
+        Type *at = rhs->as.member_expr.target->type;
+        while (at && at->kind == TYPE_COMPTIME) at = at->element_type;
+        if (at && at->kind == TYPE_ARRAY && at->array_len >= 0)   // a fixed array: its constant
+            return ir_const_int(c->f, c->cur, at->array_len, ir_type_int(c->a,64,false));
+        if (pv->type && pv->type->kind==IRT_ARRAY && pv->type->array_len >= 0)
+            return ir_const_int(c->f, c->cur, pv->type->array_len, ir_type_int(c->a,64,false));
+        return (pv->type && pv->type->kind==IRT_SLICE) ? ir_slice_len(c->f, c->cur, pv) : NULL;
+    }
     return pv;
 }
 
@@ -1187,7 +1204,15 @@ static IrValue *ir_resolve_contract_rhs(LowerCtx *c, Decl *callee, IrInstr *call
         if (pn && pn->length==nm->length && strncmp(pn->name,nm->name,(size_t)pn->length)==0) {
             if (idx >= call->n_operands) return NULL;
             IrValue *av = call->operands[idx];
-            if (is_len) return (av && av->type && av->type->kind==IRT_SLICE) ? ir_slice_len(c->f,c->cur,av) : NULL;
+            if (is_len) {
+                // A fixed-array parameter's length is in its declared type (the argument was
+                // checked against it), the same constant the callee resolves.
+                Type *pt = p->decl->as.variable_decl.type;
+                while (pt && pt->kind == TYPE_COMPTIME) pt = pt->element_type;
+                if (pt && pt->kind == TYPE_ARRAY && pt->array_len >= 0)
+                    return ir_const_int(c->f, c->cur, pt->array_len, ir_type_int(c->a,64,false));
+                return (av && av->type && av->type->kind==IRT_SLICE) ? ir_slice_len(c->f,c->cur,av) : NULL;
+            }
             return av;
         }
     }
@@ -2407,6 +2432,14 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                         IrValue *len = ir_slice_len(c->f, c->cur, cv);
                         ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, v, len));
                     }
+                } else if (cidx >= 0 && cty2 && cty2->kind==IRT_ARRAY && cty2->array_len >= 0 &&
+                           v->type && v->type->kind==IRT_INT) {
+                    // ★ A FIXED-array container: its length is a constant, and the invariant is
+                    // asserted at its construction and stores like a slice's (E121). Only the slice
+                    // case was consumed here, so `src u8[4096]` + `pos usize in src` could not
+                    // prove `l.src[l.pos]` — strictly LESS than the same struct over `u8[]`.
+                    IrValue *len = ir_const_int(c->f, c->cur, cty2->array_len, ir_type_int(c->a,64,false));
+                    ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, v, len));
                 }
                 // ...and a RELATIONAL field invariant, consumed the same way.
                 { IrFieldRel rels[8];

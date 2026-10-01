@@ -1,0 +1,22 @@
+// `.len` of a FIXED array is its constant length, wherever a refinement or an invariant names it.
+// Only a slice's `.len` was resolved, so a fixed array proved strictly LESS than a slice:
+// `i usize < a.len` over `a u8[4096]` was E085 while `i usize < 4096` proved, and
+// `src u8[4096]` + `pos usize in src` could neither read `l.src[l.pos]` nor narrow `l.pos as u32`.
+// (Found by the Handwriting session.) Runs: exit 0.
+type L {
+    src u8[16]
+    pos usize in src
+}
+func at(a u8[16], i usize < a.len) u8 { return a[i] }
+func peek(l L) u8 { return l.src[l.pos] }
+func narrow(l L) u32 { return l.pos as u32 }
+func last(a u8[16]) usize < a.len { return 15 }
+func main() i32 {
+    var b u8[16] = [k as u8 for k in 0..16]
+    if at(b, 3) != 3 { return 1 }
+    var l = L(b, 5)
+    if peek(l) != 5 { return 2 }
+    if narrow(l) != 5 { return 3 }
+    if b[last(b)] != 15 { return 4 }
+    return 0
+}
