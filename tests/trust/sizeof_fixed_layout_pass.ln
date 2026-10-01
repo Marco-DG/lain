@@ -1,0 +1,33 @@
+// @sizeof is a PROVEN constant where the size is fixed — an exact-width integer, a type Lain
+// lays out itself (a plain enumeration, a [packed] struct's container), a vector, an array of
+// those — and every index below is check-free. Before, the analysis knew only `@sizeof >= 1`
+// ("the number is the C compiler's"), so `a[@sizeof(u32)]` on a `u8[8]` was refused. Each
+// function both proves its index and checks, at run time, that the value is the one claimed.
+type Kind {
+    Ident,
+    Number,
+    Punct
+}
+[packed]
+type Pair {
+    lo u12
+    hi u4
+}
+func at_int(a u8[8]) u8 { return a[@sizeof(u32)] }                  // 4
+func at_odd(a u8[8]) u8 { return a[@sizeof(i40) - 1] }              // i40 is an int64_t: 7
+func at_enum(a u8[8]) u8 { return a[@sizeof(Kind)] }                 // one byte: 1
+func at_packed(a u8[8]) u8 { return a[@sizeof(Pair)] }               // 16 bits: 2
+func at_array(a u8[8]) u8 { return a[@sizeof(u16[3])] }              // 6
+func at_vector(a u8[8]) u8 { return a[@sizeof(Vec(2, u16))] }        // 4
+func at_align(a u8[8]) u8 { return a[@alignof(u32) + 3] }            // at most 4 + 3
+func main() i32 {
+    a u8[8] = [10, 11, 12, 13, 14, 15, 16, 17]
+    if at_int(a) != 14 { return 1 }
+    if at_odd(a) != 17 { return 2 }
+    if at_enum(a) != 11 { return 3 }
+    if at_packed(a) != 12 { return 4 }
+    if at_array(a) != 16 { return 5 }
+    if at_vector(a) != 14 { return 6 }
+    if at_align(a) < 14 { return 7 }
+    return 0
+}

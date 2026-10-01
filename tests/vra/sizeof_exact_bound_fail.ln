@@ -1,0 +1,10 @@
+// EXPECT: [E085]
+// The @sizeof fold claims the exact number, not a range around it: a `u64` is 8 bytes, which
+// is one past the last index of a `u8[8]` (sizeof_fixed_layout_pass.ln proves the 7).
+func last(a u8[8]) u8 {
+    return a[@sizeof(u64)]
+}
+func main() i32 {
+    a u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    return last(a) as i32
+}

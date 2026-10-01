@@ -1,0 +1,16 @@
+// A `Vec(4, f64)` is four doubles. Its typedef read the lane width from the integer field a
+// float type leaves 0, fell back to 4 bytes, and emitted `vector_size(16)` — two doubles — so
+// lanes 2 and 3 were read and written past the vector, silently. Each lane has its own code.
+func main() i32 {
+    var v f64x4 = [1.5, 2.5, 3.5, 4.5]
+    var w f64x4 = v + v
+    if w[0] != 3.0 { return 1 }
+    if w[1] != 5.0 { return 2 }
+    if w[2] != 7.0 { return 3 }
+    if w[3] != 9.0 { return 4 }
+    var x f32x8 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    var y f32x8 = x + x
+    if y[7] != 16.0 { return 5 }
+    if @sizeof(f64x4) != 32 { return 6 }
+    return 0
+}

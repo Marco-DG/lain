@@ -18,6 +18,7 @@
 #include "ir/ir.h"
 #include "analysis/footprint.h"   // the alias oracle: who a call can write / retain
 #include "ir/place.h"   // phase D: the index-disjointness seam we fill
+#include "ir/layout.h"  // the sizes Lain decides (@sizeof of an enum, a [packed] struct, a u32)
 #include <stdlib.h>
 #include <string.h>
 
@@ -1371,12 +1372,21 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             }
             break;
         }
-        case IR_SIZEOF: case IR_ALIGNOF:
-            // A complete C object type has size >= 1 and alignment >= 1; nothing more is claimed,
-            // because the number is the C compiler's, not this analysis's.
+        case IR_SIZEOF: case IR_ALIGNOF: {
+            // A complete C object type has size >= 1 and alignment >= 1. Where the type's C
+            // spelling has an exact size (ir_fixed_size: an integer, an enumeration, a [packed]
+            // struct, a vector, an array of those) @sizeof IS that constant, and its alignment
+            // is at most the size (C sizes every type in whole multiples of its alignment).
+            // Anything else is the C ABI's number, and nothing more is claimed. Before this,
+            // `a[@sizeof(u32)]` on a `u8[8]` was refused.
             if (r<0) break;
-            oct_forget(W, r); oct_add_lb(W, r, 1);
+            oct_forget(W, r);
+            int64_t sz = ir_fixed_size(ins->aux.alloca_ty);
+            if (sz > 0 && ins->op == IR_SIZEOF) { oct_add_const(W, r, sz); break; }
+            oct_add_lb(W, r, 1);
+            if (sz > 0) oct_add_ub(W, r, sz);
             break;
+        }
         case IR_CTZ: case IR_CLZ: case IR_POPCOUNT: {
             // A bit intrinsic lands in [0, W] where W is the OPERAND's width — exactly the
             // fact that makes `a[@popcount(mask)]` provable without a runtime check. Modelled

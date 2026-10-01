@@ -191,4 +191,52 @@ static IrStructLayout ir_struct_layout(const IrType *st) {
     return L;
 }
 
+// ── THE SIZES C FIXES, and the sizes Lain chooses ─────────────────────────────────────────────
+// Every decision below is printed by the emitter AND read by the analysis, so it is made once.
+
+// The C integer that stores an iN/uN: `u3` is a `uint8_t`, `i40` an `int64_t`.
+static int ir_int_storage_bits(int bits) { return bits<=8?8 : bits<=16?16 : bits<=32?32 : 64; }
+
+// A plain enumeration is the smallest unsigned integer that holds its tags 0..n-1 (a405172).
+static int ir_plain_enum_bits(int n_variants) {
+    return n_variants <= 256 ? 8 : n_variants <= 65536 ? 16 : 32;
+}
+
+// A vector lane's bytes. ★ A float lane's width is in `float_bits`, not `bits`: the vector
+// typedef read `bits`, found 0 and fell back to 4 bytes, so `Vec(4, f64)` was emitted as
+// `vector_size(16)` — TWO doubles — and its lanes 2 and 3 read past the vector, silently.
+static int ir_lane_bytes(const IrType *e) {
+    if (!e) return 0;
+    if (e->kind == IRT_FLOAT) return e->float_bits == 32 ? 4 : 8;
+    if (e->kind == IRT_INT)   return ir_int_storage_bits(e->bits) / 8;
+    return 0;
+}
+
+// The size in bytes of a type whose C spelling has an EXACT size: an exact-width integer (C
+// gives intN_t no padding bits), a type Lain lays out itself as one (a plain enumeration, a
+// [packed] struct's container, a niche-packed sum over a fixed-size backing), a vector (its
+// `vector_size` is the number), or an array of any of these (no padding between elements).
+// 0 when the C compiler's ABI decides — a struct, a pointer, a slice, a `_Bool`, a float — and
+// then nothing about the size is claimed but that it is at least 1.
+static int64_t ir_fixed_size(IrType *t) {
+    if (!t) return 0;
+    switch (t->kind) {
+        case IRT_INT:    return ir_int_storage_bits(t->bits) / 8;
+        case IRT_VECTOR: { int lb = ir_lane_bytes(t->elem);
+                           return (lb > 0 && t->array_len > 0) ? (int64_t)t->array_len * lb : 0; }
+        case IRT_ARRAY:  { int64_t e = ir_fixed_size(t->elem);
+                           return (e > 0 && t->array_len > 0) ? t->array_len * e : 0; }
+        case IRT_STRUCT: { IrStructLayout P = ir_struct_layout(t);
+                           return P.packed ? P.container_bits / 8 : 0; }
+        case IRT_SUM: {
+            IrLayout L = ir_layout_of(t);
+            if (!L.packed) return 0;
+            if (L.all_empty) return ir_plain_enum_bits(t->n_fields) / 8;
+            if (L.backing && L.backing->kind == IRT_BOOL) return 1;     // stored as a uint8_t
+            return ir_fixed_size(L.backing);
+        }
+        default: return 0;
+    }
+}
+
 #endif // LAIN_IR_LAYOUT_H

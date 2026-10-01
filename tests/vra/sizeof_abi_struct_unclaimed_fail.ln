@@ -1,0 +1,16 @@
+// EXPECT: [E085]
+// An ordinary struct's size is the C ABI's (padding, alignment), so the analysis claims only
+// that it is at least 1 — this one is 2 on every ABI there is, and it is still not used. A
+// [packed] struct or an enumeration, whose layout Lain decides, IS a constant
+// (sizeof_fixed_layout_pass.ln).
+type Two {
+    a u8
+    b u8
+}
+func at(a u8[8]) u8 {
+    return a[@sizeof(Two)]
+}
+func main() i32 {
+    a u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    return at(a) as i32
+}

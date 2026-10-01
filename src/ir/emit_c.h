@@ -17,7 +17,7 @@
 static void ir_emit_decl_attrs(const IrFunc *f, FILE *o);   // fwd: [cold]/[hot]/[allocator]/[noreturn]
 
 // round a non-standard integer width up to a standard C width
-static int ir_c_stdbits(int bits) { return bits<=8?8 : bits<=16?16 : bits<=32?32 : 64; }
+static int ir_c_stdbits(int bits) { return ir_int_storage_bits(bits); }
 
 // mangle a slice element type into a valid C identifier suffix (for Slice_<tag>)
 static int ir_slice_tag(const IrType *e, char *buf, int n) {
@@ -1149,9 +1149,8 @@ static void ir_emit_one_sum_body(IrType *st, FILE *o) {
             // tag values are 0..n-1, so an unsigned type of the smallest width holds them; no
             // sum niche-packs INTO a plain enumeration (layout.h gives it no backing), so no
             // sentinel depends on the width.
-            int nv = st->n_fields;
-            const char *ct = nv <= 256 ? "uint8_t" : nv <= 65536 ? "uint16_t" : "uint32_t";
-            fprintf(o, "typedef %s %.*s;\n", ct, (int)nm->length, nm->name);
+            fprintf(o, "typedef uint%d_t %.*s;\n", ir_plain_enum_bits(st->n_fields),
+                    (int)nm->length, nm->name);
         } else {
             fputs("typedef ", o); ir_layout_backing_ctype(L.backing, o);
             fprintf(o, " %.*s;\n", (int)nm->length, nm->name);
@@ -1279,7 +1278,7 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     for (int i=0;i<ts.n_vec;i++) {
         IrType *v = ts.vecs[i];
         int lanes = (int)v->array_len;
-        int bytes = lanes * ((v->elem && v->elem->bits) ? v->elem->bits/8 : 4);
+        int bytes = lanes * ir_lane_bytes(v->elem);
         char tag[64]; ir_slice_tag(v->elem, tag, sizeof tag);
         fputs("typedef ", o); ir_ctype(v->elem, o);
         fprintf(o, " Vec_%d_%s __attribute__((vector_size(%d)));\n", lanes, tag, bytes);

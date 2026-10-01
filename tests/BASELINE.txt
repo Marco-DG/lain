@@ -1630,6 +1630,10 @@ at=const 2
 rc=0
 out=
 at=const 2
+### tests/trust/simd_f64_lanes_pass.ln
+rc=0
+out=
+at=vector_size 2
 ### tests/trust/simd_lane_write_pass.ln
 rc=0
 out=
@@ -1649,6 +1653,14 @@ at=vector_size 3
 rc=0
 out=
 at=vector_size 8
+### tests/trust/sizeof_fixed_layout_pass.ln
+rc=0
+out=
+at=nonnull 14
+at=pure 14
+at=vector_size 1
+ty=Kind scalar
+ty=Pair scalar
 ### tests/trust/slice_len_bound_lexer_pass.ln
 rc=0
 out=
