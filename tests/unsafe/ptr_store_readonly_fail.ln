@@ -1,0 +1,8 @@
+// EXPECT: [E009]
+// @store writes; through a read-only `*u8` it is refused like `*p = v`.
+func fill(p *u8, v u8x16) {
+    unsafe { @store(p, 0, v) }
+}
+func main() i32 {
+    return 0
+}

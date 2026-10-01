@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// A raw pointer has no length, so it cannot be indexed. This printed "sema error: indexing
+// non-array/slice type", carried on with exit status 0, and emitted a `void*` store gcc refuses.
+func first(p *var u8) {
+    unsafe { p[0] = 1 }
+}
+func main() i32 {
+    return 0
+}

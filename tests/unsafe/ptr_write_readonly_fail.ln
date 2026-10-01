@@ -1,0 +1,13 @@
+// EXPECT: [E009]
+// `*T` is read-only and `*var T` writable (4b08e44, spec 18). Since the C is emitted from the IR,
+// nothing enforced it: the old emitter wrote `const int32_t *` and gcc refused the store, the IR
+// emitter writes `int32_t *`, so this compiled and wrote through a read-only pointer.
+// `unsafe` permits a dereference, not a write the pointer's type forbids.
+func bump(p *i32) {
+    unsafe { *p = 7 }
+}
+func main() i32 {
+    var x i32 = 41
+    unsafe { bump(&x) }
+    return 0
+}

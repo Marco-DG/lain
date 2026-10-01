@@ -1168,9 +1168,87 @@ static void reject_fixed_string_length_mismatch(Type *from, Type *to,
 
 // source expr where available (enables the null-literal idiom, 0 -> *T); NULL
 // is fine (that sub-check simply won't fire).
+// ★ `*T` IS READ-ONLY, `*var T` IS WRITABLE (4b08e44), and since the C is emitted from the IR
+// nothing enforced it: the old emitter wrote `const T*` and gcc refused a write, the IR one writes
+// `T*`. So `*p = 1` through a `*u8` compiled and wrote, and a `*u8` passed to a `*var u8`
+// parameter was accepted — every read-only pointer could be laundered into a writable one with
+// no `unsafe` in sight. The distinction is checked here, in the language, as it should have been.
+static bool sema_is_readonly_ptr(Type *t) {
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    return t && t->kind == TYPE_POINTER && !t->pointee_mutable;
+}
+// A write to `target` that reaches its place THROUGH a read-only pointer: `*p`, `p.f`, `p[i]`
+// (a pointer to an array), at any depth (`(*p).a.b`, `p.arr[i]`). E009 inside `unsafe` too:
+// `unsafe` permits a raw dereference, not a write the pointer's type forbids.
+// May the program write the place `e` names? A `var` binding or a `var` parameter; an element
+// or a field of a writable place (or of a `var` slice parameter); what a `*var T` points to.
+static bool sema_place_writable(Expr *e) {
+    if (!e) return false;
+    switch (e->kind) {
+        case EXPR_IDENTIFIER: {
+            Id *id = e->as.identifier_expr.id;
+            if (!id || id->length >= 256) return false;
+            char buf[256]; memcpy(buf, id->name, (size_t)id->length); buf[id->length] = 0;
+            extern Symbol *sema_lookup(const char *name);
+            Symbol *sym = sema_lookup(buf);
+            if (!sym) return false;
+            if (sym->is_mutable) return true;
+            return sym->decl && sym->decl->kind == DECL_VARIABLE &&
+                   sym->decl->as.variable_decl.is_parameter && sym->decl->as.variable_decl.type &&
+                   sym->decl->as.variable_decl.type->mode == MODE_MUTABLE;
+        }
+        case EXPR_INDEX: {
+            Expr *b = e->as.index_expr.target;
+            Type *bt = b ? b->type : NULL; while (bt && bt->kind == TYPE_COMPTIME) bt = bt->element_type;
+            if (bt && bt->kind == TYPE_POINTER) return bt->pointee_mutable;
+            return sema_place_writable(b) || (bt && bt->mode == MODE_MUTABLE);
+        }
+        case EXPR_MEMBER: {
+            Expr *b = e->as.member_expr.target;
+            Type *bt = b ? b->type : NULL; while (bt && bt->kind == TYPE_COMPTIME) bt = bt->element_type;
+            if (bt && bt->kind == TYPE_POINTER) return bt->pointee_mutable;
+            return sema_place_writable(b);
+        }
+        case EXPR_DEREF: {
+            Type *pt = e->as.deref_expr.expr ? e->as.deref_expr.expr->type : NULL;
+            while (pt && pt->kind == TYPE_COMPTIME) pt = pt->element_type;
+            return pt && pt->kind == TYPE_POINTER && pt->pointee_mutable;
+        }
+        default: return false;
+    }
+}
+static void sema_check_write_through_readonly(Expr *target, isize line, isize col) {
+    for (Expr *e = target; e; ) {
+        Expr *base = NULL;
+        if (e->kind == EXPR_DEREF)       base = e->as.deref_expr.expr;
+        else if (e->kind == EXPR_MEMBER) base = e->as.member_expr.target;
+        else if (e->kind == EXPR_INDEX)  base = e->as.index_expr.target;
+        else break;
+        if (base && sema_is_readonly_ptr(base->type)) {
+            Id *bid = base->kind == EXPR_IDENTIFIER ? base->as.identifier_expr.id : NULL;
+            fprintf(stderr, "[E009] Error Ln %li, Col %li: cannot write through the read-only pointer%s%.*s%s: "
+                    "a `*T` may be read, not written, inside `unsafe` too. Declare it `*var T` to "
+                    "write through it.\n", (long)line, (long)col,
+                    bid ? " `" : "", bid ? (int)bid->length : 0, bid ? bid->name : "", bid ? "`" : "");
+            diagnostic_show_line(line, col);
+            exit(1);
+        }
+        e = base;
+    }
+}
 static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
                              isize line, isize col,
                              const char *ctx, const char *label) {
+    if (sema_is_readonly_ptr(from)) {
+        Type *tt = to; while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
+        if (tt && tt->kind == TYPE_POINTER && tt->pointee_mutable) {
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: a read-only pointer `*T` cannot become a "
+                    "writable `*var T` in %s '%s'. Take a `*var T` where the pointer is made.\n",
+                    (long)line, (long)col, ctx ? ctx : "this conversion", label ? label : "");
+            diagnostic_show_line(line, col);
+            exit(1);
+        }
+    }
     // ★ AN ARRAY LITERAL TAKES THE DESTINATION'S ELEMENT TYPE. `[1, 2, 3, 4]` types as i32[4]
     // (its elements are literals), and outside a declaration nothing retyped it: lowering then
     // materialised an int32_t[4], and a `u8[4]` parameter, a `u8[]` slice or a struct's `u8[4]`
@@ -3050,8 +3128,18 @@ void sema_infer_expr(Expr *e) {
         // But we have no bounds info.
         e->type = t->element_type;
     } else {
-        fprintf(stderr, "sema error: indexing non-array/slice type\n");
-        // exit(1); // Optional: be strict
+        // ★ This was a printed "sema error" that did NOT stop the compile — the `exit` was commented
+        // out — and lowering then indexed a `void*`, C that gcc refuses. (The pointer branch above
+        // is unreachable: sema_unwrap_type strips pointers, so `p[i]` on a `*u8` landed here.)
+        Type *ot = e->as.index_expr.target->type;
+        char tb[96]; type_describe(ot, tb, sizeof tb);
+        bool rawp = ot && ot->kind == TYPE_POINTER;
+        fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot index a value of type '%s'%s.\n",
+                (long)e->line, (long)e->col, tb,
+                rawp ? ": a raw pointer has no length. Index an array or a slice, or read through the "
+                       "pointer with `*p` (or `@load` inside `unsafe`)" : "");
+        diagnostic_show_line(e->line, e->col);
+        exit(1);
     }
     break;
   }
@@ -3193,6 +3281,10 @@ void sema_infer_expr(Expr *e) {
     Type *inner = e->as.addr_expr.expr ? e->as.addr_expr.expr->type : NULL;
     if (inner) {
         e->type = type_pointer(sema_arena, inner);
+        // The address of a place the program may WRITE is a writable `*var T`; of any other
+        // place, a read-only `*T`. `&x` was always `*T`, which no check read until `*T` stopped
+        // converting to `*var T` silently.
+        if (sema_place_writable(e->as.addr_expr.expr)) e->type->pointee_mutable = true;
         // Propagate mutability from the indexed array.
         Expr *addr_inner = e->as.addr_expr.expr;
         if (addr_inner->kind == EXPR_INDEX && addr_inner->as.index_expr.target) {
@@ -3415,6 +3507,12 @@ void sema_infer_expr(Expr *e) {
             // buffer the spec allows inside `unsafe` — read as a `u8` and was refused (506f825).
             Type *bt = e->as.builtin_expr.arg->type;
             while (bt && bt->kind == TYPE_COMPTIME) bt = bt->element_type;
+            if (bk == BUILTIN_STORE && bt && bt->kind == TYPE_POINTER && !bt->pointee_mutable) {
+                fprintf(stderr, "[E009] Error Ln %li, Col %li: @store: cannot write through a read-only "
+                        "pointer `*T`. Declare it `*var T` to write through it.\n", (long)e->line, (long)e->col);
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
             if (bt && bt->kind != TYPE_ARRAY && bt->kind != TYPE_SLICE && bt->kind != TYPE_POINTER) {
                 fprintf(stderr, "[E100] Error Ln %li, Col %li: @%s: the buffer must be an array, a "
                         "slice or a raw pointer. A struct's bytes are not an array: its storage order "

@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// A read-only `*i32` does not convert to a writable `*var i32`: this laundered any read-only
+// pointer into a writable one through a call, with no `unsafe` at the conversion. (`&x` of an
+// immutable `x` is a `*i32`; of a `var x`, a `*var i32`.)
+func set(p *var i32) {
+    unsafe { *p = 7 }
+}
+func main() i32 {
+    x i32 = 41
+    unsafe { set(&x) }
+    return 0
+}

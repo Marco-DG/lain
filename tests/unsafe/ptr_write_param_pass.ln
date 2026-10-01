@@ -1,9 +1,10 @@
-// A raw-pointer parameter whose pointee is written in the body (`*p = …`, inside
-// unsafe) must emit a NON-const `int32_t *`, not `const int32_t *` — else gcc
-// rejects the store ("assignment of read-only location"). Emit-only: the pointer
-// stays MODE_SHARED in the type system; only the C output drops const when written.
+// A raw-pointer parameter that is written through is a WRITABLE pointer, `*var T`, and the C is
+// a non-const `int32_t *`. (This test first held the emit-only stopgap of b1eb3ed, writing through
+// a `*T` and dropping the C `const` when the body wrote; 4b08e44 made `*var T` the spelling, and
+// since 2026-10-01 a write through a read-only `*T` is E009 — ptr_write_readonly_fail.ln.)
+// `&x` of a `var` binding is a `*var i32`.
 extern func libc_printf(fmt *u8, ...) i32 effects io
-func bump(p *i32) {
+func bump(p *var i32) {
     unsafe { *p = *p + 1 }
 }
 func main() i32 effects io {

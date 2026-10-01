@@ -29,9 +29,16 @@ Inside an \lain{unsafe} block, the following operations are permitted:
 \begin{enumerate}
   \item \textbf{Raw pointer dereference}: \lain{*ptr} reads the value
         pointed to by a raw pointer; \lain{*ptr = v} writes through a
-        mutable raw pointer.
+        writable raw pointer \lain{*var T}. A \lain{*T} is read-only: a write through it
+        --- \lain{*p = v}, \lain{p.f = v}, \lain{@store(p, i, v)} --- is \illformed{} here
+        too~(\diagcode{E009}), and a \lain{*T} does not convert implicitly to a
+        \lain{*var T}~(\diagcode{E012}); \lain{p as *var T} states it explicitly.
   \item \textbf{Address-of}: \lain{\&x} creates a raw pointer to the
-        storage of \lain{x}.
+        storage of \lain{x}: a \lain{*var T} when the program may write \lain{x} (a
+        \lain{var} binding or parameter, an element or field of one, or what a \lain{*var}
+        pointer points to), and a \lain{*T} otherwise.
+  \item \textbf{Indexing}: a raw pointer has no length and cannot be indexed
+        (\diagcode{E012}); read through it with \lain{*p}, or \lain{@load} a vector.
   \item \textbf{Pointer and integer casts}: \lain{p as *T},
         \lain{n as *T}, \lain{p as usize}, etc.
   \item \textbf{Direct ADT field access}: reading a variant's field with the
