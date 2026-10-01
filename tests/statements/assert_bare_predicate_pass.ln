@@ -1,0 +1,19 @@
+// spec: §9 — an `assert` takes an expression, parenthesised or not, inside a function as at
+// module scope. The statement demanded parentheses, so `assert n < a.len` was refused inside a
+// function ("Expected '(' after assert/assume") and `assert K == 3` was accepted outside it;
+// `assert (n) == n` was cut off after `(n)`.
+K i32 = 3
+assert K == 3
+
+func last(a u8[]) u8 {
+    if a.len > 0 {
+        n = a.len - 1
+        assert n < a.len
+        assert(n + 1 == a.len)
+        assert (n) == n
+        return a[n]
+    }
+    return 0
+}
+
+func main() i32 { return last("ab") as i32 - 98 }

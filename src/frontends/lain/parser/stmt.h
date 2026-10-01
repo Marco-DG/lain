@@ -194,11 +194,10 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
     else if (parser_match(TOKEN_KEYWORD_ASSERT) || parser_match(TOKEN_KEYWORD_ASSUME)) {
         bool is_assume = parser_match(TOKEN_KEYWORD_ASSUME);
         parser_advance();
-        parser_expect(TOKEN_L_PAREN, "Expected '(' after assert/assume");
-        parser_advance();
+        // The predicate is an expression, as at module scope (`assert @sizeof(T) == 8`): the
+        // parentheses are optional, since a parenthesised expression is one. This demanded
+        // them, so `assert x == y` was refused inside a function and accepted outside it.
         Expr *cond = parse_expr(arena, parser);
-        parser_expect(TOKEN_R_PAREN, "Expected ')' after the predicate");
-        parser_advance();
         result = stmt_assert(arena, cond, is_assume);
     }
     else if (parser_match(TOKEN_KEYWORD_DEFER)) {

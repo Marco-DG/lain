@@ -1237,6 +1237,13 @@ rc=0
 out=
 at=nonnull 4
 ty=P struct
+### tests/statements/assert_bare_predicate_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 2
+at=pure 2
+ty=Slice_u8 scalar
 ### tests/statements/control_flow_pass.ln
 rc=0
 out=

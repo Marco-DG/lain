@@ -392,6 +392,34 @@ func process() int effects io, raises, alloc {
 \lain{unsafe \{ body \}} is an unsafe block (see \S\,\ref{sec:18-unsafe}).
 It creates a scope in which certain static checks are relaxed.
 
+\section{Assert and assume statements}
+\label{sec:stmt.assert}
+\index{assert statement}
+
+\pnum
+\lain{assert P} states a fact the compiler shall prove where it is written: its
+predicate \lain{P}, an expression of type \lain{bool}, is a proof obligation, and a
+predicate the analyses cannot discharge makes the program
+\illformed{}~(\diagcode{E012}).  An \lain{assert} costs nothing at run time.
+\lain{assume P} states a fact the compiler takes without proof, and is allowed only
+inside an \lain{unsafe} block~(\diagcode{E129}).  Parentheses around the predicate
+are optional, as for a module-scope \lain{assert}
+(\S\,\ref{sec:decl.static-assert}).
+
+\begin{example}
+\begin{laincode}
+func last(a u8[]) u8 {
+    if a.len > 0 {
+        n = a.len - 1
+        assert n < a.len
+        assert(n + 1 == a.len)
+        return a[n]
+    }
+    return 0
+}
+\end{laincode}
+\end{example}
+
 \section{Comptime if statement}
 \label{sec:stmt.comptime-if}
 \index{comptime if}
