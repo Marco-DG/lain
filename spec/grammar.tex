@@ -75,8 +75,8 @@ octal-digit      ::= "0" .. "7"
 
 \label{gram:float-literal}
 \begin{grammar}
-float-literal    ::= decimal-literal "." decimal-literal [ float-exponent ]
-float-exponent   ::= ( "e" | "E" ) [ "+" | "-" ] decimal-literal
+float-literal    ::= decimal-literal "." decimal-digit { decimal-digit | "_" } [ float-exponent ]
+float-exponent   ::= ( "e" | "E" ) [ "+" | "-" ] decimal-digit { decimal-digit | "_" }
 \end{grammar}
 
 \label{gram:string-literal}

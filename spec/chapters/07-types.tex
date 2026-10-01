@@ -136,8 +136,8 @@ differ from a refinement constraint on \lain{int}:
         constraint. Storage is the \lain{int} default (\texttt{int32\_t});
         bit-width is not specified.
   \item \lain{u3} declares a 3-bit quantity. Standalone its range is
-        \([0, 7]\) and its storage is \texttt{uint8\_t}; in a packed
-        struct (future) it occupies exactly 3 bits.
+        \([0, 7]\) and its storage is \texttt{uint8\_t}; in a
+        \lain{[packed]} struct (\S\,\ref{sec:types.packed-future}) it occupies exactly 3 bits.
 \end{itemize}
 
 The two forms are interchangeable when only the range matters; they
@@ -145,15 +145,18 @@ differ when bit-exact storage layout matters.
 
 \begin{example}
 \begin{laincode}
-// Logical bit-width: 12-bit quantity, container = uint16_t.
-var x u12 = 4095
-
-// Refinement constraint on int: range [0, 4095], container = int32_t.
-var y int >= 0 and <= 4095 = 4095
-
-// Refinement type alias: a named refinement type (\S\,\ref{sec:types.alias-refinement}).
+// A refinement constraint on int, named: range [0, 4095], container = int32_t.
+// (A constraint is written on a parameter, a field or an alias like this one,
+// not on a local's declaration.)
+type Twelve = int >= 0 and <= 4095
 type Pressure = int >= 0 and <= 1000
-var p Pressure = 500
+
+func main() int {
+    var x u12 = 4095        // logical bit-width: a 12-bit quantity, container = uint16_t
+    var y Twelve = 4095     // the same range as an int refinement
+    var p Pressure = 500
+    return 0
+}
 \end{laincode}
 \end{example}
 
@@ -593,13 +596,19 @@ A \textit{size expression} (\textit{size\_expr}) may be any of:
 \begin{example}
 \begin{laincode}
 // Exact-length constraint: out must have length == a.len + b.len
-func concat(a i32[], b i32[], out i32[a.len + b.len]) { ... }
+// (the bounds keep a.len + b.len from overflowing a usize)
+func concat(a i32[<= 1000000], b i32[<= 1000000], out i32[a.len + b.len]) {
+    for j in 0..a.len { out[j] = a[j] }
+    for j in 0..b.len { out[j + a.len] = b[j] }
+}
 
-// Lower-bound constraint: arr must have at least n elements
+// Lower-bound constraint: arr must have at least one element
 func first(arr i32[> 0]) i32 { return arr[0] }
 
-// Derived constraint using member .len
-func slide(src i32[], out i32[src.len - 1]) { ... }
+// Derived constraint using member .len (src is not empty, so src.len - 1 cannot underflow)
+func slide(src i32[>= 1], out i32[src.len - 1]) {
+    for i in 0..out.len { out[i] = src[i + 1] -% src[i] }
+}
 \end{laincode}
 \end{example}
 
@@ -625,23 +634,29 @@ When a function parameter has a sized or unsized dynamic slice type, the
 compiler decomposes it into a pair of C parameters:
 
 \begin{itemize}
-  \item a length parameter \texttt{size\_t \_\_len\_NAME};
-  \item a data pointer \texttt{const T*} (shared) or \texttt{T* restrict} (mutable).
+  \item a length parameter \texttt{size\_t};
+  \item a data pointer \texttt{T* restrict}.
 \end{itemize}
 
-If the parameter's size expression is an arithmetic expression over other
-parameters' lengths (e.g., \lain{out i32[a.len + b.len]}), no
-\texttt{\_\_len\_out} parameter is emitted; the length is re-derived from
-\texttt{\_\_len\_a + \_\_len\_b} at every use site.
+Whether the callee may write through the pointer is stated by the GCC attribute
+\texttt{access(read\_only, $p$, $n$)} or \texttt{access(read\_write, $p$, $n$)}, where $p$ and
+$n$ are the positions of the pointer and its length. A slice whose length is an expression over
+other parameters' lengths (\lain{out i32[a.len + b.len]}) is passed the same way: its length is
+an ordinary parameter, checked against the expression at every call
+(\S\,\ref{sec:vra.sized-slice-callsite}).
 
 \begin{example}
 \begin{laincode}
 // Source:
-func vadd(var out i32[], a i32[out.len], b i32[out.len]) { ... }
+func vadd(var out i32[], a i32[out.len], b i32[out.len]) {
+    for i in 0..out.len { out[i] = a[i] +% b[i] }
+}
 
-// C emission:
-// void vadd(size_t __len_out, int32_t * restrict out,
-//           const int32_t* a, const int32_t* b);
+// C emission (the name is prefixed with its module's):
+// __attribute__((access(read_write, 2, 1))) __attribute__((access(read_only, 4, 3)))
+// __attribute__((access(read_only, 6, 5)))
+// void vadd(size_t, int32_t* restrict, size_t, int32_t* restrict,
+//           size_t, int32_t* restrict);
 \end{laincode}
 \end{example}
 

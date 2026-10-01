@@ -77,11 +77,16 @@ if [ "$blockquoted" -ne 0 ]; then
 fi
 
 ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
-unchecked_readme=0 unchecked_lang=0 unchecked_other=0 falseclaim=0
+unchecked_readme=0 unchecked_lang=0 unchecked_other=0 falseclaim=0 synopsis=0
 for f in "$TMP"/b*.txt; do
     ln=${f##*_}; ln=${ln%.txt}
     page=${f%_*}; page=${page##*_}; page=${page//%//}; page=${page//\~/_}
     body=$(cat "$f")
+    # A block whose first line is `// SYNOPSIS` shows a FORM (a grammar schema, a token list),
+    # not a program. It is counted and reported, never silently passed.
+    if echo "$body" | grep -m1 -vE '^[[:space:]]*$' | grep -qE '^[[:space:]]*//[[:space:]]*SYNOPSIS'; then
+        synopsis=$((synopsis+1)); continue
+    fi
     # what does the block CLAIM?
     # A block CLAIMS to be an error only when the marker follows real CODE on that line.
     # `// x = 20   // ERROR: ...` has the offending line COMMENTED OUT — the block is showing
@@ -187,6 +192,7 @@ echo "  illustrate an error, but COMPILE : $expfail_bad   ← the README is wron
 # policy; LANGUAGE.md is the old manual and its count is a backlog. Reading "66" against a
 # recorded "README has zero unverifiable fragments" cost a real detour before this split.
 echo "  UNVERIFIABLE fragments   : $unchecked   ← not noise: a claim nobody tests"
+[ $synopsis -gt 0 ] && echo "  SYNOPSIS blocks (a form, not a program): $synopsis"
 echo "      README.md   : $unchecked_readme   <- must stay 0"
 echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a regression"
 [ $DEFAULT_PAGES -eq 0 ] && echo "      other pages : $unchecked_other   <- a backlog, not a regression"

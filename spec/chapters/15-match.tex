@@ -17,6 +17,7 @@ possible values of the scrutinee type.  The grammar production is
 \label{sec:match.syntax}
 
 \begin{laincode}
+// SYNOPSIS: the form of a case expression
 case expr {
     Pattern1: body1
     Pattern2: body2
@@ -98,13 +99,14 @@ type Color {
     Green
     Blue
 }
-var c = Color.Red
 
-case c {
-    Red:   return 1
-    Green: return 2
-    Blue:  return 3
-}  // exhaustive: all three variants covered
+func code(c Color) i32 {
+    case c {
+        Red:   return 1
+        Green: return 2
+        Blue:  return 3
+    }  // exhaustive: all three variants covered
+}
 \end{laincode}
 \end{example}
 

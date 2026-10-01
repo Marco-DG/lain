@@ -28,9 +28,17 @@ The type may be omitted (inferred from the initializer).  The binding
 cannot be reassigned after initialization.
 
 \begin{laincode}
-x i32 = 42          // explicit type
-y = 10              // type inferred (i32)
-p Point = Point(1, 2)
+type Point {
+    x i32
+    y i32
+}
+
+func main() i32 {
+    x i32 = 42          // explicit type
+    y = 10              // type inferred (i32)
+    p Point = Point(1, 2)
+    return 0
+}
 \end{laincode}
 
 \begin{constraint}
@@ -343,11 +351,11 @@ before the scope exit) and as consumed at scope exit.
 
 \begin{example}
 \begin{laincode}
-import std.fs
+import std.fs.{open_file, close_file}
 
 func process() int effects io, raises, alloc {
     var f = open_file("data.txt", "r")
-    defer { close_file(mov f) }   // f consumed at scope exit
+    defer close_file(mov f)       // f consumed at scope exit
     // ... use f ...
     return 0
 }

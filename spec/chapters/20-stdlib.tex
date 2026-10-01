@@ -317,8 +317,8 @@ specification.
 \lain{Option(T)} is a type constructor for optional values:
 
 \begin{laincode}
-type Option(T type) = type {
-    Some { value T }
+type Option(T type) {          // std/option.ln
+    Some { val T }
     None
 }
 \end{laincode}
@@ -327,11 +327,18 @@ type Option(T type) = type {
 Usage:
 
 \begin{laincode}
+import std.c.{libc_printf}
+import std.option.{Option}
+
 type OptionInt = Option(int)
-var x = OptionInt.Some(42)
-case x {
-    Some(v): libc_printf("value: %d\n", v)
-    None:    libc_printf("no value\n")
+
+func main() int effects io {
+    var x = OptionInt.Some(42)
+    case x {
+        Some(v): libc_printf("value: %d\n", v)
+        None:    libc_printf("no value\n")
+    }
+    return 0
 }
 \end{laincode}
 
@@ -343,9 +350,9 @@ case x {
 \lain{Result(T, E)} is a type constructor for fallible computations:
 
 \begin{laincode}
-type Result(T type, E type) = type {
-    Ok  { value T }
-    Err { error E }
+type Result(T type, E type) {  // std/result.ln
+    Ok  { val T }
+    Err { err E }
 }
 \end{laincode}
 
@@ -353,10 +360,17 @@ type Result(T type, E type) = type {
 Usage:
 
 \begin{laincode}
-type FileResult = Result(File, int)
+import std.result.{Result}
 
-proc try_open(path *u8[:0]) FileResult {
-    var f = open_file(path, "r")
-    return FileResult.Ok(mov f)
+type Digit = Result(i32, int)
+
+func digit(c u8) Digit {
+    if c >= 48 and c <= 57 { return Digit.Ok((c - 48) as i32) }
+    return Digit.Err(1)
 }
 \end{laincode}
+
+\pnum
+\lain{Result}'s fields are not linear, so a linear value (a \lain{File}) cannot be its payload:
+\lain{Result(File, int)} is refused (\diagcode{E083}). A fallible open declares its own sum type
+whose payload field is \lain{mov}.

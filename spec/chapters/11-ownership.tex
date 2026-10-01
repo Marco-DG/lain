@@ -219,10 +219,17 @@ points via a use-analysis pre-pass over the AST.
 
 \begin{example}
 \begin{laincode}
-var data = Data(42)
-var r = get_ref(var data)  // mutable borrow starts
-use_ref(var r)             // last use of r: borrow ends HERE (NLL)
-var y = read(data)         // OK: borrow has expired
+type Data {
+    v i32
+}
+
+func main() i32 {
+    var data = Data(42)
+    var r = var data.v         // mutable borrow of data.v starts
+    r = 7                      // last use of r: the borrow ends HERE (NLL)
+    var y = data.v             // OK: the borrow has expired
+    return y
+}
 \end{laincode}
 \end{example}
 
@@ -312,11 +319,18 @@ ACTIVE   & (nothing)    & all other access \\
 
 \begin{example}
 \begin{laincode}
-func push_n(var v Vec, n int) { v.data = v.data + n }
+type Vec {
+    data int
+    cap int
+}
+func push_n(var v Vec, n int) { v.data = v.data +% n }
 
-var v = Vec(0, 10)
-v.push_n(v.cap)   // desugars to push_n(var v, v.cap)
-                  // var v enters RESERVED phase; v.cap read is allowed
+func main() int {
+    var v = Vec(0, 10)
+    v.push_n(v.cap)   // desugars to push_n(var v, v.cap)
+                      // var v enters RESERVED phase; v.cap read is allowed
+    return v.data
+}
 \end{laincode}
 \end{example}
 
@@ -399,13 +413,15 @@ for that field.
 
 \begin{example}
 \begin{laincode}
+// ERROR [E016]: h is consumed in the then-branch but not in the (implicit) else
 type Handle { mov ptr *i32 }
+
+func drop(mov h Handle) { }
 
 func maybe_consume(mov h Handle, flag bool) {
     if flag {
         drop(mov h)   // consumed in then-branch
     }
-    // [E016]: h consumed in then but not in else (implicit else)
 }
 \end{laincode}
 \end{example}
@@ -425,10 +441,19 @@ The borrow checker tracks borrows at the field level.  Borrowing
 non-overlapping fields of the same struct simultaneously is permitted:
 
 \begin{laincode}
-type Pair { a i32, b i32 }
-var p = Pair(1, 2)
-var ra = read_a(p.a)   // shared borrow of p.a (implicit)
-var rb = read_b(p.b)   // shared borrow of p.b -- OK: non-overlapping
+type Pair {
+    a i32
+    b i32
+}
+
+func main() i32 {
+    var p = Pair(1, 2)
+    var ra = var p.a       // mutable borrow of p.a
+    var rb = var p.b       // mutable borrow of p.b -- OK: non-overlapping
+    ra = 10
+    rb = 20
+    return p.a +% p.b
+}
 \end{laincode}
 
 \begin{note}

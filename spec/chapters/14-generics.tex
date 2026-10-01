@@ -44,8 +44,11 @@ func identity(T type, x T) T {
     return x
 }
 
-var n = identity(int, 42)       // T = int, monomorphized
-var s = identity(u8[:0], "hi")  // T = u8[:0], separate monomorphization
+func main() i32 {
+    var n = identity(int, 42)       // T = int, given; monomorphized
+    var s = identity("hi")          // T = u8[:0], inferred; a separate monomorphization
+    return 0
+}
 \end{laincode}
 
 \pnum
@@ -74,10 +77,15 @@ known at compile time.
 \end{note}
 
 \begin{laincode}
-type RingBuffer(T type, comptime N int) = type {
+// ERROR: E100 -- planned: a compile-time value parameter is not yet accepted at a use
+type RingBuffer(T type, N usize) {
     items T[N]
     head  usize
     tail  usize
+}
+func main() i32 {
+    var r RingBuffer(i32, 8) = RingBuffer(i32, 8)([0, 0, 0, 0, 0, 0, 0, 0], 0, 0)
+    return r.items[0]
 }
 \end{laincode}
 
@@ -92,18 +100,21 @@ type RingBuffer(T type, comptime N int) = type {
 \index{type as value}
 
 \pnum
-A \lain{func} with return type \lain{type} is a type constructor.  Its
-body shall consist only of expressions and statements that are evaluable
-at compile time.  The return value is a type that the caller may use in
-type annotations and variable declarations.
+A type declared with type parameters is a type constructor: \lain{Option(int)} names the
+instance for \lain{int}, which is generated once (monomorphized) and may be used in type
+annotations and variable declarations. A variant of an instance is constructed as
+\lain{Option(int).Some(42)} where the declaration states the instance.
 
 \begin{laincode}
-type Option(T type) = type {
+type Option(T type) {
     Some { value T }
     None
 }
 
-var x = Option(int).Some(42)
+func main() i32 {
+    var x Option(int) = Option(int).Some(42)   // the variable states the instance
+    return 0
+}
 \end{laincode}
 
 \pnum
@@ -113,10 +124,13 @@ Type constructors may also be written as \lain{func} declarations returning
 \begin{note}
   \textbf{Planned (not yet implemented).}  The \lain{func}-returning-\lain{type}
   spelling below is presently \diagcode{E100}; use the
-  \lain{type Name(T type) = type \{ ... \}} form above, which is accepted.
+  \lain{type Name(T type) \{ ... \}} form above, which is accepted. (The spelling
+  \lain{type Name(T type) = type \{ ... \}} declares an alias, not a generic type: its
+  instances are refused, \diagcode{E124}.)
 \end{note}
 
 \begin{laincode}
+// ERROR: E100 -- the planned spelling, not yet accepted
 func Option(T type) type {
     return type {
         Some { value T }

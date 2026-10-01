@@ -193,8 +193,12 @@ desugared call is determined by the declared mode of the first parameter of
 \begin{laincode}
 func is_empty(s u8[]) bool { return s.len == 0 }
 
-var buf = "hello"
-var empty = buf.is_empty()   // desugars to: is_empty(buf)
+func main() i32 {
+    var buf = "hello"
+    var empty = buf.is_empty()   // desugars to: is_empty(buf)
+    if empty { return 1 }
+    return 0
+}
 \end{laincode}
 \end{example}
 
@@ -282,7 +286,7 @@ termination), so it does not violate the purity of an enclosing
 
 \begin{example}
 \begin{laincode}
-func head(s u8[]) u8 {
+func head(s u8[]) u8 effects raises {
     if s.len == 0 {
         panic("empty slice")    // Never; satisfies the return type
     }

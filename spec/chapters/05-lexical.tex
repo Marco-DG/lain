@@ -68,6 +68,7 @@ characters that forms a valid token is consumed.
 
 \begin{example}
 \begin{laincode}
+// SYNOPSIS: tokens, not a program
 ..=    // one token: range-inclusive, NOT '.' followed by '.='
 >=     // one token: greater-than-or-equal, NOT '>' followed by '='
 \end{laincode}
@@ -223,8 +224,9 @@ Octal     & \lain{0o} & \lain{0o755} \\
 \end{longtable}
 
 \pnum
-An underscore (\texttt{\_}) may appear between any two digits of an integer
-literal as a visual separator.  It has no effect on the value.
+An underscore (\texttt{\_}) may appear between any two digits of an integer or
+floating-point literal as a visual separator.  It has no effect on the value:
+\lain{1\_000.5} is \lain{1000.5}.
 
 \pnum
 A hexadecimal, octal or binary literal denotes a \emph{bit pattern} of at most 64 bits, read as a

@@ -182,15 +182,26 @@ the right operand.
 
 \begin{example}
 \begin{laincode}
-// In-guard: arr[i] is safe without explicit VRA
-while i in arr {
-    var x = arr[i]   // OK: in-guarded
-    i = i + 1
+// In-guard: arr[i] is safe without further proof
+func sum(arr i32[]) i32 {
+    var s i32 = 0
+    var i usize = 0
+    while i in arr {
+        s = s +% arr[i]   // OK: in-guarded
+        i = i + 1
+    }
+    return s
 }
 
 // And-chain propagation:
-while l.pos in l.src and (l.src[l.pos] as int) != '"' {
-    l.pos = l.pos + 1
+type Lexer {
+    src u8[]
+    pos usize
+}
+func skip_to_quote(l var Lexer) {
+    while l.pos in l.src and (l.src[l.pos] as int) != '"' {
+        l.pos = l.pos + 1
+    }
 }
 \end{laincode}
 \end{example}

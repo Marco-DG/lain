@@ -170,8 +170,11 @@ To pass a Lain string to a C function expecting \texttt{char*}, the
 c_include "<stdio.h>"
 extern func puts(s *u8) int effects io
 
-var s = "hello"
-puts(s.data)   // OK: .data is *u8 = const char*
+func main() int effects io {
+    var s = "hello"
+    puts(s.data)   // OK: .data is *u8 = const char*
+    return 0
+}
 \end{laincode}
 
 \pnum

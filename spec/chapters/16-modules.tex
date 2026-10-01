@@ -114,10 +114,10 @@ any importing module.
 
 \begin{laincode}
 // In module foo.bar:
-func public_api() int { ... }    // public by default
+func public_api() int { return internal_helper() }   // public by default
 
 [private]
-func internal_helper() int { ... }   // only foo.bar may reference this
+func internal_helper() int { return 0 }   // only foo.bar may reference this
 \end{laincode}
 
 \begin{constraint}

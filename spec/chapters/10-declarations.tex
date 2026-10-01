@@ -23,14 +23,18 @@ declaration are written one per line.
 
 \begin{laincode}
 [fast_math]
-func dot(a f64[], b f64[], n int) f64 { ... }
+func dot(a f64[], b f64[a.len]) f64 {
+    var s f64 = 0.0
+    for i in 0..a.len { s = s + a[i] * b[i] }
+    return s
+}
 
 [private]
-func internal_helper() int { ... }
+func internal_helper() int { return 0 }
 
 [fast_math]
 [private]
-func hot_path() f64 { ... }
+func hot_path() f64 { return 1.0 }
 \end{laincode}
 
 \pnum
@@ -182,7 +186,10 @@ The return type is written after the parameter list.  It may carry a value
 range constraint:
 
 \begin{laincode}
-func abs(x int) int >= 0 { ... }
+func abs(x int >= -2147483647) int >= 0 {
+    if x < 0 { return -x }
+    return x
+}
 \end{laincode}
 
 \begin{constraint}
