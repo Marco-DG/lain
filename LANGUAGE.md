@@ -106,13 +106,14 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `unsafe` | Unsafe block |
 | `c_include` | Include a C header file |
 | `defer` | Defer execution until end of scope |
-| `comptime` | Compile-time parameter |
-| `undefined` | Uninitialized explicit escape hatch |
+| `comptime` | Compile-time branch — only `comptime if` is implemented (§20) |
 
 > [!NOTE]
-> **Reserved for future use**: The following keywords are recognized by the lexer but not yet fully implemented:
-> `macro`, `expr`, `pre`, `post`, `use`, `end`, `export`.
-> The keyword `fun` is accepted as an alias for `func`.
+> **Reserved**: `use` is recognised by the lexer and refused as an identifier or a field name; the
+> module-level `use` form is not implemented, and this implementation refuses it with `[E100]`.
+> `macro`, `expr`, `pre`, `post`, `end`, `export`, `fun` and `undefined` are **not** reserved —
+> each is usable today as an ordinary identifier and as a struct field name.
+> There is no `fun` alias for `func`, and no `undefined` initializer.
 
 ### 1.2 Operators & Punctuation
 
@@ -2408,54 +2409,77 @@ var s = "café"       // .len = 5 (4 ASCII bytes + 1 two-byte UTF-8 char)
 
 ---
 
-## 20. Compile-Time Generics
+## 20. Generics
 
-Lain uses **compile-time evaluation (CTFE)** instead of traditional generic syntax (`<T>`). Generic functions are normal `func` declarations that accept `comptime` parameters and are evaluated at compile time. The result is **monomorphized** code: each distinct set of compile-time arguments produces an independent concrete specialization.
+A type parameter is an ordinary parameter whose type is `type`. There is no separate generic
+syntax, no `<T>` and no keyword — the dependent-parameter mechanism carries types and values
+alike. Instantiation is **monomorphized**: each distinct set of type arguments produces an
+independent concrete specialization.
 
-### 20.1 `comptime` Parameters
+### 20.1 Type Parameters
 
 ```lain
-func identity(comptime T type, x T) T {
+func identity(T type, x T) T {
     return x
 }
 
-func max_val(comptime T type, a T, b T) T {
+func max_val(T type, a T, b T) T {
     if a > b { return a }
     return b
 }
 
-max_val(int, 3, 5)    // generates: int max_val_int(int a, int b)
-max_val(bool, x, y)   // generates: bool max_val_bool(bool a, bool b)
+func main() i32 {
+    return max_val(i32, 3, 5)    // generates a concrete i32 specialization
+}
 ```
 
 ### 20.2 Generic Types
 
-Functions that return `type` are **type constructors**:
+A type declaration takes parameters the same way:
 
 ```lain
-func Option(comptime T type) type {
-    return type {
-        Some { value T }
-        None
+type Option(T type) {
+    Some { val T }
+    None
+}
+
+func unwrap_or(T type, o Option(T), fallback T) T {
+    return case o {
+        Some(v): v
+        None: fallback
     }
 }
 
-func Result(comptime T type, comptime E type) type {
-    return type {
-        Ok  { value T }
-        Err { error E }
-    }
+func main() i32 {
+    return unwrap_or(i32, Option(i32).None, 7)
+}
+```
+
+An instantiation can be named with a type alias:
+
+```lain
+type Option(T type) {
+    Some { val T }
+    None
 }
 
-// Instantiation
-type OptInt    = Option(int)
-type FileResult = Result(File, int)
+type OptInt = Option(i32)
 
-var a OptInt = OptInt.Some(42)
-var b OptInt = OptInt.None
+func main() i32 {
+    o OptInt = OptInt.Some(42)
+    return case o {
+        Some(v): v
+        None: 0
+    }
+}
 ```
 
 The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` (`Result(T, E)`) built on this mechanism.
+
+> [!NOTE]
+> Whether an instantiation is tag-free depends on its payload. `Option(*u8)` packs into a single
+> pointer using the null niche; `Option(i32)` has no spare bit pattern, so it falls back to a tag
+> byte and says so with `[W120]`. See §7 for layout and the niche rules.
 
 ---
 
@@ -2583,10 +2607,10 @@ func scan_until(src u8[:0], delim u8) usize {
 | `T[N]` | Fixed-size array | `int[10]`, `u8[256]` |
 | `T[]` | Slice (fat pointer) | `int[]`, `u8[]` |
 | `T[:S]` | Sentinel-terminated slice | `u8[:0]` (string) |
-| `comptime T` | Compile-time parameter | `comptime T type` |
+| `T type` | Type parameter (§20) | `func id(T type, x T) T` |
 | `var T` | Mutable borrow / mutable param | `var int`, `var Point` |
 | `mov T` | Owned type (in params/returns) | `mov File` |
-| `type` | Meta-type (type as value) | return of generic func |
+| `type` | Meta-type (a type as a value) | `T type` in a parameter list |
 | `*void` | Opaque pointer (like C's `void*`) | `malloc` return |
 
 ---
@@ -2601,7 +2625,7 @@ func scan_until(src u8[:0], delim u8) usize {
 | `break` | Loop exit |
 | `c_include` | C header inclusion |
 | `case` | Pattern matching (§6.5) |
-| `comptime` | Compile-time type parameters (§20) |
+| `comptime` | Compile-time branch, `comptime if` (§20) |
 | `continue` | Loop iteration skip |
 | `decreasing` | Termination measure for bounded `while` in `func` (§6.3) |
 | `defer` | Deferred cleanup (§6.7) |
@@ -2643,19 +2667,22 @@ func scan_until(src u8[:0], delim u8) usize {
 
 ---
 
-## Appendix C: Reserved Keywords & Future Plans
+## Appendix C: Planned Syntax
+
+These are names the design has earmarked, **not** words the lexer reserves. Each is usable today
+as an ordinary identifier and as a struct field name; only `use` is actually refused (§1.1).
 
 ### `pre` / `post` — Contract Annotations
 
-Reserved for explicit precondition and postcondition contract blocks. Currently, constraints are expressed inline on parameter and return types (§8).
+Planned for explicit precondition and postcondition blocks. Constraints are expressed inline on parameter and return types today (§8).
 
 ### `..=` — Inclusive Range
 
-Reserved for inclusive range syntax. Currently only `..` (exclusive end) is supported.
+Planned for inclusive ranges. Only `..` (exclusive end) exists today.
 
 ### `export` — Visibility System
 
-Reserved for a future module visibility system, enabling `private` declarations.
+Planned for a module visibility system enabling `private` declarations.
 
 ---
 
@@ -2744,8 +2771,36 @@ binop           = "+" | "-" | "*" | "/" | "%" | "==" | "!="
 
 unop            = "-" | "!" | "~" | "*" ;
 
-literal         = NUMBER | CHAR_LITERAL | STRING_LITERAL | "undefined" ;
+literal         = NUMBER | CHAR_LITERAL | STRING_LITERAL ;
 ```
 
 > [!WARNING]
 > This grammar is a simplified approximation. The actual parser may accept or reject certain constructs not captured here. The grammar is intended as a reference, not a formal specification.
+
+---
+
+## Appendix E: Compiler Flags
+
+Every flag the compiler accepts, verified against the binary. An unknown flag is an error, not a
+filename, so a mistyped flag fails the build rather than being read as a source path.
+
+| Flag | Effect |
+|:-----|:-------|
+| `-o <file>` | Write the emitted C to `<file>` (default `out.c`). A relative path is resolved against the working directory. |
+| `--target=<triple>` | Set the target triple used for layout and emission. |
+| `--interpret` | Run the accepted program on the IR's own semantics (`src/ir/interp.h`) instead of emitting C. Every discharged proof is checked as it is used, and the process exits with the value `main` returns. |
+| `--check-invariants` | Implies `--interpret`. The range analysis's state at each block must contain the running program's, so a proof that does not describe the real execution is caught. |
+| `--dump-ast` | Print the parsed syntax tree. |
+| `--dump-effects` | Print each function's inferred effect row. |
+| `--dump-niche` | Print the niche-packing decision for each sum type. |
+| `--dump-octagon` | Print the converged octagon state per basic block. |
+| `--no-w130` | Suppress the `W130` warning. |
+| `--no-line-directives` | Omit `#line` directives from the emitted C. |
+| `--emit-llvm` | Lower to proof-carrying LLVM-IR. This is a demonstration seam, not a backend: outside the subset it models it **refuses** rather than emitting a placeholder. C is the backend that works. |
+
+Two legacy selector flags, for choosing an engine and a backend, are still *accepted* and
+silently do nothing: there is one engine and one backend. They are deliberately left out of the
+table above, because a no-op documented as a feature is worse than an absent one — the engine
+selector once named a set of analyses that were deleted on 2026-09-23, and honouring it would
+have meant compiling with no ownership, bounds or overflow checking at all. They remain no-ops
+rather than errors only so that older scripts keep running.

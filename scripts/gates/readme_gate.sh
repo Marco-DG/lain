@@ -173,7 +173,10 @@ done
 # A flag name is a claim about the compiler like any other, so it gets tested like any other.
 flag_bad=0
 [ $DEFAULT_PAGES -eq 1 ] && \
-for flag in $(grep -ohE '\-\-[a-z][a-z-]*(=[a-z-]+)?' README.md LANGUAGE.md 2>/dev/null | sort -u); do
+# A flag name may contain DIGITS (`--no-w130`). The class was [a-z-] only, so that flag was
+# extracted as `--no-w`, reported as not accepted, and the real one went unchecked — the gate
+# could not express the very flag it was meant to test.
+for flag in $(grep -ohE '\-\-[a-z][a-z0-9-]*(=[a-z0-9-]+)?' README.md LANGUAGE.md 2>/dev/null | sort -u); do
     # ★ ACCEPTED IS NOT HONOURED. `--engine=` and `--backend=` are accepted and IGNORED (one
     # engine, one backend remain), so a page saying `--engine=legacy` restores the old checker
     # passed this check for weeks while describing a flag that does nothing. A flag whose
