@@ -1,0 +1,101 @@
+// The allowed side of E010 (tests/borrow/escape_*_fail.ln): a reference may leave a function when
+// it points into storage the CALLER owns, and a local's reference may move between the function's
+// own places. Each check has its own exit code. `copied` is the one the old check refused: an array
+// passed to a struct's array field is copied into it, so it lends nothing.
+type St {
+    a u8
+    s u32[]
+}
+type Sh {
+    Sl { a u8, s u32[] }
+    Flat
+}
+type A {
+    a u8
+    xs u32[3]
+}
+func through_binding(a u32[]) St {
+    s = St(1, a)
+    return s
+}
+func either(a u32[], b u32[], c bool) u32[] {
+    var s = a
+    if c {
+        s = b
+    }
+    return s
+}
+func put(o var St, s u32[]) {
+    o.s = s
+}
+func put_param(o var St, a u32[]) {
+    put(var o, a)
+}
+func local_only(k u32) u32 {
+    xs u32[3] = [k, k, k]
+    zs u32[1] = [0]
+    var o = St(1, zs[0..1])
+    put(var o, xs[0..3])
+    t = o.s
+    if t.len < 3 { return 0 }
+    return t[2]
+}
+func wrap(a u32[]) St {
+    return St(1, a)
+}
+func wrapped(a u32[]) St {
+    return wrap(a)
+}
+func half(a u32[]) u32[] {
+    if a.len < 2 { return a }
+    return a[0..1]
+}
+func halved(a u32[]) u32[] {
+    return half(a)
+}
+func as_sum(a u32[]) Sh {
+    s = Sh.Sl(1, a)
+    return s
+}
+func last_big(a u32[]) u32[] {
+    if a.len < 1 { return a }
+    var best = a[0..1]
+    var i usize = 0
+    while i < a.len {
+        if a[i] > 5 { best = a[i..i + 1] }
+        i = i + 1
+    }
+    return best
+}
+func copied(k u32 <= 100) A {
+    xs u32[3] = [k, k + 1, k + 2]
+    return A(1, xs)
+}
+func clobber(k u32) u32 {
+    ys u32[8] = [k, k, k, k, k, k, k, k]
+    return ys[3]
+}
+func main() i32 {
+    data u32[4] = [3, 9, 4, 7]
+    other u32[2] = [1, 2]
+    s = through_binding(data[0..4])
+    if s.s.len != 4 { return 1 }
+    if either(data[0..4], other[0..2], true).len != 2 { return 2 }
+    var o = St(0, other[0..2])
+    put_param(var o, data[0..4])
+    if o.s.len != 4 { return 3 }
+    if local_only(6) != 6 { return 4 }
+    if wrapped(data[0..4]).s.len != 4 { return 5 }
+    if halved(data[0..4]).len != 1 { return 6 }
+    case as_sum(other[0..2]) {
+        Sl(a, t): if t.len != 2 { return 7 }
+        Flat: return 8
+    }
+    b = last_big(data[0..4])
+    if b.len != 1 { return 9 }
+    if b[0] != 7 { return 10 }
+    c = copied(10)
+    d = clobber(77)
+    if c.xs[2] != 12 { return 11 }
+    return 0
+}

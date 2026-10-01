@@ -76,8 +76,13 @@ Three storage durations are defined:
 \end{description}
 
 \begin{constraint}
-  A \lain{return} statement shall not return a reference whose referent
-  has automatic storage duration~(\diagcode{E010}).
+  A reference whose referent has automatic storage duration shall not outlive that
+  storage~(\diagcode{E010}). It shall not be returned, whether directly or held by a struct
+  or a sum, through any binding, assignment or call that can hand it back; it shall not be
+  stored into a place the caller owns (what a \lain{var} parameter refers to, or a place
+  reached through it); and it shall not be passed to a function that keeps it where such a
+  place can reach it. An array passed to an array field or payload is copied into it and lends
+  nothing. A function declared \lain{extern} is believed to keep no reference past the call.
 \end{constraint}
 
 \section{Stack allocation}

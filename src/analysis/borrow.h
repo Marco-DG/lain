@@ -5,10 +5,10 @@
 // the return, so the caller would hold a dangling reference (a use-after-return / stack
 // use-after-free). This is exactly what the old engine's E-borrow / region check catches.
 //
-// Method: escape analysis. Trace the returned value's provenance backward through the
-// address-forming ops (elem_ptr / field_ptr / slice_data / make_slice); if the root is a
-// local IR_ALLOCA the reference escapes → flag. A param is a POINTER value (a borrow of the
-// caller's storage), not an alloca, so returning it is fine; heap/global roots likewise.
+// Method: escape analysis (bor_check_escapes). Every value that can flow into a returned
+// reference, a store into storage the caller owns, or an argument a callee keeps is followed
+// back; if any roots in a local IR_ALLOCA the reference escapes → flag. A param is a POINTER
+// value (a borrow of the caller's storage), not an alloca, so returning it is fine.
 //
 // Sovereign: reads only ir.h. (NLL region lifetimes and two-phase borrows are follow-ups;
 // this cut is the escaping-local-reference core — the memory-safety heart.)
@@ -104,34 +104,6 @@ static IrPlace bor_place_through_binding(IrFunc *f, IrInstr **def, int nvar, IrV
     if (r.nproj + t.nproj > IR_PLACE_MAX_PROJ) return t;          // too deep to name: stay DEREF
     for (int i = 0; i < t.nproj; i++) r.proj[r.nproj++] = t.proj[i];
     return r;
-}
-
-static bool bor_roots_local(IrFunc *f, IrInstr **def, int nvar, IrValue *v) {
-    for (int guard=0; v && v->id>=0 && v->id<nvar && guard<100000; guard++) {
-        IrInstr *d = def[v->id];
-        if (!d) return false;                             // param / φ with no single def
-        switch (d->op) {
-            case IR_ALLOCA:                                return true;    // a local stack slot
-            case IR_ELEM_PTR: case IR_FIELD_PTR:
-            case IR_SLICE_DATA: case IR_MAKE_SLICE:
-                v = d->n_operands>=1 ? d->operands[0] : NULL; break;       // provenance = base/data
-            case IR_LOAD: {
-                // A load launders provenance in general — but when the slot it reads is
-                // written EXACTLY ONCE, the loaded value is that stored value and provenance
-                // survives. This is what makes the escaping-local case visible at all:
-                // `var local = "hello"; return Lexer(local, 0)` LOADS the slice out of
-                // local's slot before it enters the struct, and stopping at the load reported
-                // nothing. (Reading a slot written from a PARAMETER still roots at the param,
-                // so this adds no false positives — it follows the value, not the slot.)
-                IrValue *addr = d->n_operands>=1 ? d->operands[0] : NULL;
-                IrValue *stored = bor_unique_store_value(f, addr);
-                if (!stored) return false;
-                v = stored; break;
-            }
-            default: return false;                        // call/… — not a known local
-        }
-    }
-    return false;
 }
 
 // ── loans at a call site (borrow phase A) ────────────────────────────────────
@@ -361,8 +333,7 @@ static IrValue *bor_result_slot(BorSeq *s, int at, IrValue *res) {
 // boundary and so rejects the ambiguous signature outright ("missing lifetime specifier").
 
 // provenance walk to the ROOT value: a parameter (no defining instruction) or a local slot.
-// Same edge set as bor_roots_local — address-forming ops only, so provenance is not laundered
-// through a load or a call.
+// Address-forming ops only, so provenance is not laundered through a load or a call.
 static IrValue *bor_root_value(IrInstr **def, int nvar, IrValue *v) {
     for (int guard=0; v && v->id>=0 && v->id<nvar && guard<100000; guard++) {
         IrInstr *d = def[v->id];
@@ -776,29 +747,407 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
     }
 }
 
+// ── E010, TOTAL: a reference must not outlive the storage it points into ─────────────────────
+// A local's storage dies when the function returns, so a reference into it may reach neither the
+// return value nor any place the caller owns. The check used to chase ONE provenance chain
+// and answer "not local" wherever it could not follow, so it failed OPEN: a
+// struct returned through a binding (`s = St(1, xs[0..3])  return s`), a field store
+// (`s.s = xs[0..3]`), a nested constructor, any sum, a variable assigned twice
+// (`var p = &xs[0]  if c { p = &ys[0] }  return p`), and a local's slice stored into a `var`
+// parameter's field all compiled, and each read a dead frame (ASan stack-use-after-return;
+// `lain --interpret` "no longer live"). Only `return St(..)` and `return &xs[0]` were refused.
+//
+// Now every value that can flow into a reference is followed, and anything unknown counts as
+// local unless it is provably not: a φ by all its inputs, a slot by everything stored into it
+// (directly, through a reference binding, or by a call that receives its address), a constructor
+// by its reference operands, a call by the arguments its callee may hand back. Three sinks:
+//   · a returned value that can hold a reference;
+//   · a store into storage that outlives the frame (a parameter's, or one reached through it);
+//   · an argument the callee RETAINS (ir_param_retains) beside a destination that outlives the
+//     frame. An extern is C's contract: it is believed to keep no pointer past the call.
+// An ARRAY operand of a constructor is COPIED into the field, so it lends nothing (a struct or
+// sum holds its arrays inline): `return St2(1, xs)` with an array field was refused as a borrow.
+#define BOR_ESC_MAX_SLOTS 16
+typedef struct { int16_t n; int8_t state; bool outliving; int slots[BOR_ESC_MAX_SLOTS]; } BorTargets;
+typedef struct { IrValue **v; int n, cap; } BorVals;
+typedef struct {
+    IrFunc *f, *mod; IrInstr **def; int nvar;
+    int *pidx;           // per value: its parameter index, or -1
+    BorTargets *tg;      // per value: the local slots a pointer may point into, or "outliving"
+    BorVals *direct;     // per slot: values stored straight into it (its address chain, no load)
+    BorVals *stored;     // per slot: every value that may be stored into it
+} BorEsc;
+
+// What a callee does with its PARAMETERS' references, from the same walk:
+//   ret   the parameters whose references may flow into its result;
+//   keep  the parameters whose references may outlive the call: returned, stored where its
+//         caller owns, or handed to a callee that keeps them beside such a place.
+// A by-value aggregate is copied into a local slot before a field is read, so a summary taken
+// off address-forming ops alone (bor_ret_borrow_mask, ir_param_retains) lost it:
+// `unwrap(b Box) i32[] { return b.s }` handed back nothing, and `return unwrap(Box(xs[0..2]))`
+// read a dead frame. An extern has no body: its result borrows what its type says
+// (bor_ret_borrow_mask), and it is believed to keep nothing else. Memoized per module; a
+// recursive cycle answers "every parameter" (fail-closed).
+typedef struct { IrFunc *f; uint64_t ret, keep; int state; } BorSum;
+#define BOR_SUM_MAX 4096
+static BorSum  bor_sums[BOR_SUM_MAX];
+static int     bor_nsums;
+static IrFunc *bor_sums_mod;
+static void bor_summary(IrFunc *callee, IrFunc *mod, uint64_t *ret, uint64_t *keep);
+
+static bool bor_holds_ref(const IrType *t, int depth) {
+    if (!t || depth > 16) return false;
+    switch (t->kind) {
+        case IRT_PTR: case IRT_SLICE: return true;
+        case IRT_ARRAY: return bor_holds_ref(t->elem, depth + 1);
+        case IRT_STRUCT: case IRT_SUM:
+            for (int k = 0; k < t->n_fields; k++) if (bor_holds_ref(t->fields[k], depth + 1)) return true;
+            return false;
+        default: return false;
+    }
+}
+static void bor_vals_add(BorVals *L, IrValue *v) {
+    if (!v) return;
+    for (int k = 0; k < L->n; k++) if (L->v[k] == v) return;
+    if (L->n == L->cap) { L->cap = L->cap ? L->cap * 2 : 4; L->v = realloc(L->v, (size_t)L->cap * sizeof *L->v); }
+    L->v[L->n++] = v;
+}
+static void bor_tg_union(BorTargets *a, const BorTargets *b) {
+    if (b->outliving) a->outliving = true;
+    for (int k = 0; k < b->n; k++) {
+        bool have = false;
+        for (int j = 0; j < a->n; j++) if (a->slots[j] == b->slots[k]) have = true;
+        if (have) continue;
+        if (a->n == BOR_ESC_MAX_SLOTS) { a->outliving = true; continue; }   // too many: assume the worst
+        a->slots[a->n++] = b->slots[k];
+    }
+}
+// Which operand of a call holds argument 0 (an indirect call's op[0] is the callee).
+static int bor_call_arg0(IrInstr *call) { return call->aux.callee ? 0 : 1; }
+static IrFunc *bor_callee(BorEsc *E, IrInstr *call) {
+    return call->aux.callee && E->mod ? ireff_find(E->mod, call->aux.callee) : NULL;
+}
+// The storage a pointer value may point into: local slots, or "outliving" (a parameter's, a
+// call's, anything not followed). A cycle reads as outliving: the conservative answer.
+static const BorTargets *bor_targets(BorEsc *E, IrValue *p) {
+    static const BorTargets OUT = { 0, 2, true, {0} };
+    if (!p || p->id < 0 || p->id >= E->nvar) return &OUT;
+    BorTargets *T = &E->tg[p->id];
+    if (T->state == 2) return T;
+    if (T->state == 1) return &OUT;
+    T->state = 1;
+    BorTargets R; memset(&R, 0, sizeof R);
+    IrInstr *d = E->def[p->id];
+    if (!d) R.outliving = true;                                   // a parameter: the caller's
+    else switch (d->op) {
+        case IR_ALLOCA:
+            if (d->data) R.outliving = true;                      // read-only static data
+            else { R.n = 1; R.slots[0] = p->id; }
+            break;
+        case IR_FIELD_PTR: case IR_ELEM_PTR: case IR_SLICE_DATA: case IR_MAKE_SLICE:
+        case IR_SUBSLICE: case IR_CAST:
+            bor_tg_union(&R, bor_targets(E, d->n_operands >= 1 ? d->operands[0] : NULL));
+            break;
+        case IR_LOAD: {                                           // the pointers stored there
+            const BorTargets *at = bor_targets(E, d->n_operands >= 1 ? d->operands[0] : NULL);
+            if (at->outliving) R.outliving = true;
+            for (int k = 0; k < at->n; k++) {
+                BorVals *L = &E->direct[at->slots[k]];
+                for (int j = 0; j < L->n; j++) bor_tg_union(&R, bor_targets(E, L->v[j]));
+            }
+            break;
+        }
+        case IR_PHI:
+            for (IrPhiArg *a = d->phi_args; a; a = a->next) bor_tg_union(&R, bor_targets(E, a->value));
+            break;
+        case IR_CALL: {                     // a returned reference points where its arguments do
+            IrFunc *callee = bor_callee(E, d);
+            uint64_t rm = ~(uint64_t)0, km;
+            if (callee) bor_summary(callee, E->mod, &rm, &km);
+            int a0 = bor_call_arg0(d);
+            R.outliving = true;                                   // ...or somewhere it owns
+            for (int k = a0; k < d->n_operands; k++)
+                if (k - a0 >= 64 || ((rm >> (k - a0)) & 1u)) bor_tg_union(&R, bor_targets(E, d->operands[k]));
+            break;
+        }
+        default: R.outliving = true; break;
+    }
+    R.state = 2; *T = R;
+    return T;
+}
+// The address chain of a store, followed without loads: the slot it writes directly, or -1.
+static int bor_direct_slot(BorEsc *E, IrValue *a) {
+    for (int guard = 0; a && a->id >= 0 && a->id < E->nvar && guard < 1000; guard++) {
+        IrInstr *d = E->def[a->id];
+        if (!d) return -1;
+        if (d->op == IR_ALLOCA) return d->data ? -1 : a->id;
+        if (d->op != IR_FIELD_PTR && d->op != IR_ELEM_PTR) return -1;
+        a = d->n_operands >= 1 ? d->operands[0] : NULL;
+    }
+    return -1;
+}
+
+// The parameters an address that leaves the frame may come from: storage the caller passed in.
+// Anything not followed counts as every parameter (fail-closed for the summary).
+static uint64_t bor_addr_params(BorEsc *E, IrValue *a, int depth) {
+    if (!a || a->id < 0 || a->id >= E->nvar || depth > 64) return ~(uint64_t)0;
+    IrInstr *d = E->def[a->id];
+    if (!d) { int pi = E->pidx[a->id]; return pi < 0 ? 0 : pi < 64 ? (uint64_t)1 << pi : ~(uint64_t)0; }
+    uint64_t m = 0;
+    switch (d->op) {
+        case IR_ALLOCA: return 0;                                 // the frame's, or static data
+        case IR_FIELD_PTR: case IR_ELEM_PTR: case IR_SLICE_DATA: case IR_MAKE_SLICE:
+        case IR_SUBSLICE: case IR_CAST:
+            return bor_addr_params(E, d->n_operands >= 1 ? d->operands[0] : NULL, depth + 1);
+        case IR_PHI:
+            for (IrPhiArg *p = d->phi_args; p; p = p->next) m |= bor_addr_params(E, p->value, depth + 1);
+            return m;
+        case IR_LOAD: {                                           // a pointer held in memory
+            const BorTargets *t = bor_targets(E, d->n_operands >= 1 ? d->operands[0] : NULL);
+            for (int k = 0; k < t->n; k++) {
+                BorVals *L = &E->direct[t->slots[k]];
+                for (int j = 0; j < L->n; j++) m |= bor_addr_params(E, L->v[j], depth + 1);
+            }
+            if (t->outliving) m |= bor_addr_params(E, d->n_operands >= 1 ? d->operands[0] : NULL, depth + 1);
+            return m;
+        }
+        case IR_CALL: {
+            IrFunc *callee = bor_callee(E, d);
+            uint64_t rm = ~(uint64_t)0, km;
+            if (callee) bor_summary(callee, E->mod, &rm, &km);
+            int a0 = bor_call_arg0(d);
+            for (int k = a0; k < d->n_operands; k++)
+                if (k - a0 >= 64 || ((rm >> (k - a0)) & 1u)) m |= bor_addr_params(E, d->operands[k], depth + 1);
+            return m;
+        }
+        case IR_STR_CONST: case IR_CONST: return 0;
+        default: return ~(uint64_t)0;
+    }
+}
+
+// Where can the references that flow into v come from? Returns true if any roots in one of this
+// function's locals, and adds the parameters any roots in to *params.
+static bool bor_walk(BorEsc *E, IrValue *v0, uint64_t *params) {
+    char *seen = calloc((size_t)E->nvar, 1);
+    IrValue **wl = malloc((size_t)(E->nvar > 0 ? E->nvar : 1) * sizeof *wl);
+    if (!seen || !wl) { free(seen); free(wl); *params = ~(uint64_t)0; return true; }
+    int top = 0; bool local = false;
+#define BOR_PUSH(x) do { IrValue *x_ = (x); if (x_ && x_->id >= 0 && x_->id < E->nvar && !seen[x_->id]) { seen[x_->id] = 1; wl[top++] = x_; } } while (0)
+    BOR_PUSH(v0);
+    while (top > 0) {
+        IrValue *v = wl[--top];
+        IrInstr *d = E->def[v->id];
+        if (!d) {                                                 // a parameter: the caller's
+            int pi = E->pidx[v->id];
+            if (pi >= 0) *params |= pi < 64 ? (uint64_t)1 << pi : ~(uint64_t)0;
+            continue;
+        }
+        switch (d->op) {
+            case IR_ALLOCA: if (!d->data) local = true; break;
+            case IR_FIELD_PTR: case IR_ELEM_PTR: case IR_SLICE_DATA: case IR_MAKE_SLICE:
+            case IR_SUBSLICE: case IR_CAST: case IR_SUM_PAYLOAD:
+                if (d->n_operands >= 1) BOR_PUSH(d->operands[0]);
+                break;
+            case IR_PHI:
+                for (IrPhiArg *a = d->phi_args; a; a = a->next) BOR_PUSH(a->value);
+                break;
+            case IR_LOAD: {                                       // whatever was stored there
+                const BorTargets *t = bor_targets(E, d->n_operands >= 1 ? d->operands[0] : NULL);
+                for (int k = 0; k < t->n; k++) {
+                    BorVals *L = &E->stored[t->slots[k]];
+                    for (int j = 0; j < L->n; j++) BOR_PUSH(L->v[j]);
+                }
+                // storage that outlives the frame holds what the caller put there: its parameters'
+                // references (anything local stored there is a sink of its own)
+                if (t->outliving) *params |= bor_addr_params(E, d->n_operands >= 1 ? d->operands[0] : NULL, 0);
+                break;
+            }
+            case IR_STRUCT_NEW: case IR_SUM_NEW: {
+                IrType *rt = d->result ? d->result->type : NULL;
+                IrType *pl = rt && rt->kind == IRT_SUM && d->aux.sum.variant >= 0 && d->aux.sum.variant < rt->n_fields
+                           ? rt->fields[d->aux.sum.variant] : rt;
+                for (int k = 0; k < d->n_operands; k++) {
+                    IrValue *o = d->operands[k];
+                    IrType *ft = pl && (pl->kind == IRT_STRUCT || pl->kind == IRT_SUM) && k < pl->n_fields ? pl->fields[k] : NULL;
+                    if (ft && ft->kind == IRT_ARRAY) {            // copied in: lends nothing, but
+                        if (!bor_holds_ref(ft->elem, 0)) continue;  // the references it holds move
+                        const BorTargets *t = bor_targets(E, o);
+                        for (int s = 0; s < t->n; s++) {
+                            BorVals *L = &E->stored[t->slots[s]];
+                            for (int j = 0; j < L->n; j++) BOR_PUSH(L->v[j]);
+                        }
+                        if (t->outliving) *params |= bor_addr_params(E, o, 0);
+                        continue;
+                    }
+                    if (o && bor_holds_ref(o->type, 0)) BOR_PUSH(o);
+                }
+                break;
+            }
+            case IR_CALL: {
+                IrFunc *callee = bor_callee(E, d);
+                uint64_t rm = ~(uint64_t)0, km;
+                if (callee) bor_summary(callee, E->mod, &rm, &km);
+                int a0 = bor_call_arg0(d);
+                for (int k = a0; k < d->n_operands; k++) {
+                    int ai = k - a0;
+                    if (ai < 64 && !((rm >> ai) & 1u)) continue;
+                    if (d->operands[k] && bor_holds_ref(d->operands[k]->type, 0)) BOR_PUSH(d->operands[k]);
+                }
+                break;
+            }
+            case IR_CONST: case IR_STR_CONST: case IR_FUNC_REF: case IR_OPAQUE:
+            case IR_SUM_TAG: case IR_SLICE_LEN: case IR_ICMP:
+                break;
+            default:                                              // anything else: its inputs
+                for (int k = 0; k < d->n_operands; k++)
+                    if (d->operands[k] && bor_holds_ref(d->operands[k]->type, 0)) BOR_PUSH(d->operands[k]);
+                break;
+        }
+    }
+#undef BOR_PUSH
+    free(seen); free(wl);
+    return local;
+}
+
+// One pass over f: what each slot may hold, then the three sinks. With B it reports E010 for
+// every reference to a local that reaches one; it always fills f's summary (*ret, *keep).
+static void bor_escape_pass(Borrow *B, IrFunc *f, IrFunc *mod, uint64_t *ret, uint64_t *keep) {
+    *ret = 0; *keep = 0;
+    BorEsc E; memset(&E, 0, sizeof E);
+    E.f = f; E.mod = mod; E.nvar = f->next_value_id > 0 ? f->next_value_id : 1;
+    E.def = calloc((size_t)E.nvar, sizeof *E.def);
+    E.pidx = malloc((size_t)E.nvar * sizeof *E.pidx);
+    E.tg = calloc((size_t)E.nvar, sizeof *E.tg);
+    E.direct = calloc((size_t)E.nvar, sizeof *E.direct);
+    E.stored = calloc((size_t)E.nvar, sizeof *E.stored);
+    if (!E.def || !E.pidx || !E.tg || !E.direct || !E.stored) { *ret = *keep = ~(uint64_t)0; goto done; }
+    for (int k = 0; k < E.nvar; k++) E.pidx[k] = -1;
+    { int pi = 0;
+      for (IrParam *p = f->params; p; p = p->next, pi++)
+          if (p->value && p->value->id >= 0 && p->value->id < E.nvar) E.pidx[p->value->id] = pi; }
+    for (IrBlock *b = f->blocks; b; b = b->next) {
+        for (IrInstr *i = b->phis; i; i = i->next) if (i->result && i->result->id < E.nvar) E.def[i->result->id] = i;
+        for (IrInstr *i = b->instrs; i; i = i->next) if (i->result && i->result->id < E.nvar) E.def[i->result->id] = i;
+    }
+    // what each slot holds: direct stores first (bor_targets reads them), then the rest
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            if (i->op == IR_STORE && i->n_operands >= 2) {
+                int s = bor_direct_slot(&E, i->operands[0]);
+                if (s >= 0) bor_vals_add(&E.direct[s], i->operands[1]);
+            }
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (i->op == IR_STORE && i->n_operands >= 2) {
+                IrValue *val = i->operands[1];
+                if (!val || !bor_holds_ref(val->type, 0)) continue;
+                const BorTargets *t = bor_targets(&E, i->operands[0]);
+                for (int k = 0; k < t->n; k++) bor_vals_add(&E.stored[t->slots[k]], val);
+            } else if (i->op == IR_CALL) {
+                // A callee may store any reference it keeps into storage another argument
+                // reaches: a slot passed by address may come back holding it.
+                IrFunc *callee = bor_callee(&E, i);
+                uint64_t rm, km = ~(uint64_t)0;
+                if (callee) bor_summary(callee, mod, &rm, &km);
+                int a0 = bor_call_arg0(i);
+                for (int k = a0; k < i->n_operands; k++) {
+                    IrValue *dst = i->operands[k];
+                    if (!dst || !dst->type || (dst->type->kind != IRT_PTR && dst->type->kind != IRT_SLICE && dst->type->kind != IRT_ARRAY)) continue;
+                    const BorTargets *t = bor_targets(&E, dst);
+                    for (int s = 0; s < t->n; s++)
+                        for (int j = a0; j < i->n_operands; j++) {
+                            int aj = j - a0;
+                            if (j == k || (aj < 64 && !((km >> aj) & 1u))) continue;
+                            if (i->operands[j] && bor_holds_ref(i->operands[j]->type, 0)) bor_vals_add(&E.stored[t->slots[s]], i->operands[j]);
+                        }
+                }
+            }
+        }
+    // the sinks
+    for (IrBlock *b = f->blocks; b; b = b->next) {
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (i->op == IR_STORE && i->n_operands >= 2) {        // into storage the caller owns
+                IrValue *val = i->operands[1];
+                if (!val || !bor_holds_ref(val->type, 0)) continue;
+                if (!bor_targets(&E, i->operands[0])->outliving) continue;
+                uint64_t pm = 0;
+                if (bor_walk(&E, val, &pm) && B) bor_add(B, i->line, i->col, 10);
+                *keep |= pm;
+            } else if (i->op == IR_CALL) {                        // kept by a callee beside it
+                IrFunc *callee = bor_callee(&E, i);
+                uint64_t rm, km = ~(uint64_t)0;
+                if (callee) bor_summary(callee, mod, &rm, &km);
+                int a0 = bor_call_arg0(i);
+                bool outliving_dst = false;
+                for (int k = a0; k < i->n_operands && !outliving_dst; k++) {
+                    IrValue *dst = i->operands[k];
+                    if (dst && dst->type && dst->type->kind == IRT_PTR && bor_targets(&E, dst)->outliving)
+                        outliving_dst = true;
+                }
+                if (!outliving_dst) continue;
+                bool reported = false;
+                for (int j = a0; j < i->n_operands; j++) {
+                    int aj = j - a0;
+                    if (aj < 64 && !((km >> aj) & 1u)) continue;
+                    IrValue *a = i->operands[j];
+                    if (!a || !bor_holds_ref(a->type, 0)) continue;
+                    uint64_t pm = 0;
+                    if (bor_walk(&E, a, &pm) && B && !reported) { bor_add(B, i->line, i->col, 10); reported = true; }
+                    *keep |= pm;
+                }
+            }
+        }
+        if (b->term.kind == IR_TERM_RET && b->term.cond) {        // returned
+            IrValue *rv = b->term.cond;
+            if (!bor_holds_ref(rv->type, 0)) continue;
+            uint64_t pm = 0;
+            if (bor_walk(&E, rv, &pm) && B)                       // reported at the `return`
+                bor_add(B, b->term.line ? b->term.line : rv->line, b->term.line ? b->term.col : rv->col, 10);
+            *ret |= pm; *keep |= pm;
+        }
+    }
+done:
+    for (int k = 0; k < E.nvar; k++) {
+        if (E.direct) free(E.direct[k].v);
+        if (E.stored) free(E.stored[k].v);
+    }
+    free(E.def); free(E.pidx); free(E.tg); free(E.direct); free(E.stored);
+}
+
+static void bor_summary(IrFunc *callee, IrFunc *mod, uint64_t *ret, uint64_t *keep) {
+    *ret = *keep = ~(uint64_t)0;
+    if (!callee) return;
+    if (callee->is_extern) {
+        *ret = *keep = ir_ret_is_borrow(callee) ? bor_ret_borrow_mask(callee) : 0;
+        return;
+    }
+    if (mod != bor_sums_mod) { bor_nsums = 0; bor_sums_mod = mod; }
+    for (int k = 0; k < bor_nsums; k++)
+        if (bor_sums[k].f == callee) {
+            if (bor_sums[k].state == 2) { *ret = bor_sums[k].ret; *keep = bor_sums[k].keep; }
+            return;                                               // in progress: everything
+        }
+    if (bor_nsums == BOR_SUM_MAX) return;
+    int me = bor_nsums++;
+    bor_sums[me].f = callee; bor_sums[me].state = 1;
+    uint64_t r, kp;
+    bor_escape_pass(NULL, callee, mod, &r, &kp);
+    bor_sums[me].ret = r; bor_sums[me].keep = kp; bor_sums[me].state = 2;
+    *ret = r; *keep = kp;
+}
+
+static void bor_check_escapes(Borrow *B, IrFunc *f, IrFunc *mod) {
+    uint64_t r, k;
+    bor_escape_pass(B, f, mod, &r, &k);
+}
+
 static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod) {
     Borrow *B = calloc(1,sizeof *B); B->f=f;
     B->nvar = f->next_value_id>0?f->next_value_id:1;
     B->def = calloc(B->nvar,sizeof(IrInstr*));
     for (IrBlock *b=f->blocks;b;b=b->next)
         for (IrInstr *i=b->instrs;i;i=i->next) if (i->result) B->def[i->result->id]=i;
-    for (IrBlock *b=f->blocks;b;b=b->next) {
-        if (b->term.kind!=IR_TERM_RET || !b->term.cond) continue;
-        IrValue *rv = b->term.cond;
-        bool dangles = false;
-        if (rv->type && (rv->type->kind==IRT_PTR || rv->type->kind==IRT_SLICE))
-            dangles = bor_roots_local(f, B->def, B->nvar, rv);         // return a local reference
-        else if (rv->type && rv->type->kind==IRT_STRUCT) {         // return a struct that BORROWS a
-            IrInstr *d = B->def[rv->id];                            // local through a pointer/slice field
-            if (d && d->op==IR_STRUCT_NEW)
-                for (int k=0;k<d->n_operands && !dangles;k++) {
-                    IrValue *fv = d->operands[k];
-                    if (fv && fv->type && (fv->type->kind==IRT_PTR || fv->type->kind==IRT_SLICE))
-                        dangles = bor_roots_local(f, B->def, B->nvar, fv);
-                }
-        }
-        if (dangles) bor_add(B, rv->line, rv->col, 10);
-    }
+    bor_check_escapes(B, f, mod);                             // E010: returns, stores, calls
     // phase A2: loans that outlive their statement
     if (mod) bor_check_regions(B, mod, f);
     // Scoped loans stated by a construct (`case &x`). Unlike the other phases this does NOT

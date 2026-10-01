@@ -260,7 +260,8 @@ fields, and elements at distinct constant indices, are distinct places; elements
 not proven distinct are assumed to overlap.
 
 \pnum
-A binding to storage owned by the function shall not be returned [E010].  A function whose
+A reference to storage owned by the function shall not be returned, nor stored where the
+caller can reach it [E010] (\S\,\ref{sec:mem.storage}).  A function whose
 return type is \lain{var T} shall return \lain{var P} or a call that itself returns
 \lain{var T} [E017].  A struct field shall not hold a mutable borrow [E126].
 

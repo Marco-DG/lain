@@ -1,0 +1,26 @@
+// EXPECT: [E010]
+// E010, a reference outliving its storage: a slice variable reassigned to a local inside a loop (a φ was not followed). It compiled, and main read a
+// dead frame (ASan stack-use-after-return; `lain --interpret` "no longer live").
+func mk(k u32 <= 100, a u32[]) u32[] {
+    xs u32[3] = [k, k + 1, k + 2]
+    var s = a
+    var i u32 = 0
+    while i < k {
+        s = xs[0..3]
+        i = i + 1
+    }
+    return s
+}
+func clobber(k u32) u32 {
+    ys u32[8] = [k, k, k, k, k, k, k, k]
+    return ys[3]
+}
+func main() i32 {
+    zs u32[1] = [0]
+    r = mk(10, zs[0..1])
+    c = clobber(77)
+    t = r
+    if t.len < 3 { return 3 }
+    if t[2] != 12 { return 1 }
+    return 0
+}

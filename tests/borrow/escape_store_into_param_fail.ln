@@ -1,0 +1,25 @@
+// EXPECT: [E010]
+// E010, a reference outliving its storage: a slice of a local STORED into a `var` parameter's field: nothing is returned, the caller holds it. It compiled, and main read a
+// dead frame (ASan stack-use-after-return; `lain --interpret` "no longer live").
+type St {
+    a u8
+    s u32[]
+}
+func fill(o var St, k u32 <= 100) {
+    xs u32[3] = [k, k + 1, k + 2]
+    o.s = xs[0..3]
+}
+func clobber(k u32) u32 {
+    ys u32[8] = [k, k, k, k, k, k, k, k]
+    return ys[3]
+}
+func main() i32 {
+    zs u32[1] = [0]
+    var r = St(1, zs[0..1])
+    fill(var r, 10)
+    c = clobber(77)
+    t = r.s
+    if t.len < 3 { return 3 }
+    if t[2] != 12 { return 1 }
+    return 0
+}

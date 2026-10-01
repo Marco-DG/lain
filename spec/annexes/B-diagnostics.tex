@@ -100,9 +100,11 @@ Diagnostic codes are divided into the following ranges:
 
 \diagcode{E010}
   & \S\,\ref{sec:mem.storage}
-  & \textit{cannot return reference to local variable '\texttt{x}'} ---
-    Issued when a \lain{return} statement returns a reference whose
-    referent has automatic storage duration.
+  & \textit{this reference would outlive the value it borrows} ---
+    Issued when a reference whose referent has automatic storage duration
+    would outlive it: returned (directly, or held by a struct or a sum,
+    through any binding, assignment or call), stored into a place the
+    caller owns, or passed to a function that keeps it there.
     \\[4pt]
 
 \diagcode{E016}

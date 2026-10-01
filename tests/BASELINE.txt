@@ -1500,6 +1500,17 @@ out=2
 at=const 2
 ty=Color scalar
 ty=Slice_u8 scalar
+### tests/trust/escape_allowed_pass.ln
+rc=0
+out=
+at=access 22
+at=const 6
+at=nonnull 20
+at=pure 16
+ty=A struct
+ty=Sh struct
+ty=Slice_u32 scalar
+ty=St struct
 ### tests/trust/fixed_array_len_refinement_pass.ln
 rc=0
 out=

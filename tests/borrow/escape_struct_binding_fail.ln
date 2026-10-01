@@ -1,0 +1,24 @@
+// EXPECT: [E010]
+// E010, a reference outliving its storage: a struct holding a slice of a local, returned through an immutable binding. It compiled, and main read a
+// dead frame (ASan stack-use-after-return; `lain --interpret` "no longer live").
+type St {
+    a u8
+    s u32[]
+}
+func mk(k u32 <= 100) St {
+    xs u32[3] = [k, k + 1, k + 2]
+    s = St(1, xs[0..3])
+    return s
+}
+func clobber(k u32) u32 {
+    ys u32[8] = [k, k, k, k, k, k, k, k]
+    return ys[3]
+}
+func main() i32 {
+    r = mk(10)
+    c = clobber(77)
+    t = r.s
+    if t.len < 3 { return 3 }
+    if t[2] != 12 { return 1 }
+    return 0
+}

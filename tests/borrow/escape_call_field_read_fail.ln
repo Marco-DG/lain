@@ -1,0 +1,26 @@
+// EXPECT: [E010]
+// E010, a reference outliving its storage: a slice of a local wrapped in a struct passed BY VALUE
+// to a callee that reads the field back out and returns it. The callee copies its by-value
+// parameter into a local slot before the field read, so a summary taken off address-forming ops
+// said `unwrap` returns nothing of its arguments. It compiled, and main read a dead frame.
+type Box {
+    s u32[]
+}
+func unwrap(b Box) u32[] {
+    return b.s
+}
+func mk(k u32 <= 100) u32[] {
+    xs u32[3] = [k, k + 1, k + 2]
+    return unwrap(Box(xs[0..3]))
+}
+func clobber(k u32) u32 {
+    ys u32[8] = [k, k, k, k, k, k, k, k]
+    return ys[3]
+}
+func main() i32 {
+    r = mk(10)
+    c = clobber(77)
+    if r.len < 3 { return 3 }
+    if r[2] != 12 { return 1 }
+    return 0
+}
