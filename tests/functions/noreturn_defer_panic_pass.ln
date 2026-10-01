@@ -1,0 +1,14 @@
+// A deferred `panic` runs before the `return` completes, so this function never returns and its
+// [noreturn] holds. Lowering flushed the defers, whose panic ended the path, then set the
+// `return` over it, a reachable `ret` where there was none (E135, "can return here").
+[noreturn]
+func stop(x i32) effects raises {
+    defer panic("deferred")
+    if x > 0 {
+        return
+    }
+    panic("direct")
+}
+func main() i32 {
+    return 0
+}

@@ -450,6 +450,11 @@ at=const 12
 ### tests/functions/mutual_recursion_ranked_pass.ln
 rc=3
 out=
+### tests/functions/noreturn_defer_panic_pass.ln
+rc=0
+out=
+at=noreturn 2
+ty=Slice_u8 scalar
 ### tests/functions/popcount_shift_termination_pass.ln
 rc=0
 out=
@@ -1571,6 +1576,11 @@ out=OK
 at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
+### tests/trust/noreturn_call_ends_path_pass.ln
+rc=0
+out=
+at=noreturn 7
+ty=Slice_u8 scalar
 ### tests/trust/noreturn_verified_pass.ln
 rc=0
 out=
@@ -2511,6 +2521,11 @@ at=const 2
 at=nonnull 2
 at=pure 2
 ty=Delta struct
+### tests/vra/noreturn_call_dead_code_pass.ln
+rc=0
+out=
+at=noreturn 2
+ty=Slice_u8 scalar
 ### tests/vra/offset_condition_measure_pass.ln
 rc=0
 out=

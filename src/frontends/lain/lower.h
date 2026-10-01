@@ -1754,7 +1754,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     if (e->as.else_expr.arm_is_return) {
                         IrValue *rv = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
                         ir_lower_flush_defers(c);
-                        ir_set_ret(c->cur, rv);
+                        if (!ir_is_set_term(c->cur)) ir_set_ret(c->cur, rv);   // a defer may end it
                     } else {
                         IrValue *av = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
                         if (e->as.else_expr.is_panic) ir_set_unreachable(c->cur);
@@ -1797,7 +1797,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     if (e->as.else_expr.arm_is_return) {
                         IrValue *rv = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
                         ir_lower_flush_defers(c);
-                        ir_set_ret(c->cur, rv);
+                        if (!ir_is_set_term(c->cur)) ir_set_ret(c->cur, rv);   // a defer may end it
                     } else {
                         IrValue *av = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
                         if (e->as.else_expr.is_panic) ir_set_unreachable(c->cur);
@@ -1836,7 +1836,9 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 // `try` was simply skipped.
                 ir_lower_flush_defers(c);
                 IrType *rt = c->f->ret_type;
-                if (rt && rt->kind==IRT_SUM && rt != uv->type) {
+                if (ir_is_set_term(c->cur)) {
+                    // a deferred panic or [noreturn] call ended the path: nothing is returned
+                } else if (rt && rt->kind==IRT_SUM && rt != uv->type) {
                     // WIDENING. `try` inside a function returning a wider union must RE-ENCODE
                     // the marker: `*u8 | NotFound` propagating into `*u8 | NotFound | ParseErr`
                     // is the same marker at a different variant index. Returning the narrow sum
@@ -1867,7 +1869,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             } else if (e->as.else_expr.arm_is_return) {
                 IrValue *rv = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
                 ir_lower_flush_defers(c);
-                ir_set_ret(c->cur, rv);
+                if (!ir_is_set_term(c->cur)) ir_set_ret(c->cur, rv);   // a defer may end it
             } else {
                 IrValue *av = e->as.else_expr.arm ? ir_lower_expr(c, e->as.else_expr.arm) : NULL;
                 if (e->as.else_expr.is_panic) {
@@ -3303,17 +3305,28 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
         case STMT_EXPR: {
             Expr *x = s->as.expr_stmt.expr;
             (void)ir_lower_expr(c, x);
-            // ★ A `panic(...)` STATEMENT ENDS ITS PATH. `else panic(...)` set the block
-            // unreachable, but the statement form fell through like any call, so after
+            // ★ A `panic(...)` STATEMENT ENDS ITS PATH, and so does a call to a [noreturn]
+            // function. `else panic(...)` set the block unreachable, but the statement form fell
+            // through like any call, so after
             //     if s.len == 0 { panic("empty") }
-            // the analysis still had s.len == 0 at `s[0]` and refused it (E085) — while the
-            // spec says panic never returns (its helper calls abort()). Only the declless
-            // builtin: a user's `[noreturn]` is an unchecked claim, and trusting it here would
-            // turn a wrong one into unreachable code.
+            // the analysis still had s.len == 0 at `s[0]` and refused it (E085), while the spec
+            // says panic never returns (its helper calls abort()).
+            //
+            // A [noreturn] callee was excluded as "an unchecked claim". Since 9cbe203 a body's
+            // [noreturn] IS checked (E135: every return of it must be unreachable), so trusting
+            // it is sound; partial correctness, and a cycle of [noreturn] functions never
+            // returns either. An `extern [noreturn]` is BELIEVED, exactly as its effect row is,
+            // and gcc already treats the code after it as unreachable. Without this, a
+            // [noreturn] function could not end in `exit(1)` or in another [noreturn] function,
+            // which E135's own message offers ("a call that does not return").
             if (x && x->kind == EXPR_CALL && x->as.call_expr.callee &&
-                x->as.call_expr.callee->kind == EXPR_IDENTIFIER && !x->as.call_expr.callee->decl) {
+                x->as.call_expr.callee->kind == EXPR_IDENTIFIER && !ir_is_set_term(c->cur)) {
+                Decl *cd = x->as.call_expr.callee->decl;
                 Id *nm = x->as.call_expr.callee->as.identifier_expr.id;
-                if (nm && nm->length == 5 && strncmp(nm->name, "panic", 5) == 0 && !ir_is_set_term(c->cur))
+                if (!cd && nm && nm->length == 5 && strncmp(nm->name, "panic", 5) == 0)
+                    ir_set_unreachable(c->cur);
+                else if (cd && (cd->kind == DECL_FUNCTION || cd->kind == DECL_EXTERN_FUNCTION) &&
+                         cd->as.function_decl.is_noreturn)
                     ir_set_unreachable(c->cur);
             }
             break;
@@ -3331,6 +3344,9 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             // against the old backend, which emits the defers then `return acc;` — computing
             // the value first made the new pipeline return 5, a silent miscompile.
             ir_lower_flush_defers(c);
+            // A deferred `panic` or [noreturn] call ends the path here: the return never happens,
+            // and setting it would overwrite the block's `unreachable` with a reachable `ret`.
+            if (ir_is_set_term(c->cur)) break;
             IrValue *rv = s->as.return_stmt.value ? ir_lower_expr(c, s->as.return_stmt.value) : NULL;
             // `return buf` from a function returning `u8[]`: the declared return type's
             // representation (see ir_coerce_repr) — a bare base pointer was returned as a slice.
@@ -3907,7 +3923,7 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     ir_lower_stmts(&cc, fn->as.function_decl.body);
     if (!ir_is_set_term(cc.cur)) {
         ir_lower_flush_defers(&cc);   // falling off the end is an exit too
-        ir_set_ret(cc.cur, NULL);     // implicit unit return / end of proc
+        if (!ir_is_set_term(cc.cur)) ir_set_ret(cc.cur, NULL);   // unless a defer ended it
     }
     // ★ `[noreturn]` IS AN OBLIGATION. It becomes `__attribute__((noreturn))`, and returning from
     // such a function is undefined behaviour: `[noreturn] func f(x i32) i32 { return x }` was

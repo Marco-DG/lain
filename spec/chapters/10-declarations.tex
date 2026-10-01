@@ -57,7 +57,7 @@ Recognized attribute names (closed set, version 1.1):
 \tok{[packed]}     & a struct                & Lay the fields out bit-exactly inside one integer (\S\,\ref{sec:types.packed-future}). \\
 \tok{[ordered]}    & a struct                & Store the fields in declaration order (\S\,\ref{sec:types.struct}). \\
 \tok{[cold]}, \tok{[hot]} & any function     & Rarely or frequently executed: a hint to the C compiler. \\
-\tok{[noreturn]}   & any function            & Never returns. On a function with a body every \lain{return}, and the end of the body, shall be unreachable (\diagcode{E135}); on an \lain{extern} it is believed. \\
+\tok{[noreturn]}   & any function            & Never returns. On a function with a body every \lain{return}, and the end of the body, shall be unreachable (\diagcode{E135}); on an \lain{extern} it is believed. A call to it ends its path, as \lain{panic} does, so code after the call is unreachable, and a \tok{[noreturn]} function may end in one. \\
 \tok{[allocator]}  & an \lain{extern} function & The result is non-null and aliases no other pointer (C's \texttt{malloc}). \\
 \end{longtable}
 

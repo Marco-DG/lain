@@ -1,0 +1,17 @@
+// The DEAD-CODE probe for a [noreturn] call: the code after it is dead to the analysis, so the
+// division by zero below is never judged. With an ordinary callee in the same place it is E015
+// (noreturn_call_dead_code_fail.ln), which is what makes this test mean something.
+[noreturn]
+func die() effects raises {
+    panic("die")
+}
+func f(x i32) i32 effects raises {
+    if x > 0 {
+        die()
+        return 5 /% 0
+    }
+    return x
+}
+func main() i32 effects raises {
+    return f(0)
+}

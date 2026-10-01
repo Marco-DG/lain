@@ -1,0 +1,16 @@
+// EXPECT: [E015]
+// The contrast for noreturn_call_dead_code_pass.ln: `live` returns, so the division after it is
+// reachable and refused.
+func live() i32 {
+    return 0
+}
+func f(x i32) i32 {
+    if x > 0 {
+        live()
+        return 5 /% 0
+    }
+    return x
+}
+func main() i32 {
+    return f(0)
+}

@@ -1,0 +1,24 @@
+// A call to a [noreturn] function ends its path, as `panic` does, so a [noreturn] function may
+// end in one: `finish` ends in libc's `exit` (an extern [noreturn] is believed, as its effect row
+// is), and `fail2` in another [noreturn] function (checked, E135). Both were E135 ("can return
+// here") though E135's own message offers "a call that does not return". At run time `finish()`
+// exits 0 through libc. The `return 1` after it is dead to the analysis, like the code after a
+// panic (noreturn_call_dead_code_pass.ln proves that part).
+[noreturn]
+extern func exit(code i32) effects io, diverge
+[noreturn]
+func finish() effects io, diverge {
+    exit(0)
+}
+[noreturn]
+func fail(code i32) effects raises {
+    panic("fail")
+}
+[noreturn]
+func fail2() effects raises {
+    fail(2)
+}
+func main() i32 effects io, diverge {
+    finish()
+    return 1
+}
