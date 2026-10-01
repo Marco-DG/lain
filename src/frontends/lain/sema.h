@@ -3995,6 +3995,93 @@ static void idxc_apply(StmtList *body, StmtList *scope) {
         }
     }
 }
+// Bind the names in a would-be constant to the module's globals, so the DECIDE-O evaluator
+// (sa_is_const / sa_eval) can read them before the bodies are resolved: a field's length is
+// judged right after every global is registered, whatever the order of the declarations.
+static void sema_bind_const_names(Expr *e, int depth) {
+    if (!e || depth > 16) return;
+    switch (e->kind) {
+        case EXPR_IDENTIFIER: {
+            Id *n = e->as.identifier_expr.id;
+            if (!e->decl && n && n->length < 200) {
+                char nb[208]; snprintf(nb, sizeof nb, "%.*s", (int)n->length, n->name);
+                Symbol *sym = sema_lookup(nb);
+                if (sym && sym->decl && sym->decl->kind == DECL_VARIABLE) e->decl = sym->decl;
+            }
+            if (e->decl && e->decl->kind == DECL_VARIABLE && !e->decl->as.variable_decl.is_mutable)
+                sema_bind_const_names(e->decl->as.variable_decl.init, depth + 1);
+            return;
+        }
+        case EXPR_UNARY:  sema_bind_const_names(e->as.unary_expr.right, depth); return;
+        case EXPR_BINARY: sema_bind_const_names(e->as.binary_expr.left, depth);
+                          sema_bind_const_names(e->as.binary_expr.right, depth); return;
+        case EXPR_CAST:   sema_bind_const_names(e->as.cast_expr.expr, depth); return;
+        default: return;
+    }
+}
+
+// ★ A FIELD'S LENGTH NAMED BY A CONSTANT. `src u8[<= 4096]` was the only spelling of a slice
+// field's length bound (DECIDE-P), so the u32 position invariant needed `u8[<= 4294967295]` in
+// the source, and `MAXU32 u32 = 4294967295` then `u8[<= MAXU32]`, or `u8[<= (1 << 32) - 1]`,
+// was E132 "other than a literal". So was `data u8[BUF]`, a fixed field sized by a constant.
+// A module-scope CONSTANT is now folded where a literal stood, by the evaluator module asserts
+// already use (DECIDE-O): the bound reaches lowering as the literal it evaluates to, so its
+// enforcement (asserted at construction and at every field store, assumed at every read) is the
+// literal's, unchanged; a fixed length becomes the array's own length, as `u8[64]` would be.
+// Anything else is still refused, because a length that is not a constant would be ignored.
+static void sema_fold_field_lengths(DeclList *decls) {
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        Decl *d = dl->decl;
+        if (!d || d->kind != DECL_STRUCT) continue;
+        Id *sid = d->as.struct_decl.name;
+        for (DeclList *f = d->as.struct_decl.fields; f; f = f->next) {
+            if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
+            Type *ft = f->decl->as.variable_decl.type;
+            if (!ft || ft->kind != TYPE_ARRAY || ft->array_len >= 0 || !ft->size_expr ||
+                ft->size_expr->kind == EXPR_LITERAL) continue;
+            Expr *se = ft->size_expr;
+            // A const-generic length, `type Buf(N usize) { data u8[N] }`: N is the struct's own
+            // parameter, and each instance's field is a fixed array of that size.
+            bool own_param = false;
+            if (se->kind == EXPR_IDENTIFIER && se->as.identifier_expr.id)
+                for (DeclList *tp = d->as.struct_decl.type_params; tp; tp = tp->next) {
+                    Id *pn = (tp->decl && tp->decl->kind == DECL_VARIABLE) ? tp->decl->as.variable_decl.name : NULL;
+                    Id *sn2 = se->as.identifier_expr.id;
+                    if (pn && pn->length == sn2->length && strncmp(pn->name, sn2->name, pn->length) == 0) { own_param = true; break; }
+                }
+            if (own_param) continue;
+            sema_bind_const_names(se, 0);
+            bool layout = false; __int128 v = 0;
+            bool is_bound = ft->size_relop != TOKEN_EQUAL_EQUAL;
+            bool ok = sa_is_const(se, &layout) && !layout && sa_eval(se, &v) &&
+                      v >= (is_bound ? 0 : 1) && v <= (__int128)INT64_MAX;
+            Id *fnm = f->decl->as.variable_decl.name;
+            if (!ok) {
+                fprintf(stderr,
+                    "[E132] Error Ln %li, Col %li: field '%.*s' of struct '%.*s' %s its length by "
+                    "something other than a constant, so it would be silently ignored. A field's length "
+                    "is a literal or a module constant: `%.*s u8[<= 4096]`, `%.*s u8[<= MAX_LEN]`.\n",
+                    (long)f->decl->line, (long)f->decl->col,
+                    (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
+                    (int)(sid ? sid->length : 0), sid ? sid->name : "",
+                    is_bound ? "bounds" : "sizes",
+                    (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
+                    (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "");
+                diagnostic_show_line(f->decl->line, f->decl->col);
+                exit(1);
+            }
+            if (is_bound) {
+                Expr *lit = expr_literal(sema_arena, (long long)v);
+                lit->line = se->line; lit->col = se->col;
+                ft->size_expr = lit;
+            } else {
+                ft->array_len = (isize)v;              // `data u8[BUF]` is `data u8[64]`
+                ft->size_expr = NULL;
+            }
+        }
+    }
+}
+
 
 static void sema_resolve_module(DeclList *decls, const char *module_path,
                                 Arena *arena) {
@@ -4012,6 +4099,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // 1) Clear old globals + insert top-level decls
     sema_clear_globals();
     sema_build_scope(decls, module_path);
+    sema_fold_field_lengths(decls);
 
     // Q-008: enforce `mov` on every linear field of every struct/enum.
     {

@@ -1,0 +1,11 @@
+// EXPECT: [E132]
+// A length bound must be a CONSTANT. `N` is immutable, but its value comes from a function call,
+// which the module-scope evaluator does not run, so the bound would be a fact nobody computed.
+func seven() u32 { return 7 }
+N u32 = seven()
+type Buf {
+    s u8[<= N]
+}
+func main() i32 {
+    return 0
+}

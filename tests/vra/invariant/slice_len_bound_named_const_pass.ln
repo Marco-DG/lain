@@ -1,0 +1,16 @@
+// A slice field's length bound may be a module CONSTANT, not only a literal. `pos u32 <= src.len`
+// proves `pos + 1` only when something bounds `src.len` to u32, and that bound was spelled
+// `u8[<= 4294967295]`, because `u8[<= MAXU32]` was E132 ("other than a literal"). The constant
+// is folded to the literal it names, so the bound is enforced exactly as the literal is.
+// Without the bound, `l.pos + 1` is E086: a usize length does not keep a u32 position below 2^32-1.
+MAXU32 u32 = 4294967295
+type Lexer {
+    src u8[<= MAXU32]
+    pos u32 <= src.len
+}
+func advance(l var Lexer) {
+    if l.pos < l.src.len { l.pos = l.pos + 1 }
+}
+func main() i32 {
+    return 0
+}

@@ -852,8 +852,13 @@ of the struct type. Three forms are provided:
   \item \lain{len usize <= cap} --- a relation between two integer fields, by the same four
         comparisons;
   \item \lain{src u8[<= 4294967295]} --- a \emph{length bound} on a slice field: its length
-        compared with an integer literal, written inside the brackets as for a parameter
-        (\lain{a i32[>= 2]}), by \lain{<}, \lain{<=}, \lain{>}, \lain{>=} or \lain{==}.
+        compared with an integer constant, written inside the brackets as for a parameter
+        (\lain{a i32[>= 2]}), by \lain{<}, \lain{<=}, \lain{>}, \lain{>=} or \lain{==}. The
+        constant may be a literal, a module constant (\lain{src u8[<= MAXU32]}) or an
+        expression over them (\lain{src u8[<= (1 << 32) - 1]}), evaluated as a module-scope
+        \lain{assert} is (\S\,\ref{sec:decl.static-assert}); it is enforced exactly as the
+        literal it evaluates to. A fixed-length field may be sized the same way:
+        \lain{data u8[BUF]} is \lain{data u8[64]} when \lain{BUF} is 64.
 \end{itemize}
 A refinement against a literal (\lain{pct i32 <= 100}) is a plain field refinement
 (\S\,\ref{sec:types.constrained}) and is not a field invariant.
@@ -886,8 +891,8 @@ An index invariant cannot hold for an empty container. A position invariant can:
 
 \begin{constraint}
   A field refinement naming another field in any other shape --- another comparison, a field of
-  another kind, an expression --- is \illformed{}~(\diagcode{E132}).  So is a slice field whose
-  length is bounded by anything but a literal (other than the struct's own generic parameter,
+  another kind, an expression --- is \illformed{}~(\diagcode{E132}).  So is a field whose length
+  is bounded or sized by anything but a constant (other than the struct's own generic parameter,
   \lain{type Buf(N usize) \{ data u8[N] \}}), and a refinement written after a slice type
   (\lain{src u8[] <= 4096}), which bounds nothing a slice has.
 \end{constraint}

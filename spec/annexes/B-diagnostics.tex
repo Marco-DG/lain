@@ -405,7 +405,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E129} & \lain{assume} outside an \lain{unsafe} block --- use \lain{assert} to have the fact proven \\[2pt]
 \diagcode{E130} & a declared, non-empty \lain{effects} row does not cover what the body does (an empty or absent row is \diagcode{E011}) \\[2pt]
 \diagcode{E131} & an \lain{extern} declares a slice parameter --- a slice has no C representation; pass a pointer and a length \\[2pt]
-\diagcode{E132} & a struct field's refinement is not one that is enforced --- a relation other than \lain{f CMP g} (g an integer field) or \lain{f CMP g.len} (g a slice or array field), a slice field's length bounded by other than a literal, or a refinement after a slice type; any of them would be an unpaid assume \\[2pt]
+\diagcode{E132} & a struct field's refinement is not one that is enforced --- a relation other than \lain{f CMP g} (g an integer field) or \lain{f CMP g.len} (g a slice or array field), a field's length bounded or sized by other than a constant, or a refinement after a slice type; any of them would be an unpaid assume \\[2pt]
 \diagcode{E133} & a module-scope \lain{assert} whose operand is not a \lain{bool} constant expression (\S\,\ref{sec:decl.static-assert}) --- a run-time fact is asserted inside a function \\[2pt]
 \diagcode{E134} & a module-scope assertion is false --- reported by the implementation, or, for one that measures a type with \lain{@sizeof}/\lain{@alignof}, by the C compiler through a \texttt{\_Static\_assert} carrying this code \\[2pt]
 \diagcode{E135} & a \tok{[noreturn]} function can return: a \lain{return}, or the end of its body, is reachable (\S\,\ref{sec:decl.attributes}) \\[2pt]

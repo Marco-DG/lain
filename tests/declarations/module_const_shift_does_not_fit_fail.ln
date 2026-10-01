@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// `1 << 9` is 512, which does not fit a u8. A module constant's value is checked with the
+// module-scope assert's evaluator (module_const_does_not_fit_fail.ln), and that evaluator had no
+// shift: a shift was "not a constant", the check was skipped, and X compiled with the value 0.
+X u8 = 1 << 9
+func main() i32 {
+    return X as i32
+}

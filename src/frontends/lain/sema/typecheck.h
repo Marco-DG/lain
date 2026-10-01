@@ -921,6 +921,7 @@ static bool sa_is_const(Expr *e, bool *layout) {
                 case TOKEN_ANGLE_BRACKET_LEFT: case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:
                 case TOKEN_ANGLE_BRACKET_RIGHT: case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:
                 case TOKEN_KEYWORD_AND: case TOKEN_KEYWORD_OR:
+                case TOKEN_SHIFT_LEFT: case TOKEN_SHIFT_RIGHT:
                     return sa_is_const(e->as.binary_expr.left, layout) &&
                            sa_is_const(e->as.binary_expr.right, layout);
                 default: return false;
@@ -971,6 +972,18 @@ static bool sa_eval(Expr *e, __int128 *v) {
                 case TOKEN_ANGLE_BRACKET_RIGHT: *v = a > b; return true;
                 case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: *v = a >= b; return true;
                 case TOKEN_KEYWORD_AND: case TOKEN_KEYWORD_OR: *v = (b != 0); return true;
+                // A shift over the integers: `(1 << 32) - 1` is 4294967295, whatever width the
+                // operands would have in a function. Refused (not constant) where C's would be
+                // undefined: a negative operand, a count past 126, a result past 127 bits.
+                case TOKEN_SHIFT_LEFT: {
+                    if (a < 0 || b < 0 || b > 126) return false;
+                    unsigned __int128 r = (unsigned __int128)a << (int)b;
+                    if ((r >> (int)b) != (unsigned __int128)a || (r >> 127)) return false;
+                    *v = (__int128)r; return true;
+                }
+                case TOKEN_SHIFT_RIGHT:
+                    if (a < 0 || b < 0 || b > 126) return false;
+                    *v = a >> (int)b; return true;
                 default: return false;
             }
         }

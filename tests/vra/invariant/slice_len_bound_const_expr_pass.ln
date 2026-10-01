@@ -1,0 +1,15 @@
+// The bound may be any constant EXPRESSION the module-scope assert evaluator accepts, shifts
+// included: `(1 << 32) - 1` is 4294967295 over the integers. A constant declared AFTER the type
+// is as good as one before it (OFFSET below): lengths are judged once every global is known.
+type Lexer {
+    src u8[<= (1 << 32) - OFFSET]
+    pos u32 <= src.len
+}
+OFFSET u32 = 1
+assert (1 << 32) - OFFSET == 4294967295     // the same evaluator, in a module assert
+func advance(l var Lexer) {
+    if l.pos < l.src.len { l.pos = l.pos + 1 }
+}
+func main() i32 {
+    return 0
+}

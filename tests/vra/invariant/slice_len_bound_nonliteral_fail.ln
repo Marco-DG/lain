@@ -1,7 +1,8 @@
 // EXPECT: [E132]
-// A length bound naming another field (or any expression) is not enforced — and was silently
-// ignored. Only a literal bound is (`u8[<= 4096]`); a relation to another field is a position
-// invariant on an integer field (`pos usize <= src.len`).
+// A length bound naming another field (or any non-constant expression) is not enforced — and was
+// silently ignored. Only a constant bound is (`u8[<= 4096]`, or a module constant `u8[<= MAX]`:
+// slice_len_bound_named_const_pass.ln); a relation to another field is a position invariant on an
+// integer field (`pos usize <= src.len`).
 type Buf {
     s u8[<= cap]
     cap usize

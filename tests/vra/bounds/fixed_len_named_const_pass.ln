@@ -1,0 +1,17 @@
+// A FIXED-length field sized by a module constant, `data u8[BUF]`, is the fixed array `u8[64]`:
+// it was E132, refused as "other than a literal". Its `.len` is the constant, so the call below
+// meets `at`'s precondition `i < a.len` by the number alone (index 64 is E012:
+// fixed_len_named_const_fail.ln).
+BUF usize = 64
+type Frame {
+    data u8[BUF]
+}
+func at(a u8[], i usize < a.len) u8 {
+    return a[i]
+}
+func last(f Frame) u8 {
+    return at(f.data, 63)
+}
+func main() i32 {
+    return 0
+}

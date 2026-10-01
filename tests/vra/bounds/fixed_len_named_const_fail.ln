@@ -1,0 +1,16 @@
+// EXPECT: [E012]
+// `data u8[BUF]` with BUF = 64 is 64 long, so index 64 does not meet `i < a.len`: the folded
+// constant is the length the analysis reads, not a placeholder (fixed_len_named_const_pass.ln).
+BUF usize = 64
+type Frame {
+    data u8[BUF]
+}
+func at(a u8[], i usize < a.len) u8 {
+    return a[i]
+}
+func past(f Frame) u8 {
+    return at(f.data, 64)
+}
+func main() i32 {
+    return 0
+}

@@ -428,35 +428,22 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
             }
         }
 
-        // ★ A SLICE FIELD'S LENGTH is bounded inside its brackets, by a literal: `src u8[<= 4096]`
-        // (DECIDE-P; lower.h ir_field_len_bound). Two other spellings parsed and were SILENTLY
-        // IGNORED — a length tied to another field or an expression (`u8[<= cap]`, `u8[n]`), and a
-        // scalar refinement written after a slice type (`src u8[] <= 4096`), which bounds nothing a
-        // slice has. Both read as facts; neither was one.
+        // ★ A SLICE FIELD'S LENGTH is bounded inside its brackets: `src u8[<= 4096]` (DECIDE-P;
+        // lower.h ir_field_len_bound). A scalar refinement written AFTER a slice type (`src u8[]
+        // <= 4096`) parsed and was silently ignored: it bounds nothing a slice has. A length that
+        // is not a literal is judged once every module constant is known (sema.h
+        // sema_fold_field_lengths): a constant is folded, anything else is refused there.
         for (DeclList *f = d->as.struct_decl.fields; f; f = f->next) {
             if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
             Type *ft = f->decl->as.variable_decl.type;
-            if (!ft || ft->kind != TYPE_ARRAY) continue;
-            bool bad_len = ft->array_len < 0 && ft->size_expr && ft->size_expr->kind != EXPR_LITERAL;
-            // ...except a const-generic length, `type Buf(N usize) { data u8[N] }`: N is the
-            // struct's own parameter, and each instance's field is a fixed array of that size.
-            if (bad_len && ft->size_expr->kind == EXPR_IDENTIFIER && ft->size_expr->as.identifier_expr.id)
-                for (DeclList *tp = d->as.struct_decl.type_params; tp; tp = tp->next) {
-                    Id *pn = (tp->decl && tp->decl->kind == DECL_VARIABLE) ? tp->decl->as.variable_decl.name : NULL;
-                    Id *sn2 = ft->size_expr->as.identifier_expr.id;
-                    if (pn && pn->length == sn2->length && strncmp(pn->name, sn2->name, pn->length) == 0) { bad_len = false; break; }
-                }
-            bool bad_ref = f->decl->as.variable_decl.constraints != NULL;
-            if (!bad_len && !bad_ref) continue;
+            if (!ft || ft->kind != TYPE_ARRAY || !f->decl->as.variable_decl.constraints) continue;
             Id *fnm = f->decl->as.variable_decl.name;
             fprintf(stderr,
-                "[E132] Error Ln %li, Col %li: field '%.*s' of struct '%.*s' %s — it would be silently "
-                "ignored. A slice field's length is bounded inside its brackets by a literal: "
-                "`%.*s u8[<= 4096]`.\n",
+                "[E132] Error Ln %li, Col %li: field '%.*s' of struct '%.*s' has a refinement after a "
+                "slice type, which bounds nothing a slice has, so it would be silently ignored. A slice "
+                "field's length is bounded inside its brackets by a constant: `%.*s u8[<= 4096]`.\n",
                 (long)f->decl->line, (long)f->decl->col,
                 (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "", (int)id->length, id->name,
-                bad_len ? "bounds its length by something other than a literal"
-                        : "has a refinement after a slice type, which bounds nothing a slice has",
                 (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "");
             diagnostic_show_line(f->decl->line, f->decl->col);
             exit(1);

@@ -2156,6 +2156,14 @@ out=
 at=nonnull 4
 at=pure 4
 ty=Box struct
+### tests/vra/bounds/fixed_len_named_const_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 4
+at=pure 4
+ty=Frame struct
+ty=Slice_u8 scalar
 ### tests/vra/bounds/in_condition_pass.ln
 rc=0
 out=find_char: 2
@@ -2372,6 +2380,18 @@ out=
 at=access 2
 at=nonnull 10
 at=pure 6
+ty=Lexer struct
+ty=Slice_u8 scalar
+### tests/vra/invariant/slice_len_bound_const_expr_pass.ln
+rc=0
+out=
+at=nonnull 2
+ty=Lexer struct
+ty=Slice_u8 scalar
+### tests/vra/invariant/slice_len_bound_named_const_pass.ln
+rc=0
+out=
+at=nonnull 2
 ty=Lexer struct
 ty=Slice_u8 scalar
 ### tests/vra/invariant/struct_in_assign_ok_pass.ln

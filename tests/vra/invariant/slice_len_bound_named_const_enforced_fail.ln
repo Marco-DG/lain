@@ -1,0 +1,13 @@
+// EXPECT: [E121]
+// A bound named by a constant is ENFORCED, not just believed: it is asserted where the struct is
+// built, exactly as the literal `u8[<= 16]` is. A slice of unknown length does not meet it.
+SMALL usize = 16
+type Packet {
+    body u8[<= SMALL]
+}
+func wrap(s u8[]) Packet {
+    return Packet(s)
+}
+func main() i32 {
+    return 0
+}
