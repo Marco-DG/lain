@@ -1,0 +1,19 @@
+// `~` of an UNSIGNED value is fixed by its width: `~(0 as u64)` is 2^64 - 1. Evaluated over the
+// integers it was -1, so `MAX u64 = ~(0 as u64)` was refused ("-1 does not fit u64"), and since
+// a literal of 2^63 or more is refused too, u64's maximum had no spelling as a constant. A module
+// assert Lain decides is no longer re-checked in C's `long long` (where `~0LL` is -1); one that
+// measures a type still is, with the width written into the C.
+MAX u64 = ~(0 as u64)
+LOW u8 = ~(15 as u8)
+assert ~(0 as u32) == 4294967295
+assert ~(5 as i32) == -6
+type T {
+    a u32
+}
+assert ~(@sizeof(T) as u32) == 4294967291
+func main() i32 {
+    if MAX +% 1 != 0 { return 1 }
+    if (MAX >> 63) != 1 { return 2 }
+    if LOW != 240 { return 3 }
+    return 0
+}

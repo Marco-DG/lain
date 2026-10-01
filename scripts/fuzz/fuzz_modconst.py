@@ -14,6 +14,9 @@
 #   shift           `C4 u32 = 1 << 17`      (1 is an i32, so s <= 30)
 #   explicit table  `T0 u8[5] = [1, 2, 3, 4, 5]`
 #   comprehension   `T1 u16[9] = [(i * 7 + 3) % 50 for i in 0..9]`
+#   complement      `C5 u16 = ~(40 as u16)` and `assert ~(40 as u16) == 65495`: `~` is the one
+#                   operator whose value depends on the width (2^N - 1 - x for an unsigned N-bit
+#                   x), and the evaluator once computed it over the integers, as -x - 1
 #
 # ORACLE. A program is either VALID — every value fits its type, every table has its length — or
 # carries exactly ONE invalid constant. The first line says which:
@@ -48,7 +51,7 @@ if not valid: bad_at = r(0, n - 1)
 for k in range(n):
     bad = (k == bad_at)
     t = rng.choice(list(TYPES))
-    form = rng.choice(["literal", "reference", "shift", "table", "comprehension"])
+    form = rng.choice(["literal", "reference", "shift", "table", "comprehension", "complement"])
     scalars = [c for c in consts if c[3] == "scalar"]
     if form == "reference" and not scalars: form = "literal"
     name = "C%d" % k
@@ -72,6 +75,22 @@ for k in range(n):
             consts.append((name, t, v, "scalar")); continue
         s = rng.choice(bad_s if bad else ok_s)
         lines.append("%s %s = 1 << %d" % (name, t, s)); consts.append((name, t, 1 << s, "scalar"))
+    elif form == "complement":
+        lo, hi = TYPES[t]
+        if bad and lo == 0 and hi < 4294967295:
+            # a u32 complement is far above a narrower unsigned type: refused
+            x = r(0, 1000)
+            lines.append("%s %s = ~(%d as u32)" % (name, t, x)); consts.append((name, t, 4294967295 - x, "scalar"))
+            continue
+        if bad:
+            v = value_near(t, True); lines.append("%s %s = %s" % (name, t, lit(v)))
+            consts.append((name, t, v, "scalar")); continue
+        x = r(0, hi) if lo == 0 else r(lo, hi)
+        v = (hi - x) if lo == 0 else (-x - 1)
+        operand = str(x) if x >= 0 else "(%s)" % lit(x)
+        lines.append("%s %s = ~(%s as %s)" % (name, t, operand, t))
+        lines.append("assert ~(%s as %s) == %s" % (operand, t, lit(v) if v >= 0 else "(%s)" % lit(v)))
+        consts.append((name, t, v, "scalar"))
     elif form == "table":
         L = r(1, 9)
         how = rng.choice(["length", "value"]) if bad else None

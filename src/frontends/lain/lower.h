@@ -3967,11 +3967,26 @@ static IrSAExpr *ir_lower_static_expr(LowerCtx *c, Expr *e) {
             x->kind = e->as.builtin_expr.builtin_kind == BUILTIN_SIZEOF ? IR_SA_SIZEOF : IR_SA_ALIGNOF;
             x->type = ir_lower_type(c, e->as.builtin_expr.vec_type);
             break;
-        case EXPR_UNARY:
+        case EXPR_UNARY: {
+            // `~` of an UNSIGNED N-bit value is 2^N - 1 - x (sema's sa_eval says why), and the C
+            // here computes in `long long`, where `~0` is -1: write the width in.
+            Type *ot = e->as.unary_expr.op == TOKEN_TILDE ? e->as.unary_expr.right->type : NULL;
+            while (ot && ot->kind == TYPE_COMPTIME) ot = ot->element_type;
+            int ub = 0; bool us = true;
+            if (ot && parse_iN_uN(ot, &ub, &us) && !us && ub >= 1 && ub < 64) {
+                IrSAExpr *m = arena_push_aligned(c->a, IrSAExpr);
+                memset(m, 0, sizeof *m);
+                m->kind = IR_SA_CONST; m->value = (int64_t)((((uint64_t)1) << ub) - 1);
+                x->kind = IR_SA_BINARY; x->op = "-";
+                x->l = m;
+                x->r = ir_lower_static_expr(c, e->as.unary_expr.right);
+                break;
+            }
             x->kind = IR_SA_UNARY;
             x->op = e->as.unary_expr.op == TOKEN_MINUS ? "-" : e->as.unary_expr.op == TOKEN_BANG ? "!" : "~";
             x->l = ir_lower_static_expr(c, e->as.unary_expr.right);
             break;
+        }
         case EXPR_BINARY: {
             x->kind = IR_SA_BINARY;
             switch (e->as.binary_expr.op) {
@@ -3988,6 +4003,14 @@ static IrSAExpr *ir_lower_static_expr(LowerCtx *c, Expr *e) {
     return x;
 }
 
+// Does a module assert MEASURE a type? Only such an assert reaches the C: sema decided every
+// other one (E134 when false), and re-checking it in C's `long long` arithmetic can only
+// disagree. It did: `assert ~(0 as u32) == 4294967295`, true in Lain, failed as `~0LL == ...`.
+static bool ir_sa_has_layout(const IrSAExpr *x) {
+    if (!x) return false;
+    if (x->kind == IR_SA_SIZEOF || x->kind == IR_SA_ALIGNOF) return true;
+    return ir_sa_has_layout(x->l) || ir_sa_has_layout(x->r);
+}
 static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
     IrFunc *head=NULL, *tail=NULL;
     // DECIDE-O: the module-scope asserts, in source order, for the emitter. Reset first: the
@@ -3997,8 +4020,10 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
       LowerCtx sc = {0}; sc.a = a; sc.globals = program;
       for (DeclList *d = program; d; d = d->next) {
           if (!d->decl || d->decl->kind != DECL_STATIC_ASSERT) continue;
+          IrSAExpr *cond = ir_lower_static_expr(&sc, d->decl->as.static_assert_decl.cond);
+          if (!ir_sa_has_layout(cond)) continue;          // decided by sema, not by C
           IrStaticAssert *s = arena_push_aligned(a, IrStaticAssert);
-          s->cond = ir_lower_static_expr(&sc, d->decl->as.static_assert_decl.cond);
+          s->cond = cond;
           s->line = d->decl->line; s->col = d->decl->col; s->next = NULL;
           *sa_tail = s; sa_tail = &s->next;
       } }

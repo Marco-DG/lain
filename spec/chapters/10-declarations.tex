@@ -375,8 +375,11 @@ Its operand is a \emph{constant expression}: integer and character literals; nam
 module-level constants whose initialisers are constant expressions; \lain{@sizeof(T)} and
 \lain{@alignof(T)} (\S\,\ref{sec:mem.alignment}); the arithmetic, bitwise, shift, comparison and
 logical operators; and \lain{as}.  Its value is computed over the integers, not in the width of any
-one type: \lain{(1 << 32) - 1} is \(2^{32}-1\). The same constant expressions bound or size a
-struct field's length (\S\,\ref{sec:types.struct.invariants}).
+one type: \lain{(1 << 32) - 1} is \(2^{32}-1\). The exception is \texttt{\textasciitilde}, which
+has no meaning over the integers for an unsigned operand: \texttt{\textasciitilde}$x$ of an
+unsigned $N$-bit value is \(2^N - 1 - x\), so \texttt{\textasciitilde(0 as u64)} is the largest
+\lain{u64}. The same constant expressions bound or size a struct field's length
+(\S\,\ref{sec:types.struct.invariants}).
 
 \begin{constraint}
   The operand of a module-scope \lain{assert} shall be a constant expression of type

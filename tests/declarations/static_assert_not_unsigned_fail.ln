@@ -1,0 +1,8 @@
+// EXPECT: [E134]
+// `~(0 as u32)` is 4294967295, so this claim is false. The module-scope evaluator computed `~`
+// over the integers, as -1, and decided it TRUE: a false assertion compiled. The same comparison
+// in a function is false (module_const_not_unsigned_pass.ln checks the values at run time).
+assert ~(0 as u32) < 0
+func main() i32 {
+    return 0
+}

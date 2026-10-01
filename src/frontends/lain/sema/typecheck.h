@@ -948,7 +948,26 @@ static bool sa_eval(Expr *e, __int128 *v) {
         }
         case EXPR_UNARY:
             if (!sa_eval(e->as.unary_expr.right, &a)) return false;
-            *v = e->as.unary_expr.op == TOKEN_MINUS ? -a : e->as.unary_expr.op == TOKEN_BANG ? !a : ~a;
+            // ★ `~` IS THE ONE OPERATOR WITH NO MEANING OVER THE INTEGERS. `+`, `-`, `*` agree with
+            // the language wherever it does not refuse an overflow (Path F); `~` of an UNSIGNED
+            // value is fixed by its width, 2^N - 1 - a. Evaluated as -a - 1, `~(0 as u32)` was -1,
+            // so `assert ~(0 as u32) < 0` COMPILED, a false claim decided true (the same comparison
+            // in a function is false), and `MAX u64 = ~(0 as u64)` was refused as "-1 does not fit
+            // u64". A signed operand keeps -a - 1, which is two's complement at every width.
+            if (e->as.unary_expr.op == TOKEN_TILDE) {
+                Type *ot = e->as.unary_expr.right->type;
+                while (ot && ot->kind == TYPE_COMPTIME) ot = ot->element_type;
+                int bits = 0; bool sgn = true;
+                if (ot && parse_iN_uN(ot, &bits, &sgn) && !sgn && bits >= 1 && bits <= 64) {
+                    __int128 mask = ((__int128)1 << bits) - 1;
+                    if (a < 0 || a > mask) return false;   // not a value of that type
+                    *v = mask - a;
+                    return true;
+                }
+                *v = ~a;
+                return true;
+            }
+            *v = e->as.unary_expr.op == TOKEN_MINUS ? -a : !a;
             return true;
         case EXPR_BINARY: {
             TokenKind op = e->as.binary_expr.op;
