@@ -197,7 +197,10 @@ static IVal *ip_cell(const IPtr *p, IrInstr *at) {
     IVal *par = ip_parent(p, at);
     int32_t ix = p->p[p->d - 1];
     int32_t hi = p->hi >= 0 ? p->hi : par->n;
-    if (ix < p->lo || ix >= hi || ix >= par->n) II_PROOF(at, "access at index %d outside [%d, %d)", ix, p->lo, hi);
+    if (ix < p->lo || ix >= hi || ix >= par->n) {
+        if (at && at->unchecked) II_UB(at, "access at index %d outside [%d, %d)", ix, p->lo, hi);   // `unsafe`: no proof was claimed
+        II_PROOF(at, "access at index %d outside [%d, %d)", ix, p->lo, hi);
+    }
     return &par->e[ix];
 }
 static IPtr iv_ptr(const IVal *v, IrInstr *at) {
@@ -730,6 +733,15 @@ static void ii_exec(IrInstr *ins) {
             int64_t ni = (int64_t)p.p[p.d - 1] + (int64_t)ix;
             IVal *par = ip_parent(&p, ins);
             int32_t hi = p.hi >= 0 ? p.hi : par->n;
+            // ONE PAST THE END is a pointer, not an access (C 6.5.6p8): the start of an empty
+            // subslice at the end, `s[s.len..s.len]`, is exactly that, and was a "PROOF FAILED"
+            // here although the program is defined and the C returns 0. A load or store through it
+            // is still refused, by ip_cell, at the access.
+            if (ni == hi && !(ins->result && ins->result->type && ins->result->type->kind == IRT_VECTOR)) {
+                p.p[p.d - 1] = (int32_t)ni;
+                r.k = IV_PTR; r.p = p;
+                break;
+            }
             if (ni < p.lo || ni >= hi) {
                 if (ins->unchecked) II_UB(ins, "index %lld outside [0, %d)", (long long)(ni - p.lo), hi - p.lo);
                 II_PROOF(ins, "index %lld outside [0, %d) (proven in bounds)", (long long)(ni - p.lo), hi - p.lo);
@@ -978,7 +990,12 @@ static int ir_interpret_call(IrFunc *f, IrFunc *mod, const char *file, IVal *arg
     s.who = "compile-time evaluation"; s.budget_is_callers = true;
     ist = &s;
     (void)ii_prepare(mod);
-    if (setjmp(s.stop)) { ist = NULL; *used = s.steps; return s.status ? s.status : 98; }
+    // A failure leaves by longjmp from inside a call, past every ii_call epilogue, so the frame
+    // globals still name a frame on a stack that is gone. The next call (compile-time evaluation
+    // runs many) then attached its objects to it: stack-use-after-return under ASan (found by the
+    // soundness harness's memory shapes). Reset them as a normal return would.
+    if (setjmp(s.stop)) { ist = NULL; ii_frame = NULL; ii_cur_f = NULL; ii_frame_allocs = NULL;
+                          *used = s.steps; return s.status ? s.status : 98; }
     IVal ret; memset(&ret, 0, sizeof ret);
     ii_call(f, args, nargs, &ret, NULL);
     iv_copy(out, &ret, true);

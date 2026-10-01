@@ -17,8 +17,11 @@
 // One counterexample is an unsound transfer function. fuzz_vra.c set this yardstick for loop
 // indices against a 17-case model of the IR; this one uses the real semantics, for every
 // arithmetic, bitwise, shift, count, cast and comparison operation, each wrap mode, and every
-// integer width. It also reports PRECISION COVERAGE (how many results got a range narrower than
-// their type), because a harness over an analysis that says nothing finds nothing.
+// integer width, and for MEMORY: an element of a fixed array its stores filled (the BOUNDS
+// obligation, and the loaded value against the range the analysis gives it), an element of a
+// slice, and a subslice (its bound and its `hi - lo`). It also reports PRECISION COVERAGE (how
+// many results got a range narrower than their type), because a harness over an analysis that
+// says nothing finds nothing.
 //
 //   gcc -std=c99 -O2 -o soundness src/tools/soundness_driver.c -I src
 //   ./soundness [seed] [trials] [--verbose]          exit 1 on any finding
@@ -80,7 +83,7 @@ static void pick_box(IrType *t, __int128 *lo, __int128 *hi) {
     }
 }
 
-typedef enum { K_BIN, K_UN, K_CAST, K_CMP, K_GUARD } Kind;
+typedef enum { K_BIN, K_UN, K_CAST, K_CMP, K_GUARD, K_ARRAY, K_SLICE, K_SUBSLICE } Kind;
 // `modes`: how many of check, modular, saturate lowering can put on the operation. The harness
 // builds only IR that lowering emits (lower.h's operator table and cast tiers): a combination it
 // never produces, such as a saturating IR_ADD (`+|` is expanded into a widened add and a clamp),
@@ -94,6 +97,12 @@ static const OpSpec OPS[] = {
     {"neg", K_UN, IR_NEG, 1}, {"bnot", K_UN, IR_BNOT, 1},
     {"ctz", K_UN, IR_CTZ, 1}, {"clz", K_UN, IR_CLZ, 1}, {"popcount", K_UN, IR_POPCOUNT, 1},
     {"cast", K_CAST, IR_CAST, 3}, {"cmp", K_CMP, IR_ICMP, 1}, {"guard", K_GUARD, IR_ICMP, 1},  // as as% as|
+    // MEMORY, 44.5% of the transfers whole programs exercise (Handwriting's M7): an element of a
+    // fixed array its stores filled, an element of a slice, a subslice. Listed three times each so
+    // they are drawn about as often as their share.
+    {"array[i]", K_ARRAY, IR_ELEM_PTR, 1}, {"slice[i]", K_SLICE, IR_ELEM_PTR, 1}, {"slice[lo..hi]", K_SUBSLICE, IR_MAKE_SLICE, 1},
+    {"array[i]", K_ARRAY, IR_ELEM_PTR, 1}, {"slice[i]", K_SLICE, IR_ELEM_PTR, 1}, {"slice[lo..hi]", K_SUBSLICE, IR_MAKE_SLICE, 1},
+    {"array[i]", K_ARRAY, IR_ELEM_PTR, 1}, {"slice[i]", K_SLICE, IR_ELEM_PTR, 1}, {"slice[lo..hi]", K_SUBSLICE, IR_MAKE_SLICE, 1},
 };
 #define NOPS ((int)(sizeof OPS / sizeof OPS[0]))
 static const char *WRAPS[] = {"check", "modular", "saturate"};
@@ -110,7 +119,7 @@ static bool cmp_holds(IrCmp c, __int128 x, __int128 y) {   // signed predicates 
 typedef struct {
     long trials, samples, traps, infeasible, nontrivial, results;
     long f_range, f_rel, f_unreached, f_oblig, f_missing, f_harness;
-    long per_op_findings[32];
+    long per_op_findings[64];
 } Stats;
 static Stats st;
 static bool verbose = false, dump_next = false;
@@ -122,6 +131,7 @@ typedef struct {
 
 static void describe(const Case *c, FILE *o) {
     fprintf(o, "%s/%s %s%d", c->o->name, WRAPS[c->wrap], c->tx->is_signed ? "i" : "u", c->tx->bits);
+    if (c->o->k == K_ARRAY || c->o->k == K_SLICE) fprintf(o, " of %s%d", c->rt->is_signed ? "i" : "u", c->rt->bits);
     if (c->o->k == K_CAST) fprintf(o, "->%s%d", c->rt->is_signed ? "i" : "u", c->rt->bits);
     if (c->o->k == K_CMP || c->o->k == K_GUARD) fprintf(o, " pred %s", CMPS[c->pred]);
     fprintf(o, "  x in [%s, %s]", i128s(c->xlo), i128s(c->xhi));
@@ -161,9 +171,146 @@ static void range_of(Vra *V, Octagon *W, IrValue *v, __int128 *lo, __int128 *hi)
     if (*hi > it_max(v->type)) *hi = it_max(v->type);
 }
 
+// A slice argument for the interpreter: an object of n elements holding vals, seen whole.
+static IVal slice_arg(IrType *elem, int n, const __int128 *vals) {
+    IObj *o = ii_new_obj(elem, n, "a harness slice");
+    for (int k = 0; k < n; k++) iv_int(&o->root.e[k], vals[k]);
+    IVal v; memset(&v, 0, sizeof v);
+    v.k = IV_SLICE; v.p = ip_of(o, 0); v.p.lo = 0; v.p.hi = n; v.len = n;
+    return v;
+}
+static __int128 clampi(__int128 v, __int128 lo, __int128 hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+// MEMORY: the BOUNDS obligation at an element pointer or a subslice (and the subtraction a
+// subslice's length is) must hold on every sample inside the assumptions, and a value loaded from
+// an array whose stores the analysis saw must lie in the range it gives the load.
+static void trial_mem(Case *c) {
+    IrType *u64 = ir_type_int(&A, 64, false), *E = pick_int();
+    int N = 1 + (int)(rnd() % 24);                       // array length, or the largest slice
+    __int128 elo, ehi, vals[24]; pick_box(E, &elo, &ehi);
+    for (int k = 0; k < N; k++) vals[k] = rnd_in(elo, ehi);
+    __int128 llo = rnd_in(0, N), lhi = rnd_in(llo, N);   // a slice's length, assumed
+    bool mk_rel1 = rnd() % 2, mk_rel2 = rnd() % 2;       // i < len / lo <= hi, hi <= len
+    c->rt = E;
+    if (c->o->k == K_ARRAY) c->tx = pick_int();
+    else c->tx = (c->o->k == K_SLICE && rnd() % 3 == 0) ? ir_type_int(&A, 32, false) : u64;
+    // index boxes near the interesting edges (0 and the length), sometimes anywhere
+    __int128 mn = it_min(c->tx), mx = dom_max(c->tx);
+    if (rnd() % 4 == 0) pick_box(c->tx, &c->xlo, &c->xhi);
+    else { c->xlo = clampi(rnd_in(-2, N), mn, mx); c->xhi = clampi(rnd_in(c->xlo, N + 2), mn, mx); if (c->xhi < c->xlo) c->xhi = c->xlo; }
+    if (c->o->k == K_SUBSLICE) { c->ty = u64; c->ylo = clampi(rnd_in(0, N), 0, mx); c->yhi = clampi(rnd_in(c->ylo, N + 2), 0, mx); }
+
+    IrFunc *f = ir_func_new(&A, nm("t"), c->o->k == K_SUBSLICE ? u64 : E, IR_FUNC_PURE);
+    IrType *slt = ir_type_new(&A, IRT_SLICE); slt->elem = c->o->k == K_SUBSLICE ? ir_type_int(&A, 8, false) : E;
+    IrValue *s = c->o->k != K_ARRAY ? ir_add_param(f, slt, nm("s")) : NULL;
+    IrValue *x = ir_add_param(f, c->tx, nm("i"));
+    IrValue *y = c->o->k == K_SUBSLICE ? ir_add_param(f, u64, nm("hi")) : NULL;
+    IrBlock *e = f->entry, *obs = ir_new_block(f);
+    IrCmp ge = c->tx->is_signed ? IR_CMP_SGE : IR_CMP_UGE, le = c->tx->is_signed ? IR_CMP_SLE : IR_CMP_ULE;
+    ir_assume(f, e, ir_icmp(f, e, ge, x, ir_const_int(f, e, (int64_t)c->xlo, c->tx)));
+    ir_assume(f, e, ir_icmp(f, e, le, x, ir_const_int(f, e, (int64_t)c->xhi, c->tx)));
+    if (y) {
+        ir_assume(f, e, ir_icmp(f, e, IR_CMP_UGE, y, ir_const_int(f, e, (int64_t)c->ylo, u64)));
+        ir_assume(f, e, ir_icmp(f, e, IR_CMP_ULE, y, ir_const_int(f, e, (int64_t)c->yhi, u64)));
+    }
+    IrValue *L = NULL;
+    if (s) {
+        L = ir_slice_len(f, e, s);
+        ir_assume(f, e, ir_icmp(f, e, IR_CMP_UGE, L, ir_const_int(f, e, (int64_t)llo, u64)));
+        ir_assume(f, e, ir_icmp(f, e, IR_CMP_ULE, L, ir_const_int(f, e, (int64_t)lhi, u64)));
+        if (c->o->k == K_SLICE && mk_rel1 && c->tx == u64) ir_assume(f, e, ir_icmp(f, e, IR_CMP_ULT, x, L));
+        if (c->o->k == K_SUBSLICE && mk_rel1) ir_assume(f, e, ir_icmp(f, e, IR_CMP_ULE, x, y));
+        if (c->o->k == K_SUBSLICE && mk_rel2) ir_assume(f, e, ir_icmp(f, e, IR_CMP_ULE, y, L));
+    }
+    IrValue *r = NULL; IrInstr *gate = NULL, *subop = NULL;
+    if (c->o->k == K_ARRAY) {
+        IrType *at = ir_type_new(&A, IRT_ARRAY); at->elem = E; at->array_len = N;
+        IrValue *a = ir_alloca_array(f, e, at);
+        for (int k = 0; k < N; k++)
+            ir_store(f, e, ir_elem_ptr(f, e, a, ir_const_int(f, e, k, u64), E), ir_const_int(f, e, (int64_t)vals[k], E));
+        IrValue *p = ir_elem_ptr(f, e, a, x, E); gate = e->instrs_tail;
+        r = ir_load(f, e, p, E);
+    } else if (c->o->k == K_SLICE) {
+        IrValue *d = ir_slice_data(f, e, s, E);
+        IrValue *p = ir_elem_ptr(f, e, d, x, E); gate = e->instrs_tail;
+        r = ir_load(f, e, p, E);
+    } else {                                             // as lowering: start, hi - lo, make_slice
+        IrType *u8 = ir_type_int(&A, 8, false);
+        IrValue *d = ir_slice_data(f, e, s, u8);
+        IrValue *b = ir_elem_ptr(f, e, d, x, u8);
+        IrValue *n = ir_binop(f, e, IR_SUB, y, x, u64); subop = e->instrs_tail;
+        IrValue *t = ir_make_slice(f, e, b, n, u8); gate = e->instrs_tail;
+        r = ir_slice_len(f, e, t);
+    }
+    gate->line = 100; gate->col = 1; if (subop) { subop->line = 101; subop->col = 1; }
+    ir_set_br(e, obs); ir_set_ret(obs, r); ir_finalize_cfg(f);
+
+    vra_mod = f;
+    Vra *V = vra_analyze(f);
+    long found_before = st.f_range + st.f_rel + st.f_unreached + st.f_oblig + st.f_missing + st.f_harness;
+    bool any_b = false, b_open = false, any_o = false, o_open = false;
+    for (int i = 0; i < V->nchecks; i++) {
+        if (V->checks[i].at == gate && V->checks[i].kind == VRA_BOUNDS) { any_b = true; if (!V->checks[i].ok) b_open = true; }
+        if (subop && V->checks[i].at == subop && V->checks[i].kind == VRA_OVERFLOW) { any_o = true; if (!V->checks[i].ok) o_open = true; }
+    }
+    // a subslice's start pointer is not an access (vra skips it); its bounds live at make_slice
+    bool reached = V->reached[obs->id];
+    int64_t *m = malloc((size_t)V->dsz * 8 + 8); Octagon W = { V->noct, 2 * V->noct, m };
+    __int128 rlo = 0, rhi = 0;
+    const int *map_saved = oct_map; oct_map = V->odim;
+    if (reached) { memcpy(m, V->in[obs->id], (size_t)V->dsz * 8); oct_close(&W); range_of(V, &W, r, &rlo, &rhi);
+                   st.results++; if (rlo > it_min(r->type) || rhi < it_max(r->type)) st.nontrivial++; }
+    oct_map = map_saved;
+
+    int ran = 0;
+    for (int smp = 0; smp < 40; smp++) {
+        __int128 vx = smp < 4 ? (smp & 1 ? c->xhi : c->xlo) : rnd_in(c->xlo, c->xhi);
+        __int128 vy = y ? (smp < 4 ? (smp & 2 ? c->yhi : c->ylo) : rnd_in(c->ylo, c->yhi)) : 0;
+        int n = s ? (int)(smp < 4 ? (smp & 1 ? lhi : llo) : rnd_in(llo, lhi)) : N;
+        if (s && c->o->k == K_SLICE && mk_rel1 && c->tx == u64 && !(vx < n)) continue;
+        if (c->o->k == K_SUBSLICE && mk_rel1 && !(vx <= vy)) continue;
+        if (c->o->k == K_SUBSLICE && mk_rel2 && !(vy <= n)) continue;
+        IVal args[3]; int na = 0;
+        __int128 svals[24]; for (int k = 0; k < n; k++) svals[k] = rnd_in(it_min(slt->elem), dom_max(slt->elem));
+        if (s) args[na++] = slice_arg(slt->elem, n, svals);
+        iv_int(&args[na++], vx);
+        if (y) iv_int(&args[na++], vy);
+        IVal out; memset(&out, 0, sizeof out); long long used = 0;
+        ii_quiet = true;
+        int status = ir_interpret_call(f, f, "soundness", args, na, &out, 100000, &used);
+        ii_quiet = false;
+        st.samples++; ran++;
+        if (status == 99) {
+            st.traps++;
+            bool bnd = strstr(ii_why, "outside") || strstr(ii_why, "slice of");
+            bool ovf = strstr(ii_why, "overflows") != NULL;
+            if (!bnd && !ovf) { finding(c, "HARNESS", &st.f_harness, ii_why, vx, vy, 0, 0); continue; }
+            bool any = bnd ? any_b : any_o, open = bnd ? b_open : o_open;
+            // A subslice owes two obligations that guard one another: its start `lo` is checked
+            // by make_slice's bound together with `hi - lo` (lo <= hi), and the interpreter stops
+            // at the START pointer when lo > len, before the subtraction. So it is accepted only
+            // if BOTH are discharged, and a trap is a finding only then.
+            if (c->o->k == K_SUBSLICE) { any = any_b || any_o; open = b_open || o_open; }
+            if (!any) finding(c, "MISSING", &st.f_missing, ii_why, vx, vy, 0, 0);
+            else if (!open) finding(c, "OBLIGATION", &st.f_oblig, ii_why, vx, vy, 0, 0);
+            continue;
+        }
+        if (status != 0) { finding(c, "HARNESS", &st.f_harness, ii_why, vx, vy, status, status); continue; }
+        if (!reached) { finding(c, "UNREACHED", &st.f_unreached, "VRA: the result is never produced", vx, vy, 0, 0); continue; }
+        __int128 vr = it_wrap_bits((__int128)out.i, it_bits(r->type), it_signed(r->type));
+        if (vr < rlo || vr > rhi) { finding(c, "RANGE", &st.f_range, "loaded/len outside VRA's", vx, vy, rlo, rhi); printf("        result=%s\n", i128s(vr)); }
+    }
+    if (!ran) st.infeasible++;
+    if (dump_next && st.f_range + st.f_rel + st.f_unreached + st.f_oblig + st.f_missing + st.f_harness > found_before) {
+        ir_dump_func(f, stdout); fflush(stdout); oct_map = V->odim; vra_dump_state(V, stdout); oct_map = map_saved; dump_next = false;
+    }
+    free(m); vra_free(V); st.trials++;
+}
+
 static void trial(void) {
     Case c; memset(&c, 0, sizeof c);
     c.o = &OPS[rnd() % NOPS];
+    if (c.o->k == K_ARRAY || c.o->k == K_SLICE || c.o->k == K_SUBSLICE) { trial_mem(&c); return; }
     c.tx = pick_int();
     c.wrap = (IrWrapMode)(rnd() % (uint64_t)c.o->modes);
     IrOp op = c.o->op;
@@ -338,7 +485,11 @@ int main(int argc, char **argv) {
            seed, st.trials, st.samples, st.traps, st.infeasible);
     printf("precision coverage: %ld of %ld results got a range narrower than their type\n", st.nontrivial, st.results);
     printf("findings by operation:");
-    for (int k = 0; k < NOPS; k++) if (st.per_op_findings[k]) printf(" %s=%ld", OPS[k].name, st.per_op_findings[k]);
+    for (int k = 0; k < NOPS; k++) {                       // summed by name (memory shapes are listed thrice)
+        bool first = true; long n = 0;
+        for (int j = 0; j < NOPS; j++) if (!strcmp(OPS[j].name, OPS[k].name)) { if (j < k) first = false; n += st.per_op_findings[j]; }
+        if (first && n) printf(" %s=%ld", OPS[k].name, n);
+    }
     printf("\nbugs: %ld (RANGE=%ld RELATION=%ld UNREACHED=%ld OBLIGATION=%ld MISSING=%ld HARNESS=%ld)\n",
            bugs, st.f_range, st.f_rel, st.f_unreached, st.f_oblig, st.f_missing, st.f_harness);
     return bugs ? 1 : 0;

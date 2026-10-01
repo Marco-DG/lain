@@ -1,0 +1,16 @@
+// A subslice may be empty and may start at the END: `s[s.len..s.len]` is defined and has length
+// 0. Its start is a pointer one past the last element, which C allows (6.5.6p8) and the
+// interpreter refused as "index 3 outside [0, 3) (proven in bounds)" although the C returned 0.
+// interp_gate runs this under the interpreter as well as compiled; values checked.
+func tail_from(s u8[], k usize <= s.len) usize {
+    t = s[k..s.len]
+    return t.len
+}
+func main() i32 {
+    var b u8[3] = [1, 2, 3]
+    if tail_from(b, 3) != 0 { return 1 }
+    if tail_from(b, 1) != 2 { return 2 }
+    e = b[3..3]
+    if e.len != 0 { return 3 }
+    return 0
+}
