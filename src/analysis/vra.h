@@ -1569,7 +1569,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             break;
         }
         case IR_SHL: {
-            // x << k, for x >= 0 and k a bounded amount: [xlo * 2^klo, xhi * 2^khi], stated only
+            // x << k for a bounded amount k: [xlo * 2^klo, xhi * 2^khi] when x >= 0, stated only
             // when that FITS the result type — then no bit was shifted out, whatever the mode (a
             // signed shift owes exactly that, vra_check_shift; an unsigned one wraps, and a range
             // that does not fit says nothing). There was no transfer at all: `1 << 7` was any
@@ -1582,9 +1582,18 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             int64_t alo, ahi, klo, khi;
             vra_range(V, W, ins->operands[0], &alo, &ahi);
             vra_range(V, W, ins->operands[1], &klo, &khi);
-            if (alo < 0 || ahi >= OCT_INF/2 || klo < 0 || khi > 62) break;
-            __int128 rlo = (__int128)alo << klo, rhi = (__int128)ahi << khi;
-            if (rhi > (__int128)thi || rhi > (__int128)INT64_MAX) break;
+            // ...and for a NEGATIVE x too: x << k is x * 2^k, monotone in k for either sign, so
+            // the bounds are the extremes over the two ends of k (lo << kmin vs lo << kmax for
+            // the least, hi << kmin vs hi << kmax for the greatest). `-3 << 2` is -12. Without
+            // this an i8 `x << 2` over [-16, -1] was computed wide and refused when narrowed back
+            // (E086), though -64..-4 fits. Computed as products: shifting a negative __int128 is
+            // itself undefined in C.
+            if (alo <= -OCT_INF/2 || ahi >= OCT_INF/2 || klo < 0 || khi > 62) break;
+            __int128 pmin = (__int128)1 << klo, pmax = (__int128)1 << khi;
+            __int128 l1 = (__int128)alo * pmin, l2 = (__int128)alo * pmax;
+            __int128 h1 = (__int128)ahi * pmin, h2 = (__int128)ahi * pmax;
+            __int128 rlo = l1 < l2 ? l1 : l2, rhi = h1 > h2 ? h1 : h2;
+            if (rlo < (__int128)tlo || rhi > (__int128)thi || rlo < (__int128)INT64_MIN || rhi > (__int128)INT64_MAX) break;
             oct_add_lb(W, r, (int64_t)rlo); oct_add_ub(W, r, (int64_t)rhi);
             break;
         }

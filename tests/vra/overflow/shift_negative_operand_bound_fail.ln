@@ -1,0 +1,13 @@
+// EXPECT: [E015]
+// The contrast for shift_negative_operand_pass.ln: -3 << 3 is -24, so a bound of -23 does not
+// make the division dead.
+func mixed(x i8 >= -3 and <= 5, k u8 <= 3) i8 {
+    r = x << k
+    if r < -23 or r > 40 {
+        return 5 /% 0
+    }
+    return r
+}
+func main() i32 {
+    return mixed(1, 0) as i32
+}

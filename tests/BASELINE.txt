@@ -1710,6 +1710,10 @@ out=
 at=const 2
 at=nonnull 2
 at=pure 2
+### tests/trust/shift_negative_operand_pass.ln
+rc=0
+out=
+at=const 6
 ### tests/trust/shift_unsigned_high_bit_pass.ln
 rc=0
 out=

@@ -1,0 +1,21 @@
+// `x << k` is x * 2^k for a negative x too, so its range is the extremes over the two ends of k:
+// [min(lo << kmin, lo << kmax), max(hi << kmin, hi << kmax)]. The transfer stated a range only for
+// x >= 0, so an i8 or i16 shift of a negative value, computed wide and narrowed back, was E086
+// though it fits (-16..-1 << 2 is -64..-4), and nothing at all was known of a mixed-sign one.
+// `mixed` is also a DEAD-CODE probe: its result is exactly [-24, 40], so the division is dead
+// (shift_negative_operand_bound_fail.ln moves the bound by one and it is refused).
+func s8(x i8 >= -16 and <= -1) i8 { return x << 2 }
+func s16(x i16 >= -1000 and <= -1) i16 { return x << 4 }
+func mixed(x i8 >= -3 and <= 5, k u8 <= 3) i8 {
+    r = x << k
+    if r < -24 or r > 40 {
+        return 5 /% 0
+    }
+    return r
+}
+func main() i32 {
+    if s8(-3) != -12 or s8(-16) != -64 { return 1 }
+    if s16(-1000) != -16000 { return 2 }
+    if mixed(-3, 3) != -24 or mixed(5, 3) != 40 or mixed(1, 0) != 1 { return 3 }
+    return 0
+}
