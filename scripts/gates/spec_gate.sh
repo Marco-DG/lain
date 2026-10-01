@@ -8,10 +8,23 @@
 #   PHANTOM     the annex defines a code nothing emits — a requirement no implementation meets,
 #               including this one
 #
-# It also checks that a code carries ONE meaning. A diagnostic code identifies a constraint;
-# two unrelated constraints under one code make the annex's table unusable for the reader who
-# actually hit the error. (E123 covered both function-pointer arity and `assume`-outside-unsafe
-# until this gate was written; E125 covered both direct ADT access and an understated effect row.)
+# ★ WHAT THIS GATE DOES NOT CHECK — stated here because this comment used to claim it did.
+#
+# "A code carries ONE meaning" is a RULE OF THE ANNEX, not a check in this script. Nothing below
+# counts meanings. What is reported is MISSING, PHANTOM, the build, and the examples, and that is
+# all. The rule is real and was earned — E123 once covered both function-pointer arity and
+# `assume`-outside-unsafe, E125 both direct ADT access and an understated effect row — but it is
+# upheld by whoever edits the annex and by nothing else.
+#
+# It is drifting now. As of fa8de9f, E009 carries THREE meanings in one row: a field mutated
+# through a raw pointer in safe code, a write through a read-only `*T` inside `unsafe`, and a
+# write reaching an immutable binding's storage through a reference. Those are one family rather
+# than E123's two unrelated rules, so the row is defensible — but it is three, and the only thing
+# distinguishing them for a reader who hits one is the message text, which the tests pin with
+# EXPECT-TEXT.
+#
+# A comment claiming a check that does not exist is worse than no comment: it stops people
+# looking. Whoever adds a fourth meaning to a row should know that nothing here will object.
 #
 #   bash spec_gate.sh
 set -u
