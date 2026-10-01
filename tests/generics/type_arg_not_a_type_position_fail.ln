@@ -1,0 +1,12 @@
+// EXPECT: [E124]
+// EXPECT-TEXT: Ln 10,
+// A value where a type parameter expects a type is E124, at the type application. A call inside
+// a chain (`G(7).No`) had no position, and the diagnostic said "Ln 0, Col 0".
+type G(T type) {
+    Has { v T }
+    No
+}
+func main() i32 {
+    g = G(7).No
+    return 0
+}

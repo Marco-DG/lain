@@ -1559,6 +1559,12 @@ ty=Slice_u8 scalar
 ### tests/trust/float_literal_forms_pass.ln
 rc=0
 out=
+### tests/trust/generic_array_type_arg_pass.ln
+rc=0
+out=
+at=const 2
+ty=G_arr4_u8 struct
+ty=G_arr8_u8 struct
 ### tests/trust/generic_instance_sizeof_pass.ln
 rc=0
 out=

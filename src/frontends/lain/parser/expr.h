@@ -476,7 +476,11 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
                 }
                 parser_expect(TOKEN_R_PAREN, "Expected ')' after function call arguments");
                 parser_advance(); // consume ')'
+                Expr *callee = expr;
                 expr = expr_call(arena, expr, args);
+                // A call inside a chain (`G(Quad).Has(x)`) had no position: its diagnostics
+                // said "Ln 0, Col 0". It is where its callee is.
+                if (callee) { expr->line = callee->line; expr->col = callee->col; }
 
             } else if (parser_match(TOKEN_L_BRACKET)) {
                 parser_advance();  // consume '['

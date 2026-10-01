@@ -224,9 +224,11 @@ static void mono_mangle_type(Type *t, char *buf, size_t cap) {
             char inner[128]; mono_mangle_type(t->element_type, inner, sizeof inner);
             snprintf(buf, cap, "ptr_%s", inner); break;
         }
-        case TYPE_ARRAY: {
+        case TYPE_ARRAY: {      // the length is part of the type: u8[4] and u8[8] are two instances
             char inner[128]; mono_mangle_type(t->element_type, inner, sizeof inner);
-            snprintf(buf, cap, "arr_%s", inner); break;
+            if (t->array_len > 0) snprintf(buf, cap, "arr%lld_%s", (long long)t->array_len, inner);
+            else snprintf(buf, cap, "arr_%s", inner);
+            break;
         }
         case TYPE_CONST: snprintf(buf, cap, "%lld", (long long)t->array_len); break;
         default: snprintf(buf, cap, "t%d", (int)t->kind); break;
@@ -311,9 +313,23 @@ static void mono_bind(SubstCtx *ctx, Id *name, Type *concrete) {
 // Reinterpret an explicit type-argument expression as a Type. A plain type name
 // resolves to EXPR_TYPE; a pointer type-arg `*T` parses as EXPR_DEREF wrapping
 // the element type (recursively for `**T`). Returns NULL if `e` is not a type.
+static Type *resolve_type_alias(Type *t);         // typecheck.h: peels a type alias
 static Type *mono_arg_to_type(Expr *e) {
     if (!e) return NULL;
     if (e->kind == EXPR_TYPE) return e->as.type_expr.type_value;
+    // An alias of a type that is not a struct or an enum (`type Quad = u8[4]`) stays an
+    // identifier in expression position; as a type argument it is the type it names.
+    // Read off the alias's own declaration: G(Quad) is then the same instance as G(u8[4]).
+    if (e->kind == EXPR_IDENTIFIER && e->decl && e->decl->kind == DECL_TYPE_ALIAS) {
+        Expr *rx = e->decl->as.type_alias_decl.expr;
+        return rx && rx != e ? mono_arg_to_type(rx) : NULL;
+    }
+    // `u8[4]` written as an argument parses as an index into the type: an array of that length.
+    if (e->kind == EXPR_INDEX && e->as.index_expr.index && e->as.index_expr.index->kind == EXPR_LITERAL
+        && e->as.index_expr.index->as.literal_expr.value > 0) {
+        Type *el = mono_arg_to_type(e->as.index_expr.target);
+        return el ? type_array(sema_arena, el, (isize)e->as.index_expr.index->as.literal_expr.value) : NULL;
+    }
     // `usize` / `isize` are builtin types but deliberately NOT rewritten to type-values by the
     // resolver, so they stay legal as binding names (tests/errors/near_type_name_var_pass.ln).
     // In a type-argument position, a name that is NOT bound is the type: `Box(usize, 5)` was
@@ -569,6 +585,12 @@ static Type *mono_resolve_type_apps(Type *t) {
                         (int)t->base_type->length, t->base_type->name,
                         arg->size_expr && arg->size_expr->kind == EXPR_LITERAL ? (long long)arg->size_expr->as.literal_expr.value : 0LL);
                 exit(1);
+            } else if (arg && arg->kind == TYPE_SIMPLE && !arg->type_args) {
+                // An alias of an ARRAY type is the array, so `g G(Quad)` names the instance that
+                // `G(Quad)` and `G(u8[4])` build in an expression. (Other aliases keep their name:
+                // a refinement alias is not its base type.)
+                Type *pa = resolve_type_alias(arg);
+                if (pa && pa->kind == TYPE_ARRAY && pa->array_len > 0) { arg = pa; ta->type = pa; }
             }
             mono_bind(&ctx, pnm, arg);
             char tb[128]; mono_mangle_type(arg, tb, sizeof tb);
