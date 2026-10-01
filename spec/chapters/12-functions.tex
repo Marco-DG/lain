@@ -246,13 +246,10 @@ a bare \lain{return expr} already moves \lain{expr}, so \lain{mov} is optional
 there.
 
 \begin{note}
-  A \lain{return var x} / \lain{return mov x} that would escape a borrow of a
-  \emph{local} variable is a dangling reference (\diagcode{E010},
-  \S\,\ref{sec:stmt.return}).  This supersedes an earlier design (Q-009) in
-  which explicit \lain{mov}/\lain{var} in return position was rejected.
-  Returning is only one way a reference can escape; the general rule, covering a reference
-  held by a struct or a sum, stored where the caller can reach it, or kept by a callee, is
-  \S\,\ref{sec:mem.storage}.
+  Returning a borrow of a \emph{local} variable is \illformed{}~(\diagcode{E010}); the rule on
+  references outliving their storage is stated in full at \S\,\ref{sec:mem.storage}.  This
+  supersedes an earlier design (Q-009) in which explicit \lain{mov}/\lain{var} in return
+  position was rejected.
 \end{note}
 
 

@@ -330,14 +330,11 @@ implicit from the function's declared return type, so a bare \lain{return x}
 suffices when that type is owned.
 
 \begin{constraint}
-  A \lain{return var x} (or \lain{return mov x}) that would escape a borrow of
-  a \emph{local} variable --- one whose storage does not outlive the call ---
-  is a dangling reference and is \illformed{}~(\diagcode{E010}).  Returning a
-  \lain{var} borrow tied to a \lain{var} parameter is permitted.  This is one case of a
-  general rule: a reference shall not outlive the automatic storage it borrows, by any path.
-  The rule also covers a reference handed back inside a struct or a sum, one stored into a
-  place the caller owns, and one passed to a function that keeps
-  it~(\S\,\ref{sec:mem.storage}).
+  A \lain{return var x} (or \lain{return mov x}) that would escape a borrow of a \emph{local}
+  variable is \illformed{}~(\diagcode{E010}); returning a \lain{var} borrow tied to a
+  \lain{var} parameter is permitted.  Returning is one of several ways a reference can outlive
+  the storage it borrows, and the rule governing all of them is
+  \S\,\ref{sec:mem.storage}.
 \end{constraint}
 
 \section{Defer statement}
