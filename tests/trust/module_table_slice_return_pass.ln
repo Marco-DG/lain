@@ -1,0 +1,22 @@
+// A module constant table outlives every function, and its slice is a view of the one read-only
+// static object (spec 10), so a function may return it. The slice was taken from a per-use stack
+// copy, and returning it was E010, a refusal the language did not mean. The caller reads it after
+// another call reuses the stack; a `var` copy of the table may still be written.
+TBL i32[4] = [10, 20, 30, 40]
+func tail() i32[] {
+    return TBL[1..4]
+}
+func clobber(k i32) i32 {
+    ys i32[8] = [k, k, k, k, k, k, k, k]
+    return ys[3]
+}
+func main() i32 {
+    s = tail()
+    c = clobber(77)
+    if s.len != 3 { return 1 }
+    if s[0] != 20 or s[2] != 40 { return 2 }
+    var copy = TBL
+    copy[0] = 99
+    if copy[0] != 99 or TBL[0] != 10 { return 3 }
+    return 0
+}

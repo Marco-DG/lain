@@ -772,7 +772,9 @@ static void bor_check_regions(Borrow *B, IrFunc *mod, IrFunc *f) {
 // An ARRAY operand of a constructor is COPIED into the field, so it lends nothing (a struct or
 // sum holds its arrays inline): `return St2(1, xs)` with an array field was refused as a borrow.
 #define BOR_ESC_MAX_SLOTS 16
-typedef struct { int16_t n; int8_t state; bool outliving; int slots[BOR_ESC_MAX_SLOTS]; } BorTargets;
+// `rodata`: it may point into a module constant's static table, which outlives every frame
+// (so E010 lets it go) and is never written (so E009 refuses any write that reaches it).
+typedef struct { int16_t n; int8_t state; bool outliving, rodata; int slots[BOR_ESC_MAX_SLOTS]; } BorTargets;
 typedef struct { IrValue **v; int n, cap; } BorVals;
 typedef struct {
     IrFunc *f, *mod; IrInstr **def; int nvar;
@@ -824,6 +826,7 @@ static void bor_vals_add(BorVals *L, IrValue *v) {
 }
 static void bor_tg_union(BorTargets *a, const BorTargets *b) {
     if (b->outliving) a->outliving = true;
+    if (b->rodata) a->rodata = true;
     for (int k = 0; k < b->n; k++) {
         bool have = false;
         for (int j = 0; j < a->n; j++) if (a->slots[j] == b->slots[k]) have = true;
@@ -840,7 +843,7 @@ static IrFunc *bor_callee(BorEsc *E, IrInstr *call) {
 // The storage a pointer value may point into: local slots, or "outliving" (a parameter's, a
 // call's, anything not followed). A cycle reads as outliving: the conservative answer.
 static const BorTargets *bor_targets(BorEsc *E, IrValue *p) {
-    static const BorTargets OUT = { 0, 2, true, {0} };
+    static const BorTargets OUT = { 0, 2, true, false, {0} };
     if (!p || p->id < 0 || p->id >= E->nvar) return &OUT;
     BorTargets *T = &E->tg[p->id];
     if (T->state == 2) return T;
@@ -851,7 +854,7 @@ static const BorTargets *bor_targets(BorEsc *E, IrValue *p) {
     if (!d) R.outliving = true;                                   // a parameter: the caller's
     else switch (d->op) {
         case IR_ALLOCA:
-            if (d->data) R.outliving = true;                      // read-only static data
+            if (d->data) R.outliving = R.rodata = true;           // read-only static data
             else { R.n = 1; R.slots[0] = p->id; }
             break;
         case IR_FIELD_PTR: case IR_ELEM_PTR: case IR_SLICE_DATA: case IR_MAKE_SLICE:
@@ -1103,6 +1106,7 @@ static bool bor_deep_hits_seal(BorEsc *E, IrValue *v, int32_t own) {
         IrValue *x = wl[--top];
         if (bor_is_ref(x->type)) {                               // a reference: where it points,
             const BorTargets *t = bor_targets(E, x);             // and what is held there
+            if (t->rodata) { hit = true; break; }
             for (int s = 0; s < t->n; s++) {
                 int32_t sl = bor_slot_seal(E, t->slots[s]);
                 if (sl && sl != own) { hit = true; break; }
@@ -1197,7 +1201,7 @@ static void bor_escape_pass(Borrow *B, IrFunc *f, IrFunc *mod, uint64_t *ret, ui
             if (i->op == IR_STORE && i->n_operands >= 2) {
                 bor_write_params(&E, i->operands[0], false, wsh, wdp);
                 const BorTargets *t = bor_targets(&E, i->operands[0]);
-                bool hit = false;
+                bool hit = t->rodata;
                 for (int s = 0; !hit && s < t->n; s++) {
                     int32_t sl = bor_slot_seal(&E, t->slots[s]);
                     if (sl && sl != i->seal) hit = true;
@@ -1219,6 +1223,7 @@ static void bor_escape_pass(Borrow *B, IrFunc *f, IrFunc *mod, uint64_t *ret, ui
                     if (!B || reported || (ak < 64 && ((i->ro_args >> ak) & 1u))) continue;
                     if (sh && bor_is_ref(a->type)) {
                         const BorTargets *t = bor_targets(&E, a);
+                        if (t->rodata) { bor_add(B, i->line, i->col, 9); reported = true; }
                         for (int s = 0; s < t->n && !reported; s++) {
                             int32_t sl = bor_slot_seal(&E, t->slots[s]);
                             if (sl && sl != i->seal) { bor_add(B, i->line, i->col, 9); reported = true; }

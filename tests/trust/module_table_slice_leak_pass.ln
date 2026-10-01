@@ -1,0 +1,26 @@
+// fuzz_escape's p_module_table shape (scripts/fuzz/fuzz_escape.py, Handwriting): a slice of a
+// module constant table returned from the function that takes it, read after another call has
+// reused the stack. It was E010 because the slice was taken from a per-use stack copy; the
+// table is one read-only static object, so the slice outlives every frame.
+TBL i32[4] = [1, 2, 3, 4]
+func leak() i32[] {
+    return TBL[0..2]
+}
+func clobber(n i32) i32 {
+    var junk i32[16] = [9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]
+    var acc i32 = 0
+    var i usize = 0
+    while i < 16 {
+        acc = acc +% junk[i] +% n
+        i = i + 1
+    }
+    return acc
+}
+func main() i32 {
+    r = leak()
+    c = clobber(7)
+    if c != 256 { return 1 }
+    if r.len != 2 { return 2 }
+    if r[0] != 1 or r[1] != 2 { return 3 }
+    return 0
+}

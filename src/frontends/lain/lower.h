@@ -2484,7 +2484,13 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             Expr *idxe = e->as.index_expr.index;
             if (idxe && idxe->kind == EXPR_RANGE) {   // subslice: xs[lo..hi] → a slice value
                 IrType *u64t  = ir_type_int(c->a,64,false);
+                // A module constant table's slice is a view of its read-only static object, as
+                // `T[i]` is: a slice taken from a per-use copy died with the frame, so returning
+                // `T[0..2]` was E010. A write through the view is E009 (borrow.h).
+                Expr *saved_tr = c->table_read;
+                c->table_read = e->as.index_expr.target;
                 IrValue *tv   = ir_lower_expr(c, e->as.index_expr.target);
+                c->table_read = saved_tr;
                 IrType  *selem= (ty && ty->elem) ? ty->elem : ir_type_int(c->a,8,false);
                 bool src_slice= tv->type && tv->type->kind==IRT_SLICE;
                 IrValue *srclen = src_slice ? ir_slice_len(c->f,c->cur,tv)

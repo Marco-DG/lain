@@ -313,8 +313,9 @@ extern func strlen(s *u8) usize effects
 A declaration \lain{NAME T = expression} at module scope introduces an immutable constant
 (\lain{NAME = expression} takes the initialiser's type). There are no mutable module-level
 variables. A constant array whose elements are integer constants is one read-only object:
-reading it through an index (\lain{CTYPE[c]}) reads that object, with no copy, and the
-reference implementation emits it once as a \texttt{static const} array. A constant may not be
+reading it through an index (\lain{CTYPE[c]}) or a slice (\lain{CTYPE[0..16]}) reads that
+object, with no copy, and the reference implementation emits it once as a \texttt{static const}
+array. Since the object outlives every function, a slice of it may be returned. A constant may not be
 written, nor lent as \lain{var}~(\diagcode{E009}). The initialiser is converted to \lain{T} by the rules of a declaration: an implicit
 conversion between integer and floating-point types, or between an integer type and
 \lain{bool}, is \illformed{}~(\diagcode{E012}), and an array initialiser shall have exactly
