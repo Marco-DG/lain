@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# census_gate.sh — the construct census as a gate: does the compiler still mean what the language says?
+#
+# WHY THIS IS A GATE AND NOT A FUZZER. It is the only instrument whose oracle is OUTSIDE the
+# compiler. Lowering can DROP a construct: the function is marked `incomplete`, a note goes to
+# stderr, its checks are skipped, and it is EMITTED anyway. The emitted C and `lain --interpret`
+# then run the same mutilated IR, so they agree with each other and disagree only with the truth,
+# and a sanitizer sees nothing because the code is absent rather than undefined. Measured at
+# fb04c22: a `case` on an f64 compiled to `uint8_t f(double) { return; }` and the compiler exited 0.
+# Each cell in census_cells.py states the stdout it must produce, computed in Python. That string
+# is the only independent leg, so it must never be replaced by what the compiler prints.
+#
+# VERDICT: a DIFF against census_baseline.txt, not a threshold. A threshold hides compensating
+# changes — one cell regressing OK -> MISMATCH while another is fixed MISMATCH -> OK leaves a count
+# level, and a diff names both. The gate therefore fails on ANY verdict change in EITHER direction,
+# including an improvement, so a fix shows up in review and the commit that makes it blesses the
+# baseline.
+#
+#   bash scripts/gates/census_gate.sh           # check against the committed baseline
+#   bash scripts/gates/census_gate.sh --bless   # rewrite the baseline (a deliberate act)
+#   LAIN=path/to/lain bash scripts/gates/census_gate.sh
+#
+# BASELINE RULES. A line may carry OK or REFUSED <code>. It may carry MISMATCH or
+# ACCEPTED-ILLFORMED only with a `# <plan row>` reference naming the open item (the row IDs in
+# local/internal/design/plan_2026-09-17.md), so a known hole is recorded rather than making the
+# gate un-greenable. The gate REFUSES a non-OK, non-REFUSED line without one.
+# The refusal CODE is part of the verdict, so E100 -> E012 is a visible change, not a silent one.
+#
+# DETERMINISM. A timeout is part of the verdict, not a skip: a cell that hangs is MISMATCH. The
+# budgets are fixed here rather than taken from the environment, so a loaded machine cannot change
+# the answer: 6 s per compiled run, 30 s per interpretation, 20M interpreter steps.
+#
+# COST. Each cell is 1 lain compile + 2 gcc builds + 2 runs + 1 interpretation. MEASURED at 14 s
+# for 146 cells on an idle machine at a224709 (153 cells since the assert-spelling axis). It is that fast only because no cell hangs at the current
+# baseline: before the `for`/`continue` fix twelve cells timed out and the same run took minutes.
+# So the cost is a function of how many cells are broken, and a sudden slowdown is itself a signal.
+set -u
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$(dirname "$0")/../.."
+LAIN="${LAIN:-$(pwd)/lain}"; [ -x "$LAIN" ] || { echo "build first: make"; exit 2; }
+CELLS="$HERE/census_cells.py"; BASE="$HERE/census_baseline.txt"
+[ -f "$CELLS" ] || { echo "missing $CELLS"; exit 2; }
+BLESS=0; [ "${1:-}" = "--bless" ] && BLESS=1
+SC="$(mktemp -d)"; trap 'rm -rf "$SC"' EXIT
+
+LAIN="$LAIN" CELLS="$CELLS" SC="$SC" python3 - > "$SC/now.txt" <<'PY'
+import json, os, re, subprocess, sys, tempfile
+LAIN, CELLS = os.environ["LAIN"], os.environ["CELLS"]
+DEFS = ["-Dlibc_printf=printf", "-Dlibc_puts=puts"]
+RUN_T, INT_T, STEPS = 6, 30, "20000000"
+cells = json.loads(subprocess.run([sys.executable, CELLS], capture_output=True, text=True).stdout)
+d = tempfile.mkdtemp(dir=os.environ["SC"])   # inside $SC, which the trap removes
+def code_of(t):
+    m = re.search(r'\[E\d+\]', t)
+    return m.group(0) if m else "uncoded"
+for x in cells:
+    f, cf = os.path.join(d, "c.ln"), os.path.join(d, "c.c")
+    open(f, "w").write(x["prog"])
+    if os.path.exists(cf): os.remove(cf)
+    r = subprocess.run([LAIN, f, "-o", cf], capture_output=True, text=True, timeout=120)
+    ill = x["want"] == "__ILLFORMED__"
+    key = "%s\t%s" % (x["axis"], x["cell"])
+    if r.returncode != 0 or not os.path.exists(cf):
+        v = ("ok-REFUSED " if ill else "REFUSED ") + code_of(r.stdout + r.stderr)
+        print("%s\t%s" % (key, v)); continue
+    if ill:
+        print("%s\tACCEPTED-ILLFORMED" % key); continue
+    outs = {}
+    for opt in ("-O0", "-O2"):
+        b = os.path.join(d, "b" + opt)
+        if subprocess.run(["gcc", opt, "-o", b, cf] + DEFS + ["-w"], capture_output=True).returncode:
+            outs[opt] = "<C FAILED>"; continue
+        try: outs[opt] = subprocess.run([b], capture_output=True, text=True, timeout=RUN_T).stdout
+        except subprocess.TimeoutExpired: outs[opt] = "<HUNG>"
+    try:
+        outs["interp"] = subprocess.run([LAIN, f, "--interpret"], capture_output=True, text=True,
+            env={**os.environ, "LAIN_INTERP_STEPS": STEPS}, timeout=INT_T).stdout
+    except subprocess.TimeoutExpired: outs["interp"] = "<HUNG>"
+    print("%s\t%s" % (key, "OK" if all(v == x["want"] for v in outs.values()) else "MISMATCH"))
+PY
+
+if [ $BLESS -eq 1 ]; then
+    { echo "# census baseline — regenerated by census_gate.sh --bless"
+      echo "# A non-OK, non-REFUSED verdict needs a trailing '# <plan row>' naming the open item."
+      cat "$SC/now.txt"; } > "$BASE"
+    echo "blessed: $(grep -vc '^#' "$BASE") cells written to $BASE"
+    exit 0
+fi
+[ -f "$BASE" ] || { echo "no baseline; run with --bless first"; exit 2; }
+
+# a non-OK, non-REFUSED baseline line must cite a plan row
+bad=$(grep -vE '^#' "$BASE" | grep -E 'MISMATCH|ACCEPTED-ILLFORMED' | grep -v '#' || true)
+if [ -n "$bad" ]; then
+    echo "FAIL: a baseline hole with no plan-row reference:"; echo "$bad" | sed 's/^/  /'; exit 1
+fi
+grep -vE '^#' "$BASE" | sed 's/[[:space:]]*#.*//' | sed 's/[[:space:]]*$//' > "$SC/base.txt"
+sed 's/[[:space:]]*$//' "$SC/now.txt" > "$SC/cur.txt"
+if diff -q "$SC/base.txt" "$SC/cur.txt" >/dev/null; then
+    echo "census_gate: hold — $(wc -l < "$SC/cur.txt") cells, every verdict as blessed"
+    exit 0
+fi
+echo "census_gate: FAIL — a cell's verdict changed. Any change fails, including an improvement;"
+echo "             fix it or bless it in the commit that intends it."
+join -t'	' -j1 -o 0,1.2,2.2 \
+  <(awk -F'\t' '{print $1"\t"$2"\t"$3}' "$SC/base.txt" | awk -F'\t' '{print $1"|"$2"\t"$3}' | sort) \
+  <(awk -F'\t' '{print $1"|"$2"\t"$3}' "$SC/cur.txt" | sort) 2>/dev/null \
+  | awk -F'\t' '$2 != $3 {printf "  %-52s baseline %-22s now %s\n", $1, $2, $3}'
+diff "$SC/base.txt" "$SC/cur.txt" | head -20 | sed 's/^/  | /'
+exit 1
