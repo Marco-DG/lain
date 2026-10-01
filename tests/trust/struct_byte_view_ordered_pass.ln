@@ -1,0 +1,52 @@
+// A struct's bytes may be viewed when its layout is DECLARED (struct_byte_view_*_fail.ln): marked
+// [ordered], [packed] (one integer), reached by an extern's signature (C reads it in declaration
+// order), or a single field (no order to expose). A cast between pointers to the same struct
+// is not a view. Each first byte is checked at run time: the [ordered] header starts with its
+// tag, 170, where the reordered layout would start with `len`.
+[ordered]
+type Hdr {
+    tag u8
+    len u32
+    flag u8
+}
+[packed]
+type Bits {
+    lo u4
+    hi u4
+}
+type One {
+    v u32
+}
+type Ext {
+    a u8
+    b u64
+}
+type Free {
+    a u8
+    b u64
+}
+extern func takes_ext(e *Ext) i64 effects
+func first(p *u8) u8 {
+    unsafe {
+        return *p
+    }
+}
+func same(f *Free) *var Free {
+    unsafe {
+        return f as *var Free
+    }
+}
+func main() i32 {
+    h = Hdr(170, 1, 187)
+    b = Bits(1, 2)
+    o = One(7)
+    e = Ext(9, 2)
+    var r = 0
+    unsafe {
+        if first(&h as *u8) != 170 { r = 1 }
+        if first(&b as *u8) != 33 { r = 2 }
+        if first(&o as *u8) != 7 { r = 3 }
+        if first(&e as *u8) != 9 { r = 4 }
+    }
+    return r
+}

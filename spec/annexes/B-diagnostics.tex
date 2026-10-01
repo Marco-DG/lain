@@ -173,7 +173,10 @@ Diagnostic codes are divided into the following ranges:
     Issued when a value does not have the type its context requires (an
     argument, a constructor field, a return, an operand), when a refinement
     at a call site cannot be proven, and when a pointer-to-pointer or
-    integer-to-pointer cast occurs outside an \lain{unsafe} block.  The
+    integer-to-pointer cast occurs outside an \lain{unsafe} block, and when a
+    cast, inside \lain{unsafe} too, would view the bytes of a struct whose
+    storage order the compiler chooses (\S\,\ref{sec:types.struct}; mark it
+    \tok{[ordered]}).  The
     message names which; a test that expects \diagcode{E012} should say which
     it means, since the code alone does not.
     \\[4pt]

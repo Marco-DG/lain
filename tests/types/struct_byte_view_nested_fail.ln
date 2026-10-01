@@ -1,0 +1,20 @@
+// EXPECT: [E012]
+// `[ordered]` fixes Out's own fields, but `inner` is held BY VALUE, so Out's bytes contain In's,
+// and In may still be reordered. The diagnostic names the struct that needs `[ordered]`: In.
+type In {
+    a u8
+    b u64
+}
+[ordered]
+type Out {
+    x u8
+    inner In
+}
+func view(o *Out) *u8 {
+    unsafe {
+        return o as *u8
+    }
+}
+func main() i32 {
+    return 0
+}

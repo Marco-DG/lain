@@ -778,9 +778,20 @@ A struct whose layout is read outside the program keeps its declaration order:
         since the foreign code was written against the declaration.
 \end{itemize}
 Inside a program the storage order is not observable: there are no stored references, field
-addresses cannot be compared or converted to integers, and \lain{@load} and \lain{@store} take
-an array, a slice or a raw pointer, never a struct (\S\,\ref{sec:types.vector}). Only the size is
-observable, through \lain{@sizeof}.
+addresses cannot be compared or converted to integers, \lain{@load} and \lain{@store} take
+an array, a slice or a raw pointer, never a struct (\S\,\ref{sec:types.vector}), and a cast that
+would view a reorderable struct's bytes is refused (below). Only the size is observable, through
+\lain{@sizeof}.
+
+\begin{constraint}
+  A cast between a pointer to a struct whose storage order the compiler chooses --- one not
+  declared \tok{[ordered]} or \tok{[packed]}, not reachable from an \lain{extern} signature, and
+  of more than one field --- and any other type (another pointer, an integer) is
+  \illformed{}~(\diagcode{E012}), in either direction and inside \lain{unsafe} as well:
+  \lain{unsafe} permits the cast, not an unspecified layout. So is such a cast over an array of
+  that struct, or over a struct that holds it by value. Viewing a struct's bytes needs a declared
+  layout: \tok{[ordered]}. A cast between pointers to the same struct type is not a view.
+\end{constraint}
 
 \pnum
 A struct type~$S$ is linear if at least one field of $S$ has a linear type

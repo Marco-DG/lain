@@ -1,0 +1,16 @@
+// EXPECT: [E012]
+// An array of structs is a run of their bytes: `a as *u8` over `a In[4]` views In's layout
+// exactly as `&a[0] as *u8` would.
+type In {
+    a u8
+    b u64
+}
+func first_byte(a In[4]) u8 {
+    unsafe {
+        p = a as *u8
+        return *p
+    }
+}
+func main() i32 {
+    return 0
+}

@@ -1290,14 +1290,19 @@ static void ir_sa_visit_types(IrTypeSet *ts, IrSAExpr *x) {
 // @sizeof or a module-scope assert measures. The emitter declares exactly these, so a question
 // about how a type is REPRESENTED (ir_emit_layout_report) asks it of this same set.
 static void ir_collect_types(IrFunc *funcs, IrTypeSet *ts, Arena *a);
-static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
-    IrTypeSet ts = {0};
-    ir_iface_n = 0;                          // DECIDE-U: what an extern's signature reaches
+// DECIDE-U: the structs an extern's signature reaches keep their declaration order, because C
+// on the other side reads them in that order. Asked by the emitter and by the byte-view check.
+static void ir_iface_collect(IrFunc *funcs) {
+    ir_iface_n = 0;
     for (IrFunc *f=funcs; f; f=f->next) {
         if (!f->is_extern) continue;
         ir_iface_mark(f->ret_type, 0);
         for (IrParam *p=f->params; p; p=p->next) if (p->value) ir_iface_mark(p->value->type, 0);
     }
+}
+static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
+    IrTypeSet ts = {0};
+    ir_iface_collect(funcs);
     ir_collect_types(funcs, &ts, a);
     for (int i=0;i<ts.n_struct;i++){ IrName *nm=ts.structs[i]->sname;
         // A PACKED sum is not a struct — it is a typedef for its backing type, emitted whole
@@ -1382,18 +1387,92 @@ static void ir_lain_type(const IrType *t, char *b, size_t n) {
     }
 }
 
+// ── A STRUCT'S BYTES NEED A DECLARED LAYOUT ─────────────────────────────────────────────────
+// A struct the compiler may reorder (DECIDE-U: not [ordered], not [packed], not reached by an
+// extern's signature) has fields in an order nobody wrote, and a cast between a pointer to it and
+// any other type is the one operation that exposes that order: `&h as *u8` handed to `write`
+// put a header's `len` before its `tag`, and `buf as *Hdr` read one the same way. The cast is
+// refused, inside `unsafe` too (`unsafe` permits the cast, not an unspecified layout); the
+// author marks the struct [ordered]. A struct of one field has no order to expose.
+static IrType *ir_reorderable_in(IrType *t, int depth) {
+    if (!t || depth > 32) return NULL;
+    if (t->kind == IRT_ARRAY) return ir_reorderable_in(t->elem, depth + 1);
+    if (t->kind == IRT_SUM) {
+        for (int k = 0; k < t->n_fields; k++) {
+            IrType *pl = t->fields[k]; if (!pl) continue;
+            for (int j = 0; j < pl->n_fields; j++) {
+                IrType *r = ir_reorderable_in(pl->fields[j], depth + 1);
+                if (r) return r;
+            }
+        }
+        return NULL;
+    }
+    if (t->kind != IRT_STRUCT || !t->sname) return NULL;
+    if (!t->ordered_decl && !t->packed_decl && t->n_fields > 1 &&
+        !(ir_iface_n < 0 || ir_iface_has(t->sname)))
+        return t;
+    if (t->packed_decl) return NULL;                 // an integer: no struct fields inside
+    for (int k = 0; k < t->n_fields; k++) {          // held BY VALUE, its layout is inside this one
+        IrType *r = ir_reorderable_in(t->fields[k], depth + 1);
+        if (r) return r;
+    }
+    return NULL;
+}
+static bool ir_same_pointee(const IrType *a, const IrType *b) {
+    if (a == b) return true;
+    if (!a || !b || a->kind != b->kind) return false;
+    if (a->kind == IRT_STRUCT || a->kind == IRT_SUM)
+        return a->sname && b->sname && a->sname->length == b->sname->length &&
+               memcmp(a->sname->name, b->sname->name, (size_t)a->sname->length) == 0;
+    if (a->kind == IRT_ARRAY) return a->array_len == b->array_len && ir_same_pointee(a->elem, b->elem);
+    return false;
+}
+static int ir_refuse_byte_views(IrFunc *funcs, const char *file) {
+    int n = 0;
+    for (IrFunc *f = funcs; f; f = f->next) {
+        if (f->is_extern) continue;
+        for (IrBlock *b = f->blocks; b; b = b->next)
+            for (IrInstr *i = b->instrs; i; i = i->next) {
+                if (i->op != IR_CAST || i->n_operands != 1 || !i->result) continue;
+                IrType *src = i->operands[0]->type, *dst = i->result->type;
+                if (!src || !dst) continue;
+                // An array or slice value travels as a pointer to its elements: `a as *u8` over
+                // `a In[4]` is the same view as `&a[0] as *u8`.
+                IrType *sp = (src->kind == IRT_PTR || src->kind == IRT_ARRAY || src->kind == IRT_SLICE) ? src->elem : NULL;
+                IrType *dp = (dst->kind == IRT_PTR || dst->kind == IRT_ARRAY || dst->kind == IRT_SLICE) ? dst->elem : NULL;
+                if (!sp && !dp) continue;
+                if (sp && dp && ir_same_pointee(sp, dp)) continue;   // `*S` to `*var S`
+                IrType *s = sp ? ir_reorderable_in(sp, 0) : NULL;
+                if (!s && dp) s = ir_reorderable_in(dp, 0);
+                if (!s) continue;
+                fprintf(stderr, "[E012] Error");
+                if (i->line) fprintf(stderr, " Ln %lld, Col %lld", (long long)i->line, (long long)i->col);
+                fprintf(stderr, ": viewing a struct's bytes needs a declared layout: mark `%.*s` "
+                        "[ordered]. Its fields are stored in an order the compiler chooses (DECIDE-U), "
+                        "so a cast between a pointer to it and another type would read them in an "
+                        "order nobody wrote.\n", (int)s->sname->length, s->sname->name);
+                if (file && i->line)
+                    fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)i->line, (long long)i->col);
+                n++;
+            }
+    }
+    return n;
+}
+
 // ── HOW EACH SUM IS REPRESENTED, said before any C is written ──────────────────────────
 // One pass over the sums the emitter is about to declare, asking layout.h, the one decision:
 //   · --dump-niche prints that decision for each;
 //   · W120 says so whenever a sum gets a tag (the payload union's `int32_t tag`, 4 bytes),
 //     with the reason, so the warning fires exactly when the emitted C has a tag;
 //   · E064 refuses a `T | markers` union that would get one, because its zero cost was a
-//     promise (spec 07): the layout is wrong, not merely slower.
-// Returns the number of E064 refusals.
-int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump) {
+//     promise (spec 07): the layout is wrong, not merely slower;
+//   · E012 refuses a cast that views a reorderable struct's bytes (ir_refuse_byte_views).
+// Returns the number of refusals.
+int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump, const char *file) {
     IrTypeSet ts = {0};
     ir_collect_types(funcs, &ts, a);
-    int refused = 0;
+    ir_iface_collect(funcs);
+    int refused = ir_refuse_byte_views(funcs, file);
     for (int i = 0; i < ts.n_struct; i++) {
         IrType *t = ts.structs[i];
         if (t->kind != IRT_SUM || !t->sname) continue;

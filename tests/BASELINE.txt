@@ -1744,6 +1744,15 @@ out=[world]
 at=access 2
 at=nonnull 2
 ty=Slice_u8 scalar
+### tests/trust/struct_byte_view_ordered_pass.ln
+rc=0
+out=
+at=pure 4
+ty=Bits scalar
+ty=Ext struct
+ty=Free struct
+ty=Hdr struct
+ty=One struct
 ### tests/trust/struct_field_pass.ln
 rc=0
 out=13 4

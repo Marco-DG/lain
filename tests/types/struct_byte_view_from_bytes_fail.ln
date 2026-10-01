@@ -1,0 +1,16 @@
+// EXPECT: [E012]
+// The other direction is the same view: reading a header out of a byte buffer assumes the order
+// the bytes were written in, and a reorderable struct has none it promises.
+type Hdr {
+    tag u8
+    len u32
+    flag u8
+}
+func parse(buf *u8) *Hdr {
+    unsafe {
+        return buf as *Hdr
+    }
+}
+func main() i32 {
+    return 0
+}

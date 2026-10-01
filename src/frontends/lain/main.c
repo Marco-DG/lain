@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
         ir_mod = mod;
         // How each sum is represented, from the one decision (layout.h), before any analysis:
         // a `T | markers` union that would need a tag is refused here (E064).
-        if (ir_emit_layout_report(mod, &ir_arena, args.dump_niche)) { sema_destroy(); return 1; }
+        if (ir_emit_layout_report(mod, &ir_arena, args.dump_niche, args.filename)) { sema_destroy(); return 1; }
         layout_reported = true;
         lin_mod = mod; bor_loan_mod = mod; vra_mod = mod;
         // ★ AN UNMODELLED CONSTRUCT IS REPORTED FIRST. Lowering turns one into an OPAQUE — an
@@ -251,7 +251,7 @@ int main(int argc, char **argv) {
         ir_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
         ir_mod = ir_lower_module(program, &ir_arena);
     }
-    if (!layout_reported && ir_emit_layout_report(ir_mod, &ir_arena, args.dump_niche)) {
+    if (!layout_reported && ir_emit_layout_report(ir_mod, &ir_arena, args.dump_niche, args.filename)) {
         sema_destroy(); return 1;
     }
     // Refuse BEFORE opening the file: a backend that cannot represent a construct says so,

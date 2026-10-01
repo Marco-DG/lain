@@ -1,0 +1,18 @@
+// EXPECT: [E012]
+// A struct the compiler may reorder (DECIDE-U) has its fields in an order nobody wrote, and
+// handing its bytes to C exposes that order: this header reached `dump` as `len, tag, flag`.
+// Viewing a struct's bytes needs a declared layout, `[ordered]` (struct_byte_view_ordered_pass.ln);
+// `unsafe` permits the cast, not an unspecified layout.
+type Hdr {
+    tag u8
+    len u32
+    flag u8
+}
+extern func dump(p *u8, n usize) i64 effects io
+func main() i32 effects io {
+    h = Hdr(170, 1, 187)
+    unsafe {
+        dump(&h as *u8, @sizeof(Hdr))
+    }
+    return 0
+}
