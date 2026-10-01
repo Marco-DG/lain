@@ -1455,6 +1455,14 @@ ty=One scalar
 ty=Rec struct
 ty=Token struct
 ty=Wide scalar
+### tests/trust/enum_many_variants_width_pass.ln
+rc=0
+out=
+at=const 4
+at=nonnull 4
+at=pure 4
+ty=Op scalar
+ty=Wide scalar
 ### tests/trust/enum_match_pass.ln
 rc=0
 out=2
@@ -1745,6 +1753,12 @@ rc=0
 out=20 40
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/sum_single_payload_no_tag_pass.ln
+rc=0
+out=
+at=const 6
+ty=Count scalar
+ty=Flag scalar
 ### tests/trust/termination_call_progress_pass.ln
 rc=0
 out=
