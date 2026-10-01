@@ -1,0 +1,15 @@
+// EXPECT: [E136]
+// Compile-time evaluation is bounded by a STEP budget (10 million IR operations by default,
+// LAIN_STATIC_STEPS raises it), not by time, so a build is deterministic. The budget is per
+// CONSTANT: 256 elements of 100,000 iterations each exceed it, although no single one does.
+func spin(n u32) u32 {
+    var s u32 = 0
+    var i u32 = 0
+    while i < 100000 {
+        s = s +% i
+        i = i + 1
+    }
+    return s +% n
+}
+T u32[256] = [spin(i as u32) for i in 0..256]
+func main() i32 { return 0 }

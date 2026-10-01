@@ -1,0 +1,52 @@
+// A module constant whose initialiser CALLS a function is computed at compile time, by the IR
+// interpreter, and becomes the literal the programmer could have written (DECIDE-W step 2,
+// src/frontends/lain/static_eval.h). Everything it reaches must be pure, total and proven first.
+// Each form below; the values are checked at run time, so a wrong fold is a failing exit code.
+func fib(n u32 <= 40) u32 {
+    var a u32 = 0
+    var b u32 = 1
+    var i u32 = 0
+    while i < n {
+        t = a +% b
+        a = b
+        b = t
+        i = i + 1
+    }
+    return a
+}
+func cls(c usize) u8 {
+    if c == 32 or c == 9 or c == 10 or c == 13 { return 1 }
+    if c >= 48 and c <= 57 { return 2 }
+    if (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95 { return 4 }
+    return 0
+}
+func sq(x u32 <= 1000) u32 { return x * x }
+func is_odd(x u32) bool { return x % 2 == 1 }
+func count_ident() u32 {
+    var n u32 = 0
+    var k usize = 0
+    while k < 256 {
+        if CTYPE[k] == 4 { n = n + 1 }
+        k = k + 1
+    }
+    return n
+}
+// read before it is defined: the order of declarations does not matter
+IDENT u32 = count_ident()
+F20 u32 = fib(20)
+CTYPE u8[256] = [cls(i) for i in 0..256]
+SQ u32[4] = [sq(1), sq(2), 7, sq(4)]
+K u32 = fib(10)
+L u32 = sq(K)
+ODD bool = is_odd(F20)
+func is_space(c u8) bool { return (CTYPE[c] & 1) != 0 }
+func main() i32 {
+    if F20 != 6765 { return 1 }
+    if !is_space(32) or !is_space(9) or is_space(65) { return 2 }
+    if CTYPE[48] != 2 or CTYPE[95] != 4 or CTYPE[255] != 0 { return 3 }
+    if SQ[0] != 1 or SQ[1] != 4 or SQ[2] != 7 or SQ[3] != 16 { return 4 }
+    if K != 55 or L != 3025 { return 5 }
+    if !ODD { return 6 }
+    if IDENT != 53 { return 7 }
+    return 0
+}

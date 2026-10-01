@@ -1,0 +1,10 @@
+// EXPECT: [E136]
+// A module constant is computed at compile time only through functions whose effect row is EMPTY
+// (pure and total). `greet` prints, so running it would print while compiling: refused, naming it.
+extern func libc_puts(s *u8) i32 effects io
+func greet(x u32) u32 effects io {
+    libc_puts("hello")
+    return x
+}
+G u32 = greet(3)
+func main() i32 { return 0 }

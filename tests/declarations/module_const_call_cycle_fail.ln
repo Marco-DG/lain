@@ -1,0 +1,6 @@
+// EXPECT: [E136]
+// A constant whose computation reads itself has no value. Refused as what it is, not as the
+// function it reaches calling itself (`diverge`), which is what the IR sees.
+func next() u32 { return A + 1 }
+A u32 = next()
+func main() i32 { return 0 }

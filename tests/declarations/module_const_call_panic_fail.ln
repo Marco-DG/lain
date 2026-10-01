@@ -1,0 +1,9 @@
+// EXPECT: [E136]
+// A function that may panic has the effect `raises`, so it cannot run at compile time, even with an
+// argument that does not panic: what may run is decided by the row, not by trying.
+func checked(x i32) i32 effects raises {
+    if x < 0 { panic("negative") }
+    return x
+}
+P i32 = checked(4)
+func main() i32 { return 0 }

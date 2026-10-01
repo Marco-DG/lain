@@ -65,6 +65,8 @@ typedef struct IState {
     jmp_buf stop;
     int status;
     const char *file;
+    const char *who;          // the failure prefix: `lain --interpret`, or compile-time evaluation
+    bool budget_is_callers;   // the caller reports an exhausted budget itself, with its total
 } IState;
 static IState *ist = NULL;
 
@@ -74,7 +76,8 @@ static void ii_stop(int status) __attribute__((noreturn));
 static void ii_stop(int status) { ist->status = status; longjmp(ist->stop, 1); }
 static void ii_fail(int status, const char *kind, IrInstr *at, const char *fmt, ...) __attribute__((noreturn));
 static void ii_fail(int status, const char *kind, IrInstr *at, const char *fmt, ...) {
-    fprintf(stderr, "lain --interpret: %s", kind);
+    if (status == 97 && ist->budget_is_callers) ii_stop(status);
+    fprintf(stderr, "%s: %s", ist->who ? ist->who : "lain --interpret", kind);
     if (at && at->line) fprintf(stderr, " at %s:%lld:%lld", ist->file ? ist->file : "?",
                                 (long long)at->line, (long long)at->col);
     if (ii_cur_f && ii_cur_f->name) fprintf(stderr, " (in %.*s)", (int)ii_cur_f->name->length, ii_cur_f->name->name);
@@ -893,6 +896,28 @@ static int ir_interpret_module(IrFunc *mod, const char *file) {
     if (ret.k == IV_INT) status = (int)(ret.i & 0xff);
     ist = NULL;
     return status;
+}
+
+// Run one function on given arguments: a compile-time THUNK (DECIDE-W step 2,
+// src/frontends/lain/static_eval.h). On success *out holds the value, deep-copied into storage
+// that outlives the run, and 0 is returned; otherwise the failure status (99 a proof failed,
+// 98 not modelled, 97 the step budget, 96 undefined behaviour), after printing why. The budget is
+// a STEP count, not time, so a constant that builds on one machine builds on every machine; *used
+// receives the steps taken, so a caller can spread one budget over several calls.
+static int ir_interpret_call(IrFunc *f, IrFunc *mod, const char *file, IVal *args, int nargs,
+                             IVal *out, long long budget, long long *used) {
+    static IState s; memset(&s, 0, sizeof s);
+    s.mod = mod; s.file = file; s.budget = budget;
+    s.who = "compile-time evaluation"; s.budget_is_callers = true;
+    ist = &s;
+    (void)ii_prepare(mod);
+    if (setjmp(s.stop)) { ist = NULL; *used = s.steps; return s.status ? s.status : 98; }
+    IVal ret; memset(&ret, 0, sizeof ret);
+    ii_call(f, args, nargs, &ret, NULL);
+    iv_copy(out, &ret, true);
+    ist = NULL;
+    *used = s.steps;
+    return 0;
 }
 
 #endif // LAIN_IR_INTERP_H

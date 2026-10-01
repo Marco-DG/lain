@@ -24,6 +24,7 @@
 #include "analysis/report.h"
 #include "ir/emit_c.h"
 #include "ir/interp.h"   // --interpret: the IR's semantics, executable (DECIDE-W step 1)
+#include "static_eval.h"  // DECIDE-W step 2: module constants computed at compile time
 
 void expr_print_ast(Expr *expr, int depth);
 void stmt_print_ast(Stmt *stmt, int depth);
@@ -193,6 +194,10 @@ int main(int argc, char **argv) {
     bool layout_reported = false;
     if (args.engine_ir) {
         ir_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
+        // DECIDE-W step 2: a module constant that calls a function is computed now, by the
+        // program's own semantics, and becomes a literal before the module is lowered for real.
+        { static Arena se_arena; se_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
+          if (ir_static_eval_module(program, args.filename, &se_arena)) { sema_destroy(); return 1; } }
         IrFunc *mod = ir_lower_module(program, &ir_arena);
         ir_mod = mod;
         // How each sum is represented, from the one decision (layout.h), before any analysis:

@@ -347,8 +347,51 @@ func is_digit(c u8) bool {
 \end{laincode}
 
 \pnum
-Any other module-scope comprehension --- one whose body calls a function, say --- is not
-supported by the reference implementation (\diagcode{E100}).
+\index{compile-time evaluation}
+An initialiser that \emph{calls a function} --- a scalar initialiser, an element of an array
+literal, or the body of a comprehension, evaluated once for each index --- is \emph{evaluated at
+compile time}, by the semantics of this standard, and the constant is the value it computes, as
+if that value had been written as a literal. The order of the declarations is immaterial: a
+constant may be computed by a function that reads another constant, declared before it or after
+it.
+
+\begin{constraint}
+  Every function that such an initialiser can reach shall have the empty effect row
+  \secref{sec:fn.distinction}: it is pure and total. Each shall be free of every diagnostic of
+  this standard, the evaluation shall not exceed the step limit, and the computation of a
+  constant shall not read that constant. Otherwise the program is \illformed{}~(\diagcode{E136}).
+  The value shall be representable in \lain{T}, and for an array each element in the element
+  type~(\diagcode{E086}).
+\end{constraint}
+
+\begin{laincode}
+func cls(c usize) u8 {
+    if c == 32 or c == 9 { return 1 }
+    if c >= 48 and c <= 57 { return 2 }
+    return 0
+}
+CTYPE u8[256] = [cls(c) for c in 0..256]    // cls runs 256 times, while compiling
+func is_digit(c u8) bool {
+    return (CTYPE[c] & 2) != 0
+}
+\end{laincode}
+
+\begin{laincode}
+extern func libc_puts(s *u8) i32 effects io
+func greet() u32 effects io {
+    libc_puts("hello")
+    return 1
+}
+G u32 = greet()          // ERROR [E136]: greet has the effect io, so it cannot run while compiling
+\end{laincode}
+
+\pnum
+The step limit is \idbehav{the number of steps a constant's evaluation may take.} The reference
+implementation counts the operations of its intermediate representation, ten million for each
+constant unless the environment variable \lain{LAIN_STATIC_STEPS} says otherwise, so a program
+that compiles on one machine compiles on every machine. Unsafe code that such a function reaches
+is evaluated with every check in place: an access outside an object's bounds is refused
+(\diagcode{E136}), not performed.
 
 \section{Module-scope assertions}
 \label{sec:decl.static-assert}

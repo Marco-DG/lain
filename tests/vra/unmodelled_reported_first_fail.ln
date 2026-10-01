@@ -2,12 +2,12 @@
 // An unmodelled construct is reported FIRST, at its own line. Lowering makes it an opaque —
 // an unknown value that may write anything — so `is_space` became an unknown writer, `skip`
 // lost every fact about `l.pos`, and the compiler reported E086, E121 and E011 on the correct
-// loop below while saying nothing about the table. (Found by the Handwriting session.) A
-// comprehension with a CONSTANT body is evaluated now (module_comprehension_table_pass.ln);
-// one that calls a function is not, and is the unmodelled construct here.
-func cls(i usize) u8 { return 0 }
-CTYPE u8[256] = [cls(i) for i in 0..256]
-func is_space(c u8) bool { return (CTYPE[c] & 1) != 0 }
+// loop below while saying nothing about the table. (Found by the Handwriting session.) The
+// table that was unmodelled then, a module comprehension calling a function, is computed at
+// compile time now (module_const_from_call_pass.ln); a comprehension in EXPRESSION position is
+// still not modelled, and is the unmodelled construct here.
+func first(a u8[4]) u8 { return a[0] }
+func is_space(c u8) bool { return (first([c for i in 0..4]) & 1) != 0 }
 type Lexer {
     src u8[]
     pos usize <= src.len

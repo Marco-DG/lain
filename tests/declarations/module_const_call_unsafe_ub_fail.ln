@@ -1,0 +1,10 @@
+// EXPECT: [E136]
+// `unsafe` suspends the proofs, not the checks: the interpreter that computes a constant checks
+// every access, so an out-of-bounds read inside `unsafe` stops the build at compile time, where
+// the compiled C would have read whatever lies past the array.
+func pick(i u32) u8 {
+    t u8[4] = [1, 2, 3, 4]
+    unsafe { return t[i] }
+}
+X u8 = pick(7)
+func main() i32 { return 0 }

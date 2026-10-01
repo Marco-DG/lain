@@ -1,0 +1,7 @@
+// EXPECT: [E086]
+// The value a call computes must fit the constant's declared type, as a literal's must, and it is
+// checked on the VALUE: with `return 7` this compiles, although nothing bounds a u32 result, so a
+// proof of the narrowing could not have told the two programs apart.
+func big() u32 { return 70000 }
+X u16 = big()
+func main() i32 { return 0 }
