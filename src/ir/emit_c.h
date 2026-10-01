@@ -868,12 +868,12 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
             if (ir_c_slice_split(pt)) {          // (length, pointer) — see the note above
                 fprintf(o, "size_t __len_v%d, ", p->value->id);
                 ir_ctype(pt->elem, o); fputs("*", o);
-                if (ir_param_c_restrict(p->value)) fputs(" restrict", o);
+                if (ir_param_c_restrict(f, p->value)) fputs(" restrict", o);
                 fprintf(o, " __ptr_v%d", p->value->id);
                 continue;
             }
             ir_ctype(pt, o);
-            if (pt && (pt->kind==IRT_PTR || pt->kind==IRT_ARRAY) && ir_param_c_restrict(p->value))
+            if (pt && (pt->kind==IRT_PTR || pt->kind==IRT_ARRAY) && ir_param_c_restrict(f, p->value))
                 fputs(" restrict", o);
             fprintf(o, " v%d", p->value->id);
         }
@@ -930,7 +930,7 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
             IrInstr *d = defof[id];
             int sp = (d && d->op==IR_SLICE_DATA && d->n_operands>=1 && d->operands[0])
                      ? pidx[d->operands[0]->id] : -1;
-            if (sp >= 0 && ir_param_c_restrict(d->operands[0])) {
+            if (sp >= 0 && ir_param_c_restrict(f, d->operands[0])) {
                 fputs("  ", o);
                 ir_ctype(v->type && v->type->elem ? v->type->elem : v->type, o);
                 fprintf(o, "* restrict v%d;\n", id);
@@ -1049,11 +1049,11 @@ static void ir_emit_proto_c(IrFunc *f, IrFunc *mod, FILE *o) {
                 continue;
             }
             fputs("size_t, ", o); ir_ctype(pt->elem, o); fputs("*", o);
-            if (ir_param_c_restrict(p->value)) fputs(" restrict", o);
+            if (ir_param_c_restrict(f, p->value)) fputs(" restrict", o);
             continue;
         }
         ir_ctype(pt,o);
-        if (pt && (pt->kind==IRT_PTR || pt->kind==IRT_ARRAY) && ir_param_c_restrict(p->value))
+        if (pt && (pt->kind==IRT_PTR || pt->kind==IRT_ARRAY) && ir_param_c_restrict(f, p->value))
             fputs(" restrict", o);
     }
     // `...` — without it every call to printf and friends is an implicit declaration, and the

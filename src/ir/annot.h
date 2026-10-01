@@ -80,7 +80,72 @@ static IrCAnnot ir_c_annot(IrFunc *f, IrFunc *mod) {
 //     during the call — and restrict's requirement only bites on modification (C11 6.7.3.1p4),
 //     which is why two shared references to the same array are still fine.
 // A RAW pointer (`*T` in `unsafe`) carries no such guarantee and gets nothing.
-static bool ir_param_c_restrict(IrValue *pv) {
+//
+// ★ AND A RAW POINTER BESIDE IT TAKES IT AWAY. The borrow checker makes a borrow exclusive among
+// BORROWS; a raw pointer is outside its reach. `p = &b[0]` then `f(var b, p)` hands `f` a
+// `restrict` slice and a `*var u8` into the same bytes. E087 refuses `f(var b, &b[0])`, but
+// not through the local, and following a pointer's provenance through fields and returns is
+// unbounded. So `restrict` on `a` was the compiler's claim and a false one: `a[0] = 1;
+// *q = 2; return a[0]` returned 2 at -O0 and 1 at -O2. A parameter keeps `restrict` only when
+// no OTHER parameter carries a raw pointer (directly, or in a field or element held by value)
+// whose pointee could alias its storage: the same type held either way round, or a byte or
+// opaque pointee, which C lets alias anything.
+static bool ir_same_type(const IrType *a, const IrType *b, int depth) {
+    if (a == b) return true;
+    if (!a || !b || a->kind != b->kind || depth > 16) return false;
+    switch (a->kind) {
+        case IRT_INT:   return a->bits == b->bits && a->is_signed == b->is_signed;
+        case IRT_FLOAT: return a->float_bits == b->float_bits;
+        case IRT_BOOL:  return true;
+        case IRT_STRUCT: case IRT_SUM:
+            return a->sname && b->sname && a->sname->length == b->sname->length &&
+                   memcmp(a->sname->name, b->sname->name, (size_t)a->sname->length) == 0;
+        case IRT_ARRAY: return a->array_len == b->array_len && ir_same_type(a->elem, b->elem, depth + 1);
+        case IRT_PTR: case IRT_SLICE: case IRT_VECTOR: return ir_same_type(a->elem, b->elem, depth + 1);
+        default: return false;
+    }
+}
+// Does storage of type `t` hold a `u` (itself, or by value in a field, element or payload)?
+static bool ir_type_holds(const IrType *t, const IrType *u, int depth) {
+    if (!t || !u || depth > 16) return false;
+    if (ir_same_type(t, u, 0)) return true;
+    if (t->kind == IRT_ARRAY || t->kind == IRT_VECTOR) return ir_type_holds(t->elem, u, depth + 1);
+    if (t->kind == IRT_STRUCT)
+        for (int k = 0; k < t->n_fields; k++) if (ir_type_holds(t->fields[k], u, depth + 1)) return true;
+    if (t->kind == IRT_SUM)
+        for (int k = 0; k < t->n_fields; k++) if (ir_type_holds(t->fields[k], u, depth + 1)) return true;
+    return false;
+}
+static bool ir_is_borrow_ptr(const IrType *t) { return t && t->kind == IRT_PTR && t->borrowed && !t->is_raw; }
+// Could a raw pointer reachable from a value of type `t` alias storage of type `mine`?
+static bool ir_raw_may_alias(const IrType *t, const IrType *mine, int depth) {
+    if (!t || depth > 16) return false;
+    switch (t->kind) {
+        case IRT_PTR: {
+            // A borrow is the checker's business, but what it points AT may hold raw pointers:
+            // a struct parameter travels as a borrowed address, and `h.p` is still raw.
+            if (ir_is_borrow_ptr(t)) return ir_raw_may_alias(t->elem, mine, depth + 1);
+            const IrType *r = t->elem;
+            if (!r || (r->kind == IRT_INT && r->bits <= 8)) return true;   // bytes alias anything
+            return ir_type_holds(mine, r, 0) || ir_type_holds(r, mine, 0);
+        }
+        case IRT_ARRAY: return ir_raw_may_alias(t->elem, mine, depth + 1);
+        case IRT_STRUCT: case IRT_SUM:
+            for (int k = 0; k < t->n_fields; k++)
+                if (ir_raw_may_alias(t->fields[k], mine, depth + 1)) return true;
+            return false;
+        default: return false;
+    }
+}
+static bool ir_param_c_restrict_alone(IrValue *pv);
+static bool ir_param_c_restrict(IrFunc *f, IrValue *pv) {
+    if (!ir_param_c_restrict_alone(pv)) return false;
+    IrType *mine = pv->type->elem;                       // the storage the qualifier speaks for
+    for (IrParam *q = f ? f->params : NULL; q; q = q->next)
+        if (q->value && q->value != pv && ir_raw_may_alias(q->value->type, mine, 0)) return false;
+    return true;
+}
+static bool ir_param_c_restrict_alone(IrValue *pv) {
     IrType *t = pv ? pv->type : NULL;
     if (!t) return false;
     if (t->kind == IRT_SLICE) return true;               // fat pointer: its data pointer

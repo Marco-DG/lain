@@ -1,0 +1,18 @@
+// `restrict` is the compiler's claim that nothing else reaches a parameter's storage, and a RAW
+// pointer is outside what the borrow checker can vouch for. `p = &b[0]` then `f(var b, p)` gives
+// `f` a slice and a `*var u8` into the same bytes (E087 refuses `f(var b, &b[0])`, not the local).
+// The slice was emitted `restrict`, so gcc kept `a[0]` in a register across `*q = 2`: f returned
+// 2 at -O0 and 1 at -O1/-O2. A parameter now loses `restrict` when another parameter carries a raw
+// pointer that could alias it (tests/codegen/restrict_raw_alias.sh pins which ones).
+func f(a var u8[], q *var u8) u8 {
+    if a.len == 0 { return 0 }
+    a[0] = 1
+    unsafe { *q = 2 }
+    return a[0]
+}
+func main() i32 {
+    var b u8[2] = [0, 0]
+    p = &b[0]
+    if f(var b, p) != 2 { return 1 }
+    return 0
+}

@@ -1652,6 +1652,11 @@ ty=W struct
 rc=0
 out=
 at=const 6
+### tests/trust/restrict_raw_alias_pass.ln
+rc=0
+out=
+at=access 2
+ty=Slice_u8 scalar
 ### tests/trust/return_range_pass.ln
 rc=0
 out=255 0 70
