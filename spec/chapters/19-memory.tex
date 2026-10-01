@@ -202,7 +202,9 @@ corresponding C type.
 \pnum
 Lain inherits ISO/IEC~9899 (C17) alignment and padding rules:
 \begin{itemize}
-  \item Struct fields are laid out in declaration order.
+  \item Struct fields are laid out in the storage order of \S\,\ref{sec:types.struct}: by
+        decreasing alignment, or in declaration order for a struct that is \tok{[ordered]},
+        \tok{[packed]} or reachable from an \lain{extern} signature.
   \item Each field is aligned to its natural alignment (the alignment of
         its C99 equivalent type).
   \item The compiler inserts padding between fields as necessary.
@@ -245,9 +247,10 @@ typedef uint8_t Color;           // Red = 0, Green = 1, Blue = 2
 \end{verbatim}
 
 \pnum
-Because struct fields keep their declaration order (\S\,\ref{sec:mem.alignment}), the
-programmer controls the padding a narrow enumeration leaves: \lain{\{pos u32, len u16, kind
-Kind\}} is 8 bytes where \lain{\{kind Kind, pos u32, len u16\}} is 12.
+Because a struct's fields are stored by decreasing alignment (\S\,\ref{sec:mem.alignment}), a
+narrow enumeration's byte goes after the wider fields whatever the order they are written in:
+\lain{\{kind Kind, pos u32, len u16\}} is 8 bytes, as \lain{\{pos u32, len u16, kind Kind\}} is.
+Declared \tok{[ordered]}, the first is 12.
 
 \pnum
 An ADT type uses a niche-based encoding whenever a zero-cost

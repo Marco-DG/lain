@@ -1,8 +1,10 @@
 // A plain enumeration is the smallest unsigned integer that holds its tags. The emitter's own
 // comment said so and every enumeration was an int32_t, so the hand-written lexer's token
-// {kind, pos u32, len u16} was 12 bytes. With a one-byte kind AND the fields ordered widest
-// first — the language keeps declaration order, so the order is the programmer's to choose —
-// it is the 8 bytes the lexer asked for.
+// {kind, pos u32, len u16} was 12 bytes. With a one-byte kind it is 8 — in EITHER order since
+// DECIDE-U (2026-10-01): a struct's fields are stored by decreasing alignment, so the kind's
+// byte goes last whatever order it is written in. Declared [ordered], the narrow-first order is
+// kept and costs its padding. (This file asserted the declaration-order 12 from `main`, where
+// nothing ran it; the sizes are module asserts now, checked every time the C is built.)
 type TokenKind {
     Eof
     Ident
@@ -26,9 +28,16 @@ type Token {
     len u16
     kind TokenKind
 }
+[ordered]
+type TokenOrdered {
+    kind TokenKind
+    pos u32
+    len u16
+}
+assert @sizeof(TokenKind) == 1
+assert @sizeof(TokenNarrowFirst) == 8
+assert @sizeof(Token) == 8
+assert @sizeof(TokenOrdered) == 12        // alignment padding after the kind
 func main() i32 {
-    if @sizeof(TokenKind) != 1 { return 1 }
-    if @sizeof(TokenNarrowFirst) != 12 { return 2 }    // alignment padding after the kind
-    if @sizeof(Token) != 8 { return 3 }
     return 0
 }

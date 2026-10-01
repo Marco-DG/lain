@@ -54,6 +54,8 @@ Recognized attribute names (closed set, version 1.1):
 \endlastfoot
 \tok{[fast\_math]} & any function & Enable FMA fusion (P4 opt-out, local). \\
 \tok{[private]}    & any declaration         & Module-private visibility. \\
+\tok{[packed]}     & a struct                & Lay the fields out bit-exactly inside one integer (\S\,\ref{sec:types.packed-future}). \\
+\tok{[ordered]}    & a struct                & Store the fields in declaration order (\S\,\ref{sec:types.struct}). \\
 \end{longtable}
 
 \begin{constraint}
@@ -77,7 +79,8 @@ Recognized attribute names (closed set, version 1.1):
 \pnum
 A struct declaration introduces a named product type with one or more
 named fields.  Fields are listed in declaration order; order is significant
-for construction and layout.
+for construction (a constructor's arguments are the fields in that order). The order in which
+they are stored is \S\,\ref{sec:types.struct}'s.
 
 \begin{laincode}
 type Point {

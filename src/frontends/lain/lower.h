@@ -778,6 +778,7 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
                 Id *snm = sd->as.struct_decl.name;                    // intern the struct name
                 if (snm) r->sname = ir_intern(c->a, snm->name, snm->length);
                 r->packed_decl = sd->as.struct_decl.is_packed;       // layout.h decides the rest
+                r->ordered_decl = sd->as.struct_decl.is_ordered;
                 if (c->scache_n < 64) { c->scache_decl[c->scache_n]=sd;
                                         c->scache_type[c->scache_n]=r; c->scache_n++; }
                 int nf=0; for (DeclList *fl=sd->as.struct_decl.fields; fl; fl=fl->next)

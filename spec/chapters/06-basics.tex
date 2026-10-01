@@ -179,8 +179,8 @@ Assignment requires the left-hand side to be an lvalue.
 \pnum
 Every type has a required alignment.  The alignment of a type is
 \idbehav{the same as the alignment of the corresponding C99 type}.
-Struct layout follows C99 struct layout rules, including padding
-(\S\,\ref{sec:07-types}).
+Struct layout follows C99 struct layout rules, including padding, over the fields in the
+storage order of \S\,\ref{sec:types.struct}.
 
 \pnum
 Stack-allocated variables are aligned to their type's required alignment.

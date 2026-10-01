@@ -1,0 +1,60 @@
+// DECIDE-U: a struct's fields are STORED by decreasing alignment, and every way a program
+// builds, reads, writes or passes a struct must still find each field by name. Each check below
+// has its own exit code, and the module asserts hold the sizes the reordering exists for: in
+// declaration order Token is 12 bytes and Mixed 16. Runs under -fsanitize=undefined.
+type Kind {
+    Ident,
+    Number,
+    Punct
+}
+type Token {
+    kind Kind
+    pos  u32
+    len  u16
+}
+assert @sizeof(Token) == 8
+type Mixed {
+    a u8
+    t Token
+    b u8
+}
+assert @sizeof(Mixed) == 12
+type Buf {
+    tag  u8
+    data u8[5]
+    n    u64
+    s    u8[]
+}
+type Pair(T type) {
+    flag u8
+    v    T
+}
+func bump(t var Token) {
+    t.pos = t.pos +% 1
+    t.len = 7
+}
+func total(ts Token[3]) u32 {
+    return ts[0].pos +% ts[1].pos +% ts[2].pos
+}
+func mk(p u32, n u16) Token { return Token(Kind.Number, p, n) }
+func main() i32 {
+    var t = mk(70000, 9)
+    if t.pos != 70000 or t.len != 9 { return 1 }
+    bump(var t)
+    if t.pos != 70001 or t.len != 7 { return 2 }
+    m = Mixed(5, t, 200)
+    if m.a != 5 or m.b != 200 or m.t.pos != 70001 or m.t.len != 7 { return 3 }
+    ts Token[3] = [mk(1, 1), mk(2, 2), mk(3, 3)]
+    if total(ts) != 6 { return 4 }
+    arr u8[5] = [9, 8, 7, 6, 5]
+    text = "hey"
+    b = Buf(4, arr, 123456789012, text)
+    if b.tag != 4 or b.data[0] != 9 or b.data[4] != 5 or b.n != 123456789012 { return 5 }
+    if b.s.len != 3 or b.s[1] != 101 { return 6 }
+    p = Pair(u64, 3, 77)
+    if p.flag != 3 or p.v != 77 { return 7 }
+    case m.t.kind {
+        Number: return 0
+        else: return 8
+    }
+}

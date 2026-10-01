@@ -707,7 +707,9 @@ less than \lain{N} (\diagcode{E085}).
 \lain{@load(V, b, i)} reads the \lain{N} elements of \lain{b} starting at element \lain{i} into
 a vector of type \lain{V}, and \lain{@store(b, i, v)} writes \lain{v}'s lanes there. For an
 array or slice \lain{b} the obligation is \lain{i + N <= b.len} (\diagcode{E085}). A raw pointer
-has no length, so a load or store through one is allowed only inside \lain{unsafe}.
+has no length, so a load or store through one is allowed only inside \lain{unsafe}. \lain{b}
+shall be an array, a slice or a raw pointer (\diagcode{E100}): a struct's bytes are in an order
+the implementation chooses (\S\,\ref{sec:types.struct}).
 
 \pnum
 \lain{@movemask(v)} is the \lain{u32} whose bit \lain{k} is the top bit of lane \lain{k}: of a
@@ -748,9 +750,37 @@ A struct type groups named fields into a single named product type.  The
 grammar production is \gramref{struct-declaration} (Annex~A).
 
 \pnum
-Field order is the declaration order.  The memory layout of a struct is
-\idbehav{equal to the C99 struct layout, including compiler-inserted padding
-for alignment}.
+A struct's fields are constructed and accessed by name; the order in which they are
+\emph{stored} is the implementation's. It stores them by decreasing alignment, fields of equal
+alignment in declaration order, so that the padding between them is the least the alignments
+allow. The memory layout is then \idbehav{the C99 layout of the fields in that order, including
+compiler-inserted padding for alignment}.
+
+\begin{laincode}
+type TokenKind { Ident, Number, Punct }
+type Token {
+    kind TokenKind      // one byte, stored last
+    pos  u32
+    len  u16
+}
+assert @sizeof(Token) == 8     // 12 in declaration order
+\end{laincode}
+
+\pnum
+A struct whose layout is read outside the program keeps its declaration order:
+\begin{itemize}
+  \item one declared \tok{[ordered]} (\S\,\ref{sec:decl.attributes}) --- a file format, a wire
+        header;
+  \item one declared \tok{[packed]} (\S\,\ref{sec:types.packed-future}), whose bit order is the
+        declaration;
+  \item one reachable from the signature of an \lain{extern} function --- by value, or through a
+        pointer, an array, a slice, a vector, a function pointer or a field of such a struct ---
+        since the foreign code was written against the declaration.
+\end{itemize}
+Inside a program the storage order is not observable: there are no stored references, field
+addresses cannot be compared or converted to integers, and \lain{@load} and \lain{@store} take
+an array, a slice or a raw pointer, never a struct (\S\,\ref{sec:types.vector}). Only the size is
+observable, through \lain{@sizeof}.
 
 \pnum
 A struct type~$S$ is linear if at least one field of $S$ has a linear type

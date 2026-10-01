@@ -239,4 +239,65 @@ static int64_t ir_fixed_size(IrType *t) {
     }
 }
 
+// ── DECIDE-U: A STRUCT'S STORAGE ORDER IS THE COMPILER'S ─────────────────────────────────────
+// `type Token { kind TokenKind  pos u32  len u16 }` was 12 bytes in declaration order and is 8
+// with its fields by decreasing alignment; nothing in the source said which, and a lexer had
+// carried the first, commented "8 bytes", for six weeks. Construction and field access are BY
+// NAME (the emitter writes `.pos = v1`), and Lain has no stored references, no pointer
+// arithmetic on fields and no @offsetof, so inside a program the order is not observable —
+// only its size is, and the smaller one is the one asked for. Where the layout IS an interface
+// it keeps the declaration: [ordered] (a file or wire format), [packed] (bit order is the
+// declaration), and any struct reachable from an extern's signature (the emitter decides that
+// — it sees the module).
+
+// The alignment this ordering plans with: C's natural alignment for every type the emitter
+// spells. It decides ORDER only; any order is correct C, so an alignment the C compiler sees
+// differently costs bytes, never correctness.
+static int ir_order_align(const IrType *t) {
+    if (!t) return 1;
+    int ptr = target.pointer_alignment ? (int)target.pointer_alignment : 8;
+    switch (t->kind) {
+        case IRT_INT:    return ir_int_storage_bits(t->bits) / 8;
+        case IRT_BOOL:   return 1;
+        case IRT_FLOAT:  return t->float_bits == 32 ? 4 : 8;
+        case IRT_VECTOR: { int64_t s = ir_fixed_size((IrType *)t); return s > 0 ? (int)s : 16; }
+        case IRT_ARRAY:  return ir_order_align(t->elem);
+        case IRT_STRUCT: {
+            IrStructLayout P = ir_struct_layout(t);
+            if (P.packed) return P.container_bits / 8;
+            int a = 1;
+            for (int k = 0; k < t->n_fields; k++) { int f = ir_order_align(t->fields[k]); if (f > a) a = f; }
+            return a;
+        }
+        case IRT_SUM: {
+            IrLayout L = ir_layout_of((IrType *)t);
+            if (L.packed && L.all_empty) return ir_plain_enum_bits(t->n_fields) / 8;
+            if (L.packed && L.backing)
+                return L.backing->kind == IRT_BOOL ? 1 : ir_order_align(L.backing);
+            int a = 4;                                   // the int32_t tag
+            for (int k = 0; k < t->n_fields; k++) { int f = ir_order_align(t->fields[k]); if (f > a) a = f; }
+            return a;
+        }
+        case IRT_UNIT: case IRT_NEVER: return 1;
+        default:         return ptr;                     // pointers, slices, function pointers
+    }
+}
+
+#define IR_REORDER_MAX_FIELDS 512
+// The storage order of a struct's fields: ord[q] is the declared index of the field stored
+// q-th. By decreasing alignment, equal alignments keeping their declaration order (spec 7,
+// struct types). `interface` is the emitter's answer to "does C see this struct?".
+static void ir_struct_storage_order(const IrType *st, bool interface, int *ord) {
+    int n = st->n_fields;
+    for (int k = 0; k < n; k++) ord[k] = k;
+    if (interface || st->ordered_decl || st->packed_decl || n > IR_REORDER_MAX_FIELDS ||
+        !st->field_names) return;
+    for (int k = 0; k < n; k++) if (!st->field_names[k]) return;   // an unnamed field is positional
+    for (int k = 1; k < n; k++) {                                   // stable: insertion sort
+        int x = ord[k], ax = ir_order_align(st->fields[x]), j = k - 1;
+        while (j >= 0 && ir_order_align(st->fields[ord[j]]) < ax) { ord[j + 1] = ord[j]; j--; }
+        ord[j + 1] = x;
+    }
+}
+
 #endif // LAIN_IR_LAYOUT_H

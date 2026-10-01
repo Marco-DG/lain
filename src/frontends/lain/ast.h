@@ -283,6 +283,7 @@ typedef struct StructDecl {
     Id* name;          // Struct name
     DeclList* fields;  // List of fields (should be DeclList)
     bool is_packed;    // Q-002 / Sprint 19: bit-exact layout via [packed]
+    bool is_ordered;   // DECIDE-U: [ordered] — storage keeps the declaration order
     DeclList* type_params;  // generic params `type Vec(T type){...}` (NULL = non-generic)
 } DeclStruct;
 
@@ -1120,6 +1121,7 @@ Decl* decl_struct(Arena* arena, Id* name, DeclList* fields) {
     d->as.struct_decl.name = name;  // FIXED: Correct member
     d->as.struct_decl.fields = fields;  // FIXED: Correct member
     d->as.struct_decl.is_packed = false;
+    d->as.struct_decl.is_ordered = false;
     d->as.struct_decl.type_params = NULL;
     return d;
 }

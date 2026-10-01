@@ -34,6 +34,7 @@ static bool is_known_attribute(const char *name, isize len) {
     if (len == 3 && strncmp(name, "hot",       3) == 0) return true;
     if (len == 9 && strncmp(name, "allocator", 9) == 0) return true;
     if (len == 8 && strncmp(name, "noreturn",  8) == 0) return true;
+    if (len == 7 && strncmp(name, "ordered",   7) == 0) return true;
     return false;
 }
 
@@ -67,7 +68,7 @@ static Attr *parse_attributes(Arena *arena, Parser *parser, bool *out_is_private
 
         // Validate against whitelist
         if (!is_known_attribute(name->name, name->length)) {
-            fprintf(stderr, "[E103] Error Ln %li, Col %li: unknown attribute '%.*s' (known: private, packed, fast_math, cold, hot, allocator, noreturn)\n",
+            fprintf(stderr, "[E103] Error Ln %li, Col %li: unknown attribute '%.*s' (known: private, packed, ordered, fast_math, cold, hot, allocator, noreturn)\n",
                     parser->line, parser->column, (int)name->length, name->name);
             exit(1);
         }
@@ -364,6 +365,19 @@ done:
                     break;
                 }
             }
+        }
+        // [ordered] (DECIDE-U): a struct whose layout is read outside the program — a file
+        // format, a wire header — keeps its declaration order. It means nothing on anything
+        // else, so it is refused there rather than accepted and ignored.
+        for (Attr *a = attrs; a; a = a->next) {
+            if (!a->name || a->name->length != 7 || strncmp(a->name->name, "ordered", 7) != 0) continue;
+            if (d->kind != DECL_STRUCT) {
+                fprintf(stderr, "[E103] Error Ln %li, Col %li: [ordered] applies to a struct "
+                        "declaration: it keeps the struct's fields in declaration order.\n",
+                        (long)d->line, (long)d->col);
+                exit(1);
+            }
+            d->as.struct_decl.is_ordered = true;
         }
     }
     return d;

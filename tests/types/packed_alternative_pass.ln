@@ -1,20 +1,21 @@
 // What the [packed]-enum diagnostic (packed_enum_field_fail.ln) recommends, held to its word:
-// a plain enum of up to 256 variants is one byte, and fields ordered largest first leave
-// only the tail padding, so a token record is 8 bytes without [packed].
+// a plain enum of up to 256 variants is one byte, and a struct's fields are stored by
+// decreasing alignment (DECIDE-U), so a token record is 8 bytes without [packed] — whichever
+// order its fields are written in. Tok writes the kind first.
 type Kind {
     Ident,
     Number,
     Punct
 }
 type Tok {
+    kind Kind
     pos  u32
     len  u16
-    kind Kind
 }
 assert @sizeof(Kind) == 1
 assert @sizeof(Tok) == 8
 func main() i32 {
-    t = Tok(4, 2, Kind.Number)
+    t = Tok(Kind.Number, 4, 2)
     if t.pos == 4 and t.len == 2 { return 0 }
     return 1
 }

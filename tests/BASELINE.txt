@@ -1705,6 +1705,18 @@ rc=0
 out=13 4
 ty=Point struct
 ty=Slice_u8 scalar
+### tests/trust/struct_reorder_pass.ln
+rc=0
+out=
+at=const 2
+at=nonnull 4
+at=pure 2
+ty=Buf struct
+ty=Kind scalar
+ty=Mixed struct
+ty=Pair_u64 struct
+ty=Slice_u8 scalar
+ty=Token struct
 ### tests/trust/subslice_pass.ln
 rc=0
 out=20 40
@@ -1855,6 +1867,7 @@ out=
 ty=Token struct
 ty=TokenKind scalar
 ty=TokenNarrowFirst struct
+ty=TokenOrdered struct
 ### tests/types/float_int_literal_promote_pass.ln
 rc=0
 out=
@@ -1964,6 +1977,13 @@ at=nonnull 2
 at=pure 2
 ty=Lexer struct
 ty=Slice_u8 scalar
+### tests/types/struct_ordered_pass.ln
+rc=0
+out=
+ty=Hdr struct
+ty=Inner struct
+ty=Local struct
+ty=Wire struct
 ### tests/types/structs_pass.ln
 rc=0
 out=v = {10, 20}

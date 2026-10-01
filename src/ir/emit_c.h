@@ -1187,6 +1187,42 @@ static void ir_emit_one_sum_body(IrType *st, FILE *o) {
     }
     fputs("};\n", o);
 }
+// DECIDE-U: the structs C sees. A struct reachable from an extern's signature — by value,
+// through a pointer, an array, a slice, a vector or a function pointer, or as a field of one
+// that is — has the layout the C side was written against, which is its declaration. Marked by
+// NAME: lowering may build more than one IrType for the same struct.
+#define IR_IFACE_MAX 512
+static IrName *ir_iface_name[IR_IFACE_MAX];
+static int     ir_iface_n = 0;
+static bool ir_iface_has(const IrName *n) {
+    if (!n) return false;
+    for (int k = 0; k < ir_iface_n; k++)
+        if (ir_iface_name[k]->length == n->length && memcmp(ir_iface_name[k]->name, n->name, (size_t)n->length) == 0)
+            return true;
+    return false;
+}
+static void ir_iface_mark(IrType *t, int depth) {
+    if (!t || depth > 64) return;
+    switch (t->kind) {
+        case IRT_PTR: case IRT_ARRAY: case IRT_SLICE: case IRT_VECTOR:
+            ir_iface_mark(t->elem, depth + 1); return;
+        case IRT_FUNC:
+            ir_iface_mark(t->elem, depth + 1);
+            for (int k = 0; k < t->n_fields; k++) ir_iface_mark(t->fields[k], depth + 1);
+            return;
+        case IRT_STRUCT:
+            if (!t->sname || ir_iface_has(t->sname)) return;
+            // Past the table, every struct keeps its declaration: refusing to reorder is safe.
+            if (ir_iface_n >= IR_IFACE_MAX) { ir_iface_n = -1; return; }
+            ir_iface_name[ir_iface_n++] = t->sname;
+            for (int k = 0; k < t->n_fields; k++) ir_iface_mark(t->fields[k], depth + 1);
+            return;
+        case IRT_SUM:
+            for (int k = 0; k < t->n_fields; k++) ir_iface_mark(t->fields[k], depth + 1);
+            return;
+        default: return;
+    }
+}
 static void ir_emit_one_struct_body(IrType *st, FILE *o) {
     if (st->kind == IRT_SUM) { ir_emit_one_sum_body(st, o); return; }
     IrName *nm = st->sname;
@@ -1196,7 +1232,11 @@ static void ir_emit_one_struct_body(IrType *st, FILE *o) {
           return;
       } }
     fprintf(o, "struct %.*s { ", (int)nm->length, nm->name);
-    for (int fi=0; fi<st->n_fields; fi++) {
+    int ord[IR_REORDER_MAX_FIELDS + 1];
+    bool iface = ir_iface_n < 0 || ir_iface_has(nm);
+    if (st->n_fields <= IR_REORDER_MAX_FIELDS) ir_struct_storage_order(st, iface, ord);
+    for (int q=0; q<st->n_fields; q++) {
+        int fi = st->n_fields <= IR_REORDER_MAX_FIELDS ? ord[q] : q;   // storage order (DECIDE-U)
         IrType *ft = st->fields[fi]; IrName *fn = st->field_names[fi];
         if (ft && ft->kind==IRT_ARRAY) {   // an inline fixed-array field
             ir_ctype(ft->elem, o);
@@ -1244,6 +1284,12 @@ static void ir_sa_visit_types(IrTypeSet *ts, IrSAExpr *x) {
 }
 static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     IrTypeSet ts = {0};
+    ir_iface_n = 0;                          // DECIDE-U: what an extern's signature reaches
+    for (IrFunc *f=funcs; f; f=f->next) {
+        if (!f->is_extern) continue;
+        ir_iface_mark(f->ret_type, 0);
+        for (IrParam *p=f->params; p; p=p->next) if (p->value) ir_iface_mark(p->value->type, 0);
+    }
     // A type measured only by a module-scope assert is carried by no value either.
     for (IrStaticAssert *s = ir_static_asserts; s; s = s->next) ir_sa_visit_types(&ts, s->cond);
     for (IrFunc *f=funcs; f; f=f->next) {

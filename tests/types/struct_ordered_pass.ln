@@ -1,0 +1,37 @@
+// Where a struct's layout is an interface it keeps its DECLARATION order (spec 7, struct
+// types): declared [ordered] (a file or wire format), or reachable from an extern's signature
+// — here Hdr through `*Hdr`, and Inner as a field of Hdr. The same fields in an ordinary struct
+// are reordered, which is what the third size shows.
+[ordered]
+type Wire {
+    a u8
+    b u32
+    c u16
+}
+assert @sizeof(Wire) == 12
+type Inner {
+    a u8
+    b u32
+}
+type Hdr {
+    a     u8
+    b     u32
+    c     u16
+    inner Inner
+}
+extern func consume(h *Hdr)
+assert @sizeof(Hdr) == 20
+assert @sizeof(Inner) == 8
+type Local {
+    a u8
+    b u32
+    c u16
+}
+assert @sizeof(Local) == 8
+func main() i32 {
+    w = Wire(1, 2, 3)
+    l = Local(4, 5, 6)
+    if w.a != 1 or w.b != 2 or w.c != 3 { return 1 }
+    if l.a != 4 or l.b != 5 or l.c != 6 { return 2 }
+    return 0
+}

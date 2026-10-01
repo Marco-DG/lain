@@ -3328,6 +3328,21 @@ void sema_infer_expr(Expr *e) {
                 }
             }
         }
+        // @load(V, b, i) / @store(b, i, v): `b` is an array, a slice or a raw pointer — memory
+        // whose element order the program defines. A STRUCT was accepted (inside `unsafe`) and
+        // emitted `&t[i]`, C that gcc refuses; it would also read the struct's storage order,
+        // which is the compiler's (DECIDE-U), not the program's.
+        if ((bk == BUILTIN_LOAD || bk == BUILTIN_STORE) && e->as.builtin_expr.arg) {
+            Type *bt = sema_unwrap_type(e->as.builtin_expr.arg->type);
+            if (bt && bt->kind != TYPE_ARRAY && bt->kind != TYPE_SLICE && bt->kind != TYPE_POINTER) {
+                fprintf(stderr, "[E100] Error Ln %li, Col %li: @%s: the buffer must be an array, a "
+                        "slice or a raw pointer. A struct's bytes are not an array: its storage order "
+                        "is the compiler's (spec 7, struct types).\n", (long)e->line, (long)e->col,
+                        bk == BUILTIN_LOAD ? "load" : "store");
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
+        }
         if (bk == BUILTIN_LOAD || bk == BUILTIN_SPLAT)
             e->type = e->as.builtin_expr.vec_type;                 // result is the vector T
         else if (bk == BUILTIN_SHUFFLE)

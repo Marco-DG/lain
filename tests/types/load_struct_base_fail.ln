@@ -1,0 +1,15 @@
+// EXPECT: [E100]
+// @load reads N elements of an array, a slice or a raw pointer. Over a struct it was accepted
+// (inside `unsafe`) and emitted `&t[i]` on a struct, C that gcc refuses; it would also expose
+// the struct's storage order, which is the compiler's (spec 7, struct types).
+type T {
+    a u8
+    b u32
+}
+func main() i32 {
+    t = T(1, 2)
+    unsafe {
+        v = @load(u8x8, t, 0)
+        return v[0] as i32 - 1
+    }
+}
