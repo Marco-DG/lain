@@ -624,11 +624,17 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             // An ARRAY field cannot be initialised from a pointer in a C compound literal, and
             // the IR's uniform model gives every array value as its decayed base. So brace the
             // array fields empty and COPY them in — which is what `M([10,20,30,40], 4)` means.
+            // Every field is initialised BY NAME (`.pos = v1`): operand k is declared field k,
+            // and the C struct's member order is the layout's to choose (DECIDE-U), so a
+            // positional initialiser would assign whatever field happens to be stored k-th.
             IrType *sty = i->result->type;
             fprintf(o, "  v%d = (", i->result->id); ir_ctype(sty, o); fputs("){ ", o);
             for (int k=0;k<i->n_operands;k++){
                 if (k) fputs(", ", o);
                 IrType *ft = (sty && sty->kind==IRT_STRUCT && k < sty->n_fields) ? sty->fields[k] : NULL;
+                IrName *fn = (sty && sty->kind==IRT_STRUCT && k < sty->n_fields && sty->field_names)
+                           ? sty->field_names[k] : NULL;
+                if (fn) fprintf(o, ".%.*s = ", (int)fn->length, fn->name);   // a VECTOR's lanes stay positional
                 if (ft && ft->kind==IRT_ARRAY) fputs("{0}", o);
                 else fprintf(o, "v%d", i->operands[k]->id);
             }
