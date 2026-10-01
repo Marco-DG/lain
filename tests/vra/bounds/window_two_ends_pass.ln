@@ -1,0 +1,29 @@
+// A window described by its TWO ENDS proves: every fact relates two variables (`k < end`,
+// `end <= h.len`, `pos <= end`), which is what the octagon holds. README.md documents this as the
+// way around the three-quantity limit (window_start_length_three_var_fail.ln is the other half).
+func walk(h u8[], pos usize, end usize) u32 {
+    if end > h.len { return 0 }
+    var s u32 = 0
+    var k usize = pos
+    while k < end {
+        s = s +% (h[k] as u32)
+        k = k + 1
+    }
+    return s
+}
+func cut(h u8[], end usize <= h.len, pos usize <= end) u32 {
+    w = h[pos..end]
+    var s u32 = 0
+    var i usize = 0
+    while i < w.len {
+        s = s +% (w[i] as u32)
+        i = i + 1
+    }
+    return s
+}
+func main() i32 {
+    var b u8[6] = [1, 2, 3, 4, 5, 6]
+    if walk(b, 1, 4) != 9 { return 1 }
+    if cut(b, 5, 2) != 12 { return 2 }
+    return 0
+}

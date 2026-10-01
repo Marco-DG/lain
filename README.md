@@ -891,13 +891,12 @@ ordinary work rather than a redesign.
 - **Generics are monomorphised with no trait bounds.** Mistakes show up when a generic is
   instantiated rather than where it is defined.
 
-- **Two precision gaps have names.** An array filled by a loop or a comprehension keeps its
-  length but loses its element VALUES — the seed that records them admits only literal stores
-  and runs before the fixpoint — so `[i * i for i in 0..8]` then `sq[7] - 49` is refused
-  although every value is known. And a fact relating three quantities at once, such as an
-  allocator's `pos + size <= cap`, is outside an octagon by construction: it holds `x ± y <= c`
-  with a constant on the right. Both are documented rather than hidden; `--engine=legacy`
-  compiles such a program if you need it today.
+- **A fact relating three quantities at once is outside the octagon by construction.** The
+  domain holds `x ± y <= c` with a constant on the right, so an allocator's `pos + size <= cap`,
+  or a window read as `h[pos + i]` with `i < n` and `pos + n <= h.len`, cannot be proven. The way
+  around it is to describe a window by its two ends instead of a start and a length: walk an
+  index `k` from `pos` up to `end`, or take `h[pos..end]` once `end <= h.len` and `pos <= end`
+  are known. Every fact then relates two variables again.
 
 - **None of this is machine-checked.** The analyses are fuzz-tested and the domain is validated
   by brute force, but there is no mechanised soundness proof. That is future work, and not

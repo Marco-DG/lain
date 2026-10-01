@@ -2120,6 +2120,13 @@ rc=0
 out=
 at=nonnull 2
 at=pure 2
+### tests/vra/bounds/window_two_ends_pass.ln
+rc=0
+out=
+at=access 4
+at=nonnull 4
+at=pure 4
+ty=Slice_u8 scalar
 ### tests/vra/callsite_return_range_pass.ln
 rc=0
 out=

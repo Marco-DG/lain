@@ -1,0 +1,17 @@
+// EXPECT: [E086]
+// LIMIT, documented in README.md: a window described by a START and a LENGTH needs
+// `pos + i < h.len` from `i < n` and `n <= h.len - pos`, three quantities at once, outside an
+// octagon by construction. The same window by its two ends proves (window_two_ends_pass.ln).
+// If this starts to prove, the README's limits section is out of date.
+func f(h u8[], pos usize, n usize) u32 {
+    if pos > h.len { return 0 }
+    if n > h.len - pos { return 0 }
+    var s u32 = 0
+    var i usize = 0
+    while i < n {
+        s = s +% (h[pos + i] as u32)
+        i = i + 1
+    }
+    return s
+}
+func main() i32 { return 0 }
