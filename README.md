@@ -489,9 +489,10 @@ func get(a i32[n], n usize, i usize < n) i32 {
 }
 ```
 
-`i usize < n` is checked at every call. Inside, nothing is left to check, and the proof is
-handed on to gcc as an assumption. This is the emitted C for `get.ln`, with the local
-declarations left out. The slice arrives as its length and pointer, `v1` is `n` and `v2` is `i`:
+`i usize < n` is proven at every call site, at compile time. Inside, nothing is left to check,
+and the proof is handed on to gcc as an assumption. This is the emitted C for `get.ln`, with the
+local declarations left out. The slice arrives as its length and pointer, `v1` is `n` and `v2`
+is `i`:
 
 ```c
 __attribute__((pure)) __attribute__((nonnull)) __attribute__((access(read_only, 2, 1)))
@@ -554,10 +555,12 @@ gcc and LLVM both keep their check, and neither is doing anything wrong: the inf
 would remove it is in another translation unit.
 
 **This is the honest shape of the advantage.** Inside a single function an optimiser is often as
-good. The masked index in the table above, `a[x & 4095]` over a 4096-element array, is proved by
-gcc and by LLVM as readily as by Lain, and all three vectorise it. What an optimiser cannot do
-is carry a fact across a boundary it cannot see through, or reject the program when the fact
-does not hold.
+good, when one loop counter explains the index. The masked index in the table above,
+`a[x & 4095]` over a 4096-element array, is proved by gcc and by LLVM as readily as by Lain. It
+is weaker when the bound is a relation between two variables that both move: `rustc -O` keeps a
+check on every iteration of a binary search, even over a fixed `[i32; 64]`, and of a two-pointer
+scan. What an optimiser cannot do at all is carry a fact across a boundary it cannot see
+through, or reject the program when the fact does not hold.
 
 ---
 
