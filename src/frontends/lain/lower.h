@@ -220,6 +220,8 @@ static IrType *ir_ref_binding_ptr(const IrLocal *l) {
     return (sv && sv->kind == IRT_PTR && sv->ptr_mut && sv->borrowed && sv->elem) ? sv : NULL;
 }
 static void ir_env_add(LowerCtx *c, Id *name, IrValue *slot, IrValue *param) {
+    // the slot's source name, for diagnostics and dumps only (never an analysis key)
+    if (slot && name && !slot->src_name) slot->src_name = ir_intern(c->a, name->name, name->length);
     IrLocal *l = arena_push_aligned(c->a, IrLocal);
     l->name = name; l->slot = slot; l->param = param; l->aggregate = false;
     l->next = c->locals; c->locals = l;
@@ -3311,6 +3313,7 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
                                                         : ir_alloca(c->f, c->cur, slot_ty);
                 IrLocal *l = arena_push_aligned(c->a, IrLocal);
                 l->name = s->as.var_stmt.name; l->slot = agg; l->param = NULL;
+                if (l->name && !agg->src_name) agg->src_name = ir_intern(c->a, l->name->name, l->name->length);
                 l->aggregate = true; l->next = c->locals; c->locals = l;
                 // array-literal initializer: store each element at its index
                 Expr *init = s->as.var_stmt.expr;

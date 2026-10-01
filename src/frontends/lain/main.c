@@ -164,6 +164,7 @@ int main(int argc, char **argv) {
     // has been deleted must be deleted with it.
 
     vra_dump_enabled = args.dump_octagon;
+    vra_dump_measures_enabled = args.dump_measures;
 
 
     // sema = resolve identifiers → you’d call:

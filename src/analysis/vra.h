@@ -1037,6 +1037,20 @@ static bool vra_modular_wraps(Vra *V, Octagon *W, IrInstr *ins, int r) {
 }
 static void vra_free(Vra *V);                                                    // fwd (phase D)
 static bool vra_dump_enabled = false;   // --dump-octagon: print the converged state
+// ── C.1: THE MEASURE A TERMINATION RULE FOUND ────────────────────────────────────────────
+// A rule says THAT a loop or a recursion ends; it also knows WHY, and the why is what a
+// termination certificate has to state (local/internal/design/certificates.md, C.1). The rule
+// that succeeds records its measure here, and `--dump-measures` prints it in the program's own
+// names: "why does Lain think this loop ends?".
+typedef enum { VRA_MEAS_NONE, VRA_MEAS_RISES, VRA_MEAS_FALLS, VRA_MEAS_PAIR,
+               VRA_MEAS_PARAM, VRA_MEAS_PARAM_DIFF } VraMeasKind;
+// RISES: the counter `a` rises toward the bound `b`, measure b - a. FALLS: it falls toward `b`,
+// measure a - b. PAIR: `a < b` with each moving toward the other, measure b - a. PARAM: the
+// parameter `a` descends at every self-call. PARAM_DIFF: `a - b` over two parameters does.
+typedef struct { VraMeasKind kind; IrValue *a, *b; } VraMeasure;
+static VraMeasure vra_last_measure;
+static bool vra_dump_measures_enabled = false;   // --dump-measures
+static void vra_print_measure(Vra *V, IrFunc *f, isize line, bool rec, bool ok);   // fwd
 static void vra_dump_state(Vra *V, FILE *o);   // fwd
 
 // --dump-octagon prints once per function per compile, not once per analysis run.
@@ -3412,13 +3426,17 @@ static bool vra_loop_terminates_pair(Vra *V, IrBlock *H) {
             && !vra_cell_opaque_write(V, chi, nbb, body))
             ok = vra_progress_on_every_path(V, H, nbb, body, prog);
         free(body); free(prog);
-        if (ok) { result_pair = true; break; }
+        if (ok) {
+            vra_last_measure = (VraMeasure){ VRA_MEAS_PAIR, ic->operands[side], ic->operands[side^1] };
+            result_pair = true; break;
+        }
     }
     oct_map = oct_map_saved_pair;
     return result_pair;
 }
 
 static bool vra_loop_terminates(Vra *V, IrBlock *H) {
+    vra_last_measure.kind = VRA_MEAS_NONE;
     if (H->term.kind != IR_TERM_BR_COND) return false;
     IrInstr *ic = V->def[H->term.cond->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
@@ -3624,7 +3642,10 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
         }
         bool ok = vra_progress_on_every_path(V, H, nbb, body, prog);
         free(body); free(prog);
-        if (ok) { result_loop = true; break; }
+        if (ok) {
+            vra_last_measure = (VraMeasure){ lt ? VRA_MEAS_RISES : VRA_MEAS_FALLS, ivv, bnd };
+            result_loop = true; break;
+        }
     }
     oct_map = oct_map_saved_loop;
     // Neither endpoint is a counter against an invariant bound — try the DIFFERENCE.
@@ -4552,6 +4573,7 @@ static Vra *vra_analyze(IrFunc *f) {
         { IrInstr *hc = (b->term.cond && b->term.cond->id>=0 && b->term.cond->id<V->nvar)
                         ? V->def[b->term.cond->id] : NULL;
           if (hc) { c.line = hc->line; c.col = hc->col; } }
+        if (vra_dump_measures_enabled) vra_print_measure(V, f, c.line, false, c.ok);
         vra_add_check(V, c);
     }
     // ── RECURSION: the same obligation, one level up ────────────────────────────────────────
@@ -4582,6 +4604,7 @@ static Vra *vra_analyze(IrFunc *f) {
             c.had_measure = f->has_decreasing;
             c.line = site->line; c.col = site->col;
             c.ok = vra_recursion_terminates(V, f);
+            if (vra_dump_measures_enabled) vra_print_measure(V, f, c.line, true, c.ok);
             vra_add_check(V, c);
         } else if (vra_mod && !vra_in_mutual_check) {
             // ★ MUTUAL RECURSION IS AN ORDINARY OBLIGATION, raised here beside the self-call one
@@ -4816,6 +4839,7 @@ static void vra_disjoint_close(VraDisjoint *D) {
 // Conservative: any self-call that does not shrink the candidate disqualifies it, and a
 // function with no parameters or no self-call is not our business.
 static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
+    vra_last_measure.kind = VRA_MEAS_NONE;
     if (!V || !f || !f->name) return false;
     int nparams = 0;
     for (IrParam *p=f->params; p; p=p->next) nparams++;
@@ -4871,7 +4895,10 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
                 vra_transfer_instr(V, &W, i);
             }
         }
-        if (ok) { free(scratch); oct_map = oct_map_saved; return true; }  // this param is a measure
+        if (ok) {                                          // this param is a measure
+            vra_last_measure = (VraMeasure){ VRA_MEAS_PARAM, pv, NULL };
+            free(scratch); oct_map = oct_map_saved; return true;
+        }
     }
 
     // ── A DIFFERENCE OF TWO PARAMETERS, WHICH IS WHAT DIVIDE-AND-CONQUER DESCENDS ON ────────
@@ -4943,13 +4970,90 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
                         vra_transfer_instr(V, &W, i);
                     }
                 }
-                if (ok) { free(scratch); oct_map = oct_map_saved; return true; }
+                if (ok) {
+                    vra_last_measure = (VraMeasure){ VRA_MEAS_PARAM_DIFF, av, bv };
+                    free(scratch); oct_map = oct_map_saved; return true;
+                }
             }
         }
     }
     free(scratch);
     oct_map = oct_map_saved;
     return false;
+}
+
+// ── --dump-measures: the measure in the program's own names ─────────────────────────────
+static void vra_src_place(Vra *V, IrValue *a, char *buf, size_t n, int depth);
+static void vra_src_expr(Vra *V, IrValue *v, char *buf, size_t n, int depth) {
+    if (!v || n < 2) { snprintf(buf, n, "?"); return; }
+    if (depth > 8) { snprintf(buf, n, "%%%d", v->id); return; }
+    if (v->id >= 0 && v->id < V->nvar && V->cknown[v->id]) { snprintf(buf, n, "%lld", (long long)V->cval[v->id]); return; }
+    IrInstr *d = (v->id >= 0 && v->id < V->nvar) ? V->def[v->id] : NULL;
+    if (!d) {                                                     // a parameter
+        if (v->src_name) snprintf(buf, n, "%.*s", (int)v->src_name->length, v->src_name->name);
+        else snprintf(buf, n, "%%%d", v->id);
+        return;
+    }
+    char x[160], y[160];
+    switch (d->op) {
+        case IR_LOAD: vra_src_place(V, d->n_operands >= 1 ? d->operands[0] : NULL, buf, n, depth + 1); return;
+        case IR_SLICE_LEN: vra_src_expr(V, d->operands[0], x, sizeof x, depth + 1); snprintf(buf, n, "%s.len", x); return;
+        case IR_CAST: vra_src_expr(V, d->operands[0], buf, n, depth + 1); return;
+        case IR_ADD: case IR_SUB:
+            vra_src_expr(V, d->operands[0], x, sizeof x, depth + 1);
+            vra_src_expr(V, d->operands[1], y, sizeof y, depth + 1);
+            snprintf(buf, n, "%s %c %s", x, d->op == IR_ADD ? '+' : '-', y);
+            return;
+        default: snprintf(buf, n, "%%%d", v->id); return;
+    }
+}
+static void vra_src_place(Vra *V, IrValue *a, char *buf, size_t n, int depth) {
+    if (!a || depth > 8) { snprintf(buf, n, "?"); return; }
+    IrInstr *d = (a->id >= 0 && a->id < V->nvar) ? V->def[a->id] : NULL;
+    if (!d || d->op == IR_ALLOCA) {                               // a parameter or a local
+        if (a->src_name) snprintf(buf, n, "%.*s", (int)a->src_name->length, a->src_name->name);
+        else snprintf(buf, n, "%%%d", a->id);
+        return;
+    }
+    char x[160];
+    if (d->op == IR_FIELD_PTR && d->n_operands >= 1) {
+        vra_src_place(V, d->operands[0], x, sizeof x, depth + 1);
+        IrType *bt = d->operands[0]->type;
+        if (bt && (bt->kind == IRT_PTR) && bt->elem) bt = bt->elem;
+        int k = (int)d->aux.field_idx;
+        IrName *fn = (bt && bt->kind == IRT_STRUCT && k >= 0 && k < bt->n_fields && bt->field_names) ? bt->field_names[k] : NULL;
+        if (fn) snprintf(buf, n, "%s.%.*s", x, (int)fn->length, fn->name);
+        else snprintf(buf, n, "%s.%d", x, k);
+        return;
+    }
+    if (d->op == IR_LOAD) { vra_src_expr(V, a, buf, n, depth + 1); return; }   // through a reference
+    snprintf(buf, n, "%%%d", a->id);
+}
+// Printed once per loop or recursion per compile, however often the function is re-analysed.
+static struct { IrFunc *f; isize line; bool rec; } vra_meas_seen[1024]; static int vra_meas_seen_n;
+static void vra_print_measure(Vra *V, IrFunc *f, isize line, bool rec, bool ok) {
+    for (int k = 0; k < vra_meas_seen_n; k++)
+        if (vra_meas_seen[k].f == f && vra_meas_seen[k].line == line && vra_meas_seen[k].rec == rec) return;
+    if (vra_meas_seen_n < 1024) { vra_meas_seen[vra_meas_seen_n].f = f; vra_meas_seen[vra_meas_seen_n].line = line; vra_meas_seen[vra_meas_seen_n++].rec = rec; }
+    char a[200], b[200];
+    VraMeasure m = vra_last_measure;
+    fprintf(stderr, "[measure] %.*s: %s at line %lld: ", f->name ? (int)f->name->length : 1,
+            f->name ? f->name->name : "?", rec ? "recursion" : "loop", (long long)line);
+    if (!ok || m.kind == VRA_MEAS_NONE) { fprintf(stderr, "no measure found\n"); return; }
+    vra_src_expr(V, m.a, a, sizeof a, 0);
+    if (m.b) vra_src_expr(V, m.b, b, sizeof b, 0); else snprintf(b, sizeof b, "?");
+    // the subtrahend in parentheses only when it is itself a sum: `n - (i + 1)`, `n - i`
+    char pa[210], pb[210];
+    snprintf(pa, sizeof pa, strchr(a, ' ') ? "(%s)" : "%s", a);
+    snprintf(pb, sizeof pb, strchr(b, ' ') ? "(%s)" : "%s", b);
+    switch (m.kind) {
+        case VRA_MEAS_RISES: fprintf(stderr, "`%s - %s` decreases: %s rises by at least 1 each iteration and stays below %s\n", b, pa, a, b); break;
+        case VRA_MEAS_FALLS: fprintf(stderr, "`%s - %s` decreases: %s falls by at least 1 each iteration and stays above %s\n", a, pb, a, b); break;
+        case VRA_MEAS_PAIR:  fprintf(stderr, "`%s - %s` decreases: each iteration raises %s or lowers %s, and the loop runs while %s < %s\n", b, a, a, b, a, b); break;
+        case VRA_MEAS_PARAM: fprintf(stderr, "`%s` decreases at every self-call and stays at least 0\n", a); break;
+        case VRA_MEAS_PARAM_DIFF: fprintf(stderr, "`%s - %s` decreases at every self-call and stays at least 0\n", a, b); break;
+        default: fprintf(stderr, "?\n"); break;
+    }
 }
 
 // ── STATE INSTRUMENT ─────────────────────────────────────────────────────────────────────
