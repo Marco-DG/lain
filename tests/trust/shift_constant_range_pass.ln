@@ -1,0 +1,17 @@
+// A left shift has a range: x << k for x >= 0 and a bounded k is [xlo * 2^klo, xhi * 2^khi]
+// when that fits the result type (then no bit was shifted out). There was no transfer at all,
+// so `1 << 2` was any value: `a[1 << 2]` and `(x << 6) as u8` were unprovable. Each function
+// proves its obligation and main checks the value at run time (ASan, UBSan).
+func at(a u8[8]) u8 {
+    return a[1 << 2]
+}
+func scale(x u8) u8 {
+    if x > 3 { return 0 }
+    return (x << 6) as u8
+}
+func main() i32 {
+    a u8[8] = [10, 11, 12, 13, 14, 15, 16, 17]
+    if at(a) != 14 { return 1 }
+    if scale(3) != 192 { return 2 }
+    return 0
+}

@@ -1515,6 +1515,26 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             }
             break;
         }
+        case IR_SHL: {
+            // x << k, for x >= 0 and k a bounded amount: [xlo * 2^klo, xhi * 2^khi], stated only
+            // when that FITS the result type — then no bit was shifted out, whatever the mode (a
+            // signed shift owes exactly that, vra_check_shift; an unsigned one wraps, and a range
+            // that does not fit says nothing). There was no transfer at all: `1 << 7` was any
+            // value, so `(1 << 7) as u8` and every use of a shifted constant were unprovable.
+            if (r<0) break;
+            oct_forget(W, r);
+            IrType *rt = ins->result ? ins->result->type : NULL;
+            int64_t tlo, thi;
+            if (ins->n_operands < 2 || !rt || rt->kind != IRT_INT || !irtype_int_range(rt, &tlo, &thi)) break;
+            int64_t alo, ahi, klo, khi;
+            vra_range(V, W, ins->operands[0], &alo, &ahi);
+            vra_range(V, W, ins->operands[1], &klo, &khi);
+            if (alo < 0 || ahi >= OCT_INF/2 || klo < 0 || khi > 62) break;
+            __int128 rlo = (__int128)alo << klo, rhi = (__int128)ahi << khi;
+            if (rhi > (__int128)thi || rhi > (__int128)INT64_MAX) break;
+            oct_add_lb(W, r, (int64_t)rlo); oct_add_ub(W, r, (int64_t)rhi);
+            break;
+        }
         case IR_LSHR: {  // x >> k  (logical) of a non-negative x is in [0, x]
             if (r<0) break;
             int a=ins->operands[0]->id; oct_forget(W,r);

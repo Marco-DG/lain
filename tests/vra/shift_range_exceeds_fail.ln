@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// The shift's range is stated only where it fits: x <= 4 gives up to 256, which a u8 cannot
+// hold, so the narrowing stays an obligation the analysis refuses (shift_constant_range_pass.ln
+// proves the x <= 3 case).
+func scale(x u8) u8 {
+    if x > 4 { return 0 }
+    return (x << 6) as u8
+}
+func main() i32 {
+    return scale(4) as i32
+}
