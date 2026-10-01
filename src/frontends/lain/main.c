@@ -23,6 +23,7 @@
 #include "analysis/vra.h"
 #include "analysis/report.h"
 #include "ir/emit_c.h"
+#include "ir/interp.h"   // --interpret: the IR's semantics, executable (DECIDE-W step 1)
 
 void expr_print_ast(Expr *expr, int depth);
 void stmt_print_ast(Stmt *stmt, int depth);
@@ -220,6 +221,11 @@ int main(int argc, char **argv) {
             found += ir_report_findings(f, mod, args.filename, args.engine_ir_numeric);
         }
         if (found) { sema_destroy(); return 1; }
+        if (args.interpret) {             // run it instead of emitting it; the status is the program's
+            int st = ir_interpret_module(mod, args.filename);
+            sema_destroy();
+            return st;
+        }
     }
 
     // then code-gen: proof-carrying LLVM-IR (Phase 1 seam) or the portable C target.

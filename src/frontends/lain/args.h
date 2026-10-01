@@ -20,6 +20,9 @@ typedef struct
     bool        dump_effects;       // --dump-effects: print each function's inferred effect row
     bool        dump_octagon;       // --dump-octagon: print the converged octagon state per block
     bool        emit_llvm;          // --emit-llvm: lower to proof-carrying LLVM-IR (Phase 1 seam)
+    bool        interpret;          // --interpret: run the accepted program on the IR's own semantics
+                                    // (src/ir/interp.h) instead of emitting C; every discharged proof
+                                    // is checked as it is used
     bool        engine_ir_numeric;  // --engine=ir-full: ALSO make the IR authoritative for the
                                     // NUMERIC obligations (bounds/overflow/division). Measured
                                     // separately because that is where the gap is: the
@@ -121,6 +124,8 @@ static Args args_parse(int argc, char** argv)
             args.dump_octagon = true;
         } else if (strcmp(argv[i], "--emit-llvm") == 0) {
             args.emit_llvm = true;
+        } else if (strcmp(argv[i], "--interpret") == 0) {
+            args.interpret = true;
         } else if (strncmp(argv[i], "--backend=", 10) == 0) {   // IGNORED-FLAG (readme_gate reads this)
             // Accepted and ignored: there is one backend. Kept as a no-op rather than an
             // error so a script pinned to `--backend=ir` still runs.

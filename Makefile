@@ -40,6 +40,7 @@ gates: $(BIN)
 	bash scripts/gates/check_build_warnings.sh
 	bash scripts/gates/baseline_gate.sh
 	bash scripts/gates/bench_gate.sh
+	bash scripts/gates/interp_gate.sh
 
 # ── THE INSTRUMENTS AFTER THE DELETIONS, 2026-09-23 ──────────────────────────────────────
 # Two engines and two backends became one of each, and SEVEN differentials went with them:
