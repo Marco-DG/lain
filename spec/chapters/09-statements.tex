@@ -406,6 +406,19 @@ inside an \lain{unsafe} block~(\diagcode{E129}).  Parentheses around the predica
 are optional, as for a module-scope \lain{assert}
 (\S\,\ref{sec:decl.static-assert}).
 
+\begin{note}
+  The two are duals, and the asymmetry in where they are permitted follows from that.  An
+  \lain{assert} \emph{adds} an obligation: the analyses must discharge it, so the worst a wrong
+  one can do is refuse a program.  An \lain{assume} \emph{removes} one: it is believed, and every
+  proof downstream of it is conditional on it being true.  An assumption nothing pays for is an
+  axiom, and an axiom silently makes a prover able to prove a false statement --- which is why it
+  is confined to \lain{unsafe}, where the programmer has already taken the obligation on.
+
+  The practical use of \lain{assert} is to choose where imprecision is reported.  Without one, a
+  fact the analyses fail to carry surfaces at whatever later line first needs it, often an array
+  access several statements away; with one, it surfaces at the predicate that was actually lost.
+\end{note}
+
 \begin{example}
 \begin{laincode}
 func last(a u8[]) u8 {
