@@ -174,6 +174,15 @@ done
 flag_bad=0
 [ $DEFAULT_PAGES -eq 1 ] && \
 for flag in $(grep -ohE '\-\-[a-z][a-z-]*(=[a-z-]+)?' README.md LANGUAGE.md 2>/dev/null | sort -u); do
+    # ★ ACCEPTED IS NOT HONOURED. `--engine=` and `--backend=` are accepted and IGNORED (one
+    # engine, one backend remain), so a page saying `--engine=legacy` restores the old checker
+    # passed this check for weeks while describing a flag that does nothing. A flag whose
+    # accepting branch in args.h is marked IGNORED-FLAG may not be documented as doing anything.
+    if grep -E "\"${flag%%=*}=?\"" src/frontends/lain/args.h | grep -q 'IGNORED-FLAG'; then
+        flag_bad=$((flag_bad+1))
+        echo "  ★ README/LANGUAGE names $flag — the compiler accepts it and IGNORES it"
+        continue
+    fi
     grep -qF "\"$flag\"" src/frontends/lain/args.h && continue
     grep -qE "\"${flag%%=*}=\"" src/frontends/lain/args.h && continue          # --target=<triple> style
     grep -qE "strncmp\(argv\[i\], \"${flag%%=*}=\"" src/frontends/lain/args.h && continue

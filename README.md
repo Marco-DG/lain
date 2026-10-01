@@ -26,8 +26,8 @@ Every analysis runs on the IR. None of them looks at the source text or at the o
 so the same proofs hold whichever backend emits the code.
 
 Since 2026-09-17 that is also what a plain compile runs. Ownership, linearity, borrows,
-definite assignment, bounds, overflow, division and termination are all answered by the IR;
-`--engine=legacy` restores the older AST engine for anyone who needs it.
+definite assignment, bounds, overflow, division and termination are all answered by the IR.
+The older AST engine was deleted on 2026-09-23.
 
 ## Guarantees
 
@@ -275,11 +275,10 @@ The relationship is read out of the body, so the result is known to borrow `a` a
 `b` stays usable while the result is alive. Rust can express that too, but only if you write
 `<'a, 'b>` yourself: its own suggested fix ties both parameters to one lifetime and freezes `b`.
 
-This is what a plain compile runs. `--engine=legacy` restores the pre-rebuild checker, which
-assumes a returned borrow came from *every* mutable parameter. Move the write to `q` above the
-last use of `r`, so that the borrow is still live when `q` is touched, and that checker rejects
-the program with `E004`; the one that answers a plain compile accepts it, because it knows the
-borrow came from `a`.
+The pre-rebuild checker, deleted on 2026-09-23, assumed a returned borrow came from *every*
+mutable parameter. Move the write to `q` above the last use of `r`, so that the borrow is still
+live when `q` is touched, and that checker rejected the program with `E004`; the compiler accepts
+it, because it knows the borrow came from `a`.
 
 ## Exclusive borrows become `restrict`
 

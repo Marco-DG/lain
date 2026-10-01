@@ -121,11 +121,11 @@ static Args args_parse(int argc, char** argv)
             args.dump_octagon = true;
         } else if (strcmp(argv[i], "--emit-llvm") == 0) {
             args.emit_llvm = true;
-        } else if (strncmp(argv[i], "--backend=", 10) == 0) {
+        } else if (strncmp(argv[i], "--backend=", 10) == 0) {   // IGNORED-FLAG (readme_gate reads this)
             // Accepted and ignored: there is one backend. Kept as a no-op rather than an
             // error so a script pinned to `--backend=ir` still runs.
             (void)0;
-        } else if (strncmp(argv[i], "--engine=", 9) == 0) {
+        } else if (strncmp(argv[i], "--engine=", 9) == 0) {     // IGNORED-FLAG (readme_gate reads this)
             // Accepted and ignored: there is one engine. `--engine=legacy` selected the AST
             // analyses, which were deleted on 2026-09-23 — honouring it would mean compiling
             // with no ownership, bounds or overflow checking at all, which is a fail-open
