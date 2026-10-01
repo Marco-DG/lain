@@ -74,6 +74,26 @@ int main(int argc, char **argv) {
     sema_dump_niche = args.dump_niche;
     sema_dump_effects = args.dump_effects;
 
+    // A relative path that CLIMBS (`../m.ln`, `sub/../m.ln`) cannot name a module: the name is
+    // the path with `/` turned into `.`, so `../m.ln` became the module `...m`, whose file is
+    // `///m.ln`, and the driver could not open the program it was given. Made absolute against
+    // the working directory, it takes the branch below exactly as `lain /abs/m.ln` does: the
+    // same module name, the same emitted C.
+    if (args.filename && args.filename[0] != '/' && args.filename[0] != '\\') {
+        bool climbs = false;
+        for (const char *p = args.filename; *p && !climbs; ) {
+            const char *q = p;
+            while (*q && *q != '/' && *q != '\\') q++;
+            if (q - p == 2 && p[0] == '.' && p[1] == '.') climbs = true;
+            p = *q ? q + 1 : q;
+        }
+        static char in_abs[4096];
+        char cwd[4096];
+        if (climbs && getcwd(cwd, sizeof cwd) &&
+            (size_t)snprintf(in_abs, sizeof in_abs, "%s/%s", cwd, args.filename) < sizeof in_abs)
+            args.filename = in_abs;
+    }
+
     // C.1 fix: if the user passed an **absolute** path, chdir to its directory
     // so import-based module resolution keeps working. Relative paths are left
     // untouched — the project convention is to invoke lain from the repo root
