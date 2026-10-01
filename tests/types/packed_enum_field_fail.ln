@@ -1,0 +1,18 @@
+// EXPECT: [E121]
+// An enum is not an iN/uN, so it cannot be a [packed] field (spec 07). The diagnostic says
+// what to write instead: a plain enum is already its smallest integer, so ordering the
+// fields largest first gets the size [packed] was reached for (packed_alternative_pass.ln).
+type Kind {
+    Ident,
+    Number,
+    Punct
+}
+[packed]
+type Tok {
+    pos  u32
+    len  u16
+    kind Kind
+}
+func main() i32 {
+    return 0
+}

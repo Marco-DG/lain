@@ -1881,6 +1881,11 @@ out=
 ### tests/types/overflow_wrap_explicit_pass.ln
 rc=0
 out=
+### tests/types/packed_alternative_pass.ln
+rc=0
+out=
+ty=Kind scalar
+ty=Tok struct
 ### tests/types/packed_mixed_widths_pass.ln
 rc=0
 out=

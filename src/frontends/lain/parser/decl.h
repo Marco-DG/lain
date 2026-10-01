@@ -401,6 +401,7 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
         /* Must start with an identifier (field name or enum value) */
         parser_expect(TOKEN_IDENTIFIER, "Expected field name or enum value");
         Id *name = id(arena, parser->token.length, parser->token.start);
+        long name_line = parser->line, name_col = parser->column;   // the field's diagnostics point here
         parser_advance();
 
         // Lookahead to distinguish:
@@ -437,8 +438,10 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
 
             /* Create the Decl for this field */
             Decl *var_decl = decl_variable(arena, name, field_type);
-            var_decl->line = parser->line;
-            var_decl->col = parser->column;
+            // At the field's NAME. The position after its type is the next line's first token
+            // (often the struct's `}`), and every diagnostic about a field pointed there.
+            var_decl->line = name_line;
+            var_decl->col = name_col;
 
             /* --- NEW: optional `in <identifier>` annotation --- */
             if (parser_match(TOKEN_KEYWORD_IN)) {
@@ -527,12 +530,13 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                     
                     parser_expect(TOKEN_IDENTIFIER, "Expected variant field name");
                     Id *fname = id(arena, parser->token.length, parser->token.start);
+                    long fname_line = parser->line, fname_col = parser->column;
                     parser_advance();
                     
                     Type *ftype = parse_type(arena, parser);
                     Decl *fdecl = decl_variable(arena, fname, ftype);
-                    fdecl->line = parser->line;
-                    fdecl->col = parser->column;
+                    fdecl->line = fname_line;
+                    fdecl->col = fname_col;
                     
                     *vfields_tail = decl_list(arena, fdecl);
                     vfields_tail = &(*vfields_tail)->next;

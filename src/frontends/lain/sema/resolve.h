@@ -378,6 +378,32 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                             "must be integers of a declared width (spec 07).\n", (long)f->decl->line,
                             (long)f->decl->col, (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
                             (int)id->length, id->name);
+                    // The common reason to reach for [packed] is a small token or tag record with
+                    // an enum in it. A plain enum is already its smallest integer (a405172), so
+                    // ordering the fields gets the size [packed] was wanted for.
+                    extern DeclList *sema_decls;
+                    for (DeclList *el = sema_decls; ft && ft->base_type && el; el = el->next) {
+                        Decl *E = el->decl;
+                        if (!E || E->kind != DECL_ENUM || !E->as.enum_decl.type_name ||
+                            E->as.enum_decl.type_name->length != ft->base_type->length ||
+                            strncmp(E->as.enum_decl.type_name->name, ft->base_type->name,
+                                    (size_t)ft->base_type->length) != 0) continue;
+                        bool plain = true;
+                        for (Variant *v = E->as.enum_decl.variants; v; v = v->next) if (v->fields) plain = false;
+                        if (plain)
+                            fprintf(stderr, "       '%.*s' is a plain enum, already stored in its smallest "
+                                    "integer (one byte up to 256 variants). Drop [packed] and order the "
+                                    "fields largest first (`pos u32  len u16  kind %.*s` is 8 bytes).\n",
+                                    (int)ft->base_type->length, ft->base_type->name,
+                                    (int)ft->base_type->length, ft->base_type->name);
+                        break;
+                    }
+                    if (ft && ft->base_type && ft->base_type->length == 4 &&
+                        strncmp(ft->base_type->name, "bool", 4) == 0)
+                        fprintf(stderr, "       A one-bit flag in a packed struct is `u1` "
+                                "(`%.*s u1`; read it as `x.%.*s == 1`).\n",
+                                (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
+                                (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "");
                     diagnostic_show_line(f->decl->line, f->decl->col);
                     exit(1);
                 }
