@@ -46,6 +46,20 @@ The \lain{use} statement (\S\,\ref{sec:lex.keywords}) provides a
 semantics are implementation-defined in this revision}; the standard library
 uses top-level \lain{import} rather than \lain{use}.
 
+\begin{note}
+  \textbf{What this implementation does.}  It refuses the statement~(\diagcode{E100}),
+  reporting that the construct is not modelled and that there is nothing faithful to emit.
+  \lain{use} is accepted by the parser only inside a function body; at top level it is not a
+  declaration form.
+
+  Refusing is itself the fix for a defect worth recording, because it shows what an unmodelled
+  construct costs when it is merely skipped.  Lowering previously ignored the statement and
+  marked the containing function \emph{incomplete}, and the function was then emitted with every
+  check suppressed --- so an out-of-bounds access in the same body compiled and ran.  An
+  implementation that does not model a construct must reject the program, not emit the rest of
+  the function without its obligations.
+\end{note}
+
 \pnum
 \textbf{Path resolution}: a module path is converted to a file system path
 by replacing dots with directory separators and appending \texttt{.ln}.

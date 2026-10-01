@@ -152,7 +152,9 @@ tests the \lain{else if} clauses in order; if none matches, executes the
 \lain{else} body (if present).
 
 \begin{constraint}
-  \textit{cond} shall have type \lain{bool}.
+  \textit{cond} shall have type \lain{bool}, or an integer type, or an optional that
+  narrows (\S\,\ref{sec:types.bool}).  An integer in condition position is false when
+  zero and true otherwise.
 \end{constraint}
 
 \pnum
@@ -188,7 +190,9 @@ true, executes \textit{body}.
 \end{constraint}
 
 \begin{constraint}
-  \textit{cond} shall have type \lain{bool}.
+  \textit{cond} shall have type \lain{bool}, or an integer type, or an optional that
+  narrows (\S\,\ref{sec:types.bool}).  An integer in condition position is false when
+  zero and true otherwise.
 \end{constraint}
 
 \pnum
@@ -329,7 +333,11 @@ suffices when that type is owned.
   A \lain{return var x} (or \lain{return mov x}) that would escape a borrow of
   a \emph{local} variable --- one whose storage does not outlive the call ---
   is a dangling reference and is \illformed{}~(\diagcode{E010}).  Returning a
-  \lain{var} borrow tied to a \lain{var} parameter is permitted.
+  \lain{var} borrow tied to a \lain{var} parameter is permitted.  This is one case of a
+  general rule: a reference shall not outlive the automatic storage it borrows, by any path.
+  The rule also covers a reference handed back inside a struct or a sum, one stored into a
+  place the caller owns, and one passed to a function that keeps
+  it~(\S\,\ref{sec:mem.storage}).
 \end{constraint}
 
 \section{Defer statement}

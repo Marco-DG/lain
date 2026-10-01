@@ -148,6 +148,15 @@ func Option(T type) type {
 }
 \end{laincode}
 
+\begin{note}
+  \textbf{Not yet in force.}  This implementation does not parse a function whose return type
+  is \lain{type}: \lain{func Mk(T type) type} is refused at the return
+  type~(\diagcode{E100}).  A generic type is declared directly, as
+  \lain{type Option(T type) \{ ... \}}, which is the form the standard library uses.  The
+  constraint below is retained because the form is intended, and marked because nothing
+  currently checks it.
+\end{note}
+
 \begin{constraint}
   A function returning \lain{type} shall have an empty effect row: a type-level
   value cannot depend on an effect.

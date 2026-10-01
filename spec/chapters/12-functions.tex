@@ -250,6 +250,9 @@ there.
   \emph{local} variable is a dangling reference (\diagcode{E010},
   \S\,\ref{sec:stmt.return}).  This supersedes an earlier design (Q-009) in
   which explicit \lain{mov}/\lain{var} in return position was rejected.
+  Returning is only one way a reference can escape; the general rule, covering a reference
+  held by a struct or a sum, stored where the caller can reach it, or kept by a callee, is
+  \S\,\ref{sec:mem.storage}.
 \end{note}
 
 

@@ -453,13 +453,24 @@ An \lain{if} expression of the form
 \lain{if cond \{ e1 \} else \{ e2 \}} evaluates \textit{cond}; if true,
 evaluates $e_1$; otherwise, evaluates $e_2$.
 
+\begin{note}
+  \textbf{Not yet in force.}  This implementation does not parse an \lain{if} in
+  expression position: \lain{x = if b \{ 1 \} else \{ 2 \}} is refused at the
+  \lain{if}~(\diagcode{E100}).  The two constraints below therefore describe a form no
+  implementation currently accepts, and nothing checks them.  They are retained because the
+  form is intended; they are marked so that a reader does not take them for requirements an
+  implementation is meeting.  The \lain{if} \emph{statement} is
+  \S\,\ref{sec:stmt.if}, and is unaffected.
+\end{note}
+
 \begin{constraint}
   The types of $e_1$ and $e_2$ shall be compatible.  If they are not, the
   expression is \illformed{}.
 \end{constraint}
 
 \begin{constraint}
-  \textit{cond} shall have type \lain{bool}.
+  \textit{cond} shall have type \lain{bool}, or an integer type, or an optional that
+  narrows (\S\,\ref{sec:types.bool}).
 \end{constraint}
 
 \section{Match expression (\texttt{case})}
