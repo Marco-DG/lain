@@ -2434,8 +2434,21 @@ void sema_infer_expr(Expr *e) {
             Type *ltv = lt, *rtv = rt;
             while (ltv && ltv->kind == TYPE_COMPTIME) ltv = ltv->element_type;
             while (rtv && rtv->kind == TYPE_COMPTIME) rtv = rtv->element_type;
-            if (ltv && ltv->kind == TYPE_VECTOR) { e->type = ltv; break; }
-            if (rtv && rtv->kind == TYPE_VECTOR) { e->type = rtv; break; }
+            Type *vt = (ltv && ltv->kind == TYPE_VECTOR) ? ltv
+                     : (rtv && rtv->kind == TYPE_VECTOR) ? rtv : NULL;
+            if (vt) {
+                // A comparison of FLOAT lanes is a mask of INTEGER lanes of the same width
+                // (an f32x4 comparison is an i32x4, all ones where it held): a float with every
+                // bit set is a NaN, not a mask. Typed as the float vector, the mask's slot was
+                // `float` lanes while the comparison produced `int` ones, and gcc refused the C.
+                if (is_comparison_op(op) && vt->element_type && is_float_type(vt->element_type)) {
+                    bool wide = memcmp(vt->element_type->base_type->name, "f64", 3) == 0;
+                    e->type = type_vector(sema_arena, vt->array_len,
+                                          type_simple(sema_arena, id(sema_arena, 3, wide ? "i64" : "i32")));
+                    break;
+                }
+                e->type = vt; break;
+            }
         }
     }
 

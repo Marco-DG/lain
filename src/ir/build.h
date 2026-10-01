@@ -223,11 +223,14 @@ IrValue *ir_icmp(IrFunc *f, IrBlock *b, IrCmp c, IrValue *x, IrValue *y) {
     // A comparison of VECTORS is lane-wise: its result is a vector of per-lane predicates,
     // not a scalar bool. Typing it bool made `d == s` assign a 16-lane value to a `_Bool`.
     // The lane type is the ISA's own convention — a signed integer of the operand's width.
+    // A float lane's width is in `float_bits` (`bits` is 0 there): an f32x4 comparison was
+    // typed as a vector of 0-bit integers, emitted `Vec_4_i0`, and gcc refused the C.
     IrType *rt = ir_type_bool(f->arena);
     if (x && x->type && x->type->kind == IRT_VECTOR) {
         IrType *v = ir_type_new(f->arena, IRT_VECTOR);
+        const IrType *le = x->type->elem;
         v->array_len = x->type->array_len;
-        v->elem = ir_type_int(f->arena, x->type->elem ? x->type->elem->bits : 8, true);
+        v->elem = ir_type_int(f->arena, !le ? 8 : le->kind == IRT_FLOAT ? le->float_bits : le->bits, true);
         rt = v;
     }
     IrInstr *ins = ir_instr(f, IR_ICMP, rt, 2);

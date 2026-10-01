@@ -1,0 +1,26 @@
+// Float vectors beside scalars, and their comparisons. Both produced C that gcc refused:
+// a float literal is an f64, so `v * 2.0` on an f32x4 put a `double` beside a float vector
+// (a scalar operand now takes the lane type, as an integer one already did); and a
+// comparison's mask was typed as a vector of 0-bit integers, the lane width being read from
+// the field a float type leaves 0. A float comparison's mask has integer lanes of the same
+// width — -1 where it held (spec 7.5). Runs under -fsanitize=undefined.
+func main() i32 {
+    var v f32x4 = [1.0, 2.0, 3.0, 4.0]
+    var a f32x4 = v * 2.0
+    if a[3] != 8.0 { return 1 }
+    var b f32x4 = 1.0 + v
+    if b[0] != 2.0 { return 2 }
+    var c f32x4 = v / 2.0
+    if c[1] != 1.0 { return 3 }
+    m = v < 2.5
+    if m[0] != -1 { return 4 }
+    if m[2] != 0 { return 5 }
+    both = m & (v > 1.5)
+    if both[0] != 0 or both[1] != -1 { return 6 }
+    var d f64x2 = [1.0, 2.0]
+    var e f64x2 = d * 3.0
+    if e[1] != 6.0 { return 7 }
+    k = d == 2.0
+    if k[0] != 0 or k[1] != -1 { return 8 }
+    return 0
+}

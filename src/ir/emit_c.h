@@ -153,7 +153,10 @@ static void ir_arith_operand_c(IrInstr *i, int k, FILE *o) {
     // A SCALAR operand of a vector operation takes the LANE type, as the vector comparison's
     // does: `(x >> 4) & 15` on a u8x16 held the 15 in an int32_t, and gcc and clang both refuse
     // "conversion of scalar int32_t to vector involves truncation" for a variable operand.
-    if (rt && ot && rt->kind == IRT_VECTOR && rt->elem && ot->kind == IRT_INT) {
+    // A float scalar too: a float literal is an f64, so `v * 2.0` on an f32x4 put a `double`
+    // beside a float vector, and gcc refuses that the same way.
+    if (rt && ot && rt->kind == IRT_VECTOR && rt->elem &&
+        (ot->kind == IRT_INT || ot->kind == IRT_FLOAT)) {
         fputc('(', o); ir_ctype(rt->elem, o); fputc(')', o);
     }
     fprintf(o, "v%d", i->operands[k]->id);

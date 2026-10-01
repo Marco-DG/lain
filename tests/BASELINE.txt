@@ -1634,6 +1634,10 @@ at=const 2
 rc=0
 out=
 at=vector_size 2
+### tests/trust/simd_float_scalar_and_mask_pass.ln
+rc=0
+out=
+at=vector_size 4
 ### tests/trust/simd_lane_write_pass.ln
 rc=0
 out=

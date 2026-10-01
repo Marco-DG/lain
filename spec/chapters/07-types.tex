@@ -694,8 +694,10 @@ obligation. Two obligations remain, as on scalars:
 \end{itemize}
 
 \pnum
-A comparison yields a \emph{mask} of the operands' vector type: every bit of a lane is set
-where the comparison holds and clear where it does not (255 and 0 for \lain{u8} lanes).
+A comparison yields a \emph{mask}: every bit of a lane is set where the comparison holds and
+clear where it does not (255 and 0 for \lain{u8} lanes). For integer lanes the mask has the
+operands' vector type; for \lain{f32} and \lain{f64} lanes it has \lain{i32} and \lain{i64}
+lanes, so a lane that held is $-1$ (a float with every bit set would be a NaN, not a mask).
 
 \pnum
 \lain{v[k]} is lane \lain{k} of \lain{v}, read or written in place. \lain{k} shall be provably
