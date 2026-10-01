@@ -5,6 +5,8 @@
 static bool sa_is_const(Expr *e, bool *layout);   // typecheck.h: the constant evaluator
 static bool sa_eval(Expr *e, __int128 *v);
 static Type *resolve_type_alias(Type *t);         // typecheck.h: peels a type alias
+static void sema_check_case_scrutinee(Expr *val, isize line, isize col);   // typecheck.h
+static void sema_check_case_pattern_kinds(Expr *val, ExprList *patterns);  // typecheck.h
 
 
 // ★ PLAN PART 7G (2026-09-28): twelve checks here, in typecheck.h and in sema.h decided analysis
@@ -1093,6 +1095,7 @@ void sema_resolve_stmt(Stmt *s) {
     // for exhaustiveness), and resolution alone produces one only for an identifier.
     if (s->as.match_stmt.value && !s->as.match_stmt.value->type)
       sema_infer_expr(s->as.match_stmt.value);
+    sema_check_case_scrutinee(s->as.match_stmt.value, s->line, s->col);
     Decl *marm_enum = s->as.match_stmt.value
                     ? find_enum_decl(s->as.match_stmt.value->type) : NULL;
     for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
@@ -1131,6 +1134,7 @@ void sema_resolve_stmt(Stmt *s) {
       }
       sema_check_variant_patterns(s->as.match_stmt.value ? s->as.match_stmt.value->type : NULL,
                                   c->patterns);
+      sema_check_case_pattern_kinds(s->as.match_stmt.value, c->patterns);
       for (StmtList *b = c->body; b; b = b->next) {
         sema_resolve_stmt(b->stmt);
       }

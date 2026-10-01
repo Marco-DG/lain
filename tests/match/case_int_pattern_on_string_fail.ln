@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: a pattern on a string scrutinee must be a string literal
+// spec: §15 — a string scrutinee is matched by string literals.
+func f(s u8[]) i32 {
+    case s {
+        7: return 1
+        else: return 2
+    }
+}
+
+func main() i32 { return f("ab") }

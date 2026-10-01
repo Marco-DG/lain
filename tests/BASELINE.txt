@@ -801,6 +801,14 @@ ty=__U_ptr_u8_none scalar
 rc=0
 out=
 at=const 2
+### tests/match/string_patterns_pass.ln
+rc=0
+out=0 1 2 3 9 4 5 5 9 | 10 20 10 40 | 2
+at=access 4
+at=const 2
+at=nonnull 4
+at=pure 4
+ty=Slice_u8 scalar
 ### tests/match/union_case_runtime_pass.ln
 rc=0
 out=ok=hi

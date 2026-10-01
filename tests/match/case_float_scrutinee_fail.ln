@@ -1,7 +1,8 @@
-// EXPECT: [E100]
-// spec: §15 — the scrutinee types are enums, integers, `u8`, `bool` (and strings, §15.7). A
-// `case` statement on an f64 was DROPPED by lowering: this function compiled to a bare
-// `return;` from a u8 function, and the compiler exited 0 with a note on stderr.
+// EXPECT: [E012]
+// EXPECT-TEXT: a `case` cannot match on a float
+// spec: §15 — the scrutinee types are integers, `bool`, enums and sums, and strings. A `case`
+// statement on an f64 was DROPPED by lowering: this function compiled to a bare `return;` from
+// a u8 function, and the compiler exited 0 with a note on stderr.
 func pick(x f64) u8 {
     case x {
         1.0: return 7

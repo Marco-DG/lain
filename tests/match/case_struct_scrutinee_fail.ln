@@ -1,0 +1,13 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: a `case` cannot match on a struct
+// spec: §15 — a struct has no patterns. This `case` was dropped by lowering and the function
+// returned whatever the register held (64 where 20 is right).
+type P { x i32, y i32 }
+
+func f(p P) i32 {
+    case p {
+        else: return 20
+    }
+}
+
+func main() i32 { return f(P(1, 2)) }

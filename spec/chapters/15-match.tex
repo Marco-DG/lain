@@ -62,6 +62,14 @@ The following pattern forms are supported:
 \end{description}
 
 \begin{constraint}
+  The scrutinee shall be an integer (a \lain{u8} character included), a
+  \lain{bool}, an enum or ADT, or a string (\lain{u8[]}, \S\,\ref{sec:match.string}),
+  and every pattern shall have its scrutinee's type: a string scrutinee takes
+  string literals and nothing else does.  Any other scrutinee or pattern is
+  \illformed{}~(\diagcode{E012}).
+\end{constraint}
+
+\begin{constraint}
   A variant pattern shall name a variant of the scrutinee's own enum or ADT,
   bare (\lain{Red}) or qualified by that type (\lain{Color.Red}); any other
   name is \illformed{}~(\diagcode{E106}).
@@ -91,6 +99,7 @@ ADT      & All variants covered, or \lain{else} arm present \\
 Integer  & \lain{else} arm always required \\
 \lain{u8} (char) & \lain{else} arm always required \\
 \lain{bool} & \lain{true} and \lain{false} covered, or \lain{else} \\
+String (\lain{u8[]}) & \lain{else} arm always required \\
 \end{longtable}
 
 \begin{constraint}

@@ -436,6 +436,46 @@ static IrType *ir_variant_field_type(IrType *plk, int j) {
     if (!plk) return NULL;
     return (plk->kind==IRT_STRUCT && j < plk->n_fields) ? plk->fields[j] : plk;
 }
+// ── STRING PATTERNS (spec 15) ────────────────────────────────────────────────────────────────
+// `case s { "ab": … }` matches when s has the pattern's length and bytes. It lowers to the tests
+// the spec's note describes: the length, then each byte, every failed test a branch to the next
+// pattern. Each byte is read under `len == n`, so its bound is DISCHARGED by that guard rather
+// than assumed; a fixed array whose length is not the pattern's never matches it. A string
+// scrutinee had no lowering at all, and the whole `case` statement was dropped.
+typedef struct { IrValue *data, *len; int64_t fixed; } IrStrScrut;   // fixed >= 0: an array
+static bool ir_is_u8_string_type(IrType *t) {
+    IrType *e = t ? t->elem : NULL;
+    return t && (t->kind == IRT_SLICE || t->kind == IRT_ARRAY) &&
+           e && e->kind == IRT_INT && e->bits == 8 && !e->is_signed;
+}
+// The scrutinee's bytes and length, computed once where it is evaluated, before any test.
+static void ir_string_scrutinee(LowerCtx *c, IrValue *v, IrType *t, IrStrScrut *ss) {
+    if (t->kind == IRT_SLICE) {
+        ss->data = ir_slice_data(c->f, c->cur, v, t->elem);
+        ss->len = ir_slice_len(c->f, c->cur, v); ss->fixed = -1;
+    } else { ss->data = v; ss->len = NULL; ss->fixed = t->array_len; }
+}
+static void ir_match_string(LowerCtx *c, IrStrScrut *ss, Expr *pe, IrBlock *body, IrBlock *nxt) {
+    int64_t n = pe->as.string_expr.length;
+    IrType *usz = ir_type_int(c->a, 64, false), *u8 = ir_type_int(c->a, 8, false);
+    if (ss->fixed >= 0) {
+        if (ss->fixed != n) { ir_set_br(c->cur, nxt); return; }
+    } else {
+        IrBlock *bytes = ir_new_block(c->f);
+        ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, IR_CMP_EQ, ss->len, ir_const_int(c->f, c->cur, n, usz)),
+                       bytes, nxt);
+        c->cur = bytes;
+    }
+    for (int64_t k = 0; k < n; k++) {
+        IrBlock *next = ir_new_block(c->f);
+        IrValue *ep = ir_elem_ptr(c->f, c->cur, ss->data, ir_const_int(c->f, c->cur, k, usz), u8);
+        IrValue *by = ir_load(c->f, c->cur, ep, u8);
+        IrValue *lit = ir_const_int(c->f, c->cur, (unsigned char)pe->as.string_expr.value[k], u8);
+        ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, IR_CMP_EQ, by, lit), next, nxt);
+        c->cur = next;
+    }
+    ir_set_br(c->cur, body);
+}
 // Branch on the outer tag test `eq` into `body`, threading the pattern's nested variant tests
 // in between. Each sub-test sits in its own block, entered only once the outer tag is known,
 // so IR_SUM_PAYLOAD is never emitted off its own variant. `c->cur` is left where the caller
@@ -1971,8 +2011,9 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             Expr *val = e->as.match_expr.value;
             IrType *sumty = NULL;
             bool vty_kind_is_scalar = false;
-            { IrType *vty = ir_lower_type(c, val ? val->type : NULL);
-              if (vty && vty->kind == IRT_SUM) sumty = vty;
+            IrType *vty = ir_lower_type(c, val ? val->type : NULL);
+            bool string_ok = ir_is_u8_string_type(vty);
+            { if (vty && vty->kind == IRT_SUM) sumty = vty;
               vty_kind_is_scalar = vty && (vty->kind == IRT_INT || vty->kind == IRT_BOOL); }
             // ★ ASK THE LOWERED TYPE, NOT THE AST SHAPE. This read
             // `vt->kind==TYPE_SIMPLE && vt->int_width_cache>0`, so a `bool` scrutinee — which is
@@ -1985,11 +2026,13 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // Asking the IR type is also the right question for lowering to ask: what it can match
             // on is a property of the IR, and re-deriving it from AST fields is how the two drift.
             bool scalar_ok = vty_kind_is_scalar;
-            if (!sumty && !scalar_ok)
+            if (!sumty && !scalar_ok && !string_ok)
                 return ir_opaque_expr(c, ty, false, "a `case` on a scrutinee of this type", NULL, NULL);
             IrValue *v = ir_lower_expr(c, val);
             if (sumty && !(v && v->type && v->type->kind==IRT_SUM))
                 return ir_opaque_expr(c, ty, false, "a `case` on a scrutinee of this type", NULL, NULL);
+            IrStrScrut ss = {0};
+            if (string_ok) ir_string_scrutinee(c, v, vty, &ss);
 
 
 
@@ -2019,6 +2062,9 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                         IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
                         ir_match_branch(c, sumty, k, pe, v,
                                         ir_icmp(c->f,c->cur,IR_CMP_EQ,tagv,kc), body, nxt);
+                    } else if (string_ok) {   // only string literals here (E012 in the front end)
+                        if (pe->kind == EXPR_STRING) ir_match_string(c, &ss, pe, body, nxt);
+                        else { ir_incomplete(c, "a pattern that is not a string literal"); ir_set_br(c->cur, nxt); }
                     } else if (pe->kind == EXPR_RANGE) {
                         Expr *loe=pe->as.range_expr.start, *hie=pe->as.range_expr.end;
                         IrBlock *hitest = ir_new_block(c->f);
@@ -3698,8 +3744,9 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             Expr *val = s->as.match_stmt.value;
             Type *vt = val ? val->type : NULL;
             IrValue *v = NULL; IrType *sumty = NULL; bool scalar_ok = false;
-            { IrType *vty = ir_lower_type(c, vt);
-              if (vty && vty->kind == IRT_SUM) sumty = vty;
+            IrType *vty = ir_lower_type(c, vt);
+            bool string_ok = ir_is_u8_string_type(vty);
+            { if (vty && vty->kind == IRT_SUM) sumty = vty;
               // ★ ASK THE LOWERED TYPE, NOT THE AST SHAPE. This read `int_width_cache>0`, so a
               // `bool` scrutinee — not an integer, no width — made the whole function
               // `incomplete`, which SUPPRESSES EVERY PROOF OVER IT. It was the last incomplete
@@ -3709,11 +3756,13 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
               // be matched on is a property of the IR, and re-deriving it from AST fields is how
               // the two drift apart.
               scalar_ok = vty && (vty->kind == IRT_INT || vty->kind == IRT_BOOL); }
-            if (!sumty && !scalar_ok) {
+            if (!sumty && !scalar_ok && !string_ok) {
                 ir_incomplete(c, "a `case` on a scrutinee of this type"); break;
             }
             v = ir_lower_expr(c, val);
             if (sumty && !(v && v->type && v->type->kind==IRT_SUM)) { ir_incomplete(c,"enum-match"); break; }
+            IrStrScrut ss = {0};
+            if (string_ok) ir_string_scrutinee(c, v, vty, &ss);
             // `case &x` is a NON-CONSUMING match: it borrows the scrutinee for the whole
             // construct. Nothing in the arms reads that borrow, so a liveness-derived region
             // would be empty and `42: x = 99` would look legal — the loan has to be stated.
@@ -3751,6 +3800,12 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                         IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
                         IrValue *eq = ir_icmp(c->f, c->cur, IR_CMP_EQ, tagv, kc);
                         ir_match_branch(c, sumty, k, pe, v, eq, body, nxt);
+                        c->cur = nxt;
+                        continue;
+                    }
+                    if (string_ok) {   // the front end allows only string literals here (E012)
+                        if (pe->kind == EXPR_STRING) ir_match_string(c, &ss, pe, body, nxt);
+                        else { ir_incomplete(c, "a pattern that is not a string literal"); ir_set_br(c->cur, nxt); }
                         c->cur = nxt;
                         continue;
                     }

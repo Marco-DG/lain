@@ -799,6 +799,51 @@ static bool is_nominal_aggregate(Type *t) {
            (sym->decl->kind == DECL_STRUCT || sym->decl->kind == DECL_ENUM);
 }
 
+// ★ WHAT A `case` MATCHES ON (spec 15): an integer (a `u8` character too), `bool`, an enum or
+// sum, or a string (`u8[]`, matched by bytes and length). Nothing else has patterns, and nothing
+// said so: a `case` statement on an f64, a struct or an array was DROPPED by lowering, until it
+// was refused as an unmodelled construct. Nor was a pattern checked against its scrutinee:
+// `case x { "ab": … }` on an i32 compiled to `x == (Slice_u8){…}`, C that gcc rejects.
+static bool sema_is_u8_string(Type *t) {
+    t = resolve_type_alias(t);
+    if (!t || (t->kind != TYPE_ARRAY && t->kind != TYPE_SLICE)) return false;
+    Type *el = resolve_type_alias(t->element_type);
+    int b; bool sg;
+    return el && parse_iN_uN(el, &b, &sg) && b == 8 && !sg;
+}
+static void sema_check_case_scrutinee(Expr *val, isize line, isize col) {
+    Type *t = val ? resolve_type_alias(val->type) : NULL;
+    if (!t) return;
+    const char *what = NULL;
+    if (is_float_type(t))                                   what = "a float";
+    else if (t->kind == TYPE_POINTER)                       what = "a pointer";
+    else if (t->kind == TYPE_FUNC)                          what = "a function pointer";
+    else if (t->kind == TYPE_VECTOR)                        what = "a vector";
+    else if ((t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) && !sema_is_u8_string(t))
+                                                            what = "an array that is not a `u8` string";
+    else if (is_nominal_aggregate(t) && !find_enum_decl(t)) what = "a struct";
+    if (!what) return;
+    fprintf(stderr, "[E012] Error Ln %li, Col %li: a `case` cannot match on %s: the scrutinee "
+            "must be an integer, `bool`, an enum or sum, or a `u8[]` string.\n", line, col, what);
+    diagnostic_show_line(line, col);
+    exit(1);
+}
+static void sema_check_case_pattern_kinds(Expr *val, ExprList *patterns) {
+    bool str = val && sema_is_u8_string(val->type);
+    for (ExprList *p = patterns; p; p = p->next) {
+        Expr *pe = p->expr;
+        if (!pe) continue;
+        const char *bad = NULL;
+        if (str && pe->kind != EXPR_STRING)       bad = "a pattern on a string scrutinee must be a string literal";
+        else if (!str && pe->kind == EXPR_STRING) bad = "a string pattern needs a `u8[]` scrutinee";
+        else if (pe->kind == EXPR_FLOAT_LITERAL)  bad = "a float literal is not a pattern";
+        if (!bad) continue;
+        fprintf(stderr, "[E012] Error Ln %li, Col %li: %s.\n", pe->line, pe->col, bad);
+        diagnostic_show_line(pe->line, pe->col);
+        exit(1);
+    }
+}
+
 // P2/S3: reject POINTER type-confusion at a boundary — the memory-unsafe
 // conversions with no legitimate implicit counterpart:
 //   * two pointers with different pointee types (*i32 <-> *u8) — aliasing lie
@@ -3319,6 +3364,7 @@ void sema_infer_expr(Expr *e) {
 
   case EXPR_MATCH: {
     sema_infer_expr(e->as.match_expr.value);
+    sema_check_case_scrutinee(e->as.match_expr.value, e->line, e->col);
     Type *inferred_type = NULL;
     for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
         sema_push_scope();
@@ -3327,6 +3373,7 @@ void sema_infer_expr(Expr *e) {
         }
         sema_check_variant_patterns(e->as.match_expr.value ? e->as.match_expr.value->type : NULL,
                                     c->patterns);
+        sema_check_case_pattern_kinds(e->as.match_expr.value, c->patterns);
         sema_infer_expr(c->body);
         sema_pop_scope();
         

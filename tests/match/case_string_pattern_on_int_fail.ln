@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: a string pattern needs a `u8[]` scrutinee
+// spec: §15 — a pattern has its scrutinee's type. This compiled, and the C compared an int32_t
+// with a Slice_u8, which gcc rejects.
+func f(x i32) i32 {
+    case x {
+        "ab": return 1
+        else: return 2
+    }
+}
+
+func main() i32 { return f(1) }

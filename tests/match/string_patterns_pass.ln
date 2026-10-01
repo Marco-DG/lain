@@ -1,0 +1,46 @@
+// spec: §15 — a string pattern matches when the scrutinee has the same length and bytes. A
+// `case` on a `u8[]` was not lowered at all: the whole statement was dropped (a u8 function
+// compiled to a bare `return;`), then refused. Every byte read below is proven in bounds by the
+// length test that precedes it.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func kind(s u8[]) i32 {
+    case s {
+        "": return 0
+        "a": return 1
+        "ab": return 2
+        "abc": return 3
+        "b\n": return 4
+        "if", "fi": return 5
+        else: return 9
+    }
+}
+
+// The expression form, and a pattern longer than any scrutinee it meets.
+func code(s u8[]) i32 {
+    r = case s {
+        "func": 10
+        "type": 20
+        "toolongtomatch": 30
+        else: 40
+    }
+    return r
+}
+
+// A local string literal has a fixed length: a pattern of another length never matches it.
+func fixed() i32 {
+    s = "xyz"
+    case s {
+        "xy": return 1
+        "xyz": return 2
+        else: return 3
+    }
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d %d %d %d %d %d %d %d | ", kind(""), kind("a"), kind("ab"), kind("abc"), kind("abd"), kind("b\n"), kind("if"), kind("fi"), kind("abcd"))
+    t = "xfuncx"
+    libc_printf("%d %d %d %d | ", code("func"), code("type"), code(t[1..5]), code(t[0..4]))
+    libc_printf("%d\n", fixed())
+    return 0
+}
