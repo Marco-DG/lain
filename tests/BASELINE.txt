@@ -2304,6 +2304,10 @@ out=idx=3
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
+### tests/vra/bitwise_or_xor_range_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/vra/bounded_counter_return_pass.ln
 rc=0
 out=

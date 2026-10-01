@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// The OR bound holds for NON-NEGATIVE operands only: an i32 that may be negative has its sign bit
+// set, and so does any OR with it, so narrowing the OR to u8 is not proven. (-1 | 0 is -1.)
+func f(a i32, b u8) u8 {
+    x u8 = a | b
+    return x
+}
+
+func main() i32 { return f(-1, 0) as i32 }

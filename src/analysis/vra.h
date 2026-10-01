@@ -1460,6 +1460,27 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             }
             break;
         }
+        case IR_OR: case IR_XOR: {
+            // ★ OR AND XOR HAD NO TRANSFER: the result could be any value. Two NON-NEGATIVE
+            // operands set only bits below the higher one's top bit, so the result lies in
+            // [0, 2^bitlen(max) - 1], and an OR is at least its larger operand. Without it
+            // `(a & b) | (a ^ b) % 7` over u8 operands was refused: `% 7` makes the right side an
+            // i32, and their OR read as unbounded where it narrowed back to u8 (plan I.32).
+            if (r<0) break;
+            oct_close(W);
+            int64_t alo, ahi, blo, bhi;
+            vra_range(V, W, ins->operands[0], &alo, &ahi);
+            vra_range(V, W, ins->operands[1], &blo, &bhi);
+            oct_forget(W, r);
+            if (alo >= 0 && blo >= 0) {
+                uint64_t m = (uint64_t)(ahi > bhi ? ahi : bhi);
+                int bits = m ? 64 - __builtin_clzll((unsigned long long)m) : 0;
+                int64_t cap = bits >= 63 ? INT64_MAX : (int64_t)(((uint64_t)1 << bits) - 1);
+                oct_add_lb(W, r, ins->op == IR_OR ? (alo > blo ? alo : blo) : 0);
+                oct_add_ub(W, r, cap);
+            }
+            break;
+        }
         case IR_UDIV: {  // x / b  — in any defined exec (b > 0, x ≥ 0)
             if (r<0) break;
             int a=ins->operands[0]->id, b=ins->operands[1]->id;

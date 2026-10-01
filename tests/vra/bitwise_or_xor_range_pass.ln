@@ -1,0 +1,8 @@
+// The OR and the XOR of two non-negative values lie below 2^bitlen of the larger one, and an OR
+// is at least its larger operand. Neither had a transfer, so the result read as any value: `% 7`
+// makes the right side of `mix`'s OR an i32, and the OR could not narrow back to the u8 it
+// returns (E086). mix(6, 3) = 2 | (5 % 7) = 7; flip(9) = ((9 ^ 3) % 5) | 1 = 1.
+func mix(a u8, b u8) u8 { return (a & b) | (a ^ b) % 7 }
+func flip(a u8) u8 { return (a ^ 3) % 5 | 1 }
+
+func main() i32 { return mix(6, 3) as i32 + flip(9) as i32 - 8 }
