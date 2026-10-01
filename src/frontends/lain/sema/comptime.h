@@ -160,6 +160,24 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
         case EXPR_ANON_ENUM:
             // These are already fully evaluated compile-time values
             return clone_expr(arena, expr);
+
+        case EXPR_INDEX: {
+            // `type A = u8[K]`: an alias of an ARRAY TYPE. The right-hand side parses as an index
+            // into a type name, and with a constant index it IS the array type. Every such alias
+            // was refused ("Type alias must evaluate to a type", at Ln 0), with a literal length
+            // as well as a named constant (Handwriting's M6 probe table).
+            Expr *t = comptime_evaluate_expr(arena, expr->as.index_expr.target, env);
+            Expr *ix = expr->as.index_expr.index;
+            bool lay = false; __int128 n = 0;
+            if (t && t->kind == EXPR_TYPE && t->as.type_expr.type_value && ix
+                && sa_is_const(ix, &lay) && !lay && sa_eval(ix, &n) && n > 0 && n <= INT32_MAX) {
+                Expr *texpr = clone_expr(arena, expr);
+                texpr->kind = EXPR_TYPE;
+                texpr->as.type_expr.type_value = type_array(arena, t->as.type_expr.type_value, (isize)n);
+                return texpr;
+            }
+            return clone_expr(arena, expr);
+        }
         
         case EXPR_MEMBER: {
             // Since we are parsing things like `OptionInt` from `type OptionInt = Option(int)`

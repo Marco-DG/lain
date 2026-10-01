@@ -240,8 +240,12 @@ static Expr *se_run(SeCtx *x, Decl *d, IrFunc *thunk, IVal *arg, Type *ty, Expr 
     return se_literal_of(&out, thunk->ret_type, ty, at, d, what);
 }
 
+// A module constant is computed here when its initialiser calls a function, or when it is a
+// comprehension the front end could not expand into a literal (its evaluator stops at a cast,
+// `[(i * 100) as% u8 for i in 0..4]`, and the comprehension was then E100, unmodelled).
 static bool se_pending(Decl *d) {
-    return d && d->kind == DECL_VARIABLE && !d->as.variable_decl.is_mutable && se_has_call(d->as.variable_decl.init);
+    if (!d || d->kind != DECL_VARIABLE || d->as.variable_decl.is_mutable || !d->as.variable_decl.init) return false;
+    return se_has_call(d->as.variable_decl.init) || d->as.variable_decl.init->kind == EXPR_ARRAY_COMPREHENSION;
 }
 
 // Fold one constant. SE_OK: folded, or left to run at each use (a value with no literal, or one the

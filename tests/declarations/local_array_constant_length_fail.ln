@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// `T[N]` takes a compile-time constant N, so a local declared `u8[K]` with `K usize = 4` is an
+// array of four elements, and a literal of three does not fit it. The declared length was
+// dropped in silence: `a` became a slice of the literal's three elements (Handwriting's M6).
+K usize = 4
+func main() i32 {
+    var a u8[K] = [1, 2, 3]
+    return a[2] as i32
+}

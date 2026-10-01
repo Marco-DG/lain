@@ -1,0 +1,8 @@
+// A module comprehension the front end's evaluator cannot expand, here because its body casts
+// (`as%`), is computed at compile time by the IR interpreter like one that calls a function. It
+// was E100, unmodelled. Values checked at run time.
+T u8[4] = [(i * 100) as% u8 for i in 0..4]
+func main() i32 {
+    if T[0] != 0 or T[1] != 100 or T[2] != 200 or T[3] != 44 { return 1 }
+    return 0
+}

@@ -2,6 +2,9 @@
 
 #ifndef SEMA_RESOLVE_H
 #define SEMA_RESOLVE_H
+static bool sa_is_const(Expr *e, bool *layout);   // typecheck.h: the constant evaluator
+static bool sa_eval(Expr *e, __int128 *v);
+static Type *resolve_type_alias(Type *t);         // typecheck.h: peels a type alias
 
 
 // ★ PLAN PART 7G (2026-09-28): twelve checks here, in typecheck.h and in sema.h decided analysis
@@ -233,8 +236,10 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         // (fail-closed) instead. Slice returns (`i32[n]`, array_len == -1, emitted
         // as a Slice_<T> struct) and `var` output parameters are the supported
         // ways to hand back array data.
+        Type *urt = rt;                                    // through an alias of an array type
+        if (urt && urt->kind == TYPE_SIMPLE) { Type *a = resolve_type_alias(urt); if (a && a->kind == TYPE_ARRAY) urt = a; }
         if ((d->kind == DECL_FUNCTION) &&
-            rt && rt->kind == TYPE_ARRAY && rt->array_len > 0) {
+            urt && urt->kind == TYPE_ARRAY && urt->array_len > 0) {
             fprintf(stderr, "[E088] Error Ln %li, Col %li: '%.*s' returns a fixed-size array "
                     "by value, which is not supported. Return a slice ('T[n]') or write the "
                     "result through a 'var' output parameter instead.\n",
@@ -614,8 +619,9 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                   // passes (emit) can inspect the underlying type.
                   d->as.type_alias_decl.expr = eval_rhs;
              } else {
-                  fprintf(stderr, "[E012] Error Ln %li, Col %li: Type alias must evaluate to a type at compile-time (got kind=%d)\n", d->line, d->col, eval_rhs->kind);
-                  diagnostic_show_line(d->line, d->col);
+                  isize aln = d->line ? d->line : d->as.type_alias_decl.expr->line, acl = d->line ? d->col : d->as.type_alias_decl.expr->col;
+                  fprintf(stderr, "[E012] Error Ln %li, Col %li: a type alias's right-hand side must be a type (a named type, an array of one with a constant length, a struct or an enum)\n", (long)aln, (long)acl);
+                  diagnostic_show_line(aln, acl);
                   exit(1);
              }
         } else {
@@ -672,6 +678,33 @@ void sema_resolve_stmt(Stmt *s) {
     if (s->as.var_stmt.type)
         s->as.var_stmt.type = mono_resolve_type_apps(s->as.var_stmt.type);
     Type *ty = s->as.var_stmt.type; // Start with the annotation (if any)
+    // ★ A LOCAL ARRAY'S LENGTH. `T[N]` needs a compile-time constant N (spec 7), and a local
+    // with a RUNTIME length and no initializer is a VLA (the note there). A declared length
+    // that is neither was dropped in silence: `var a u8[K] = [1, 2, 3]` with `K usize = 4` made
+    // `a` a slice of the literal's three elements, and `var a u8[f3()] = [7 elements]` one of
+    // seven (Handwriting's M6 probes). A constant length is folded here, so the local is a fixed
+    // array and the literal is checked against it (E012); a runtime length with an initializer
+    // is refused. (A length computed by a call is a runtime value until step 3 of DECIDE-W: the
+    // front end needs it before compile-time evaluation runs.)
+    if (ty && ty->kind == TYPE_ARRAY && ty->array_len < 0 && ty->size_expr
+        && (ty->size_relop == 0 || ty->size_relop == TOKEN_EQUAL_EQUAL)) {
+        sema_resolve_expr(ty->size_expr);
+        sema_infer_expr(ty->size_expr);
+        bool lay = false; __int128 nv = 0;
+        if (sa_is_const(ty->size_expr, &lay) && !lay && sa_eval(ty->size_expr, &nv) && nv > 0 && nv <= INT32_MAX) {
+            Type *ft = arena_push_aligned(sema_arena, Type);
+            *ft = *ty; ft->array_len = (isize)nv; ft->size_expr = NULL; ft->size_relop = 0;
+            s->as.var_stmt.type = ty = ft;
+        } else if (rhs) {
+            Id *vn = s->as.var_stmt.name;
+            fprintf(stderr, "[E137] Error Ln %li, Col %li: the length of '%.*s' is not a compile-time "
+                    "constant, and a declaration with an initializer needs one: its type is `T[N]` with N "
+                    "a constant. A length known only at run time is a VLA, declared without an "
+                    "initializer.\n", (long)s->line, (long)s->col, vn ? (int)vn->length : 1, vn ? vn->name : "?");
+            diagnostic_show_line(s->line, s->col);
+            exit(1);
+        }
+    }
     
     // If there is an annotation, resolve it first
     if (ty) {
@@ -1169,7 +1202,8 @@ void sema_resolve_stmt(Stmt *s) {
     if (eval && eval->kind == EXPR_LITERAL) {
         is_true = eval->as.literal_expr.value != 0;
     } else {
-        fprintf(stderr, "[E014] Error Ln %li, Col %li: comptime if condition must evaluate to a compile-time constant\n",
+        // E137, not E014: E014 is a non-exhaustive match (Annex B), and this shared its code.
+        fprintf(stderr, "[E137] Error Ln %li, Col %li: comptime if condition must evaluate to a compile-time constant\n",
                 s->line, s->col);
         diagnostic_show_line(s->line, s->col);
         exit(1);

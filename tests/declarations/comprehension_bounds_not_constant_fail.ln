@@ -1,0 +1,8 @@
+// EXPECT: [E137]
+// A comprehension's bounds give the array its length, so a bound known only at run time is
+// refused. This was an uncoded "sema error", invisible to anything that reads diagnostic codes.
+func make(n usize <= 8) u8 {
+    a = [i for i in 0..n]
+    return a[0]
+}
+func main() i32 { return make(4) as i32 }

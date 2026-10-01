@@ -1,0 +1,21 @@
+// An alias of an ARRAY type, with a literal length or a constant one, is the array: a local, a
+// struct field and a parameter of the alias index it, read `.len`, and take a literal of exactly
+// its length. Every such alias was refused ("Type alias must evaluate to a type", at Ln 0).
+// Values checked at run time.
+K usize = 4
+type Buf4 = u8[K]
+type Pair = i32[2]
+type Holder {
+    p Pair
+    n i32
+}
+func sum(p Pair) i32 { return p[0] +% p[1] }
+func first_last(b Buf4) u8 { return b[0] +% b[3] }
+func main() i32 {
+    var q Pair = [1, 2]
+    h = Holder(q, 5)
+    if h.p[1] != 2 or q.len != 2 or sum(q) != 3 { return 1 }
+    var b Buf4 = [1, 2, 3, 4]
+    if first_last(b) != 5 or b.len != 4 or @sizeof(Buf4) != 4 { return 2 }
+    return 0
+}

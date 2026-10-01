@@ -1,0 +1,10 @@
+// EXPECT: [E137]
+// A `comptime if` decides which code exists, so its condition is a compile-time constant. A call
+// is not one here. This was E014, the code of a non-exhaustive `case` (Annex B).
+func f3() u32 { return 3 }
+func main() i32 {
+    comptime if f3() == 3 {
+        return 1
+    }
+    return 0
+}

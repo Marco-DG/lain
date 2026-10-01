@@ -1,0 +1,10 @@
+// EXPECT: [E137]
+// A local with an initializer needs a constant length, and a length a CALL computes is a
+// runtime value until DECIDE-W's step 3 (the front end needs it before compile-time evaluation
+// runs). It was dropped in silence: `a` became a slice of the literal's seven elements. Without
+// an initializer, `var a u8[f3()]` is a VLA, which is allowed.
+func f3() usize { return 3 }
+func main() i32 {
+    var a u8[f3()] = [0, 0, 0, 0, 0, 0, 0]
+    return a[6] as i32
+}

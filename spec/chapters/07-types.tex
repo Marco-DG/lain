@@ -459,6 +459,14 @@ zero (grammar: \gramref{array-type}).
 The \texttt{.len} property of an array type yields $N$ as a compile-time
 constant of type \lain{int}.
 
+\pnum
+In a local declaration, \lain{N} may be any constant expression, a module constant
+(\lain{var a u8[K]}) as well as a literal; the local is then a fixed array of \lain{N}
+elements, and an initializer shall have exactly that length (\diagcode{E012}). A length that is
+not a constant expression is \illformed{} in a declaration with an initializer
+(\diagcode{E137}): without one, the local is a VLA (the note below). A type alias may name an
+array type, \lain{type Buf4 = u8[K]}, and is that array type.
+
 \begin{note}
   \textbf{Runtime-length local arrays (VLAs).}  A \emph{local} declaration
   \lain{var a T[n]} whose length \lain{n} is a runtime value and which has no

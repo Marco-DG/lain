@@ -1575,12 +1575,17 @@ static Type *lookup_struct_field_type(Id *struct_name, Id *field) {
 */
 
 /* Unwrap wrapper types to get the underlying type (struct/array/slice) */
+static Type *resolve_type_alias(Type *t);
 static Type *sema_unwrap_type(Type *t) {
     while (t) {
         // With the new OwnershipMode system, we only unwrap pointer/comptime
         // The mode is just a field on the type, not a wrapper
         if (t->kind == TYPE_POINTER) t = t->element_type;
         else if (t->kind == TYPE_COMPTIME) t = t->element_type;
+        // An alias of an ARRAY type (`type Buf4 = u8[K]`) is the array: indexing, `.len` and a
+        // literal's length all read it through here. A scalar alias stays itself, since its
+        // refinement is enforced on the name.
+        else if (t->kind == TYPE_SIMPLE) { Type *a = resolve_type_alias(t); if (a && a != t && a->kind == TYPE_ARRAY) t = a; else break; }
         else break;
     }
     return t;
@@ -3122,9 +3127,22 @@ void sema_infer_expr(Expr *e) {
         diagnostic_show_line(e->line, e->col); exit(1);
     }
     Expr *lo = range->as.range_expr.start, *hi = range->as.range_expr.end;
-    if (!lo || lo->kind != EXPR_LITERAL || !hi || hi->kind != EXPR_LITERAL) {
-        fprintf(stderr, "sema error Ln %li, Col %li: array comprehension range bounds must be integer literals\n", e->line, e->col);
-        diagnostic_show_line(e->line, e->col); exit(1);
+    // The bounds give the array its LENGTH, so they are compile-time constants: a literal, or a
+    // constant expression (`0..N` with `N usize = 64`), folded to its literal here so that
+    // everything downstream reads a literal. Anything else is E137; this was an uncoded
+    // "sema error" that a harness grepping for codes could not see (Handwriting's M6).
+    {
+        bool lay = false; __int128 lv = 0, hv = 0;
+        bool ok = lo && hi && sa_is_const(lo, &lay) && sa_is_const(hi, &lay) && !lay
+                  && sa_eval(lo, &lv) && sa_eval(hi, &hv)
+                  && lv >= INT32_MIN && lv <= INT32_MAX && hv >= INT32_MIN && hv <= INT32_MAX;
+        if (!ok) {
+            fprintf(stderr, "[E137] Error Ln %li, Col %li: an array comprehension's range bounds give the "
+                    "array its length, so they must be compile-time constants\n", e->line, e->col);
+            diagnostic_show_line(e->line, e->col); exit(1);
+        }
+        if (lo->kind != EXPR_LITERAL) { Expr *l = expr_literal(sema_arena, (int64_t)lv); l->type = lo->type; l->line = lo->line; l->col = lo->col; range->as.range_expr.start = lo = l; }
+        if (hi->kind != EXPR_LITERAL) { Expr *h = expr_literal(sema_arena, (int64_t)hv); h->type = hi->type; h->line = hi->line; h->col = hi->col; range->as.range_expr.end = hi = h; }
     }
     isize n = (isize)hi->as.literal_expr.value - (isize)lo->as.literal_expr.value;
     if (range->as.range_expr.inclusive) n += 1;

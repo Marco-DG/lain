@@ -2475,8 +2475,9 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 // (fall through: a struct field literally named `data`)
             }
             if (m && m->length==3 && strncmp(m->name,"len",3)==0) {
-                if (tst && tst->kind==TYPE_ARRAY && tst->array_len>=0)
-                    return ir_const_int(c->f, c->cur, tst->array_len, ty);   // fixed array .len = N
+                Type *ust = sema_unwrap_type(tst);                    // an alias of an array type
+                if (ust && ust->kind==TYPE_ARRAY && ust->array_len>=0)
+                    return ir_const_int(c->f, c->cur, ust->array_len, ty);   // fixed array .len = N
                 // otherwise decide by the LOWERED target's IR type — robust to untyped
                 // refinement/size exprs (e.g. `src.len - 1` in `i32[src.len - 1]`).
                 IrValue *s = ir_lower_expr(c, tgt);

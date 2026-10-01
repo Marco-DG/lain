@@ -1,0 +1,10 @@
+// A comprehension's bounds give the array its length, so they are compile-time constants: a
+// constant expression is as good as a literal (`0..N` with `N usize = 4`), at module scope and in
+// a function. Values checked at run time.
+N usize = 4
+T u8[4] = [i * 2 for i in 0..N]
+func main() i32 {
+    a = [i + 1 for i in 0..N]
+    if T[3] != 6 or a[3] != 4 or a.len != 4 { return 1 }
+    return 0
+}

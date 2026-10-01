@@ -63,6 +63,15 @@ at=pure 2
 rc=0
 out=5 3 4 5
 ty=Slice_u8 scalar
+### tests/declarations/array_type_alias_pass.ln
+rc=0
+out=
+at=nonnull 4
+at=pure 4
+ty=Holder struct
+### tests/declarations/comprehension_constant_bounds_pass.ln
+rc=0
+out=
 ### tests/declarations/const_global_pass.ln
 rc=0
 out=MASK=3 FLAGS[2]=3
@@ -80,6 +89,9 @@ ty=Slice_u8 scalar
 rc=0
 out=x=42 y=10
 ty=Slice_u8 scalar
+### tests/declarations/local_array_constant_length_pass.ln
+rc=0
+out=
 ### tests/declarations/single_line_comma_decl_pass.ln
 rc=10
 out=
@@ -1541,6 +1553,9 @@ at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/module_comprehension_cast_pass.ln
+rc=0
+out=
 ### tests/trust/module_comprehension_table_pass.ln
 rc=0
 out=

@@ -1,0 +1,10 @@
+// A local array whose length is a constant expression is a FIXED array of that length: the
+// literal is checked against it, `.len` is the constant, and an index below it proves. Values
+// checked at run time.
+K usize = 4
+func main() i32 {
+    var a u8[K] = [1, 2, 3, 4]
+    a[3] = 9
+    if a.len != 4 or a[3] != 9 or a[0] != 1 { return 1 }
+    return 0
+}
