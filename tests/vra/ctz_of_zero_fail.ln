@@ -1,0 +1,6 @@
+// EXPECT: [E015]
+// @ctz and @clz of 0 are undefined (the C is __builtin_ctz, and bsf leaves its destination
+// unchanged), so their argument owes what a divisor owes: proof that it is not zero. Nothing
+// asked for it, and `tz(0)` returned whatever the register held (soundness harness).
+func tz(x u32) u32 { return @ctz(x) }
+func main() i32 { return tz(0) as i32 }

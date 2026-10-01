@@ -75,8 +75,19 @@ static IrFunc *ii_cur_f = NULL;
 static void ii_stop(int status) __attribute__((noreturn));
 static void ii_stop(int status) { ist->status = status; longjmp(ist->stop, 1); }
 static void ii_fail(int status, const char *kind, IrInstr *at, const char *fmt, ...) __attribute__((noreturn));
+// A caller that classifies failures itself (the soundness harness) sets ii_quiet and reads ii_why,
+// the last failure's message: its kind, then what happened ("PROOF FAILED: division by zero ...").
+static bool ii_quiet = false;
+static char ii_why[256];
 static void ii_fail(int status, const char *kind, IrInstr *at, const char *fmt, ...) {
     if (status == 97 && ist->budget_is_callers) ii_stop(status);
+    int n = snprintf(ii_why, sizeof ii_why, "%s", kind);
+    if (fmt && n >= 0 && n < (int)sizeof ii_why) {
+        va_list ap; va_start(ap, fmt);
+        snprintf(ii_why + n, sizeof ii_why - (size_t)n, ": ");
+        vsnprintf(ii_why + n + 2, sizeof ii_why - (size_t)n - 2, fmt, ap); va_end(ap);
+    }
+    if (ii_quiet) ii_stop(status);
     fprintf(stderr, "%s: %s", ist->who ? ist->who : "lain --interpret", kind);
     if (at && at->line) fprintf(stderr, " at %s:%lld:%lld", ist->file ? ist->file : "?",
                                 (long long)at->line, (long long)at->col);
@@ -204,6 +215,29 @@ static IVal *ii_val(IrValue *v, IrInstr *at) {
     return &ii_frame->v[v->id];
 }
 static void ii_set(IrValue *r, const IVal *x) { if (r && r->id >= 0 && r->id < ii_frame->nv) iv_copy(&ii_frame->v[r->id], x, false); }
+
+// A value LANDING in a place of another integer type: a store into a slot, an argument into its
+// parameter, a returned value into the result, a field, a payload. The IR states no cast there
+// (the conversion is implicit, and so is C's), but the analysis owes it as a narrowing
+// (vra_check_narrow), so it is a discharged proof like any other and is checked here. Without
+// this the interpreter carried the out-of-range value on unchecked: `(x as% i32) - 2147483646`
+// returned from an i32 function printed -2147483651 here and 2147483645 from the C, and as an
+// exit status both were 253, so the false proof showed only where a program happened to print it
+// (found with the per-operation soundness harness). Now it stops at the line that owed the
+// proof. Inside `unsafe` the conversion is C's: it wraps.
+static void ii_land(IVal *v, const IrType *vt, const IrType *dt, IrInstr *at) {
+    if (!v || v->k != IV_INT || !vt || !dt || vt->kind != IRT_INT || dt->kind != IRT_INT) return;
+    if (vt->bits == dt->bits && vt->is_signed == dt->is_signed) return;
+    __int128 x = iv_get(v, (IrType *)vt, at);
+    if (it_fits(x, dt)) return;
+    if (at && at->unchecked) { iv_int(v, it_wrap(x, (IrType *)dt)); return; }
+    char b[48]; int n = 0, j = 0; unsigned __int128 u = x < 0 ? -(unsigned __int128)x : (unsigned __int128)x;
+    char t[48]; do { t[n++] = (char)('0' + (int)(u % 10)); u /= 10; } while (u);
+    if (x < 0) b[j++] = '-';
+    while (n) b[j++] = t[--n];
+    b[j] = 0;
+    II_PROOF(at, "%s lands in a %s%d, which cannot hold it (proven to fit)", b, dt->is_signed ? "i" : "u", dt->bits);
+}
 
 static IrFunc *ii_find(const IrName *n) {
     if (!n) return NULL;
@@ -649,6 +683,7 @@ static void ii_exec(IrInstr *ins) {
                 return;
             }
             iv_free_owned(c); iv_copy(c, v, true);
+            ii_land(c, vt, pt && pt->kind == IRT_PTR ? pt->elem : NULL, ins);
             return;
         }
         case IR_FIELD_PTR: {
@@ -728,14 +763,19 @@ static void ii_exec(IrInstr *ins) {
                 if (ft && ft->kind == IRT_ARRAY && v->k == IV_PTR) {        // copy the array it points at
                     IVal *f = &r.e[k]; f->k = IV_AGG; f->n = (int32_t)ft->array_len; f->e = iv_elems(f->n, false);
                     for (int j = 0; j < f->n; j++) { IPtr q = v->p; q.p[q.d - 1] += j; iv_copy(&f->e[j], ip_cell(&q, ins), false); }
-                } else iv_copy(&r.e[k], v, false);
+                } else { iv_copy(&r.e[k], v, false); ii_land(&r.e[k], ii_ty(ins->operands[k]), ft, ins); }
             }
             break;
         }
         case IR_SUM_NEW: {
             int n = ins->n_operands;
             r.k = IV_SUM; r.n = ins->aux.sum.variant; r.len = n; r.e = iv_elems(n, false);
-            for (int k = 0; k < n; k++) iv_copy(&r.e[k], ii_val(ins->operands[k], ins), false);
+            const IrType *pl = (rt && rt->kind == IRT_SUM && r.n >= 0 && r.n < rt->n_fields) ? rt->fields[r.n] : NULL;
+            for (int k = 0; k < n; k++) {
+                iv_copy(&r.e[k], ii_val(ins->operands[k], ins), false);
+                const IrType *ft = !pl ? NULL : pl->kind == IRT_STRUCT ? (k < pl->n_fields ? pl->fields[k] : NULL) : (k == 0 ? pl : NULL);
+                ii_land(&r.e[k], ii_ty(ins->operands[k]), ft, ins);
+            }
             break;
         }
         case IR_SUM_TAG: {
@@ -782,6 +822,11 @@ static void ii_exec(IrInstr *ins) {
             int na = ins->n_operands - a0;
             IVal *args = ii_tmp(sizeof(IVal) * (size_t)(na > 0 ? na : 1));
             for (int k = 0; k < na; k++) iv_copy(&args[k], ii_val(ins->operands[a0 + k], ins), false);
+            if (g) {                                               // each argument lands in its parameter
+                int k = 0;
+                for (IrParam *pp = g->params; pp && k < na; pp = pp->next, k++)
+                    ii_land(&args[k], ii_ty(ins->operands[a0 + k]), pp->value ? pp->value->type : NULL, ins);
+            }
             if (!g) {
                 if (ins->aux.callee && ii_name_is(ins->aux.callee, "panic")) { fflush(stdout); ii_stop(134); }
                 II_UNSUP(ins, "a call to %.*s, which the module does not define", ins->aux.callee ? (int)ins->aux.callee->length : 1, ins->aux.callee ? ins->aux.callee->name : "?");
@@ -850,7 +895,11 @@ static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
             b = to; continue;
         }
         if (t->kind == IR_TERM_RET) {
-            if (t->cond) iv_copy(ret, ii_val(t->cond, NULL), false); else ret->k = IV_UNIT;
+            if (t->cond) {
+                iv_copy(ret, ii_val(t->cond, NULL), false);
+                IrInstr where; memset(&where, 0, sizeof where); where.line = t->line; where.col = t->col;
+                ii_land(ret, t->cond->type, f->ret_type, &where);   // the result lands in the return type
+            } else ret->k = IV_UNIT;
             break;
         }
         ii_fail(99, "PROOF FAILED", NULL, "control reached a point the compiler marked unreachable");

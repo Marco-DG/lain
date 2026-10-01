@@ -150,7 +150,11 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 }
                 n++; break;
             case VRA_DIVZERO:
-                ir_diag(file, c->line, c->col, "E015", "divisor is not provably non-zero");
+                if (c->bitcount)
+                    ir_diag(file, c->line, c->col, "E015",
+                            "the argument of @ctz/@clz is not provably non-zero (counting the zero bits of 0 is undefined)");
+                else
+                    ir_diag(file, c->line, c->col, "E015", "divisor is not provably non-zero");
                 n++; break;
             case VRA_PRECOND:
                 if (c->diag == 85)

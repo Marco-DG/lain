@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// `as%` from u32 to i32 is a reinterpretation: 4294967291 is -5. The range analysis followed a
+// cast back to its source whenever the destination was at least as wide and signed, as if it
+// kept the value, so the cast read as [0, 2^31) and the subtraction below was proven to fit an
+// i32 although -5 - 2147483646 does not (soundness harness).
+func g(x u32 >= 4294967291) i32 {
+    return (x as% i32) - 2147483646
+}
+func main() i32 { return g(4294967291) }

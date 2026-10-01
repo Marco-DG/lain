@@ -469,7 +469,8 @@ its relation to the operands is dropped.
 \pnum
 \textbf{Beyond the domain.} Facts the octagon cannot hold are computed alongside and handed
 back as bounds: a running total's range as the loop's trip count times its step; a divisor's
-non-zero-ness from a \lain{!= 0} refinement or guard; a remainder's and a logical shift's bound
+non-zero-ness, and that of the argument of \lain{@ctz} and \lain{@clz}, from a \lain{!= 0}
+refinement or guard; a remainder's and a logical shift's bound
 by their operand; the range of \lain{@movemask}.
 
 \pnum

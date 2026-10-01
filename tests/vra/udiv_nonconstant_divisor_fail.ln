@@ -1,0 +1,12 @@
+// EXPECT: [E015]
+// A quotient by a divisor that is not a constant is at most the dividend over the SMALLEST
+// divisor and at least the dividend over the LARGEST. The analysis used 1 for both, so `15 / y`
+// with y = 39 was "at least 15": the branch below looked dead and the division by zero in it was
+// proven. It compiled and died with SIGFPE (found by the per-operation soundness harness,
+// src/tools/soundness_driver.c). The quotient is 0 here; the branch runs.
+func q(x u8 >= 15 and <= 15, y u8 >= 39 and <= 39) u8 {
+    r = x / y
+    if r != 15 { return 5 / (r - r) }
+    return r
+}
+func main() i32 { return q(15, 39) as i32 }

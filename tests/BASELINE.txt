@@ -2306,6 +2306,10 @@ rc=0
 out=
 at=nonnull 2
 at=pure 2
+### tests/vra/ctz_guarded_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/vra/div_guard_strict_pass.ln
 rc=0
 out=
@@ -2786,6 +2790,10 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
+### tests/vra/srem_negative_divisor_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/vra/struct_field_cell_pass.ln
 rc=0
 out=
@@ -2805,6 +2813,10 @@ out=
 at=access 2
 at=nonnull 2
 ty=Slice_i32 scalar
+### tests/vra/udiv_nonconstant_divisor_pass.ln
+rc=0
+out=
+at=const 6
 ### tests/vra/while_and_conjunct_pass.ln
 rc=0
 out=

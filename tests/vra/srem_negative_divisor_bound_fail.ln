@@ -1,0 +1,10 @@
+// EXPECT: [E015]
+// 127 % -128 is 127: the remainder's bound is the divisor's MAGNITUDE less one, and the
+// analysis used its upper bound (127) instead, so `r > 126` looked impossible and the division
+// by zero under it was proven. It died with SIGFPE (soundness harness).
+func h(x i8 >= 120, y i8 <= 0 - 100) i8 {
+    r = x % y
+    if r > 126 { return 5 / (r - r) }
+    return r
+}
+func main() i32 { return h(127, 0 - 128) as i32 }

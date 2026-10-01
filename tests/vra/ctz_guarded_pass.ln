@@ -1,0 +1,13 @@
+// @ctz and @clz with their argument proven non-zero, by a guard and by a `!= 0` type; values
+// checked at run time.
+type NonZero = u32 != 0
+func first_match(bits u32) u32 {
+    if bits == 0 { return 32 }             // a mask with no match has no first lane
+    return @ctz(bits)
+}
+func top(x NonZero) u32 { return 31 - @clz(x) }
+func main() i32 {
+    if first_match(0) != 32 or first_match(40) != 3 { return 1 }
+    if top(1) != 0 or top(4096) != 12 { return 2 }
+    return 0
+}

@@ -721,6 +721,25 @@ mask, the lanes where the comparison held.
 \end{constraint}
 
 \pnum
+\lain{@popcount(x)}, \lain{@ctz(x)} and \lain{@clz(x)} take an integer and give a \lain{u32}:
+the number of bits of \lain{x} that are set, the number of zero bits below its lowest set bit,
+and the number above its highest, counted in \lain{x}'s width. With \lain{@movemask} they scan a
+mask: \lain{@ctz} of a mask is its first matching lane.
+
+\begin{constraint}
+  The argument of \lain{@ctz} and of \lain{@clz} shall be provably non-zero, as a divisor shall:
+  from its type, its range or a guard (\diagcode{E015}). Neither count is defined for 0, which
+  is the mask of a comparison that matched no lane.
+\end{constraint}
+
+\begin{laincode}
+func first_match(bits u32) u32 {
+    if bits == 0 { return 32 }      // no lane matched
+    return @ctz(bits)
+}
+\end{laincode}
+
+\pnum
 \lain{@shuffle(t, idx)} is a table lookup: lane \lain{k} of the result is
 \lain{t[idx[k]]} when \lain{idx[k] < N}, and 0 otherwise. It is total: an index out of range
 reads 0, never another lane and never an undefined value, so it states no obligation. This is

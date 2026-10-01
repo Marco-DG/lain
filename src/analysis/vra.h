@@ -140,6 +140,7 @@ typedef struct {
     // 2 = a signed left shift may carry a bit into/through the sign. Both are UB in the C the
     // backend emits, and each needs its own sentence.
     int      shift;
+    bool     bitcount;       // a VRA_DIVZERO check on the argument of @ctz/@clz, not a divisor
     int      diag;           // VRA_PRECOND: the assert's diagnostic class (85/86/87; 0 = E012)
     int64_t  line, col;
 } VraCheck;
@@ -1392,10 +1393,23 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             // fact that makes `a[@popcount(mask)]` provable without a runtime check. Modelled
             // as an op rather than an opaque call precisely so this range is free.
             if (r<0) break;
-            oct_forget(W, r);
             const IrType *at = ins->operands[0] ? ins->operands[0]->type : NULL;
             int width = (at && at->kind==IRT_INT && at->bits>0 && at->bits<=64) ? at->bits : 32;
-            oct_add_lb(W, r, 0); oct_add_ub(W, r, width);
+            int64_t xlo = INT64_MIN, xhi = INT64_MAX;
+            if (ins->operands[0]) vra_range(V, W, ins->operands[0], &xlo, &xhi);
+            oct_forget(W, r);
+            int64_t lo = 0, hi = width;
+            // @ctz/@clz owe a non-zero argument (vra_check_bitcount), so in any defined execution
+            // they count at most width - 1 zeros; and @clz is monotone in a positive argument: the
+            // larger it is, the fewer leading zeros. (`31 - @clz(x)` for x != 0 is then provable.)
+            #define VRA_BITLEN(v) (64 - __builtin_clzll((unsigned long long)(v)))
+            if (ins->op != IR_POPCOUNT) hi = width - 1;
+            if (ins->op == IR_CLZ && xlo >= 1 && xhi < ((int64_t)1 << (width < 63 ? width : 62))) {
+                lo = width - VRA_BITLEN(xhi); hi = width - VRA_BITLEN(xlo);
+            }
+            if (ins->op == IR_POPCOUNT && xlo >= 0 && xhi >= 0) { int64_t b = xhi ? VRA_BITLEN(xhi) : 0; if (b < hi) hi = b; }
+            #undef VRA_BITLEN
+            oct_add_lb(W, r, lo); oct_add_ub(W, r, hi);
             break;
         }
         case IR_AND: {   // x & c  with c ≥ 0 constant  ⇒  0 ≤ r ≤ c   (mask idiom c=N−1)
@@ -1432,7 +1446,21 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             oct_close(W);                                  // the dividend's interval, relationally
             int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
             oct_forget(W, r);
-            vra_div_facts(V, W, r, a, (V->cknown[b] && V->cval[b]>0) ? V->cval[b] : 1, alo,hl,ahi,hh);
+            if (V->cknown[b] && V->cval[b]>0) { vra_div_facts(V, W, r, a, V->cval[b], alo,hl,ahi,hh); break; }
+            // ★ A DIVISOR THAT IS NOT A CONSTANT. This passed 1 as the divisor, and vra_div_facts
+            // states both bounds for EXACTLY that divisor: `r ≤ hi(x)/1` holds for every divisor
+            // ≥ 1, but `r ≥ lo(x)/1` holds for 1 alone, so `15 / y` with y = 39 was "at least
+            // 15". A branch on the quotient then looked dead, and anything in it was proven: a
+            // division by zero there compiled and died with SIGFPE (found by the per-operation
+            // soundness harness, src/tools/soundness_driver.c). The quotient is largest at the
+            // smallest divisor and smallest at the largest, so each bound takes its own end.
+            int64_t Blo, Bhi; vra_range(V, W, ins->operands[1], &Blo, &Bhi);
+            if (Blo < 1) Blo = 1;                          // b = 0 is the separate obligation
+            oct_add_lb(W, r, 0);
+            vra_add_diff_le(V,W, r, a, 0);                 // r ≤ x: every divisor is at least 1
+            if (hh && ahi >= 0) oct_add_ub(W, r, ahi / Blo);
+            if (hl && alo >= 0 && Bhi >= 1) oct_add_lb(W, r, alo / Bhi);
+            if (Blo >= 2 && hl && alo >= 1) vra_add_diff_le(V,W, r, a, -1);   // r ≤ x − 1
             break;
         }
         case IR_SDIV: {  // signed x / c — for x ≥ 0 and c > 0 (the common index idiom
@@ -1495,8 +1523,21 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (V->cknown[b] && V->cval[b]>0){
                 int64_t c=V->cval[b];
                 oct_add_lb(W,r, (hl&&alo>=0)?0:-(c-1)); oct_add_ub(W,r,c-1);
-            } else if (hl && alo>=0) {                     // non-const divisor, a ≥ 0, b > 0 in
-                oct_add_lb(W,r,0); vra_add_diff_le(V,W,r,b,-1);   // any defined exec ⇒ 0 ≤ r < b
+            } else if (hl && alo>=0) {                     // a ≥ 0: the remainder is ≥ 0, and below |b|
+                // ★ NOT `r < b`. That was stated on "b > 0 in any defined exec", which is true of
+                // an UNSIGNED remainder only: a signed divisor need only be non-zero, and 5 % -3
+                // is 2. With b negative `r < b` and `r ≥ 0` are contradictory, so the state after
+                // the remainder was EMPTY and every later obligation was vacuously proven
+                // (`(x % y) + 32767` on an i16 compiled; and 127 % -128 = 127 was "at most 126").
+                // Found by the per-operation soundness harness.
+                oct_add_lb(W,r,0);
+                int64_t Blo, Bhi; vra_range(V, W, ins->operands[1], &Blo, &Bhi);
+                if (Blo >= 1) vra_add_diff_le(V,W,r,b,-1);        // a positive divisor: r < b
+                else {
+                    __int128 mb = Blo < 0 ? -(__int128)Blo : (__int128)Blo, mb2 = Bhi < 0 ? -(__int128)Bhi : (__int128)Bhi;
+                    if (mb2 > mb) mb = mb2;
+                    if (mb >= 1 && mb - 1 <= INT64_MAX) oct_add_ub(W, r, (int64_t)(mb - 1));   // r < |b|
+                }
             } else {
                 // ★ The general remainder (DECIDE-M): it takes the dividend's sign, and its
                 // magnitude is below both |b| and |a| + 1. Needed once `%` is computed in i64 and
@@ -2211,6 +2252,10 @@ static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) 
         if (!st || !dt || st->kind != IRT_INT || dt->kind != IRT_INT) break;
         if (st->bits > dt->bits) break;                       // a narrowing changes the value
         if (st->is_signed && !dt->is_signed) break;           // signed -> unsigned may not
+        // ...and unsigned -> signed only when it WIDENS: at the same width `u32 4294967295 as%
+        // i32` is -1, and this loop intersected the result with [0, 2^32) as if it were
+        // value-preserving, so `(x as% i32) - 2147483646` was proven to fit (soundness harness).
+        if (!st->is_signed && dt->is_signed && st->bits >= dt->bits) break;
         src = d->operands[0];
         int64_t slo, shi;
         if (!irtype_int_range(st, &slo, &shi)) break;
@@ -2658,6 +2703,24 @@ static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
     { IrType *dt = dv ? dv->type : NULL;                     // a `!= 0` TYPE is a proof by itself
       if (!c.ok && dt && dt->has_ne && dt->refine_ne == 0) c.ok = true; }
     if (!c.ok && dv) c.ok = vra_guarded_nonzero(V, at, dv->id);
+    vra_add_check(V, c);
+}
+
+// @ctz / @clz OF ZERO. The C is __builtin_ctz / __builtin_clz, undefined at 0 (bsf leaves its
+// destination unchanged), and the interpreter calls it a failed proof, but nothing asked for one:
+// `@ctz(x)` over any u32 compiled, and `tz(0)` returned whatever the register held. The argument
+// owes exactly what a divisor owes, from the same three sources (found by the per-operation
+// soundness harness, src/tools/soundness_driver.c).
+static void vra_check_bitcount(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
+    if (ins->n_operands < 1 || ins->unchecked) return;      // `unsafe` waives it, as for a divisor
+    int64_t lo, hi; vra_range(V, W, ins->operands[0], &lo, &hi);
+    VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_DIVZERO; c.at=ins; c.line=ins->line; c.col=ins->col;
+    c.bitcount = true;
+    c.ok = (lo>0) || (hi<0);                                // 0 ∉ [lo,hi]
+    IrValue *xv = ins->operands[0];
+    IrType *xt = xv ? xv->type : NULL;                      // a `!= 0` type
+    if (!c.ok && xt && xt->has_ne && xt->refine_ne == 0) c.ok = true;
+    if (!c.ok && xv) c.ok = vra_guarded_nonzero(V, at, xv->id);   // a guard on the path
     vra_add_check(V, c);
 }
 
@@ -4294,6 +4357,7 @@ static Vra *vra_analyze(IrFunc *f) {
                     break;
                 }
                 case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: oct_close(&W); vra_check_divzero(V,&W,ins,b); break;
+                case IR_CTZ: case IR_CLZ: oct_close(&W); vra_check_bitcount(V,&W,ins,b); break;
                 default: break;
             }
             vra_transfer_instr(V,&W,ins);

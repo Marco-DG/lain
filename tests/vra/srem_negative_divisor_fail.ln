@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// A signed remainder takes the dividend's sign and is below |divisor|; a negative divisor is
+// allowed (only zero is not). The analysis stated `r < y` as if the divisor were positive, and
+// with y negative that contradicts `r >= 0`: the state after `x % y` was EMPTY, so the sum below
+// was proven to fit although 7 + 32767 does not (soundness harness).
+func f(x i16 >= 0 and <= 39, y i16 >= 0 - 15436 and <= 0 - 15436) i16 {
+    return (x % y) + 32767
+}
+func main() i32 { return f(7, 0 - 15436) as i32 }

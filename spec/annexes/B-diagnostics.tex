@@ -201,9 +201,10 @@ Diagnostic codes are divided into the following ranges:
 
 \diagcode{E015}
   & \S\,\ref{sec:expr.arith}
-  & \textit{division by zero} ---
-    Issued when VRA can prove statically that a division or modulo
-    expression has a zero divisor.
+  & \textit{a value that must be non-zero is not provably so} ---
+    The divisor of a division or remainder, or the argument of \lain{@ctz} or \lain{@clz}
+    (\S\,\ref{sec:types.vector}), when neither its type, its range nor a guard shows it is
+    not zero.
     \\[4pt]
 
 \end{longtable}

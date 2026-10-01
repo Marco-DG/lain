@@ -1,0 +1,19 @@
+// The bounds a quotient by a non-constant divisor does have: below the dividend over the smallest
+// divisor, at least the dividend over the largest, never above the dividend, and below it once
+// the divisor is at least 2. Values checked at run time (the companion _fail test is the bound
+// that was false).
+func avg(total u32 <= 1000, count u32 >= 1 and <= 10) u32 { return total / count }
+func half_or_less(x u32 >= 1 and <= 100, d u32 >= 2 and <= 8) u32 {
+    r = x / d
+    return x - r - 1                       // r <= x - 1 is proven, so this cannot underflow
+}
+func at_least(x u32 >= 100 and <= 200, d u32 >= 1 and <= 4) u32 {
+    r = x / d
+    return r - 25                          // r >= 100 / 4 = 25 is proven
+}
+func main() i32 {
+    if avg(1000, 3) != 333 { return 1 }
+    if half_or_less(100, 2) != 49 { return 2 }
+    if at_least(100, 4) != 0 { return 3 }
+    return 0
+}

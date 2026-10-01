@@ -118,8 +118,12 @@ static bool mask_index_proven(int mask, int alen) {
 // A bit intrinsic is bounded by its OPERAND's width, for ANY input: @popcount(x) on a u32
 // is in [0,32]. Modelling ctz/clz/popcount as IR ops rather than opaque calls is what makes
 // `a[@popcount(x)]` provable with no runtime check — and refusable when the array is too
-// small, which is the soundness half.
-static bool bitcount_index_proven(IrOp op, int opbits, int alen) {
+// small, which is the soundness half. @ctz/@clz OWE a non-zero argument (E015, undefined at 0),
+// so in an accepted program they count at most width - 1; *nonzero_ok is that obligation's
+// verdict, and the index's verdict assumes it, as the analysis does.
+static bool bitcount_index_proven2(IrOp op, int opbits, int alen, bool *nonzero_ok);
+static bool bitcount_index_proven(IrOp op, int opbits, int alen) { bool nz; return bitcount_index_proven2(op, opbits, alen, &nz); }
+static bool bitcount_index_proven2(IrOp op, int opbits, int alen, bool *nonzero_ok) {
     IrFunc *f=ir_func_new(&A,nm("bc"),ir_type_int(&A,32,true),IR_FUNC_PROC);
     IrType *ub=ir_type_int(&A,opbits,false), *u32=ir_type_int(&A,32,false), *i32=ir_type_int(&A,32,true);
     IrValue *x=ir_add_param(f,ub,nm("x"));
@@ -128,8 +132,11 @@ static bool bitcount_index_proven(IrOp op, int opbits, int alen) {
     IrValue *idx=ir_bitcount(f,e,op,x,u32);
     ir_elem_ptr(f,e,a,idx,i32);
     ir_set_ret(e,NULL); ir_finalize_cfg(f);
-    Vra *V=vra_analyze(f); bool ok=false;
-    for(int i=0;i<V->nchecks;i++) if(V->checks[i].kind==VRA_BOUNDS) ok=V->checks[i].ok;
+    Vra *V=vra_analyze(f); bool ok=false; *nonzero_ok=true;
+    for(int i=0;i<V->nchecks;i++) {
+        if(V->checks[i].kind==VRA_BOUNDS) ok=V->checks[i].ok;
+        if(V->checks[i].kind==VRA_DIVZERO && V->checks[i].bitcount && !V->checks[i].ok) *nonzero_ok=false;
+    }
     vra_free(V); return ok;
 }
 
@@ -661,7 +668,13 @@ int main(void) {
     vra_expect("a[@popcount(u32 x)] over a[33] (0..32 < 33)", bitcount_index_proven(IR_POPCOUNT,32,33), true);
     vra_expect("a[@popcount(u32 x)] over a[32] (32 escapes)", bitcount_index_proven(IR_POPCOUNT,32,32), false);
     vra_expect("a[@ctz(u8 x)] over a[9]      (0..8 < 9)",     bitcount_index_proven(IR_CTZ,8,9),        true);
-    vra_expect("a[@clz(u8 x)] over a[8]      (8 escapes)",    bitcount_index_proven(IR_CLZ,8,8),        false);
+    // @clz(0) is undefined, not 8: the argument owes `x != 0` (E015), so the index ranges over
+    // 0..7 and fits a[8]; the program is refused by that obligation when x may be 0, which it
+    // may here. And clz(1) = 7 still escapes a[7].
+    { bool nz; bool ix = bitcount_index_proven2(IR_CLZ,8,8,&nz);
+      vra_expect("a[@clz(u8 x)] over a[8]: index (0..7 < 8)",  ix, true);
+      vra_expect("...but @clz(x), x may be 0: owes x != 0",    nz, false); }
+    vra_expect("a[@clz(u8 x)] over a[7]      (7 escapes)",    bitcount_index_proven(IR_CLZ,8,7),        false);
     vra_expect("reverse a[(N-1)-i] over a[10]  (i<10)",       reverse_fixed_proven(10), true);
     vra_expect("nested loops: a[j] under j<N (2 headers)",    nested_loop_proven(10),   true);
     // TERMINATION — a func's loops must drain their bound.

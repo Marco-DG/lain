@@ -1,0 +1,11 @@
+// A signed remainder by a divisor of either sign: non-negative for a non-negative dividend, and
+// below the divisor's magnitude. Values checked at run time.
+func r(x i32 >= 0 and <= 1000, y i32 >= 0 - 7 and <= 0 - 3) i32 {
+    m = x % y
+    return m + 2147483641                  // m <= 6 is proven
+}
+func main() i32 {
+    if r(20, 0 - 7) != 2147483647 { return 1 }   // 20 % -7 = 6
+    if r(20, 0 - 3) != 2147483643 { return 2 }   // 20 % -3 = 2
+    return 0
+}

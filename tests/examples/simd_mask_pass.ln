@@ -9,8 +9,13 @@ func main() i32 {
 
     var bits  u32 = @movemask(d == s)   // inline compare → mask → bitmask
     var count u32 = @popcount(bits)     // 8 matches
-    var first u32 = @ctz(bits)          // first match at lane 0
-    var lead  u32 = @clz(bits)          // leading zeros of the 32-bit mask
+    // @ctz and @clz of 0 are undefined, and a mask with no match is 0: guard, as a scan does.
+    var first u32 = 32
+    var lead  u32 = 32
+    if bits != 0 {
+        first = @ctz(bits)              // first match at lane 0
+        lead = @clz(bits)               // leading zeros of the 32-bit mask
+    }
 
     // wrapping add avoids a scalar overflow proof on full-range u32 counts
     return (count +% first +% lead) as i32
