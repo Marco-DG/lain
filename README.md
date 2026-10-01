@@ -165,18 +165,18 @@ Nothing in the Lain source asked for `pure`, `nonnull` or `restrict`, and nothin
 length to be passed separately. Each one is a fact the analyses established.
 
 Change `<` to `<=` and the fact becomes `%7 − %5 ≤ 0`. The index can now equal the length, so
-the bounds obligation no longer holds and the program is rejected:
+the bounds obligation no longer holds and the program is rejected — twice:
 
 ```
-[E085] bounds error: cannot prove index is within bounds for dynamic-length array
-  --> bytes.ln:4:13
-   |
- 4 |         if haystack[i] == target { return i }
-   |             ^
-       index `i`: range [0, MAX]
-       array `haystack`: length [unknown]
-       hint: use `for i in 0..arr.len`, a fixed-length type `[N]`, or a `p in arr` guard
+[E085] Error Ln 4, Col 12: index is not provably within bounds
+  --> bytes.ln:4:12
+[E086] Error Ln 5, Col 13: arithmetic is not provably free of overflow
+  --> bytes.ln:5:13
 ```
+
+The second is not noise, and it is the more interesting of the two. Once `i` may reach the
+length, nothing bounds it any more, so at the maximum length `i = i + 1` can overflow — a
+separate obligation, broken by the same character.
 
 The analyses in the chapters below depend on one another. Because the borrow checker guarantees
 a mutable borrow is exclusive, the numeric analysis can keep a fact about a value across a
