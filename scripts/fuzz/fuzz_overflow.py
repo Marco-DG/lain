@@ -9,10 +9,38 @@ a signed overflow at runtime in a program the engine proved check-free is unsoun
 
 Every generated function is called with the EXTREMES of its declared parameter ranges, so a
 proof that is wrong at the boundary is exercised rather than merely possible.
+
+ORACLES, and exactly what each one can see (corrected 2026-10-01 — the previous claim that
+"UBSan is an EXACT oracle for the signed case" was false for every type this generator used):
+
+  UBSan   sees UNDEFINED BEHAVIOUR IN THE EMITTED C, and nothing else. The backend deliberately
+          widens a narrow arithmetic op by one step — i8 computes in int16_t, i16 in int32_t,
+          i32 in int64_t — so for those three widths the C addition CANNOT overflow, and the only
+          narrowing is the implicit conversion on return, which is a conversion and not an
+          overflowing operation. UBSan therefore cannot fire for i8/i16/i32 at all. i64 is
+          emitted at its own width (`v = (v0 + v1)`), so it is the only width where a false proof
+          of an overflow obligation becomes C-level UB that UBSan reports.
+  the interpreter (`lain --interpret`) sees EVERY OBLIGATION THE ANALYSIS DISCHARGED, at the line
+          that owes it, because it carries abstract values and checks each proof as it is used.
+          This is the oracle that covers the narrow widths.
+  the output differential (C vs interpreter) sees a wrong VALUE even where neither of the above
+          fires: the emitted C wraps deterministically rather than committing UB, while the
+          interpreter carried the out-of-range value on, so the two legs printed different
+          numbers. Since 892f794 the interpreter also checks a narrowing where the value LANDS
+          (ii_land), so most such cases now stop at their line; the differential stays as defence
+          in depth.
+
+The lesson behind the correction: a harness must say which oracle covers which case, or a zero
+means only that nothing was watching.
 """
 import random, sys
 
-TYPES = {"i8": (-128, 127), "i16": (-32768, 32767), "i32": (-2147483648, 2147483647)}
+TYPES = {"i8": (-128, 127), "i16": (-32768, 32767), "i32": (-2147483648, 2147483647),
+         "i64": (-9223372036854775808, 9223372036854775807)}
+# i64 is here for the ORACLE, not for variety: see the oracle note above. The backend widens
+# an i8/i16/i32 arithmetic op one step (i8 -> int16_t, i16 -> int32_t, i32 -> int64_t), so the
+# C addition cannot overflow and UBSan can never fire. i64 is the one width emitted at its own
+# width (`v = (v0 + v1)`), so it is the only one where a false proof becomes C-level UB.
 
 def gen(rng):
     ty = rng.choice(list(TYPES))
