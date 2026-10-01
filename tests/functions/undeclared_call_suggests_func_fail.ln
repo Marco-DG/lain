@@ -1,0 +1,5 @@
+// EXPECT: [E127]
+// EXPECT-TEXT: Add an `extern func missing(...)` declaration
+// The hint named `extern proc` for a week after `proc` was removed (2026-09-25); following it
+// produced the removal error.
+func main() i32 { return missing(1) }

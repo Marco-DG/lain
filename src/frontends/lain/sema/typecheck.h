@@ -2471,7 +2471,7 @@ void sema_infer_expr(Expr *e) {
         bool is_panic = cn && cn->length == 5 && strncmp(cn->name, "panic", 5) == 0;
         if (cn && !is_panic && !(cty && cty->kind == TYPE_FUNC)) {
             fprintf(stderr, "[E127] Error Ln %li, Col %li: call to undeclared function '%.*s' — "
-                    "nothing in scope declares it. Add an `extern proc %.*s(...)` declaration, "
+                    "nothing in scope declares it. Add an `extern func %.*s(...)` declaration, "
                     "import the module that defines it, or fix the spelling.\n",
                     (long)e->line, (long)e->col, (int)cn->length, cn->name,
                     (int)cn->length, cn->name);

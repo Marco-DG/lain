@@ -135,6 +135,16 @@ run_test() {
                 return
             fi
         fi
+        # An optional `// EXPECT-TEXT: <text>` must appear in the output too. The code says which
+        # rule refused the program; the text says the message EXPLAINS it, and a message is the
+        # documentation a user reads when stuck. Nothing tested one before.
+        local etext
+        etext="$(grep -m1 -oE '// EXPECT-TEXT: .*' "$file" | sed 's|^// EXPECT-TEXT: ||')"
+        if [[ -n "$etext" ]] && ! echo "$out" | grep -qF -- "$etext"; then
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+            FAILED_TESTS+=("$file (expected the message to say: $etext)")
+            return
+        fi
         PASS_COUNT=$((PASS_COUNT + 1))
     else
         if [[ $rc -ne 0 ]]; then

@@ -3044,7 +3044,7 @@ static void walk_stmt(Stmt *s) {
                     Id *bid = base->kind == EXPR_IDENTIFIER ? base->as.identifier_expr.id : NULL;
                     fprintf(stderr, "[E009] Error Ln %li, Col %li: cannot mutate a field through a raw pointer "
                             "`*T`%s%.*s%s in safe code — `*T` is the unsafe/interop tool and is not borrow-checked. "
-                            "For in-place mutation take a `var` (mutable borrow) parameter, e.g. `proc f(var x T)`, "
+                            "For in-place mutation take a `var` (mutable borrow) parameter, e.g. `func f(var x T)`, "
                             "or wrap the write in an `unsafe` block.\n",
                             s->line, s->col,
                             bid ? " (`" : "", bid ? (int)bid->length : 0, bid ? bid->name : "", bid ? "`)" : "");
@@ -3655,7 +3655,7 @@ static EffectSet effect_full(Decl *d) {
 // F3.3 --dump-effects: print a function's inferred effect row.
 static void sema_print_effects(Decl *d) {
     Id *n = d->as.function_decl.name;
-    const char *kind = (d->kind == DECL_FUNCTION) ? "func" : "proc";
+    const char *kind = (d->kind == DECL_FUNCTION) ? "func" : "extern func";
     EffectSet e = d->as.function_decl.effects;
     fprintf(stderr, "[effects] %s %.*s : {", kind, n ? (int)n->length : 1, n ? n->name : "?");
     const char *sep = "";

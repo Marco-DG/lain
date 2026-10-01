@@ -41,8 +41,26 @@ for u in $UNITS; do
         bad=$((bad + $(echo "$out" | wc -l)))
     fi
 done
+# ── A REMOVED KEYWORD IN DIAGNOSTIC PROSE ────────────────────────────────────────────────
+# Diagnostic text is the documentation a user reads when stuck, and no other gate reads it:
+# readme_gate and spec_gate check documents and diagnostic CODES. E127 told users to write
+# `extern proc` for a week after `proc` was removed (2026-09-25), and three other strings named
+# it too. A string literal that names a removed keyword must be the message saying it was
+# removed. Exempt: the lexer, which recognises the keyword in order to say so, and the IR dump,
+# where `proc` is the IR's own word for an impure function, not Lain syntax.
+REMOVED_KEYWORDS='proc'
+prose=$(grep -rnE '"[^"]*\b('"$REMOVED_KEYWORDS"')\b[^"]*"' src --include=*.h --include=*.c \
+        | grep -vE '^[^:]+:[0-9]+:\s*//' | grep -vE 'removed|used to' \
+        | grep -vE '^src/ir/dump\.h:|^src/frontends/lain/token\.h:')
+nprose=0
+if [ -n "$prose" ]; then
+    echo "── diagnostic prose names a removed keyword ($REMOVED_KEYWORDS):"; echo "$prose" | head -8
+    nprose=$(echo "$prose" | wc -l)
+fi
 echo "=================================================================="
 if [ $bad -eq 0 ]; then echo "build warnings (correctness class): NONE"; else
     echo "build warnings (correctness class): $bad  ← each of these is undefined behaviour"; fi
+if [ $nprose -eq 0 ]; then echo "removed keywords in diagnostic prose: NONE"; else
+    echo "removed keywords in diagnostic prose: $nprose  ← a message tells the user to write it"; fi
 echo "=================================================================="
-[ $bad -eq 0 ]
+[ $bad -eq 0 ] && [ $nprose -eq 0 ]

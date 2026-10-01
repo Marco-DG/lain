@@ -2478,6 +2478,17 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
     // B1: the domain cannot bound a running total, because the bound is a PRODUCT of the trip
     // count and the step. Derive it outside the domain and hand back the interval.
     if (!c.ok) c.ok = vra_accum_info(V, W, val, &c, tlo, thi);
+    // NAME THE ONE CASE. A signed `/` below 64 bits is computed one bit wider, and its quotient
+    // fits the operands' type except TYPE_MIN / -1. Narrowed to a type that holds the operands'
+    // type, that is the only value that can fail, and "arithmetic is not provably free of
+    // overflow" did not say so: `b int != 0` reads like the whole precondition of `a / b`.
+    if (!c.ok && !c.accum && val->id >= 0 && val->id < V->nvar) {
+        IrInstr *d = V->def[val->id];
+        int64_t dlo, dhi;
+        if (d && d->op == IR_SDIV && d->n_operands >= 2 && d->operands[0] && d->operands[0]->type &&
+            irtype_int_range(d->operands[0]->type, &dlo, &dhi) && tlo <= dlo && dhi <= thi)
+            c.shift = 5;
+    }
     vra_add_check(V, c);
 }
 

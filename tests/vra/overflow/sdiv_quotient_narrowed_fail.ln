@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: the quotient TYPE_MIN / -1 does not fit here
+// spec: §8 — a signed `/` below 64 bits is computed one bit wider, so the division cannot
+// overflow; narrowing its quotient back to i32 fails for TYPE_MIN / -1 alone. `b i32 != 0`
+// excludes zero, not -1. The message said only "arithmetic is not provably free of overflow",
+// which left `!= 0` looking like the whole precondition of `a / b`.
+func safe_div(a i32, b i32 != 0) i32 { return a / b }
+
+func main() i32 { return safe_div(7, 2) }

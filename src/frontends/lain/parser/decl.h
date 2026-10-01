@@ -279,7 +279,7 @@ Decl *parse_decl(Arena* arena, Parser* parser)
             d = parse_extern_type_decl(arena, parser);
             goto done;
         }
-        parser_expect(TOKEN_KEYWORD_FUNC, "Expected 'func', 'proc', or 'type' after 'extern'");
+        parser_expect(TOKEN_KEYWORD_FUNC, "Expected 'func' or 'type' after 'extern'");
         return NULL;
     }
 
