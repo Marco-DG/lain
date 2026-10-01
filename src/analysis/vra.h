@@ -905,12 +905,19 @@ static void vra_interval(Vra *V, const Octagon *W, int id,
 //
 // Both are strictly more precise than the octagon form they replace — an exact value beats
 // any interval, and an absolute bound needs no closure step to become usable.
+// ★ IN 128 BITS. These were int64 subtractions, and a constant at the edge of i64 overflowed:
+// `0 - INT64_MIN` wrapped to INT64_MIN, so a cell holding 0 and a value of -2^63 were said to
+// satisfy `a - b <= -2^63` while a - b is 2^63 (found by checking the analysis's states against a
+// running program, --check-invariants, in four corpus programs; signed overflow is also undefined
+// in this compiler's own C). An upper bound beyond the domain's infinity is no bound; one below
+// int64 is weakened to INT64_MIN, still true.
+static int64_t vra_clamp_ub(__int128 d) { return d >= (__int128)OCT_INF ? OCT_INF : d < (__int128)INT64_MIN ? INT64_MIN : (int64_t)d; }
 static int64_t vra_diff_ub(Vra *V, const Octagon *W, int a, int b) {   // upper bound on a − b
     bool ac = (a>=0 && a<V->nvar && V->cknown[a]), bc = (b>=0 && b<V->nvar && V->cknown[b]);
-    if (ac && bc) return V->cval[a] - V->cval[b];
+    if (ac && bc) return vra_clamp_ub((__int128)V->cval[a] - V->cval[b]);
     int64_t lo,hi; bool hl,hh;
-    if (ac) { vra_interval(V,W,b,&lo,&hl,&hi,&hh); return hl ? V->cval[a]-lo : OCT_INF; }
-    if (bc) { vra_interval(V,W,a,&lo,&hl,&hi,&hh); return hh ? hi-V->cval[b] : OCT_INF; }
+    if (ac) { vra_interval(V,W,b,&lo,&hl,&hi,&hh); return hl ? vra_clamp_ub((__int128)V->cval[a]-lo) : OCT_INF; }
+    if (bc) { vra_interval(V,W,a,&lo,&hl,&hi,&hh); return hh ? vra_clamp_ub((__int128)hi-V->cval[b]) : OCT_INF; }
     return oct_get(W, oct_pos(b), oct_pos(a));
 }
 static void vra_add_diff_le(Vra *V, Octagon *W, int a, int b, int64_t c) {   // a − b ≤ c
@@ -1300,10 +1307,11 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                     vra_add_diff_le(V, W, lo_, r, 0);                   // r ≥ a
                 }
             }
-            if (isadd && bc)      { vra_add_diff_le(V,W,r,a,V->cval[b]); vra_add_diff_le(V,W,a,r,-V->cval[b]); }   // r=a+c (exact)
-            else if (isadd && ac) { vra_add_diff_le(V,W,r,b,V->cval[a]); vra_add_diff_le(V,W,b,r,-V->cval[a]); }
-            else if (!isadd && bc){ vra_add_diff_le(V,W,r,a,-V->cval[b]); vra_add_diff_le(V,W,a,r,V->cval[b]); }   // r=a-c (exact)
-            else if (!isadd && ac){ int64_t c=V->cval[a]; oct_add_sum_le(W,r,b,c); oct_add_negsum_le(W,r,b,-c); } // r=c-b ⇒ r+b=c
+            // (-INT64_MIN does not exist in int64: that half of the relation is left out.)
+            if (isadd && bc)      { vra_add_diff_le(V,W,r,a,V->cval[b]); if (V->cval[b] != INT64_MIN) vra_add_diff_le(V,W,a,r,-V->cval[b]); }   // r=a+c (exact)
+            else if (isadd && ac) { vra_add_diff_le(V,W,r,b,V->cval[a]); if (V->cval[a] != INT64_MIN) vra_add_diff_le(V,W,b,r,-V->cval[a]); }
+            else if (!isadd && bc){ if (V->cval[b] != INT64_MIN) vra_add_diff_le(V,W,r,a,-V->cval[b]); vra_add_diff_le(V,W,a,r,V->cval[b]); }   // r=a-c (exact)
+            else if (!isadd && ac){ int64_t c=V->cval[a]; oct_add_sum_le(W,r,b,c); if (c != INT64_MIN) oct_add_negsum_le(W,r,b,-c); } // r=c-b ⇒ r+b=c
             else {
                 // two-variable: sound difference bounds from the second operand's interval
                 //   r=a+b, b∈[blo,bhi] ⇒ a+blo ≤ r ≤ a+bhi ;  r=a-b ⇒ a-bhi ≤ r ≤ a-blo
@@ -1653,7 +1661,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             oct_forget(W, r);
             if (ins->n_operands < 1) break;
             int x = ins->operands[0]->id;
-            if (x>=0 && x<V->nvar && V->cknown[x]) { oct_add_const(W, r, -V->cval[x]); break; }
+            if (x>=0 && x<V->nvar && V->cknown[x]) { if (V->cval[x] != INT64_MIN) oct_add_const(W, r, -V->cval[x]); break; }
             oct_add_sum_le(W, r, x, 0);
             oct_add_negsum_le(W, r, x, 0);
             break;
@@ -1683,7 +1691,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 // Fold exactly, in the result type's own arithmetic: ~c is −c−1 signed, and
                 // (2^N−1)−c unsigned. Using C's ~ on the i64 carrier would give the SIGNED
                 // answer for an unsigned type (u8: ~5 is 250, not −6).
-                int64_t c = (is_signed || !have_t) ? -V->cval[x] - 1 : thi - V->cval[x];
+                int64_t c = (is_signed || !have_t) ? ~V->cval[x] : thi - V->cval[x];   // ~c == -c-1, without -INT64_MIN
                 oct_add_const(W, r, c);
                 break;
             }
@@ -1874,10 +1882,28 @@ static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir) {
             if (!trustworthy) {
                 int64_t blo,bhi; bool hl,hh;
                 vra_interval(V, W, bound, &blo,&hl,&bhi,&hh);
-                trustworthy = hh && bhi >= 0 && bhi < ((int64_t)1<<62);
+                // ...and NON-NEGATIVE: a signed bound of -1 is 2^64 - 1 unsigned, and every
+                // negative `small` is below it.
+                trustworthy = hh && bhi >= 0 && bhi < ((int64_t)1<<62) && hl && blo >= 0;
+                if (!trustworthy && bound<V->nvar && V->cknown[bound]) trustworthy = V->cval[bound] >= 0;
             }
             if (trustworthy) oct_add_lb(W, small, 0);
         }
+        // ★ AND ONLY THEN IS IT A SIGNED COMPARISON. Everything below states the predicate on
+        // signed values, which an unsigned comparison is only between two NON-NEGATIVE ones. The
+        // false edge of `p in a` (`(unsigned)p < 32`) is `p < 0 or p >= 32`; it was read as
+        // `p >= 32`, so code there under `if p < 0` was dead to the analysis and a division by
+        // zero in it was proven (SIGFPE). Found by --check-invariants on a fuzz_vra program:
+        // the state said p >= 32 where the run had p = -1.
+        bool an, bn;
+        { int64_t lo,hi; bool hl,hh;
+          an = (a<V->nvar && V->cknown[a]) ? V->cval[a] >= 0
+             : (a<V->nvar && V->val[a] && V->val[a]->type && V->val[a]->type->kind==IRT_INT && !V->val[a]->type->is_signed)
+             || (vra_interval(V, W, a, &lo,&hl,&hi,&hh), hl && lo >= 0);
+          bn = (b<V->nvar && V->cknown[b]) ? V->cval[b] >= 0
+             : (b<V->nvar && V->val[b] && V->val[b]->type && V->val[b]->type->kind==IRT_INT && !V->val[b]->type->is_signed)
+             || (vra_interval(V, W, b, &lo,&hl,&hi,&hh), hl && lo >= 0); }
+        if (!an || !bn) return;
     }
     // When one side is a CONSTANT, state an ABSOLUTE bound rather than a difference against
     // its dimension — a constant has none (it lives in the constant table), so the relational
@@ -3460,7 +3486,7 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
                     IrInstr *ld=V->def[vd->operands[0]->id]; int c=vd->operands[1]->id;
                     if (ld && ld->op==IR_LOAD && VRA_SAME_CELL(ld->operands[0]->id)) {
                         if (V->cknown[c]) {
-                            int64_t stp = (vd->op==IR_ADD)? V->cval[c] : -V->cval[c];
+                            int64_t stp = (vd->op==IR_ADD)? V->cval[c] : (V->cval[c] == INT64_MIN ? 0 : -V->cval[c]);
                             ok_step = (lt && stp>0) || (gt && stp<0);
                         } else if (c>=0 && c<V->nvar && V->in[b->id]) {
                             // ── A VARIABLE STEP, WHICH ONLY NEEDS ITS SIGN ──────────────────

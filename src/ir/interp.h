@@ -889,6 +889,10 @@ static void ii_exec(IrInstr *ins) {
 }
 
 // ── a call ──────────────────────────────────────────────────────────────────────────────
+// Called at every block entry with the frame's values, when set: the analysis's invariant at
+// that block must contain them (src/analysis/containment.h, `lain --interpret --check-invariants`).
+// A hook rather than a call, so the semantics does not depend on the analysis it checks.
+static void (*ii_on_block)(IrFunc *f, IrBlock *b, IVal *v, int nv) = NULL;
 static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
     IFrame fr; memset(&fr, 0, sizeof fr);
     fr.f = f; fr.nv = f->next_value_id > 0 ? f->next_value_id : 1; fr.up = ii_frame;
@@ -907,6 +911,7 @@ static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
         for (IrInstr *phi = b->phis; phi; phi = phi->next)
             for (IrPhiArg *pa = phi->phi_args; pa; pa = pa->next)
                 if (pa->pred == prev) { ii_set(phi->result, ii_val(pa->value, phi)); break; }
+        if (ii_on_block) ii_on_block(f, b, fr.v, fr.nv);
         for (IrInstr *i = b->instrs; i; i = i->next) {
             if (++ist->steps > ist->budget) ii_fail(97, "STEP BUDGET EXHAUSTED", i, "%lld steps", ist->budget);
             ii_exec(i);

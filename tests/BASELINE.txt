@@ -2464,6 +2464,11 @@ ty=Slice_i32 scalar
 rc=0
 out=
 at=const 2
+### tests/vra/in_guard_false_edge_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
 ### tests/vra/insertion_sort_pass.ln
 rc=1
 out=

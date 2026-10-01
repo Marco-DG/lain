@@ -1,0 +1,15 @@
+// EXPECT: [E015]
+// `p in a` is `(unsigned)p < a.len`. Its FALSE edge is `p < 0 or p >= 32`, two intervals, and
+// the range analysis recorded only `p >= 32`: code under `if p < 0` there looked dead, and the
+// division by zero in it was proven. It compiled and died with SIGFPE for p = -1. Found by
+// --check-invariants on a fuzz_vra program, where the analysis's state said p >= 32 and the
+// running program had p = -1.
+func f(a i32[32], p i32) i32 {
+    if p in a { return a[p] }
+    if p < 0 { return 5 / (p - p) }
+    return 0
+}
+func main() i32 {
+    var arr i32[32] = [0 for z in 0..32]
+    return f(arr, 0 - 1)
+}

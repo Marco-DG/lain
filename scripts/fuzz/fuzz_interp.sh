@@ -8,6 +8,8 @@
 #
 #   DIFFER        the two legs disagree: a backend representation bug or a semantics bug
 #   PROOF         the interpreter caught a false proof (or a violated trusted assumption)
+#   INVARIANT     the range analysis's state at some block excludes the running program's
+#                 (--check-invariants): a wrong fact, even one no obligation happened to read
 #   UB            undefined behaviour inside `unsafe` (a generator bug: its programs should be
 #                 defined, or the oracle of that generator means nothing)
 #   CRASH/BUDGET  the interpreter died or ran out of steps
@@ -21,7 +23,7 @@ LAIN="$(pwd)/lain"; [ -x "$LAIN" ] || { echo "build first: make"; exit 2; }
 N="${1:-30}"; BASE=${RANDOM_SEED:-$$}
 SC="$(mktemp -d)"; trap 'rm -rf "$SC"' EXIT
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_malloc=malloc -Dlibc_free=free -Dlibc_calloc=calloc -Dlibc_realloc=realloc"
-agree=0 diff=0 proof=0 ub=0 crash=0 unsup=0 rej=0 cfail=0 genfail=0
+agree=0 diff=0 proof=0 inv=0 ub=0 crash=0 unsup=0 rej=0 cfail=0 genfail=0
 for g in "$HERE"/fuzz_*.py; do
   gn=$(basename "$g" .py)
   for ((k=0; k<N; k++)); do
@@ -30,9 +32,10 @@ for g in "$HERE"/fuzz_*.py; do
     timeout 60 "$LAIN" "$f" -o "$SC/x.c" >/dev/null 2>&1 || { rej=$((rej+1)); continue; }
     gcc -O2 -o "$SC/x" "$SC/x.c" $DEFS -w -lm 2>/dev/null || { cfail=$((cfail+1)); continue; }
     ( cd "$SC" && timeout 20 ./x > c.out 2>/dev/null; echo $? > c.st ) 2>/dev/null
-    LAIN_INTERP_STEPS=50000000 timeout 60 "$LAIN" "$f" --interpret > "$SC/i.out" 2>"$SC/i.err"; is=$?
+    LAIN_INTERP_STEPS=50000000 timeout 60 "$LAIN" "$f" --check-invariants > "$SC/i.out" 2>"$SC/i.err"; is=$?
     m=$(grep -m1 'lain --interpret' "$SC/i.err")
-    if   echo "$m" | grep -q "PROOF FAILED\|TRUSTED"; then proof=$((proof+1)); echo "── PROOF  $gn seed=$seed :: $m"
+    if   echo "$m" | grep -q "INVARIANT VIOLATED";   then inv=$((inv+1)); echo "── INVARIANT  $gn seed=$seed :: $m"
+    elif echo "$m" | grep -q "PROOF FAILED\|TRUSTED"; then proof=$((proof+1)); echo "── PROOF  $gn seed=$seed :: $m"
     elif echo "$m" | grep -q "UNDEFINED BEHAVIOUR";  then ub=$((ub+1));       echo "── UB  $gn seed=$seed :: $m"
     elif echo "$m" | grep -q "NOT MODELLED";         then unsup=$((unsup+1))
     elif echo "$m" | grep -q "STEP BUDGET";          then crash=$((crash+1)); echo "── BUDGET  $gn seed=$seed"
@@ -43,7 +46,7 @@ for g in "$HERE"/fuzz_*.py; do
 done
 echo "=================================================================="
 echo "fuzz_interp: $N programs per generator   agree=$agree   (rejected=$rej, not modelled=$unsup, C link failed=$cfail)"
-echo "  bugs:  DIFFER=$diff  PROOF=$proof  UB=$ub  CRASH=$crash"
+echo "  bugs:  DIFFER=$diff  PROOF=$proof  INVARIANT=$inv  UB=$ub  CRASH=$crash"
 [ $genfail -gt 0 ] && echo "  GENERATOR-FAIL=$genfail   (harness bug — these tested NOTHING)"
 echo "=================================================================="
-[ $((diff + proof + ub + crash + genfail)) -eq 0 ]
+[ $((diff + proof + inv + ub + crash + genfail)) -eq 0 ]

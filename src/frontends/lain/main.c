@@ -25,6 +25,7 @@
 #include "ir/emit_c.h"
 #include "ir/interp.h"   // --interpret: the IR's semantics, executable (DECIDE-W step 1)
 #include "static_eval.h"  // DECIDE-W step 2: module constants computed at compile time
+#include "analysis/containment.h"   // --check-invariants: the analysis's states against a real run
 
 void expr_print_ast(Expr *expr, int depth);
 void stmt_print_ast(Stmt *stmt, int depth);
@@ -228,7 +229,10 @@ int main(int argc, char **argv) {
         }
         if (found) { sema_destroy(); return 1; }
         if (args.interpret) {             // run it instead of emitting it; the status is the program's
+            if (args.check_invariants) { vra_mod = mod; ii_on_block = ct_on_block; }
             int st = ir_interpret_module(mod, args.filename);
+            if (args.check_invariants && getenv("LAIN_CONTAINMENT_TRACE"))
+                fprintf(stderr, "check-invariants: %ld block entries checked against %ld constraints\n", ct_checked, ct_constraints);
             sema_destroy();
             return st;
         }

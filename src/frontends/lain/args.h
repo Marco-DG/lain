@@ -23,6 +23,9 @@ typedef struct
     bool        interpret;          // --interpret: run the accepted program on the IR's own semantics
                                     // (src/ir/interp.h) instead of emitting C; every discharged proof
                                     // is checked as it is used
+    bool        check_invariants;   // --check-invariants (with --interpret): the range analysis's
+                                    // state at each block must contain the running program's
+                                    // (src/analysis/containment.h)
     bool        engine_ir_numeric;  // --engine=ir-full: ALSO make the IR authoritative for the
                                     // NUMERIC obligations (bounds/overflow/division). Measured
                                     // separately because that is where the gap is: the
@@ -126,6 +129,8 @@ static Args args_parse(int argc, char** argv)
             args.emit_llvm = true;
         } else if (strcmp(argv[i], "--interpret") == 0) {
             args.interpret = true;
+        } else if (strcmp(argv[i], "--check-invariants") == 0) {
+            args.interpret = true; args.check_invariants = true;
         } else if (strncmp(argv[i], "--backend=", 10) == 0) {   // IGNORED-FLAG (readme_gate reads this)
             // Accepted and ignored: there is one backend. Kept as a no-op rather than an
             // error so a script pinned to `--backend=ir` still runs.
