@@ -99,7 +99,10 @@ never a declaration.
 
 \begin{constraint}
   The left-hand side shall be a mutable lvalue (\S\,\ref{sec:basics.lvalues}).
-  Assigning to an immutable binding is \illformed{}~(\diagcode{E009}).
+  Assigning to an immutable binding, or to an element or field of one, or to a module
+  constant, is \illformed{}~(\diagcode{E009}).  So is lending such a place as \lain{var},
+  as an argument (\lain{f(var a)}) or a reference binding (\lain{var r = var x}).  An
+  array or slice \emph{parameter} is an output reference: its elements may be written.
 \end{constraint}
 
 \begin{constraint}

@@ -1,0 +1,8 @@
+// EXPECT: [E009]
+// An immutable binding's ELEMENTS are immutable too (spec 09: an assignment's left-hand side is a
+// mutable lvalue). Only a write to the name was refused; `a[0] = 9` compiled.
+func main() i32 {
+    a u8[4] = [1, 2, 3, 4]
+    a[0] = 9
+    return a[0] as i32
+}

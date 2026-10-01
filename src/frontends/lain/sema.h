@@ -3027,6 +3027,8 @@ static void walk_stmt(Stmt *s) {
             sema_infer_expr(s->as.assign_stmt.expr);
             sema_infer_expr(s->as.assign_stmt.target);
             sema_check_write_through_readonly(s->as.assign_stmt.target, s->line, s->col);
+            if (s->as.assign_stmt.target->kind == EXPR_INDEX || s->as.assign_stmt.target->kind == EXPR_MEMBER)
+                sema_check_place_writable(s->as.assign_stmt.target, s->line, s->col, "write to an element or field of");
 
             // COHERENCE (§2.9): a raw pointer `*T` is the unsafe/interop tool — it
             // is not borrow-checked, and mutating a struct field through it in SAFE

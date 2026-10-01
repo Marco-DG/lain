@@ -1,0 +1,11 @@
+// EXPECT: [E009]
+// Lending a place as `var` lends it to be written, so the place must be writable: `set(var a)`
+// handed an immutable array to a function that writes it.
+func set(a var u8[]) {
+    if a.len > 0 { a[0] = 9 }
+}
+func main() i32 {
+    a u8[4] = [1, 2, 3, 4]
+    set(var a)
+    return a[0] as i32
+}

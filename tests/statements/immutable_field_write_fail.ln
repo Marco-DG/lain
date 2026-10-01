@@ -1,0 +1,10 @@
+// EXPECT: [E009]
+// Spec 07: "writing to an immutable binding's field is ill-formed". It compiled.
+type S {
+    v i32
+}
+func main() i32 {
+    s = S(1)
+    s.v = 9
+    return s.v
+}

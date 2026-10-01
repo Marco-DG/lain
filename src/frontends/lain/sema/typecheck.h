@@ -1268,6 +1268,49 @@ static void sema_check_write_through_readonly(Expr *target, isize line, isize co
         e = base;
     }
 }
+// ★ AN IMMUTABLE BINDING'S ELEMENTS AND FIELDS ARE IMMUTABLE TOO, and so is a module constant.
+// Spec 07 ("writing to an immutable binding's field is ill-formed") and 09 ("the left-hand side
+// shall be a mutable lvalue") said so, and only a write to the NAME was refused: `a[0] = 9` and
+// `s.v = 9` on immutable bindings compiled, `f(var a)` lent an immutable array to be written,
+// `var r = var x` made a writable view of an immutable `x`, and every one of them wrote a module
+// constant table too, which is read-only static data. The place must be one the program may write
+// (sema_place_writable), whatever the route, and inside `unsafe` as well.
+static void sema_check_place_writable(Expr *place, isize line, isize col, const char *how) {
+    if (!place || sema_place_writable(place)) return;
+    Expr *root = place;
+    while (root && (root->kind == EXPR_INDEX || root->kind == EXPR_MEMBER)) {
+        Expr *b = root->kind == EXPR_INDEX ? root->as.index_expr.target : root->as.member_expr.target;
+        Type *bt = b ? b->type : NULL; while (bt && bt->kind == TYPE_COMPTIME) bt = bt->element_type;
+        if (bt && bt->kind == TYPE_POINTER) return;     // through a pointer: the read-only check's case
+        root = b;
+    }
+    if (!root || root->kind != EXPR_IDENTIFIER || !root->as.identifier_expr.id) return;
+    Id *id = root->as.identifier_expr.id;
+    Decl *rd = root->decl;
+    // An ARRAY or SLICE parameter is an output reference: `func set0(dst i32[3], v i32)` writes
+    // `dst[0]` into the caller's array (tests/memory/fixed_array_outparam_pass.ln). That is the
+    // language's convention for a written array parameter, not an immutable binding's elements.
+    if (rd && rd->kind == DECL_VARIABLE && rd->as.variable_decl.is_parameter) {
+        Type *pt = rd->as.variable_decl.type;
+        while (pt && pt->kind == TYPE_COMPTIME) pt = pt->element_type;
+        if (pt && (pt->kind == TYPE_ARRAY || pt->kind == TYPE_SLICE)) return;
+    }
+    bool global = false;
+    if (rd && rd->kind == DECL_VARIABLE && !rd->as.variable_decl.is_parameter) {
+        extern DeclList *sema_decls;
+        for (DeclList *dl = sema_decls; dl && !global; dl = dl->next) if (dl->decl == rd) global = true;
+        if (rd->as.variable_decl.name) id = rd->as.variable_decl.name;   // the name as written
+    }
+    char buf[256]; int l = id->length < 255 ? (int)id->length : 255; memcpy(buf, id->name, (size_t)l); buf[l] = 0;
+    if (global)
+        fprintf(stderr, "[E009] Error Ln %li, Col %li: cannot %s the module constant '%s': a module "
+                "constant is read-only. Copy it into a `var` to change the copy.\n", (long)line, (long)col, how, buf);
+    else
+        fprintf(stderr, "[E009] Error Ln %li, Col %li: cannot %s '%s', an immutable binding: its "
+                "elements and fields are immutable too. Declare it `var`.\n", (long)line, (long)col, how, buf);
+    diagnostic_show_line(line, col);
+    exit(1);
+}
 static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
                              isize line, isize col,
                              const char *ctx, const char *label) {
@@ -3233,6 +3276,7 @@ void sema_infer_expr(Expr *e) {
   case EXPR_MUT:
     sema_infer_expr(e->as.mut_expr.expr);
     e->type = type_mut(sema_arena, e->as.mut_expr.expr->type);
+    if (sema_walk_phase) sema_check_place_writable(e->as.mut_expr.expr, e->line, e->col, "lend as `var`");
     if (sema_walk_phase) sema_check_packed_field_addr(e->as.mut_expr.expr, e->line, e->col, "a `var` reference");
     if (sema_walk_phase && !sema_in_unsafe_block) sema_check_mut_invariant_field(e);
     break;

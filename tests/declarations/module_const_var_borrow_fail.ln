@@ -1,0 +1,10 @@
+// EXPECT: [E009]
+// Nor may a module constant be lent as `var`.
+T u8[4] = [1, 2, 3, 4]
+func set(a var u8[]) {
+    if a.len > 0 { a[0] = 9 }
+}
+func main() i32 {
+    set(var T)
+    return 0
+}

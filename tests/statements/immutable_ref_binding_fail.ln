@@ -1,0 +1,9 @@
+// EXPECT: [E009]
+// A reference binding `var r = var x` is a writable view of x, so x must be writable: through r
+// an immutable `x` became 9.
+func main() i32 {
+    x i32 = 1
+    var r = var x
+    r = 9
+    return x
+}
