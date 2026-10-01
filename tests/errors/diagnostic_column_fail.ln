@@ -1,0 +1,18 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Ln 11, Col 24:
+// A diagnostic's column is where the construct starts in its line. The parser counted token
+// LENGTHS and never the whitespace between them, so every column was short by the indentation
+// and every space before it: this index, at column 24, was reported at column 10.
+func f(a u8[], i usize) u8 {
+    if i > 0 {
+        if i > 1 {
+            if i > 2 {
+                var unused = 0
+                return a[i]
+            }
+        }
+    }
+    return 0
+}
+
+func main() i32 { return 0 }

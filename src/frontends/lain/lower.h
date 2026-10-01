@@ -1803,7 +1803,12 @@ static IrValue *ir_lower_expr(LowerCtx *c, Expr *e) {
         for (int i = 0; i < c->cse_n; i++)
             if (ir_expr_same(c->cse_expr[i], e)) return c->cse_val[i];
     }
+    // A node's own instructions are emitted AFTER its operands are lowered, and each operand
+    // moved the current position to itself: `i = i + 1` reported its add at the `1`. Restore
+    // the caller's position on the way out, so the add is at its operator.
+    isize sv_line = ir_cur_line, sv_col = ir_cur_col;
     IrValue *v = ir_lower_expr_raw(c, e);
+    ir_cur_line = sv_line; ir_cur_col = sv_col;
     if (c && c->cse_recording && e && v && c->cse_n < 32) {
         switch (e->kind) {                      // only the shapes ir_expr_same can match
             case EXPR_BINARY: case EXPR_MEMBER: case EXPR_IDENTIFIER:

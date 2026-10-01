@@ -58,10 +58,18 @@ Token _parser_advance(Parser* parser) {
     // make a local copy so we can normalize the kind if needed
     Token token = parser->token;
 
-    // update line/column based on the raw token
+    // update line/column based on the raw token. The column is where the token STARTS, counted
+    // from the start of its line. It was `column += token.length`, which counted token lengths
+    // and never the whitespace between them, so every column the front end reported was short
+    // by the indentation and every space before the token (`    use p.x as px` said Col 4).
     if (token.kind == TOKEN_NEWLINE) {
         parser->line++;
         parser->column = 1;
+    } else if (parser->lexer && parser->lexer->text && token.start) {
+        const char *p = token.start;
+        while (p > parser->lexer->text && p[-1] != '\n') p--;
+        parser->column = (isize)(token.start - p) + 1;
+        if (token.kind == TOKEN_STRING_LITERAL) parser->column--;   // its start skips the opening quote
     } else {
         parser->column += token.length;
     }
