@@ -1432,6 +1432,15 @@ out=
 rc=0
 out=0 7
 ty=Slice_u8 scalar
+### tests/trust/const_generic_struct_pass.ln
+rc=0
+out=
+at=nonnull 6
+at=pure 6
+ty=Buf_16 struct
+ty=Buf_4 struct
+ty=Buf_8 struct
+ty=Ring_8 struct
 ### tests/trust/div_early_return_guard_pass.ln
 rc=0
 out=

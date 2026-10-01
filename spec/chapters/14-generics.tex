@@ -11,20 +11,20 @@
 \pnum
 Lain implements genericity through compile-time function evaluation (CTFE).
 Generic types and functions accept \textit{type parameters} (declared as
-\lain{name type}) or \textit{compile-time value parameters} (declared as
-\lain{comptime name non-type}).  The compiler evaluates them at compile time
-and monomorphizes the result.  There is no type erasure and no runtime
-polymorphism.
+\lain{name type}), and a generic type also accepts \textit{compile-time value
+parameters} (declared as \lain{name T} with \lain{T} an integer type).  The
+compiler evaluates them at compile time and monomorphizes the result.  There is
+no type erasure and no runtime polymorphism.
 
 \begin{note}
   \textbf{Implementation status.}  The reference compiler implements the
   \emph{core} of this chapter and monomorphizes it: generic \lain{func}s with
   \lain{type} parameters (bound by inference from a value argument or by an
   explicit type argument), and generic types written
-  \lain{type Name(T type) = type \{ ... \}}.  The remaining constructs below are
-  \emph{planned} and not yet accepted --- compile-time \emph{value} parameters /
-  const generics (\lain{comptime N int}), \lain{comptime \{ ... \}} expression
-  blocks, and the \lain{func}-returning-\lain{type} spelling; each is flagged at
+  \lain{type Name(T type) \{ ... \}}, including compile-time value parameters of a
+  type (const generics, \lain{type Buf(N usize)}).  The remaining constructs below are
+  \emph{planned} and not yet accepted --- \lain{comptime \{ ... \}} expression
+  blocks and the \lain{func}-returning-\lain{type} spelling; each is flagged at
   its section, and is presently reported as \diagcode{E100}.  (\lain{comptime if},
   \S\,\ref{sec:gen.comptime-if}, \emph{is} available.)
 \end{note}
@@ -66,28 +66,37 @@ no runtime code.
 \index{comptime parameter}
 
 \pnum
-A parameter declared \lain{comptime name non-type} is a compile-time value
-parameter.  The argument shall be a constant expression of the declared type
-known at compile time.
-
-\begin{note}
-  \textbf{Planned (not yet implemented).}  Compile-time value parameters
-  (const generics) are not accepted by the reference compiler: a declaration
-  such as the one below is presently \diagcode{E100}.
-\end{note}
+A type's parameter list may declare a \emph{value} parameter, \lain{N usize}: a
+parameter whose type is an integer type rather than \lain{type}. An instance names
+its value, which shall be a constant expression (\S\,\ref{sec:decl.static-assert}): a
+literal, \lain{Buf(4)}, or a module constant, \lain{Buf(SIZE)}. Each value is its own
+instance, generated once. Inside the type the parameter sizes an array field,
+\lain{data u8[N]}, or bounds a slice field's length, \lain{src u8[<= N]}, exactly as
+the literal would. A constructor infers the value from the length of the array it is
+given, or takes it first:
 
 \begin{laincode}
-// ERROR: E100 -- planned: a compile-time value parameter is not yet accepted at a use
-type RingBuffer(T type, N usize) {
-    items T[N]
-    head  usize
-    tail  usize
+SIZE usize = 16
+type Buf(N usize) {
+    data u8[N]
+}
+assert @sizeof(Buf(4)) == 4
+assert @sizeof(Buf(SIZE)) == 16
+func last(b Buf(4)) u8 {
+    return b.data[3]                         // b.data.len is 4: proven
 }
 func main() i32 {
-    var r RingBuffer(i32, 8) = RingBuffer(i32, 8)([0, 0, 0, 0, 0, 0, 0, 0], 0, 0)
-    return r.items[0]
+    b = Buf([1, 2, 3, 4])                    // N = 4, from the array
+    c = Buf(8, [0, 0, 0, 0, 0, 0, 0, 9])     // N = 8, given
+    return 0
 }
 \end{laincode}
+
+\begin{constraint}
+  The argument for a value parameter shall be a non-negative constant expression;
+  otherwise the program is \illformed{}~(\diagcode{E124}). An array given for a field the
+  parameter sizes shall have that length (\diagcode{E012}).
+\end{constraint}
 
 \begin{constraint}
   A compile-time evaluation context (CTFE) shall not call a function whose

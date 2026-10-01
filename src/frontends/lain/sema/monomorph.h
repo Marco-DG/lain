@@ -60,6 +60,19 @@ static MonoInst *mono_find_inst(Id *name) {
 // TYPE_SIMPLE leaves are never mutated, only replaced when matched).
 static Type *mono_subst_type(Type *t, SubstCtx *ctx) {
     if (!t) return t;
+    // A const-generic parameter in a LENGTH: `data u8[N]` in `Buf(4)` is `data u8[4]`, and a
+    // bound `src u8[<= N]` is `src u8[<= 4]`, exactly as if the literal had been written.
+    if ((t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) && t->array_len < 0 && t->size_expr &&
+        t->size_expr->kind == EXPR_IDENTIFIER && t->size_expr->as.identifier_expr.id) {
+        for (int i = 0; i < ctx->n; i++) {
+            Type *c = ctx->concretes[i];
+            if (!c || c->kind != TYPE_CONST || !mono_id_eq(t->size_expr->as.identifier_expr.id, ctx->names[i]))
+                continue;
+            if (t->size_relop != TOKEN_EQUAL_EQUAL) t->size_expr = expr_literal(sema_arena, (long long)c->array_len);
+            else { t->array_len = c->array_len; t->size_expr = NULL; }
+            break;
+        }
+    }
     if (t->kind == TYPE_SIMPLE && t->base_type) {
         for (int i = 0; i < ctx->n; i++)
             if (mono_id_eq(t->base_type, ctx->names[i]))
@@ -215,6 +228,7 @@ static void mono_mangle_type(Type *t, char *buf, size_t cap) {
             char inner[128]; mono_mangle_type(t->element_type, inner, sizeof inner);
             snprintf(buf, cap, "arr_%s", inner); break;
         }
+        case TYPE_CONST: snprintf(buf, cap, "%lld", (long long)t->array_len); break;
         default: snprintf(buf, cap, "t%d", (int)t->kind); break;
     }
 }
@@ -321,8 +335,28 @@ static Type *mono_arg_to_type(Expr *e) {
 
 // Structurally unify a parameter's type pattern against a concrete argument type,
 // binding any type-param names it mentions (T, *T[], etc.).
+static Type *mono_const_type(long long v) {
+    Type *c = arena_push_aligned(sema_arena, Type);
+    memset(c, 0, sizeof *c);
+    c->kind = TYPE_CONST; c->array_len = (isize)v; c->size_expr = expr_literal(sema_arena, v);
+    return c;
+}
 static void mono_unify(Type *pat, Type *arg, SubstCtx *ctx, Id **tp, int ntp) {
     if (!pat || !arg) return;
+    // A const-generic LENGTH is inferred from an argument of known length: the field
+    // `data u8[N]` against `[1, 2, 3, 4]` (a `u8[4]`) binds N = 4.
+    if (pat->kind == TYPE_ARRAY && pat->array_len < 0 && pat->size_expr &&
+        pat->size_expr->kind == EXPR_IDENTIFIER && pat->size_expr->as.identifier_expr.id &&
+        arg->kind == TYPE_ARRAY && arg->array_len >= 0) {
+        Id *nm = pat->size_expr->as.identifier_expr.id;
+        for (int i = 0; i < ntp; i++)
+            if (mono_id_eq(nm, tp[i])) {
+                bool bound = false;
+                for (int j = 0; j < ctx->n; j++) if (mono_id_eq(ctx->names[j], nm)) bound = true;
+                if (!bound) mono_bind(ctx, nm, mono_const_type((long long)arg->array_len));
+                break;
+            }
+    }
     if (pat->kind == TYPE_SIMPLE && pat->base_type) {
         for (int i = 0; i < ntp; i++)
             if (mono_id_eq(pat->base_type, tp[i])) { mono_bind(ctx, pat->base_type, arg); return; }
@@ -463,6 +497,7 @@ static Type *union_lower(Type *u) {
 
 // The struct/enum type an alias names, resolved — or NULL when `n` is not an alias of one.
 static Type *mono_resolve_type_apps(Type *t);
+static void sema_bind_const_names(Expr *e, int depth);   // sema.h: names in a constant, bound
 static Type *mono_alias_target(Id *n) {
     if (!n || n->length >= 224) return NULL;
     char nb[224]; snprintf(nb, sizeof nb, "%.*s", (int)n->length, n->name);
@@ -501,8 +536,41 @@ static Type *mono_resolve_type_apps(Type *t) {
         SubstCtx ctx; ctx.n = 0; char suffix[224]; int soff = 0; suffix[0] = '\0';
         TypeList *ta = t->type_args;
         for (DeclList *tp = tparams; tp && ta; tp = tp->next, ta = ta->next) {
-            mono_bind(&ctx, tp->decl->as.variable_decl.name, ta->type);
-            char tb[128]; mono_mangle_type(ta->type, tb, sizeof tb);
+            Type *pty = tp->decl->as.variable_decl.type;
+            Type *arg = ta->type;
+            Id *pnm = tp->decl->as.variable_decl.name;
+            if (pty && pty->kind != TYPE_META) {
+                // ★ A CONST-GENERIC PARAMETER TAKES A VALUE: `type Buf(N usize)` is instantiated
+                // by `Buf(4)` or by a module constant, `Buf(SIZE)`, evaluated as a module assert
+                // is (DECIDE-O). Every spelling was refused, by the parser ("Expected type name")
+                // or here, while const generics were documented as shipped.
+                Expr *ve = NULL;
+                if (arg && arg->kind == TYPE_CONST) ve = arg->size_expr;
+                else if (arg && arg->kind == TYPE_SIMPLE && arg->base_type && !arg->type_args) {
+                    ve = expr_identifier(sema_arena, arg->base_type);
+                    sema_bind_const_names(ve, 0);
+                }
+                bool lay = false; __int128 v = 0;
+                if (!ve || !sa_is_const(ve, &lay) || lay || !sa_eval(ve, &v) || v < 0 || v > (__int128)INT64_MAX) {
+                    fprintf(stderr, "[E124] Error: the argument for '%.*s' of '%.*s' must be a "
+                            "non-negative constant: a literal or a module constant.\n",
+                            (int)(pnm ? pnm->length : 0), pnm ? pnm->name : "",
+                            (int)t->base_type->length, t->base_type->name);
+                    exit(1);
+                }
+                Type *c = arena_push_aligned(sema_arena, Type);
+                memset(c, 0, sizeof *c);
+                c->kind = TYPE_CONST; c->array_len = (isize)v; c->size_expr = expr_literal(sema_arena, (long long)v);
+                arg = c; ta->type = c;
+            } else if (arg && arg->kind == TYPE_CONST) {
+                fprintf(stderr, "[E124] Error: '%.*s' of '%.*s' is a type parameter, and %lld is a value.\n",
+                        (int)(pnm ? pnm->length : 0), pnm ? pnm->name : "",
+                        (int)t->base_type->length, t->base_type->name,
+                        arg->size_expr && arg->size_expr->kind == EXPR_LITERAL ? (long long)arg->size_expr->as.literal_expr.value : 0LL);
+                exit(1);
+            }
+            mono_bind(&ctx, pnm, arg);
+            char tb[128]; mono_mangle_type(arg, tb, sizeof tb);
             soff += snprintf(suffix + soff, sizeof suffix - (size_t)soff, "_%s", tb);
         }
         Decl *inst = mono_type_instance(tmpl, &ctx, suffix);
@@ -560,7 +628,21 @@ static bool mono_construct_generic_struct(Expr *call, Decl *tmpl) {
     if (nargs == ntp + nf) {
         // Explicit: leading `ntp` args are the type arguments.
         ExprList *a = call->as.call_expr.args;
-        for (int i = 0; i < ntp; i++, a = a->next) {
+        DeclList *tpd = tparams;
+        for (int i = 0; i < ntp; i++, a = a->next, tpd = tpd ? tpd->next : NULL) {
+            Type *pty = (tpd && tpd->decl) ? tpd->decl->as.variable_decl.type : NULL;
+            if (pty && pty->kind != TYPE_META) {          // a VALUE parameter: `Buf(4, [..])`
+                bool lay = false; __int128 v = 0;
+                sema_bind_const_names(a->expr, 0);
+                if (!sa_is_const(a->expr, &lay) || lay || !sa_eval(a->expr, &v) || v < 0 || v > (__int128)INT64_MAX) {
+                    fprintf(stderr, "[E124] Error Ln %li, Col %li: the argument for '%.*s' of '%.*s' must be a "
+                            "non-negative constant: a literal or a module constant.\n", (long)call->line,
+                            (long)call->col, (int)tp_names[i]->length, tp_names[i]->name, (int)base->length, base->name);
+                    diagnostic_show_line(call->line, call->col); exit(1);
+                }
+                mono_bind(&ctx, tp_names[i], mono_const_type((long long)v));
+                continue;
+            }
             Type *ta = mono_arg_to_type(a->expr);
             if (!ta) {
                 fprintf(stderr, "[E124] Error Ln %li, Col %li: generic type '%.*s' expects a leading type argument.\n",

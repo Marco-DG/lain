@@ -1,0 +1,11 @@
+// EXPECT: [E085]
+// `Buf(4)` has `data u8[4]`, so index 4 is one past the end (const_generic_struct_pass.ln proves 3).
+type Buf(N usize) {
+    data u8[N]
+}
+func past(b Buf(4)) u8 {
+    return b.data[4]
+}
+func main() i32 {
+    return 0
+}

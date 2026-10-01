@@ -394,7 +394,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E121} & a struct field invariant --- \lain{pos usize in text} (a valid index), \lain{pos usize <= src.len} or \lain{len usize <= cap} (a relation between fields), or a slice field's length bound \lain{src u8[<= 4294967295]} --- is not proven where the value is built or a field is written, or a \lain{var} reference is taken to a field it relates (a write through it would escape the check); also a \tok{[packed]} struct whose fields are not all \lain{iN}/\lain{uN} or exceed 64 bits, and a \lain{var} reference to, or the address of, one of its fields (bits have no address) \\[2pt]
 \diagcode{E122} & a function pointer must be initialized with a matching function \\[2pt]
 \diagcode{E123} & wrong number of arguments in a call through a function pointer \\[2pt]
-\diagcode{E124} & generic instantiation: non-generic type, missing or uninferable type argument, wrong arity \\[2pt]
+\diagcode{E124} & generic instantiation: non-generic type, missing or uninferable type argument, a value argument that is not a constant, wrong arity \\[2pt]
 \diagcode{E125} & direct ADT field access outside \lain{unsafe} --- destructure with \lain{case} \\[2pt]
 \diagcode{E065} & a \lain{try} may propagate a marker the enclosing return union does not list \\[2pt]
 \diagcode{E066} & \lain{try}/\lain{else} requires a \lain{T | markers} union value \\[2pt]

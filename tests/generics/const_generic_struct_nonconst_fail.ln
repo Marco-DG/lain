@@ -1,0 +1,12 @@
+// EXPECT: [E124]
+// The argument for a value parameter is a CONSTANT: a literal or a module constant. A name that
+// is neither cannot size a type.
+type Buf(N usize) {
+    data u8[N]
+}
+func f(b Buf(x)) u8 {
+    return 0
+}
+func main() i32 {
+    return 0
+}

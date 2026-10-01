@@ -50,6 +50,8 @@ typedef enum {
     TYPE_FUNC,      // non-capturing function pointer: *func(params) ret / *proc(params) ret
     TYPE_META,      // the meta-type `type` — the "type" of a type parameter (`T type`)
     TYPE_VECTOR,    // SIMD vector `Vec(N, T)`: N lanes of element type T
+    TYPE_CONST,     // a VALUE given as a type argument, `Buf(4)` / `Buf(SIZE)`: size_expr holds it,
+                    // and array_len its value once monomorphization has evaluated it
 } TypeKind;
 
 /* P2/S2: the value-range refinement carried ON a type — the interval component

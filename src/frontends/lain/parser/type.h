@@ -269,7 +269,21 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
     TypeList *targs = NULL, *tt = NULL;
     if (!parser_match(TOKEN_R_PAREN)) {
       for (;;) {
-        Type *arg = parse_type_core(arena, parser);
+        // A const-generic argument is a VALUE: `Buf(4)` for `type Buf(N usize)`. A number is
+        // one unambiguously; a name (`Buf(SIZE)`) parses as a type and is told apart from one
+        // when the template's parameter says which it wants (mono_resolve_type_apps).
+        Type *arg;
+        if (parser_match(TOKEN_NUMBER)) {
+          long long v = parse_numeric_literal(parser->token.start, parser->token.length);
+          parser_advance();
+          arg = arena_push_aligned(arena, Type);
+          memset(arg, 0, sizeof *arg);
+          arg->kind = TYPE_CONST;
+          arg->size_expr = expr_literal(arena, v);
+          arg->array_len = -1;
+        } else {
+          arg = parse_type_core(arena, parser);
+        }
         TypeList *node = type_list(arena, arg);
         if (!targs) targs = node; else tt->next = node;
         tt = node;

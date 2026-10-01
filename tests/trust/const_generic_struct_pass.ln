@@ -1,0 +1,35 @@
+// A const-generic struct, `type Buf(N usize) { data u8[N] }`, is instantiated by a value: a
+// literal `Buf(4)`, a module constant `Buf(SIZE)`, the length of the array a constructor is given
+// (`Buf([1, 2, 3, 4])` is a Buf(4)), or the value given first (`Buf(8, [...])`). Every spelling
+// was refused ("Expected type name", "Expected ')'", E124) while const generics were documented
+// as shipped. An instance is an ordinary struct with `u8[4]` in place of `u8[N]`, so its `.len`
+// proves an index, its @sizeof is its own, and invariants over it hold.
+SIZE usize = 16
+type Buf(N usize) {
+    data u8[N]
+}
+type Ring(N usize) {
+    data u8[N]
+    pos usize in data
+}
+assert @sizeof(Buf(4)) == 4
+assert @sizeof(Buf(SIZE)) == 16
+func last(b Buf(4)) u8 {
+    return b.data[3]
+}
+func at(b Buf(SIZE), i usize < 16) u8 {
+    return b.data[i]
+}
+func peek(r Ring(8)) u8 {
+    return r.data[r.pos]
+}
+func main() i32 {
+    b = Buf([1, 2, 3, 4])
+    c = Buf(8, [0, 0, 0, 0, 0, 0, 0, 9])
+    r = Ring([1, 2, 3, 4, 5, 6, 7, 8], 7)
+    if last(b) != 4 { return 1 }
+    if c.data[7] != 9 { return 2 }
+    if peek(r) != 8 { return 3 }
+    if @sizeof(Buf(4)) == @sizeof(Buf(8)) { return 4 }
+    return 0
+}

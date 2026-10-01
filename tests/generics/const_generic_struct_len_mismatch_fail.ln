@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// Given explicitly, N fixes the field's length, and an array of another length does not fit it.
+type Buf(N usize) {
+    data u8[N]
+}
+func main() i32 {
+    b = Buf(4, [1, 2, 3])
+    return 0
+}
