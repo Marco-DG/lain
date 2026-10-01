@@ -2706,6 +2706,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             int i=0;
             if (indirect) i = 1;                       // operand 0 is the callee value
             for (ExprList *a=e->as.call_expr.args; a; a=a->next,i++) {
+                { int k = indirect ? i - 1 : i;          // which parameter this argument binds
+                  if (a->expr && a->expr->ro_root && k >= 0 && k < 64) ins->ro_args |= (uint64_t)1 << k; }
                 // ── A SHARED BORROW OF AN AGGREGATE IS PASSED BY ADDRESS ────────────────
                 // The callee's parameter is a pointer (see the param loop and
                 // `ir_shared_agg_by_address`), so the argument has to be one. Taken BEFORE

@@ -1,0 +1,12 @@
+// EXPECT: [E009]
+// An array parameter is an output reference: `set0` writes the caller's array. Handing it an
+// IMMUTABLE array let it write what the program declared immutable; the callee's write footprint
+// says it does, so the call is refused.
+func set0(dst i32[3], v i32) {
+    dst[0] = v
+}
+func main() i32 {
+    a i32[3] = [1, 2, 3]
+    set0(a, 99)
+    return a[0]
+}

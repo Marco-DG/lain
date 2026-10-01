@@ -397,6 +397,10 @@ typedef struct IrInstr {
     // analysis keeps reading it as an array of known length; the emitter points at a
     // `static const` array, and the interpreter at one read-only object.
     struct IrData *data;
+    // IR_CALL: bit k = argument k is the storage of an IMMUTABLE binding (an immutable local
+    // array, a module constant), handed to an array parameter, which the callee may write as an
+    // output reference. Refused when the callee's write footprint includes k (ir_check_readonly_args).
+    uint64_t ro_args;
     isize      line, col;   // for diagnostics
     struct IrInstr *next;   // intrusive list within a block
 } IrInstr;

@@ -207,4 +207,36 @@ static IrRetainFootprint ir_param_retains(IrFunc *f, IrFunc *mod) {
     return r;
 }
 
+// ★ AN IMMUTABLE ARRAY HANDED TO A PARAMETER THE CALLEE WRITES. An array parameter is an
+// output reference (`func set0(dst i32[3], v i32) { dst[0] = v }` writes the caller's array), so
+// passing it an immutable local or a module constant let the callee write what the program
+// declared immutable. sema marks such arguments (Expr.ro_root → IrInstr.ro_args); the callee's
+// write footprint decides, and an extern, which may write anything, is refused conservatively.
+static int ir_check_readonly_args(IrFunc *mod, const char *file) {
+    int n = 0;
+    for (IrFunc *f = mod; f; f = f->next) {
+        if (f->is_extern) continue;
+        for (IrBlock *b = f->blocks; b; b = b->next)
+            for (IrInstr *i = b->instrs; i; i = i->next) {
+                if (i->op != IR_CALL || !i->ro_args) continue;
+                IrFunc *callee = ireff_find(mod, i->aux.callee);
+                IrWriteFootprint w = callee ? ir_param_writes(callee, mod) : ~(IrWriteFootprint)0;
+                uint64_t bad = w & i->ro_args;
+                if (!bad) continue;
+                int k = 0; while (k < 64 && !(bad & ((uint64_t)1 << k))) k++;
+                const IrName *cn = i->aux.callee;
+                fprintf(stderr, "[E009] Error");
+                if (i->line) fprintf(stderr, " Ln %lld, Col %lld", (long long)i->line, (long long)i->col);
+                fprintf(stderr, ": argument %d of '%.*s' is an immutable array, and '%.*s' %s that "
+                        "parameter: an array parameter is an output reference. Pass a `var` copy.\n",
+                        k + 1, cn ? (int)cn->length : 1, cn ? cn->name : "?", cn ? (int)cn->length : 1,
+                        cn ? cn->name : "?", (callee && !callee->is_extern) ? "writes" : "may write");
+                if (file && i->line)
+                    fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)i->line, (long long)i->col);
+                n++;
+            }
+    }
+    return n;
+}
+
 #endif // LAIN_FOOTPRINT_H

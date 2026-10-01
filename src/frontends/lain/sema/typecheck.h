@@ -1275,6 +1275,34 @@ static void sema_check_write_through_readonly(Expr *target, isize line, isize co
 // `var r = var x` made a writable view of an immutable `x`, and every one of them wrote a module
 // constant table too, which is read-only static data. The place must be one the program may write
 // (sema_place_writable), whatever the route, and inside `unsafe` as well.
+// The immutable BINDING whose storage `place` is, or NULL: an immutable local or a module
+// constant (`*global` says which), never a parameter of array or slice type (an output reference)
+// and never anything reached through a pointer.
+static Expr *sema_readonly_root(Expr *place, bool *global, Id **shown) {
+    *global = false; *shown = NULL;
+    if (!place || sema_place_writable(place)) return NULL;
+    Expr *root = place;
+    while (root && (root->kind == EXPR_INDEX || root->kind == EXPR_MEMBER)) {
+        Expr *b = root->kind == EXPR_INDEX ? root->as.index_expr.target : root->as.member_expr.target;
+        Type *bt = b ? b->type : NULL; while (bt && bt->kind == TYPE_COMPTIME) bt = bt->element_type;
+        if (bt && bt->kind == TYPE_POINTER) return NULL;
+        root = b;
+    }
+    if (!root || root->kind != EXPR_IDENTIFIER || !root->as.identifier_expr.id) return NULL;
+    Decl *rd = root->decl;
+    *shown = root->as.identifier_expr.id;
+    if (rd && rd->kind == DECL_VARIABLE && rd->as.variable_decl.is_parameter) {
+        Type *pt = rd->as.variable_decl.type;
+        while (pt && pt->kind == TYPE_COMPTIME) pt = pt->element_type;
+        if (pt && (pt->kind == TYPE_ARRAY || pt->kind == TYPE_SLICE)) return NULL;
+    }
+    if (rd && rd->kind == DECL_VARIABLE && !rd->as.variable_decl.is_parameter) {
+        extern DeclList *sema_decls;
+        for (DeclList *dl = sema_decls; dl && !*global; dl = dl->next) if (dl->decl == rd) *global = true;
+        if (rd->as.variable_decl.name) *shown = rd->as.variable_decl.name;
+    }
+    return root;
+}
 static void sema_check_place_writable(Expr *place, isize line, isize col, const char *how) {
     if (!place || sema_place_writable(place)) return;
     Expr *root = place;
@@ -2485,6 +2513,15 @@ void sema_infer_expr(Expr *e) {
                     buf[n] = '\0';
                     check_conversion(parg->type, ptype, r, parg, parg->line, parg->col,
                         "argument to parameter", buf);
+                    // An immutable array handed to an ARRAY parameter: the callee may write it
+                    // as an output reference. The IR decides, from the callee's write footprint
+                    // (ir_check_readonly_args).
+                    Type *pt0 = ptype; while (pt0 && pt0->kind == TYPE_COMPTIME) pt0 = pt0->element_type;
+                    if (pt0 && (pt0->kind == TYPE_ARRAY || pt0->kind == TYPE_SLICE) && pt0->mode != MODE_MUTABLE &&
+                        parg->kind != EXPR_MUT) {
+                        bool gl; Id *sh;
+                        if (sema_readonly_root(parg, &gl, &sh)) parg->ro_root = true;
+                    }
                 }
             }
             param_idx++;

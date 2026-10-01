@@ -102,7 +102,9 @@ never a declaration.
   Assigning to an immutable binding, or to an element or field of one, or to a module
   constant, is \illformed{}~(\diagcode{E009}).  So is lending such a place as \lain{var},
   as an argument (\lain{f(var a)}) or a reference binding (\lain{var r = var x}).  An
-  array or slice \emph{parameter} is an output reference: its elements may be written.
+  array or slice \emph{parameter} is an output reference: its elements may be written, so an
+  immutable array (or a module constant) shall not be passed to one that the callee writes,
+  directly or through a further call; an \lain{extern} is assumed to write it~(\diagcode{E009}).
 \end{constraint}
 
 \begin{constraint}

@@ -1,0 +1,9 @@
+// EXPECT: [E009]
+// An extern has no body to show it does not write an array parameter, so an immutable array is
+// refused there conservatively. Copy it into a `var` to pass it.
+extern func fill(buf u8[4], n usize) effects io
+func main() i32 effects io {
+    msg u8[4] = [1, 2, 3, 4]
+    fill(msg, 4)
+    return 0
+}

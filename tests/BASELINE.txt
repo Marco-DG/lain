@@ -1241,6 +1241,11 @@ out=  i=2, val=2
 out=  i=3, val=3
 out=  i=4, val=4
 ty=Slice_u8 scalar
+### tests/statements/immutable_readonly_param_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
 ### tests/statements/panic_basic_pass.ln
 rc=42
 out=

@@ -1,0 +1,13 @@
+// EXPECT: [E009]
+// The footprint is transitive: `pass` writes its parameter by handing it to `set0`.
+func set0(dst i32[3], v i32) {
+    dst[0] = v
+}
+func pass(d i32[3]) {
+    set0(d, 7)
+}
+T i32[3] = [1, 2, 3]
+func main() i32 {
+    pass(T)
+    return 0
+}

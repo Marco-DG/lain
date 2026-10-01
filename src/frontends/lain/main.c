@@ -203,6 +203,7 @@ int main(int argc, char **argv) {
         // How each sum is represented, from the one decision (layout.h), before any analysis:
         // a `T | markers` union that would need a tag is refused here (E064).
         if (ir_emit_layout_report(mod, &ir_arena, args.dump_niche, args.filename)) { sema_destroy(); return 1; }
+        if (ir_check_readonly_args(mod, args.filename)) { sema_destroy(); return 1; }
         layout_reported = true;
         lin_mod = mod; bor_loan_mod = mod; vra_mod = mod;
         // ★ AN UNMODELLED CONSTRUCT IS REPORTED FIRST. Lowering turns one into an OPAQUE — an
