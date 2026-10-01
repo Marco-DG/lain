@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// A module constant has its DECLARED type at every use. The initialiser was returned in its own
+// type and never converted: here a u16 1000 (a saturating cast the front end does not evaluate)
+// became X, and `X as i32` read 1000 from a u8. The fold is now a checked conversion to the
+// declared type, which the range analysis must discharge; 1000 does not fit a u8.
+X u8 = 1000 as| u16
+func main() i32 {
+    return X as i32
+}

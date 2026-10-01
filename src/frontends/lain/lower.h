@@ -2128,7 +2128,26 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 }
                 if (g) { c->const_depth++;
                          IrValue *v = ir_lower_expr(c, g->as.variable_decl.init);
-                         c->const_depth--; return v; }
+                         c->const_depth--;
+                         // ★ THE CONSTANT HAS ITS DECLARED TYPE at every use. The initialiser was
+                         // returned in its OWN type: `X u8 = 1 << 9` was computed as an int32_t
+                         // and used as 512 — X was never a u8 anywhere. A module constant lands in
+                         // no slot, so this is its slot: a CHECKED conversion to the declared type,
+                         // which the range analysis must discharge (E086) like any other narrowing.
+                         // The front end checks a value it can evaluate (5c99f19); this covers the
+                         // ones it cannot.
+                         if (v && v->type && ty && v->type->kind == IRT_INT && ty->kind == IRT_INT &&
+                             (v->type->bits != ty->bits || v->type->is_signed != ty->is_signed)) {
+                             IrInstr *cv = ir_instr(c->f, IR_CAST, ty, 1);
+                             cv->operands[0] = v;
+                             cv->aux.cast_kind = v->type->bits > ty->bits ? IR_CAST_TRUNC
+                                               : v->type->bits < ty->bits ? (v->type->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT)
+                                               : IR_CAST_BITCAST;
+                             cv->wrap = IR_WRAP_CHECK;
+                             ir_emit(c->cur, cv);
+                             v = cv->result;
+                         }
+                         return v; }
             }
             // A global we cannot fold (typically a global ARRAY). `const 0` was a LIE — the
             // value is simply wrong, and any proof built on it is built on a fiction. An
