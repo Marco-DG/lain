@@ -158,6 +158,18 @@ Token lexer_next(Lexer* lexer) {
                                *lexer->current == '_') {
                             lexer->current++;
                         }
+                        // The EXPONENT (spec Annex A, float-exponent): `2.5e3`, `1.0E-2`. It was
+                        // never scanned, so `2.5e3` lexed as `2.5` then an identifier `e3`. Taken
+                        // only when a digit follows the e and its optional sign, so `1.5.e` and a
+                        // member named `e` are untouched.
+                        if (*lexer->current == 'e' || *lexer->current == 'E') {
+                            const char *q = lexer->current + 1;
+                            if (*q == '+' || *q == '-') q++;
+                            if (*q >= '0' && *q <= '9') {
+                                while ((*q >= '0' && *q <= '9') || *q == '_') q++;
+                                lexer->current = (char *)q;
+                            }
+                        }
                         RETURN_TOKEN(TOKEN_FLOAT_LITERAL);
                     }
                     default:            lexer->current--;

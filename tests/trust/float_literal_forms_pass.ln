@@ -1,0 +1,18 @@
+// A float literal's exponent and separators (Annex A float-literal). `2.5e3` lexed as `2.5` and an
+// identifier `e3`, and `1_000.5` became 1.0: strtod stopped at the separator and the literal
+// compiled to x == 1 with no diagnostic. Each check has its own return code.
+func main() i32 {
+    var z f64 = 2.5e3
+    if z != 2500.0 { return 1 }
+    var m f64 = 1.25E-2
+    if m != 0.0125 { return 2 }
+    var p f64 = 3.0e+1
+    if p != 30.0 { return 3 }
+    var x f64 = 1_000.5
+    if x != 1000.5 { return 4 }
+    var y f64 = 0.000_5
+    if y != 0.0005 { return 5 }
+    var f f32 = 1.5e2
+    if f != 150.0 { return 6 }
+    return 0
+}

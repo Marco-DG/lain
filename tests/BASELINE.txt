@@ -1418,6 +1418,9 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=const 38
+### tests/trust/char_escape_forms_pass.ln
+rc=0
+out=
 ### tests/trust/comprehension_pass.ln
 rc=0
 out=0 7
@@ -1453,6 +1456,9 @@ at=nonnull 4
 at=pure 4
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/float_literal_forms_pass.ln
+rc=0
+out=
 ### tests/trust/hex_literal_bits_pass.ln
 rc=0
 out=

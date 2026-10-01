@@ -1,0 +1,11 @@
+// `'\0'` and `'\"'` are escape sequences (Annex A escape-sequence) in a character literal as in a
+// string: strings accepted both, and a character literal refused them.
+func main() i32 {
+    var z u8 = '\0'
+    if z != 0 { return 1 }
+    var q u8 = '\"'
+    if q != 34 { return 2 }
+    var n u8 = '\n'
+    if n != 10 { return 3 }
+    return 0
+}

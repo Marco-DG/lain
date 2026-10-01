@@ -279,7 +279,13 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         return expr_literal(arena, value);
     }
     else if (parser_match(TOKEN_FLOAT_LITERAL)) {
-        double value = strtod(parser->token.start, NULL);
+        // ★ The separators go before strtod reads the digits. strtod stops at the first `_`,
+        // so `1_000.5` became 1.0 and `var x f64 = 1_000.5` compiled with x == 1 — silently.
+        char fb[128]; int fl = 0;
+        for (isize k = 0; k < parser->token.length && fl < (int)sizeof fb - 1; k++)
+            if (parser->token.start[k] != '_') fb[fl++] = parser->token.start[k];
+        fb[fl] = 0;
+        double value = strtod(fb, NULL);
         parser_advance();
         return expr_float_literal(arena, value);
     }   
@@ -358,6 +364,8 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
                 case 't':  c = '\t'; break;
                 case '\\': c = '\\'; break;
                 case '\'': c = '\''; break;
+                case '0':  c = 0;    break;   // Annex A escape-sequence; strings had it,
+                case '"':  c = '"';  break;   // character literals did not
                 case 'x':
                     if (len < 6) parser_error("incomplete \\xHH escape");
                     c = (unsigned char)((from_hex(s[3]) << 4) | from_hex(s[4]));
