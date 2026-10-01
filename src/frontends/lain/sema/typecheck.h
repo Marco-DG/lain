@@ -3472,6 +3472,12 @@ void sema_infer_expr(Expr *e) {
         }
         e->type = u32_ty;
     } else if (bk == BUILTIN_SIZEOF || bk == BUILTIN_ALIGNOF) {
+        // ★ THE TYPE ASKED ABOUT IS THE INSTANCE. `@sizeof(Pair(u64))` kept its type application
+        // unresolved, so lowering found the TEMPLATE `Pair` (T erased to `void*`, never reordered)
+        // and every instance answered with the template's size: `assert @sizeof(Pair(u8)) == 16`
+        // passed. Every other type position resolves applications; this one did not.
+        if (e->as.builtin_expr.vec_type)
+            e->as.builtin_expr.vec_type = mono_resolve_type_apps(e->as.builtin_expr.vec_type);
         static Type *usize_ty = NULL;
         if (!usize_ty) {
             Id *uid = arena_push_aligned(sema_arena, Id);

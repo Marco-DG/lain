@@ -1486,6 +1486,12 @@ ty=Slice_u8 scalar
 ### tests/trust/float_literal_forms_pass.ln
 rc=0
 out=
+### tests/trust/generic_instance_sizeof_pass.ln
+rc=0
+out=
+at=const 4
+ty=Pair_u64 struct
+ty=Pair_u8 struct
 ### tests/trust/hex_literal_bits_pass.ln
 rc=0
 out=

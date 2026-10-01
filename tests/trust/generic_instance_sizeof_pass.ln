@@ -1,0 +1,22 @@
+// @sizeof of a GENERIC INSTANCE measures the instance. It kept the type application unresolved,
+// so lowering found the template `Pair` (T erased, never reordered) and every instance answered
+// with the template's size: `assert @sizeof(Pair(u8)) == 16` passed and size8() returned 16.
+// Found by the Handwriting session (M4). Each instance has its own layout (DECIDE-U): Pair(u64)
+// is reordered to {b, a}, 16 bytes; Pair(u8) is {a, b}, 2. Runs both ways (interp_gate).
+type Pair(T type) {
+    a u8
+    b T
+}
+assert @sizeof(Pair(u64)) == 16
+assert @sizeof(Pair(u8)) == 2
+func size64() u64 {
+    return @sizeof(Pair(u64))
+}
+func size8() u64 {
+    return @sizeof(Pair(u8))
+}
+func main() i32 {
+    if size64() != 16 { return 1 }
+    if size8() != 2 { return 2 }
+    return 0
+}
