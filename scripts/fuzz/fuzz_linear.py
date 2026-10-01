@@ -23,17 +23,19 @@ import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 rng = random.Random(seed)
 
-HEADER = """extern func libc_malloc(size usize) mov *void effects io, alloc
+# calloc, not malloc: `touch` reads the byte, and a malloc'd byte is never written — every program
+# read uninitialised heap memory, undefined behaviour the IR interpreter reported (2026-10-01).
+HEADER = """extern func libc_calloc(n usize, size usize) mov *void effects io, alloc
 extern func libc_free(ptr mov *void) effects io
-func acquire() mov *u8 effects io, alloc { unsafe { return libc_malloc(4) as *u8 } }
+func acquire() mov *u8 effects io, alloc { unsafe { return libc_calloc(1, 4) as *u8 } }
 func release(p mov *u8) effects io { unsafe { libc_free(mov p as *void) } }
 func touch(p *u8) u8 { unsafe { return *p } }
 type Res { mov h *u8 }
-func rmake() Res effects io, alloc { unsafe { return Res(libc_malloc(4) as *u8) } }
+func rmake() Res effects io, alloc { unsafe { return Res(libc_calloc(1, 4) as *u8) } }
 func rfree(mov {h} Res) effects io { unsafe { libc_free(mov h as *void) } }
 func rtouch(r Res) u8 { unsafe { return *r.h } }
 type Two { mov a *u8, mov b *u8 }
-func tmake() Two effects io, alloc { unsafe { return Two(libc_malloc(4) as *u8, libc_malloc(4) as *u8) } }
+func tmake() Two effects io, alloc { unsafe { return Two(libc_calloc(1, 4) as *u8, libc_calloc(1, 4) as *u8) } }
 func tfree(mov {a, b} Two) effects io {
     unsafe {
         libc_free(mov a as *void)

@@ -40,7 +40,7 @@ for ((k=0; k<N; k++)); do
 
     # run every compiled program under ASan+LSan — for accept-stream programs, run
     # BOTH branch directions (flip `flag`) so conditional consume paths are covered.
-    if ! gcc -fsanitize=address,undefined -o "$SC/t" "$SC/t.c" -Dlibc_malloc=malloc -Dlibc_free=free -w >/dev/null 2>&1; then
+    if ! gcc -fsanitize=address,undefined -o "$SC/t" "$SC/t.c" -Dlibc_malloc=malloc -Dlibc_calloc=calloc -Dlibc_free=free -w >/dev/null 2>&1; then
         echo "BROKEN-C seed=$seed"; brokenc=$((brokenc+1)); continue
     fi
     timeout 5 "$SC/t" >/dev/null 2>"$SC/e"
@@ -51,7 +51,7 @@ for ((k=0; k<N; k++)); do
     if [ "$exp" = accept ] && grep -q 'var flag i32 = 1' "$SC/t.ln"; then
         sed 's/var flag i32 = 1/var flag i32 = 0/' "$SC/t.ln" > "$SC/t0.ln"
         if "$LAIN" "$SC/t0.ln" -o "$SC/t0.c" >/dev/null 2>&1 \
-           && gcc -fsanitize=address,undefined -o "$SC/t0" "$SC/t0.c" -Dlibc_malloc=malloc -Dlibc_free=free -w >/dev/null 2>&1; then
+           && gcc -fsanitize=address,undefined -o "$SC/t0" "$SC/t0.c" -Dlibc_malloc=malloc -Dlibc_calloc=calloc -Dlibc_free=free -w >/dev/null 2>&1; then
             timeout 5 "$SC/t0" >/dev/null 2>"$SC/e0"
             if grep -qiE "AddressSanitizer|LeakSanitizer|runtime error|double-free|use-after" "$SC/e0"; then
                 echo "UNSOUND (accepted program is dirty) seed=$seed flag=0:"; sed -n '1,3p' "$SC/e0"
