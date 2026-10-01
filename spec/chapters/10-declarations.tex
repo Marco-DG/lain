@@ -305,6 +305,31 @@ extern func strlen(s *u8) usize effects
   declarations.  User-defined variadic functions are \illformed{}.
 \end{constraint}
 
+\section{Module-scope constants}
+\label{sec:decl.module-const}
+\index{constant!module scope}
+
+\pnum
+A declaration \lain{NAME T = expression} at module scope introduces an immutable constant
+(\lain{NAME = expression} takes the initialiser's type). There are no mutable module-level
+variables. The initialiser is converted to \lain{T} by the rules of a declaration: an implicit
+conversion between integer and floating-point types, or between an integer type and
+\lain{bool}, is \illformed{}~(\diagcode{E012}), and an array initialiser shall have exactly
+\lain{T}'s length~(\diagcode{E012}).
+
+\begin{constraint}
+  When the initialiser is a constant expression (\S\,\ref{sec:decl.static-assert}) of an integer
+  type, its value shall be representable in \lain{T}; for an array of an integer type, each
+  element's shall be representable in the element type. Otherwise the program is
+  \illformed{}~(\diagcode{E086}).
+\end{constraint}
+
+\begin{laincode}
+MAX_TOKENS usize = 4096
+LIMIT u8 = 200
+OVER u8 = 300            // ERROR [E086]: 300 does not fit u8
+\end{laincode}
+
 \section{Module-scope assertions}
 \label{sec:decl.static-assert}
 \index{static assertion}

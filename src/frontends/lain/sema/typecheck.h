@@ -968,6 +968,38 @@ static bool sa_eval(Expr *e, __int128 *v) {
         default: return false;
     }
 }
+// A module constant's VALUE against its integer type, and an array constant's elements against
+// theirs. A narrowing is the IR's obligation where a value lands in a slot (a local's store, an
+// argument, a return), and a module constant never lands in one: it is folded into each use. So
+// `X u8 = 300` compiled with X == 44. It is a compile-time constant, so it is checked here, exactly.
+static void sema_check_one_const_fits(Type *ty, Expr *e, Decl *d, const char *what, const char *name) {
+    int bits = 0; bool sgn = false, lay = false; __int128 v;
+    Type *t = ty; while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t || !e || !parse_iN_uN(t, &bits, &sgn) || bits < 1 || bits > 64) return;
+    if (!sa_is_const(e, &lay) || lay || !sa_eval(e, &v)) return;
+    __int128 lo = sgn ? -((__int128)1 << (bits - 1)) : 0;
+    __int128 hi = sgn ? ((__int128)1 << (bits - 1)) - 1 : (((__int128)1 << bits) - 1);
+    if (v >= lo && v <= hi) return;
+    char tb[64]; type_describe(t, tb, sizeof tb);
+    isize ln = e->line ? e->line : d->line, cl = e->line ? e->col : d->col;
+    if (v >= (__int128)INT64_MIN && v <= (__int128)INT64_MAX)
+        fprintf(stderr, "[E086] Error Ln %li, Col %li: %s '%s' is %lld, which does not fit %s.\n",
+                (long)ln, (long)cl, what, name, (long long)v, tb);
+    else
+        fprintf(stderr, "[E086] Error Ln %li, Col %li: %s '%s' is outside the 64-bit range, so it "
+                "does not fit %s.\n", (long)ln, (long)cl, what, name, tb);
+    diagnostic_show_line(ln, cl);
+    exit(1);
+}
+static void sema_check_const_fits(Type *ty, Expr *init, Decl *d, const char *name) {
+    Type *t = ty; while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (t && t->kind == TYPE_ARRAY && init && init->kind == EXPR_ARRAY_LITERAL) {
+        for (ExprList *el = init->as.array_literal_expr.elements; el; el = el->next)
+            sema_check_one_const_fits(t->element_type, el->expr, d, "an element of constant", name);
+        return;
+    }
+    sema_check_one_const_fits(ty, init, d, "constant", name);
+}
 static void sema_check_static_assert(Decl *d) {
     Expr *c = d->as.static_assert_decl.cond;
     bool layout = false;

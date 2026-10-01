@@ -1,0 +1,7 @@
+// EXPECT: [E012]
+// An implicit float-to-integer conversion is refused in a declaration; at module scope it was
+// accepted and X was 3.
+X i32 = 3.5
+func main() i32 {
+    return X - 3
+}

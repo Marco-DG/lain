@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// The value is the constant's, whatever spells it: Y is 1000, which does not fit X's u8.
+// This compiled with X == 232.
+Y i32 = 1000
+X u8 = Y
+func main() i32 {
+    return X as i32
+}

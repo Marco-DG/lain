@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// A module constant's value is checked against its declared type. It was only resolved and
+// inferred: a narrowing is the IR's obligation where a value lands in a slot, and a module
+// constant never lands in one (it is folded into each use), so this compiled with X == 44.
+X u8 = 300
+func main() i32 {
+    return X as i32
+}

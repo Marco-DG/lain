@@ -4092,8 +4092,26 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 // it shipped. Found 2026-09-15 while clearing D-38 tier 2.
                 //
                 // The initialiser has just been inferred, so its type is the declaration's.
+                bool declared = d->as.variable_decl.type != NULL;
                 if (!d->as.variable_decl.type && d->as.variable_decl.init->type)
                     d->as.variable_decl.type = d->as.variable_decl.init->type;
+                // ★ A MODULE CONSTANT'S INITIALISER IS CHECKED AGAINST ITS DECLARED TYPE, as a
+                // local's is. It was only resolved and inferred, so `X u8 = 300` compiled with
+                // X == 44, `X u8 = -1` with 255, `X i32 = 3.5` with 3, `X bool = 1` at all, and
+                // `T u8[256] = [5, 6, 7]` left 253 elements of the table UNINITIALISED: every
+                // function materialises the constant, so `T[200]` read whatever was on the stack.
+                if (declared && d->as.variable_decl.init->type) {
+                    Id *vn = d->as.variable_decl.name;
+                    char vb[128]; int vl = vn ? (vn->length < 127 ? (int)vn->length : 127) : 0;
+                    if (vn) memcpy(vb, vn->name, (size_t)vl);
+                    vb[vl] = '\0';
+                    Range r = sema_ranges ? sema_eval_range(d->as.variable_decl.init, sema_ranges)
+                                          : range_unknown();
+                    check_conversion(d->as.variable_decl.init->type, d->as.variable_decl.type, r,
+                                     d->as.variable_decl.init, d->line, d->col,
+                                     "initialization of constant", vb);
+                    sema_check_const_fits(d->as.variable_decl.type, d->as.variable_decl.init, d, vb);
+                }
             }
             continue;
         }

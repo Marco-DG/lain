@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// A module-scope table shorter than its type was accepted, and every function that reads the
+// constant materialises it: 3 elements were written into a 256-byte array and T[200] read the
+// stack (the run died on a signal). A local `var t u8[8] = [5, 6, 7]` was always refused.
+T u8[256] = [5, 6, 7]
+func at(k u8) u8 {
+    return T[k]
+}
+func main() i32 {
+    return at(200) as i32
+}
