@@ -34,7 +34,10 @@ echo "$out" | grep -q "static-eval: 2 constant(s) computed at compile time" || {
 main=$(awk '/^int main\(void\) \{/,/^}/' "$D/a.c")
 [ -n "$main" ] || { echo "no main in the C"; exit 1; }
 echo "$main" | grep -q "6765" || { echo "main does not hold the value 6765"; exit 1; }
-for v in 121 144 169; do echo "$main" | grep -q "\b$v\b" || { echo "main does not hold the table value $v"; exit 1; }; done
+# A table read through an index is read-only static data: its values are in the file-scope
+# `static const` array that main reads, not copied into main.
+table=$(grep -E '^static const .*lain_ro_.*SQ' -A2 "$D/a.c")
+for v in 121 144 169; do echo "$table" | grep -q "\b${v}u\?\b" || { echo "the static table does not hold the value $v"; exit 1; }; done
 if echo "$main" | grep -q "_fib(\|_sq("; then echo "main calls the function at run time"; exit 1; fi
 gcc -w -o "$D/a" "$D/a.c" && "$D/a" || { echo "the program does not run to 0"; exit 1; }
 exit 0

@@ -636,6 +636,19 @@ static void ii_exec(IrInstr *ins) {
         }
         case IR_CAST: ii_cast(ins, &r); break;
         case IR_ALLOCA: {
+            if (ins->data) {            // a module constant table: ONE read-only object, ever
+                IrData *d = ins->data;
+                IObj *o = (IObj *)d->interp_obj;
+                if (!o) {
+                    o = ii_new_obj(d->type->elem, d->n, "a module constant table");
+                    if (ii_frame) { ii_frame->objs = o->frame_next; o->frame_next = NULL; }   // static: never dies
+                    for (int k = 0; k < d->n; k++) iv_int(&o->root.e[k], (uint64_t)d->vals[k]);
+                    o->ro = true;
+                    d->interp_obj = o;
+                }
+                r.k = IV_PTR; r.p = ip_of(o, 0);
+                break;
+            }
             int64_t count = 1;
             IrType *at = ins->aux.alloca_ty;
             if (ins->n_operands >= 1) count = (int64_t)iv_get(ii_val(ins->operands[0], ins), ii_ty(ins->operands[0]), ins);

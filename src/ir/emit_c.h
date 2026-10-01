@@ -362,6 +362,11 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             else fprintf(o, "  v%d = %lld;\n", i->result->id, (long long)i->aux.imm);
             break;
         case IR_ALLOCA: // array decays to its element base; scalar takes the slot address
+            if (i->data) {              // a module constant table: the static array itself
+                fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->data->type->elem, o);
+                fprintf(o, "*)%.*s;\n", (int)i->data->name->length, i->data->name->name);
+                break;
+            }
             if (i->n_operands >= 1) {   // DYNAMIC: `count` elements, allocated in this frame
                 fprintf(o, "  v%d = (", i->result->id);
                 ir_ctype(i->aux.alloca_ty, o);
@@ -905,7 +910,7 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
     for (IrBlock *b=f->blocks; b; b=b->next)
         for (IrInstr *i=b->instrs; i; i=i->next) {
             if (i->result && i->result->id < f->next_value_id) defof[i->result->id] = i;
-            if (i->op==IR_ALLOCA && i->result) alloca_ty[i->result->id] = i->aux.alloca_ty;
+            if (i->op==IR_ALLOCA && i->result && !i->data) alloca_ty[i->result->id] = i->aux.alloca_ty;
         }
     // Which parameter (if any) is a given value? Needed to decide the slice-data qualifier.
     int *pidx = arena_push_many_aligned(a, int, nval);
@@ -1590,6 +1595,21 @@ void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
                 (long long)s->line, (long long)s->col);
     }
     if (ir_static_asserts) fputc('\n', o);
+    // Module constant tables: ONE read-only object each (ir_data_for_global), in .rodata.
+    for (IrData *d = ir_data_objects; d; d = d->next) {
+        fputs("static const ", o); ir_ctype(d->type->elem, o);
+        fprintf(o, " %.*s[%d] = {", (int)d->name->length, d->name->name, d->n);
+        bool sgn = d->type->elem->kind == IRT_INT && d->type->elem->is_signed;
+        for (int k = 0; k < d->n; k++) {
+            if (k) fputs(",", o);
+            if (k % 16 == 0) fputs("\n  ", o); else fputc(' ', o);
+            if (!sgn)                         fprintf(o, "%lluu", (unsigned long long)d->vals[k]);
+            else if (d->vals[k] == INT64_MIN) fputs("(-9223372036854775807LL - 1)", o);
+            else                              fprintf(o, "%lld", (long long)d->vals[k]);
+        }
+        fputs("\n};\n", o);
+    }
+    if (ir_data_objects) fputc('\n', o);
     // `panic` is a declless builtin — it has no Lain declaration, so nothing declares it in
     // the generated C either and every `else panic(...)` failed to LINK. The old backend
     // inlines fprintf+abort at the site; emit one helper instead, and only when it is used,

@@ -41,6 +41,8 @@ typedef struct {
                                  // registered, exactly as falling off its end does.
     DeclList *globals;     // module top-level decls (for global-constant references)
     int       const_depth; // recursion guard for cyclic constant initializers
+    Expr     *table_read;  // the base of the `T[i]` being READ: the one place a module constant
+                           // table is its read-only static object (ir_data_for_global)
     // struct-type memo: cache the IrType per struct decl so a self-referential
     // field (a pointer back to the struct) returns the in-progress node instead of
     // recursing forever.
@@ -246,6 +248,44 @@ static int ir_param_index_by_name(Decl *fn, Id *nm) {
             return i;
     }
     return -1;
+}
+// The read-only static object for a module constant table (see the materialisation in
+// ir_lower_expr), made once per declaration. NULL when the table is not one: an element that
+// is not an integer (or bool), or a value the module-assert evaluator cannot compute.
+#define IR_DATA_MAX 256
+static Decl   *ir_data_decl[IR_DATA_MAX];
+static IrData *ir_data_obj[IR_DATA_MAX];
+static int     ir_data_n = 0;
+static IrData *ir_data_for_global(LowerCtx *c, Decl *g, IrType *ty) {
+    for (int k = 0; k < ir_data_n; k++) if (ir_data_decl[k] == g) return ir_data_obj[k];
+    if (ir_data_n >= IR_DATA_MAX || !ty || ty->kind != IRT_ARRAY || ty->array_len <= 0 || !ty->elem ||
+        (ty->elem->kind != IRT_INT && ty->elem->kind != IRT_BOOL)) return NULL;
+    Expr *init = g->as.variable_decl.init;
+    int n = 0; for (ExprList *el = init->as.array_literal_expr.elements; el; el = el->next) n++;
+    if (n != ty->array_len) return NULL;
+    int64_t *vals = arena_push_many_aligned(c->a, int64_t, n);
+    int k = 0;
+    for (ExprList *el = init->as.array_literal_expr.elements; el; el = el->next, k++) {
+        Expr *x = el->expr;
+        __int128 v; bool lay = false;
+        if (!x || !sa_is_const(x, &lay) || lay || !sa_eval(x, &v) ||
+            v < (__int128)INT64_MIN || v > (__int128)INT64_MAX) return NULL;
+        vals[k] = (int64_t)v;
+    }
+    IrData *d = arena_push_aligned(c->a, IrData);
+    memset(d, 0, sizeof *d);
+    Id *nm = g->as.variable_decl.name;
+    IrName *q = ir_qualified_name(c->a, g, nm);
+    char buf[300]; int bl = snprintf(buf, sizeof buf, "lain_ro_%.*s", q ? (int)q->length : 0, q ? q->name : "");
+    for (int j = 0; j < bl; j++) if (!((buf[j] >= 'a' && buf[j] <= 'z') || (buf[j] >= 'A' && buf[j] <= 'Z') ||
+                                       (buf[j] >= '0' && buf[j] <= '9') || buf[j] == '_')) buf[j] = '_';
+    d->name = ir_intern(c->a, buf, bl);
+    d->type = ty; d->vals = vals; d->n = n;
+    d->lo = d->hi = vals[0];
+    for (int j = 1; j < n; j++) { if (vals[j] < d->lo) d->lo = vals[j]; if (vals[j] > d->hi) d->hi = vals[j]; }
+    d->next = ir_data_objects; ir_data_objects = d;
+    ir_data_decl[ir_data_n] = g; ir_data_obj[ir_data_n] = d; ir_data_n++;
+    return d;
 }
 static Decl *ir_find_global_const(LowerCtx *c, Id *name) {
     if (!name) return NULL;
@@ -2143,6 +2183,21 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 if (g && g->as.variable_decl.init
                     && g->as.variable_decl.init->kind == EXPR_ARRAY_LITERAL
                     && ty && ty->kind == IRT_ARRAY) {
+                    // ★ A TABLE IS READ-ONLY STATIC DATA, not a copy made at every use. Built as
+                    // a local, `CTYPE u8[256]` read in `is_space(c)` compiled at gcc -O2 to 16
+                    // vector loads from .rodata and 16 stores to the stack on EVERY call, and a
+                    // lexer calls it per character. An integer table whose every element is a
+                    // constant is one `static const` object; the alloca that names it keeps it
+                    // an array of known length, fully initialised, to every analysis.
+                    // ...only where it is READ through an index. Anywhere else (an argument, a
+                    // copy, a slice) the use keeps its own copy: an array parameter is an output
+                    // reference the callee may write, and .rodata cannot be written.
+                    IrData *dt = (c->table_read == e) ? ir_data_for_global(c, g, ty) : NULL;
+                    if (dt) {
+                        IrValue *agg = ir_data_array(c->f, c->cur, dt);
+                        ir_init_fact(c->f, c->cur, agg);
+                        return agg;
+                    }
                     IrValue *agg = ir_alloca_array(c->f, c->cur, ty);
                     int k = 0;
                     c->const_depth++;
@@ -2362,7 +2417,10 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     len = ir_binop(c->f,c->cur, IR_ADD, len, ir_const_int(c->f,c->cur,1,u64t), u64t);
                 return ir_make_slice(c->f,c->cur, nd, len, selem);
             }
+            Expr *saved_tr = c->table_read;
+            c->table_read = e->as.index_expr.target;          // `T[i]` READS T
             IrValue *addr = ir_lower_addr(c, e);
+            c->table_read = saved_tr;
             return ir_load(c->f, c->cur, addr, ty);
         }
         case EXPR_ARRAY_LITERAL: {
@@ -4044,6 +4102,7 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
     // DECIDE-O: the module-scope asserts, in source order, for the emitter. Reset first: the
     // driver may lower a module more than once.
     ir_static_asserts = NULL;
+    ir_data_objects = NULL; ir_data_n = 0;             // module constant tables, made on first use
     { IrStaticAssert **sa_tail = &ir_static_asserts;
       LowerCtx sc = {0}; sc.a = a; sc.globals = program;
       for (DeclList *d = program; d; d = d->next) {

@@ -392,6 +392,11 @@ typedef struct IrInstr {
     } aux;
     IrPhiArg  *phi_args;    // IR_PHI
     bool       unchecked;   // ELEM_PTR / arithmetic inside an `unsafe` block
+    // IR_ALLOCA of a module constant TABLE: the array IS this static read-only object, with
+    // these elements, rather than a fresh local initialised by a store per element. Every
+    // analysis keeps reading it as an array of known length; the emitter points at a
+    // `static const` array, and the interpreter at one read-only object.
+    struct IrData *data;
     isize      line, col;   // for diagnostics
     struct IrInstr *next;   // intrusive list within a block
 } IrInstr;
@@ -604,6 +609,19 @@ typedef struct IrStaticAssert {
     struct IrStaticAssert *next;
 } IrStaticAssert;
 static IrStaticAssert *ir_static_asserts = NULL;   // set by ir_lower_module, read by the emitter
+
+// A MODULE CONSTANT TABLE as read-only static data: `CTYPE u8[256] = [...]` is one object, not a
+// local copy made at every use. Integer (or bool) elements, all constant.
+typedef struct IrData {
+    IrName  *name;          // the C name of the static array
+    IrType  *type;          // IRT_ARRAY(elem, n)
+    int64_t *vals;          // the n elements
+    int32_t  n;
+    int64_t  lo, hi;        // the least and greatest element: what a read of it can be
+    void    *interp_obj;    // the interpreter's object for it, made on first use
+    struct IrData *next;
+} IrData;
+static IrData *ir_data_objects = NULL;              // set by ir_lower_module, read by the emitter
 
 typedef struct IrModule {
     IrFunc  *funcs;

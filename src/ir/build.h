@@ -286,6 +286,17 @@ IrValue *ir_slice_data(IrFunc *f, IrBlock *b, IrValue *slice, IrType *elem) {
     return ins->result;
 }
 // A string literal's bytes — result is *u8 pointing at static storage.
+// The array a module constant table IS: an IR_ALLOCA of its type that names the static object,
+// so it is an array of known length to every analysis, owns nothing, and is never stored to.
+IrValue *ir_data_array(IrFunc *f, IrBlock *b, IrData *d) {
+    IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = d->type->elem;
+    IrInstr *ins = ir_instr(f, IR_ALLOCA, pt, 0);
+    ins->aux.alloca_ty = d->type;
+    ins->data = d;
+    ins->result->owns = false;
+    ir_emit(b, ins);
+    return ins->result;
+}
 IrValue *ir_str_const(IrFunc *f, IrBlock *b, const char *bytes, int32_t len) {
     IrType *pt = ir_type_new(f->arena, IRT_PTR); pt->elem = ir_type_int(f->arena, 8, false);
     IrInstr *ins = ir_instr(f, IR_STR_CONST, pt, 0);

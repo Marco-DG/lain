@@ -628,6 +628,18 @@ static void vra_seed_element_ranges_round(Vra *V) {
 // round and is recomputed from scratch in the next), so this converges and is bounded. Chains
 // longer than two copies simply do not get the range — a limit, not an unsoundness.
 static void vra_seed_element_ranges(Vra *V) {
+    // A module constant TABLE (IR_ALLOCA naming read-only static data) is never stored to:
+    // its elements are the data's, known before any store is joined, so a copy of the table
+    // can take its range in the rounds below as well.
+    for (IrBlock *b=V->f->blocks; b; b=b->next)
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next)
+            if (ins->op == IR_ALLOCA && ins->data && ins->result &&
+                ins->result->id >= 0 && ins->result->id < V->nvar) {
+                int cell = ins->result->id;
+                V->elem_known[cell] = true;
+                V->elem_lo[cell] = ins->data->lo;
+                V->elem_hi[cell] = ins->data->hi;
+            }
     for (int round = 0; round < 3; round++) vra_seed_element_ranges_round(V);
 }
 

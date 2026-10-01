@@ -1551,6 +1551,10 @@ at=const 12
 rc=0
 out=
 ty=T struct
+### tests/trust/module_table_static_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/trust/mul_narrowing_provable_pass.ln
 rc=0
 out=

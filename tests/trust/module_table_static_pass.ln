@@ -1,0 +1,18 @@
+// A module constant table read through an index is read-only static data: one object, its range
+// the least and greatest element (so `NEXT[SEQ[i]]` and `DELTA[i] + 100` prove as they did when
+// each use built a local copy). Any other use of the table (an argument, a copy, a slice) still
+// builds its own copy, so nothing reaches the read-only object to write it.
+SEQ u8[4] = [3, 0, 2, 1]
+NEXT u8[4] = [10, 20, 30, 40]
+DELTA i8[4] = [0 - 100, 0 - 1, 0, 27]
+func hop(i usize < 4) u8 {
+    return NEXT[SEQ[i]]
+}
+func shifted(i usize < 4) i32 {
+    return DELTA[i] as i32 + 100
+}
+func main() i32 {
+    if hop(0) != 40 or hop(1) != 10 { return 1 }
+    if shifted(0) != 0 or shifted(3) != 127 { return 2 }
+    return 0
+}
