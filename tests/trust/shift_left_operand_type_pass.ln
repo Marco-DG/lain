@@ -1,0 +1,19 @@
+// A shift has its LEFT operand's type (spec 08), whatever the amount's. `x << k` took the wider
+// operand's type, the rule for & | ^, so an i8 shifted by a u32 amount was computed as a u32:
+// -3 << 3 was 4294967272 rather than -24, and the analysis, judging an i8 operand under a u32
+// result, refused even what fits. Values checked at run time and through `lain --interpret`.
+func shl(x i8 >= -16 and <= 15, k u32 <= 3) i8 {
+    return x << k
+}
+func neg(x i8 >= -3 and <= -1, k u32 <= 3) bool {
+    return (x << k) < 0
+}
+func shr(x u8, k u64 <= 7) u8 {
+    return x >> k
+}
+func main() i32 {
+    if shl(-3, 3) != -24 or shl(15, 3) != 120 { return 1 }
+    if !neg(-3, 3) { return 2 }
+    if shr(200, 3) != 25 { return 3 }
+    return 0
+}

@@ -106,6 +106,7 @@ typedef enum {
     TOKEN_KEYWORD_DEFER,
     TOKEN_KEYWORD_DECREASING,
     TOKEN_KEYWORD_TRY,     // try <expr> — propagate a union's markers to the enclosing return
+    TOKEN_SHIFT_LEFT_PERCENT, // <<%  wrapping left shift: bits shifted out are discarded
 } TokenKind;
 
 typedef struct {
@@ -223,6 +224,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOKEN_PERCENT:                     return "TOKEN_PERCENT";
         case TOKEN_PERCENT_EQUAL:               return "TOKEN_PERCENT_EQUAL";
         case TOKEN_SHIFT_LEFT:                  return "TOKEN_SHIFT_LEFT";
+        case TOKEN_SHIFT_LEFT_PERCENT:          return "TOKEN_SHIFT_LEFT_PERCENT";
         case TOKEN_SHIFT_RIGHT:                 return "TOKEN_SHIFT_RIGHT";
         case TOKEN_SHIFT_LEFT_EQUAL:            return "TOKEN_SHIFT_LEFT_EQUAL";
         case TOKEN_SHIFT_RIGHT_EQUAL:           return "TOKEN_SHIFT_RIGHT_EQUAL";
@@ -322,6 +324,7 @@ const char* token_kind_to_str(TokenKind kind) {
         case TOKEN_PERCENT:                     return "%";
         case TOKEN_PERCENT_EQUAL:               return "%=";
         case TOKEN_SHIFT_LEFT:                  return "<<";
+        case TOKEN_SHIFT_LEFT_PERCENT:          return "<<%";
         case TOKEN_SHIFT_RIGHT:                 return ">>";
         case TOKEN_SHIFT_LEFT_EQUAL:            return "<<=";
         case TOKEN_SHIFT_RIGHT_EQUAL:           return ">>=";

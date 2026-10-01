@@ -158,6 +158,27 @@ the left operand type.
   (\S\,\ref{sec:vra.boundary}) that also rejects arithmetic overflow.
 \end{constraint}
 
+\begin{constraint}
+  \lain{x << k} is \(x \cdot 2^k\), and like \lain{*} it shall not overflow: a left shift whose
+  result value range analysis cannot prove representable in the left operand's type is
+  \illformed{}~(\diagcode{E086}), for an unsigned operand as for a signed one.  No bit is
+  silently shifted out.
+\end{constraint}
+
+\pnum
+The \emph{wrapping} left shift \lain{x <<\% k} discards the bits shifted out, as \lain{+\%},
+\lain{-\%} and \lain{*\%} wrap: its result is \(x \cdot 2^k\) modulo \(2^N\), read in the left
+operand's type.  The shift amount obeys the same constraint as for \lain{<<}; an amount outside
+\(0 \leq k < N\) is not a wrap.
+
+\begin{example}
+\begin{laincode}
+func mix(h u32, c u8) u32 {
+    return (h <<% 5) +% h +% (c as u32)     // a hash step: the high bits are meant to go
+}
+\end{laincode}
+\end{example}
+
 \section{The \texttt{in} operator}
 \label{sec:expr.in}
 \index{in operator}

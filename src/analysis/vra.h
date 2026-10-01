@@ -2590,7 +2590,24 @@ static void vra_check_shift(Vra *V, Octagon *W, IrInstr *ins) {
     c.ok = (blo >= 0) && (bhi <= bits - 1);
     vra_add_check(V, c);
     if (!c.ok) return;                                   // the value question needs a bounded n
-    if (ins->op != IR_SHL || !a->type->is_signed) return;
+    if (ins->op != IR_SHL) return;
+    if (ins->wrap == IR_WRAP_MODULAR) return;            // `<<%`: discarding bits is what it says
+    // ★ AN UNSIGNED `<<` MAY NOT LOSE BITS EITHER. `x << k` is x * 2^k, Path F refuses an unproven
+    // overflow of `*`, and the signed check below refuses a bit reaching the sign, so silently
+    // dropping high bits of an unsigned value was the one hole in the family: `(x << 6) as u8`
+    // over x <= 4 dropped 256's bit and read 0. The wrapping shift `<<%` (IR_WRAP_MODULAR) is
+    // how a program says it means to discard them.
+    if (!a->type->is_signed) {
+        IrType *ut = (ins->result && ins->result->type) ? ins->result->type : a->type;
+        int64_t ulo, uhi; if (!irtype_int_range(ut, &ulo, &uhi)) return;
+        int64_t alo, ahi; vra_range(V, W, a, &alo, &ahi);
+        __int128 top = (alo >= 0 && ahi < OCT_INF/2) ? (__int128)ahi * ((__int128)1 << bhi) : ((__int128)1 << 127) - 1;
+        VraCheck u; memset(&u,0,sizeof u); u.kind = VRA_OVERFLOW; u.at = ins;
+        u.line = ins->line; u.col = ins->col; u.shift = 4;
+        u.ok = alo >= 0 && ahi < OCT_INF/2 && top <= (__int128)uhi;
+        vra_add_check(V, u);
+        return;
+    }
     IrType *tt = (ins->result && ins->result->type) ? ins->result->type : a->type;
     int64_t tlo, thi; if (!irtype_int_range(tt, &tlo, &thi)) return;
     int64_t alo, ahi; vra_range(V, W, a, &alo, &ahi);

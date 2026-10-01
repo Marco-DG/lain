@@ -319,7 +319,8 @@ Diagnostic codes are divided into the following ranges:
   & \textit{integer overflow at boundary: range exceeds target type} ---
     Issued when the VRA range of a source value provably exceeds the
     natural range of the target type at a type boundary (declaration,
-    assignment, call argument, return, struct constructor), or when a module-scope constant's
+    assignment, call argument, return, struct constructor), when a left shift may lose bits
+    (\S\,\ref{sec:expr.bitwise}; \lain{<<\%} discards them on purpose), or when a module-scope constant's
     value, or an element of one, is not representable in its declared type
     (\S\,\ref{sec:decl.module-const}).
     \\[4pt]

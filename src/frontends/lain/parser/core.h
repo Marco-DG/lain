@@ -121,6 +121,7 @@ int get_precedence(TokenKind op) {
 
         // << >>  → precedence 8 (bitwise shift)
         case TOKEN_SHIFT_LEFT:
+        case TOKEN_SHIFT_LEFT_PERCENT:     // <<%  wrapping left shift
         case TOKEN_SHIFT_RIGHT:
             return 8;
 

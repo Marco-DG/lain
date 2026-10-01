@@ -1,0 +1,28 @@
+// `<<%` is the WRAPPING left shift: the bits shifted out are discarded, completing `+% -% *%`.
+// A plain `<<` may not lose bits (x << k is x * 2^k, refused like `*` overflow unless proven to
+// fit), so the hash-mixing and bit-packing idioms that mean to discard them say so. The amount
+// must still be in [0, width-1]: a larger amount is undefined in C, not a wrap. Signed and
+// unsigned, values checked at run time and through `lain --interpret`.
+func w8(x u8, k u32 <= 7) u8 {
+    return x <<% k
+}
+func w32(x u32, k u32 <= 31) u32 {
+    return x <<% k
+}
+func s8(x i8, k u32 <= 7) i8 {
+    return x <<% k
+}
+func djb2(s u8[]) u32 {
+    var h u32 = 5381
+    for i in 0..s.len {
+        h = (h <<% 5) +% h +% (s[i] as u32)
+    }
+    return h
+}
+func main() i32 {
+    if w8(240, 4) != 0 or w8(15, 4) != 240 { return 1 }
+    if w32(4294967295, 31) != 2147483648 { return 2 }
+    if s8(127, 1) != -2 or s8(-1, 7) != -128 { return 3 }
+    if djb2("ab") != 5863208 { return 4 }
+    return 0
+}

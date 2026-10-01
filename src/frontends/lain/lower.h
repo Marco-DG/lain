@@ -1364,6 +1364,7 @@ static bool ir_bin_op(TokenKind t, bool sgn, IrOp *op, IrWrapMode *wrap) {
         case TOKEN_PIPE:     *op=IR_OR;  return true;
         case TOKEN_CARET:    *op=IR_XOR; return true;
         case TOKEN_SHIFT_LEFT: *op=IR_SHL; return true;
+        case TOKEN_SHIFT_LEFT_PERCENT: *op=IR_SHL; *wrap=IR_WRAP_MODULAR; return true;   // bits out are discarded
         case TOKEN_SHIFT_RIGHT:*op= sgn?IR_ASHR:IR_LSHR; return true;
         case TOKEN_PLUS_PERCENT: *op=IR_ADD; *wrap=IR_WRAP_MODULAR; return true;
         case TOKEN_MINUS_PERCENT:*op=IR_SUB; *wrap=IR_WRAP_MODULAR; return true;

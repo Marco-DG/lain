@@ -225,6 +225,7 @@ Token lexer_next(Lexer* lexer) {
                 switch (c) {
                     case '=':           RETURN_TOKEN(TOKEN_ANGLE_BRACKET_LEFT_EQUAL);
                     case '<':           if (*lexer->current == '=') { lexer->current++; RETURN_TOKEN(TOKEN_SHIFT_LEFT_EQUAL); }
+                                        if (*lexer->current == '%') { lexer->current++; RETURN_TOKEN(TOKEN_SHIFT_LEFT_PERCENT); }
                                         RETURN_TOKEN(TOKEN_SHIFT_LEFT);
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_ANGLE_BRACKET_LEFT);

@@ -405,13 +405,18 @@ static void ii_binop_scalar(IrInstr *ins, IVal *a, IVal *b, IrType *ta, IrType *
         case IR_XOR: z = (__int128)((int64_t)x ^ (int64_t)y); if (!it_signed(rt)) z = it_wrap(z, rt); break;
         case IR_SHL: case IR_LSHR: case IR_ASHR: {
             int w = it_bits(ta);
+            // A vector's lanes shifted past their width read 0. A scalar amount is an
+            // obligation in every wrap mode: `<<%` wraps the bits shifted out, not the amount,
+            // and the C `<<` by the width or more is undefined.
+            bool lane = ins->result && ins->result->type && ins->result->type->kind == IRT_VECTOR;
             if (y < 0 || y >= w) {
-                if (ins->wrap != IR_WRAP_CHECK) { z = 0; break; }
+                if (lane) { z = 0; break; }
                 II_PROOF(ins, "shift by %lld, outside [0, %d) (proven in range)", (long long)y, w);
             }
             if (ins->op == IR_SHL) {
-                z = (__int128)((unsigned __int128)x << (int)y);   // exact for |x| < 2^63; wraps for u64
-                if (!it_signed(rt) && ins->wrap == IR_WRAP_CHECK) z = it_wrap(z, rt);   // an unsigned shift wraps
+                // exact for |x| < 2^63; ii_settle wraps `<<%` and checks `<<`, which may not lose
+                // a bit for either sign (vra_check_shift)
+                z = (__int128)((unsigned __int128)x << (int)y);
             } else if (ins->op == IR_LSHR) {
                 z = (__int128)((unsigned __int128)it_wrap_bits(x, w, false) >> (int)y);
             } else z = x >> (int)y;

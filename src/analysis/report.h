@@ -141,6 +141,10 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                             "signed division may overflow — TYPE_MIN / -1 is undefined at this width; "
                             "prove the dividend is not TYPE_MIN or the divisor is not -1, or say what "
                             "you mean: `/%` wraps (MIN), `/|` saturates (MAX)");
+                } else if (c->shift == 4) {
+                    ir_diag(file, c->line, c->col, "E086",
+                            "unsigned left shift may lose bits — the result may not fit the left "
+                            "operand's type; prove it fits, or say you mean to discard them: `<<%` wraps");
                 } else if (c->shift == 2) {
                     ir_diag(file, c->line, c->col, "E086",
                             "signed left shift may overflow — a bit can reach the sign (`1 << 31` on an i32 is UB)");

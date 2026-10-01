@@ -367,7 +367,8 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
             bool is_wrap_or_sat = (op == TOKEN_PLUS_PERCENT  || op == TOKEN_MINUS_PERCENT
                                 || op == TOKEN_ASTERISK_PERCENT || op == TOKEN_PLUS_PIPE
                                 || op == TOKEN_MINUS_PIPE || op == TOKEN_ASTERISK_PIPE
-                                || op == TOKEN_SLASH_PERCENT || op == TOKEN_SLASH_PIPE);
+                                || op == TOKEN_SLASH_PERCENT || op == TOKEN_SLASH_PIPE
+                                || op == TOKEN_SHIFT_LEFT_PERCENT);
             if (is_wrap_or_sat && e->as.binary_expr.left && e->as.binary_expr.left->type) {
                 long long lo, hi;
                 if (type_integer_range(e->as.binary_expr.left->type, &lo, &hi)) {

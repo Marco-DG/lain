@@ -1,10 +1,11 @@
 // A shift amount proven in [0, width-1] by a guard is accepted (check-free). Uses
-// an UNSIGNED operand, where an in-range amount fully defines the shift (no
-// signed-overflow UB). (Signed left-shift OVERFLOW — e.g. `1i32 << 31` — is a
-// separate value-dependent UB, handled like `*` overflow, not by the amount check.)
+// an UNSIGNED operand and the WRAPPING shift `<<%`, where an in-range amount fully defines
+// the shift: the bits shifted out are discarded, which is what `<<%` says. (A plain `<<` may
+// not lose bits, signed or unsigned; that is a value question handled like `*` overflow, not
+// by the amount check: shift_range_exceeds_fail.ln.)
 func f(x u32, n u32) u32 {
     if n < 32 {
-        return x << n
+        return x <<% n
     }
     return 0
 }

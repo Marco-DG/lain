@@ -1,0 +1,14 @@
+// EXPECT: [E086]
+// An unsigned `<<` whose result may not fit its type is refused, like `*`: here the accumulator
+// grows without bound, so `h << 5` drops bits. A hash that means to drop them writes `h <<% 5`
+// (shift_wrapping_pass.ln).
+func hash(s u8[]) u32 {
+    var h u32 = 5381
+    for i in 0..s.len {
+        h = (h << 5) +% (s[i] as u32)
+    }
+    return h
+}
+func main() i32 {
+    return 0
+}

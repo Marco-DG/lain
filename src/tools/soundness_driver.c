@@ -90,7 +90,7 @@ static const OpSpec OPS[] = {
     {"add", K_BIN, IR_ADD, 2}, {"sub", K_BIN, IR_SUB, 2}, {"mul", K_BIN, IR_MUL, 2},  // +% -% *%
     {"div", K_BIN, IR_SDIV, 3}, {"rem", K_BIN, IR_SREM, 1},   // signed /% and /|; unsigned: check
     {"and", K_BIN, IR_AND, 1}, {"or", K_BIN, IR_OR, 1}, {"xor", K_BIN, IR_XOR, 1},
-    {"shl", K_BIN, IR_SHL, 1}, {"shr", K_BIN, IR_ASHR, 1},
+    {"shl", K_BIN, IR_SHL, 2}, {"shr", K_BIN, IR_ASHR, 1},   // <<%
     {"neg", K_UN, IR_NEG, 1}, {"bnot", K_UN, IR_BNOT, 1},
     {"ctz", K_UN, IR_CTZ, 1}, {"clz", K_UN, IR_CLZ, 1}, {"popcount", K_UN, IR_POPCOUNT, 1},
     {"cast", K_CAST, IR_CAST, 3}, {"cmp", K_CMP, IR_ICMP, 1}, {"guard", K_GUARD, IR_ICMP, 1},  // as as% as|

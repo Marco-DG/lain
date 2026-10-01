@@ -2847,7 +2847,8 @@ void sema_infer_expr(Expr *e) {
                                 || aop == TOKEN_MINUS_PIPE || aop == TOKEN_ASTERISK_PIPE
                                 || aop == TOKEN_PLUS_QUESTION || aop == TOKEN_MINUS_QUESTION
                                 || aop == TOKEN_ASTERISK_QUESTION
-                                || aop == TOKEN_SLASH_PERCENT || aop == TOKEN_SLASH_PIPE);
+                                || aop == TOKEN_SLASH_PERCENT || aop == TOKEN_SLASH_PIPE
+                                || aop == TOKEN_SHIFT_LEFT_PERCENT);
             if (is_wrap_or_sat && lt && is_integer_type(lt)) {
                 e->type = lt;
                 // Q1: a checked op (`+?`/`-?`/`*?`) must be handled inline by `else`
@@ -2889,6 +2890,13 @@ void sema_infer_expr(Expr *e) {
                             e->type->refine.hi = res.max;
                         }
                     }
+                } else if (aop == TOKEN_SHIFT_LEFT || aop == TOKEN_SHIFT_RIGHT) {
+                    // ★ A SHIFT HAS ITS LEFT OPERAND'S TYPE (spec 08, bitwise operators), whatever
+                    // the amount's. It took the WIDER operand's, the rule for & | ^, so an i8 `x`
+                    // shifted by a u32 `k` was computed as a u32: -3 << 3 was 4294967272, not
+                    // -24, and the interpreter and the C agreed on the wrong value. The amount
+                    // only counts positions.
+                    e->type = lt;
                 } else
                     e->type = wider_integer_type(lt, rt);
             } else {
