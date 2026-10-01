@@ -573,7 +573,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
           }
         }
         sema_resolve_expr(d->as.type_alias_decl.expr);
-        Expr* eval_rhs = comptime_evaluate_expr(sema_arena, d->as.type_alias_decl.expr, NULL);
+        Expr* eval_rhs = comptime_evaluate_expr(sema_arena, d->as.type_alias_decl.expr);
         
         current_module_path = old_path;
         
@@ -1197,7 +1197,7 @@ void sema_resolve_stmt(Stmt *s) {
     sema_resolve_expr(cond);
 
     // 2) Evaluate the condition at compile time
-    Expr *eval = comptime_evaluate_expr(sema_arena, cond, NULL);
+    Expr *eval = comptime_evaluate_expr(sema_arena, cond);
     bool is_true = false;
     if (eval && eval->kind == EXPR_LITERAL) {
         is_true = eval->as.literal_expr.value != 0;

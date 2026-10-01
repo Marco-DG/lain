@@ -144,7 +144,10 @@ is not evaluated if the result is determined by the left operand alone.
 The bitwise operators \lain{\&}, \lain{|}, \texttt{\textasciicircum}, \lain{<<}, \lain{>>}
 operate on integer operands.  The result type is the wider operand type for
 \lain{\&}, \lain{|}, \texttt{\textasciicircum}; for shift operators, the result type is
-the left operand type.
+the left operand type.  A \emph{literal} shifted left by a constant expression is typed by its
+value, as a constant sum is: the literal and the shift take the narrowest of its type,
+\lain{i64} and \lain{u64} that holds the result, so \lain{1 << 40} is an \lain{i64} holding
+\(2^{40}\), in a module assertion and in code alike.
 
 \begin{constraint}
   Operands of bitwise operators shall be integer types.

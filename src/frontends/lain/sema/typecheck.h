@@ -42,6 +42,16 @@ static Type *get_builtin_i64_type(void) {
   }
   return i64_ty;
 }
+static Type *sa_u64_type(void) {                // a shift of constants that needs all 64 bits
+  static Type *u64_ty = NULL;
+  if (!u64_ty) {
+    Id *id = arena_push_aligned(sema_arena, Id);
+    id->name = "u64";
+    id->length = 3;
+    u64_ty = type_simple(sema_arena, id);
+  }
+  return u64_ty;
+}
 Type *get_builtin_i32_type(void) {
   // Q-002 / int-removal: the default integer type for naked literals
   // is i32. The function name is kept for historical reasons but the
@@ -2902,6 +2912,30 @@ void sema_infer_expr(Expr *e) {
                     // -24, and the interpreter and the C agreed on the wrong value. The amount
                     // only counts positions.
                     e->type = lt;
+                    // ★ ...and a LITERAL shifted left by a constant is typed by its VALUE, as a
+                    // constant sum already is (`200 + 100` is an i33). `1 << 40` shifted an i32
+                    // literal by 40 and was refused wherever it was a value (E086), while a module
+                    // assert, whose evaluator computes over the integers, accepted
+                    // `(1 << 40) == 1099511627776`: one expression, two meanings (Handwriting's M1,
+                    // plan I.20). The literal and the shift take the narrowest of i64 and u64 that
+                    // holds the value, so `1 << 40` is an i64 2^40 in an assert and in code alike.
+                    Expr *L = e->as.binary_expr.left, *R = e->as.binary_expr.right;
+                    bool lay = false; __int128 lv = 0, rv = 0; int lbits = 0; bool lsgn = false;
+                    if (aop == TOKEN_SHIFT_LEFT && L && L->kind == EXPR_LITERAL && !L->as.literal_expr.is_bool
+                        && R && sa_is_const(R, &lay) && !lay && sa_eval(R, &rv) && rv >= 0 && rv < 64
+                        && sa_eval(L, &lv) && lv >= 0 && parse_iN_uN(lt, &lbits, &lsgn) && lbits >= 1 && lbits <= 64) {
+                        __int128 v = lv << (int)rv;
+                        __int128 tmax = lsgn ? (((__int128)1 << (lbits - 1)) - 1) : ((((__int128)1) << lbits) - 1);
+                        if (v > tmax && v <= (__int128)UINT64_MAX) {
+                            Type *base = v <= (__int128)INT64_MAX ? get_builtin_i64_type() : sa_u64_type();
+                            Type *lt2 = arena_push_aligned(sema_arena, Type); *lt2 = *base;
+                            lt2->refine.known = true; lt2->refine.lo = (int64_t)lv; lt2->refine.hi = (int64_t)lv;
+                            L->type = lt2;
+                            Type *et = arena_push_aligned(sema_arena, Type); *et = *base;
+                            if (v <= (__int128)INT64_MAX) { et->refine.known = true; et->refine.lo = et->refine.hi = (int64_t)v; }
+                            e->type = et;
+                        }
+                    }
                 } else
                     e->type = wider_integer_type(lt, rt);
             } else {

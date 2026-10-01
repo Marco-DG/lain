@@ -6,53 +6,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/*
-    Comptime Interpreter for Phase B
-    Executes a subset of the AST to return a compile-time value.
-    In Phase B, we focus on functions returning `type` expressions
-    to support type aliases like `type OptionInt = Option(int)`.
-*/
-
-// A simple structure to hold local variables during comptime execution
-typedef struct ComptimeEnv {
-    Id* name;
-    Expr* value;
-    struct ComptimeEnv* next;
-} ComptimeEnv;
+// The TYPE-LEVEL compile-time evaluator (DECIDE-W v2, section 3): a type alias's right-hand side
+// (`type OptInt = Option(i32)`, `type Buf4 = u8[K]`) and a `comptime if` condition (`@os == 1`).
+// It computes no value that also exists at run time: every such value is the IR's, computed by
+// the interpreter (static_eval.h) or folded by the front end's constant evaluator (sa_eval). Its
+// statement interpreter and variable environment (ComptimeEnv, comptime_evaluate_stmt_list) had no
+// caller and were deleted with plan I.20; Handwriting's M6 found 40 of its 41 dispatches in the
+// corpus to be alias right-hand sides and one a `comptime if @os == 1`.
 
 Type* get_builtin_i32_type(void);
 
-ComptimeEnv* comptime_env_push(Arena* arena, ComptimeEnv* env, Id* name, Expr* value) {
-    ComptimeEnv* node = arena_push_aligned(arena, ComptimeEnv);
-    node->name = name;
-    node->value = value;
-    node->next = env;
-    return node;
-}
+Expr* comptime_evaluate_expr(Arena* arena, Expr* expr);
 
-Expr* comptime_env_lookup(ComptimeEnv* env, Id* name) {
-    for (ComptimeEnv* curr = env; curr; curr = curr->next) {
-        if (curr->name->length == name->length && 
-            strncmp(curr->name->name, name->name, name->length) == 0) {
-            return curr->value;
-        }
-    }
-    return NULL;
-}
-
-// Forward declarations of evaluation functions
-Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env);
-Expr* comptime_evaluate_stmt_list(Arena* arena, StmtList* stmts, ComptimeEnv* env);
-
-Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
+Expr* comptime_evaluate_expr(Arena* arena, Expr* expr) {
     if (!expr) return NULL;
     
     switch (expr->kind) {
         case EXPR_IDENTIFIER: {
             Id* id = expr->as.identifier_expr.id;
-            // Variable lookup
-            Expr* val = comptime_env_lookup(env, id);
-            if (!val) {
+            {
                 // If resolving failed, we return the identifier itself, OR look it up globally
                 char raw[256];
                 int L = id->length < (int)sizeof(raw)-1 ? id->length : (int)sizeof(raw)-1;
@@ -107,11 +79,10 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
                 
                 return expr;
             }
-            return clone_expr(arena, val);
         }
         case EXPR_BINARY: {
-            Expr* left = comptime_evaluate_expr(arena, expr->as.binary_expr.left, env);
-            Expr* right = comptime_evaluate_expr(arena, expr->as.binary_expr.right, env);
+            Expr* left = comptime_evaluate_expr(arena, expr->as.binary_expr.left);
+            Expr* right = comptime_evaluate_expr(arena, expr->as.binary_expr.right);
             
             // Integer literal comparison (for @os == 1, etc.)
             if (left && right && left->kind == EXPR_LITERAL && right->kind == EXPR_LITERAL) {
@@ -166,7 +137,7 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
             // into a type name, and with a constant index it IS the array type. Every such alias
             // was refused ("Type alias must evaluate to a type", at Ln 0), with a literal length
             // as well as a named constant (Handwriting's M6 probe table).
-            Expr *t = comptime_evaluate_expr(arena, expr->as.index_expr.target, env);
+            Expr *t = comptime_evaluate_expr(arena, expr->as.index_expr.target);
             Expr *ix = expr->as.index_expr.index;
             bool lay = false; __int128 n = 0;
             if (t && t->kind == EXPR_TYPE && t->as.type_expr.type_value && ix
@@ -183,7 +154,7 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
             // Since we are parsing things like `OptionInt` from `type OptionInt = Option(int)`
             // We might just need to pass the member expression through un-evaluated for now,
             // or fully evaluate if it's a known struct. For Phase B, returning types is our main goal.
-            Expr* target_eval = comptime_evaluate_expr(arena, expr->as.member_expr.target, env);
+            Expr* target_eval = comptime_evaluate_expr(arena, expr->as.member_expr.target);
             // Reconstruct the member expression with evaluated target
             Expr* res = clone_expr(arena, expr);
             res->as.member_expr.target = target_eval;
@@ -257,62 +228,6 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr, ComptimeEnv* env) {
         default:
             return clone_expr(arena, expr);
     }
-}
-
-// Evaluate a list of statements. Returns the returned expression if a return statement is hit.
-Expr* comptime_evaluate_stmt_list(Arena* arena, StmtList* stmts, ComptimeEnv* env) {
-    for (StmtList* curr = stmts; curr; curr = curr->next) {
-        Stmt* stmt = curr->stmt;
-        switch (stmt->kind) {
-            case STMT_VAR: {
-                Expr* init_val = comptime_evaluate_expr(arena, stmt->as.var_stmt.expr, env);
-                env = comptime_env_push(arena, env, stmt->as.var_stmt.name, init_val);
-                break;
-            }
-            case STMT_ASSIGN: {
-                // In Phase B, we assume assignment targets are identifiers for simplicity.
-                if (stmt->as.assign_stmt.target->kind == EXPR_IDENTIFIER) {
-                    Expr* val = comptime_evaluate_expr(arena, stmt->as.assign_stmt.expr, env);
-                    // Update existing environment variable (we'd mutate the node value)
-                    Id* target_id = stmt->as.assign_stmt.target->as.identifier_expr.id;
-                    for (ComptimeEnv* e = env; e; e = e->next) {
-                        if (e->name->length == target_id->length && 
-                            strncmp(e->name->name, target_id->name, target_id->length) == 0) {
-                            e->value = val;
-                            break;
-                        }
-                    }
-                }
-                break;
-            }
-            case STMT_IF: {
-                Expr* cond = comptime_evaluate_expr(arena, stmt->as.if_stmt.cond, env);
-                bool is_true = false;
-                if (cond && cond->kind == EXPR_LITERAL) {
-                    is_true = cond->as.literal_expr.value != 0;
-                }
-                
-                if (is_true) {
-                     Expr* ret = comptime_evaluate_stmt_list(arena, stmt->as.if_stmt.then_body, env);
-                     if (ret) return ret;
-                } else if (stmt->as.if_stmt.else_branch) {
-                     Expr* ret = comptime_evaluate_stmt_list(arena, stmt->as.if_stmt.else_branch, env);
-                     if (ret) return ret;
-                }
-                break;
-            }
-            case STMT_RETURN: {
-                return comptime_evaluate_expr(arena, stmt->as.return_stmt.value, env);
-            }
-            case STMT_EXPR: {
-                comptime_evaluate_expr(arena, stmt->as.expr_stmt.expr, env);
-                break;
-            }
-            default:
-                break; // Ignore other statements in a basic interpreter
-        }
-    }
-    return NULL; // Function fell through without returning
 }
 
 #endif // SEMANTICS_COMPTIME_H

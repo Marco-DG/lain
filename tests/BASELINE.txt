@@ -1449,6 +1449,9 @@ out=
 rc=0
 out=0 7
 ty=Slice_u8 scalar
+### tests/trust/constant_shift_typed_by_value_pass.ln
+rc=0
+out=
 ### tests/trust/const_generic_struct_pass.ln
 rc=0
 out=

@@ -1,0 +1,16 @@
+// A literal shifted left by a constant is typed by its VALUE, as a constant sum is (`200 + 100` is
+// an i33): `1 << 40` is an i64 holding 2^40. It shifted an i32 literal by 40 and was refused
+// wherever it was a value (E086), while a module assert, whose evaluator computes over the
+// integers, accepted the same expression: one expression, two meanings. Values checked at run
+// time and under --interpret.
+assert (1 << 40) == 1099511627776
+X i64 = 1 << 40
+func main() i32 {
+    x i64 = 1 << 40
+    y u32 = 1 << 31
+    z u8 = 1 << 7
+    if X != 1099511627776 or x != X { return 1 }
+    if y != 2147483648 { return 2 }
+    if z != 128 { return 3 }
+    return 0
+}

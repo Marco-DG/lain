@@ -1,0 +1,7 @@
+// EXPECT: [E086]
+// `1 << 31` is 2^31, an i64 now that a constant shift is typed by its value, and 2^31 does not fit
+// an i32: the narrowing is refused, as `x i32 = 2147483648` is.
+func main() i32 {
+    x i32 = 1 << 31
+    return x
+}
