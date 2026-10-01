@@ -566,14 +566,26 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                 fprintf(o, ", .data.%.*s = { ", vn?(int)vn->length:0, vn?vn->name:"");
                 for (int j=0;j<i->n_operands;j++) {
                     IrName *fn = (j < pl->n_fields) ? pl->field_names[j] : NULL;
+                    IrType *ft = (j < pl->n_fields) ? pl->fields[j] : NULL;
                     if (j) fputs(", ", o);
                     if (fn) fprintf(o, ".%.*s = ", (int)fn->length, fn->name);
                     else    fprintf(o, ".f%d = ", j);
-                    fprintf(o, "v%d", i->operands[j]->id);
+                    if (ft && ft->kind == IRT_ARRAY) fputs("{0}", o);
+                    else fprintf(o, "v%d", i->operands[j]->id);
                 }
                 fputs(" }", o);
             }
             fputs(" };\n", o);
+            // An array operand is its decayed base: COPY the elements into the payload's own
+            // storage, as IR_STRUCT_NEW does.
+            for (int j=0; pl && j<i->n_operands && j<pl->n_fields; j++) {
+                if (!pl->fields[j] || pl->fields[j]->kind != IRT_ARRAY) continue;
+                IrName *fn = pl->field_names[j];
+                char m[160];
+                if (fn) snprintf(m, sizeof m, "v%d.data.%.*s.%.*s", i->result->id, vn?(int)vn->length:0, vn?vn->name:"", (int)fn->length, fn->name);
+                else    snprintf(m, sizeof m, "v%d.data.%.*s.f%d", i->result->id, vn?(int)vn->length:0, vn?vn->name:"", j);
+                fprintf(o, "  __builtin_memcpy(%s, v%d, sizeof %s);\n", m, i->operands[j]->id, m);
+            }
             break;
         }
         case IR_VEC_MOVEMASK: {   // the ISA's own lane-predicate reduction, where there is one
@@ -1196,10 +1208,17 @@ static void ir_emit_one_sum_body(IrType *st, FILE *o) {
             if (pl->n_fields <= IR_REORDER_MAX_FIELDS) ir_sum_payload_order(st, k, iface, ord);
             for (int q=0;q<pl->n_fields;q++) {
                 int j = pl->n_fields <= IR_REORDER_MAX_FIELDS ? ord[q] : q;   // storage order (DECIDE-U)
-                ir_ctype(pl->fields[j], o);
-                IrName *fn = pl->field_names[j];
-                if (fn) fprintf(o, " %.*s; ", (int)fn->length, fn->name);
-                else    fprintf(o, " f%d; ", j);
+                IrType *ft = pl->fields[j]; IrName *fn = pl->field_names[j];
+                // ★ An array field is stored INLINE, as a struct's is. ir_ctype spells an array
+                // as its decayed base, so the payload held a POINTER to the constructor's
+                // argument: a sum returned from the function that built it read a dead frame
+                // (ASan stack-use-after-return; gcc -O2 read the wrong value).
+                bool arr = ft && ft->kind == IRT_ARRAY;
+                ir_ctype(arr ? ft->elem : ft, o);
+                if (fn) fprintf(o, " %.*s", (int)fn->length, fn->name);
+                else    fprintf(o, " f%d", j);
+                if (arr) fprintf(o, "[%lld]", (long long)ft->array_len);
+                fputs("; ", o);
             }
             fprintf(o, "} %.*s; ", vn?(int)vn->length:0, vn?vn->name:"");
         }

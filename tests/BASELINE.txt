@@ -1871,6 +1871,11 @@ rc=0
 out=20 40
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/sum_array_payload_pass.ln
+rc=0
+out=
+at=const 8
+ty=Sh struct
 ### tests/trust/sum_byte_view_ordered_pass.ln
 rc=0
 out=

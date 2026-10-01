@@ -812,8 +812,15 @@ static void ii_exec(IrInstr *ins) {
             r.k = IV_SUM; r.n = ins->aux.sum.variant; r.len = n; r.e = iv_elems(n, false);
             const IrType *pl = (rt && rt->kind == IRT_SUM && r.n >= 0 && r.n < rt->n_fields) ? rt->fields[r.n] : NULL;
             for (int k = 0; k < n; k++) {
-                iv_copy(&r.e[k], ii_val(ins->operands[k], ins), false);
+                IVal *v = ii_val(ins->operands[k], ins);
                 const IrType *ft = !pl ? NULL : pl->kind == IRT_STRUCT ? (k < pl->n_fields ? pl->fields[k] : NULL) : (k == 0 ? pl : NULL);
+                if (ft && ft->kind == IRT_ARRAY && v->k == IV_PTR) {        // the payload's own copy,
+                    IVal *f = &r.e[k]; f->k = IV_AGG; f->n = (int32_t)ft->array_len;   // as IR_STRUCT_NEW
+                    f->e = iv_elems(f->n, false);
+                    for (int j = 0; j < f->n; j++) { IPtr q = v->p; q.p[q.d - 1] += j; iv_copy(&f->e[j], ip_cell(&q, ins), false); }
+                    continue;
+                }
+                iv_copy(&r.e[k], v, false);
                 ii_land(&r.e[k], ii_ty(ins->operands[k]), ft, ins);
             }
             break;
@@ -830,7 +837,16 @@ static void ii_exec(IrInstr *ins) {
             if (s->k != IV_SUM) II_UNSUP(ins, "the payload of a non-sum value");
             if (s->n != ins->aux.sum.variant) II_PROOF(ins, "payload of variant %d read from a value of variant %d", ins->aux.sum.variant, s->n);
             if (ins->aux.sum.field < 0 || ins->aux.sum.field >= s->len) II_UNSUP(ins, "a payload field out of range");
-            iv_copy(&r, &s->e[ins->aux.sum.field], false);
+            IVal *fv = &s->e[ins->aux.sum.field];
+            if (rt && rt->kind == IRT_ARRAY && fv->k == IV_AGG) {
+                // An array value is its decayed base: the C reads `v.data.V.xs` out of the sum's
+                // local copy, so the base of a copy that lives as long as this frame.
+                IObj *o = ii_new_obj(rt->elem, rt->array_len, "an array read from a sum's payload");
+                for (int j = 0; j < fv->n && j < o->root.n; j++) { iv_free_owned(&o->root.e[j]); iv_copy(&o->root.e[j], &fv->e[j], true); }
+                r.k = IV_PTR; r.p = ip_of(o, 0);
+                break;
+            }
+            iv_copy(&r, fv, false);
             break;
         }
         case IR_FUNC_REF: r.k = IV_FUNC; r.fn = ins->aux.callee; break;

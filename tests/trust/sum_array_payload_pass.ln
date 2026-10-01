@@ -1,0 +1,55 @@
+// A sum's array payload is a VALUE, stored inline in the sum, as a struct's array field is. It was
+// a pointer to the constructor's argument: a sum returned from the function that built it read a
+// dead frame, and writing the source array after construction changed the sum. Each check has its
+// own exit code; the size ties the C and the interpreter's size model (payload {xs, a} is 16).
+// tests/codegen/sum_array_payload.sh runs the returned case at -O0 and -O2 under ASan's
+// use-after-return check.
+type Sh {
+    Arr { a u8, xs u32[3] }
+    Flat
+}
+func mk(k u32 <= 100) Sh {
+    xs u32[3] = [k, k + 1, k + 2]
+    return Sh.Arr(1, xs)
+}
+func clobber(k u32) u32 {
+    ys u32[8] = [k, k, k, k, k, k, k, k]
+    return ys[3]
+}
+func at(s Sh, i usize <= 2) u32 {
+    case s {
+        Arr(a, ys): return ys[i]
+        Flat: return 0
+    }
+}
+func bumped(s Sh) Sh {
+    case s {
+        Arr(a, ys):
+            zs u32[3] = [ys[0] +% 1, ys[1] +% 1, ys[2] +% 1]
+            return Sh.Arr(a, zs)
+        Flat: return Sh.Flat
+    }
+}
+func main() i32 {
+    if @sizeof(Sh) != 20 { return 10 }
+    s = mk(10)
+    c = clobber(77)
+    if at(s, 0) != 10 or at(s, 2) != 12 { return 1 }
+    // A source in an inner block: today every local lives as long as the frame, in the C and
+    // the interpreter alike, so this guards the copy against a block-scoped lifetime later.
+    var t = Sh.Flat
+    if c == 77 {
+        inner u32[3] = [4, 5, 6]
+        t = Sh.Arr(2, inner)
+    }
+    d = clobber(55)
+    if at(t, 1) != 5 { return 2 }
+    var xs u32[3] = [1, 2, 3]
+    u = Sh.Arr(3, xs)
+    xs[0] = 99
+    if at(u, 0) != 1 { return 3 }
+    v = bumped(u)
+    if at(v, 0) != 2 or at(v, 2) != 4 { return 4 }
+    if at(u, 0) != 1 or at(u, 2) != 3 { return 5 }
+    return 0
+}

@@ -274,7 +274,9 @@ struct Shape { int32_t tag; union { struct { float r; } Circle;
 \pnum
 Each payload of a tagged union is stored as a struct is (\S\,\ref{sec:mem.alignment}): its
 fields by decreasing alignment, unless the sum is declared \tok{[ordered]} or reachable from an
-\lain{extern} signature, which keeps every payload in declaration order. Construction,
+\lain{extern} signature, which keeps every payload in declaration order. An array field is
+stored inline, as a struct's is: a sum holds its payload by value, so constructing it copies
+the array, and the sum outlives the array it was built from. Construction,
 \lain{case} and field access name each field, so the order is not observable but through
 \lain{@sizeof}, and a cast that would view the bytes is refused (\diagcode{E012}). A
 niche-packed sum has no payload struct (its one payload field is the value), so it is
