@@ -49,14 +49,14 @@ typedef struct {
     Decl     *scache_decl[64];
     IrType   *scache_type[64];
     int       scache_n;
-    // `defer` stack. Lain's defer is FUNCTION-scoped (the old backend keeps one stack per
-    // function and flushes it in reverse at every return and at the end) — so lowering
-    // records the statements here and REPLAYS them at each exit. Without this, defer was
-    // simply dropped and the whole function marked `incomplete`, which made a deferred
-    // consumption invisible: `defer drop(mov r); drop(mov r)` is a double free that no
-    // analysis could see because the function was never analysed.
-    Stmt     *defers[64];
-    int       ndefers;
+    // `defer` stack. Lowering records the deferred statements here and REPLAYS them at each
+    // exit of the block that registered them (ir_lower_stmts; a `return` replays them all).
+    // Without this, defer was simply dropped and the whole function marked `incomplete`,
+    // which made a deferred consumption invisible: `defer drop(mov r); drop(mov r)` is a
+    // double free that no analysis could see because the function was never analysed. It
+    // grows from the arena: a fixed 64 ran only the first 64 of 65.
+    Stmt    **defers;
+    int       ndefers, defers_cap;
     bool      in_defer;    // guard: a defer's own body must not re-register defers
     // ── D-49: THE GUARD'S VALUES, SO THE MEASURE CAN REUSE THEM ─────────────────────────
     // `while i < n / 2 decreasing n / 2 - i` mentions `n / 2` twice. Lowering each occurrence
@@ -161,13 +161,15 @@ static bool ir_expr_same(const Expr *a, const Expr *b) {
     }
 }
 
-// Mark the function unfaithful, WITH A REASON. `incomplete` suppresses every proof over the
-// function, so an unlabelled one is an unmeasured escape hatch conditioning every survey
-// number (backlog C3). First reason wins: it is the first construct that defeated lowering.
+// Mark the function unfaithful, WITH A REASON AND A POSITION: the program is refused there
+// (ir_emit_refuse_opaque). First reason wins: it is the first construct that defeated lowering.
 static void ir_incomplete(LowerCtx *c, const char *why) {
     if (!c || !c->f) return;
     c->f->incomplete = true;
-    if (!c->f->incomplete_why) c->f->incomplete_why = why;
+    if (!c->f->incomplete_why) {
+        c->f->incomplete_why = why;
+        c->f->incomplete_line = ir_cur_line; c->f->incomplete_col = ir_cur_col;
+    }
 }
 
 // B3: lower an unmodelled EXPRESSION as an honest opaque instead of poisoning the whole
@@ -1976,10 +1978,10 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // on is a property of the IR, and re-deriving it from AST fields is how the two drift.
             bool scalar_ok = vty_kind_is_scalar;
             if (!sumty && !scalar_ok)
-                return ir_opaque_expr(c, ty, false, "match-expr-scrutinee", NULL, NULL);
+                return ir_opaque_expr(c, ty, false, "a `case` on a scrutinee of this type", NULL, NULL);
             IrValue *v = ir_lower_expr(c, val);
             if (sumty && !(v && v->type && v->type->kind==IRT_SUM))
-                return ir_opaque_expr(c, ty, false, "match-expr-scrutinee", NULL, NULL);
+                return ir_opaque_expr(c, ty, false, "a `case` on a scrutinee of this type", NULL, NULL);
 
 
 
@@ -2001,7 +2003,10 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                         if (sumty->sname) { Id tn; tn.name=sumty->sname->name; tn.length=sumty->sname->length;
                                             ed = ir_find_enum_decl(c, &tn); }
                         int k = ed ? ir_variant_index(ed, ir_variant_name_of(pv), true) : -1;
-                        if (k < 0) { ir_set_br(c->cur, body); c->cur = nxt; continue; }
+                        if (k < 0) {   // the front end refuses this (E106); never match everything
+                            if (pe->line) { ir_cur_line = pe->line; ir_cur_col = pe->col; }
+                            ir_incomplete(c, "a pattern that names no variant of the scrutinee"); ir_set_br(c->cur, body); c->cur = nxt; continue;
+                        }
                         if (pe->kind==EXPR_CALL) { bound_k = k; bound_pat = pe; }
                         IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
                         ir_match_branch(c, sumty, k, pe, v,
@@ -2096,9 +2101,9 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // reported as "arithmetic is not provably free of overflow": a confusing message
             // about the wrong thing, and the program never reached the emitter that knew.
             //
-            // The predicate is the emitter's, verbatim. Marking the function incomplete is
-            // fail-closed — no finding is reported for it — and the emitter then says what is
-            // actually wrong.
+            // The predicate is the emitter's, verbatim. E106 is now raised before lowering
+            // (sema_check_undeclared, main.c); this is the backstop, and an incomplete function
+            // is refused at the name.
             if (e->line > 0 && e->type == NULL && e->decl == NULL && !e->is_global &&
                 !ir_env_find(c, e->as.identifier_expr.id))
                 ir_incomplete(c, "undeclared-identifier");
@@ -3424,8 +3429,16 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
         }
         case STMT_DEFER:
             // Recorded, not emitted: the body runs at every exit, in reverse order.
-            if (!c->in_defer && c->ndefers < 64) c->defers[c->ndefers++] = s->as.defer_stmt.stmt;
-            else if (c->ndefers >= 64) ir_incomplete(c, "defer-overflow");
+            // A `defer` inside a deferred statement was DROPPED here, with no mark at all:
+            // `defer if c { defer f() }` never ran f.
+            if (c->in_defer) { ir_incomplete(c, "a `defer` inside a deferred statement"); break; }
+            if (c->ndefers == c->defers_cap) {
+                int nc = c->defers_cap ? 2 * c->defers_cap : 16;
+                Stmt **nd = arena_push_many_aligned(c->a, Stmt *, nc);
+                if (c->ndefers) memcpy(nd, c->defers, (size_t)c->ndefers * sizeof *nd);
+                c->defers = nd; c->defers_cap = nc;
+            }
+            c->defers[c->ndefers++] = s->as.defer_stmt.stmt;
             break;
         case STMT_RETURN: {
             // ORDER MATTERS, and it is not Go's. Lain runs the deferred statements BEFORE
@@ -3655,7 +3668,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
               // the two drift apart.
               scalar_ok = vty && (vty->kind == IRT_INT || vty->kind == IRT_BOOL); }
             if (!sumty && !scalar_ok) {
-                ir_incomplete(c, "match-scrutinee"); break;
+                ir_incomplete(c, "a `case` on a scrutinee of this type"); break;
             }
             v = ir_lower_expr(c, val);
             if (sumty && !(v && v->type && v->type->kind==IRT_SUM)) { ir_incomplete(c,"enum-match"); break; }
@@ -3687,7 +3700,10 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                         if (sumty->sname) { Id tn; tn.name=sumty->sname->name; tn.length=sumty->sname->length;
                                             ed = ir_find_enum_decl(c, &tn); }
                         int k = ed ? ir_variant_index(ed, ir_variant_name_of(pv), true) : -1;
-                        if (k < 0) { ir_incomplete(c, "enum-match-pattern"); ir_set_br(c->cur, body); c->cur = nxt; continue; }
+                        if (k < 0) {
+                            if (pe->line) { ir_cur_line = pe->line; ir_cur_col = pe->col; }
+                            ir_incomplete(c, "a pattern that names no variant of the scrutinee"); ir_set_br(c->cur, body); c->cur = nxt; continue;
+                        }
                         if (k < 64) matched |= (uint64_t)1 << k;
                         if (pe->kind==EXPR_CALL) { bound_k = k; bound_pat = pe; }
                         IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
@@ -3813,7 +3829,11 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             if (taken) ir_lower_stmts(c, taken);
             break;
         }
-        default: ir_incomplete(c, "unhandled-stmt"); break;   // enum-match/use — TODO (fail closed)
+        // `use path as name` in a function body: implementation-defined in spec 16, and this
+        // implementation does not model it (the alias resolved to a C name, an AST-emitter
+        // leftover). Refused at the statement (ir_emit_refuse_opaque).
+        case STMT_USE: ir_incomplete(c, "a `use` statement in a function body"); break;
+        default: ir_incomplete(c, "unhandled-stmt"); break;
     }
 }
 // `defer` is BLOCK-scoped, not function-scoped. The old backend emits the deferred call at

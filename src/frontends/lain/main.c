@@ -213,18 +213,13 @@ int main(int argc, char **argv) {
         // The opaque itself was refused only at emission, which a program with findings never
         // reaches, so the cause was never printed. A module-scope `[0 for i in 0..256]` made
         // E011 and E086 appear on correct loops elsewhere in the file and said nothing at its own
-        // line. Nothing can be emitted for such a program anyway: name the cause and stop.
+        // line. Nothing can be emitted for such a program anyway: name the cause and stop. The
+        // same holds for a function lowering marked `incomplete` (unmodelled control flow); it
+        // used to be skipped here with a note and then EMITTED, its checks never run.
         if (ir_emit_refuse_opaque(mod, args.filename)) { sema_destroy(); return 1; }
         int found = 0;
         for (IrFunc *f = mod; f; f = f->next) {
             if (f->is_extern) continue;
-            // An unfaithfully lowered function cannot be judged: say so rather than pretend.
-            if (f->incomplete) {
-                fprintf(stderr, "note: '%.*s' is not fully modelled (%s); its checks are skipped\n",
-                        (int)f->name->length, f->name->name,
-                        f->incomplete_why ? f->incomplete_why : "unknown");
-                continue;
-            }
             found += ir_report_findings(f, mod, args.filename, args.engine_ir_numeric);
         }
         if (found) { sema_destroy(); return 1; }

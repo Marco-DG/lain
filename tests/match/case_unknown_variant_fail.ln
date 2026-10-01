@@ -1,0 +1,15 @@
+// EXPECT: [E106]
+// spec: §15.3 — a variant pattern names a variant of the scrutinee's enum. `Purple` is not one;
+// lowering found variants by name, did not find it, and branched into the arm for EVERY value
+// (this returned 9 for Red).
+type Color { Red, Green, Blue }
+
+func code(c Color) i32 {
+    r = case c {
+        Purple: 9
+        else: 1
+    }
+    return r
+}
+
+func main() i32 { return code(Color.Red) }

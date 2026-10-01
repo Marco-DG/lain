@@ -78,6 +78,49 @@ static Decl *find_enum_decl(Type *vtype) {
     return NULL;
 }
 
+// ★ A VARIANT PATTERN NAMES A VARIANT OF THE SCRUTINEE'S OWN ENUM. Nothing checked it, and
+// lowering finds a variant by its bare name: `Purple:` on a `Color` (no such variant) branched
+// into its arm for EVERY value, and `Light.Green:` on a `Color` tested `Color.Green`. A
+// qualifier is compared only when it names a non-generic enum: an instance of a generic one
+// has a mangled name (`Option_ptr_u8`), and the corpus writes no qualified pattern at all.
+// The name test is lowering's own (ir_variant_index with `suffix`): a pattern that resolved
+// to a constructor carries its C name, `prog_Option_Some`, so `_Some` at the end names `Some`.
+static void sema_check_variant_patterns(Type *vtype, ExprList *patterns) {
+    Decl *ed = find_enum_decl(vtype);
+    if (!ed) return;
+    Id *en = ed->as.enum_decl.type_name;
+    for (ExprList *p = patterns; p; p = p->next) {
+        Expr *pe = p->expr;
+        Expr *pv = (pe && pe->kind == EXPR_CALL) ? pe->as.call_expr.callee : pe;
+        if (!pv) continue;
+        Id *vn = NULL; Decl *qd = NULL;
+        if (pv->kind == EXPR_IDENTIFIER) vn = pv->as.identifier_expr.id;
+        else if (pv->kind == EXPR_MEMBER) {
+            vn = pv->as.member_expr.member;
+            Expr *t = pv->as.member_expr.target;
+            if (t && (t->kind == EXPR_IDENTIFIER || t->kind == EXPR_TYPE) && t->decl &&
+                t->decl->kind == DECL_ENUM && !t->decl->as.enum_decl.type_params) qd = t->decl;
+        } else continue;                          // a literal or a range: not a variant pattern
+        if (!vn) continue;
+        bool found = false;
+        if (!qd || qd == ed)
+            for (Variant *v = ed->as.enum_decl.variants; v && !found; v = v->next) {
+                if (!v->name) continue;
+                Id *w = v->name;
+                found = (w->length == vn->length && strncmp(w->name, vn->name, (size_t)vn->length) == 0)
+                     || (vn->length > w->length && vn->name[vn->length - w->length - 1] == '_' &&
+                         strncmp(vn->name + (vn->length - w->length), w->name, (size_t)w->length) == 0);
+            }
+        if (found) continue;
+        Id *qn = qd ? qd->as.enum_decl.type_name : NULL;
+        fprintf(stderr, "[E106] Error Ln %li, Col %li: `%.*s%s%.*s` is not a variant of '%.*s'.\n",
+                pe->line, pe->col, qn ? (int)qn->length : 0, qn ? qn->name : "", qn ? "." : "",
+                (int)vn->length, vn->name, en ? (int)en->length : 1, en ? en->name : "?");
+        diagnostic_show_line(pe->line, pe->col);
+        exit(1);
+    }
+}
+
 // Check if a pattern matches an enum variant by name
 // Handles mangled names like "module_Type_Variant" matching variant "Variant"
 static bool pattern_matches_variant(Expr *pattern, Id *variant) {

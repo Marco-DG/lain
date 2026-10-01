@@ -2058,7 +2058,7 @@ void sema_infer_expr(Expr *e) {
             DeclEnum *adt = &e->as.member_expr.target->decl->as.enum_decl;
             Variant *v = lookup_adt_variant(adt, e->as.member_expr.member);
             if (!v) {
-                fprintf(stderr, "sema error Ln %li, Col %li: ADT has no variant '%.*s'\n",
+                fprintf(stderr, "[E106] Error Ln %li, Col %li: ADT has no variant '%.*s'\n",
                         e->line, e->col,
                         (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
                 diagnostic_show_line(e->line, e->col);
@@ -3325,6 +3325,8 @@ void sema_infer_expr(Expr *e) {
         for (ExprList *p = c->patterns; p; p = p->next) {
             sema_infer_expr(p->expr);
         }
+        sema_check_variant_patterns(e->as.match_expr.value ? e->as.match_expr.value->type : NULL,
+                                    c->patterns);
         sema_infer_expr(c->body);
         sema_pop_scope();
         

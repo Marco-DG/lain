@@ -334,8 +334,8 @@ typedef enum {
     //
     // IR_OPAQUE says: this produces an UNKNOWN value, and it may touch memory as declared by
     // aux.opaque. An analysis handles it by havocking exactly that footprint and carrying on
-    // — so the rest of the function is still analysed, soundly. That is what makes the IR
-    // TOTAL: there is no "gave up here" bit, only a declared unknown.
+    // — so the rest of the function is still analysed, soundly. What an opaque cannot state
+    // (unmodelled CONTROL FLOW) still sets `incomplete`, and both are refused before emission.
     IR_OPAQUE,
     // verification layer (Phase 2.9 — the assume/assert substrate)
     IR_ASSUME,              // op[0] = a bool that HOLDS here (guard/refinement/precondition);
@@ -518,12 +518,13 @@ typedef struct IrFunc {
     int32_t    next_block_id;
     void      *src_decl;    // OPAQUE provenance handle (front-end's; the IR never derefs it)
     bool       incomplete;
-    // WHY this function could not be lowered faithfully — a static string, first reason wins.
-    // `incomplete` suppresses every proof over the function, so an UNLABELLED one is an
-    // unmeasured escape hatch silently conditioning every survey number (backlog C3). The
-    // label makes the remaining gap a ranked work list instead of a single opaque count.
-    const char *incomplete_why;  // lowering dropped/placeholder'd a construct ⇒ the IR is
-                            // NOT faithful, so no analysis may claim a proof over it
+    // WHY this function could not be lowered faithfully — a static string, first reason wins —
+    // and WHERE: the position of that first construct. The IR is missing code the program
+    // executes, so no analysis can claim a proof over it AND nothing faithful can be emitted:
+    // the program is refused there, like an opaque (ir_emit_refuse_opaque). It used to be
+    // emitted with every check skipped (a `case` on an f64 compiled to a bare `return;`).
+    const char *incomplete_why;
+    isize      incomplete_line, incomplete_col;
     // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
     IrEffect   effects;
     bool       effects_done, effects_in_progress;

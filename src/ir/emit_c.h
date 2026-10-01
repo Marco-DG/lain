@@ -1581,23 +1581,40 @@ int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump, const char *file) 
 // So the backend is prove-or-reject too: it emits what it can represent faithfully and
 // REFUSES the rest. Measured before it was written — in the whole corpus exactly ONE program
 // reaches an emitted OPAQUE, and it is a test asserting that this construct must be refused.
+//
+// ★ AN INCOMPLETE FUNCTION IS REFUSED THE SAME WAY. What an opaque cannot state, unmodelled
+// CONTROL FLOW, marks the function `incomplete`, and the driver used to print "its checks are
+// skipped" and EMIT it: a `case` on an f64 lost the whole statement (a u8 function compiled
+// to a bare `return;`), a 65th `defer` never ran, and an index after a `use` statement was
+// emitted unchecked. The IR is missing code the program executes, so there is no proof to
+// skip and nothing faithful to emit. No corpus program was incomplete when this changed.
+static void ir_emit_refuse_at(const char *file, isize line, isize col, const char *why,
+                              const char *instead) {
+    fprintf(stderr, "[E100] Error");
+    if (line) fprintf(stderr, " Ln %lld, Col %lld", (long long)line, (long long)col);
+    fprintf(stderr, ": this construct is not supported by the code generator yet (%s).\n", why);
+    if (file && line) fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)line, (long long)col);
+    fprintf(stderr, "       the compiler did not model it, so there is nothing faithful to emit — "
+                    "refusing rather than %s\n", instead);
+}
+
 static int ir_emit_refuse_opaque(IrFunc *funcs, const char *file) {
     int n = 0;
     for (IrFunc *f = funcs; f; f = f->next) {
         if (f->is_extern) continue;
+        if (f->incomplete) {
+            ir_emit_refuse_at(file, f->incomplete_line, f->incomplete_col,
+                              f->incomplete_why ? f->incomplete_why : "?",
+                              "emitting the function without it");
+            n++;
+            continue;
+        }
         for (IrBlock *b = f->blocks; b; b = b->next)
             for (IrInstr *i = b->instrs; i; i = i->next) {
                 if (i->op != IR_OPAQUE) continue;
-                const char *why = i->aux.opaque.why ? i->aux.opaque.why : "?";
-                fprintf(stderr, "[E100] Error");
-                if (i->line) fprintf(stderr, " Ln %lld, Col %lld", (long long)i->line, (long long)i->col);
-                fprintf(stderr, ": this construct is not supported by the code generator yet"
-                                " (%s).\n", why);
-                if (file && i->line)
-                    fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)i->line, (long long)i->col);
-                fprintf(stderr, "       the compiler did not model it, so there is nothing "
-                                "faithful to emit — refusing rather than emitting a "
-                                "placeholder\n");
+                ir_emit_refuse_at(file, i->line, i->col,
+                                  i->aux.opaque.why ? i->aux.opaque.why : "?",
+                                  "emitting a placeholder");
                 n++;
             }
     }

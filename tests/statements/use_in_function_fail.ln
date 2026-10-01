@@ -1,0 +1,14 @@
+// EXPECT: [E100]
+// spec: §16 — `use` inside a function body is implementation-defined; this implementation does
+// not model it. It was skipped by lowering, the function marked incomplete and EMITTED with
+// every check skipped: the out-of-bounds `t[i]` below compiled and ran.
+type P { x i32, y i32 }
+
+func f(i usize) u8 {
+    t u8[4] = [1, 2, 3, 4]
+    p = P(1, 2)
+    use p.x as px
+    return t[i]
+}
+
+func main() i32 { return f(100) as i32 }

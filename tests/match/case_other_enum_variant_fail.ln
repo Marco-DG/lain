@@ -1,0 +1,14 @@
+// EXPECT: [E106]
+// spec: §15.3 — `Light.Green` is a variant of `Light`, not of the scrutinee's `Color`. Lowering
+// matched the bare name, so this arm tested `Color.Green` and the program returned 9.
+type Color { Red, Green, Blue }
+type Light { Off, Green }
+
+func code(c Color) i32 {
+    case c {
+        Light.Green: return 9
+        else: return 1
+    }
+}
+
+func main() i32 { return code(Color.Green) }

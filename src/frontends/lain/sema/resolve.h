@@ -1129,6 +1129,8 @@ void sema_resolve_stmt(Stmt *s) {
       for (ExprList *p = c->patterns; p; p = p->next) {
         sema_resolve_expr(p->expr);
       }
+      sema_check_variant_patterns(s->as.match_stmt.value ? s->as.match_stmt.value->type : NULL,
+                                  c->patterns);
       for (StmtList *b = c->body; b; b = b->next) {
         sema_resolve_stmt(b->stmt);
       }

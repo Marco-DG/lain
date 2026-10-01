@@ -61,6 +61,12 @@ The following pattern forms are supported:
     \lain{1, 2, 3: ...}.
 \end{description}
 
+\begin{constraint}
+  A variant pattern shall name a variant of the scrutinee's own enum or ADT,
+  bare (\lain{Red}) or qualified by that type (\lain{Color.Red}); any other
+  name is \illformed{}~(\diagcode{E106}).
+\end{constraint}
+
 \section{Exhaustiveness}
 \label{sec:match.exhaustiveness}
 \index{exhaustiveness}
