@@ -377,26 +377,18 @@ var empty = arr[3..3]  // OK: empty slice of length 0
 
 \pnum
 When a function parameter is declared with a sized slice type
-(\S\,\ref{sec:types.sized-slice}), the compiler verifies at every
-call site that the supplied argument satisfies the parameter's
-length constraint.  A proved violation is \illformed{}~(\diagcode{E087}).
-The check is conservative: it fires only when VRA can \emph{prove}
-the constraint is not met; it is silent when the constraint cannot
-be determined statically.
+(\S\,\ref{sec:types.sized-slice}), the callee assumes the parameter's length constraint at its
+entry, so every call site shall establish it: the argument's length shall be \emph{proven} to
+satisfy the constraint, and an argument for which it is not proven is
+\illformed{}~(\diagcode{E087}). The same holds for a scalar parameter's refinement
+(\lain{n u32 < K}), whose call sites owe \diagcode{E012}.
 
 \pnum
-The cases checked are:
-
-\begin{itemize}
-  \item \lain{T[>= k]} or \lain{T[> k]} with integer literal \lain{k}:
-        fires if the argument length's VRA upper bound is less than
-        the required minimum (\lain{>= k} requires $\mathit{len} \geq k$;
-        \lain{> k} requires $\mathit{len} \geq k+1$).
-  \item \lain{T[k]} (exact length, literal \lain{k}): fires if the
-        argument length's VRA range does not contain \lain{k}.
-  \item \lain{T[ref.len]} (cross-parameter equality): fires if both
-        sides have a concrete singleton VRA range and they differ.
-\end{itemize}
+The length, or the refinement's right-hand side, may be an integer literal, a constant
+(\lain{T[K]} with \lain{K} a module constant), another parameter (\lain{T[n]}), a parameter's
+length (\lain{T[ref.len]}), or a sum or difference of those. One the call site cannot evaluate,
+because it calls a function or casts, is \illformed{} at the call~(\diagcode{E137}): the callee
+would assume a fact nobody established.
 
 \begin{example}
 \begin{laincode}

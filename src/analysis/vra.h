@@ -1680,6 +1680,21 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             break;
         }
         case IR_CAST:
+            // ★ `x as bool` IS NOT A COPY. It is C's _Bool conversion: any non-zero value is 1. The
+            // copy below made `(-5) as bool` read as -5, so `if (b as i32) < 0` looked always
+            // taken and a division by zero on the other branch was proven (SIGFPE). Found by
+            // checking this analysis's block states against a running program (--check-invariants:
+            // `7 as bool` was held to be 7). A bool's range is [0, 1], exact when zero is or is not
+            // excluded.
+            if (r>=0 && ins->n_operands && ins->result && ins->result->type && ins->result->type->kind == IRT_BOOL
+                && ins->operands[0]->type && ins->operands[0]->type->kind == IRT_INT) {
+                int64_t slo, shi; vra_range(V, W, ins->operands[0], &slo, &shi);
+                oct_forget(W, r);
+                if (slo > 0 || shi < 0)        { oct_add_lb(W, r, 1); oct_add_ub(W, r, 1); }
+                else if (slo == 0 && shi == 0) { oct_add_lb(W, r, 0); oct_add_ub(W, r, 0); }
+                else                           { oct_add_lb(W, r, 0); oct_add_ub(W, r, 1); }
+                break;
+            }
             if (r>=0){ // treat as a copy (widenings preserve value; a narrowing that
                        // changes it would be a separate proven-safe obligation)
                 if (vra_is_int(ins->result) && ins->n_operands) {
@@ -2638,6 +2653,14 @@ static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid) {
         IrBlock *p = e->block;
         if (!p) return false;
         if (p->term.kind == IR_TERM_BR_COND && p->term.cond) {
+            // `if b {` on a bool itself: its then-edge is the guard (an `assert(b)` inside it).
+            int cid = p->term.cond->id;
+            bool csame = (cid == vid);
+            if (!csame && vcell >= 0 && cid>=0 && cid<V->nvar) {
+                IrInstr *cd = V->def[cid];
+                csame = cd && cd->op==IR_LOAD && cd->n_operands>=1 && cd->operands[0]->id == vcell;
+            }
+            if (csame && p->term.a == b) return true;
             IrInstr *ic = V->def[p->term.cond->id];
             if (ic && ic->op==IR_ICMP && ic->n_operands>=2) {
                 int a = ic->operands[0]->id, z = ic->operands[1]->id;
@@ -2787,7 +2810,19 @@ static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid);   // fwd
 static void vra_check_assert(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
     if (ins->n_operands<1) return;
     IrInstr *ic = V->def[ins->operands[0]->id];
-    if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return;
+    if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) {
+        // ★ ANY OTHER CONDITION OWES THE PROOF TOO. This returned without recording an obligation,
+        // so `assert(b)` on a bool parameter compiled (the interpreter: "an obligation the analysis
+        // discharged does not hold"), and so did the refusal of a contract the call site cannot
+        // evaluate, an assert of `false` (ir_assert_unresolvable). Proven only when the condition
+        // is known to be true: a guard, an entry assume, or a constant.
+        VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_PRECOND; c.at=ins; c.line=ins->line; c.col=ins->col;
+        c.diag = (int)ins->aux.imm;
+        int64_t lo, hi; vra_range(V, W, ins->operands[0], &lo, &hi);
+        c.ok = lo >= 1 || vra_guarded_nonzero(V, at, ins->operands[0]->id);
+        vra_add_check(V, c);
+        return;
+    }
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_PRECOND; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.diag = (int)ins->aux.imm;
     c.ok = vra_icmp_holds(V, W, ic->operands[0]->id, ic->operands[1]->id, ic->aux.cmp);

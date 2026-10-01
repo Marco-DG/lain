@@ -1089,6 +1089,28 @@ static void ir_lower_region_shape(LowerCtx *c, IrValue *pv, Type *pty) {
     ir_shape(c->f, c->cur, pv, ext, rank);
 }
 
+// ★ A CONTRACT TERM THAT IS A CONSTANT (`K`, `K - 1`, `4 * K`, a module constant computed at
+// compile time) has one value on both sides of a call. Both resolvers below knew a literal, a
+// parameter and `p.len` only, while the callee's ENTRY side (ir_lower_param_refinements,
+// ir_lower_slice_len_refinement) lowers any expression. So for `K u32 = 10`, `func g(n u32 < K)`
+// ASSUMED n < 10 at its entry and no call asserted it: `g(50)` compiled, and so did
+// `func g(a u8[K])` called with a 2-element array, which read past it (ASan: stack-buffer-
+// overflow). Names resolve through the front end's declaration (sa_named_constant reads e->decl),
+// so a parameter that shadows a module constant is not mistaken for it. The return side resolves
+// through the same function on both ends (ir_contract_rhs_in_callee, ir_resolve_contract_rhs), so
+// the two agree term for term.
+static bool ir_contract_const(Expr *e, int64_t *v) {
+    bool lay = false; __int128 x;
+    if (!e || !sa_is_const(e, &lay) || lay || !sa_eval(e, &x)) return false;
+    if (x < (__int128)INT64_MIN || x > (__int128)INT64_MAX) return false;
+    *v = (int64_t)x; return true;
+}
+// A precondition the call site cannot evaluate (a call, a cast, a callee local) is REFUSED at the
+// call (E137), never skipped: skipping left the callee's entry assume unlicensed.
+static void ir_assert_unresolvable(LowerCtx *c) {
+    ir_assert_coded(c->f, c->cur, ir_const_int(c->f, c->cur, 0, ir_type_bool(c->a)), 137);
+}
+
 // B2 (contracts): a callee's return refinement `result OP rhs` (`func f(..) usize <= m`)
 // becomes a post-call `assume(v OP <that>)` — the caller LEARNS the ensures. rhs is resolved
 // against the call's arguments by the same function that resolves a precondition's: a literal,
@@ -1121,6 +1143,7 @@ static void ir_lower_return_ensures(LowerCtx *c, Decl *callee, IrValue *v, IrIns
 // `void`, the assert was silently dropped, and the caller still assumed it.)
 static IrValue *ir_contract_rhs_in_callee(LowerCtx *c, Expr *rhs, IrType *ty) {
     if (!rhs) return NULL;
+    { int64_t kv; if (ir_contract_const(rhs, &kv)) return ir_const_int(c->f, c->cur, kv, ty); }   // as the call site
     if (rhs->kind==EXPR_LITERAL) return ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, ty);
     if (rhs->kind==EXPR_BINARY &&
         (rhs->as.binary_expr.op==TOKEN_PLUS || rhs->as.binary_expr.op==TOKEN_MINUS)) {
@@ -1182,7 +1205,7 @@ static void ir_lower_return_ensures_assert(LowerCtx *c, IrValue *v) {
 // slice_len(arg for a).
 static IrValue *ir_resolve_contract_rhs(LowerCtx *c, Decl *callee, IrInstr *call, Expr *rhs, IrType *ty) {
     if (!rhs) return NULL;
-    if (rhs->kind==EXPR_LITERAL) return ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, ty);
+    { int64_t kv; if (ir_contract_const(rhs, &kv)) return ir_const_int(c->f, c->cur, kv, ty); }   // as the callee
     // ── C6, THE CALL-SITE HALF — and it is the half that keeps this sound ────────────────
     // An additive bound (`n <= cap - 1`) is rebuilt here out of the CALLER's argument values,
     // so the assert the caller must discharge is the same statement as the assume the callee
@@ -1251,6 +1274,7 @@ static void ir_lower_call_requires(LowerCtx *c, Decl *callee, IrInstr *call) {
             IrValue *rv = ir_resolve_contract_rhs(c, callee, call, con->as.binary_expr.right, arg->type);
             if (rv && rv->type && rv->type->kind==IRT_INT)
                 ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, arg, rv));
+            else ir_assert_unresolvable(c);                      // never an unlicensed entry assume
         }
         // in_field dual: callee `pos in text` ⇒ assert arg_pos < len(arg_text) (licenses the
         // callee's entry `assume(pos < len(text))`, closing the contract soundly).
@@ -1325,11 +1349,13 @@ static bool ir_cmp_op(TokenKind t, bool sgn, IrCmp *c) {
 
 // Recursively resolve a callee-scope length expression at a CALL SITE into caller values —
 // each callee param name is substituted by the matching call argument (ident / `x.len` via
-// ir_resolve_contract_rhs; +/-/* recurse). NULL if any leaf is unresolvable → fail-closed:
-// no call-site length assert is emitted, so the callee's entry length-assume goes unlicensed
-// and the chain simply won't fully verify (sound: we never trust an unproven length).
+// ir_resolve_contract_rhs; +/-/* recurse), and a constant is its value. NULL if any leaf is
+// unresolvable, and the caller then REFUSES the call (ir_assert_unresolvable): the callee's entry
+// assumes the length whatever happens here, so emitting nothing was not "fail-closed" but an
+// unlicensed assume.
 static IrValue *ir_resolve_len_expr(LowerCtx *c, Decl *callee, IrInstr *call, Expr *e, IrType *ty) {
     if (!e) return NULL;
+    { int64_t kv; if (ir_contract_const(e, &kv)) return ir_const_int(c->f, c->cur, kv, ty); }
     if (e->kind==EXPR_BINARY) {
         IrOp op; IrWrapMode wrap;
         if (!ir_bin_op(e->as.binary_expr.op, false, &op, &wrap)) return NULL;
@@ -1359,7 +1385,9 @@ static void ir_lower_call_slice_len_requires(LowerCtx *c, Decl *callee, IrInstr 
         if (!arg || !arg->type || arg->type->kind!=IRT_SLICE) continue;
         IrValue *L  = ir_slice_len(c->f, c->cur, arg);
         IrValue *rv = ir_resolve_len_expr(c, callee, call, pty->size_expr, ir_type_int(c->a,64,false));
-        if (!rv || !rv->type || rv->type->kind!=IRT_INT) continue;  // fail-closed
+        // Fail-CLOSED means refused. This said `continue // fail-closed` and emitted nothing, while
+        // the callee's entry still assumed the length: an unlicensed assume (see ir_contract_const).
+        if (!rv || !rv->type || rv->type->kind!=IRT_INT) { ir_assert_unresolvable(c); continue; }
         if (pty->size_relop == TOKEN_EQUAL_EQUAL) {                 // len == expr ⇒ both dirs
             ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_UGE, L, rv), 87);
             ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULE, L, rv), 87);

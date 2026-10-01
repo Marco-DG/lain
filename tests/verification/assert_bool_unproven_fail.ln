@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// `assert` asks for a proof, whatever its condition. One that is not a comparison, a bool
+// parameter here, recorded no obligation at all, so this compiled although b may be false (the
+// interpreter: "an obligation the analysis discharged does not hold").
+func f(b bool) i32 {
+    assert(b)
+    return 1
+}
+func main() i32 { return f(false) }

@@ -1,0 +1,11 @@
+// EXPECT: [E087]
+// A parameter sized by a module constant, `a u8[K]`, is a slice whose length the callee ASSUMES
+// is K, and every call must establish it. The call site resolved a literal, a parameter and
+// `p.len` only, emitted nothing for a constant, and the callee still assumed it: called with a
+// 2-element array, `g` proved `a[3]` and read past the array (ASan: stack-buffer-overflow).
+K usize = 4
+func g(a u8[K]) u8 { return a[3] }
+func main() i32 {
+    var b u8[2] = [1, 2]
+    return g(b) as i32
+}

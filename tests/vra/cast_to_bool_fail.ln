@@ -1,0 +1,11 @@
+// EXPECT: [E015]
+// `x as bool` is C's _Bool conversion: any non-zero value is 1. The range analysis copied the
+// value through it, so `(-5) as bool` read as -5, `(b as i32) < 0` looked always true, and the
+// division by zero on the other branch was proven; it compiled and died with SIGFPE. Found by
+// checking the analysis's block states against a running program (`7 as bool` was held to be 7).
+func f(x i32 >= 0 - 9 and <= 0 - 1) i32 {
+    b = x as bool
+    if (b as i32) < 0 { return 0 }
+    return 5 / (x - x)
+}
+func main() i32 { return f(0 - 5) }

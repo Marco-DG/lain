@@ -1,0 +1,19 @@
+// An `assert` of a bool is proven by what establishes it: a guard on the bool itself, or an
+// early return on its negation. Values checked at run time.
+func f(b bool) i32 {
+    if b {
+        assert(b)
+        return 1
+    }
+    return 0
+}
+func g(b bool) i32 {
+    if !b { return 0 }
+    assert(b)
+    return 2
+}
+func main() i32 {
+    if f(true) != 1 or f(false) != 0 { return 1 }
+    if g(true) != 2 or g(false) != 0 { return 2 }
+    return 0
+}

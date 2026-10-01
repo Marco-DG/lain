@@ -1,0 +1,13 @@
+// A bool converted from an integer is 1 when the integer cannot be zero, and the analysis knows
+// it: the index below is proven, and `b as i32` is 0 or 1. Values checked at run time.
+func pick(x i32 >= 0 - 9 and <= 0 - 1) u8 {
+    t u8[2] = [10, 20]
+    b = x as bool
+    return t[b as usize]
+}
+func flag(n u32) i32 { return (n as bool) as i32 }
+func main() i32 {
+    if pick(0 - 5) != 20 { return 1 }
+    if flag(0) != 0 or flag(7) != 1 { return 2 }
+    return 0
+}

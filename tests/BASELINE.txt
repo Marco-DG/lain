@@ -2140,6 +2140,10 @@ out=
 ### tests/unsafe/unsafe_valid_pass.ln
 rc=0
 out=
+### tests/verification/assert_bool_guarded_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/verification/assert_proven_pass.ln
 rc=0
 out=
@@ -2298,6 +2302,10 @@ at=nonnull 4
 at=pure 4
 ty=Slice_u8 scalar
 ### tests/vra/callsite_return_range_pass.ln
+rc=0
+out=
+at=const 4
+### tests/vra/cast_to_bool_pass.ln
 rc=0
 out=
 at=const 4
@@ -2783,6 +2791,13 @@ ty=Slice_i32 scalar
 rc=0
 out=
 at=const 4
+### tests/vra/sized_param_constant_length_pass.ln
+rc=0
+out=
+at=access 4
+at=nonnull 4
+at=pure 4
+ty=Slice_u8 scalar
 ### tests/vra/sliding_window_pass.ln
 rc=0
 out=

@@ -169,6 +169,9 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 else if (c->diag == 87)
                     ir_diag(file, c->line, c->col, "E087",
                             "argument does not satisfy the parameter's sized-slice constraint");
+                else if (c->diag == 137)
+                    ir_diag(file, c->line, c->col, "E137",
+                            "this call cannot be checked against the callee's parameter refinement: its right-hand side is something the call site cannot evaluate (a call, a cast), so the callee would assume a fact nobody established. Write it with literals, constants and parameters");
                 else if (c->diag == 135)
                     ir_diag(file, c->line, c->col, "E135",
                             "a [noreturn] function can return here — every path must end in a panic, a call that does not return, or a loop that does not end (with `effects diverge`)");

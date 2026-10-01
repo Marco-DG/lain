@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// A parameter refinement naming a module constant, `n u32 < K`, is assumed by the callee at its
+// entry, so every call must establish it. The call site skipped a constant (it resolved literals,
+// parameters and `p.len`), so `g(50)` compiled and indexed a 10-element table with 50.
+K u32 = 10
+func g(n u32 < K) u8 {
+    t u8[10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    return t[n]
+}
+func main() i32 { return g(50) as i32 }

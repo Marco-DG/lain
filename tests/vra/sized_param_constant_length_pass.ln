@@ -1,0 +1,12 @@
+// `a u8[K]` with K a module constant, called with an array of exactly K elements: the call
+// establishes the length the callee assumes. Values checked at run time.
+K usize = 4
+N u32 = 3
+func g(a u8[K]) u8 { return a[3] }
+func h(n u32 < N, a u8[K]) u8 { return a[n] }
+func main() i32 {
+    var b u8[4] = [1, 2, 3, 4]
+    if g(b) != 4 { return 1 }
+    if h(2, b) != 3 { return 2 }
+    return 0
+}

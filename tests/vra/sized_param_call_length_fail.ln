@@ -1,0 +1,10 @@
+// EXPECT: [E137]
+// A length (or a refinement) the call site cannot evaluate, here a call, is refused at the call:
+// the callee assumes `a.len == f3()` at its entry whatever happens, and this used to emit no
+// check at all (a comment called that "fail-closed"), so a 7-element array was accepted.
+func f3() usize { return 3 }
+func g(a u8[f3()]) u8 { return a[2] }
+func main() i32 {
+    var b u8[7] = [1, 2, 3, 4, 5, 6, 7]
+    return g(b) as i32
+}

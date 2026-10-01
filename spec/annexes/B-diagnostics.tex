@@ -28,7 +28,7 @@ Diagnostic codes are divided into the following ranges:
 \diagcode{E011}–\diagcode{E015}, \diagcode{E060} & Purity, safety, and verification \\
 \diagcode{E082} & Bounded while verification \\
 \diagcode{E083}–\diagcode{E087} & Array/slice safety and integer boundaries \\
-\diagcode{E084}, \diagcode{E101}--\diagcode{E136} & Modules, attributes, generics, packing, ADT access, effects, verification \\
+\diagcode{E084}, \diagcode{E101}--\diagcode{E137} & Modules, attributes, generics, packing, ADT access, effects, verification \\
 \diagcode{E100}                 & Miscellaneous \\
 \diagcode{VRA}                  & Value range analysis \\
 \end{longtable}
@@ -414,4 +414,5 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E134} & a module-scope assertion is false --- reported by the implementation, or, for one that measures a type with \lain{@sizeof}/\lain{@alignof}, by the C compiler through a \texttt{\_Static\_assert} carrying this code \\[2pt]
 \diagcode{E135} & a \tok{[noreturn]} function can return: a \lain{return}, or the end of its body, is reachable (\S\,\ref{sec:decl.attributes}) \\[2pt]
 \diagcode{E136} & a module constant computed at compile time cannot be: its initialiser reaches a function whose effect row is not empty, a function that may panic, or a call through a function pointer; its computation reads the constant itself, exceeds the step limit, or fails a check (\S\,\ref{sec:decl.module-const}) \\[2pt]
+\diagcode{E137} & a call cannot be checked against the callee's parameter refinement or sized-slice length: its right-hand side calls a function or casts, which the call site cannot evaluate, so the callee would assume a fact nobody established (\S\,\ref{sec:vra.sized-slice-callsite}) \\[2pt]
 \end{longtable}
