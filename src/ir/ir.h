@@ -188,6 +188,9 @@ typedef struct IrType {
     int     sum_backing_bits; // IRT_SUM, plain only: `type K u16 { A, B }` DECLARED its width
                             // (8/16/32/64), 0 = not declared. Like packed_decl, a declaration;
                             // the width itself is layout.h's answer, which reads this first.
+    bool    sum_niche_mandatory; // IRT_SUM from a `T | m1 | m2` union whose markers carry no
+                            // payload: zero cost was PROMISED, so a layout that needs a tag is
+                            // refused (E064) rather than emitted.
     struct IrType **fields; // lowered field types / variant payloads, in declaration order
     IrName **field_names;   // field / variant names
     int   n_fields;         // field count, or VARIANT count for IRT_SUM

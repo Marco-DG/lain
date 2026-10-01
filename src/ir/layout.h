@@ -21,12 +21,11 @@
 // TYPE stays semantic (a sum is a sum), and the REPRESENTATION is a separate answer computed
 // from that type on demand. This file is that answer; it never mutates a type.
 //
-// The algorithm is src/sema/niche.h's, ported to IrType. It is deliberately the same
-// algorithm and not a better one: the immediate job is for the two backends to AGREE, and a
-// port that improves on the original silently reintroduces the divergence it exists to close.
+// The algorithm was src/sema/niche.h's, ported to IrType, and that file is now deleted: this is
+// the only layout decision, and W120, --dump-niche and E064 read it (ir_emit_layout_report).
 #include "ir.h"
 #include "../target.h"
-#include "../layout_core.h"   // the sentinel algebra, shared with src/sema/niche.h
+#include "../layout_core.h"   // the sentinel algebra
 
 /* The pool algebra is src/layout_core.h's — ONE definition for both backends. Keeping a
    second copy here is exactly how D-62 and D-63 happened: each side was individually
@@ -85,7 +84,7 @@ static SentinelPool ir_pool_for(IrType *t) {
 
     // A pointer: the zero page, which no user mapping can occupy.
     //
-    // ⚠ A SLICE IS NOT INCLUDED, though src/sema/niche.h includes it. The reasoning there is
+    // ⚠ A SLICE IS NOT INCLUDED, though the deleted src/sema/niche.h once did. The reasoning is
     // sound — a slice's data pointer is never null (D-N2), so the zero page is spare — but the
     // REPRESENTATION does not follow: a slice is a two-word struct, and a sentinel is an
     // integer, so `(Slice_u8)(uintptr_t)0` is not a conversion C will do. Packing one produces
@@ -120,8 +119,6 @@ static SentinelPool ir_pool_for(IrType *t) {
     return p;
 }
 
-// Deterministic assignment, same order as src/sema/niche.h — the two backends must pick the
-// SAME bit pattern for the same variant, not merely both pick some pattern.
 /* ir_sentinel_pick: gone. The ASSIGNMENT is sentinel_pick() in layout_core.h — two backends
    that both pack but choose different patterns disagree about what `none` IS. */
 
@@ -178,6 +175,55 @@ static IrLayout ir_layout_of(IrType *sum) {
         L.has_sentinel[k] = true;
     }
     return L;
+}
+
+// WHY a sum carries a tag, in words a programmer can act on. It reads the same tests as
+// ir_layout_of in the same order, so the warning (W120) and the refusal (E064) cannot say one
+// thing while the emitter does another: they were decided in the front end (src/sema/niche.h),
+// which believed in a multi-payload niche this backend never built, and so stayed silent over
+// `Result(*T, Err)`'s tag, and reported "0 empty variant(s) require 0" over a tag nothing needed.
+// Returns false, writing nothing, when the sum is packed. `*short_pool` says the reason is the
+// payload's spare values, the one a refinement or a different payload type can fix.
+static bool ir_layout_why_tagged(IrType *sum, char *buf, size_t n, bool *short_pool) {
+    *short_pool = false;
+    IrLayout L = ir_layout_of(sum);
+    if (L.packed || !sum || sum->kind != IRT_SUM) return false;
+    if (sum->n_fields > IR_LAYOUT_MAX_VARIANTS) {
+        snprintf(buf, n, "it has %d variants, and spare values are searched for at most %d",
+                 sum->n_fields, IR_LAYOUT_MAX_VARIANTS);
+        return true;
+    }
+    if (L.payload_count != 1) {
+        snprintf(buf, n, "%d of its variants carry a payload, and only a sum with ONE "
+                 "payload-carrying variant can store the others in the payload's spare values",
+                 L.payload_count);
+        return true;
+    }
+    int k = 0; while (k < sum->n_fields && !sum->fields[k]) k++;
+    IrName *vn = sum->field_names ? sum->field_names[k] : NULL;
+    int vl = vn ? (int)vn->length : 1; const char *vs = vn ? vn->name : "?";
+    IrType *back = ir_layout_single_field(sum, k);
+    if (!back) {
+        snprintf(buf, n, "variant '%.*s' carries %d fields, and only a single-field payload can "
+                 "be the sum itself", vl, vs, sum->fields[k] ? sum->fields[k]->n_fields : 0);
+        return true;
+    }
+    if (L.empty_count == 0 && !ir_layout_scalar(back)) {
+        snprintf(buf, n, "variant '%.*s' carries a %s, and only a scalar payload can be the sum "
+                 "itself", vl, vs, back->kind == IRT_SLICE ? "slice" : back->kind == IRT_ARRAY ?
+                 "fixed array" : back->kind == IRT_VECTOR ? "vector" : "struct");
+        return true;
+    }
+    SentinelPool pool = ir_pool_for(back);
+    long long spare = pool.kind == POOL_EMPTY ? 0 : (long long)pool.size;
+    *short_pool = true;
+    char who[96];                    // a `T | markers` union's payload variant is internal
+    if (vl >= 2 && vs[0] == '_' && vs[1] == '_') snprintf(who, sizeof who, "the value type");
+    else snprintf(who, sizeof who, "the payload of '%.*s'", vl, vs);
+    snprintf(buf, n, "%s has %lld spare value%s, and %d payload-less variant%s",
+             who, spare, spare == 1 ? "" : "s", L.empty_count,
+             L.empty_count == 1 ? " needs one" : "s need one each");
+    return true;
 }
 
 // ── A `[packed]` STRUCT: bit-exact fields in one integer (spec 07, DECIDE-N) ──────────────────

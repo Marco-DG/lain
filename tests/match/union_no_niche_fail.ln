@@ -1,6 +1,6 @@
 // EXPECT: [E064]
 // Zero-cost is MANDATORY: a full-range i32 has no spare bit-pattern for `none`,
-// so the union is rejected (not silently given a tag byte). Refine the value
-// type to make niche room, or use a pointer/slice.
+// so the union is rejected (not silently given a tag). Refine the value
+// type to make niche room, or use a pointer (a slice has none: union_slice_payload_fail.ln).
 func f() i32 | none { return 0 }
 func main() i32 { return 0 }

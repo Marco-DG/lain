@@ -1286,6 +1286,10 @@ static void ir_sa_visit_types(IrTypeSet *ts, IrSAExpr *x) {
     if ((x->kind == IR_SA_SIZEOF || x->kind == IR_SA_ALIGNOF) && x->type) ir_ts_visit(ts, x->type);
     ir_sa_visit_types(ts, x->l); ir_sa_visit_types(ts, x->r);
 }
+// Every type the module needs a C declaration for: the types its values carry, and those a
+// @sizeof or a module-scope assert measures. The emitter declares exactly these, so a question
+// about how a type is REPRESENTED (ir_emit_layout_report) asks it of this same set.
+static void ir_collect_types(IrFunc *funcs, IrTypeSet *ts, Arena *a);
 static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     IrTypeSet ts = {0};
     ir_iface_n = 0;                          // DECIDE-U: what an extern's signature reaches
@@ -1294,27 +1298,7 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
         ir_iface_mark(f->ret_type, 0);
         for (IrParam *p=f->params; p; p=p->next) if (p->value) ir_iface_mark(p->value->type, 0);
     }
-    // A type measured only by a module-scope assert is carried by no value either.
-    for (IrStaticAssert *s = ir_static_asserts; s; s = s->next) ir_sa_visit_types(&ts, s->cond);
-    for (IrFunc *f=funcs; f; f=f->next) {
-        // ★ AN EXTERN HAS NO VALUES. `next_value_id` is 0 for a declaration with no body, and
-        // the arena refuses a zero-count push — so a program whose only aggregates came from
-        // an extern's signature aborted the compiler here rather than emitting anything.
-        // `mov p *u8 = acquire()` with `extern proc acquire() mov *u8` is the whole program.
-        //
-        // The guard is the count, not the extern-ness: a body-less function is one way to have
-        // no values and there is no reason to enumerate the others.
-        if (f->next_value_id <= 0) continue;
-        IrValTab vt = { arena_push_many_aligned(a, IrValue*, f->next_value_id), f->next_value_id };
-        for (int k=0;k<vt.n;k++) vt.v[k]=NULL;
-        ir_collect_vals(f, &vt);
-        for (int id=0; id<vt.n; id++) if (vt.v[id]) ir_ts_visit(&ts, vt.v[id]->type);
-        // A type named only inside @sizeof/@alignof is carried by no value, and must still be
-        // declared before the expression that measures it.
-        for (IrBlock *b=f->blocks; b; b=b->next)
-            for (IrInstr *i=b->instrs; i; i=i->next)
-                if ((i->op==IR_SIZEOF || i->op==IR_ALIGNOF) && i->aux.alloca_ty) ir_ts_visit(&ts, i->aux.alloca_ty);
-    }
+    ir_collect_types(funcs, &ts, a);
     for (int i=0;i<ts.n_struct;i++){ IrName *nm=ts.structs[i]->sname;
         // A PACKED sum is not a struct — it is a typedef for its backing type, emitted whole
         // by ir_emit_one_sum_body. A forward `typedef struct X X;` for it would collide with
@@ -1354,6 +1338,104 @@ static void ir_emit_type_decls(IrFunc *funcs, FILE *o, Arena *a) {
     { bool done[256]; for (int i=0;i<ts.n_struct;i++) done[i]=false;
       for (int i=0;i<ts.n_struct;i++) ir_emit_struct_body_deps(&ts, i, done, o); }
     if (ts.n_struct || ts.n_slice) fputc('\n', o);
+}
+
+static void ir_collect_types(IrFunc *funcs, IrTypeSet *ts, Arena *a) {
+    // A type measured only by a module-scope assert is carried by no value either.
+    for (IrStaticAssert *s = ir_static_asserts; s; s = s->next) ir_sa_visit_types(ts, s->cond);
+    for (IrFunc *f=funcs; f; f=f->next) {
+        // ★ AN EXTERN HAS NO VALUES. `next_value_id` is 0 for a declaration with no body, and
+        // the arena refuses a zero-count push — so a program whose only aggregates came from
+        // an extern's signature aborted the compiler here rather than emitting anything.
+        // `mov p *u8 = acquire()` with `extern proc acquire() mov *u8` is the whole program.
+        //
+        // The guard is the count, not the extern-ness: a body-less function is one way to have
+        // no values and there is no reason to enumerate the others.
+        if (f->next_value_id <= 0) continue;
+        IrValTab vt = { arena_push_many_aligned(a, IrValue*, f->next_value_id), f->next_value_id };
+        for (int k=0;k<vt.n;k++) vt.v[k]=NULL;
+        ir_collect_vals(f, &vt);
+        for (int id=0; id<vt.n; id++) if (vt.v[id]) ir_ts_visit(ts, vt.v[id]->type);
+        // A type named only inside @sizeof/@alignof is carried by no value, and must still be
+        // declared before the expression that measures it.
+        for (IrBlock *b=f->blocks; b; b=b->next)
+            for (IrInstr *i=b->instrs; i; i=i->next)
+                if ((i->op==IR_SIZEOF || i->op==IR_ALIGNOF) && i->aux.alloca_ty) ir_ts_visit(ts, i->aux.alloca_ty);
+    }
+}
+
+// A type as the program spells it, for a diagnostic about its representation.
+static void ir_lain_type(const IrType *t, char *b, size_t n) {
+    if (!t || n < 2) { if (n) b[0] = 0; return; }
+    char e[96];
+    switch (t->kind) {
+        case IRT_INT:   snprintf(b, n, "%c%d", t->is_signed ? 'i' : 'u', t->bits); return;
+        case IRT_BOOL:  snprintf(b, n, "bool"); return;
+        case IRT_FLOAT: snprintf(b, n, "f%d", t->float_bits); return;
+        case IRT_PTR:   ir_lain_type(t->elem, e, sizeof e); snprintf(b, n, "*%s%s", t->ptr_mut ? "var " : "", e); return;
+        case IRT_SLICE: ir_lain_type(t->elem, e, sizeof e); snprintf(b, n, "%s[%s]", e, t->slice_sentinel ? ":0" : ""); return;
+        case IRT_ARRAY: ir_lain_type(t->elem, e, sizeof e); snprintf(b, n, "%s[%lld]", e, (long long)t->array_len); return;
+        default:
+            if (t->sname) snprintf(b, n, "%.*s", (int)t->sname->length, t->sname->name);
+            else snprintf(b, n, "?");
+            return;
+    }
+}
+
+// ── HOW EACH SUM IS REPRESENTED, said before any C is written ──────────────────────────
+// One pass over the sums the emitter is about to declare, asking layout.h, the one decision:
+//   · --dump-niche prints that decision for each;
+//   · W120 says so whenever a sum gets a tag (the payload union's `int32_t tag`, 4 bytes),
+//     with the reason, so the warning fires exactly when the emitted C has a tag;
+//   · E064 refuses a `T | markers` union that would get one, because its zero cost was a
+//     promise (spec 07): the layout is wrong, not merely slower.
+// Returns the number of E064 refusals.
+int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump) {
+    IrTypeSet ts = {0};
+    ir_collect_types(funcs, &ts, a);
+    int refused = 0;
+    for (int i = 0; i < ts.n_struct; i++) {
+        IrType *t = ts.structs[i];
+        if (t->kind != IRT_SUM || !t->sname) continue;
+        IrName *nm = t->sname;
+        IrLayout L = ir_layout_of(t);
+        char why[320]; bool short_pool = false;
+        bool tagged = ir_layout_why_tagged(t, why, sizeof why, &short_pool);
+        if (dump) {
+            fprintf(stderr, "[niche] enum '%.*s': variants=%d payload=%d empty=%d ",
+                    (int)nm->length, nm->name, t->n_fields, L.payload_count, L.empty_count);
+            if (L.all_empty) fprintf(stderr, "-> plain u%d\n", ir_plain_enum_bits(t));
+            else if (L.packed) {
+                char bt[128]; ir_lain_type(L.backing, bt, sizeof bt);
+                fprintf(stderr, "-> packed into %s\n", bt);
+                for (int k = 0; k < t->n_fields && k < IR_LAYOUT_MAX_VARIANTS; k++)
+                    if (L.has_sentinel[k] && t->field_names[k])
+                        fprintf(stderr, "[niche]   %.*s = %lld\n", (int)t->field_names[k]->length,
+                                t->field_names[k]->name, L.sentinel[k]);
+            } else fprintf(stderr, "-> int32_t tag + payload union (%s)\n", why);
+        }
+        if (!tagged) continue;
+        if (t->sum_niche_mandatory) {
+            IrType *v = ir_layout_single_field(t, 0);
+            char vt[128]; ir_lain_type(v, vt, sizeof vt);
+            fprintf(stderr, "[E064] Error: the union `%s | ...` cannot be zero-cost: %s. Give the "
+                    "value type spare values (a pointer, a bool, or a refinement like `u8 < 200`), "
+                    "or use fewer markers.\n", vt, why);
+            refused++;
+            continue;
+        }
+        char what[160];          // a `T | markers` union's enum is internal: name the union
+        if (nm->length > 4 && memcmp(nm->name, "__U_", 4) == 0) {
+            char vt[128]; ir_lain_type(ir_layout_single_field(t, 0), vt, sizeof vt);
+            snprintf(what, sizeof what, "the union `%s | ...`", vt);
+        } else snprintf(what, sizeof what, "enum '%.*s'", (int)nm->length, nm->name);
+        fprintf(stderr, "[W120] Warning: %s is not zero-cost: it carries an int32_t tag (4 bytes) "
+                "beside its payloads.\n       It does because %s.\n", what, why);
+        if (short_pool)
+            fprintf(stderr, "       To drop the tag, give the payload spare values (a pointer, a "
+                    "bool, or a refinement like `u8 < 200`), or use fewer payload-less variants.\n");
+    }
+    return refused;
 }
 
 // ── WHAT THIS BACKEND CANNOT EMIT, SAID OUT LOUD ─────────────────────────────────────────

@@ -259,19 +259,15 @@ An ADT type uses a niche-based encoding whenever a zero-cost
 representation is derivable. The compiler performs \textit{aggressive
 multi-slot niche optimization} (D-Niche): it explores the full
 sentinel space of the payload and packs as many empty variants as
-fit, without any tag byte. When the pool is insufficient to cover
-every empty variant, the layout falls back to a tagged union and the
-compiler emits \diagcode{W120} (best-effort warning; not an error).
+fit, without a tag. Otherwise the sum is a tagged union, an
+\texttt{int32\_t} tag beside a union of the payloads, and the compiler
+emits \diagcode{W120} (a warning, not an error) with the reason.
 
 \begin{verbatim}
-// Tagged-union fallback (only when no niche is derivable):
-typedef struct {
-    enum { Shape_Circle_tag, Shape_Rect_tag } tag;
-    union {
-        struct { float r; } Circle;
-        struct { float w; float h; } Rect;
-    };
-} Shape;
+// Tagged union (no niche is derivable: two variants carry a payload):
+typedef struct Shape Shape;
+struct Shape { int32_t tag; union { struct { float r; } Circle;
+                                    struct { float w; float h; } Rect; } data; };
 \end{verbatim}
 
 \pnum
@@ -306,25 +302,20 @@ $(8, 16, 24, \ldots)$ and packs its own empty variants into them.
 Layout of the entire result still occupies one pointer-sized word.
 
 \pnum
-\textit{Multi-payload niche.} An enum with exactly two payload variants
-where one payload (the \textit{primary}) has a non-empty sentinel pool
-and the other payload (the \textit{secondary}) has a single field whose
-type is an \textit{enum of pure-empty variants} is encoded by mapping
-each sub-variant into a sentinel of the primary's pool. For
-\lain{Result(*T, FileErr)} with \lain{FileErr = enum \{ NotFound,
-Permission, OOM \}}, the encoding on a host with pointer alignment~8 is
-\lain{Ok(f)} = any valid pointer, \lain{Err(NotFound)} = sentinel~0,
-\lain{Err(Permission)} = sentinel~8, \lain{Err(OOM)} = sentinel~16. The
-secondary constructor emits a stride-multiplication; the case-match
-discriminator emits a corresponding stride-division for binding-style
-patterns.
+\textit{More than one payload.} A sum with more than one
+payload-carrying variant is a tagged union whatever its payloads:
+\lain{Result(*T, FileErr)} carries an \texttt{int32\_t} tag beside a
+union of the pointer and the \lain{FileErr}. So does a payload of more
+than one field. A sum whose only variant carries one scalar field is
+that field, with no tag, since there is nothing to tell apart.
 
 \pnum
-The compiler never refuses compilation to satisfy a layout
-optimization: when the pool is insufficient, \diagcode{W120} is
-emitted with suggestions (constrain the payload, change to a type
-with larger sentinel space, or split the enum), and a tag byte is
-added. The programmer decides whether to accept the overhead.
+Outside a \lain{T | markers} union, the compiler never refuses a
+program to satisfy a layout: a sum that gets a tag draws
+\diagcode{W120} with the reason, and the programmer decides whether to
+accept the four bytes. A union whose markers carry no payload is the
+exception: its zero cost is required, and a union that would need a
+tag is \illformed{}~(\diagcode{E064}).
 
 \pnum
 The CLI flag \texttt{--target=<triple>} selects the target's sentinel

@@ -403,24 +403,21 @@ static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
 // Lower `T | m1 | m2` (TYPE_UNION) to a niche-optimized anonymous enum: one
 // payload variant `some { __v: T }` + one empty variant per marker. Deduped by a
 // deterministic mangled name so the same union in two signatures shares one enum.
-// ZERO-COST MANDATORY: reject (E064) if the markers don't fit T's niche.
+// ZERO-COST MANDATORY: the IR refuses (E064) a layout that needs a tag (ir_emit_layout_report).
 static Type *union_lower(Type *u) {
     Type *value = u->element_type;
     char nb[256]; int off = 0;
     char vb[128]; mono_mangle_type(value, vb, sizeof vb);
     off += snprintf(nb + off, sizeof nb - (size_t)off, "__U_%s", vb);
-    int nmark = 0; bool has_payload_marker = false;
     for (IdList *m = u->union_markers; m; m = m->next) {
         off += snprintf(nb + off, sizeof nb - (size_t)off, "_%.*s", (int)m->id->length, m->id->name);
         // Payload markers mangle their field types too, so `E{line u32}` and
         // `E{col u16}` are distinct unions (no dedup collision).
         for (DeclList *f = m->fields; f; f = f->next) {
             if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
-            has_payload_marker = true;
             char fb[128]; mono_mangle_type(f->decl->as.variable_decl.type, fb, sizeof fb);
             off += snprintf(nb + off, sizeof nb - (size_t)off, "_%s", fb);
         }
-        nmark++;
     }
     Symbol *ex = sema_lookup(nb);
     if (ex && ex->decl && ex->decl->kind == DECL_ENUM)
@@ -457,25 +454,10 @@ static Type *union_lower(Type *u) {
     DeclList *tl = sema_decls; while (tl && tl->next) tl = tl->next;
     if (tl) tl->next = node; else sema_decls = node;
 
-    // Zero-cost: nullary-marker unions are niche-mandatory (E064 if they don't
-    // fit — the naked-niche promise for the simple case). A PAYLOAD marker carries
-    // data that must be stored somewhere, so a payload-carrying union may fall back
-    // to a tag-byte struct when the niche overlay doesn't fit (worst case ties C).
-    if (!has_payload_marker && !niche_enum_is_zero_cost(&ed->as.enum_decl)) {
-        char vd[128]; type_describe(value, vd, sizeof vd);
-        // ⚠ THE REMEDY LIST HAD TO BE CORRECTED (D-63). It named "or a slice", and a slice
-        // stopped being a niche source the day the reason was checked against the
-        // representation: the pool is real (its data pointer is never null) but a sentinel
-        // cannot be STORED in a two-word struct, and packing one emitted C that does not
-        // compile. An error message that advises a fix which does not work is worse than one
-        // that offers fewer — it sends the reader to spend time on something that cannot
-        // succeed.
-        fprintf(stderr, "[E064] Error: the union `%s | ...` cannot be zero-cost — '%s' has no "
-                "spare bit-patterns for its %d marker(s). Give the value type niche room "
-                "(a pointer, a bool, or a refinement like `u8 < 200`), or use fewer markers.\n",
-                vd, vd, nmark);
-        exit(1);
-    }
+    // Zero cost is MANDATORY for a union whose markers carry no payload (E064), and whether a
+    // layout achieves it is ir/layout.h's answer, asked once the union is an IR type
+    // (ir_emit_layout_report). Asking sema/niche.h here was a second answer to the same
+    // question, and two answers are how D-62 happened.
     return ity;
 }
 

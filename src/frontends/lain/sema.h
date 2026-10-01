@@ -64,11 +64,6 @@ static NarrowEntry *sema_narrows = NULL;
 static void sema_push_narrows(Expr *cond, bool negated);
 static bool sema_is_narrowed(Expr *e);
 
-// Defined in sema/niche.h (included after monomorph.h) — forward-declared here so
-// union_lower() in monomorph.h can enforce "zero-cost or reject" on the anonymous
-// enum it synthesizes for `T | markers`.
-static bool niche_enum_is_zero_cost(struct EnumDecl *e);
-
 // Union (`T | markers`) construction coercion — defined below (after the includes);
 // forward-declared here so the call-argument check in typecheck.h can reach it.
 static void sema_union_coerce(Expr **slot, Type *target);
@@ -117,7 +112,6 @@ static bool verify_recursion_expr_measure(Decl *fn, Expr *call);
 #include "sema/typecheck.h"
 #include "sema/monomorph.h"
 #include "sema/ownership_spelling.h"
-#include "sema/niche.h"
 #include "sema/undeclared.h"
 
 Type *current_return_type = NULL;
@@ -129,7 +123,6 @@ RangeTable *sema_ranges = NULL;
 bool sema_in_unsafe_block = false;
 bool sema_walk_phase = false;
 bool sema_addr_of_context = false; // set by EXPR_ADDR to relax &arr[len] in bounds check
-bool sema_dump_niche = false;      // set by main from args.dump_niche (D-Niche re-land)
 bool sema_dump_effects = false;    // set by main from args.dump_effects (F3.3 effect row)
 
 /*─────────────────────────────────────────────────────────────────╗
@@ -4033,19 +4026,11 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         if (any_error) exit(1);
     }
 
-    // D-Niche (re-land): precompute niche layout for every enum, emit a
-    // best-effort W120 when the sentinel pool was insufficient, and dump the
-    // decision when --dump-niche is set. Codegen (emit/*) recomputes per enum,
-    // so this loop is diagnostic; it runs after monomorphization below only for
-    // W120 coverage of generic instances — non-generic enums are covered here.
-    for (DeclList *dl = decls; dl; dl = dl->next) {
-        if (dl->decl && dl->decl->kind == DECL_ENUM &&
-            !decl_is_generic_template(dl->decl)) {
-            NicheLayout layout = niche_compute_layout(&dl->decl->as.enum_decl);
-            niche_emit_w120(&dl->decl->as.enum_decl, &layout);
-            if (sema_dump_niche) niche_dump_layout(&dl->decl->as.enum_decl, &layout);
-        }
-    }
+    // How a sum is REPRESENTED (W120, --dump-niche, and E064's zero-cost promise) is not
+    // decided here. It was, by sema/niche.h over the AST, and the front end then believed in a
+    // multi-payload niche the backend never built: it stayed silent over `Result(*T, Err)`'s
+    // tag. Layout is ONE decision, ir/layout.h, reported before the C is written
+    // (ir_emit_layout_report).
 
     // Pre-pass: resolve EVERY function signature (lowering `T | markers` return
     // and param types to their niche'd enum) before any body is inferred — so a

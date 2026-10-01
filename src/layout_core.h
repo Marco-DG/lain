@@ -18,6 +18,13 @@
 // that is genuinely two questions, because a `Type*` and an `IrType*` are different things.
 // The pool algebra and the sentinel ASSIGNMENT are one question and now have one answer.
 //
+// ★ AND THEN ONE IMPLEMENTATION (2026-10-01). The AST side outlived the legacy backend as the
+// oracle for W120, --dump-niche and E064, and it still believed in a multi-payload niche that
+// layout.h never built: W120 stayed silent over `Result(*T, Err)`'s tag and printed "0 empty
+// variant(s) require 0" over a tag nothing needed. It is deleted; every layout claim the
+// compiler makes is now ir/layout.h's answer (ir_emit_layout_report). This file stays as the
+// algebra layout.h uses.
+//
 // ★ The assignment order is load-bearing and is why sharing it matters more than sharing the
 // decision: two backends that both pack but pick DIFFERENT bit patterns for the same variant
 // produce programs that disagree about what `none` is. Agreeing to pack is not enough; they

@@ -987,27 +987,29 @@ using the record-variant form).
 
 \pnum
 ADTs use a niche-based representation whenever a zero-cost encoding is
-available; otherwise they fall back to a tagged union (a tag field of
-implementation-defined integer type plus a union of variant payload
-structs).
+available; otherwise they are a tagged union: an \texttt{int32\_t} tag
+(four bytes) beside a union of the variant payloads.
 
 \begin{note}
   \textbf{D-Niche aggressive multi-slot.}
   When the variant payload admits a \textit{niche}---a bit pattern that
   cannot occur in any valid value of the payload type---that niche is
-  used to encode tag-less variants.  Niche sources, in priority order:
-  zero-page pointer slots for pointers/slices; VRA-proven unused values
-  for constrained integers; bit patterns outside the declared variants
-  for \lain{bool} or small enums; niche of any recursive field. See
-  \S\,\ref{sec:mem.adt-layout} for the full algorithm.
+  used to encode tag-less variants.  Only a sum with one
+  payload-carrying variant, whose payload is a single field, can be
+  encoded this way. The niche sources are the zero page for a pointer,
+  the values outside its refinement for a constrained integer, the 254
+  byte patterns outside \(\{0, 1\}\) for \lain{bool}, and the slots a
+  packed sum leaves unused when it is itself the payload. A slice and a
+  plain enum are not niche sources: a sum whose payload is one of them
+  carries a tag.
 
-  If no niche or only a partial niche can be derived, the compiler
-  emits \diagcode{W120} (best-effort warning, never an error) and
-  falls back to a tag+union representation. The programmer may
-  resolve the warning by constraining the payload, by changing to a
-  payload type with larger sentinel space, or by accepting the tag
-  byte. See \S\,\ref{sec:mem.adt-layout} for the full layout
-  algorithm and target dependencies.
+  Whenever a sum is given a tag, the compiler emits \diagcode{W120} (a
+  warning, never an error) with the reason. When the reason is the
+  payload's spare values, the programmer may remove the tag by
+  constraining the payload or by choosing a payload type that has
+  spare values; otherwise the tag is the cost of the shape. See
+  \S\,\ref{sec:mem.adt-layout} for the full layout algorithm and its
+  target dependencies.
 \end{note}
 
 \pnum

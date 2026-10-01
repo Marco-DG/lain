@@ -14,12 +14,16 @@
 //
 // Refusing is the correct answer while the representation does not exist: E064 is
 // prove-or-reject for layout, and "I cannot make this zero-cost" is exactly what it says.
+//
+// (`main` states `effects io` for its printf. Without it this program had a SECOND error, E011,
+// which the front end's early E064 used to hide; E064 is now decided on the IR, after the
+// effect check, and the test must fail for the one reason it names.)
 extern func libc_printf(fmt *u8, ...) i32 effects io
 func pick(b bool) u8[:0] | none {
     if b { return "hi" }
     return none
 }
-func main() i32 {
+func main() i32 effects io {
     var r u8[:0] | none = pick(true)
     case r {
         none: libc_printf("none\n")

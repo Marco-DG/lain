@@ -744,12 +744,25 @@ type OptionByte {
 }
 ```
 
-```c
-typedef const uint8_t * niche_OptionByte;
+This is the C `lain` emits for it, compiled as `ob.ln` (the module name prefixes each function)
+with two one-line functions added, `func some(p *u8) OptionByte { return OptionByte.Some(p) }`
+and its `None` twin:
 
-static inline niche_OptionByte niche_OptionByte_Some(const uint8_t * v) { return v; }
-static inline niche_OptionByte niche_OptionByte_None(void) {
-    return (const uint8_t *)(uintptr_t)0LL;
+```c
+typedef uint8_t* OptionByte;
+
+__attribute__((pure)) OptionByte ob_some(uint8_t* v0) {
+  OptionByte v1;
+ L0: ;
+  v1 = (OptionByte)v0;
+  return v1;
+}
+
+__attribute__((const)) OptionByte ob_none(void) {
+  OptionByte v0;
+ L0: ;
+  v0 = (OptionByte)(uintptr_t)0ull;
+  return v0;
 }
 ```
 
@@ -762,22 +775,20 @@ payload, the packing is not an optimisation the compiler attempts. It is require
 program is rejected when it cannot be done:
 
 ```
-[E064] Error: the union `i32 | ...` cannot be zero-cost — 'i32' has no spare
-       bit-patterns for its 2 marker(s). Give the value type niche room (a
-       refinement like `u8 < 200`, a pointer, or a slice), or use fewer markers.
+[E064] Error: the union `i32 | ...` cannot be zero-cost: the value type has 0 spare
+       values, and 2 payload-less variants need one each. Give the value type spare
+       values (a pointer, a bool, or a refinement like `u8 < 200`), or use fewer markers.
 ```
 
 That is a deliberate trade, and it cuts both ways: a program that would have compiled elsewhere
-does not compile here. Where a tag byte is genuinely unavoidable, because an error case carries
-a payload, it is allowed and reported rather than added quietly:
+does not compile here. Where a tag is genuinely unavoidable, because an error case carries a
+payload, it is allowed and reported rather than added quietly:
 
 ```
-[W120] Warning: enum 'OptI32' not fully zero-cost.
-       Payload provides 0 sentinel slot(s); 1 empty variant(s) require 1.
-       Layout falls back to 1 tag byte + payload union.
-       To eliminate the tag byte: reduce empty variants, constrain the
-       payload type with a refinement, or change payload to a type with
-       larger sentinel space (i8: 255, i16: 65535, *T: 8192).
+[W120] Warning: the union `i32 | ...` is not zero-cost: it carries an int32_t tag (4 bytes)
+       beside its payloads.
+       It does because 2 of its variants carry a payload, and only a sum with ONE
+       payload-carrying variant can store the others in the payload's spare values.
 ```
 
 A layout optimisation that quietly fails is a cost you find later with a profiler. This one is
