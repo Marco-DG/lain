@@ -3333,7 +3333,10 @@ void sema_infer_expr(Expr *e) {
         // emitted `&t[i]`, C that gcc refuses; it would also read the struct's storage order,
         // which is the compiler's (DECIDE-U), not the program's.
         if ((bk == BUILTIN_LOAD || bk == BUILTIN_STORE) && e->as.builtin_expr.arg) {
-            Type *bt = sema_unwrap_type(e->as.builtin_expr.arg->type);
+            // The DECLARED type: sema_unwrap_type strips a pointer, so a raw `*u8` — the one
+            // buffer the spec allows inside `unsafe` — read as a `u8` and was refused (506f825).
+            Type *bt = e->as.builtin_expr.arg->type;
+            while (bt && bt->kind == TYPE_COMPTIME) bt = bt->element_type;
             if (bt && bt->kind != TYPE_ARRAY && bt->kind != TYPE_SLICE && bt->kind != TYPE_POINTER) {
                 fprintf(stderr, "[E100] Error Ln %li, Col %li: @%s: the buffer must be an array, a "
                         "slice or a raw pointer. A struct's bytes are not an array: its storage order "

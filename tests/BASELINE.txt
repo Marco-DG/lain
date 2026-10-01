@@ -1662,6 +1662,11 @@ out=
 at=const 2
 at=vector_size 2
 ty=Pair struct
+### tests/trust/simd_load_raw_pointer_pass.ln
+rc=0
+out=
+at=pure 2
+at=vector_size 1
 ### tests/trust/simd_mask_value_pass.ln
 rc=0
 out=

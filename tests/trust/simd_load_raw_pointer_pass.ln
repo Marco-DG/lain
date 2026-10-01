@@ -1,0 +1,17 @@
+// @load through a raw pointer, inside `unsafe`, is the one unchecked load the spec allows
+// (spec 7.5). 506f825 refused it: the check on @load's buffer stripped the pointer before
+// asking whether the buffer WAS one, so a `*u8` read as a `u8`. No corpus program loaded
+// through a raw pointer, so no gate saw it. Runs under ASan and UBSan.
+func first(p *u8) u8 {
+    unsafe {
+        v = @load(u8x16, p, 0)
+        return v[15]
+    }
+}
+func main() i32 {
+    var a u8[16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    unsafe {
+        p = &a[0]
+        return first(p) as i32 - 16
+    }
+}
