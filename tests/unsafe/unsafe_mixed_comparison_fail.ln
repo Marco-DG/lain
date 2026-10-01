@@ -1,0 +1,14 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: incompatible operand types for '<'
+// spec: §8 — the operands of a comparison have compatible types, inside `unsafe` too: it licenses
+// memory operations, not comparing an f64 with an i32. This was accepted inside `unsafe` only.
+// The check is reached only by a cross-KIND comparison (f64 with i32, bool with i32): integers of
+// different widths compare freely, and `i32 < u8[]` is refused earlier by another check
+// (Handwriting's probes, M11).
+func f(a f64, b i32) bool {
+    unsafe {
+        return a < b
+    }
+}
+
+func main() i32 { return 0 }

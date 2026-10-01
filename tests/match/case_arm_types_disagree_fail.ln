@@ -1,0 +1,14 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: the arms of a `case` have incompatible types
+// spec: §15 — the arms of a `case` expression have compatible types, and §7 forbids an implicit
+// conversion between `bool` and an integer. The result took the FIRST arm's type, so this was an
+// i32 whose `true` arm became 1, and it ran.
+func f(c i32) i32 {
+    r = case c {
+        1: 5
+        else: true
+    }
+    return r
+}
+
+func main() i32 { return f(2) }

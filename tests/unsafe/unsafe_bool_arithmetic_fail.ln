@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: on a `bool` operand
+// spec: §7 — no implicit conversion between `bool` and an integer, and `unsafe` licenses memory
+// operations, not conversions. Inside `unsafe` the type checker silently TYPED this bool as an
+// i32 and the program compiled; no corpus program relied on it (Handwriting's M11 measurement).
+func f(a i32, b i32) i32 {
+    unsafe {
+        return (a < b) + 1
+    }
+}
+
+func main() i32 { return f(1, 2) }

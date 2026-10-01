@@ -57,10 +57,23 @@ if [ -n "$prose" ]; then
     echo "── diagnostic prose names a removed keyword ($REMOVED_KEYWORDS):"; echo "$prose" | head -8
     nprose=$(echo "$prose" | wc -l)
 fi
+# ── AN ERROR WITHOUT A CODE ──────────────────────────────────────────────────────────────
+# spec_gate checks that every code the compiler prints is in Annex B; an error that prints NO
+# code is invisible to it. Twelve did ("sema error: struct 'S' has no field 'zzz'", most without
+# a line either), found by Handwriting's M11. A front-end error starts with its [E###]; an
+# internal one says "internal error".
+uncoded=$(grep -rnE '"sema error' src --include=*.h --include=*.c | grep -vE '^[^:]+:[0-9]+:\s*//')
+nuncoded=0
+if [ -n "$uncoded" ]; then
+    echo "── an error message with no diagnostic code:"; echo "$uncoded" | head -8
+    nuncoded=$(echo "$uncoded" | wc -l)
+fi
 echo "=================================================================="
 if [ $bad -eq 0 ]; then echo "build warnings (correctness class): NONE"; else
     echo "build warnings (correctness class): $bad  ← each of these is undefined behaviour"; fi
 if [ $nprose -eq 0 ]; then echo "removed keywords in diagnostic prose: NONE"; else
     echo "removed keywords in diagnostic prose: $nprose  ← a message tells the user to write it"; fi
+if [ $nuncoded -eq 0 ]; then echo "errors without a diagnostic code: NONE"; else
+    echo "errors without a diagnostic code: $nuncoded  ← spec_gate cannot see them"; fi
 echo "=================================================================="
-[ $bad -eq 0 ] && [ $nprose -eq 0 ]
+[ $bad -eq 0 ] && [ $nprose -eq 0 ] && [ $nuncoded -eq 0 ]

@@ -119,8 +119,8 @@ void sema_build_path(Expr *e, char *buf, size_t cap) {
     memcpy(buf + cur, field->name, to_copy);
     buf[cur + to_copy] = '\0';
   } else {
-    fprintf(stderr,
-            "sema error: `use` target must be identifier or member-path\n");
+    fprintf(stderr, "[E100] Error Ln %li, Col %li: a `use` target must be an identifier or a "
+            "member path (`a.b.c`)\n", (long)e->line, (long)e->col);
     exit(1);
   }
 }
@@ -664,7 +664,7 @@ void sema_resolve_stmt(Stmt *s) {
     for (char *p = cname; *p; p++) if (*p == '.') *p = '_';
 
     if (!target->type) {
-      fprintf(stderr, "sema error: use-target `%s` has no type\n", cname);
+      fprintf(stderr, "[E100] Error Ln %li, Col %li: use-target `%s` has no type\n", (long)s->line, (long)s->col, cname);
       exit(1);
     }
 

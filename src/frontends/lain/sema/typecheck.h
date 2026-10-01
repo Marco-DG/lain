@@ -828,6 +828,19 @@ static void sema_check_case_scrutinee(Expr *val, isize line, isize col) {
     diagnostic_show_line(line, col);
     exit(1);
 }
+// spec 15: the arms of a `case` EXPRESSION have compatible types; spec 7: no implicit conversion
+// between `bool` and an integer, or an integer and a float. Nothing compared the arms: the
+// result took the FIRST arm's type, so `1: 5  else: true` was an i32 whose `true` arm became 1.
+// Aggregates, strings and unions are checked where the value is used; an arm with no type of its
+// own (a `panic`) has nothing to compare.
+static bool sema_arm_types_agree(Type *a, Type *b) {
+    a = resolve_type_alias(a); b = resolve_type_alias(b);
+    if (!a || !b) return true;
+    if (is_bool_type(a) || is_bool_type(b))       return is_bool_type(a) && is_bool_type(b);
+    if (is_integer_type(a) || is_integer_type(b)) return is_integer_type(a) && is_integer_type(b);
+    if (is_float_type(a) || is_float_type(b))     return is_float_type(a) && is_float_type(b);
+    return true;
+}
 static void sema_check_case_pattern_kinds(Expr *val, ExprList *patterns) {
     bool str = val && sema_is_u8_string(val->type);
     for (ExprList *p = patterns; p; p = p->next) {
@@ -858,7 +871,8 @@ static void sema_check_case_pattern_kinds(Expr *val, ExprList *patterns) {
 static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
                                            isize line, isize col,
                                            const char *ctx, const char *label) {
-    if (sema_in_unsafe_block) return;
+    // Not waived by `unsafe`, which licenses memory operations, not conversions between
+    // incompatible types: `unsafe { return s }` with `s u8[]` returned as an i32 was accepted.
     if (!from || !to) return;
     Type *f = from, *t = to;
     while (f && f->kind == TYPE_COMPTIME) f = f->element_type;
@@ -1524,10 +1538,10 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
 // different pointee types, or a float to an integer are confusions that emit
 // broken/mis-evaluated C. Integer signedness is intentionally NOT policed here
 // — i32-vs-usize comparisons (`i < xs.len`) are idiomatic; struct/enum '==' is
-// handled separately. `unsafe` bypasses the check.
+// handled separately. `unsafe` does not bypass it: it licenses memory operations, not
+// comparing an f64 with an i32 (accepted inside `unsafe` until 2026-10-01).
 static void check_comparison_operands(Type *lt, Type *rt, Expr *le, Expr *re,
                                       const char *op, isize line, isize col) {
-    if (sema_in_unsafe_block) return;
     if (!lt || !rt) return;
     Type *l = lt, *r = rt;
     while (l && l->kind == TYPE_COMPTIME) l = l->element_type;
@@ -1601,14 +1615,14 @@ static ExprList *sema_member_field_constraints(Type *struct_type, Id *field) {
 /* lookup a field’s Type* given a struct and field Id */
 static Type *lookup_struct_field_type(Id *struct_name, Id *field) {
   if (!struct_name) {
-    fprintf(stderr, "sema error: internal: lookup_struct_field_type called "
+    fprintf(stderr, "internal error: lookup_struct_field_type called "
                     "with NULL struct_name\n");
     exit(1);
   }
 
   DeclStruct *sd = find_struct_decl(struct_name);
   if (!sd) {
-    fprintf(stderr, "sema error: unknown struct ‘%.*s’\n",
+    fprintf(stderr, "[E106] Error: unknown struct '%.*s'\n",
             (int)struct_name->length, struct_name->name);
     exit(1);
   }
@@ -2150,7 +2164,7 @@ void sema_infer_expr(Expr *e) {
                 return;
             }
         }
-        fprintf(stderr, "sema error Ln %li, Col %li: variant '%.*s' has no field '%.*s'\n",
+        fprintf(stderr, "[E128] Error Ln %li, Col %li: variant '%.*s' has no field '%.*s'\n",
                 e->line, e->col,
                 (int)v->name->length, v->name->name,
                 (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
@@ -2247,8 +2261,8 @@ void sema_infer_expr(Expr *e) {
             // We leave `e->type = NULL`. The parent `EXPR_CALL` will detect this
             // and rewrite the AST to `consume(l)`.
         } else {
-            fprintf(stderr, "sema error: struct '%.*s' has no field '%.*s'\n",
-                (int)t->base_type->length, t->base_type->name, 
+            fprintf(stderr, "[E128] Error Ln %li, Col %li: struct '%.*s' has no field '%.*s'\n",
+                (long)e->line, (long)e->col, (int)t->base_type->length, t->base_type->name, 
                 (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
             exit(1);
         }
@@ -2351,8 +2365,8 @@ void sema_infer_expr(Expr *e) {
                  }
                  
                  if (arg || field) {
-                     fprintf(stderr, "sema error: wrong number of arguments for variant constructor '%.*s'\n",
-                             (int)v->name->length, v->name->name);
+                     fprintf(stderr, "[E012] Error Ln %li, Col %li: wrong number of arguments for variant constructor '%.*s'\n",
+                             (long)e->line, (long)e->col, (int)v->name->length, v->name->name);
                      exit(1);
                  }
                  
@@ -2423,8 +2437,8 @@ void sema_infer_expr(Expr *e) {
             // Now proceed with normal call logic
             sema_infer_expr(e->as.call_expr.callee);
         } else {
-            fprintf(stderr, "sema error: struct field or UFCS method '%.*s' not found on type '%.*s'\n",
-                    (int)method_name->length, method_name->name,
+            fprintf(stderr, "[E128] Error Ln %li, Col %li: struct field or UFCS method '%.*s' not found on type '%.*s'\n",
+                    (long)e->line, (long)e->col, (int)method_name->length, method_name->name,
                     (int)target->type->base_type->length, target->type->base_type->name);
             exit(1);
         }
@@ -2862,8 +2876,9 @@ void sema_infer_expr(Expr *e) {
                 e->as.binary_expr.right->type, e->as.binary_expr.left,
                 e->as.binary_expr.right, token_kind_to_str(bop), e->line, e->col);
         }
-        if ((bop == TOKEN_KEYWORD_AND || bop == TOKEN_KEYWORD_OR) && !sema_in_unsafe_block) {
-            // spec 08: the operands of `and` and `or` shall have type bool.
+        if (bop == TOKEN_KEYWORD_AND || bop == TOKEN_KEYWORD_OR) {
+            // spec 08: the operands of `and` and `or` shall have type bool, inside `unsafe` too
+            // (it licenses memory operations, not implicit conversions; no corpus program used it).
             for (int side = 0; side < 2; side++) {
                 Expr *o = side ? e->as.binary_expr.right : e->as.binary_expr.left;
                 if (o && o->type && !is_bool_type(o->type)) {
@@ -2881,19 +2896,38 @@ void sema_infer_expr(Expr *e) {
         } else if (is_bool_type(e->as.binary_expr.left->type) || is_bool_type(e->as.binary_expr.right->type)) {
             // Arithmetic — and bitwise, whose operands spec 08 requires to be integers — on a
             // boolean is an implicit bool→integer conversion (spec 07). `and` / `or` are the
-            // boolean operators.
-            if (!sema_in_unsafe_block) {
+            // boolean operators. Inside `unsafe` this silently TYPED the bool as an i32: the
+            // type checker performing the conversion spec 07 forbids, in a block whose licence
+            // is memory. No corpus program relied on it (Handwriting, M11).
+            {
                 fprintf(stderr, "[E012] Error Ln %li, Col %li: `%s` on a `bool` operand — a boolean is not an "
                         "integer (spec 07); use `and` / `or`, or convert explicitly: `(a < b) as i32`.\n",
                         (long)e->line, (long)e->col, token_kind_to_str(bop));
                 diagnostic_show_line(e->line, e->col);
                 exit(1);
-            } else {
-                e->type = get_builtin_i32_type();
             }
         } else {
             Type *lt = e->as.binary_expr.left->type;
             Type *rt = e->as.binary_expr.right->type;
+            // spec 08: bitwise operators take integers, and `%` is defined on integers only. On
+            // an f64 both were accepted: `a & a` emitted C that gcc rejects, and `a % b` was
+            // refused only as a division whose divisor might be zero (E015), not for what it is.
+            {
+                TokenKind bk = e->as.binary_expr.op;
+                bool bitwise = bk == TOKEN_AMPERSAND || bk == TOKEN_PIPE || bk == TOKEN_CARET ||
+                               bk == TOKEN_SHIFT_LEFT || bk == TOKEN_SHIFT_RIGHT ||
+                               bk == TOKEN_SHIFT_LEFT_PERCENT;
+                Type *fl = (lt && is_float_type(resolve_type_alias(lt))) ? lt
+                         : (rt && is_float_type(resolve_type_alias(rt))) ? rt : NULL;
+                if ((bitwise || bk == TOKEN_PERCENT) && fl) {
+                    char tb[128]; type_describe(fl, tb, sizeof tb);
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: `%s` on a `%s` operand: %s (spec 08).\n",
+                            (long)e->line, (long)e->col, token_kind_to_str(bk), tb,
+                            bitwise ? "bitwise operators take integers" : "`%` is defined on integers only");
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+            }
             // Q-002 simplified (post Phase 4 rollback): result type follows
             // Sprint 10 widening — max(rank(lt), rank(rt)). Wrap/sat ops
             // keep the LHS type unchanged (the operation bounds the result
@@ -3068,7 +3102,7 @@ void sema_infer_expr(Expr *e) {
              // e->type = get_builtin_i32_type(); // fallback
              // return;
              // Actually let's exit to be consistent with previous panic
-             fprintf(stderr, "sema error: internal: deref operand untyped\n");
+             fprintf(stderr, "internal error: deref operand untyped\n");
              exit(1);
         }
         
@@ -3080,7 +3114,8 @@ void sema_infer_expr(Expr *e) {
         if (t->kind == TYPE_POINTER) {
             e->type = t->element_type;
             if (!sema_in_unsafe_block) {
-                fprintf(stderr, "sema error: Dereference of raw pointer outside 'unsafe' block.\n");
+                fprintf(stderr, "[E060] Error Ln %li, Col %li: dereference of a raw pointer outside an `unsafe` block.\n",
+                        (long)e->line, (long)e->col);
                 exit(1);
             }
         } else {
@@ -3095,7 +3130,8 @@ void sema_infer_expr(Expr *e) {
         if (e->as.unary_expr.op == TOKEN_BANG) {                                      // logical not
             e->type = get_builtin_bool_type();
             Expr *o = e->as.unary_expr.right;                  // spec 08: its operand is a bool
-            if (o && o->type && !is_bool_type(o->type) && !sema_in_unsafe_block) {
+            // Inside `unsafe` too: `unsafe` licenses memory operations, not implicit conversions.
+            if (o && o->type && !is_bool_type(o->type)) {
                 char tb[128]; type_describe(o->type, tb, sizeof tb);
                 fprintf(stderr, "[E012] Error Ln %li, Col %li: `!` applied to '%s', not `bool` (spec 08) — "
                         "compare it: `n == 0`.\n", (long)e->line, (long)e->col, tb);
@@ -3178,7 +3214,7 @@ void sema_infer_expr(Expr *e) {
   case EXPR_ARRAY_LITERAL: {
     ExprList *elems = e->as.array_literal_expr.elements;
     if (!elems) {
-        fprintf(stderr, "sema error Ln %li, Col %li: empty array literal\n", e->line, e->col);
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: empty array literal\n", e->line, e->col);
         diagnostic_show_line(e->line, e->col);
         exit(1);
     }
@@ -3202,7 +3238,7 @@ void sema_infer_expr(Expr *e) {
     sema_infer_expr(body);
     sema_infer_expr(range);
     if (!range || range->kind != EXPR_RANGE) {
-        fprintf(stderr, "sema error Ln %li, Col %li: array comprehension requires a range `start..end`\n", e->line, e->col);
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: array comprehension requires a range `start..end`\n", e->line, e->col);
         diagnostic_show_line(e->line, e->col); exit(1);
     }
     Expr *lo = range->as.range_expr.start, *hi = range->as.range_expr.end;
@@ -3226,7 +3262,7 @@ void sema_infer_expr(Expr *e) {
     isize n = (isize)hi->as.literal_expr.value - (isize)lo->as.literal_expr.value;
     if (range->as.range_expr.inclusive) n += 1;
     if (n <= 0) {
-        fprintf(stderr, "sema error Ln %li, Col %li: array comprehension length must be positive\n", e->line, e->col);
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: array comprehension length must be positive\n", e->line, e->col);
         diagnostic_show_line(e->line, e->col); exit(1);
     }
     e->type = type_array(sema_arena, body->type, n);
@@ -3379,6 +3415,14 @@ void sema_infer_expr(Expr *e) {
         
         if (!inferred_type && c->body->type) {
             inferred_type = c->body->type;
+        } else if (inferred_type && c->body && c->body->type &&
+                   !sema_arm_types_agree(inferred_type, c->body->type)) {
+            char ta[128], tb[128];
+            type_describe(inferred_type, ta, sizeof ta); type_describe(c->body->type, tb, sizeof tb);
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: the arms of a `case` have incompatible "
+                    "types: '%s' and '%s' (spec 15).\n", (long)c->body->line, (long)c->body->col, ta, tb);
+            diagnostic_show_line(c->body->line, c->body->col);
+            exit(1);
         }
     }
     

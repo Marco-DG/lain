@@ -1,0 +1,9 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: struct 'S' has no field 'zzz'
+// A front-end error names its code and its line. This printed "sema error: struct 'S' has no field
+// 'zzz'" with neither, so spec_gate, which checks the codes the compiler prints, could not see it.
+type S { a i32 }
+
+func f(s S) i32 { return s.zzz }
+
+func main() i32 { return 0 }

@@ -1,0 +1,7 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: bitwise operators take integers
+// spec: §8 — the operands of a bitwise operator are integers. This was accepted, and the C it
+// emitted (`v0 & v0` on two doubles) is rejected by gcc.
+func f(a f64) f64 { return a & a }
+
+func main() i32 { return 0 }

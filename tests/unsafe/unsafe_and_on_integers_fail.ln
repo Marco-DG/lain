@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: an operand of `and` has type
+// spec: §8 — the operands of `and` and `or` are `bool`, inside `unsafe` too: it licenses memory
+// operations, not implicit conversions. This was accepted inside `unsafe` and refused outside it.
+func f(a i32, b i32) bool {
+    unsafe {
+        return a and b
+    }
+}
+
+func main() i32 { return 0 }
