@@ -36,6 +36,14 @@ typedef struct {
     bool      unsafe;      // inside an `unsafe` block (elem_ptr etc. become unchecked)
     // innermost loop targets, for break/continue
     IrBlock  *loop_head, *loop_exit;
+    // A `for` loop's STEP, which `continue` must run. It targets the LATCH (step the counter,
+    // jump to the header); it targeted the header, so `for i in 0..3 { if i == 1 { continue } }`
+    // never left i == 1: refused as E011 in a total function, a hang in one that may diverge.
+    // The latch is made at the first `continue`, so a loop without one is lowered as before.
+    // NULL cell: a `while`, whose `continue` is its header.
+    IrValue  *loop_step_cell;
+    IrType   *loop_step_ty;
+    IrBlock  *loop_latch;
     int       loop_defer_mark;   // defer-stack depth on entering the innermost loop BODY:
                                  // `break`/`continue` leave that block, so they run what it
                                  // registered, exactly as falling off its end does.
@@ -3063,6 +3071,24 @@ static void ir_forloop_init_fact(LowerCtx *c, Stmt *s, Expr *lo_e, Expr *hi_e, b
 }
 
 static void ir_lower_stmt(LowerCtx *c, Stmt *s);
+// Where `continue` goes: a `for` loop's latch (made on first use), a `while` loop's header.
+static IrBlock *ir_loop_continue_target(LowerCtx *c) {
+    if (!c->loop_step_cell) return c->loop_head;
+    if (!c->loop_latch) c->loop_latch = ir_new_block(c->f);
+    return c->loop_latch;
+}
+// The end of a `for` body: step the counter and go back to the header — inline when nothing
+// continued (the shape every loop had), else in the latch every `continue` reached.
+static void ir_lower_for_step(LowerCtx *c, IrBlock *head) {
+    if (c->loop_latch) {
+        if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, c->loop_latch);
+        c->cur = c->loop_latch;
+    } else if (ir_is_set_term(c->cur)) return;
+    IrValue *ci = ir_load(c->f, c->cur, c->loop_step_cell, c->loop_step_ty);
+    ir_store(c->f, c->cur, c->loop_step_cell,
+             ir_binop(c->f, c->cur, IR_ADD, ci, ir_const_int(c->f, c->cur, 1, c->loop_step_ty), c->loop_step_ty));
+    ir_set_br(c->cur, head);
+}
 // Replay the pending `defer` bodies in REVERSE registration order. The stack is not popped:
 // an early return runs the defers registered SO FAR, and a later exit runs them too — one
 // dynamic execution reaches exactly one exit, so replaying at each is faithful, and it is
@@ -3522,7 +3548,9 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             ir_lower_cond_br(c, s->as.while_stmt.cond, body, exit);
             c->cse_recording = false;
             IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
+            IrValue *osc=c->loop_step_cell; IrType *ost=c->loop_step_ty; IrBlock *olt=c->loop_latch;
                 c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
+                c->loop_step_cell=NULL; c->loop_step_ty=NULL; c->loop_latch=NULL;   // continue: the header
             c->cur = body;
             // ── D-49: THE MEASURE IS AN EXPRESSION, AND IT HAS TO BE WELL-DEFINED ────────
             // A written `decreasing` is a claim the compiler defends (D-44), and a claim that
@@ -3553,6 +3581,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             ir_lower_stmts(c, s->as.while_stmt.body);
             if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, head);
             c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om;
+            c->loop_step_cell=osc; c->loop_step_ty=ost; c->loop_latch=olt;
             c->cur = exit;
             break;
         }
@@ -3590,14 +3619,13 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 IrValue *cond = ir_icmp(c->f, head, it->as.range_expr.inclusive?IR_CMP_ULE:IR_CMP_ULT, iv, hi);
                 ir_set_br_cond(head, cond, body, exit);
                 IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
+                IrValue *osc=c->loop_step_cell; IrType *ost=c->loop_step_ty; IrBlock *olt=c->loop_latch;
                 c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
+                c->loop_step_cell=icell; c->loop_step_ty=ity; c->loop_latch=NULL;
                 c->cur = body; ir_lower_stmts(c, s->as.for_stmt.body);
-                if (!ir_is_set_term(c->cur)) {
-                    IrValue *ci = ir_load(c->f, c->cur, icell, ity);
-                    ir_store(c->f, c->cur, icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,ity),ity));
-                    ir_set_br(c->cur, head);
-                }
-                c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om; c->cur = exit;
+                ir_lower_for_step(c, head);
+                c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om;
+                c->loop_step_cell=osc; c->loop_step_ty=ost; c->loop_latch=olt; c->cur = exit;
                 // ★ A LOOP THAT FILLS EVERY ELEMENT IS A WHOLE-INITIALISATION.
                 // `for k in 0..8 { a[k] = e }` over `a i32[8]` writes every slot, but
                 // definite-init is a MUST analysis over a per-element lattice and the store is
@@ -3632,19 +3660,18 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                          : ir_const_int(c->f, head, alen>=0?alen:0, usz);
             ir_set_br_cond(head, ir_icmp(c->f,head,IR_CMP_ULT,iv,len), body, exit);
             IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
+            IrValue *osc=c->loop_step_cell; IrType *ost=c->loop_step_ty; IrBlock *olt=c->loop_latch;
                 c->loop_head=head; c->loop_exit=exit; c->loop_defer_mark=c->ndefers;
+                c->loop_step_cell=icell; c->loop_step_ty=usz; c->loop_latch=NULL;
             c->cur = body;
             IrValue *iv2 = ir_load(c->f, body, icell, usz);
             IrValue *dat = is_slice ? ir_slice_data(c->f, body, av, elem) : av;
             IrValue *ep  = ir_elem_ptr(c->f, body, dat, iv2, elem);
             ir_store(c->f, body, vcell, ir_load(c->f, body, ep, elem));   // v = arr[i]
             ir_lower_stmts(c, s->as.for_stmt.body);
-            if (!ir_is_set_term(c->cur)) {
-                IrValue *ci = ir_load(c->f, c->cur, icell, usz);
-                ir_store(c->f, c->cur, icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,usz),usz));
-                ir_set_br(c->cur, head);
-            }
-            c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om; c->cur = exit;
+            ir_lower_for_step(c, head);
+            c->loop_head=oh; c->loop_exit=oe; c->loop_defer_mark=om;
+            c->loop_step_cell=osc; c->loop_step_ty=ost; c->loop_latch=olt; c->cur = exit;
             break;
         }
         case STMT_MATCH: {
@@ -3780,7 +3807,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
                 for (int i = c->ndefers - 1; i >= c->loop_defer_mark; i--) ir_lower_stmt(c, c->defers[i]);
                 c->in_defer = false;
             }
-            IrBlock *tgt = (s->kind==STMT_BREAK) ? c->loop_exit : c->loop_head;
+            IrBlock *tgt = (s->kind==STMT_BREAK) ? c->loop_exit : ir_loop_continue_target(c);
             if (tgt) ir_set_br(c->cur, tgt);
             break;
         }

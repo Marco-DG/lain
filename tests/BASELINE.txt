@@ -1248,6 +1248,11 @@ ty=Slice_u8 scalar
 rc=0
 out=1234-
 ty=Slice_u8 scalar
+### tests/statements/for_continue_pass.ln
+rc=0
+out=0 2 4 | 1 3 | 01 03 11 13 i1 21 23 i2 | b0 d0 d1 b2 d2 |
+at=nonnull 2
+ty=Slice_u8 scalar
 ### tests/statements/for_two_var_pass.ln
 rc=0
 out=for i, val in 0..5:
