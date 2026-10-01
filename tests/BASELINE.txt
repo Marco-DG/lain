@@ -1516,6 +1516,13 @@ at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/module_comprehension_table_pass.ln
+rc=0
+out=
+at=const 4
+at=nonnull 2
+ty=Lexer struct
+ty=Slice_u8 scalar
 ### tests/trust/mul_narrowing_provable_pass.ln
 rc=0
 out=

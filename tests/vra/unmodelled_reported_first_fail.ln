@@ -2,9 +2,11 @@
 // An unmodelled construct is reported FIRST, at its own line. Lowering makes it an opaque —
 // an unknown value that may write anything — so `is_space` became an unknown writer, `skip`
 // lost every fact about `l.pos`, and the compiler reported E086, E121 and E011 on the correct
-// loop below while saying nothing about line 1. (Found by the Handwriting session; replacing
-// the comprehension with an explicit list made all three disappear.)
-CTYPE u8[256] = [0 for i in 0..256]
+// loop below while saying nothing about the table. (Found by the Handwriting session.) A
+// comprehension with a CONSTANT body is evaluated now (module_comprehension_table_pass.ln);
+// one that calls a function is not, and is the unmodelled construct here.
+func cls(i usize) u8 { return 0 }
+CTYPE u8[256] = [cls(i) for i in 0..256]
 func is_space(c u8) bool { return (CTYPE[c] & 1) != 0 }
 type Lexer {
     src u8[]

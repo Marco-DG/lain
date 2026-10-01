@@ -233,6 +233,11 @@ primary-expression   ::=
   | match-expression
   | constructor-expression
   | comptime-expression
+  | array-literal
+  | array-comprehension
+
+array-literal        ::= "[" [ expression { "," expression } ] "]"
+array-comprehension  ::= "[" expression "for" identifier "in" expression ( ".." | "..=" ) expression "]"
 
 literal              ::=
     integer-literal

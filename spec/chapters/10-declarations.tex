@@ -330,6 +330,26 @@ LIMIT u8 = 200
 OVER u8 = 300            // ERROR [E086]: 300 does not fit u8
 \end{laincode}
 
+\pnum
+An \emph{array comprehension} \lain{[e for i in lo..hi]} is the array whose element \lain{k} is
+\lain{e} with \lain{i} = \lain{lo + k}, for \lain{i} from \lain{lo} up to but excluding
+\lain{hi} (\lain{..=} includes \lain{hi}). Inside a function it initialises an array at run
+time. As a module-scope constant whose element type is an integer type, when \lain{lo},
+\lain{hi} and \lain{e} are constant expressions (\lain{e} may name \lain{i}), it \emph{is} the
+array literal of its values, and is checked as one (\S\,\ref{sec:decl.module-const}):
+
+\begin{laincode}
+// 1 for a space, 2 for a digit: a lexer's character-class table
+CTYPE u8[256] = [(c == 32 or c == 9) as u8 + 2 * (c >= 48 and c <= 57) as u8 for c in 0..256]
+func is_digit(c u8) bool {
+    return (CTYPE[c] & 2) != 0
+}
+\end{laincode}
+
+\pnum
+Any other module-scope comprehension --- one whose body calls a function, say --- is not
+supported by the reference implementation (\diagcode{E100}).
+
 \section{Module-scope assertions}
 \label{sec:decl.static-assert}
 \index{static assertion}

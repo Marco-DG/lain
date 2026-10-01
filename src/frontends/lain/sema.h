@@ -4079,6 +4079,12 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             if (d->as.variable_decl.init) {
                 sema_clear_locals();
                 sema_resolve_expr(d->as.variable_decl.init);
+                // I.8: a constant comprehension is the explicit list it denotes.
+                if (!d->as.variable_decl.is_mutable) {
+                    Expr *lst = sema_expand_const_comprehension(d->as.variable_decl.init,
+                                                                d->as.variable_decl.type);
+                    if (lst) { d->as.variable_decl.init = lst; sema_resolve_expr(lst); }
+                }
                 sema_infer_expr(d->as.variable_decl.init);
                 // A top-level constant written without an annotation (`MAX = 100`) had NO TYPE
                 // at all: the declaration keeps whatever the parser gave it, which is NULL, and

@@ -1,0 +1,28 @@
+// A module-scope comprehension whose body is a constant expression of the index IS the
+// explicit list it denotes, and becomes one before it is typed: a 256-entry lexer table is
+// one line. It was never modelled. It lowered to an opaque, and before 2026-10-01 that made
+// `skip` below fail with E086/E121/E011 on its correct loop while saying nothing about the
+// table (the Handwriting session's reproduction, now this test). Values checked at run time.
+CTYPE u8[256] = [(i == 32 or i == 9 or i == 10) as u8 + 2 * (i >= 48 and i <= 57) as u8 for i in 0..256]
+SQUARES u16[16] = [i * i for i in 0..16]
+LAST u8[4] = [i for i in 252..=255]
+func is_space(c u8) bool { return (CTYPE[c] & 1) != 0 }
+func is_digit(c u8) bool { return (CTYPE[c] & 2) != 0 }
+type Lexer {
+    src u8[]
+    pos usize <= src.len
+}
+func skip(l var Lexer) {
+    while l.pos < l.src.len and is_space(l.src[l.pos]) { l.pos = l.pos + 1 }
+}
+func main() i32 {
+    text = "  \t7x"
+    var l = Lexer(text, 0)
+    skip(var l)
+    if l.pos != 3 or l.pos >= l.src.len { return 1 }
+    if !is_digit(l.src[l.pos]) { return 2 }
+    if is_digit(120) or is_space(120) { return 3 }
+    if SQUARES[15] != 225 { return 4 }
+    if LAST[0] != 252 or LAST[3] != 255 { return 5 }
+    return 0
+}

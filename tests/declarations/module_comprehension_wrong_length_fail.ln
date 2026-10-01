@@ -1,0 +1,7 @@
+// EXPECT: [E012]
+// An evaluated comprehension is checked like the list it becomes: 10 elements do not
+// initialise a u8[256].
+T u8[256] = [0 for i in 0..10]
+func main() i32 {
+    return T[3] as i32
+}

@@ -886,11 +886,19 @@ static Expr *sa_named_constant(Expr *e) {
     return e->decl->as.variable_decl.init;
 }
 static int sa_depth = 0;
+// I.8: a comprehension's index, bound while its body is evaluated at compile time.
+static Id *sa_bound_idx = NULL; static __int128 sa_bound_val = 0;
+static bool sa_is_bound(Expr *e) {
+    Id *n = e->as.identifier_expr.id;
+    return sa_bound_idx && n && n->length == sa_bound_idx->length &&
+           strncmp(n->name, sa_bound_idx->name, (size_t)n->length) == 0;
+}
 static bool sa_is_const(Expr *e, bool *layout) {
     if (!e) return false;
     switch (e->kind) {
         case EXPR_LITERAL: case EXPR_CHAR: return true;
         case EXPR_IDENTIFIER: {
+            if (sa_is_bound(e)) return true;
             Expr *init = sa_named_constant(e);
             if (!init || sa_depth > 16) return false;      // a cycle is not a constant
             sa_depth++; bool ok = sa_is_const(init, layout); sa_depth--;
@@ -931,6 +939,7 @@ static bool sa_eval(Expr *e, __int128 *v) {
         case EXPR_CHAR:    *v = (unsigned char)e->as.char_expr.value; return true;
         case EXPR_CAST:    return sa_eval(e->as.cast_expr.expr, v);
         case EXPR_IDENTIFIER: {
+            if (sa_is_bound(e)) { *v = sa_bound_val; return true; }
             Expr *init = sa_named_constant(e);
             if (!init || sa_depth > 16) return false;
             sa_depth++; bool ok = sa_eval(init, v); sa_depth--;
@@ -999,6 +1008,43 @@ static void sema_check_const_fits(Type *ty, Expr *init, Decl *d, const char *nam
         return;
     }
     sema_check_one_const_fits(ty, init, d, "constant", name);
+}
+// I.8: `CTYPE u8[256] = [f(i) for i in 0..256]` at module scope. A module constant is folded
+// into each use as its initialiser, and a comprehension there was never modelled: it lowered to
+// an opaque (refused since G, before that the cause of E086/E011 on unrelated loops). When the
+// range and the body are CONSTANT expressions of the index — the evaluator module asserts use,
+// with the index bound — it IS an explicit list, and becomes one before it is typed, so the
+// element-fits checks and everything downstream see exactly what a hand-written table gives
+// them. Anything else is left alone and refused where it stands. Integer elements only: a
+// value is a number here, and a bool or a float element would need its own literal.
+#define SA_COMPREHENSION_MAX 65536
+static Expr *sema_expand_const_comprehension(Expr *e, Type *decl_ty) {
+    if (!e || e->kind != EXPR_ARRAY_COMPREHENSION) return NULL;
+    Type *at = decl_ty; while (at && at->kind == TYPE_COMPTIME) at = at->element_type;
+    if (!at || at->kind != TYPE_ARRAY || !is_integer_type(at->element_type)) return NULL;
+    Expr *rg = e->as.array_comprehension_expr.range, *body = e->as.array_comprehension_expr.body;
+    Id *idx = e->as.array_comprehension_expr.idx;
+    if (!rg || rg->kind != EXPR_RANGE || !body || !idx) return NULL;
+    bool lay = false; __int128 lo, hi;
+    if (!sa_is_const(rg->as.range_expr.start, &lay) || !sa_is_const(rg->as.range_expr.end, &lay) || lay ||
+        !sa_eval(rg->as.range_expr.start, &lo) || !sa_eval(rg->as.range_expr.end, &hi)) return NULL;
+    if (rg->as.range_expr.inclusive) hi += 1;
+    if (hi < lo || hi - lo > SA_COMPREHENSION_MAX) return NULL;
+    sa_bound_idx = idx;
+    bool ok = sa_is_const(body, &lay) && !lay;
+    ExprList *head = NULL, **tail = &head;
+    for (__int128 k = lo; ok && k < hi; k++) {
+        __int128 v; sa_bound_val = k;
+        if (!sa_eval(body, &v) || v < (__int128)INT64_MIN || v > (__int128)INT64_MAX) { ok = false; break; }
+        Expr *lit = expr_literal(sema_arena, (int64_t)v);
+        lit->line = body->line; lit->col = body->col;
+        *tail = expr_list(sema_arena, lit); tail = &(*tail)->next;
+    }
+    sa_bound_idx = NULL;
+    if (!ok) return NULL;
+    Expr *arr = expr_array_literal(sema_arena, head);
+    arr->line = e->line; arr->col = e->col;
+    return arr;
 }
 static void sema_check_static_assert(Decl *d) {
     Expr *c = d->as.static_assert_decl.cond;
