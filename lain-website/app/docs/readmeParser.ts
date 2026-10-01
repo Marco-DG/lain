@@ -219,11 +219,20 @@ function titleToId(title: string): string {
         .replace(/^-|-$/g, '');
 }
 
-// ── README → DocSection[] ─────────────────────────────────────────────────────
+// ── a Markdown page → DocSection[] ────────────────────────────────────────────
+//
+// This reads the REAL document out of the repository at build time, which is the only reason
+// /docs has never gone stale while the hand-written /overview data drifted for five months. A
+// page that paraphrases the manual is a second copy of the manual, and the second copy is always
+// the one nobody updates: of 35 Lain samples in the old overviewData.ts, 1 still compiled.
+//
+// So the parser takes a FILENAME. /docs renders README.md, /overview renders LANGUAGE.md, and
+// both are gated by scripts/gates/readme_gate.sh, which compiles every ```lain block on those two
+// pages. The website cannot now contradict the compiler without failing that gate first.
 
-export function parseReadme(): DocSection[] {
-    const readmePath = path.join(process.cwd(), '..', 'README.md');
-    const raw = fs.readFileSync(readmePath, 'utf-8');
+function parseMarkdownDoc(filename: string, level1Title?: string): DocSection[] {
+    const docPath = path.join(process.cwd(), '..', filename);
+    const raw = fs.readFileSync(docPath, 'utf-8');
     const lines = raw.split('\n');
 
     const sections: DocSection[] = [];
@@ -275,7 +284,7 @@ export function parseReadme(): DocSection[] {
                 const title = m2[1].trim();
                 currentTitle = title;
                 currentId = titleToId(title);
-                currentLevel = title === 'Language Reference' ? 1 : 2;
+                currentLevel = (level1Title !== undefined && title === level1Title) ? 1 : 2;
                 continue;
             }
         }
@@ -285,4 +294,14 @@ export function parseReadme(): DocSection[] {
 
     flush();
     return sections;
+}
+
+/** /docs — the project README, as it is in the repository right now. */
+export function parseReadme(): DocSection[] {
+    return parseMarkdownDoc('README.md', 'Language Reference');
+}
+
+/** /overview — the language reference manual, as it is in the repository right now. */
+export function parseLanguage(): DocSection[] {
+    return parseMarkdownDoc('LANGUAGE.md');
 }

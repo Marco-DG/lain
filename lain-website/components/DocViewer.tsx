@@ -26,7 +26,12 @@ export default function DocViewer({ data }: DocViewerProps) {
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
 
-        const regex = /\b(func|proc|fun|var|mov|return|type|if|elif|else|while|for|case|extern|comptime|undefined|as|import|c_include|defer|unsafe|and|or|break|continue|in|true|false|decreasing)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void)\b|("(?:[^"\\]|\\.)*")|(\/\/[^\n]*|\/\*[\s\S]*?\*\/)/g;
+        // Derived from the lexer (src/frontends/lain/token.h), not from memory. It previously
+        // highlighted `fun`, `elif` and `undefined`, none of which are keywords — highlighting a
+        // word teaches a reader it exists — and omitted `effects`, the row introducer that
+        // replaced `proc` in 2026-09. `proc` stays listed because the lexer still reserves it to
+        // issue the removal diagnostic.
+        const regex = /\b(func|proc|var|mov|return|type|if|else|while|for|case|try|extern|comptime|effects|decreasing|assert|assume|as|import|c_include|defer|unsafe|use|and|or|in|break|continue|nil|true|false)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void)\b|("(?:[^"\\]|\\.)*")|(\/\/[^\n]*|\/\*[\s\S]*?\*\/)/g;
 
         return s.replace(regex, (match, kw, type, str, com) => {
             if (kw)   return `<span class="${styles.kw}">${kw}</span>`;

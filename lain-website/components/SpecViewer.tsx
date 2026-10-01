@@ -77,7 +77,12 @@ export default function SpecViewer({ data }: SpecViewerProps) {
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
 
-        const regex = /\b(func|proc|fun|var|mov|return|type|let|if|elif|else|while|for|match|case|extern|comptime|undefined|as|import|c_include|defer|unsafe|and|or|break|continue|in|true|false)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void|string|File|Data|Buffer|Result|Option)\b|("[^"]*")|(\/\*[\s\S]*?\*\/|\/\/.*)/g;
+        // Derived from the lexer (src/frontends/lain/token.h), not from memory. It previously
+        // highlighted `fun`, `let`, `match`, `elif` and `undefined` — none of which are Lain —
+        // and omitted `effects`, `decreasing`, `assert`, `assume` and `try`. Highlighting a word
+        // teaches a reader it exists. `proc` stays listed because the lexer still reserves it to
+        // issue the removal diagnostic.
+        const regex = /\b(func|proc|var|mov|return|type|if|else|while|for|case|try|extern|comptime|effects|decreasing|assert|assume|as|import|c_include|defer|unsafe|use|and|or|in|break|continue|nil|true|false)\b|\b(int|i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|void)\b|("[^"]*")|(\/\*[\s\S]*?\*\/|\/\/.*)/g;
 
         return escaped.replace(regex, (match, kw, type, str, com) => {
             if (kw) return `<span class="${styles.kw}">${kw}</span>`;

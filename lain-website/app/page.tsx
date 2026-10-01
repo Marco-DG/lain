@@ -24,11 +24,11 @@ export default function Home() {
             <pre><code>
               <span className={styles.kw}>type</span> File {'{'} <span className={styles.kw}>mov</span> handle <span className={styles.type}>int</span> {'}'}{"\n"}
               {"\n"}
-              <span className={styles.kw}>proc</span> close_file(<span className={styles.kw}>mov</span> {'{'}handle{'}'} File) {'{'}{"\n"}
+              <span className={styles.kw}>func</span> close_file(<span className={styles.kw}>mov</span> {'{'}handle{'}'} File) <span className={styles.kw}>effects</span> io {'{'}{"\n"}
               {'  '}fclose(handle){"\n"}
               {'}'}{"\n"}
               {"\n"}
-              <span className={styles.kw}>proc</span> main() {'{'}{"\n"}
+              <span className={styles.kw}>func</span> main() <span className={styles.kw}>effects</span> io {'{'}{"\n"}
               {'  '}<span className={styles.kw}>var</span> f = open_file(<span className={styles.str}>"data.txt"</span>, <span className={styles.str}>"r"</span>){"\n"}
               {'  '}close_file(<span className={styles.kw}>mov</span> f){"\n"}
               {"\n"}
@@ -41,7 +41,7 @@ export default function Home() {
           <div className={styles.codeBlock}>
             <div className={styles.codeComment}>VALUE RANGE ANALYSIS</div>
             <pre><code>
-              <span className={styles.kw}>func</span> safe_div(a <span className={styles.type}>int</span>, b <span className={styles.type}>int</span> != 0) <span className={styles.type}>int</span> {'{'}{"\n"}
+              <span className={styles.kw}>func</span> safe_div(a <span className={styles.type}>u32</span>, b <span className={styles.type}>u32</span> != 0) <span className={styles.type}>u32</span> {'{'}{"\n"}
               {'  '}<span className={styles.kw}>return</span> a / b{"\n"}
               {'}'}{"\n"}
               {"\n"}

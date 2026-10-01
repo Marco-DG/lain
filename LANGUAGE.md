@@ -87,7 +87,6 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `effects` | Declares a function's effect row (`io`, `diverge`, `raises`, `alloc`) |
 | `return` | Return a value from a function |
 | `if` | Conditional branch |
-| `elif` | Else-if branch |
 | `else` | Default branch in conditional/case |
 | `for` | Range-based for loop |
 | `while` | While loop |
@@ -1137,15 +1136,23 @@ v.push(42)   // Desugars to: push(var v, 42)
 
 ## 6. Control Flow
 
-### 6.1 If / Elif / Else
+### 6.1 If / Else
+
+There is no `elif`. A chained branch is written `else if`.
 
 ```lain
-if x > 10 {
-    // ...
-} elif x > 5 {
-    // ...
-} else {
-    // ...
+func classify(x i32) i32 {
+    if x > 10 {
+        return 2
+    } else if x > 5 {
+        return 1
+    } else {
+        return 0
+    }
+}
+
+func main() i32 {
+    return classify(7)
 }
 ```
 
@@ -2629,7 +2636,6 @@ func scan_until(src u8[:0], delim u8) usize {
 | `continue` | Loop iteration skip |
 | `decreasing` | Termination measure for bounded `while` in `func` (§6.3) |
 | `defer` | Deferred cleanup (§6.7) |
-| `elif` | Else-if branch |
 | `else` | Default branch |
 | `extern` | C interop declarations |
 | `false` | Boolean false literal |
@@ -2746,7 +2752,7 @@ return_stmt     = "return" ["mov" | "var"] [expr] ;
 break_stmt      = "break" ;
 continue_stmt   = "continue" ;
 
-if_stmt         = "if" expr block { "elif" expr block } [ "else" block ] ;
+if_stmt         = "if" expr block { "else" "if" expr block } [ "else" block ] ;
 for_stmt        = "for" IDENT ["," IDENT] "in" expr ".." expr block ;
 while_stmt      = "while" expr [ "decreasing" expr ] block ;
 
