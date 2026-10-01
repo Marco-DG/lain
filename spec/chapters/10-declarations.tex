@@ -192,9 +192,31 @@ func abs(x int >= -2147483647) int >= 0 {
 }
 \end{laincode}
 
+\pnum
+The constraint's right-hand side is an integer literal, a parameter, a parameter's
+\lain{.len}, or a sum or difference of those. The function proves it at every return; every
+caller then knows it of the result. A search can thereby promise an index into its argument:
+
+\begin{laincode}
+func position(a u8[>= 1], c u8) usize < a.len {
+    var i usize = 0
+    while i < a.len {
+        if a[i] == c { return i }
+        i = i + 1
+    }
+    return 0
+}
+
+func at_first_space(a u8[>= 1]) u8 {
+    return a[position(a, 32)]   // proven: the result is below a.len
+}
+\end{laincode}
+
 \begin{constraint}
   All return paths of a \lain{func} shall produce a value whose type and
-  value range satisfy the declared return type and constraint.
+  value range satisfy the declared return type and constraint
+  (\diagcode{E086} where a return cannot be shown to). A right-hand side that names anything
+  but a parameter, or the \lain{.len} of anything but a slice parameter, is unsatisfiable.
 \end{constraint}
 
 \subsection{Purity constraints}

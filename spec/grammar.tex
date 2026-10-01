@@ -355,8 +355,11 @@ effect-name           ::= "io" | "diverge" | "raises" | "alloc"
 
 attribute            ::= "[" identifier [ "(" argument-list ")" ] "]" newline
 
-return-annotation    ::= type [ relational-op integer-literal ]
+return-annotation    ::= type [ return-constraint { "and" return-constraint } ]
                        | ( empty )
+return-constraint    ::= relational-op constraint-term { ( "+" | "-" ) constraint-term }
+constraint-term      ::= integer-literal | identifier | identifier "." "len"
+                                                         % identifier: a parameter
 
 param-list           ::= param { "," param }
 param                ::=

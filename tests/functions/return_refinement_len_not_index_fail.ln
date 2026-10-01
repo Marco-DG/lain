@@ -1,0 +1,14 @@
+// EXPECT: [E085]
+// `<= a.len` admits a.len itself, which is not an index: the caller's read is refused.
+func position(a u8[], c u8) usize <= a.len {
+    var i usize = 0
+    while i < a.len {
+        if a[i] == c { return i }
+        i = i + 1
+    }
+    return a.len
+}
+func pick(a u8[]) u8 {
+    return a[position(a, 32)]
+}
+func main() i32 { return 0 }

@@ -1073,27 +1073,18 @@ static void ir_lower_region_shape(LowerCtx *c, IrValue *pv, Type *pty) {
 }
 
 // B2 (contracts): a callee's return refinement `result OP rhs` (`func f(..) usize <= m`)
-// becomes a post-call `assume(v OP <that>)` — the caller LEARNS the ensures. rhs may be a
-// constant or one of the callee's params, resolved to the matching call argument.
+// becomes a post-call `assume(v OP <that>)` — the caller LEARNS the ensures. rhs is resolved
+// against the call's arguments by the same function that resolves a precondition's: a literal,
+// a parameter, a parameter's `.len` (`usize < a.len`, I.1), or a sum or difference of those.
+static IrValue *ir_resolve_contract_rhs(LowerCtx *c, Decl *callee, IrInstr *call, Expr *rhs, IrType *ty);  // fwd
 static void ir_lower_return_ensures(LowerCtx *c, Decl *callee, IrValue *v, IrInstr *call) {
     if (!callee || callee->kind==DECL_STRUCT || !v || !v->type || v->type->kind!=IRT_INT) return;
     for (ExprList *rc = callee->as.function_decl.return_constraints; rc; rc = rc->next) {
         Expr *con = rc->expr;
         if (!con || con->kind!=EXPR_BINARY) continue;
         Expr *rhs = con->as.binary_expr.right;
-        IrValue *rv = NULL;
-        if (rhs && rhs->kind==EXPR_LITERAL) rv = ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, v->type);
-        else if (rhs && rhs->kind==EXPR_IDENTIFIER) {
-            int idx=0; Id *rn=rhs->as.identifier_expr.id;
-            for (DeclList *p=callee->as.function_decl.params; p; p=p->next, idx++) {
-                if (!p->decl || p->decl->kind!=DECL_VARIABLE) continue;
-                Id *pn=p->decl->as.variable_decl.name;
-                if (pn && rn && pn->length==rn->length && strncmp(pn->name,rn->name,(size_t)pn->length)==0) {
-                    if (idx < call->n_operands) rv = call->operands[idx];
-                    break;
-                }
-            }
-        }
+        IrValue *rv = ir_resolve_contract_rhs(c, callee, call, rhs, v->type);
+        if (rv && (!rv->type || rv->type->kind != IRT_INT)) rv = NULL;
         IrCmp cmp;
         if (rv && ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp)) {
             // A Lain callee PROVES its return refinement (E012 at each return); an extern's is
@@ -1105,12 +1096,42 @@ static void ir_lower_return_ensures(LowerCtx *c, Decl *callee, IrValue *v, IrIns
     }
 }
 
+// The callee side of a return refinement's right-hand side: EXACTLY the shapes
+// ir_resolve_contract_rhs resolves at a call — a literal, a parameter, a parameter's `.len`, and
+// `+`/`-` of those — resolved against this function's own parameters. The two must agree term
+// for term: a shape the call site resolves and this one does not would license an assume nobody
+// asserted. (The first cut lowered `a.len - 1` as an untyped expression here, its values came out
+// `void`, the assert was silently dropped, and the caller still assumed it.)
+static IrValue *ir_contract_rhs_in_callee(LowerCtx *c, Expr *rhs, IrType *ty) {
+    if (!rhs) return NULL;
+    if (rhs->kind==EXPR_LITERAL) return ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, ty);
+    if (rhs->kind==EXPR_BINARY &&
+        (rhs->as.binary_expr.op==TOKEN_PLUS || rhs->as.binary_expr.op==TOKEN_MINUS)) {
+        IrValue *l = ir_contract_rhs_in_callee(c, rhs->as.binary_expr.left,  ty);
+        IrValue *r = ir_contract_rhs_in_callee(c, rhs->as.binary_expr.right, ty);
+        if (!l || !r || !l->type || l->type->kind!=IRT_INT) return NULL;
+        return ir_binop(c->f, c->cur, rhs->as.binary_expr.op==TOKEN_PLUS ? IR_ADD : IR_SUB, l, r, l->type);
+    }
+    Id *nm = NULL; bool is_len = false;
+    if (rhs->kind==EXPR_IDENTIFIER) nm = rhs->as.identifier_expr.id;
+    else if (rhs->kind==EXPR_MEMBER && rhs->as.member_expr.member && rhs->as.member_expr.member->length==3
+             && strncmp(rhs->as.member_expr.member->name,"len",3)==0
+             && rhs->as.member_expr.target && rhs->as.member_expr.target->kind==EXPR_IDENTIFIER) {
+        nm = rhs->as.member_expr.target->as.identifier_expr.id; is_len = true;
+    }
+    if (!nm) return NULL;
+    IrLocal *l = ir_env_find(c, nm);
+    IrValue *pv = (l && l->param) ? l->param : NULL;         // a parameter, as at the call site
+    if (!pv) return NULL;
+    if (is_len) return (pv->type && pv->type->kind==IRT_SLICE) ? ir_slice_len(c->f, c->cur, pv) : NULL;
+    return pv;
+}
+
 // B2 (ensures, CALLEE side — the soundness dual of ir_lower_return_ensures): at each
 // `return e` in a function declaring `result OP rhs`, emit `assert(e OP rhs)`. The callee
 // must PROVE its own postcondition; only that discharge licenses the caller's post-call
 // `assume`. Without this, the caller would trust a front-end ensures the IR never checks —
-// a lying/sketchy front-end could then prove a false bound from the returned value. rhs is
-// a literal or one of the callee's own params (scalar, in scope).
+// a lying/sketchy front-end could then prove a false bound from the returned value.
 static void ir_lower_return_ensures_assert(LowerCtx *c, IrValue *v) {
     Decl *fn = c->fdecl;
     if (!fn || fn->kind==DECL_STRUCT || !v || !v->type || v->type->kind!=IRT_INT) return;
@@ -1118,16 +1139,16 @@ static void ir_lower_return_ensures_assert(LowerCtx *c, IrValue *v) {
         Expr *con = rc->expr;
         if (!con || con->kind!=EXPR_BINARY) continue;
         Expr *rhs = con->as.binary_expr.right;
-        IrValue *rv = NULL;
-        if (rhs && rhs->kind==EXPR_LITERAL) rv = ir_const_int(c->f, c->cur, rhs->as.literal_expr.value, v->type);
-        else if (rhs && rhs->kind==EXPR_IDENTIFIER) {
-            IrLocal *l = ir_env_find(c, rhs->as.identifier_expr.id);
-            rv = (l && l->param) ? l->param : NULL;   // scalar param only (fail-closed otherwise)
-        }
+        IrValue *rv = ir_contract_rhs_in_callee(c, rhs, v->type);
         IrCmp cmp;
-        if (rv && rv->type && rv->type->kind==IRT_INT &&
-            ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp))
+        if (!ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp)) continue;
+        if (rv && rv->type && rv->type->kind==IRT_INT)
             ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, v, rv), 86);   // return refinement
+        else
+            // A right-hand side this cannot resolve (a name that is not a parameter, `.len` of a
+            // non-slice): refuse it at every return rather than let it stand unchecked. The call
+            // site resolves nothing for it either, so no caller assumes it.
+            ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_NE, v, v), 86);
     }
 }
 

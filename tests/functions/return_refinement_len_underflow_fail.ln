@@ -1,0 +1,7 @@
+// EXPECT: [E086]
+// `a.len - 1` underflows on an empty slice, so the refinement cannot be stated of one: the
+// callee's subtraction is refused (and so the caller can never assume it).
+func last(a u8[]) usize <= a.len - 1 {
+    return 0
+}
+func main() i32 { return 0 }

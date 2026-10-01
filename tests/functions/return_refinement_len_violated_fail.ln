@@ -1,0 +1,6 @@
+// EXPECT: [E086]
+// The callee proves its return refinement at every return: `a.len` is not below `a.len`.
+func position(a u8[>= 1], c u8) usize < a.len {
+    return a.len
+}
+func main() i32 { return 0 }

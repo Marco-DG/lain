@@ -1595,6 +1595,13 @@ rc=0
 out=255 0 70
 at=const 2
 ty=Slice_u8 scalar
+### tests/trust/return_refinement_param_len_pass.ln
+rc=0
+out=
+at=access 4
+at=nonnull 4
+at=pure 4
+ty=Slice_u8 scalar
 ### tests/trust/saturating_checked_widths_pass.ln
 rc=0
 out=

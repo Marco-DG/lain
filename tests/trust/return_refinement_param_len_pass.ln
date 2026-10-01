@@ -1,0 +1,26 @@
+// A return refinement may name a parameter's length (plan 7I, I.1): `usize < a.len` promises
+// an index into a, and the caller indexes with the result and no check. The callee proves it at
+// every return. `<= a.len - 1` is the same fact in additive form. Runs: exit 0.
+func position(a u8[>= 1], c u8) usize < a.len {
+    var i usize = 0
+    while i < a.len {
+        if a[i] == c { return i }
+        i = i + 1
+    }
+    return 0
+}
+func last_space(a u8[>= 1]) usize <= a.len - 1 {
+    var i usize = a.len - 1
+    while i > 0 {
+        if a[i] == 32 { return i }
+        i = i - 1
+    }
+    return 0
+}
+func main() i32 {
+    var s u8[5] = [104, 32, 105, 32, 33]
+    if s[position(s, 32)] != 32 { return 1 }
+    if last_space(s) != 3 { return 2 }
+    if s[last_space(s)] != 32 { return 3 }
+    return 0
+}

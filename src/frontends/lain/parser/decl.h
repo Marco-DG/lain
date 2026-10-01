@@ -826,6 +826,30 @@ static bool parse_effects_clause(Parser *parser, EffectSet *out) {
 }
 
 // One introducer, so no `is_proc`: `proc` is rejected at the dispatch site (E100).
+// One term of a return constraint's right-hand side: a literal, a parameter, or a parameter's
+// `.len`. `usize < a.len` is the bound a search returns ("an index into a"), and a caller can
+// only USE it if the refinement can name a's length (O-7 / plan 7I, I.1).
+static Expr *parse_return_constraint_term(Arena *arena, Parser *parser) {
+    if (parser_match(TOKEN_NUMBER)) {
+        long long value = parse_numeric_literal(parser->token.start, parser->token.length);
+        parser_advance();
+        return expr_literal(arena, value);
+    }
+    if (!parser_match(TOKEN_IDENTIFIER))
+        parser_error("Expected a number, a parameter or `param.len` in a return constraint");
+    Expr *t = expr_identifier(arena, id(arena, parser->token.length, parser->token.start));
+    parser_advance();
+    if (parser_match(TOKEN_DOT)) {
+        parser_advance();
+        if (!parser_match(TOKEN_IDENTIFIER) || parser->token.length != 3 ||
+            strncmp(parser->token.start, "len", 3) != 0)
+            parser_error("Expected `len` after `.` in a return constraint (`a.len`)");
+        parser_advance();
+        t = expr_member(arena, t, id(arena, 3, "len"));
+    }
+    return t;
+}
+
 Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
     // function name
     parser_expect(TOKEN_IDENTIFIER, "Expected function/procedure name");
@@ -1077,18 +1101,12 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
             TokenKind op = parser->token.kind;
             parser_advance();  // consume operator
             
-            // Parse the RHS (literal or identifier)
-            Expr *rhs = NULL;
-            if (parser_match(TOKEN_NUMBER)) {
-                long long value = parse_numeric_literal(parser->token.start, parser->token.length);
+            // Parse the RHS: terms joined by `+`/`-` (`a.len`, `a.len - 1`, `n + 1`).
+            Expr *rhs = parse_return_constraint_term(arena, parser);
+            while (parser_match(TOKEN_PLUS) || parser_match(TOKEN_MINUS)) {
+                TokenKind aop = parser->token.kind;
                 parser_advance();
-                rhs = expr_literal(arena, value);
-            } else if (parser_match(TOKEN_IDENTIFIER)) {
-                Id *rhs_id = id(arena, parser->token.length, parser->token.start);
-                parser_advance();
-                rhs = expr_identifier(arena, rhs_id);
-            } else {
-                parser_error("Expected number or identifier after comparison operator in return constraint");
+                rhs = expr_binary(arena, aop, rhs, parse_return_constraint_term(arena, parser));
             }
             
             // Create binary constraint expression: result op rhs
