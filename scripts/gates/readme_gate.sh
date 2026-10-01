@@ -34,6 +34,21 @@ while [ $# -gt 0 ]; do
     shift
 done
 [ -x "$LAIN" ] || { echo "build first: gcc -std=c99 -o lain src/frontends/lain/main.c -I src"; exit 2; }
+# ★ A STALE BINARY MAKES THIS GATE LIE IN BOTH DIRECTIONS. The check above only ever asked whether
+# ./lain EXISTS, so a green here meant "the documentation agrees with whatever binary is lying in
+# the tree", not "with HEAD". On 2026-10-01 a binary six hours behind HEAD reported `--interpret`
+# and `--check-invariants` as unaccepted — and the stale binary's own usage string omitted them
+# too, so the false verdict looked confirmed from two independent directions. The converse is
+# worse: a stale binary silently PASSES a documented claim the current compiler would reject.
+# A refusal rather than an implicit `make`, deliberately. A gate that builds in the shared tree
+# swaps the binary under any other session's gate running at that moment, and a warning is a
+# thing people learn to scroll past.
+if stale=$(find src -type f -newer "$LAIN" -print -quit 2>/dev/null); [ -n "$stale" ]; then
+    echo "REFUSING TO RUN: ./lain is older than $stale"
+    echo "  This gate would be checking the documentation against a stale compiler."
+    echo "  Run: make"
+    exit 2
+fi
 TMP=$(mktemp -d); trap 'rm -rf "$TMP" "$ROOT/_readme_gate_tmp.ln" "$ROOT/_readme_gate_tmp.c"' EXIT
 
 python3 - "$TMP" "${PAGES[@]}" <<'PY'

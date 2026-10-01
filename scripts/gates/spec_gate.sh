@@ -93,6 +93,18 @@ fi
 # are (readme_gate --pages): an `// ERROR`/`[Exxx]` block must fail, any other must compile, and
 # a fragment drawing a proof diagnostic is a false safety claim.
 ex="SKIPPED (no ./lain; build first)"; exfail=0
+# ★ A STALE BINARY MAKES THIS CHECK LIE, and silently. Running the spec's own examples against a
+# compiler older than src/ can PASS a normative example the current compiler would reject, which
+# is the exact failure this gate exists to prevent. Refuse rather than build: a gate that runs
+# `make` in the shared tree swaps the binary under another session's gate mid-run.
+if [ -x ./lain ]; then
+  if stale=$(find src -type f -newer ./lain -print -quit 2>/dev/null); [ -n "$stale" ]; then
+      echo "REFUSING TO RUN: ./lain is older than $stale"
+      echo "  The spec's examples would be checked against a stale compiler."
+      echo "  Run: make"
+      exit 2
+  fi
+fi
 if [ -x ./lain ]; then
   ETMP=$(mktemp -d)
   python3 - "$ETMP/spec.md" spec/chapters/*.tex spec/annexes/*.tex <<'PY'
