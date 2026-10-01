@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# lain-website
 
-## Getting Started
-
-First, run the development server:
+The public site for the Lain language. Next.js 14 (App Router), React 18, TypeScript, CSS
+Modules. No database, no API, no client state — every page is statically prerendered at build
+time.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev     # http://localhost:3000
+npm run build   # static prerender of all routes
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## The one rule that matters here
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**Pages that make claims about the language read the real document out of the repository at build
+time. They do not paraphrase it.**
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| route | renders | source |
+|:--|:--|:--|
+| `/docs` | the project README | `../README.md`, via `parseReadme()` |
+| `/overview` | the language reference manual | `../LANGUAGE.md`, via `parseLanguage()` |
+| `/` | a short teaser, hand-written | — |
+| `/blog/*` | articles | hand-written |
 
-## Learn More
+Both parsers are `app/docs/readmeParser.ts`, which takes a filename and returns `DocSection[]`.
 
-To learn more about Next.js, take a look at the following resources:
+This is not a stylistic preference, it is the fix for a specific failure. Until 2026-10-01
+`/overview` rendered `overviewData.ts`, 33 hand-written chapters paraphrasing the manual. Of its
+35 Lain code samples, **one still compiled.** It taught the `proc` keyword removed from the
+language in September, built its central narrative on a `func`/`proc` split that no longer
+exists, and led with a division example the compiler rejects. Over the same five months `/docs`
+had zero false claims — because it was already reading the README instead of restating it.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+A page that paraphrases the manual is a second copy of the manual, and the second copy is always
+the one nobody updates.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Because `README.md` and `LANGUAGE.md` are both checked by `scripts/gates/readme_gate.sh`, which
+compiles every ```lain block in them, the two documentation routes cannot contradict the compiler
+without failing that gate first.
 
-## Deploy on Vercel
+## If you add a Lain sample anywhere
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Compile it. `./lain yourfile.ln -o /dev/null` from the repository root, against a compiler built
+from current `src/` — the gates now refuse to run against a stale binary for exactly this reason.
+A sample that has not been compiled is a claim nobody has tested, and every false claim found on
+this site was in that category.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Samples hand-tokenised into JSX (`app/page.tsx`, and the unused components below) are **not**
+reachable by any gate. Verify those by hand and keep them short.
+
+## Unused components
+
+`Hero`, `CodeShowcase`, `FeatureGrid`, `TerminalWindow`, `Navbar` and `Footer` are imported by
+nothing. `ROADMAP.md` phases 1–6 intended to wire them up and that never happened. Their Lain
+samples were corrected on 2026-10-01 so that wiring one up does not reintroduce a false claim,
+but nothing checks them — treat them as drafts.
+
+## Deployment
+
+**Undetermined.** There is no CI configuration anywhere in the repository, no `vercel.json`, no
+`netlify.toml`, no Dockerfile and no deploy script. `next.config.mjs` is empty, so there is no
+`output: 'export'` and the site needs a Node host rather than static file hosting. How (or
+whether) this is currently published is not recorded anywhere, and should be before anything is
+shipped.

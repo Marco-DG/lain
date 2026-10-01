@@ -1,3 +1,22 @@
+> [!IMPORTANT]
+> **Status, 2026-10-01.** This roadmap was written 2026-04-01 and phases 1–6 were never done.
+> Read it as intent, not as a description of the site.
+>
+> What has changed since, and what it means for the plan below:
+>
+> - **Phase 2's premise is resolved, differently.** It noted that `specData.ts` duplicated the
+>   spec and proposed loading from source. `specData.ts` and `docData.ts` were orphaned (no route
+>   rendered them) and are now in `local/_old/website_2026-10-01/`. `/overview` renders
+>   `LANGUAGE.md` and `/docs` renders `README.md`, both parsed from the repository at build time.
+> - **Every Lain sample in this file is stale.** The Hello World below is `proc main() int`, and
+>   `proc` was removed from the language on 2026-09-25. The keyword list in Phase 3 is also wrong
+>   — see `components/DocViewer.tsx`, whose list is now derived from the compiler's lexer.
+> - **The six components Phase 1 would revive are still unused**, but their samples were corrected
+>   so that wiring one up does not reintroduce a false claim.
+> - **`func` vs `proc` is not a topic any more.** There is one introducer and an effect row.
+>
+> Anything below that still makes sense is worth doing. Just do not take its code as current.
+
 # Lain Website — Roadmap
 
 ## Current State Diagnosis
