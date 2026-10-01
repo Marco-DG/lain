@@ -1,0 +1,24 @@
+// EXPECT: [E138]
+// spec: §9 — `try` returns the marker from the function when its operand is one, so inside a
+// deferred statement it would leave the statement like a `return`.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func step(p *u8, fail bool) *u8 | Err {
+    if fail { return Err }
+    return p
+}
+
+func work(p *u8, fail bool) *u8 | Err effects io {
+    var v *u8 = p
+    defer v = try step(p, fail)
+    libc_printf("body\n")
+    return v
+}
+
+func main() i32 effects io {
+    var r *u8 | Err = work("x", true)
+    case r {
+        Err: return 1
+        else: return 0
+    }
+}

@@ -28,7 +28,7 @@ Diagnostic codes are divided into the following ranges:
 \diagcode{E011}–\diagcode{E015}, \diagcode{E060} & Purity, safety, and verification \\
 \diagcode{E082} & Bounded while verification \\
 \diagcode{E083}–\diagcode{E087} & Array/slice safety and integer boundaries \\
-\diagcode{E084}, \diagcode{E101}--\diagcode{E137} & Modules, attributes, generics, packing, ADT access, effects, verification \\
+\diagcode{E084}, \diagcode{E101}--\diagcode{E138} & Modules, attributes, generics, packing, ADT access, effects, verification \\
 \diagcode{E100}                 & Miscellaneous \\
 \diagcode{VRA}                  & Value range analysis \\
 \end{longtable}
@@ -420,4 +420,5 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E135} & a \tok{[noreturn]} function can return: a \lain{return}, or the end of its body, is reachable (\S\,\ref{sec:decl.attributes}) \\[2pt]
 \diagcode{E136} & a module constant computed at compile time cannot be: its initialiser reaches a function whose effect row is not empty, a function that may panic, or a call through a function pointer; its computation reads the constant itself, exceeds the step limit, or fails a check (\S\,\ref{sec:decl.module-const}) \\[2pt]
 \diagcode{E137} & a compile-time constant is required and the expression is not one: a parameter refinement or sized-slice length the call site cannot evaluate (a call, a cast; \S\,\ref{sec:vra.sized-slice-callsite}), the length of a local array declared with an initializer, an array comprehension's bounds, a \lain{comptime if} condition \\[2pt]
+\diagcode{E138} & control would leave a deferred statement: a \lain{return}, a \lain{break} or \lain{continue} aimed at a loop outside it, or a \lain{try} or \lain{else return} that leaves the function (\S\,\ref{sec:stmt.defer}) \\[2pt]
 \end{longtable}

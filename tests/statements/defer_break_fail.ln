@@ -1,0 +1,18 @@
+// EXPECT: [E138]
+// spec: §9 — a `break` in a deferred statement aimed at a loop OUTSIDE it would leave the
+// deferred statement. (One aimed at a loop inside it is fine: defer_nested_pass.ln.)
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func f() effects io {
+    var i = 0
+    while i < 3 {
+        defer break
+        libc_printf("it\n")
+        i = i + 1
+    }
+}
+
+func main() i32 effects io {
+    f()
+    return 0
+}

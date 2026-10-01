@@ -33,6 +33,23 @@ static int         und_bind_depth = 0;
 static const char *und_file = NULL;
 static int         und_found = 0;
 
+// ★ THE SAME WALK ENFORCES SPEC 9's RULE FOR `defer`: control cannot leave a deferred statement.
+// A deferred statement runs while its scope is being left, so a `return` in it, a `break` or
+// `continue` aimed at a loop outside it, or a `try` / `else return` that leaves the function would
+// start a second exit in the middle of the first. Nothing checked the rule: `defer return 7`
+// returned 7 and skipped the other pending defer, because lowering, already replaying the
+// defers, stopped replaying them. This walk visits everything the backend emits, which is what
+// the rule needs.
+static int und_defer_depth = 0;   // > 0 inside a deferred statement
+static int und_defer_loops = 0;   // loops entered INSIDE the innermost deferred statement
+static void und_defer_escape(long line, long col, const char *what) {
+    fprintf(stderr, "[E138] Error Ln %li, Col %li: %s inside a deferred statement would leave it. A "
+            "`defer` runs while its scope is being left, so it cannot start another exit.\n",
+            line, col, what);
+    if (und_file) fprintf(stderr, "  --> %s:%li:%li\n", und_file, line, col);
+    und_found++;
+}
+
 static bool und_is_binding(const char *name, int len) {
     for (int i = 0; i < und_bind_depth; i++)
         if (und_bind_len[i] == len && strncmp(und_bind_name[i], name, len) == 0) return true;
@@ -113,8 +130,12 @@ static void und_expr(Expr *e) {
         case EXPR_CAST:  und_expr(e->as.cast_expr.expr); break;
         case EXPR_ADDR:  und_expr(e->as.addr_expr.expr); break;
         case EXPR_DEREF: und_expr(e->as.deref_expr.expr); break;
-        case EXPR_TRY:   und_expr(e->as.try_expr.operand); break;
+        case EXPR_TRY:
+            if (und_defer_depth) und_defer_escape((long)e->line, (long)e->col, "`try` (it returns a marker from the function)");
+            und_expr(e->as.try_expr.operand); break;
         case EXPR_ELSE:
+            if (und_defer_depth && e->as.else_expr.arm_is_return)
+                und_defer_escape((long)e->line, (long)e->col, "`else return`");
             und_expr(e->as.else_expr.operand); und_expr(e->as.else_expr.arm); break;
         case EXPR_BUILTIN:
             und_expr(e->as.builtin_expr.arg);
@@ -154,9 +175,22 @@ static void und_stmt(Stmt *s) {
         case STMT_ASSIGN:
             und_expr(s->as.assign_stmt.target); und_expr(s->as.assign_stmt.expr); break;
         case STMT_EXPR:   und_expr(s->as.expr_stmt.expr); break;
-        case STMT_RETURN: und_expr(s->as.return_stmt.value); break;
+        case STMT_RETURN:
+            if (und_defer_depth) und_defer_escape((long)s->line, (long)s->col, "`return`");
+            und_expr(s->as.return_stmt.value); break;
         case STMT_ASSERT: und_expr(s->as.assert_stmt.cond); break;
-        case STMT_DEFER:  und_stmt(s->as.defer_stmt.stmt); break;
+        case STMT_DEFER: {   // a nested deferred statement is a scope of its own: its loops start at 0
+            int sd = und_defer_depth, sl = und_defer_loops;
+            und_defer_depth++; und_defer_loops = 0;
+            und_stmt(s->as.defer_stmt.stmt);
+            und_defer_depth = sd; und_defer_loops = sl;
+            break;
+        }
+        case STMT_BREAK: case STMT_CONTINUE:
+            if (und_defer_depth && !und_defer_loops)
+                und_defer_escape((long)s->line, (long)s->col,
+                                 s->kind == STMT_BREAK ? "`break`" : "`continue`");
+            break;
         case STMT_UNSAFE: und_stmt_list(s->as.unsafe_stmt.body); break;
         case STMT_IF:
             und_expr(s->as.if_stmt.cond);
@@ -166,14 +200,14 @@ static void und_stmt(Stmt *s) {
         case STMT_WHILE:
             // The measure is a proof obligation, not code — `decreasing` emits nothing.
             und_expr(s->as.while_stmt.cond);
-            und_stmt_list(s->as.while_stmt.body);
+            und_defer_loops++; und_stmt_list(s->as.while_stmt.body); und_defer_loops--;
             break;
         case STMT_FOR: {
             int saved = und_bind_depth;
             und_expr(s->as.for_stmt.iterable);
             und_push(s->as.for_stmt.index_name);
             und_push(s->as.for_stmt.value_name);
-            und_stmt_list(s->as.for_stmt.body);
+            und_defer_loops++; und_stmt_list(s->as.for_stmt.body); und_defer_loops--;
             und_bind_depth = saved;
             break;
         }
@@ -197,7 +231,7 @@ static void und_stmt(Stmt *s) {
                             ? s->as.comptime_if_stmt.then_body
                             : s->as.comptime_if_stmt.else_branch);
             break;
-        default: break;   // break, continue, use
+        default: break;   // use
     }
 }
 
@@ -205,11 +239,12 @@ static void und_stmt_list(StmtList *l) {
     for (; l; l = l->next) und_stmt(l->stmt);
 }
 
-// Walk everything the backend would emit. Returns the number of undeclared names found.
+// Walk everything the backend would emit. Returns the number of errors found: undeclared names
+// (E106) and control leaving a deferred statement (E138).
 // A generic TEMPLATE is skipped for the same reason the emitter skips it: only its instances
 // are code, and its body mentions type parameters that are bound per instance.
 static int sema_check_undeclared(DeclList *decls, const char *file) {
-    und_file = file; und_found = 0; und_bind_depth = 0;
+    und_file = file; und_found = 0; und_bind_depth = 0; und_defer_depth = 0; und_defer_loops = 0;
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
         if (!d || decl_is_generic_template(d)) continue;

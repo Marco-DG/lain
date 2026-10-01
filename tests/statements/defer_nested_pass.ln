@@ -1,0 +1,57 @@
+// spec: §9 — a deferred statement is a scope of its own. A `defer` inside it runs when the
+// deferred statement ends, as at the end of any block. Lowering skipped registration while it
+// replayed a deferred statement, so both nested defers below were DROPPED with no diagnostic:
+// `in_block` printed "body outer" and `doubled` printed "body".
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func in_block(c bool) effects io {
+    defer if c {
+        defer libc_printf("inner ")
+        libc_printf("outer ")
+    }
+    libc_printf("body ")
+}
+
+// The deferred statement is itself a `defer`: it runs when that statement ends.
+func doubled() effects io {
+    defer defer libc_printf("twice ")
+    libc_printf("body ")
+}
+
+// Order across nested scopes: each block replays what it registered, newest first.
+func order() effects io {
+    defer libc_printf("1 ")
+    if true {
+        defer libc_printf("2 ")
+        defer if true {
+            defer libc_printf("3 ")
+            libc_printf("4 ")
+        }
+        libc_printf("5 ")
+    }
+    libc_printf("6 ")
+}
+
+// A loop inside a deferred statement, with its own defer, `continue` and `break`: control
+// stays inside the deferred statement, so this is allowed (E138 is for leaving it).
+func loop_in_defer() effects io {
+    defer for i in 0..4 {
+        defer libc_printf("d%d ", i as i32)
+        if i == 1 { continue }
+        if i == 3 { break }
+        libc_printf("b%d ", i as i32)
+    }
+    libc_printf("body ")
+}
+
+func main() i32 effects io {
+    in_block(true)
+    libc_printf("| ")
+    doubled()
+    libc_printf("| ")
+    order()
+    libc_printf("| ")
+    loop_in_defer()
+    libc_printf("|\n")
+    return 0
+}

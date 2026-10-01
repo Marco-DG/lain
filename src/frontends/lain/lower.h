@@ -65,7 +65,7 @@ typedef struct {
     // grows from the arena: a fixed 64 ran only the first 64 of 65.
     Stmt    **defers;
     int       ndefers, defers_cap;
-    bool      in_defer;    // guard: a defer's own body must not re-register defers
+    bool      in_defer;    // replaying a deferred statement: control cannot leave it (E138)
     // ── D-49: THE GUARD'S VALUES, SO THE MEASURE CAN REUSE THEM ─────────────────────────
     // `while i < n / 2 decreasing n / 2 - i` mentions `n / 2` twice. Lowering each occurrence
     // independently makes two SSA values, and a RELATIONAL DOMAIN RELATES VALUES, NOT SYNTAX:
@@ -3089,15 +3089,32 @@ static void ir_lower_for_step(LowerCtx *c, IrBlock *head) {
              ir_binop(c->f, c->cur, IR_ADD, ci, ir_const_int(c->f, c->cur, 1, c->loop_step_ty), c->loop_step_ty));
     ir_set_br(c->cur, head);
 }
-// Replay the pending `defer` bodies in REVERSE registration order. The stack is not popped:
-// an early return runs the defers registered SO FAR, and a later exit runs them too — one
-// dynamic execution reaches exactly one exit, so replaying at each is faithful, and it is
-// what makes `defer drop(mov r); drop(mov r)` visible as the double consume it is.
-static void ir_lower_flush_defers(LowerCtx *c) {
-    if (c->in_defer) return;
+// Run ONE deferred statement. It is a scope of its own: a `defer` directly in it (`defer defer
+// f()`) registers above the ones being replayed and runs when the statement ends, as at the end
+// of any block, and a block inside it replays its own (ir_lower_stmts). Both used to be DROPPED:
+// registration was simply skipped while replaying. Control cannot leave a deferred statement
+// (spec 9, E138 in the front end), so a replay never meets a `return`.
+static void ir_lower_deferred(LowerCtx *c, Stmt *s) {
+    int mark = c->ndefers; bool o = c->in_defer;
     c->in_defer = true;
-    for (int i = c->ndefers - 1; i >= 0; i--) ir_lower_stmt(c, c->defers[i]);
-    c->in_defer = false;
+    ir_lower_stmt(c, s);
+    for (int i = c->ndefers - 1; i >= mark; i--) ir_lower_deferred(c, c->defers[i]);
+    c->ndefers = mark;
+    c->in_defer = o;
+}
+// Replay the deferred statements registered at or above `from`, newest first, without popping
+// them: an early exit runs the defers registered SO FAR, and a later exit runs them too. One
+// dynamic execution reaches exactly one exit, so replaying at each is faithful, and it is what
+// makes `defer drop(mov r); drop(mov r)` visible as the double consume it is.
+static void ir_lower_replay_defers(LowerCtx *c, int from) {
+    for (int i = c->ndefers - 1; i >= from; i--) ir_lower_deferred(c, c->defers[i]);
+}
+// A `return` (or a `try` that propagates) leaves every scope at once.
+static void ir_lower_flush_defers(LowerCtx *c) {
+    // Inside a replay this would run the statement being replayed again. The front end refuses
+    // it (E138); refuse here too rather than skip the rest of the replay, which this used to do.
+    if (c->in_defer) { ir_incomplete(c, "control leaving a deferred statement"); return; }
+    ir_lower_replay_defers(c, 0);
 }
 
 // ★ A STORE TO A FIELD MUST KEEP THE STRUCT'S `in` INVARIANT. `pos usize in text` is read as a FACT
@@ -3454,10 +3471,8 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             break;
         }
         case STMT_DEFER:
-            // Recorded, not emitted: the body runs at every exit, in reverse order.
-            // A `defer` inside a deferred statement was DROPPED here, with no mark at all:
-            // `defer if c { defer f() }` never ran f.
-            if (c->in_defer) { ir_incomplete(c, "a `defer` inside a deferred statement"); break; }
+            // Recorded, not emitted: the body runs at every exit of this block, newest first.
+            // Inside a deferred statement too, which is a scope like any other.
             if (c->ndefers == c->defers_cap) {
                 int nc = c->defers_cap ? 2 * c->defers_cap : 16;
                 Stmt **nd = arena_push_many_aligned(c->a, Stmt *, nc);
@@ -3802,11 +3817,9 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
         case STMT_BREAK: case STMT_CONTINUE: {
             // Both LEAVE the loop body, so both run the defers it registered — in reverse,
             // like any other block exit. Without this a `continue` skipped them entirely.
-            if (!c->in_defer && c->ndefers > c->loop_defer_mark) {
-                c->in_defer = true;
-                for (int i = c->ndefers - 1; i >= c->loop_defer_mark; i--) ir_lower_stmt(c, c->defers[i]);
-                c->in_defer = false;
-            }
+            // Inside a deferred statement the loop is inside it too (E138), so its mark is above
+            // the statement's own and this replays only what that loop's body registered.
+            if (c->ndefers > c->loop_defer_mark) ir_lower_replay_defers(c, c->loop_defer_mark);
             IrBlock *tgt = (s->kind==STMT_BREAK) ? c->loop_exit : ir_loop_continue_target(c);
             if (tgt) ir_set_br(c->cur, tgt);
             break;
@@ -3875,11 +3888,7 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
 static void ir_lower_stmts(LowerCtx *c, StmtList *body) {
     int mark = c->ndefers;
     for (StmtList *b = body; b && !ir_is_set_term(c->cur); b = b->next) ir_lower_stmt(c, b->stmt);
-    if (!c->in_defer && c->ndefers > mark && !ir_is_set_term(c->cur)) {
-        c->in_defer = true;
-        for (int i = c->ndefers - 1; i >= mark; i--) ir_lower_stmt(c, c->defers[i]);
-        c->in_defer = false;
-    }
+    if (c->ndefers > mark && !ir_is_set_term(c->cur)) ir_lower_replay_defers(c, mark);
     if (c->ndefers > mark) c->ndefers = mark;
 }
 

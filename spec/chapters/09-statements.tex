@@ -348,10 +348,16 @@ inside a \lain{defer} body, the variable is marked as defer-consumed.  It
 is treated as unconsumed for the purposes of the main body (it may be used
 before the scope exit) and as consumed at scope exit.
 
+\pnum
+A deferred statement is a scope of its own: a \lain{defer} inside it runs
+when the deferred statement ends, as at the end of any block.
+
 \begin{constraint}
-  A \lain{defer} body shall not contain \lain{return}, \lain{break}, or
-  \lain{continue} statements that would transfer control out of the deferred
-  body.
+  Control shall not leave a deferred statement: a \lain{return}, a
+  \lain{break} or \lain{continue} aimed at a loop outside it, and a
+  \lain{try} or \lain{else return} that leaves the function are
+  \illformed{}~(\diagcode{E138}).  A loop inside the deferred statement may
+  use \lain{break} and \lain{continue}.
 \end{constraint}
 
 \begin{example}

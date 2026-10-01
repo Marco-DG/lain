@@ -181,6 +181,7 @@ int main(int argc, char **argv) {
     // sovereign engine was reporting `return x + missing` as "arithmetic is not provably free
     // of overflow" — a confusing message about the wrong thing (src/ir/lower.h marks the
     // function incomplete for exactly this, and that seam stays as the fail-closed backstop).
+    // The same walk enforces spec 9's rule that control cannot leave a deferred statement (E138).
     if (sema_check_undeclared(program, args.filename)) { sema_destroy(); return 1; }
 
     // ── STAGE 3.5, THE SPLIT ─────────────────────────────────────────────────────────────

@@ -1,0 +1,12 @@
+// EXPECT: [E138]
+// spec: §9 — control cannot leave a deferred statement. This was accepted: it returned 7 and
+// never ran the other pending defer, because the replay that reached `return 7` stopped there.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func f() i32 effects io {
+    defer libc_printf("a\n")
+    defer return 7
+    return 1
+}
+
+func main() i32 effects io { return f() }
