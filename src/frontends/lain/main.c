@@ -224,6 +224,7 @@ int main(int argc, char **argv) {
             found += ir_report_findings(f, mod, args.filename, args.engine_ir_numeric);
         }
         if (found) { sema_destroy(); return 1; }
+        if (ir_require_verdicts(mod)) { sema_destroy(); return 70; }
         if (args.interpret) {             // run it instead of emitting it; the status is the program's
             if (args.check_invariants) { vra_mod = mod; ii_on_block = ct_on_block; }
             int st = ir_interpret_module(mod, args.filename);

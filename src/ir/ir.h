@@ -530,6 +530,10 @@ typedef struct IrFunc {
     // emitted with every check skipped (a `case` on an f64 compiled to a bare `return;`).
     const char *incomplete_why;
     isize      incomplete_line, incomplete_col;
+    // Set by ir_report_findings once every analysis has judged the function, numeric
+    // obligations included. Emission and --interpret refuse a function without it
+    // (ir_require_verdicts): whatever skips the analyses in future cannot also emit.
+    bool       judged;
     // effect row (analysis/effects.h fills these — memoized transitive fixpoint)
     IrEffect   effects;
     bool       effects_done, effects_in_progress;

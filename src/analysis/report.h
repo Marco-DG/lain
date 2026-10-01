@@ -101,7 +101,7 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     }
     borrow_free(B);
 
-    if (!numeric) return n;   // the old engine still owns bounds/overflow/division
+    if (!numeric) return n;   // NOT judged: the numeric obligations were never reported
     for (int i = 0; i < V->nchecks; i++) {
         VraCheck *c = &V->checks[i];
         if (c->ok) continue;                       // proved check-free: nothing to say
@@ -238,6 +238,23 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
         }
     }
     vra_free(V);
+    f->judged = true;
+    return n;
+}
+
+// ★ EMISSION REQUIRES A VERDICT, BY CONSTRUCTION. Three fail-open paths in two days had one shape:
+// something skipped the analyses (a contract the resolver could not read, a borrow root it could
+// not name, an `incomplete` function whose "checks are skipped") and the program was emitted
+// anyway. Each was fixed where it was found; this refuses the class. Every function that is
+// emitted or interpreted must have been judged by ir_report_findings.
+static int ir_require_verdicts(IrFunc *mod) {
+    int n = 0;
+    for (IrFunc *f = mod; f; f = f->next) {
+        if (f->is_extern || f->judged) continue;
+        fprintf(stderr, "internal error: '%.*s' would be emitted without being analysed; refusing "
+                "the program (a path skipped the analyses)\n", (int)f->name->length, f->name->name);
+        n++;
+    }
     return n;
 }
 
