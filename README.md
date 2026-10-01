@@ -119,22 +119,24 @@ is what settles an array access. A range for `i` is no use when the length is un
 `--dump-octagon` prints what the compiler settled on at the array access:
 
 ```
-── octagon state: find ──
+── octagon state: bytes_find ──
   bb2
-      %2 ∈ [0, +inf]                                   ; i
-      %4 ∈ [0, +inf]
+      %0:haystack ∈ [1, +inf]
+      %2:i ∈ [0, +inf]
       %5 ∈ [1, +inf]                                   ; haystack.len
       …
-      %2 − %5 ≤ -1                                     ; the guard, carried in
+      %2:i − %5 ≤ -1                                   ; the guard, carried in
       %4 − %5 ≤ -1
       …
-    · %7 ∈ [0, +inf]   %7−%2≤0   %7−%4≤0   %7−%5≤-1
-                                                       ; index − length ≤ −1
+    · %7 ∈ [0, +inf]   %7−%0:haystack≤-1   %7−%2:i≤0   %7−%4≤0   %7−%5≤-1
 ```
 
-Read the last line. `%7` is the index and `%5` is the length, so `%7 − %5 ≤ -1` says the index
-is at least one below the length. Neither value is known at compile time. The comparison between
-them is, and that is enough to settle the bounds check before the program runs.
+A value that came from a named local prints as `%2:i`; the unnamed ones are temporaries, and
+`%5` is the one holding `haystack.len`.
+
+Read the last line. `%7` is the index, so `%7−%5≤-1` says the index is at least one below the
+length. Neither value is known at compile time. The comparison between them is, and that is
+enough to settle the bounds check before the program runs.
 
 **Step 3. Check each obligation against those facts.**
 

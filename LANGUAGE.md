@@ -2494,10 +2494,36 @@ func main() i32 {
 
 The standard library provides `std/option.ln` (`Option(T)`) and `std/result.ln` (`Result(T, E)`) built on this mechanism.
 
+A type argument may be any type, including an array type or an alias of one. The length is part
+of the instance, so `G(u8[4])` and `G(u8[8])` are two instances rather than one:
+
+```lain
+type Quad = u8[4]
+
+type G(T type) {
+    Has { v T }
+    No
+}
+
+func get(g G(Quad)) u8 {
+    case g {
+        Has(v): return v[3]
+        No: return 0
+    }
+}
+
+func main() i32 {
+    xs Quad = [1, 2, 3, 4]
+    a = G(Quad).Has(xs)
+    return get(a) as i32
+}
+```
+
 > [!NOTE]
 > Whether an instantiation is tag-free depends on its payload. `Option(*u8)` packs into a single
 > pointer using the null niche; `Option(i32)` has no spare bit pattern, so it falls back to a tag
-> byte and says so with `[W120]`. See §7 for layout and the niche rules.
+> byte and says so with `[W120]`. The `G(u8[4])` above warns for the same reason. See §7 for
+> layout and the niche rules.
 
 ---
 
@@ -2810,7 +2836,8 @@ filename, so a mistyped flag fails the build rather than being read as a source 
 | `--dump-ast` | Print the parsed syntax tree. |
 | `--dump-effects` | Print each function's inferred effect row. |
 | `--dump-niche` | Print the niche-packing decision for each sum type. |
-| `--dump-octagon` | Print the converged octagon state per basic block. |
+| `--dump-octagon` | Print the converged octagon state per basic block. A value that came from a named local prints as `%2:i`; the rest are temporaries. |
+| `--dump-measures` | Print the measure behind each termination proof, in the program's own names, one line per loop or recursion — and `no measure found` for a loop that is about to be refused. |
 | `--no-w130` | Suppress the `W130` warning. |
 | `--no-line-directives` | Omit `#line` directives from the emitted C. |
 | `--emit-llvm` | Lower to proof-carrying LLVM-IR. This is a demonstration seam, not a backend: outside the subset it models it **refuses** rather than emitting a placeholder. C is the backend that works. |
