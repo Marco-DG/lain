@@ -1,0 +1,14 @@
+// A left shift of a NEGATIVE signed value is a multiplication by 2^k in Lain whenever the result
+// fits (the analysis proves that, as for any signed shift), so `-3 << 2` is -12 and
+// `lain --interpret` says so. The C was `v0 << v5` on a negative int32_t: undefined behaviour in
+// C99 (UBSan: "left shift of negative value"), at every optimisation level. A signed `<<` is now
+// computed in unsigned and converted back, which is exact.
+func s32(x i32 >= -5 and <= -1) i32 { return x << 2 }
+func s64(x i64 >= -1000000 and <= -1) i64 { return x << 40 }
+func main() i32 {
+    if s32(-5) != -20 { return 1 }
+    if s32(-1) != -4 { return 2 }
+    if s64(-1) != -1099511627776 { return 3 }
+    if s64(-1000000) != -1099511627776000000 { return 4 }
+    return 0
+}

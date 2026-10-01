@@ -1701,6 +1701,10 @@ at=const 2
 rc=0
 out=
 at=const 2
+### tests/trust/signed_shift_negative_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/trust/simd_f64_lanes_pass.ln
 rc=0
 out=

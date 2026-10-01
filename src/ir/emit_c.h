@@ -740,8 +740,14 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                 ir_ctype(i->result->type, o); fprintf(o, ")(v%d / v%d);\n", a, b);
                 break;
             }
-            if (i->n_operands == 2 && i->result && i->wrap == IR_WRAP_MODULAR &&
-                (i->op == IR_ADD || i->op == IR_SUB || i->op == IR_MUL) &&
+            // ★ A SIGNED `<<` IS A MULTIPLICATION BY 2^k IN LAIN, AND UNDEFINED IN C WHEN THE
+            // OPERAND IS NEGATIVE. The analysis proves the result fits (vra_check_shift), so
+            // `-3 << 2` is -12 and the interpreter says so, but `v0 << v5` on a negative int32_t
+            // is C99 6.5.7p4 UB (UBSan: "left shift of negative value"). Computed in unsigned
+            // and converted back, the bits are -12 exactly, whatever the wrap mode.
+            if (i->n_operands == 2 && i->result &&
+                ((i->wrap == IR_WRAP_MODULAR && (i->op == IR_ADD || i->op == IR_SUB || i->op == IR_MUL)) ||
+                 (i->op == IR_SHL && i->result->type && i->result->type->is_signed)) &&
                 i->result->type && i->result->type->kind == IRT_INT) {
                 ir_emit_modular(i, o);
                 break;
