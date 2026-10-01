@@ -481,6 +481,7 @@ static Type *union_lower(Type *u) {
     ed->as.enum_decl.variants    = pv;
     ed->as.enum_decl.type_params = NULL;
     ed->as.enum_decl.is_union    = true;
+    ed->as.enum_decl.is_ordered  = false;
 
     Type *ity = type_simple(sema_arena, ename);
     sema_insert_global(raw, raw, ity, ed, false);

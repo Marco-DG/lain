@@ -184,7 +184,8 @@ typedef struct IrType {
                             // The layout itself is a query (layout.h ir_struct_layout), like a
                             // sum's niche; this records only what the program declared.
     bool    ordered_decl;   // IRT_STRUCT declared `[ordered]`: storage keeps the declaration
-                            // order (layout.h ir_struct_storage_order; DECIDE-U).
+                            // order (layout.h ir_struct_storage_order; DECIDE-U). On an IRT_SUM,
+                            // every payload does (ir_sum_payload_order).
     int     sum_backing_bits; // IRT_SUM, plain only: `type K u16 { A, B }` DECLARED its width
                             // (8/16/32/64), 0 = not declared. Like packed_decl, a declaration;
                             // the width itself is layout.h's answer, which reads this first.

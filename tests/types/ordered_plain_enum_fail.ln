@@ -1,0 +1,11 @@
+// EXPECT: [E103]
+// `[ordered]` keeps the fields of a struct, or of a sum's payloads, in declaration order. A plain
+// enumeration has no payload, so nothing would be kept: refused rather than accepted and ignored.
+[ordered]
+type Kind {
+    A
+    B
+}
+func main() i32 {
+    return 0
+}

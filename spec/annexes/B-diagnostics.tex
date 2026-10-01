@@ -174,9 +174,9 @@ Diagnostic codes are divided into the following ranges:
     argument, a constructor field, a return, an operand), when a refinement
     at a call site cannot be proven, and when a pointer-to-pointer or
     integer-to-pointer cast occurs outside an \lain{unsafe} block, and when a
-    cast, inside \lain{unsafe} too, would view the bytes of a struct whose
-    storage order the compiler chooses (\S\,\ref{sec:types.struct}; mark it
-    \tok{[ordered]}).  The
+    cast, inside \lain{unsafe} too, would view the bytes of a struct, or of a
+    sum's payload, whose storage order the compiler chooses
+    (\S\,\ref{sec:types.struct}; mark it \tok{[ordered]}).  The
     message names which; a test that expects \diagcode{E012} should say which
     it means, since the code alone does not.
     \\[4pt]
@@ -389,7 +389,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E084} & access to a \lain{[private]} declaration from another module \\[2pt]
 \diagcode{E101} & calling a \lain{proc} from a \lain{comptime} context (only \lain{func} is allowed) \\[2pt]
 \diagcode{E102} & expected an attribute name after the opening bracket \\[2pt]
-\diagcode{E103} & unknown attribute, or an attribute on a declaration it does not apply to (\tok{[ordered]} off a struct, \tok{[allocator]} on a function with a body) \\[2pt]
+\diagcode{E103} & unknown attribute, or an attribute on a declaration it does not apply to (\tok{[ordered]} off a struct or a payload-carrying sum, \tok{[allocator]} on a function with a body) \\[2pt]
 \diagcode{E104} & a type contains itself by value (infinite size) \\[2pt]
 \diagcode{E105} & identifier is defined in another module --- add an \lain{import} \\[2pt]
 \diagcode{E106} & use of an undeclared identifier (diagnosed at translation-output generation) \\[2pt]

@@ -226,8 +226,10 @@ Decl *parse_decl(Arena* arena, Parser* parser)
 
     if (parser_match(TOKEN_KEYWORD_TYPE))
     {
+        isize line = parser->line, col = parser->column;   // a type's diagnostics had Ln 0
         parser_advance();
         d = parse_type_decl(arena, parser);
+        if (d && !d->line) { d->line = line; d->col = col; }
         goto done;
     }
 
@@ -388,17 +390,22 @@ done:
             }
         }
         // [ordered] (DECIDE-U): a struct whose layout is read outside the program — a file
-        // format, a wire header — keeps its declaration order. It means nothing on anything
-        // else, so it is refused there rather than accepted and ignored.
+        // format, a wire header — keeps its declaration order, and so does every payload of a
+        // sum declared [ordered]. It means nothing on anything else (a plain enumeration has no
+        // payload), so it is refused there rather than accepted and ignored.
         for (Attr *a = attrs; a; a = a->next) {
             if (!a->name || a->name->length != 7 || strncmp(a->name->name, "ordered", 7) != 0) continue;
-            if (d->kind != DECL_STRUCT) {
-                fprintf(stderr, "[E103] Error Ln %li, Col %li: [ordered] applies to a struct "
-                        "declaration: it keeps the struct's fields in declaration order.\n",
-                        (long)d->line, (long)d->col);
+            bool carries = false;
+            if (d->kind == DECL_ENUM)
+                for (Variant *v = d->as.enum_decl.variants; v; v = v->next) if (v->fields) carries = true;
+            if (d->kind != DECL_STRUCT && !carries) {
+                fprintf(stderr, "[E103] Error Ln %li, Col %li: [ordered] applies to a struct, or "
+                        "to a sum whose variants carry payloads: it keeps their fields in "
+                        "declaration order.\n", (long)d->line, (long)d->col);
                 exit(1);
             }
-            d->as.struct_decl.is_ordered = true;
+            if (d->kind == DECL_STRUCT) d->as.struct_decl.is_ordered = true;
+            else d->as.enum_decl.is_ordered = true;
         }
     }
     return d;

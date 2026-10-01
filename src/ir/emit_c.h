@@ -1152,6 +1152,7 @@ static void ir_emit_one_slice(IrType *sl, FILE *o) {
     fputs("typedef struct { ", o); ir_ctype(sl->elem, o);
     fprintf(o, "* data; size_t len; } Slice_%s;\n", tag);
 }
+static bool ir_layout_iface(const IrType *t);   // DECIDE-U: does C read t's layout? (below)
 // A sum's C layout: `struct S { int32_t tag; union { …per-variant payload… } data; }`.
 // This is a BACKEND decision — the IR records only which variants exist and what they
 // carry (local/internal/design/ir_sum_types.md §3) — so swapping in a niche packing later
@@ -1186,11 +1187,15 @@ static void ir_emit_one_sum_body(IrType *st, FILE *o) {
     for (int k=0;k<st->n_fields;k++) if (st->fields[k]) carrying++;
     if (carrying) {
         fputs("union { ", o);
+        bool iface = ir_layout_iface(st);
         for (int k=0;k<st->n_fields;k++) {
             IrType *pl = st->fields[k]; if (!pl) continue;
             IrName *vn = st->field_names[k];
             fputs("struct { ", o);
-            for (int j=0;j<pl->n_fields;j++) {
+            int ord[IR_REORDER_MAX_FIELDS + 1];
+            if (pl->n_fields <= IR_REORDER_MAX_FIELDS) ir_sum_payload_order(st, k, iface, ord);
+            for (int q=0;q<pl->n_fields;q++) {
+                int j = pl->n_fields <= IR_REORDER_MAX_FIELDS ? ord[q] : q;   // storage order (DECIDE-U)
                 ir_ctype(pl->fields[j], o);
                 IrName *fn = pl->field_names[j];
                 if (fn) fprintf(o, " %.*s; ", (int)fn->length, fn->name);
@@ -1233,11 +1238,20 @@ static void ir_iface_mark(IrType *t, int depth) {
             for (int k = 0; k < t->n_fields; k++) ir_iface_mark(t->fields[k], depth + 1);
             return;
         case IRT_SUM:
-            for (int k = 0; k < t->n_fields; k++) ir_iface_mark(t->fields[k], depth + 1);
+            // The sum by its own name: its payloads keep their declaration order. A payload is
+            // named after its variant, which a struct may share, so it is not marked itself.
+            if (t->sname) {
+                if (ir_iface_has(t->sname)) return;
+                if (ir_iface_n >= IR_IFACE_MAX) { ir_iface_n = -1; return; }
+                ir_iface_name[ir_iface_n++] = t->sname;
+            }
+            for (int k = 0; k < t->n_fields; k++) if (t->fields[k])
+                for (int j = 0; j < t->fields[k]->n_fields; j++) ir_iface_mark(t->fields[k]->fields[j], depth + 1);
             return;
         default: return;
     }
 }
+static bool ir_layout_iface(const IrType *t) { return ir_iface_n < 0 || ir_iface_has(t->sname); }
 static void ir_emit_one_struct_body(IrType *st, FILE *o) {
     if (st->kind == IRT_SUM) { ir_emit_one_sum_body(st, o); return; }
     IrName *nm = st->sname;
@@ -1248,7 +1262,7 @@ static void ir_emit_one_struct_body(IrType *st, FILE *o) {
       } }
     fprintf(o, "struct %.*s { ", (int)nm->length, nm->name);
     int ord[IR_REORDER_MAX_FIELDS + 1];
-    bool iface = ir_iface_n < 0 || ir_iface_has(nm);
+    bool iface = ir_layout_iface(st);
     if (st->n_fields <= IR_REORDER_MAX_FIELDS) ir_struct_storage_order(st, iface, ord);
     for (int q=0; q<st->n_fields; q++) {
         int fi = st->n_fields <= IR_REORDER_MAX_FIELDS ? ord[q] : q;   // storage order (DECIDE-U)
@@ -1409,8 +1423,13 @@ static IrType *ir_reorderable_in(IrType *t, int depth) {
     if (!t || depth > 32) return NULL;
     if (t->kind == IRT_ARRAY) return ir_reorderable_in(t->elem, depth + 1);
     if (t->kind == IRT_SUM) {
+        // A tagged sum's payloads are stored like structs (ir_sum_payload_order): one of more
+        // than one field has an order nobody wrote, unless the sum is [ordered] or C reads it.
+        // A niche-packed sum is its one payload field, so only what that field holds counts.
+        bool tagged = !ir_layout_of(t).packed, pinned = t->ordered_decl || ir_layout_iface(t);
         for (int k = 0; k < t->n_fields; k++) {
             IrType *pl = t->fields[k]; if (!pl) continue;
+            if (tagged && !pinned && pl->n_fields > 1) return t;
             for (int j = 0; j < pl->n_fields; j++) {
                 IrType *r = ir_reorderable_in(pl->fields[j], depth + 1);
                 if (r) return r;
@@ -1419,8 +1438,7 @@ static IrType *ir_reorderable_in(IrType *t, int depth) {
         return NULL;
     }
     if (t->kind != IRT_STRUCT || !t->sname) return NULL;
-    if (!t->ordered_decl && !t->packed_decl && t->n_fields > 1 &&
-        !(ir_iface_n < 0 || ir_iface_has(t->sname)))
+    if (!t->ordered_decl && !t->packed_decl && t->n_fields > 1 && !ir_layout_iface(t))
         return t;
     if (t->packed_decl) return NULL;                 // an integer: no struct fields inside
     for (int k = 0; k < t->n_fields; k++) {          // held BY VALUE, its layout is inside this one
@@ -1458,10 +1476,12 @@ static int ir_refuse_byte_views(IrFunc *funcs, const char *file) {
                 if (!s) continue;
                 fprintf(stderr, "[E012] Error");
                 if (i->line) fprintf(stderr, " Ln %lld, Col %lld", (long long)i->line, (long long)i->col);
-                fprintf(stderr, ": viewing a struct's bytes needs a declared layout: mark `%.*s` "
-                        "[ordered]. Its fields are stored in an order the compiler chooses (DECIDE-U), "
+                bool sum = s->kind == IRT_SUM;
+                fprintf(stderr, ": viewing a %s's bytes needs a declared layout: mark `%.*s` "
+                        "[ordered]. %s are stored in an order the compiler chooses (DECIDE-U), "
                         "so a cast between a pointer to it and another type would read them in an "
-                        "order nobody wrote.\n", (int)s->sname->length, s->sname->name);
+                        "order nobody wrote.\n", sum ? "sum" : "struct", (int)s->sname->length,
+                        s->sname->name, sum ? "Its payloads' fields" : "Its fields");
                 if (file && i->line)
                     fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)i->line, (long long)i->col);
                 n++;

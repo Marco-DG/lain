@@ -1871,6 +1871,22 @@ rc=0
 out=20 40
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/sum_byte_view_ordered_pass.ln
+rc=0
+out=
+at=pure 4
+ty=Ext struct
+ty=Single struct
+ty=Wire struct
+ty=WireC struct
+### tests/trust/sum_payload_reorder_pass.ln
+rc=0
+out=
+at=const 4
+ty=ExtSum struct
+ty=Sh struct
+ty=Two_u64 struct
+ty=Wire struct
 ### tests/trust/sum_single_payload_no_tag_pass.ln
 rc=0
 out=

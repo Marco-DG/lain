@@ -1,0 +1,50 @@
+// A sum's bytes may be viewed when no payload's order is the compiler's (sum_byte_view_fail.ln):
+// declared [ordered], reached by an extern's signature (C reads it in declaration order), or every
+// payload of at most one field. The [ordered] sum is read back through a struct spelling its C
+// layout, `int32_t tag` and the payload at offset 8 in declaration order, checked at run time:
+// reordered, `a` would be at 16 and `b` at 8.
+[ordered]
+type Wire {
+    Rec { a u8, b i64, c u8 }
+    Empty
+}
+[ordered]
+type WireC {
+    tag i32
+    pad u32
+    a   u8
+    b   i64
+    c   u8
+}
+type Ext {
+    V { a u8, b i64 }
+    N
+}
+extern func takes_ext(e *Ext) i64 effects
+type Single {
+    I { v u32 }
+    F { w u16 }
+    Z
+}
+func holds(p *WireC) bool {
+    unsafe {
+        return p.tag == 0 and p.a == 7 and p.b == 8 and p.c == 9
+    }
+}
+func first(p *u8) u8 {
+    unsafe {
+        return *p
+    }
+}
+func main() i32 {
+    w = Wire.Rec(7, 8, 9)
+    e = Ext.V(5, 6)
+    s = Single.F(3)
+    var r = 0
+    unsafe {
+        if !holds(&w as *WireC) { r = 1 }
+        if first(&e as *u8) != 0 { r = 2 }
+        if first(&s as *u8) != 1 { r = 3 }
+    }
+    return r
+}

@@ -372,4 +372,14 @@ static void ir_struct_storage_order(const IrType *st, bool interface, int *ord) 
     }
 }
 
+// The storage order of variant k's payload in a tagged sum (`.data.Wide`): a struct's, decided
+// by the SUM. A payload is built and read by field name (`.data.Wide = { .a = v1, ... }`,
+// `v.data.Wide.b`), so it is no more observable than a struct's order. It was emitted in
+// declaration order while the interpreter's size model reordered it: `{a u8, b i64, c u8}` made
+// the sum 32 bytes in C and 24 in `lain --interpret`. `interface` is the emitter's answer for
+// the sum itself; the payload's own name is its variant's, which a struct may share.
+static void ir_sum_payload_order(const IrType *sum, int k, bool interface, int *ord) {
+    ir_struct_storage_order(sum->fields[k], interface || sum->ordered_decl, ord);
+}
+
 #endif // LAIN_IR_LAYOUT_H

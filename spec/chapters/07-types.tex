@@ -804,6 +804,9 @@ A struct whose layout is read outside the program keeps its declaration order:
         pointer, an array, a slice, a vector, a function pointer or a field of such a struct ---
         since the foreign code was written against the declaration.
 \end{itemize}
+A tagged sum's payloads (\S\,\ref{sec:types.adt}) are stored the same way, each by decreasing
+alignment, unless the sum is declared \tok{[ordered]} or is reachable from an \lain{extern}
+signature; either keeps every payload in declaration order.
 Inside a program the storage order is not observable: there are no stored references, field
 addresses cannot be compared or converted to integers, \lain{@load} and \lain{@store} take
 an array, a slice or a raw pointer, never a struct (\S\,\ref{sec:types.vector}), and a cast that
@@ -818,6 +821,9 @@ would view a reorderable struct's bytes is refused (below). Only the size is obs
   \lain{unsafe} permits the cast, not an unspecified layout. So is such a cast over an array of
   that struct, or over a struct that holds it by value. Viewing a struct's bytes needs a declared
   layout: \tok{[ordered]}. A cast between pointers to the same struct type is not a view.
+  The same holds for a tagged sum with a payload of more than one field whose order the
+  compiler chooses: viewing its bytes needs \tok{[ordered]} on the sum. A sum whose payloads
+  have at most one field each has no order to expose.
 \end{constraint}
 
 \pnum
@@ -1031,7 +1037,9 @@ using the record-variant form).
 \pnum
 ADTs use a niche-based representation whenever a zero-cost encoding is
 available; otherwise they are a tagged union: an \texttt{int32\_t} tag
-(four bytes) beside a union of the variant payloads.
+(four bytes) beside a union of the variant payloads. A payload's fields are stored as a
+struct's are (\S\,\ref{sec:types.struct}), by decreasing alignment, unless the sum is
+\tok{[ordered]} or reachable from an \lain{extern} signature.
 
 \begin{note}
   \textbf{D-Niche aggressive multi-slot.}

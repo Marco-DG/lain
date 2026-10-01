@@ -1,0 +1,17 @@
+// EXPECT: [E012]
+// A tagged sum's payload is stored like a struct (DECIDE-U), `{b, a, c}` here, so handing the
+// sum's bytes to C exposes an order nobody wrote: `dump` would read `b` where `a` was written.
+// Viewing them needs a declared layout, `[ordered]` on the sum (sum_byte_view_ordered_pass.ln);
+// `unsafe` permits the cast, not an unspecified layout.
+type Msg {
+    Wide { a u8, b i64, c u8 }
+    Empty
+}
+extern func dump(p *u8, n usize) i64 effects io
+func main() i32 effects io {
+    m = Msg.Wide(1, 2, 3)
+    unsafe {
+        dump(&m as *u8, @sizeof(Msg))
+    }
+    return 0
+}

@@ -42,9 +42,9 @@ Inside an \lain{unsafe} block, the following operations are permitted:
   \item \textbf{Indexing}: a raw pointer has no length and cannot be indexed
         (\diagcode{E012}); read through it with \lain{*p}, or \lain{@load} a vector.
   \item \textbf{Pointer and integer casts}: \lain{p as *T},
-        \lain{n as *T}, \lain{p as usize}, etc., except a cast that views the bytes of a struct
-        whose storage order the compiler chooses, which stays \illformed{}~(\diagcode{E012};
-        \S\,\ref{sec:types.struct}): mark the struct \tok{[ordered]}.
+        \lain{n as *T}, \lain{p as usize}, etc., except a cast that views the bytes of a struct,
+        or of a sum's payload, whose storage order the compiler chooses, which stays
+        \illformed{}~(\diagcode{E012}; \S\,\ref{sec:types.struct}): mark it \tok{[ordered]}.
   \item \textbf{Direct ADT field access}: reading a variant's field with the
         qualified form \lain{value.Variant.field} without going through a
         \lain{case} arm.  Outside \lain{unsafe} this is

@@ -1,0 +1,20 @@
+// EXPECT: [E012]
+// `[ordered]` fixes Out's own fields, but `msg` is held BY VALUE, so Out's bytes contain Msg's,
+// and Msg's payload may still be reordered. The diagnostic names the sum that needs `[ordered]`.
+type Msg {
+    Wide { a u8, b i64, c u8 }
+    Empty
+}
+[ordered]
+type Out {
+    x   u8
+    msg Msg
+}
+func view(o *Out) *u8 {
+    unsafe {
+        return o as *u8
+    }
+}
+func main() i32 {
+    return 0
+}

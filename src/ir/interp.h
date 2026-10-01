@@ -532,6 +532,18 @@ static void ii_cast(IrInstr *ins, IVal *r) {
 // natural alignment, fields in the order the layout chooses. A disagreement with the emitted C
 // is a layout bug in one of the two, which is what the differential is for.
 static int64_t ii_c_align(IrType *t);
+static int64_t ii_c_size(IrType *t);
+// A struct's fields at natural alignment, in storage order `ord` (0 past the reorder limit).
+static int64_t ii_c_fields_size(IrType *t, const int *ord) {
+    if (t->n_fields > IR_REORDER_MAX_FIELDS) return 0;
+    int64_t off = 0, al = 1;
+    for (int q = 0; q < t->n_fields; q++) {
+        IrType *ft = t->fields[ord[q]]; int64_t a = ii_c_align(ft), z = ii_c_size(ft);
+        if (a > al) al = a;
+        off = (off + a - 1) / a * a + z;
+    }
+    return (off + al - 1) / al * al;
+}
 static int64_t ii_c_size(IrType *t) {
     int64_t s = ir_fixed_size(t);
     if (s > 0) return s;
@@ -543,23 +555,21 @@ static int64_t ii_c_size(IrType *t) {
         case IRT_SLICE: return 16;
         case IRT_ARRAY: return t->array_len * ii_c_size(t->elem);
         case IRT_STRUCT: {
-            int ord[IR_REORDER_MAX_FIELDS + 1]; bool iface = ir_iface_n < 0 || ir_iface_has(t->sname);
+            int ord[IR_REORDER_MAX_FIELDS + 1];
             if (t->n_fields > IR_REORDER_MAX_FIELDS) return 0;
-            ir_struct_storage_order(t, iface, ord);
-            int64_t off = 0, al = 1;
-            for (int q = 0; q < t->n_fields; q++) {
-                IrType *ft = t->fields[ord[q]]; int64_t a = ii_c_align(ft), z = ii_c_size(ft);
-                if (a > al) al = a;
-                off = (off + a - 1) / a * a + z;
-            }
-            return (off + al - 1) / al * al;
+            ir_struct_storage_order(t, ir_layout_iface(t), ord);
+            return ii_c_fields_size(t, ord);
         }
         case IRT_SUM: {
             IrLayout L = ir_layout_of(t);
             if (L.packed && L.backing) return L.backing->kind == IRT_BOOL ? 1 : ii_c_size(L.backing);
             int64_t al = 4, pay = 0;
             for (int k = 0; k < t->n_fields; k++) if (t->fields[k]) {
-                int64_t a = ii_c_align(t->fields[k]), z = ii_c_size(t->fields[k]);
+                // the payload in the SUM's order: its own name is its variant's
+                int ord[IR_REORDER_MAX_FIELDS + 1];
+                if (t->fields[k]->n_fields > IR_REORDER_MAX_FIELDS) return 0;
+                ir_sum_payload_order(t, k, ir_layout_iface(t), ord);
+                int64_t a = ii_c_align(t->fields[k]), z = ii_c_fields_size(t->fields[k], ord);
                 if (a > al) al = a;
                 if (z > pay) pay = z;
             }
