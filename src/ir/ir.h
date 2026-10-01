@@ -403,6 +403,7 @@ typedef struct IrTerm {
     struct IrBlock *a;      // BR target / BR_COND then / SWITCH default
     struct IrBlock *b;      // BR_COND else
     IrSwitchCase   *cases;  // SWITCH
+    isize           line, col;  // RET: the return's position (an obligation on it is reported there)
 } IrTerm;
 
 // ─────────────────────────────────────────────────────────────────────────────

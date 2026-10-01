@@ -1,0 +1,32 @@
+// A [noreturn] function whose every return is unreachable compiles, and its callers may rely on
+// it. Three shapes: every path panics; a loop with no exit (`while true` — a constant condition
+// rules out its exit edge); and a `return` the analysis proves dead (a u8 is never above 300).
+// None is called on the path main takes, so the program exits 0.
+[noreturn]
+func fail(code i32) effects raises {
+    if code == 0 {
+        panic("zero")
+    }
+    panic("nonzero")
+}
+[noreturn]
+func spin() effects diverge {
+    while true {
+    }
+}
+[noreturn]
+func guard(x u8) effects raises {
+    if x as i32 > 300 {
+        return
+    }
+    panic("guard")
+}
+func pick(n i32) i32 effects raises, diverge {
+    if n < 0 { fail(n) }
+    if n > 1000000 { spin() }
+    if n > 999999 { guard(7) }
+    return n
+}
+func main() i32 effects raises, diverge {
+    return pick(0)
+}

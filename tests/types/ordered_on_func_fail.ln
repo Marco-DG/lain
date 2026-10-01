@@ -1,0 +1,10 @@
+// EXPECT: [E103]
+// [ordered] keeps a struct's fields in declaration order; on anything else it would mean
+// nothing, and an attribute that is accepted and ignored is a claim nobody checks.
+[ordered]
+func f() i32 {
+    return 0
+}
+func main() i32 {
+    return f()
+}

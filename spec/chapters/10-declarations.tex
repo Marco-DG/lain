@@ -56,12 +56,17 @@ Recognized attribute names (closed set, version 1.1):
 \tok{[private]}    & any declaration         & Module-private visibility. \\
 \tok{[packed]}     & a struct                & Lay the fields out bit-exactly inside one integer (\S\,\ref{sec:types.packed-future}). \\
 \tok{[ordered]}    & a struct                & Store the fields in declaration order (\S\,\ref{sec:types.struct}). \\
+\tok{[cold]}, \tok{[hot]} & any function     & Rarely or frequently executed: a hint to the C compiler. \\
+\tok{[noreturn]}   & any function            & Never returns. On a function with a body every \lain{return}, and the end of the body, shall be unreachable (\diagcode{E135}); on an \lain{extern} it is believed. \\
+\tok{[allocator]}  & an \lain{extern} function & The result is non-null and aliases no other pointer (C's \texttt{malloc}). \\
 \end{longtable}
 
 \begin{constraint}
   \textbf{Q-017.}
-  An attribute name not listed in Table~\ref{tab:attributes} is
-  \illformed{}~(\diagcode{E103}).  An attribute that omits the
+  An attribute name not listed in Table~\ref{tab:attributes}, or one written on a declaration
+  it does not apply to, is \illformed{}~(\diagcode{E103}). \tok{[allocator]} applies only to an
+  \lain{extern} function: the claim cannot be checked against a body, and a false one is
+  undefined behaviour in the translation.  An attribute that omits the
   identifier (e.g.\ \texttt{[ ]} or \texttt{[(arg)]}) is
   \illformed{}~(\diagcode{E102}).
 \end{constraint}

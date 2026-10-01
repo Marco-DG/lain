@@ -101,9 +101,11 @@ ty=Slice_u8 scalar
 rc=2
 out=
 at=cold 2
-at=const 6
+at=const 4
 at=hot 2
-at=malloc 2
+at=malloc 1
+at=noreturn 3
+ty=Slice_u8 scalar
 ### tests/effects/diverges_attribute_pass.ln
 rc=0
 out=
@@ -1537,6 +1539,11 @@ out=OK
 at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
+### tests/trust/noreturn_verified_pass.ln
+rc=0
+out=
+at=noreturn 6
+ty=Slice_u8 scalar
 ### tests/trust/overflow_checked_pass.ln
 rc=0
 out=0

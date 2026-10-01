@@ -165,6 +165,9 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 else if (c->diag == 87)
                     ir_diag(file, c->line, c->col, "E087",
                             "argument does not satisfy the parameter's sized-slice constraint");
+                else if (c->diag == 135)
+                    ir_diag(file, c->line, c->col, "E135",
+                            "a [noreturn] function can return here — every path must end in a panic, a call that does not return, or a loop that does not end (with `effects diverge`)");
                 else
                     ir_diag(file, c->line, c->col, "E012", "a required precondition is not established here");
                 n++; break;

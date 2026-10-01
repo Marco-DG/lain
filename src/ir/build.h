@@ -403,6 +403,7 @@ void ir_set_br_cond(IrBlock *b, IrValue *cond, IrBlock *t, IrBlock *e) {
 }
 void ir_set_ret(IrBlock *b, IrValue *v /*NULL for unit*/) {
     b->term.kind = IR_TERM_RET; b->term.cond = v;
+    b->term.line = ir_cur_line; b->term.col = ir_cur_col;
 }
 void ir_set_unreachable(IrBlock *b) { b->term.kind = IR_TERM_UNREACHABLE; }
 

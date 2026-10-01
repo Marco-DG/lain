@@ -1732,6 +1732,16 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
 // refine W along a branch edge from `br` taken in direction `then_dir`
 static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir) {
     if (!cond) return;
+    // A CONSTANT condition decides its branch, and the edge it rules out is dead (⊥). Only a
+    // comparison was read here, so `while true { }` kept a live exit edge, and code after the
+    // loop — a `[noreturn]` function's implicit return above all — counted as reachable.
+    if (cond->id >= 0 && cond->id < V->nvar && V->cknown[cond->id]) {
+        if ((V->cval[cond->id] != 0) != then_dir && W->dim > 0) {
+            *oct_at(W, 0, 0) = -1;            // a negative self-distance IS ⊥ (oct_is_bottom)
+            oct_set_clean(W, false);
+        }
+        return;
+    }
     IrInstr *ic = V->def[cond->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return;
     int a=ic->operands[0]->id, b=ic->operands[1]->id;

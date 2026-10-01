@@ -1,0 +1,13 @@
+// EXPECT: [E135]
+// `[noreturn]` becomes `__attribute__((noreturn))`, and returning from such a function is
+// undefined behaviour. This one was accepted, and at -O2 its caller fell off the end of the code
+// into a segfault, in a program with no `unsafe`. Every return of a [noreturn] function is now
+// an obligation: it must be unreachable.
+[noreturn]
+func f(x i32) i32 {
+    return x
+}
+func main() i32 {
+    if f(3) == 3 { return 0 }
+    return 1
+}

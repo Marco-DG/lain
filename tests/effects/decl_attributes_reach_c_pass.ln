@@ -16,8 +16,12 @@
 // program used any of these attributes. A column that counts something nothing produces reports
 // zero forever. THIS FILE is what makes it bite; removing the emission now moves the baseline.
 //
-// `[allocator]` is the one that is more than a hint: it becomes `malloc, returns_nonnull`, which
-// tells the optimizer the returned pointer aliases nothing.
+// `[allocator]` and `[noreturn]` are more than hints. `malloc, returns_nonnull` tells the optimizer
+// the returned pointer is non-null and aliases nothing, and returning from a `noreturn` function
+// is undefined. So `[allocator]` is believed only on an `extern` (a body cannot be checked to
+// satisfy it; this file's first version marked a body that returned NULL), and a `[noreturn]`
+// body is CHECKED: every return must be unreachable (E135, noreturn_*_fail.ln). On an extern
+// both were parsed and dropped until 2026-10-01; they reach the prototype now.
 [cold]
 func rare_path() i32 {
     return 0
@@ -26,13 +30,16 @@ func rare_path() i32 {
 func inner_loop(x i32) i32 {
     return x +% 1
 }
+// Never called: the point is that the ATTRIBUTE reaches the C, and the baseline's build step only
+// defines libc_printf/libc_puts — a program it cannot link is a program it silently skips, which
+// is how the first version of this test failed to protect anything.
 [allocator]
-func fresh() *var u8 {
-    // No allocator call: the point is that the ATTRIBUTE reaches the C, and the baseline's
-    // build step only defines libc_printf/libc_puts — a program it cannot link is a program it
-    // silently skips, which is how the first version of this test failed to protect anything.
-    var p *var u8 = 0
-    return p
+extern func fresh(n usize) *var u8
+[noreturn]
+extern func halt(code i32)
+[noreturn]
+func die() effects raises {
+    panic("die")
 }
 func main() i32 {
     return rare_path() +% inner_loop(1)

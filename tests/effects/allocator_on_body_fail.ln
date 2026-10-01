@@ -1,0 +1,11 @@
+// EXPECT: [E103]
+// `[allocator]` tells the C compiler the result is non-null and aliases nothing. A body cannot
+// be checked to satisfy that (this one returns its argument), and a false claim is undefined
+// behaviour in the C, so the attribute is believed only on an `extern`.
+[allocator]
+func g(p *var u8) *var u8 {
+    return p
+}
+func main() i32 {
+    return 0
+}

@@ -3883,6 +3883,20 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
         ir_lower_flush_defers(&cc);   // falling off the end is an exit too
         ir_set_ret(cc.cur, NULL);     // implicit unit return / end of proc
     }
+    // ★ `[noreturn]` IS AN OBLIGATION. It becomes `__attribute__((noreturn))`, and returning from
+    // such a function is undefined behaviour: `[noreturn] func f(x i32) i32 { return x }` was
+    // accepted, and at -O2 its caller ran off the end of the code into a segfault — a program
+    // with no `unsafe` in it. Every return of a [noreturn] function asserts false (E135): one
+    // the analysis proves unreachable costs nothing, any other is refused where it is.
+    if (f->is_noreturn) {
+        for (IrBlock *b = f->blocks; b; b = b->next) {
+            if (b->term.kind != IR_TERM_RET) continue;
+            if (b->term.line) { ir_cur_line = b->term.line; ir_cur_col = b->term.col; }
+            else if (fn->line) { ir_cur_line = fn->line; ir_cur_col = fn->col; }
+            IrValue *z = ir_const_int(f, b, 0, ir_type_int(a, 32, false));
+            ir_assert_coded(f, b, ir_icmp(f, b, IR_CMP_NE, z, z), 135);
+        }
+    }
     ir_finalize_cfg(f);
     return f;
 }
@@ -3969,6 +3983,10 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
             f = ir_func_new(a, nm ? ir_intern(a, nm->name, nm->length) : NULL, NULL,
                             k==DECL_EXTERN_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
             f->is_extern = true; f->src_decl = d->decl;
+            f->is_cold      = d->decl->as.function_decl.is_cold;       // believed, as the row is
+            f->is_hot       = d->decl->as.function_decl.is_hot;
+            f->is_allocator = d->decl->as.function_decl.is_allocator;
+            f->is_noreturn  = d->decl->as.function_decl.is_noreturn;
             // E.5: carry the DECLARED row across the seam. Mapped bit by bit on purpose — the
             // two enums are parallel today, and a silent `(IrEffect)eff` would turn any future
             // divergence between them into a wrong effect rather than a compile error.

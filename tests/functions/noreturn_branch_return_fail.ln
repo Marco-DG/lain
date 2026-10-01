@@ -1,0 +1,13 @@
+// EXPECT: [E135]
+// One path panics, the other returns: the return is reachable whenever x > 0, so the function
+// can return, and [noreturn] is refused at that `return`.
+[noreturn]
+func stop(x i32) effects raises {
+    if x > 0 {
+        return
+    }
+    panic("stop")
+}
+func main() i32 {
+    return 0
+}

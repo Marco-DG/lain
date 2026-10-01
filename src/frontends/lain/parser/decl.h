@@ -252,6 +252,16 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         if (parser_match(TOKEN_KEYWORD_FUNC)) {
             parser_advance();  // consume 'func'
             d = parse_extern_func_decl(arena, parser);
+            // The declaration attributes were read only on the path for a function WITH a body,
+            // so on an extern — the one place `[allocator]` and `[noreturn]` can be believed —
+            // they parsed and were dropped. An extern's attributes are a claim about the foreign
+            // function, trusted like its effect row.
+            if (d) {
+                d->as.function_decl.is_cold      = attrs_have(attrs, "cold", 4);
+                d->as.function_decl.is_hot       = attrs_have(attrs, "hot", 3);
+                d->as.function_decl.is_allocator = attrs_have(attrs, "allocator", 9);
+                d->as.function_decl.is_noreturn  = attrs_have(attrs, "noreturn", 8);
+            }
             goto done;
         }
         // ★ `proc` IS GONE (E.4/E.5). The token stays RESERVED so this message can exist: a
@@ -316,6 +326,17 @@ Decl *parse_decl(Arena* arena, Parser* parser)
     if (parser_match(TOKEN_KEYWORD_FUNC)) {
         parser_advance();
         d = parse_func_decl(arena, parser);
+        // ★ `[allocator]` becomes `__attribute__((malloc, returns_nonnull))`: the result is
+        // non-null and aliases nothing. On a function with a BODY that is a claim nothing checks,
+        // and a false one is undefined behaviour in the C — the corpus's own example returned
+        // null. It is believed where every claim about foreign code is: on an `extern`.
+        if (d && decl_is_allocator) {
+            fprintf(stderr, "[E103] Error Ln %li, Col %li: [allocator] applies to an `extern` "
+                    "function. It tells the C compiler the result is non-null and aliases nothing, "
+                    "which a body cannot be checked to satisfy; declare the allocator `extern`.\n",
+                    (long)d->line, (long)d->col);
+            exit(1);
+        }
         if (d) {
             d->as.function_decl.diverges     = decl_diverges;
             d->as.function_decl.does_io       = decl_is_io;
