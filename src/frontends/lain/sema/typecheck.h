@@ -3298,14 +3298,12 @@ void sema_infer_expr(Expr *e) {
         // place, a read-only `*T`. `&x` was always `*T`, which no check read until `*T` stopped
         // converting to `*var T` silently.
         if (sema_place_writable(e->as.addr_expr.expr)) e->type->pointee_mutable = true;
-        // Propagate mutability from the indexed array.
-        Expr *addr_inner = e->as.addr_expr.expr;
-        if (addr_inner->kind == EXPR_INDEX && addr_inner->as.index_expr.target) {
-            Type *arr_ty = addr_inner->as.index_expr.target->type;
-            if (arr_ty && (arr_ty->mode == MODE_MUTABLE || arr_ty->mode == MODE_OWNED)) {
-                e->type->mode = MODE_MUTABLE; // mutable borrow: int32_t *, not linear
-            }
-        }
+        // ★ NOT `mode = MODE_MUTABLE`. That was how a writable `&arr[k]` was spelled before
+        // `pointee_mutable` (4b08e44), and it outlived it: on a POINTER the mode means "a mutable
+        // BORROW" to lowering (ir_lower_borrow_binding_type), so once 1694f66 made `&a[0]` of a
+        // `var` slice a `*var u8`, `p = &a[0]` became a reference binding, every read of `p`
+        // went one level further, and `*p = 77` was `*(*p) = 77`: C that gcc refuses. A raw
+        // pointer value is not a borrow; its writability is `pointee_mutable`, set above.
     }
     break;
   }

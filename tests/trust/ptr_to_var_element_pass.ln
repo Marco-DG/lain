@@ -1,0 +1,29 @@
+// The address of an element of a WRITABLE array or slice is a writable `*var T` (1694f66), and
+// a local holding it is a plain pointer. sema also marked that pointer's type MODE_MUTABLE, an
+// older spelling of the same fact that lowering reads as a mutable BORROW: once the pointer was
+// writable, `p = &a[0]` became a reference binding, every read of `p` went one level further,
+// and `*p = 77` was emitted as `*(*p) = 77`, C that gcc refuses. Each function writes through
+// such a pointer and reads the element back.
+func poke_slice(a var u8[]) u8 {
+    if a.len > 0 {
+        p = &a[0]
+        unsafe {
+            *p = 77
+            return *p
+        }
+    }
+    return 0
+}
+func set(q *var u8) {
+    unsafe { *q = 9 }
+}
+func main() i32 {
+    var b u8[3] = [1, 2, 3]
+    if poke_slice(var b) != 77 or b[0] != 77 { return 1 }
+    p = &b[1]
+    unsafe { *p = 42 }
+    if b[1] != 42 { return 2 }
+    set(&b[2])
+    if b[2] != 9 { return 3 }
+    return 0
+}

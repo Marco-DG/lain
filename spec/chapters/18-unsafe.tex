@@ -32,7 +32,9 @@ Inside an \lain{unsafe} block, the following operations are permitted:
         writable raw pointer \lain{*var T}. A \lain{*T} is read-only: a write through it
         --- \lain{*p = v}, \lain{p.f = v}, \lain{@store(p, i, v)} --- is \illformed{} here
         too~(\diagcode{E009}), and a \lain{*T} does not convert implicitly to a
-        \lain{*var T}~(\diagcode{E012}); \lain{p as *var T} states it explicitly.
+        \lain{*var T}~(\diagcode{E012}). A \lain{*T} becomes writable only by an explicit
+        cast inside \lain{unsafe}, \lain{p as *var T}, which asserts that writing through it
+        is valid.
   \item \textbf{Address-of}: \lain{\&x} creates a raw pointer to the
         storage of \lain{x}: a \lain{*var T} when the program may write \lain{x} (a
         \lain{var} binding or parameter, an element or field of one, or what a \lain{*var}
@@ -40,7 +42,9 @@ Inside an \lain{unsafe} block, the following operations are permitted:
   \item \textbf{Indexing}: a raw pointer has no length and cannot be indexed
         (\diagcode{E012}); read through it with \lain{*p}, or \lain{@load} a vector.
   \item \textbf{Pointer and integer casts}: \lain{p as *T},
-        \lain{n as *T}, \lain{p as usize}, etc.
+        \lain{n as *T}, \lain{p as usize}, etc., except a cast that views the bytes of a struct
+        whose storage order the compiler chooses, which stays \illformed{}~(\diagcode{E012};
+        \S\,\ref{sec:types.struct}): mark the struct \tok{[ordered]}.
   \item \textbf{Direct ADT field access}: reading a variant's field with the
         qualified form \lain{value.Variant.field} without going through a
         \lain{case} arm.  Outside \lain{unsafe} this is
