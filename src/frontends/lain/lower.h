@@ -3219,7 +3219,24 @@ static void ir_lower_stmt(LowerCtx *c, Stmt *s) {
             if (c->cur->instrs_tail) c->cur->instrs_tail->unchecked = c->unsafe;
             break;
         }
-        case STMT_EXPR: (void)ir_lower_expr(c, s->as.expr_stmt.expr); break;
+        case STMT_EXPR: {
+            Expr *x = s->as.expr_stmt.expr;
+            (void)ir_lower_expr(c, x);
+            // ★ A `panic(...)` STATEMENT ENDS ITS PATH. `else panic(...)` set the block
+            // unreachable, but the statement form fell through like any call, so after
+            //     if s.len == 0 { panic("empty") }
+            // the analysis still had s.len == 0 at `s[0]` and refused it (E085) — while the
+            // spec says panic never returns (its helper calls abort()). Only the declless
+            // builtin: a user's `[noreturn]` is an unchecked claim, and trusting it here would
+            // turn a wrong one into unreachable code.
+            if (x && x->kind == EXPR_CALL && x->as.call_expr.callee &&
+                x->as.call_expr.callee->kind == EXPR_IDENTIFIER && !x->as.call_expr.callee->decl) {
+                Id *nm = x->as.call_expr.callee->as.identifier_expr.id;
+                if (nm && nm->length == 5 && strncmp(nm->name, "panic", 5) == 0 && !ir_is_set_term(c->cur))
+                    ir_set_unreachable(c->cur);
+            }
+            break;
+        }
         case STMT_DEFER:
             // Recorded, not emitted: the body runs at every exit, in reverse order.
             if (!c->in_defer && c->ndefers < 64) c->defers[c->ndefers++] = s->as.defer_stmt.stmt;

@@ -1555,6 +1555,12 @@ at=nonnull 2
 ty=Header scalar
 ty=Signed scalar
 ty=Wide scalar
+### tests/trust/panic_statement_ends_path_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 2
+ty=Slice_u8 scalar
 ### tests/trust/payload_marker_pass.ln
 rc=0
 out=1234

@@ -1,0 +1,13 @@
+// A `panic(...)` statement ends its path, as `else panic(...)` always did: after
+// `if s.len == 0 { panic(...) }` the slice is known non-empty, so `s[0]` proves. The statement
+// form fell through like any call and the read was refused (E085), although panic never returns.
+func head(s u8[]) u8 effects raises {
+    if s.len == 0 {
+        panic("empty slice")
+    }
+    return s[0]
+}
+func main() i32 effects raises {
+    if head("abc") != 97 { return 1 }
+    return 0
+}
