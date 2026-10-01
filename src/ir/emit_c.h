@@ -1151,14 +1151,14 @@ static void ir_emit_one_sum_body(IrType *st, FILE *o) {
     // the old emitter packed the same sum into a single pointer (D-62).
     IrLayout L = ir_layout_of(st);
     if (L.packed) {
-        if (L.all_empty) {   // a plain enumeration: the smallest integer that holds it
+        if (L.all_empty) {   // a plain enumeration: its declared width, else the smallest that holds it
             // ...which is what this comment always said and the code never did: every
             // enumeration was an int32_t, so an 11-kind TokenKind made a {kind, pos u32, len u16}
             // token 12 bytes where `uint8_t` and field order make it 8 (the lexer report). The
             // tag values are 0..n-1, so an unsigned type of the smallest width holds them; no
             // sum niche-packs INTO a plain enumeration (layout.h gives it no backing), so no
             // sentinel depends on the width.
-            fprintf(o, "typedef uint%d_t %.*s;\n", ir_plain_enum_bits(st->n_fields),
+            fprintf(o, "typedef uint%d_t %.*s;\n", ir_plain_enum_bits(st),
                     (int)nm->length, nm->name);
         } else {
             fputs("typedef ", o); ir_layout_backing_ctype(L.backing, o);

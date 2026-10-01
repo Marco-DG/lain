@@ -390,11 +390,19 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                                     (size_t)ft->base_type->length) != 0) continue;
                         bool plain = true;
                         for (Variant *v = E->as.enum_decl.variants; v; v = v->next) if (v->fields) plain = false;
-                        if (plain)
+                        int bw = E->as.enum_decl.backing_bits;
+                        if (plain && bw)
+                            fprintf(stderr, "       '%.*s' is a plain enum stored in the u%d its declaration "
+                                    "states. Drop [packed]: a struct's fields are stored by decreasing "
+                                    "alignment, so the record needs no help to stay small.\n",
+                                    (int)ft->base_type->length, ft->base_type->name, bw);
+                        else if (plain)
                             fprintf(stderr, "       '%.*s' is a plain enum, already stored in its smallest "
                                     "integer (one byte up to 256 variants). Drop [packed]: a struct's fields "
                                     "are stored by decreasing alignment, so `kind %.*s  pos u32  len u16` is "
-                                    "8 bytes in any order.\n",
+                                    "8 bytes in any order. `type %.*s u8 { ... }` keeps it one byte as "
+                                    "variants are added.\n",
+                                    (int)ft->base_type->length, ft->base_type->name,
                                     (int)ft->base_type->length, ft->base_type->name,
                                     (int)ft->base_type->length, ft->base_type->name);
                         break;

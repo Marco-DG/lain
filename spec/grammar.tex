@@ -126,7 +126,8 @@ top-level-declaration ::=
 
 import-declaration   ::= "import" qualified-identifier [ "." "{" identifier { "," identifier } "}" ] newline
 type-declaration     ::= "type" identifier [ "(" type-param-list ")" ]
-                         ( "=" type | struct-body | enum-body )
+                         ( "=" type | struct-body | [ backing-width ] enum-body )
+backing-width        ::= "u8" | "u16" | "u32" | "u64"   % a plain enum only (chapter 7)
 type-param-list      ::= type-param { "," type-param }
 type-param           ::= identifier "type"
 qualified-identifier ::= identifier { "." identifier }

@@ -928,9 +928,37 @@ carries no associated data.  The grammar production is
 \gramref{enum-declaration} (Annex~A).
 
 \pnum
-The underlying representation of an enum type is \idbehav{an integer type
-large enough to hold all variant tags; the reference implementation uses
-\texttt{int}}.
+An enum type is represented by an unsigned integer type whose values \(0, 1, \ldots, n-1\)
+are its variants in declaration order. The integer is the smallest that holds the variants
+(\S\,\ref{sec:mem.adt-layout}) unless the declaration states a \textit{backing width}
+between the type name and the body:
+
+\begin{example}
+\begin{laincode}
+type TokenKind u16 { Ident, Number, Punct }
+assert @sizeof(TokenKind) == 2
+\end{laincode}
+\end{example}
+
+\pnum
+A record that stores an enum has a layout that depends on the enum's width. With a backing
+width, adding a variant leaves that layout where it is, and a variant that no longer fits
+makes the declaration ill-formed instead of the enum silently wider.
+
+\begin{constraint}
+  A backing width shall be \lain{u8}, \lain{u16}, \lain{u32} or \lain{u64}, and shall appear
+  only on an enum none of whose variants carries a payload. A backing width \lain{uN} holds at
+  most \(2^N\) variants. A violation is \illformed{}~(\diagcode{E100}).
+\end{constraint}
+
+\begin{example}
+\begin{laincode}
+type Sign i8 { Minus, Plus }             // ERROR: E100
+\end{laincode}
+\begin{laincode}
+type Shape u8 { Dot, Circle { r u32 } }  // ERROR: E100
+\end{laincode}
+\end{example}
 
 \pnum
 Enum values are accessed as \lain{TypeName.VariantName}.

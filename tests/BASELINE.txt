@@ -1444,6 +1444,17 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=const 12
+### tests/trust/enum_backing_width_pass.ln
+rc=0
+out=
+at=const 4
+at=nonnull 4
+at=pure 4
+ty=Kind scalar
+ty=One scalar
+ty=Rec struct
+ty=Token struct
+ty=Wide scalar
 ### tests/trust/enum_match_pass.ln
 rc=0
 out=2

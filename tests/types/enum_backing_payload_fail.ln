@@ -1,0 +1,7 @@
+// EXPECT: [E100]
+// Only a PLAIN enum takes a backing width. A sum whose variant carries a payload is laid out by
+// the niche search or as tag plus union, and a declared integer width cannot describe either.
+type Shape u8 { Dot, Circle { r u32 } }
+func main() i32 {
+    return 0
+}

@@ -1,0 +1,11 @@
+// EXPECT: [E085]
+// The analysis reads an enum's DECLARED width: a u32-backed enum is 4 bytes, one past the last
+// index of a `u8[4]`, however few variants it has (two would fit in one byte, index 1).
+type Wide u32 { A, B }
+func at(a u8[4]) u8 {
+    return a[@sizeof(Wide)]
+}
+func main() i32 {
+    a u8[4] = [1, 2, 3, 4]
+    return at(a) as i32
+}

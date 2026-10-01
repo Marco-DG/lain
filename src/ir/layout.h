@@ -197,9 +197,13 @@ static IrStructLayout ir_struct_layout(const IrType *st) {
 // The C integer that stores an iN/uN: `u3` is a `uint8_t`, `i40` an `int64_t`.
 static int ir_int_storage_bits(int bits) { return bits<=8?8 : bits<=16?16 : bits<=32?32 : 64; }
 
-// A plain enumeration is the smallest unsigned integer that holds its tags 0..n-1 (a405172).
-static int ir_plain_enum_bits(int n_variants) {
-    return n_variants <= 256 ? 8 : n_variants <= 65536 ? 16 : 32;
+// A plain enumeration is the unsigned integer its declaration states (`type K u16 { A, B }`,
+// the parser checked that the variants fit), or else the smallest that holds its tags 0..n-1
+// (a405172).
+static int ir_plain_enum_bits(const IrType *sum) {
+    if (sum->sum_backing_bits) return sum->sum_backing_bits;
+    int n = sum->n_fields;
+    return n <= 256 ? 8 : n <= 65536 ? 16 : 32;
 }
 
 // A vector lane's bytes. ★ A float lane's width is in `float_bits`, not `bits`: the vector
@@ -231,7 +235,7 @@ static int64_t ir_fixed_size(IrType *t) {
         case IRT_SUM: {
             IrLayout L = ir_layout_of(t);
             if (!L.packed) return 0;
-            if (L.all_empty) return ir_plain_enum_bits(t->n_fields) / 8;
+            if (L.all_empty) return ir_plain_enum_bits(t) / 8;
             if (L.backing && L.backing->kind == IRT_BOOL) return 1;     // stored as a uint8_t
             return ir_fixed_size(L.backing);
         }
@@ -271,7 +275,7 @@ static int ir_order_align(const IrType *t) {
         }
         case IRT_SUM: {
             IrLayout L = ir_layout_of((IrType *)t);
-            if (L.packed && L.all_empty) return ir_plain_enum_bits(t->n_fields) / 8;
+            if (L.packed && L.all_empty) return ir_plain_enum_bits(t) / 8;
             if (L.packed && L.backing)
                 return L.backing->kind == IRT_BOOL ? 1 : ir_order_align(L.backing);
             int a = 4;                                   // the int32_t tag

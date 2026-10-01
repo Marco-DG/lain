@@ -1,0 +1,51 @@
+// `type Kind u16 { Ident, Number }` states the enum's width. The declaration, not the variant
+// count, decides how many bytes a value takes, so a record that stores one keeps its layout as
+// variants are added. The width reaches the C typedef, @sizeof and the analysis's @sizeof fold
+// from one answer (layout.h ir_plain_enum_bits); each function proves its index and the run
+// checks the value.
+type Kind u16 { Ident, Number }
+type Wide u64 { A, B, C }
+type One u8 { Only }
+type Token {
+    pos u32
+    len u16
+    kind Kind
+}
+assert @sizeof(Kind) == 2
+assert @sizeof(Wide) == 8
+assert @sizeof(One) == 1
+assert @sizeof(Token) == 8
+// Fields are stored by decreasing alignment (DECIDE-U), and a u16-backed enum aligns to 2: `k`
+// goes first and the record is 4 bytes. Ordered as if `k` were one byte, it would be 6.
+type Rec {
+    a u8
+    k Kind
+    b u8
+}
+assert @sizeof(Rec) == 4
+func at_kind(a u8[8]) u8 { return a[@sizeof(Kind)] }           // 2
+func at_wide(a u8[8]) u8 { return a[@sizeof(Wide) - 1] }       // 7
+func name(k Kind) i32 {
+    case k {
+        Ident: return 10
+        Number: return 20
+    }
+}
+func rank(w Wide) i32 {
+    case w {
+        A: return 1
+        B: return 2
+        C: return 3
+    }
+}
+func main() i32 {
+    a u8[8] = [10, 11, 12, 13, 14, 15, 16, 17]
+    if at_kind(a) != 12 { return 1 }
+    if at_wide(a) != 17 { return 2 }
+    t = Token(7, 3, Kind.Number)
+    if name(t.kind) != 20 { return 3 }
+    if rank(Wide.C) != 3 { return 4 }
+    r = Rec(1, Kind.Ident, 2)
+    if r.a != 1 or r.b != 2 or name(r.k) != 10 { return 5 }
+    return 0
+}

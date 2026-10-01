@@ -742,6 +742,7 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
                 IrType *r = ir_type_new(c->a, IRT_SUM);
                 Id *enm = ed->as.enum_decl.type_name;
                 if (enm) r->sname = ir_intern(c->a, enm->name, enm->length);
+                r->sum_backing_bits = ed->as.enum_decl.backing_bits;   // the parser checked it
                 if (c->scache_n < 64) { c->scache_decl[c->scache_n]=ed;
                                         c->scache_type[c->scache_n]=r; c->scache_n++; }
                 int nv=0; for (Variant *v = ed->as.enum_decl.variants; v; v=v->next) nv++;

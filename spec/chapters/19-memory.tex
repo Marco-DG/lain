@@ -238,6 +238,8 @@ is built.
 A \textit{plain enumeration} --- an enum type none of whose variants carries a payload ---
 is emitted as the smallest unsigned integer type that holds its variants: \texttt{uint8\_t}
 for up to 256 variants, \texttt{uint16\_t} for up to 65\,536, \texttt{uint32\_t} otherwise.
+A backing width (\S\,\ref{sec:types.enum}) replaces that choice: \lain{type K u16 \{ A, B \}}
+is a \texttt{uint16\_t} however few variants it has.
 The variants are the values \(0, 1, \ldots, n-1\) in declaration order. Each enum type is
 still nominally distinct in the language; the C translation names it with its own
 \texttt{typedef}:

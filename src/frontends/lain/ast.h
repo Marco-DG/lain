@@ -277,6 +277,8 @@ typedef struct EnumDecl {
     Variant* variants;      // Linked list of variants
     DeclList* type_params;  // generic params `type R(T type){...}` (NULL = non-generic)
     bool is_union;          // synthesized from `T | m1 | m2` (payload variant `some` + markers)
+    int backing_bits;       // `type K u8 { A, B }`: the DECLARED width (8/16/32/64), 0 = none.
+                            // Only a plain enum carries one; the parser refuses the rest.
 } DeclEnum;
 
 typedef struct StructDecl {
@@ -1135,6 +1137,8 @@ Decl *decl_enum(Arena *arena, Id *type_name, Variant *variants) {
     d->as.enum_decl.type_name = type_name;
     d->as.enum_decl.variants = variants;
     d->as.enum_decl.type_params = NULL;
+    d->as.enum_decl.is_union = false;
+    d->as.enum_decl.backing_bits = 0;
     return d;
 }
 

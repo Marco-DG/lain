@@ -1,0 +1,7 @@
+// EXPECT: [E100]
+// A backing width is an UNSIGNED width: an enum's values are 0..n-1, and a signed backing would
+// spend half its range on values no variant can take (spec 07, enum types).
+type Sign i8 { Minus, Plus }
+func main() i32 {
+    return 0
+}

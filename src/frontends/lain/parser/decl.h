@@ -673,8 +673,24 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
         parser_advance();
     }
 
+    // Optional BACKING WIDTH of a plain enum: `type TokenKind u8 { Ident, Number, Punct }`.
+    // Without it the width is the smallest that holds the variants; with it the program
+    // states the width, so a record that stores the tag has a layout that does not move when
+    // a variant is added. An alias needs `=` and a body needs `{`, so an identifier here is
+    // unambiguous. Checked below, once the body says whether this is a plain enum.
+    Token backing_tok = parser->token;
+    long backing_line = 0, backing_col = 0;
+    bool has_backing = false;
+    if (parser_match(TOKEN_IDENTIFIER)) {
+        backing_tok = parser->token;
+        backing_line = parser->line;
+        backing_col = parser->column;
+        has_backing = true;
+        parser_advance();
+    }
+
     // If it's a type alias: type Name = Expr
-    if (parser_match(TOKEN_EQUAL)) {
+    if (!has_backing && parser_match(TOKEN_EQUAL)) {
         parser_advance(); // consume '='
 
         // Q-002 refinement type alias detection: `type Name = int >= 0 and <= N`.
@@ -744,7 +760,8 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
     // allow the '{' to be on the next line
     parser_skip_eol();
 
-    parser_expect(TOKEN_L_BRACE, "Expected '{' after type name");
+    parser_expect(TOKEN_L_BRACE, has_backing ? "Expected '{' after the enum's backing width"
+                                             : "Expected '{' after type name");
     parser_advance();
 
     bool is_enum;
@@ -754,9 +771,52 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
     parser_expect(TOKEN_R_BRACE, "Expected '}' at end of type definition");
     parser_advance();
 
+    int backing_bits = 0;
+    if (has_backing) {
+        static const char *const widths = "u8, u16, u32 or u64";
+        int bl = (int)backing_tok.length;
+        const char *bs = backing_tok.start;
+        if (bl == 2 && memcmp(bs, "u8", 2) == 0) backing_bits = 8;
+        else if (bl == 3 && memcmp(bs, "u16", 3) == 0) backing_bits = 16;
+        else if (bl == 3 && memcmp(bs, "u32", 3) == 0) backing_bits = 32;
+        else if (bl == 3 && memcmp(bs, "u64", 3) == 0) backing_bits = 64;
+        if (!backing_bits) {
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: '%.*s' cannot back enum '%.*s': "
+                    "the backing width is %s.\n", backing_line, backing_col, bl, bs,
+                    (int)name->length, name->name, widths);
+            exit(1);
+        }
+        const char *why = NULL;
+        Variant *payload = NULL;
+        if (!is_enum) why = struct_fields ? "has fields, not variants" : "has no variants";
+        else for (Variant *v = adt_variants; v; v = v->next)
+            if (v->fields) { payload = v; break; }
+        if (why || payload) {
+            if (payload)
+                fprintf(stderr, "[E100] Error Ln %li, Col %li: only a plain enum takes a backing "
+                        "width (%s), and variant '%.*s' of '%.*s' carries a payload.\n",
+                        backing_line, backing_col, widths, (int)payload->name->length,
+                        payload->name->name, (int)name->length, name->name);
+            else
+                fprintf(stderr, "[E100] Error Ln %li, Col %li: only a plain enum takes a backing "
+                        "width (%s), and '%.*s' %s.\n", backing_line, backing_col, widths,
+                        (int)name->length, name->name, why);
+            exit(1);
+        }
+        long long n = 0;
+        for (Variant *v = adt_variants; v; v = v->next) n++;
+        if (backing_bits < 64 && n > (1LL << backing_bits)) {
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: enum '%.*s' has %lld variants and "
+                    "u%d holds %lld; the backing width is %s.\n", backing_line, backing_col,
+                    (int)name->length, name->name, n, backing_bits, 1LL << backing_bits, widths);
+            exit(1);
+        }
+    }
+
     if (is_enum) {
         Decl *d = decl_enum(arena, name, adt_variants);
         d->as.enum_decl.type_params = type_params;
+        d->as.enum_decl.backing_bits = backing_bits;
         return d;
     } else {
         Decl *d = decl_struct(arena, name, struct_fields);
