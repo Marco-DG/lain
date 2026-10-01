@@ -195,6 +195,14 @@ int main(int argc, char **argv) {
         IrFunc *mod = ir_lower_module(program, &ir_arena);
         ir_mod = mod;
         lin_mod = mod; bor_loan_mod = mod; vra_mod = mod;
+        // ★ AN UNMODELLED CONSTRUCT IS REPORTED FIRST. Lowering turns one into an OPAQUE — an
+        // unknown value — so the function is still analysed, and every finding that depends on
+        // that unknown is reported: an overflow, a loop that cannot be shown to end, an index.
+        // The opaque itself was refused only at emission, which a program with findings never
+        // reaches, so the cause was never printed. A module-scope `[0 for i in 0..256]` made
+        // E011 and E086 appear on correct loops elsewhere in the file and said nothing at its own
+        // line. Nothing can be emitted for such a program anyway: name the cause and stop.
+        if (ir_emit_refuse_opaque(mod, args.filename)) { sema_destroy(); return 1; }
         int found = 0;
         for (IrFunc *f = mod; f; f = f->next) {
             if (f->is_extern) continue;
