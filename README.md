@@ -782,6 +782,14 @@ Rust does this too, and calls it the same thing. Errors get the same treatment, 
 payload, the packing is not an optimisation the compiler attempts. It is required, and the
 program is rejected when it cannot be done:
 
+```lain
+// ERROR: [E064] the union cannot be zero-cost — i32 has no spare values
+func get(flag bool) i32 | NotFound | Denied {
+    if flag { return 1 }
+    return NotFound
+}
+```
+
 ```
 [E064] Error: the union `i32 | ...` cannot be zero-cost: the value type has 0 spare
        values, and 2 payload-less variants need one each. Give the value type spare
@@ -792,11 +800,18 @@ That is a deliberate trade, and it cuts both ways: a program that would have com
 does not compile here. Where a tag is genuinely unavoidable, because an error case carries a
 payload, it is allowed and reported rather than added quietly:
 
+```lain
+type FileErr { NotFound, Permission, Oom }
+type R { Ok { p *i32 }, Err { e FileErr } }
+
+func f() R {
+    return R.Err(FileErr.Oom)
+}
 ```
-[W120] Warning: the union `i32 | ...` is not zero-cost: it carries an int32_t tag (4 bytes)
-       beside its payloads.
-       It does because 2 of its variants carry a payload, and only a sum with ONE
-       payload-carrying variant can store the others in the payload's spare values.
+
+```
+[W120] Warning: enum 'R' is not zero-cost: it carries an int32_t tag (4 bytes) beside its payloads.
+       It does because 2 of its variants carry a payload, and only a sum with ONE payload-carrying variant can store the others in the payload's spare values.
 ```
 
 A layout optimisation that quietly fails is a cost you find later with a profiler. This one is
