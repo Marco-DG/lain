@@ -738,6 +738,61 @@ never used, so putting it on a function that can abort turns a program that abor
 one that runs clean at `-O3`. This project shipped that miscompile once, and treating a panic as
 an effect is what fixed it.
 
+## The row is only as good as its weakest check
+
+It shipped a second time, by a different route, and the second one is the more useful story.
+A function pointer carries a row, so a call through it is charged the arrow's row — on the
+premise that the row was checked wherever the pointer got its value. That check existed in one
+place: a `var` initialiser. Reach the pointer any other way and nothing looked:
+
+```lain
+// ERROR: [E122] the function may do more than the arrow admits
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type S { cb *func(i32) i32 }
+
+func noisy(n i32) i32 effects io {
+    libc_printf("side effect\n")
+    return n
+}
+
+func run(s S) i32 {
+    return s.cb(0)
+}
+
+func main() i32 effects io {
+    var s = S(noisy)
+    unused = run(s)
+    return 0
+}
+```
+
+`run` reaches an `io` function, through a field whose arrow claims none. Before this was fixed the
+program compiled, and `run` was emitted `__attribute__((pure))` — a promise to the C compiler that
+calling it twice is the same as calling it once, and that a call whose result is unused may be
+dropped. The interpreter, which runs the program on the IR's own semantics, prints the side effect.
+gcc is entitled to delete it, and with this gcc it did:
+
+| build | times the side effect printed |
+|:---|:---|
+| `lain --interpret` | 1 |
+| `gcc -O0` | 1 |
+| **`gcc -O1`** | **0** |
+| `gcc -O2` | 1 |
+
+The `-O2` row is why this kind of bug survives. Nothing is promised about *which* optimiser at
+*which* level takes the permission — gcc 13 inlined the call at `-O2` and kept the effect, and
+deleted it at `-O1`. A wrong annotation does not reliably break anything. It breaks something
+occasionally, on one compiler, at one level, which is indistinguishable from a flake until someone
+reads the emitted C.
+
+The fix is not another check at another site. The row is now verified wherever a value takes a
+function-pointer type, by one check that every such boundary passes through — an initialiser, an
+assignment, a return, a call argument, a struct constructor, a sum payload, an array element.
+Two instances of one wrong annotation, arriving by different routes, is what makes that the right
+shape: an annotation derived from an analysis is only as sound as the weakest place that analysis
+is consulted.
+
 ---
 
 # 7. Data Layout
