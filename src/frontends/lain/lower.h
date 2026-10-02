@@ -2228,7 +2228,12 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 //
                 // The declaration is right here and has both halves. `ir_lower_type` on each
                 // is the same lowering every other type goes through.
-                IrType *fty = (ty && ty->kind==IRT_FUNC) ? ty : NULL;
+                // ...ALWAYS from the declaration. The expression's own type was preferred when it
+                // was a function type, and a function NAME is typed by its RETURN type, so a
+                // function that returns a function pointer (`func pick() *func(i32) i32`) was
+                // referenced as if it WERE that pointer: `pick()` emitted `v1 = pick; v2 = v1();`
+                // with v1 declared `int32_t (*)(int32_t)`, and gcc refused the call.
+                IrType *fty = NULL;
                 if (!fty) {
                     fty = ir_type_new(c->a, IRT_FUNC);
                     fty->elem = ir_lower_type(c, e->decl->as.function_decl.return_type);
@@ -2679,8 +2684,15 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // Detected from the callee's TYPE, not its decl: a local fn-pointer has no decl
             // attached at the call site, so keying on DECL_VARIABLE missed every real case.
             Expr *cx = e->as.call_expr.callee;
-            bool indirect = (callee && callee->kind==DECL_VARIABLE)
-                         || (cx && cx->type && cx->type->kind==TYPE_FUNC);
+            // A NAME bound to a function is a direct call whatever its type says: its type is the
+            // return type, a function pointer for `pick() *func(i32) i32`, which made `pick()` an
+            // indirect call through a value of the wrong type. A callee that is itself a call,
+            // `pick()(5)`, has a function pointer as its value and stays indirect.
+            bool names_fn = cx && cx->kind == EXPR_IDENTIFIER && callee &&
+                            (callee->kind == DECL_FUNCTION || callee->kind == DECL_EXTERN_FUNCTION);
+            bool indirect = !names_fn &&
+                            ((callee && callee->kind==DECL_VARIABLE)
+                             || (cx && cx->type && cx->type->kind==TYPE_FUNC));
             if (indirect) callee = NULL;
             int n=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next) n++;
             // `Point(1, 2)` is struct construction, not a call: build a struct value

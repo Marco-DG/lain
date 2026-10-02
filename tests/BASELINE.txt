@@ -1608,6 +1608,10 @@ ty=Slice_u8 scalar
 ### tests/trust/float_literal_forms_pass.ln
 rc=0
 out=
+### tests/trust/fnptr_from_call_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/trust/fnptr_row_subsumption_pass.ln
 rc=0
 out=io ok

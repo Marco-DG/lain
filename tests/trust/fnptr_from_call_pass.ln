@@ -1,0 +1,19 @@
+// A function that RETURNS a function pointer. Its name is typed by its return type, and lowering
+// took that type for the reference itself, so `pick()` emitted `v1 = pick; v2 = v1();` with v1
+// declared `int32_t (*)(int32_t)`, and gcc refused the call in all four spellings below (the
+// interpreter ran them). The reference's type now comes from the declaration, and a name bound
+// to a function is a direct call.
+func quiet(x i32) i32 { return x +% 0 }
+
+func pick() *func(i32) i32 { return quiet }
+
+func main() i32 {
+    var p = pick()
+    if p(5) != 5 { return 1 }
+    var q *func(i32) i32 = pick()
+    if q(6) != 6 { return 2 }
+    if pick()(7) != 7 { return 3 }
+    r = pick()
+    if r(8) != 8 { return 4 }
+    return 0
+}
