@@ -1,48 +1,37 @@
-// Handwritten by Marco De Groskovskaja
-// License: MIT
-// 15/08/2025
+// Handwritten by:  Marco De Groskovskaja
+// License:         MIT
+// Date:            2026/10/02
 
-/* TODO: currently we treat src as null terminated string,
-    but getting the src lenght would be a single syscall.
-    known len would allow better vectorization
-
-    I could do:
-
-        type Lexer {            // 16 Bytes
-            src  *u8[len]
-            len   u32
-            pos   u32 in src    // Max file size is ~ 4 GB
-        }
-
-*/
-
-
-import token.{Token, TokenKind}
-import ctype.{is_alpha, is_alnum, is_digit, is_space}
-
-/*
-define {
-    Text type = u8[]
-    Pos  type = u32 in Text
+type TokenKind {
+    Eof
+    Ident
+    Number
+    Plus
+    Minus
+    Star
+    Slash
+    LParen
+    RParen
+    Assign
+    Unknown
 }
 
-type Lexer {          // 16 Bytes
-    src Text          // A slice is {data, len}
-    pos Pos    // Max file size is ~ 4 GB
-                      // Unused padding is 4 bytes
-}
-*/
-
-type Lexer {          // 16 Bytes
-    src u8[]          // A slice is {data, len}
-    pos u32 in src    // Max file size is ~ 4 GB
-                      // Unused padding is 4 bytes
+type Token {        // 16 bytes
+    pos  u64        // 8 bytes
+    len  u16        // 2 bytes
+    kind TokenKind  // 1 byte
+                    // padding 5 bytes
 }
 
-func lexer_new(text u8[:0]) Lexer {
+type Lexer {        // 24 bytes
+    src u8[]        // 16 bytes: a slice is {data, len}
+    pos usize <= src.len
+}
+
+assert @sizeof(TokenKind) == 1
+assert @sizeof(Token) == 16
+assert @sizeof(Lexer) == 24
+
+func lexer_new(text u8[]) Lexer {
     return Lexer(text, 0)
-}   
-
-func lexer_next(l *Lexer) Token {
-    // ...
 }
