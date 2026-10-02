@@ -540,6 +540,22 @@ static bool types_compatible(Type *from, Type *to) {
     }
 }
 
+// ★ A FUNCTION NAMED AS A MEMBER, NOT CALLED: `p.helper` with `func helper(p P)` in scope. UFCS
+// makes `p.helper()` the call `helper(p)`; without the parentheses there is nothing to call and no
+// field to read. It reached lowering as an unresolved member and was refused as E100 "not
+// supported by the code generator yet", which reads like a missing feature.
+static bool sema_member_is_callee = false;
+static void type_describe(Type *t, char *buf, size_t cap);
+static void sema_report_function_as_member(Expr *e, Type *t) {
+    char tb[128]; type_describe(t, tb, sizeof tb);
+    int ml = (int)e->as.member_expr.member->length; const char *mn = e->as.member_expr.member->name;
+    fprintf(stderr, "[E128] Error Ln %li, Col %li: '%.*s' is a function, not a member of '%s': call "
+            "it, `x.%.*s()`, which is `%.*s(x)`.\n", (long)e->line, (long)e->col, ml, mn, tb, ml, mn,
+            ml, mn);
+    diagnostic_show_line(e->line, e->col);
+    exit(1);
+}
+
 // P2/S3: render a Type into `buf` for diagnostics (best-effort, a couple of
 // levels of pointer/slice/array nesting; falls back to "?").
 static void type_describe(Type *t, char *buf, size_t cap) {
@@ -2045,6 +2061,10 @@ void sema_infer_expr(Expr *e) {
 // ...
 
   case EXPR_MEMBER: {
+    // Whether this member is the callee of a call (set by EXPR_CALL for its callee only, and
+    // consumed here before the target is inferred, so `a.b.c()` makes only `.c` a callee).
+    bool is_callee = sema_member_is_callee;
+    sema_member_is_callee = false;
     sema_infer_expr(e->as.member_expr.target);
     Type *t = e->as.member_expr.target->type;
     
@@ -2201,6 +2221,7 @@ void sema_infer_expr(Expr *e) {
         Symbol *usym = sema_lookup(ubuf);
         if (usym && usym->decl && (usym->decl->kind == DECL_FUNCTION
                                 || usym->decl->kind == DECL_EXTERN_FUNCTION)) {
+            if (!is_callee) sema_report_function_as_member(e, t);
             e->type = NULL;   // the parent EXPR_CALL turns this into `member(target, …)`
             return;
         }
@@ -2232,6 +2253,7 @@ void sema_infer_expr(Expr *e) {
             // It might be a UFCS method call (e.g., `l.consume()`).
             // We leave `e->type = NULL`. The parent `EXPR_CALL` will detect this
             // and rewrite the AST to `consume(l)`.
+            if (!is_callee) sema_report_function_as_member(e, t);
         } else {
             fprintf(stderr, "[E128] Error Ln %li, Col %li: struct '%.*s' has no field '%.*s'\n",
                 (long)e->line, (long)e->col, (int)t->base_type->length, t->base_type->name, 
@@ -2247,7 +2269,9 @@ void sema_infer_expr(Expr *e) {
 
   case EXPR_CALL: {
     // ensure callee resolved & infer args
+    sema_member_is_callee = true;   // a member callee may be a UFCS function (EXPR_MEMBER)
     sema_infer_expr(e->as.call_expr.callee); // Changed from resolve to infer to handle Shape.Circle
+    sema_member_is_callee = false;
 
     // Call THROUGH a function pointer: the callee is a VALUE of TYPE_FUNC (a
     // variable/param/field), not a direct function reference. Check args

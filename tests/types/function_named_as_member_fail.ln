@@ -1,0 +1,14 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: Error Ln 11, Col 12: 'helper' is a function, not a member of 'P'
+// UFCS makes `p.helper()` the call `helper(p)`; without the parentheses there is neither a call
+// nor a field. It reached lowering as an unresolved member and was refused as E100 "this construct
+// is not supported by the code generator yet", which reads like a missing feature.
+type P { x i32 }
+
+func helper(p P) i32 { return p.x }
+
+func main() i32 {
+    return p_of().helper
+}
+
+func p_of() P { return P(0) }
