@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: a `decreasing` measure is an integer that falls toward 0; this one has type 'u8[]'
+// `decreasing "a string"` on a loop whose termination was inferred was accepted silently: the
+// measure was never typed (I.50).
+func main() i32 {
+    var i usize = 0
+    var n usize = 4
+    while i < n decreasing "a string" {
+        i = i + 1
+    }
+    return 0
+}

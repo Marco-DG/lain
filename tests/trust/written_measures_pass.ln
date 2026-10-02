@@ -1,0 +1,23 @@
+// The allowed side of checking a written `decreasing` everywhere (I.50): a measure on a function
+// that does not recurse, and one on a loop whose termination would be inferred anyway, are
+// redundant but legitimate, and stay accepted.
+func first(a u8[], n usize) u8 decreasing n {
+    if a.len == 0 {
+        return 0
+    }
+    return a[0]
+}
+
+func count(n usize) usize {
+    var i usize = 0
+    while i < n decreasing n - i {
+        i = i + 1
+    }
+    return i
+}
+
+func main() i32 {
+    if first("xy", 2) != 120 { return 1 }
+    if count(5) != 5 { return 2 }
+    return 0
+}

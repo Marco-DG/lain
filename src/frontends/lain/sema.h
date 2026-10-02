@@ -2009,6 +2009,33 @@ static void bc_scan(StmtList *body, Id **gv, Id **gb, int nguard, BCEntry *e, in
 /* walk_stmt: type inference + range analysis walk over a single statement.
    Formerly a GCC nested function inside sema_resolve_module; refactored to
    file-level static for C99/Clang/MSVC portability. */
+// ★ A `decreasing` THE PROGRAMMER WROTE IS CHECKED WHERE IT IS WRITTEN (I.50, Handwriting). It
+// was resolved only where the termination checker consumed it: on a function that does not recurse,
+// or a loop whose termination was inferred, `decreasing zz` and `decreasing "a string"` were
+// accepted silently, and on a loop an undeclared name reached the code generator, refused as E100
+// "not supported yet (undeclared-identifier)": a typo reported as a missing feature. A COPY is
+// resolved and typed, so the expression the termination checker and lowering read is untouched
+// (the checker compares a function measure's names with the parameters'). A measure is an integer;
+// a pointer is let through, the shape of the `p - arr` measures loops synthesise.
+static void sema_check_written_measure(Expr *m) {
+    if (!m) return;
+    Expr *mc = clone_expr(sema_arena, m);
+    sema_resolve_expr(mc);
+    sema_infer_expr(mc);
+    int undeclared = und_found;   // undeclared.h's predicate, on the measure it skipped
+    und_expr(mc);
+    if (und_found > undeclared) exit(1);
+    Type *t = mc->type;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    t = resolve_type_alias(sema_unwrap_type(t));
+    if (t && (is_integer_type(t) || t->kind == TYPE_POINTER)) return;
+    char tb[128]; type_describe(mc->type, tb, sizeof tb);
+    fprintf(stderr, "[E012] Error Ln %li, Col %li: a `decreasing` measure is an integer that "
+            "falls toward 0; this one has type '%s'.\n", (long)m->line, (long)m->col, tb);
+    diagnostic_show_line(m->line, m->col);
+    exit(1);
+}
+
 static void walk_stmt(Stmt *s) {
     if (!s) return;
     switch (s->kind) {
@@ -2721,6 +2748,7 @@ static void walk_stmt(Stmt *s) {
         }
         case STMT_WHILE: {
             sema_infer_expr(s->as.while_stmt.cond);
+            if (s->as.while_stmt.measure_written) sema_check_written_measure(s->as.while_stmt.measure);
 
             // Bounded-counter capture: find guarded +1 counters and their PRE-LOOP
             // ranges now, before any widening, so v <= B can be re-established after.
@@ -4669,6 +4697,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                  sema_infer_expr(post->expr);
              }
         }
+
+        // A written measure, with the parameters in scope (an inferred one is installed later, at
+        // a recursive call, and is the compiler's own).
+        sema_check_written_measure(d->as.function_decl.decreasing_measure);
 
         // Before RESOLUTION, not after: resolve creates the implicit local and gives it the
         // declared type, so a type decided later never reaches the symbol.

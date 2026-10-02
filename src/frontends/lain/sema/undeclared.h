@@ -198,7 +198,9 @@ static void und_stmt(Stmt *s) {
             und_stmt_list(s->as.if_stmt.else_branch);
             break;
         case STMT_WHILE:
-            // The measure is a proof obligation, not code — `decreasing` emits nothing.
+            // The measure is checked where it is written (sema.h, sema_check_written_measure): it
+            // is lowered for the termination proof, so an undeclared name in it reached the code
+            // generator. The comment here said "`decreasing` emits nothing".
             und_expr(s->as.while_stmt.cond);
             und_defer_loops++; und_stmt_list(s->as.while_stmt.body); und_defer_loops--;
             break;

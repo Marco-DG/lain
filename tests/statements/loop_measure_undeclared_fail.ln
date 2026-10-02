@@ -1,0 +1,13 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 9, Col 28: use of undeclared identifier 'nn'
+// A typo in a loop's `decreasing` reached the code generator, which refused it as E100 "this
+// construct is not supported by the code generator yet (undeclared-identifier)": a mistyped name
+// reported as a missing feature (I.50, Handwriting). The measure is checked where it is written.
+func main() i32 {
+    var i usize = 0
+    var n usize = 4
+    while i < n decreasing nn - i {
+        i = i + 1
+    }
+    return 0
+}

@@ -1,0 +1,10 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 6, Col 40: use of undeclared identifier 'zz'
+// A function's `decreasing` was resolved only if the function recursed, where the termination
+// checker read it; on this one, which does not recurse, `decreasing zz` was accepted silently
+// (I.50, Handwriting).
+func f(a u8[], n usize) i32 decreasing zz {
+    return 0
+}
+
+func main() i32 { return f("ab", 2) }
