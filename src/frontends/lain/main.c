@@ -165,11 +165,11 @@ int main(int argc, char **argv) {
     char *modname = filepath_to_modname(&ast_arena, args.filename);
 
     module_root_file = args.filename;   // read the program from the path given, not from its name
+    // NULL is the program with no declarations: a file it cannot open has already been reported,
+    // and the root module is never one already loaded. It compiles to a module with nothing in it,
+    // as a program without `main` compiles. It was refused as "Could not load root module", with
+    // no code, which blamed a file that loaded fine.
     DeclList *program = load_module(&file_arena, &ast_arena, modname);
-    if (!program) {
-        fprintf(stderr, "Could not load root module %s\n", modname);
-        return 1;
-    }
 
     if (args.dump_ast) {
         printf("\n\n#### AST ####\n");
