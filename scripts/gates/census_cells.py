@@ -646,6 +646,41 @@ for _cdir, _init, _step, _want in (("up", "0", "i = i + 1", "4 3\n"), ("down", "
 
 
 
+# ── axis: a MIXED-SIGN comparison, where C's conversions are not mathematics (I.88) ──────────────
+# MCW's I.88, a memory-safety hole on HEAD. `x < n` with x i32 and n usize: the IR, the octagon and
+# the interpreter read it mathematically; C converts -1 to SIZE_MAX. The decided semantics is
+# mathematics, so every expectation below is the MATHEMATICAL answer, written here from the operand
+# values and never read from any oracle.
+#
+# Two cells carry the row on their own. `u64 > negative i32` is the dangerous one: on HEAD, C AND the
+# interpreter agree on the wrong answer, because the lowering took signedness from the LEFT operand,
+# so no differential between those two oracles can see it and only an external authority can.
+# `u32 < negative i64` is its mirror: there C was RIGHT and the interpreter was wrong, which is the
+# direction a C-vs-interpreter differential would have blamed on the backend.
+# `negative i8 < u8` is the allowed side: C promotes both to int, so C is already exact there and a
+# fix must leave it alone.
+_I88 = ("I.88 — a mixed-sign comparison is mathematical in the IR and converted in C (-1 becomes "
+        "SIZE_MAX), and the lowering took signedness from the LEFT operand, so the IR itself answered "
+        "one question two ways")
+for _cell, _pa, _pb, _expr, _aa, _ab, _math in [
+    ("negative i32 < u64",            "i32", "u64",   "a < b",  "0 - 1", "4",          1),
+    ("u64 > negative i32",            "u64", "i32",   "a > b",  "4",     "0 - 1",      1),
+    ("negative i32 < u32",            "i32", "u32",   "a < b",  "0 - 1", "4",          1),
+    ("negative i32 <= usize",         "i32", "usize", "a <= b", "0 - 1", "4",          1),
+    ("u32 < negative i64",            "u32", "i64",   "a < b",  "4",     "0 - 1",      0),
+    ("negative i32 == u32 max",       "i32", "u32",   "a == b", "0 - 1", "4294967295", 0),
+    ("negative i8 < u8 (exact in C)", "i8",  "u8",    "a < b",  "0 - 1", "4",          1),
+]:
+    # DERIVED: -1 is less than every non-negative number, so the first four are 1; 4 is not less than
+    # -1, so the fifth is 0; -1 does not equal 4294967295, so the sixth is 0. No compiler needed.
+    add("mixed-sign-cmp", _cell,
+        'func cmp(a %s, b %s) i32 {\n    if %s {\n        return 1\n    }\n    return 0\n}\n'
+        'func main() i32 effects io {\n    libc_printf("%%d\\n", cmp(%s, %s))\n    return 0\n}\n'
+        % (_pa, _pb, _expr, _aa, _ab),
+        "%d\n" % _math,
+        plan=(None if _cell.startswith("negative i8") else _I88))
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
