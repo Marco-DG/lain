@@ -1,0 +1,14 @@
+// CLAIM: LANGUAGE.md §1.1 — of macro/expr/pre/post/end/export/fun/undefined, none is reserved.
+// EXPECT: COMPILES
+type S {
+    end i32
+    macro i32
+    expr i32
+    post i32
+    export i32
+    undefined i32
+}
+func main() i32 {
+    s = S(1, 2, 3, 4, 5, 6)
+    return s.end
+}

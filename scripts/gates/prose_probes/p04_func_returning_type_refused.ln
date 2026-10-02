@@ -1,0 +1,6 @@
+// CLAIM: spec §14 note — a function returning `type` does not parse (marked not yet in force).
+// EXPECT: [E100]
+func Mk(T type) type {
+    return T
+}
+func main() i32 { return 0 }

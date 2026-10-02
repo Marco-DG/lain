@@ -1,0 +1,14 @@
+// CLAIM: LANGUAGE.md §6.1 — a chained branch is `else if`; there is no `elif`.
+// EXPECT: COMPILES
+func classify(x i32) i32 {
+    if x > 10 {
+        return 2
+    } else if x > 5 {
+        return 1
+    } else {
+        return 0
+    }
+}
+func main() i32 {
+    return classify(7)
+}

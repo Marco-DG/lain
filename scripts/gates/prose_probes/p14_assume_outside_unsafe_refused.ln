@@ -1,0 +1,7 @@
+// CLAIM: spec §9 stmt.assert — `assume` is allowed only inside an `unsafe` block.
+// EXPECT: [E129]
+func f(n usize) usize {
+    assume n < 10
+    return n
+}
+func main() i32 { return 0 }

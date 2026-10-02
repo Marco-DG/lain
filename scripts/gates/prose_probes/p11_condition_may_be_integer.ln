@@ -1,0 +1,9 @@
+// CLAIM: spec §7 types.bool and §9 — a condition may be a bool OR an integer (0 false).
+// EXPECT: COMPILES
+func f(n i32) i32 {
+    if n {
+        return 1
+    }
+    return 0
+}
+func main() i32 { return 0 }

@@ -1,0 +1,7 @@
+// CLAIM: README §4 / the wording rule — for UNSIGNED division `!= 0` IS exactly sufficient,
+// because there is no MIN / -1. This is the honest zero-division demonstration.
+// EXPECT: COMPILES
+func safe_div(a u32, b u32 != 0) u32 {
+    return a / b
+}
+func main() i32 { return 0 }

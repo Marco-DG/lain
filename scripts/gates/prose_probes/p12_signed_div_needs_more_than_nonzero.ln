@@ -1,0 +1,7 @@
+// CLAIM: README §4 / the wording rule — `b != 0` is NOT sufficient for SIGNED division,
+// because MIN / -1 overflows. No document may say otherwise.
+// EXPECT: [E086]
+func safe_div(a int, b int != 0) int {
+    return a / b
+}
+func main() i32 { return 0 }

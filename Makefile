@@ -35,6 +35,7 @@ gates: $(BIN)
 	bash scripts/gates/run_trust.sh
 	bash scripts/gates/readme_gate.sh
 	bash scripts/gates/spec_gate.sh
+	bash scripts/gates/prose_gate.sh
 	bash scripts/gates/run_ir_tests.sh
 	bash scripts/gates/cmin_gate.sh
 	bash scripts/gates/check_build_warnings.sh

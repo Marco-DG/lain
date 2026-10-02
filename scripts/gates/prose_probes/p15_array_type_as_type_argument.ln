@@ -1,0 +1,18 @@
+// CLAIM: LANGUAGE.md §20 — a type argument may be an array type or an alias of one.
+// EXPECT: COMPILES
+type Quad = u8[4]
+type G(T type) {
+    Has { v T }
+    No
+}
+func get(g G(Quad)) u8 {
+    case g {
+        Has(v): return v[3]
+        No: return 0
+    }
+}
+func main() i32 {
+    xs Quad = [1, 2, 3, 4]
+    a = G(Quad).Has(xs)
+    return get(a) as i32
+}

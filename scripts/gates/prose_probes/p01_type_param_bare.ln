@@ -1,0 +1,8 @@
+// CLAIM: LANGUAGE.md §20 — a type parameter is an ordinary parameter of type `type`, no keyword.
+// EXPECT: COMPILES
+func identity(T type, x T) T {
+    return x
+}
+func main() i32 {
+    return identity(i32, 7)
+}

@@ -1,0 +1,11 @@
+// CLAIM: LANGUAGE.md §6.1 — `elif` is not a keyword.
+// EXPECT: [E100]
+func f(x i32) i32 {
+    if x > 10 {
+        return 1
+    } elif x > 5 {
+        return 2
+    }
+    return 0
+}
+func main() i32 { return 0 }

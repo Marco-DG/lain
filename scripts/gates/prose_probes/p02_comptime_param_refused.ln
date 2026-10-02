@@ -1,0 +1,6 @@
+// CLAIM: LANGUAGE.md §20 — there is no `comptime` parameter keyword (it taught one until 2026-10-01).
+// EXPECT: [E100]
+func identity(comptime T type, x T) T {
+    return x
+}
+func main() i32 { return 0 }

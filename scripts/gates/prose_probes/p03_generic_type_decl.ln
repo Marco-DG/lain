@@ -1,0 +1,13 @@
+// CLAIM: LANGUAGE.md §20 — a generic type is declared `type Option(T type) { ... }`.
+// EXPECT: COMPILES
+type Option(T type) {
+    Some { val T }
+    None
+}
+func main() i32 {
+    o Option(*u8) = Option(*u8).None
+    return case o {
+        Some(v): 1
+        None: 0
+    }
+}

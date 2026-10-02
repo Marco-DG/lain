@@ -1,0 +1,5 @@
+// CLAIM: LANGUAGE.md §1.1 — `fun` is NOT an alias for `func` (the page claimed it was).
+// EXPECT: [E100]
+fun main() i32 {
+    return 0
+}
