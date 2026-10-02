@@ -1,0 +1,11 @@
+// EXPECT: [E003]
+// EXPECT-TEXT: a linear value is not consumed before it goes out of scope
+// I.92: the binding form of tests/ownership/mov_scalar_param_leak_fail.ln. `mov x i32` is
+// consumed exactly once like every `mov` value, so going out of scope unconsumed is a leak.
+func go() i32 {
+    mov x i32 = 7
+    return 0
+}
+func main() i32 {
+    return go()
+}

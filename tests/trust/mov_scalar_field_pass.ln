@@ -1,7 +1,8 @@
-// I.82, the allowed side: a `mov` int field consumed on every path compiles and runs, and an owned
-// BINDING of a plain int (`mov n i32`) or of a struct with no `mov` field owns no resource and needs
-// no consumer. Only a field DECLARED `mov` carries the release obligation. Run under the sanitizers
-// and the interpreter.
+// I.82, the allowed side: a `mov` int field consumed on every path compiles and runs. An owned binding
+// of a struct with no `mov` field (`mov k Counter`) owns no resource and needs no consumer (I.93 keeps
+// that case apart). A plain parameter `n i32` is not `mov`: since I.92 a `mov` scalar must be released,
+// and a body that only returns it is the identity route plan I.95 asks about, so this test does not
+// use one. Run under the sanitizers and the interpreter.
 extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type Fd { mov fd i32 }
@@ -21,7 +22,7 @@ func use_fd(c bool) i32 effects io {
     return 0
 }
 
-func plain(mov n i32, mov k Counter) i32 {
+func plain(n i32, mov k Counter) i32 {
     return n +% k.value
 }
 

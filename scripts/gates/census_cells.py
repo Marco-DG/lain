@@ -673,17 +673,14 @@ for _cell, _pa, _pb, _expr, _aa, _ab, _math in [
 # FIELD and is a missing case of an existing rule, while this row asks whether `mov x i32` is a
 # resource at all, which is a semantics choice. Their measurement for it: charging linear scalars at
 # depth 0 changes no corpus file except their own I.82 trust test, which drops a `mov n i32` on purpose.
-_I82B = ("I.92 — a `mov` binding or parameter of a plain scalar is linear in two directions and not "
-         "the third: dropping it is accepted, while double-consume (E002) and use-after-consume (E001) "
-         "are both caught. The proposal in the row is that `mov` mean exactly-once for every type. "
-         "I.82 is a different question: it charges a declared `mov` FIELD inside an aggregate")
+# Closed by I.92: a dropped `mov` scalar is E003 at any depth, so the two holes above now refuse.
 add("mov-outside-aggregate", "integer parameter, dropped",
-    'func sink(mov v i32) { }\nfunc main() i32 { return 0 }\n', "__ILLFORMED__", plan=_I82B)
+    'func sink(mov v i32) { }\nfunc main() i32 { return 0 }\n', "__ILLFORMED__")
 add("mov-outside-aggregate", "pointer parameter, dropped",
     'func sink(mov v *i32) { }\nfunc main() i32 { return 0 }\n', "__ILLFORMED__")
 add("mov-outside-aggregate", "integer binding, never consumed",
     'func go() i32 {\n    mov x i32 = 7\n    return 0\n}\n'
-    'func main() i32 { return go() }\n', "__ILLFORMED__", plan=_I82B)
+    'func main() i32 { return go() }\n', "__ILLFORMED__")
 add("mov-outside-aggregate", "pointer binding, never consumed",
     'func go() i32 {\n    var n i32 = 0\n    mov p *i32 = &n\n    return 0\n}\n'
     'func main() i32 { return go() }\n', "__ILLFORMED__")

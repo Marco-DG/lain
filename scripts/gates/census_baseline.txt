@@ -260,9 +260,9 @@ mixed-sign-cmp	negative i32 <= usize	OK
 mixed-sign-cmp	u32 < negative i64	OK
 mixed-sign-cmp	negative i32 == u32 max	OK
 mixed-sign-cmp	negative i8 < u8 (exact in C)	OK
-mov-outside-aggregate	integer parameter, dropped	ACCEPTED-ILLFORMED  # I.92 — a `mov` binding or parameter of a plain scalar is linear in two directions and not the third: dropping it is accepted, while double-consume (E002) and use-after-consume (E001) are both caught. The proposal in the row is that `mov` mean exactly-once for every type. I.82 is a different question: it charges a declared `mov` FIELD inside an aggregate
+mov-outside-aggregate	integer parameter, dropped	ok-REFUSED [E003]
 mov-outside-aggregate	pointer parameter, dropped	ok-REFUSED [E003]
-mov-outside-aggregate	integer binding, never consumed	ACCEPTED-ILLFORMED  # I.92 — a `mov` binding or parameter of a plain scalar is linear in two directions and not the third: dropping it is accepted, while double-consume (E002) and use-after-consume (E001) are both caught. The proposal in the row is that `mov` mean exactly-once for every type. I.82 is a different question: it charges a declared `mov` FIELD inside an aggregate
+mov-outside-aggregate	integer binding, never consumed	ok-REFUSED [E003]
 mov-outside-aggregate	pointer binding, never consumed	ok-REFUSED [E003]
 mov-outside-aggregate	integer binding, consumed twice	ok-REFUSED [E002]
 mov-outside-aggregate	integer binding, read after the consume	ok-REFUSED [E001]

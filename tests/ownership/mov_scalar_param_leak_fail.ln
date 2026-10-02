@@ -1,0 +1,12 @@
+// EXPECT: [E003]
+// EXPECT-TEXT: a linear value is not consumed before it goes out of scope
+// I.92: a `mov` parameter of a plain scalar is a resource like any `mov` value. It was linear in
+// two directions of three: consuming it twice was E002 and using it after its consume E001, while
+// dropping it, below, was accepted. A file descriptor passed as `mov fd i32` and never closed is
+// exactly this program.
+func forget(mov fd i32) i32 {
+    return 0
+}
+func main() i32 {
+    return forget(3)
+}

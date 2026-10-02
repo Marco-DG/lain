@@ -65,14 +65,16 @@ typedef struct {
 static bool lin_has_release_obligation(const IrType *t, int depth) {
     if (!t || depth > 8) return false;
     if ((t->kind==IRT_PTR || t->kind==IRT_SLICE) && t->linear) return true;
-    // ★ A FIELD DECLARED `mov` IS A RESOURCE WHATEVER ITS TYPE (I.82). The rule above charged only
+    // ★ A `mov` SCALAR IS A RESOURCE WHATEVER ITS TYPE (I.82, I.92). The rule above charged only
     // pointers and slices, on the premise that an integer is not a resource; but a POSIX file
     // descriptor is an int, and `type H { mov handle i32 }` is the corpus's own spelling. Consuming
-    // such a field on one path only was E016 while never consuming it was accepted: trying and
-    // failing was refused, not trying was not. A linear scalar INSIDE an aggregate (depth >= 1) is a
-    // declared `mov` field and carries the obligation. At depth 0 it is an owned BINDING of a plain
-    // value (`mov x i32`, `mov c Counter` with no `mov` field), which owns no resource.
-    if (depth >= 1 && t->linear && (t->kind==IRT_INT || t->kind==IRT_BOOL)) return true;
+    // such a value on one path only was E016, consuming it twice E002, using it after its consume
+    // E001, while never consuming it at all was accepted: linear in two directions of three. A
+    // linear scalar carries the obligation wherever it sits, a declared `mov` field (I.82) or a
+    // `mov` binding or parameter (I.92). A plain struct bound by `mov` (`mov c Counter`, no `mov`
+    // field) is not charged here: its type's linear flag is shared with every value of that type
+    // in the function (I.93), so charging it would charge them all.
+    if (t->linear && (t->kind==IRT_INT || t->kind==IRT_BOOL)) return true;
     if (t->kind==IRT_STRUCT) {
         // An OPAQUE linear struct — no visible fields, because a cross-module type lowers
         // without them — must be assumed to own a resource. Concluding "owns nothing" about a
