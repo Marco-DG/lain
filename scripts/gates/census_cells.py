@@ -708,6 +708,36 @@ add("mov-outside-aggregate", "integer binding, read after the consume",
     'func main() i32 effects io { return go() }\n', "__ILLFORMED__")
 
 
+# ── axis: a `mov` PARAMETER and a plain local of the same struct type (I.93) ─────────────────────
+# Found by MCW while measuring the struct half of I.92, and confirmed here. Lowering caches one
+# IrType per struct per function and the `mov` qualifier sets `linear` on that shared object, so a
+# `mov` parameter makes every plain local of the same type linear too:
+#
+#   func f(mov k Counter) i32 { a = Counter(1)  b = a  d = a ... }   E001 at `d = a`
+#   func f(k Counter)     i32 { ... the identical body ... }          runs, prints 7
+#
+# Over-rejection only, since the flag can only ADD linearity. The third cell is the one that locates
+# the bug for whoever fixes it: a `mov` parameter of a DIFFERENT struct type does not contaminate, so
+# the sharing is per TYPE and not per function. A fix keyed on the function would leave that cell
+# alone and the first cell broken; a fix that cleared linearity too widely would stop charging the
+# parameter itself, which the mov-field-leak row above would then catch.
+_I93 = ("I.93 — lowering caches one IrType per struct per function and `mov` sets `linear` on that "
+        "shared object, so a `mov` parameter makes plain locals of the same type linear: `d = a` is "
+        "refused E001. Over-rejection only; it also blocks measuring the struct half of I.92")
+_I93_BODY = ('type Counter { n i32 }\n%s'
+             'func f(%s) i32 {\n    a = Counter(1)\n    b = a\n    d = a\n'
+             '    if b.n == d.n {\n        return 7\n    }\n    return 9\n}\n'
+             'func main() i32 effects io {\n    libc_printf("%%d\\n", f(%s))\n    return 0\n}\n')
+# DERIVED: a and its two copies all hold n == 1, so the comparison holds and f returns 7. Counter owns
+# nothing, so no copy of it can be a move in the first place.
+add("mov-shared-irtype", "mov parameter of the local's own type",
+    _I93_BODY % ("", "mov k Counter", "Counter(0)"), "7\n", plan=_I93)
+add("mov-shared-irtype", "plain parameter of the local's own type",
+    _I93_BODY % ("", "k Counter", "Counter(0)"), "7\n")
+add("mov-shared-irtype", "mov parameter of a DIFFERENT type",
+    _I93_BODY % ("type Other { m i32 }\n", "mov k Other", "Other(0)"), "7\n")
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
