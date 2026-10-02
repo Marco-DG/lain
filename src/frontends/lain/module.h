@@ -316,8 +316,8 @@ static DeclList* load_module(Arena *file_arena,
 
     // 2) read the file into file_arena
     File f = file_read_into_arena(file_arena, path);
-    if (!f.contents) {
-        fprintf(stderr, "Error: Cannot open module file '%s'\n", path);
+    if (!f.contents) {   // the program's own file: an imported module is checked at its import
+        fprintf(stderr, "lain: cannot open '%s'.\n", path);
         exit(1);
     }
 
@@ -380,6 +380,22 @@ static DeclList* load_module(Arena *file_arena,
                 register_sel_import(ast_arena, modname, sn->id);
 
             record_import_edge(ast_arena, modname, buf, cur->decl, path);
+
+            // A module that does not exist is refused at the import that names it, with its
+            // position; it was an uncoded "Error: Cannot open module file" with neither.
+            if (!module_already_loaded(buf)) {
+                char mpath[256];
+                module_name_to_path(buf, mpath, sizeof mpath);
+                FILE *probe = fopen(mpath, "rb");
+                if (!probe) {
+                    fprintf(stderr, "[E106] Error Ln %li, Col %li: there is no module '%s' (no file "
+                            "'%s').\n", (long)cur->decl->line, (long)cur->decl->col, buf, mpath);
+                    fprintf(stderr, "  --> %s:%li:%li\n", path, (long)cur->decl->line,
+                            (long)cur->decl->col);
+                    exit(1);
+                }
+                fclose(probe);
+            }
 
             // recurse
             DeclList *child = load_module(file_arena, ast_arena, buf);

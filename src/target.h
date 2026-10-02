@@ -91,7 +91,7 @@ static void target_init_for(const char *triple) {
     } else if (strcmp(triple, "host") == 0) {
         target_init_host();
     } else {
-        fprintf(stderr, "Error: unknown target triple '%s'.\n"
+        fprintf(stderr, "lain: unknown target triple '%s'.\n"
                         "Supported: x86_64-linux-gnu, aarch64-linux-gnu, "
                         "x86_64-windows-msvc, cortex-m4-bare, host.\n",
                 triple);

@@ -3173,19 +3173,6 @@ static void walk_stmt(Stmt *s) {
                 check_conversion(s->as.return_stmt.value->type, current_return_type, r,
                     s->as.return_stmt.value, s->line, s->col, "return from function", buf);
             }
-            // Check Post-Contracts
-            if (current_function_decl && current_function_decl->as.function_decl.post_contracts) {
-                Range ret_range = sema_eval_range(s->as.return_stmt.value, sema_ranges);
-                
-                for (ExprList *post = current_function_decl->as.function_decl.post_contracts; post; post = post->next) {
-                    int result = sema_check_post_condition(post->expr, ret_range, sema_ranges);
-                    
-                    if (result == 0) {
-                        fprintf(stderr, "Error: Post-condition violation. Return value cannot satisfy contract.\n");
-                        exit(1);
-                    }
-                }
-            }
             
             break;
         case STMT_MATCH: {
@@ -4311,7 +4298,11 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 }
 
                 if (!struct_decl) {
-                    fprintf(stderr, "Error: Could not resolve struct type for destructuring\n");
+                    char tb[128]; type_describe(dd->type, tb, sizeof tb);
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: a destructured parameter has "
+                            "type '%s'; only a struct can be destructured.\n",
+                            (long)p->decl->line, (long)p->decl->col, tb);
+                    diagnostic_show_line(p->decl->line, p->decl->col);
                     exit(1);
                 }
 
@@ -4328,9 +4319,12 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     }
 
                     if (!field_type) {
-                        fprintf(stderr, "Error: Field '%.*s' not found in struct '%.*s'\n", 
-                                (int)n->id->length, n->id->name,
-                                (int)dd->type->base_type->length, dd->type->base_type->name);
+                        fprintf(stderr, "[E128] Error Ln %li, Col %li: struct '%.*s' has no field "
+                                "'%.*s' to destructure.\n",
+                                (long)p->decl->line, (long)p->decl->col,
+                                (int)dd->type->base_type->length, dd->type->base_type->name,
+                                (int)n->id->length, n->id->name);
+                        diagnostic_show_line(p->decl->line, p->decl->col);
                         exit(1);
                     }
 

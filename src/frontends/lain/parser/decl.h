@@ -995,6 +995,7 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
             
             if (parser_match(TOKEN_L_BRACE)) {
                 // Destructuring: {a, b} Type
+                isize d_line = parser->line, d_col = parser->column;   // for its diagnostics
                 parser_advance(); // consume '{'
                 
                 IdList* names = NULL;
@@ -1025,6 +1026,7 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
                 if (is_move) ptype = type_move(arena, ptype);
                 
                 pdecl = decl_destruct(arena, names, ptype);
+                pdecl->line = d_line; pdecl->col = d_col;
                 
                 *tail = decl_list(arena, pdecl);
                 tail  = &(*tail)->next;

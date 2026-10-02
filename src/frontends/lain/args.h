@@ -156,7 +156,7 @@ static Args args_parse(int argc, char** argv)
             // the filename produced "Cannot open module file '--dump-effcts.ln'", which is
             // confusing rather than wrong. readme_gate tests the opposite direction (a flag the
             // docs name that the binary rejects) and cannot see this one.
-            fprintf(stderr, "Error: unknown option '%s'.\n", argv[i]);
+            fprintf(stderr, "lain: unknown option '%s'.\n", argv[i]);
             fprintf(stderr, "       accepted: -o <file> --target=<triple> --dump-ast --dump-niche "
                             "--dump-effects --dump-octagon --dump-measures\n"
                             "                 --no-w130 --no-line-directives --emit-llvm "

@@ -165,19 +165,6 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr) {
             if (expr->as.call_expr.callee->kind == EXPR_IDENTIFIER) {
                 Id* callee_id = expr->as.call_expr.callee->as.identifier_expr.id;
                 
-                // Intrinsic: compileError
-                if (strncmp(callee_id->name, "compileError", 12) == 0) {
-                    if (expr->as.call_expr.args && expr->as.call_expr.args->expr->kind == EXPR_STRING) {
-                        const char* error_msg = expr->as.call_expr.args->expr->as.string_expr.value;
-                        fprintf(stderr, "Compile Error: %.*s\n", 
-                            (int)expr->as.call_expr.args->expr->as.string_expr.length, error_msg);
-                        exit(1);
-                    } else {
-                        fprintf(stderr, "Compile Error: compileError expects a string literal.\n");
-                        exit(1);
-                    }
-                }
-                
                 Decl* callee_decl = expr->as.call_expr.callee->decl;
                 
                 // If it wasn't resolved yet, try looking it up by its name (e.g. for intrinsic checks)

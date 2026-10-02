@@ -1385,69 +1385,6 @@ static void sema_apply_negated_constraint(Expr *cond, RangeTable *t) {
     }
 }
 
-// Helper to compare two ranges
-static int sema_compare_ranges(Range l, Range r, TokenKind op) {
-    if (!l.known || !r.known) return -1;
-
-    switch (op) {
-        case TOKEN_ANGLE_BRACKET_RIGHT: // L > R
-            if (l.min > r.max) return 1; // definitely true
-            if (l.max <= r.min) return 0; // definitely false
-            return -1;
-        case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: // L >= R
-            if (l.min >= r.max) return 1;
-            if (l.max < r.min) return 0;
-            return -1;
-        case TOKEN_ANGLE_BRACKET_LEFT: // L < R
-            if (l.max < r.min) return 1;
-            if (l.min >= r.max) return 0;
-            return -1;
-        case TOKEN_ANGLE_BRACKET_LEFT_EQUAL: // L <= R
-            if (l.max <= r.min) return 1;
-            if (l.min > r.max) return 0;
-            return -1;
-        case TOKEN_EQUAL_EQUAL: // L == R
-            if (l.min == l.max && r.min == r.max && l.min == r.min) return 1;
-            if (l.max < r.min || l.min > r.max) return 0;
-            return -1;
-        case TOKEN_BANG_EQUAL: // L != R
-            if (l.max < r.min || l.min > r.max) return 1;
-            if (l.min == l.max && r.min == r.max && l.min == r.min) return 0;
-            return -1;
-        default: return -1;
-    }
-}
-
-// Check post-condition with result range substitution
-static int sema_check_post_condition(Expr *cond, Range result_range, RangeTable *t) {
-    if (!cond || !t) return -1;
-
-    if (cond->kind == EXPR_BINARY) {
-        Range l, r;
-        
-        // Evaluate Left
-        if (cond->as.binary_expr.left->kind == EXPR_IDENTIFIER &&
-            strncmp(cond->as.binary_expr.left->as.identifier_expr.id->name, "result", 6) == 0 &&
-            cond->as.binary_expr.left->as.identifier_expr.id->length == 6) {
-            l = result_range;
-        } else {
-            l = sema_eval_range(cond->as.binary_expr.left, t);
-        }
-
-        // Evaluate Right
-        if (cond->as.binary_expr.right->kind == EXPR_IDENTIFIER &&
-            strncmp(cond->as.binary_expr.right->as.identifier_expr.id->name, "result", 6) == 0 &&
-            cond->as.binary_expr.right->as.identifier_expr.id->length == 6) {
-            r = result_range;
-        } else {
-            r = sema_eval_range(cond->as.binary_expr.right, t);
-        }
-
-        return sema_compare_ranges(l, r, cond->as.binary_expr.op);
-    }
-    return -1;
-}
-
 // Prove a PARAMETRIC return refinement `result <op> p` (p a parameter identifier)
 // for the returned expression `ret`. Returns 1 iff provably satisfied, else -1.
 // Handles the exact syntactic forms (`return p`, `return p - k`, `return p + k`) and

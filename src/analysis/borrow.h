@@ -288,9 +288,9 @@ static void bor_linearize(IrFunc *f, BorSeq *s) {
     for (IrBlock *b=f->blocks;b;b=b->next)
         for (IrInstr *i=b->instrs;i;i=i->next) {
             if (s->n >= BOR_MAX_INSTR) {
-                fprintf(stderr, "error: '%.*s' exceeds %d instructions, which is more than the "
-                        "borrow checker can sequence. Its loans would be checked against a "
-                        "truncated function, so no borrow result is reported for it. Split the "
+                fprintf(stderr, "[E100] Error: '%.*s' exceeds %d instructions, more than the "
+                        "borrow checker can sequence (an implementation limit). Its loans would be "
+                        "checked against a truncated function, so it is refused. Split the "
                         "function.\n",
                         f->name ? (int)f->name->length : 1, f->name ? f->name->name : "?",
                         BOR_MAX_INSTR);

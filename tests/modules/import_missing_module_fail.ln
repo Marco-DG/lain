@@ -1,0 +1,9 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 5, Col 8: there is no module 'std.nonexistent'
+// spec: §16 — an import names a module that exists. A missing one was an uncoded "Error: Cannot open
+// module file 'std/nonexistent.ln'", with no position (I.44).
+import std.nonexistent
+
+func main() i32 {
+    return 0
+}

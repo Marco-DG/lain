@@ -30,7 +30,7 @@ static File file_read_into_arena(Arena* arena, char* filename)
     }
     f.size = file_size(f.handle);
     if (f.size < 0) {
-        fprintf(stderr, "Error: could not stat file '%s' (size=%zd)\n", filename, f.size);
+        fprintf(stderr, "lain: could not stat file '%s' (size=%zd)\n", filename, f.size);
         exit(1);
     }
 

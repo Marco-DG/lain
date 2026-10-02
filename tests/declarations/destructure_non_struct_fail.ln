@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: only a struct can be destructured
+// Destructuring a non-struct was an uncoded "Error: Could not resolve struct type for
+// destructuring", with no line (I.44).
+func first({x, y} i32) i32 {
+    return x
+}
+
+func main() i32 {
+    return first(3) - 3
+}

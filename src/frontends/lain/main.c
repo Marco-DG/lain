@@ -124,7 +124,7 @@ int main(int argc, char **argv) {
                 memcpy(dirbuf, fname, dirlen);
                 dirbuf[dirlen] = '\0';
                 if (chdir(dirbuf) != 0) {
-                    fprintf(stderr, "Error: cannot chdir to '%s' for module resolution.\n", dirbuf);
+                    fprintf(stderr, "lain: cannot chdir to '%s' for module resolution.\n", dirbuf);
                     return 1;
                 }
                 args.filename = (char *)(last_sep + 1);
@@ -279,7 +279,7 @@ int main(int argc, char **argv) {
     // — a zero of the right type is not a diagnosable failure).
     if (ir_emit_refuse_opaque(ir_mod, args.filename)) { sema_destroy(); return 1; }
     FILE *out = fopen(args.output_file, "w");
-    if (!out) { fprintf(stderr, "Error: cannot open %s\n", args.output_file); sema_destroy(); return 1; }
+    if (!out) { fprintf(stderr, "lain: cannot open '%s' for writing.\n", args.output_file); sema_destroy(); return 1; }
     ir_emit_module_c(ir_mod, out, &ir_arena);
     fclose(out);
     sema_destroy();

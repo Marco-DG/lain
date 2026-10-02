@@ -228,7 +228,8 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         }
         
         if (pending_count > 0) {
-            fprintf(stderr, "Error Ln %li, Col %li: match patterns with no body at end of block\n", parser->line, parser->column);
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: a `case` pattern with no body ends the "
+                    "block; give it an arm.\n", parser->line, parser->column);
             exit(1);
         }
         
@@ -532,6 +533,7 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         return expr;
     }
     else if (parser_match(TOKEN_AT)) {
+        isize at_line = parser->line, at_col = parser->column;   // where the builtin is named
         parser_advance(); // consume '@'
         parser_expect(TOKEN_IDENTIFIER, "Expected builtin name after '@'");
         const char *name = parser->token.start;
@@ -654,8 +656,8 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
             e->as.builtin_expr.vec_type = t;
             return e;
         } else {
-            fprintf(stderr, "Error Ln %li, Col %li: Unknown builtin '@%.*s'\n",
-                    parser->line, parser->column, (int)len, name);
+            fprintf(stderr, "[E106] Error Ln %li, Col %li: unknown builtin '@%.*s'.\n",
+                    at_line, at_col, (int)len, name);
             exit(1);
         }
     }

@@ -1,0 +1,13 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: struct 'P' has no field 'zz' to destructure
+// A destructured parameter naming no field was an uncoded "Error: Field 'zz' not found in struct
+// 'P'", with no line, so no gate could see it (I.44).
+type P { x i32, y i32 }
+
+func first({x, zz} P) i32 {
+    return x
+}
+
+func main() i32 {
+    return first(P(1, 2)) - 1
+}

@@ -134,10 +134,12 @@ static void di_mark_init(Di *D, uint64_t *st, const IrPlace *p) {
         // p.f.g = v — initialises ONLY the leaf. The parent field becomes initialised when
         // every one of ITS fields is, which is what separates this from the old behaviour.
         if ((unsigned)fi >= DI_SUBF) {
-            fprintf(stderr, "error: a nested write to field %d exceeds the %u fields this "
-                    "initialisation analysis can track separately. Marking the whole parent "
-                    "initialised would hide a read of uninitialised memory, so no result is "
-                    "reported for this function. Split the struct.\n", fi, DI_SUBF);
+            fprintf(stderr, "[E100] Error: '%.*s' writes nested field %d, beyond the %u fields "
+                    "this initialisation analysis can track separately (an implementation limit). "
+                    "Marking the whole parent initialised would hide a read of uninitialised "
+                    "memory, so the function is refused. Split the struct.\n",
+                    D->f && D->f->name ? (int)D->f->name->length : 1,
+                    D->f && D->f->name ? D->f->name->name : "?", fi, DI_SUBF);
             exit(1);
         }
         int gi = p->proj[1].field;

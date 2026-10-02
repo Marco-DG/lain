@@ -61,8 +61,11 @@ fi
 # spec_gate checks that every code the compiler prints is in Annex B; an error that prints NO
 # code is invisible to it. Twelve did ("sema error: struct 'S' has no field 'zzz'", most without
 # a line either), found by Handwriting's M11. A front-end error starts with its [E###]; an
-# internal one says "internal error".
-uncoded=$(grep -rnE '"sema error' src --include=*.h --include=*.c | grep -vE '^[^:]+:[0-9]+:\s*//')
+# internal one says "internal error"; one about the command line or a file the driver cannot
+# open starts with "lain:". The rule matched only "sema error" at first, and 16 more spellings
+# hid behind it ("Error: Field 'zz' not found in struct", "Compile Error: ...", "Error Ln 4,
+# Col 1: ..."), five of them reachable from a program.
+uncoded=$(grep -rnE 'fprintf\(stderr, *"(sema error|[Ee]rror|Compile [Ee]rror|[Ff]atal|FATAL)' src --include=*.h --include=*.c | grep -vE '^[^:]+:[0-9]+:\s*//')
 nuncoded=0
 if [ -n "$uncoded" ]; then
     echo "── an error message with no diagnostic code:"; echo "$uncoded" | head -8
