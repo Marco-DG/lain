@@ -179,3 +179,7 @@ qualifier	a qualifier that names a LOCAL	ok-REFUSED [E106]
 qualifier	a selective import's qualifier (allowed)	OK
 qualifier	an alias (allowed)	OK
 qualifier	a name through the qualified module's import (allowed)	OK
+case-exhaustive	every variant, bare spelling	OK
+case-exhaustive	every variant, qualified spelling	OK
+case-exhaustive	one qualified arm among bare ones	OK
+case-exhaustive	a missing variant, no else	ok-REFUSED [E014]

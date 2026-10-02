@@ -1,0 +1,13 @@
+// EXPECT: [E014]
+// EXPECT-TEXT: a `case` on 'i32' needs an `else:` arm
+// spec: §15.4 — an integer scrutinee has more values than any list of arms, so only an `else:`
+// makes the `case` exhaustive.
+func name(n i32) i32 {
+    case n {
+        0: return 10
+        1: return 11
+    }
+    return 0
+}
+
+func main() i32 { return name(0) - 10 }

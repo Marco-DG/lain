@@ -3416,8 +3416,7 @@ void sema_infer_expr(Expr *e) {
     }
     
     if (!sema_check_expr_match_exhaustive(e)) {
-        fprintf(stderr, "[E014] Error Ln %li, Col %li: non-exhaustive match expression\n", e->line, e->col);
-        diagnostic_show_line(e->line, e->col);
+        sema_report_nonexhaustive_match_expr(e);
         exit(1);
     }
     

@@ -1,0 +1,52 @@
+// spec: §15 — a variant pattern may be bare (`Red`) or qualified by its type (`Color.Red`), and a
+// `case` that names every variant is exhaustive without an `else:`. The exhaustiveness check did
+// not count the qualified spelling: both functions below were refused as non-exhaustive (E014).
+type Color { Red, Green, Blue }
+
+func code(c Color) i32 {
+    case c {
+        Color.Red: return 1
+        Color.Green: return 2
+        Color.Blue: return 3
+    }
+}
+
+func weight(c Color) i32 {
+    w = case c {
+        Color.Red: 10
+        Color.Green, Color.Blue: 20
+    }
+    return w
+}
+
+// One qualified arm among bare ones was enough to make a complete `case` "non-exhaustive"
+// (Handwriting): the qualified arm counted for nothing.
+func mixed(c Color) i32 {
+    case c {
+        Color.Red: return 5
+        Green: return 6
+        Blue: return 7
+    }
+}
+
+// A generic sum qualified by its template's name: its variants are mangled per instance, and the
+// qualified arms are matched by name like any other.
+type Opt(T type) { Some { v T }, None }
+
+func get(o Opt(i32)) i32 {
+    case o {
+        Opt.Some(v): return v
+        Opt.None: return 0
+    }
+}
+
+func main() i32 {
+    if get(Opt(i32).Some(9)) != 9 { return 6 }
+    if get(Opt(i32).None) != 0 { return 7 }
+    if mixed(Color.Blue) != 7 { return 5 }
+    if code(Color.Red) != 1 { return 1 }
+    if code(Color.Blue) != 3 { return 2 }
+    if weight(Color.Green) != 20 { return 3 }
+    if weight(Color.Red) != 10 { return 4 }
+    return 0
+}

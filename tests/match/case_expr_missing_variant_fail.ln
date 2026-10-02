@@ -1,0 +1,14 @@
+// EXPECT: [E014]
+// EXPECT-TEXT: this `case` on 'Color' has no arm for Color.Green, Color.Blue
+// spec: §15.4 — the expression form of case_missing_variant_fail.ln. It gave a line but not the
+// variants.
+type Color { Red, Green, Blue }
+
+func weight(c Color) i32 {
+    w = case c {
+        Color.Red: 10
+    }
+    return w
+}
+
+func main() i32 { return weight(Color.Red) - 10 }

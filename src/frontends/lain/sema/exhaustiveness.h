@@ -131,6 +131,12 @@ static bool pattern_matches_variant(Expr *pattern, Id *variant) {
     
     if (pattern->kind == EXPR_IDENTIFIER) {
         pat_id = pattern->as.identifier_expr.id;
+    } else if (pattern->kind == EXPR_MEMBER) {
+        // ★ A QUALIFIED variant, `Color.Red`: spec 15 allows it beside the bare `Red`, and it was
+        // never counted, so a `case` covering every variant by the qualified spelling was refused
+        // as non-exhaustive (E014) unless it added an `else:`. That the qualifier is the
+        // scrutinee's own type is E106's rule, checked where the pattern is typed.
+        pat_id = pattern->as.member_expr.member;
     } else if (pattern->kind == EXPR_CALL) {
         // Constructor pattern: Variant(...)
         // The callee should be the variant name
@@ -283,10 +289,73 @@ static bool sema_check_match_exhaustive(Stmt *match_stmt) {
     return false;
 }
 
+static void type_describe(Type *t, char *buf, size_t cap);   // sema/typecheck.h
+
+// ★ WHAT A NON-EXHAUSTIVE `case` LEAVES OUT, for its message. The statement form said only
+// "non-exhaustive match", with no line, and the expression form gave a line but no reason; the
+// checker knows exactly which variants are uncovered. `arms` holds each arm's pattern list.
+// Writes the uncovered variants (`C.B, C.D`) or the missing bool value(s); leaves buf empty when
+// the arms cannot cover every value (an integer, a string), which only an `else:` can.
+static void match_describe_uncovered(Type *vtype, ExprList **arms, int narms, char *buf, size_t cap) {
+    buf[0] = '\0';
+    if (!vtype || vtype->kind != TYPE_SIMPLE || !vtype->base_type) return;
+    if (vtype->base_type->length == 4 && strncmp(vtype->base_type->name, "bool", 4) == 0) {
+        bool has_t = false, has_f = false;
+        for (int a = 0; a < narms; a++)
+            for (ExprList *p = arms[a]; p; p = p->next)
+                if (p->expr && p->expr->kind == EXPR_LITERAL) {
+                    if (p->expr->as.literal_expr.value) has_t = true; else has_f = true;
+                }
+        snprintf(buf, cap, "%s", !has_t && !has_f ? "`true` or `false`" : !has_t ? "`true`" : "`false`");
+        return;
+    }
+    Decl *ed = find_enum_decl(vtype);
+    if (!ed || ed->kind != DECL_ENUM) return;
+    Id *en = ed->as.enum_decl.type_name;
+    size_t o = 0; int n = 0;
+    for (Variant *v = ed->as.enum_decl.variants; v && o < cap; v = v->next) {
+        if (!v->name) continue;
+        bool covered = false;
+        for (int a = 0; a < narms && !covered; a++)
+            for (ExprList *p = arms[a]; p && !covered; p = p->next)
+                if (pattern_matches_variant(p->expr, v->name)) covered = true;
+        if (!covered)
+            o += (size_t)snprintf(buf + o, cap - o, "%s%.*s.%.*s", n++ ? ", " : "",
+                                  en ? (int)en->length : 0, en ? en->name : "",
+                                  (int)v->name->length, v->name->name);
+    }
+}
+
+// One message for both forms of `case`.
+static void sema_report_uncovered(isize line, isize col, Expr *value, ExprList **arms, int narms) {
+    char missing[256], tb[128];
+    Type *vt = value ? value->type : NULL;
+    type_describe(vt, tb, sizeof tb);
+    match_describe_uncovered(vt, arms, narms, missing, sizeof missing);
+    if (narms == 0)
+        fprintf(stderr, "[E014] Error Ln %li, Col %li: this `case` has no arms.\n", (long)line, (long)col);
+    else if (missing[0])
+        fprintf(stderr, "[E014] Error Ln %li, Col %li: this `case` on '%s' has no arm for %s. "
+                "Add one, or an `else:`.\n", (long)line, (long)col, tb, missing);
+    else
+        fprintf(stderr, "[E014] Error Ln %li, Col %li: a `case` on '%s' needs an `else:` arm: its "
+                "patterns cannot name every value.\n", (long)line, (long)col, tb);
+    diagnostic_show_line(line, col);
+}
+
 // Report non-exhaustive match error
 static void sema_report_nonexhaustive_match(Stmt *match_stmt) {
-    (void)match_stmt;
-    fprintf(stderr, "[E014] Error: non-exhaustive match - add an 'else:' case or cover all variants\n");
+    ExprList *arms[256]; int n = 0;
+    for (StmtMatchCase *c = match_stmt->as.match_stmt.cases; c && n < 256; c = c->next)
+        arms[n++] = c->patterns;
+    sema_report_uncovered(match_stmt->line, match_stmt->col, match_stmt->as.match_stmt.value, arms, n);
+}
+
+static void sema_report_nonexhaustive_match_expr(Expr *match_expr) {
+    ExprList *arms[256]; int n = 0;
+    for (ExprMatchCase *c = match_expr->as.match_expr.cases; c && n < 256; c = c->next)
+        arms[n++] = c->patterns;
+    sema_report_uncovered(match_expr->line, match_expr->col, match_expr->as.match_expr.value, arms, n);
 }
 
 /*───────────────────────────────────────────────────────────────────╗

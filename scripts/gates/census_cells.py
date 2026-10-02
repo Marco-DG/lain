@@ -374,6 +374,24 @@ add_raw("qualifier", "a name through the qualified module's import (allowed)",
     'import std.io\n\nfunc main() i32 effects io {\n    io.printf("ok\\n")\n    return 0\n}\n',
     "ok\n")
 
+# ── axis: a `case` that names every variant needs no `else:` (X, I.47) ──────────────────────────
+# spec 15. Every other cell with a `case` has an `else:` arm, so exhaustiveness was never tested
+# here. The qualified spelling (`Color.Red`) counted for nothing toward it, so a complete `case`
+# was refused as non-exhaustive, and one qualified arm among bare ones was enough (Handwriting).
+# The refusing twin keeps the rule from being confirmed by over-rejection.
+_EXH = 'type Color { Red, Green }\n'
+def _exh(arms):
+    return (_EXH + 'func pick(c Color) i32 {\n    case c {\n' + arms + '    }\n}\n'
+            'func main() i32 effects io {\n    libc_printf("%d\\n", pick(Color.Green))\n    return 0\n}\n')
+add("case-exhaustive", "every variant, bare spelling",
+    _exh('        Red: return 3\n        Green: return 7\n'), "7\n")
+add("case-exhaustive", "every variant, qualified spelling",
+    _exh('        Color.Red: return 3\n        Color.Green: return 7\n'), "7\n")
+add("case-exhaustive", "one qualified arm among bare ones",
+    _exh('        Color.Red: return 3\n        Green: return 7\n'), "7\n")
+add("case-exhaustive", "a missing variant, no else",
+    _exh('        Red: return 3\n'), "__ILLFORMED__")
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w} for a, c, p, w in CELLS]))

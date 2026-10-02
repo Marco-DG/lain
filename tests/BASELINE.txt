@@ -1492,6 +1492,12 @@ at=nonnull 8
 ty=Slice_Token scalar
 ty=Slice_u8 scalar
 ty=Token struct
+### tests/trust/case_qualified_variants_pass.ln
+rc=0
+out=
+at=const 8
+ty=Color scalar
+ty=Opt_i32 struct
 ### tests/trust/cast_checked_pass.ln
 rc=0
 out=255

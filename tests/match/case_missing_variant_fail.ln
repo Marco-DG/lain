@@ -1,0 +1,15 @@
+// EXPECT: [E014]
+// EXPECT-TEXT: Error Ln 8, Col 5: this `case` on 'Color' has no arm for Color.Blue
+// spec: §15.4 — a `case` on an enum covers every variant or has an `else:`. The statement form said
+// only "non-exhaustive match", with no line and no variant.
+type Color { Red, Green, Blue }
+
+func code(c Color) i32 {
+    case c {
+        Red: return 1
+        Color.Green: return 2
+    }
+    return 0
+}
+
+func main() i32 { return code(Color.Red) - 1 }

@@ -1,4 +1,5 @@
 // EXPECT: [E014]
+// EXPECT-TEXT: has no arm for `false`
 // spec: §15.4 — a `bool` match with only `true` (and no `false`, no `else`)
 // is non-exhaustive.
 func pick(b bool) i32 {
