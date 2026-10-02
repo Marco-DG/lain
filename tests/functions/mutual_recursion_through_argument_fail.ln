@@ -1,0 +1,20 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: Error Ln 10, Col 14: this call closes a mutual-recursion cycle
+// The front end's own cycle walker (sema.h, `mrec_*`) is deleted: mutual recursion is the IR engine's
+// obligation (analysis/report.h), and the walker had been reached by nothing since. Before deleting
+// it, the shapes it searched expression trees for were written out; the engine refuses each,
+// at the call that closes the cycle. Its DFS also stopped silently at 256 functions.
+// Here the closing call is an ARGUMENT of another call: `g(h(n))`, h -> f.
+func f(n u32) u32 {
+    if n == 0 { return 0 }
+    return g(h(n))
+}
+func g(n u32) u32 {
+    return n
+}
+func h(n u32) u32 {
+    return f(n)
+}
+func main() i32 {
+    return f(3) as i32
+}
