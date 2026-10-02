@@ -1,0 +1,5 @@
+# Static functions that no entry point reaches, kept on purpose (dead_code_gate.sh). One per line:
+#   <path> <function> <reason>
+# A <path> ending in `/` with function `*` exempts a whole directory.
+src/utils/ * a general-purpose library shared with other projects: its API is not this compiler's call graph
+src/ir/annot.h ir_param_c_const kept on purpose, with the reason in its comment: the C `const` the write footprint justifies, for the day the emitter propagates qualifiers

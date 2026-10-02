@@ -45,7 +45,7 @@ gates: $(BIN)
 	bash scripts/gates/census_gate.sh
 	bash scripts/gates/certificate_gate.sh
 	bash scripts/gates/bench_gate.sh
-	bash scripts/gates/interp_gate.sh
+	bash scripts/gates/dead_code_gate.sh
 
 # ── THE INSTRUMENTS AFTER THE DELETIONS, 2026-09-23 ──────────────────────────────────────
 # Two engines and two backends became one of each, and SEVEN differentials went with them:
