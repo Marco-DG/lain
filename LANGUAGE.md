@@ -1574,10 +1574,41 @@ an empty effect row, which is to say as a function the caller may treat as pure 
 
 The measure is compile-time only; it produces no runtime overhead.
 
-**Error codes:**
-- `[E080]`: Cannot verify measure is non-negative when condition holds
-- `[E081]`: Cannot extract variables from measure expression
-- `[E082]`: Cannot verify measure strictly decreases each iteration
+**Two codes, and which one you get depends on whether you supplied a measure.** A loop or recursion
+the compiler cannot bound *at all* is `[E011]` — the same code as an unacknowledged effect, because
+non-termination *is* an effect the row did not name:
+
+```lain
+func g(flag bool) i32 {
+    while flag {          // ERROR [E011]
+    }
+    return 0
+}
+```
+
+```
+[E011] Error: this loop is not provably terminating, and no measure could be inferred
+```
+
+A `decreasing` measure that is supplied and does not hold is `[E082]`:
+
+```lain
+type Small = i32 >= 0 and <= 100
+
+func f(n Small, m Small) i32 decreasing m {
+    if n == 0 { return 0 }
+    return f(m, n)        // ERROR [E082]: swapping the arguments does not decrease m
+}
+```
+
+```
+[E082] Error Ln 5, Col 12: the `decreasing` measure is not provably well-founded here
+```
+
+> [!NOTE]
+> A `decreasing` clause on a loop the compiler can already bound by itself is not checked, because
+> nothing needs it — so a wrong measure there is accepted rather than reported. Supply one only where
+> the compiler asks for it.
 
 ### 6.4 Break & Continue
 
@@ -2778,26 +2809,30 @@ Lain eliminates entire classes of bugs at compile time without runtime overhead.
 
 Compiler errors are prefixed with error codes for easy reference:
 
+This is a convenience index. **Annex B of the specification is the authority** on what a code means,
+and it is reconciled against the compiler's own strings by a gate.
+
 | Code | Category | Triggering Condition |
 |:-----|:---------|:---------------------|
-| `[E001]` | Use after move | Using a variable after it was moved |
-| `[E002]` | Unconsumed linear value | Linear variable not consumed before end of scope |
-| `[E003]` | Double move | Moving a variable that was already moved |
-| `[E004]` | Borrow conflict | Conflicting borrows (mut+shared, mut+mut) |
-| `[E005]` | Move of borrowed value | Moving a variable while it is borrowed |
-| `[E006]` | Move in loop | Moving a variable inside a loop |
-| `[E007]` | Branch inconsistency | Linear variable consumed in some branches but not others |
-| `[E008]` | Linear field error | Linear struct field not properly handled |
-| `[E009]` | Immutability violation | Assigning to an immutable variable |
-| `[E010]` | Dangling reference | `return var` of a local (doesn't outlive function) |
+| `[E001]` | Use after move | Reading or passing a value whose linear state is consumed |
+| `[E002]` | Consumed twice | A second `mov` of an already-consumed value — including consuming a value from inside a loop it was declared outside of |
+| `[E003]` | Unconsumed linear value | A linear value goes out of scope without being consumed |
+| `[E004]` | Borrow conflict | A mutable borrow conflicts with an existing borrow |
+| `[E005]` | Use of an uninitialised value | A read on a path that did not write it (definite initialisation) |
+| `[E007]` | Implicit move | A linear value transferred to a `mov` parameter without writing `mov` |
+| `[E008]` | Move of a borrowed value | Moving a value that is currently borrowed |
+| `[E009]` | Illegal mutation | Assigning to an immutable binding, or mutating through a raw pointer in safe code |
+| `[E010]` | Dangling reference | A reference that would outlive the value it borrows (`return var` of a local) |
 | `[E011]` | Unacknowledged effect | the body has an effect the row does not name, and no row was written; also an unbounded `while` or a recursion with no measure |
-| `[E012]` | Type error | Type mismatch |
-| `[E013]` | Undeclared identifier | Using a variable or field that doesn't exist |
+| `[E012]` | Type or constraint violation | Type mismatch, or an operand pair with no common type |
+| `[E013]` | Redeclaration or shadowing | Re-declaring a name already in scope (§3.6) |
 | `[E014]` | Exhaustiveness | Non-exhaustive case: missing variant or `else` |
-| `[E015]` | Division by zero | Division by a constant zero |
-| `[E080]` | Measure non-negativity | Cannot verify measure is non-negative when condition holds |
-| `[E081]` | Measure extraction | Cannot extract variables from measure expression |
-| `[E082]` | Measure decrease | Cannot verify measure strictly decreases each iteration |
+| `[E015]` | Not provably non-zero | A divisor whose range includes 0 — not only a literal `0` |
+| `[E016]` | Inconsistent linear use | Consumed on some paths and not others |
+| `[E082]` | Termination measure | A supplied `decreasing` measure is not proven well-founded (an *absent* one is `[E011]`) |
+| `[E085]` | Bounds | An index not provably within bounds |
+| `[E086]` | Overflow or narrowing | A result, or a narrowing, not proven to fit |
+| `[E106]` | Undeclared identifier | Using a name nothing in scope declares |
 
 Every diagnostic gives the code, the line and column, the message, the file position, and a
 source excerpt with a caret under the construct. The column is where the construct starts, and

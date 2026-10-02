@@ -264,6 +264,31 @@ for f in "$TMP"/b*.txt; do
     fi
 done
 
+# ── DIAGNOSTIC CODES ─────────────────────────────────────────────────────────────────────
+# A code named in a document is a claim about the compiler, exactly as a flag name is, and it
+# rots the same way: silently, because prose is not compiled.
+#
+# This exists because LANGUAGE.md's §4.3 — the section explaining the language's defining feature —
+# named `[E006]` for "moved inside a loop". E006 was RETIRED and folded into E002, and nothing in
+# the project could see that a document still taught it. Four of the five codes in that one table
+# were wrong (b5b5a21), and a swap between two live codes is beyond this check's reach; a code that
+# does not exist at all is not, and it is one grep.
+#
+# `in` is deliberately NOT inferred from the annex: the annex is a document too, so checking a
+# document against a document proves only that they agree. The authority is the SOURCE.
+code_bad=0
+emitted_codes=$( { grep -rhoE '\[E[0-9]{3}\]' --include='*.h' --include='*.c' src/ | tr -d '[]'
+                   grep -rhoE '"E[0-9]{3}"'   --include='*.h' --include='*.c' src/ | tr -d '"'
+                   grep -rhoE '\[W[0-9]{3}\]' --include='*.h' --include='*.c' src/ | tr -d '[]'
+                   grep -rhoE '"W[0-9]{3}"'   --include='*.h' --include='*.c' src/ | tr -d '"'
+                 } | sort -u)
+for code in $(grep -ohE '\[[EW][0-9]{3}\]' "${PAGES[@]}" 2>/dev/null | tr -d '[]' | sort -u); do
+    echo "$emitted_codes" | grep -qxF "$code" && continue
+    code_bad=$((code_bad+1))
+    echo "  ★ README/LANGUAGE names [$code] — no source file in src/ emits it"
+    grep -nH "\[$code\]" "${PAGES[@]}" 2>/dev/null | head -3 | sed 's/^/      /'
+done
+
 # ── FLAGS ────────────────────────────────────────────────────────────────────────────────
 # The ```lain blocks were the only thing this gate read, so a flag named in PROSE was checked
 # by nothing — and `--dump-octagon` sat in the README for weeks without existing in the binary.
@@ -315,6 +340,7 @@ echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a 
   [ $split_sum -ne $unchecked ] && \
       echo "  ★ the split above sums to $split_sum but the total is $unchecked — a page is uncounted"
 echo "  FLAGS named but not accepted : $flag_bad   ← a claim about the binary, now tested"
+echo "  CODES named but not emitted  : $code_bad   ← a retired or misspelt code"
 echo "  fragments drawing a PROOF diagnostic : $falseclaim   ← a false SAFETY claim, must stay 0"
 # A documented VALUE, run rather than compiled. The count is small on purpose: every block that
 # earns one is a sentence about what the language computes that used to rest on trust alone.
@@ -333,4 +359,4 @@ fi
 echo "  blocks extracted, all accounted for : $extracted"
 echo "=================================================================="
 [ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] \
-    && [ $verify_bad -eq 0 ] && [ $accounting_bad -eq 0 ] && exit 0 || exit 1
+    && [ $verify_bad -eq 0 ] && [ $accounting_bad -eq 0 ] && [ $code_bad -eq 0 ] && exit 0 || exit 1
