@@ -586,10 +586,25 @@ type Shape {
 
 **Construction:**
 ```lain
-var c = Color.Red
-var shape = Shape.Circle(10)
-var rect = Shape.Rectangle(5, 8)
-var p = Shape.Point
+type Color {
+    Red,
+    Green,
+    Blue
+}
+
+type Shape {
+    Circle { radius int }
+    Rectangle { width int, height int }
+    Point
+}
+
+func main() i32 {
+    var c = Color.Red
+    var shape = Shape.Circle(10)
+    var rect = Shape.Rectangle(5, 8)
+    var p = Shape.Point
+    return 0
+}
 ```
 
 **Pattern matching & Data Extraction:**
@@ -602,10 +617,38 @@ See §6.5 for `case` expressions.
 If you are certain of the active variant and need to bypass the branching overhead, you can extract the field directly using the variant name. This is **only allowed** inside an `unsafe` block.
 
 ```lain
-var s = Shape.Circle(10)
-unsafe {
-    var r = s.Circle.radius // Zero-overhead direct C union access
+// VERIFY: exit 10
+type Shape {
+    Circle { radius int }
+    Point
 }
+
+func main() i32 {
+    var s = Shape.Circle(10)
+    unsafe {
+        var r = s.Circle.radius      // Zero-overhead direct C union access
+        return r as i32
+    }
+}
+```
+
+"Only inside `unsafe`" is enforced, and it has its own diagnostic:
+
+```lain
+type Shape {
+    Circle { radius int }
+    Point
+}
+
+func main() i32 {
+    var s = Shape.Circle(10)
+    var r = s.Circle.radius      // ERROR [E125]
+    return r as i32
+}
+```
+
+```
+[E125] Error Ln 8, Col 13: direct ADT field access ('Shape.Circle') is only allowed inside an 'unsafe' block — destructure with `case` instead.
 ```
 
 If the variant at runtime is actually a `Rectangle`, this will yield garbage data, living up to its `unsafe` name.
@@ -1190,10 +1233,10 @@ the function — and the call site states the last two again, which is §4.6. Se
 semantics.
 
 > [!WARNING]
-> **A parameter list must be on one line.** Breaking it across lines is `[E100] Expected parameter
-> name`, because statements and declarations are newline-terminated. The same applies to the
-> arguments at a call site. It is a real constraint on how wide a signature can get, not a style
-> preference.
+> **A parameter list must currently be on one line.** Breaking it across lines is `[E100] Expected
+> parameter name`, and so is breaking a call's arguments. This is a **known limitation being
+> fixed**, not a rule of the language: a newline inside `(` `)` should not terminate a declaration.
+> Write signatures on one line until it lands.
 
 ### 5.4 Return Types & Void Functions
 
@@ -3056,7 +3099,9 @@ func process() effects io, raises, alloc {
 
 The payload fields are **refined, and they have to be**: `r * r * 314` on an unbounded `int`
 overflows long before the division brings it back. A variant field takes its bound from a
-**refinement type alias** — the refinement cannot be written inline in the variant:
+**refinement type alias**; an inline refinement on a variant field is not yet accepted
+(`[E100] Expected ',' after variant field`), though a struct field takes one — so use the alias for
+now rather than reading the asymmetry as deliberate:
 
 ```lain
 type Dim = int >= 0 and <= 1000
