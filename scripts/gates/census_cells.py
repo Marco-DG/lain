@@ -660,6 +660,54 @@ for _cell, _pa, _pb, _expr, _aa, _ab, _math in [
         "%d\n" % _math)
 
 
+# ── axis: a `mov` leak OUTSIDE an aggregate, by the value's TYPE ─────────────────────────────────
+# The I.82 defect one level out. The mov-field-leak row above is all declared fields inside a struct,
+# and the fix for it is scoped to exactly that, so the same hole for a top-level `mov` binding and for
+# a bare `mov` PARAMETER is invisible to every cell in this file. Two lines are enough to show it:
+#
+#   func sink(mov v *i32) { }     E003: a linear value is not consumed before it goes out of scope
+#   func sink(mov v i32)  { }     accepted
+#
+# The two cells that make this an argument rather than a complaint are the last two. A top-level
+# `mov x i32` IS enforced: consuming it twice is E002 and reading it after the consume is E001. So the
+# machinery knows the binding is linear and declines to report only the LEAK, which is the identical
+# signature the mov-field-leak row documents for fields. Not "linearity is missing here".
+# The citation is I.92 and not I.82, on MCW's reading, which I accept: I.82 charges a declared `mov`
+# FIELD and is a missing case of an existing rule, while this row asks whether `mov x i32` is a
+# resource at all, which is a semantics choice. Their measurement for it: charging linear scalars at
+# depth 0 changes no corpus file except their own I.82 trust test, which drops a `mov n i32` on purpose.
+_I82B = ("I.92 — a `mov` binding or parameter of a plain scalar is linear in two directions and not "
+         "the third: dropping it is accepted, while double-consume (E002) and use-after-consume (E001) "
+         "are both caught. The proposal in the row is that `mov` mean exactly-once for every type. "
+         "I.82 is a different question: it charges a declared `mov` FIELD inside an aggregate")
+add("mov-outside-aggregate", "integer parameter, dropped",
+    'func sink(mov v i32) { }\nfunc main() i32 { return 0 }\n', "__ILLFORMED__", plan=_I82B)
+add("mov-outside-aggregate", "pointer parameter, dropped",
+    'func sink(mov v *i32) { }\nfunc main() i32 { return 0 }\n', "__ILLFORMED__")
+add("mov-outside-aggregate", "integer binding, never consumed",
+    'func go() i32 {\n    mov x i32 = 7\n    return 0\n}\n'
+    'func main() i32 { return go() }\n', "__ILLFORMED__", plan=_I82B)
+add("mov-outside-aggregate", "pointer binding, never consumed",
+    'func go() i32 {\n    var n i32 = 0\n    mov p *i32 = &n\n    return 0\n}\n'
+    'func main() i32 { return go() }\n', "__ILLFORMED__")
+# The two enforcement cells consume through an EXTERN sink. A bodied `func sink(mov v i32) { }`
+# drops its own parameter, so once I.92 charges a dropped scalar that sink's leak became the first error
+# and these cells stopped pinning E002/E001 (MCW measured it on the I.92 stack). The obvious repair,
+# `func sink(mov v i32) i32 { return v }`, works today but discharges by returning the value as a plain
+# i32, which is the laundering route recorded in I.95: if returning a `mov` value as a non-`mov` type is
+# ever refused, that sink breaks these cells a third time. An extern's signature is trusted under any
+# such rule, so this discharge stays valid however I.95 is decided. The cells are refused, so the
+# undefined extern never links.
+add("mov-outside-aggregate", "integer binding, consumed twice",
+    'extern func sink(v mov i32) effects io\n'
+    'func go() i32 effects io {\n    mov x i32 = 7\n    sink(mov x)\n    sink(mov x)\n    return 0\n}\n'
+    'func main() i32 effects io { return go() }\n', "__ILLFORMED__")
+add("mov-outside-aggregate", "integer binding, read after the consume",
+    'extern func sink(v mov i32) effects io\n'
+    'func go() i32 effects io {\n    mov x i32 = 7\n    sink(mov x)\n    return x\n}\n'
+    'func main() i32 effects io { return go() }\n', "__ILLFORMED__")
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
