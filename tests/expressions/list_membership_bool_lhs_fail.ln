@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: tests an integer against a list of integers; the left side is 'bool'
+// I.79: membership in a list of integers is asked of an integer; a bool is refused at the left side
+// rather than compared as 0 or 1.
+func f(b bool) bool {
+    return b in [0, 1]
+}
+func main() i32 {
+    return 0
+}

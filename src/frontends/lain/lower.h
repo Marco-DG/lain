@@ -1746,6 +1746,7 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
 static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e);
 static void ir_lower_range_member(LowerCtx *c, Expr *e, IrBlock *tb, IrBlock *fb);
 static void ir_range_member_br(LowerCtx *c, Expr *R, IrValue *x, IrBlock *tb, IrBlock *fb);
+static void ir_list_member_br(LowerCtx *c, Expr *R, IrValue *x, IrBlock *tb, IrBlock *fb);
 
 // D-49's seam. While a loop CONDITION is lowered, every pure subexpression's value is
 // remembered; while its MEASURE is lowered, a structurally identical one is reused rather than
@@ -2419,6 +2420,16 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // `i in container` — a valid-index guard: 0 ≤ i < container.len. Lowered to
             // `i < len` (the ≥ 0 half comes from i's type/flow); this makes it a real
             // icmp so guard refinement and the termination check both engage.
+            if (e->as.binary_expr.op == TOKEN_KEYWORD_IN && R && R->kind == EXPR_ARRAY_LITERAL) {
+                IrValue *x = ir_lower_expr(c, L);
+                IrType *bt = ir_type_bool(c->a);
+                IrValue *rcell = ir_alloca(c->f, c->cur, bt);
+                IrBlock *yes = ir_new_block(c->f), *no = ir_new_block(c->f), *jn = ir_new_block(c->f);
+                ir_list_member_br(c, R, x, yes, no);
+                c->cur = yes; ir_store(c->f, c->cur, rcell, ir_const_int(c->f,c->cur,1,bt)); ir_set_br(c->cur, jn);
+                c->cur = no;  ir_store(c->f, c->cur, rcell, ir_const_int(c->f,c->cur,0,bt)); ir_set_br(c->cur, jn);
+                c->cur = jn;  return ir_load(c->f, c->cur, rcell, bt);
+            }
             if (e->as.binary_expr.op == TOKEN_KEYWORD_IN && R && R->kind == EXPR_RANGE) {
                 // One test suffices when the lower one cannot fail (`0..` on an unsigned x): then the
                 // value is that comparison, exactly `x < hi`, and needs no cell (I.78).
@@ -3205,10 +3216,28 @@ static void ir_range_member_br(LowerCtx *c, Expr *R, IrValue *x, IrBlock *tb, Ir
     else    ir_set_br(c->cur, tb);
 }
 
+// `x in [a, b, c]` (DECIDE-X, I.79): x evaluated once, then `x == a`, `x == b`, ... each on its own
+// branch, the first that holds going to tb. Each element is a constant, so evaluating them in turn
+// changes nothing; each comparison is mathematical whatever the types (I.88). On the edge into tb, x
+// is one of the elements, so the analysis narrows it to their hull.
+static void ir_list_member_br(LowerCtx *c, Expr *R, IrValue *x, IrBlock *tb, IrBlock *fb) {
+    for (ExprList *el = R->as.array_literal_expr.elements; el; el = el->next) {
+        IrBlock *next = el->next ? ir_new_block(c->f) : fb;
+        IrValue *v = ir_lower_expr(c, el->expr);
+        ir_cmp_br(c, TOKEN_EQUAL_EQUAL, x, v, false, ir_nonneg_lit(el->expr), true, tb, next);
+        if (el->next) c->cur = next;
+    }
+}
+
 static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) {
     if (cond && cond->kind==EXPR_BINARY && cond->as.binary_expr.op==TOKEN_KEYWORD_IN &&
         cond->as.binary_expr.right && cond->as.binary_expr.right->kind==EXPR_RANGE) {
         ir_lower_range_member(c, cond, tb, fb);
+        return;
+    }
+    if (cond && cond->kind==EXPR_BINARY && cond->as.binary_expr.op==TOKEN_KEYWORD_IN &&
+        cond->as.binary_expr.right && cond->as.binary_expr.right->kind==EXPR_ARRAY_LITERAL) {
+        ir_list_member_br(c, cond->as.binary_expr.right, ir_lower_expr(c, cond->as.binary_expr.left), tb, fb);
         return;
     }
     // A comparison of a signed value with a 64-bit unsigned one branches on the sign and then on

@@ -188,10 +188,20 @@ func mix(h u32, c u8) u32 {
 \index{in guard}
 
 \pnum
-\lain{in} tests \textbf{membership in a set}, and the set is written as a range:
-\lain{x in lo..hi} is \lain{true} if and only if \(\mathit{lo} \leq x < \mathit{hi}\), and
-\lain{x in lo..=hi} if and only if \(\mathit{lo} \leq x \leq \mathit{hi}\).  Each bound is
+\lain{in} tests \textbf{membership in a set}, and the set is written as a range or as a list of
+constants.  \lain{x in lo..hi} is \lain{true} if and only if \(\mathit{lo} \leq x < \mathit{hi}\),
+and \lain{x in lo..=hi} if and only if \(\mathit{lo} \leq x \leq \mathit{hi}\); each bound is
 evaluated once.  All three operands shall have integer types.
+
+\pnum
+\lain{x in [}\(e_1, \ldots, e_n\)\lain{]} is \lain{true} if and only if \(x\) equals some \(e_i\).
+\(x\) is evaluated once and compared with each element in turn, as integers --- mathematically, not
+after conversion to a common C type, so a \lain{u8} holding 44 does not equal 300.  Each element
+shall be a \emph{closed constant}: an integer or character literal, or unary and binary arithmetic on
+such literals; a name is not followed.  On the edge where the test is true, the analysis narrows
+\(x\) to the \emph{hull} of the elements, \(\min e_i \leq x \leq \max e_i\) --- the test itself is
+exact, but the fact recorded is the interval.  Membership in the elements of an array or slice is
+not an \lain{in} expression; it is a scan.
 
 \pnum
 The indices of an array or slice \textit{arr} are the range \lain{0..arr.len}, so an index test is
@@ -238,6 +248,12 @@ func skip_to_quote(l var Lexer) {
 }
 \end{laincode}
 \end{example}
+
+\begin{constraint}
+  An element of a membership list \lain{x in [}\ldots\lain{]} that is not a closed constant is
+  \illformed{}~(\diagcode{E012}), as is a left operand that is not an integer.  An empty list is
+  \illformed{}~(\diagcode{E100}).
+\end{constraint}
 
 \begin{constraint}
   An in-guard of the form \lain{idx in 0..arr.len} covers only \lain{arr[idx]}

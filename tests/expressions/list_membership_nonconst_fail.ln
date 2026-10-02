@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: each element of a membership list is a constant (numbers and characters, and arithmetic on them)
+// I.79: the list is a set known when the program is compiled; an element known only at run time
+// belongs in a comparison, `x == a or x == b`, which the message names.
+func f(x i32, y i32) bool {
+    return x in [1, y]
+}
+func main() i32 {
+    return 0
+}

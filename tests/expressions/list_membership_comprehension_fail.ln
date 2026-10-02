@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: a comprehension is built at run time
+// I.79: membership is tested against a list of constants written out. A comprehension is built when
+// the program runs, so `x in [...for...]` would be a scan behind an operator, which is a function the
+// program writes.
+func f(x i32) bool {
+    return x in [k * 2 for k in 0..4]
+}
+func main() i32 {
+    return 0
+}

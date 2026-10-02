@@ -2055,6 +2055,27 @@ static void sema_check_mut_invariant_field(Expr *e) {
 }
 
 
+// A CLOSED constant: built only from number and character literals with unary and binary arithmetic,
+// so its value is fixed when the program is compiled (`-3`, `0 - 3`, `'a' + 1`). Names are not
+// followed: a membership list is a set written out (I.79).
+static bool tc_closed_const(Expr *e, int depth) {
+    if (!e || depth > 16) return false;
+    switch (e->kind) {
+    case EXPR_LITERAL: case EXPR_CHAR: return true;
+    case EXPR_UNARY:
+        return (e->as.unary_expr.op == TOKEN_MINUS || e->as.unary_expr.op == TOKEN_TILDE) &&
+               tc_closed_const(e->as.unary_expr.right, depth + 1);
+    case EXPR_BINARY: {
+        TokenKind op = e->as.binary_expr.op;
+        bool arith = op == TOKEN_PLUS || op == TOKEN_MINUS || op == TOKEN_ASTERISK || op == TOKEN_SLASH ||
+                     op == TOKEN_PERCENT || op == TOKEN_AMPERSAND || op == TOKEN_PIPE || op == TOKEN_CARET;
+        return arith && tc_closed_const(e->as.binary_expr.left, depth + 1) &&
+               tc_closed_const(e->as.binary_expr.right, depth + 1);
+    }
+    default: return false;
+    }
+}
+
 // `a.b.c` into buf when e is a name or a member chain (for a message that quotes the program);
 // buf is left as it was otherwise.
 static void tc_dotted_path(Expr *e, char *buf, size_t cap) {
@@ -2848,12 +2869,38 @@ void sema_infer_expr(Expr *e) {
             }
             break;
         }
-        // Membership in a LIST is I.79's, and not available yet.
-        if (R && (R->kind == EXPR_ARRAY_LITERAL || R->kind == EXPR_ARRAY_COMPREHENSION)) {
-            fprintf(stderr, "[E012] Error Ln %li, Col %li: membership in a list, `x in [...]`, is not "
-                    "available yet. Compare instead: `x == a or x == b`.\n", ln, cl);
+        // ★ MEMBERSHIP IN A LIST OF CONSTANTS (DECIDE-X, I.79): `c in [' ', 9, 10, 13]`. The set is
+        // known when the program is compiled, so the test is a chain of comparisons (gcc turns it
+        // into one bitmask test) and needs no table and no scan. A list built at run time would be
+        // an O(n) scan behind an operator; that is a function the program writes, so it is refused.
+        if (R && R->kind == EXPR_ARRAY_COMPREHENSION) {
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: membership is tested against a list of "
+                    "constants written out, `x in [a, b, c]`; a comprehension is built at run time.\n", ln, cl);
             diagnostic_show_line(ln, cl);
             exit(1);
+        }
+        if (R && R->kind == EXPR_ARRAY_LITERAL) {
+            if (lt && !is_integer_type(lt)) {
+                char tb[128]; type_describe(lt, tb, sizeof tb);
+                long l2 = (long)(L->line ? L->line : e->line), c2 = (long)(L->line ? L->col : e->col);
+                fprintf(stderr, "[E012] Error Ln %li, Col %li: `x in [a, b, c]` tests an integer against a "
+                        "list of integers; the left side is '%s'.\n", l2, c2, tb);
+                diagnostic_show_line(l2, c2);
+                exit(1);
+            }
+            for (ExprList *el = R->as.array_literal_expr.elements; el; el = el->next) {
+                Expr *x = el->expr;
+                long l3 = (long)(x && x->line ? x->line : ln), c3 = (long)(x && x->line ? x->col : cl);
+                if (!tc_closed_const(x, 0)) {
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: each element of a membership list is a "
+                            "constant (numbers and characters, and arithmetic on them); for a value known "
+                            "only at run time, compare: `x == a or x == b`.\n", l3, c3);
+                    diagnostic_show_line(l3, c3);
+                    exit(1);
+                }
+                sema_infer_expr(x);
+            }
+            break;
         }
         // ★ `i in a` AS AN INDEX TEST IS RETIRED (DECIDE-X, I.78). `in` means membership in a set, and
         // `i in a` read as `i < a.len` while every other language reads it as "i is one of a's
@@ -2867,8 +2914,9 @@ void sema_infer_expr(Expr *e) {
             long l2 = (long)(e->line ? e->line : ln), c2 = (long)(e->line ? e->col : cl);
             fprintf(stderr, "[E100] Error Ln %li, Col %li: `%s in %s` as an index test was retired: `in` "
                     "means membership in a set, and %s's indices are the range `0..%s.len`. Write "
-                    "`%s in 0..%s.len` (or `%s < %s.len`).\n", l2, c2, ln_s, rn_s, rn_s, rn_s,
-                    ln_s, rn_s, ln_s, rn_s);
+                    "`%s in 0..%s.len` (or `%s < %s.len`). Membership in a container's ELEMENTS is "
+                    "a scan, which is a function you write; `in` takes a list of constants "
+                    "(`x in [a, b]`).\n", l2, c2, ln_s, rn_s, rn_s, rn_s, ln_s, rn_s, ln_s, rn_s);
             diagnostic_show_line(l2, c2);
             exit(1);
         }

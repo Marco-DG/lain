@@ -94,7 +94,7 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `break` | Exit the innermost loop |
 | `continue` | Skip to the next iteration |
 | `case` | Pattern matching |
-| `in` | Range iteration / membership in a range, as a constraint or a bounds-proving condition |
+| `in` | Range iteration / membership in a range or a list of constants, as a constraint or a bounds-proving condition |
 | `and` | Logical AND |
 | `or` | Logical OR |
 | `true` | Boolean true literal |
@@ -2345,11 +2345,11 @@ func bad_abs(x int) int >= 0 {
 }
 ```
 
-### 8.3 Bounds from a range (`in`)
+### 8.3 Membership (`in`): ranges and lists of constants
 
-**`in` means membership in a set.** The set is written as a range — `lo..hi` excluding `hi`, or
-`lo..=hi` including it — and each bound is evaluated once. The value being tested comes first:
-`x in lo..hi`.
+**`in` means membership in a set.** The set is written either as a range — `lo..hi` excluding
+`hi`, or `lo..=hi` including it, each bound evaluated once — or as a list of constants,
+`[a, b, c]` (§8.3.3). The value being tested comes first: `x in lo..hi`, `x in [a, b, c]`.
 
 An index into a container is the case that matters most, and it is now spelled out rather than
 implied: the indices of `arr` are `0..arr.len`.
@@ -2367,7 +2367,7 @@ func f(a i32[8], i usize) i32 {
 ```
 
 ```
-[E100] Error Ln 2, Col 8: `i in a` as an index test was retired: `in` means membership in a set, and a's indices are the range `0..a.len`. Write `i in 0..a.len` (or `i < a.len`).
+[E100] Error Ln 2, Col 8: `i in a` as an index test was retired: `in` means membership in a set, and a's indices are the range `0..a.len`. Write `i in 0..a.len` (or `i < a.len`). Membership in a container's ELEMENTS is a scan, which is a function you write; `in` takes a list of constants (`x in [a, b]`).
 ```
 
 ```lain
@@ -2482,6 +2482,85 @@ branch or to code after the block.
 > A guard matches the access **structurally**: `pos in 0..data.len` guards exactly `data[pos]`. A
 > different offset is not guarded and is refused on its own merits — `data[pos + 1]` under that guard
 > is `[E085]`, because the guard says nothing about `pos + 1`.
+
+#### 8.3.3 List membership (`x in [a, b, c]`)
+
+`x in [a, b, c]` is `true` when `x` equals one of the elements. `x` is evaluated once and compared
+with each element in turn:
+
+```lain
+// VERIFY: exit 0
+func is_space(c u8) bool {
+    return c in [' ', 9, 10, 13]
+}
+
+func main() i32 {
+    if !is_space(' ') { return 1 }
+    if !is_space(10) { return 2 }
+    if is_space('a') { return 3 }
+    return 0
+}
+```
+
+The elements are **closed constants**: number and character literals, and arithmetic on them —
+`' '`, `-3`, `'a' + 1`. A name is not followed, so a value known only at run time is refused with the
+spelling to use instead:
+
+```lain
+func f(x i32, y i32) bool {
+    return x in [1, y]                 // ERROR [E012]
+}
+```
+
+```
+[E012] Error Ln 2, Col 21: each element of a membership list is a constant (numbers and characters, and arithmetic on them); for a value known only at run time, compare: `x == a or x == b`.
+```
+
+**The test is exact; the narrowing is the hull.** These are two different facts, and confusing them
+is the natural mistake. `i in [0, 2]` is true for `0` and `2` and **false for `1`** — but inside the
+true branch the analysis knows only that `i` lies between the smallest element and the largest,
+`0..=2`. That is enough to prove an index into a three-element array:
+
+```lain
+// VERIFY: exit 0
+func pick(t u8[3], i usize) u8 {
+    if i in [0, 2] { return t[i] }     // the hull 0..=2 proves the index
+    return 0
+}
+
+func main() i32 {
+    var t u8[3] = [7, 8, 9]
+    if pick(t, 2) != 9 { return 1 }    // 2 is a member
+    if pick(t, 1) != 0 { return 2 }    // 1 is inside the hull, but not in the set
+    return 0
+}
+```
+
+Because the narrowing is the hull, a gap in the list does not help a bound: over the same array,
+`i in [0, 5]` narrows `i` to `0..=5`, which does not fit, and `t[i]` is `[E085]`.
+
+**The comparison is mathematical**, not C's. A `u8` holding `44` does not match `300`, although
+`300` reduced to a byte is `44`; and `255` does not match `-1`. Each element is compared with `x` as
+the integer it is, whatever the types:
+
+```lain
+// VERIFY: exit 0
+func hit(c u8) i32 {
+    if c in [-1, 300, 7] { return 1 }
+    return 0
+}
+
+func main() i32 {
+    if hit(255) != 0 { return 1 }      // not -1
+    if hit(44) != 0 { return 2 }       // not 300, though 300 mod 256 = 44
+    if hit(7) != 1 { return 3 }
+    return 0
+}
+```
+
+`in` tests an integer against integers, so a `bool` on the left is `[E012]`, and an empty list
+`x in []` is the parser's `[E100]`. Membership in a container's **elements** — "is `v` anywhere in
+`arr`?" — is not `in` at all: it is a scan, and a scan is a function you write.
 
 ### 8.4 Relational Constraints Between Parameters
 
@@ -3767,7 +3846,7 @@ func scan_until(src u8[:0], delim u8) usize {
 | `fun` | Alias for `func` |
 | `if` | Conditional |
 | `import` | Module import |
-| `in` | Range iteration / membership in a range (§8.3): a constraint, or a bounds-proving condition |
+| `in` | Range iteration / membership in a range or a list of constants (§8.3): a constraint, or a bounds-proving condition |
 | `mov` | Ownership transfer |
 | `or` | Logical OR operator |
 | `effects` | Effect row (`io`, `diverge`, `raises`, `alloc`) |

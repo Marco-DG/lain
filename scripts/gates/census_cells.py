@@ -841,8 +841,8 @@ add("error-union", "a refinement clause on a union return is ignored",
 # as the INDEX test: against [7, 8, 9], `m(1)` was true and `m(7)` false, printing 100 where membership
 # prints 010. I.78 refuses it and points at `x in 0..a.len` or a scan function, which is what this cell
 # now holds in place.
-_I79 = ("I.79 — `x in [a, b, c]` over a list of constants is element membership; HEAD refuses it E012, "
-        "having retired the old index meaning")
+# Closed by I.79: the five value cells below print the membership values derived above, in C at
+# -O0 and -O2 and in the interpreter.
 _MEM = 'func m(%s) %s {\n%s}\n'
 _IF1 = '    if %s {\n        return 1\n    }\n    return 0\n'
 def _mem_main(fmt, args):
@@ -850,20 +850,20 @@ def _mem_main(fmt, args):
 # DERIVED: each digit is 1 when the argument is an element of the list, 0 otherwise.
 add("membership", "i32 elements, branch position",
     _MEM % ("x i32", "i32", _IF1 % "x in [1, 3, 5]")
-    + _mem_main("%d%d%d%d", "m(1), m(2), m(5), m(6)"), "1010\n", plan=_I79)
+    + _mem_main("%d%d%d%d", "m(1), m(2), m(5), m(6)"), "1010\n")
 add("membership", "i32 elements, value position",
     _MEM % ("x i32", "bool", "    return x in [1, 3, 5]\n")
-    + _mem_main("%d%d%d%d", "m(1) as i32, m(2) as i32, m(5) as i32, m(6) as i32"), "1010\n", plan=_I79)
+    + _mem_main("%d%d%d%d", "m(1) as i32, m(2) as i32, m(5) as i32, m(6) as i32"), "1010\n")
 add("membership", "negative literal elements",
     _MEM % ("x i32", "i32", _IF1 % "x in [-3, 0, 4]")
-    + _mem_main("%d%d%d%d", "m(0 - 3), m(0 - 1), m(0), m(4)"), "1011\n", plan=_I79)
+    + _mem_main("%d%d%d%d", "m(0 - 3), m(0 - 1), m(0), m(4)"), "1011\n")
 add("membership", "character literal elements",
     _MEM % ("c u8", "i32", _IF1 % "c in ['a', 'e', 'i']")
-    + _mem_main("%d%d%d", "m('a'), m('b'), m('i')"), "101\n", plan=_I79)
+    + _mem_main("%d%d%d", "m('a'), m('b'), m('i')"), "101\n")
 add("membership", "u64 against small constants, including u64 max",
     _MEM % ("x u64", "i32", _IF1 % "x in [1, 2, 3]")
     + 'func main() i32 effects io {\n    var big u64 = 0\n    big = big -% 1\n'
-      '    libc_printf("%d%d%d\\n", m(2), m(7), m(big))\n    return 0\n}\n', "100\n", plan=_I79)
+      '    libc_printf("%d%d%d\\n", m(2), m(7), m(big))\n    return 0\n}\n', "100\n")
 add("membership", "a runtime container",
     _MEM % ("x usize, a u8[]", "i32", _IF1 % "x in a") + 'func main() i32 {\n    return 0\n}\n',
     "__ILLFORMED__")
