@@ -219,8 +219,8 @@ mov-field-leak	pointer field, never consumed	ok-REFUSED [E003]
 mov-field-leak	integer field, full consume	OK
 mov-field-leak	integer field, partial	ok-REFUSED [E016]
 mov-field-leak	integer field, never consumed	ACCEPTED-ILLFORMED  # I.82 — a `mov` field of non-pointer type leaks silently: E016 fires on the partial path, E003 does not fire on the leak
-for-bound-type	f64 bound, body returns	ACCEPTED-ILLFORMED  # I.81 — a `for` bound may be an f64; a returning body never steps the counter, so nothing complains. The completing-body cell pins the other symptom (E086 at the body, should be E012 at the bound)
-for-bound-type	f64 bound, body completes	ok-REFUSED [E086]
+for-bound-type	f64 bound, body returns	ok-REFUSED [E012]
+for-bound-type	f64 bound, body completes	ok-REFUSED [E012]
 for-bound-type	usize bound, body returns	OK
 for-bound-type	usize bound, body completes	OK
 char-literal	single	OK

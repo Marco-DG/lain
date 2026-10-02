@@ -1,0 +1,16 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 8, Col 17: a `for` range counts in integers, so its bounds are integers
+// Spec 09: a range's start and end "shall have integer types". An f64 bound compiled: the loop
+// variable took the float's type, the C compared an integer counter with a double, and with a body
+// that counted, the refusal was an E086 at the body naming neither the bound nor the float
+// (Documentation, Handwriting; I.81).
+func f(a f64) i32 {
+    for i in 0..a {
+        return 1
+    }
+    return 0
+}
+
+func main() i32 {
+    return f(0.5)
+}

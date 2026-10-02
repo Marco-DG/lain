@@ -543,11 +543,7 @@ for bname, bound, arg0, arg1 in [("f64", "f64", "0.5", "0.0"), ("usize", "usize"
         'func main() i32 effects io {\n    libc_printf("%%d\\n", f(%s) * 10 + f(%s))\n    return 0\n}\n'
         % (bound, arg0, arg1),
         # DERIVED: a non-empty bound enters the body once and returns 1; an empty bound returns 0.
-        "10\n" if bname == "usize" else "__ILLFORMED__",
-        plan=(None if bname == "usize" else
-              "I.81 — a `for` bound may be an f64; a returning body never steps the counter, so nothing "
-              "complains. The completing-body cell pins the other symptom (E086 at the body, should be "
-              "E012 at the bound)"))
+        "10\n" if bname == "usize" else "__ILLFORMED__")
     add("for-bound-type", "%s bound, body completes" % bname,
         'func f(a %s) i32 effects io {\n    for i in 0..a {\n        libc_printf("x")\n    }\n'
         '    return 0\n}\n'

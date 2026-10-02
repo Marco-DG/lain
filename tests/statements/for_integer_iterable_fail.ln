@@ -1,0 +1,15 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 7, Col 14: `for` iterates a range (`lo..hi`), an array or a slice
+// `for` iterates a range, an array or a slice. An integer here reached an `assert` in resolve and
+// CRASHED the compiler (exit 134, core dump) instead of saying so (I.81).
+func f(n i32) i32 {
+    var s i32 = 0
+    for i in n {
+        s = 1
+    }
+    return s
+}
+
+func main() i32 {
+    return f(3)
+}

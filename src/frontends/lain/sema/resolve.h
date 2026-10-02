@@ -2,6 +2,10 @@
 
 #ifndef SEMA_RESOLVE_H
 #define SEMA_RESOLVE_H
+// forward: typecheck.h, included after this file
+static bool is_integer_type(Type *t);
+static void type_describe(Type *t, char *buf, size_t cap);
+static Type *resolve_type_alias(Type *t);
 static bool sa_is_const(Expr *e, bool *layout);   // typecheck.h: the constant evaluator
 static bool sa_eval(Expr *e, __int128 *v);
 static Type *resolve_type_alias(Type *t);         // typecheck.h: peels a type alias
@@ -996,6 +1000,43 @@ void sema_resolve_stmt(Stmt *s) {
     Expr *it = s->as.for_stmt.iterable;
     sema_resolve_expr(it);
     sema_infer_expr(it);
+    // ★ WHAT A `for` ITERATES (I.81, Documentation; spec 09: a range's start and end "shall have
+    // integer types"). An f64 bound compiled: the loop variable took the float's type, the C
+    // compared an integer counter with a double, and a body that counted was refused with an
+    // E086 at the body that named neither the bound nor the float. A non-range iterable that is
+    // not an array or a slice reached an `assert` and CRASHED the compiler (`for i in n`).
+    {
+      Expr *bad = NULL; Type *bt0 = NULL;
+      if (it->kind == EXPR_RANGE) {
+        Expr *ends[2] = { it->as.range_expr.start, it->as.range_expr.end };
+        for (int k = 0; k < 2 && !bad; k++) {
+          Expr *e = ends[k];
+          if (!e) continue;
+          sema_resolve_expr(e); sema_infer_expr(e);
+          Type *t = e->type;
+          if (t && t->kind == TYPE_SIMPLE) { Type *a = resolve_type_alias(t); if (a) t = a; }
+          if (t && !is_integer_type(t)) { bad = e; bt0 = t; }
+        }
+        if (bad) {
+          char tb[128]; type_describe(bt0, tb, sizeof tb);
+          long l = (long)(bad->line ? bad->line : s->line), c = (long)(bad->line ? bad->col : s->col);
+          fprintf(stderr, "[E012] Error Ln %li, Col %li: a `for` range counts in integers, so its "
+                  "bounds are integers; this one is '%s'.\n", l, c, tb);
+          diagnostic_show_line(l, c); exit(1);
+        }
+      } else {
+        Type *t = it->type;
+        if (t && t->kind == TYPE_SIMPLE) { Type *a = resolve_type_alias(t); if (a && (a->kind == TYPE_ARRAY || a->kind == TYPE_SLICE)) t = a; }
+        if (!t || (t->kind != TYPE_ARRAY && t->kind != TYPE_SLICE)) {
+          char tb[128] = "an unknown type"; if (t) type_describe(t, tb, sizeof tb);
+          long l = (long)(it->line ? it->line : s->line), c = (long)(it->line ? it->col : s->col);
+          fprintf(stderr, "[E012] Error Ln %li, Col %li: `for` iterates a range (`lo..hi`), an array or "
+                  "a slice; this is '%s'.\n", l, c, tb);
+          diagnostic_show_line(l, c); exit(1);
+        }
+        if (t != it->type) it->type = t;
+      }
+    }
 
     Type *iter_ty = it->type;
     Type *idx_ty = get_builtin_i32_type();
