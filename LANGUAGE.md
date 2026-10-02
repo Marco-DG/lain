@@ -3833,29 +3833,14 @@ literal         = NUMBER | CHAR_LITERAL | STRING_LITERAL ;
 
 ## Appendix E: Compiler Flags
 
-Every flag the compiler accepts, verified against the binary. An unknown flag is an error, not a
-filename, so a mistyped flag fails the build rather than being read as a source path.
+Moved to **[USAGE.md](USAGE.md)**, which is the compiler's manual: every flag, the exit codes, why
+`-Dlibc_printf=printf` and `-w` are needed when compiling the emitted C, how to run a program on the
+IR's own semantics instead of emitting C, and how to read a diagnostic.
 
-| Flag | Effect |
-|:-----|:-------|
-| `-o <file>` | Write the emitted C to `<file>` (default `out.c`). A relative path is resolved against the working directory. |
-| `--target=<triple>` | Set the target triple used for layout and emission. |
-| `--interpret` | Run the accepted program on the IR's own semantics (`src/ir/interp.h`) instead of emitting C. Every discharged proof is checked as it is used, and the process exits with the value `main` returns. |
-| `--check-invariants` | Implies `--interpret`. The range analysis's state at each block must contain the running program's, so a proof that does not describe the real execution is caught. |
-| `--dump-ast` | Print the parsed syntax tree. |
-| `--dump-effects` | Print each function's inferred effect row. |
-| `--dump-niche` | Print the niche-packing decision for each sum type. |
-| `--dump-octagon` | Print the converged octagon state per basic block. A value that came from a named local prints as `%2:i`; the rest are temporaries. |
-| `--dump-measures` | Print the measure behind each termination proof, in the program's own names, one line per loop or recursion — and `no measure found` for a loop that is about to be refused. |
-| `--emit-certificate <file>` | Write what the range analysis found, per function, to `<file>`: the loop-header octagon states, the termination measure of each loop and recursion, element and return ranges, call-site ranges with the callee's certificate nested, and accumulator bounds. It is text meant to be read by a person. |
-| `--certificate-roundtrip <file>` | Parse a certificate and print it back. This is the format's own test — emitting, parsing and re-emitting must give the same text — rather than a tool for everyday use. |
-| `--no-w130` | Accepted, and does nothing today: `W130` was removed with `proc`, and the only warning the compiler emits is `W120`. |
-| `--no-line-directives` | Omit `#line` directives from the emitted C. |
-| `--emit-llvm` | Lower to proof-carrying LLVM-IR. This is a demonstration seam, not a backend: outside the subset it models it **refuses** rather than emitting a placeholder. C is the backend that works. |
-
-Two legacy selector flags, for choosing an engine and a backend, are still *accepted* and
-silently do nothing: there is one engine and one backend. They are deliberately left out of the
-table above, because a no-op documented as a feature is worse than an absent one — the engine
-selector once named a set of analyses that were deleted on 2026-09-23, and honouring it would
-have meant compiling with no ownership, bounds or overflow checking at all. They remain no-ops
-rather than errors only so that older scripts keep running.
+The table lived here because this was the only page long enough to hold it, which is not a reason. A
+language manual describes the language; what a particular compiler accepts on its command line is a
+different document, and a reader looking for "how do I run this" was never going to find it in an
+appendix to §20. One further reason to keep it in one place: the flag list is checked against
+`src/frontends/lain/args.h` in both directions — a flag named in a document must be accepted, and a
+flag the compiler accepts must be documented — and two copies of a checked table are two things to
+keep true.
