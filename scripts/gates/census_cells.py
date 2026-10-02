@@ -823,6 +823,64 @@ add("error-union", "a refinement clause on a union return is ignored",
     "__ILLFORMED__", plan=_I94)
 
 
+# ── axis: `in` as ELEMENT MEMBERSHIP over a list of constants (DECIDE-X: I.78 + I.79) ─────────────
+# Marco's DECIDE-X: `in` means membership in a set, and the index test is spelled `i < a.len` or
+# `i in 0..a.len`. The same program across three builds is the whole argument for the decision:
+#
+#   if x in [1, 3, 5]  with x = 1, 2, 5, 6
+#   before 9468c20     1100     meant x < 3, the INDEX of a 3-element list
+#   HEAD               E012     refused: the old meaning retired loudly
+#   with I.79          1010     element membership
+#
+# No program can slide from 1100 to 1010 silently, because HEAD refuses it in between. That is the
+# migration's one safety property, and the first five cells pin where it ends up.
+#
+# The refusals are DESIGN, each documented in its own message: a list element must be a constant
+# ("for a value known only at run time, compare: x == a or x == b"); a comprehension is built at run
+# time; a runtime container's elements are "a scan, which is a function you write". The empty list
+# follows from the general rule that an empty array literal is refused, not from a membership decision.
+#
+# The runtime-container cell pins the retirement itself. Before I.78, a runtime slice was still read
+# as the INDEX test: against [7, 8, 9], `m(1)` was true and `m(7)` false, printing 100 where membership
+# prints 010. I.78 refuses it and points at `x in 0..a.len` or a scan function, which is what this cell
+# now holds in place.
+_I79 = ("I.79 — `x in [a, b, c]` over a list of constants is element membership; HEAD refuses it E012, "
+        "having retired the old index meaning")
+_MEM = 'func m(%s) %s {\n%s}\n'
+_IF1 = '    if %s {\n        return 1\n    }\n    return 0\n'
+def _mem_main(fmt, args):
+    return 'func main() i32 effects io {\n    libc_printf("%s\\n", %s)\n    return 0\n}\n' % (fmt, args)
+# DERIVED: each digit is 1 when the argument is an element of the list, 0 otherwise.
+add("membership", "i32 elements, branch position",
+    _MEM % ("x i32", "i32", _IF1 % "x in [1, 3, 5]")
+    + _mem_main("%d%d%d%d", "m(1), m(2), m(5), m(6)"), "1010\n", plan=_I79)
+add("membership", "i32 elements, value position",
+    _MEM % ("x i32", "bool", "    return x in [1, 3, 5]\n")
+    + _mem_main("%d%d%d%d", "m(1) as i32, m(2) as i32, m(5) as i32, m(6) as i32"), "1010\n", plan=_I79)
+add("membership", "negative literal elements",
+    _MEM % ("x i32", "i32", _IF1 % "x in [-3, 0, 4]")
+    + _mem_main("%d%d%d%d", "m(0 - 3), m(0 - 1), m(0), m(4)"), "1011\n", plan=_I79)
+add("membership", "character literal elements",
+    _MEM % ("c u8", "i32", _IF1 % "c in ['a', 'e', 'i']")
+    + _mem_main("%d%d%d", "m('a'), m('b'), m('i')"), "101\n", plan=_I79)
+add("membership", "u64 against small constants, including u64 max",
+    _MEM % ("x u64", "i32", _IF1 % "x in [1, 2, 3]")
+    + 'func main() i32 effects io {\n    var big u64 = 0\n    big = big -% 1\n'
+      '    libc_printf("%d%d%d\\n", m(2), m(7), m(big))\n    return 0\n}\n', "100\n", plan=_I79)
+add("membership", "a runtime container",
+    _MEM % ("x usize, a u8[]", "i32", _IF1 % "x in a") + 'func main() i32 {\n    return 0\n}\n',
+    "__ILLFORMED__")
+add("membership", "a non-constant element",
+    _MEM % ("x i32, p i32, q i32", "i32", _IF1 % "x in [p, q]") + 'func main() i32 {\n    return 0\n}\n',
+    "__ILLFORMED__")
+add("membership", "a comprehension",
+    _MEM % ("x i32", "i32", _IF1 % "x in [i for i in 0..4]") + 'func main() i32 {\n    return 0\n}\n',
+    "__ILLFORMED__")
+add("membership", "an empty list",
+    _MEM % ("x i32", "i32", _IF1 % "x in []") + 'func main() i32 {\n    return 0\n}\n',
+    "__ILLFORMED__")
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,

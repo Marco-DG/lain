@@ -276,3 +276,12 @@ error-union	i32 payload, no spare values	ok-REFUSED [E064]
 error-union	try whose marker the enclosing union omits	ok-REFUSED [E065]
 error-union	refined alias, the third remedy E064 names	OK
 error-union	a refinement clause on a union return is ignored	ACCEPTED-ILLFORMED  # I.94 — (a) E064's message says `a refinement like u8 < 200`, which cannot be written where a union's payload goes; it should show `type Small = u8 < 200`. (b) a refinement clause after a union return type, `T | M < N`, parses and is silently ignored: a payload that can exceed N is accepted, where the same clause on a plain return is E086
+membership	i32 elements, branch position	REFUSED [E012]  # I.79 — `x in [a, b, c]` over a list of constants is element membership; HEAD refuses it E012, having retired the old index meaning
+membership	i32 elements, value position	REFUSED [E012]  # I.79 — `x in [a, b, c]` over a list of constants is element membership; HEAD refuses it E012, having retired the old index meaning
+membership	negative literal elements	REFUSED [E012]  # I.79 — `x in [a, b, c]` over a list of constants is element membership; HEAD refuses it E012, having retired the old index meaning
+membership	character literal elements	REFUSED [E012]  # I.79 — `x in [a, b, c]` over a list of constants is element membership; HEAD refuses it E012, having retired the old index meaning
+membership	u64 against small constants, including u64 max	REFUSED [E012]  # I.79 — `x in [a, b, c]` over a list of constants is element membership; HEAD refuses it E012, having retired the old index meaning
+membership	a runtime container	ok-REFUSED [E100]
+membership	a non-constant element	ok-REFUSED [E012]
+membership	a comprehension	ok-REFUSED [E012]
+membership	an empty list	ok-REFUSED [E100]
