@@ -442,31 +442,32 @@ type Point {
 }
 ```
 
-**Construction** (two forms):
+A struct is built positionally, or declared and filled field by field. Reading a field uses the
+same dotted name, and assigning a struct **copies** it, so writing through the copy leaves the
+original alone (for non-linear structs):
 
-*Positional construction:*
 ```lain
-var p = Point(10, 20)     // Fields assigned by position
-```
+type Point {
+    x int
+    y int
+}
 
-*Field-by-field assignment:*
-```lain
-var p Point
-p.x = 10
-p.y = 20
-```
+func main() i32 {
+    var p = Point(10, 20)     // positional construction
 
-**Field access:**
-```lain
-var x = p.x
-var y = p.y
-```
+    var x = p.x               // field access
+    var y = p.y
 
-**Copy semantics:**
-By default, assigning a struct creates a copy (for non-linear structs):
-```lain
-var p2 = p          // Copy of p
-p2.x = 30           // Does not modify p
+    var p2 = p                // a struct assignment copies
+    p2.x = 30
+    if p.x != 10 { return 1 } // p is untouched
+
+    var q Point               // declared, then filled field by field
+    q.x = 10
+    q.y = 20
+
+    return x + y + q.x + p2.x
+}
 ```
 
 **Linear fields:**
