@@ -34,6 +34,10 @@ lain.h
 # Scratch
 *_scratch.ln
 _*.ln
+# ...and the C a gate emits beside it. `_*.ln` covered readme_gate's program and nothing covered
+# its output, so an interrupted run left an untracked `_readme_gate_tmp*.c` at the root — which
+# the root is supposed to stay clean of, and which `git status` then shows to every session.
+_*.c
 debug_out.txt
 test_output.txt*
 tests/**/out

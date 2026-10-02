@@ -13,6 +13,16 @@
 # compiling can check that sentence. An example written as its own assertion is worse than
 # unchecked: `if a != b { return 1 }` reads like a test and is inert until something runs it.
 #
+# ★ WHAT THAT ORACLE CAN AND CANNOT SEE (Handwriting's framing, worth stating where the marker is
+# defined so a green line is not over-read). `--interpret` runs the program on the IR's own
+# semantics. So it catches a wrong ANALYSIS — anything the IR does not itself encode, e.g. I.60's
+# unsafe-waiver, where the range analysis read an unwrapped value and the running program did not.
+# It is BLIND to a wrong IR, because it executes the same mistake it is meant to detect: in I.56
+# the policy operators were typed i32, and the emitted C and the interpreter agreed on the wrong
+# value. Only Handwriting's census saw it, because its expected values come from Python — outside
+# the compiler. A second oracle inside the system is not an independent one.
+# The exit status is also 8 bits, so values are compared modulo 256; see the write site.
+#
 # Blocks that are fragments (no `func main`) are wrapped: top-level declarations get a `main`
 # appended, statement fragments get wrapped in one. The wrapper's row is `io, raises, alloc` and
 # deliberately NOT `diverge`: since E.6 every effect must be acknowledged, so a wrapper with a
@@ -55,7 +65,17 @@ if stale=$(find src -type f -newer "$LAIN" -print -quit 2>/dev/null); [ -n "$sta
     echo "  Run: make"
     exit 2
 fi
-TMP=$(mktemp -d); trap 'rm -rf "$TMP" "$ROOT/_readme_gate_tmp.ln" "$ROOT/_readme_gate_tmp.c"' EXIT
+TMP=$(mktemp -d)
+# ★ THE PROGRAM FILE IS NAMED PER PROCESS. It has to live in the repo root — module paths resolve
+# relative to the source file's directory, so an example saying `import std.c.{…}` can only be
+# compiled from the directory that holds `std/` (see the note at the write site). But a FIXED name
+# there is shared state: two runs of this gate at once — one in a compiler session's chain, one in
+# mine — overwrite each other's program, so run A can compile run B's example and report the
+# verdict against A's page and line, and whichever exits first deletes the other's file mid-run.
+# Moving it into $TMP would fix the collision and break every module example, which is why the
+# fix is the NAME and not the directory.
+PROG="$ROOT/_readme_gate_tmp.$$.ln"; PROGC="$ROOT/_readme_gate_tmp.$$.c"
+trap 'rm -rf "$TMP" "$PROG" "$PROGC"' EXIT
 
 python3 - "$TMP" "${PAGES[@]}" <<'PY'
 import re, sys, os
@@ -128,12 +148,34 @@ for f in "$TMP"/b*.txt; do
         verify_bad=$((verify_bad+1))
         echo "  ★ $page:$ln — block claims both a rejection and an exit value"
     fi
+    # ★ AN EXIT STATUS IS 8 BITS, so this comparison aliases modulo 256 and the gate must say so
+    # rather than let a page look checked. Handwriting measured it on 479e320: a `main` returning
+    # 256 exits 0 and one returning 300 exits 44, in the emitted C and under --interpret alike.
+    # Two ways that bites, the second much worse than the first:
+    #   · `// VERIFY: exit 300` can never hold, and the failure reads as a compiler bug rather
+    #     than as an impossible expectation;
+    #   · `// VERIFY: exit 0` PASSES for a program that computes 256 — the gate then CONFIRMS a
+    #     wrong value, and 0 is the value an author writes most often.
+    # An out-of-range claim is therefore a malformed annotation and is refused here.
+    #
+    # The second hazard is NOT yet closed mechanically, and is recorded rather than forgotten: the
+    # full fix is to require a literal `return N` in the block, forcing the wide comparison inside
+    # the program (`if f(x) != 300 { return 1 }`) so the status carries only which assertion
+    # failed — a computed return can alias, a literal one the author wrote cannot. That rule
+    # refuses a currently-committed spec example which is in fact safe (`return sat(10) as i32`
+    # returns a u8 and cannot reach 256), so it lands together with the rewrite of that example,
+    # when spec/ is released. A lint must not land before the thing it would refuse is fixed.
+    if [ -n "$verify_exp" ] && { [ "$verify_exp" -lt 0 ] || [ "$verify_exp" -gt 255 ]; }; then
+        verify_bad=$((verify_bad+1))
+        echo "  ★ $page:$ln — VERIFY: exit $verify_exp is outside 0..255; an exit status cannot carry it"
+        echo "      Compare it inside the program instead: \`if f(x) != $verify_exp { return 1 }\` with VERIFY: exit 0"
+    fi
     # make it a program
     # ★ The program is written into the REPOSITORY ROOT, not into $TMP. Module paths resolve
     # relative to the source file's directory, so an example that says `import std.c.{…}` can
     # only be checked from the directory that contains `std/`. Written to a temp dir, every
     # such example failed for a reason that had nothing to do with the example.
-    prog="$ROOT/_readme_gate_tmp.ln"
+    prog="$PROG"
     selfcontained=0
     echo "$body" | grep -qE '^\s*(proc|func) main' && selfcontained=1
     if [ $selfcontained -eq 1 ]; then
@@ -149,7 +191,7 @@ for f in "$TMP"/b*.txt; do
                         *)           unchecked_other=$((unchecked_other+1))   ;; esac
         continue
     fi
-    out=$("$LAIN" "$prog" -o "$ROOT/_readme_gate_tmp.c" 2>&1); rc=$?
+    out=$("$LAIN" "$prog" -o "$PROGC" 2>&1); rc=$?
     # ★ ONLY A SELF-CONTAINED EXAMPLE IS HELD TO ACCOUNT. A fragment names types and functions
     # it deliberately did not declare (`case color { … }`, `var p Point`), so every diagnostic
     # it draws is the gate's wrapper talking, not the README being wrong. The first version of
