@@ -1,0 +1,39 @@
+// I.88b: three loop guards that compare a signed and an unsigned value, each proved terminating
+// before I.88 and refused (E011) by it, because the comparison grew a sign test or a widening cast
+// that hid the counter from the termination rule. None needs either: a widened sum of unsigned
+// values cannot be negative (`(i + 15) < a.len`), a fixed array's length is a constant that fits i64
+// (`i < a.len` with an i32 counter), and a widening cast is exact and order-preserving (`i < n` with
+// i i32 and n u32). Run under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func blocks(a u8[4096], start u32 < 4097) u32 {
+    var i u32 = start
+    while (i + 15) < a.len {
+        i = i +% 16
+    }
+    return i
+}
+
+func count(a u8[4096]) i32 {
+    var i i32 = 0
+    var s i32 = 0
+    while i < a.len {
+        s = s + 1
+        i = i + 1
+    }
+    return s
+}
+
+func upto(n u32 < 4096) i32 {
+    var i i32 = 0
+    while i < n {
+        i = i + 1
+    }
+    return i
+}
+
+func main() i32 effects io {
+    b u8[4096] = [0 for k in 0..4096]
+    libc_printf("%u %d %d\n", blocks(b, 0), count(b), upto(40))
+    return 0
+}

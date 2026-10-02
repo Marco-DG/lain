@@ -1423,12 +1423,44 @@ static bool ir_nonneg_lit(Expr *e) {
     return e && e->kind == EXPR_LITERAL && e->as.literal_expr.value >= 0;
 }
 static int ir_cbits(IrType *t) { return t->bits <= 8 ? 8 : t->bits <= 16 ? 16 : t->bits <= 32 ? 32 : 64; }
-// 0: a compare C gets right as written; 1: mixed, widen both to i64; 2: mixed, test the sign first.
-static int ir_cmp_mixed(IrValue *x, IrValue *y, bool xlit, bool ylit) {
+// The instruction defining v, when v was just computed in the block being lowered.
+static IrInstr *ir_cmp_def(LowerCtx *c, IrValue *v) {
+    for (IrInstr *i = c->cur ? c->cur->instrs : NULL; i; i = i->next) if (i->result == v) return i;
+    return NULL;
+}
+// ★ v >= 0 BY CONSTRUCTION (I.88b): an unsigned value, a non-negative constant, a zero-extension, or a
+// checked sum or product of such. That is what a guard like `(i + 15) < a.len` on a u32 i lowers
+// to: the sum is computed widened, so it is SIGNED in the IR, but it cannot be negative.
+static bool ir_cmp_nonneg(LowerCtx *c, IrValue *v, int depth) {
+    if (!v || !v->type || v->type->kind != IRT_INT) return false;
+    if (!v->type->is_signed) return true;
+    IrInstr *d = depth < 4 ? ir_cmp_def(c, v) : NULL;
+    if (!d) return false;
+    if (d->op == IR_CONST) return d->aux.imm >= 0;
+    if (d->op == IR_CAST && d->n_operands >= 1)
+        return d->aux.cast_kind == IR_CAST_ZEXT ||
+               (d->aux.cast_kind == IR_CAST_SEXT && ir_cmp_nonneg(c, d->operands[0], depth + 1));
+    if ((d->op == IR_ADD || d->op == IR_MUL) && d->n_operands >= 2 && d->wrap == IR_WRAP_CHECK)
+        return ir_cmp_nonneg(c, d->operands[0], depth + 1) && ir_cmp_nonneg(c, d->operands[1], depth + 1);
+    return false;
+}
+// 0: a compare C gets right as written; 1: mixed, widen both to i64; 2: mixed, test the sign first;
+// 3: mixed, but the signed side cannot be negative: compare unsigned, as written;
+// 4: mixed, but the unsigned side is a constant that fits i64: compare signed against it.
+static int ir_cmp_mixed(LowerCtx *c, IrValue *x, IrValue *y, bool xlit, bool ylit) {
     IrType *a = x ? x->type : NULL, *b = y ? y->type : NULL;
     if (!a || !b || a->kind != IRT_INT || b->kind != IRT_INT || a->is_signed == b->is_signed) return 0;
     if (a->is_signed ? xlit : ylit) return 0;
     IrType *u = a->is_signed ? b : a, *s = a->is_signed ? a : b;
+    IrValue *sv = a->is_signed ? x : y, *uv = a->is_signed ? y : x;
+    // ★ Before the general cases: a sign test or a widening cast in a loop guard hides the counter
+    // from the termination rule (the sign test's block keeps both branches inside the loop), and
+    // these two shapes need neither. `(i + 15) < a.len` and `i < a.len` over a fixed array were
+    // E011 after I.88 and proved before it.
+    if (ir_cmp_nonneg(c, sv, 0)) return 3;
+    IrInstr *ud = ir_cmp_def(c, uv);
+    if (ud && ud->op == IR_CONST && ud->aux.imm >= 0) return 4;
+    (void)uv;
     if (ir_cbits(u) == 64) return 2;
     if (ir_cbits(u) == 32 && ir_cbits(s) <= 32) return 1;
     return 0;
@@ -1465,7 +1497,18 @@ static void ir_cmp_br_mixed(LowerCtx *c, TokenKind op, IrValue *x, IrValue *y, I
 // The comparison as a VALUE. `sgn` is used only when the operands are not two integers.
 static IrValue *ir_cmp_value(LowerCtx *c, TokenKind op, IrValue *x, IrValue *y, bool xlit, bool ylit, bool sgn) {
     IrCmp cmp = IR_CMP_EQ;
-    int mix = ir_cmp_mixed(x, y, xlit, ylit);
+    int mix = ir_cmp_mixed(c, x, y, xlit, ylit);
+    if (mix == 3) {                 // x >= 0 converts exactly to the unsigned side
+        ir_cmp_op(op, false, &cmp);
+        return ir_icmp(c->f, c->cur, cmp, x, y);
+    }
+    if (mix == 4) {                 // the unsigned side is a constant k <= INT64_MAX: compare signed
+        bool xs = x->type->is_signed;
+        IrInstr *ud = ir_cmp_def(c, xs ? y : x);
+        IrValue *k = ir_const_int(c->f, c->cur, ud->aux.imm, ir_type_int(c->a, 64, true));
+        ir_cmp_op(op, true, &cmp);
+        return ir_icmp(c->f, c->cur, cmp, xs ? x : k, xs ? k : y);
+    }
     if (mix == 1) {
         IrValue *wx = ir_cmp_widen64(c, x), *wy = ir_cmp_widen64(c, y);
         ir_cmp_op(op, true, &cmp);
@@ -1492,7 +1535,7 @@ static IrValue *ir_cmp_value(LowerCtx *c, TokenKind op, IrValue *x, IrValue *y, 
 // The comparison as a BRANCH: the mixed 64-bit case branches directly, so each edge keeps its fact.
 static void ir_cmp_br(LowerCtx *c, TokenKind op, IrValue *x, IrValue *y, bool xlit, bool ylit, bool sgn,
                       IrBlock *tb, IrBlock *fb) {
-    if (ir_cmp_mixed(x, y, xlit, ylit) == 2) { ir_cmp_br_mixed(c, op, x, y, tb, fb); return; }
+    if (ir_cmp_mixed(c, x, y, xlit, ylit) == 2) { ir_cmp_br_mixed(c, op, x, y, tb, fb); return; }
     ir_set_br_cond(c->cur, ir_cmp_value(c, op, x, y, xlit, ylit, sgn), tb, fb);
 }
 

@@ -3724,11 +3724,31 @@ static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
         // exactly when `i` rises, so the predicate's direction is unchanged and the bound moves
         // by a constant. Progress is then checked on the CELL, as before — which is the part
         // that must not be relaxed, because it is what the counter actually is.
-        if (ivd && (ivd->op==IR_ADD || ivd->op==IR_SUB) && ivd->n_operands>=2 && vra_zexact(V, ivd)) {
-            IrValue *a0=ivd->operands[0], *a1=ivd->operands[1];
-            bool c1 = a1 && a1->id>=0 && a1->id<V->nvar && V->cknown[a1->id];
-            IrInstr *ld = (a0 && a0->id>=0 && a0->id<V->nvar) ? V->def[a0->id] : NULL;
-            if (c1 && ld && ld->op==IR_LOAD && ld->n_operands>=1) ivd = ld;   // `i ± const`
+        //
+        // ── ...AND MAY BE WIDENED (I.88b) ───────────────────────────────────────────────
+        // A guard comparing a signed and an unsigned value of at most 32 bits compares both
+        // widened to i64 (I.88), so the counter reaches the test as `sext(i)` (or `sext(i + k)`).
+        // A widening cast that is exact — sign-extending a signed value, zero-extending an
+        // unsigned one — is monotone for the same reason the offset is: it rises exactly when
+        // `i` rises. Without this, `while i < n` with i i32 and n u32 proved before I.88 and not
+        // after it.
+        for (int peel = 0; peel < 4 && ivd; peel++) {
+            if (ivd->op==IR_CAST && ivd->n_operands>=1 && ivd->result && ivd->result->type &&
+                ivd->operands[0] && ivd->operands[0]->type && ivd->operands[0]->type->kind==IRT_INT &&
+                ivd->result->type->bits > ivd->operands[0]->type->bits &&
+                ((ivd->aux.cast_kind==IR_CAST_SEXT &&  ivd->operands[0]->type->is_signed) ||
+                 (ivd->aux.cast_kind==IR_CAST_ZEXT && !ivd->operands[0]->type->is_signed))) {
+                IrValue *o = ivd->operands[0];
+                ivd = (o->id>=0 && o->id<V->nvar) ? V->def[o->id] : NULL;
+                continue;
+            }
+            if ((ivd->op==IR_ADD || ivd->op==IR_SUB) && ivd->n_operands>=2 && vra_zexact(V, ivd)) {
+                IrValue *a0=ivd->operands[0], *a1=ivd->operands[1];
+                bool c1 = a1 && a1->id>=0 && a1->id<V->nvar && V->cknown[a1->id];
+                IrInstr *nx = (c1 && a0 && a0->id>=0 && a0->id<V->nvar) ? V->def[a0->id] : NULL;
+                if (nx) { ivd = nx; continue; }                     // `i ± const`
+            }
+            break;
         }
         if (!ivd || ivd->op!=IR_LOAD || ivd->n_operands<1) continue;
         int cell=ivd->operands[0]->id;
