@@ -6116,6 +6116,7 @@ static void vra_cert_finish(Vra *V) {
         cert_print(c, vra_cert_out);
         if (vra_cert_seen_n < 4096) vra_cert_seen[vra_cert_seen_n++] = f;
         cert_free(c); V->cert = NULL;
+        V->certifying = false;   // finished: a later query must not record into a freed certificate
     }
 }
 
