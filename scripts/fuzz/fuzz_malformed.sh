@@ -38,15 +38,30 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$(dirname "$0")/../.."
+# The guards below resolve a path from a diagnostic against the TREE ROOT, not against
+# whatever cwd happens to be. Captured here so the guard does not depend on a cd dozens of
+# lines above it, and asserted so a future edit cannot quietly move it.
+ROOT="$PWD"
+[ -d "$ROOT/tests" ] && [ -d "$ROOT/src" ] || { echo "not at the tree root: $ROOT"; exit 2; }
 LAIN="${LAIN:-$(pwd)/lain}"; [ -x "$LAIN" ] || { echo "build first: make"; exit 2; }
 MUT="$HERE/fuzz_malformed.py"; [ -f "$MUT" ] || { echo "missing $MUT"; exit 2; }
-N="${1:-40}"; BASE=${RANDOM_SEED:-$$}
-# NOT a dotted directory. A path component beginning with '.' is mangled: lain rebuilds the root
-# file's path from the module name, turning '/' into '.' and then every '.' back into '/', so
-# `local/.m13/m.ln` is READ AS `local/m13/m.ln`. If that other file exists, a DIFFERENT file is
-# compiled, silently, exit 0. It cost this harness an entire invalid run: every mutant it wrote was
-# ignored and one stale crashing file was recompiled 145 times, reported as 145 crashes across
-# every operator. Keep every component of this path free of a leading dot.
+# THE SEED IS FIXED BY DEFAULT. It used to default to $$, the PID, so two runs generated different
+# programs and their numbers were not comparable. That cost a retracted measurement: a `proved` count
+# read 92, 95 and 100 across three commits and was reported as precision rising, when at a fixed seed
+# all four binaries are identical and unseeded runs of ONE binary span 89 to 102. Randomising is now
+# an explicit opt-in (RANDOM_SEED=random), and every run prints the seed it used.
+N="${1:-40}"; BASE=${RANDOM_SEED:-5150}
+case "$BASE" in random|RANDOM) BASE=$$ ;; esac
+# Keep every component of this path free of a leading dot, and the path tree-relative.
+# WHY, now history: before Z (58e5cf0) lain rebuilt the root file's path from the module name,
+# turning '/' into '.' and every '.' back into '/', so `local/.m13/m.ln` was READ AS
+# `local/m13/m.ln`. When that other file existed a DIFFERENT file was compiled, silently, exit 0.
+# It cost this harness an entire invalid run: every mutant it wrote was ignored and one stale
+# crashing file was recompiled 145 times, reported as 145 crashes across every operator.
+# Z fixed the substitution (verified with a decoy sibling in place), but the LESSON is why the
+# sanity line below still runs on every invocation: no guard could detect a silently substituted
+# file, because the wrong file opened perfectly and nothing was absent to notice. A harness that
+# cannot prove it read what it wrote cannot attribute anything it measures.
 TMP="local/m13run"; mkdir -p "$TMP"; trap 'rm -rf "$TMP"' EXIT
 BUDGET=20
 OPS="${M13_OPS:-unknown-member unknown-member-seq undeclared-ident swap-type wrong-qualifier unknown-import drop-token dup-token call-to-member member-to-call}"
@@ -56,7 +71,7 @@ OPS="${M13_OPS:-unknown-member unknown-member-seq undeclared-ident swap-type wro
 # refusal — unless the named file EXISTS, which means the harness ran from the wrong directory.
 m13_wrongcwd() {
     _f=$(printf '%s' "$1" | sed -n "s/.*(no file '\([^']*\)').*/\1/p" | head -1)
-    [ -n "$_f" ] && [ -f "$_f" ] && return 0
+    [ -n "$_f" ] && [ -f "$ROOT/$_f" ] && return 0
     case "$1" in *"Cannot open module file"*|*"lain: cannot open"*) return 0 ;; esac
     return 1
 }
@@ -120,13 +135,13 @@ for op in $OPS; do
             if echo "$out" | grep -qE "$KNOWN_UNCODED"; then uncoded_known=$((uncoded_known+1))
             else
                 uncoded_new=$((uncoded_new+1)); tot_new=$((tot_new+1))
-                echo "  ** UNCODED(new) op=$op seed=$((BASE+k)) src=$src :: $(echo "$out" | head -1 | cut -c1-72)"
+                echo "  ** UNCODED(new) op=$op seed=$mseed src=$src :: $(echo "$out" | head -1 | cut -c1-72)"
             fi
             continue
         fi
         if echo "$out" | grep -qE 'Ln 0,'; then
             nopos=$((nopos+1)); tot_nopos=$((tot_nopos+1))
-            echo "  ** NO-POSITION op=$op seed=$((BASE+k)) src=$src :: $(echo "$out" | head -1 | cut -c1-72)"
+            echo "  ** NO-POSITION op=$op seed=$mseed src=$src :: $(echo "$out" | head -1 | cut -c1-72)"
             continue
         fi
         rl=$(echo "$out" | grep -oE 'Ln [0-9]+' | head -1 | grep -oE '[0-9]+' | head -1)
@@ -138,6 +153,7 @@ for op in $OPS; do
             ''|*[!0-9]*) : ;;                       # not both plain integers: cannot judge position
             *) if [ "$rl" -ne $((line + 1)) ]; then
                    wrongpos=$((wrongpos+1)); tot_wrongpos=$((tot_wrongpos+1))
+                   echo "  -- WRONG-POSITION op=$op seed=$mseed src=$src :: refused at Ln $rl, mutated line $((line + 1))"
                fi ;;
         esac
     done

@@ -37,6 +37,11 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$(dirname "$0")/../.."
+# CELLDIR and the UNJUDGED existence test below are both resolved against cwd, which must be the
+# tree root: a cell compiled from an absolute path cannot import anything, and the existence test
+# is what separates a genuinely missing module from a harness run in the wrong place.
+ROOT="$PWD"
+[ -d "$ROOT/tests" ] && [ -d "$ROOT/std" ] || { echo "not at the tree root: $ROOT"; exit 2; }
 LAIN="${LAIN:-$(pwd)/lain}"; [ -x "$LAIN" ] || { echo "build first: make"; exit 2; }
 CELLS="$HERE/census_cells.py"; BASE="$HERE/census_baseline.txt"
 [ -f "$CELLS" ] || { echo "missing $CELLS"; exit 2; }

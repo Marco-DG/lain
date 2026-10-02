@@ -37,9 +37,20 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$(dirname "$0")/../.."
+# The guards below resolve a path from a diagnostic against the TREE ROOT, not against
+# whatever cwd happens to be. Captured here so the guard does not depend on a cd dozens of
+# lines above it, and asserted so a future edit cannot quietly move it.
+ROOT="$PWD"
+[ -d "$ROOT/tests" ] && [ -d "$ROOT/src" ] || { echo "not at the tree root: $ROOT"; exit 2; }
 LAIN="${LAIN:-$(pwd)/lain}"; [ -x "$LAIN" ] || { echo "build first: make"; exit 2; }
 GEN="$HERE/fuzz_escape.py"; [ -f "$GEN" ] || { echo "missing $GEN"; exit 2; }
-N="${1:-200}"; BASE=${RANDOM_SEED:-$$}
+# THE SEED IS FIXED BY DEFAULT. It used to default to $$, the PID, so two runs generated different
+# programs and their numbers were not comparable. That cost a retracted measurement: a `proved` count
+# read 92, 95 and 100 across three commits and was reported as precision rising, when at a fixed seed
+# all four binaries are identical and unseeded runs of ONE binary span 89 to 102. Randomising is now
+# an explicit opt-in (RANDOM_SEED=random), and every run prints the seed it used.
+N="${1:-200}"; BASE=${RANDOM_SEED:-9702}
+case "$BASE" in random|RANDOM) BASE=$$ ;; esac
 SC="$(mktemp -d)"; trap 'rm -rf "$SC"' EXIT
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts"
 # ── is this output a HARNESS failure rather than a verdict? ───────────────────────────────────
@@ -53,7 +64,7 @@ m13_unjudged() {
         *"Cannot open module file"*|*"lain: cannot open"*) return 0 ;;
     esac
     _f=$(printf '%s' "$1" | sed -n "s/.*(no file '\([^']*\)').*/\1/p" | head -1)
-    [ -n "$_f" ] && [ -f "$_f" ] && return 0
+    [ -n "$_f" ] && [ -f "$ROOT/$_f" ] && return 0
     return 1
 }
 
@@ -115,7 +126,7 @@ for ((k=0; k<N; k++)); do
 done
 
 echo "=================================================================="
-echo "fuzz_escape: $N programs   proved=$proved  correctly refused=$refused"
+echo "fuzz_escape: $N programs   proved=$proved  correctly refused=$refused   seed=$BASE"
 echo "  BUGS:  DANGLING RETURN=$dangled"
 for s in "${!d_shape[@]}"; do echo "           $s: ${d_shape[$s]}"; done
 echo "  COST:  WRONG-REJECT=$wrongreject"

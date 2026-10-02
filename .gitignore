@@ -71,3 +71,6 @@ handwritten/leetcode/update_compiler.sh
 handwritten/main.ln
 
 fuzz_bugs/
+
+# Python bytecode from importing a fuzzer helper as a module (M14 calibration does this)
+__pycache__/
