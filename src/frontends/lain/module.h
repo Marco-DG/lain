@@ -29,6 +29,11 @@ typedef struct ModuleNode {
 
 static ModuleNode *loaded_modules = NULL;
 
+// The program's own file, as the driver was given it. Its module name is derived from the path
+// (main.c's filepath_to_modname) but cannot always be turned back into it, so the root is read
+// from here; an imported module is found from its dotted name.
+static const char *module_root_file = NULL;
+
 // Registry of import qualifiers: (importer, qualifier, module) triples, the qualifier being the
 // alias or the module path's last segment. Populated during load (the DECL_IMPORT nodes are
 // spliced out afterward). ★ A qualifier is the IMPORTER'S: it was one global list, so a program
@@ -312,7 +317,13 @@ static DeclList* load_module(Arena *file_arena,
 
     // 1) build the filesystem path
     char path[256];
-    module_name_to_path(modname, path, sizeof path);
+    if (root && module_root_file) {
+        if (strlen(module_root_file) >= sizeof path) {   // never read a truncated path
+            fprintf(stderr, "lain: the path '%s' is too long.\n", module_root_file);
+            exit(1);
+        }
+        snprintf(path, sizeof path, "%s", module_root_file);
+    } else module_name_to_path(modname, path, sizeof path);
 
     // 2) read the file into file_arena
     File f = file_read_into_arena(file_arena, path);

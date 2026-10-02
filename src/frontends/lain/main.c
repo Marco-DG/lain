@@ -52,13 +52,24 @@ static char *filepath_to_modname(Arena *arena, const char *path) {
                  ? n - 3
                  : n;
 
-    // 3) allocate exactly end+1 chars in the AST arena
-    char *tmp = arena_push_many(arena, char, end + 1);
+    // 3) one dotted segment per path component, each an identifier. ★ The name was the path
+    // with '/' turned into '.', and a dot INSIDE a component survived, so the name could not be
+    // turned back into the path: `v1.2/a.ln` became `v1.2.a`, whose file is `v1/2/a.ln`, and the
+    // root file was read from that (a different file, if one existed). The root is now read from
+    // the path as given (module_root_file); the name only has to be a valid, distinct identifier
+    // path, so any other character becomes '_' and a component starting with a digit gets one
+    // in front (`1prog.ln` was refused: its constants mangled to C names starting with a digit).
+    char *tmp = arena_push_many(arena, char, 2 * end + 1);
+    size_t o = 0; bool seg_start = true;
     for (size_t i = 0; i < end; i++) {
         char c = p[i];
-        tmp[i] = (c == '/' || c == '\\') ? '.' : c;
+        if (c == '/' || c == '\\') { tmp[o++] = '.'; seg_start = true; continue; }
+        bool ident = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        if (seg_start && c >= '0' && c <= '9') tmp[o++] = '_';
+        tmp[o++] = ident ? c : '_';
+        seg_start = false;
     }
-    tmp[end] = '\0';
+    tmp[o] = '\0';
     return tmp;
 }
 
@@ -136,6 +147,7 @@ int main(int argc, char **argv) {
     // (strip “.ln” and turn “/” into “.”)
     char *modname = filepath_to_modname(&ast_arena, args.filename);
 
+    module_root_file = args.filename;   // read the program from the path given, not from its name
     DeclList *program = load_module(&file_arena, &ast_arena, modname);
     if (!program) {
         fprintf(stderr, "Could not load root module %s\n", modname);
