@@ -1,0 +1,16 @@
+// A local bound to a function NAME is a function pointer with that function's row. A function
+// name is typed by its return type, so `var g = quiet` made g an i32 and `g(5)` was refused as
+// "call to undeclared function 'g'" (I.55); with the type written out it always worked.
+func quiet(x i32) i32 { return x +% 0 }
+
+func louder(x i32) i32 { return x +% 1 }
+
+func main() i32 {
+    var g = quiet
+    if g(5) != 5 { return 1 }
+    h = quiet
+    if h(6) != 6 { return 2 }
+    g = louder
+    if g(1) != 2 { return 3 }
+    return 0
+}

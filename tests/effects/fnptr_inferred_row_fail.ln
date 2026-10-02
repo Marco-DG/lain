@@ -1,0 +1,17 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: `func` 'pure_user' has an unacknowledged effect (io)
+// The inferred pointer carries the function's own ROW: calling `g`, bound to an io function, makes
+// the caller io, and a `func` declared pure is refused for it.
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("io")
+    return x
+}
+
+func pure_user() i32 {
+    var g = noisy
+    return g(0)
+}
+
+func main() i32 effects io { return pure_user() }

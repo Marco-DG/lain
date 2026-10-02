@@ -1,0 +1,18 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 16, Col 5: function does not match the function-pointer type
+// An inferred pointer to a PURE function cannot later hold an io one: its row is the first
+// function's, and a function may do no more than its arrow admits (8b90e84's boundary check).
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("io")
+    return x
+}
+
+func quiet(x i32) i32 { return x +% 0 }
+
+func main() i32 effects io {
+    var g = quiet
+    g = noisy
+    return g(0)
+}

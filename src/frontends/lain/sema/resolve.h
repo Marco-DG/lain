@@ -72,6 +72,7 @@ Type *get_builtin_u8_type(void);
 void sema_infer_expr(Expr *e);
 // Defined in typecheck.h (included after this file); checks a fn-ptr initialiser.
 static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col);
+static Type *fnptr_type_of_decl(Decl *d);
 // Defined in monomorph.h; rewrites a generic call to its concrete instance.
 static bool sema_monomorphize_call(Expr *call);
 // Defined in monomorph.h; resolves generic type-applications `Vec(i32)` in a type.
@@ -881,6 +882,13 @@ void sema_resolve_stmt(Stmt *s) {
       }
       if (!ty) {
           ty = rhs->type;           // infer from initializer
+          // A function NAMED as the initialiser is a function-pointer value, `*func(...)` with the
+          // function's own row. A function name's type is its RETURN type, so `var g = noisy`
+          // made `g` an i32 and `g(0)` was refused as "call to undeclared function 'g'" (I.55).
+          if (rhs->kind == EXPR_IDENTIFIER && rhs->decl &&
+              (rhs->decl->kind == DECL_FUNCTION || rhs->decl->kind == DECL_EXTERN_FUNCTION) &&
+              !decl_is_generic_template(rhs->decl))
+              ty = fnptr_type_of_decl(rhs->decl);
           // D-38 tier 1. A CALL returning `var T` yields an ADDRESS. Stripping its mode to
           // SHARED declared the local at the VALUE type while the initialiser stayed a pointer
           // — `int32_t ref = <int32_t*>`. gcc calls that a warning, not an error, so the

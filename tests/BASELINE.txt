@@ -1617,6 +1617,10 @@ out=
 rc=0
 out=
 at=const 4
+### tests/trust/fnptr_inferred_local_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/trust/fnptr_row_subsumption_pass.ln
 rc=0
 out=io ok
