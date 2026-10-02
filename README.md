@@ -817,6 +817,88 @@ func f() R {
 A layout optimisation that quietly fails is a cost you find later with a profiler. This one is
 either guaranteed or refused, and says which.
 
+## An enum that declares its width is a niche source
+
+A plain enum has no spare values the layout can use, because nothing says how wide it is. Declare
+the width and the values above the last variant become spare, which is enough to pack an option
+over it into a single byte:
+
+```lain
+type K u8 { A, B, C }
+
+type Opt {
+    Some { k K }
+    None
+}
+
+func main() i32 {
+    assert @sizeof(Opt) == 1
+    o = Opt.Some(K.B)
+    return case o {
+        Some(k): 0
+        None: 1
+    }
+}
+```
+
+`K` occupies 0, 1 and 2, so `None` is stored as 3 and the sum needs no tag. Without the `u8` the
+same program compiles and warns, naming the fix:
+
+```lain
+type P { A, B, C }
+
+type Opt2 {
+    Some { p P }
+    None
+}
+
+func main() i32 {
+    o = Opt2.Some(P.B)
+    return case o {
+        Some(p): 0
+        None: 1
+    }
+}
+```
+
+```
+[W120] Warning: enum 'Opt2' is not zero-cost: it carries an int32_t tag (4 bytes) beside its payloads.
+       It does because the payload of 'Some' has 0 spare values, and 1 payload-less variant needs one.
+       To drop the tag, declare the width of 'P' (`type P u8 { ... }`): its values above the last variant are then spare.
+```
+
+**There is one exception, and it is about C rather than about Lain.** If an `extern` signature can
+reach the enum — as a parameter, a result, or through a pointer, a struct or a function pointer —
+the tag stays, because C is free to hand back any value of that width and none of them is
+reliably spare:
+
+```lain
+type K u8 { A, B, C }
+
+extern func takes_k(k K) i32 effects
+
+type Opt3 {
+    Some { k K }
+    None
+}
+
+func main() i32 {
+    o = Opt3.Some(K.B)
+    return case o {
+        Some(k): takes_k(k)
+        None: 1
+    }
+}
+```
+
+```
+[W120] Warning: enum 'Opt3' is not zero-cost: it carries an int32_t tag (4 bytes) beside its payloads.
+       It does because its payload is the enumeration 'K', which an extern's signature reaches, so C may hand it any value of its width and none is spare.
+```
+
+A value of an enumeration type is always one of its variants; writing anything else into its
+storage is undefined behaviour, which is what makes the spare values usable in the first place.
+
 ---
 
 # 8. Code Generation
