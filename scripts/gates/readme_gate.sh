@@ -222,7 +222,16 @@ echo "  UNVERIFIABLE fragments   : $unchecked   ← not noise: a claim nobody te
 [ $synopsis -gt 0 ] && echo "  SYNOPSIS blocks (a form, not a program): $synopsis"
 echo "      README.md   : $unchecked_readme   <- must stay 0"
 echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a regression"
-[ $DEFAULT_PAGES -eq 0 ] && echo "      other pages : $unchecked_other   <- a backlog, not a regression"
+  # ★ PRINT IT WHENEVER IT IS NON-ZERO, not only under --pages. The split below the total must
+  # ACCOUNT FOR the total: a count this gate computes and then hides is a backlog nobody sees, and
+  # on a default run the "other" line was printed by nothing. It is 0 today because the default
+  # pages are exactly README and LANGUAGE — but the next page added to that list would land here
+  # silently, and the two numbers would stop adding up with no line saying so.
+  { [ $DEFAULT_PAGES -eq 0 ] || [ $unchecked_other -gt 0 ]; } && \
+      echo "      other pages : $unchecked_other   <- a backlog, not a regression"
+  split_sum=$((unchecked_readme + unchecked_lang + unchecked_other))
+  [ $split_sum -ne $unchecked ] && \
+      echo "  ★ the split above sums to $split_sum but the total is $unchecked — a page is uncounted"
 echo "  FLAGS named but not accepted : $flag_bad   ← a claim about the binary, now tested"
 echo "  fragments drawing a PROOF diagnostic : $falseclaim   ← a false SAFETY claim, must stay 0"
 echo "=================================================================="
