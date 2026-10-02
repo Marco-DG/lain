@@ -1467,6 +1467,100 @@ static bool ir_cmp_op(TokenKind t, bool sgn, IrCmp *c) {
     }
 }
 
+// ── A COMPARISON MEANS WHAT IT SAYS, WHATEVER ITS OPERANDS' TYPES (I.86) ─────────────────────
+// `x < n` with `x i32` and `n usize` is a question about two integers, and the IR, the
+// interpreter and the octagon all answer it so (a signed compare reads each operand by its own
+// type). The C it was emitted as, `v0 < v1`, is not: C converts the i32 to size_t first, so -1 < 5
+// is FALSE there. A proof made on one meaning ran on the other: after `if x < n { return }`, the
+// analysis knew x >= n and the C let x = -1 through, and `a[x - 4]` read out of bounds (ASan). And
+// the signedness was taken from the left operand only, so `n > x` was an unsigned compare.
+//
+// So a mixed comparison is a SIGNED (mathematical) compare in the IR, and is lowered so that C
+// computes the same thing:
+//   · the signed side a non-negative literal: an unsigned compare, which C converts exactly;
+//   · C promotes both to a signed type that holds them (the unsigned side narrower than 32 bits,
+//     or the signed side wider than it): the plain compare, now marked signed;
+//   · the unsigned side 32 bits and the signed side no wider: both widened to i64;
+//   · the unsigned side 64 bits: no type holds both, so the sign is tested first. A negative
+//     value is below every unsigned one; otherwise it converts exactly and the compare is
+//     unsigned. Two branches, so a guard narrows each operand on each edge.
+static bool ir_nonneg_lit(Expr *e) {
+    return e && e->kind == EXPR_LITERAL && e->as.literal_expr.value >= 0;
+}
+static int ir_cbits(IrType *t) { return t->bits <= 8 ? 8 : t->bits <= 16 ? 16 : t->bits <= 32 ? 32 : 64; }
+// 0: a compare C gets right as written; 1: mixed, widen both to i64; 2: mixed, test the sign first.
+static int ir_cmp_mixed(IrValue *x, IrValue *y, bool xlit, bool ylit) {
+    IrType *a = x ? x->type : NULL, *b = y ? y->type : NULL;
+    if (!a || !b || a->kind != IRT_INT || b->kind != IRT_INT || a->is_signed == b->is_signed) return 0;
+    if (a->is_signed ? xlit : ylit) return 0;
+    IrType *u = a->is_signed ? b : a, *s = a->is_signed ? a : b;
+    if (ir_cbits(u) == 64) return 2;
+    if (ir_cbits(u) == 32 && ir_cbits(s) <= 32) return 1;
+    return 0;
+}
+static IrValue *ir_cmp_widen64(LowerCtx *c, IrValue *v) {
+    if (v->type->bits == 64 && v->type->is_signed) return v;
+    IrInstr *cv = ir_instr(c->f, IR_CAST, ir_type_int(c->a, 64, true), 1);
+    cv->operands[0] = v;
+    cv->aux.cast_kind = v->type->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT;
+    ir_emit(c->cur, cv);
+    return cv->result;
+}
+// Branch on `x OP y` where one operand is signed and the other a 64-bit unsigned value.
+static void ir_cmp_br_mixed(LowerCtx *c, TokenKind op, IrValue *x, IrValue *y, IrBlock *tb, IrBlock *fb) {
+    bool xs = x->type->is_signed;
+    IrValue *s = xs ? x : y;
+    // The answer when s < 0, i.e. when the signed operand is below every unsigned value.
+    bool below = op == TOKEN_ANGLE_BRACKET_LEFT || op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL;
+    bool above = op == TOKEN_ANGLE_BRACKET_RIGHT || op == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL;
+    bool when_neg = op == TOKEN_BANG_EQUAL || (xs ? below : above);
+    IrBlock *nonneg = ir_new_block(c->f);
+    ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, IR_CMP_SLT, s, ir_const_int(c->f, c->cur, 0, s->type)),
+                   when_neg ? tb : fb, nonneg);
+    c->cur = nonneg;
+    IrType *ut = xs ? y->type : x->type;
+    IrInstr *cv = ir_instr(c->f, IR_CAST, ut, 1);       // exact: s >= 0 on this edge
+    cv->operands[0] = s;
+    cv->aux.cast_kind = s->type->bits < ut->bits ? IR_CAST_SEXT : IR_CAST_BITCAST;
+    cv->wrap = IR_WRAP_CHECK;
+    ir_emit(c->cur, cv);
+    IrCmp cmp = IR_CMP_EQ; ir_cmp_op(op, false, &cmp);
+    ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, cmp, xs ? cv->result : x, xs ? y : cv->result), tb, fb);
+}
+// The comparison as a VALUE. `sgn` is used only when the operands are not two integers.
+static IrValue *ir_cmp_value(LowerCtx *c, TokenKind op, IrValue *x, IrValue *y, bool xlit, bool ylit, bool sgn) {
+    IrCmp cmp = IR_CMP_EQ;
+    int mix = ir_cmp_mixed(x, y, xlit, ylit);
+    if (mix == 1) {
+        IrValue *wx = ir_cmp_widen64(c, x), *wy = ir_cmp_widen64(c, y);
+        ir_cmp_op(op, true, &cmp);
+        return ir_icmp(c->f, c->cur, cmp, wx, wy);
+    }
+    if (mix == 2) {
+        IrType *bt = ir_type_bool(c->a);
+        IrValue *cell = ir_alloca(c->f, c->cur, bt);
+        IrBlock *yes = ir_new_block(c->f), *no = ir_new_block(c->f), *jn = ir_new_block(c->f);
+        ir_cmp_br_mixed(c, op, x, y, yes, no);
+        c->cur = yes; ir_store(c->f, c->cur, cell, ir_const_int(c->f, c->cur, 1, bt)); ir_set_br(c->cur, jn);
+        c->cur = no;  ir_store(c->f, c->cur, cell, ir_const_int(c->f, c->cur, 0, bt)); ir_set_br(c->cur, jn);
+        c->cur = jn;
+        return ir_load(c->f, c->cur, cell, bt);
+    }
+    IrType *a = x ? x->type : NULL, *b = y ? y->type : NULL;
+    if (a && b && a->kind == IRT_INT && b->kind == IRT_INT) {
+        if (a->is_signed == b->is_signed) sgn = a->is_signed;
+        else sgn = !(a->is_signed ? xlit : ylit);   // unsigned only against a non-negative literal
+    }
+    ir_cmp_op(op, sgn, &cmp);
+    return ir_icmp(c->f, c->cur, cmp, x, y);
+}
+// The comparison as a BRANCH: the mixed 64-bit case branches directly, so each edge keeps its fact.
+static void ir_cmp_br(LowerCtx *c, TokenKind op, IrValue *x, IrValue *y, bool xlit, bool ylit, bool sgn,
+                      IrBlock *tb, IrBlock *fb) {
+    if (ir_cmp_mixed(x, y, xlit, ylit) == 2) { ir_cmp_br_mixed(c, op, x, y, tb, fb); return; }
+    ir_set_br_cond(c->cur, ir_cmp_value(c, op, x, y, xlit, ylit, sgn), tb, fb);
+}
+
 // Recursively resolve a callee-scope length expression at a CALL SITE into caller values —
 // each callee param name is substituted by the matching call argument (ident / `x.len` via
 // ir_resolve_contract_rhs; +/-/* recurse), and a constant is its value. NULL if any leaf is
@@ -2460,7 +2554,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                        ? ir_lower_vec_literal(c, R, lvt) : NULL;
             if (!y) y = ir_lower_expr(c, R);
             IrOp op; IrWrapMode wrap; IrCmp cmp;
-            if (ir_cmp_op(e->as.binary_expr.op, sgn, &cmp)) return ir_icmp(c->f,c->cur,cmp,x,y);
+            if (ir_cmp_op(e->as.binary_expr.op, sgn, &cmp))
+                return ir_cmp_value(c, e->as.binary_expr.op, x, y, ir_nonneg_lit(L), ir_nonneg_lit(R), sgn);
             if (ir_bin_op(e->as.binary_expr.op, sgn, &op, &wrap)) {
                 // DECIDE-M: a SIGNED remainder never overflows mathematically, but C's `%` is
                 // undefined at TYPE_MIN % -1 (because TYPE_MIN / -1 is). Below 64 bits it is
@@ -3125,6 +3220,20 @@ static IrValue *ir_lower_truth(LowerCtx *c, Expr *cond) {
 }
 
 static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) {
+    // A comparison of a signed value with a 64-bit unsigned one branches on the sign and then on
+    // the unsigned compare (I.86), so each edge keeps its fact rather than a bool's join.
+    if (cond && cond->kind==EXPR_BINARY) {
+        TokenKind op = cond->as.binary_expr.op; IrCmp probe;
+        Expr *L = cond->as.binary_expr.left, *R = cond->as.binary_expr.right;
+        if (ir_cmp_op(op, true, &probe) && L && R && L->type && R->type) {
+            IrType *lt = ir_lower_type(c, L->type), *rt = ir_lower_type(c, R->type);
+            if (lt && rt && lt->kind==IRT_INT && rt->kind==IRT_INT && lt->is_signed != rt->is_signed) {
+                IrValue *x = ir_lower_expr(c, L), *y = ir_lower_expr(c, R);
+                ir_cmp_br(c, op, x, y, ir_nonneg_lit(L), ir_nonneg_lit(R), true, tb, fb);
+                return;
+            }
+        }
+    }
     if (cond && cond->kind==EXPR_BINARY &&
         (cond->as.binary_expr.op==TOKEN_KEYWORD_AND || cond->as.binary_expr.op==TOKEN_KEYWORD_OR)) {
         bool is_and = cond->as.binary_expr.op==TOKEN_KEYWORD_AND;

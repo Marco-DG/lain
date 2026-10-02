@@ -1,0 +1,23 @@
+// I.88: the memory-safety half. After `if x < n { return 0 }` the analysis knows x >= 4, so
+// `a[x - 4]` under `x < 12` is in bounds. The C it was emitted as converted x to size_t for the
+// compare, so x = -1 failed `x < n` there, fell through, and read a[-5]: ASan, stack-buffer-overflow,
+// on a program the compiler accepted. The proof is right; the C now computes what was proven.
+// Run under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func pick(a u8[8], x i32) u8 {
+    n usize = 4
+    if x < n {
+        return 0
+    }
+    if x < 12 {
+        return a[x - 4]
+    }
+    return 0
+}
+
+func main() i32 effects io {
+    t u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    libc_printf("%d %d %d\n", pick(t, 0 - 1) as i32, pick(t, 5) as i32, pick(t, 11) as i32)
+    return 0
+}

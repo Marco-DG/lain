@@ -253,10 +253,10 @@ loop-guard	or, down, total	ok-REFUSED [E086]
 loop-guard	or, down, diverge	ok-REFUSED [E086]
 loop-guard	range-in, down, total	REFUSED [E100]  # I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100
 loop-guard	range-in, down, diverge	REFUSED [E100]  # I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100
-mixed-sign-cmp	negative i32 < u64	MISMATCH  # I.88 — a mixed-sign comparison is mathematical in the IR and converted in C (-1 becomes SIZE_MAX), and the lowering took signedness from the LEFT operand, so the IR itself answered one question two ways
-mixed-sign-cmp	u64 > negative i32	MISMATCH  # I.88 — a mixed-sign comparison is mathematical in the IR and converted in C (-1 becomes SIZE_MAX), and the lowering took signedness from the LEFT operand, so the IR itself answered one question two ways
-mixed-sign-cmp	negative i32 < u32	MISMATCH  # I.88 — a mixed-sign comparison is mathematical in the IR and converted in C (-1 becomes SIZE_MAX), and the lowering took signedness from the LEFT operand, so the IR itself answered one question two ways
-mixed-sign-cmp	negative i32 <= usize	MISMATCH  # I.88 — a mixed-sign comparison is mathematical in the IR and converted in C (-1 becomes SIZE_MAX), and the lowering took signedness from the LEFT operand, so the IR itself answered one question two ways
-mixed-sign-cmp	u32 < negative i64	MISMATCH  # I.88 — a mixed-sign comparison is mathematical in the IR and converted in C (-1 becomes SIZE_MAX), and the lowering took signedness from the LEFT operand, so the IR itself answered one question two ways
-mixed-sign-cmp	negative i32 == u32 max	MISMATCH  # I.88 — a mixed-sign comparison is mathematical in the IR and converted in C (-1 becomes SIZE_MAX), and the lowering took signedness from the LEFT operand, so the IR itself answered one question two ways
+mixed-sign-cmp	negative i32 < u64	OK
+mixed-sign-cmp	u64 > negative i32	OK
+mixed-sign-cmp	negative i32 < u32	OK
+mixed-sign-cmp	negative i32 <= usize	OK
+mixed-sign-cmp	u32 < negative i64	OK
+mixed-sign-cmp	negative i32 == u32 max	OK
 mixed-sign-cmp	negative i8 < u8 (exact in C)	OK

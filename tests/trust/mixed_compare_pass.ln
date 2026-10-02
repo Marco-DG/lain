@@ -1,0 +1,59 @@
+// I.88: a comparison of a signed and an unsigned value means what it says. The analysis always
+// read it so; the emitted C did not: `x < n` with x i32 and n usize converted -1 to SIZE_MAX, and
+// `n > x` was lowered as an UNSIGNED compare because the signedness came from the left operand.
+// Every pair below is one C got wrong, in both orders, as a branch and as a value: a 64-bit
+// unsigned side (a sign test first), a 32-bit one against a signed side no wider (both widened to
+// i64), and `==` / `!=` of -1 against the all-ones value. Run under the sanitizers and the
+// interpreter; the expected output was computed in Python.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func lt_su(x i32, n usize) i32 {
+    if x < n {
+        return 1
+    }
+    return 0
+}
+func gt_us(n usize, x i32) bool {
+    return n > x
+}
+func le_su(x i64, n u64) bool {
+    return x <= n
+}
+func ge_us(n u64, x i64) i32 {
+    if n >= x {
+        return 1
+    }
+    return 0
+}
+func lt32(x i32, n u32) bool {
+    return x < n
+}
+func gt32(n u32, x i16) i32 {
+    if n > x {
+        return 1
+    }
+    return 0
+}
+func eq(x i16, n u64) bool {
+    return x == n
+}
+func ne(n u32, x i32) i32 {
+    if n != x {
+        return 1
+    }
+    return 0
+}
+
+func main() i32 effects io {
+    var big u64 = 1
+    big = big <<% 63
+    var top u64 = 0
+    top = top -% 1
+    var top32 u32 = 0
+    top32 = top32 -% 1
+    libc_printf("%d %d %d %d\n", lt_su(0 - 1, 5), lt_su(7, 5), gt_us(5, 0 - 1) as i32, gt_us(5, 9) as i32)
+    libc_printf("%d %d %d %d\n", le_su(0 - 1, 0) as i32, le_su(9, big) as i32, ge_us(0, 0 - 1), ge_us(big, 9223372036854775807))
+    libc_printf("%d %d %d %d\n", lt32(0 - 1, 0) as i32, lt32(0 - 1, top32) as i32, gt32(0, 0 - 1), gt32(top32, 32767))
+    libc_printf("%d %d %d %d\n", eq(0 - 1, top) as i32, eq(5, 5) as i32, ne(top32, 0 - 1), ne(5, 5))
+    return 0
+}

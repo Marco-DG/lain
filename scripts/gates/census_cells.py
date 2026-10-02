@@ -646,9 +646,6 @@ for _cdir, _init, _step, _want in (("up", "0", "i = i + 1", "4 3\n"), ("down", "
 # direction a C-vs-interpreter differential would have blamed on the backend.
 # `negative i8 < u8` is the allowed side: C promotes both to int, so C is already exact there and a
 # fix must leave it alone.
-_I88 = ("I.88 — a mixed-sign comparison is mathematical in the IR and converted in C (-1 becomes "
-        "SIZE_MAX), and the lowering took signedness from the LEFT operand, so the IR itself answered "
-        "one question two ways")
 for _cell, _pa, _pb, _expr, _aa, _ab, _math in [
     ("negative i32 < u64",            "i32", "u64",   "a < b",  "0 - 1", "4",          1),
     ("u64 > negative i32",            "u64", "i32",   "a > b",  "4",     "0 - 1",      1),
@@ -664,8 +661,7 @@ for _cell, _pa, _pb, _expr, _aa, _ab, _math in [
         'func cmp(a %s, b %s) i32 {\n    if %s {\n        return 1\n    }\n    return 0\n}\n'
         'func main() i32 effects io {\n    libc_printf("%%d\\n", cmp(%s, %s))\n    return 0\n}\n'
         % (_pa, _pb, _expr, _aa, _ab),
-        "%d\n" % _math,
-        plan=(None if _cell.startswith("negative i8") else _I88))
+        "%d\n" % _math)
 
 
 if __name__ == "__main__":

@@ -1695,6 +1695,20 @@ at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/mixed_compare_guard_pass.ln
+rc=0
+out=0 2 8
+at=nonnull 2
+at=pure 2
+ty=Slice_u8 scalar
+### tests/trust/mixed_compare_pass.ln
+rc=0
+out=1 0 1 0
+out=1 1 1 1
+out=1 1 1 1
+out=0 1 1 0
+at=const 16
+ty=Slice_u8 scalar
 ### tests/trust/module_comprehension_cast_pass.ln
 rc=0
 out=
