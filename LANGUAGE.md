@@ -906,8 +906,10 @@ func main() i32 {
 
 ### 4.3 Linear Types
 
-A type is **linear** if it has a `mov` field, or if it transitively contains a linear field. A linear
-value must be consumed **exactly once**:
+A type is **linear** if it has a `mov` field. Linearity also passes outward through containment —
+a struct holding a linear value is linear — but never silently: a field whose type is linear must
+itself be declared `mov`, and leaving the annotation off is `[E083]`. So a type's linearity is always
+visible in its own declaration, at every level. A linear value must be consumed **exactly once**:
 
 | violation | code |
 |:----------|:-----|
@@ -933,6 +935,18 @@ func leak(mov f Fd) {         // ERROR [E003]
 
 ```
 [E003] Error Ln 6, Col 15: a linear value is not consumed before it goes out of scope
+```
+
+Holding a linear value in another struct passes the obligation outward, and the annotation is what
+makes that visible — omit it and the declaration itself is refused:
+
+```lain
+type Inner { mov tag i32 }
+type Outer { inner Inner, n i32 }     // ERROR [E083]
+```
+
+```
+[E083] Error Ln 2, Col 14: field 'inner' in struct 'Outer' has linear type but is missing `mov` annotation. Add `mov` to the field declaration.
 ```
 
 **What consumes a linear value is destructuring it.** A function that takes `mov` and does nothing

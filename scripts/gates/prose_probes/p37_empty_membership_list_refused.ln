@@ -1,0 +1,8 @@
+// CLAIM: LANGUAGE §8.3.3 — an empty membership list `x in []` is the parser's [E100]. A prose claim
+// CLAIM: in the I.79 patch, hand-checked by the compiler session before landing; pinned here so it
+// CLAIM: stays true rather than having been true once.
+// EXPECT: [E100]
+func f(x i32) bool {
+    return x in []
+}
+func main() i32 { return 0 }

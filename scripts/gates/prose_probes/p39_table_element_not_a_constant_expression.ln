@@ -1,0 +1,8 @@
+// CLAIM: spec 10 constraint — a module-scope `assert` takes a CONSTANT expression, and the definition
+// CLAIM: is a closed list, so an element of a constant table is not one even though it is fixed at
+// CLAIM: translation time. The constraint used to give the reason as "a value that exists only at run
+// CLAIM: time", which is false for a constant table; the refusal is about the list, not about time.
+// EXPECT: [E133]
+TABLE u8[3] = [1, 2, 3]
+assert TABLE[0] == 1
+func main() i32 { return 0 }

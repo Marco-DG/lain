@@ -433,9 +433,12 @@ unsigned $N$-bit value is \(2^N - 1 - x\), so \texttt{\textasciitilde(0 as u64)}
 
 \begin{constraint}
   The operand of a module-scope \lain{assert} shall be a constant expression of type
-  \lain{bool}; otherwise the program is \illformed{}~(\diagcode{E133}).  A value that exists only
-  at run time is asserted inside a function, where it is an obligation the value-range analysis
-  must discharge (\S\,\ref{sec:13-vra}).
+  \lain{bool}; otherwise the program is \illformed{}~(\diagcode{E133}).  The definition above is a
+  closed list, so an element of a constant table and a function call are not constant
+  expressions --- not because their values are unknown before run time, since a constant table's
+  elements are fixed at translation time, but because neither is in the list.  A fact about a value
+  known only at run time is asserted inside a function, where it is an obligation the value-range
+  analysis must discharge (\S\,\ref{sec:13-vra}).
 \end{constraint}
 
 \begin{constraint}

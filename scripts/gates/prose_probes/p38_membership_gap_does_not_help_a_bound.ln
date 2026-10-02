@@ -1,0 +1,9 @@
+// CLAIM: LANGUAGE §8.3.3 — the narrowing on `x in [a, b, c]` is the HULL of the elements, so a gap
+// CLAIM: does not help a bound: `i in [0, 5]` narrows i to 0..=5, which does not fit a u8[3]. This is
+// CLAIM: the companion of the VERIFY example where [0, 2] DOES fit — the same mechanism, refused.
+// EXPECT: [E085]
+func pick(t u8[3], i usize) u8 {
+    if i in [0, 5] { return t[i] }
+    return 0
+}
+func main() i32 { return 0 }
