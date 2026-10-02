@@ -1236,6 +1236,8 @@ measure where it can, `decreasing <expr>` supplies one where it cannot, and `eff
 is how a function states that it genuinely may not terminate:
 
 ```lain
+import std.c.{libc_printf}
+
 func count_up() effects io {
     var i = 0
     while i < 10 {
@@ -1245,19 +1247,44 @@ func count_up() effects io {
 }
 ```
 
-**Infinite loop pattern:**
+**A loop with no bound is not an exception to that; it is a different claim.** `while 1` cannot be
+proven to terminate, and `break` on a runtime condition does not change that — the compiler would
+have to know the condition eventually holds. So the function has to say so:
+
 ```lain
-while 1 {
-    if done { break }
+func serve(ready bool) effects diverge {
+    while 1 {
+        if ready { break }
+    }
 }
+```
+
+Drop `effects diverge` and the same loop is refused:
+
+```lain
+func serve(ready bool) {
+    while 1 {               // ERROR [E011]
+        if ready { break }
+    }
+}
+```
+
+```
+[E011] Error Ln 2, Col 11: this loop is not provably terminating, and no measure could be inferred
+   |
+ 2 |     while 1 {               // ERROR [E011]
+   |           ^
 ```
 
 #### Bounded While — Termination Measure
 
-A `while` loop may carry an optional **termination measure** via the `decreasing` keyword. When present, the loop is also allowed inside `func`, because the compiler statically verifies that:
+A `while` loop may carry an explicit **termination measure** via the `decreasing` keyword. It is
+what lets a loop the compiler cannot measure by itself appear in a function that does not state
+`effects diverge` — not a second kind of loop, and not a relaxation: the measure is verified, and
+the compiler checks that
 
-1. The measure is **non-negative** when the loop condition holds.
-2. The measure **strictly decreases** on every iteration.
+1. the measure is **non-negative** when the loop condition holds, and
+2. the measure **strictly decreases** on every iteration.
 
 ```lain
 func count_up(n int) int {
@@ -1269,7 +1296,8 @@ func count_up(n int) int {
 }
 ```
 
-This enables provably-terminating finite state machines (lexers, parsers, protocol handlers) to be expressed as pure `func`.
+This is what lets a finite state machine — a lexer, a parser, a protocol handler — be written with
+an empty effect row, which is to say as a function the caller may treat as pure and total.
 
 **Supported patterns:**
 
@@ -1308,58 +1336,97 @@ func example() effects io {
 
 `case` is used for pattern matching on enums, ADTs, characters, and integer values. It can act as either a **statement** or an **expression**.
 
-**Matching on an enum:**
+**Matching on an enum, and on an ADT with destructuring.** A variant's payload is bound
+positionally in the pattern; an enum match needs no `else`, because its patterns can name every
+value:
+
 ```lain
-case color {
-    Red:   libc_printf("Red\n")
-    Green: libc_printf("Green\n")
-    Blue:  libc_printf("Blue\n")
+import std.c.{libc_printf}
+
+type Color {
+    Red,
+    Green,
+    Blue
+}
+
+type Shape {
+    Circle { radius i32 }
+    Rectangle { width i32, height i32 }
+    Point
+}
+
+func describe(color Color) effects io {
+    case color {
+        Red:   libc_printf("Red\n")
+        Green: libc_printf("Green\n")
+        Blue:  libc_printf("Blue\n")
+    }
+}
+
+func outline(shape Shape) effects io {
+    case shape {
+        Circle(r):       libc_printf("Circle radius: %d\n", r)
+        Rectangle(w, h): libc_printf("Rect: %d x %d\n", w, h)
+        Point:           libc_printf("Just a point\n")
+    }
+}
+
+func main() i32 effects io {
+    describe(Color.Red)
+    outline(Shape.Circle(10))
+    return 0
 }
 ```
 
-**Matching on an ADT with destructuring:**
+**Multiple patterns, ranges, and `case` as an expression.** Arms take comma-separated pattern
+lists and ranges (`start..end`, inclusive at both ends). As an expression every arm must yield the
+same type. An integer or character match **does** need `else`: no finite set of patterns can name
+every value of an integer type, and leaving it out is `[E014]`.
+
 ```lain
-case shape {
-    Circle(r):        libc_printf("Circle radius: %d\n", r)
-    Rectangle(w, h):  libc_printf("Rect: %d x %d\n", w, h)
-    Point:            libc_printf("Just a point\n")
+import std.c.{libc_printf}
+
+func classify(character u8) effects io {
+    case character {
+        'a'..'z', 'A'..'Z': libc_printf("Alphabetical\n")
+        '0'..'9':           libc_printf("Digit\n")
+        '_', '-':           libc_printf("Symbol\n")
+        else:               libc_printf("Other\n")
+    }
+}
+
+func label(width i32) u8[:0] {
+    var size = case width {
+        1..10:  "Small"
+        11..50: "Medium"
+        else:   "Large"
+    }
+    return size
+}
+
+func main() i32 effects io {
+    classify('q')
+    return 0
 }
 ```
 
-**Matching with multiple patterns and ranges:**
-Cases support comma-separated pattern lists and ranges (`start..end`), which are inclusive bounds:
+Drop the `else` from an integer match and the program is refused:
+
 ```lain
-case character {
-    'a'..'z', 'A'..'Z': libc_printf("Alphabetical\n")
-    '0'..'9':           libc_printf("Digit\n")
-    '_', '-':           libc_printf("Symbol\n")
-    else:               libc_printf("Other\n")
+func rank(x i32) i32 {
+    var r = case x {      // ERROR [E014]
+        1: 1
+        2: 2
+    }
+    return r
 }
 ```
 
-**Case Expressions:**
-A `case` block can be evaluated as an expression. All branches must yield the same type:
-```lain
-var size = case width {
-    1..10:  "Small"
-    11..50: "Medium"
-    else:   "Large"
-}
-
-var area = case shape {
-    Circle(r):       r * r * 314 / 100
-    Rectangle(w, h): w * h
-    Point:           0
-}
 ```
-
-**Matching on integers** (requires `else` for exhaustiveness):
-```lain
-case x {
-    1: return 1
-    2: return 2
-    else: return 0    // Required: integers are not finite
-}
+[E014] Error Ln 2, Col 13: a `case` on 'i32' needs an `else:` arm: its patterns cannot name every value.
+   |
+ 2 |     var r = case x {      // ERROR [E014]
+   |             ^
 ```
 
 **Case arms** can be:
@@ -1372,33 +1439,66 @@ case x {
 By default, `case expr` consumes the scrutinee (for linear types). To inspect a value **without consuming it**, prefix the scrutinee with `&`:
 
 ```lain
-var x = 42
-var result = 0
-case &x {            // Borrowed match: x is NOT consumed
-    42: result = 1
-    else: result = 0
+// VERIFY: exit 43
+func inspect() i32 {
+    var x = 42
+    var result = 0
+    case &x {            // Borrowed match: x is NOT consumed
+        42: result = 1
+        else: result = 0
+    }
+    return x + result    // x is still usable: 42 + 1
 }
-return x + result    // x is still usable: returns 43
-```
 
-The `&` registers a shared borrow on the scrutinee for the duration of the match. This prevents mutation inside the match arms:
-
-```lain
-var x = 42
-case &x {
-    42: x = 99       // ERROR [E004]: cannot mutate 'x' because it is borrowed
-    else: x = 0
+func main() i32 {
+    return inspect()
 }
 ```
 
-Particularly useful with ADTs where you want to inspect a variant without consuming the value:
+The `&` registers a shared borrow on the scrutinee for the duration of the match, so an arm may
+not mutate it:
 
 ```lain
-case &shape {
-    Circle(r):      libc_printf("radius: %d\n", r)
-    Rectangle(w, h): libc_printf("area: %d\n", w * h)
+func f() i32 {
+    var x = 42
+    var y = 0
+    case &x {
+        42: x = 99       // ERROR [E004]
+        else: y = 2
+    }
+    return x
 }
-// shape is still available here
+```
+
+```
+[E004] Error Ln 5, Col 13: conflicting borrows of the same value
+   |
+ 5 |         42: x = 99       // ERROR [E004]
+   |             ^
+```
+
+Particularly useful with ADTs, where you want to inspect a variant without consuming the value:
+
+```lain
+import std.c.{libc_printf}
+
+type Shape {
+    Circle { radius i32 }
+    Rectangle { width i32, height i32 }
+}
+
+func report(shape Shape) effects io {
+    case &shape {
+        Circle(r):       libc_printf("radius: %d\n", r)
+        Rectangle(w, h): libc_printf("area: %d\n", w * h)
+    }
+    // shape is still available here
+}
+
+func main() i32 effects io {
+    report(Shape.Circle(3))
+    return 0
+}
 ```
 
 ### 6.6 Exhaustiveness Checking
