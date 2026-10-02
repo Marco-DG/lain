@@ -3751,7 +3751,9 @@ filename, so a mistyped flag fails the build rather than being read as a source 
 | `--dump-niche` | Print the niche-packing decision for each sum type. |
 | `--dump-octagon` | Print the converged octagon state per basic block. A value that came from a named local prints as `%2:i`; the rest are temporaries. |
 | `--dump-measures` | Print the measure behind each termination proof, in the program's own names, one line per loop or recursion — and `no measure found` for a loop that is about to be refused. |
-| `--no-w130` | Suppress the `W130` warning. |
+| `--emit-certificate <file>` | Write what the range analysis found, per function, to `<file>`: the loop-header octagon states, the termination measure of each loop and recursion, element and return ranges, call-site ranges with the callee's certificate nested, and accumulator bounds. It is text meant to be read by a person. |
+| `--certificate-roundtrip <file>` | Parse a certificate and print it back. This is the format's own test — emitting, parsing and re-emitting must give the same text — rather than a tool for everyday use. |
+| `--no-w130` | Accepted, and does nothing today: `W130` was removed with `proc`, and the only warning the compiler emits is `W120`. |
 | `--no-line-directives` | Omit `#line` directives from the emitted C. |
 | `--emit-llvm` | Lower to proof-carrying LLVM-IR. This is a demonstration seam, not a backend: outside the subset it models it **refuses** rather than emitting a placeholder. C is the backend that works. |
 

@@ -121,6 +121,10 @@ ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
 unchecked_readme=0 unchecked_lang=0 unchecked_other=0 falseclaim=0 synopsis=0
 verify_n=0 verify_bad=0 accounting_bad=0
 for f in "$TMP"/b*.txt; do
+    # ★ With no blocks extracted the glob does not match and bash passes the PATTERN through,
+    # so the body came back empty and was counted as one unverifiable fragment. A page with
+    # zero examples then reported 1, and the accounting line said -1 fell through.
+    [ -e "$f" ] || continue
     ln=${f##*_}; ln=${ln%.txt}
     page=${f%_*}; page=${page##*_}; page=${page//%//}; page=${page//\~/_}
     body=$(cat "$f")
@@ -271,6 +275,36 @@ for f in "$TMP"/b*.txt; do
     fi
 done
 
+# ── FLAGS, THE OTHER DIRECTION ───────────────────────────────────────────────────────────
+# The check below tests every flag a DOCUMENT names against args.h. It cannot see a flag the
+# documents never mention, which is the more likely failure: a flag lands with a feature and
+# nobody goes back to the manual.
+#
+# It happened the day this was written. `--emit-certificate` and `--certificate-roundtrip` landed
+# in ea9b479 and Appendix E's own header says "Every flag the compiler accepts, verified against
+# the binary" — a sentence that had quietly become false. Nothing in the project could see it.
+#
+# A flag must therefore be documented OR listed here with a reason. The list is the point: it
+# turns "nobody noticed" into "someone decided", and it is short enough to read.
+undoc_bad=0
+flag_exempt() {
+    case "$1" in
+        # Accepted and silently ignored: there is one engine and one backend. Appendix E explains
+        # in prose why they are deliberately NOT in its table — a no-op documented as a feature is
+        # worse than an absent one — so they must not be required to appear in it.
+        --engine|--backend) return 0 ;;
+    esac
+    return 1
+}
+# Only meaningful against the default pages: asked about an arbitrary page, every flag is
+# "undocumented" because that page is not the manual. The forward check is guarded the same way.
+for flag in $([ $DEFAULT_PAGES -eq 1 ] && grep -ohE '"--[a-z][a-z0-9-]*' src/frontends/lain/args.h | tr -d '"' | sort -u); do
+    flag_exempt "$flag" && continue
+    grep -qF -- "$flag" "${PAGES[@]}" 2>/dev/null && continue
+    undoc_bad=$((undoc_bad+1))
+    echo "  ★ args.h accepts $flag — no document names it, and it is not on the exempt list"
+done
+
 # ── DIAGNOSTIC CODES ─────────────────────────────────────────────────────────────────────
 # A code named in a document is a claim about the compiler, exactly as a flag name is, and it
 # rots the same way: silently, because prose is not compiled.
@@ -289,8 +323,26 @@ emitted_codes=$( { grep -rhoE '\[E[0-9]{3}\]' --include='*.h' --include='*.c' sr
                    grep -rhoE '\[W[0-9]{3}\]' --include='*.h' --include='*.c' src/ | tr -d '[]'
                    grep -rhoE '"W[0-9]{3}"'   --include='*.h' --include='*.c' src/ | tr -d '"'
                  } | sort -u)
-for code in $(grep -ohE '\[[EW][0-9]{3}\]' "${PAGES[@]}" 2>/dev/null | tr -d '[]' | sort -u); do
+# Prose names a code as `W130` rather than `[W130]`, so both spellings count. That matters:
+# `--no-w130`'s row said "Suppress the `W130` warning" and W130 has not been emitted since
+# `proc` was removed — the bracketed-only pattern could not see it.
+for code in $( { grep -ohE '\[[EW][0-9]{3}\]' "${PAGES[@]}" 2>/dev/null | tr -d '[]'
+                 grep -ohE '`[EW][0-9]{3}`'   "${PAGES[@]}" 2>/dev/null | tr -d '`'
+               } | sort -u); do
     echo "$emitted_codes" | grep -qxF "$code" && continue
+    # ★ A RETIRED code may be NAMED, provided the text says it is retired. spec_gate settled the
+    # same question by counting only Annex B's definitions and not its cross-references, on the
+    # grounds that "prose that refers to a retired code is exactly the kind of thing a good annex
+    # contains". The markdown analogue: a mention whose own line says removed / retired / no longer
+    # is describing history, not claiming a live diagnostic. Every OTHER mention is a claim.
+    #
+    # Without this the only way to satisfy the gate is to stop naming the code, which would make
+    # `--no-w130`'s row unable to explain what the flag was ever for — a gate pushing a document
+    # toward saying less.
+    if ! grep -hE "(\[$code\]|\`$code\`)" "${PAGES[@]}" 2>/dev/null \
+         | grep -qvE 'removed|retired|no longer'; then
+        continue
+    fi
     code_bad=$((code_bad+1))
     echo "  ★ README/LANGUAGE names [$code] — no source file in src/ emits it"
     grep -nH "\[$code\]" "${PAGES[@]}" 2>/dev/null | head -3 | sed 's/^/      /'
@@ -348,6 +400,7 @@ echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a 
       echo "  ★ the split above sums to $split_sum but the total is $unchecked — a page is uncounted"
 echo "  FLAGS named but not accepted : $flag_bad   ← a claim about the binary, now tested"
 echo "  CODES named but not emitted  : $code_bad   ← a retired or misspelt code"
+echo "  FLAGS accepted but undocumented : $undoc_bad   ← a flag landed, the manual did not"
 echo "  fragments drawing a PROOF diagnostic : $falseclaim   ← a false SAFETY claim, must stay 0"
 # A documented VALUE, run rather than compiled. The count is small on purpose: every block that
 # earns one is a sentence about what the language computes that used to rest on trust alone.
@@ -366,4 +419,5 @@ fi
 echo "  blocks extracted, all accounted for : $extracted"
 echo "=================================================================="
 [ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] \
-    && [ $verify_bad -eq 0 ] && [ $accounting_bad -eq 0 ] && [ $code_bad -eq 0 ] && exit 0 || exit 1
+    && [ $verify_bad -eq 0 ] && [ $accounting_bad -eq 0 ] && [ $code_bad -eq 0 ] \
+    && [ $undoc_bad -eq 0 ] && exit 0 || exit 1
