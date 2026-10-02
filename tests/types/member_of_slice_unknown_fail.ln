@@ -1,0 +1,11 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: 'i32[]' has no member 'zz'
+// The slice receiver of member_of_array_unknown_fail.ln: it crashed the compiler the same way.
+func first(s i32[]) i32 {
+    return s.zz
+}
+
+func main() i32 {
+    var a = [1, 2]
+    return first(a)
+}

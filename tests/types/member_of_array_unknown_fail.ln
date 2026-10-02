@@ -1,0 +1,8 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: 'i32[2]' has no member 'zz'
+// An unknown member of an array CRASHED the compiler (SIGSEGV): the message printed the type's
+// base name, and an array has none. Every array and slice receiver did; the type is described now.
+func main() i32 {
+    var a = [1, 2]
+    return a.zz
+}

@@ -460,6 +460,10 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
                 Id *field_id = id(arena, parser->token.length, parser->token.start);
                 parser_advance();
                 expr = expr_member(arena, expr, field_id);
+                // Each link of a postfix chain takes the chain's first token, as a unary node does.
+                // Only the outermost link got one (parse_unary_expr), so an error about an inner
+                // one, `std.math` in `std.math.max(1, 2)`, said Ln 0.
+                expr->line = id_line; expr->col = id_col;
 
             } else if (parser_match(TOKEN_L_PAREN)) {
                 parser_advance(); // consume '('
@@ -510,6 +514,7 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
                     idx_expr = expr_range(arena, start, end, /*inclusive=*/false);
                 }
                 expr = expr_index(arena, expr, idx_expr);
+                expr->line = id_line; expr->col = id_col;
 
             } else {
                 break;

@@ -196,6 +196,41 @@ static bool module_reaches_name(DeclList *program, const char *mod, Id *name,
     return false;
 }
 
+// For a diagnostic about `q.name` where `q` is not a value: the name a program qualifies module
+// `mod` with (the last segment of its path when an import registered it, else the alias of an
+// import of it), or NULL.
+static const char *module_qualifier_of(const char *mod, size_t *len) {
+    const char *dot = strrchr(mod, '.');
+    const char *seg = dot ? dot + 1 : mod;
+    if (qualifier_is_module(seg, strlen(seg))) { *len = strlen(seg); return seg; }
+    for (ImportEdge *e = import_edges; e; e = e->next) {
+        Id *a = e->import->as.import_decl.alias;
+        if (a && strcmp(e->to, mod) == 0) { *len = (size_t)a->length; return a->name; }
+    }
+    return NULL;
+}
+
+// A loaded module whose path is `head.next`, or begins with it: `std.math` for `std` and `math`.
+static const char *module_with_path_head(const char *head, size_t hl, const char *next, size_t nl) {
+    for (ModuleNode *n = loaded_modules; n; n = n->next) {
+        const char *p = n->name;
+        if (strlen(p) >= hl + 1 + nl && strncmp(p, head, hl) == 0 && p[hl] == '.' &&
+            strncmp(p + hl + 1, next, nl) == 0 && (p[hl + 1 + nl] == '\0' || p[hl + 1 + nl] == '.'))
+            return p;
+    }
+    return NULL;
+}
+
+// A loaded module whose path ends in the segment `seg`: `std.math` for `math`.
+static const char *module_with_last_segment(const char *seg, size_t sl) {
+    for (ModuleNode *n = loaded_modules; n; n = n->next) {
+        const char *dot = strrchr(n->name, '.');
+        const char *last = dot ? dot + 1 : n->name;
+        if (strlen(last) == sl && strncmp(last, seg, sl) == 0) return n->name;
+    }
+    return NULL;
+}
+
 // ★ A SELECTED NAME MUST EXIST where it is imported from (Handwriting, M12): `import
 // std.math.{mxa}` was accepted, so a typo surfaced later, at the use, as an unrelated error, or
 // never if the name went unused. Imports share one namespace, so a name the module reaches

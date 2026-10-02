@@ -2054,20 +2054,44 @@ void sema_infer_expr(Expr *e) {
     }
 
     if (!t) {
-        // The target of a member access has no value type. The common trigger is
-        // module-qualified access (`io.println(...)`) — imports are a flat
-        // namespace, so `io` is not a value. Emit a diagnostic instead of the old
-        // assertion abort (a compiler crash on user input).
+        // The target of a member access has no value. A module is qualified by the last segment
+        // of its path or by the alias it is imported under (`math.max`, `m.max`), so when the
+        // target is a module named another way the message says which qualifier works. It was
+        // E102 (the Annex's code for an attribute name) at Ln 0, and it advised "imports share
+        // a flat namespace: call 'math' directly": false since qualified access landed, and for
+        // `std.math.max` an instruction to call a module.
         Expr *tgt = e->as.member_expr.target;
-        int tl = (tgt && tgt->kind == EXPR_IDENTIFIER && tgt->as.identifier_expr.id)
-                 ? (int)tgt->as.identifier_expr.id->length : 0;
-        const char *tn = tl ? tgt->as.identifier_expr.id->name : "";
         int ml = (int)e->as.member_expr.member->length;
         const char *mn = e->as.member_expr.member->name;
-        fprintf(stderr, "[E102] Error Ln %li, Col %li: cannot access member '%.*s' of "
-            "'%.*s' — '%.*s' is not a value. If it is an imported module, imports share "
-            "a flat namespace: call '%.*s' directly (unqualified).\n",
-            e->line, e->col, ml, mn, tl, tn, tl, tn, ml, mn);
+        if (tgt && tgt->kind == EXPR_IDENTIFIER && tgt->as.identifier_expr.id && !tgt->decl) {
+            int tl = (int)tgt->as.identifier_expr.id->length;
+            const char *tn = tgt->as.identifier_expr.id->name;
+            const char *mod; const char *q = NULL; size_t ql = 0;
+            if ((mod = module_with_path_head(tn, (size_t)tl, mn, (size_t)ml)) &&
+                (q = module_qualifier_of(mod, &ql)))
+                fprintf(stderr, "[E106] Error Ln %li, Col %li: '%.*s' is not a value. A module is "
+                        "named by the last segment of its path or by its alias, so '%s' is `%.*s` "
+                        "here: write `%.*s.` and the name, not the whole path.\n",
+                        e->line, e->col, tl, tn, mod, (int)ql, q, (int)ql, q);
+            else if ((mod = module_with_last_segment(tn, (size_t)tl)) &&
+                     (q = module_qualifier_of(mod, &ql)) &&
+                     !(ql == (size_t)tl && strncmp(q, tn, ql) == 0))
+                fprintf(stderr, "[E106] Error Ln %li, Col %li: '%.*s' is not a value. Module '%s' "
+                        "is imported as '%.*s': write `%.*s.%.*s`.\n",
+                        e->line, e->col, tl, tn, mod, (int)ql, q, (int)ql, q, ml, mn);
+            else
+                fprintf(stderr, "[E106] Error Ln %li, Col %li: cannot access member '%.*s' of "
+                        "'%.*s': '%.*s' is neither a value nor an imported module.\n",
+                        e->line, e->col, ml, mn, tl, tn, tl, tn);
+        } else if (tgt && tgt->kind == EXPR_TYPE) {
+            char tb[128]; type_describe(tgt->as.type_expr.type_value, tb, sizeof tb);
+            fprintf(stderr, "[E128] Error Ln %li, Col %li: cannot access member '%.*s' of the "
+                    "type '%s': a member is read from a value of the type.\n",
+                    e->line, e->col, ml, mn, tb);
+        } else {
+            fprintf(stderr, "[E128] Error Ln %li, Col %li: cannot access member '%.*s': the "
+                    "expression before the '.' has no value.\n", e->line, e->col, ml, mn);
+        }
         diagnostic_show_line(e->line, e->col);
         exit(1);
     }
@@ -2159,10 +2183,12 @@ void sema_infer_expr(Expr *e) {
         // Neither a field (the type is not a struct) nor a function. This used to fall into
         // `lookup_struct_field_type`, which exits with a raw internal line — no code, no
         // position, no suggestion. A user-facing failure deserves a user-facing diagnostic.
-        fprintf(stderr, "[E128] Error Ln %li, Col %li: '%.*s' has no member '%.*s', and no "
+        // The type is DESCRIBED, not read as a name: an array or a slice has no base name, and
+        // `a.zz` on `var a = [1, 2]` crashed the compiler printing one.
+        char tb[128]; type_describe(t, tb, sizeof tb);
+        fprintf(stderr, "[E128] Error Ln %li, Col %li: '%s' has no member '%.*s', and no "
                 "function of that name is in scope to call as `%.*s(x, ...)`.\n",
-                (long)e->line, (long)e->col,
-                (int)t->base_type->length, t->base_type->name,
+                (long)e->line, (long)e->col, tb,
                 (int)e->as.member_expr.member->length, e->as.member_expr.member->name,
                 (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
         diagnostic_show_line(e->line, e->col);
@@ -2186,6 +2212,7 @@ void sema_infer_expr(Expr *e) {
             fprintf(stderr, "[E128] Error Ln %li, Col %li: struct '%.*s' has no field '%.*s'\n",
                 (long)e->line, (long)e->col, (int)t->base_type->length, t->base_type->name, 
                 (int)e->as.member_expr.member->length, e->as.member_expr.member->name);
+            diagnostic_show_line(e->line, e->col);
             exit(1);
         }
     }
@@ -2359,9 +2386,10 @@ void sema_infer_expr(Expr *e) {
             // Now proceed with normal call logic
             sema_infer_expr(e->as.call_expr.callee);
         } else {
-            fprintf(stderr, "[E128] Error Ln %li, Col %li: struct field or UFCS method '%.*s' not found on type '%.*s'\n",
-                    (long)e->line, (long)e->col, (int)method_name->length, method_name->name,
-                    (int)target->type->base_type->length, target->type->base_type->name);
+            char tb[128]; type_describe(target->type, tb, sizeof tb);
+            fprintf(stderr, "[E128] Error Ln %li, Col %li: struct field or UFCS method '%.*s' not found on type '%s'\n",
+                    (long)e->line, (long)e->col, (int)method_name->length, method_name->name, tb);
+            diagnostic_show_line(e->line, e->col);
             exit(1);
         }
     }

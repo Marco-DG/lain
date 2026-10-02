@@ -1,0 +1,9 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 8, Col 12: 'std' is not a value. A module is named by the last segment of its path or by its alias, so 'std.math' is `math` here
+// spec: §16 — a module is qualified by the last segment of its path or by its alias. This was
+// E102 (the Annex's code for an attribute name) at "Ln 0, Col 0", advising "call 'math' directly".
+import std.math
+
+func main() i32 {
+    return std.math.max(1, 2) - 2
+}

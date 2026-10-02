@@ -1,0 +1,9 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Module 'std.math' is imported as 'm': write `m.max`.
+// spec: §16 — a module imported under an alias is qualified by the alias. The message used to say
+// imports share a flat namespace and the name should be called unqualified.
+import std.math as m
+
+func main() i32 {
+    return math.max(1, 2) - 2
+}
