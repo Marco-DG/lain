@@ -2115,26 +2115,21 @@ Compiler errors are prefixed with error codes for easy reference:
 | `[E081]` | Measure extraction | Cannot extract variables from measure expression |
 | `[E082]` | Measure decrease | Cannot verify measure strictly decreases each iteration |
 
-Every diagnostic gives the code, the line and column, the message, and the file position. The
-column is where the offending construct starts, and an operation is reported at its own
-expression.
+Every diagnostic gives the code, the line and column, the message, the file position, and a
+source excerpt with a caret under the construct. The column is where the construct starts, and
+an operation is reported at its own expression.
 
 ```
 [E004] Error Ln 10, Col 5: conflicting borrows of the same value
   --> e4.ln:10:5
+    |
+ 10 |     d.v = 99
+    |     ^
 ```
 
-Some diagnostics add a source excerpt with a caret under the construct, and some do not — those
-that explain a declaration generally do. For example, a function whose effect row understates
-what its body does:
-
-```
-[E130] Error Ln 9, Col 6: 'talk' declares `effects` that do not cover what its body does — it also has: io.
-  --> t2.ln:9:6
-   |
- 9 | func talk() i32 effects alloc {
-   |      ^
-```
+The excerpt is uniform across front-end and analysis errors. Until 2026-10-02 the analyses
+printed only the code, the message and the position, so a bounds or overflow error pointed at a
+line you then had to go and look up.
 
 ---
 

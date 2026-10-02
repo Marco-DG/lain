@@ -172,8 +172,14 @@ the bounds obligation no longer holds and the program is rejected — twice:
 ```
 [E085] Error Ln 4, Col 12: index is not provably within bounds
   --> bytes.ln:4:12
+   |
+ 4 |         if haystack[i] == target { return i }
+   |            ^
 [E086] Error Ln 5, Col 13: arithmetic is not provably free of overflow
   --> bytes.ln:5:13
+   |
+ 5 |         i = i + 1
+   |             ^
 ```
 
 The second is not noise, and it is the more interesting of the two. Once `i` may reach the
