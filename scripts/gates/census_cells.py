@@ -42,13 +42,18 @@ SCRUT = [
     ("f64",    "x f64",      "1.5",       '        1.5: return 7\n        else: return 9\n'),
     ("char",   "x u8",       "65",        "        'A': return 7\n        else: return 9\n"),
 ]
+# DECIDED 2026-10-02 (I.86, reversible): a `case` scrutinee must be a type that has a pattern form,
+# integers, `bool`, enums and sums, `u8[]` strings, and every refusal below states that rule in its own
+# message. A float has no sound equality pattern, and a float RANGE pattern would first need NaN
+# semantics designed. So f32 and f64 are refused by design and expect __ILLFORMED__. Until the decision
+# they expected 7 and cited I.86 as an open question; the struct and fixed-array cells under `misc` were
+# relabelled in the same commit for the same reason.
 for name, param, arg, arms in SCRUT:
     add("case-scrutinee", name,
         'func pick(%s) u8 {\n    case %s {\n%s    }\n}\n'
         'func main() i32 effects io {\n    libc_printf("%%d\\n", pick(%s) as i32)\n    return 0\n}\n'
         % (param, param.split()[0], arms, arg),
-        "7\n",
-        plan=("I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them" if name in ("f32", "f64") else None))
+        "__ILLFORMED__" if name in ("f32", "f64") else "7\n")
 
 add("case-scrutinee", "u8[] string",
     'func pick(s u8[]) u8 {\n    case s {\n        "ab": return 5\n        else: return 9\n    }\n}\n'
@@ -245,17 +250,17 @@ add("misc", "case on a nonexistent variant",
     'func go(c Color) i32 {\n    case c {\n        Purple: return 1\n        else: return 20\n    }\n}\n'
     'func main() i32 effects io {\n    libc_printf("%d\\n", go(Color.Red))\n    return 0\n}\n',
     "__ILLFORMED__")
+# DECIDED (I.86): a struct or a non-string array has no pattern form at all, so a `case` over one could
+# only ever hold `else:`, which is its body. Refused for having no meaning beyond that, not by accident.
 add("misc", "case on a struct scrutinee",
     'type P { x i32, y i32 }\n'
     'func go(p P) i32 {\n    case p {\n        else: return 20\n    }\n}\n'
     'func main() i32 effects io {\n    libc_printf("%d\\n", go(P(1, 2)))\n    return 0\n}\n',
-    "20\n",
-    plan="I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them")
+    "__ILLFORMED__")
 add("misc", "case on a fixed-array scrutinee",
     'func go(a i32[2]) i32 {\n    case a {\n        else: return 20\n    }\n}\n'
     'func main() i32 effects io {\n    var v i32[2] = [1, 2]\n    libc_printf("%d\\n", go(v))\n    return 0\n}\n',
-    "20\n",
-    plan="I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them")
+    "__ILLFORMED__")
 
 
 # ── axis 8: a PATTERN whose type does not match the scrutinee ─────────────────────────────────

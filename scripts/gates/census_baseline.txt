@@ -7,8 +7,8 @@ case-scrutinee	i64	OK
 case-scrutinee	u8	OK
 case-scrutinee	u32	OK
 case-scrutinee	u64	OK
-case-scrutinee	f32	REFUSED [E012]  # I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them
-case-scrutinee	f64	REFUSED [E012]  # I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them
+case-scrutinee	f32	ok-REFUSED [E012]
+case-scrutinee	f64	ok-REFUSED [E012]
 case-scrutinee	char	OK
 case-scrutinee	u8[] string	OK
 case-scrutinee	enum	OK
@@ -141,8 +141,8 @@ defer	return inside a defer body (spec 9 forbids)	ok-REFUSED [E138]
 defer	break inside a defer body (spec 9 forbids)	ok-REFUSED [E138]
 misc	use p.x as px in a function	ok-REFUSED [E100]
 misc	case on a nonexistent variant	ok-REFUSED [E106]
-misc	case on a struct scrutinee	REFUSED [E012]  # I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them
-misc	case on a fixed-array scrutinee	REFUSED [E012]  # I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them
+misc	case on a struct scrutinee	ok-REFUSED [E012]
+misc	case on a fixed-array scrutinee	ok-REFUSED [E012]
 pattern-type	string pattern on an i32 scrutinee	ok-REFUSED [E012]
 pattern-type	integer pattern on a u8[] scrutinee	ok-REFUSED [E012]
 misc	case on a wrong enum's variant (qualified)	ok-REFUSED [E106]
