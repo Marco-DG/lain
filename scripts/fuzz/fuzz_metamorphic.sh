@@ -56,7 +56,9 @@ STEPS="${LAIN_INTERP_STEPS:-20000000}"
 # Programs are written HERE, under the tree root and reached by a RELATIVE path. An absolute path
 # makes lain chdir away and `std/...` stops resolving; a DOTTED component made it read a different
 # file entirely before Z (58e5cf0). Neither may creep back, so assert both.
-TMP="local/m14run"
+TMP="local/m14run_$$"        # UNIQUE per run: a fixed path lets one run's exit trap delete
+                             # another's. UNDERSCORE, not a dot: `m14run.$$` has a dotted
+                             # component and this script's own guard rejected it, correctly.
 case "$TMP" in
     /*) echo "TMP must be tree-relative, not absolute"; exit 2 ;;
     *.*|.*|*/.*) echo "TMP must have no dotted component"; exit 2 ;;
@@ -179,8 +181,20 @@ for x in $XFORMS; do
                echo "  ** XFORM-CRASH (a bug in fuzz_metamorphic.py, NOT a finding) x=$x seed=$seed src=$p"
                sed -n '$p' "$SC/err" | sed 's/^/       /'
                continue ;;
-            *) sk=$((sk+1)); continue ;;
+            *) echo "  ** HARNESS FAILURE: the transformer exited $rc (not 0, 3 or 4) for"
+               echo "     x=$x seed=$seed src=$p. This is not a SKIP and not a finding: the harness"
+               echo "     could not produce or write the variant, so nothing was judged. Refusing to"
+               echo "     continue, because every later pair in this run is equally unattributable."
+               sed -n '$p' "$SC/err" 2>/dev/null | sed 's/^/       /'
+               exit 2 ;;
         esac
+        # rc=0 must also mean the variant actually landed on disk: a redirection into a directory
+        # that has been removed under us exits 0 from the shell's point of view in some shells.
+        if [ ! -s "$m" ]; then
+            echo "  ** HARNESS FAILURE: the transformer reported success but $m is missing or empty"
+            echo "     (x=$x seed=$seed src=$p). Refusing to continue."
+            exit 2
+        fi
         ap=$((ap+1)); t_applied=$((t_applied+1))
         eval "b_out=\$B_OUT_$((i+1))"
         verdict "$m"; v1="$V"; c1="$CODE"
@@ -224,3 +238,13 @@ if [ "$t_applied" -eq 0 ]; then
     exit 2
 fi
 echo "=================================================================="
+# EXIT NONZERO ON THE BUGS ROW, as every sibling fuzzer does: fuzz_chain exits 1 on FALSE PROOF and
+# GENERATOR-FAIL, fuzz_malformed on CRASH, UNCODED and NO-POSITION. Without this the instrument
+# printed a soundness hole and `make fuzz` still passed, which makes the gate decorative for exactly
+# the two categories that matter. COST and DIAG do NOT fail: a precision asymmetry is a cost, like
+# chain's WRONG-REJECT, and one is currently known and open (I.56). XFORM-CRASH fails too, for the
+# same reason chain fails on GENERATOR-FAIL — those pairs tested nothing.
+[ "$t_unsafe"  -gt 0 ] && exit 1
+[ "$t_output"  -gt 0 ] && exit 1
+[ "$t_xcrash"  -gt 0 ] && exit 1
+exit 0

@@ -10,6 +10,25 @@ The class is real and every instance so far was found by hand: a `case` qualifie
 instance qualifier in a first arm vs a later one (W), a guard on `r.i.s` vs binding it first (I.38),
 `if` vs `while` and `+%` vs `+` precision gaps, and a cast positioned only when parenthesised.
 
+A TRANSFORMATION MUST PRESERVE THE REST OF THE LINE. Both pattern transformations matched an arm up
+to its colon and rewrote the whole line, so `Red: n = 1` became `Color.Red:` and the body was lost.
+The mutilated program's verdict then differed from the base's and was reported as a finding — it
+reached a peer's commit message as "X confirmed" before the census-cell corpus exposed it. A
+verdict-only calibration cannot see it, because an ill-formed variant that still compiles counts as
+agreement. Match what you rewrite, and keep what you did not match.
+
+VERDICT AGREEMENT DOES NOT PROVE TWO PROGRAMS MEAN THE SAME THING. A scratch calibration script that
+compared accept/refuse only counted a mutilated variant as AGREEING with its base: both compiled, so
+both were "accept", though the variant had silently lost a `case` arm's body. The false claim that
+came out of it reached a peer's commit message. So THE CALIBRATION IS THIS DRIVER, run over a corpus
+where every pair must agree — it already compares verdict AND output, and a separate script with its
+own notion of agreement is a second, weaker gatekeeper. Do not write one.
+
+THIS INSTRUMENT'S CHARACTERISTIC FAILURE MODE IS FALSE POSITIVES FROM ITS OWN TRANSFORMATIONS: eleven
+transformation bugs were found in calibration before any of them reached a verdict, and one reached a
+commit message. Weigh its first number on any new corpus or transformation accordingly, and triage
+every divergence before reporting it.
+
 A NEW BASE CORPUS IS A NEW CALIBRATION. Calibration is a property of the pair (transformation,
 corpus), not of the transformation: `rename-local` was clean over 276 applications on tests/ and then
 produced 13 false divergences on fuzz_chain's proved programs, because their ranges end in a local
@@ -303,13 +322,13 @@ def t_qualify_pattern(src, rng):
     ls = src.split("\n")
     cands = []
     for i, l in enumerate(ls):
-        m = re.match(r'^(\s+)([A-Za-z_]\w*)(\s*:)', l)
+        m = re.match(r'^(\s+)([A-Za-z_]\w*)(\s*:)(.*)$', l)
         if m and m.group(2) in vs:
-            cands.append((i, m.group(1), m.group(2), m.group(3)))
+            cands.append((i, m.group(1), m.group(2), m.group(3), m.group(4)))
     if not cands:
         return None
-    i, ind, var, tail = rng.choice(cands)
-    ls[i] = "%s%s.%s%s" % (ind, vs[var], var, tail)
+    i, ind, var, tail, rest = rng.choice(cands)
+    ls[i] = "%s%s.%s%s%s" % (ind, vs[var], var, tail, rest)
     return "\n".join(ls)
 
 
@@ -319,13 +338,13 @@ def t_unqualify_pattern(src, rng):
     ls = src.split("\n")
     cands = []
     for i, l in enumerate(ls):
-        m = re.match(r'^(\s+)([A-Za-z_]\w*)\.([A-Za-z_]\w*)(\s*:)', l)
+        m = re.match(r'^(\s+)([A-Za-z_]\w*)\.([A-Za-z_]\w*)(\s*:)(.*)$', l)
         if m and m.group(3) in vs and vs[m.group(3)] == m.group(2):
-            cands.append((i, m.group(1), m.group(3), m.group(4)))
+            cands.append((i, m.group(1), m.group(3), m.group(4), m.group(5)))
     if not cands:
         return None
-    i, ind, var, tail = rng.choice(cands)
-    ls[i] = "%s%s%s" % (ind, var, tail)
+    i, ind, var, tail, rest = rng.choice(cands)
+    ls[i] = "%s%s%s%s" % (ind, var, tail, rest)
     return "\n".join(ls)
 
 

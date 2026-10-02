@@ -392,6 +392,77 @@ add("case-exhaustive", "one qualified arm among bare ones",
 add("case-exhaustive", "a missing variant, no else",
     _exh('        Red: return 3\n'), "__ILLFORMED__")
 
+# ── axis: an operator with an overflow policy, literal on the LEFT vs the RIGHT (I.56) ──────────
+# The operation has ONE integer type, its operands'. A literal on the left made it an i32: `100 +% x`
+# on an i64 printed 79, `100 +| x` on a u32 printed 2147483647, and the C and the interpreter agreed
+# (the IR was typed wrong). Expected values are computed here, from the operator's definition.
+def _pol_rng(t):
+    b = int(t[1:])
+    return (-(1 << (b - 1)), (1 << (b - 1)) - 1) if t[0] == 'i' else (0, (1 << b) - 1)
+def _pol_val(op, a, b, t):
+    lo, hi = _pol_rng(t)
+    exact = {'+': a + b, '-': a - b, '*': a * b}[op[0]]
+    if op[1] == '%':
+        m = 1 << int(t[1:]); v = exact % m
+        return v - m if t[0] == 'i' and v > hi else v
+    if op[1] == '|': return max(lo, min(hi, exact))
+    return exact if lo <= exact <= hi else 7          # `+? ... else 7`
+POLICY_CELLS = [   # (op, type, literal, run-time operand)
+    ('+%', 'i64', 100, 9223372036854775787), ('-%', 'i64', 100, -9223372036854775788),
+    ('*%', 'i64', 3, 4611686018427387904),   ('+%', 'u8', 250, 10),
+    ('+|', 'u32', 100, 4294967275),          ('*|', 'u32', 100, 4294967275),
+    ('-|', 'u32', 100, 4294967275),          ('-|', 'i8', -100, 100),
+    ('+?', 'u32', 100, 4294967275),          ('+?', 'i16', 100, 5),
+]
+for op, t, lit, arg in POLICY_CELLS:
+    fmt, wide = ('%lld', 'i64') if t[0] == 'i' else ('%llu', 'u64')
+    tail = ' else 7' if op.endswith('?') else ''
+    for side, expr, a, b in (('left', '%d %s x%s' % (lit, op, tail), lit, arg),
+                             ('right', 'x %s %d%s' % (op, lit, tail), arg, lit)):
+        add("policy-op-literal", "%s %s literal-%s" % (op, t, side),
+            'func f(x %s) %s {\n    return %s\n}\n'
+            'func main() i32 effects io {\n    libc_printf("%s\\n", f(%d) as %s)\n    return 0\n}\n'
+            % (t, t, expr, fmt, arg, wide),
+            "%d\n" % _pol_val(op, a, b, t))
+
+# ── axis: the BOUNDARY of I.56's rule, both orders (Handwriting) ───────────────────────────────
+# The rule: the operation's TYPE comes from the other operand; the literal keeps its EXACT VALUE and
+# the policy applies to the exact result. These ten pin the cases the rule has to decide and that the
+# twenty above do not reach. Expected values are DERIVED here from that statement, not copied from a
+# measurement — a measurement agreeing with the derivation is a check, not the oracle.
+#
+#   `x +% 300` on a u8 is NOT "300 truncated to 44, then added": it is 10 + 300 = 310 wrapped in u8.
+#   The two happen to coincide for `+%`; they do not for `+|`, which clamps the EXACT sum to 255.
+def _b_wrap(v, bits, signed):
+    m = 1 << bits
+    v %= m
+    return v - m if signed and v >= (1 << (bits - 1)) else v
+
+for lit, arg, want in [(300, 10, _b_wrap(10 + 300, 8, False)),      # a literal OUT OF RANGE for u8
+                       (-100, 10, _b_wrap(10 - 100, 8, False))]:    # a NEGATIVE literal, unsigned operand
+    for side, expr in (("literal-left", "%d +%% x" % lit), ("literal-right", "x +%% %d" % lit)):
+        add("policy-op-boundary", "u8 %d %s" % (lit, side),
+            'func f(x u8) u8 {\n    return %s\n}\n'
+            'func main() i32 effects io {\n    libc_printf("%%d\\n", f(%d) as i32)\n    return 0\n}\n'
+            % (expr, arg), "%d\n" % want)
+
+# Two STATED types where neither holds every value of the other: refused in BOTH orders, since the
+# rule cannot choose and choosing by position is what I.56 removed.
+for ta, tb, va, vb in [("i32", "u32", 1, 1), ("i8", "u64", 1, 1)]:
+    for side, expr in (("a-first", "a +% b"), ("b-first", "b +% a")):
+        add("policy-op-boundary", "%s/%s %s" % (ta, tb, side),
+            'func f(a %s, b %s) %s {\n    return %s\n}\n'
+            'func main() i32 { return 0 }\n' % (ta, tb, ta, expr), "__ILLFORMED__")
+
+# A WIDENING pair: i32 holds every u8, so the operation is i32 in both orders and the answer does not
+# depend on which side the u8 is written. 200 + (-300) = -100 exactly, and -100 fits i32.
+for side, expr in (("a-first", "a +% b"), ("b-first", "b +% a")):
+    add("policy-op-boundary", "u8/i32 widening %s" % side,
+        'func f(a u8, b i32) i32 {\n    return %s\n}\n'
+        'func main() i32 effects io {\n    libc_printf("%%d\\n", f(200, 0 - 300))\n    return 0\n}\n'
+        % expr, "%d\n" % (200 + (-300)))
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w} for a, c, p, w in CELLS]))

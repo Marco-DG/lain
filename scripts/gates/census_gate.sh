@@ -52,7 +52,10 @@ SC="$(mktemp -d)"
 # and `std/...` stops resolving (measured: absolute rc=1 "Cannot open module file", tree-relative
 # rc=0). No component may begin with a dot, or the path is rebuilt from the module name and a
 # DIFFERENT file is read.
-CELLDIR="local/censusrun"; mkdir -p "$CELLDIR"
+CELLDIR="local/censusrun_$$"   # UNIQUE per run: a fixed path lets one run's exit trap delete
+                             # another's scratch. Underscore, not a dot: a dotted component
+                             # was read as a different path before Z (58e5cf0).
+mkdir -p "$CELLDIR"
 trap 'rm -rf "$SC" "$CELLDIR"' EXIT
 
 LAIN="$LAIN" CELLS="$CELLS" SC="$SC" CELLDIR="$CELLDIR" python3 - > "$SC/now.txt" <<'PY'

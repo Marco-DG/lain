@@ -62,7 +62,11 @@ case "$BASE" in random|RANDOM) BASE=$$ ;; esac
 # sanity line below still runs on every invocation: no guard could detect a silently substituted
 # file, because the wrong file opened perfectly and nothing was absent to notice. A harness that
 # cannot prove it read what it wrote cannot attribute anything it measures.
-TMP="local/m13run"; mkdir -p "$TMP"; trap 'rm -rf "$TMP"' EXIT
+TMP="local/m13run_$$"   # UNIQUE per run: a fixed path lets one run's exit trap delete
+                             # another's scratch. Underscore, not a dot: a dotted component
+                             # was read as a different path before Z (58e5cf0).
+mkdir -p "$TMP"
+trap 'rm -rf "$TMP"' EXIT
 BUDGET=20
 OPS="${M13_OPS:-unknown-member unknown-member-seq undeclared-ident swap-type wrong-qualifier unknown-import drop-token dup-token call-to-member member-to-call}"
 # The five messages still uncoded at P-minus-1. After P every refusal starts with [E###] or
@@ -100,10 +104,10 @@ fi
 echo
 
 # ── the mutants ──────────────────────────────────────────────────────────────────────────────
-tot_crash=0; tot_new=0; tot_nopos=0; tot_wrongpos=0; unjudged=0
+tot_crash=0; tot_new=0; tot_nopos=0; tot_wrongpos=0; unjudged=0; tot_nojudge=0
 printf "%-18s %7s %7s %7s %7s %7s %7s %7s %7s\n" operator gen skip judged CRASH UNCODED-new NO-POS WRONG-POS accepted
 for op in $OPS; do
-    gen=0; skip=0; judged=0; crash=0; uncoded_new=0; uncoded_known=0; nopos=0; wrongpos=0; acc=0; hang=0
+    gen=0; skip=0; judged=0; crash=0; uncoded_new=0; uncoded_known=0; nopos=0; wrongpos=0; acc=0; hang=0; nojudge=0
     # Walk the program list until N mutants EXIST, rather than spending the budget on programs
     # that have no site for this operator. A skip is still counted, so an operator that can
     # mutate almost nothing stays visible instead of silently testing less than the others.
@@ -150,7 +154,12 @@ for op in $OPS; do
         # the diagnostic was not in the shape assumed, and a malformed value in $(( )) is a
         # syntax error that kills the run mid-operator rather than skipping one mutant.
         case "$rl$line" in
-            ''|*[!0-9]*) : ;;                       # not both plain integers: cannot judge position
+            ''|*[!0-9]*)
+                # NOT a benign case: the position could not be judged at all, and silence here is
+                # indistinguishable from "the position was correct". A diagnostic with NO `Ln` in it
+                # (not even `Ln 0`) lands here, so it is counted rather than dropped — otherwise a run
+                # where every refusal lacks a position reads as WRONG-POSITION 0.
+                nojudge=$((nojudge+1)); tot_nojudge=$((tot_nojudge+1)) ;;
             *) if [ "$rl" -ne $((line + 1)) ]; then
                    wrongpos=$((wrongpos+1)); tot_wrongpos=$((tot_wrongpos+1))
                    echo "  -- WRONG-POSITION op=$op seed=$mseed src=$src :: refused at Ln $rl, mutated line $((line + 1))"
@@ -164,5 +173,7 @@ echo "fuzz_malformed: $N mutants per operator over ${#PASSES[@]} _pass programs,
 echo "  BUGS:  CRASH=$tot_crash  UNCODED(new)=$tot_new  NO-POSITION=$tot_nopos"
 if [ $unjudged -gt 0 ]; then echo "  UNJUDGED=$unjudged   (harness bug — these tested NOTHING)"; fi
 echo "  REVIEW: WRONG-POSITION=$tot_wrongpos  (a refusal away from the mutated line; not always wrong)"
+echo "  REVIEW: POSITION-UNJUDGED=$tot_nojudge  (no \`Ln\` in the diagnostic, or an unexpected header:"
+echo "          the position could NOT be judged — silence here is not a pass)"
 echo "=================================================================="
 [ $tot_crash -eq 0 ] && [ $tot_new -eq 0 ] && [ $tot_nopos -eq 0 ] && exit 0 || exit 1

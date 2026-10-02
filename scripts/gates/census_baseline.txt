@@ -183,3 +183,33 @@ case-exhaustive	every variant, bare spelling	OK
 case-exhaustive	every variant, qualified spelling	OK
 case-exhaustive	one qualified arm among bare ones	OK
 case-exhaustive	a missing variant, no else	ok-REFUSED [E014]
+policy-op-literal	+% i64 literal-left	OK
+policy-op-literal	+% i64 literal-right	OK
+policy-op-literal	-% i64 literal-left	OK
+policy-op-literal	-% i64 literal-right	OK
+policy-op-literal	*% i64 literal-left	OK
+policy-op-literal	*% i64 literal-right	OK
+policy-op-literal	+% u8 literal-left	OK
+policy-op-literal	+% u8 literal-right	OK
+policy-op-literal	+| u32 literal-left	OK
+policy-op-literal	+| u32 literal-right	OK
+policy-op-literal	*| u32 literal-left	OK
+policy-op-literal	*| u32 literal-right	OK
+policy-op-literal	-| u32 literal-left	OK
+policy-op-literal	-| u32 literal-right	OK
+policy-op-literal	-| i8 literal-left	OK
+policy-op-literal	-| i8 literal-right	OK
+policy-op-literal	+? u32 literal-left	OK
+policy-op-literal	+? u32 literal-right	OK
+policy-op-literal	+? i16 literal-left	OK
+policy-op-literal	+? i16 literal-right	OK
+policy-op-boundary	u8 300 literal-left	OK
+policy-op-boundary	u8 300 literal-right	OK
+policy-op-boundary	u8 -100 literal-left	OK
+policy-op-boundary	u8 -100 literal-right	OK
+policy-op-boundary	i32/u32 a-first	ok-REFUSED [E012]
+policy-op-boundary	i32/u32 b-first	ok-REFUSED [E012]
+policy-op-boundary	i8/u64 a-first	ok-REFUSED [E012]
+policy-op-boundary	i8/u64 b-first	ok-REFUSED [E012]
+policy-op-boundary	u8/i32 widening a-first	OK
+policy-op-boundary	u8/i32 widening b-first	OK
