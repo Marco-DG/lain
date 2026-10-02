@@ -735,6 +735,94 @@ add("mov-shared-irtype", "mov parameter of a DIFFERENT type",
     _I93_BODY % ("type Other { m i32 }\n", "mov k Other", "Other(0)"), "7\n")
 
 
+# ── axis: the ERROR UNION — `try`, `else return`, and which payloads can carry a marker ──────────
+# Until this row the census had no cell using `try`, `raises` or an error union at all, while the corpus
+# has 26 tests using `try` and 29 using `raises`. That mattered on 2026-10-02: MCW's I.93 fix moved
+# five try/error-union corpus tests, and the census could not have seen any of it.
+#
+# A union `T | Marker` must be zero-cost: no hidden tag word, so the marker lives in a value T can
+# never hold. E064 enforces that, and its message names three remedies:
+#
+#   "Give the value type spare values (a pointer, a bool, or a refinement like `u8 < 200`)"
+#
+# All three work. The refinement works through a refined ALIAS, and the cell for it also prints the
+# union's size, because the promise is about REPRESENTATION: a niche-packed `Small | NotFound` is one
+# byte, the size of a u8, and a union that grew a tag word would print 2 while every value stayed right.
+#
+#   type Small = u8 < 200     a refined alias            works: niche-packed, 1 byte
+#   u8 < 200 | NotFound       inline in the type         E100, a parse error at the return type
+#   type Small u8 < 200       no `=`                     E100: that is the enum-width form
+#   u8 | NotFound < 200       a clause after the union   PARSED, then IGNORED; E064 for the bare u8
+#
+# CORRECTED 2026-10-02. This row first claimed the refinement remedy "works in no spelling", from the
+# last three lines alone. MCW found the alias. What survives is two smaller things, which are I.94 now:
+# (a) E064's example `u8 < 200` cannot be written where a union's payload goes, so the message should
+# show `type Small = u8 < 200`; and (b) a refinement clause after a union return type parses and is
+# silently ignored, which is "parsed is not enforced". The last cell pins (b) with a program the clause
+# should refuse: a payload that can be 199 under a clause `< 100`. The same clause on a plain return is
+# E086; on the union it is accepted. My first version of that cell used `u8 | NotFound < 200` instead,
+# which is refused E064 for the bare u8's lack of spare values, so it never reached the clause at all.
+#
+_I94 = ("I.94 — (a) E064's message says `a refinement like u8 < 200`, which cannot be written where a "
+        "union's payload goes; it should show `type Small = u8 < 200`. (b) a refinement clause after a "
+        "union return type, `T | M < N`, parses and is silently ignored: a payload that can exceed N is "
+        "accepted, where the same clause on a plain return is E086")
+_EU_INNER = ('func inner(fail bool, v %s) %s | NotFound {\n    if fail {\n        return NotFound\n'
+             '    }\n    return v\n}\n')
+_EU_MAIN = ('func main() i32 effects io {\n'
+            '    var a %s | %s = %s(false, %s)\n    case a {\n        %s: libc_printf("%s")\n'
+            '        else: libc_printf("%s", a)\n    }\n'
+            '    var b %s | %s = %s(true, %s)\n    case b {\n        %s: libc_printf("%s")\n'
+            '        else: libc_printf("%s", b)\n    }\n'
+            '    libc_printf("\\n")\n    return 0\n}\n')
+def _eu_main(ty, marker, fn, arg, ch, fmt):
+    return _EU_MAIN % (ty, marker, fn, arg, marker, ch, fmt, ty, marker, fn, arg, marker, ch, fmt)
+# DERIVED for the three running cells: the success path prints the payload, the failure path prints
+# the marker's letter. "ok" then E; "ok" then D for the remapped marker; 1 (true) then E.
+add("error-union", "try, pointer payload, both paths",
+    _EU_INNER % ("*u8", "*u8")
+    + 'func relay(fail bool, s *u8) *u8 | NotFound {\n    r = try inner(fail, s)\n    return r\n}\n'
+    + _eu_main("*u8", "NotFound", "relay", '"ok"', "E", "%s"),
+    "okE\n")
+add("error-union", "else return remaps the marker",
+    _EU_INNER % ("*u8", "*u8")
+    + 'func outer(fail bool, s *u8) *u8 | Denied {\n    r = inner(fail, s) else return Denied\n'
+      '    return r\n}\n'
+    + _eu_main("*u8", "Denied", "outer", '"ok"', "D", "%s"),
+    "okD\n")
+add("error-union", "bool payload, a remedy E064 names",
+    _EU_INNER % ("bool", "bool")
+    + 'func relay(fail bool, s bool) bool | NotFound {\n    r = try inner(fail, s)\n    return r\n}\n'
+    + _eu_main("bool", "NotFound", "relay", "true", "E", "%d"),
+    "1E\n")
+add("error-union", "i32 payload, no spare values",
+    _EU_INNER % ("i32", "i32") + 'func main() i32 {\n    return 0\n}\n',
+    "__ILLFORMED__")
+add("error-union", "try whose marker the enclosing union omits",
+    _EU_INNER % ("*u8", "*u8")
+    + 'func relay(fail bool, s *u8) *u8 {\n    r = try inner(fail, s)\n    return r\n}\n'
+      'func main() i32 {\n    return 0\n}\n',
+    "__ILLFORMED__")
+# DERIVED: success prints the payload 9, failure the marker's letter E, then the size of a
+# niche-packed u8 union, which is one byte.
+add("error-union", "refined alias, the third remedy E064 names",
+    'type Small = u8 < 200\n'
+    + _EU_INNER % ("Small", "Small")
+    + 'func main() i32 effects io {\n'
+      '    var a Small | NotFound = inner(false, 9)\n    case a {\n        NotFound: libc_printf("E")\n'
+      '        else: libc_printf("%d", a)\n    }\n'
+      '    var b Small | NotFound = inner(true, 9)\n    case b {\n        NotFound: libc_printf("E")\n'
+      '        else: libc_printf("%d", b)\n    }\n'
+      '    libc_printf(" %d\\n", @sizeof(Small | NotFound) as i32)\n    return 0\n}\n',
+    "9E 1\n")
+add("error-union", "a refinement clause on a union return is ignored",
+    'type Small = u8 < 200\n'
+    'func inner(fail bool, v Small) Small | NotFound < 100 {\n    if fail {\n        return NotFound\n'
+    '    }\n    return v\n}\n'
+    'func main() i32 {\n    return 0\n}\n',
+    "__ILLFORMED__", plan=_I94)
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
