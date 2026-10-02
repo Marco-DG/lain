@@ -211,9 +211,14 @@ String literals have type `u8[:0]` (null-terminated sentinel slice). They expose
 - `.len`: length of the string, excluding the sentinel
 
 ```lain
-var s = "Hello"
-libc_printf("Length: %d\n", s.len)   // 5
-libc_printf("Content: %s\n", s.data) // Hello
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func main() i32 effects io {
+    var s = "Hello"
+    libc_printf("Length: %d\n", s.len)   // 5
+    libc_printf("Content: %s\n", s.data) // Hello
+    return 0
+}
 ```
 
 ### 1.4 Comments
@@ -269,9 +274,18 @@ var y = 20     // Without semicolon
 
 Floating-point types support the standard arithmetic operators (`+`, `-`, `*`, `/`) and comparison operators. The modulo operator `%` is **not** available for floating-point types.
 
+A float is initialised from a float literal. An integer literal is **not** implicitly converted:
+`var pi f64 = 3` is `[E012] implicit conversion between float and integer`, and the message asks
+for an explicit `as` cast.
+
 ```lain
-var pi f64 = 3
-var radius f32 = 5
+func main() i32 {
+    var pi f64 = 3.14159
+    var radius f32 = 5.0
+    var n i32 = 7
+    var scaled f64 = n as f64
+    return 0
+}
 ```
 
 **Boolean:**
@@ -341,23 +355,23 @@ Raw pointer dereference and address-of (`&x`) are only allowed inside `unsafe` b
 
 Arrays are fixed-size, stack-allocated collections. The size is part of the type.
 
-```lain
-var arr int[5]        // Array of 5 ints
-var bytes u8[256]     // Array of 256 bytes
-```
+A declaration names the element type and the length. Elements may be written one at a time, or
+given as a literal, and an index reads back:
 
-**Initialization:**
 ```lain
-var arr int[3]
-arr[0] = 10
-arr[1] = 20
-arr[2] = 30
-```
+func main() i32 {
+    var arr int[3]
+    arr[0] = 10
+    arr[1] = 20
+    arr[2] = 30
 
-**Indexing:**
-```lain
-arr[0] = 10
-var x = arr[0]
+    var bytes u8[256]
+    bytes[0] = 1
+
+    var lit int[3] = [10, 20, 30]
+    var x = lit[0]
+    return x
+}
 ```
 
 Array indices are **statically verified** at compile time. Accessing an out-of-bounds index is a compile error (see §8).
@@ -367,7 +381,11 @@ Array indices are **statically verified** at compile time. Accessing an out-of-b
 Slices are dynamic views into arrays. They consist of a pointer and a length.
 
 ```lain
-var s int[] = arr[0..3]   // Slice of elements [0, 1, 2]
+func main() i32 {
+    var arr int[5] = [1, 2, 3, 4, 5]
+    var s int[] = arr[0..3]   // Slice of elements [0, 1, 2]
+    return s.len as i32
+}
 ```
 
 All slice types (`T[]`) expose two fields:
