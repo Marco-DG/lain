@@ -395,6 +395,17 @@ literals:
   (\texttt{"\textbackslash x414"} is the two bytes \texttt{A} and \texttt{4}).
 \end{constraint}
 
+\begin{laincode}
+// VERIFY: exit 0
+func main() i32 {
+    var s = "\x414"          // \x41 is 'A'; the 4 after it is an ordinary character
+    if s.len != 2 { return 1 }
+    if s[0] != 65 { return 2 }
+    if s[1] != 52 { return 3 }
+    return 0
+}
+\end{laincode}
+
 \section{Operators and punctuators}
 \label{sec:lex.operators}
 \index{operator}
