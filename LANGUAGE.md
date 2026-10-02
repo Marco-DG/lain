@@ -994,7 +994,7 @@ func branchy(mov h Handle, c bool) {
 ```
 
 ```
-[E016] Error: consumed on some paths but not others
+[E016] Error Ln 8, Col 9: consumed on some paths but not others
 ```
 
 And the transfer must be written: passing a linear value to a `mov` parameter without the keyword is
@@ -1631,7 +1631,7 @@ func g(flag bool) i32 {
 ```
 
 ```
-[E011] Error: this loop is not provably terminating, and no measure could be inferred
+[E011] Error Ln 2, Col 5: this loop is not provably terminating, and no measure could be inferred
 ```
 
 A `decreasing` measure that is supplied and does not hold is `[E082]`:

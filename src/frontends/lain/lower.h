@@ -4091,6 +4091,7 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     IrFunc *f = ir_func_new(a, ir_qualified_name(a, fn, fnm), NULL,
                             fn->kind==DECL_FUNCTION ? IR_FUNC_PURE : IR_FUNC_PROC);
     f->src_decl = fn;   // opaque provenance (void*) — the IR never derefs it
+    if (fnm) f->src_name = ir_intern(a, fnm->name, fnm->length);   // as written, for diagnostics
     // The exception to "everything terminates", written by the function that wants it. The
     // effect row already had a `diverge` bit and a parser for it; this is the one place that
     // had to start reading it, so the opt-out needed no new syntax.

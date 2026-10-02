@@ -411,6 +411,9 @@ void ir_set_br(IrBlock *b, IrBlock *target) {
 }
 void ir_set_br_cond(IrBlock *b, IrValue *cond, IrBlock *t, IrBlock *e) {
     b->term.kind = IR_TERM_BR_COND; b->term.cond = cond; b->term.a = t; b->term.b = e;
+    // A loop's header ends here, and a finding about the loop (E011, E082) is placed at it when
+    // its condition has no placed instruction (`while 1`: a constant), I.68.
+    b->term.line = ir_cur_line; b->term.col = ir_cur_col;
 }
 void ir_set_ret(IrBlock *b, IrValue *v /*NULL for unit*/) {
     b->term.kind = IR_TERM_RET; b->term.cond = v;

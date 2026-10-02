@@ -4756,8 +4756,13 @@ static Vra *vra_analyze(IrFunc *f) {
             if (vra_type_may_lose(rv->type, V->f->ret_type)) {
                 oct_close(&W);
                 IrInstr *site = V->def[rv->id];
-                vra_check_narrow(V,&W, rv, V->f->ret_type, site,
-                                 site ? site->line : 0, site ? site->col : 0);
+                // At the returned value; failing that, at the `return` itself (the terminator
+                // carries its position). A PARAMETER has no defining instruction, and `return a`
+                // narrowing an i32 parameter into an i8 result printed no position at all (I.68).
+                bool sp = site && site->line;
+                isize rl = sp ? site->line : b->term.line;
+                isize rc = sp ? site->col  : b->term.col;
+                vra_check_narrow(V,&W, rv, V->f->ret_type, site, rl, rc);
             }
         }
     }
@@ -4798,7 +4803,8 @@ static Vra *vra_analyze(IrFunc *f) {
         // "Error:" with no line — in a file with several loops, no way to tell which.
         { IrInstr *hc = (b->term.cond && b->term.cond->id>=0 && b->term.cond->id<V->nvar)
                         ? V->def[b->term.cond->id] : NULL;
-          if (hc) { c.line = hc->line; c.col = hc->col; } }
+          if (hc && hc->line) { c.line = hc->line; c.col = hc->col; }
+          else { c.line = b->term.line; c.col = b->term.col; } }   // `while 1`: the header (I.68)
         if (vra_dump_measures_enabled) vra_print_measure(V, f, c.line, false, c.ok);
         vra_add_check(V, c);
     }

@@ -22,9 +22,15 @@
 // function from an imported module, or a tool without a front end) keeps the bare `-->` line.
 static void (*ir_diag_excerpt)(isize line, isize col) = NULL;
 
+// The function being reported, for a finding that has no position (I.68): `[E086] Error:` with no
+// place at all was printed for `func f(a i32) i8 { return a }`, and the gate that requires every
+// coded error to be placed grepped for a LITERAL code, while this helper passes the code as a
+// format argument, so no rule saw it. With no line it now names the function, as ir_diag_locus
+// does for the emitter's errors.
+static const IrFunc *ir_diag_fn = NULL;
 static void ir_diag(const char *file, isize line, isize col, const char *code, const char *msg) {
     fprintf(stderr, "[%s] Error", code);
-    if (line) fprintf(stderr, " Ln %lld, Col %lld", (long long)line, (long long)col);
+    ir_diag_locus(line, col, ir_diag_fn);
     fprintf(stderr, ": %s\n", msg);
     if (line && ir_diag_excerpt) ir_diag_excerpt(line, col);
     else if (file && line) fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)line, (long long)col);
@@ -37,6 +43,7 @@ static void ir_diag(const char *file, isize line, isize col, const char *code, c
 // and every one after it nothing — the co-argument aliasing check silently stopped running
 // after the first callee, which is exactly where `mix(var x, var x)` lives.
 static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool numeric) {
+    ir_diag_fn = f;
     int n = 0;
 
     // The borrow pass runs FIRST so the linearity pass can defer to it. `f(var d, mov d)`

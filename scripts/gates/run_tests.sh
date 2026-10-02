@@ -145,6 +145,20 @@ run_test() {
             FAILED_TESTS+=("$file (expected the message to say: $etext)")
             return
         fi
+        # ★ THE FIRST CODED ERROR SAYS WHERE IT IS: a line, or at least the function (I.68). This
+        # MEASURES what check_build_warnings can only grep for: that gate looked for a literal
+        # `"[E086] Error:"`, while report.h's ir_diag passes the code as a format argument, so six
+        # analysis errors printed no position and no rule saw them (Handwriting's audit). The one
+        # exempt code has no source construct to point at: E064, an anonymous union's layout. (E124
+        # in a type position needed the same exemption until 4db07a1 placed it.)
+        local first
+        first="$(echo "$out" | grep -m1 -E '^\[E[0-9]+\] Error')"
+        if [[ -n "$first" ]] && ! echo "$first" | grep -qE ' Ln [0-9]+, Col [0-9]+| in '"'" \
+           && ! echo "$first" | grep -qE '^\[E064\]'; then
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+            FAILED_TESTS+=("$file (the first error has no position: $first)")
+            return
+        fi
         PASS_COUNT=$((PASS_COUNT + 1))
     else
         if [[ $rc -ne 0 ]]; then

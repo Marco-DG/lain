@@ -525,6 +525,9 @@ typedef struct IrFunc {
     int32_t    next_value_id;
     int32_t    next_block_id;
     void      *src_decl;    // OPAQUE provenance handle (front-end's; the IR never derefs it)
+    // The function's name as the program wrote it, for a diagnostic that has no line to give
+    // (ir_diag_locus): `name` is qualified by its module (`tests_x_f`), which read as noise.
+    IrName    *src_name;
     bool       incomplete;
     // WHY this function could not be lowered faithfully — a static string, first reason wins —
     // and WHERE: the position of that first construct. The IR is missing code the program
@@ -606,7 +609,10 @@ typedef struct IrFunc {
 // held no "Error:" literal, and the output held no "Ln 0" (Handwriting).
 static inline void ir_diag_locus(isize line, isize col, const IrFunc *f) {
     if (line) fprintf(stderr, " Ln %lld, Col %lld", (long long)line, (long long)col);
-    else if (f && f->name) fprintf(stderr, " in '%.*s'", (int)f->name->length, f->name->name);
+    else if (f && (f->src_name || f->name)) {
+        const IrName *n = f->src_name ? f->src_name : f->name;
+        fprintf(stderr, " in '%.*s'", (int)n->length, n->name);
+    }
 }
 
 // Does this function return a BORROW — a reference into storage the caller owns? ONE reader
