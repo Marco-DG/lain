@@ -218,7 +218,7 @@ mov-field-leak	pointer field, partial	ok-REFUSED [E016]
 mov-field-leak	pointer field, never consumed	ok-REFUSED [E003]
 mov-field-leak	integer field, full consume	OK
 mov-field-leak	integer field, partial	ok-REFUSED [E016]
-mov-field-leak	integer field, never consumed	ACCEPTED-ILLFORMED  # I.82 — a `mov` field of non-pointer type leaks silently: E016 fires on the partial path, E003 does not fire on the leak
+mov-field-leak	integer field, never consumed	ok-REFUSED [E003]
 for-bound-type	f64 bound, body returns	ok-REFUSED [E012]
 for-bound-type	f64 bound, body completes	ok-REFUSED [E012]
 for-bound-type	usize bound, body returns	OK

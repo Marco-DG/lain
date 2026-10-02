@@ -1,0 +1,33 @@
+// I.82, the allowed side: a `mov` int field consumed on every path compiles and runs, and an owned
+// BINDING of a plain int (`mov n i32`) or of a struct with no `mov` field owns no resource and needs
+// no consumer. Only a field DECLARED `mov` carries the release obligation. Run under the sanitizers
+// and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Fd { mov fd i32 }
+type Counter { value i32 }
+
+func close_fd(mov {fd} Fd) effects io {
+    libc_printf("closed\n")
+}
+
+func use_fd(c bool) i32 effects io {
+    f = Fd(4)
+    if c {
+        close_fd(mov f)
+        return 1
+    }
+    close_fd(mov f)
+    return 0
+}
+
+func plain(mov n i32, mov k Counter) i32 {
+    return n +% k.value
+}
+
+func main() i32 effects io {
+    a = use_fd(true)
+    b = use_fd(false)
+    libc_printf("%d %d %d\n", a, b, plain(2, Counter(3)))
+    return 0
+}

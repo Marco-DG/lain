@@ -516,10 +516,7 @@ for fty, tyname, init in [("*i32", "pointer", "    var r = R(&n)\n"),
             % (fty, init, body),
             # DERIVED, not measured: `go` consumes (or leaks) the resource and returns 0 on every
             # path it can reach, so an accepted cell prints exactly "0".
-            "0\n" if want == "accept" else want,
-            plan=("I.82 — a `mov` field of non-pointer type leaks silently: E016 fires on the partial "
-                  "path, E003 does not fire on the leak"
-                  if (tyname, shape) == ("integer", "never consumed") else None))
+            "0\n" if want == "accept" else want)
 
 
 # ── axis: a `for` bound's TYPE, by whether the body completes an iteration (I.81) ──────────────

@@ -1741,6 +1741,15 @@ ty=Slice_i32 scalar
 rc=0
 out=
 at=const 4
+### tests/trust/mov_scalar_field_pass.ln
+rc=0
+out=closed
+out=closed
+out=1 0 5
+at=const 2
+ty=Counter struct
+ty=Fd struct
+ty=Slice_u8 scalar
 ### tests/trust/mul_narrowing_provable_pass.ln
 rc=0
 out=

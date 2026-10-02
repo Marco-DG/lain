@@ -1,0 +1,15 @@
+// EXPECT: [E003]
+// EXPECT-TEXT: a linear value is not consumed before it goes out of scope
+// I.82: a field declared `mov` is a resource whatever its type. A POSIX file descriptor is an int,
+// so `type Fd { mov fd i32 }` owns one, and dropping it unclosed is a leak. Before I.82 only pointer
+// and slice fields carried the release obligation: consuming this field on ONE path was E016, and
+// never consuming it at all, below, was accepted.
+type Fd { mov fd i32 }
+func close_fd(mov {fd} Fd) { }
+func open_and_forget() {
+    f = Fd(3)
+}
+func main() i32 {
+    open_and_forget()
+    return 0
+}
