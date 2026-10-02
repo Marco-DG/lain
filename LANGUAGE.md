@@ -1527,25 +1527,68 @@ case s {
 
 ### 6.7 Defer Statement
 
-The `defer` statement defers execution of a block until the end of the current lexical scope. It is the primary mechanism for deterministic resource cleanup (RAII).
+`defer` schedules **one statement** to run as the current scope is left. It is the primary
+mechanism for deterministic resource cleanup (RAII):
 
 ```lain
+import std.fs.{open_file, close_file}
+
 func process_file() effects io, raises, alloc {
     var f = open_file("data.txt", "r")
-    defer {
-        close_file(mov f)
-    }
-
+    defer close_file(mov f)
     // ... use f ...
-    // f is automatically closed when the function returns or exits the block
+    // f is closed on every exit from this scope
 }
 ```
 
+> [!NOTE]
+> `defer { … }` with a braced block **is not accepted** — a block is not a statement here, and the
+> parser reports `[E100] Unexpected token in expression: TOKEN_L_BRACE`. For several cleanup
+> actions, write several `defer`s; they run in LIFO order, so the one written last runs first.
+
 **Rules for defer:**
-1. Deferred blocks execute in reverse order (LIFO, Last In First Out).
-2. They execute on all exit paths: normal return, `return`, `break`, or `continue`.
-3. If control flow exits multiple scopes, all `defer` statements from exited scopes are executed in the correct order.
-4. `defer` blocks cannot contain `return`, `break`, or `continue` statements that escape the block.
+1. Deferred statements execute in reverse order (LIFO, Last In First Out).
+2. They execute on all exit paths: fall-through, `return`, `break`, or `continue`.
+3. If control flow exits multiple scopes, the deferred statements of all exited scopes run, innermost scope first.
+4. Control may not leave a deferred statement: a `return`, or a `break`/`continue` aimed at a loop outside it, is `[E138]`.
+
+Rule 1 is observable, so it is checked rather than asserted. Each iteration of the loop is a scope,
+and the `defer` registered *last* runs *first* — which is why the one that reads `b_done` sees it
+already set. Were the order FIFO, this program would return 0:
+
+```lain
+// VERIFY: exit 1
+func lifo() i32 {
+    var b_done = false
+    var a_saw_b = false
+    var i = 0
+    while i < 1 {
+        defer a_saw_b = b_done      // registered FIRST, so it runs LAST
+        defer b_done = true         // registered LAST, so it runs FIRST
+        i = i + 1
+    }
+    if a_saw_b { return 1 }
+    return 0
+}
+
+func main() i32 {
+    return lifo()
+}
+```
+
+Rule 4 is enforced, and the diagnostic explains why the rule has to exist:
+
+```lain
+func f() i32 {
+    var x = 1
+    defer return 2      // ERROR [E138]
+    return x
+}
+```
+
+```
+[E138] Error Ln 3, Col 11: `return` inside a deferred statement would leave it. A `defer` runs while its scope is being left, so it cannot start another exit.
+```
 
 ---
 
@@ -2763,11 +2806,11 @@ func peek(data u8[:0], pos int) int {
 ### File Handling with Ownership
 
 ```lain
-import std.fs
+import std.fs.{open_file, close_file, write_file}
 
-func process() {
+func process() effects io, raises, alloc {
     var f = open_file("log.txt", "w")
-    defer { close_file(mov f) }   // guaranteed even on early return
+    defer close_file(mov f)       // guaranteed even on early return
 
     write_file(f, "Processing...\n")
     // f is closed automatically here
@@ -2776,12 +2819,16 @@ func process() {
 
 ### ADT and Pattern Matching
 
+The payload fields are **refined, and they have to be**: `r * r * 314` on an unbounded `int`
+overflows long before the division brings it back. A variant field takes its bound from a
+**refinement type alias** — the refinement cannot be written inline in the variant:
+
 ```lain
-// The payload fields are REFINED, and they have to be: `r * r * 314` on an unbounded int
-// overflows long before the division brings it back.
+type Dim = int >= 0 and <= 1000
+
 type Shape {
-    Circle    { radius int >= 0 and <= 1000 }
-    Rectangle { width int >= 0 and <= 1000, height int >= 0 and <= 1000 }
+    Circle    { radius Dim }
+    Rectangle { width Dim, height Dim }
     Point
 }
 
@@ -2789,6 +2836,25 @@ func area(s Shape) int {
     return case s {
         Circle(r):       r * r * 314 / 100
         Rectangle(w, h): w * h
+        Point:           0
+    }
+}
+```
+
+"They have to be" is not a figure of speech. Widen the fields to a bare `int` and all three arms are
+refused:
+
+```lain
+type Shape {
+    Circle    { radius int }
+    Rectangle { width int, height int }
+    Point
+}
+
+func area(s Shape) int {
+    return case s {
+        Circle(r):       r * r * 314 / 100     // ERROR [E086]
+        Rectangle(w, h): w * h                 // ERROR [E086]
         Point:           0
     }
 }
