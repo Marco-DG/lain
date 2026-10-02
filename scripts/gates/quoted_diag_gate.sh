@@ -21,6 +21,16 @@
 # page width and the compiler's is not. Everything else is compared literally: a changed word is
 # a failure, which is the entire point.
 #
+# ★ SCOPE, so the coverage number is not over-read. Every program here is run as plain
+# `lain prog.ln -o /dev/null`. A diagnostic that needs anything else — a non-default flag, a second
+# input file, a deliberately corrupted one — is OUTSIDE this gate, and no amount of coverage here
+# says otherwise. C.3a's `--check-certificate` refusal is the first such case: it needs a MUTATED
+# certificate, because the compiler's own certificates never fail, so only the gate that owns the
+# feature can produce the input. A quote of that kind must be asserted by that gate, and the
+# catalogue records which instrument checks it. Extending this gate to pass auxiliary files was
+# considered and rejected: one quote is not worth a second invocation model, and a gate that can
+# run anything is a gate nobody can read.
+#
 #   bash scripts/gates/quoted_diag_gate.sh
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT" || exit 2
