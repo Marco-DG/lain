@@ -26,6 +26,11 @@ DEFS="-Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_malloc=malloc -Dlibc_free=fre
 agree=0 diff=0 proof=0 inv=0 ub=0 crash=0 unsup=0 rej=0 cfail=0 genfail=0
 for g in "$HERE"/fuzz_*.py; do
   gn=$(basename "$g" .py)
+  # Not every fuzz_*.py is a program generator. fuzz_malformed.py MUTATES a corpus program (a source,
+  # an operator and a seed) and is run by its own driver, as fuzz_metamorphic.py will be; taken for a
+  # generator it failed every call and counted 30 GENERATOR-FAIL. Named, not detected by failure: a
+  # generator that breaks must still be reported.
+  case "$gn" in fuzz_malformed|fuzz_metamorphic) continue ;; esac
   for ((k=0; k<N; k++)); do
     seed=$((BASE * 1000 + k)); f="$SC/${gn}_$k.ln"
     python3 "$g" "$seed" > "$f" 2>/dev/null || { genfail=$((genfail+1)); continue; }

@@ -153,3 +153,29 @@ assert-spelling	bare, in an if branch	OK
 assert-spelling	bare, in a case arm	OK
 assert-spelling	bare, in an unsafe block	OK
 assert-spelling	parenthesised, function top level (control)	OK
+module-scope-name	a func defined twice	ok-REFUSED [E013]
+module-scope-name	a type defined twice	ok-REFUSED [E013]
+module-scope-name	a constant and a func of one name	ok-REFUSED [E013]
+module-scope-name	two externs, parameters differ	ok-REFUSED [E013]
+module-scope-name	two externs, effect row differs	ok-REFUSED [E013]
+module-scope-name	two externs that AGREE (allowed)	OK
+opaque-and-void	opaque type as a variable	ok-REFUSED [E012]
+opaque-and-void	opaque type as a parameter	ok-REFUSED [E012]
+opaque-and-void	opaque type as a field	ok-REFUSED [E012]
+opaque-and-void	opaque type as a module constant	ok-REFUSED [E012]
+opaque-and-void	opaque type as a return value	ok-REFUSED [E012]
+opaque-and-void	opaque type through a POINTER (allowed)	OK
+opaque-and-void	void as a variable	ok-REFUSED [E012]
+opaque-and-void	void as a parameter	ok-REFUSED [E012]
+opaque-and-void	void as a field	ok-REFUSED [E012]
+opaque-and-void	void as a RETURN TYPE (allowed)	OK
+import-list	an unknown name in the list, used	ok-REFUSED [E106]
+import-list	an unknown name in the list, never used	ok-REFUSED [E106]
+import-list	a name through the module's own import, c then io	OK
+import-list	a name through the module's own import, io then c	OK
+qualifier	a qualifier the file does not import	ok-REFUSED [E106]
+qualifier	a qualifier of the wrong module	ok-REFUSED [E106]
+qualifier	a qualifier that names a LOCAL	ok-REFUSED [E106]
+qualifier	a selective import's qualifier (allowed)	OK
+qualifier	an alias (allowed)	OK
+qualifier	a name through the qualified module's import (allowed)	OK

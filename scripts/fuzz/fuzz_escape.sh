@@ -42,8 +42,23 @@ GEN="$HERE/fuzz_escape.py"; [ -f "$GEN" ] || { echo "missing $GEN"; exit 2; }
 N="${1:-200}"; BASE=${RANDOM_SEED:-$$}
 SC="$(mktemp -d)"; trap 'rm -rf "$SC"' EXIT
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts"
+# ── is this output a HARNESS failure rather than a verdict? ───────────────────────────────────
+# Three spellings, and for the module one an EXISTENCE test, because after P a legitimately
+# missing module and a harness running from the wrong directory print the SAME message:
+#   "there is no module 'std.math' (no file 'std/math.ln')"
+# If the named file EXISTS under the tree root, the compiler could not see a file that is there,
+# which is the harness's fault. If it does not exist, the program genuinely asked for nothing.
+m13_unjudged() {
+    case "$1" in
+        *"Cannot open module file"*|*"lain: cannot open"*) return 0 ;;
+    esac
+    _f=$(printf '%s' "$1" | sed -n "s/.*(no file '\([^']*\)').*/\1/p" | head -1)
+    [ -n "$_f" ] && [ -f "$_f" ] && return 0
+    return 1
+}
 
-proved=0 refused=0 wrongreject=0 dangled=0 unconfirmed=0 genfail=0 cfail=0
+
+proved=0 refused=0 wrongreject=0 dangled=0 unconfirmed=0 genfail=0 unjudged=0 cfail=0
 declare -A d_shape wr_shape
 for ((k=0; k<N; k++)); do
     seed=$((BASE * 1000 + k)); f="$SC/e_$k.ln"
@@ -52,7 +67,18 @@ for ((k=0; k<N; k++)); do
     shape=$(sed -n '2p' "$f" | sed 's|// shape: ||')
     [ -n "$expect" ] && [ -n "$shape" ] || { genfail=$((genfail+1)); continue; }
 
-    if timeout 60 "$LAIN" "$f" -o "$SC/x.c" >/dev/null 2>&1; then accepted=1; else accepted=0; fi
+    # A program the compiler could not LOAD is not a verdict. $f is an absolute path, so lain
+    # chdirs to its directory; if a program ever gains an `import`, the module would not resolve
+    # and the failure would otherwise be miscounted as a refusal. Count it and move on.
+    _out=$(timeout 60 "$LAIN" "$f" -o "$SC/x.c" 2>&1); _rc=$?
+    # Both spellings: pre-P "Cannot open module file", post-P "lain: cannot open".
+    # A guard keyed on one message stops firing when the message is reworded, and the
+    # unloadable program then reads as an ordinary refusal — the same harness bug in a
+    # verdict's clothes.
+    if m13_unjudged "$_out"; then
+        unjudged=$((unjudged+1)); continue
+    fi
+    if [ $_rc -eq 0 ]; then accepted=1; else accepted=0; fi
 
     if [ "$expect" = "prove" ]; then
         if [ $accepted -eq 1 ]; then proved=$((proved+1))
@@ -96,6 +122,7 @@ echo "  COST:  WRONG-REJECT=$wrongreject"
 for s in "${!wr_shape[@]}"; do echo "           $s: ${wr_shape[$s]}"; done
 [ $unconfirmed -gt 0 ] && echo "  unconfirmed=$unconfirmed  (accepted an EXPECT:reject program, nothing observed)"
 [ $cfail -gt 0 ]       && echo "  C link failed=$cfail"
+[ $unjudged -gt 0 ]     && echo "  UNJUDGED=$unjudged   (a program the compiler could not LOAD — harness bug, these tested NOTHING)"
 [ $genfail -gt 0 ]     && echo "  GENERATOR-FAIL=$genfail   (harness bug — these tested NOTHING)"
 echo "=================================================================="
 [ $dangled -eq 0 ] && [ $genfail -eq 0 ] && exit 0 || exit 1

@@ -285,6 +285,95 @@ for _name, _body in _ASSERT_CTX.items():
         _body + 'func main() i32 effects io {\n    libc_printf("%d\\n", go())\n    return 0\n}\n',
         "9\n")
 
+# ── axis: a module-scope name is defined once (R, commit 2b1cd42) ──────────────────────────────
+# spec 6. Each refusal is paired with the ALLOWED case the rule must not swallow, because the rule
+# is a RESTRICTION: a gate that only records the refusals cannot tell "refuses exactly this" from
+# "refuses this and more". Two `extern` declarations of one function are the allowed twin here.
+add("module-scope-name", "a func defined twice",
+    'func f() i32 {\n    return 1\n}\nfunc f() i32 {\n    return 2\n}\n'
+    'func main() i32 {\n    return f() - 1\n}\n', "__ILLFORMED__")
+add("module-scope-name", "a type defined twice",
+    'type P { x i32 }\ntype P { y i32, z i32 }\nfunc main() i32 {\n    return 0\n}\n', "__ILLFORMED__")
+add("module-scope-name", "a constant and a func of one name",
+    'helper i32 = 9\nfunc helper() i32 {\n    return 9\n}\n'
+    'func main() i32 {\n    return 0\n}\n', "__ILLFORMED__")
+add("module-scope-name", "two externs, parameters differ",
+    'extern func ext_thing(a i32) i32\nextern func ext_thing(a i64, b i64) i64\n'
+    'func main() i32 {\n    return 0\n}\n', "__ILLFORMED__")
+add("module-scope-name", "two externs, effect row differs",
+    'extern func ext_go(a i32) i32\nextern func ext_go(a i32) i32 effects diverge\n'
+    'func main() i32 {\n    return 0\n}\n', "__ILLFORMED__")
+add("module-scope-name", "two externs that AGREE (allowed)",
+    'extern func libc_puts(s *u8) i32 effects io\nextern func libc_puts(s *u8) i32 effects io\n'
+    'func main() i32 effects io {\n    libc_puts("ok")\n    return 0\n}\n', "ok\n")
+
+# ── axis: an opaque or void type is not a value (R, commit 2b1cd42) ────────────────────────────
+# spec 17 for `extern type`, spec 7 for void. Five positions for the opaque type and three for
+# void, each named separately: the check runs over declarations, so one position passing says
+# nothing about another. The twins are the two uses that STAY legal, a pointer and a return type.
+for pos, prog in [
+    ("a variable",       'func f() i32 {\n    var fh FILE\n    return 0\n}\nfunc main() i32 {\n    return f()\n}\n'),
+    ("a parameter",      'func f(fh FILE) i32 {\n    return 0\n}\nfunc main() i32 {\n    return 0\n}\n'),
+    ("a field",          'type H { fh FILE }\nfunc main() i32 {\n    return 0\n}\n'),
+    ("a module constant",'G FILE = 0\nfunc main() i32 {\n    return 0\n}\n'),
+    ("a return value",   'func f() FILE {\n    return 0\n}\nfunc main() i32 {\n    return 0\n}\n'),
+]:
+    add("opaque-and-void", "opaque type as " + pos, 'extern type FILE\n' + prog, "__ILLFORMED__")
+add("opaque-and-void", "opaque type through a POINTER (allowed)",
+    'extern type FILE\nextern func libc_fopen(p *u8, m *u8) *FILE\n'
+    'func f(fh *FILE) i32 {\n    return 0\n}\n'
+    'func main() i32 effects io {\n    libc_printf("ok\\n")\n    return 0\n}\n', "ok\n")
+for pos, prog in [
+    ("a variable",  'func f() i32 {\n    var x void\n    return 0\n}\nfunc main() i32 {\n    return f()\n}\n'),
+    ("a parameter", 'func f(x void) i32 {\n    return 0\n}\nfunc main() i32 {\n    return 0\n}\n'),
+    ("a field",     'type H { x void }\nfunc main() i32 {\n    return 0\n}\n'),
+]:
+    add("opaque-and-void", "void as " + pos, prog, "__ILLFORMED__")
+add("opaque-and-void", "void as a RETURN TYPE (allowed)",
+    'func f() void {\n    return\n}\n'
+    'func main() i32 effects io {\n    f()\n    libc_printf("ok\\n")\n    return 0\n}\n', "ok\n")
+
+# ── axis: an import list names only what the module reaches (M, commit 1463bd5) ────────────────
+# spec 16. These carry an `import`, so they are the first cells that cannot be compiled from an
+# absolute path: see CELLDIR in census_gate.sh. Both ORDERS are cells, because the first version of
+# the check read the imported module's declaration list and the order of two imports decided.
+def add_raw(axis, cell, prog, expected):
+    CELLS.append((axis, cell, prog, expected))        # no PRE: an import must come first
+
+add_raw("import-list", "an unknown name in the list, used",
+    'import std.math.{max, mxa}\n\nfunc main() i32 {\n    return max(1, 1) - 1\n}\n', "__ILLFORMED__")
+add_raw("import-list", "an unknown name in the list, never used",
+    'import std.math.{mxa}\n\nfunc main() i32 {\n    return 0\n}\n', "__ILLFORMED__")
+add_raw("import-list", "a name through the module's own import, c then io",
+    'import std.c.{fopen}\nimport std.io.{printf}\n\n'
+    'func main() i32 effects io {\n    printf("ok\\n")\n    return 0\n}\n', "ok\n")
+add_raw("import-list", "a name through the module's own import, io then c",
+    'import std.io.{printf}\nimport std.c.{fopen}\n\n'
+    'func main() i32 effects io {\n    printf("ok\\n")\n    return 0\n}\n', "ok\n")
+
+# ── axis: a qualifier is the importing file's (O, commit 6a3f1b1) ──────────────────────────────
+# spec 16. The third refusal is the one that returned a WRONG ANSWER rather than refusing: with
+# `var helper = 9` in scope, `math.helper` read the local, so `math.helper - 7` returned 2.
+add_raw("qualifier", "a qualifier the file does not import",
+    'import std.io\n\nfunc main() i32 effects io {\n    c.printf("x\\n")\n    return 0\n}\n',
+    "__ILLFORMED__")
+add_raw("qualifier", "a qualifier of the wrong module",
+    'import std.io\nimport std.math\n\n'
+    'func main() i32 effects io {\n    math.printf("x\\n")\n    return 0\n}\n', "__ILLFORMED__")
+add_raw("qualifier", "a qualifier that names a LOCAL",
+    'import std.math\n\nfunc go() i32 {\n    var helper = 9\n    return math.helper - 7\n}\n'
+    'func main() i32 {\n    return go()\n}\n', "__ILLFORMED__")
+add_raw("qualifier", "a selective import's qualifier (allowed)",
+    'import std.math.{max}\nextern func libc_printf(fmt *u8, ...) i32 effects io\n\n'
+    'func main() i32 effects io {\n    if math.min(max(1, 2), 3) != 2 {\n        return 1\n    }\n'
+    '    libc_printf("ok\\n")\n    return 0\n}\n', "ok\n")
+add_raw("qualifier", "an alias (allowed)",
+    'import std.io as o\n\nfunc main() i32 effects io {\n    o.printf("ok\\n")\n    return 0\n}\n',
+    "ok\n")
+add_raw("qualifier", "a name through the qualified module's import (allowed)",
+    'import std.io\n\nfunc main() i32 effects io {\n    io.printf("ok\\n")\n    return 0\n}\n',
+    "ok\n")
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w} for a, c, p, w in CELLS]))
