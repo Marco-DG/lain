@@ -259,7 +259,7 @@ The following patterns are accepted by the standard verification algorithm:
 \lain{n > 0}    & \lain{n}          & $n$ decreases directly \\
 \lain{i > k}    & \lain{i - k}      & $i$ decreases toward $k$ \\
 \lain{a < b}    & \lain{b - a}      & either $a$ increases or $b$ decreases \\
-\lain{i in arr} & \lain{arr.len - i}& \lain{in} implies $i < \texttt{arr.len}$ \\
+\lain{i in 0..arr.len} & \lain{arr.len - i}& the range's upper bound gives $i < \texttt{arr.len}$ \\
 \end{longtable}
 
 \pnum
@@ -280,8 +280,7 @@ implementation shall attempt to \emph{infer} a measure from \textit{cond}
 using the correspondences above: a relational condition \lain{i < n},
 \lain{i <= n}, \lain{i > k}, or \lain{i >= k} yields the candidate
 \lain{n - i} (respectively \lain{i - k}); a two-variable bound \lain{lo < hi}
-yields \lain{hi - lo}.  A pointer condition \lain{p in arr} yields the
-pointer-offset measure.
+yields \lain{hi - lo}; and a range membership \lain{i in 0..n} yields \lain{n - i}.
 
 \pnum
 An inferred measure is subject to the \emph{identical} verification as an

@@ -1,0 +1,12 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: `in src` as an index refinement was retired: `in` means membership in a set. Write `in 0..src.len` for an index, always below the length, or `in 0..=src.len` for a cursor that may rest at the end.
+// I.78 (DECIDE-X): a field refined `in src` was an index invariant, `pos < src.len`. The range says
+// the same and says it as membership, and its inclusive form says what this one could not: a
+// cursor that may rest one past the end.
+type Lexer {
+    src u8[]
+    pos usize in src
+}
+func main() i32 {
+    return 0
+}

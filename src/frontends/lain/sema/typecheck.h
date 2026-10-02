@@ -2070,6 +2070,25 @@ static void sema_check_mut_invariant_field(Expr *e) {
 }
 
 
+// `a.b.c` into buf when e is a name or a member chain (for a message that quotes the program);
+// buf is left as it was otherwise.
+static void tc_dotted_path(Expr *e, char *buf, size_t cap) {
+    char tmp[96]; size_t n = 0;
+    Expr *parts[8]; int np = 0;
+    while (e && e->kind == EXPR_MEMBER && np < 7) { parts[np++] = e; e = e->as.member_expr.target; }
+    if (!e || e->kind != EXPR_IDENTIFIER) return;
+    Id *root = e->as.identifier_expr.id;
+    if ((size_t)root->length >= sizeof tmp) return;
+    memcpy(tmp, root->name, (size_t)root->length); n = (size_t)root->length;
+    for (int k = np - 1; k >= 0; k--) {
+        Id *m = parts[k]->as.member_expr.member;
+        if (n + 1 + (size_t)m->length >= sizeof tmp) return;
+        tmp[n++] = '.'; memcpy(tmp + n, m->name, (size_t)m->length); n += (size_t)m->length;
+    }
+    tmp[n] = '\0';
+    if (n < cap) memcpy(buf, tmp, n + 1);
+}
+
 void sema_infer_expr(Expr *e) {
   if (!e) return;
 // (removed debug print)
@@ -2844,29 +2863,37 @@ void sema_infer_expr(Expr *e) {
             }
             break;
         }
+        // Membership in a LIST is I.79's, and not available yet.
         if (R && (R->kind == EXPR_ARRAY_LITERAL || R->kind == EXPR_ARRAY_COMPREHENSION)) {
-            fprintf(stderr, "[E012] Error Ln %li, Col %li: `in` tests an INDEX against a container's "
-                    "length, so `x in [...]` would mean `x <` the list's length, not that `x` is one "
-                    "of its values. For membership, compare: `x == a or x == b`.\n", ln, cl);
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: membership in a list, `x in [...]`, is not "
+                    "available yet. Compare instead: `x == a or x == b`.\n", ln, cl);
             diagnostic_show_line(ln, cl);
             exit(1);
         }
-        if (lt && !is_integer_type(lt)) {
-            char tb[128]; type_describe(lt, tb, sizeof tb);
-            long l2 = (long)(L->line ? L->line : e->line), c2 = (long)(L->line ? L->col : e->col);
-            fprintf(stderr, "[E012] Error Ln %li, Col %li: `in` tests an index against a container's "
-                    "length, and its left side must be an integer; it is '%s'.\n", l2, c2, tb);
+        // ★ `i in a` AS AN INDEX TEST IS RETIRED (DECIDE-X, I.78). `in` means membership in a set, and
+        // `i in a` read as `i < a.len` while every other language reads it as "i is one of a's
+        // elements". Both meanings compile, so the index test could not simply change meaning: it is
+        // refused, with the replacement, and only after the corpus has migrated does `x in a` become
+        // element membership (I.79). A container's indices are the range `0..a.len`.
+        if (rt && (rt->kind == TYPE_ARRAY || rt->kind == TYPE_SLICE)) {
+            char ln_s[96] = "i", rn_s[96] = "a";     // the program's own names when they are paths
+            tc_dotted_path(L, ln_s, sizeof ln_s);
+            tc_dotted_path(R, rn_s, sizeof rn_s);
+            long l2 = (long)(e->line ? e->line : ln), c2 = (long)(e->line ? e->col : cl);
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: `%s in %s` as an index test was retired: `in` "
+                    "means membership in a set, and %s's indices are the range `0..%s.len`. Write "
+                    "`%s in 0..%s.len` (or `%s < %s.len`).\n", l2, c2, ln_s, rn_s, rn_s, rn_s,
+                    ln_s, rn_s, ln_s, rn_s);
             diagnostic_show_line(l2, c2);
             exit(1);
         }
-        if (rt && rt->kind != TYPE_ARRAY && rt->kind != TYPE_SLICE) {
-            char tb[128]; type_describe(rt, tb, sizeof tb);
-            fprintf(stderr, "[E012] Error Ln %li, Col %li: `in` needs an array or a slice on its right, "
-                    "whose length bounds the index; this is '%s'.\n", ln, cl, tb);
+        {
+            char tb[128] = "?"; if (rt) type_describe(rt, tb, sizeof tb);
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: `in` tests membership in a range `lo..hi`; "
+                    "the right side here is '%s'.\n", ln, cl, tb);
             diagnostic_show_line(ln, cl);
             exit(1);
         }
-        break;
     }
 
     // Pointer arithmetic: ptr ± integer → ptr (same type)
@@ -3757,7 +3784,8 @@ void sema_infer_expr(Expr *e) {
         if (!guarded) {
             fprintf(stderr,
                 "[E060] Error Ln %li, Col %li: pointer dereference outside 'unsafe' block. "
-                "Use 'unsafe { }' or declare the pointer with 'var p *T in arr' and guard with 'p in arr'.\n",
+                "Dereference it inside 'unsafe { }', or use a slice and an index (`a[i]`), whose bounds "
+                "the compiler proves.\n",
                 e->line, e->col);
             diagnostic_show_line(e->line, e->col);
             exit(1);

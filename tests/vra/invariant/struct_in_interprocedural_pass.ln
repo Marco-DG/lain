@@ -4,7 +4,7 @@
 import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
 type Lexer {
     text u8[]
-    pos  usize in text
+    pos  usize in 0..text.len
 }
 
 // Callee: does NOT need explicit guard — invariant propagates

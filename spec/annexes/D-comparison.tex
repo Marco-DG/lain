@@ -243,8 +243,8 @@ Interval-based VRA
   & Polynomial-time static verification of array bounds and arithmetic
     constraints, without an SMT solver.
     \\[4pt]
-\lain{in} operator for index constraints
-  & \lain{idx in arr} establishes the bounds guard
+\lain{in} operator for range membership
+  & \lain{idx in 0..arr.len} establishes the bounds guard
     $0 \leq \mathtt{idx} < \mathtt{arr.len}$ in the containing scope.
     \\[4pt]
 Bounded \lain{while} with \lain{decreasing}

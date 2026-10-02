@@ -1767,6 +1767,7 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
 
 static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e);
 static void ir_lower_range_member(LowerCtx *c, Expr *e, IrBlock *tb, IrBlock *fb);
+static void ir_range_member_br(LowerCtx *c, Expr *R, IrValue *x, IrBlock *tb, IrBlock *fb);
 
 // D-49's seam. While a loop CONDITION is lowered, every pure subexpression's value is
 // remembered; while its MEASURE is lowered, a structurally identical one is reused rather than
@@ -2441,10 +2442,19 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // `i < len` (the ≥ 0 half comes from i's type/flow); this makes it a real
             // icmp so guard refinement and the termination check both engage.
             if (e->as.binary_expr.op == TOKEN_KEYWORD_IN && R && R->kind == EXPR_RANGE) {
+                // One test suffices when the lower one cannot fail (`0..` on an unsigned x): then the
+                // value is that comparison, exactly `x < hi`, and needs no cell (I.78).
+                IrValue *x = ir_lower_expr(c, L);
+                Expr *lo = R->as.range_expr.start, *hi = R->as.range_expr.end;
+                if (lo && hi && lo->kind == EXPR_LITERAL && lo->as.literal_expr.value == 0 &&
+                    x->type && x->type->kind == IRT_INT && !x->type->is_signed)
+                    return ir_cmp_value(c, R->as.range_expr.inclusive ? TOKEN_ANGLE_BRACKET_LEFT_EQUAL
+                                                                      : TOKEN_ANGLE_BRACKET_LEFT,
+                                        x, ir_lower_expr(c, hi), false, ir_nonneg_lit(hi), false);
                 IrType *bt = ir_type_bool(c->a);
                 IrValue *rcell = ir_alloca(c->f, c->cur, bt);
                 IrBlock *yes = ir_new_block(c->f), *no = ir_new_block(c->f), *jn = ir_new_block(c->f);
-                ir_lower_range_member(c, e, yes, no);
+                ir_range_member_br(c, R, x, yes, no);
                 c->cur = yes; ir_store(c->f, c->cur, rcell, ir_const_int(c->f,c->cur,1,bt)); ir_set_br(c->cur, jn);
                 c->cur = no;  ir_store(c->f, c->cur, rcell, ir_const_int(c->f,c->cur,0,bt)); ir_set_br(c->cur, jn);
                 c->cur = jn;  return ir_load(c->f, c->cur, rcell, bt);
@@ -3235,9 +3245,11 @@ static IrValue *ir_lower_truth(LowerCtx *c, Expr *cond) {
 // ordinary comparison (I.88: mathematical, whatever the operands' signedness). `0 <= x` on an
 // unsigned x always holds and is not emitted, so `i in 0..n` is exactly `i < n`.
 static void ir_lower_range_member(LowerCtx *c, Expr *e, IrBlock *tb, IrBlock *fb) {
-    Expr *X = e->as.binary_expr.left, *R = e->as.binary_expr.right;
+    ir_range_member_br(c, e->as.binary_expr.right, ir_lower_expr(c, e->as.binary_expr.left), tb, fb);
+}
+// The tests of `x in R` with x already lowered (it is evaluated exactly once, first).
+static void ir_range_member_br(LowerCtx *c, Expr *R, IrValue *x, IrBlock *tb, IrBlock *fb) {
     Expr *lo = R->as.range_expr.start, *hi = R->as.range_expr.end;
-    IrValue *x  = ir_lower_expr(c, X);
     bool lo_trivial = lo && lo->kind == EXPR_LITERAL && lo->as.literal_expr.value == 0 &&
                       x->type && x->type->kind == IRT_INT && !x->type->is_signed;
     IrValue *lv = (lo && !lo_trivial) ? ir_lower_expr(c, lo) : NULL;   // a literal: no effect to keep
@@ -3248,6 +3260,20 @@ static void ir_lower_range_member(LowerCtx *c, Expr *e, IrBlock *tb, IrBlock *fb
         IrBlock *hitest = ir_new_block(c->f);
         ir_cmp_br(c, TOKEN_ANGLE_BRACKET_LEFT_EQUAL, lv, x, ir_nonneg_lit(lo), false, true, hitest, fb);
         c->cur = hitest;
+    }
+    // ★ PAST A LOWER BOUND THAT IS A NON-NEGATIVE LITERAL, x >= 0 (I.78). A non-negative value
+    // converts exactly to any unsigned type, so against an unsigned upper bound ONE unsigned compare
+    // is exact in the IR, the interpreter and C: no sign test. That test was not only redundant, it
+    // hid the bound from termination: its block keeps both branches inside a loop, so it is not an
+    // exit test (I.85) and the chain stopped before the real one. `while (i + 15) in 0..src.len`
+    // (the guard computed widened, so signed) was E011 in the SIMD lexer. The retired `i in a`
+    // lowered to exactly this unsigned compare.
+    bool x_nonneg = lo_trivial || (lo && ir_nonneg_lit(lo));
+    if (hv && x_nonneg && x->type && x->type->kind == IRT_INT && x->type->is_signed &&
+        hv->type && hv->type->kind == IRT_INT && !hv->type->is_signed) {
+        ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, R->as.range_expr.inclusive ? IR_CMP_ULE : IR_CMP_ULT,
+                                       x, hv), tb, fb);
+        return;
     }
     if (hv) ir_cmp_br(c, R->as.range_expr.inclusive ? TOKEN_ANGLE_BRACKET_LEFT_EQUAL : TOKEN_ANGLE_BRACKET_LEFT,
                       x, hv, false, ir_nonneg_lit(hi), true, tb, fb);

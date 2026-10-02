@@ -1,11 +1,11 @@
 // EXPECT: [E121]
-// `l.pos = l.pos + 1` with no guard breaks `pos in text` at the last character: pos becomes
+// `l.pos = l.pos + 1` with no guard breaks `pos in 0..text.len` at the last character: pos becomes
 // text.len, and the next `l.text[l.pos]` reads one past the end. The corpus's own
 // struct_in_interprocedural_pass did exactly this and passed, because a slice container's
 // field store was never checked. A lexer advances under a guard (see that test now).
 type Lexer {
     text u8[]
-    pos  usize in text
+    pos  usize in 0..text.len
 }
 func lexer_advance(var l Lexer) u8 {
     ch = l.text[l.pos]

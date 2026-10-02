@@ -13,7 +13,7 @@ extern func libc_printf(fmt *u8, ...) i32 effects io
 // witness. Wrapping is an escape from the overflow obligation, never from totality.
 func find_char(data u8[:0], target i32) usize {
     var i usize = 0
-    while i in data decreasing data.len - i {
+    while i in 0..data.len decreasing data.len - i {
         if (data[i] as i32) == target { return i }
         i = i + 1
     }
@@ -21,7 +21,7 @@ func find_char(data u8[:0], target i32) usize {
 }
 
 func peek_safe(data u8[:0], pos i32) i32 {
-    if pos in data { return data[pos] as i32 }
+    if pos in 0..data.len { return data[pos] as i32 }
     return 0
 }
 

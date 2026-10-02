@@ -2,14 +2,14 @@
 // `as` is the proven tier. The subject here is the struct-of-arrays write pattern, and the
 // bound is also what the program actually means — both arrays are 256 long.
 // Structure-of-Arrays output: two parallel `var` array params written together via
-// in-guarded element writes (`count in kinds` proves `kinds[count]`). The borrow
+// in-guarded element writes (`count in 0..kinds.len` proves `kinds[count]`). The borrow
 // checker proves the three arrays don't alias, so all get `restrict`. This is the
 // core of the lexer's SoA `tokenize` (kinds[] 1B + starts[] 4B, no length stored).
 func fill_soa(n u32 <= 256, var kinds u8[256], var starts u32[256]) u32 effects diverge {
     var count u32 = 0
     var i     u32 = 0
     while i < n {
-        if count in kinds and count in starts {
+        if count in 0..kinds.len and count in 0..starts.len {
             kinds[count]  = i as u8
             starts[count] = i
             count = count +% 1

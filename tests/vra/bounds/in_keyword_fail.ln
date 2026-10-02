@@ -1,8 +1,11 @@
-// EXPECT: [E085]
+// EXPECT: [E012]
+// EXPECT-TEXT: a required precondition is not established here
+// (I.78: `i usize in 0..a.len` is a precondition like any other refinement, so a call that does
+// not establish it is E012; the retired `i usize in a` reported E085.)
 // Test: in keyword violation - should FAIL to compile
 // Passing an out-of-bounds index to a function with 'in' constraint
 
-func get(arr i32[10], i i32 in arr) i32 {
+func get(arr i32[10], i i32 in 0..arr.len) i32 {
     return arr[i]
 }
 

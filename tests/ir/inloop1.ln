@@ -1,10 +1,10 @@
 // The running total is over the elements of an UNBOUNDED slice, so it is a real overflow:
 // the diagnostic asks for a bound on the count, the element or the total and this has none.
-// The subject is the `i in data` bounds proof, so the addition is explicitly wrapping.
+// The subject is the `i in 0..data.len` bounds proof, so the addition is explicitly wrapping.
 func total(data i32[]) i32 effects diverge {
     var s i32 = 0
     var i usize = 0
-    while i in data {
+    while i in 0..data.len {
         s = s +% data[i]
         i = i + 1
     }

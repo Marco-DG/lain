@@ -10,7 +10,7 @@
 //     `src[j]` because `&&` short-circuits (the compiler applies the `j < n`
 //     conjunct before the read). VRA emits no bounds checks.
 //   • the SIMD scan loads (`scan_to`) are proven via a last-byte in-guard
-//     `(i + 15) in src` — ZERO `unsafe`, zero runtime checks. The corrected lexer
+//     `(i + 15) in 0..src.len` — ZERO `unsafe`, zero runtime checks. The corrected lexer
 //     (count_tokens_smart / tokenize) has no `unsafe` at all.
 //   • (the deprecated naive `count_tokens` below keeps its `in`-guards and one
 //     `unsafe` block — its `n` is unbounded, so it stands as the "before" form
@@ -36,14 +36,14 @@ func is_alnum(c u8) bool { return is_alpha(c) or is_digit(c) }
 // movemask + ctz). This is SIMD used the RIGHT way — on a genuinely-long run (a
 // string / comment body), amortized over many bytes.
 //
-// P2b: the loads are now PROVEN safe — NO `unsafe`. The loop guard `(i + 15) in src`
+// P2b: the loads are now PROVEN safe — NO `unsafe`. The loop guard `(i + 15) in 0..src.len`
 // proves the last byte of the 16-byte load is in bounds; for an unsigned `i` that
 // plus contiguity proves the whole `[i, i+16)` load, at zero runtime cost. The
 // `i +% 16 <= n` bound keeps the SIMD path within the content (the scalar tail
 // finishes the final partial chunk).
 func scan_to(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 >= start {
     var i u32 = start
-    while (i + 15) in src and i + 16 <= n {
+    while (i + 15) in 0..src.len and i + 16 <= n {
         var hit u32 = @movemask(@load(u8x16, src, i) == term) & (65535 as u32)
         if hit != 0 {
             i = i + (@ctz(hit) as u32)
@@ -121,18 +121,18 @@ func count_tokens(src u8[4096], n u32 < 4097) u32 {
             }
         }
         // scalar tail: finish skipping whitespace past the last full chunk (proven)
-        while i in src and i < n and is_ws(src[i]) { i = i +% 1 }
+        while i in 0..src.len and i < n and is_ws(src[i]) { i = i +% 1 }
         if i >= n { break }
 
         // --- scalar token scan (all reads in-guarded) ---
-        if i in src {
+        if i in 0..src.len {
             var c u8 = src[i]
             if is_alpha(c) {
                 i = i + 1                                             // c itself: alpha, so alnum
-                while i in src and i < n and is_alnum(src[i]) { i = i +% 1 }
+                while i in 0..src.len and i < n and is_alnum(src[i]) { i = i +% 1 }
             } else if is_digit(c) {
                 i = i + 1
-                while i in src and i < n and is_digit(src[i]) { i = i +% 1 }
+                while i in 0..src.len and i < n and is_digit(src[i]) { i = i +% 1 }
             } else {
                 i = i +% 1                                            // single-char operator
             }
@@ -232,7 +232,7 @@ func tokenize(src u8[4096], n u32 < 4090, var kinds u8[1024], var starts u32[102
                     i = i +% 1
                     kind = KIND_OP
                 }
-                if count in kinds and count in starts {      // SoA write, parallel arrays
+                if count in 0..kinds.len and count in 0..starts.len {      // SoA write, parallel arrays
                     kinds[count] = kind
                     starts[count] = start
                     count = count +% 1

@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: `in a` as an index refinement was retired
+// I.78 (DECIDE-X): the parameter form of the retired index refinement, refused like the field
+// form; the replacement is `i usize in 0..a.len`, a precondition checked at every call.
+func get(a i32[], i usize in a) i32 {
+    return a[i]
+}
+func main() i32 {
+    return 0
+}

@@ -7,7 +7,7 @@
 //     advance before it. A callee that neither writes nor keeps the address cannot change it.
 type Lexer {
     src u8[]
-    pos usize in src
+    pos usize in 0..src.len
 }
 func peek(l Lexer) u8 { return l.src[l.pos] }
 func reset(l var Lexer) { l.pos = 0 }

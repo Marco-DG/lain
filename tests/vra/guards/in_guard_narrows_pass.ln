@@ -1,10 +1,10 @@
-// VRA: `i in arr` narrows i's range to [0, arr.len). Inside the loop
+// VRA: `i in 0..arr.len` narrows i's range to [0, arr.len). Inside the loop
 // the assignment back to a u8 must succeed because i is provably small.
 
 func main() i32 effects diverge {
     var arr u8[10] = [0,0,0,0,0,0,0,0,0,0]
     var i i32 = 0
-    while i in arr {
+    while i in 0..arr.len {
         var x u8 = i as u8   // explicit until VRA propagates through ops
         var _x = x
         i = i + 1

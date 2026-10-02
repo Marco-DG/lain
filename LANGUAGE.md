@@ -94,7 +94,7 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `break` | Exit the innermost loop |
 | `continue` | Skip to the next iteration |
 | `case` | Pattern matching |
-| `in` | Range iteration / index bound constraint / bounds-proving condition |
+| `in` | Range iteration / membership in a range, as a constraint or a bounds-proving condition |
 | `and` | Logical AND |
 | `or` | Logical OR |
 | `true` | Boolean true literal |
@@ -483,7 +483,8 @@ type File {
 A field may state a fact that holds for the struct's whole life. It is proven wherever the value
 is built or the field is written ([E121] otherwise), and it is a fact wherever the field is read:
 
-- `pos usize in text` — `pos` is a valid index into the slice or array field `text`;
+- `pos usize in 0..text.len` — `pos` is a valid index into the slice or array field `text`,
+  always below its length; `in 0..=text.len` for a cursor that may rest at the end;
 - `pos u32 <= src.len` — a position against another field's length (`<`, `<=`, `>`, `>=`);
 - `len usize <= cap` — a relation between two integer fields;
 - `src u8[<= 4294967295]` — a bound on a slice field's length, in the brackets, as for a parameter.
@@ -1641,7 +1642,7 @@ an empty effect row, which is to say as a function the caller may treat as pure 
 | `i < n` | `n - i` | `i` increases, so measure decreases |
 | `n > 0` | `n` | `n` decreases directly |
 | `a < b` | `b - a` | Either `a` increases or `b` decreases |
-| `i in arr` | `arr.len - i` | `in` implies `i < arr.len` (see §8.3.2) |
+| `i in 0..arr.len` | `arr.len - i` | the range's upper bound gives `i < arr.len` (see §8.3.2) |
 
 The measure is compile-time only; it produces no runtime overhead.
 
@@ -2059,7 +2060,7 @@ a <= b     // Less than or equal
 a >= b     // Greater than or equal
 ```
 
-A comparison is a `bool`, not an integer — as are `true`, `false`, `x in a` and the logical
+A comparison is a `bool`, not an integer — as are `true`, `false`, `x in lo..hi` and the logical
 operators below. A `bool` never converts to or from an integer implicitly (spec 07): returning
 `a < b` from an `i32` function, `n + (a < b)`, `take(1)` for a `bool` parameter and `flag == 1`
 are all [E012]. Convert explicitly: `(a < b) as i32`, `n as bool` (which is `n != 0`). An integer
@@ -2333,46 +2334,97 @@ func bad_abs(x int) int >= 0 {
 }
 ```
 
-### 8.3 Index Bounds (`in` keyword)
+### 8.3 Bounds from a range (`in`)
 
-The `in` keyword has two complementary roles in bounds verification:
+**`in` means membership in a set.** The set is written as a range — `lo..hi` excluding `hi`, or
+`lo..=hi` including it — and each bound is evaluated once. The value being tested comes first:
+`x in lo..hi`.
 
-#### 8.3.1 Parameter Constraint (`i int in arr`)
+An index into a container is the case that matters most, and it is now spelled out rather than
+implied: the indices of `arr` are `0..arr.len`.
 
-As a parameter constraint, `in` declares that a value is a valid index into an array:
-
-```lain
-func get(arr int[10], i int in arr) int {
-    return arr[i]      // Always safe; compiler knows i in [0, 9]
-}
-```
-
-This desugars to the constraint: `i >= 0 and i < arr.len`.
+> [!IMPORTANT]
+> **`x in <container>` was retired.** It read as "x is a valid index into arr", which is not what
+> membership means — `arr` is a sequence of elements, not a set of indices. Write the range you mean.
+> Both old spellings are refused, with the replacement in the message:
 
 ```lain
-get(arr, 5)      // OK: 5 in [0, 10)
-get(arr, 15)     // ERROR: 15 is not in [0, 10)
-```
-
-#### 8.3.2 Bounds-Proving Condition (`idx in arr`)
-
-As a binary expression, `idx in arr` evaluates to `true` if `0 <= idx < arr.len`. When used as the condition of an `if` or `while`, it creates an **in-guard** that authorizes `arr[idx]` accesses inside the guarded body, without `unsafe` and without runtime checks.
-
-```lain
-func peek(data u8[:0], pos int) int {
-    if pos in data { return data[pos] as int }  // safe: in-guarded
+func f(a i32[8], i usize) i32 {
+    if i in a { return a[i] }          // ERROR [E100]
     return 0
 }
 ```
 
-**While loops with `in`:**
+```
+[E100] Error Ln 2, Col 8: `i in a` as an index test was retired: `in` means membership in a set, and a's indices are the range `0..a.len`. Write `i in 0..a.len` (or `i < a.len`).
+```
+
 ```lain
-// The counter is a `usize`, and it has to be: `i in data` bounds it by `data.len`, which is
-// a usize, so an `int` counter can leave i32 on a long enough slice. The not-found answer is
-// the length rather than -1, for the same reason — it keeps the return type usize.
+type L {
+    src u8[],
+    pos usize in src                   // ERROR [E100]
+}
+```
+
+```
+[E100] Error Ln 3, Col 18: `in src` as an index refinement was retired: `in` means membership in a set. Write `in 0..src.len` for an index, always below the length, or `in 0..=src.len` for a cursor that may rest at the end.
+```
+
+#### 8.3.1 Parameter constraint (`i int in 0..arr.len`)
+
+As a parameter constraint, `in` declares which set a value belongs to, so the body may index it
+without a check:
+
+```lain
+func get(arr int[10], i int in 0..arr.len) int {
+    return arr[i]      // always safe: the caller established 0 <= i < 10
+}
+
+func main() i32 {
+    var a int[10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    return get(a, 5) as i32
+}
+```
+
+It means the same as the two clauses `i >= 0 and i < arr.len`. The obligation is the **caller's**,
+and a call that does not establish it is refused:
+
+```lain
+func get(arr int[10], i int in 0..arr.len) int {
+    return arr[i]
+}
+
+func main() i32 {
+    var a int[10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    return get(a, 15) as i32        // ERROR [E012]
+}
+```
+
+```
+[E012] Error Ln 7, Col 12: a required precondition is not established here
+```
+
+#### 8.3.2 Bounds-proving condition (`idx in 0..arr.len`)
+
+As an expression, `idx in 0..arr.len` is a `bool`. Used as the condition of an `if` or `while` it
+creates an **in-guard** that authorises `arr[idx]` in the guarded body, with no `unsafe` and no
+runtime check:
+
+```lain
+func peek(data u8[:0], pos usize) int {
+    if pos in 0..data.len { return data[pos] as int }   // safe: in-guarded
+    return 0
+}
+```
+
+**While loops.** The counter is a `usize`, and it has to be: the range's upper bound is `data.len`,
+a `usize`, so an `int` counter could leave `i32` on a long enough slice. The not-found answer is the
+length rather than `-1` for the same reason — it keeps the return type `usize`.
+
+```lain
 func find_zero(data u8[:0]) usize {
     var i usize = 0
-    while i in data decreasing data.len - i {
+    while i in 0..data.len decreasing data.len - i {
         if (data[i] as int) == 0 { return i }   // safe: in-guarded
         i += 1
     }
@@ -2380,15 +2432,16 @@ func find_zero(data u8[:0]) usize {
 }
 ```
 
-**And-chain composition:** The `in` guard propagates through `and`, so the right-hand side of an `and` can safely access the array:
+**And-chain composition.** The guard propagates through `and`, so the right-hand side may index:
+
 ```lain
 type Lexer {
     src u8[],
-    pos usize <= src.len
+    pos usize in 0..=src.len
 }
 
 func scan_to_quote(var l Lexer) {
-    while l.pos in l.src and (l.src[l.pos] as int) != '"' decreasing l.src.len - l.pos {
+    while l.pos in 0..l.src.len and (l.src[l.pos] as int) != '"' decreasing l.src.len - l.pos {
         l.pos += 1   // l.src[l.pos] is safe on both sides of the `and`
     }
 }
@@ -2399,19 +2452,25 @@ func main() i32 {
 ```
 
 > [!IMPORTANT]
-> Note the field invariant: a scanning cursor is `pos usize <= src.len`, a **position**, not
-> `pos usize in src`, which is an **index** and means `pos < src.len`. A loop that advances past the
-> last byte breaks the index form on its final iteration, and the store is refused with `[E121]`.
-> The guard `l.pos in l.src` inside the loop is what re-establishes the index property where it is
-> needed, which is exactly the division of labour: the field carries what is always true, the guard
-> proves what is true here.
+> **An index and a cursor are different sets, and the field says which.** A scanning cursor is
+> `pos usize in 0..=src.len` — it may rest one past the last byte, which is where the loop above
+> leaves it. An index is `pos usize in 0..src.len`, always below the length; a loop that advances past
+> the last byte breaks that form on its final iteration and the store is refused with `[E121]`.
+>
+> The guard inside the loop is what turns the cursor back into an index where one is needed. That is
+> the division of labour: the field carries what is always true, the guard proves what is true here.
+> (`pos usize <= src.len` is the same set as `in 0..=src.len`, written as a relation.)
 
-**Termination integration:** `idx in arr` implies `idx < arr.len`, so the measure `arr.len - idx` is recognized as non-negative by the termination verifier (§6.3).
+**Termination.** `idx in 0..arr.len` gives `idx < arr.len`, so the measure `arr.len - idx` is
+recognised as non-negative by the termination verifier (§6.3).
 
-**Scoping:** In-guards are scoped to the body of the `if`/`while`. They do not extend to `else` branches or code after the block.
+**Scoping.** In-guards are scoped to the body of the `if`/`while`. They do not extend to an `else`
+branch or to code after the block.
 
 > [!NOTE]
-> The `in` guard uses structural expression matching: `l.pos in l.src` guards exactly `l.src[l.pos]`, including member expressions. Accesses with different offsets (e.g., `l.src[l.pos + 1]`) are **not** guarded and still require `unsafe`.
+> A guard matches the access **structurally**: `pos in 0..data.len` guards exactly `data[pos]`. A
+> different offset is not guarded and is refused on its own merits — `data[pos + 1]` under that guard
+> is `[E085]`, because the guard says nothing about `pos + 1`.
 
 ### 8.4 Relational Constraints Between Parameters
 
@@ -2779,7 +2838,7 @@ The `...` is only valid in `extern` function declarations.
 While Lain prioritizes safety, low-level systems programming sometimes requires bypassing safety checks.
 
 > [!TIP]
-> Before reaching for `unsafe`, consider whether the `in` keyword (§8.3.2) can prove your array access safe. Code like `if idx in arr { arr[idx] }` or `while i in data decreasing data.len - i { data[i] }` is fully verified at compile time with zero runtime overhead.
+> Before reaching for `unsafe`, consider whether an in-guard (§8.3.2) can prove your array access safe. Code like `if idx in 0..arr.len { arr[idx] }` or `while i in 0..data.len decreasing data.len - i { data[i] }` is fully verified at compile time with zero runtime overhead.
 
 ### 11.1 Unsafe Blocks
 
@@ -2809,7 +2868,7 @@ func f(p *i32) i32 {
 ```
 
 ```
-[E060] Error Ln 2, Col 12: pointer dereference outside 'unsafe' block. Use 'unsafe { }' or declare the pointer with 'var p *T in arr' and guard with 'p in arr'.
+[E060] Error Ln 2, Col 12: pointer dereference outside 'unsafe' block. Dereference it inside 'unsafe { }', or use a slice and an index (`a[i]`), whose bounds the compiler proves.
 ```
 
 ### 11.2 What `unsafe` waives, and what it does not
@@ -2848,8 +2907,9 @@ it without proof, so suspending its check would make deductions false in safe co
 
 > [!WARNING]
 > **Bounds verification is waived**, so `unsafe { a[i] }` is accepted for any `i`. An out-of-range
-> index there is undefined behaviour, and the compiler has stopped helping. `in` (§8.3.2) is almost
-> always the better answer: `if i in a { a[i] }` needs no `unsafe` and costs nothing at run time.
+> index there is undefined behaviour, and the compiler has stopped helping. An in-guard (§8.3.2) is
+> almost always the better answer: `if i in 0..a.len { a[i] }` needs no `unsafe` and costs nothing
+> at run time.
 
 A double move is refused inside `unsafe` exactly as outside it:
 
@@ -3523,9 +3583,9 @@ func find(arr int[10], target int) int {
     return 0 - 1
 }
 
-// Safe access using in-guard
-func peek(data u8[:0], pos int) int {
-    if pos in data { return data[pos] as int }
+// Safe access using an in-guard
+func peek(data u8[:0], pos usize) int {
+    if pos in 0..data.len { return data[pos] as int }
     return 0
 }
 ```
@@ -3634,19 +3694,19 @@ func main() int effects io {
 
 ```lain
 // String length as a pure, provably-terminating function.
-// The counter is a `usize` because `i in src` bounds it by `src.len`, which is one.
+// The counter is a `usize` because the range's bound is `src.len`, which is one.
 func string_length(src u8[:0]) usize {
     var i usize = 0
-    while i in src decreasing src.len - i {
+    while i in 0..src.len decreasing src.len - i {
         i += 1
     }
     return i
 }
 
-// Scan for a delimiter, safe with in-guard and and-chain
+// Scan for a delimiter, safe with an in-guard and an and-chain
 func scan_until(src u8[:0], delim u8) usize {
     var i usize = 0
-    while i in src and (src[i] as int) != (delim as int) decreasing src.len - i {
+    while i in 0..src.len and (src[i] as int) != (delim as int) decreasing src.len - i {
         i += 1
     }
     return i
@@ -3696,7 +3756,7 @@ func scan_until(src u8[:0], delim u8) usize {
 | `fun` | Alias for `func` |
 | `if` | Conditional |
 | `import` | Module import |
-| `in` | Range iteration / index bounds / bounds-proving condition (§8.3) |
+| `in` | Range iteration / membership in a range (§8.3): a constraint, or a bounds-proving condition |
 | `mov` | Ownership transfer |
 | `or` | Logical OR operator |
 | `effects` | Effect row (`io`, `diverge`, `raises`, `alloc`) |

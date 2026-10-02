@@ -4,7 +4,7 @@
 // proving an earlier read.)
 type Cur {
     text u8[]
-    pos usize in text
+    pos usize in 0..text.len
 }
 func peek(c Cur) u8 {
     return c.text[c.pos]

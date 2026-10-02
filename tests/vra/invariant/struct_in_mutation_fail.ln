@@ -2,7 +2,7 @@
 
 type Buf {
     data u8[5]
-    pos  usize in data
+    pos  usize in 0..data.len
 }
 
 func main() i32 {

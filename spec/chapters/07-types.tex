@@ -920,8 +920,9 @@ field type (\S\,\ref{sec:types.compat}).
 A field declaration may state a fact about the field's value for the whole life of every value
 of the struct type. Three forms are provided:
 \begin{itemize}
-  \item \lain{pos usize in text} --- an \emph{index} invariant: \lain{pos} is a valid index into
-        the slice or array field \lain{text} (\lain{pos < text.len});
+  \item \lain{pos usize in 0..text.len} --- an \emph{index} invariant: \lain{pos} is a valid index
+        into the slice or array field \lain{text}, always below its length.  A cursor that may rest
+        one past the last element is \lain{in 0..=text.len};
   \item \lain{pos usize <= src.len} --- a \emph{position} invariant: \lain{pos} compared with the
         length of the slice or array field \lain{src}, by \lain{<}, \lain{<=}, \lain{>} or
         \lain{>=};
@@ -976,7 +977,7 @@ An index invariant cannot hold for an empty container. A position invariant can:
 \pnum
 Because every write that could break a field invariant is checked, the invariant is a fact at
 every read of the field: \lain{c.text[c.pos]} needs no bounds check under
-\lain{pos usize in text}, and \lain{b.cap - b.len} needs no underflow check under
+\lain{pos usize in 0..text.len}, and \lain{b.cap - b.len} needs no underflow check under
 \lain{len usize <= cap}.
 
 \begin{example}

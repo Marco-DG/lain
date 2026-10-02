@@ -1,7 +1,7 @@
 // Dependent-type expressiveness (G9): the `in` guard on a DYNAMIC-array param
-// (`i usize in a` where a is a plain slice) must tie i < a.len so `a[i]` is
+// (`i usize in 0..a.len` where a is a plain slice) must tie i < a.len so `a[i]` is
 // proven safe. Previously only fixed-size array params tightened the bound.
-func get(a i32[], i usize in a) i32 {
+func get(a i32[], i usize in 0..a.len) i32 {
     return a[i]
 }
 func main() i32 {

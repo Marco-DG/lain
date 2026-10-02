@@ -437,7 +437,7 @@ the compiler:
 ```lain
 func scan(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
     var i u32 = start
-    while (i + 15) in src and i +% 16 <= n {
+    while (i + 15) in 0..src.len and i +% 16 <= n {
         var hit u32 = @movemask(@load(u8x16, src, i) == term) & (65535 as u32)
         if hit != 0 {
             i = i +% (@ctz(hit) as u32)
@@ -445,7 +445,7 @@ func scan(src u8[4096], n u32 < 4097, start u32 < 4097, term u8) u32 {
         }
         i = i +% 16
     }
-    while i in src and i < n and src[i] != term { i = i +% 1 }
+    while i in 0..src.len and i < n and src[i] != term { i = i +% 1 }
     return i
 }
 ```

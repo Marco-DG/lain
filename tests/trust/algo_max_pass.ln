@@ -3,7 +3,7 @@ extern func libc_printf(fmt *u8, ...) i32 effects io
 func find_max(data u8[:0]) i32 {
     var mx = 0
     var i = 0
-    while i in data decreasing data.len - i {
+    while i in 0..data.len decreasing data.len - i {
         var v = data[i] as i32
         if v > mx { mx = v }
         i += 1

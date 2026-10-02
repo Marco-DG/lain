@@ -5,7 +5,7 @@
 // `u8[5]` made that assume `10 < 5`, and everything after it was proven: `d[20]` compiled.
 type Buf {
     data u8[5]
-    pos usize in data
+    pos usize in 0..data.len
 }
 func main() i32 {
     var d u8[5] = [1, 2, 3, 4, 5]

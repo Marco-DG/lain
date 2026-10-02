@@ -1,9 +1,12 @@
-// EXPECT: [E085]
-// P0 soundness: the `pos usize in text` parameter invariant (0 <= pos < text.len)
+// EXPECT: [E012]
+// EXPECT-TEXT: a required precondition is not established here
+// (I.78: `i usize in 0..a.len` is a precondition like any other refinement, so a call that does
+// not establish it is E012; the retired `i usize in a` reported E085.)
+// P0 soundness: the `pos usize in 0..text.len` parameter invariant (0 <= pos < text.len)
 // was enforced only for a known-constant array length and a known index range, so
 // forwarding an UNBOUNDED index through a slice was accepted and the callee's
 // check-free `text[pos]` read out of bounds (ASan: stack-buffer-overflow via
 // run(buf,10) -> at(buf,10) -> text[10] on a length-3 array). Now fail-closed.
-func at(text u8[], pos usize in text) u8 { return text[pos] }
+func at(text u8[], pos usize in 0..text.len) u8 { return text[pos] }
 func run(t u8[], p usize) u8 { return at(t, p) }
 func main() i32 { return 0 }

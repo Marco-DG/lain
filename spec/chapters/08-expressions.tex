@@ -188,12 +188,21 @@ func mix(h u32, c u8) u32 {
 \index{in guard}
 
 \pnum
-The expression \lain{idx in arr} evaluates to \lain{true} if and only if
-$0 \leq \mathit{idx} < \mathit{arr.len}$.  The operand \textit{arr} shall
-be an array or slice type; \textit{idx} shall be an integer type.
+\lain{in} tests \textbf{membership in a set}, and the set is written as a range:
+\lain{x in lo..hi} is \lain{true} if and only if \(\mathit{lo} \leq x < \mathit{hi}\), and
+\lain{x in lo..=hi} if and only if \(\mathit{lo} \leq x \leq \mathit{hi}\).  Each bound is
+evaluated once.  All three operands shall have integer types.
 
 \pnum
-When \lain{idx in arr} appears as the condition of a \lain{while} or
+The indices of an array or slice \textit{arr} are the range \lain{0..arr.len}, so an index test is
+written \lain{idx in 0..arr.len}.  The form \lain{idx in arr}, naming the container, was retired:
+\lain{arr} is a sequence of elements and not a set of indices, and the implementation refuses it
+with the range to write instead~(\diagcode{E100}).  An index refinement on a field or a parameter is
+written the same way --- \lain{in 0..arr.len} for an index, \lain{in 0..=arr.len} for a cursor that
+may rest at the end.
+
+\pnum
+When \lain{idx in 0..arr.len} appears as the condition of a \lain{while} or
 \lain{if} statement (or as the leftmost operand of an \lain{and}-chain
 condition), it establishes an \textbf{in guard}: inside the body of that
 statement, the implementation shall accept \lain{arr[idx]} without
@@ -210,7 +219,7 @@ the right operand.
 func sum(arr i32[]) i32 {
     var s i32 = 0
     var i usize = 0
-    while i in arr {
+    while i in 0..arr.len {
         s = s +% arr[i]   // OK: in-guarded
         i = i + 1
     }
@@ -223,7 +232,7 @@ type Lexer {
     pos usize
 }
 func skip_to_quote(l var Lexer) {
-    while l.pos in l.src and (l.src[l.pos] as int) != '"' {
+    while l.pos in 0..l.src.len and (l.src[l.pos] as int) != '"' {
         l.pos = l.pos + 1
     }
 }
@@ -231,7 +240,7 @@ func skip_to_quote(l var Lexer) {
 \end{example}
 
 \begin{constraint}
-  An in-guard of the form \lain{idx in arr} covers only \lain{arr[idx]}
+  An in-guard of the form \lain{idx in 0..arr.len} covers only \lain{arr[idx]}
   exactly.  Accesses \lain{arr[idx + k]} for any $k \neq 0$ are not
   covered by this guard and require separate verification or an
   \lain{unsafe} block.

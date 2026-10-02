@@ -3,7 +3,7 @@
 // to `c.pos` ever appears for the invariant check to see. Refused at the reference.
 type Cur {
     text u8[]
-    pos usize in text
+    pos usize in 0..text.len
 }
 func peek(c Cur) u8 {
     return c.text[c.pos]

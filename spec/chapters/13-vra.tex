@@ -166,13 +166,13 @@ the constant $N$; for a sized slice \lain{a T[n]} it is the size parameter
 \index{in guard!VRA semantics}
 
 \pnum
-An in-guard \lain{idx in arr} (\S\,\ref{sec:expr.in}) introduces the
+An in-guard \lain{idx in 0..arr.len} (\S\,\ref{sec:expr.in}) introduces the
 constraint $0 \leq \mathit{idx} < \mathit{arr.len}$ into the VRA's
 range environment.  Inside the guarded body, \lain{arr[idx]} is accepted
 without further proof.
 
 \pnum
-When \lain{idx in arr} is the condition of a \lain{while decreasing M}
+When \lain{idx in 0..arr.len} is the condition of a \lain{while decreasing M}
 loop, the VRA infers that $\mathit{arr.len} - \mathit{idx} \geq 0$ (a
 valid non-negativity proof for the measure $\mathit{arr.len} - \mathit{idx}$).
 

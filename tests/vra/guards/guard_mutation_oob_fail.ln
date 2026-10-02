@@ -1,13 +1,13 @@
 // EXPECT: [E085]
 // SOUNDNESS lock: an `in`-guard must NOT keep proving an access after the guarded
-// index is mutated in the SAME scope. `while i in a { i = huge; a[i] }` reassigns
-// `i` out of bounds, so the `i in a` guard is stale and `a[i]` must be rejected
+// index is mutated in the SAME scope. `while i in 0..a.len { i = huge; a[i] }` reassigns
+// `i` out of bounds, so the `i in 0..a.len` guard is stale and `a[i]` must be rejected
 // (previously it silently emitted an out-of-bounds read). Mutations in NESTED
 // scopes (if/while/for bodies) are caught too — see char_guard_mutation_nested_fail.
 func t(a u8[16]) u8 effects diverge {
     var i u32 = 0
     var r u8 = 0
-    while i in a {
+    while i in 0..a.len {
         i = i +% 1000
         r = a[i]
         break

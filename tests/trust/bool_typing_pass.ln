@@ -28,7 +28,7 @@ func main() i32 {
     if !either { return 8 }
     var arr i32[4] = [1, 2, 3, 4]
     var j usize = 2
-    var ok = j in arr
+    var ok = j in 0..arr.len
     if !ok { return 14 }
     if count_true(t, f, 1 < 2) != 2 { return 9 }
     var n i32 = 7

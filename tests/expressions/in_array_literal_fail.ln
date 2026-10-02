@@ -1,8 +1,8 @@
 // EXPECT: [E012]
-// EXPECT-TEXT: Error Ln 7, Col 13: `in` tests an INDEX against a container's length
+// EXPECT-TEXT: Error Ln 7, Col 13: membership in a list, `x in [...]`, is not available yet
 // `x in [1, 3, 5]` reads as membership and computed `x < 3`, the literal's LENGTH: `member(3)` was
-// 0 and `member(2)` was 1, wrong for every value but 1 (Handwriting, I.75). `in` is an index test;
-// refused, with what it would have meant.
+// 0 and `member(2)` was 1, wrong for every value but 1 (Handwriting, I.75). Refused since then; `in`
+// now means membership (DECIDE-X), and membership in a list arrives with I.79.
 func member(x i32) i32 {
     if x in [1, 3, 5] {
         return 1

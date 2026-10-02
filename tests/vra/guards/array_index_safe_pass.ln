@@ -3,7 +3,7 @@
 func main() i32 {
     var arr i32[5] = [10, 20, 30, 40, 50]
     var i i32 = 2
-    if i in arr {
+    if i in 0..arr.len {
         var v = arr[i]
         var _v = v
     }

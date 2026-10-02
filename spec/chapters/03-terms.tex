@@ -302,7 +302,7 @@ the scrutinee type is covered by at least one arm
 \subsection*{in guard}
 \index{in guard}
 A use of the \lain{in} operator as a loop or conditional guard.  An in
-guard of the form \lain{idx in arr} proves to the VRA that
+guard of the form \lain{idx in 0..arr.len} proves to the VRA that
 \texttt{idx} $\in$ \texttt{[0, arr.len-1]} in the guarded body
 (see \S\,\ref{sec:08-expressions}, \S\,\ref{sec:13-vra}).
 

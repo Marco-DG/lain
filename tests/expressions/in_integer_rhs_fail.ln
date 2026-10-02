@@ -1,7 +1,7 @@
 // EXPECT: [E012]
-// EXPECT-TEXT: Error Ln 6, Col 13: `in` needs an array or a slice on its right
-// `in` needs a container whose length bounds the index; an integer on its right compiled and the
-// emitted C was rejected by gcc (I.75).
+// EXPECT-TEXT: Error Ln 6, Col 13: `in` tests membership in a range `lo..hi`; the right side here is 'i32'
+// An integer on the right of `in` compiled and the emitted C was rejected by gcc (I.75). `in` tests
+// membership in a range (I.77; the container form was retired by I.78), and an i32 is not one.
 func f(x i32, n i32) i32 {
     if x in n {
         return 1

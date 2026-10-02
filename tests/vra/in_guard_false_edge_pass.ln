@@ -1,8 +1,8 @@
 // The false edge of an unsigned comparison is a signed fact when both sides are non-negative:
-// for an unsigned p, `!(p in a)` is p >= 32, so `p - 32` cannot underflow. (A signed p may be
+// for an unsigned p, `!(p in 0..a.len)` is p >= 32, so `p - 32` cannot underflow. (A signed p may be
 // negative there; in_guard_false_edge_fail.ln.) Values checked at run time.
 func excess(a i32[32], p u32) u32 {
-    if p in a { return 0 }
+    if p in 0..a.len { return 0 }
     return p - 32
 }
 func main() i32 {

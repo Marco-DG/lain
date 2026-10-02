@@ -10,7 +10,7 @@ type Buf(N usize) {
 }
 type Ring(N usize) {
     data u8[N]
-    pos usize in data
+    pos usize in 0..data.len
 }
 assert @sizeof(Buf(4)) == 4
 assert @sizeof(Buf(SIZE)) == 16
