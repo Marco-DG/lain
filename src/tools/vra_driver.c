@@ -34,7 +34,6 @@ int main(int argc, char **argv) {
     for (int k=2;k<argc;k++){ if(!strcmp(argv[k],"--dump"))dump=true; if(!strcmp(argv[k],"--suppress"))suppress=true;
                               if(!strcmp(argv[k],"--dump-octagon"))vra_dump_enabled=true;
                               if(!strcmp(argv[k],"--loss"))loss_mode=true; }
-    Arena fa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena aa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena ia=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -44,7 +43,7 @@ int main(int argc, char **argv) {
     if (slash && path[0]=='/'){ char dir[4096]; size_t dl=(size_t)(slash-path);
         if(dl<sizeof dir){ memcpy(dir,path,dl); dir[dl]='\0'; if(chdir(dir)!=0){} path=slash+1; } }
     char *mod=drv_modname(&aa,path);
-    DeclList *prog=load_module(&fa,&aa,mod);
+    DeclList *prog=load_module(&aa,mod);
     if(!prog){ fprintf(stderr,"load failed\n"); return 1; }
     /* --suppress once stood the LEGACY bounds/termination/overflow checks down so a program only
        the NEW engine proves could still be measured. Those checks are deleted, so there is nothing

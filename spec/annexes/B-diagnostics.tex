@@ -284,7 +284,9 @@ Diagnostic codes are divided into the following ranges:
     A catch-all code used for lexical and syntactic errors without a
     dedicated code, including: an unexpected token, using \lain{==} on enum
     types (\S\,\ref{sec:types.enum}), an empty or multi-character character
-    literal, a keyword used as an identifier, and a zero-field array size.
+    literal, a string literal, character literal or block comment that the
+    source file ends inside, a keyword used as an identifier, and a
+    zero-field array size.
     Also a construct this implementation does not model, refused where it
     appears rather than translated without it, and a function beyond the
     capacity of one of its analyses (an implementation limit), refused rather

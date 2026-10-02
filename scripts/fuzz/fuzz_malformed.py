@@ -125,7 +125,62 @@ def op_member_to_call(t, rng):
     L[i] = re.sub(r'\.(\s*)([a-z_]\w*)', lambda m: '.%s%s()' % (m.group(1), m.group(2)), L[i], count=1)
     return "\n".join(L), i + 1
 
+def _delimited(t):
+    """Every string literal, character literal and block comment in t, as (start, end, kind), with
+    end one past the closing delimiter. A small scan with the lexer's own rules: a backslash skips
+    the next byte inside a literal, a line comment runs to the end of its line, block comments
+    nest. A token the text itself leaves open is not a site (the program would be refused already)."""
+    out, i, n = [], 0, len(t)
+    while i < n:
+        c = t[i]
+        if c == '/' and t[i+1:i+2] == '/':
+            while i < n and t[i] not in '\r\n': i += 1
+        elif c == '/' and t[i+1:i+2] == '*':
+            j, depth = i + 2, 1
+            while j < n and depth:
+                if t[j:j+2] == '/*': depth += 1; j += 2
+                elif t[j:j+2] == '*/': depth -= 1; j += 2
+                else: j += 1
+            if depth: return out
+            out.append((i, j, 'comment')); i = j
+        elif c in '"\'':
+            j = i + 1
+            while j < n and t[j] != c:
+                j += 2 if t[j] == '\\' else 1
+            if j >= n: return out
+            out.append((i, j + 1, 'string' if c == '"' else 'char')); i = j + 1
+        else:
+            i += 1
+    return out
+
+def op_truncate(t, rng):
+    """The text ENDS inside a string literal, a character literal or a block comment (I.101).
+
+    The lexer had no case for the end of the text inside a literal, and read on past the source's
+    NUL until some later byte was a quote. This fuzzer sat at 0 through it, because no operator
+    ever ended a program early: every mutant was a whole file. And at -O2 the overread usually
+    printed a CODED E100 ("unknown escape sequence") at the right line, which passes every check
+    above, so the driver runs this operator against an ASan build of lain (the source has its own
+    allocation, so a read past it is visible). The cut lands anywhere from just after the opening
+    delimiter to just before the closing one, so right after a backslash too. The refusal belongs
+    at the token's first line."""
+    sites = _delimited(t)
+    if not sites: return None
+    start, end, _ = rng.choice(sites)
+    cut = rng.randrange(start + 1, end)       # past the opener, before the closer's last byte
+    return t[:cut], t.count("\n", 0, start) + 1
+
+def op_truncate_any(t, rng):
+    """The text ends at ANY byte, inside a token or between two. Where the refusal belongs depends
+    on what was cut (an unclosed block, a missing operand), so the driver does not judge its
+    position; it judges that nothing crashes, ASan sees nothing, and a refusal is coded."""
+    if len(t) < 2: return None
+    cut = rng.randrange(1, len(t))
+    return t[:cut], t.count("\n", 0, cut) + 1
+
 OPS = {
+    "truncate":          op_truncate,
+    "truncate-any":      op_truncate_any,
     "unknown-member":    op_unknown_member,
     "unknown-member-seq": op_unknown_member_on_seq,
     "undeclared-ident":  op_undeclared_ident,

@@ -315,6 +315,12 @@ var z = '\0'   // u8, value 0
   \illformed{}~(\diagcode{E100}).
 \end{constraint}
 
+\begin{constraint}
+  A character literal whose closing single quote is not found before the
+  end of the source file is \illformed{}~(\diagcode{E100}).  The diagnostic
+  is at its opening quote.
+\end{constraint}
+
 \subsection{String literals}
 \label{sec:lex.literals.string}
 \index{string literal}
@@ -323,6 +329,12 @@ var z = '\0'   // u8, value 0
 A string literal is a sequence of zero or more characters enclosed in
 double quotes.  Escape sequences (\S\,\ref{sec:lex.escape}) are permitted
 (grammar: \gramref{string-literal}).
+
+\begin{constraint}
+  A string literal whose closing double quote is not found before the end
+  of the source file is \illformed{}~(\diagcode{E100}).  The diagnostic is
+  at its opening quote.
+\end{constraint}
 
 \pnum
 The type of a string literal of $N$ visible characters is

@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 10, Col 5: unterminated character literal: no closing `'` before the end of the file
+// The lexer had no case for the end of the text inside a string or character literal, so it read
+// on past the source's terminating NUL until some later byte happened to be a quote (I.101, found
+// by the Debugger agent reading the lexer). The error is now at the opening quote.
+// This one said "a character literal holds exactly one character or one escape".
+func main() i32 {
+    return 0
+}
+c = 'a

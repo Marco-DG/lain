@@ -21,6 +21,8 @@
 #   NO-POSITION    refused, and the first error says "Ln 0".
 #   WRONG-POSITION refused at a line that is not the mutated line. NOT automatically a bug — an
 #                  error may legitimately surface at a use site — so it is a count to review.
+#   ASAN           an ASan build of lain reported a memory error. Always a bug. Only the two
+#                  truncation operators run on it (below).
 #   HANG           exceeded the per-program budget.
 #   ACCEPTED       the mutant still compiles. Not a bug in itself; counted, and run under
 #                  --interpret so a mutant that compiles to something wrong is still seen.
@@ -32,6 +34,14 @@
 # tree root, never absolute: lain chdirs to an absolute file's directory, and a program that
 # imports a module then fails to resolve it. That cost another instrument 34 silently unloadable
 # tests for days, in both legs of a differential, where "same" was the verdict nobody reads.
+#
+# TRUNCATION (I.101). `truncate` ends the text inside a string literal, a character literal or a
+# block comment; `truncate-any` ends it at any byte. The lexer read past the source's NUL on the
+# first, and this harness read 0 through it for two reasons: no operator ever cut a program short,
+# and at -O2 the overread usually printed a CODED, POSITIONED E100 ("unknown escape sequence"),
+# which every verdict above accepts. So these two run against an ASan build of lain, built here
+# into this run's own directory (or LAIN_ASAN=path). Each source is first compiled unmutated on it,
+# once: a report there is not the mutation's (BASELINE-ASAN), and that source is not mutated.
 #
 #   bash scripts/fuzz/fuzz_malformed.sh [N]        # N mutants per operator, default 40
 #   RANDOM_SEED=123 bash scripts/fuzz/fuzz_malformed.sh 10
@@ -68,7 +78,7 @@ TMP="local/m13run_$$"   # UNIQUE per run: a fixed path lets one run's exit trap 
 mkdir -p "$TMP"
 trap 'rm -rf "$TMP"' EXIT
 BUDGET=20
-OPS="${M13_OPS:-unknown-member unknown-member-seq undeclared-ident swap-type wrong-qualifier unknown-import drop-token dup-token call-to-member member-to-call}"
+OPS="${M13_OPS:-truncate truncate-any unknown-member unknown-member-seq undeclared-ident swap-type wrong-qualifier unknown-import drop-token dup-token call-to-member member-to-call}"
 # The five messages still uncoded at P-minus-1. After P every refusal starts with [E###] or
 # with "lain:" (driver errors), so this list goes empty and any UNCODED is new.
 # After P, "there is no module 'x' (no file 'p')" is E106 and CODED, so it is a legitimate
@@ -80,6 +90,21 @@ m13_wrongcwd() {
     return 1
 }
 KNOWN_UNCODED="not found in struct|Could not resolve struct type for destructuring|Unknown builtin|match patterns with no body|Cannot open module file"
+
+# The ASan lain, for the truncation operators only: about 30 s to build, so only when one runs.
+LAIN_ASAN="${LAIN_ASAN:-}"
+case " $OPS " in *" truncate"*)
+    if [ -z "$LAIN_ASAN" ]; then
+        LAIN_ASAN="$TMP/lain_asan"
+        echo "building an ASan lain for the truncation operators: $LAIN_ASAN"
+        gcc -std=c99 -O1 -g -fsanitize=address -fno-omit-frame-pointer -w -I src \
+            -o "$LAIN_ASAN" src/frontends/lain/main.c -lm || { echo "the ASan build failed"; exit 2; }
+    fi
+    [ -x "$LAIN_ASAN" ] || { echo "no ASan lain at $LAIN_ASAN"; exit 2; } ;;
+esac
+# lain never frees (arenas live to exit), so leak reports would bury the errors this looks for.
+export ASAN_OPTIONS="detect_leaks=0${ASAN_OPTIONS:+:$ASAN_OPTIONS}"
+declare -A ASAN_CLEAN   # source -> 1 clean, 0 reported unmutated
 
 mapfile -t PASSES < <(find tests -name '*_pass.ln' | sort)
 [ ${#PASSES[@]} -gt 0 ] || { echo "no _pass programs found"; exit 2; }
@@ -104,10 +129,10 @@ fi
 echo
 
 # ── the mutants ──────────────────────────────────────────────────────────────────────────────
-tot_crash=0; tot_new=0; tot_nopos=0; tot_wrongpos=0; unjudged=0; tot_nojudge=0
-printf "%-18s %7s %7s %7s %7s %7s %7s %7s %7s\n" operator gen skip judged CRASH UNCODED-new NO-POS WRONG-POS accepted
+tot_crash=0; tot_new=0; tot_nopos=0; tot_wrongpos=0; unjudged=0; tot_nojudge=0; tot_asan=0; base_asan=0
+printf "%-18s %7s %7s %7s %7s %7s %7s %7s %7s %7s\n" operator gen skip judged CRASH ASAN UNCODED-new NO-POS WRONG-POS accepted
 for op in $OPS; do
-    gen=0; skip=0; judged=0; crash=0; uncoded_new=0; uncoded_known=0; nopos=0; wrongpos=0; acc=0; hang=0; nojudge=0
+    gen=0; skip=0; judged=0; crash=0; asan=0; uncoded_new=0; uncoded_known=0; nopos=0; wrongpos=0; acc=0; hang=0; nojudge=0
     # Walk the program list until N mutants EXIST, rather than spending the budget on programs
     # that have no site for this operator. A skip is still counted, so an operator that can
     # mutate almost nothing stays visible instead of silently testing less than the others.
@@ -117,11 +142,28 @@ for op in $OPS; do
         tries=$((tries+1))
         m="$TMP/m.ln"
         mseed=$((BASE + k))
+        L="$LAIN"
+        case "$op" in truncate*)
+            L="$LAIN_ASAN"
+            if [ -z "${ASAN_CLEAN[$src]:-}" ]; then
+                if timeout $BUDGET "$L" "$src" -o "$TMP/b.c" 2>&1 | grep -q 'ERROR: AddressSanitizer'; then
+                    ASAN_CLEAN[$src]=0; base_asan=$((base_asan+1))
+                    echo "  ** BASELINE-ASAN src=$src :: reported UNMUTATED, so its mutants are not judged"
+                else ASAN_CLEAN[$src]=1; fi
+            fi
+            [ "${ASAN_CLEAN[$src]}" = 1 ] || { skip=$((skip+1)); continue; } ;;
+        esac
         if ! python3 "$MUT" "$src" "$op" "$mseed" > "$m" 2>/dev/null; then skip=$((skip+1)); continue; fi
         gen=$((gen+1)); k=$((k+1))
         line=$(head -1 "$m" | grep -oE 'line=[0-9]+' | cut -d= -f2)
-        out=$(timeout $BUDGET "$LAIN" "$m" -o "$TMP/m.c" 2>&1); rc=$?
+        out=$(timeout $BUDGET "$L" "$m" -o "$TMP/m.c" 2>&1); rc=$?
         judged=$((judged+1))
+        if echo "$out" | grep -q 'ERROR: AddressSanitizer'; then
+            asan=$((asan+1)); tot_asan=$((tot_asan+1))
+            echo "  ** ASAN op=$op seed=$mseed src=$src :: $(echo "$out" | grep -m1 'ERROR: AddressSanitizer' | sed 's/.*AddressSanitizer: //' | cut -c1-60)"
+            echo "$out" | grep -m3 -E '^ +#[0-9]+ ' | sed 's/^ */        /' | cut -c1-110
+            continue
+        fi
         if [ $rc -ge 128 ] && [ $rc -ne 124 ]; then
             crash=$((crash+1)); tot_crash=$((tot_crash+1))
             echo "  ** CRASH rc=$rc  op=$op seed=$mseed src=$src"
@@ -148,6 +190,8 @@ for op in $OPS; do
             echo "  ** NO-POSITION op=$op seed=$mseed src=$src :: $(echo "$out" | head -1 | cut -c1-72)"
             continue
         fi
+        # Where a cut at an arbitrary byte is refused depends on what it cut: not judged.
+        [ "$op" = truncate-any ] && continue
         rl=$(echo "$out" | grep -oE 'Ln [0-9]+' | head -1 | grep -oE '[0-9]+' | head -1)
         # The mutant carries a 1-line header, so a correct report is the mutated line + 1.
         # Both values are checked to be PLAIN INTEGERS first: anything else means the header or
@@ -166,14 +210,15 @@ for op in $OPS; do
                fi ;;
         esac
     done
-    printf "%-18s %7d %7d %7d %7d %7d %7d %7d %7d\n" "$op" "$gen" "$skip" "$judged" "$crash" "$uncoded_new" "$nopos" "$wrongpos" "$acc"
+    printf "%-18s %7d %7d %7d %7d %7d %7d %7d %7d %7d\n" "$op" "$gen" "$skip" "$judged" "$crash" "$asan" "$uncoded_new" "$nopos" "$wrongpos" "$acc"
 done
 echo "=================================================================="
 echo "fuzz_malformed: $N mutants per operator over ${#PASSES[@]} _pass programs, seed base $BASE"
-echo "  BUGS:  CRASH=$tot_crash  UNCODED(new)=$tot_new  NO-POSITION=$tot_nopos"
+echo "  BUGS:  CRASH=$tot_crash  ASAN=$tot_asan  UNCODED(new)=$tot_new  NO-POSITION=$tot_nopos"
+if [ $base_asan -gt 0 ]; then echo "  BASELINE-ASAN=$base_asan  (sources ASan reports UNMUTATED: a compiler bug, not judged here)"; fi
 if [ $unjudged -gt 0 ]; then echo "  UNJUDGED=$unjudged   (harness bug — these tested NOTHING)"; fi
 echo "  REVIEW: WRONG-POSITION=$tot_wrongpos  (a refusal away from the mutated line; not always wrong)"
 echo "  REVIEW: POSITION-UNJUDGED=$tot_nojudge  (no \`Ln\` in the diagnostic, or an unexpected header:"
 echo "          the position could NOT be judged — silence here is not a pass)"
 echo "=================================================================="
-[ $tot_crash -eq 0 ] && [ $tot_new -eq 0 ] && [ $tot_nopos -eq 0 ] && exit 0 || exit 1
+[ $tot_crash -eq 0 ] && [ $tot_asan -eq 0 ] && [ $base_asan -eq 0 ] && [ $tot_new -eq 0 ] && [ $tot_nopos -eq 0 ] && exit 0 || exit 1

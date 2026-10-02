@@ -40,7 +40,6 @@ int main(int argc, char **argv) {
        exited on, letting the NEW passes be measured against the same program. The legacy ownership
        checks are deleted, so the option is a no-op and the new passes always run. */
     (void)reject;
-    Arena fa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena aa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena ia=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -50,7 +49,7 @@ int main(int argc, char **argv) {
     if (slash && path[0]=='/'){ char dir[4096]; size_t dl=(size_t)(slash-path);
         if (dl<sizeof dir){ memcpy(dir,path,dl); dir[dl]='\0'; if(chdir(dir)!=0){} path=slash+1; } }
     char *mod=drv_modname(&aa,path);
-    DeclList *program=load_module(&fa,&aa,mod);
+    DeclList *program=load_module(&aa,mod);
     if (!program){ fprintf(stderr,"load failed: %s\n",mod); return 2; }
     sema_resolve_module(program, mod, &sa);
 

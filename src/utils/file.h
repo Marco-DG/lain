@@ -8,8 +8,8 @@
 
 */
 
+#include <stdlib.h> /* malloc */
 #include "common/system/file.h" /* file */ /* beware for name collision with this import */
-#include "arena.h" /* Arena */
 
 typedef struct
 {
@@ -18,7 +18,13 @@ typedef struct
     char* contents;
 } File;
 
-static File file_read_into_arena(Arena* arena, char* filename)
+// Reads a whole source file into its OWN allocation of exactly size + 1 bytes, NUL-terminated.
+// Tokens point into it for the whole compile, so it is never freed. It was a slice of an arena that
+// held every source file, and then a read past the NUL landed in the arena's next bytes (another
+// file, or zeroes), where nothing could see it: the lexer did that for every unterminated literal
+// at the end of a file (I.101), and an ASan build of lain reported nothing. Now a read past the
+// end is a read past an allocation, which ASan reports.
+static File file_read_source(char* filename)
 {
     File f = {0};
 
@@ -35,7 +41,11 @@ static File file_read_into_arena(Arena* arena, char* filename)
     }
 
     // allocate f.size + 1 bytes so we can NUL‑terminate
-    char* buf = arena_push_many(arena, char, f.size + 1);
+    char* buf = malloc((size_t)f.size + 1);
+    if (!buf) {
+        fprintf(stderr, "lain: out of memory reading '%s'\n", filename);
+        exit(1);
+    }
     f.contents = buf;
 
     // read exactly f.size bytes
@@ -43,8 +53,6 @@ static File file_read_into_arena(Arena* arena, char* filename)
 
     // NUL‑terminate
     buf[f.size] = '\0';
-
-    arena_align(arena, 8);
 
     return f;
 }

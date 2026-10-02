@@ -313,9 +313,11 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         const char* str = parser->token.start;
         isize len = parser->token.length;
         // Validate escape sequences (spec §5.9.6): a backslash not followed by
-        // one of the recognized escape characters is ill-formed. The raw lexeme
-        // includes the surrounding quotes, so scan the interior [1, len-1).
-        for (isize i = 1; i + 1 < len; i++) {
+        // one of the recognized escape characters is ill-formed. The token is the
+        // text BETWEEN the quotes (lexer.h). This loop started at 1, as if it held
+        // the opening quote, so an escape in the first position was never checked:
+        // `"\q"` compiled, a raw backslash and a `q` (I.101).
+        for (isize i = 0; i + 1 < len; i++) {
             if (str[i] == '\\') {
                 char e = str[i + 1];
                 if (e != 'n' && e != 't' && e != 'r' && e != '0' &&

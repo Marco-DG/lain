@@ -60,7 +60,6 @@ int main(int argc, char **argv) {
        checks is now deleted, so all four are accepted as no-ops: the callers (fuzz_termination.sh,
        fuzz_vra.sh, the surveys) keep working unchanged, and there is no flag left to set. */
     if (argc < 2) { fprintf(stderr, "usage: %s <file.ln>\n", argv[0]); return 2; }
-    Arena file_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena ast_arena  = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sema_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena ir_arena   = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -74,7 +73,7 @@ int main(int argc, char **argv) {
         if (dl<sizeof dir){ memcpy(dir,path,dl); dir[dl]='\0'; if (chdir(dir)!=0){} path=slash+1; } }
 
     char *modname = drv_modname(&ast_arena, path);
-    DeclList *program = load_module(&file_arena, &ast_arena, modname);
+    DeclList *program = load_module(&ast_arena, modname);
     if (!program) { fprintf(stderr, "load failed: %s\n", modname); return 1; }
     sema_resolve_module(program, modname, &sema_arena);
 

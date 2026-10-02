@@ -61,7 +61,11 @@ Token lexer_next(Lexer* lexer) {
         switch (state) {
             case STATE_START:
                 switch (c) {
-                    case 0:             RETURN_TOKEN(TOKEN_EOF);
+                    // The end stays the end: step back onto the NUL, so a later call (the
+                    // parser's lookahead forks the lexer and reads on) returns EOF again instead
+                    // of reading past it.
+                    case 0:             lexer->current--;
+                                        RETURN_TOKEN(TOKEN_EOF);
                     case ' ':
                     case '\t':          token.start++; break;
                     case '\n':
@@ -178,6 +182,17 @@ Token lexer_next(Lexer* lexer) {
                 break;
 
             case STATE_SINGLE_QUOTE:
+                // The end of the text before the closing quote: an unterminated literal (I.101).
+                // There was no case for it, so the scan went on PAST the source's terminating NUL
+                // until some later byte happened to be a quote: a bogus diagnostic, or an abort
+                // allocating 25 MB for a token made of whatever memory followed. Stop on the NUL
+                // and hand the parser an invalid token that starts at the opening quote; it
+                // reports it (parser/core.h).
+                if (c == 0) {
+                    lexer->current--;
+                    token.kind = TOKEN_INVALID; token.length = lexer->current - token.start;
+                    return token;
+                }
                 // keep scanning until we hit the *matching* closing '
                 if (c == '\\') {
                     // skip over backslash-escape plus its following char
@@ -193,6 +208,11 @@ Token lexer_next(Lexer* lexer) {
                 break;
 
             case STATE_DOUBLE_QUOTE:
+                if (c == 0) {                     // unterminated: see STATE_SINGLE_QUOTE
+                    lexer->current--;
+                    token.kind = TOKEN_INVALID; token.length = lexer->current - token.start;
+                    return token;
+                }
                 // F-002 fix: treat backslash as an escape that consumes the next
                 // character (including an escaped closing quote). The raw lexeme
                 // retains the escape bytes; decoding happens later in the parser.
@@ -288,8 +308,13 @@ Token lexer_next(Lexer* lexer) {
                                 nesting--;
                                 lexer->current += 2;
                             } else if (d == 0) {
-                                // EOF before close
-                                break;
+                                // The end of the text inside the comment: ill-formed (spec 05,
+                                // E100). It was returned as a comment and skipped, so a program
+                                // whose `/*` never closed compiled. The parser reports the
+                                // invalid token at the `/*` (parser/core.h).
+                                token.kind   = TOKEN_INVALID;
+                                token.length = lexer->current - token.start;
+                                return token;
                             } else {
                                 lexer->current++;
                             }

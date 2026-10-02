@@ -304,10 +304,9 @@ static void module_name_to_path(const char *mod, char *out, size_t cap) {
 }
 
 /// Load (and splice) a module into the AST‐arena.
-///   file_arena: used only for reading files,
 ///   ast_arena:  used only for building AST nodes.
-static DeclList* load_module(Arena *file_arena,
-                             Arena *ast_arena,
+/// Each source file has its own allocation (file_read_source).
+static DeclList* load_module(Arena *ast_arena,
                              const char *modname)
 {
     if (module_already_loaded(modname)) {
@@ -325,8 +324,8 @@ static DeclList* load_module(Arena *file_arena,
         snprintf(path, sizeof path, "%s", module_root_file);
     } else module_name_to_path(modname, path, sizeof path);
 
-    // 2) read the file into file_arena
-    File f = file_read_into_arena(file_arena, path);
+    // 2) read the file
+    File f = file_read_source(path);
     if (!f.contents) {   // the program's own file: an imported module is checked at its import
         fprintf(stderr, "lain: cannot open '%s'.\n", path);
         exit(1);
@@ -409,7 +408,7 @@ static DeclList* load_module(Arena *file_arena,
             }
 
             // recurse
-            DeclList *child = load_module(file_arena, ast_arena, buf);
+            DeclList *child = load_module(ast_arena, buf);
             if (child) {
                 // splice child in place of this import
                 DeclList *end = child;

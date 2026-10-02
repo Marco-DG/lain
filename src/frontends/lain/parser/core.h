@@ -74,6 +74,20 @@ Token _parser_advance(Parser* parser) {
         parser->column += token.length;
     }
 
+    // A literal or block comment that the text ends inside (lexer.h): the token starts at its
+    // opening delimiter, and so does the position reported (I.101).
+    if (token.kind == TOKEN_INVALID && token.start
+        && (*token.start == '"' || *token.start == '\'' || (token.start[0] == '/' && token.start[1] == '*'))) {
+        if (*token.start == '/')
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: unterminated block comment: no closing `*/` "
+                    "before the end of the file\n", parser->line, parser->column);
+        else
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: unterminated %s literal: no closing `%c` "
+                    "before the end of the file\n", parser->line, parser->column,
+                    *token.start == '"' ? "string" : "character", *token.start);
+        exit(1);
+    }
+
     // normalize newline and semicolon into a single canonical EOL token
     if (token.kind == TOKEN_NEWLINE || token.kind == TOKEN_SEMICOLON) {
         token.kind = TOKEN_EOL;

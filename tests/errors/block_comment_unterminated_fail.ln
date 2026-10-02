@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 9, Col 7: unterminated block comment: no closing `*/` before the end of the file
+// A block comment the text ends inside is ill-formed (spec 05, E100). The lexer returned it as a
+// comment and the parser skipped it, so this program compiled (I.101). A nested `/* */` closes
+// only its own level, so the outer comment is still open at the end.
+func main() i32 {
+    return 0
+}
+x = 1 /* outer /* inner */ still open
+y = 2

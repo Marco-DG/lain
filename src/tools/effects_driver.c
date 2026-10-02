@@ -39,7 +39,6 @@ static void fmt(unsigned e, char *out) {
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s <file.ln> [--quiet]\n", argv[0]); return 2; }
     bool quiet = (argc>=3 && strcmp(argv[2],"--quiet")==0);
-    Arena file_arena=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena ast_arena =arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sema_arena=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena ir_arena  =arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -51,7 +50,7 @@ int main(int argc, char **argv) {
         if (dl<sizeof dir){ memcpy(dir,path,dl); dir[dl]='\0'; if (chdir(dir)!=0){} path=slash+1; } }
 
     char *modname=drv_modname(&ast_arena,path);
-    DeclList *program=load_module(&file_arena,&ast_arena,modname);
+    DeclList *program=load_module(&ast_arena,modname);
     if (!program){ fprintf(stderr,"load failed: %s\n",modname); return 2; }
     sema_resolve_module(program, modname, &sema_arena);
 

@@ -75,8 +75,6 @@ static char *filepath_to_modname(Arena *arena, const char *path) {
 
 
 int main(int argc, char **argv) {
-    // two arenas:
-    Arena file_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena ast_arena  = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena _sema_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
 
@@ -169,7 +167,7 @@ int main(int argc, char **argv) {
     // and the root module is never one already loaded. It compiles to a module with nothing in it,
     // as a program without `main` compiles. It was refused as "Could not load root module", with
     // no code, which blamed a file that loaded fine.
-    DeclList *program = load_module(&file_arena, &ast_arena, modname);
+    DeclList *program = load_module(&ast_arena, modname);
 
     if (args.dump_ast) {
         printf("\n\n#### AST ####\n");

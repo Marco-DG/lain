@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 8, Col 9: unknown escape sequence in string literal
+// A backslash not followed by a recognised escape is ill-formed (spec 05), wherever it is in the
+// string. The check skipped the FIRST character, so `"\qa"` compiled to three bytes with a raw
+// backslash in them, while `"a\q"` was refused (I.101).
+func main() i32 {
+    // the next line's literal begins with the unknown escape
+    s = "\qa"
+    return s.len as i32
+}

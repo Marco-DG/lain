@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 10, Col 5: unterminated string literal: no closing `"` before the end of the file
+// The lexer had no case for the end of the text inside a string or character literal, so it read
+// on past the source's terminating NUL until some later byte happened to be a quote (I.101, found
+// by the Debugger agent reading the lexer). The error is now at the opening quote.
+// This program said "unknown escape sequence"; a shorter one aborted allocating 25 MB.
+func main() i32 {
+    return 0
+}
+s = "abc

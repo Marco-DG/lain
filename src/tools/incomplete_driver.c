@@ -25,7 +25,6 @@ static char *mn(Arena *a, const char *path){ const char *p=path;
   size_t n=strlen(p),e=(n>3&&strcmp(p+n-3,".ln")==0)?n-3:n;
   char *t=arena_push_many(a,char,e+1); memcpy(t,p,e); t[e]='\0'; return t; }
 int main(int argc,char**argv){ if(argc<2) return 2;
-  Arena fa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
   Arena aa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
   Arena sa=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
   Arena ia=arena_new(memory_alloc,MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -35,7 +34,7 @@ int main(int argc,char**argv){ if(argc<2) return 2;
   // in the test's directory, where `import std.*` cannot resolve, and the survey then
   // silently dropped the file: the denominator excluded every program that uses the stdlib.
   if(sl && path[0]=='/'){ char d[4096]; size_t dl=(size_t)(sl-path); if(dl<sizeof d){memcpy(d,path,dl);d[dl]='\0'; if(chdir(d)!=0){} path=sl+1;} }
-  char *m=mn(&aa,path); DeclList*pr=load_module(&fa,&aa,m); if(!pr) return 2;
+  char *m=mn(&aa,path); DeclList*pr=load_module(&aa,m); if(!pr) return 2;
   sema_resolve_module(pr,m,&sa);
   IrFunc *mod=ir_lower_module(pr,&ia); int tot=0,inc=0;
   for(IrFunc*f=mod;f;f=f->next){ if(f->is_extern) continue; tot++;
