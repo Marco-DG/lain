@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 11, Col 5: arithmetic is not provably free of overflow
+// A character literal is a u8, 0..255. One at or above 0x80 (`\xHH`, the only spelling that makes
+// one) was stored in a signed `char`, so `'\xff'` reached the IR as the constant -1. The range
+// analysis then proved `c + 1` fits a u8 (it computed 0), the obligation was discharged, and the
+// program returned 0: a silent wrap of 255 + 1. The same program with `c u8 = 255` was refused.
+// The C ran "right" in plain use (its slot is uint8_t) and the interpreter shared the wrong
+// constant, so no oracle saw it.
+func main() i32 {
+    c = '\xff'
+    d u8 = c + 1
+    return d as i32
+}

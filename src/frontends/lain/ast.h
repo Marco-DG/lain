@@ -654,7 +654,10 @@ typedef struct {
 } ExprRange;
 
 typedef struct {
-    char value;
+    // UNSIGNED: a character literal is a u8, 0..255. As plain `char` (signed here) `'\xff'` was
+    // stored as -1, and the lowering made it the IR constant -1, so the range analysis proved
+    // `'\xff' + 1` fits a u8 and the C wrapped it to 0.
+    unsigned char value;
 } ExprChar;
 
 typedef struct {

@@ -1,0 +1,11 @@
+// The value of a character literal at or above 0x80 is its byte, not a negative number: `'\xff'` is
+// 255 and `'\x80'` is 128, in the C and in the interpreter alike (the interpreter said neither).
+func main() i32 {
+    c = '\xff'
+    h = '\x80'
+    if c != 255 { return 1 }
+    if h != 128 { return 2 }
+    d u16 = c as u16 + 1
+    if d != 256 { return 3 }
+    return 0
+}
