@@ -739,15 +739,44 @@ y = 30           // Assignment (y was declared var)
 
 ### 3.6 Lexical Block Scoping
 
-Variables declared within a block are only visible within that block. **Shadowing** is allowed: declaring a variable with the same name as an outer variable creates an independent inner variable.
+Variables declared within a block are only visible within that block:
 
 ```lain
-var x = 10
-if true {
-    var x = 20       // Shadows outer x (independent variable)
-    // x is 20 here
+func scoped() i32 {
+    var total = 0
+    if true {
+        var step = 20      // visible only inside this block
+        total = total + step
+    }
+    return total           // 20; `step` is not in scope here
 }
-// x is 10 here again
+
+func main() i32 {
+    return scoped()
+}
+```
+
+> [!IMPORTANT]
+> **Shadowing is forbidden**, not allowed. Re-declaring a name that is already in scope — in an
+> inner block or the same one — is `[E013]`, so a name means one thing for the whole of its
+> function. There is no inner variable that quietly replaces an outer one.
+
+```lain
+func f() i32 {
+    var x = 10
+    if true {
+        var x = 20       // ERROR [E013]
+        return x
+    }
+    return x
+}
+```
+
+```
+[E013] Error Ln 4, Col 9: Redeclaration or shadowing of variable 'x' is forbidden
+   |
+ 4 |         var x = 20       // ERROR [E013]
+   |         ^
 ```
 
 ## 4. Ownership & Borrowing
@@ -768,24 +797,63 @@ Every parameter, variable and field has one of three ownership modes:
 
 The `mov` operator transfers ownership of a value. After a move, the source variable is **invalidated**.
 
-**Variable-to-variable move:**
+**Variable-to-variable move, and a move at a call site.** The moved-from variable is invalidated in
+both cases, and the invalidation is what `mov` buys: it is why no second consumer can exist.
+
 ```lain
-var a Resource
-a.id = 1
-var b = mov a       // a is moved into b
-// a.id             // ERROR [E001]: Use after move
+// VERIFY: exit 7
+type Resource { id i32 }
+
+func take_ownership(mov r Resource) i32 {
+    return r.id
+}
+
+func main() i32 {
+    var a Resource
+    a.id = 1
+    var b = mov a            // a is moved into b; a is now invalid
+    if b.id != 1 { return 1 }
+
+    var c Resource
+    c.id = 7
+    return take_ownership(mov c)
+}
 ```
 
-**Move at function call site:**
+Touch the source after the move and the program is refused:
+
 ```lain
-take_ownership(mov resource)
-// resource is now invalid
+type Resource { id i32 }
+
+func f() i32 {
+    var a Resource
+    a.id = 1
+    var b = mov a
+    return a.id              // ERROR [E001]
+}
 ```
 
-**Returning ownership:**
+```
+[E001] Error Ln 7, Col 12: use of a value that was already moved
+```
+
+**Returning ownership.** A constructor takes `mov` the same way a function does, so ownership
+passes into the returned value:
+
 ```lain
+// VERIFY: exit 5
+type Resource { id i32 }
+type Container { inner Resource }
+
 func wrap(mov r Resource) Container {
     return Container(mov r)    // Transfer ownership into return value
+}
+
+func main() i32 {
+    var a Resource
+    a.id = 5
+    var c = wrap(mov a)
+    return c.inner.id
 }
 ```
 
