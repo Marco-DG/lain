@@ -2541,31 +2541,91 @@ While Lain prioritizes safety, low-level systems programming sometimes requires 
 Operations that bypass safety checks must be enclosed in an `unsafe` block:
 
 ```lain
-unsafe {
-    var val = *ptr      // Pointer dereference: OK inside unsafe
-    *ptr = 42           // Write through pointer
-    var addr = &x       // Address-of: OK inside unsafe
+// VERIFY: exit 0
+func main() i32 {
+    var x = 7
+    unsafe {
+        var ptr = &x as *var i32    // Address-of and the cast: OK inside unsafe
+        var val = *ptr              // Pointer dereference: OK inside unsafe
+        *ptr = 42                   // Write through pointer
+        if val != 7 { return 1 }
+    }
+    if x != 42 { return 2 }         // the write landed
+    return 0
 }
-
-// var val = *ptr       // ERROR: Dereference outside unsafe block
 ```
 
-### 11.2 What `unsafe` Does NOT Disable
-
-`unsafe` only disables the specific operations listed in §11.1. The following remain fully active inside `unsafe` blocks:
-
-- Ownership tracking and move semantics (`[E001]`, `[E002]`, `[E003]`)
-- Borrow checking (`[E004]`, `[E005]`)
-- Type checking
-- VRA bounds verification
-- Pattern exhaustiveness checking
-- Purity enforcement
+Outside an `unsafe` block the dereference is refused:
 
 ```lain
-unsafe {
-    consume(mov resource)
-    // consume(mov resource)  // ERROR [E003]: double move (even inside unsafe)
+func f(p *i32) i32 {
+    return *p           // ERROR [E060]
 }
+```
+
+```
+[E060] Error Ln 2, Col 12: pointer dereference outside 'unsafe' block. Use 'unsafe { }' or declare the pointer with 'var p *T in arr' and guard with 'p in arr'.
+```
+
+### 11.2 What `unsafe` waives, and what it does not
+
+One principle decides the two lists, and it is worth knowing rather than memorising them:
+**`unsafe` waives a proof about an *operation*; it never waives a fact the rest of the program is
+entitled to assume.** A waived operation still has a defined result — a narrowing that does not fit
+yields the value modulo 2ᴺ — and the analysis after it reasons from that result. A refinement or a
+struct invariant is not an operation's obligation but a *premise*: later reads are allowed to assume
+it without proof, so suspending its check would make deductions false in safe code elsewhere.
+(Specification, chapter 18.)
+
+**Waived inside an `unsafe` block:**
+
+| check | code |
+|:------|:-----|
+| Pointer dereference and address-of | `[E060]` |
+| Pointer/integer casts | `[E012]` |
+| Direct ADT field access | `[E125]` |
+| Bounds verification | `[E085]` |
+| Overflow, and a narrowing that may not fit | `[E086]` |
+| Division or remainder by zero | `[E015]` |
+
+**Still fully active inside an `unsafe` block:**
+
+| check | code |
+|:------|:-----|
+| Ownership and move semantics | `[E001]`–`[E003]` |
+| Borrow checking | `[E004]` |
+| Definite initialisation | `[E005]` |
+| Pattern exhaustiveness | `[E014]` |
+| Struct field invariants | `[E121]` |
+| A narrowing **into a refined type** | `[E086]` |
+| The effect row | `[E011]`, `[E130]` |
+| Type checking | — |
+
+> [!WARNING]
+> **Bounds verification is waived**, so `unsafe { a[i] }` is accepted for any `i`. An out-of-range
+> index there is undefined behaviour, and the compiler has stopped helping. `in` (§8.3.2) is almost
+> always the better answer: `if i in a { a[i] }` needs no `unsafe` and costs nothing at run time.
+
+A double move is refused inside `unsafe` exactly as outside it:
+
+```lain
+type Resource { id i32 }
+
+func consume(mov r Resource) {
+}
+
+func f() {
+    var r Resource
+    r.id = 1
+    unsafe {
+        consume(mov r)
+        consume(mov r)      // ERROR [E002]
+    }
+}
+```
+
+```
+[E002] Error Ln 11, Col 17: this value is moved twice
 ```
 
 ### 11.3 Raw Pointers
