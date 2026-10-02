@@ -1318,6 +1318,25 @@ The keyword stays reserved and tells you the replacement:
        compiler cannot bound. Silence means no effects at all
 ```
 
+The attributes that spelled the same thing are gone with it, and refuse themselves the same way:
+
+```lain
+import std.c.{libc_printf}
+
+@io
+func p(s u8[:0]) {            // ERROR [E100]
+    libc_printf("%s", s.data)
+}
+```
+
+```
+[E100] Error Ln 3, Col 1: `@io` was removed: an effect is stated once, in the row. Write `func NAME(...) RET effects io`, listing every effect the function has (silence means none).
+```
+
+So all three spellings now lead to the row, and "one concern with three spellings" is a statement
+about the past rather than an aspiration. `@cold`, `@hot`, `@allocator` and `@noreturn` remain: they
+are not effects.
+
 A **function-pointer type** carries a row in the same position, which is what replaced the two
 points `*func` (total and pure) and `*proc` (anything):
 
@@ -1650,24 +1669,52 @@ func f(n Small, m Small) i32 decreasing m {
 ```
 
 > [!NOTE]
-> A `decreasing` clause on a loop the compiler can already bound by itself is not checked, because
-> nothing needs it — so a wrong measure there is accepted rather than reported. Supply one only where
-> the compiler asks for it.
+> **A written measure is a claim the compiler defends, even where it does not need it.** On a loop it
+> could already bound by itself, the measure you wrote is still checked, so a wrong one is reported
+> rather than ignored.
+
+```lain
+func f(n i32) i32 {
+    var i = 0
+    while i < n decreasing i {    // ERROR [E082]: `i` rises
+        i = i + 1
+    }
+    return i
+}
+```
+
+```
+[E082] Error Ln 3, Col 11: this loop ends, but not by the `decreasing` measure written: it does not fall on every iteration
+```
+
+The message says what it means: the loop *does* terminate — the compiler can see that from `i < n`
+and `i = i + 1` — but not for the reason stated. A measure is an assertion about *why*, and an
+assertion the implementation cannot confirm is refused even when the conclusion happens to hold.
 
 ### 6.4 Break & Continue
 
 `break` exits the innermost loop. `continue` skips to the next iteration.
 
 ```lain
-func example() effects io {
+// VERIFY: exit 0
+import std.c.{libc_printf}
+
+func example() i32 effects io {
+    var total = 0
     var i = 0
     while i < 10 {
         i = i + 1
         if i == 5 { continue }    // Skip 5
         if i == 8 { break }       // Stop at 8
-        libc_printf("%d ", i)
+        libc_printf("%d ", i)     // prints: 1 2 3 4 6 7
+        total = total + i
     }
-    // Output: 1 2 3 4 6 7
+    return total
+}
+
+func main() i32 effects io {
+    if example() != 23 { return 1 }    // 1 + 2 + 3 + 4 + 6 + 7
+    return 0
 }
 ```
 
@@ -2558,28 +2605,45 @@ func main() i32 { return 0 }
 
 **`std/fs.ln`** — File system with ownership:
 ```lain
-import std.c
+import std.c.{FILE, fopen, fclose, fputs}
 
 type File {
-    mov handle *FILE       // Owned file handle
+    mov handle *FILE       // Owned file handle -> File is linear
 }
 
-func open_file(path u8[:0], mode u8[:0]) mov File {
+// fopen returns null on failure, and wrapping that null in a File would defer the
+// fault to a later fputs or fclose on a null handle. Until Result lands, open_file
+// panics instead, so a File never holds a null handle: a defined abort rather than
+// undefined behaviour. The null check reads the owned pointer, so it needs `unsafe`;
+// the pointer is still consumed on the success path by File(raw).
+func open_file(path u8[:0], mode u8[:0]) mov File effects io, raises, alloc {
     var raw = fopen(path.data, mode.data)
+    unsafe {
+        if raw == 0 { panic("open_file: could not open file") }
+    }
     return File(raw)
 }
 
-func close_file(mov {handle} File) {
-    fclose(handle)
+func close_file(mov {handle} File) effects io {
+    fclose(mov handle)
 }
 
-func write_file(f File, s u8[:0]) {
+func write_file(f File, s u8[:0]) effects io {
     fputs(s.data, f.handle)
 }
+
+func main() i32 { return 0 }
 ```
 
 > [!NOTE]
-> The `File` type is a safe wrapper around C's `FILE*`. Because `handle` is declared `mov`, the `File` struct is **linear**: it must be explicitly consumed via `close_file(mov f)`. Forgetting to close a file is a compile error `[E002]`.
+> The `File` type is a safe wrapper around C's `FILE*`. Because `handle` is declared `mov`, `File` is
+> **linear**: it must be consumed exactly once, via `close_file(mov f)`. Forgetting to close a file is
+> `[E003]` — a linear value not consumed before it goes out of scope. (`[E002]` is the opposite
+> mistake, closing it twice.)
+>
+> Note also that `close_file` consumes by **destructuring** — `mov {handle} File` — and then passes
+> `mov handle` on to `fclose`. That is what consuming a linear value means in practice, and §4.3
+> explains why a function that takes `mov` and does nothing with it has not consumed anything.
 
 **`std/math.ln`** — Pure math utilities:
 
@@ -3475,10 +3539,28 @@ func process() effects io, raises, alloc {
 ### ADT and Pattern Matching
 
 The payload fields are **refined, and they have to be**: `r * r * 314` on an unbounded `int`
-overflows long before the division brings it back. A variant field takes its bound from a
-**refinement type alias**; an inline refinement on a variant field is not yet accepted
-(`[E100] Expected ',' after variant field`), though a struct field takes one — so use the alias for
-now rather than reading the asymmetry as deliberate:
+overflows long before the division brings it back. A variant field carries a refinement exactly as a
+struct field does — written inline, or named by a **refinement type alias** when the same bound
+appears more than once:
+
+```lain
+type Shape {
+    Circle    { radius int >= 0 and <= 1000 }
+    Rectangle { width int >= 0 and <= 1000, height int >= 0 and <= 1000 }
+    Point
+}
+
+func area(s Shape) int {
+    return case s {
+        Circle(r):       r * r * 314 / 100
+        Rectangle(w, h): w * h
+        Point:           0
+    }
+}
+```
+
+The same thing with an alias, which is the form to prefer once a bound is repeated — three times
+here, and the alias also gives it a name a reader can learn:
 
 ```lain
 type Dim = int >= 0 and <= 1000
