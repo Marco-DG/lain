@@ -10,6 +10,7 @@ typedef struct Parser {
     Token  token;
     isize  line;
     isize  column;
+    isize  line_carry;   // line ends inside the current token, added when the next one is read
 } Parser;
 
 // low‑level helpers
@@ -37,6 +38,13 @@ Expr *parse_path_expr(Arena *arena, Parser *parser);
 
 
 Token _parser_advance(Parser* parser) {
+    // The token just consumed may have spanned lines: a string or character literal can hold a
+    // raw line end (Annex A `string-char`). Its own position is where it STARTS, so its line
+    // ends count from the next token on. They were never counted, so after a two-line string
+    // every position was one line early (I.102).
+    parser->line += parser->line_carry;
+    parser->line_carry = 0;
+
     // keep pulling tokens until it's not a comment
     do {
         parser->token = lexer_next(parser->lexer);
@@ -70,6 +78,9 @@ Token _parser_advance(Parser* parser) {
         while (p > parser->lexer->text && p[-1] != '\n') p--;
         parser->column = (isize)(token.start - p) + 1;
         if (token.kind == TOKEN_STRING_LITERAL) parser->column--;   // its start skips the opening quote
+        if (token.kind == TOKEN_STRING_LITERAL || token.kind == TOKEN_CHAR_LITERAL)
+            for (const char *q = token.start; q < token.start + token.length; q++)
+                if (*q == '\n') parser->line_carry++;
     } else {
         parser->column += token.length;
     }

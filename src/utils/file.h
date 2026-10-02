@@ -24,6 +24,14 @@ typedef struct
 // file, or zeroes), where nothing could see it: the lexer did that for every unterminated literal
 // at the end of a file (I.101), and an ASan build of lain reported nothing. Now a read past the
 // end is a read past an allocation, which ASan reports.
+//
+// Line ends are normalised here, once, for everything after it (spec 05: CR LF is a single line
+// feed, and so is a lone CR). Nothing did it before (I.102): the lexer made CR and LF two
+// newlines, while the block-comment line counter, the column scan and the excerpt printer
+// counted LF only, so a file saved with Windows line ends reported an error on line 5 as Ln 8,
+// under line 8's text, and a lone-CR file as Ln 4, Col 62. A string literal kept the CR, so the
+// same program saved with CR LF had a longer string. One normalisation at the one entry point
+// makes every later reader see LF alone.
 static File file_read_source(char* filename)
 {
     File f = {0};
@@ -50,6 +58,14 @@ static File file_read_source(char* filename)
 
     // read exactly f.size bytes
     file_read(f.handle, f.contents, f.size);
+
+    isize w = 0;
+    for (isize r = 0; r < f.size; r++) {
+        if (buf[r] != '\r') { buf[w++] = buf[r]; continue; }
+        buf[w++] = '\n';
+        if (r + 1 < f.size && buf[r + 1] == '\n') r++;
+    }
+    f.size = w;
 
     // NUL‑terminate
     buf[f.size] = '\0';
