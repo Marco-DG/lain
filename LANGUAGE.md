@@ -1442,8 +1442,20 @@ func main() {
 This works for all types, including slices, pointers, and structs. The ownership mode of the first parameter is inferred automatically from the function declaration:
 
 ```lain
-func push(var v Vec, item int) { /* ... */ }
-v.push(42)   // Desugars to: push(var v, 42)
+// VERIFY: exit 0
+type Vec { len int }
+
+func push(var v Vec, item int) {
+    v.len = item
+}
+
+func main() i32 {
+    var v Vec
+    v.len = 0
+    v.push(42)              // Desugars to: push(var v, 42)
+    if v.len != 42 { return 1 }
+    return 0
+}
 ```
 
 ---
@@ -1478,15 +1490,33 @@ For loops iterate over finite ranges, so they are always allowed: the bound is t
 
 **Single variable form:**
 ```lain
-for i in 0..n {
-    // i ranges from 0 to n-1 (exclusive end)
+func last_index(n usize) usize {
+    var seen usize = 0
+    for i in 0..n {
+        seen = i            // i ranges from 0 to n-1 (exclusive end)
+    }
+    return seen
+}
+
+func main() i32 {
+    return 0
 }
 ```
 
 **Two variable form:**
 ```lain
-for i, val in 0..10 {
-    // i = index, val = value (same as i for integer ranges)
+// VERIFY: exit 0
+func f() i32 {
+    var last = 0
+    for i, val in 0..10 {
+        last = val as i32   // i = index, val = value (same as i for integer ranges)
+    }
+    return last             // the last value is 9
+}
+
+func main() i32 {
+    if f() != 9 { return 1 }
+    return 0
 }
 ```
 
@@ -2283,10 +2313,29 @@ func find_zero(data u8[:0]) usize {
 
 **And-chain composition:** The `in` guard propagates through `and`, so the right-hand side of an `and` can safely access the array:
 ```lain
-while l.pos in l.src and (l.src[l.pos] as int) != '"' decreasing l.src.len - l.pos {
-    l.pos += 1   // l.src[l.pos] is safe on both sides
+type Lexer {
+    src u8[],
+    pos usize <= src.len
+}
+
+func scan_to_quote(var l Lexer) {
+    while l.pos in l.src and (l.src[l.pos] as int) != '"' decreasing l.src.len - l.pos {
+        l.pos += 1   // l.src[l.pos] is safe on both sides of the `and`
+    }
+}
+
+func main() i32 {
+    return 0
 }
 ```
+
+> [!IMPORTANT]
+> Note the field invariant: a scanning cursor is `pos usize <= src.len`, a **position**, not
+> `pos usize in src`, which is an **index** and means `pos < src.len`. A loop that advances past the
+> last byte breaks the index form on its final iteration, and the store is refused with `[E121]`.
+> The guard `l.pos in l.src` inside the loop is what re-establishes the index property where it is
+> needed, which is exactly the division of labour: the field carries what is always true, the guard
+> proves what is true here.
 
 **Termination integration:** `idx in arr` implies `idx < arr.len`, so the measure `arr.len - idx` is recognized as non-negative by the termination verifier (§6.3).
 
@@ -2774,11 +2823,19 @@ func main() int {
 Unsafe blocks can be nested and combined with control flow:
 
 ```lain
-unsafe {
+// VERIFY: exit 0
+func main() i32 {
+    var x = 7
+    var p = &x
     unsafe {
-        var val = *p    // OK: nested unsafe
+        unsafe {
+            var val = *p        // OK: nested unsafe
+            if val != 7 { return 1 }
+        }
+        var val2 = *p           // OK: still inside outer unsafe
+        if val2 != 7 { return 2 }
     }
-    var val2 = *p       // OK: still inside outer unsafe
+    return 0
 }
 ```
 

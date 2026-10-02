@@ -209,10 +209,17 @@ for f in "$TMP"/b*.txt; do
         # PARSE or NAME error (E100, E106, E012, ...) really is the wrapper talking. One that
         # fails on a PROOF diagnostic — bounds, overflow, borrows, initialisation — compiled
         # far enough to be judged, and the judgement was that the documented code is unsafe.
+        #
+        # ★ THE LIST WAS INCOMPLETE and that is how it fails: a code missing from it files a
+        # false SAFETY claim under "backlog". E121 was missing, so §8.3.2's documented lexer
+        # loop — which breaks a struct field's invariant — counted as an unverifiable fragment
+        # rather than as unsafe documented code. So were E001-E003 (linearity), E011 (a
+        # documented loop that is not provably terminating, which the wrapper's row withholds
+        # `diverge` precisely in order to catch), E015, E016, E010 and E125.
         # That is the page making a false claim, and filing it under "backlog" hides it: the
         # `int` alias fix turned five such fragments red and this bucket absorbed all five
         # without the total moving enough to notice.
-        if echo "$out" | grep -qE '^\[E(004|005|019|082|085|086|126|130|131)\]'; then
+        if echo "$out" | grep -qE '^\[E(001|002|003|004|005|007|010|011|015|016|019|082|085|086|121|125|126|130|131)\]'; then
             falseclaim=$((falseclaim+1))
             echo "  ★ $page:$ln — fragment draws a PROOF diagnostic: the documented code is not safe"
             echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'
