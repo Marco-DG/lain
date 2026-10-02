@@ -1221,6 +1221,24 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                     oct_add_lb(W, r, V->elem_lo[arr]);
                     oct_add_ub(W, r, V->elem_hi[arr]);
                 }
+                // ...and ANY integer read from memory is bounded by its TYPE, the values its bits
+                // can represent: a `u8` element is in [0, 255]. That bound lived only in vra_range,
+                // for the same reason as above, so it was lost once the value went through a
+                // cell: `t = (c[0] as i32) + (c[1] as i32); return t` was refused (E086 at the
+                // return) where `t i32 = ...` and `return ...` proved, and where u8 PARAMETERS
+                // proved, since a parameter's type range is seeded at entry (I.57, Handwriting's
+                // M14 bind-return finding). Sound for every width: a bit pattern of an N-bit
+                // integer is within its range. 64 bits is skipped (u64's top is past a bound).
+                {
+                    IrType *lt = ins->result ? ins->result->type : NULL;
+                    if (lt && lt->kind == IRT_INT && lt->bits >= 1 && lt->bits <= 63) {
+                        long long tlo = lt->is_signed ? -(1LL << (lt->bits - 1)) : 0;
+                        long long thi = lt->is_signed ? (1LL << (lt->bits - 1)) - 1
+                                                      : (long long)((1ULL << lt->bits) - 1);
+                        oct_add_lb(W, r, tlo);
+                        oct_add_ub(W, r, thi);
+                    }
+                }
             }
             break;
         }

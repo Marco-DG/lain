@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 9, Col 12: arithmetic is not provably free of overflow
+// The refusing twin of tests/trust/element_type_range_through_local_pass.ln: the bound an array
+// element gets is its TYPE's range and no tighter. Two u16 elements multiplied reach 65535 * 65535,
+// past i32, so returning the product as an i32 must stay refused (the same with u8 elements proves).
+func prod2(c u16[2]) i32 {
+    x = c[0]
+    t = (x as i64) * (c[1] as i64)
+    return t
+}
+
+func main() i32 {
+    var c u16[2] = [3, 4]
+    return prod2(c) - 12
+}

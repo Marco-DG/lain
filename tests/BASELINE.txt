@@ -1547,6 +1547,11 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=const 12
+### tests/trust/element_type_range_through_local_pass.ln
+rc=0
+out=
+at=nonnull 4
+at=pure 4
 ### tests/trust/enum_backing_width_pass.ln
 rc=0
 out=

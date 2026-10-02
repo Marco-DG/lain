@@ -1,0 +1,23 @@
+// An integer read from an array is bounded by its type, and the bound survives a local: the sum of
+// two u8 elements widened to i32 is in [0, 510], bound to an untyped local and returned. It was
+// refused (E086 at `return t`) while `t i32 = ...`, a direct return, and u8 PARAMETERS all proved:
+// the element's type range lived only in the interval fallback, not in the octagon, and was lost
+// through the local's cell (I.57, from Handwriting's M14 bind-return transformation).
+func sum2(c u8[4]) i32 {
+    t = (c[0] as i32) + (c[1] as i32)
+    return t
+}
+
+func prod2(c u8[4]) i32 {
+    x = c[2]
+    y = c[3]
+    t = (x as i32) * (y as i32)
+    return t
+}
+
+func main() i32 {
+    var c u8[4] = [200, 250, 255, 255]
+    if sum2(c) != 450 { return 1 }
+    if prod2(c) != 65025 { return 2 }
+    return 0
+}
