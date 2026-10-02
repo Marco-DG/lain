@@ -979,6 +979,12 @@ static void ii_exec(IrInstr *ins) {
 // that block must contain them (src/analysis/containment.h, `lain --interpret --check-invariants`).
 // A hook rather than a call, so the semantics does not depend on the analysis it checks.
 static void (*ii_on_block)(IrFunc *f, IrBlock *b, IVal *v, int nv) = NULL;
+// Called before every instruction runs, and once more with `i` NULL before the block's
+// terminator runs (`b->term`; a `return` has no instruction of its own, and its line is the
+// terminator's). This is what a stepping debugger stops on: the call stack is `ii_frame` and its
+// `up` links, and the frame's values are `v[0..nv)` by IrValue id. NULL by default: the cost is
+// one test per instruction.
+static void (*ii_on_instr)(IrFunc *f, IrBlock *b, IrInstr *i, IVal *v, int nv) = NULL;
 static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
     IFrame fr; memset(&fr, 0, sizeof fr);
     fr.f = f; fr.nv = f->next_value_id > 0 ? f->next_value_id : 1; fr.up = ii_frame;
@@ -1000,8 +1006,10 @@ static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
         if (ii_on_block) ii_on_block(f, b, fr.v, fr.nv);
         for (IrInstr *i = b->instrs; i; i = i->next) {
             if (++ist->steps > ist->budget) ii_fail(97, "STEP BUDGET EXHAUSTED", i, "%lld steps", ist->budget);
+            if (ii_on_instr) ii_on_instr(f, b, i, fr.v, fr.nv);
             ii_exec(i);
         }
+        if (ii_on_instr) ii_on_instr(f, b, NULL, fr.v, fr.nv);
         prev = b;
         IrTerm *t = &b->term;
         if (t->kind == IR_TERM_BR) { b = t->a; continue; }
