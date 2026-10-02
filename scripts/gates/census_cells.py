@@ -15,9 +15,19 @@ import sys
 
 PRE = 'extern func libc_printf(fmt *u8, ...) i32 effects io\n'
 CELLS = []   # (axis, cell, program, expected_stdout)
+PLAN = {}    # (axis, cell) -> the plan row that explains a KNOWN hole
 
-def add(axis, cell, prog, expected):
+def add(axis, cell, prog, expected, plan=None):
+    """`plan` names the open item for a cell that is expected to be wrong TODAY.
+
+    The census gate refuses a baseline hole with no plan row. That citation used to be hand-written
+    into census_baseline.txt, where the next `--bless` destroyed it: a documented hole silently became
+    an undocumented one and the gate failed with no indication that a comment had been dropped. Keeping
+    it here means blessing EMITS it, so it survives every re-bless by construction.
+    """
     CELLS.append((axis, cell, PRE + prog, expected))
+    if plan:
+        PLAN[(axis, cell)] = plan
 
 # ── axis 1: `case` scrutinee type ─────────────────────────────────────────────────────────────
 SCRUT = [
@@ -463,6 +473,116 @@ for side, expr in (("a-first", "a +% b"), ("b-first", "b +% a")):
         % expr, "%d\n" % (200 + (-300)))
 
 
+# ── axis: a `mov` field's leak, by the field's TYPE (I.82) ─────────────────────────────────────
+# Documentation found that a `mov` field of non-pointer type is consumed-exactly-once on some paths
+# and not others: E016 fires, E003 does not. Verified as a 2x3 matrix, and the shape is why this is a
+# census row rather than one test: FIVE of the six cells are correct today, and the fix must flip
+# exactly one and leave the others alone.
+#
+#   field type   full consume   partial (some paths)   never consumed
+#   *i32         accepted       E016                   E003
+#   i32          accepted       E016                   ACCEPTED   <- the bug (I.82)
+#
+# The partial case firing E016 for BOTH types is the interesting part: the linearity machinery knows
+# the field is linear, it just does not report the LEAK for a non-pointer. So this is a missing report
+# on one path, not a missing notion of linearity — which is what the five correct cells pin.
+_MOV_SHAPES = [
+    ("full consume",  '    sink(mov r)\n',                                  "accept"),
+    ("partial",       '    if c {\n        sink(mov r)\n    }\n',           "__ILLFORMED__"),
+    ("never consumed",'    n = n + 0\n',                                    "__ILLFORMED__"),
+]
+for fty, tyname, init in [("*i32", "pointer", "    var r = R(&n)\n"),
+                          ("i32",  "integer", "    var r = R(7)\n")]:
+    for shape, body, want in _MOV_SHAPES:
+        add("mov-field-leak", "%s field, %s" % (tyname, shape),
+            'type R { mov h %s }\n'
+            'func sink(mov {h} R) { }\n'
+            'func go(c bool) i32 {\n'
+            '    var n i32 = 0\n'
+            '%s%s'
+            '    return 0\n}\n'
+            'func main() i32 effects io {\n    libc_printf("%%d\\n", go(true))\n    return 0\n}\n'
+            % (fty, init, body),
+            # DERIVED, not measured: `go` consumes (or leaks) the resource and returns 0 on every
+            # path it can reach, so an accepted cell prints exactly "0".
+            "0\n" if want == "accept" else want,
+            plan=("I.82 — a `mov` field of non-pointer type leaks silently: E016 fires on the partial "
+                  "path, E003 does not fire on the leak"
+                  if (tyname, shape) == ("integer", "never consumed") else None))
+
+
+# ── axis: a `for` bound's TYPE, by whether the body completes an iteration (I.81) ──────────────
+# Documentation found that a `for` bound may be an f64. One missing typing rule, TWO symptoms, and
+# which one you see depends on the BODY:
+#
+#   bound   body returns immediately        body completes an iteration
+#   f64     ACCEPTED (silently wrong)       refused E086, at the BODY's first line, about "arithmetic"
+#   usize   accepted                        accepted
+#
+# A returning body never steps the counter, so VRA never compares it against the float and nothing
+# complains; a completing body does, and the refusal lands in the wrong place for the wrong reason
+# (an f64 where an integer was wanted is not an overflow). E012 at the BOUND fixes both, so when it
+# lands the first cell flips to a refusal and the second's CODE changes — which is why both are here:
+# one pins the acceptance, the other pins the diagnostic.
+#
+# The emitted C makes the defect plain: `v3 < v0` compares an integer counter with a double.
+for bname, bound, arg0, arg1 in [("f64", "f64", "0.5", "0.0"), ("usize", "usize", "1", "0")]:
+    add("for-bound-type", "%s bound, body returns" % bname,
+        'func f(a %s) i32 {\n    for i in 0..a {\n        return 1\n    }\n    return 0\n}\n'
+        'func main() i32 effects io {\n    libc_printf("%%d\\n", f(%s) * 10 + f(%s))\n    return 0\n}\n'
+        % (bound, arg0, arg1),
+        # DERIVED: a non-empty bound enters the body once and returns 1; an empty bound returns 0.
+        "10\n" if bname == "usize" else "__ILLFORMED__",
+        plan=(None if bname == "usize" else
+              "I.81 — a `for` bound may be an f64; a returning body never steps the counter, so nothing "
+              "complains. The completing-body cell pins the other symptom (E086 at the body, should be "
+              "E012 at the bound)"))
+    add("for-bound-type", "%s bound, body completes" % bname,
+        'func f(a %s) i32 effects io {\n    for i in 0..a {\n        libc_printf("x")\n    }\n'
+        '    return 0\n}\n'
+        'func main() i32 effects io {\n    f(%s)\n    libc_printf("\\n")\n    return 0\n}\n'
+        % (bound, "4.0" if bname == "f64" else "4"),
+        # DERIVED: four iterations print four x's.
+        "xxxx\n" if bname == "usize" else "__ILLFORMED__")
+
+
+# ── axis: the character literal (I.83) ────────────────────────────────────────────────────────
+# `'ab'` is silently 'a'. Probing the whole family found 8 of 10 cases already correct, and the 8
+# correct ones are the point of the row, because they are a TRAP for the obvious fix:
+#
+#   'a'      97   correct            'ab'    97   WRONG, should be refused (I.83)
+#   '\n'     10   correct            'abc'   97   WRONG, same bug
+#   '\t'      9   correct            ''           correctly refused (malformed)
+#   '\\'     92   correct            '\q'         correctly refused (unknown escape)
+#   '\''     39   correct
+#   '\x41'   65   correct
+#
+# **`'\n'`, `'\t'`, `'\\'`, `'\''` and `'\x41'` are all MULTI-CHARACTER IN SOURCE and single-valued.**
+# So a fix that refuses "more than one character between the quotes" breaks five working cases. The
+# rule has to be "more than one character after escape processing". These five cells are what catches
+# that, and they are the reason this is a row and not a test.
+#
+# Values are the ASCII code points, derived from the standard, not read back from the compiler.
+for name, lit, want in [
+        ("single",            r"'a'",    "97\n"),
+        ("escape newline",    r"'\n'",   "10\n"),
+        ("escape tab",        r"'\t'",   "9\n"),
+        ("escape backslash",  r"'\\'",   "92\n"),
+        ("escape quote",      r"'\''",   "39\n"),
+        ("escape hex",        r"'\x41'", "65\n"),
+        ("two characters",    r"'ab'",   "__ILLFORMED__"),
+        ("three characters",  r"'abc'",  "__ILLFORMED__"),
+        ("empty",             r"''",     "__ILLFORMED__"),
+        ("unknown escape",    r"'\q'",   "__ILLFORMED__")]:
+    add("char-literal", name,
+        'func main() i32 effects io {\n    c u8 = %s\n    libc_printf("%%d\\n", c as i32)\n'
+        '    return 0\n}\n' % lit, want,
+        plan=("I.83 — extra characters are silently dropped; the fix must count characters AFTER escape "
+              "processing, or the five escape cells break"
+              if name in ("two characters", "three characters") else None))
+
+
 if __name__ == "__main__":
     import json
-    print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w} for a, c, p, w in CELLS]))
+    print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
+                       "plan": PLAN.get((a, c))} for a, c, p, w in CELLS]))
