@@ -1689,19 +1689,41 @@ func main() i32 effects io {
 3. **Integers**: An `else` arm is always required (integers are not finite).
 
 ```lain
-// OK: All 3 variants covered, no 'else' needed
+// VERIFY: exit 3
+// All 3 variants covered, so no `else` is needed
 type Status { Ready, Running, Done }
-case s {
-    Ready:   /* ... */
-    Running: /* ... */
-    Done:    /* ... */
+
+func rank(s Status) i32 {
+    case s {
+        Ready:   return 1
+        Running: return 2
+        Done:    return 3
+    }
+    return 0
 }
 
-// ERROR [E014]: Missing 'Done' variant and no 'else'
-case s {
-    Ready:   /* ... */
-    Running: /* ... */
+func main() i32 {
+    return rank(Status.Done)
 }
+```
+
+Drop one arm and the diagnostic names the variant you forgot, which is what makes exhaustiveness
+usable rather than merely strict:
+
+```lain
+type Status { Ready, Running, Done }
+
+func rank(s Status) i32 {
+    case s {              // ERROR [E014]
+        Ready:   return 1
+        Running: return 2
+    }
+    return 0
+}
+```
+
+```
+[E014] Error Ln 4, Col 5: this `case` on 'Status' has no arm for Status.Done. Add one, or an `else:`.
 ```
 
 ### 6.7 Defer Statement
@@ -2739,17 +2761,25 @@ Lain does **not** have exceptions, `try`/`catch`, or stack unwinding. All error 
 
 ### 14.2 The `Option` and `Result` Pattern
 
+`Option(T)` and `Result(T, E)` are ordinary generic ADTs from the standard library — `Some`/`None`
+and `Ok`/`Err` — so a `case` on one is exhaustive by the rules of §6.6, with no special syntax:
+
 ```lain
-import std.option
-import std.result
+// VERIFY: exit 7
+import std.result.{Result}
 
-type OptFile = Option(File)
-type FileResult = Result(File, int)
+type FileResult = Result(i32, i32)
 
-var result = FileResult.Ok(my_file)
-case result {
-    Ok(f): write_file(f, "hello")
-    Err(code): libc_printf("Error: %d\n", code)
+func handle(r FileResult) i32 {
+    return case r {
+        Ok(v):     v
+        Err(code): code
+    }
+}
+
+func main() i32 {
+    var good = FileResult.Ok(7)
+    return handle(good)
 }
 ```
 
