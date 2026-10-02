@@ -20,4 +20,4 @@ func fact(n u64) u64 {
     return n *% fact(n -% 1)
 }
 
-func main() u64 { return fact(4) +% (top(1) +% a1(2) +% a2(3) as% u64) }
+func main() u64 { return fact(4) +% ((top(1) +% a1(2) +% a2(3)) as% u64) }

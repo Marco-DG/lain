@@ -1,0 +1,49 @@
+// The allowed side of policy_op_mixed_types_fail.ln (spec 07): an operator with an overflow policy
+// computes in one integer type, and the program never has to state a conversion that loses
+// nothing.
+// - A literal, negated or not, takes the other operand's type, on either side.
+// - So does plain arithmetic, `+ - * /`, whose wide type the compiler chose so it cannot
+//   overflow: `s +% x * y` on i32s wraps in i32 although `x * y` is an i64, and the policy
+//   applies to its exact value.
+// - Of two stated types, the one that holds every value of the other, in either order:
+//   `a +| b` and `b +| a` with a u8 and a u32 are both a u32 saturating add, and a u8 and an i32
+//   are an i32 add (200 and -300 give -100; the u8 used to win on the left, giving 156).
+// - A literal keeps its exact value, in the type's range or not: `x +| 300` on a u8 clamps the
+//   exact sum to 255, `300 +% x` wraps it.
+// - A shift's amount is a count, not an operand.
+// Each value is checked in the C (run_trust) and under `lain --interpret` (interp_gate).
+func lit_left(x u16) u16 { return 7 +% x }
+func lit_right(x u16) u16 { return x +% 7 }
+func neg_left(x i16) i16 { return -3 *| x }
+func neg_right(x i16) i16 { return x *| -3 }
+func wide_right(s i32, x i32, y i32) i32 { return s +% x * y }
+func wide_left(s i32, x i32) i32 { return (x + 1) +% s }
+func wide_u8(s u8, x u8) u8 { return s +% (x - 1) }
+func hash(acc u32, c u8) u32 { return acc *% 31 +% c }
+func holds_lr(a u8, b u32) u32 { return a +| b }
+func holds_rl(a u8, b u32) u32 { return b +| a }
+func holds_signed(s i64, x i32) i64 { return x -| s }
+func mixed_sign_lr(a u8, b i32) i32 { return a +% b }
+func mixed_sign_rl(a u8, b i32) i32 { return b +% a }
+func lit_big(x u8) u8 { return x +| 300 }
+func lit_big_left(x u8) u8 { return 300 +% x }
+func cast(a u32, b i32) u32 { return a +| (b as% u32) }
+func shift(x u8, k u32) u8 {
+    if k >= 8 { return 0 }
+    return x <<% k
+}
+func main() i32 {
+    if lit_left(65535) != 6 or lit_right(65535) != 6 { return 1 }
+    if neg_left(20000) != -32768 or neg_right(20000) != -32768 { return 2 }
+    if wide_right(2147483647, 65536, 65536) != 2147483647 { return 3 }
+    if wide_left(2147483647, 0) != -2147483648 { return 4 }
+    if wide_u8(5, 0) != 4 { return 5 }
+    if hash(4294967295, 200) != 169 { return 6 }
+    if holds_lr(10, 300) != 310 or holds_rl(10, 300) != 310 { return 7 }
+    if holds_signed(9223372036854775807, -5) != -9223372036854775807 - 1 { return 8 }
+    if mixed_sign_lr(200, -300) != -100 or mixed_sign_rl(200, -300) != -100 { return 11 }
+    if lit_big(10) != 255 or lit_big_left(10) != 54 { return 12 }
+    if cast(10, 5) != 15 { return 9 }
+    if shift(3, 7) != 128 { return 10 }
+    return 0
+}

@@ -1,0 +1,14 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: of `u32` and `i32` neither holds every value of the other
+// An operator with an overflow policy computes in one integer type (spec 07). Of two stated
+// types it takes the one that holds every value of the other (policy_op_one_type_pass.ln); a u32
+// and an i32 have no such type, so the program says which. The LEFT one used to win and the
+// right was converted in silence: `a +| b` with a = 10, b = -20 clamped to 0 as a u32, and
+// `b +| a` gave -10 as an i32, so a commutative operator depended on the order.
+func f(a u32, b i32) u32 {
+    return a +| b
+}
+func main() i32 {
+    if f(10, -20) != 0 { return 1 }
+    return 0
+}

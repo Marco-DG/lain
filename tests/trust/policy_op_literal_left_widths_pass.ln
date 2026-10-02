@@ -1,0 +1,18 @@
+// The other half of policy_op_literal_left_pass.ln: where the operation's i32 did not fit the
+// result, a literal on the left was refused (E086) while the mirror spelling compiled. `250 +% x`
+// on a u8 is the u8 wrapping add `x +% 250` is, and so on at each width and policy.
+func w8(x u8) u8 { return 250 +% x }
+func w16(x i16) i16 { return 30000 +% x }
+func ssub(x u32) u32 { return 100 -| x }
+func sneg(x i64) i64 { return -1 *| x }
+func s8(x i8) i8 { return -100 -| x }
+func m16(x u16) u16 { return 300 *% x }
+func main() i32 {
+    if w8(10) != 4 { return 1 }
+    if w16(10000) != -25536 { return 2 }
+    if ssub(4294967275) != 0 or ssub(40) != 60 { return 3 }
+    if sneg(-9223372036854775807 - 1) != 9223372036854775807 or sneg(5) != -5 { return 4 }
+    if s8(100) != -128 or s8(-100) != 0 { return 5 }
+    if m16(300) != 24464 { return 6 }
+    return 0
+}

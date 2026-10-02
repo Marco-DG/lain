@@ -1804,6 +1804,18 @@ out=1234
 at=const 2
 ty=Slice_u8 scalar
 ty=__U_i32_ParseErr_i32 struct
+### tests/trust/policy_op_literal_left_pass.ln
+rc=0
+out=
+at=const 14
+### tests/trust/policy_op_literal_left_widths_pass.ln
+rc=0
+out=
+at=const 12
+### tests/trust/policy_op_one_type_pass.ln
+rc=0
+out=
+at=const 34
 ### tests/trust/ptr_to_var_element_pass.ln
 rc=0
 out=

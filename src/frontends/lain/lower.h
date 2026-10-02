@@ -2431,6 +2431,16 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             Type *sty = (L->type && L->type->kind==TYPE_SIMPLE && L->type->int_width_cache>0) ? L->type
                       : (R->type && R->type->kind==TYPE_SIMPLE && R->type->int_width_cache>0) ? R->type
                       : e->type;
+            // An operator with an overflow policy computes in ITS type, which a literal on the left
+            // takes from the other operand (I.56): `100 /% x` on a u64 is an unsigned division.
+            {
+                TokenKind po = e->as.binary_expr.op;
+                bool policy = po == TOKEN_PLUS_PERCENT || po == TOKEN_MINUS_PERCENT || po == TOKEN_ASTERISK_PERCENT ||
+                              po == TOKEN_SLASH_PERCENT || po == TOKEN_PLUS_PIPE || po == TOKEN_MINUS_PIPE ||
+                              po == TOKEN_ASTERISK_PIPE || po == TOKEN_SLASH_PIPE || po == TOKEN_PLUS_QUESTION ||
+                              po == TOKEN_MINUS_QUESTION || po == TOKEN_ASTERISK_QUESTION;
+                if (policy && e->type && e->type->kind==TYPE_SIMPLE && e->type->int_width_cache>0) sty = e->type;
+            }
             bool sgn = !(sty && sty->kind==TYPE_SIMPLE && sty->int_width_cache>0 && !sty->int_signed_cache);
             // An ARRAY LITERAL beside a vector (`a - [1, 1, 1, 1]`) is that vector: it types as
             // an array, so it was materialised as one and its BASE POINTER met the vector —

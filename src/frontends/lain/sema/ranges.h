@@ -369,9 +369,13 @@ static Range sema_eval_range(Expr *e, RangeTable *t) {
                                 || op == TOKEN_MINUS_PIPE || op == TOKEN_ASTERISK_PIPE
                                 || op == TOKEN_SLASH_PERCENT || op == TOKEN_SLASH_PIPE
                                 || op == TOKEN_SHIFT_LEFT_PERCENT);
-            if (is_wrap_or_sat && e->as.binary_expr.left && e->as.binary_expr.left->type) {
+            // The operation's own type (typecheck.h, I.56): the LEFT operand's was an i32 when it
+            // was a literal, so `100 +% x` on an i64 was given an i32's range.
+            Type *wty = (e->type && type_integer_range(e->type, &(long long){0}, &(long long){0}))
+                      ? e->type : e->as.binary_expr.left ? e->as.binary_expr.left->type : NULL;
+            if (is_wrap_or_sat && wty) {
                 long long lo, hi;
-                if (type_integer_range(e->as.binary_expr.left->type, &lo, &hi)) {
+                if (type_integer_range(wty, &lo, &hi)) {
                     bool is_sat = (op == TOKEN_PLUS_PIPE || op == TOKEN_MINUS_PIPE
                                 || op == TOKEN_ASTERISK_PIPE);
                     if (is_sat) {

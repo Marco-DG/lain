@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: of `i32` and `u64` neither holds every value of the other
+// The rule covers every operator with an overflow policy, the checked ones too (spec 07): neither
+// an i32 nor a u64 holds every value of the other, so there is no one type for `+?` to test the
+// overflow in, and the program says which.
+func f(a i32, b u64) u64 {
+    return a +? b else 0
+}
+func main() i32 {
+    if f(1, 2) != 3 { return 1 }
+    return 0
+}

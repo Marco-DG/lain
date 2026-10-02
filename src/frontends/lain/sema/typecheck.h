@@ -129,6 +129,36 @@ static bool is_integer_type(Type *t) {
     return false;
 }
 
+// An integer type's representation, width and signedness: `usize`/`isize` at the target's pointer
+// width, `int` as i32, a refinement alias as its base. Two integer types with one shape are one
+// type to an operator with an overflow policy (I.56).
+static bool sema_int_shape(Type *t, int *bits, bool *sgn) {
+    t = resolve_type_alias(t);
+    if (!t || !is_integer_type(t)) return false;
+    if (parse_iN_uN(t, bits, sgn)) return true;
+    const char *n = t->base_type->name;
+    if (t->base_type->length == 5) { *bits = (int)target.pointer_size * 8; *sgn = n[0] == 'i'; return true; }
+    *bits = 32; *sgn = true;                                    // `int`
+    return true;
+}
+// An integer literal, negated or not: it has no type of its own to insist on.
+static bool sema_int_literal_operand(Expr *x) {
+    if (x && x->kind == EXPR_UNARY && x->as.unary_expr.op == TOKEN_MINUS) x = x->as.unary_expr.right;
+    return x && x->kind == EXPR_LITERAL && !x->as.literal_expr.is_bool;
+}
+// Plain arithmetic, `+ - * /`: its type is the one the compiler chose so that it cannot overflow
+// (`x + 1` on an i32 is an i33, spec 07 rank), not one the program states.
+static bool sema_widened_operand(Expr *x) {
+    if (!x || x->kind != EXPR_BINARY) return false;
+    TokenKind k = x->as.binary_expr.op;
+    return k == TOKEN_PLUS || k == TOKEN_MINUS || k == TOKEN_ASTERISK || k == TOKEN_SLASH;
+}
+// Every value of an integer type of shape (bb, bs) is one of shape (ab, as).
+static bool sema_int_shape_holds(int ab, bool as, int bb, bool bs) {
+    if (as == bs) return ab >= bb;
+    return as && ab > bb;                                    // a signed type holds a narrower unsigned one
+}
+
 static bool is_bool_type(Type *t) {
     while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
     if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
@@ -2974,7 +3004,42 @@ void sema_infer_expr(Expr *e) {
                                 || aop == TOKEN_SLASH_PERCENT || aop == TOKEN_SLASH_PIPE
                                 || aop == TOKEN_SHIFT_LEFT_PERCENT);
             if (is_wrap_or_sat && lt && is_integer_type(lt)) {
-                e->type = lt;
+                // I.56: the operation has ONE integer type, the operands'. It took the LEFT one, so
+                // a literal on the left made it an i32: `100 +% x` on an i64 wrapped at 2^32 (79,
+                // not -9223372036854775729) and `100 +| x` on a u32 clamped at 2147483647, while the
+                // C and the interpreter agreed (the IR was typed wrong, so no oracle over it could
+                // see it). And of two typed operands the left won and the right was truncated in
+                // silence, so `a +| b` and `b +| a` differed. Now (spec 07): a literal or plain
+                // arithmetic takes the other operand's type, on either side; of two stated types,
+                // the one that holds every value of the other; neither is E012. A shift's amount is
+                // a count, not an operand.
+                Expr *le = e->as.binary_expr.left, *re = e->as.binary_expr.right;
+                Type *opty = lt;
+                if (aop != TOKEN_SHIFT_LEFT_PERCENT && rt && is_integer_type(resolve_type_alias(rt))) {
+                    // A literal, or plain arithmetic whose wide type the compiler chose, takes the
+                    // other operand's type, and the policy applies to its exact value: `s +% x * y`
+                    // on i32s wraps in i32 although `x * y` is an i64. Of two stated types, the one
+                    // that holds every value of the other; neither is E012.
+                    bool lfree = sema_int_literal_operand(le), rfree = sema_int_literal_operand(re);
+                    if (!lfree && !rfree) { lfree = sema_widened_operand(le); rfree = sema_widened_operand(re); }
+                    int lb = 0, rb = 0; bool ls = false, rs = false;
+                    if (lfree && !rfree) opty = rt;
+                    else if (!lfree && !rfree && sema_int_shape(lt, &lb, &ls) && sema_int_shape(rt, &rb, &rs) &&
+                             (lb != rb || ls != rs)) {
+                        if (sema_int_shape_holds(lb, ls, rb, rs)) opty = lt;
+                        else if (sema_int_shape_holds(rb, rs, lb, ls)) opty = rt;
+                        else {
+                            char ta[128], tb[128]; type_describe(lt, ta, sizeof ta); type_describe(rt, tb, sizeof tb);
+                            const char *os = token_kind_to_str(aop);
+                            fprintf(stderr, "[E012] Error Ln %li, Col %li: `%s` takes its operands in one integer type, "
+                                    "and of `%s` and `%s` neither holds every value of the other: convert one, e.g. "
+                                    "`(a as %s) %s b`.\n", (long)e->line, (long)e->col, os, ta, tb, tb, os);
+                            diagnostic_show_line(e->line, e->col);
+                            exit(1);
+                        }
+                    }
+                }
+                e->type = opty;
                 // Q1: a checked op (`+?`/`-?`/`*?`) must be handled inline by `else`
                 // — a bare one would abort implicitly, and abort is explicit-only.
                 // The enclosing `else` sets checked_ok before this runs.

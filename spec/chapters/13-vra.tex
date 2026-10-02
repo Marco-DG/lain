@@ -326,8 +326,9 @@ The check is skipped:
 
 \pnum
 The wrapping/saturating operators (\tok{+\%}, \tok{*\%}, \tok{+|}, \tok{*|})
-produce a result whose range is automatically clamped to the LHS type's
-natural range, so they pass the boundary check unconditionally.
+produce a result whose range is automatically clamped to the natural range of the
+operation's one type (\S\,\ref{sec:types.overflow}), so they pass the boundary check
+unconditionally.
 
 \begin{example}
 \begin{laincode}

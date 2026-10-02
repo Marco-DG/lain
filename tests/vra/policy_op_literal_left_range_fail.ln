@@ -1,0 +1,17 @@
+// EXPECT: [E015]
+// EXPECT-TEXT: Ln 10,
+// The wrong type of `100 +| x` (an i32, from the literal on the left: spec 07, I.56) was also the
+// RANGE the analysis used: at most 2147483647 on a u32, so `r > 3000000000` was dead and the
+// division by zero inside it was accepted, as `x +| 100` never was. The branch is live: x =
+// 4294967000 reaches it.
+func f(x u32) u32 {
+    r = 100 +| x
+    if r > 3000000000 {
+        return r /% 0
+    }
+    return r
+}
+func main() i32 {
+    if f(5) != 105 { return 1 }
+    return 0
+}

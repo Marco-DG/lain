@@ -1,0 +1,28 @@
+// An operator with an overflow policy (`+% -% *% /%`, `+| -| *| /|`, `+? -? *?`) computes in ONE
+// integer type, its operands' (spec 07). It took the LEFT operand's, and a literal on the left is an
+// i32 of its own, so `100 +% x` on an i64 wrapped at 2^32 (79) and `100 +| x` on a u32 clamped at
+// i32's maximum: accepted, wrong, and the C and `lain --interpret` agreed, because the IR itself was
+// typed wrong. A literal now takes the other operand's type on either side, so each function below
+// must give its mirror spelling's value (`x +% 100`). Checked in the C and under the interpreter.
+// The literal-left spellings that were refused instead: policy_op_literal_left_widths_pass.ln.
+func wadd(x i64) i64 { return 100 +% x }
+func wsub(x i64) i64 { return 100 -% x }
+func wmul(x i64) i64 { return 3 *% x }
+func sadd(x u32) u32 { return 100 +| x }
+func smul(x u32) u32 { return 100 *| x }
+func cadd(x u32) u32 { return 100 +? x else 7 }
+func udiv(x u64) u64 {
+    if x == 0 { return 1 }
+    return 100 /% x
+}
+func main() i32 {
+    if wadd(9223372036854775787) != -9223372036854775729 { return 1 }
+    if wsub(-9223372036854775788) != -9223372036854775728 { return 2 }
+    if wmul(4611686018427387904) != -4611686018427387904 { return 3 }
+    if sadd(4294967275) != 4294967295 { return 4 }
+    if smul(4294967275) != 4294967295 { return 5 }
+    if cadd(4294967275) != 7 or cadd(5) != 105 { return 6 }
+    if udiv(7) != 14 { return 7 }
+    if wadd(5) != 105 or sadd(5) != 105 { return 8 }
+    return 0
+}
