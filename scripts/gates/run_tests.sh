@@ -12,7 +12,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LAIN="$ROOT/lain"
 
-# Use relative paths for test files (lain crashes on absolute paths with spaces)
+# Test files are compiled by RELATIVE path from the tree root. Given an absolute path, lain changes
+# to the file's directory, so `import std.io` looks for std/io.ln there and is refused (E106).
+# Spaces have nothing to do with it (this line used to blame them): an absolute path fails with or
+# without one, and a relative path works inside a directory whose name has one.
 cd "$ROOT" || exit 1
 
 if [[ ! -x "$LAIN" ]]; then
