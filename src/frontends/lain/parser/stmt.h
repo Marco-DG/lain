@@ -726,21 +726,30 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
                     }
                 }
                 else if (t1.kind == TOKEN_L_PAREN) {
-                    // Constructor pattern: Variant(...) :
-                    // We need to skip balanced parens
-                    int depth = 1;
-                    while (depth > 0) {
-                        Token t = lexer_next(&fork);
-                        if (t.kind == TOKEN_EOF) break;
-                        if (t.kind == TOKEN_L_PAREN) depth++;
-                        else if (t.kind == TOKEN_R_PAREN) depth--;
-                    }
-                    
-                    if (depth == 0) {
-                        Token t_after = lexer_next(&fork);
-                        if (t_after.kind == TOKEN_COLON || t_after.kind == TOKEN_COMMA) {
-                            stop_for_header = true;
+                    // Constructor pattern: Variant(...) : — and a variant qualified by a generic
+                    // INSTANCE, `Opt(i32).Some(v) :`, whose type arguments come first. Skip each
+                    // balanced group and each `.name` after it; only `:` or `,` makes a header.
+                    // The instance spelling was parsed as a statement of the previous arm and
+                    // refused as "Expected end-of-line" (I.49).
+                    Token t_after = t1;
+                    while (t_after.kind == TOKEN_L_PAREN) {
+                        int depth = 1;
+                        while (depth > 0) {
+                            Token t = lexer_next(&fork);
+                            if (t.kind == TOKEN_EOF) break;
+                            if (t.kind == TOKEN_L_PAREN) depth++;
+                            else if (t.kind == TOKEN_R_PAREN) depth--;
                         }
+                        if (depth != 0) break;
+                        t_after = lexer_next(&fork);
+                        while (t_after.kind == TOKEN_DOT) {
+                            Token tn = lexer_next(&fork);
+                            if (tn.kind != TOKEN_IDENTIFIER) break;
+                            t_after = lexer_next(&fork);
+                        }
+                    }
+                    if (t_after.kind == TOKEN_COLON || t_after.kind == TOKEN_COMMA) {
+                        stop_for_header = true;
                     }
                 }
             }

@@ -1,0 +1,18 @@
+// spec: §15 — a variant pattern may be qualified by its type, and for a generic sum the type is the
+// instance: `Opt(i32).Some(v)`. The parser's lookahead for the next arm skipped one parenthesised
+// group and then demanded a colon, so the instance spelling was read as a statement of the
+// previous arm and refused, "Expected end-of-line after statement in match case" (I.49).
+type Opt(T type) { Some { v T }, None }
+
+func get(o Opt(i32)) i32 {
+    case o {
+        Opt(i32).Some(v): return v
+        Opt(i32).None: return 0
+    }
+}
+
+func main() i32 {
+    if get(Opt(i32).Some(5)) != 5 { return 1 }
+    if get(Opt(i32).None) != 0 { return 2 }
+    return 0
+}

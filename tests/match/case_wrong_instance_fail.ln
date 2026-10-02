@@ -1,0 +1,15 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: is not a variant of 'Opt_i32'
+// spec: §15 — a variant qualified by ANOTHER instance of the same generic sum names no variant of
+// the scrutinee's: `Opt(u8).Some` on an `Opt(i32)`. The refusing twin of
+// tests/trust/case_instance_qualified_pass.ln.
+type Opt(T type) { Some { v T }, None }
+
+func get(o Opt(i32)) i32 {
+    case o {
+        Opt(u8).Some(v): return 1
+        else: return 0
+    }
+}
+
+func main() i32 { return get(Opt(i32).Some(5)) - 1 }
