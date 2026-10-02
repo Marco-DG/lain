@@ -1,0 +1,39 @@
+// I.85: a loop is proved to end by ANY test of its condition chain, not only the first. `and`
+// lowers to a chain of tests, each of which leaves the loop when it fails, so a counter moving
+// toward failing the second ends the loop as surely as one against the first: `0 <= k and k < n`
+// is `k < n and 0 <= k`, which proved before. Counting up, counting down, and a first test the
+// loop never moves (a flag). Run under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func up(n i32) i32 {
+    var k i32 = -3
+    var s i32 = 0
+    while -3 <= k and k < n {
+        s = s +% k
+        k = k + 1
+    }
+    return s
+}
+
+func down(n i32) i32 {
+    var k i32 = n
+    var s i32 = 0
+    while k <= n and k > 0 {
+        s = s +% k
+        k = k - 1
+    }
+    return s
+}
+
+func flagged(ok bool, n u32) u32 {
+    var i u32 = 0
+    while ok and i < n {
+        i = i + 1
+    }
+    return i
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d %u %u\n", up(4), down(4), flagged(true, 7), flagged(false, 7))
+    return 0
+}

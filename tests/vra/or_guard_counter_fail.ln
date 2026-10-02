@@ -1,0 +1,18 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: arithmetic is not provably free of overflow
+// I.85: the guard-counter rule proves a guard's own `i + 1` cannot overflow by induction: the body
+// is entered only when `i + 1 < n` held, so the next `i` is at most n. Under `or b` the body is
+// entered with the test false too, `i` climbs past n to the top of i64 (no wider type to compute
+// the guard in), and the guard's `i + 1` overflows. The rule now asks that failing the test end
+// the loop, as the termination rule does.
+func scan(n i64, b bool) i64 effects diverge {
+    var i i64 = 0
+    while i + 1 < n or b {
+        i = i + 1
+    }
+    return i
+}
+
+func main() i32 effects diverge {
+    return scan(5, false) as i32 - 4
+}

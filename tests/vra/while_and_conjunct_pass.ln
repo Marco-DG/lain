@@ -1,8 +1,7 @@
-// ⚠ `effects diverge` — the compiler cannot prove this loop terminates, and says so here
-// rather than exempting every `proc` from the question. Before 2026-09-24 the keyword
-// `proc` carried this permission silently: it means "may do IO", and every IO function
-// inherited "may hang" for sharing it. Measured then: 173 procs did IO and terminated
-// while exempt, against 61 that actually diverge. The marker is now on the exceptions.
+// Both loops are total, and both are PROVED total (I.85): `first` by its guard's first test, `second`
+// by its second. Until I.85 the termination rule read only the header's test, so `second`, whose
+// header tests `s < 5` (a value the loop never moves toward failing), needed `effects diverge`,
+// and so did `first` and `main` with it, as a pair.
 // Both helpers return an unbounded i32 (the accumulator wraps), so their difference can
 // overflow. The subject is the `and`-conjunct guard inside the loop, not the subtraction.
 // A `while` guard's conjuncts each reach the body. `while i < 100 and s < 5` proves `a[i]`
@@ -16,21 +15,21 @@
 // `ir_lower_cond_br`, which puts each conjunct's fact on its own edge.
 //
 // Both orders are checked: the index guard is the FIRST conjunct here and the SECOND below.
-func first(a i32[100]) i32 effects diverge {
+func first(a i32[100]) i32 {
     var i usize = 0
     var s i32 = 0
     while i < 100 and s < 5 { s = s +% a[i]
         i = i + 1 }
     return s
 }
-func second(a i32[100]) i32 effects diverge {
+func second(a i32[100]) i32 {
     var i usize = 0
     var s i32 = 0
     while s < 5 and i < 100 { s = s +% a[i]
         i = i + 1 }
     return s
 }
-func main() i32 effects diverge {
+func main() i32 {
     var xs i32[100] = [1 for k in 0..100]
     return first(xs) -% second(xs)
 }

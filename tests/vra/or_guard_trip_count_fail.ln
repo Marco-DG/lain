@@ -1,0 +1,17 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: arithmetic is not provably free of overflow
+// I.85: B1 bounds a counter by the loop's TRIP COUNT, read from the header's test, and that bound
+// holds only if failing the test ends the loop. Here the header's else goes on to test `b`, so
+// with `b` true the loop never ends and `i + 1` reaches the top of i32. Termination is waived
+// (`effects diverge`), so this pins the trip count alone: it was 10, and `i + 1` was "proven".
+func spin(b bool) i32 effects diverge {
+    var i i32 = 0
+    while i < 10 or b {
+        i = i + 1
+    }
+    return i
+}
+
+func main() i32 effects diverge {
+    return spin(false) - 10
+}

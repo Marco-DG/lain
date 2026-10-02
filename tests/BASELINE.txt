@@ -1676,6 +1676,11 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
+### tests/trust/loop_exit_chain_pass.ln
+rc=0
+out=0 10 7 0
+at=const 6
+ty=Slice_u8 scalar
 ### tests/trust/loop_measure_shapes_pass.ln
 rc=0
 out=
@@ -3135,4 +3140,4 @@ at=const 6
 rc=0
 out=
 at=nonnull 4
-at=pure 2
+at=pure 4

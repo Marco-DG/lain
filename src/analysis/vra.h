@@ -3559,6 +3559,46 @@ static IrCmp vra_cmp_swap(IrCmp c) {
     }
 }
 
+// ── THE LOOP'S EXIT TESTS ────────────────────────────────────────────────────────────────
+// Every rule below reads a test as "the loop continues while this holds", which is true only if
+// the test's ELSE branch leaves the loop and its THEN branch stays. The header's test was assumed
+// to be one. For `while i < 10 or b` it is not: the header's else goes to the test of `b`, inside
+// the loop, so `i < 10` failing does not end it. The rules proved `while i < 10 or b { i = i + 1 }`
+// terminating, B1 then bounded `i` by the loop's trip count and `i + 1` was proven too, and with
+// `b` true it runs forever (the interpreter exhausts its step budget).
+//
+// The exit tests are the CHAIN every iteration passes before the body: the header's, if its else
+// leaves the loop, then, while its then-branch goes to a block whose only predecessor is the test
+// before it, that block's, under the same condition. `and` and `x in lo..hi` lower to exactly this
+// (I.77), so `while 0 <= k and k < n` and `while k in 0..n` are proved by their second test, as
+// `while k < n and 0 <= k` already was by its first. Each test in the chain runs once per
+// iteration, before any store of the body, so a counter that makes progress against any one of
+// them ends the loop. Returns the number found (at most `max`); 0 when the header's test does not
+// exit, which refuses the `or` shape above.
+static int vra_exit_tests(Vra *V, IrBlock *H, IrBlock **out, int max) {
+    int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+    char *body = malloc((size_t)nbb);
+    if (!body) return 0;                                    // fail closed: no exit test
+    vra_natural_loop(V, H, nbb, body);
+    #define VRA_IN_LOOP(blk) ((blk) && (blk)->id >= 0 && (blk)->id < nbb && body[(blk)->id])
+    int n = 0;
+    for (IrBlock *E = H; E && n < max; ) {
+        if (E->term.kind != IR_TERM_BR_COND || !E->term.cond) break;
+        if (!VRA_IN_LOOP(E->term.a) || VRA_IN_LOOP(E->term.b)) break;   // then stays, else leaves
+        out[n++] = E;
+        IrBlock *nx = E->term.a;
+        if (nx == H || !nx->preds || nx->preds->next || nx->preds->block != E) break;
+        E = nx;
+    }
+    #undef VRA_IN_LOOP
+    free(body);
+    return n;
+}
+static bool vra_header_exits(Vra *V, IrBlock *H) {
+    IrBlock *e[1];
+    return vra_exit_tests(V, H, e, 1) == 1;
+}
+
 // ── A TWO-ENDPOINT MEASURE: `while lo < hi { ... lo = mid+1 ... hi = mid ... }` ──────────
 // The rule above tracks ONE counter against a loop-INVARIANT bound. Binary search has neither:
 // both endpoints are written in the loop, and which one moves depends on the branch. What
@@ -3582,9 +3622,9 @@ static IrCmp vra_cmp_swap(IrCmp c) {
 // relaxed: EVERY store to either cell must be progress (so no path can undo one), every path
 // around the loop must pass through at least one (the `prog` dataflow), and neither cell may be
 // written through an escaped address by a call.
-static bool vra_loop_terminates_pair(Vra *V, IrBlock *H) {
-    if (H->term.kind != IR_TERM_BR_COND) return false;
-    IrInstr *ic = V->def[H->term.cond->id];
+static bool vra_loop_terminates_pair(Vra *V, IrBlock *H, IrBlock *E) {
+    if (E->term.kind != IR_TERM_BR_COND) return false;
+    IrInstr *ic = V->def[E->term.cond->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
     // ★ INSTALL THE PACKING. `oct_map` translates a VALUE id into the octagon's packed slot,
     // and the domain's own operations index with it. vra_analyze installs it for the duration
@@ -3650,10 +3690,11 @@ static bool vra_loop_terminates_pair(Vra *V, IrBlock *H) {
     return result_pair;
 }
 
-static bool vra_loop_terminates(Vra *V, IrBlock *H) {
-    vra_last_measure.kind = VRA_MEAS_NONE;
-    if (H->term.kind != IR_TERM_BR_COND) return false;
-    IrInstr *ic = V->def[H->term.cond->id];
+// One exit test E of the loop at H (vra_exit_tests): does a counter it reads make progress
+// toward failing it on every iteration?
+static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
+    if (E->term.kind != IR_TERM_BR_COND) return false;
+    IrInstr *ic = V->def[E->term.cond->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
     IrCmp p0 = ic->aux.cmp;
     // See the note in vra_loop_terminates_pair: this rule is also asked from effects.h, outside
@@ -3865,7 +3906,16 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
     }
     oct_map = oct_map_saved_loop;
     // Neither endpoint is a counter against an invariant bound — try the DIFFERENCE.
-    return result_loop ? true : vra_loop_terminates_pair(V, H);
+    return result_loop ? true : vra_loop_terminates_pair(V, H, E);
+}
+
+static bool vra_loop_terminates(Vra *V, IrBlock *H) {
+    vra_last_measure.kind = VRA_MEAS_NONE;
+    IrBlock *ex[8];
+    int n = vra_exit_tests(V, H, ex, 8);
+    for (int k = 0; k < n; k++)
+        if (vra_loop_terminates_at(V, H, ex[k])) return true;
+    return false;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
@@ -3901,6 +3951,7 @@ static bool vra_mul_ovf(int64_t a, int64_t b, int64_t *out) {
 // (cell, bound, step): that function proves the loop ENDS, this asks how late.
 static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
     if (H->term.kind != IR_TERM_BR_COND || !H->term.cond) return false;
+    if (!vra_header_exits(V, H)) return false;          // the header's test may not end the loop
     IrInstr *ic = V->def[H->term.cond->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
     IrCmp pr = ic->aux.cmp;
@@ -4024,6 +4075,7 @@ static bool vra_guard_counter_fits(Vra *V, Octagon *W, IrInstr *ins, int64_t thi
         IrInstr *ic = V->def[H->term.cond->id];
         if (!ic || ic->op != IR_ICMP || ic->n_operands < 2) continue;
         if (ic->operands[0]->id != ins->result->id) continue;          // this ADD IS the guard
+        if (!vra_header_exits(V, H)) continue;     // the body is entered only when the guard held
         if (!(ic->aux.cmp == IR_CMP_SLT || ic->aux.cmp == IR_CMP_ULT)) continue;  // strict only
         IrValue *bnd = ic->operands[1];
         if (!vra_loop_invariant(V, bnd, H)) continue;

@@ -1,0 +1,20 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: this loop is not provably terminating
+// I.85: a loop's test ends it only if its ELSE branch leaves the loop. In `while i < 10 or b` the
+// header's else goes on to test `b`, inside the loop, so `i < 10` failing does not end it. The
+// termination rule read the header's test as "the loop continues while this holds", counted the
+// store of 10 as progress (it makes that test false), and proved this loop terminating; with `b`
+// true it runs forever. No arithmetic, so nothing but termination can refuse it (Handwriting's
+// reproducer). B1 and the guard-counter rule had the same assumption:
+// tests/vra/or_guard_trip_count_fail.ln and or_guard_counter_fail.ln.
+func spin(b bool) i32 {
+    var i i32 = 0
+    while i < 10 or b {
+        i = 10
+    }
+    return i
+}
+
+func main() i32 {
+    return spin(false) - 10
+}

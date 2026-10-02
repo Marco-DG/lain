@@ -607,8 +607,6 @@ for name, lit, want in [
 #
 # The body is `s = i`, an ASSIGNMENT. An earlier version used `s = s + i` and every cell in the row
 # was refused for the running total instead, on every binary: the accumulator hid the whole axis.
-_I85 = ("I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's "
-        "else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none")
 _I77 = "I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100"
 for _cdir, _init, _step, _want in (("up", "0", "i = i + 1", "4 3\n"), ("down", "4", "i = i - 1", "0 1\n")):
     for _gname, _g in (("single",      "i < 4"            if _cdir == "up" else "i > 0"),
@@ -624,11 +622,7 @@ for _cdir, _init, _step, _want in (("up", "0", "i = i + 1", "4 3\n"), ("down", "
             # and the program must be REFUSED whatever the effect row says.
             _exp = "__ILLFORMED__" if _gname == "or" else _want
             _plan = None
-            if _gname == "or" and _cdir == "up":
-                _plan = _I85                      # ACCEPTED today, and it must not be
-            elif _gname == "and-swapped" and _eff == "total":
-                _plan = _I85                      # REFUSED today, and it should run
-            elif _gname == "range-in":
+            if _gname == "range-in":
                 _plan = _I77
             add("loop-guard", "%s, %s, %s" % (_gname, _cdir, _eff),
                 'func f(ok bool, extra bool) i32%s {\n    var i i32 = %s\n    var s i32 = 0 - 1\n'

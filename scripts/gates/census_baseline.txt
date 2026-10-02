@@ -237,17 +237,17 @@ loop-guard	single, up, total	OK
 loop-guard	single, up, diverge	OK
 loop-guard	and, up, total	OK
 loop-guard	and, up, diverge	OK
-loop-guard	and-swapped, up, total	REFUSED [E011]  # I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none
+loop-guard	and-swapped, up, total	OK
 loop-guard	and-swapped, up, diverge	OK
-loop-guard	or, up, total	ACCEPTED-ILLFORMED  # I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none
-loop-guard	or, up, diverge	ACCEPTED-ILLFORMED  # I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none
+loop-guard	or, up, total	ok-REFUSED [E086]
+loop-guard	or, up, diverge	ok-REFUSED [E086]
 loop-guard	range-in, up, total	REFUSED [E100]  # I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100
 loop-guard	range-in, up, diverge	REFUSED [E100]  # I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100
 loop-guard	single, down, total	OK
 loop-guard	single, down, diverge	OK
 loop-guard	and, down, total	OK
 loop-guard	and, down, diverge	OK
-loop-guard	and-swapped, down, total	REFUSED [E011]  # I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none
+loop-guard	and-swapped, down, total	OK
 loop-guard	and-swapped, down, diverge	OK
 loop-guard	or, down, total	ok-REFUSED [E086]
 loop-guard	or, down, diverge	ok-REFUSED [E086]
