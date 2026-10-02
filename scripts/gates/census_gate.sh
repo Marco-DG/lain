@@ -23,8 +23,9 @@
 # BASELINE RULES. A line may carry OK or REFUSED <code>. It may carry MISMATCH or
 # ACCEPTED-ILLFORMED only with a `# <plan row>` reference naming the open item (the row IDs in
 # local/internal/design/plan_2026-09-17.md), so a known hole is recorded rather than making the
-# gate un-greenable. The gate REFUSES a non-OK, non-REFUSED line without one, AND refuses a
-# reference on a line that records no hole, so a citation cannot outlive the bug it names.
+# gate un-greenable. A cell is a hole in three ways and all three need one: ACCEPTED-ILLFORMED,
+# MISMATCH, and a plain REFUSED (refused although the cell expects a value: OVER-REJECTION). The gate
+# also refuses a reference on a line that records no hole, so a citation cannot outlive the bug.
 # The refusal CODE is part of the verdict, so E100 -> E012 is a visible change, not a silent one.
 #
 # DETERMINISM. A timeout is part of the verdict, not a skip: a cell that hangs is MISMATCH. The
@@ -144,14 +145,25 @@ fi
 # stale citation held green. The rule is what makes the citation set self-cleaning: the fix flips the
 # verdict, and the gate then asks for the citation to go.
 check_citations() {
+    # A cell PASSES as `OK` or `ok-REFUSED <code>`. It is a HOLE in exactly three ways, and all three
+    # need a plan row: `ACCEPTED-ILLFORMED` (compiled when it must be refused), `MISMATCH` (ran and
+    # gave the wrong value) and `REFUSED <code>` (refused although the cell expects a VALUE, i.e.
+    # OVER-REJECTION). The third was missing, and over-rejection is the quiet one: 7 cells recorded a
+    # refusal of a program the cell says should run, and nothing asked anybody why. Three of those
+    # turned out to be MY expectation being wrong rather than the compiler's answer.
+    # `ok-REFUSED` CONTAINS the string REFUSED, so every test is anchored on the VERDICT FIELD ($3),
+    # never a grep of the whole line.
     local f="$1" bad stale
-    bad=$(grep -vE '^#' "$f" | grep -E 'MISMATCH|ACCEPTED-ILLFORMED' | grep -v '  # ' || true)
+    local hole='^(MISMATCH|ACCEPTED-ILLFORMED|REFUSED )'
+    bad=$(awk -F'\t' -v h="$hole" '/^#/ {next} $3 ~ h && $3 !~ /  # / {print}' "$f")
     if [ -n "$bad" ]; then
         echo "FAIL: a baseline hole with no plan-row reference:"; echo "$bad" | sed 's/^/  /'
-        echo "      add plan=\"I.NN — ...\" to the cell in census_cells.py, then re-bless."
+        echo "      a REFUSED verdict on a cell that expects a value is OVER-REJECTION: either cite the"
+        echo "      plan row that will fix it, or correct the cell's expectation to __ILLFORMED__ if the"
+        echo "      refusal is the right answer. Then re-bless."
         return 1
     fi
-    stale=$(grep -vE '^#' "$f" | grep '  # ' | grep -vE 'MISMATCH|ACCEPTED-ILLFORMED' || true)
+    stale=$(awk -F'\t' -v h="$hole" '/^#/ {next} $3 ~ /  # / && $3 !~ h {print}' "$f")
     if [ -n "$stale" ]; then
         echo "FAIL: a plan-row reference on a cell that records NO hole — the row it names is closed here:"
         echo "$stale" | sed 's/^/  /'

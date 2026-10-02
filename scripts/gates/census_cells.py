@@ -47,7 +47,8 @@ for name, param, arg, arms in SCRUT:
         'func pick(%s) u8 {\n    case %s {\n%s    }\n}\n'
         'func main() i32 effects io {\n    libc_printf("%%d\\n", pick(%s) as i32)\n    return 0\n}\n'
         % (param, param.split()[0], arms, arg),
-        "7\n")
+        "7\n",
+        plan=("I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them" if name in ("f32", "f64") else None))
 
 add("case-scrutinee", "u8[] string",
     'func pick(s u8[]) u8 {\n    case s {\n        "ab": return 5\n        else: return 9\n    }\n}\n'
@@ -230,11 +231,15 @@ add("defer", "break inside a defer body (spec 9 forbids)",
     'func main() i32 effects io { return go() }\n', "__ILLFORMED__")
 
 # ── axis 7: the three extra constructs ────────────────────────────────────────────────────────
+# CORRECTED 2026-10-02: this expected 6, the value the program would print IF `use` existed. `use` is
+# the one reserved word that is refused and implements nothing, so a program containing it must be
+# refused. If `use` is ever implemented the cell flips and the gate asks for a blessing, which is what
+# is wanted from a cell about an absent construct.
 add("misc", "use p.x as px in a function",
     'type P { x i32, y i32 }\nA i32[2] = [5, 6]\n'
     'func go(p P) i32 {\n    use p.x as px\n    if px < 2 { return A[px as usize] }\n    return 0\n}\n'
     'func main() i32 effects io {\n    libc_printf("%d\\n", go(P(1, 2)))\n    return 0\n}\n',
-    "6\n")
+    "__ILLFORMED__")
 add("misc", "case on a nonexistent variant",
     'type Color { Red, Green, Blue }\n'
     'func go(c Color) i32 {\n    case c {\n        Purple: return 1\n        else: return 20\n    }\n}\n'
@@ -244,22 +249,28 @@ add("misc", "case on a struct scrutinee",
     'type P { x i32, y i32 }\n'
     'func go(p P) i32 {\n    case p {\n        else: return 20\n    }\n}\n'
     'func main() i32 effects io {\n    libc_printf("%d\\n", go(P(1, 2)))\n    return 0\n}\n',
-    "20\n")
+    "20\n",
+    plan="I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them")
 add("misc", "case on a fixed-array scrutinee",
     'func go(a i32[2]) i32 {\n    case a {\n        else: return 20\n    }\n}\n'
     'func main() i32 effects io {\n    var v i32[2] = [1, 2]\n    libc_printf("%d\\n", go(v))\n    return 0\n}\n',
-    "20\n")
+    "20\n",
+    plan="I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them")
 
 
 # ── axis 8: a PATTERN whose type does not match the scrutinee ─────────────────────────────────
+# CORRECTED 2026-10-02: both cells expected the mistyped arm to be SKIPPED and `else` to run (20).
+# That was wrong. This axis is about a pattern that cannot match its scrutinee, and refusing it IS the
+# right answer, so the expectation is __ILLFORMED__. The old labels made the baseline record two
+# correct refusals as over-rejections, which is what the citation rule now catches.
 add("pattern-type", "string pattern on an i32 scrutinee",
     'func pick(x i32) i32 {\n    case x {\n        "ab": return 7\n        else: return 20\n    }\n}\n'
     'func main() i32 effects io {\n    libc_printf("%d\\n", pick(1))\n    return 0\n}\n',
-    "20\n")
+    "__ILLFORMED__")
 add("pattern-type", "integer pattern on a u8[] scrutinee",
     'func pick(s u8[]) i32 {\n    case s {\n        7: return 7\n        else: return 20\n    }\n}\n'
     'func main() i32 effects io {\n    libc_printf("%d\\n", pick("ab"))\n    return 0\n}\n',
-    "20\n")
+    "__ILLFORMED__")
 
 
 add("misc", "case on a wrong enum's variant (qualified)",
@@ -580,6 +591,59 @@ for name, lit, want in [
         plan=("I.83 — extra characters are silently dropped; the fix must count characters AFTER escape "
               "processing, or the five escape cells break"
               if name in ("two characters", "three characters") else None))
+
+
+# ── axis: a loop's GUARD crossed with the counter's DIRECTION and the function's effect row ─────
+# Suggested by MCW after I.85: the corpus had no `or` loop guard with a counter at all, in any shape.
+# Every rule that reads a loop test reads it as "the loop continues while this holds", which needs the
+# test's ELSE to leave the loop. `while i < 4 or extra` breaks that: the header's else goes to the test
+# of `extra`, INSIDE the loop. Three axes, because measuring one at a time finds none of this:
+#
+#   guard        total func                      effects diverge
+#   single       runs                            runs
+#   and          runs                            runs
+#   and-swapped  REFUSED E011  <- over-reject    runs          <- the SAME program, so E011 is the rule
+#   or           ACCEPTED, must be refused       ACCEPTED, must be refused
+#   or + down    already E086                    already E086  <- the hole is DIRECTION-dependent
+#   range-in     E100 until I.77                 E100 until I.77
+#
+# The and-swapped pair is the sharpest cell in the row: one program, two effect rows, and today only
+# the TOTAL one is refused, which proves the refusal comes from the termination rule and not from the
+# arithmetic. The `or` + down cells are the allowed side: they were already refused, for the counter's
+# underflow rather than for termination, so a fix must not be credited for them.
+#
+# The body is `s = i`, an ASSIGNMENT. An earlier version used `s = s + i` and every cell in the row
+# was refused for the running total instead, on every binary: the accumulator hid the whole axis.
+_I85 = ("I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's "
+        "else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none")
+_I77 = "I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100"
+for _cdir, _init, _step, _want in (("up", "0", "i = i + 1", "4 3\n"), ("down", "4", "i = i - 1", "0 1\n")):
+    for _gname, _g in (("single",      "i < 4"            if _cdir == "up" else "i > 0"),
+                       ("and",         "i < 4 and ok"     if _cdir == "up" else "i > 0 and ok"),
+                       ("and-swapped", "ok and i < 4"     if _cdir == "up" else "ok and i > 0"),
+                       ("or",          "i < 4 or extra"   if _cdir == "up" else "i > 0 or extra"),
+                       ("range-in",    "i in 0..4"        if _cdir == "up" else "i in 1..=4")):
+        for _eff in ("total", "diverge"):
+            _row = " effects io" if _eff == "total" else " effects io, diverge"
+            # DERIVED: four iterations either way. Counting up, i ends at 4 and s holds the last
+            # value entered with, 3. Counting down, i ends at 0 and s holds 1. An `or` guard makes
+            # the counter unbounded, so neither the loop's end nor the step's arithmetic is provable
+            # and the program must be REFUSED whatever the effect row says.
+            _exp = "__ILLFORMED__" if _gname == "or" else _want
+            _plan = None
+            if _gname == "or" and _cdir == "up":
+                _plan = _I85                      # ACCEPTED today, and it must not be
+            elif _gname == "and-swapped" and _eff == "total":
+                _plan = _I85                      # REFUSED today, and it should run
+            elif _gname == "range-in":
+                _plan = _I77
+            add("loop-guard", "%s, %s, %s" % (_gname, _cdir, _eff),
+                'func f(ok bool, extra bool) i32%s {\n    var i i32 = %s\n    var s i32 = 0 - 1\n'
+                '    while %s {\n        s = i\n        %s\n    }\n'
+                '    libc_printf("%%d %%d\\n", i, s)\n    return 0\n}\n'
+                'func main() i32%s {\n    return f(true, false)\n}\n' % (_row, _init, _g, _step, _row),
+                _exp, plan=_plan)
+
 
 
 if __name__ == "__main__":

@@ -7,8 +7,8 @@ case-scrutinee	i64	OK
 case-scrutinee	u8	OK
 case-scrutinee	u32	OK
 case-scrutinee	u64	OK
-case-scrutinee	f32	REFUSED [E012]
-case-scrutinee	f64	REFUSED [E012]
+case-scrutinee	f32	REFUSED [E012]  # I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them
+case-scrutinee	f64	REFUSED [E012]  # I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them
 case-scrutinee	char	OK
 case-scrutinee	u8[] string	OK
 case-scrutinee	enum	OK
@@ -139,12 +139,12 @@ defer	defer containing a defer block	OK
 defer	order across nested scopes	OK
 defer	return inside a defer body (spec 9 forbids)	ok-REFUSED [E138]
 defer	break inside a defer body (spec 9 forbids)	ok-REFUSED [E138]
-misc	use p.x as px in a function	REFUSED [E100]
+misc	use p.x as px in a function	ok-REFUSED [E100]
 misc	case on a nonexistent variant	ok-REFUSED [E106]
-misc	case on a struct scrutinee	REFUSED [E012]
-misc	case on a fixed-array scrutinee	REFUSED [E012]
-pattern-type	string pattern on an i32 scrutinee	REFUSED [E012]
-pattern-type	integer pattern on a u8[] scrutinee	REFUSED [E012]
+misc	case on a struct scrutinee	REFUSED [E012]  # I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them
+misc	case on a fixed-array scrutinee	REFUSED [E012]  # I.86 — which scrutinee types `case` admits. It takes integers, u8, enums, sums and strings; it refuses f32, f64, a struct and a fixed array with E012, including when the only arm is `else:`. These four cells ask that one question, and refusing `case x { else: }` on any type is the least defensible of them
+pattern-type	string pattern on an i32 scrutinee	ok-REFUSED [E012]
+pattern-type	integer pattern on a u8[] scrutinee	ok-REFUSED [E012]
 misc	case on a wrong enum's variant (qualified)	ok-REFUSED [E106]
 assert-spelling	at module scope (control)	OK
 assert-spelling	bare, function top level	OK
@@ -233,3 +233,23 @@ char-literal	two characters	ACCEPTED-ILLFORMED  # I.83 — extra characters are 
 char-literal	three characters	ACCEPTED-ILLFORMED  # I.83 — extra characters are silently dropped; the fix must count characters AFTER escape processing, or the five escape cells break
 char-literal	empty	ok-REFUSED [E100]
 char-literal	unknown escape	ok-REFUSED [E100]
+loop-guard	single, up, total	OK
+loop-guard	single, up, diverge	OK
+loop-guard	and, up, total	OK
+loop-guard	and, up, diverge	OK
+loop-guard	and-swapped, up, total	REFUSED [E011]  # I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none
+loop-guard	and-swapped, up, diverge	OK
+loop-guard	or, up, total	ACCEPTED-ILLFORMED  # I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none
+loop-guard	or, up, diverge	ACCEPTED-ILLFORMED  # I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none
+loop-guard	range-in, up, total	REFUSED [E100]  # I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100
+loop-guard	range-in, up, diverge	REFUSED [E100]  # I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100
+loop-guard	single, down, total	OK
+loop-guard	single, down, diverge	OK
+loop-guard	and, down, total	OK
+loop-guard	and, down, diverge	OK
+loop-guard	and-swapped, down, total	REFUSED [E011]  # I.85 — a loop rule reads the header test as the loop's exit test; under `or` the header's else stays inside the loop. Fix: read the chain of EXIT tests, of which an `or` header has none
+loop-guard	and-swapped, down, diverge	OK
+loop-guard	or, down, total	ok-REFUSED [E086]
+loop-guard	or, down, diverge	ok-REFUSED [E086]
+loop-guard	range-in, down, total	REFUSED [E100]  # I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100
+loop-guard	range-in, down, diverge	REFUSED [E100]  # I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100
