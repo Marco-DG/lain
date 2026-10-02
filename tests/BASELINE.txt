@@ -1651,6 +1651,13 @@ at=pure 4
 ty=Lx struct
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/in_index_test_pass.ln
+rc=0
+out=
+at=access 4
+at=nonnull 4
+at=pure 4
+ty=Slice_u8 scalar
 ### tests/trust/interproc_bounds_pass.ln
 rc=0
 out=30

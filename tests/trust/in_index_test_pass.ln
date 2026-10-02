@@ -1,0 +1,31 @@
+// `i in c` is an index test, `0 <= i < c.len`, and it proves the index it guards: over a slice, a
+// fixed array, a refined index type, and a negative index (which the test rejects: the comparison
+// is unsigned, so -1 is not below any length). The typing rule of I.75 keeps all of these. Run
+// under the sanitizers and the interpreter.
+type Idx = i32 >= 0 and <= 9
+
+func both(i Idx, a u8[], b u8[4]) i32 {
+    if i in a and i in b {
+        return (a[i] + b[i]) as i32
+    }
+    return 0
+}
+
+func at(x i32, a u8[]) i32 {
+    if x in a {
+        return a[x] as i32
+    }
+    return 100
+}
+
+func main() i32 {
+    var a u8[3] = [1, 2, 3]
+    var b u8[4] = [4, 5, 6, 7]
+    if both(1, a, b) != 7 or both(3, a, b) != 0 {
+        return 1
+    }
+    if at(-1, a) != 100 or at(2, a) != 3 {
+        return 2
+    }
+    return 0
+}

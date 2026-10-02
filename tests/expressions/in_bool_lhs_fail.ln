@@ -1,0 +1,15 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 6, Col 8: `in` tests an index against a container's length
+// The left side of `in` is an index, so it is an integer: `true in a` compiled and meant `1 < a.len`
+// (I.75).
+func f(b bool, a u8[]) i32 {
+    if b in a {
+        return 1
+    }
+    return 0
+}
+
+func main() i32 {
+    var a u8[3] = [1, 2, 3]
+    return f(true, a)
+}

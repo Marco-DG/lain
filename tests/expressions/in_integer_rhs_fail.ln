@@ -1,0 +1,14 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 6, Col 13: `in` needs an array or a slice on its right
+// `in` needs a container whose length bounds the index; an integer on its right compiled and the
+// emitted C was rejected by gcc (I.75).
+func f(x i32, n i32) i32 {
+    if x in n {
+        return 1
+    }
+    return 0
+}
+
+func main() i32 {
+    return f(1, 5)
+}

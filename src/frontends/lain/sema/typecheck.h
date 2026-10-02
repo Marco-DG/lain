@@ -2800,9 +2800,44 @@ void sema_infer_expr(Expr *e) {
         sema_infer_expr(e->as.binary_expr.right);
     }
 
-    // 'in' operator: result is bool, skip other checks
+    // `i in c` is an INDEX test, `0 <= i < c.len` (lowering compares against the length), and it
+    // had no typing rule at all (I.75, Handwriting): `x in [1, 3, 5]` compiled and meant `x < 3`,
+    // the literal's length, not membership (wrong for every member but 1); `x in n` with an
+    // integer `n` and `"x" in a` emitted C gcc rejects; `true in a` compiled. The left side is an
+    // integer and the right a container whose length bounds it; an array LITERAL on the right is
+    // refused with what it would have meant.
     if (e->as.binary_expr.op == TOKEN_KEYWORD_IN) {
         e->type = get_builtin_bool_type();
+        Expr *L = e->as.binary_expr.left, *R = e->as.binary_expr.right;
+        Type *lt = L ? L->type : NULL, *rt = R ? R->type : NULL;
+        if (lt && lt->kind == TYPE_SIMPLE) { Type *a = resolve_type_alias(lt); if (a) lt = a; }
+        if (rt && rt->kind == TYPE_SIMPLE) {
+            Type *a = resolve_type_alias(rt);
+            if (a && (a->kind == TYPE_ARRAY || a->kind == TYPE_SLICE)) rt = a;
+        }
+        long ln = (long)(R && R->line ? R->line : e->line), cl = (long)(R && R->line ? R->col : e->col);
+        if (R && (R->kind == EXPR_ARRAY_LITERAL || R->kind == EXPR_ARRAY_COMPREHENSION)) {
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: `in` tests an INDEX against a container's "
+                    "length, so `x in [...]` would mean `x <` the list's length, not that `x` is one "
+                    "of its values. For membership, compare: `x == a or x == b`.\n", ln, cl);
+            diagnostic_show_line(ln, cl);
+            exit(1);
+        }
+        if (lt && !is_integer_type(lt)) {
+            char tb[128]; type_describe(lt, tb, sizeof tb);
+            long l2 = (long)(L->line ? L->line : e->line), c2 = (long)(L->line ? L->col : e->col);
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: `in` tests an index against a container's "
+                    "length, and its left side must be an integer; it is '%s'.\n", l2, c2, tb);
+            diagnostic_show_line(l2, c2);
+            exit(1);
+        }
+        if (rt && rt->kind != TYPE_ARRAY && rt->kind != TYPE_SLICE) {
+            char tb[128]; type_describe(rt, tb, sizeof tb);
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: `in` needs an array or a slice on its right, "
+                    "whose length bounds the index; this is '%s'.\n", ln, cl, tb);
+            diagnostic_show_line(ln, cl);
+            exit(1);
+        }
         break;
     }
 
