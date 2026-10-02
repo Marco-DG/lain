@@ -2761,7 +2761,7 @@ void sema_infer_expr(Expr *e) {
         // caller as the GENERIC `Option`, so `var o = f()` declared an `Option` and assigned it an
         // `Option_i32` — C that gcc rejects. Only annotated bindings ever worked. Resolve here.
         Type *rt = e->as.call_expr.callee->type;
-        e->type = (rt && rt->kind == TYPE_SIMPLE && rt->type_args) ? mono_resolve_type_apps(rt) : rt;
+        e->type = (rt && rt->kind == TYPE_SIMPLE && rt->type_args) ? mono_resolve_type_apps_at(rt, e->line, e->col) : rt;
     }
     break;
   }
@@ -3824,7 +3824,7 @@ void sema_infer_expr(Expr *e) {
         // and every instance answered with the template's size: `assert @sizeof(Pair(u8)) == 16`
         // passed. Every other type position resolves applications; this one did not.
         if (e->as.builtin_expr.vec_type)
-            e->as.builtin_expr.vec_type = mono_resolve_type_apps(e->as.builtin_expr.vec_type);
+            e->as.builtin_expr.vec_type = mono_resolve_type_apps_at(e->as.builtin_expr.vec_type, e->line, e->col);
         static Type *usize_ty = NULL;
         if (!usize_ty) {
             Id *uid = arena_push_aligned(sema_arena, Id);

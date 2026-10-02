@@ -436,13 +436,13 @@ static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
         for (DeclList *f = inst->as.struct_decl.fields; f; f = f->next)
             if (f->decl && f->decl->kind == DECL_VARIABLE)
                 f->decl->as.variable_decl.type =
-                    mono_resolve_type_apps(mono_subst_type(f->decl->as.variable_decl.type, ctx));
+                    mono_resolve_type_apps_at(mono_subst_type(f->decl->as.variable_decl.type, ctx), f->decl->line, f->decl->col);
     } else if (inst->kind == DECL_ENUM) {
         for (Variant *v = inst->as.enum_decl.variants; v; v = v->next)
             for (DeclList *f = v->fields; f; f = f->next)
                 if (f->decl && f->decl->kind == DECL_VARIABLE)
                     f->decl->as.variable_decl.type =
-                        mono_resolve_type_apps(mono_subst_type(f->decl->as.variable_decl.type, ctx));
+                        mono_resolve_type_apps_at(mono_subst_type(f->decl->as.variable_decl.type, ctx), f->decl->line, f->decl->col);
     }
     return inst;
 }
@@ -514,6 +514,18 @@ static Type *union_lower(Type *u) {
 
 // The struct/enum type an alias names, resolved — or NULL when `n` is not an alias of one.
 static Type *mono_resolve_type_apps(Type *t);
+// Where the type being resolved is written. A Type carries no position, so E124 in a type
+// (`g G(7)`, `Plain(i32)`) said only "Error:"; each caller that resolves a written type names the
+// construct it is written in (the parameter, the field, the statement), and the recursion inside
+// keeps it.
+static isize mono_at_line = 0, mono_at_col = 0;
+static Type *mono_resolve_type_apps_at(Type *t, isize line, isize col) {
+    isize sl = mono_at_line, sc = mono_at_col;
+    if (line > 0) { mono_at_line = line; mono_at_col = col; }
+    Type *r = mono_resolve_type_apps(t);
+    mono_at_line = sl; mono_at_col = sc;
+    return r;
+}
 static void sema_bind_const_names(Expr *e, int depth);   // sema.h: names in a constant, bound
 static Type *mono_alias_target(Id *n) {
     if (!n || n->length >= 224) return NULL;
@@ -543,8 +555,8 @@ static Type *mono_resolve_type_apps(Type *t) {
         Symbol *sym = sema_lookup(nb);
         if (!sym || !sym->decl || !decl_is_generic_template(sym->decl) ||
             (sym->decl->kind != DECL_STRUCT && sym->decl->kind != DECL_ENUM)) {
-            fprintf(stderr, "[E124] Error: '%.*s' is not a generic type.\n",
-                    (int)t->base_type->length, t->base_type->name);
+            fprintf(stderr, "[E124] Error Ln %li, Col %li: '%.*s' is not a generic type.\n",
+                    (long)mono_at_line, (long)mono_at_col, (int)t->base_type->length, t->base_type->name);
             exit(1);
         }
         Decl *tmpl = sym->decl;
@@ -569,9 +581,9 @@ static Type *mono_resolve_type_apps(Type *t) {
                 }
                 bool lay = false; __int128 v = 0;
                 if (!ve || !sa_is_const(ve, &lay) || lay || !sa_eval(ve, &v) || v < 0 || v > (__int128)INT64_MAX) {
-                    fprintf(stderr, "[E124] Error: the argument for '%.*s' of '%.*s' must be a "
+                    fprintf(stderr, "[E124] Error Ln %li, Col %li: the argument for '%.*s' of '%.*s' must be a "
                             "non-negative constant: a literal or a module constant.\n",
-                            (int)(pnm ? pnm->length : 0), pnm ? pnm->name : "",
+                            (long)mono_at_line, (long)mono_at_col, (int)(pnm ? pnm->length : 0), pnm ? pnm->name : "",
                             (int)t->base_type->length, t->base_type->name);
                     exit(1);
                 }
@@ -580,8 +592,8 @@ static Type *mono_resolve_type_apps(Type *t) {
                 c->kind = TYPE_CONST; c->array_len = (isize)v; c->size_expr = expr_literal(sema_arena, (long long)v);
                 arg = c; ta->type = c;
             } else if (arg && arg->kind == TYPE_CONST) {
-                fprintf(stderr, "[E124] Error: '%.*s' of '%.*s' is a type parameter, and %lld is a value.\n",
-                        (int)(pnm ? pnm->length : 0), pnm ? pnm->name : "",
+                fprintf(stderr, "[E124] Error Ln %li, Col %li: '%.*s' of '%.*s' is a type parameter, and %lld is a value.\n",
+                        (long)mono_at_line, (long)mono_at_col, (int)(pnm ? pnm->length : 0), pnm ? pnm->name : "",
                         (int)t->base_type->length, t->base_type->name,
                         arg->size_expr && arg->size_expr->kind == EXPR_LITERAL ? (long long)arg->size_expr->as.literal_expr.value : 0LL);
                 exit(1);
@@ -624,9 +636,9 @@ static void mono_resolve_signature(Decl *d) {
     if (!d || (d->kind != DECL_FUNCTION)) return;
     for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
         Type **slot = mono_param_type_slot(p->decl);
-        if (slot) *slot = mono_resolve_type_apps(*slot);
+        if (slot) *slot = mono_resolve_type_apps_at(*slot, p->decl->line, p->decl->col);
     }
-    d->as.function_decl.return_type = mono_resolve_type_apps(d->as.function_decl.return_type);
+    d->as.function_decl.return_type = mono_resolve_type_apps_at(d->as.function_decl.return_type, d->line, d->col);
 }
 
 // Generic struct construction. Type args may be explicit and leading

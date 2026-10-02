@@ -74,14 +74,12 @@ fi
 # ── AN ERROR WITHOUT A POSITION ──────────────────────────────────────────────────────────
 # A coded error says where: `[E###] Error Ln N, Col M: ...`, or `[E###] Error` followed by a
 # position printed when the construct has one. A literal `[E###] Error:` has none by
-# construction. Allowed, each for its reason: E124 in a TYPE position (sema/monomorph.h: a Type
-# carries no position), an anonymous union's layout refusal (E064, ir/emit_c.h: no source
-# construct to point at), a function beyond an analysis's capacity (E100 in
+# construction. Allowed, each for its reason: an anonymous union's layout refusal (E064,
+# ir/emit_c.h: no source construct to point at), a function beyond an analysis's capacity (E100 in
 # analysis/definite_init.h and analysis/borrow.h: an IrFunc has no line, so it names the
 # function), and the --emit-llvm summary (main.c). M13 (Handwriting) measures the dynamic side.
 noloc=$(grep -rnE 'fprintf\(stderr, *"\[E[0-9]+\] Error:' src --include=*.h --include=*.c \
         | grep -vE '^[^:]+:[0-9]+:\s*//' \
-        | grep -vE '^src/frontends/lain/sema/monomorph\.h:[0-9]+:.*\[E124\]' \
         | grep -vE '^src/ir/emit_c\.h:[0-9]+:.*\[E064\]' \
         | grep -vE '^src/analysis/(definite_init|borrow)\.h:[0-9]+:.*\[E100\]' \
         | grep -vE '^src/frontends/lain/main\.c:[0-9]+:.*\[E100\] Error: the LLVM path')

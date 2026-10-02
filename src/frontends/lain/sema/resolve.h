@@ -77,6 +77,7 @@ static Type *fnptr_type_of_decl(Decl *d);
 static bool sema_monomorphize_call(Expr *call);
 // Defined in monomorph.h; resolves generic type-applications `Vec(i32)` in a type.
 static Type *mono_resolve_type_apps(Type *t);
+static Type *mono_resolve_type_apps_at(Type *t, isize line, isize col);   // ...written at line:col
 static Type *mono_alias_target(Id *n);
 static Type *mono_arg_to_type(Expr *e);
 static void  mono_resolve_signature(Decl *d);
@@ -672,7 +673,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
               }
               if (all_types && na == ntp && ntp > 0) {
                 rx->kind = EXPR_TYPE;
-                rx->as.type_expr.type_value = mono_resolve_type_apps(type_application(sema_arena, gn, tl));
+                rx->as.type_expr.type_value = mono_resolve_type_apps_at(type_application(sema_arena, gn, tl), rx->line, rx->col);
                 rx->type = NULL;
               }
             }
@@ -801,7 +802,7 @@ void sema_resolve_stmt(Stmt *s) {
     Expr *rhs = s->as.var_stmt.expr;
     // Resolve a generic type-application annotation (`var v Vec(i32)`).
     if (s->as.var_stmt.type)
-        s->as.var_stmt.type = mono_resolve_type_apps(s->as.var_stmt.type);
+        s->as.var_stmt.type = mono_resolve_type_apps_at(s->as.var_stmt.type, s->line, s->col);
     Type *ty = s->as.var_stmt.type; // Start with the annotation (if any)
     // ★ A LOCAL ARRAY'S LENGTH. `T[N]` needs a compile-time constant N (spec 7), and a local
     // with a RUNTIME length and no initializer is a VLA (the note there). A declared length
@@ -1769,7 +1770,7 @@ void sema_resolve_expr(Expr *e) {
             if (e->as.builtin_expr.arg2) sema_resolve_expr(e->as.builtin_expr.arg2);
             if (e->as.builtin_expr.arg3) sema_resolve_expr(e->as.builtin_expr.arg3);
             if (e->as.builtin_expr.vec_type)
-                e->as.builtin_expr.vec_type = mono_resolve_type_apps(e->as.builtin_expr.vec_type);
+                e->as.builtin_expr.vec_type = mono_resolve_type_apps_at(e->as.builtin_expr.vec_type, e->line, e->col);
             break;
     }
     break;

@@ -4150,12 +4150,12 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         } else if (d->kind == DECL_STRUCT) {   // lower `T | markers` / Vec(i32) field types
             for (DeclList *f = d->as.struct_decl.fields; f; f = f->next)
                 if (f->decl && f->decl->kind == DECL_VARIABLE)
-                    f->decl->as.variable_decl.type = mono_resolve_type_apps(f->decl->as.variable_decl.type);
+                    f->decl->as.variable_decl.type = mono_resolve_type_apps_at(f->decl->as.variable_decl.type, f->decl->line, f->decl->col);
         } else if (d->kind == DECL_ENUM) {
             for (Variant *v = d->as.enum_decl.variants; v; v = v->next)
                 for (DeclList *f = v->fields; f; f = f->next)
                     if (f->decl && f->decl->kind == DECL_VARIABLE)
-                        f->decl->as.variable_decl.type = mono_resolve_type_apps(f->decl->as.variable_decl.type);
+                        f->decl->as.variable_decl.type = mono_resolve_type_apps_at(f->decl->as.variable_decl.type, f->decl->line, f->decl->col);
         }
     }
 
@@ -4641,7 +4641,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
 
 
         // 2.b) Name resolution
-        current_return_type = mono_resolve_type_apps(d->as.function_decl.return_type);
+        current_return_type = mono_resolve_type_apps_at(d->as.function_decl.return_type, d->line, d->col);
         current_function_decl = d; // Set current function
         // Q-018: use the decl's defining_module if known so that cross-module
         // visibility checks within imported function bodies see the correct
