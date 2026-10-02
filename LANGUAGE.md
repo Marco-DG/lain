@@ -917,12 +917,23 @@ value must be consumed **exactly once**:
 | Consumed on some paths but not others | `[E016]` |
 | Moved without writing `mov` | `[E007]` |
 
-> [!WARNING]
-> **Not yet enforced for a non-pointer `mov` field.** With `type H { mov tag i32 }`, never consuming
-> an `H` is accepted today, although consuming it on *one* path of a branch is `[E016]` — so trying
-> and failing is refused while not trying passes. The rule above is the language's rule and this is a
-> gap being closed, not an exception: an `i32` can perfectly well be a resource, a POSIX file
-> descriptor being the obvious one. Do not rely on the omission.
+The rule holds **whatever the field's type**. A `mov` field of type `i32` makes its struct linear
+exactly as a pointer would: an `i32` can perfectly well be a resource, a POSIX file descriptor being
+the obvious one, so the compiler does not guess from the type whether a value needs releasing.
+
+```lain
+type Fd { mov handle i32 }
+
+func close_fd(mov {handle} Fd) {
+}
+
+func leak(mov f Fd) {         // ERROR [E003]
+}
+```
+
+```
+[E003] Error Ln 6, Col 15: a linear value is not consumed before it goes out of scope
+```
 
 **What consumes a linear value is destructuring it.** A function that takes `mov` and does nothing
 with it has not consumed it — it has moved the leak one level up, and is itself `[E003]`. So the
