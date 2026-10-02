@@ -76,7 +76,7 @@ than believed.
 |:-----|:--------|
 | `0` | success — the program was accepted and the C written |
 | `1` | the program was refused, or the input could not be read, or a flag was not recognised |
-| `70` | **internal error**: a proof obligation reached code generation undischarged. This is a compiler bug, not a program error — please report it with the source. With `--check-certificate`, also a certificate that does not check, which prints `internal error: the certificate for '<function>' does not check:` and the reason. If this compiler wrote that certificate for this same program, it is a compiler bug as well (the search and the check disagree); if the certificate was edited, or came from another build or program, the certificate is wrong |
+| `70` | **internal error**: the compiler's own fault, not the program's — please report it with the source. Every exit-70 message begins `internal error:`; for instance a function that would reach code generation without having been analysed, or an analysis that did not reach a fixpoint. The one exception is `--check-certificate`: a message beginning `internal error: the certificate for` is a compiler bug only if this compiler wrote that certificate for this same program, since the search and the check then disagree. If the certificate was edited, or came from another build or program, the certificate is wrong |
 | *other* | with `--interpret` only: the value `main` returned |
 
 Two things worth knowing about the last row. An exit status is **8 bits**, so a returned value is
