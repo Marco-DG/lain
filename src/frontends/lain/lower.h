@@ -349,39 +349,6 @@ static Decl *ir_find_struct_decl(LowerCtx *c, Id *name) {
     }
     return NULL;
 }
-// ── STRUCT FIELD INVARIANTS (`pos usize in text`) ────────────────────────────────────────
-// A field declared `in <other field>` is a promise that it is a VALID INDEX into that other
-// field, for the whole life of the value. It is the one piece of a struct's meaning that the
-// IR could not see: `l.text[l.pos]` had two unrelated loads and no reason to believe the
-// index was in range, so a perfectly safe accessor could not be proven.
-//
-// The obligation is discharged where the value is BUILT and consumed where it is READ —
-// assert at construction, assume at the read, which is the same shape as the B2 contract
-// layer and keeps the "every assume is paid for by an assert" invariant intact.
-//
-// Returns the container field's index, or −1 if this field carries no invariant.
-static int ir_field_in_target(LowerCtx *c, IrType *sty, int fidx, IrType **cty) {
-    if (!sty || sty->kind!=IRT_STRUCT || fidx<0 || fidx>=sty->n_fields || !sty->field_names) return -1;
-    if (!sty->sname) return -1;
-    Id sn; sn.name = sty->sname->name; sn.length = sty->sname->length;
-    Decl *sd = ir_find_struct_decl(c, &sn);
-    if (!sd || sd->kind != DECL_STRUCT) return -1;
-    int k = 0; Id *want = NULL;
-    for (DeclList *fl = sd->as.struct_decl.fields; fl; fl = fl->next) {
-        if (!fl->decl || fl->decl->kind != DECL_VARIABLE) continue;
-        if (k == fidx) { want = fl->decl->as.variable_decl.in_field; break; }
-        k++;
-    }
-    if (!want) return -1;
-    for (int i=0;i<sty->n_fields;i++) {
-        IrName *fn = sty->field_names[i];
-        if (fn && fn->length==want->length && strncmp(fn->name, want->name, (size_t)want->length)==0) {
-            if (cty) *cty = sty->fields[i];
-            return i;
-        }
-    }
-    return -1;
-}
 
 // A module-level ENUM declaration, matched the same two ways as a struct.
 static Decl *ir_find_enum_decl(LowerCtx *c, Id *name) {
@@ -1394,38 +1361,6 @@ static void ir_lower_call_requires(LowerCtx *c, Decl *callee, IrInstr *call) {
             if (rv && rv->type && rv->type->kind==IRT_INT)
                 ir_assert(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, arg, rv));
             else ir_assert_unresolvable(c);                      // never an unlicensed entry assume
-        }
-        // in_field dual: callee `pos in text` ⇒ assert arg_pos < len(arg_text) (licenses the
-        // callee's entry `assume(pos < len(text))`, closing the contract soundly).
-        Id *inf = p->decl->as.variable_decl.in_field;
-        if (inf) {
-            int jdx=0;
-            for (DeclList *q=callee->as.function_decl.params; q; q=q->next, jdx++) {
-                if (!q->decl || q->decl->kind!=DECL_VARIABLE) continue;
-                Id *qn=q->decl->as.variable_decl.name;
-                if (qn && qn->length==inf->length && strncmp(qn->name,inf->name,(size_t)qn->length)==0) {
-                    // ★ THE ASSERT MUST COVER EVERY CASE THE ENTRY ASSUMES. The callee assumes
-                    // `pos < len` for a SLICE and for a FIXED array (constant length); this side
-                    // asserted for slices only, so `get(arr i32[10], i i32 in arr)` called as
-                    // `get(arr, 15)` gave the callee an assumption nobody proved — an unlicensed
-                    // assume, hidden only because the front end's legacy check refused the call
-                    // first. The length comes from the callee's DECLARED type, the same fact the
-                    // entry side reads off the parameter.
-                    if (jdx < call->n_operands) {
-                        IrValue *aarr = call->operands[jdx];
-                        Type *qt = q->decl->as.variable_decl.type;
-                        IrValue *len = NULL;
-                        if (aarr && aarr->type && aarr->type->kind==IRT_SLICE)
-                            len = ir_slice_len(c->f, c->cur, aarr);
-                        else if (qt && qt->kind==TYPE_ARRAY && qt->array_len > 0)
-                            len = ir_const_int(c->f, c->cur, qt->array_len, ir_type_int(c->a,64,false));
-                        else if (aarr && aarr->type && aarr->type->kind==IRT_ARRAY && aarr->type->array_len > 0)
-                            len = ir_const_int(c->f, c->cur, aarr->type->array_len, ir_type_int(c->a,64,false));
-                        if (len) ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, arg, len), 85);
-                    }
-                    break;
-                }
-            }
         }
     }
 }
@@ -2770,25 +2705,6 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     && addr->type->kind==IRT_ARRAY) return addr;
                 IrValue *v = ir_load(c->f, c->cur, addr, fty ? fty : ty);
                 ir_field_len_bound_fact(c, sty, fidx, v, false);      // a slice's length bound, consumed
-                // the `in` invariant, consumed: this field is a valid index into that one
-                IrType *cty2 = NULL;
-                int cidx = ir_field_in_target(c, sty, fidx, &cty2);
-                if (cidx >= 0 && cty2 && cty2->kind==IRT_SLICE && v->type && v->type->kind==IRT_INT) {
-                    IrValue *base = ir_lower_addr(c, tgt);
-                    if (base) {
-                        IrValue *cv  = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, cidx, cty2), cty2);
-                        IrValue *len = ir_slice_len(c->f, c->cur, cv);
-                        ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, v, len));
-                    }
-                } else if (cidx >= 0 && cty2 && cty2->kind==IRT_ARRAY && cty2->array_len >= 0 &&
-                           v->type && v->type->kind==IRT_INT) {
-                    // ★ A FIXED-array container: its length is a constant, and the invariant is
-                    // asserted at its construction and stores like a slice's (E121). Only the slice
-                    // case was consumed here, so `src u8[4096]` + `pos usize in src` could not
-                    // prove `l.src[l.pos]` — strictly LESS than the same struct over `u8[]`.
-                    IrValue *len = ir_const_int(c->f, c->cur, cty2->array_len, ir_type_int(c->a,64,false));
-                    ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, v, len));
-                }
                 // ...and a RELATIONAL field invariant, consumed the same way.
                 { IrFieldRel rels[8];
                   int nr = (v->type && v->type->kind==IRT_INT) ? ir_field_relations(c, sty, fidx, rels, 8) : 0;
@@ -2838,40 +2754,6 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 int k=0; for (ExprList *a=e->as.call_expr.args; a; a=a->next,k++)
                     fs[k] = ir_coerce_repr(c, ir_lower_expr(c, a->expr),
                                            k < ty->n_fields ? ty->fields[k] : NULL, a->expr);
-                // the `in` invariant, DISCHARGED: building the value is where the promise is
-                // made, so that is where it must be proven. Without this the assume at every
-                // read would be a fact the IR never checks — a front end could then hand the
-                // proof engine an out-of-range index and have it believed.
-                Expr *argx[64]; { int q=0; for (ExprList *a=e->as.call_expr.args; a && q<64; a=a->next) argx[q++]=a->expr; }
-                for (int fi=0; fi<n && fi<ty->n_fields && fi<64; fi++) {
-                    IrType *cty2 = NULL;
-                    int cidx = ir_field_in_target(c, ty, fi, &cty2);
-                    if (cidx < 0 || cidx >= n || cidx >= 64 || !cty2) continue;
-                    if (cty2->kind!=IRT_SLICE && cty2->kind!=IRT_ARRAY) continue;
-                    if (!fs[fi] || !fs[fi]->type || fs[fi]->type->kind!=IRT_INT) continue;
-                    if (!fs[cidx] || !fs[cidx]->type) continue;
-                    // The container's length. A slice carries it; a FIXED ARRAY coerced into
-                    // the slice field does not — its length is in the argument's declared
-                    // type, and reading it there is what lets `Lexer(src, 99)` over a `u8[5]`
-                    // be caught at all. Without a length there is nothing to check and the
-                    // read-side assume would be unpaid, so the site is left unverified rather
-                    // than silently passed (tracked as a gap, not as a proof).
-                    IrValue *len = NULL;
-                    // A FIXED-ARRAY container field has its length in its type. It was skipped
-                    // here, which was harmless only while nothing assumed the invariant for one;
-                    // the field-store rule assumes the OLD value is in range (that is what proves
-                    // `l.pos = 0`), and an unchecked `Buf(d, 10)` over `u8[5]` then assumed
-                    // 10 < 5 and proved everything after it, `d[20]` included.
-                    if (cty2->kind==IRT_ARRAY) {
-                        if (cty2->array_len >= 0)
-                            len = ir_const_int(c->f, c->cur, cty2->array_len, fs[fi]->type);
-                    } else if (fs[cidx]->type->kind==IRT_SLICE) len = ir_slice_len(c->f, c->cur, fs[cidx]);
-                    else if (argx[cidx] && argx[cidx]->type && argx[cidx]->type->kind==TYPE_ARRAY
-                             && argx[cidx]->type->array_len >= 0)
-                        len = ir_const_int(c->f, c->cur, argx[cidx]->type->array_len, fs[fi]->type);
-                    if (!len) continue;
-                    ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, fs[fi], len), 121);
-                }
                 // ...and so is a slice field's length bound.
                 for (int fi=0; fi<n && fi<ty->n_fields; fi++) ir_field_len_bound_fact(c, ty, fi, fs[fi], true);
                 // A RELATIONAL field invariant is established here too, from the operands.
@@ -3401,23 +3283,16 @@ static void ir_lower_flush_defers(LowerCtx *c) {
     ir_lower_replay_defers(c, 0);
 }
 
-// ★ A STORE TO A FIELD MUST KEEP THE STRUCT'S `in` INVARIANT. `pos usize in text` is read as a FACT
-// (every load of `pos` assumes `pos < text.len`, which is what proves `c.text[c.pos]`), so every
+// ★ A STORE TO A FIELD MUST KEEP THE STRUCT'S INVARIANT. `pos usize in 0..text.len` is read as a
+// FACT (every load of `pos` assumes `pos < text.len`, which is what proves `c.text[c.pos]`), so every
 // write that could break it must pay for it. Construction asserted it; ASSIGNMENT did not — the
 // legacy front-end E121 covered fixed-array containers only and accepted a slice container
 // unconditionally — so `c.pos = 5` over a 4-byte slice compiled and the proven read overflowed
-// the buffer (ASan). Two ways to break it, both asserted here:
-//   · storing the `in` field itself: the new value must be < len(container);
-//   · storing the CONTAINER: every field that is `in` it must be < the new length.
+// the buffer (ASan). Two ways to break it, both asserted below by the relational rules:
+//   · storing the constrained field itself: the new value must satisfy the relation;
+//   · storing the field it names (the container): every field related to it must still hold.
 static IrInstr *ir_def_in_block(IrBlock *b, IrValue *v) {
     for (IrInstr *i = b ? b->instrs : NULL; i; i = i->next) if (i->result == v) return i;
-    return NULL;
-}
-static IrValue *ir_container_len(LowerCtx *c, IrValue *cv, IrType *cty, IrType *ity) {
-    if (!cty) return NULL;
-    if (cty->kind == IRT_SLICE && cv) return ir_slice_len(c->f, c->cur, cv);
-    if (cty->kind == IRT_ARRAY && cty->array_len >= 0)     // `u8[0]` has no valid index at all
-        return ir_const_int(c->f, c->cur, cty->array_len, ity ? ity : ir_type_int(c->a,64,false));
     return NULL;
 }
 // `fp` is the target's defining instruction, captured BEFORE the right-hand side was lowered: an
@@ -3436,30 +3311,6 @@ static void ir_lower_field_invariant_asserts(LowerCtx *c, IrInstr *fp, IrValue *
     // `uint64_t` field — C that gcc rejects.
     IrType *ft = sty->fields[fi];
     ir_field_len_bound_fact(c, sty, fi, v, true);                // a new slice keeps its length bound
-    IrType *cty = NULL;
-    int cidx = ir_field_in_target(c, sty, fi, &cty);
-    if (cidx >= 0 && cty && ft && ft->kind == IRT_INT && v->type->kind == IRT_INT) {
-        IrValue *cv = (cty->kind == IRT_SLICE)
-            ? ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, cidx, cty), cty) : NULL;
-        IrValue *len = ir_container_len(c, cv, cty, ft);
-        if (len) {
-            // The invariant HELD before this store — every write that could break it is asserted
-            // (construction, this rule, the container rule below) — so the old value is below the
-            // length. That is what lets `l.pos = 0` prove: it says the container is not empty.
-            IrValue *old = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, fi, ft), ft);
-            ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, old, len));
-            ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, v, len), 121);
-        }
-    }
-    for (int j = 0; j < sty->n_fields; j++) {
-        IrType *c2 = NULL;
-        if (j == fi || ir_field_in_target(c, sty, j, &c2) != fi) continue;
-        IrType *jt = sty->fields[j];
-        if (!jt || jt->kind != IRT_INT) continue;
-        IrValue *jv = ir_load(c->f, c->cur, ir_field_ptr(c->f, c->cur, base, j, jt), jt);
-        IrValue *len = ir_container_len(c, v, v->type, jt);
-        if (len) ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, jv, len), 121);
-    }
     // RELATIONAL invariants. The field written is either the constrained one (its new value must
     // satisfy the relation against the other's CURRENT value) or the one a relation names (every
     // field constrained against it must satisfy the relation against the NEW value). In both, the
@@ -4243,18 +4094,6 @@ static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl
         IrValue *rv = ir_lower_refinement_rhs(c, rhs, pv->type);   // literal / a.len / param
         if (rv && rv->type && rv->type->kind==IRT_INT)
             ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, cmp, pv, rv));
-    }
-    // `pos usize in text` — a valid-index refinement (pos < len(text)). in_field names the
-    // array param; the ≥0 half is pv's usize type. (Call-site dual in ir_lower_call_requires.)
-    Id *inf = pdecl->as.variable_decl.in_field;
-    if (inf) {
-        IrLocal *la = ir_env_find(c, inf);
-        IrValue *av = la ? (la->param ? la->param : la->slot) : NULL;
-        IrValue *len = NULL;
-        if (av && av->type && av->type->kind==IRT_SLICE) len = ir_slice_len(c->f, c->cur, av);
-        else if (av && av->type && av->type->kind==IRT_ARRAY)
-            len = ir_const_int(c->f, c->cur, av->type->array_len, ir_type_int(c->a,64,false));
-        if (len) ir_assume(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_ULT, pv, len));
     }
 }
 

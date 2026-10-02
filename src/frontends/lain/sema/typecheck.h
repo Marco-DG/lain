@@ -2052,21 +2052,6 @@ static void sema_check_mut_invariant_field(Expr *e) {
             exit(1);
         }
     }
-    for (DeclList *sf = ss->decl->as.struct_decl.fields; sf; sf = sf->next) {
-        if (!sf->decl || sf->decl->kind != DECL_VARIABLE) continue;
-        Id *fn = sf->decl->as.variable_decl.name, *in = sf->decl->as.variable_decl.in_field;
-        if (!fn || !in) continue;
-        bool is_idx = fn->length == fld->length && strncmp(fn->name, fld->name, fn->length) == 0;
-        bool is_cnt = in->length == fld->length && strncmp(in->name, fld->name, in->length) == 0;
-        if (!is_idx && !is_cnt) continue;
-        fprintf(stderr, "[E121] Error Ln %li, Col %li: a `var` reference to `%.*s` can break the struct's "
-                "invariant `%.*s in %.*s` — a write through the reference is not checked against it. "
-                "Pass the whole struct as `var` instead; its field writes are checked.\n",
-                (long)e->line, (long)e->col, (int)fld->length, fld->name,
-                (int)fn->length, fn->name, (int)in->length, in->name);
-        diagnostic_show_line(e->line, e->col);
-        exit(1);
-    }
 }
 
 

@@ -1886,48 +1886,6 @@ static void sema_invalidate_constraints_for_body(struct StmtList *body) {
     }
 }
 
-// Push persistent InGuardEntries for each "field Type in container" annotation
-// in a struct definition. Call this when a variable or parameter of a struct
-// type enters scope. `var_name_id` is the variable/parameter name Id.
-static void sema_push_struct_field_guards(Id *var_name_id, Type *var_ty) {
-    if (!var_ty || var_ty->kind != TYPE_SIMPLE || !var_ty->base_type) return;
-    char sname[256];
-    int snlen = (int)var_ty->base_type->length;
-    if (snlen >= (int)sizeof(sname)) return;
-    memcpy(sname, var_ty->base_type->name, snlen);
-    sname[snlen] = '\0';
-    Symbol *ssym = sema_lookup(sname);
-    if (!ssym || !ssym->decl || ssym->decl->kind != DECL_STRUCT) return;
-    for (DeclList *sf = ssym->decl->as.struct_decl.fields; sf; sf = sf->next) {
-        if (!sf->decl || sf->decl->kind != DECL_VARIABLE) continue;
-        Id *in_fld = sf->decl->as.variable_decl.in_field;
-        if (!in_fld) continue;
-        // Synthetic EXPR_IDENTIFIER for the variable
-        Expr *ve = arena_push_aligned(sema_arena, Expr);
-        memset(ve, 0, sizeof(Expr));
-        ve->kind = EXPR_IDENTIFIER;
-        ve->as.identifier_expr.id = var_name_id;
-        // EXPR_MEMBER: var.field (the index)
-        Expr *fidx = arena_push_aligned(sema_arena, Expr);
-        memset(fidx, 0, sizeof(Expr));
-        fidx->kind = EXPR_MEMBER;
-        fidx->as.member_expr.target = ve;
-        fidx->as.member_expr.member = sf->decl->as.variable_decl.name;
-        // EXPR_MEMBER: var.container
-        Expr *fcnt = arena_push_aligned(sema_arena, Expr);
-        memset(fcnt, 0, sizeof(Expr));
-        fcnt->kind = EXPR_MEMBER;
-        fcnt->as.member_expr.target = ve;
-        fcnt->as.member_expr.member = in_fld;
-        // Push the guard
-        InGuardEntry *ig = arena_push_aligned(sema_arena, InGuardEntry);
-        ig->index = fidx;
-        ig->container = fcnt;
-        ig->next = sema_in_guards;
-        sema_in_guards = ig;
-    }
-}
-
 /* ── Bounded-counter recognition ─────────────────────────────────────────────
    A variable incremented by exactly 1 ONLY inside an `if v < B` guard, and
    assigned nowhere else, satisfies the loop invariant v <= B (v < B ⟹ v+1 <= B).
@@ -2419,10 +2377,6 @@ static void walk_stmt(Stmt *s) {
                     }
                 }
             }
-
-            // Struct field invariants: push persistent in-guards so that
-            // accesses like `l.text[l.pos]` are bounds-proven automatically.
-            sema_push_struct_field_guards(s->as.var_stmt.name, s->as.var_stmt.type);
 
             // Auto-infer pointer in-guard from `&arr[k]` initializer.
             // `var p = &arr[k]` carries the same safety guarantee as
@@ -4414,56 +4368,6 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                     }
                 }
 
-                // Handle 'in' constraint: param int in arr
-                // Desugars to: param >= 0 and param < arr.len
-                if (p->decl->as.variable_decl.in_field && sema_ranges) {
-                    Id *arr_id = p->decl->as.variable_decl.in_field;
-                    Id *param_id = pid;
-                    
-                    // Find the array parameter to get its length
-                    Type *arr_type = NULL;
-                    for (DeclList *arr_p = d->as.function_decl.params; arr_p; arr_p = arr_p->next) {
-                        if (arr_p->decl->kind == DECL_VARIABLE) {
-                            Id *aname = arr_p->decl->as.variable_decl.name;
-                            if (aname->length == arr_id->length &&
-                                strncmp(aname->name, arr_id->name, aname->length) == 0) {
-                                arr_type = arr_p->decl->as.variable_decl.type;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (arr_type) {
-                        // Apply range: param >= 0
-                        Range r = range_make(0, INT64_MAX);
-
-                        // If array has known length (fixed-size), tighten upper bound
-                        if (arr_type->kind == TYPE_ARRAY && arr_type->array_len >= 0) {
-                            r = range_make(0, arr_type->array_len - 1);
-                        }
-
-                        range_set(sema_ranges, param_id, r);
-
-                        // G9: dynamic array `i usize in a` — tie `i < a.len` via a
-                        // difference constraint against the synthetic __len_a var
-                        // (registered by the __len_PARAM seeding for array params
-                        // processed earlier). Previously only fixed arrays tightened,
-                        // so `a[i]` on a plain slice was rejected E085.
-                        if (arr_type->kind == TYPE_ARRAY && arr_type->array_len == -1) {
-                            char key[272]; int klen = 6 + (int)arr_id->length;
-                            if (klen < (int)sizeof(key)) {
-                                memcpy(key, "__len_", 6);
-                                memcpy(key + 6, arr_id->name, arr_id->length);
-                                Id *len_id = NULL;
-                                for (RangeEntry *re = sema_ranges->head; re; re = re->next)
-                                    if (re->var && re->var->length == klen &&
-                                        strncmp(re->var->name, key, klen) == 0) { len_id = re->var; break; }
-                                if (len_id) constraint_add(sema_ranges, param_id, len_id, -1);
-                            }
-                        }
-                    }
-                }
-                
                 // Apply equation-style constraints: b int != 0, x int >= 0 and <= 100
                 if (p->decl->as.variable_decl.constraints && sema_ranges) {
                     for (ExprList *c = p->decl->as.variable_decl.constraints; c; c = c->next) {
@@ -4602,9 +4506,6 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                         }
                     }
                 }
-                // Struct-typed parameter: push field invariants as in-guards
-                // so the callee proves `l.text[l.pos]` safe without explicit guard.
-                sema_push_struct_field_guards(pid, pty);
             }
             param_idx++;
         }

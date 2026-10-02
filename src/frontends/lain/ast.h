@@ -252,7 +252,6 @@ typedef struct {
 
     // OPTIONAL "in <identifier>" annotation used in struct field
     // definitions like: `cursor u8 in text`
-    Id*   in_field;
     
     // Equation-style constraints: b int != 0, x int >= 0 and <= 100
     ExprList* constraints;
@@ -1081,7 +1080,6 @@ Decl *decl_variable(Arena *arena, Id *name, Type *type) {
     d->kind = DECL_VARIABLE;
     d->as.variable_decl.name = name;
     d->as.variable_decl.type = type;
-    d->as.variable_decl.in_field = NULL; // default: no "in" annotation
     d->as.variable_decl.constraints = NULL; // default: no constraints
     d->as.variable_decl.is_parameter = false;
     d->as.variable_decl.is_mutable = false; // default

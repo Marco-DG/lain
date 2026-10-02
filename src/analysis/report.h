@@ -195,10 +195,7 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                     ir_diag(file, c->line, c->col, "E015", "divisor is not provably non-zero");
                 n++; break;
             case VRA_PRECOND:
-                if (c->diag == 85)
-                    ir_diag(file, c->line, c->col, "E085",
-                            "index argument is not provably within the bounds of the array it is `in`");
-                else if (c->diag == 86)
+                if (c->diag == 86)
                     ir_diag(file, c->line, c->col, "E086",
                             "return value cannot be proven to satisfy the function's return refinement");
                 else if (c->diag == 121)

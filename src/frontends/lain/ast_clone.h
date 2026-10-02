@@ -327,7 +327,6 @@ Decl *clone_decl(Arena *arena, Decl *d) {
         case DECL_VARIABLE:
             new_d->as.variable_decl.name = clone_id(arena, d->as.variable_decl.name);
             new_d->as.variable_decl.type = clone_type(arena, d->as.variable_decl.type);
-            new_d->as.variable_decl.in_field = clone_id(arena, d->as.variable_decl.in_field);
             new_d->as.variable_decl.constraints = clone_expr_list(arena, d->as.variable_decl.constraints);
             break;
         case DECL_FUNCTION:
