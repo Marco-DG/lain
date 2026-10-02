@@ -14,7 +14,6 @@ typedef struct
     char*       filename;
     char*       output_file;  // -o flag, defaults to "out.c"
     bool        dump_ast;
-    bool        no_w130;           // --no-w130: suppress proc-could-be-func warning
     bool        no_line_directives; // --no-line-directives: suppress #line in emitted C
     bool        dump_niche;         // --dump-niche: print enum niche layout decisions
     bool        dump_effects;       // --dump-effects: print each function's inferred effect row
@@ -156,7 +155,7 @@ static Args args_parse(int argc, char** argv)
         } else if (strcmp(argv[i], "--dump-ast") == 0) {
             args.dump_ast = true;
         } else if (strcmp(argv[i], "--no-w130") == 0) {
-            args.no_w130 = true;
+            // accepted and ignored: W130 and the walker behind it are deleted
         } else if (strcmp(argv[i], "--no-line-directives") == 0) {
             args.no_line_directives = true;
         } else if (strcmp(argv[i], "--dump-niche") == 0) {

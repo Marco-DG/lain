@@ -292,10 +292,10 @@ typedef struct StructDecl {
 } DeclStruct;
 
 // F3.3 effect row: the closed lattice of effects a function may have, inferred and
-// propagated by set inclusion (callee.effects ⊆ caller.effects). This unifies the
-// three analyses Lain runs separately — W130 (has-effects), the emit const/pure
-// classification, and func/proc + termination — into one artifact. A `func` is
-// exactly a function whose effects avoid IO and Diverge (pure + total).
+// propagated by set inclusion (callee.effects ⊆ caller.effects). It unified what three
+// separate analyses decided (W130's has-effects walk, since deleted, the emit const/pure
+// classification, and func/proc + termination) into one artifact. A function with no
+// stated row is exactly one whose effects avoid IO and Diverge (pure + total).
 
 typedef struct {
     Id*         name;           // Function name

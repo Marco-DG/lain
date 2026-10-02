@@ -107,7 +107,6 @@ int main(int argc, char **argv) {
 
     // Initialize target config (host auto-detect unless --target= specified).
     target_init_for(args.target_triple);
-    sema_w130_silent = args.no_w130;
     sema_dump_effects = args.dump_effects;
 
     // A relative path that CLIMBS (`../m.ln`, `sub/../m.ln`) cannot name a module: the name is
