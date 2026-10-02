@@ -1,0 +1,9 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: Error Ln 5, Col 31: 'u8[]' has no member 'zz'
+// A name in a parameter refinement had no position: the same `h.zz` in the body was placed, in the
+// signature it said Ln 0, Col 0 (and before a9b7078 it crashed the compiler; M13, Handwriting).
+func cut(h u8[], end usize <= h.zz) u32 {
+    return 0
+}
+
+func main() i32 { return 0 }

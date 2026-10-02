@@ -71,6 +71,41 @@ if [ -n "$uncoded" ]; then
     echo "── an error message with no diagnostic code:"; echo "$uncoded" | head -8
     nuncoded=$(echo "$uncoded" | wc -l)
 fi
+# ── AN ERROR WITHOUT A POSITION ──────────────────────────────────────────────────────────
+# A coded error says where: `[E###] Error Ln N, Col M: ...`, or `[E###] Error` followed by a
+# position printed when the construct has one. A literal `[E###] Error:` has none by
+# construction. Allowed, each for its reason: E124 in a TYPE position (sema/monomorph.h: a Type
+# carries no position), an anonymous union's layout refusal (E064, ir/emit_c.h: no source
+# construct to point at), a function beyond an analysis's capacity (E100 in
+# analysis/definite_init.h and analysis/borrow.h: an IrFunc has no line, so it names the
+# function), and the --emit-llvm summary (main.c). M13 (Handwriting) measures the dynamic side.
+noloc=$(grep -rnE 'fprintf\(stderr, *"\[E[0-9]+\] Error:' src --include=*.h --include=*.c \
+        | grep -vE '^[^:]+:[0-9]+:\s*//' \
+        | grep -vE '^src/frontends/lain/sema/monomorph\.h:[0-9]+:.*\[E124\]' \
+        | grep -vE '^src/ir/emit_c\.h:[0-9]+:.*\[E064\]' \
+        | grep -vE '^src/analysis/(definite_init|borrow)\.h:[0-9]+:.*\[E100\]' \
+        | grep -vE '^src/frontends/lain/main\.c:[0-9]+:.*\[E100\] Error: the LLVM path')
+# Two shapes the literal rule above cannot see (Handwriting, from a count of every coded literal):
+# a code spelled otherwise ("[E101] Comptime purity error", "[E085] bounds error" skipped a rule
+# keyed on "Error"), and the position printed by a separate call, `"[E012] Error"` then
+# `if (line) fprintf(" Ln ...")`, which printed "[E012] Error: ..." with no place when line was 0,
+# a shape neither this gate nor a runtime grep for "Ln 0" could see. The idiom's next line must be
+# ir_diag_locus (ir/ir.h), which names the function when there is no line.
+spelled=$(grep -rnE 'fprintf\(stderr, *"\[E[0-9]+\]' src --include=*.h --include=*.c \
+          | grep -vE '^[^:]+:[0-9]+:\s*//' | grep -vE '"\[E[0-9]+\] Error( Ln |:|")')
+[ -n "$spelled" ] && noloc="$noloc${noloc:+
+}$spelled"
+idiom=$(for f in $(grep -rlE 'fprintf\(stderr, *"\[E[0-9]+\] Error"' src --include=*.h --include=*.c); do
+          awk -v F="$f" '/fprintf\(stderr, *"\[E[0-9]+\] Error"/ { m = NR; next }
+                         m && NR == m + 1 { if ($0 !~ /ir_diag_locus\(/) print F ":" m ": the position after it is not ir_diag_locus"; m = 0 }' "$f"
+        done)
+[ -n "$idiom" ] && noloc="$noloc${noloc:+
+}$idiom"
+nnoloc=0
+if [ -n "$noloc" ]; then
+    echo "── a coded error with no position (or not spelled [E###] Error):"; echo "$noloc" | head -8
+    nnoloc=$(echo "$noloc" | wc -l)
+fi
 echo "=================================================================="
 if [ $bad -eq 0 ]; then echo "build warnings (correctness class): NONE"; else
     echo "build warnings (correctness class): $bad  ← each of these is undefined behaviour"; fi
@@ -78,5 +113,7 @@ if [ $nprose -eq 0 ]; then echo "removed keywords in diagnostic prose: NONE"; el
     echo "removed keywords in diagnostic prose: $nprose  ← a message tells the user to write it"; fi
 if [ $nuncoded -eq 0 ]; then echo "errors without a diagnostic code: NONE"; else
     echo "errors without a diagnostic code: $nuncoded  ← spec_gate cannot see them"; fi
+if [ $nnoloc -eq 0 ]; then echo "coded errors without a position: NONE"; else
+    echo "coded errors without a position: $nnoloc  ← the user is not told where"; fi
 echo "=================================================================="
-[ $bad -eq 0 ] && [ $nprose -eq 0 ] && [ $nuncoded -eq 0 ]
+[ $bad -eq 0 ] && [ $nprose -eq 0 ] && [ $nuncoded -eq 0 ] && [ $nnoloc -eq 0 ]

@@ -56,8 +56,13 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
         else if (parser_match(TOKEN_PERCENT))  { ck = CAST_WRAPPING;   parser_advance(); }
         else if (parser_match(TOKEN_PIPE))     { ck = CAST_SATURATING; parser_advance(); }
         Type *target = parse_type(arena, parser);
+        Expr *operand = left;
         left = expr_cast(arena, left, target);
         left->as.cast_expr.kind = ck;
+        // A cast is where its operand is. It had no position, and only the outermost node of an
+        // expression gets one, so `x as u8[] + 100` reported its E012 at Ln 0 (M13), while
+        // `(x as u8[]) + 100` and `x as u8[]` alone were placed.
+        left->line = operand->line; left->col = operand->col;
     }
 
     while (true) {
@@ -88,7 +93,9 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
         if (parser_match(TOKEN_KEYWORD_AS)) {
             parser_advance();
             Type *target = parse_type(arena, parser);
+            Expr *operand = left;
             left = expr_cast(arena, left, target);
+            left->line = operand->line; left->col = operand->col;
         }
     }
 

@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 8, Col 12: cannot cast 'u8' to 'K'
+// No conversion reaches an enumeration from an integer (I.12's validity routes, Secondary
+// Compiler Worker), and the refusal of `n as? K else K.A` said Ln 0, Col 0: the cast is the operand
+// of the `else`, and only the outermost node was placed.
+type K u8 { A, B, C }
+func f(n u8) K {
+    return n as? K else K.A
+}
+
+func main() i32 { return 0 }

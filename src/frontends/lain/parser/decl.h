@@ -520,8 +520,10 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                         rhs = expr_literal(arena, neg ? -value : value);
                     } else if (!neg && parser_match(TOKEN_IDENTIFIER)) {
                         Id *rid = id(arena, parser->token.length, parser->token.start);
+                        isize r_line = parser->line, r_col = parser->column;
                         parser_advance();
                         rhs = expr_identifier(arena, rid);
+                        rhs->line = r_line; rhs->col = r_col;
                         // `pos usize <= src.len` — another field's LENGTH, the POSITION
                         // invariant a lexer needs (EOF is pos == len). Only `.len` is meaningful
                         // on a field here; resolve decides what the name refers to.
@@ -531,6 +533,7 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                             Id *mid = id(arena, parser->token.length, parser->token.start);
                             parser_advance();
                             rhs = expr_member(arena, rhs, mid);
+                            rhs->line = r_line; rhs->col = r_col;
                         }
                     } else {
                         parser_error("Expected number or identifier after comparison operator");
@@ -1083,8 +1086,13 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
                             rhs = expr_literal(arena, pneg ? -value : value);
                         } else if (!pneg && parser_match(TOKEN_IDENTIFIER)) {
                             Id *rhs_id = id(arena, parser->token.length, parser->token.start);
+                            // A refinement's names carry their position: an error about one
+                            // (`end usize <= h.zz`) said Ln 0 while the same expression in the
+                            // body was placed (M13).
+                            isize r_line = parser->line, r_col = parser->column;
                             parser_advance();
                             rhs = expr_identifier(arena, rhs_id);
+                            rhs->line = r_line; rhs->col = r_col;
                             // G8: allow `ident.member` (e.g. `i usize < a.len`) as a
                             // constraint RHS — the dependent bound against a length.
                             if (parser_match(TOKEN_DOT)) {
@@ -1093,6 +1101,7 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
                                 Id *member = id(arena, parser->token.length, parser->token.start);
                                 parser_advance();
                                 rhs = expr_member(arena, rhs, member);
+                                rhs->line = r_line; rhs->col = r_col;
                             }
                         } else {
                             parser_error("Expected number or identifier after comparison operator");
@@ -1124,14 +1133,17 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
                                 term = expr_literal(arena, v);
                             } else if (parser_match(TOKEN_IDENTIFIER)) {
                                 Id *tid = id(arena, parser->token.length, parser->token.start);
+                                isize t_line = parser->line, t_col = parser->column;
                                 parser_advance();
                                 term = expr_identifier(arena, tid);
+                                term->line = t_line; term->col = t_col;
                                 if (parser_match(TOKEN_DOT)) {
                                     parser_advance();
                                     parser_expect(TOKEN_IDENTIFIER, "Expected identifier after '.'");
                                     Id *m = id(arena, parser->token.length, parser->token.start);
                                     parser_advance();
                                     term = expr_member(arena, term, m);
+                                    term->line = t_line; term->col = t_col;
                                 }
                             } else {
                                 parser_error("Expected number or identifier after '+' or '-' in a refinement bound");

@@ -1559,10 +1559,10 @@ static Type *lookup_struct_field_type(Id *struct_name, Id *field) {
   }
 
   DeclStruct *sd = find_struct_decl(struct_name);
-  if (!sd) {
-    fprintf(stderr, "[E106] Error: unknown struct '%.*s'\n",
+  if (!sd) {   // the only caller looked the struct up first
+    fprintf(stderr, "internal error: lookup_struct_field_type: '%.*s' is not a struct\n",
             (int)struct_name->length, struct_name->name);
-    exit(1);
+    exit(70);
   }
   for (DeclList *fld = sd->fields; fld; fld = fld->next) {
     Decl *vd = fld->decl;
@@ -3357,7 +3357,7 @@ void sema_infer_expr(Expr *e) {
         if (!sema_in_unsafe_block && ix && ix->kind == EXPR_LITERAL) {
             long long li = (long long)ix->as.literal_expr.value;
             if (li < 0 || li >= t->array_len) {
-                fprintf(stderr, "[E085] bounds error Ln %li, Col %li: vector lane %lld is out of "
+                fprintf(stderr, "[E085] Error Ln %li, Col %li: vector lane %lld is out of "
                         "range for Vec(%ld, ...).\n",
                         (long)e->line, (long)e->col, li, (long)t->array_len);
                 diagnostic_show_line(e->line, e->col);

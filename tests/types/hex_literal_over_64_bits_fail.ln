@@ -4,3 +4,4 @@ func main() i32 {
     var z = 0x1_0000_0000_0000_0000
     return 0
 }
+// EXPECT-TEXT: Error Ln 4, Col 13: integer literal

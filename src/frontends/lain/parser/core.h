@@ -212,7 +212,7 @@ static int from_hex(char c) {
 // silently. Decimal literals must fit the i64 value representation. Non-decimal
 // bases are bit-pattern notations, so they may span the full unsigned 64-bit
 // range (e.g. 0xFFFFFFFFFFFFFFFF == -1 as the stored int64_t), matching C.
-static long long parse_numeric_literal(const char *start, long length) {
+static long long parse_numeric_literal_at(isize line, isize col, const char *start, long length) {
     char buf[80];
     long i = 0, j = 0;
     bool truncated = false;
@@ -242,8 +242,8 @@ static long long parse_numeric_literal(const char *start, long length) {
             errno = 0;
             unsigned long long u = strtoull(buf + skip, NULL, base);
             if (truncated || errno == ERANGE) {
-                fprintf(stderr, "[E086] Error: integer literal '%.*s' has more than 64 bits.\n",
-                        (int)length, start);
+                fprintf(stderr, "[E086] Error Ln %li, Col %li: integer literal '%.*s' has more "
+                        "than 64 bits.\n", (long)line, (long)col, (int)length, start);
                 exit(1);
             }
             long long bits; memcpy(&bits, &u, sizeof bits);      // the pattern, two's complement
@@ -253,11 +253,13 @@ static long long parse_numeric_literal(const char *start, long length) {
     errno = 0;
     long long value = strtoll(buf, NULL, 10);
     if (truncated || errno == ERANGE) {
-        fprintf(stderr, "[E086] Error: integer literal '%.*s' is too large to fit "
-                "in a signed 64-bit integer.\n", (int)length, start);
+        fprintf(stderr, "[E086] Error Ln %li, Col %li: integer literal '%.*s' is too large to "
+                "fit in a signed 64-bit integer.\n", (long)line, (long)col, (int)length, start);
         exit(1);
     }
     return value;
 }
+// Every caller reads the parser's current token, so the position is the parser's.
+#define parse_numeric_literal(s, l) parse_numeric_literal_at(parser->line, parser->column, (s), (l))
 
 #endif // PARSER_CORE_H

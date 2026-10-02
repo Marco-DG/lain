@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 7, Col 12: cannot cast 'i32' to 'u8[]'
+// A cast that is the operand of a binary operator had no position: only the outermost node of an
+// expression got one, so this said Ln 0, Col 0, while `(x as u8[]) + 100` was placed (M13,
+// Handwriting).
+func f(x i32) u32 {
+    return x as u8[] + 100
+}
+
+func main() i32 { return 0 }

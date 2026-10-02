@@ -597,6 +597,15 @@ typedef struct IrFunc {
     struct IrFunc *next;
 } IrFunc;
 
+// The locus of a diagnostic about an instruction: its position, or, when lowering gave it none,
+// the function it is in. Three sites printed the position only `if (line)`, so a line of 0
+// produced "[E012] Error: ..." with no place at all, a shape no instrument could see: the source
+// held no "Error:" literal, and the output held no "Ln 0" (Handwriting).
+static inline void ir_diag_locus(isize line, isize col, const IrFunc *f) {
+    if (line) fprintf(stderr, " Ln %lld, Col %lld", (long long)line, (long long)col);
+    else if (f && f->name) fprintf(stderr, " in '%.*s'", (int)f->name->length, f->name->name);
+}
+
 // Does this function return a BORROW — a reference into storage the caller owns? ONE reader
 // for what used to be `IrFunc.ret_borrows`, a boolean beside a type that contradicted it, so
 // the question now has a single answer and every client asks the TYPE. `is_raw` is what keeps

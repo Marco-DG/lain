@@ -192,10 +192,14 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr) {
                     && callee_decl->as.function_decl.effects_declared
                     && callee_decl->as.function_decl.effects_bound != 0) callee_impure = true;
                 if (callee_impure) {
-                    fprintf(stderr, "[E101] Comptime purity error: cannot call '%.*s' from a "
-                            "comptime context — it declares effects, and compile-time evaluation "
-                            "has no machine to perform them on\n",
-                            (int)callee_id->length, callee_id->name);
+                    // It named the MANGLED callee ('t_noisy' for `noisy`) and had no position.
+                    Id *dn = callee_decl->as.function_decl.name;
+                    fprintf(stderr, "[E101] Error Ln %li, Col %li: a `comptime` context cannot call "
+                            "'%.*s': it declares effects, and compile-time evaluation has no "
+                            "machine to perform them on.\n", (long)expr->line, (long)expr->col,
+                            dn ? (int)dn->length : (int)callee_id->length,
+                            dn ? dn->name : callee_id->name);
+                    diagnostic_show_line(expr->line, expr->col);
                     exit(1);
                 }
                 if (callee_decl && callee_decl->kind == DECL_EXTERN_FUNCTION) {

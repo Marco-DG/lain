@@ -6,3 +6,4 @@ func main() i32 {
     var x i64 = 99999999999999999999
     return 0
 }
+// EXPECT-TEXT: Error Ln 6, Col 17: integer literal

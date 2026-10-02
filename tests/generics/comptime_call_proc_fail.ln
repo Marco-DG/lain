@@ -17,3 +17,4 @@ type Bad = side_effect()
 func main() i32 {
     return 0
 }
+// EXPECT-TEXT: Error Ln 15, Col 12: a `comptime` context cannot call 'side_effect'

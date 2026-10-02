@@ -226,7 +226,7 @@ static int ir_check_readonly_args(IrFunc *mod, const char *file) {
                 int k = 0; while (k < 64 && !(bad & ((uint64_t)1 << k))) k++;
                 const IrName *cn = i->aux.callee;
                 fprintf(stderr, "[E009] Error");
-                if (i->line) fprintf(stderr, " Ln %lld, Col %lld", (long long)i->line, (long long)i->col);
+                ir_diag_locus(i->line, i->col, f);
                 fprintf(stderr, ": argument %d of '%.*s' is an immutable array, and '%.*s' %s that "
                         "parameter: an array parameter is an output reference. Pass a `var` copy.\n",
                         k + 1, cn ? (int)cn->length : 1, cn ? cn->name : "?", cn ? (int)cn->length : 1,

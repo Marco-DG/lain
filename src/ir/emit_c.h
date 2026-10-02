@@ -839,9 +839,11 @@ static void ir_pk_build(IrFunc *f, Arena *a) {
             for (int q = 0; q < i->n_operands; q++) {
                 if (!ir_pk_of(i->operands[q])) continue;
                 if ((i->op == IR_LOAD || i->op == IR_STORE) && q == 0) continue;
-                fprintf(stderr, "[E121] Error: a field of a [packed] struct is used as an address "
-                        "(%s) — it is bits inside an integer and has none. (internal: the front end "
-                        "should have refused this)\n", i->op == IR_CALL ? "passed to a call" : "an address use");
+                fprintf(stderr, "[E121] Error Ln %lld, Col %lld: a field of a [packed] struct is "
+                        "used as an address (%s) — it is bits inside an integer and has none. "
+                        "(internal: the front end should have refused this)\n",
+                        (long long)i->line, (long long)i->col,
+                        i->op == IR_CALL ? "passed to a call" : "an address use");
                 exit(1);
             }
 }
@@ -1482,7 +1484,7 @@ static int ir_refuse_byte_views(IrFunc *funcs, const char *file) {
                 if (!s && dp) s = ir_reorderable_in(dp, 0);
                 if (!s) continue;
                 fprintf(stderr, "[E012] Error");
-                if (i->line) fprintf(stderr, " Ln %lld, Col %lld", (long long)i->line, (long long)i->col);
+                ir_diag_locus(i->line, i->col, f);
                 bool sum = s->kind == IRT_SUM;
                 fprintf(stderr, ": viewing a %s's bytes needs a declared layout: mark `%.*s` "
                         "[ordered]. %s are stored in an order the compiler chooses (DECIDE-U), "
@@ -1593,10 +1595,10 @@ int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump, const char *file) 
 // to a bare `return;`), a 65th `defer` never ran, and an index after a `use` statement was
 // emitted unchecked. The IR is missing code the program executes, so there is no proof to
 // skip and nothing faithful to emit. No corpus program was incomplete when this changed.
-static void ir_emit_refuse_at(const char *file, isize line, isize col, const char *why,
-                              const char *instead) {
+static void ir_emit_refuse_at(const char *file, isize line, isize col, const IrFunc *f,
+                              const char *why, const char *instead) {
     fprintf(stderr, "[E100] Error");
-    if (line) fprintf(stderr, " Ln %lld, Col %lld", (long long)line, (long long)col);
+    ir_diag_locus(line, col, f);
     fprintf(stderr, ": this construct is not supported by the code generator yet (%s).\n", why);
     if (file && line) fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)line, (long long)col);
     fprintf(stderr, "       the compiler did not model it, so there is nothing faithful to emit — "
@@ -1608,7 +1610,7 @@ static int ir_emit_refuse_opaque(IrFunc *funcs, const char *file) {
     for (IrFunc *f = funcs; f; f = f->next) {
         if (f->is_extern) continue;
         if (f->incomplete) {
-            ir_emit_refuse_at(file, f->incomplete_line, f->incomplete_col,
+            ir_emit_refuse_at(file, f->incomplete_line, f->incomplete_col, f,
                               f->incomplete_why ? f->incomplete_why : "?",
                               "emitting the function without it");
             n++;
@@ -1617,7 +1619,7 @@ static int ir_emit_refuse_opaque(IrFunc *funcs, const char *file) {
         for (IrBlock *b = f->blocks; b; b = b->next)
             for (IrInstr *i = b->instrs; i; i = i->next) {
                 if (i->op != IR_OPAQUE) continue;
-                ir_emit_refuse_at(file, i->line, i->col,
+                ir_emit_refuse_at(file, i->line, i->col, f,
                                   i->aux.opaque.why ? i->aux.opaque.why : "?",
                                   "emitting a placeholder");
                 n++;
