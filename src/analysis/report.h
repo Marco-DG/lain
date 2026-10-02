@@ -254,6 +254,15 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                     // programmer wrote `decreasing` — recorded at PARSE time, because sema's
                     // inference installs its candidate in the same AST field and by lowering
                     // the two are indistinguishable.
+                    if (c->measure_mismatch) {
+                        // I.74: the loop DOES end, by a measure the engine found; the one written
+                        // is the claim that is wrong, and was accepted unread until now.
+                        ir_diag(file, c->line, c->col, "E082",
+                                "this loop ends, but not by the `decreasing` measure written: it "
+                                "does not fall on every iteration");
+                        fprintf(stderr, "       write the quantity that falls (for a counter rising "
+                                        "toward a bound, `bound - counter`), or drop the clause\n");
+                    } else
                     ir_diag(file, c->line, c->col, c->had_measure ? "E082" : "E011",
                             c->had_measure
                               ? "the `decreasing` measure is not provably well-founded here"

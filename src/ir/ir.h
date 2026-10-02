@@ -459,6 +459,10 @@ typedef struct IrBlock {
     // this bit, per loop rather than per function, because a `proc` may hold both a checked
     // loop and a deliberately unbounded one.
     bool      has_measure;
+    // ...and WHAT it was: the measure's value at the start of the body, under the guard (I.74).
+    // The engine proved such a loop by a measure it found itself and never read this one, so
+    // `while i < n decreasing i` with `i` rising was accepted: a written claim nothing checked.
+    struct IrValue *measure_val;
     struct IrBlock *next;   // list within the function
 } IrBlock;
 

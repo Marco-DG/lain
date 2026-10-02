@@ -137,6 +137,7 @@ typedef struct {
     // for a recursion with no inferable measure, E082 for one whose measure is present and
     // fails — so the engine has to carry the distinction to be normatively right.
     bool     had_measure;
+    bool     measure_mismatch;   // I.74: the loop ends, but not by the WRITTEN measure
     // A VRA_OVERFLOW check about a SHIFT: 1 = the amount is not provably in [0, width-1],
     // 2 = a signed left shift may carry a bit into/through the sign. Both are UB in the C the
     // backend emits, and each needs its own sentence.
@@ -4335,6 +4336,97 @@ static void vra_seed_entry(Vra *V, IrFunc *f, int dim) {
 static int     vra_depth = 0;
 static IrFunc *vra_shared_f = NULL;     // the function whose analysis the borrow pass may reuse
 static Vra    *vra_shared_V = NULL;
+
+// ── I.74: A WRITTEN LOOP MEASURE IS CHECKED, NOT ONLY DEFINED ────────────────────────────────
+// D-44 says a written `decreasing` is a claim the compiler defends, and lowering (D-49) checked
+// only that it is well-defined. When a rule proved the loop by a measure it found itself, the
+// written one was never read: `while i < n decreasing i` with `i` rising, and `decreasing 7`,
+// were accepted (Documentation). A difference of two measures (`(n - i') - (n - i)`) needs `n`
+// cancelled, a three-variable fact the octagon cannot hold, so the check is on SHAPE: the written
+// measure, as a linear form over the cells the loop changes, must be a positive multiple of the
+// measure the rule found, plus anything loop-invariant. `n - i`, `2 * (n - i)`, `n / 2 - i` and
+// `hi - lo` (the pair rule's) pass; `i` (the opposite sign) and `7` (no changing term) do not.
+#define VRA_LIN_MAX 8
+typedef struct { int cell[VRA_LIN_MAX]; int64_t k[VRA_LIN_MAX]; int n; } VraLin;
+static bool vra_lin_add(VraLin *L, int cell, int64_t k) {
+    for (int i = 0; i < L->n; i++) if (L->cell[i] == cell) { L->k[i] += k; return true; }
+    if (L->n >= VRA_LIN_MAX) return false;
+    L->cell[L->n] = cell; L->k[L->n] = k; L->n++; return true;
+}
+// The variant part of `v`, times `k`, added to `out`. False: not a linear form this can read.
+static bool vra_lin_of(Vra *V, IrBlock *H, IrValue *v, int64_t k, VraLin *out, int depth) {
+    if (!v || depth > 24 || v->id < 0 || v->id >= V->nvar) return false;
+    if (V->cknown[v->id] || vra_loop_invariant(V, v, H)) return true;   // no changing term
+    IrInstr *d = V->def[v->id];
+    if (!d) return false;
+    switch (d->op) {
+        case IR_LOAD: {
+            if (d->n_operands < 1) return false;
+            int cell = vra_canon_cell(V, vra_ref_target(V, d->operands[0]->id));
+            return cell >= 0 && vra_lin_add(out, cell, k);
+        }
+        case IR_ADD: case IR_SUB:
+            if (d->n_operands < 2 || !vra_zexact(V, d)) return false;
+            return vra_lin_of(V, H, d->operands[0], k, out, depth + 1) &&
+                   vra_lin_of(V, H, d->operands[1], d->op == IR_ADD ? k : -k, out, depth + 1);
+        case IR_NEG:
+            return d->n_operands >= 1 && vra_lin_of(V, H, d->operands[0], -k, out, depth + 1);
+        case IR_MUL: {
+            if (d->n_operands < 2 || !vra_zexact(V, d)) return false;
+            for (int s = 0; s < 2; s++) {
+                IrValue *c = d->operands[s];
+                if (c && c->id >= 0 && c->id < V->nvar && V->cknown[c->id]) {
+                    int64_t m;
+                    if (__builtin_mul_overflow(k, V->cval[c->id], &m)) return false;
+                    return vra_lin_of(V, H, d->operands[1 - s], m, out, depth + 1);
+                }
+            }
+            return false;
+        }
+        case IR_CAST: {                               // only a cast that keeps the value
+            IrType *st = d->n_operands ? d->operands[0]->type : NULL, *dt = d->result ? d->result->type : NULL;
+            if (!st || !dt || st->kind != IRT_INT || dt->kind != IRT_INT || st->bits > dt->bits) return false;
+            if (st->is_signed && !dt->is_signed) return false;
+            if (!st->is_signed && dt->is_signed && st->bits >= dt->bits) return false;
+            return vra_lin_of(V, H, d->operands[0], k, out, depth + 1);
+        }
+        default: return false;
+    }
+}
+// Is the written measure a positive multiple of the found one, plus invariants?
+static bool vra_written_measure_ok(Vra *V, IrBlock *H, VraMeasure found) {
+    IrValue *w = H->measure_val;
+    if (!w) return true;                              // nothing written to check
+    VraLin W = {0}, F = {0};
+    if (!vra_lin_of(V, H, w, 1, &W, 0)) return false;
+    bool fok;
+    switch (found.kind) {
+        case VRA_MEAS_RISES: case VRA_MEAS_PAIR:      // b - a
+            fok = vra_lin_of(V, H, found.b, 1, &F, 0) && vra_lin_of(V, H, found.a, -1, &F, 0); break;
+        case VRA_MEAS_FALLS:                          // a - b
+            fok = vra_lin_of(V, H, found.a, 1, &F, 0) && vra_lin_of(V, H, found.b, -1, &F, 0); break;
+        default: return true;                         // a rule that states no measure: not judged here
+    }
+    if (!fok) return true;                            // the found measure is not readable: no basis
+    int64_t kk = 0;
+    for (int i = 0; i < F.n; i++) {
+        if (F.k[i] == 0) continue;
+        int64_t wk = 0;
+        for (int j = 0; j < W.n; j++) if (W.cell[j] == F.cell[i]) wk = W.k[j];
+        if (wk == 0 || wk % F.k[i] != 0) return false;
+        int64_t r = wk / F.k[i];
+        if (r <= 0 || (kk && r != kk)) return false;
+        kk = r;
+    }
+    if (kk == 0) return false;                        // the found measure has no changing term
+    for (int j = 0; j < W.n; j++) {                   // nothing changing that F does not have
+        if (W.k[j] == 0) continue;
+        bool inF = false;
+        for (int i = 0; i < F.n; i++) if (F.cell[i] == W.cell[j] && F.k[i] != 0) inF = true;
+        if (!inF) return false;
+    }
+    return true;
+}
 static Vra *vra_analyze(IrFunc *f) {
     vra_depth++;
     Vra *V = calloc(1, sizeof *V);
@@ -4799,6 +4891,11 @@ static Vra *vra_analyze(IrFunc *f) {
         VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
         if (V->certifying) vra_cert_measure(V, CERT_M_LOOP, b->id, c.ok);
         c.had_measure = b->has_measure;
+        // I.74: the loop ends, but is it by what the programmer WROTE? Checked against the
+        // measure the rule just found (vra_last_measure), before anything else overwrites it.
+        if (c.ok && b->has_measure && !vra_written_measure_ok(V, b, vra_last_measure)) {
+            c.ok = false; c.measure_mismatch = true;
+        }
         // The loop's POSITION: its header's condition. The check had none, so E011 printed
         // "Error:" with no line — in a file with several loops, no way to tell which.
         { IrInstr *hc = (b->term.cond && b->term.cond->id>=0 && b->term.cond->id<V->nvar)

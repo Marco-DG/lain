@@ -3718,7 +3718,7 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
             // The value is discarded; only its obligations matter. Nothing is stored, so no
             // analysis sees a new write and the loop's shape is unchanged.
             if (s->as.while_stmt.measure_written && s->as.while_stmt.measure)
-                (void)ir_lower_expr(c, s->as.while_stmt.measure);
+                head->measure_val = ir_lower_expr(c, s->as.while_stmt.measure);   // I.74: kept
             c->cse_n = cse_save; c->cse_recording = cse_rec_save;
             ir_lower_stmts(c, s->as.while_stmt.body);
             if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, head);

@@ -1,0 +1,17 @@
+// EXPECT: [E082]
+// EXPECT-TEXT: Error Ln 9, Col 11: this loop ends, but not by the `decreasing` measure written
+// A written `decreasing` is a claim the compiler defends (D-44). This loop ends (`n - i` falls),
+// so the engine proved it by its own measure and never read the one written, which RISES with
+// `i`: accepted until I.74 (Documentation). The written measure must be a positive multiple of
+// the one that falls, plus anything the loop does not change.
+func f(n u32) u32 {
+    var i u32 = 0
+    while i < n decreasing i {
+        i = i + 1
+    }
+    return i
+}
+
+func main() i32 {
+    return f(3) as i32
+}

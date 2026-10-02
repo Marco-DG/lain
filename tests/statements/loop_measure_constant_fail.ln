@@ -1,0 +1,15 @@
+// EXPECT: [E082]
+// EXPECT-TEXT: Error Ln 7, Col 11: this loop ends, but not by the `decreasing` measure written
+// A constant never falls, so it measures nothing: accepted until I.74 because the loop ends by a
+// measure the engine found itself.
+func f(n u32) u32 {
+    var i u32 = 0
+    while i < n decreasing 7 {
+        i = i + 1
+    }
+    return i
+}
+
+func main() i32 {
+    return f(3) as i32
+}

@@ -1,0 +1,61 @@
+// Written loop measures the engine now CHECKS against the measure it finds (I.74), in the shapes
+// the corpus writes: a bound minus a rising counter, a multiple of it, a bound with an invariant
+// expression in it, a bare falling counter, and a binary search's `hi - lo` (the pair rule). Each
+// is a positive multiple of the measure that falls, plus terms the loop does not change. Run
+// under the sanitizers and the interpreter.
+func up(n u32) u32 {
+    var i u32 = 0
+    while i < n decreasing n - i {
+        i = i + 1
+    }
+    return i
+}
+
+func twice(n u32) u32 {
+    var i u32 = 0
+    while i < n decreasing 2 * (n - i) {
+        i = i + 1
+    }
+    return i
+}
+
+func half(n u32) u32 {
+    var i u32 = 0
+    while i < n / 2 decreasing n / 2 - i {
+        i = i + 1
+    }
+    return i
+}
+
+func down(n u32) u32 {
+    var j u32 = n
+    while j > 0 decreasing j {
+        j = j - 1
+    }
+    return j
+}
+
+func search(a i32[8], x i32) usize {
+    var lo usize = 0
+    var hi usize = 8
+    while lo < hi decreasing hi - lo {
+        mid = lo + (hi - lo) / 2
+        if a[mid] < x {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo
+}
+
+func main() i32 {
+    var a i32[8] = [1, 3, 5, 7, 9, 11, 13, 15]
+    if up(5) != 5 or twice(4) != 4 or half(9) != 4 or down(6) != 0 {
+        return 1
+    }
+    if search(a, 9) != 4 {
+        return 2
+    }
+    return 0
+}
