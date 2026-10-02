@@ -905,29 +905,108 @@ func main() i32 {
 
 ### 4.3 Linear Types
 
-A type is **linear** if it has a `mov` field, or if it transitively contains a linear field. A linear value must be consumed **exactly once**:
+A type is **linear** if it has a `mov` field, or if it transitively contains a linear field. A linear
+value must be consumed **exactly once**:
 
-- Not consumed at scope end: `[E002]`
-- Consumed twice (double move): `[E003]`
-- Moved inside a loop: `[E006]`
+| violation | code |
+|:----------|:-----|
+| Not consumed before the end of its scope | `[E003]` |
+| Consumed twice | `[E002]` |
+| Consumed inside a loop | `[E002]` — consuming a value declared outside the loop from inside it *is* consuming it twice |
+| Consumed on some paths but not others | `[E016]` |
+| Moved without writing `mov` | `[E007]` |
+
+**What consumes a linear value is destructuring it.** A function that takes `mov` and does nothing
+with it has not consumed it — it has moved the leak one level up, and is itself `[E003]`. So the
+consumer is the one that takes the value apart:
 
 ```lain
-type File {
-    mov handle *FILE   // Linear field -> File is linear
+type Handle { mov raw *u8 }     // a mov field -> Handle is linear
+
+func close_it(mov {raw} Handle) {
+    // destructuring the parameter consumes the Handle
 }
 
-func leak() effects io, raises, alloc {
-    var f = open_file("data.txt", "r")
-    // ERROR [E002]: linear variable 'f' not consumed before end of scope
+func ok(mov h Handle) {
+    close_it(mov h)             // consumed exactly once
 }
 
-func correct() effects io, raises, alloc {
-    var f = open_file("data.txt", "r")
-    close_file(mov f)  // Consumed: OK
+func main() i32 {
+    return 0
 }
 ```
 
-If a linear variable is consumed in one branch of an `if` but not the other, the compiler emits `[E007]`. All execution paths must uniformly consume (or not consume) linear variables.
+Each violation, against that same pair. Not consumed:
+
+```lain
+type Handle { mov raw *u8 }
+
+func close_it(mov {raw} Handle) {
+}
+
+func leak(mov h Handle) {       // ERROR [E003]
+}
+```
+
+```
+[E003] Error Ln 6, Col 15: a linear value is not consumed before it goes out of scope
+```
+
+Consumed twice, and the loop case, which is the same violation rather than a separate one:
+
+```lain
+type Handle { mov raw *u8 }
+
+func close_it(mov {raw} Handle) {
+}
+
+func twice(mov h Handle) {
+    close_it(mov h)
+    close_it(mov h)             // ERROR [E002]
+}
+```
+
+```
+[E002] Error Ln 8, Col 14: this value is moved twice
+```
+
+Consuming on one path and not another is `[E016]`, *"consumed on some paths but not others"*: every
+execution path must agree, consuming the value or leaving it alone.
+
+```lain
+type Handle { mov raw *u8 }
+
+func close_it(mov {raw} Handle) {
+}
+
+func branchy(mov h Handle, c bool) {
+    if c {
+        close_it(mov h)      // ERROR [E016]: the else path does not consume h
+    }
+}
+```
+
+```
+[E016] Error: consumed on some paths but not others
+```
+
+And the transfer must be written: passing a linear value to a `mov` parameter without the keyword is
+`[E007]`, so an ownership transfer is never silent.
+
+```lain
+type Handle { mov raw *u8 }
+
+func close_it(mov {raw} Handle) {
+}
+
+func implicit(mov h Handle) {
+    close_it(h)              // ERROR [E007]
+}
+```
+
+```
+[E007] Error Ln 7, Col 5: moving linear variable 'h' requires explicit 'mov' at the call site.
+```
 
 ### 4.4 Borrowing Rules (Read-Write Lock)
 
