@@ -295,11 +295,16 @@ func main() i32 {
 | `bool` | Boolean type with values `true` and `false` | `_Bool` |
 
 ```lain
-var x bool = true
-var y bool = false
+extern func libc_printf(fmt *u8, ...) i32 effects io
 
-if x {
-    libc_printf("x is true\n")
+func main() i32 effects io {
+    var x bool = true
+    var y bool = false
+
+    if x {
+        libc_printf("x is true\n")
+    }
+    return 0
 }
 ```
 
@@ -335,7 +340,7 @@ var f = n as f64        // widening, always fits
 
 Pointer types use the prefix `*` syntax:
 
-```lain
+```
 *int       // Pointer to int (shared, read-only)
 var *int   // Mutable pointer to int
 mov *int   // Owned pointer (linear)
@@ -394,7 +399,7 @@ All slice types (`T[]`) expose two fields:
 
 **Sentinel-terminated slices** end with a known sentinel value (typically `0`):
 
-```lain
+```
 u8[:0]     // Null-terminated byte slice (C string compatible)
 ```
 
@@ -410,10 +415,20 @@ var msg u8[:0] = "Explicit type"    // Explicit annotation
 Strings can be passed to functions expecting `u8[:0]` or to C functions via `.data`:
 
 ```lain
-func greet(msg u8[:0]) {
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func greet(msg u8[:0]) effects io {
     libc_printf("Message: %s\n", msg.data)
 }
+
+func main() i32 effects io {
+    greet("hi")
+    return 0
+}
 ```
+
+The `effects io` is not decoration. A `func` with no row claims to do nothing observable, so one
+that calls `libc_printf` without it is `[E011]` — see §5.2.
 
 ### 2.7 Struct Types
 
