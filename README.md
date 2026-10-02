@@ -931,7 +931,8 @@ gcc out.c -o my_program -Dlibc_printf=printf -w          # C99   -> executable
 ```
 
 Run from the repository root if a program imports from `std/`, since module paths are resolved
-relative to the source file.
+relative to the **working directory**, not to the source file. `lain sub/prog.ln` looks for
+`std/math.ln` under the directory you are standing in, not under `sub/`.
 
 ```bash
 make test                # the corpus
