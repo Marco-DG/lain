@@ -230,6 +230,7 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
 
     // Check for assignment operator
     TokenKind op = parser->token.kind;
+    isize op_line = parser->line, op_col = parser->column;   // a compound op's binary node is placed here
     bool is_assign = false;
     switch (op) {
         case TOKEN_EQUAL:
@@ -270,6 +271,10 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
                 default:                    binop = TOKEN_PLUS;      break;
             }
             rhs = expr_binary(arena, binop, lhs, rhs);
+            // The operation `i += 1` desugars to is placed at its operator, as every binary node
+            // is: it had no position, and an error about it (E012 for `+=` on a bool) said Ln 0
+            // while `i = i + 1` was placed (M13, Handwriting).
+            rhs->line = op_line; rhs->col = op_col;
         }
         result = stmt_assign(arena, lhs, rhs);
     } else {

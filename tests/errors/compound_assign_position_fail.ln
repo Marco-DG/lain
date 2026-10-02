@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 7, Col 7: `+` on a `bool` operand
+// `i += 1` desugars to `i = i + 1`, and the `+` it builds had no position: this said Ln 0, Col 0,
+// while the spelled-out `i = i + 1` was placed (M13, Handwriting; also `-=` and `*=`).
+func main() i32 {
+    var i bool = false
+    i += 1
+    return 0
+}
