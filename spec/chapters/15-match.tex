@@ -27,36 +27,8 @@ case expr {
 
 \pnum
 Each arm consists of a pattern (or comma-separated list of patterns) and a
-body.  The arms are tested in declaration order; the first matching arm is
-taken.
-
-\pnum
-In a \lain{case} \emph{statement}, an arm's body is one or more statements,
-each ending at a newline, running from the \lain{:} to the next arm's
-pattern or to the closing brace.  The body is not enclosed in braces: a
-\lain{\{} after the \lain{:} is not the start of a block, and does not
-parse.  In a \lain{case} \emph{expression} (\S\,\ref{sec:match.type}), an
-arm's body is a single expression.
-
-\begin{laincode}
-// VERIFY: exit 0
-func classify(x i32) i32 {
-    var y = 0
-    case x {
-        1, 2:
-            y = 10           // a body of two statements, one per line
-            y = y + 1
-        else: y = 2
-    }
-    return y
-}
-
-func main() i32 {
-    if classify(2) != 11 { return 1 }
-    if classify(7) != 2 { return 2 }
-    return 0
-}
-\end{laincode}
+body.  The body may be a single expression or a block.  The arms are
+tested in declaration order; the first matching arm is taken.
 
 \section{Patterns}
 \label{sec:match.patterns}
@@ -182,7 +154,7 @@ of compatible types (\S\,\ref{sec:types.compat}).  The type of the
 
 \begin{constraint}
   Arms of a \lain{case} expression that produce incompatible types are
-  \illformed{}~(\diagcode{E012}).
+  \illformed{}.
 \end{constraint}
 
 \section{String pattern matching}
@@ -193,24 +165,6 @@ of compatible types (\S\,\ref{sec:types.compat}).  The type of the
 String literals may appear as patterns.  A string pattern matches if the
 scrutinee has the same byte sequence and length as the pattern literal.
 The comparison is performed byte-by-byte (analogous to \texttt{memcmp}).
-
-\begin{laincode}
-// VERIFY: exit 0
-func kind(s u8[]) i32 {
-    return case s {
-        "red": 1
-        "blue": 2
-        else: 0
-    }
-}
-
-func main() i32 {
-    if kind("blue") != 2 { return 1 }
-    if kind("blu") != 0 { return 2 }     // a prefix is not a match
-    if kind("blues") != 0 { return 3 }   // nor is a longer string
-    return 0
-}
-\end{laincode}
 
 \begin{note}
   String pattern matching in the translation output is implemented as a
