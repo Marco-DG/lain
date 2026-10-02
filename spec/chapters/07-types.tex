@@ -1050,16 +1050,24 @@ struct's are (\S\,\ref{sec:types.struct}), by decreasing alignment, unless the s
   payload-carrying variant, whose payload is a single field, can be
   encoded this way. The niche sources are the zero page for a pointer,
   the values outside its refinement for a constrained integer, the 254
-  byte patterns outside \(\{0, 1\}\) for \lain{bool}, and the slots a
-  packed sum leaves unused when it is itself the payload. A slice and a
-  plain enum are not niche sources: a sum whose payload is one of them
-  carries a tag.
+  byte patterns outside \(\{0, 1\}\) for \lain{bool}, the values above
+  the last variant for a plain enum that declares its width
+  (\lain{type K u8 \{ A, B, C \}} leaves 3 to 255), and the slots a
+  packed sum leaves unused when it is itself the payload. A slice is not a
+  niche source, nor is a plain enum without a declared width, whose width
+  (and so whose spare values) would change with its variant count, nor an
+  enum that the signature of an \lain{extern} function reaches, since C may
+  hand it any value of its width: a sum whose payload is one of them
+  carries a tag. A value of an enumeration type is always one of its
+  variants: no conversion produces one from an integer, and writing any
+  other value into one is undefined (\S\,\ref{sec:unsafe.ub}).
 
   Whenever a sum is given a tag, the compiler emits \diagcode{W120} (a
   warning, never an error) with the reason. When the reason is the
   payload's spare values, the programmer may remove the tag by
-  constraining the payload or by choosing a payload type that has
-  spare values; otherwise the tag is the cost of the shape. See
+  constraining the payload, by declaring a plain enum payload's width, or
+  by choosing a payload type that has spare values; otherwise the tag is
+  the cost of the shape. See
   \S\,\ref{sec:mem.adt-layout} for the full layout algorithm and its
   target dependencies.
 \end{note}

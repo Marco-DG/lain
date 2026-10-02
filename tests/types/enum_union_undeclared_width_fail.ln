@@ -1,0 +1,17 @@
+// EXPECT: [E064]
+// EXPECT-TEXT: declare the width of 'P'
+// A `T | markers` union promises zero cost. A plain enum without a declared width has no spare
+// values (its width is the smallest that holds its variants), so `P | Missing` would need a tag,
+// and the refusal says how to fix it: declare P's width, as `K u8` in
+// tests/trust/enum_niche_pass.ln does.
+type P {
+    X
+    Y
+}
+func find(p P, miss bool) P | Missing {
+    if miss { return Missing }
+    return p
+}
+func main() i32 {
+    return 0
+}

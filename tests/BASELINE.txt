@@ -1561,6 +1561,14 @@ out=2
 at=const 2
 ty=Color scalar
 ty=Slice_u8 scalar
+### tests/trust/enum_niche_pass.ln
+rc=0
+out=
+at=const 8
+ty=K scalar
+ty=Opt scalar
+ty=OptOpt scalar
+ty=__U_K_Missing scalar
 ### tests/trust/escape_allowed_pass.ln
 rc=0
 out=

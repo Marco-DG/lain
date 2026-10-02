@@ -1164,7 +1164,6 @@ static void ir_emit_one_slice(IrType *sl, FILE *o) {
     fputs("typedef struct { ", o); ir_ctype(sl->elem, o);
     fprintf(o, "* data; size_t len; } Slice_%s;\n", tag);
 }
-static bool ir_layout_iface(const IrType *t);   // DECIDE-U: does C read t's layout? (below)
 // A sum's C layout: `struct S { int32_t tag; union { …per-variant payload… } data; }`.
 // This is a BACKEND decision — the IR records only which variants exist and what they
 // carry (local/internal/design/ir_sum_types.md §3) — so swapping in a niche packing later
@@ -1230,16 +1229,6 @@ static void ir_emit_one_sum_body(IrType *st, FILE *o) {
 // through a pointer, an array, a slice, a vector or a function pointer, or as a field of one
 // that is — has the layout the C side was written against, which is its declaration. Marked by
 // NAME: lowering may build more than one IrType for the same struct.
-#define IR_IFACE_MAX 512
-static IrName *ir_iface_name[IR_IFACE_MAX];
-static int     ir_iface_n = 0;
-static bool ir_iface_has(const IrName *n) {
-    if (!n) return false;
-    for (int k = 0; k < ir_iface_n; k++)
-        if (ir_iface_name[k]->length == n->length && memcmp(ir_iface_name[k]->name, n->name, (size_t)n->length) == 0)
-            return true;
-    return false;
-}
 static void ir_iface_mark(IrType *t, int depth) {
     if (!t || depth > 64) return;
     switch (t->kind) {
@@ -1270,7 +1259,6 @@ static void ir_iface_mark(IrType *t, int depth) {
         default: return;
     }
 }
-static bool ir_layout_iface(const IrType *t) { return ir_iface_n < 0 || ir_iface_has(t->sname); }
 static void ir_emit_one_struct_body(IrType *st, FILE *o) {
     if (st->kind == IRT_SUM) { ir_emit_one_sum_body(st, o); return; }
     IrName *nm = st->sname;
@@ -1544,9 +1532,24 @@ int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump, const char *file) 
             } else fprintf(stderr, "-> int32_t tag + payload union (%s)\n", why);
         }
         if (!tagged) continue;
+        // A plain enumeration payload has spare values once its width is DECLARED (layout.h's
+        // pool): say that, rather than suggest a pointer or a refinement it cannot have.
+        IrType *pay = NULL;
+        for (int k = 0; k < t->n_fields && !pay; k++) if (t->fields[k]) pay = ir_layout_single_field(t, k);
+        bool undeclared_enum = pay && pay->kind == IRT_SUM && pay->sum_backing_bits == 0 &&
+                               ir_layout_of(pay).all_empty;
+        char enum_hint[200] = "";
+        if (undeclared_enum && pay->sname)
+            snprintf(enum_hint, sizeof enum_hint, "declare the width of '%.*s' (`type %.*s u8 { ... }`): "
+                     "its values above the last variant are then spare",
+                     (int)pay->sname->length, pay->sname->name, (int)pay->sname->length, pay->sname->name);
         if (t->sum_niche_mandatory) {
             IrType *v = ir_layout_single_field(t, 0);
             char vt[128]; ir_lain_type(v, vt, sizeof vt);
+            if (enum_hint[0])
+                fprintf(stderr, "[E064] Error: the union `%s | ...` cannot be zero-cost: %s. To make it "
+                        "zero-cost, %s.\n", vt, why, enum_hint);
+            else
             fprintf(stderr, "[E064] Error: the union `%s | ...` cannot be zero-cost: %s. Give the "
                     "value type spare values (a pointer, a bool, or a refinement like `u8 < 200`), "
                     "or use fewer markers.\n", vt, why);
@@ -1560,7 +1563,9 @@ int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump, const char *file) 
         } else snprintf(what, sizeof what, "enum '%.*s'", (int)nm->length, nm->name);
         fprintf(stderr, "[W120] Warning: %s is not zero-cost: it carries an int32_t tag (4 bytes) "
                 "beside its payloads.\n       It does because %s.\n", what, why);
-        if (short_pool)
+        if (short_pool && enum_hint[0])
+            fprintf(stderr, "       To drop the tag, %s.\n", enum_hint);
+        else if (short_pool)
             fprintf(stderr, "       To drop the tag, give the payload spare values (a pointer, a "
                     "bool, or a refinement like `u8 < 200`), or use fewer payload-less variants.\n");
     }

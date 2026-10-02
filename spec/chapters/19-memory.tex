@@ -318,6 +318,26 @@ the type's full range minus any VRA-narrowed sub-range:
 \lain{type Pct = i32 >= 0 and <= 100} as a payload yields a pool
 of $\approx 4.3 \times 10^9$ slots (every integer outside $[0,100]$).
 For \lain{bool}, the pool is the 254 byte patterns outside $\{0, 1\}$.
+For a plain enum that declares its width, the pool is the values above its last variant: with
+\lain{type K u8 \{ A, B, C \}}, an \lain{Opt \{ Some \{ k K \}, None \}} is one byte, \lain{None}
+the value~3, and \lain{K | none} likewise. Without a declared width the enum is the smallest
+integer that holds its variants, so its spare values would move with every variant added, and
+it is not a niche source. Nor is one that an \lain{extern} function's signature reaches (as a
+parameter, a result, or through a pointer, a struct or a function pointer): C may hand it any
+value of its width, and a 3 would read as \lain{None}.
+
+\begin{laincode}
+type K u8 {
+    A
+    B
+    C
+}
+type Opt {
+    Some { k K }
+    None
+}
+assert @sizeof(Opt) == 1         // no tag: None is K's spare value 3
+\end{laincode}
 
 \pnum
 Niche allocation cascades through nested enum payloads. If

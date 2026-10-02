@@ -700,6 +700,17 @@ static void ii_exec(IrInstr *ins) {
                 II_PROOF(ins, "read of an uninitialised value (definite initialisation)");
             }
             iv_copy(&r, c, false);
+            // A plain enumeration's storage holds its ordinal, and only Lain's own values reach it,
+            // except a raw write in `unsafe` (`*(&k as *var u8) = 3`). A value that is none of the
+            // variants is undefined: a sum that stores its empty variants in the enum's spare
+            // values (layout.h) reads it as one of THEM, `Some(k)` as `None`.
+            if (rt && rt->kind == IRT_SUM && r.k == IV_INT && ir_layout_of(rt).all_empty) {
+                if (r.i >= (uint64_t)rt->n_fields)
+                    II_UB(ins, "an enumeration holds %llu, which is none of its %d variants (written as raw bytes)",
+                          (unsigned long long)r.i, rt->n_fields);
+                int32_t ord = (int32_t)r.i;
+                memset(&r, 0, sizeof r); r.k = IV_SUM; r.n = ord;
+            }
             break;
         }
         case IR_STORE: {

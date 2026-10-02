@@ -1,0 +1,53 @@
+// A plain enum that DECLARES its width is a niche source: `type K u8 { A, B, C }` holds 0..2, so
+// 3..255 are spare, and a sum whose one payload is a K stores its payload-less variants there
+// with no tag. Opt is one byte (None = 3), OptOpt cascades into what Opt leaves (N = 4), and
+// `K | Missing` is zero-cost too. Sizes and values are checked in main, so they hold in the C and
+// under `lain --interpret`; tests/codegen/enum_niche_tags.sh counts the tags in the emitted C.
+type K u8 {
+    A
+    B
+    C
+}
+type Opt {
+    Some { k K }
+    None
+}
+type OptOpt {
+    S { o Opt }
+    N
+}
+func name(o Opt) i32 {
+    case o {
+        Some(k):
+            case k {
+                A: return 1
+                B: return 2
+                C: return 3
+            }
+        None: return 0
+    }
+}
+func deep(o OptOpt) i32 {
+    case o {
+        S(x): return name(x)
+        N: return 9
+    }
+}
+func find(k K, miss bool) K | Missing {
+    if miss { return Missing }
+    return k
+}
+func maybe(k K, miss bool) i32 {
+    var r K | Missing = find(k, miss)
+    case r {
+        Missing: return 0
+        else: return 1
+    }
+}
+func main() i32 {
+    if @sizeof(Opt) != 1 or @sizeof(OptOpt) != 1 { return 1 }
+    if name(Opt.Some(K.C)) != 3 or name(Opt.Some(K.A)) != 1 or name(Opt.None) != 0 { return 2 }
+    if deep(OptOpt.S(Opt.Some(K.B))) != 2 or deep(OptOpt.S(Opt.None)) != 0 or deep(OptOpt.N) != 9 { return 3 }
+    if maybe(K.B, false) != 1 or maybe(K.B, true) != 0 { return 4 }
+    return 0
+}

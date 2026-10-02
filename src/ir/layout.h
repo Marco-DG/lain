@@ -76,6 +76,22 @@ static SentinelPool ir_pool_int_refined(const IrType *t, long long rlo, long lon
     return sentinel_pool_int_refined(tlo, thi, rlo, rhi);       /* shared: layout_core.h */
 }
 
+// ── THE TYPES C SEES (DECIDE-U) ──────────────────────────────────────────────────────────
+// Kept here because what C reads is a LAYOUT question: a struct's or a sum payload's storage
+// order, and whether an enumeration may donate its spare values (ir_pool_for). The emitter
+// fills it (ir_iface_collect) before the first layout question is asked of a module.
+#define IR_IFACE_MAX 512
+static IrName *ir_iface_name[IR_IFACE_MAX];
+static int     ir_iface_n = 0;
+static bool ir_iface_has(const IrName *n) {
+    if (!n) return false;
+    for (int k = 0; k < ir_iface_n; k++)
+        if (ir_iface_name[k]->length == n->length && memcmp(ir_iface_name[k]->name, n->name, (size_t)n->length) == 0)
+            return true;
+    return false;
+}
+static bool ir_layout_iface(const IrType *t) { return ir_iface_n < 0 || ir_iface_has(t->sname); }
+
 // The spare bit patterns of a payload type — the ones that cannot be a legitimate value, so
 // they are free to mean "this is one of the payload-less variants".
 static SentinelPool ir_pool_for(IrType *t) {
@@ -105,6 +121,24 @@ static SentinelPool ir_pool_for(IrType *t) {
     // first N slots of the underlying pool. Take what is left.
     if (t->kind == IRT_SUM) {
         IrLayout inner = ir_layout_of(t);
+        // A PLAIN ENUMERATION with a DECLARED width (`type K u8 { A, B, C }`): its values are
+        // 0..n-1, so n..2^w-1 are spare. Only a declared width: the default width is the
+        // smallest that holds the variants, so one more variant could move every sentinel, and a
+        // layout that depends on how many variants happen to exist today is not a layout a
+        // program can rely on. A declared width fixes the pool.
+        //
+        // ★ AND ONLY AN ENUMERATION C CANNOT HAND US. The niche is sound only while no value of
+        // the enum holds a spare pattern, and Lain can make one in no way (no cast reaches an
+        // enum). C can: `extern func get() K` may return 3, and a callback `*func(K) i32` given
+        // to C may be called with it. A K that holds 3 inside `Opt` would read as None. So an
+        // enumeration an extern's signature reaches donates nothing, as a struct C reads keeps
+        // its declared order (DECIDE-U).
+        if (inner.packed && inner.all_empty && t->sum_backing_bits > 0 && t->n_fields > 0 &&
+            !ir_layout_iface(t)) {
+            long long tlo, thi;
+            if (!sentinel_int_range(t->sum_backing_bits, false, &tlo, &thi)) return p;
+            return sentinel_pool_int_refined(tlo, thi, 0, (long long)t->n_fields - 1);
+        }
         if (inner.packed && inner.backing) {
             SentinelPool base = ir_pool_for(inner.backing);
             if (base.kind != POOL_EMPTY) {
@@ -212,6 +246,14 @@ static bool ir_layout_why_tagged(IrType *sum, char *buf, size_t n, bool *short_p
         snprintf(buf, n, "variant '%.*s' carries a %s, and only a scalar payload can be the sum "
                  "itself", vl, vs, back->kind == IRT_SLICE ? "slice" : back->kind == IRT_ARRAY ?
                  "fixed array" : back->kind == IRT_VECTOR ? "vector" : "struct");
+        return true;
+    }
+    // A declared-width enumeration that C can reach has spare values Lain cannot rely on.
+    if (back->kind == IRT_SUM && back->sum_backing_bits > 0 && back->sname &&
+        ir_layout_of(back).all_empty && ir_layout_iface(back)) {
+        snprintf(buf, n, "its payload is the enumeration '%.*s', which an extern's signature reaches, "
+                 "so C may hand it any value of its width and none is spare",
+                 (int)back->sname->length, back->sname->name);
         return true;
     }
     SentinelPool pool = ir_pool_for(back);
