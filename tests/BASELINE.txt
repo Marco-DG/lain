@@ -923,6 +923,14 @@ out=also unqualified
 at=access 4
 at=nonnull 4
 ty=Slice_u8 scalar
+### tests/modules/qualifier_through_import_pass.ln
+rc=0
+out=io
+out=alias
+at=access 4
+at=const 8
+at=nonnull 4
+ty=Slice_u8 scalar
 ### tests/ownership/array_element_consume_pass.ln
 rc=0
 out=

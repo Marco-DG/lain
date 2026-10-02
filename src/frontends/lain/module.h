@@ -29,27 +29,39 @@ typedef struct ModuleNode {
 
 static ModuleNode *loaded_modules = NULL;
 
-// Registry of import qualifiers (the alias, or a module path's last segment) so
-// name resolution can recognize `qualifier.Member` as qualified module access.
-// Populated during load (the DECL_IMPORT nodes are spliced out afterward).
+// Registry of import qualifiers: (importer, qualifier, module) triples, the qualifier being the
+// alias or the module path's last segment. Populated during load (the DECL_IMPORT nodes are
+// spliced out afterward). ★ A qualifier is the IMPORTER'S: it was one global list, so a program
+// importing only std.io could write `c.printf`, because std.io imports std.c.
 typedef struct QualifierNode {
-    char *name;
+    char *importer;   // the module whose import declared it
+    char *name;       // the qualifier
+    char *module;     // the module it names
     struct QualifierNode *next;
 } QualifierNode;
 static QualifierNode *import_qualifiers = NULL;
 
-static void register_qualifier(Arena *arena, const char *name, size_t len) {
+static void register_qualifier(Arena *arena, const char *importer, const char *name, size_t len,
+                               const char *module) {
     for (QualifierNode *q = import_qualifiers; q; q = q->next)
-        if (strlen(q->name) == len && strncmp(q->name, name, len) == 0) return;
+        if (strcmp(q->importer, importer) == 0 && strlen(q->name) == len &&
+            strncmp(q->name, name, len) == 0) return;
     QualifierNode *q = arena_push_aligned(arena, QualifierNode);
+    size_t il = strlen(importer) + 1, ml = strlen(module) + 1;
+    q->importer = arena_push_many(arena, char, (isize)il); memcpy(q->importer, importer, il);
     q->name = arena_push_many(arena, char, (isize)len + 1);
     memcpy(q->name, name, len); q->name[len] = '\0';
+    q->module = arena_push_many(arena, char, (isize)ml); memcpy(q->module, module, ml);
     q->next = import_qualifiers; import_qualifiers = q;
 }
-static bool qualifier_is_module(const char *name, size_t len) {
+// The module that `name` qualifies in module `importer`, or NULL.
+static const char *qualifier_module(const char *importer, const char *name, size_t len) {
+    if (!importer) return NULL;
     for (QualifierNode *q = import_qualifiers; q; q = q->next)
-        if (strlen(q->name) == len && strncmp(q->name, name, len) == 0) return true;
-    return false;
+        if (strcmp(q->importer, importer) == 0 && strlen(q->name) == len &&
+            strncmp(q->name, name, len) == 0)
+            return q->module;
+    return NULL;
 }
 
 // Registry of selective imports: (importer module, name) pairs — the names an
@@ -196,18 +208,38 @@ static bool module_reaches_name(DeclList *program, const char *mod, Id *name,
     return false;
 }
 
-// For a diagnostic about `q.name` where `q` is not a value: the name a program qualifies module
-// `mod` with (the last segment of its path when an import registered it, else the alias of an
-// import of it), or NULL.
-static const char *module_qualifier_of(const char *mod, size_t *len) {
-    const char *dot = strrchr(mod, '.');
-    const char *seg = dot ? dot + 1 : mod;
-    if (qualifier_is_module(seg, strlen(seg))) { *len = strlen(seg); return seg; }
-    for (ImportEdge *e = import_edges; e; e = e->next) {
-        Id *a = e->import->as.import_decl.alias;
-        if (a && strcmp(e->to, mod) == 0) { *len = (size_t)a->length; return a->name; }
-    }
+// For a diagnostic about `q.name` where `q` is not a value: the qualifier module `importer`
+// names module `mod` by (the last segment of its path, or the alias it is imported under), or
+// NULL when `importer` does not import `mod`.
+static const char *module_qualifier_of(const char *importer, const char *mod, size_t *len) {
+    if (!importer) return NULL;
+    for (QualifierNode *q = import_qualifiers; q; q = q->next)
+        if (strcmp(q->importer, importer) == 0 && strcmp(q->module, mod) == 0) {
+            *len = strlen(q->name); return q->name;
+        }
     return NULL;
+}
+
+// Whether module `from` reaches module `target`: it is `target`, or imports it, directly or not.
+static bool module_reaches_module(const char *from, const char *target) {
+    if (module_paths_equal(from, target)) return true;
+    size_t cap = 0;
+    for (ModuleNode *n = loaded_modules; n; n = n->next) cap++;
+    const char **queue = malloc((cap ? cap : 1) * sizeof *queue);
+    size_t head = 0, tail = 0; bool found = false;
+    queue[tail++] = from;
+    while (head < tail && !found) {
+        const char *m = queue[head++];
+        for (ImportEdge *e = import_edges; e && !found; e = e->next) {
+            if (strcmp(e->from, m) != 0) continue;
+            if (module_paths_equal(e->to, target)) { found = true; break; }
+            bool queued = false;
+            for (size_t k = 0; k < tail; k++) if (strcmp(queue[k], e->to) == 0) { queued = true; break; }
+            if (!queued && tail < cap) queue[tail++] = e->to;
+        }
+    }
+    free(queue);
+    return found;
 }
 
 // A loaded module whose path is `head.next`, or begins with it: `std.math` for `std` and `math`.
@@ -335,12 +367,12 @@ static DeclList* load_module(Arena *file_arena,
             // (the glob still binds bare names, so this is additive).
             Id *alias = cur->decl->as.import_decl.alias;
             if (alias) {
-                register_qualifier(ast_arena, alias->name, (size_t)alias->length);
+                register_qualifier(ast_arena, modname, alias->name, (size_t)alias->length, buf);
             } else {
                 const char *seg = buf; size_t seglen = strlen(buf);
                 const char *dot = strrchr(buf, '.');
                 if (dot) { seg = dot + 1; seglen = strlen(dot + 1); }
-                register_qualifier(ast_arena, seg, seglen);
+                register_qualifier(ast_arena, modname, seg, seglen, buf);
             }
             // Selective imports: `import M.{a, b}` brings a, b unqualified into
             // the importing module (`modname`).

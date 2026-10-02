@@ -2068,17 +2068,25 @@ void sema_infer_expr(Expr *e) {
             const char *tn = tgt->as.identifier_expr.id->name;
             const char *mod; const char *q = NULL; size_t ql = 0;
             if ((mod = module_with_path_head(tn, (size_t)tl, mn, (size_t)ml)) &&
-                (q = module_qualifier_of(mod, &ql)))
+                (q = module_qualifier_of(current_module_path, mod, &ql)))
                 fprintf(stderr, "[E106] Error Ln %li, Col %li: '%.*s' is not a value. A module is "
                         "named by the last segment of its path or by its alias, so '%s' is `%.*s` "
                         "here: write `%.*s.` and the name, not the whole path.\n",
                         e->line, e->col, tl, tn, mod, (int)ql, q, (int)ql, q);
+            else if (mod)
+                fprintf(stderr, "[E106] Error Ln %li, Col %li: '%.*s' is not a value, and module "
+                        "'%s' is not imported here: import it, then qualify a name by the last "
+                        "segment of its path.\n", e->line, e->col, tl, tn, mod);
             else if ((mod = module_with_last_segment(tn, (size_t)tl)) &&
-                     (q = module_qualifier_of(mod, &ql)) &&
+                     (q = module_qualifier_of(current_module_path, mod, &ql)) &&
                      !(ql == (size_t)tl && strncmp(q, tn, ql) == 0))
                 fprintf(stderr, "[E106] Error Ln %li, Col %li: '%.*s' is not a value. Module '%s' "
                         "is imported as '%.*s': write `%.*s.%.*s`.\n",
                         e->line, e->col, tl, tn, mod, (int)ql, q, (int)ql, q, ml, mn);
+            else if (mod && !q)
+                fprintf(stderr, "[E106] Error Ln %li, Col %li: '%.*s' is not a value, and module "
+                        "'%s' is not imported here: `import %s` makes `%.*s.%.*s` available.\n",
+                        e->line, e->col, tl, tn, mod, mod, tl, tn, ml, mn);
             else
                 fprintf(stderr, "[E106] Error Ln %li, Col %li: cannot access member '%.*s' of "
                         "'%.*s': '%.*s' is neither a value nor an imported module.\n",

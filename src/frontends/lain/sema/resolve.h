@@ -1411,13 +1411,22 @@ void sema_resolve_expr(Expr *e) {
           && !sel_import_visible(current_module_path, raw, (size_t)L)) {
         const char *seg = strrchr(sym->decl->defining_module, '.');
         seg = seg ? seg + 1 : sym->decl->defining_module;
-        fprintf(stderr, "[E105] Error Ln %li, Col %li: '%.*s' is defined in module '%s' — "
-                "import it (`import %s.{%.*s}`) or qualify it (`%s.%.*s`).\n",
-                e->line, e->col,
-                (int)e->as.identifier_expr.id->length, e->as.identifier_expr.id->name,
-                sym->decl->defining_module,
-                sym->decl->defining_module, (int)e->as.identifier_expr.id->length, e->as.identifier_expr.id->name,
-                seg, (int)e->as.identifier_expr.id->length, e->as.identifier_expr.id->name);
+        // The qualified form is offered only as it would compile here: with the qualifier this
+        // module imports the defining module under, else with the import it needs first.
+        size_t ql = 0;
+        const char *qn = module_qualifier_of(current_module_path, sym->decl->defining_module, &ql);
+        int il = (int)e->as.identifier_expr.id->length; const char *in = e->as.identifier_expr.id->name;
+        if (qn)
+            fprintf(stderr, "[E105] Error Ln %li, Col %li: '%.*s' is defined in module '%s' — "
+                    "import it (`import %s.{%.*s}`) or qualify it (`%.*s.%.*s`).\n",
+                    e->line, e->col, il, in, sym->decl->defining_module,
+                    sym->decl->defining_module, il, in, (int)ql, qn, il, in);
+        else
+            fprintf(stderr, "[E105] Error Ln %li, Col %li: '%.*s' is defined in module '%s' — "
+                    "import it (`import %s.{%.*s}`), or import the module (`import %s`) and "
+                    "qualify it (`%s.%.*s`).\n",
+                    e->line, e->col, il, in, sym->decl->defining_module,
+                    sym->decl->defining_module, il, in, sym->decl->defining_module, seg, il, in);
         exit(1);
       }
 
@@ -1565,12 +1574,26 @@ void sema_resolve_expr(Expr *e) {
     // name, so rewrite this node into that identifier and resolve it normally.
     if (mtgt && mtgt->kind == EXPR_IDENTIFIER && e->as.member_expr.member) {
         Id *q = mtgt->as.identifier_expr.id;
-        if (q && qualifier_is_module(q->name, (size_t)q->length)) {
+        const char *qmod = q ? qualifier_module(current_module_path, q->name, (size_t)q->length) : NULL;
+        if (qmod) {
             Id *member = e->as.member_expr.member;
+            int ml = (int)member->length; const char *mn = member->name;   // before the rewrite
             e->kind = EXPR_IDENTIFIER;
             e->as.identifier_expr.id = member;
             e->as.identifier_expr.via_qualifier = true;   // exempt from glob-retirement
             sema_resolve_expr(e);
+            // ★ A QUALIFIER NAMES ITS MODULE. The member was looked up in the one flat namespace
+            // and the qualifier was never consulted again: `math.printf` called std.c's printf,
+            // and `math.helper()` the program's own helper (or a LOCAL named helper). The name
+            // must be defined by the qualified module or by a module it imports, as in an import
+            // list (module_check_selected_imports).
+            const char *dm = (e->is_global && e->decl) ? e->decl->defining_module : NULL;
+            if (!dm || !module_reaches_module(qmod, dm)) {
+                fprintf(stderr, "[E106] Error Ln %li, Col %li: module '%s' defines no '%.*s'.\n",
+                        e->line, e->col, qmod, ml, mn);
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
+            }
             break;
         }
     }

@@ -1,0 +1,16 @@
+// spec: §16 — the allowed side of qualified access. A selective import also declares the module's
+// qualifier (`math.min` beside `{max}`), an alias replaces it (`o.`), and a qualified name may be
+// defined by a module the qualified one imports (std.io imports std.c, so `io.printf`), as in an
+// import list.
+import std.math.{max}
+import std.io
+import std.io as o
+
+func main() i32 effects io {
+    io.printf("io\n")
+    o.println("alias")
+    if math.min(max(1, 2), 3) != 2 {
+        return 1
+    }
+    return 0
+}

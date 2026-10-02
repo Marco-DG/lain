@@ -1,0 +1,12 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: module 'std.math' defines no 'helper'
+// spec: §16 — `q.name` names a declaration of the module q qualifies (or of one it imports). The
+// qualifier was never consulted after the lookup in the flat namespace: `math.helper()` called
+// this program's own helper.
+import std.math
+
+func helper() i32 { return 7 }
+
+func main() i32 {
+    return math.helper() - 7
+}

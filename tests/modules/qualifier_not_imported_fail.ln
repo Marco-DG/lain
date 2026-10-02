@@ -1,0 +1,11 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: module 'std.c' is not imported here
+// spec: §16 — a qualifier belongs to the source file whose import declares it. The qualifiers were
+// one global list, so this program compiled: std.io imports std.c, and that registered `c` for
+// every module.
+import std.io.{println}
+
+func main() i32 effects io {
+    c.printf("hello\n")
+    return 0
+}

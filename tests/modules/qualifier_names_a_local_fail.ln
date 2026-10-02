@@ -1,0 +1,10 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: module 'std.math' defines no 'helper'
+// spec: §16 — a qualified name is never a local. `math.helper` read the local `helper` (the lookup
+// finds locals first), and this returned 2.
+import std.math
+
+func main() i32 {
+    var helper = 9
+    return math.helper - 7
+}

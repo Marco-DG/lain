@@ -30,13 +30,16 @@ module \lain{std.io}.
 
 \pnum
 \lain{import module.path} makes the declarations of the named module
-available in the current source file.  The grammar production is
-\gramref{import-declaration} (Annex~A).
+available in the current source file through the module's qualifier
+(below): \lain{import std.math} makes \lain{math.max} available, not
+\lain{max}.  The grammar production is \gramref{import-declaration}
+(Annex~A).
 
 \pnum
 \textbf{Selective import.}  \lain{import module.path.\{name1, name2, ...\}}
-brings only the listed names into scope rather than the whole module.  This is
-the form used throughout the standard library, e.g.\
+also brings the listed names into scope unqualified; no other name of the
+module is available unqualified.  This is the form used throughout the
+standard library, e.g.\
 \lain{import std.mem.\{mem\_alloc, mem\_free\}} or
 \lain{import std.fs.\{File, open\_file, close\_file\}}.
 
@@ -45,6 +48,22 @@ the form used throughout the standard library, e.g.\
   a module it imports, directly or through further imports; any other name is
   \illformed{}~(\diagcode{E106}).  Neither the order of the import declarations
   nor an import cycle changes which names a module reaches.
+\end{constraint}
+
+\pnum
+\textbf{Qualified access.}  Every import declaration, with or without an
+import list, also declares a \emph{qualifier} for the imported module in the
+importing source file: the last segment of the module path, or the identifier
+after \lain{as} (\lain{import std.io as o} makes \lain{o.println} available,
+and not \lain{io.println}).  \lain{q.name} names the declaration \lain{name}
+of the module that \lain{q} qualifies.
+
+\begin{constraint}
+  In a qualified name \lain{q.name}, \lain{q} shall be a qualifier declared by
+  an import in the same source file, and \lain{name} shall be defined by the
+  module it qualifies or by a module that module imports, directly or through
+  further imports; otherwise the program is \illformed{}~(\diagcode{E106}).
+  A qualified name never names a local.
 \end{constraint}
 
 \pnum

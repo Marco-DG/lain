@@ -399,7 +399,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E103} & unknown attribute, or an attribute on a declaration it does not apply to (\tok{[ordered]} off a struct or a payload-carrying sum, \tok{[allocator]} on a function with a body) \\[2pt]
 \diagcode{E104} & a type contains itself by value (infinite size) \\[2pt]
 \diagcode{E105} & identifier is defined in another module --- add an \lain{import} \\[2pt]
-\diagcode{E106} & use of an undeclared identifier, a \lain{case} pattern that names no variant of the scrutinee's enum (\S\,\ref{sec:match.patterns}), or a name in an import list that its module does not define (\S\,\ref{sec:mod.import}) \\[2pt]
+\diagcode{E106} & use of an undeclared identifier, a \lain{case} pattern that names no variant of the scrutinee's enum (\S\,\ref{sec:match.patterns}), or a name in an import list, or a qualified name, that its module does not define (\S\,\ref{sec:mod.import}) \\[2pt]
 \diagcode{E121} & a struct field invariant --- \lain{pos usize in text} (a valid index), \lain{pos usize <= src.len} or \lain{len usize <= cap} (a relation between fields), or a slice field's length bound \lain{src u8[<= 4294967295]} --- is not proven where the value is built or a field is written, or a \lain{var} reference is taken to a field it relates (a write through it would escape the check); also a \tok{[packed]} struct whose fields are not all \lain{iN}/\lain{uN} or exceed 64 bits, and a \lain{var} reference to, or the address of, one of its fields (bits have no address) \\[2pt]
 \diagcode{E122} & a function pointer must be initialized with a matching function \\[2pt]
 \diagcode{E123} & wrong number of arguments in a call through a function pointer \\[2pt]
