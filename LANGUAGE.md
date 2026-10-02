@@ -2669,23 +2669,58 @@ Lain never performs automatic memory management. All resource lifetimes are stat
 
 ### 16.1 Explicit Initialization
 
-Lain requires all variables to be explicitly initialized. To deliberately leave a variable uninitialized (for performance), the programmer must assign the `undefined` keyword:
+A variable may be declared **without an initialiser**. There is no `undefined` to assign — see
+§3.2 — and nothing is zeroed on your behalf; instead the compiler's **definite initialisation
+analysis** requires a write on every path that reaches a read:
 
 ```lain
-var x int = 0          // Safely initialized to 0
-var y int = undefined  // Explicitly uninitialized (contains garbage)
+// VERIFY: exit 1
+func pick(c bool) i32 {
+    var y i32              // no initialiser: not yet readable
+    if c {
+        y = 1
+    } else {
+        y = 2
+    }
+    return y               // every path assigned y, so this read is allowed
+}
+
+func main() i32 {
+    return pick(true)
+}
 ```
 
-The compiler's **Definite Initialization Analysis** verifies that variables assigned `= undefined` are written before they are read on every code path.
+Leave one path unassigned and the read is refused — the analysis is flow-sensitive, so it is the
+missing path that is the error, not the declaration:
+
+```lain
+func pick(c bool) i32 {
+    var y i32
+    if c { y = 1 }
+    return y              // ERROR [E005]
+}
+```
+
+```
+[E005] Error Ln 4, Col 12: read of an uninitialised value
+```
 
 ### 16.2 Struct Initialization
 
-```lain
-// All fields initialized at once (safe)
-var p = Point(10, 20)
+A struct is built either all at once with its constructor, or declared without an initialiser and
+filled field by field. There is no placeholder for a single uninitialised field:
 
-// Explicit placeholder for uninitialized field
-var q = Point(10, undefined)
+```lain
+// VERIFY: exit 30
+type Point { x int, y int }
+
+func main() i32 {
+    p = Point(10, 20)      // all fields at once
+    var q Point            // no initialiser
+    q.x = 10               // ...filled field by field
+    q.y = 20
+    return (p.x + q.y) as i32
+}
 ```
 
 ---
@@ -3156,13 +3191,15 @@ func scan_until(src u8[:0], delim u8) usize {
 | `return` | Return value |
 | `true` | Boolean true literal |
 | `type` | Type definition |
-| `undefined` | Uninitialized variable marker |
 | `unsafe` | Unsafe block |
 | `var` | Mutable binding |
 | `while` | While loop; must be provably finite unless the row names `diverge`. `while cond decreasing measure` states the measure |
 
-**Reserved keywords** (recognized by the lexer, semantics not yet defined):
-`end`, `export`, `expr`, `macro`, `post`, `pre`, `use`.
+**Reserved**: `use` alone. It is recognised by the lexer and refused as an identifier and as a
+field name; the module-level `use` form is not implemented and this implementation refuses it with
+`[E100]`. `end`, `export`, `expr`, `macro`, `post`, `pre`, `fun` and `undefined` are **not**
+reserved — each is usable today as an ordinary identifier and as a struct field name. §1.1 is the
+authority; this list exists only because an appendix that contradicts it is worse than no appendix.
 
 **Primitive types:**
 | Type | Description |
