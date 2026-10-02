@@ -174,7 +174,35 @@ incorrect}:
         one of those (\S\,\ref{sec:mem.adt-layout}).
   \item Writing into a tagged sum's tag a value that is none of its variants: no
         \lain{case} arm matches it.
+  \item Writing, through a raw pointer, a value that does not satisfy a refined type's predicate
+        or a struct field's invariant.  This is the same kind of violation as the two items above,
+        for the same reason: the predicate and the invariant are premises
+        (\S\,\ref{sec:unsafe.not-disabled}), and every later read is entitled to assume them
+        without proof.  With \lain{type D \{ v i32 >= 0 and <= 3 \}}, the write
+        \lain{*(\&d.v as *var i32) = 100} makes a subsequent \lain{t[d.v]} read outside
+        \lain{t i32[4]} although the index was proven in bounds.
 \end{itemize}
+
+\pnum
+The rule is about the \emph{value}, not about the pointer.  Writing a value that does satisfy the
+predicate is well defined, and the reads that follow remain correct, so a raw pointer into refined
+storage is not in itself an error:
+
+\begin{laincode}
+// VERIFY: exit 0
+type D { v i32 >= 0 and <= 3 }
+
+func main() i32 {
+    var t i32[4] = [10, 20, 30, 40]
+    var d = D(1)
+    unsafe {
+        var q = &d.v as *var i32
+        *q = 2                   // satisfies the predicate: well defined
+    }
+    if t[d.v] != 30 { return 1 }
+    return 0
+}
+\end{laincode}
 
 \pnum
 A conforming implementation that generates C99 translation output inherits
