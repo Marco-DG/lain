@@ -67,7 +67,7 @@ Inside an \lain{unsafe} block, the following operations are permitted:
 The index below is proven from the wrapped value, 4, in the safe code after the block:
 
 \begin{laincode}
-// VERIFY: exit 5
+// VERIFY: exit 0
 func main() i32 {
     var a i32[8] = [1, 2, 3, 4, 5, 6, 7, 8]
     var y u16 = 260
@@ -75,7 +75,8 @@ func main() i32 {
     unsafe {
         x = y as u8
     }
-    return a[x]
+    if a[x] != 5 { return 1 }    // a[4], and the index needed no bounds check
+    return 0
 }
 \end{laincode}
 
@@ -112,6 +113,33 @@ Struct field invariants (\diagcode{E121}) & No \\
 Narrowing into a refined type (\diagcode{E086}) & No \\
 Purity enforcement (\diagcode{E011}) & No \\
 \end{longtable}
+
+\pnum
+The two halves of that table are separated by one principle rather than by a list of exceptions,
+and the principle is worth stating because the rows that look alike are not.  A numeric obligation
+is \emph{local}: \lain{unsafe} accepts responsibility for one operation, that operation then has a
+defined result --- the value modulo $2^N$, as \S\,\ref{sec:unsafe.enables} gives it --- and the
+analysis of everything after it proceeds from that result.  Nothing elsewhere in the program was
+relying on the obligation having been discharged, so the consequence of waiving it reaches no
+further than the value it produced.
+
+\pnum
+A struct field's invariant (\S\,\ref{sec:types.struct.invariants}) and a refined type's constraint
+(\S\,\ref{sec:types.alias-refinement}) are not obligations of that kind; they are \emph{premises}.
+The check exists so that every later read may assume the property without proving it, and an
+implementation is permitted to compile a read that contradicts one into unreachable code.
+Suspending such a check inside \lain{unsafe} would therefore not confine its consequence to the
+block: it would make deductions false in \emph{safe} code elsewhere, which the programmer asserted
+nothing about and could not have, since no assertion available at the \lain{unsafe} block speaks
+about a later function's reasoning.  An assignment that would break an invariant, or that would
+land outside the refinement of the type it is stored into, is therefore \illformed{} inside
+\lain{unsafe} exactly as it is outside
+it~(\diagcode{E121}, \diagcode{E086}).
+
+\pnum
+So: \lain{unsafe} waives a \emph{proof about an operation}; it never waives a \emph{fact the rest
+of the program is entitled to assume}.  A reader deciding whether some future check belongs above
+or below the midrule of that table should ask which of those two it is.
 
 \begin{constraint}
   Ownership and linearity rules (\S\,\ref{sec:11-ownership}) are not

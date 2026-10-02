@@ -617,7 +617,7 @@ See §6.5 for `case` expressions.
 If you are certain of the active variant and need to bypass the branching overhead, you can extract the field directly using the variant name. This is **only allowed** inside an `unsafe` block.
 
 ```lain
-// VERIFY: exit 10
+// VERIFY: exit 0
 type Shape {
     Circle { radius int }
     Point
@@ -627,8 +627,9 @@ func main() i32 {
     var s = Shape.Circle(10)
     unsafe {
         var r = s.Circle.radius      // Zero-overhead direct C union access
-        return r as i32
+        if r as i32 != 10 { return 1 }
     }
+    return 0
 }
 ```
 
@@ -844,7 +845,7 @@ The `mov` operator transfers ownership of a value. After a move, the source vari
 both cases, and the invalidation is what `mov` buys: it is why no second consumer can exist.
 
 ```lain
-// VERIFY: exit 7
+// VERIFY: exit 0
 type Resource { id i32 }
 
 func take_ownership(mov r Resource) i32 {
@@ -859,7 +860,8 @@ func main() i32 {
 
     var c Resource
     c.id = 7
-    return take_ownership(mov c)
+    if take_ownership(mov c) != 7 { return 2 }
+    return 0
 }
 ```
 
@@ -884,7 +886,7 @@ func f() i32 {
 passes into the returned value:
 
 ```lain
-// VERIFY: exit 5
+// VERIFY: exit 0
 type Resource { id i32 }
 type Container { inner Resource }
 
@@ -896,7 +898,8 @@ func main() i32 {
     var a Resource
     a.id = 5
     var c = wrap(mov a)
-    return c.inner.id
+    if c.inner.id != 5 { return 1 }
+    return 0
 }
 ```
 
@@ -1065,7 +1068,7 @@ func main() i32 {
 Parameters can be destructured at the function signature level:
 
 ```lain
-// VERIFY: exit 4
+// VERIFY: exit 0
 type Resource { id int }
 
 func drop(mov {id} Resource) int {
@@ -1075,7 +1078,8 @@ func drop(mov {id} Resource) int {
 func main() i32 {
     var r Resource
     r.id = 4
-    return drop(mov r) as i32
+    if drop(mov r) as i32 != 4 { return 1 }
+    return 0
 }
 ```
 
@@ -1083,7 +1087,7 @@ func main() i32 {
 
 **`return mov` — transfer ownership:**
 ```lain
-// VERIFY: exit 6
+// VERIFY: exit 0
 type Item { id int }
 
 func transfer(mov item Item) Item {
@@ -1094,7 +1098,8 @@ func main() i32 {
     var i Item
     i.id = 6
     var j = transfer(mov i)
-    return j.id as i32
+    if j.id as i32 != 6 { return 1 }
+    return 0
 }
 ```
 
@@ -1243,7 +1248,7 @@ nothing else. `*proc` could only have said "may do anything".
 Every function supports three parameter modes:
 
 ```lain
-// VERIFY: exit 9
+// VERIFY: exit 0
 type Context { value int }
 type Resource { id int }
 
@@ -1261,7 +1266,8 @@ func main() i32 {
     var r Resource
     r.id = 9
     process(4, var c, mov r)      // the call site repeats the modes
-    return c.value as i32
+    if c.value as i32 != 9 { return 1 }
+    return 0
 }
 ```
 
@@ -1618,7 +1624,7 @@ func rank(x i32) i32 {
 By default, `case expr` consumes the scrutinee (for linear types). To inspect a value **without consuming it**, prefix the scrutinee with `&`:
 
 ```lain
-// VERIFY: exit 43
+// VERIFY: exit 0
 func inspect() i32 {
     var x = 42
     var result = 0
@@ -1630,7 +1636,8 @@ func inspect() i32 {
 }
 
 func main() i32 {
-    return inspect()
+    if inspect() != 43 { return 1 }
+    return 0
 }
 ```
 
@@ -1689,7 +1696,7 @@ func main() i32 effects io {
 3. **Integers**: An `else` arm is always required (integers are not finite).
 
 ```lain
-// VERIFY: exit 3
+// VERIFY: exit 0
 // All 3 variants covered, so no `else` is needed
 type Status { Ready, Running, Done }
 
@@ -1703,7 +1710,8 @@ func rank(s Status) i32 {
 }
 
 func main() i32 {
-    return rank(Status.Done)
+    if rank(Status.Done) != 3 { return 1 }
+    return 0
 }
 ```
 
@@ -1758,7 +1766,7 @@ and the `defer` registered *last* runs *first* — which is why the one that rea
 already set. Were the order FIFO, this program would return 0:
 
 ```lain
-// VERIFY: exit 1
+// VERIFY: exit 0
 func lifo() i32 {
     var b_done = false
     var a_saw_b = false
@@ -1773,7 +1781,8 @@ func lifo() i32 {
 }
 
 func main() i32 {
-    return lifo()
+    if lifo() != 1 { return 2 }      // 2, so a failure is never the LIFO answer
+    return 0
 }
 ```
 
@@ -2765,7 +2774,7 @@ Lain does **not** have exceptions, `try`/`catch`, or stack unwinding. All error 
 and `Ok`/`Err` — so a `case` on one is exhaustive by the rules of §6.6, with no special syntax:
 
 ```lain
-// VERIFY: exit 7
+// VERIFY: exit 0
 import std.result.{Result}
 
 type FileResult = Result(i32, i32)
@@ -2779,7 +2788,8 @@ func handle(r FileResult) i32 {
 
 func main() i32 {
     var good = FileResult.Ok(7)
-    return handle(good)
+    if handle(good) != 7 { return 1 }
+    return 0
 }
 ```
 
@@ -2835,7 +2845,7 @@ A variable may be declared **without an initialiser**. There is no `undefined` t
 analysis** requires a write on every path that reaches a read:
 
 ```lain
-// VERIFY: exit 1
+// VERIFY: exit 0
 func pick(c bool) i32 {
     var y i32              // no initialiser: not yet readable
     if c {
@@ -2847,7 +2857,8 @@ func pick(c bool) i32 {
 }
 
 func main() i32 {
-    return pick(true)
+    if pick(true) != 1 { return 2 }
+    return 0
 }
 ```
 
@@ -2872,7 +2883,7 @@ A struct is built either all at once with its constructor, or declared without a
 filled field by field. There is no placeholder for a single uninitialised field:
 
 ```lain
-// VERIFY: exit 30
+// VERIFY: exit 0
 type Point { x int, y int }
 
 func main() i32 {
@@ -2880,7 +2891,8 @@ func main() i32 {
     var q Point            // no initialiser
     q.x = 10               // ...filled field by field
     q.y = 20
-    return (p.x + q.y) as i32
+    if (p.x + q.y) as i32 != 30 { return 1 }
+    return 0
 }
 ```
 
@@ -2945,11 +2957,12 @@ to a `u8` first would give 54. For `+%` the two readings happen to coincide — 
 is why the wrong one survives being tested:
 
 ```lain
-// VERIFY: exit 255
+// VERIFY: exit 0
 func sat(x u8) u8 { return x +| 300 }
 
 func main() i32 {
-    return sat(10) as i32
+    if sat(10) as i32 != 255 { return 1 }
+    return 0
 }
 ```
 
@@ -3029,10 +3042,11 @@ There is no `export`, and **`export` is not a reserved word** — it appears now
 and is usable today as an ordinary identifier:
 
 ```lain
-// VERIFY: exit 3
+// VERIFY: exit 0
 func main() i32 {
     var export = 3
-    return export
+    if export != 3 { return 1 }
+    return 0
 }
 ```
 

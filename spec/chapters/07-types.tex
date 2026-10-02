@@ -380,13 +380,14 @@ their operands and never wider than the wider stated one:
         \lain{i32}, \lain{i32} and \lain{u64}) are \illformed{}~(\diagcode{E012}): convert one.
 \end{itemize}
 \begin{laincode}
-// VERIFY: exit 255
+// VERIFY: exit 0
 func sat(x u8) u8 { return x +| 300 }      // the exact 310, clamped
 func wrap(x u8) u8 { return x +% 300 }     // 310 mod 256
 
 func main() i32 {
-    if wrap(10) as i32 != 54 { return 1 }
-    return sat(10) as i32
+    if sat(10) as i32 != 255 { return 1 }
+    if wrap(10) as i32 != 54 { return 2 }
+    return 0
 }
 \end{laincode}
 

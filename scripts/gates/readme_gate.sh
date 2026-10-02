@@ -156,19 +156,24 @@ for f in "$TMP"/b*.txt; do
     #     than as an impossible expectation;
     #   · `// VERIFY: exit 0` PASSES for a program that computes 256 — the gate then CONFIRMS a
     #     wrong value, and 0 is the value an author writes most often.
-    # An out-of-range claim is therefore a malformed annotation and is refused here.
-    #
-    # The second hazard is NOT yet closed mechanically, and is recorded rather than forgotten: the
-    # full fix is to require a literal `return N` in the block, forcing the wide comparison inside
-    # the program (`if f(x) != 300 { return 1 }`) so the status carries only which assertion
-    # failed — a computed return can alias, a literal one the author wrote cannot. That rule
-    # refuses a currently-committed spec example which is in fact safe (`return sat(10) as i32`
-    # returns a u8 and cannot reach 256), so it lands together with the rewrite of that example,
-    # when spec/ is released. A lint must not land before the thing it would refuse is fixed.
-    if [ -n "$verify_exp" ] && { [ "$verify_exp" -lt 0 ] || [ "$verify_exp" -gt 255 ]; }; then
-        verify_bad=$((verify_bad+1))
-        echo "  ★ $page:$ln — VERIFY: exit $verify_exp is outside 0..255; an exit status cannot carry it"
-        echo "      Compare it inside the program instead: \`if f(x) != $verify_exp { return 1 }\` with VERIFY: exit 0"
+    # So an out-of-range claim is refused as a malformed annotation, AND the claimed value must
+    # appear in the block as a literal `return N`. The second rule is what actually closes the
+    # aliasing hazard: it forces the interesting comparison INSIDE the program
+    # (`if f(x) != 300 { return 1 }`), where it happens at full width, and leaves the exit status
+    # carrying only which assertion failed. A computed return can alias; a literal the author
+    # wrote cannot. It costs a little verbosity in the examples and buys the one thing a
+    # mod-256 comparison cannot give: a value the gate checks is the value the page claims.
+    if [ -n "$verify_exp" ]; then
+        if [ "$verify_exp" -lt 0 ] || [ "$verify_exp" -gt 255 ]; then
+            verify_bad=$((verify_bad+1))
+            echo "  ★ $page:$ln — VERIFY: exit $verify_exp is outside 0..255; an exit status cannot carry it"
+            echo "      Compare it inside the program instead: \`if f(x) != $verify_exp { return 1 }\` with VERIFY: exit 0"
+        elif ! echo "$body" | grep -qE "^[[:space:]]*return[[:space:]]+$verify_exp([[:space:]]+//.*)?[[:space:]]*$"; then
+            verify_bad=$((verify_bad+1))
+            echo "  ★ $page:$ln — VERIFY claims exit $verify_exp but the block has no literal \`return $verify_exp\`"
+            echo "      An exit status is 8 bits, so a COMPUTED return aliases mod 256 and could"
+            echo "      confirm a wrong value. Assert it inside the program and return a literal."
+        fi
     fi
     # make it a program
     # ★ The program is written into the REPOSITORY ROOT, not into $TMP. Module paths resolve
