@@ -1,5 +1,5 @@
 // EXPECT: [E086]
-// EXPECT-TEXT: Error Ln 16, Col 9: arithmetic is not provably free of overflow
+// EXPECT-TEXT: Error Ln 16, Col 9: this value is not provably within [0, 3], the refinement of the type it lands in
 // `unsafe` waives a narrowing, and C wraps it to the bits; a REFINED type is a predicate no wrap
 // can honour, and every reader of `d.v` assumes it (that is what proves `t[d.v]`). The narrowing
 // into `i32 >= 0 and <= 3` was waived here, so this compiled and the SAFE `t[d.v]` read t[100]

@@ -2118,6 +2118,12 @@ ty=S struct
 rc=0
 out=
 at=const 2
+### tests/trust/variant_field_refinement_pass.ln
+rc=0
+out=
+at=const 2
+ty=Opt scalar
+ty=Shape scalar
 ### tests/trust/widening_arith_promotion_pass.ln
 rc=0
 out=3600000000

@@ -1,0 +1,40 @@
+// A variant's field takes a refinement as a struct's field does (I.66); it was E100 "Expected ','
+// after variant field", while the same bound through an alias compiled. The refinement is the
+// payload's type: the construction is checked into it, the payload read assumes it (`t[r]` is
+// proven from `radius i32 >= 0 and <= 3` alone), and it donates a niche (`Some { v u8 < 200 }`
+// keeps None at 200, so the sum is one byte, as with an alias). Run under the sanitizers and the
+// interpreter.
+type Shape {
+    Circle { radius i32 >= 0 and <= 3 },
+    Dot
+}
+
+type Opt {
+    Some { v u8 < 200 },
+    None
+}
+
+func pick(s Shape) i32 {
+    var t i32[4] = [10, 20, 30, 40]
+    case s {
+        Circle(r): return t[r]
+        Dot: return 0
+    }
+}
+
+func main() i32 {
+    if pick(Shape.Circle(2)) != 30 {
+        return 1
+    }
+    if @sizeof(Opt) != 1 {
+        return 2
+    }
+    o = Opt.Some(5)
+    case o {
+        Some(v): if v != 5 {
+            return 3
+        }
+        None: return 4
+    }
+    return 0
+}

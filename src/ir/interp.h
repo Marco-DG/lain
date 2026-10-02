@@ -231,11 +231,12 @@ static void ii_set(IrValue *r, const IVal *x) { if (r && r->id >= 0 && r->id < i
 // exit status both were 253, so the false proof showed only where a program happened to print it
 // (found with the per-operation soundness harness). Now it stops at the line that owed the
 // proof. Inside `unsafe` the conversion is C's: it wraps.
+static void ii_land_refined(IVal *v, const IrType *dt, IrInstr *at);   // below
 static void ii_land(IVal *v, const IrType *vt, const IrType *dt, IrInstr *at) {
     if (!v || v->k != IV_INT || !vt || !dt || vt->kind != IRT_INT || dt->kind != IRT_INT) return;
-    if (vt->bits == dt->bits && vt->is_signed == dt->is_signed) return;
+    if (vt->bits == dt->bits && vt->is_signed == dt->is_signed) { ii_land_refined(v, dt, at); return; }
     __int128 x = iv_get(v, (IrType *)vt, at);
-    if (it_fits(x, dt)) return;
+    if (it_fits(x, dt)) { ii_land_refined(v, dt, at); return; }
     if (at && at->unchecked) { iv_int(v, it_wrap(x, (IrType *)dt)); return; }
     char b[48]; int n = 0, j = 0; unsigned __int128 u = x < 0 ? -(unsigned __int128)x : (unsigned __int128)x;
     char t[48]; do { t[n++] = (char)('0' + (int)(u % 10)); u /= 10; } while (u);
@@ -243,6 +244,22 @@ static void ii_land(IVal *v, const IrType *vt, const IrType *dt, IrInstr *at) {
     while (n) b[j++] = t[--n];
     b[j] = 0;
     II_PROOF(at, "%s lands in a %s%d, which cannot hold it (proven to fit)", b, dt->is_signed ? "i" : "u", dt->bits);
+}
+
+// ★ A REFINED SLOT IS PART OF THE OBLIGATION. The analysis proves a value fits `i32 >= 0 and <= 3`
+// (vra_check_narrow reads the refined range), and the check above compared only the BITS: it
+// returned at once for an i32 landing in a refined i32, so a false proof of a refinement was
+// never caught where it was owed, only by whatever it broke later. A narrowing into a refined
+// type is never waived, inside `unsafe` either (I.60), so a value outside the refinement here is
+// a false proof wherever it lands: a store, a field, a payload, an argument, a result.
+static void ii_land_refined(IVal *v, const IrType *dt, IrInstr *at) {
+    if (!v || v->k != IV_INT || !dt || dt->kind != IRT_INT || !(dt->has_refine || dt->has_ne)) return;
+    __int128 x = iv_get(v, (IrType *)dt, at);
+    if (dt->has_refine && (x < (__int128)dt->refine_lo || x > (__int128)dt->refine_hi))
+        II_PROOF(at, "%lld lands in a type refined to [%lld, %lld], which does not hold it (proven to fit)",
+                 (long long)x, (long long)dt->refine_lo, (long long)dt->refine_hi);
+    if (dt->has_ne && x == (__int128)dt->refine_ne)
+        II_PROOF(at, "%lld lands in a type refined to != %lld (proven to fit)", (long long)x, (long long)dt->refine_ne);
 }
 
 static IrFunc *ii_find(const IrName *n) {

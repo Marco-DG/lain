@@ -142,6 +142,11 @@ typedef struct {
     // backend emits, and each needs its own sentence.
     int      shift;
     bool     bitcount;       // a VRA_DIVZERO check on the argument of @ctz/@clz, not a divisor
+    // A VRA_OVERFLOW check that is a narrowing into a REFINED type: 1 = its range [ref_lo, ref_hi],
+    // 2 = only its excluded value ref_ne, 3 = both. The failure is about the refinement, and
+    // "arithmetic is not provably free of overflow" was printed for `C(7)`, which has no arithmetic.
+    int      refine;
+    int64_t  ref_lo, ref_hi, ref_ne;
     int      diag;           // VRA_PRECOND: the assert's diagnostic class (85/86/87; 0 = E012)
     int64_t  line, col;
 } VraCheck;
@@ -2724,6 +2729,13 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
         if (d && d->op == IR_SDIV && d->n_operands >= 2 && d->operands[0] && d->operands[0]->type &&
             irtype_int_range(d->operands[0]->type, &dlo, &dhi) && tlo <= dlo && dhi <= thi)
             c.shift = 5;
+    }
+    // ...and NAME THE REFINEMENT (I.66). A value landing in `i32 >= 0 and <= 3`, a field, a
+    // payload, a parameter, that is not proven to fit said "arithmetic is not provably free of
+    // overflow" even where there was no arithmetic at all (`C(7)`). Say what is not proven.
+    if (!c.ok && !c.accum && !c.shift && (target->has_refine || target->has_ne)) {
+        c.refine = (target->has_refine ? 1 : 0) | (target->has_ne ? 2 : 0);
+        c.ref_lo = tlo; c.ref_hi = thi; c.ref_ne = target->refine_ne;
     }
     vra_add_check(V, c);
 }

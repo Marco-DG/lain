@@ -164,6 +164,17 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 } else if (c->shift == 2) {
                     ir_diag(file, c->line, c->col, "E086",
                             "signed left shift may overflow — a bit can reach the sign (`1 << 31` on an i32 is UB)");
+                } else if (c->refine) {
+                    char msg[200];
+                    if (c->refine == 2)
+                        snprintf(msg, sizeof msg, "this value is not provably different from %lld, "
+                                 "which the refined type it lands in excludes", (long long)c->ref_ne);
+                    else
+                        snprintf(msg, sizeof msg, "this value is not provably within [%lld, %lld]%s, "
+                                 "the refinement of the type it lands in",
+                                 (long long)c->ref_lo, (long long)c->ref_hi,
+                                 c->refine == 3 ? " (and not the excluded value)" : "");
+                    ir_diag(file, c->line, c->col, "E086", msg);
                 } else {
                     ir_diag(file, c->line, c->col, "E086",
                             "arithmetic is not provably free of overflow");

@@ -1,0 +1,17 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 12, Col 9: this value is not provably within [0, 3], the refinement of the type it lands in
+// The refinement on a variant's field is checked at construction, as a struct field's is: 7 is not
+// a `radius` (I.66). The message names the refinement; it said "arithmetic is not provably free of
+// overflow", for a construction with no arithmetic in it.
+type Shape {
+    Circle { radius i32 >= 0 and <= 3 },
+    Dot
+}
+
+func main() i32 {
+    s = Shape.Circle(7)
+    case s {
+        Circle(r): return r
+        Dot: return 0
+    }
+}

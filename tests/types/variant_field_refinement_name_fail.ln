@@ -1,0 +1,13 @@
+// EXPECT: [E132]
+// EXPECT-TEXT: Error Ln 7, Col 28: the refinement of variant field 'h' must bound it by a number
+// A variant's field may be bounded by numbers only. Naming another field is a struct invariant,
+// asserted at every write to a struct; a variant has no such machinery, so `h i32 <= w` would be
+// accepted and never checked (I.66).
+type Shape {
+    Rect { w i32, h i32 <= w },
+    Dot
+}
+
+func main() i32 {
+    return 0
+}

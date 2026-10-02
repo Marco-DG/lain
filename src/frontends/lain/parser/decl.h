@@ -582,6 +582,47 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                     Decl *fdecl = decl_variable(arena, fname, ftype);
                     fdecl->line = fname_line;
                     fdecl->col = fname_col;
+
+                    // A refinement on a variant's field, as a struct field takes one (I.66):
+                    // `Circle { radius i32 >= 0 and <= 1000 }` was E100 "Expected ','", while the
+                    // same bound through an alias compiled. Number bounds only: a struct field may
+                    // name another field because ir_field_relations asserts the relation at every
+                    // write, and a variant has no such machinery, so a name here would be parsed
+                    // and silently unenforced. It is E132, as an unenforceable shape is on a struct.
+                    if (is_comparison_op(parser->token.kind)) {
+                        ExprList *vcons = NULL, **vct = &vcons;
+                        Expr *fref = expr_identifier(arena, fname);
+                        do {
+                            TokenKind op = parser->token.kind;
+                            isize op_line = parser->line, op_col = parser->column;
+                            parser_advance();
+                            bool neg = false;
+                            if (parser_match(TOKEN_MINUS)) { neg = true; parser_advance(); }
+                            if (!parser_match(TOKEN_NUMBER)) {
+                                fprintf(stderr,
+                                    "[E132] Error Ln %li, Col %li: the refinement of variant field '%.*s' "
+                                    "must bound it by a number (`%.*s i32 >= 0 and <= 1000`).\n"
+                                    "       A field of a variant cannot be related to another field: that is a\n"
+                                    "       struct invariant, checked at every write to a struct, and a variant has\n"
+                                    "       none, so the relation would be accepted and never checked.\n",
+                                    (long)parser->line, (long)parser->column,
+                                    (int)fname->length, fname->name, (int)fname->length, fname->name);
+                                exit(1);
+                            }
+                            long long value = parse_numeric_literal(parser->token.start, parser->token.length);
+                            parser_advance();
+                            Expr *fc = expr_binary(arena, op, fref, expr_literal(arena, neg ? -value : value));
+                            fc->line = op_line; fc->col = op_col;
+                            *vct = expr_list(arena, fc);
+                            vct = &(*vct)->next;
+                            if (parser_match(TOKEN_KEYWORD_AND)) {
+                                parser_advance();
+                                if (!is_comparison_op(parser->token.kind))
+                                    parser_error("Expected comparison operator after 'and'");
+                            } else break;
+                        } while (is_comparison_op(parser->token.kind));
+                        fdecl->as.variable_decl.constraints = vcons;
+                    }
                     
                     *vfields_tail = decl_list(arena, fdecl);
                     vfields_tail = &(*vfields_tail)->next;

@@ -861,7 +861,12 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
                     pt->field_names = arena_push_many_aligned(c->a, IrName*, nf);
                     int j=0; for (DeclList *fl=v->fields; fl; fl=fl->next) {
                         if (!fl->decl || fl->decl->kind!=DECL_VARIABLE) continue;
-                        pt->fields[j] = ir_lower_type(c, fl->decl->as.variable_decl.type);
+                        // A variant field's refinement is its type's, exactly as a struct field's
+                        // is (below): the payload's narrowing at construction is checked into it,
+                        // and a read of the payload may assume it (I.66).
+                        pt->fields[j] = ir_refine_int_type_from(c,
+                                            ir_lower_type(c, fl->decl->as.variable_decl.type),
+                                            fl->decl->as.variable_decl.constraints);
                         Id *fn = fl->decl->as.variable_decl.name;
                         pt->field_names[j] = fn ? ir_intern(c->a, fn->name, fn->length) : NULL;
                         j++;
