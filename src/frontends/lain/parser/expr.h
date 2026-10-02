@@ -324,6 +324,11 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
                     e != '\\' && e != '"' && e != '\'' && e != 'x') {
                     parser_error("unknown escape sequence in string literal");
                 }
+                // `\xHH` takes exactly two hex digits, as in a character literal (spec 05). The
+                // decoder below took what digits it found: `"\x4"` was one byte 4 and `"\xZZ"`
+                // a NUL followed by "ZZ", both silently, while `'\x4'` was refused.
+                if (e == 'x' && !(i + 3 < len && from_hex(str[i + 2]) >= 0 && from_hex(str[i + 3]) >= 0))
+                    parser_error("a \\x escape takes exactly two hex digits");
                 i++;  // consume the escaped character
             }
         }
@@ -389,7 +394,8 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
                 case '0':  c = 0;    break;   // Annex A escape-sequence; strings had it,
                 case '"':  c = '"';  break;   // character literals did not
                 case 'x':
-                    if (len < 6) parser_error("incomplete \\xHH escape");
+                    if (len < 6 || from_hex(s[3]) < 0 || from_hex(s[4]) < 0)
+                        parser_error("a \\x escape takes exactly two hex digits");
                     c = (unsigned char)((from_hex(s[3]) << 4) | from_hex(s[4]));
                     break;
                 default:

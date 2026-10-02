@@ -384,11 +384,15 @@ literals:
 \texttt{\textbackslash\textbackslash} & 0x5C & Backslash \\
 \texttt{\textbackslash "} & 0x22 & Double quote \\
 \texttt{\textbackslash '} & 0x27 & Single quote \\
+\texttt{\textbackslash x}\textit{HH} & 0x\textit{HH} & The byte whose value is the two hex digits \textit{HH} \\
 \end{longtable}
 
 \begin{constraint}
   A backslash not followed by one of the characters in the table above is
   an unrecognized escape sequence and is \illformed{}~(\diagcode{E100}).
+  A \texttt{\textbackslash x} not followed by exactly two hex digits is
+  \illformed{}~(\diagcode{E100}); a third digit is an ordinary character
+  (\texttt{"\textbackslash x414"} is the two bytes \texttt{A} and \texttt{4}).
 \end{constraint}
 
 \section{Operators and punctuators}

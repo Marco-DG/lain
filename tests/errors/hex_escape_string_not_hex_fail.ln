@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 8, Col 9: a \x escape takes exactly two hex digits
+// A `\x` escape takes exactly two hex digits, in a string as in a character literal (spec 05). The
+// digit helper printed "invalid hex digit in char literal" to STDOUT and returned 0, so `'\xZ1'`
+// compiled to 1; a string took whatever digits it found, so `"\x4"` was one byte and `"\xZZ"` a
+// NUL and "ZZ", silently. Found by the Debugger agent, whose probe's stdout the message corrupted.
+func main() i32 {
+    s = "\xZZ"
+    return s.len as i32
+}

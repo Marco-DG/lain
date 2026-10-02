@@ -1,0 +1,11 @@
+// The allowed side of the two-digit `\x` rule: two hex digits are one byte, in either case, and a
+// third digit is an ordinary character. Run under the sanitizers and the interpreter.
+func main() i32 {
+    s = "\x414"
+    t = "\x7f\x00"
+    c = '\xfF'
+    if s.len != 2 or s[0] != 65 or s[1] != 52 { return 1 }
+    if t.len != 2 or t[0] != 127 or t[1] != 0 { return 2 }
+    if c != 255 { return 3 }
+    return 0
+}

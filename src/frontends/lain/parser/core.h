@@ -224,8 +224,9 @@ static int from_hex(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    printf("invalid hex digit in char literal");
-    return 0;
+    // Not a hex digit: the caller refuses the escape. This printed "invalid hex digit in char
+    // literal" to STDOUT, with no code and no newline, and returned 0, so `'\xZ1'` compiled to 1.
+    return -1;
 }
 
 // F-004 helper: strip underscores from a numeric lexeme then convert.

@@ -83,7 +83,8 @@ float-exponent   ::= ( "e" | "E" ) [ "+" | "-" ] decimal-digit { decimal-digit |
 \begin{grammar}
 string-literal   ::= '"' { string-char } '"'
 string-char      ::= any-source-char-except-'"'-or-'\' | escape-sequence
-escape-sequence  ::= '\' ( '"' | '\' | "n" | "t" | "r" | "0" )
+char-literal     ::= "'" ( any-source-char-except-"'"-or-'\' | escape-sequence ) "'"
+escape-sequence  ::= '\' ( '"' | "'" | '\' | "n" | "t" | "r" | "0" | "x" hex-digit hex-digit )
 \end{grammar}
 
 \label{gram:bool-literal}
