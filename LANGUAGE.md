@@ -1065,8 +1065,17 @@ func main() i32 {
 Parameters can be destructured at the function signature level:
 
 ```lain
-func drop(mov {id} Resource) {
-    // 'id' is extracted from Resource, consuming the struct
+// VERIFY: exit 4
+type Resource { id int }
+
+func drop(mov {id} Resource) int {
+    return id             // 'id' is extracted from Resource, consuming the struct
+}
+
+func main() i32 {
+    var r Resource
+    r.id = 4
+    return drop(mov r) as i32
 }
 ```
 
@@ -1074,20 +1083,48 @@ func drop(mov {id} Resource) {
 
 **`return mov` — transfer ownership:**
 ```lain
+// VERIFY: exit 6
+type Item { id int }
+
 func transfer(mov item Item) Item {
     return mov item       // Transfer ownership to the caller
+}
+
+func main() i32 {
+    var i Item
+    i.id = 6
+    var j = transfer(mov i)
+    return j.id as i32
 }
 ```
 
 **`return var` — return a mutable reference:**
 ```lain
+type Context { counter int }
+
 func get_ref(var ctx Context) var int {
     return var ctx.counter    // Return a mutable reference to a field
 }
+
+func main() i32 {
+    return 0
+}
 ```
 
-> [!WARNING]
-> Returning a mutable reference to a local variable is a compile error because it creates a dangling pointer. `return var` is restricted to references to data that outlives the function (such as fields of `var` parameters).
+Returning a mutable reference to a **local** is refused, because the reference would outlive what it
+borrows. `return var` is restricted to data that outlives the call — a field of a `var` parameter,
+as above:
+
+```lain
+func dangle() var int {
+    var local = 5
+    return var local      // ERROR [E010]
+}
+```
+
+```
+[E010] Error Ln 3, Col 5: this reference would outlive the value it borrows
+```
 
 **`return` (default) — return by value (copy):**
 ```lain
