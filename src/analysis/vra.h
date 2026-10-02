@@ -965,6 +965,28 @@ static void vra_assign_copy(Vra *V, Octagon *o, int dst, int src) {
     if (shh) oct_add_ub(o, dst, shi);
 }
 
+// ★ A VALUE THAT ENTERS THE FUNCTION SATISFIES ITS TYPE, and the octagon must be told so where it
+// enters, not only vra_range: the add/sub transfer records DIFFERENCE bounds (`r - a <= c`), and the
+// closure can turn those into an absolute range for the result only if the operand has one in the
+// octagon. A parameter's range is seeded at entry and an array element's arrived with I.57
+// (0f13bee); a call's result, a sum's payload and a scalar or field cell's load had none, so
+// `(get() / 1000) as i32` with `get` returning u32 was E086 wherever the callee's return range was
+// unknown (an extern, a call through a function pointer, a recursion) although any u32 divided by
+// 1000 fits an i32; likewise `case o { Some(v): (v / 1000) as i32 }` and `(p.x / 1000) as i32`
+// (M5c's probes). The range is the TYPE's, refinement included, as at a parameter: a bound from
+// the bits alone is finite, so vra_range stopped deriving the tighter refined one through the
+// definition (`a[(d.v + 8) as usize]` over `v i32 >= -8 and <= 8` was refused). Sound since I.60:
+// every landing models what C does with a value that does not fit its bits, and a narrowing into a
+// refined type is never waived, so no cell holds a value outside its type. A u64's top is past a
+// bound and is not stated.
+static void vra_bound_by_type(Octagon *W, int r, const IrType *t) {
+    int64_t tlo, thi;
+    if (r < 0 || !t || t->kind != IRT_INT || !irtype_int_range((IrType *)t, &tlo, &thi)) return;
+    bool u64top = !t->is_signed && t->bits >= 64 && thi == INT64_MAX;
+    if (tlo > -OCT_INF/2) oct_add_lb(W, r, tlo);
+    if (thi <  OCT_INF/2 && !u64top) oct_add_ub(W, r, thi);
+}
+
 // The slot a STORE writes: the pointee of its address, or an alloca's own type.
 static IrType *vra_store_slot(Vra *V, IrInstr *st) {
     if (!st || st->n_operands < 1) return NULL;
@@ -1287,15 +1309,18 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
         case IR_LOAD: {
             if (r<0) break;
             int cell = ins->n_operands ? vra_ref_target(V, ins->operands[0]->id) : -1;
+            IrType *lt0 = ins->result ? ins->result->type : NULL;
             if (vra_field_cell_base(V, cell) >= 0) {        // a field of a local struct
                 vra_assign_copy(V, W, r, vra_canon_cell(V, cell));
+                vra_bound_by_type(W, r, lt0);              // a struct PARAMETER's field had none
                 break;
             }
             IrInstr *d = cell>=0 ? V->def[cell] : NULL;
             if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
-                || vra_is_param_cell(V, cell))
+                || vra_is_param_cell(V, cell)) {
                 vra_assign_copy(V, W, r, cell);                // scalar cell → value
-            else {
+                vra_bound_by_type(W, r, lt0);
+            } else {
                 oct_forget(W, r);                              // array elem / unknown
                 // ...but an element of an array whose CONTENTS are known is bounded by them.
                 // The bound goes into the OCTAGON, not just into vra_range: the add/sub
@@ -1316,16 +1341,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 // proved, since a parameter's type range is seeded at entry (I.57, Handwriting's
                 // M14 bind-return finding). Sound for every width: a bit pattern of an N-bit
                 // integer is within its range. 64 bits is skipped (u64's top is past a bound).
-                {
-                    IrType *lt = ins->result ? ins->result->type : NULL;
-                    if (lt && lt->kind == IRT_INT && lt->bits >= 1 && lt->bits <= 63) {
-                        long long tlo = lt->is_signed ? -(1LL << (lt->bits - 1)) : 0;
-                        long long thi = lt->is_signed ? (1LL << (lt->bits - 1)) - 1
-                                                      : (long long)((1ULL << lt->bits) - 1);
-                        oct_add_lb(W, r, tlo);
-                        oct_add_ub(W, r, thi);
-                    }
-                }
+                vra_bound_by_type(W, r, lt0);
             }
             break;
         }
@@ -1989,6 +2005,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             }
             if (r>=0) {
                 oct_forget(W, r);
+                vra_bound_by_type(W, r, ins->result ? ins->result->type : NULL);   // whatever the callee
                 // ...but the RESULT is not unknown: the callee's body bounds it.
                 int64_t rlo, rhi;
                 IrFunc *cal2 = vra_find_func(ins->aux.callee);
@@ -2011,6 +2028,9 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             // of a struct proved nothing and the field-by-field spelling of the same struct
             // proved everything, for no reason in the source.
             if (r>=0 && vra_field_cell_base(V, r) < 0) oct_forget(W, r);
+            break;
+        case IR_SUM_PAYLOAD:
+            if (r>=0) { oct_forget(W, r); vra_bound_by_type(W, r, ins->result ? ins->result->type : NULL); }
             break;
         default:
             if (r>=0) oct_forget(W, r);   // conservative: result becomes unknown

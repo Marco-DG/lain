@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 8, Col 12: arithmetic is not provably free of overflow
+// The refusing twin of type_range_extern_call_pass: the bound a call's result gets is its TYPE's
+// range and no tighter, so a u32 that is not divided does not fit an i32.
+extern func get() u32
+
+func main() i32 effects io, diverge, raises, alloc {
+    return get() as i32
+}

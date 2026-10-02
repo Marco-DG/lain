@@ -1,0 +1,47 @@
+// A value that enters a function satisfies its type, and the analysis now knows it wherever the
+// value enters (I.59): each u32 below, divided by 1000, provably fits an i32, but before this
+// only a parameter's and an array element's type range reached the octagon, and each of these
+// five was E086 (M5c's probe table). Run under the sanitizers and the interpreter.
+type Opt { Some { v u32 }, None }
+
+type P { x u32, y u32 }
+
+func ident(x u32) u32 {
+    return x
+}
+
+func down(n u32) u32 {
+    if n == 0 {
+        return 7000
+    }
+    return (down(n - 1) / 1000) + 7000
+}
+
+func mk(a u32) P {
+    return P(a, 1)
+}
+
+func payload(o Opt) i32 {
+    case o {
+        Some(v): return (v / 1000) as i32
+        None: return 0
+    }
+}
+
+func field(p P) i32 {
+    return (p.x / 1000) as i32
+}
+
+func main() i32 {
+    var f *func(u32) u32 = ident
+    a = (f(7000) / 1000) as i32
+    b = (down(3) / 1000) as i32
+    c = payload(Opt.Some(7000))
+    d = field(P(7000, 8))
+    q = mk(7000)
+    e = (q.x / 1000) as i32
+    if a + b + c + d + e != 35 {
+        return 1
+    }
+    return 0
+}

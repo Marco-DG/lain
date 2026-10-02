@@ -1,0 +1,8 @@
+// An extern's result satisfies its declared type (the declaration is believed, as its effect row
+// is): `get() / 1000` on a u32 fits an i32. E086 before I.59, since an extern has no return range.
+// Compiled only: nothing here is linked.
+extern func get() u32
+
+func main() i32 effects io, diverge, raises, alloc {
+    return (get() / 1000) as i32
+}

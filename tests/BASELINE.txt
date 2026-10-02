@@ -2094,6 +2094,14 @@ out=got Err
 at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_Err scalar
+### tests/trust/type_range_at_every_source_pass.ln
+rc=0
+out=
+at=const 8
+at=nonnull 2
+at=pure 2
+ty=Opt struct
+ty=P struct
 ### tests/trust/unsafe_field_invariant_kept_pass.ln
 rc=0
 out=
