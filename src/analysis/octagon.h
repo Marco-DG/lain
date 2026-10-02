@@ -371,9 +371,6 @@ static void oct_widen_thr(Octagon *dst, const Octagon *a, const Octagon *b, cons
             *oct_at(dst,i,j) = up;
         }
 }
-static void oct_widen_sel(Octagon *dst, const Octagon *a, const Octagon *b, const char *mod) {
-    oct_widen_thr(dst, a, b, mod, NULL, 0);
-}
 static bool oct_leq(const Octagon *a, const Octagon *b) {
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++)

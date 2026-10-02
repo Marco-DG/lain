@@ -30,13 +30,6 @@ static bool pt_sat(const Octagon *o, const int *x) {
 
 // iterate the box, calling f(point). Returns count of γ-members.
 typedef void (*ptfn)(const int *x, void *ctx);
-static void box_iter(ptfn f, void *ctx) {
-    int x[NV];
-    for (x[0]=-R;x[0]<=R;x[0]++)
-     for (x[1]=-R;x[1]<=R;x[1]++)
-      for (x[2]=-R;x[2]<=R;x[2]++)
-        f(x, ctx);
-}
 
 // ── property checkers over the box ───────────────────────────────────────────
 static int fails = 0;

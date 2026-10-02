@@ -283,11 +283,6 @@ static void ir_emit_cstr(const char *s, int len, FILE *o) {
 // front of it.
 static bool ir_c_slice_split(const IrType *t) { return t && t->kind == IRT_SLICE; }
 
-// Is this value a slice PARAMETER — i.e. one that arrived split? Set for the duration of one
-// function's emission, because the instruction emitter has no other way to tell a parameter
-// from an ordinary SSA value, and that is exactly what decides whether `.len` exists to read.
-static bool *ir_emit_sliceparam = NULL;
-static int   ir_emit_sliceparam_n = 0;
 // The module, so a CALL can ask whether its callee is an `extern`. See ir_c_extern_slice.
 static IrFunc *ir_emit_mod = NULL;
 static IrFunc *ir_emit_find(const IrName *n) {
@@ -310,10 +305,6 @@ static IrFunc *ir_emit_find(const IrName *n) {
 // word landed in the right register BY ACCIDENT. The convention only became visible when it
 // changed.
 static bool ir_c_extern_slice(IrFunc *callee) { return callee && callee->is_extern; }
-static bool ir_emit_is_slice_param(const IrValue *v) {
-    return v && ir_emit_sliceparam && v->id >= 0 && v->id < ir_emit_sliceparam_n
-        && ir_emit_sliceparam[v->id];
-}
 
 
 // ── EMITTING A PACKED SUM ────────────────────────────────────────────────────────────────
@@ -913,13 +904,6 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
     IrInstr **defof    = arena_push_many_aligned(a, IrInstr*, nval);
     for (int k=0;k<vt.n;k++){ vt.v[k]=NULL; alloca_ty[k]=NULL; defof[k]=NULL; }
     ir_collect_vals(f, &vt);
-    // Mark the slice PARAMETERS for this function — they arrived split as (length, pointer).
-    { bool *sp = arena_push_many_aligned(a, bool, f->next_value_id>0?f->next_value_id:1);
-      for (int q=0;q<f->next_value_id;q++) sp[q]=false;
-      for (IrParam *p=f->params; p; p=p->next)
-          if (p->value && ir_c_slice_split(p->value->type) && p->value->id>=0
-              && p->value->id < f->next_value_id) sp[p->value->id]=true;
-      ir_emit_sliceparam = sp; ir_emit_sliceparam_n = f->next_value_id; }
     ir_emit_mod = mod;                 // so a CALL can ask whether its callee is an extern
     for (IrBlock *b=f->blocks; b; b=b->next)
         for (IrInstr *i=b->instrs; i; i=i->next) {

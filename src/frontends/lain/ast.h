@@ -1015,23 +1015,6 @@ Type *type_func(Arena *arena, TypeList *params, Type *ret, EffectSet row) {
 }
 
 
-// Helper: get underlying type without ownership wrapper
-static inline Type *type_unwrap(Type *t) {
-    // With the new system, mode is a field, not a wrapper type
-    // So "unwrapping" just returns the same type pointer
-    return t;
-}
-
-// Helper: check if type has linear/owned semantics
-static inline bool type_is_linear(Type *t) {
-    return t && t->mode == MODE_OWNED;
-}
-
-// Helper: check if type is a mutable borrow
-static inline bool type_is_mutable(Type *t) {
-    return t && t->mode == MODE_MUTABLE;
-}
-
 /*──────────────────────────────────────────────────────────────────╗
 │ LISTS CONSTRUCTORS                                                │
 ╚──────────────────────────────────────────────────────────────────*/

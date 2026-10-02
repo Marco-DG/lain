@@ -53,7 +53,6 @@ static InGuardEntry *sema_in_guards = NULL;
 static bool expr_struct_equal(Expr *a, Expr *b); // defined later in sema.h
 static bool sema_is_affine_assign(Stmt *s, Id **out_var, long long *out_step); // defined below
 static void sema_push_in_guards(Expr *cond);
-static bool sema_is_in_guarded(Expr *index, Expr *container);
 
 // Nullable narrowing: `if x { … }` / `if x != nil { … }` proves x non-nil inside
 // the branch, so ?T narrows to T there (deref/pass/return-safe). Mirrors the
@@ -1751,16 +1750,6 @@ static void sema_push_in_guards(Expr *cond) {
         sema_push_in_guards(cond->as.binary_expr.left);
         sema_push_in_guards(cond->as.binary_expr.right);
     }
-}
-
-static bool sema_is_in_guarded(Expr *index, Expr *container) {
-    for (InGuardEntry *e = sema_in_guards; e; e = e->next) {
-        if (e->is_ptr_guard) continue;
-        if (expr_struct_equal(e->index, index) &&
-            expr_struct_equal(e->container, container))
-            return true;
-    }
-    return false;
 }
 
 // True iff `e` syntactically references the variable `var` anywhere within it.

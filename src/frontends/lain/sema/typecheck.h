@@ -397,48 +397,6 @@ static bool can_widen_to(Type *from, Type *to) {
 │ raw pointer (and therefore borrow tracking is relevant).          │
 ╚─────────────────────────────────────────────────────────────────*/
 
-static bool is_pointer_bearing(Type *t) {
-    if (!t) return false;
-    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
-    if (!t) return false;
-    // Direct pointer, slice (T[]), null-terminated slice (T[:0])
-    if (t->kind == TYPE_POINTER) return true;
-    if (t->kind == TYPE_SLICE)   return true;
-    if (t->kind == TYPE_ARRAY) {
-        // Dynamic-length array (slice) is pointer-bearing.
-        // Fixed-size array (length >= 0) is NOT (data is inline).
-        if (t->array_len == -1) return true;
-        return false;
-    }
-    // TYPE_SIMPLE: check the underlying decl's fields recursively.
-    if (t->kind == TYPE_SIMPLE && t->base_type) {
-        char buf[256];
-        if ((size_t)t->base_type->length >= sizeof(buf)) return false;
-        memcpy(buf, t->base_type->name, t->base_type->length);
-        buf[t->base_type->length] = '\0';
-        extern Symbol *sema_lookup(const char *name);
-        Symbol *sym = sema_lookup(buf);
-        if (!sym || !sym->decl) return false;
-        if (sym->decl->kind == DECL_STRUCT) {
-            for (DeclList *f = sym->decl->as.struct_decl.fields; f; f = f->next) {
-                if (f->decl && f->decl->kind == DECL_VARIABLE) {
-                    if (is_pointer_bearing(f->decl->as.variable_decl.type)) return true;
-                }
-            }
-        }
-        if (sym->decl->kind == DECL_ENUM) {
-            for (Variant *v = sym->decl->as.enum_decl.variants; v; v = v->next) {
-                for (DeclList *f = v->fields; f; f = f->next) {
-                    if (f->decl && f->decl->kind == DECL_VARIABLE) {
-                        if (is_pointer_bearing(f->decl->as.variable_decl.type)) return true;
-                    }
-                }
-            }
-        }
-    }
-    return false;
-}
-
 // F-022 support: structural type compatibility for argument-vs-field check.
 // Conservative: returns true for same simple type, integer widening,
 // pointer-to-same-element, or if either operand has no inferred type.
@@ -668,8 +626,7 @@ static Type *resolve_type_alias(Type *t) {
 // The best-known CONSTANT interval for a type — the {lo,hi} of {ν:τ | lo≤ν≤hi}.
 // Reads the on-type refinement / a refinement alias's constraints; failing that,
 // an integer type is bounded by its own full range. ⊤ (known=false) otherwise.
-// This is the single reader `type_subsumes` (and, later, VRA) consult in place of
-// the name-keyed range table.
+// It is read in place of the name-keyed range table.
 static Refinement type_interval(Type *t) {
     Refinement iv = type_refine_interval(t);         // refine field or alias constraints
     if (iv.known) return iv;
@@ -681,21 +638,6 @@ static Refinement type_interval(Type *t) {
         return r;
     }
     return iv;                                        // ⊤ — unknown/unbounded
-}
-
-// Subsumption `sub <: sup`: a value of `sub` is safely usable where `sup` is
-// expected. True iff they share a core (mode/refinement stripped, aliases peeled)
-// AND sub's interval ⊆ sup's. The single relation that (K3) will decide every
-// boundary — replacing the scattered fits-checks. Sound: only accepts when the
-// interval containment is proven.
-static bool type_subsumes(Type *sub, Type *sup) {
-    if (!sub || !sup) return false;
-    if (!core_identical(resolve_type_alias(sub), resolve_type_alias(sup))) return false;
-    Refinement a = type_interval(sub);
-    Refinement b = type_interval(sup);
-    if (!b.known) return true;                        // sup is ⊤ → anything of this core fits
-    if (!a.known) return false;                       // sub unbounded, sup bounded → not proven
-    return a.lo >= b.lo && a.hi <= b.hi;              // [a] ⊆ [b]
 }
 
 // The unified numeric-boundary relation: integer→integer, does the value provably
@@ -730,14 +672,6 @@ static bool value_fits(Type *from, Range r, Type *to) {
 // rather than an inline snippet re-derived per operation. A new operator's rule
 // is then a single call, not a bespoke block, and every precondition of the same
 // shape shares one proof path. Call sites keep their own diagnostics.
-
-// Is `operand`'s proven interval ⊆ [lo, hi]? `*out` returns the interval so the
-// caller can shape its diagnostic (unknown vs out-of-range).
-static bool op_proven_in_range(Expr *operand, int64_t lo, int64_t hi, Range *out) {
-    Range r = operand ? sema_eval_range(operand, sema_ranges) : range_unknown();
-    if (out) *out = r;
-    return r.known && r.min >= lo && r.max <= hi;
-}
 
 // Strict structural type equality (NO widening, NO decay). Used where variance
 // is unsound — the element types behind a pointer/slice/array must match

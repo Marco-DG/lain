@@ -295,7 +295,6 @@ static bool vra_land_range(const IrType *slot, const IrType *src, int64_t *lo, i
 }
 
 // ── small helpers ────────────────────────────────────────────────────────────
-static int vra_var(IrValue *v) { return v ? v->id : -1; }
 static bool vra_is_int(IrValue *v){ return v && v->type &&
         (v->type->kind==IRT_INT || v->type->kind==IRT_BOOL); }
 
@@ -4884,7 +4883,7 @@ static Vra *vra_analyze(IrFunc *f) {
         if (!H->is_loop_header) continue;
         char *inloop = malloc((size_t)nb);
         if (inloop) vra_natural_loop(V, H, nb, inloop);
-        // ★ Keyed by OCTAGON SLOT, not value id. oct_widen_sel reads `mod[i/2]` where i is a
+        // ★ Keyed by OCTAGON SLOT, not value id. oct_widen_thr reads `mod[i/2]` where i is a
         // DBM index, so the table must live in slot space. While the mapping was the identity
         // the two coincided; under variable packing they do not, and the mismatch made the
         // widening consult an unrelated variable — a loop counter that was never widened kept

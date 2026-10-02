@@ -478,17 +478,6 @@ static void ir_match_branch(LowerCtx *c, IrType *sumty, int k, Expr *pe, IrValue
     c->cur = keep;
 }
 
-// The enum whose variant list contains `vn` (for a bare/mangled variant reference).
-static Decl *ir_find_enum_by_variant(LowerCtx *c, Id *vn, int *idx) {
-    for (DeclList *d = c->globals; d; d = d->next) {
-        Decl *dc = d->decl;
-        if (!dc || dc->kind != DECL_ENUM) continue;
-        int k = ir_variant_index(dc, vn, true);
-        if (k >= 0) { if (idx) *idx = k; return dc; }
-    }
-    return NULL;
-}
-
 // The variant name an expression names: `Shape.Circle` (member) or a bare/mangled `NotFound`.
 static Id *ir_variant_name_of(Expr *e) {
     if (!e) return NULL;

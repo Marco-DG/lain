@@ -873,17 +873,6 @@ static void constraint_add_nonzero(RangeTable *t, Id *v1) {
     t->constraints = c;
 }
 
-// Is `v1` known nonzero via a live `!= 0` marker?
-static bool constraint_has_nonzero(RangeTable *t, Id *v1) {
-    if (!t || !v1) return false;
-    for (ConstraintEntry *c = t->constraints; c; c = c->next) {
-        if (c->nonzero && c->v1->length == v1->length &&
-            strncmp(c->v1->name, v1->name, v1->length) == 0)
-            return true;
-    }
-    return false;
-}
-
 // Get known max difference: v1 - v2 <= ?
 // Includes a one-step bridge: if v1-MID <= d1 and MID-v2 <= d2 in the table,
 // returns d1+d2 when no direct entry exists. This lets the prover derive
