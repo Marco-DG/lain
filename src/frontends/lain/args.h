@@ -20,6 +20,8 @@ typedef struct
     bool        dump_effects;       // --dump-effects: print each function's inferred effect row
     bool        dump_octagon;       // --dump-octagon: print the converged octagon state per block
     bool        dump_measures;      // --dump-measures: each loop's and recursion's termination measure
+    char*       emit_certificate;   // --emit-certificate F: each function's proof certificate (C.2)
+    char*       certificate_roundtrip; // --certificate-roundtrip F: parse a certificate, print it back
     bool        emit_llvm;          // --emit-llvm: lower to proof-carrying LLVM-IR (Phase 1 seam)
     bool        interpret;          // --interpret: run the accepted program on the IR's own semantics
                                     // (src/ir/interp.h) instead of emitting C; every discharged proof
@@ -128,6 +130,10 @@ static Args args_parse(int argc, char** argv)
             args.dump_octagon = true;
         } else if (strcmp(argv[i], "--dump-measures") == 0) {
             args.dump_measures = true;
+        } else if (strcmp(argv[i], "--emit-certificate") == 0 && i + 1 < argc) {
+            args.emit_certificate = argv[++i];
+        } else if (strcmp(argv[i], "--certificate-roundtrip") == 0 && i + 1 < argc) {
+            args.certificate_roundtrip = argv[++i];
         } else if (strcmp(argv[i], "--emit-llvm") == 0) {
             args.emit_llvm = true;
         } else if (strcmp(argv[i], "--interpret") == 0) {
@@ -159,6 +165,7 @@ static Args args_parse(int argc, char** argv)
             fprintf(stderr, "lain: unknown option '%s'.\n", argv[i]);
             fprintf(stderr, "       accepted: -o <file> --target=<triple> --dump-ast --dump-niche "
                             "--dump-effects --dump-octagon --dump-measures\n"
+                            "                 --emit-certificate <file> --certificate-roundtrip <file>\n"
                             "                 --no-w130 --no-line-directives --emit-llvm "
                             "(refuses; the C backend is the complete one)\n"
                             "       accepted and ignored (one engine, one backend): --engine=... "
@@ -169,7 +176,7 @@ static Args args_parse(int argc, char** argv)
         }
     }
     
-    if (!args.filename) {
+    if (!args.filename && !args.certificate_roundtrip) {
         printf("Error: No input file specified.\n");
         exit(1);
     }

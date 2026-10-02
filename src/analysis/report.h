@@ -46,6 +46,7 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     // what the programmer did wrong, and the first is an artefact of `mov` being lowered as a
     // use. Emission order is unchanged; only the analysis order and this suppression are new.
     // One range analysis serves the borrow pass's disjointness queries and the report below.
+    if (numeric) vra_cert_next = f;          // this is the analysis a certificate states (C.2)
     Vra *V = numeric ? vra_analyze(f) : NULL;
     vra_shared_f = V ? f : NULL; vra_shared_V = V;
     Borrow *B = borrow_analyze_mod(f, mod);

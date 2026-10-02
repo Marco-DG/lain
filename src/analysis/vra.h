@@ -19,6 +19,7 @@
 #include "analysis/footprint.h"   // the alias oracle: who a call can write / retain
 #include "ir/place.h"   // phase D: the index-disjointness seam we fill
 #include "ir/layout.h"  // the sizes Lain decides (@sizeof of an enum, a [packed] struct, a u32)
+#include "analysis/certificate.h"   // C.2: what the search found, for a checker (--emit-certificate)
 #include <stdlib.h>
 #include <string.h>
 
@@ -212,6 +213,12 @@ typedef struct {
     bool    *strict_esc;
     bool     marking_benign;   // set while marking the value of a benign reference store
     VraCheck *checks; int nchecks, cap_checks;
+    // C.2: this analysis records its certificate. The facts are written where the analysis
+    // computes them (a measure, a consulted accumulator bound, a call-site re-analysis) and the
+    // states at the end, so emitting changes nothing the analysis decides. cert_top: print it
+    // when the analysis ends; otherwise a caller takes it (a callee under constant arguments).
+    bool      certifying, cert_top;
+    CertFunc *cert;
 } Vra;
 
 // ★ DOES THIS OPERATION'S RESULT EQUAL ITS VALUE OVER ℤ? Every structural rule in this file —
@@ -1174,6 +1181,26 @@ static bool vra_modular_wraps(Vra *V, Octagon *W, IrInstr *ins, int r) {
 }
 static void vra_free(Vra *V);                                                    // fwd (phase D)
 static bool vra_dump_enabled = false;   // --dump-octagon: print the converged state
+// ── C.2: --emit-certificate ──────────────────────────────────────────────────────────────────
+// One certificate per function, from the analysis whose verdicts the user sees: report.h names
+// the function in vra_cert_next before it analyses it. Not from the first analysis of the function,
+// which is what vra_dumped_already keeps: that can be a callee re-analysed under one call's
+// constant arguments (vra_ret_range_at) or inside a mutual-recursion check, and its states are
+// not the function's. A callee re-analysed for a call site certifies itself NESTED, under the
+// call (vra_cert_nested_next), and its caller keeps the result.
+static FILE   *vra_cert_out = NULL;
+static IrFunc *vra_cert_next = NULL, *vra_cert_nested_next = NULL;
+static IrFunc *vra_cert_seen[4096]; static int vra_cert_seen_n = 0;
+static bool vra_cert_already(IrFunc *f) {
+    for (int i = 0; i < vra_cert_seen_n; i++) if (vra_cert_seen[i] == f) return true;
+    return false;
+}
+static void vra_cert_finish(Vra *V);                                             // fwd
+static void vra_cert_measure(Vra *V, CertMKind k, int block, bool ok);         // fwd
+static void vra_cert_accum(Vra *V, IrValue *acc, IrBlock *H, int64_t T, int64_t dlo, int64_t dhi,
+                           int64_t s0lo, int64_t s0hi);                          // fwd
+// the pair the mutual-recursion rule found (vra_mutual_cycle_terminates), for the certificate
+static int vra_last_mutual_kf = -1, vra_last_mutual_kg = -1; static char vra_last_mutual_strict = 0;
 // ── C.1: THE MEASURE A TERMINATION RULE FOUND ────────────────────────────────────────────
 // A rule says THAT a loop or a recursion ends; it also knows WHY, and the why is what a
 // termination certificate has to state (local/internal/design/certificates.md, C.1). The rule
@@ -2006,8 +2033,9 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (r>=0) {
                 oct_forget(W, r);
                 vra_bound_by_type(W, r, ins->result ? ins->result->type : NULL);   // whatever the callee
-                // ...but the RESULT is not unknown: the callee's body bounds it.
-                int64_t rlo, rhi;
+                // ...but the RESULT is not unknown: the callee's body bounds it. (Initialised: both
+                // are read only when a query answered, which gcc cannot see once the query inlines.)
+                int64_t rlo = 0, rhi = 0;
                 IrFunc *cal2 = vra_find_func(ins->aux.callee);
                 bool got = vra_ret_range_at(V, W, cal2, ins, &rlo, &rhi);
                 if (!got) got = vra_ret_range(cal2, &rlo, &rhi);
@@ -4172,7 +4200,9 @@ static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
     if (__builtin_add_overflow(s0lo, alo, &lo)) return false;
     if (__builtin_add_overflow(s0hi, ahi, &hi)) return false;
     if (!vra_accum_fits_step(V, val, lo, hi)) return false;
-    return lo >= tlo && hi <= thi;
+    bool fits = lo >= tlo && hi <= thi;
+    if (fits && V->certifying) vra_cert_accum(V, val, H, T, dlo, dhi, s0lo, s0hi);   // a proof consulted it
+    return fits;
 }
 
 // ★ B1'S BOUND IS NOT ONLY FOR THE OBLIGATION IT WAS INVENTED FOR.
@@ -4229,6 +4259,7 @@ static bool vra_cell_accum_range(Vra *V, Octagon *W, int cell, int64_t *lo, int6
                 !__builtin_add_overflow(s0hi, ahi, &h) && l <= h &&
                 vra_accum_fits_step(V, acc, l, h)) {
                 *lo = l; *hi = h; ok = true;
+                if (V->certifying) vra_cert_accum(V, acc, H, T, dlo, dhi, s0lo, s0hi);
             }
         }
     }
@@ -4296,6 +4327,16 @@ static Vra *vra_analyze(IrFunc *f) {
     vra_depth++;
     Vra *V = calloc(1, sizeof *V);
     V->f=f; V->nvar = f->next_value_id>0 ? f->next_value_id : 1;
+    if (vra_cert_out && vra_cert_next == f && vra_depth == 1 && vra_argbind_n == 0 &&
+        !vra_in_mutual_check && !vra_cert_already(f)) {
+        V->certifying = true; V->cert_top = true;
+    } else if (vra_cert_nested_next == f) {
+        V->certifying = true; V->cert_top = false;          // under a certified caller's call site
+    }
+    if (vra_cert_next == f) vra_cert_next = NULL;
+    if (vra_cert_nested_next == f) vra_cert_nested_next = NULL;
+    if (V->certifying)
+        V->cert = cert_new(f->name ? f->name->name : "?", f->name ? (int)f->name->length : 1);
     // ── VARIABLE PACKING (2.2). Only values that can appear in a numeric relation get an
     // octagon dimension. An element pointer, a slice, a struct, a unit never can, and giving
     // them one cost cubically: a 128-element array literal reached dim 645 and a 3.3 MB
@@ -4739,6 +4780,7 @@ static Vra *vra_analyze(IrFunc *f) {
         // the function that wants it rather than inherited from how it prints.
         if (f->may_diverge && !b->has_measure) continue;
         VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.ok=vra_loop_terminates(V,b);
+        if (V->certifying) vra_cert_measure(V, CERT_M_LOOP, b->id, c.ok);
         c.had_measure = b->has_measure;
         // The loop's POSITION: its header's condition. The check had none, so E011 printed
         // "Error:" with no line — in a file with several loops, no way to tell which.
@@ -4776,6 +4818,7 @@ static Vra *vra_analyze(IrFunc *f) {
             c.had_measure = f->has_decreasing;
             c.line = site->line; c.col = site->col;
             c.ok = vra_recursion_terminates(V, f);
+            if (V->certifying) vra_cert_measure(V, CERT_M_REC, -1, c.ok);
             if (vra_dump_measures_enabled) vra_print_measure(V, f, c.line, true, c.ok);
             vra_add_check(V, c);
         } else if (vra_mod && !vra_in_mutual_check) {
@@ -4793,6 +4836,12 @@ static Vra *vra_analyze(IrFunc *f) {
                 c.had_measure = f->has_decreasing;
                 c.line = msite->line; c.col = msite->col;
                 c.ok = (mvia && mback) && vra_mutual_cycle_terminates(f, mvia, msite, mback);
+                if (V->certifying && c.ok && mvia && mvia->name) {
+                    CertMeasure *M = CERT_PUSH(V->cert->meas, V->cert->nmeas, V->cert->cmeas);
+                    M->k = CERT_M_MUTUAL; strcpy(M->rule, "mutual");
+                    M->other = cert_strdup(mvia->name->name, (int)mvia->name->length);
+                    M->kf = vra_last_mutual_kf; M->kg = vra_last_mutual_kg; M->strict = vra_last_mutual_strict;
+                }
                 vra_add_check(V, c);
             }
         }
@@ -4837,10 +4886,22 @@ static Vra *vra_analyze(IrFunc *f) {
     free(W_m); free(T_m); free(J_m); free(D_m);
     if (vra_depth == 1 && vra_mod) {
         bool all = !f->incomplete;
-        for (IrBlock *b=f->blocks; b && all; b=b->next)
-            if (b->is_loop_header && !vra_loop_terminates(V, b)) all = false;
+        for (IrBlock *b=f->blocks; b && all; b=b->next) {
+            if (!b->is_loop_header) continue;
+            bool t = vra_loop_terminates(V, b);
+            // the effect row asks about EVERY loop, including one whose obligation `effects
+            // diverge` waived above: its measure is stated too, so a checker can answer it
+            if (V->certifying) {
+                bool have = false;
+                for (int q = 0; q < V->cert->nmeas && !have; q++)
+                    have = V->cert->meas[q].k == CERT_M_LOOP && V->cert->meas[q].block == b->id;
+                if (!have) vra_cert_measure(V, CERT_M_LOOP, b->id, t);
+            }
+            if (!t) all = false;
+        }
         f->vra_loops_summary = all ? 1 : 2;
     }
+    if (V->certifying) vra_cert_finish(V);
     oct_map = oct_map_saved;
     vra_depth--;
     return V;
@@ -4913,9 +4974,26 @@ static bool vra_ret_range_at(Vra *V, Octagon *W, IrFunc *g, IrInstr *call,
     int saved_state = g->ret_range_state;
     int64_t saved_lo = g->ret_range_lo, saved_hi = g->ret_range_hi;
     g->ret_range_state = 1;                                // guard against self-recursion
+    // C.2: the callee's certificate under these arguments, nested under this call. Only here,
+    // where the per-call cache is FILLED: a later sweep answers from V->cret_* and never reaches
+    // this line, so recording at the cache read would miss every call answered from it.
+    if (V->certifying) vra_cert_nested_next = g;
     Vra *sub = vra_analyze(g);
+    vra_cert_nested_next = NULL;
     bool ok = (g->ret_range_state == 2);
-    if (ok) { *lo = g->ret_range_lo; *hi = g->ret_range_hi; }
+    int64_t got_lo = 0, got_hi = 0;          // read once, here: *lo is the caller's, unset when !ok
+    if (ok) { got_lo = g->ret_range_lo; got_hi = g->ret_range_hi; *lo = got_lo; *hi = got_hi; }
+    if (ok && V->certifying && sub && sub->cert) {
+        CertCall *K = CERT_PUSH(V->cert->call, V->cert->ncall, V->cert->ccall);
+        K->result.id = rid;
+        if (rid >= 0 && V->val[rid] && V->val[rid]->src_name)
+            cert_set_name(&K->result, V->val[rid]->src_name->name, (int)V->val[rid]->src_name->length);
+        K->callee = g->name ? cert_strdup(g->name->name, (int)g->name->length) : cert_strdup("?", 1);
+        for (int k = 0; k < n && K->nbind < 16; k++)
+            if (bhas[k]) { K->bind_k[K->nbind] = k; K->bind_lo[K->nbind] = blo[k]; K->bind_hi[K->nbind] = bhi[k]; K->nbind++; }
+        K->lo.has = K->hi.has = true; K->lo.v = got_lo; K->hi.v = got_hi;
+        K->sub = sub->cert; sub->cert = NULL;
+    }
     vra_free(sub);
     // the memo belongs to the DECLARED-interval analysis; this one is call-site specific
     g->ret_range_state = saved_state; g->ret_range_lo = saved_lo; g->ret_range_hi = saved_hi;
@@ -4925,7 +5003,7 @@ static bool vra_ret_range_at(Vra *V, Octagon *W, IrFunc *g, IrInstr *call,
     memcpy(vra_argbind_has, shas, sizeof shas);
     if (rid >= 0) {
         V->cret_state[rid] = ok ? 2 : 1;
-        if (ok) { V->cret_lo[rid] = *lo; V->cret_hi[rid] = *hi; }
+        if (ok) { V->cret_lo[rid] = got_lo; V->cret_hi[rid] = got_hi; }
     }
     return ok;
 }
@@ -5395,6 +5473,7 @@ static bool vra_mutual_cycle_terminates(IrFunc *f, IrFunc *g, IrInstr *cfg, IrIn
     Vra *Vf = vra_analyze(f); if (!Vf) { vra_in_mutual_check = guard_saved; return false; }
     Vra *Vg = vra_analyze(g); if (!Vg) { vra_free(Vf); vra_in_mutual_check = guard_saved; return false; }
     bool ok = false;
+    vra_last_mutual_kf = vra_last_mutual_kg = -1; vra_last_mutual_strict = 0;
     for (int kf = 0; kf < nf && !ok; kf++)
         for (int kg = 0; kg < ng && !ok; kg++) {
             // Over one lap the measure must not GROW on either edge and must FALL on at least one.
@@ -5402,12 +5481,116 @@ static bool vra_mutual_cycle_terminates(IrFunc *f, IrFunc *g, IrInstr *cfg, IrIn
             // cycle cannot run forever.
             if (!vra_edge_shrinks(Vf, f, cfg, kf, kg, false)) continue;
             if (!vra_edge_shrinks(Vg, g, cgf, kg, kf, false)) continue;
-            if (vra_edge_shrinks(Vf, f, cfg, kf, kg, true) ||
-                vra_edge_shrinks(Vg, g, cgf, kg, kf, true)) ok = true;
+            // the pair is a measure the search FOUND, so a certificate states it (C.2)
+            if (vra_edge_shrinks(Vf, f, cfg, kf, kg, true)) { ok = true; vra_last_mutual_strict = 'f'; }
+            else if (vra_edge_shrinks(Vg, g, cgf, kg, kf, true)) { ok = true; vra_last_mutual_strict = 'g'; }
+            if (ok) { vra_last_mutual_kf = kf; vra_last_mutual_kg = kg; }
         }
     vra_free(Vf); vra_free(Vg);
     vra_in_mutual_check = guard_saved;
     return ok;
+}
+
+// ── C.2: BUILDING THE CERTIFICATE ───────────────────────────────────────────────────────────────
+static void vra_cert_ref(Vra *V, int id, CertRef *r) {
+    r->id = id; r->name[0] = 0;
+    IrValue *v = (id >= 0 && id < V->nvar) ? V->val[id] : NULL;
+    if (v && v->src_name) cert_set_name(r, v->src_name->name, (int)v->src_name->length);
+}
+// The measure the rule that just ran found (vra_last_measure), or `none` when it found none.
+static void vra_cert_measure(Vra *V, CertMKind k, int block, bool ok) {
+    CertMeasure *M = CERT_PUSH(V->cert->meas, V->cert->nmeas, V->cert->cmeas);
+    M->k = k; M->block = block;
+    VraMeasure m = vra_last_measure;
+    const char *rule = "none";
+    if (ok) switch (m.kind) {
+        case VRA_MEAS_RISES: rule = "rises"; break;   case VRA_MEAS_FALLS: rule = "falls"; break;
+        case VRA_MEAS_PAIR: rule = "pair"; break;     case VRA_MEAS_PARAM: rule = "param"; break;
+        case VRA_MEAS_PARAM_DIFF: rule = "param_diff"; break;
+        default: break;
+    }
+    strcpy(M->rule, rule);
+    if (strcmp(rule, "none")) {
+        if (m.a) { M->has_a = true; vra_cert_ref(V, m.a->id, &M->a); }
+        if (m.b) { M->has_b = true; vra_cert_ref(V, m.b->id, &M->b); }
+    }
+}
+// An accumulator bound a proof consulted (B1): once per accumulator and loop.
+static void vra_cert_accum(Vra *V, IrValue *acc, IrBlock *H, int64_t T, int64_t dlo, int64_t dhi,
+                           int64_t s0lo, int64_t s0hi) {
+    if (!acc || !H) return;
+    CertFunc *c = V->cert;
+    // A bound is asked at a point, and the delta and the start are read from that point's state, so
+    // one accumulator can be consulted with different answers: each distinct one is a fact.
+    for (int i = 0; i < c->nacc; i++)
+        if (c->acc[i].v.id == acc->id && c->acc[i].block == H->id && c->acc[i].trips == T &&
+            c->acc[i].dlo == dlo && c->acc[i].dhi == dhi && c->acc[i].s0lo == s0lo && c->acc[i].s0hi == s0hi) return;
+    CertAccum *A = CERT_PUSH(c->acc, c->nacc, c->cacc);
+    vra_cert_ref(V, acc->id, &A->v); A->block = H->id;
+    A->trips = T; A->dlo = dlo; A->dhi = dhi; A->s0lo = s0lo; A->s0hi = s0hi;
+}
+// The rest is read off the converged analysis when it ends: the constant table, one closed state
+// per loop header (finite entries only, each coherent pair once), the element ranges and the
+// return range. Then the certificate is printed, or kept for the caller that asked for it nested.
+static void vra_cert_finish(Vra *V) {
+    CertFunc *c = V->cert; IrFunc *f = V->f;
+    const int *saved = oct_map; oct_map = V->odim;
+    for (int id = 0; id < V->nvar; id++) if (V->cknown[id]) {
+        CertConst *k = CERT_PUSH(c->consts, c->nconst, c->cconst);
+        vra_cert_ref(V, id, &k->v); k->c = V->cval[id];
+    }
+    int dim = 2*V->noct;
+    int64_t *m = malloc((size_t)(V->dsz > 0 ? V->dsz : 1)*8);
+    for (IrBlock *b = f->blocks; b && m; b = b->next) {
+        if (!b->is_loop_header) continue;
+        CertHeader *H = CERT_PUSH(c->hdr, c->nhdr, c->chdr);
+        H->block = b->id;
+        if (!V->reached[b->id] || !V->in[b->id]) { H->bottom = true; continue; }
+        memcpy(m, V->in[b->id], (size_t)V->dsz*8);
+        Octagon W = { V->noct, dim, m };
+        oct_close(&W);
+        if (oct_is_bottom(&W)) { H->bottom = true; continue; }
+        for (int a = 0; a < V->nvar; a++) {
+            if (V->odim[a] < 0) continue;
+            int64_t up2 = oct_get(&W, oct_neg(a), oct_pos(a)), dn2 = oct_get(&W, oct_pos(a), oct_neg(a));
+            if (up2 < OCT_INF || dn2 < OCT_INF) {                   // 2a <= up2, -2a <= dn2
+                CertIv *v = CERT_PUSH(H->iv, H->niv, H->civ);
+                vra_cert_ref(V, a, &v->v);
+                if (dn2 < OCT_INF) { v->lo.has = true; v->lo.v = -oct_fdiv2(dn2); }
+                if (up2 < OCT_INF) { v->hi.has = true; v->hi.v = oct_fdiv2(up2); }
+            }
+            for (int bb = a + 1; bb < V->nvar; bb++) {
+                if (V->odim[bb] < 0) continue;
+                struct { CertBinKind k; int x, y; int64_t c; } e[4] = {
+                    { CERT_DIFF, a, bb, oct_get(&W, oct_pos(bb), oct_pos(a)) },   // a - b
+                    { CERT_DIFF, bb, a, oct_get(&W, oct_pos(a), oct_pos(bb)) },   // b - a
+                    { CERT_SUM,  a, bb, oct_get(&W, oct_neg(bb), oct_pos(a)) },   // a + b
+                    { CERT_NSUM, a, bb, oct_get(&W, oct_pos(bb), oct_neg(a)) },   // -a - b
+                };
+                for (int q = 0; q < 4; q++) {
+                    if (e[q].c >= OCT_INF) continue;
+                    CertBin *B = CERT_PUSH(H->bin, H->nbin, H->cbin);
+                    B->k = e[q].k; vra_cert_ref(V, e[q].x, &B->a); vra_cert_ref(V, e[q].y, &B->b); B->c = e[q].c;
+                }
+            }
+        }
+    }
+    free(m);
+    for (int id = 0; V->elem_known && id < V->nvar; id++) if (V->elem_known[id]) {
+        CertElem *E = CERT_PUSH(c->elem, c->nelem, c->celem);
+        vra_cert_ref(V, id, &E->v);
+        E->lo.has = E->hi.has = true; E->lo.v = V->elem_lo[id]; E->hi.v = V->elem_hi[id];
+    }
+    if (f->ret_range_state == 2) {
+        c->has_ret = true; c->ret_lo.has = c->ret_hi.has = true;
+        c->ret_lo.v = f->ret_range_lo; c->ret_hi.v = f->ret_range_hi;
+    }
+    oct_map = saved;
+    if (V->cert_top) {
+        cert_print(c, vra_cert_out);
+        if (vra_cert_seen_n < 4096) vra_cert_seen[vra_cert_seen_n++] = f;
+        cert_free(c); V->cert = NULL;
+    }
 }
 
 static void vra_dump_val(Vra *V, int id, FILE *o) {
@@ -5484,7 +5667,7 @@ static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
     free(V->in); free(V->reached); free(V->inclosed); free(V->def); free(V->defblk); free(V->cval); free(V->cknown); free(V->modwrap);
-    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->uniq_store); free(V->strict_esc); free(V->odim); free(V->checks); free(V);
+    free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->uniq_store); free(V->strict_esc); free(V->odim); free(V->checks); cert_free(V->cert); free(V);
 }
 
 #endif // LAIN_VRA_H

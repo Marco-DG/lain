@@ -82,6 +82,23 @@ int main(int argc, char **argv) {
 
     Args args = args_parse(argc, argv);
 
+    // C.2: read a certificate and print it back. The format's own test: emitting, parsing and
+    // re-emitting must give the same text (tests/codegen/certificate_roundtrip.sh), because the
+    // checker (C.3) reads what the compiler writes.
+    if (args.certificate_roundtrip) {
+        FILE *in = fopen(args.certificate_roundtrip, "r");
+        if (!in) { fprintf(stderr, "lain: cannot open '%s'\n", args.certificate_roundtrip); return 1; }
+        char err[256]; CertFunc *c = cert_parse(in, err, sizeof err); fclose(in);
+        if (!c) { fprintf(stderr, "lain: %s: %s\n", args.certificate_roundtrip, err); return 1; }
+        cert_print(c, stdout); cert_free(c);
+        return 0;
+    }
+    // Opened before anything changes directory, so a relative path is the caller's.
+    if (args.emit_certificate) {
+        vra_cert_out = fopen(args.emit_certificate, "w");
+        if (!vra_cert_out) { fprintf(stderr, "lain: cannot write '%s'\n", args.emit_certificate); return 1; }
+    }
+
     // Initialize target config (host auto-detect unless --target= specified).
     target_init_for(args.target_triple);
     sema_w130_silent = args.no_w130;
