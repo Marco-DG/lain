@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: a required precondition is not established here
+// I.77: a parameter refined `in 0..a.len` is the precondition `i >= 0 and i < a.len`, checked at
+// every call. 4 is one past the end of a four-element slice.
+func at(a u8[], i usize in 0..a.len) u8 {
+    return a[i]
+}
+func main() i32 {
+    b u8[4] = [1, 2, 3, 4]
+    return at(b[0..4], 4) as i32
+}

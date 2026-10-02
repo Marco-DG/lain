@@ -607,7 +607,6 @@ for name, lit, want in [
 #
 # The body is `s = i`, an ASSIGNMENT. An earlier version used `s = s + i` and every cell in the row
 # was refused for the running total instead, on every binary: the accumulator hid the whole axis.
-_I77 = "I.77 — `x in lo..hi` is not yet accepted, so a range-in loop guard is E100"
 for _cdir, _init, _step, _want in (("up", "0", "i = i + 1", "4 3\n"), ("down", "4", "i = i - 1", "0 1\n")):
     for _gname, _g in (("single",      "i < 4"            if _cdir == "up" else "i > 0"),
                        ("and",         "i < 4 and ok"     if _cdir == "up" else "i > 0 and ok"),
@@ -621,15 +620,12 @@ for _cdir, _init, _step, _want in (("up", "0", "i = i + 1", "4 3\n"), ("down", "
             # the counter unbounded, so neither the loop's end nor the step's arithmetic is provable
             # and the program must be REFUSED whatever the effect row says.
             _exp = "__ILLFORMED__" if _gname == "or" else _want
-            _plan = None
-            if _gname == "range-in":
-                _plan = _I77
             add("loop-guard", "%s, %s, %s" % (_gname, _cdir, _eff),
                 'func f(ok bool, extra bool) i32%s {\n    var i i32 = %s\n    var s i32 = 0 - 1\n'
                 '    while %s {\n        s = i\n        %s\n    }\n'
                 '    libc_printf("%%d %%d\\n", i, s)\n    return 0\n}\n'
                 'func main() i32%s {\n    return f(true, false)\n}\n' % (_row, _init, _g, _step, _row),
-                _exp, plan=_plan)
+                _exp)
 
 
 

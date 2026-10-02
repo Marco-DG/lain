@@ -1,0 +1,62 @@
+// I.77 (DECIDE-X): `x in lo..hi` in every position the corpus will use it, run under the sanitizers
+// and the interpreter. x, lo and hi are each evaluated ONCE, in that order (the `say` calls print
+// x, a, b exactly once each); a loop guarded by a range ends by its second test (I.85); a signed x
+// against an unsigned bound is compared mathematically (I.88), so -1 is not in 0..n; a u64 above
+// 2^63 is compared unsigned; a parameter refined `in 0..a.len` indexes with no further guard, and
+// a field refined `in 0..=100` is established by a membership test. Expected output computed by hand
+// from the program and checked against Python's range semantics.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Pct {
+    v i32 in 0..=100
+}
+
+func say(v i32, tag u8) i32 effects io {
+    libc_printf("%c", tag as i32)
+    return v
+}
+
+func at(a u8[], i usize in 0..a.len) u8 {
+    return a[i]
+}
+
+func pct(v i32) Pct {
+    if v in 0..=100 {
+        return Pct(v)
+    }
+    return Pct(0)
+}
+
+func count(lo i32, hi i32) i32 {
+    var k i32 = -3
+    var s i32 = 0
+    while k in -3..=3 {
+        if k in lo..hi {
+            s = s + 1
+        }
+        k = k + 1
+    }
+    return s
+}
+
+func main() i32 effects io {
+    hit = say(3, 120) in say(1, 97)..say(5, 98)
+    libc_printf(" %d\n", hit as i32)
+    n usize = 4
+    var neg i32 = -1
+    var big u64 = 1
+    big = big <<% 63
+    var top u64 = 0
+    top = top -% 1
+    libc_printf("%d %d %d\n", (neg in 0..n) as i32, (big in 5..top) as i32, (top in 5..top) as i32)
+    b u8[4] = [7, 8, 9, 10]
+    s = b[0..4]
+    var i usize = 0
+    var t i32 = 0
+    while i in 0..s.len {
+        t = t +% at(s, i) as i32
+        i = i + 1
+    }
+    libc_printf("%d %d %d %d\n", count(0, 2), count(-3, 4), t, pct(101).v + pct(42).v)
+    return 0
+}

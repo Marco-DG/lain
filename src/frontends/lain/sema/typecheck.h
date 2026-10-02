@@ -2816,6 +2816,34 @@ void sema_infer_expr(Expr *e) {
             if (a && (a->kind == TYPE_ARRAY || a->kind == TYPE_SLICE)) rt = a;
         }
         long ln = (long)(R && R->line ? R->line : e->line), cl = (long)(R && R->line ? R->col : e->col);
+        // `x in lo..hi`: membership in a range of integers (I.77). Its bounds are integers.
+        if (R && R->kind == EXPR_RANGE) {
+            Expr *ends[2] = { R->as.range_expr.start, R->as.range_expr.end };
+            for (int k = 0; k < 2; k++) {
+                Expr *b = ends[k];
+                if (!b) continue;
+                sema_infer_expr(b);
+                Type *bt = b->type;
+                if (bt && bt->kind == TYPE_SIMPLE) { Type *a = resolve_type_alias(bt); if (a) bt = a; }
+                if (bt && !is_integer_type(bt)) {
+                    char tb[128]; type_describe(bt, tb, sizeof tb);
+                    long bl = (long)(b->line ? b->line : ln), bc = (long)(b->line ? b->col : cl);
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: a range's bounds are integers; this "
+                            "one is '%s'.\n", bl, bc, tb);
+                    diagnostic_show_line(bl, bc);
+                    exit(1);
+                }
+            }
+            if (lt && !is_integer_type(lt)) {
+                char tb[128]; type_describe(lt, tb, sizeof tb);
+                long l2 = (long)(L->line ? L->line : e->line), c2 = (long)(L->line ? L->col : e->col);
+                fprintf(stderr, "[E012] Error Ln %li, Col %li: `x in lo..hi` tests an integer against a "
+                        "range of integers; the left side is '%s'.\n", l2, c2, tb);
+                diagnostic_show_line(l2, c2);
+                exit(1);
+            }
+            break;
+        }
         if (R && (R->kind == EXPR_ARRAY_LITERAL || R->kind == EXPR_ARRAY_COMPREHENSION)) {
             fprintf(stderr, "[E012] Error Ln %li, Col %li: `in` tests an INDEX against a container's "
                     "length, so `x in [...]` would mean `x <` the list's length, not that `x` is one "

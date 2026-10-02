@@ -203,7 +203,7 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                             "return value cannot be proven to satisfy the function's return refinement");
                 else if (c->diag == 121)
                     ir_diag(file, c->line, c->col, "E121",
-                            "a struct field invariant is not proven here — an `in` index must stay below its container's length, and a relation between fields (`pos <= src.len`, `len <= cap`) must hold; both at construction and after every write to either field. A cursor that may rest at the END of its container, or start on an empty one, is `pos usize <= src.len`, not `in`");
+                            "a struct field invariant is not proven here — an `in` index must stay below its container's length, and a relation between fields (`pos <= src.len`, `len <= cap`) must hold; both at construction and after every write to either field. A cursor that may rest at the END of its container, or start on an empty one, is `pos usize in 0..=src.len` (or `pos usize <= src.len`); `in 0..src.len` is an index, always below the length");
                 else if (c->diag == 87)
                     ir_diag(file, c->line, c->col, "E087",
                             "argument does not satisfy the parameter's sized-slice constraint");

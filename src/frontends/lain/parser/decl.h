@@ -19,6 +19,70 @@ static bool is_comparison_op(TokenKind kind) {
     }
 }
 
+// One bound of a range in a refinement (DECIDE-X, I.77): a number (negative too), a name, or a
+// name's member (`src.len`; resolve decides what is meaningful). Positioned, as every refinement
+// name is (M13).
+static Expr *parse_refine_bound(Arena *arena, Parser *parser) {
+    isize ln = parser->line, cl = parser->column;
+    bool neg = false;
+    if (parser_match(TOKEN_MINUS)) { neg = true; parser_advance(); }
+    Expr *t = NULL;
+    if (parser_match(TOKEN_NUMBER)) {
+        long long v = parse_numeric_literal(parser->token.start, parser->token.length);
+        parser_advance();
+        t = expr_literal(arena, neg ? -v : v);
+    } else if (!neg && parser_match(TOKEN_IDENTIFIER)) {
+        t = expr_identifier(arena, id(arena, parser->token.length, parser->token.start));
+        parser_advance();
+        if (parser_match(TOKEN_DOT)) {
+            parser_advance();
+            parser_expect(TOKEN_IDENTIFIER, "Expected a member name after '.' in a range bound");
+            Id *m = id(arena, parser->token.length, parser->token.start);
+            parser_advance();
+            t = expr_member(arena, t, m);
+        }
+    } else {
+        parser_error("Expected a number or a name as a range bound after 'in'");
+    }
+    t->line = ln; t->col = cl;
+    return t;
+}
+
+// `NAME TYPE in lo..hi` / `in lo..=hi` (DECIDE-X, I.77): membership in a range, stated as the two
+// clauses it means, `NAME >= lo` and `NAME < hi` (`<= hi`), appended at **tail, so a field's go to
+// the field-invariant machinery and a parameter's to the precondition, as if spelled out. Called
+// at the `in`. Without a `..` after the first bound it is the retired container form
+// (`pos usize in src`, an index test): *container gets the name and false is returned; I.78 refuses
+// that form.
+static bool parse_in_refinement(Arena *arena, Parser *parser, Expr *subject, ExprList ***tail,
+                                Id **container) {
+    parser_advance();   // 'in'
+    Expr *lo = parse_refine_bound(arena, parser);
+    if (!(parser_match(TOKEN_DOT_DOT) || parser_match(TOKEN_DOT_DOT_EQUAL))) {
+        if (lo->kind != EXPR_IDENTIFIER)
+            parser_error("Expected a range `lo..hi` or `lo..=hi` after 'in'");
+        *container = lo->as.identifier_expr.id;
+        return false;
+    }
+    bool inclusive = parser_match(TOKEN_DOT_DOT_EQUAL);
+    parser_advance();
+    Expr *hi = parse_refine_bound(arena, parser);
+    Expr *c_lo = expr_binary(arena, TOKEN_ANGLE_BRACKET_RIGHT_EQUAL, subject, lo);
+    c_lo->line = lo->line; c_lo->col = lo->col;
+    Expr *c_hi = expr_binary(arena, inclusive ? TOKEN_ANGLE_BRACKET_LEFT_EQUAL : TOKEN_ANGLE_BRACKET_LEFT,
+                             subject, hi);
+    c_hi->line = hi->line; c_hi->col = hi->col;
+    **tail = expr_list(arena, c_lo); *tail = &(**tail)->next;
+    **tail = expr_list(arena, c_hi); *tail = &(**tail)->next;
+    // More clauses may follow, joined by `and`: `x i32 in 0..100 and != 50`.
+    if (parser_match(TOKEN_KEYWORD_AND)) {
+        parser_advance();
+        if (!is_comparison_op(parser->token.kind))
+            parser_error("Expected comparison operator after 'and'");
+    }
+    return true;
+}
+
 // Q-017 attribute parsing: [name] or [name(args)]
 // Whitelist of known attribute names (lista chiusa pre-1.0):
 // ★ ONE SYNTAX FOR DECLARATION METADATA (plan 7B.3, E.3). `[cold]`, `[hot]`, `[allocator]` and
@@ -475,13 +539,14 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
             var_decl->line = name_line;
             var_decl->col = name_col;
 
-            /* --- NEW: optional `in <identifier>` annotation --- */
+            // `in lo..hi` (a range: two clauses) or the retired `in <container>` (an index test).
+            ExprList *fconstraints = NULL;
+            ExprList **fctail = &fconstraints;
+            Expr *field_expr = expr_identifier(arena, name);
             if (parser_match(TOKEN_KEYWORD_IN)) {
-                parser_advance(); // consume 'in'
-                parser_expect(TOKEN_IDENTIFIER, "Expected identifier after 'in'");
-                Id *container_name = id(arena, parser->token.length, parser->token.start);
-                parser_advance(); // consume the identifier
-                var_decl->as.variable_decl.in_field = container_name;
+                Id *container_name = NULL;
+                if (!parse_in_refinement(arena, parser, field_expr, &fctail, &container_name))
+                    var_decl->as.variable_decl.in_field = container_name;
             }
 
             // G5: optional field refinement constraints, e.g.
@@ -489,9 +554,6 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
             // and alias constraints; stored on the field's variable_decl.constraints
             // and enforced at construction (see the struct-constructor check).
             if (is_comparison_op(parser->token.kind)) {
-                ExprList *fconstraints = NULL;
-                ExprList **fctail = &fconstraints;
-                Expr *field_expr = expr_identifier(arena, name);
                 do {
                     TokenKind op = parser->token.kind;
                     parser_advance();
@@ -538,8 +600,8 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                             parser_error("Expected comparison operator after 'and'");
                     } else break;
                 } while (is_comparison_op(parser->token.kind));
-                var_decl->as.variable_decl.constraints = fconstraints;
             }
+            var_decl->as.variable_decl.constraints = fconstraints;
 
             /* Append to struct_fields list */
             *struct_tail = decl_list(arena, var_decl);
@@ -1085,22 +1147,18 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
                 pdecl->as.variable_decl.is_parameter = true;
             // ... (constraints check continues below) ...
 
-                // Check for 'in' keyword: param int in arr
+                // `i usize in lo..hi` (a range: two clauses) or the retired `i usize in arr`.
+                ExprList *constraints = NULL;
+                ExprList **ctail = &constraints;
+                Expr *param_expr = expr_identifier(arena, pname);   // the LHS of every clause
                 if (parser_match(TOKEN_KEYWORD_IN)) {
-                    parser_advance();
-                    parser_expect(TOKEN_IDENTIFIER, "Expected array name after 'in'");
-                    pdecl->as.variable_decl.in_field = id(arena, parser->token.length, parser->token.start);
-                    parser_advance();
+                    Id *container_name = NULL;
+                    if (!parse_in_refinement(arena, parser, param_expr, &ctail, &container_name))
+                        pdecl->as.variable_decl.in_field = container_name;
                 }
                 
                 // Parse equation-style constraints: param int != 0, param int >= 0 and <= 100
                 if (is_comparison_op(parser->token.kind)) {
-                    ExprList *constraints = NULL;
-                    ExprList **ctail = &constraints;
-                    
-                    // Create expression for the parameter name (LHS of constraint)
-                    Expr *param_expr = expr_identifier(arena, pname);
-                    
                     do {
                         TokenKind op = parser->token.kind;
                         long cst_line = parser->line, cst_col = parser->column;  // the clause's anchor
@@ -1203,9 +1261,8 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
                             break;
                         }
                     } while (is_comparison_op(parser->token.kind));
-                    
-                    pdecl->as.variable_decl.constraints = constraints;
                 }
+                pdecl->as.variable_decl.constraints = constraints;
 
                 *tail = decl_list(arena, pdecl);
                 tail  = &(*tail)->next;

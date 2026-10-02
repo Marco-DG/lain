@@ -1,0 +1,14 @@
+// EXPECT: accept
+// I.77 — the bounds are VARIABLES, not literals, so the octagon must hold `lo <= x < hi` as a
+// RELATION rather than an interval. MCW expects this to be the case most likely to break.
+// The membership must also be strong enough to index with: `data[x]` after `x in 0..data.len`.
+func pick(data u8[], lo usize, hi usize, x usize) u8 {
+    if hi <= data.len and x in lo..hi {
+        return data[x]
+    }
+    return 0
+}
+func main() i32 {
+    b u8[4] = [1, 2, 3, 4]
+    return pick(b[0..4], 1, 3, 2) as i32 - 3
+}

@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: a range's bounds are integers; this one is 'f64'
+// I.77: a range is a set of INTEGERS, so `x in 0..h` with an f64 bound is refused at the bound,
+// naming its type, as a `for` range's bound is (I.81).
+func f(x i32, h f64) bool {
+    return x in 0..h
+}
+func main() i32 {
+    return 0
+}

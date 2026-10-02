@@ -1858,6 +1858,34 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
+### tests/trust/range_membership_eval_pass.ln
+rc=0
+out=xab 1
+out=0 1 0
+out=2 7 34 42
+at=access 2
+at=const 4
+at=nonnull 2
+at=pure 2
+ty=Pct struct
+ty=Slice_u8 scalar
+### tests/trust/range_membership_pass.ln
+rc=0
+out=110 10 00
+at=const 6
+ty=Slice_u8 scalar
+### tests/trust/range_membership_signed_pass.ln
+rc=0
+out=1110
+at=const 2
+ty=Slice_u8 scalar
+### tests/trust/range_membership_variable_bounds_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 2
+at=pure 2
+ty=Slice_u8 scalar
 ### tests/trust/ref_binding_read_through_pass.ln
 rc=0
 out=10 5
@@ -2347,6 +2375,19 @@ ty=GpioModer scalar
 ### tests/types/paradigm_b_widening_pass.ln
 rc=0
 out=
+### tests/types/range_refinement_cursor_pass.ln
+rc=0
+out=
+at=nonnull 2
+ty=L struct
+ty=Slice_u8 scalar
+### tests/types/range_refinement_index_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
+ty=L struct
+ty=Slice_u8 scalar
 ### tests/types/refinement_alias_int_pass.ln
 rc=0
 out=

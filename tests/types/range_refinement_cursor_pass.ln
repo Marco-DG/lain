@@ -1,0 +1,13 @@
+// EXPECT: accept
+// I.77 — `pos in 0..=src.len` ADMITS pos == src.len. This is the one-past-the-end cursor the
+// handwritten lexer needs, and the case the retired `in src` spelling cannot express (E121).
+type L {
+    src u8[]
+    pos usize in 0..=src.len
+}
+func to_end(l var L) {
+    l.pos = l.src.len
+}
+func main() i32 {
+    return 0
+}

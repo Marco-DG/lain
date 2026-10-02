@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: tests an integer against a range of integers; the left side is 'bool'
+// I.77: membership in a range of integers is asked of an integer. A bool is not one, and is refused
+// at the left side rather than compared as 0 or 1.
+func f(b bool) bool {
+    return b in 0..2
+}
+func main() i32 {
+    return 0
+}

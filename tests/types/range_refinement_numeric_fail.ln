@@ -1,0 +1,14 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: this value is not provably within [0, 100], the refinement of the type it lands in
+// I.77: a field refined `in 0..=100` holds 0 to 100 inclusive, so a construction from an unbounded
+// i32 is refused; tests/trust/range_membership_eval_pass.ln constructs the same type behind
+// `if v in 0..=100`, which proves it.
+type P {
+    pct i32 in 0..=100
+}
+func mk(v i32) P {
+    return P(v)
+}
+func main() i32 {
+    return mk(101).pct
+}

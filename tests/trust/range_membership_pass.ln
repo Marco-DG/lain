@@ -1,0 +1,26 @@
+// EXPECT: accept
+// I.77 (DECIDE-X) — `x in lo..hi` is membership in a HALF-OPEN integer range: lo <= x < hi.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func half(x usize) i32 {
+    if x in 0..4 {
+        return 1
+    }
+    return 0
+}
+func incl(x usize) i32 {
+    if x in 0..=4 {
+        return 1
+    }
+    return 0
+}
+func empty(x usize) i32 {
+    if x in 0..0 {
+        return 1
+    }
+    return 0
+}
+func main() i32 effects io {
+    // half-open admits 0..3 and excludes 4; inclusive admits 4; an empty range admits nothing.
+    libc_printf("%d%d%d %d%d %d%d\n", half(0), half(3), half(4), incl(4), incl(5), empty(0), empty(1))
+    return 0
+}

@@ -1766,6 +1766,7 @@ static IrValue *ir_lower_addr(LowerCtx *c, Expr *e) {
 }
 
 static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e);
+static void ir_lower_range_member(LowerCtx *c, Expr *e, IrBlock *tb, IrBlock *fb);
 
 // D-49's seam. While a loop CONDITION is lowered, every pure subexpression's value is
 // remembered; while its MEASURE is lowered, a structurally identical one is reused rather than
@@ -2439,6 +2440,15 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             // `i in container` — a valid-index guard: 0 ≤ i < container.len. Lowered to
             // `i < len` (the ≥ 0 half comes from i's type/flow); this makes it a real
             // icmp so guard refinement and the termination check both engage.
+            if (e->as.binary_expr.op == TOKEN_KEYWORD_IN && R && R->kind == EXPR_RANGE) {
+                IrType *bt = ir_type_bool(c->a);
+                IrValue *rcell = ir_alloca(c->f, c->cur, bt);
+                IrBlock *yes = ir_new_block(c->f), *no = ir_new_block(c->f), *jn = ir_new_block(c->f);
+                ir_lower_range_member(c, e, yes, no);
+                c->cur = yes; ir_store(c->f, c->cur, rcell, ir_const_int(c->f,c->cur,1,bt)); ir_set_br(c->cur, jn);
+                c->cur = no;  ir_store(c->f, c->cur, rcell, ir_const_int(c->f,c->cur,0,bt)); ir_set_br(c->cur, jn);
+                c->cur = jn;  return ir_load(c->f, c->cur, rcell, bt);
+            }
             if (e->as.binary_expr.op == TOKEN_KEYWORD_IN) {
                 IrValue *a = ir_lower_expr(c, L);
                 IrValue *len;
@@ -3219,7 +3229,37 @@ static IrValue *ir_lower_truth(LowerCtx *c, Expr *cond) {
     return v;
 }
 
+// `x in lo..hi` / `x in lo..=hi` (DECIDE-X, I.77): x, lo and hi are each evaluated once, in that
+// order, and the test is `lo <= x` then `x < hi` (`<=` for `..=`), two comparisons on two branches,
+// so guard refinement narrows x on each exactly as it does for the `and` spelled out. Each is an
+// ordinary comparison (I.88: mathematical, whatever the operands' signedness). `0 <= x` on an
+// unsigned x always holds and is not emitted, so `i in 0..n` is exactly `i < n`.
+static void ir_lower_range_member(LowerCtx *c, Expr *e, IrBlock *tb, IrBlock *fb) {
+    Expr *X = e->as.binary_expr.left, *R = e->as.binary_expr.right;
+    Expr *lo = R->as.range_expr.start, *hi = R->as.range_expr.end;
+    IrValue *x  = ir_lower_expr(c, X);
+    bool lo_trivial = lo && lo->kind == EXPR_LITERAL && lo->as.literal_expr.value == 0 &&
+                      x->type && x->type->kind == IRT_INT && !x->type->is_signed;
+    IrValue *lv = (lo && !lo_trivial) ? ir_lower_expr(c, lo) : NULL;   // a literal: no effect to keep
+    IrValue *hv = hi ? ir_lower_expr(c, hi) : NULL;
+    // The upper test follows in the SAME block when the lower one is skipped: a loop's header must
+    // end in its test, or it has no exit test at all (I.85) and `while i in 0..n` is refused.
+    if (lv) {
+        IrBlock *hitest = ir_new_block(c->f);
+        ir_cmp_br(c, TOKEN_ANGLE_BRACKET_LEFT_EQUAL, lv, x, ir_nonneg_lit(lo), false, true, hitest, fb);
+        c->cur = hitest;
+    }
+    if (hv) ir_cmp_br(c, R->as.range_expr.inclusive ? TOKEN_ANGLE_BRACKET_LEFT_EQUAL : TOKEN_ANGLE_BRACKET_LEFT,
+                      x, hv, false, ir_nonneg_lit(hi), true, tb, fb);
+    else    ir_set_br(c->cur, tb);
+}
+
 static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) {
+    if (cond && cond->kind==EXPR_BINARY && cond->as.binary_expr.op==TOKEN_KEYWORD_IN &&
+        cond->as.binary_expr.right && cond->as.binary_expr.right->kind==EXPR_RANGE) {
+        ir_lower_range_member(c, cond, tb, fb);
+        return;
+    }
     // A comparison of a signed value with a 64-bit unsigned one branches on the sign and then on
     // the unsigned compare (I.86), so each edge keeps its fact rather than a bool's join.
     if (cond && cond->kind==EXPR_BINARY) {

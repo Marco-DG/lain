@@ -1,0 +1,13 @@
+// EXPECT: accept
+// I.77 — a signed range with a NEGATIVE lower bound. Membership is on the value, not an index.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func near(x i32) i32 {
+    if x in -5..5 {
+        return 1
+    }
+    return 0
+}
+func main() i32 effects io {
+    libc_printf("%d%d%d%d\n", near(0 - 5), near(0), near(4), near(5))
+    return 0
+}

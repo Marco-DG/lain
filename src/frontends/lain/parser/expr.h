@@ -86,6 +86,18 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
         isize op_line = parser->line, op_col = parser->column;
         parser_advance();  // consume this operator
         Expr *right = parse_binary_expr(arena, parser, prec + 1);
+        // `x in lo..hi` / `x in lo..=hi`: membership in a RANGE (DECIDE-X, I.77). The range binds
+        // tighter than the comparison, its bounds as tightly as an additive operand: `x in 0..n + 1`
+        // is `x in 0..(n + 1)`. A range is not a value, so it exists only on the right of `in`
+        // (and in `for` headers, slices and comprehensions).
+        if (op == TOKEN_KEYWORD_IN && (parser_match(TOKEN_DOT_DOT) || parser_match(TOKEN_DOT_DOT_EQUAL))) {
+            bool inclusive = parser->token.kind == TOKEN_DOT_DOT_EQUAL;
+            isize r_line = right->line, r_col = right->col;
+            parser_advance();
+            Expr *hi = parse_binary_expr(arena, parser, prec + 1);
+            right = expr_range(arena, right, hi, inclusive);
+            right->line = r_line; right->col = r_col;
+        }
         left = expr_binary(arena, op, left, right);
         left->line = op_line; left->col = op_col;
 

@@ -1,0 +1,13 @@
+// EXPECT: accept
+// I.77 — in REFINEMENT position, `pos in 0..src.len` is the index invariant and must give free
+// indexing, exactly as the retired `pos usize in src` does today.
+type L {
+    src u8[]
+    pos usize in 0..src.len
+}
+func cur(l L) u8 {
+    return l.src[l.pos]
+}
+func main() i32 {
+    return 0
+}

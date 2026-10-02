@@ -1,0 +1,15 @@
+// EXPECT: [E121]
+// EXPECT-TEXT: field invariant
+// I.77 — the REFUSING TWIN of range_refinement_cursor_pass. A field refined `in 0..src.len` is
+// HALF-OPEN, so writing exactly `src.len` violates it. If this is ever accepted, the half-open and
+// inclusive forms have collapsed into one and the cursor test above proves nothing.
+type L {
+    src u8[]
+    pos usize in 0..src.len
+}
+func to_end(l var L) {
+    l.pos = l.src.len
+}
+func main() i32 {
+    return 0
+}
