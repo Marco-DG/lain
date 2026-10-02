@@ -1,0 +1,17 @@
+// CLAIM: spec 09 constraint — overwriting a linear variable whose value has not been consumed
+// CLAIM: would leak it, and is ill-formed. The chapter cited E003 until 2026-10-02; the code is
+// CLAIM: E021, and Annex B documents E021 with exactly this meaning.
+// EXPECT: [E021]
+type H { mov raw *u8 }
+
+func close_it(mov {raw} H) {
+}
+
+func f(mov a H, mov b H) {
+    var x = mov a
+    var y = mov b
+    x = y
+    close_it(mov x)
+}
+
+func main() i32 { return 0 }

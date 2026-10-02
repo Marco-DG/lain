@@ -1,0 +1,7 @@
+// CLAIM: spec 09 constraint — a mutable declaration shall include either an explicit type
+// CLAIM: annotation or an initializer; one with neither is ill-formed.
+// EXPECT: [E100]
+func main() i32 {
+    var y
+    return 0
+}

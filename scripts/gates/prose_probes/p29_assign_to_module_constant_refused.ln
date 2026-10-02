@@ -1,0 +1,9 @@
+// CLAIM: spec 09 constraint — the left-hand side of an assignment shall be a mutable lvalue;
+// CLAIM: a module constant is not one.
+// EXPECT: [E009]
+LIMIT i32 = 10
+
+func main() i32 {
+    LIMIT = 20
+    return 0
+}

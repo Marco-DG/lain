@@ -1,0 +1,13 @@
+// CLAIM: spec 09 constraint — at a `return`, every linear variable in scope shall have been
+// CLAIM: consumed; a live one is ill-formed.
+// EXPECT: [E003]
+type H { mov raw *u8 }
+
+func close_it(mov {raw} H) {
+}
+
+func f(mov h H) i32 {
+    return 0
+}
+
+func main() i32 { return 0 }
