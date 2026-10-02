@@ -1,0 +1,12 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: '*func(i32) i32' has no member 'zz'
+// An unknown member of a function pointer crashed the compiler (SIGSEGV); with that fixed, the
+// message described the type as '?'.
+func idn(a i32) i32 {
+    return a
+}
+
+func main() i32 {
+    var g *func(i32) i32 = idn
+    return g.zz
+}

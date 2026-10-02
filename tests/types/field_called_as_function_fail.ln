@@ -1,0 +1,11 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: 'x' is a member of 'P' of type 'i32', not a function
+// A field that holds a value is not callable. `p.x()` was accepted and emitted C that gcc
+// rejects: the UFCS check ran only for a member with no type, so a typed member went on as a
+// direct call of a member (I.46, found by M13's member-to-call operator).
+type P { x i32, y i32 }
+
+func main() i32 {
+    var p = P(0, 2)
+    return p.x()
+}

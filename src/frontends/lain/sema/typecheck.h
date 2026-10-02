@@ -567,6 +567,22 @@ static void type_describe(Type *t, char *buf, size_t cap) {
             if (t->array_len >= 0) snprintf(buf, cap, "%s[%lld]", inner, (long long)t->array_len);
             else snprintf(buf, cap, "%s[]", inner);
             break;
+        case TYPE_VECTOR:   // a message about a vector said '?' (a SIMD receiver's E128)
+            type_describe(t->element_type, inner, sizeof inner);
+            snprintf(buf, cap, "Vec(%lld, %s)", (long long)t->array_len, inner);
+            break;
+        case TYPE_FUNC: {   // the parameter types, then the return type; the row is not shown
+            size_t o = (size_t)snprintf(buf, cap, "*func(");
+            for (TypeList *pt = t->func_params; pt && o < cap; pt = pt->next) {
+                type_describe(pt->type, inner, sizeof inner);
+                o += (size_t)snprintf(buf + o, cap - o, "%s%s", inner, pt->next ? ", " : "");
+            }
+            if (o < cap) {
+                if (t->element_type) type_describe(t->element_type, inner, sizeof inner);
+                snprintf(buf + o, cap - o, t->element_type ? ") %s" : ")", inner);
+            }
+            break;
+        }
         default:
             snprintf(buf, cap, "?");
     }
@@ -2335,8 +2351,12 @@ void sema_infer_expr(Expr *e) {
     
     // Check for UFCS: `a.method(b)` -> `method(a, b)`
     // If the callee is EXPR_MEMBER and it failed to find a field (type is NULL),
-    // we assume it's a UFCS call.
-    if (e->as.call_expr.callee->kind == EXPR_MEMBER && !e->as.call_expr.callee->type) {
+    // we assume it's a UFCS call. ★ So is a member that IS a field, unless the field holds a
+    // function (handled above as a call through a pointer): a value is not callable, and the
+    // check used to run only when the member had no type, so `p.x()` on an i32 field went on as
+    // a direct call of a member and emitted C gcc rejects ("expected expression before ')'").
+    if (e->as.call_expr.callee->kind == EXPR_MEMBER &&
+        (!e->as.call_expr.callee->type || e->as.call_expr.callee->type->kind != TYPE_FUNC)) {
         Expr *target = e->as.call_expr.callee->as.member_expr.target;
         Id *method_name = e->as.call_expr.callee->as.member_expr.member;
         
@@ -2393,6 +2413,17 @@ void sema_infer_expr(Expr *e) {
             
             // Now proceed with normal call logic
             sema_infer_expr(e->as.call_expr.callee);
+        } else if (e->as.call_expr.callee->type) {
+            char tb[128], fb[128];
+            type_describe(target->type, tb, sizeof tb);
+            type_describe(e->as.call_expr.callee->type, fb, sizeof fb);
+            fprintf(stderr, "[E128] Error Ln %li, Col %li: '%.*s' is a member of '%s' of type '%s', "
+                    "not a function, and no function '%.*s' is in scope to call as `%.*s(x, ...)`.\n",
+                    (long)e->line, (long)e->col, (int)method_name->length, method_name->name, tb, fb,
+                    (int)method_name->length, method_name->name,
+                    (int)method_name->length, method_name->name);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
         } else {
             char tb[128]; type_describe(target->type, tb, sizeof tb);
             fprintf(stderr, "[E128] Error Ln %li, Col %li: struct field or UFCS method '%.*s' not found on type '%s'\n",

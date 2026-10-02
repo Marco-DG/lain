@@ -1,0 +1,19 @@
+// `p.x()` is UFCS, `x(p)`, even when P also has a field named x: a call names a function. It
+// emitted C gcc rejects (the member's type made the call skip UFCS). The field still reads as a
+// field without the parentheses.
+type P { x i32, y i32 }
+
+func x(p P) i32 {
+    return p.y
+}
+
+func main() i32 {
+    var p = P(5, 2)
+    if p.x() != 2 {
+        return 1
+    }
+    if p.x != 5 {
+        return 2
+    }
+    return 0
+}

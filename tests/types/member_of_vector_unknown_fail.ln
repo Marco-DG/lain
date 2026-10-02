@@ -1,0 +1,8 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: 'Vec(4, i32)' has no member 'zz'
+// An unknown member of a SIMD vector crashed the compiler (SIGSEGV) like an array's did (M13's
+// unknown-member operator); with that fixed, the message described the type as '?'.
+func main() i32 {
+    var a Vec(4, i32) = [1, 2, 3, 4]
+    return a.zz
+}

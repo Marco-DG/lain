@@ -1,0 +1,11 @@
+// EXPECT: [E128]
+// EXPECT-TEXT: 'x' is a member of 'P' of type 'i32', not a function
+// The assignment-target twin of field_called_as_function_fail.ln: `p.x() = 5` was refused, but
+// as E100 "not supported by the code generator yet (unlowered-lvalue)", which names no reason.
+type P { x i32, y i32 }
+
+func main() i32 {
+    var p = P(0, 2)
+    p.x() = 5
+    return 0
+}

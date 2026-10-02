@@ -498,6 +498,12 @@ ty=Slice_u8 scalar
 rc=45
 out=
 at=const 2
+### tests/functions/ufcs_over_same_named_field_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
+ty=P struct
 ### tests/functions/ufcs_pass.ln
 rc=15
 out=
