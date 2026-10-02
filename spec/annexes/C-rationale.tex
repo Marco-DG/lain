@@ -43,13 +43,23 @@ and each still holds; only the spelling changed.
 \pnum
 \textbf{The original spelling, and why it was replaced.}  The decision was first
 realised as two introducers: \lain{func} for the pure and total case and
-\lain{proc} for anything else.  That form was removed on 2026-09-25.  Two
-introducers can express one bit, so the four effects had to be spelled a second
-way regardless --- by keyword, by attribute (\lain{@diverges}) and by clause at
-once --- and one concern with three spellings is what the language's own law of a
-single mechanism refuses.  A row states all four in one place, has an empty value
-that means something, and extends to a function-pointer type, where
-\lain{*func} against \lain{*proc} could carry only the same single bit.
+\lain{proc} for anything else.  That form was removed on 2026-09-25, in the
+effect-row work (plan Part~7B).  Three reasons, each about what a keyword
+\emph{cannot} say:
+\begin{itemize}
+  \item The bound had only two points, \lain{func} and \lain{proc} --- a single
+        bit.  Four effects therefore had to be spelled a second way regardless,
+        and were: by keyword, by attribute (\lain{@diverges}) and by clause, all
+        at once.  One concern with three spellings is what the language's own law
+        of a single mechanism refuses.
+  \item A row makes assignment between function-pointer types \emph{row
+        containment}, which subsumes the one relation the keywords could express
+        (a \lain{func} being usable where a \lain{proc} was expected) and gives
+        every other one for free.
+  \item A row lets an arrow say \emph{``may print, but terminates''}.  A bit
+        cannot: it must either grant divergence along with \lain{io} or deny
+        both.
+\end{itemize}
 
 \pnum
 \textbf{Alternatives considered.}
