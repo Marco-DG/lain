@@ -4891,12 +4891,10 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
             // KEYWORD and `diverge` by an ATTRIBUTE, so one family was spelled three ways —
             // which is what L3 refuses (plan Part 7B).
             //
-            // The attribute and keyword forms are still read below so the corpus can migrate in
-            // steps; both are scheduled for deletion (E.2, E.4).
+            // The keyword and the attribute forms are gone (`proc` in 7B.15, `@io` and
+            // `@diverges` in I.67): the row is the only consent.
             EffectSet consented = dl->decl->as.function_decl.effects_declared
                                 ? dl->decl->as.function_decl.effects_bound : 0;
-            consented |= (dl->decl->as.function_decl.does_io   ? EFFECT_IO      : 0)
-                      |  (dl->decl->as.function_decl.diverges  ? EFFECT_DIVERGE : 0);
             // ★ E.6 — SILENCE MEANS ∅, FOR THE WHOLE ROW. This was `ef & (EFFECT_IO |
             // EFFECT_DIVERGE)`, so `raises` and `alloc` were inferred, printed by
             // --dump-effects, and checked against a row when one was written — but never

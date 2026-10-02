@@ -9,7 +9,6 @@ type File {
 // failure so a File never holds a null handle — a defined abort instead of UB.
 // The null check reads the owned pointer, so it lives in an `unsafe` block; the
 // pointer is still consumed on the success path by File(raw).
-@io
 func open_file(path u8[:0], mode u8[:0]) mov File effects io, raises, alloc {
     var raw = fopen(path.data, mode.data)
     unsafe {
@@ -18,12 +17,10 @@ func open_file(path u8[:0], mode u8[:0]) mov File effects io, raises, alloc {
     return File(raw)
 }
 
-@io
-func close_file(mov {handle} File) {
+func close_file(mov {handle} File) effects io {
     fclose(mov handle)
 }
 
-@io
-func write_file(f File, s u8[:0]) {
+func write_file(f File, s u8[:0]) effects io {
     fputs(s.data, f.handle)
 }

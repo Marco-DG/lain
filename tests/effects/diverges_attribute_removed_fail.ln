@@ -1,0 +1,13 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 4, Col 1: `@diverges` was removed
+// `@diverges` was a second spelling of `effects diverge` (I.67): removed, with the row to write.
+@diverges
+func spin(n i32) i32 {
+    var i i32 = 0
+    while i < n { }
+    return i
+}
+
+func main() i32 {
+    return 0
+}

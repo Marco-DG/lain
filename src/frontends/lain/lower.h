@@ -4094,15 +4094,13 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     // The exception to "everything terminates", written by the function that wants it. The
     // effect row already had a `diverge` bit and a parser for it; this is the one place that
     // had to start reading it, so the opt-out needed no new syntax.
-    // E.1: the ROW grants divergence. `@diverges` is still honoured while the corpus migrates
-    // (E.2 deletes it), but `effects diverge` is the spelling the language keeps.
+    // E.1: the ROW grants divergence, and only the row (`@diverges` was removed, I.67).
     f->is_cold      = fn->as.function_decl.is_cold;
     f->is_hot       = fn->as.function_decl.is_hot;
     f->is_noreturn  = fn->as.function_decl.is_noreturn;
     f->is_allocator = fn->as.function_decl.is_allocator;
-    f->may_diverge = fn->as.function_decl.diverges
-                  || (fn->as.function_decl.effects_declared
-                      && (fn->as.function_decl.effects_bound & EFFECT_DIVERGE));
+    f->may_diverge = fn->as.function_decl.effects_declared
+                  && (fn->as.function_decl.effects_bound & EFFECT_DIVERGE);
     cc.fdecl = fn;      // for callee-side return-ensures asserts
     cc.f = f; cc.cur = f->entry;
     // ★ THE POSITION CURSOR IS GLOBAL, so it must be re-anchored per function. Instructions take

@@ -1,0 +1,10 @@
+// EXPECT: [E011]
+// A `func` with no row states no effects, so calling something that performs IO is an
+// unacknowledged effect: the default is pure, and the row (`effects io`) is the one way to say
+// otherwise. Of the corpus's functions at the time the default was chosen, 1,034 were pure and 173
+// did IO, so marking the IO set was the cheap default.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func shout(x i32) i32 {
+    return libc_printf("%d\n", x)
+}
+func main() i32 { return shout(7) }

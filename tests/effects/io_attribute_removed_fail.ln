@@ -1,0 +1,14 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 7, Col 1: `@io` was removed
+// `@io` was a second spelling of `effects io`, left by the incremental migration that removed
+// `proc` (plan 7B.15): one concern spelled two ways is what L3 refuses. Removed as `proc` was, with
+// the row to write instead (I.67).
+extern func libc_printf(fmt *u8, ...) i32 effects io
+@io
+func shout(x i32) i32 {
+    return libc_printf("%d\n", x)
+}
+
+func main() i32 effects io {
+    return shout(7)
+}

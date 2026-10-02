@@ -1,13 +1,11 @@
 import std.c.{FILE, printf, fopen, fclose, fputs, fgets, libc_printf, libc_puts}
-@io
-func print(s u8[:0]) {
+func print(s u8[:0]) effects io {
     // Use an explicit "%s" format so the caller's bytes are never interpreted
     // as printf conversion specifiers (a '%' in `s` would otherwise be a
     // format-string vulnerability / undefined behavior).
     libc_printf("%s", s.data)
 }
 
-@io
-func println(s u8[:0]) {
+func println(s u8[:0]) effects io {
     libc_puts(s.data)
 }

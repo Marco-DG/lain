@@ -289,25 +289,11 @@ Decl *parse_decl(Arena* arena, Parser* parser)
     bool decl_is_hot       = attrs_have(attrs, "hot", 3);
     bool decl_is_allocator = attrs_have(attrs, "allocator", 9);
     bool decl_is_noreturn  = attrs_have(attrs, "noreturn", 8);
-    // ★ `@diverges` — the one exception to "every loop terminates".
-    //
-    // It is an ATTRIBUTE and not an `effects diverge` clause, and the difference was measured
-    // rather than guessed. The effect row is a COMPLETE upper bound: declaring one bit obliges
-    // you to declare them all, so opting out of termination through the row meant spelling the
-    // whole row ([E130] on a `main` that also prints). Divergence is one rare property of one
-    // declaration, which is exactly what `@cold`, `@hot` and `@noreturn` already are.
-    bool decl_diverges = false;
-    // ★ `@io` — consent to perform IO, which is what `proc` says today.
-    //
-    // The endgame is ONE introducer: `func`, pure and total by default, with every deviation
-    // acknowledged by an attribute. `@io func f()` is exactly `proc f()`, so this lands first
-    // and the corpus migrates incrementally instead of in one 845-file rewrite.
-    //
-    // An annotation never tells the compiler something it could infer — effects are always
-    // inferred. Its job is CONSENT: this function deviates from a guarantee the language gives
-    // by default, and the compiler checks that the deviation was intended.
-    bool decl_is_io = false;
+    // `@io` and `@diverges` were a second spelling of `effects io` and `effects diverge`, left by
+    // the incremental migration that removed `proc` (plan 7B.15); one concern spelled two ways is
+    // what L3 refuses, and both are refused below as `proc` is (I.67).
     if (parser_match(TOKEN_AT)) {
+        isize at_line = parser->line, at_col = parser->column;
         parser_advance(); // consume '@'
         parser_expect(TOKEN_IDENTIFIER, "Expected annotation name after '@'");
         const char *aname = parser->token.start;
@@ -316,10 +302,16 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         else if (alen == 3 && strncmp(aname, "hot",       3) == 0) decl_is_hot       = true;
         else if (alen == 9 && strncmp(aname, "allocator", 9) == 0) decl_is_allocator = true;
         else if (alen == 8 && strncmp(aname, "noreturn", 8) == 0)  decl_is_noreturn  = true;
-        else if (alen == 8 && strncmp(aname, "diverges", 8) == 0)  decl_diverges     = true;
-        else if (alen == 2 && strncmp(aname, "io",       2) == 0)  decl_is_io        = true;
-        if (decl_is_cold || decl_is_hot || decl_is_allocator || decl_is_noreturn
-            || decl_diverges || decl_is_io) {
+        else if ((alen == 8 && strncmp(aname, "diverges", 8) == 0) ||
+                 (alen == 2 && strncmp(aname, "io",       2) == 0)) {
+            bool io = alen == 2;
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: `@%s` was removed: an effect is stated once, "
+                    "in the row. Write `func NAME(...) RET effects %s`, listing every effect the "
+                    "function has (silence means none).\n",
+                    (long)at_line, (long)at_col, io ? "io" : "diverges", io ? "io" : "diverge");
+            exit(1);
+        }
+        if (decl_is_cold || decl_is_hot || decl_is_allocator || decl_is_noreturn) {
             parser_advance(); // consume annotation name
             parser_skip_eol();
         }
@@ -340,8 +332,6 @@ Decl *parse_decl(Arena* arena, Parser* parser)
             exit(1);
         }
         if (d) {
-            d->as.function_decl.diverges     = decl_diverges;
-            d->as.function_decl.does_io       = decl_is_io;
             d->as.function_decl.is_cold      = decl_is_cold;
             d->as.function_decl.is_hot       = decl_is_hot;
             d->as.function_decl.is_allocator = decl_is_allocator;

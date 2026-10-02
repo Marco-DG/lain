@@ -32,19 +32,16 @@ extern func libc_realloc(ptr mov *void, new_size usize) mov *void effects io, al
 
 // Allocate `size` bytes. The returned pointer is linear — caller must
 // pass it to mem_free (flagged as leak at compile time otherwise).
-@io
 func mem_alloc(size usize) mov *u8 effects io, alloc {
     unsafe { return libc_malloc(size) as *u8 }
 }
 
 // Free an owned heap pointer. Consumes the pointer: no use after this call.
-@io
-func mem_free(ptr mov *u8) {
+func mem_free(ptr mov *u8) effects io {
     unsafe { libc_free(mov ptr as *void) }
 }
 
 // Allocate `size` zero-initialized bytes (via calloc).
-@io
 func mem_alloc_zeroed(size usize) mov *u8 effects io, alloc {
     unsafe { return libc_calloc(size, 1) as *u8 }
 }

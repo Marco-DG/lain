@@ -1,0 +1,13 @@
+// `effects diverge` lets a function loop without a bound the compiler can prove; the row is the
+// only way to say so (`@diverges`, a second spelling, was removed in I.67). The row is a complete
+// upper bound, so a function that also prints states both.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func serve(n i32) i32 effects diverge, io {
+    var i i32 = 0
+    while i < n { }
+    return libc_printf("%d\n", i)
+}
+
+func main() i32 {
+    return 0
+}

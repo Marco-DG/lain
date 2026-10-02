@@ -122,7 +122,7 @@ at=hot 2
 at=malloc 1
 at=noreturn 3
 ty=Slice_u8 scalar
-### tests/effects/diverges_attribute_pass.ln
+### tests/effects/diverge_row_pass.ln
 rc=0
 out=
 ty=Slice_u8 scalar
@@ -139,10 +139,6 @@ ty=Slice_u8 scalar
 ### tests/effects/func_diverges_via_row_pass.ln
 rc=0
 out=
-ty=Slice_u8 scalar
-### tests/effects/io_attribute_pass.ln
-rc=2
-out=7
 ty=Slice_u8 scalar
 ### tests/effects/panic_func_annotation_pass.ln
 rc=6

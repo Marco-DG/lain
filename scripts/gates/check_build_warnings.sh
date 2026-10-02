@@ -48,13 +48,16 @@ done
 # it too. A string literal that names a removed keyword must be the message saying it was
 # removed. Exempt: the lexer, which recognises the keyword in order to say so, and the IR dump,
 # where `proc` is the IR's own word for an impure function, not Lain syntax.
+# The attributes `@io` and `@diverges`, a second spelling of the row, were removed the same way
+# (I.67); `\b` cannot anchor before `@`, so they have their own alternative.
 REMOVED_KEYWORDS='proc'
-prose=$(grep -rnE '"[^"]*\b('"$REMOVED_KEYWORDS"')\b[^"]*"' src --include=*.h --include=*.c \
+REMOVED_ATTRS='io|diverges'
+prose=$(grep -rnE '"[^"]*(\b('"$REMOVED_KEYWORDS"')\b|@('"$REMOVED_ATTRS"')\b)[^"]*"' src --include=*.h --include=*.c \
         | grep -vE '^[^:]+:[0-9]+:\s*//' | grep -vE 'removed|used to' \
         | grep -vE '^src/ir/dump\.h:|^src/frontends/lain/token\.h:')
 nprose=0
 if [ -n "$prose" ]; then
-    echo "── diagnostic prose names a removed keyword ($REMOVED_KEYWORDS):"; echo "$prose" | head -8
+    echo "── diagnostic prose names a removed keyword ($REMOVED_KEYWORDS, @$REMOVED_ATTRS):"; echo "$prose" | head -8
     nprose=$(echo "$prose" | wc -l)
 fi
 # ── AN ERROR WITHOUT A CODE ──────────────────────────────────────────────────────────────
