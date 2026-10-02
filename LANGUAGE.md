@@ -670,21 +670,37 @@ x = 10           // Immutable binding
 
 ### 3.2 Mutable Bindings (`var`)
 
-The `var` keyword creates a mutable binding. All variables *must* be initialized at declaration.
+The `var` keyword creates a mutable binding. A declaration may give an initial value or omit it —
+omitting it costs nothing, which is how a large stack buffer is declared:
 
 ```lain
-var y = 10       // Mutable binding with initialization
-y = 20           // OK: y is mutable
+func main() i32 {
+    var y = 10          // mutable, initialised
+    y = 20
+
+    var buffer u8[4096] // no initialiser: the storage is not written
+    buffer[0] = 1
+
+    return y
+}
 ```
 
-To deliberately leave a variable uninitialized (e.g., for a large stack buffer), use `undefined`:
+There is no `undefined` initialiser; `undefined` is an ordinary identifier, so
+`var buffer u8[4096] = undefined` is `[E106] use of undeclared identifier`.
+
+**Definite initialisation is enforced, and it is flow-sensitive.** Reading a variable the compiler
+cannot show was written is `[E005]`, and a write on only one branch is not enough:
 
 ```lain
-var buffer u8[4096] = undefined  // Zero-cost stack allocation, data is garbage
+// ERROR: [E005] read of an uninitialised value — `n` is written on one path only
+func main() i32 {
+    var n i32
+    if 1 == 1 {
+        n = 7
+    }
+    return n
+}
 ```
-
-> [!WARNING]
-> The compiler enforces **Definite Initialization Analysis**. If a variable is declared with `= undefined`, the compiler flow-sensitively tracks whether it is assigned before it is read. Reading an uninitialized variable on any code path is a hard compile error.
 
 ### 3.3 Type Annotations
 
