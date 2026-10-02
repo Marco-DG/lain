@@ -6,6 +6,12 @@
 # A block is judged by what it claims:
 #   · contains `// ERROR` or an `[Exxx]` code  → it ILLUSTRATES a rejection and must FAIL
 #   · otherwise                                → it must COMPILE
+#   · plus `// VERIFY: exit N`                 → ...and `--interpret` must exit N
+#
+# That third marker exists because COMPILING IS NOT COMPUTING. A page may state what a program
+# produces — "both spellings give the same value", "this wraps to 54" — and no amount of
+# compiling can check that sentence. An example written as its own assertion is worse than
+# unchecked: `if a != b { return 1 }` reads like a test and is inert until something runs it.
 #
 # Blocks that are fragments (no `func main`) are wrapped: top-level declarations get a `main`
 # appended, statement fragments get wrapped in one. The wrapper's row is `io, raises, alloc` and
@@ -75,7 +81,7 @@ for path, i, line in src:
 for n, (path, ln, body) in enumerate(blocks):
     tag = path.replace("/", "%").replace("_", "~")      # `_` separates the name's fields
     open(os.path.join(tmp, "b%04d_%s_%d.txt" % (n, tag, ln)), "w").write(body)
-print(len(blocks))
+open(os.path.join(tmp, "EXTRACTED"), "w").write(str(len(blocks)))
 PY
 
 # ★ A FENCE INSIDE A BLOCKQUOTE IS INVISIBLE TO THE EXTRACTOR, which matches a line whose stripped
@@ -93,6 +99,7 @@ fi
 
 ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
 unchecked_readme=0 unchecked_lang=0 unchecked_other=0 falseclaim=0 synopsis=0
+verify_n=0 verify_bad=0 accounting_bad=0
 for f in "$TMP"/b*.txt; do
     ln=${f##*_}; ln=${ln%.txt}
     page=${f%_*}; page=${page##*_}; page=${page//%//}; page=${page//\~/_}
@@ -114,6 +121,13 @@ for f in "$TMP"/b*.txt; do
     # that should COMPILE, failed, and was filed under UNVERIFIABLE instead of being counted
     # as the error demonstration it is.
     echo "$body" | grep -m1 -vE '^[[:space:]]*$' | grep -qE '^[[:space:]]*//[[:space:]]*(ERROR|Compile error|E[0-9]{3})' && expect_fail=1
+    # `// VERIFY: exit N` — what the block says it COMPUTES. Checked below, after it compiles.
+    verify_exp=$(echo "$body" | grep -m1 -oE '//[[:space:]]*VERIFY:[[:space:]]*exit[[:space:]]+-?[0-9]+' \
+                 | grep -oE -- '-?[0-9]+$')
+    if [ -n "$verify_exp" ] && [ $expect_fail -eq 1 ]; then
+        verify_bad=$((verify_bad+1))
+        echo "  ★ $page:$ln — block claims both a rejection and an exit value"
+    fi
     # make it a program
     # ★ The program is written into the REPOSITORY ROOT, not into $TMP. Module paths resolve
     # relative to the source file's directory, so an example that says `import std.c.{…}` can
@@ -172,7 +186,28 @@ for f in "$TMP"/b*.txt; do
             [ $VERBOSE -eq 1 ] && sed 's/^/      /' "$f"
         fi
     else
-        if [ $rc -eq 0 ]; then ok=$((ok+1))
+        if [ $rc -eq 0 ]; then
+            ok=$((ok+1))
+            # ── A COMPUTED VALUE IS A CLAIM TOO ──────────────────────────────────────────
+            # Compiling proves a program is ACCEPTED. It says nothing about what the program
+            # computes, so a manual sentence like "both spellings give -9223372036854775729"
+            # was checked by nothing — and an example written as its own assertion
+            # (`if a != b { return 1 }`) is pure decoration while no gate runs it.
+            # `// VERIFY: exit N` makes the block state its result; `--interpret` exits with
+            # main's value, so the claim is then checked on the IR's own semantics.
+            if [ -n "$verify_exp" ]; then
+                verify_n=$((verify_n+1))
+                if [ $selfcontained -eq 0 ]; then
+                    verify_bad=$((verify_bad+1))
+                    echo "  ★ $page:$ln — VERIFY on a block with no \`main\`: nothing can run it"
+                else
+                    "$LAIN" "$prog" --interpret >/dev/null 2>&1; vrc=$?
+                    if [ "$vrc" != "$verify_exp" ]; then
+                        verify_bad=$((verify_bad+1))
+                        echo "  ★ $page:$ln — block claims exit $verify_exp, the program computes $vrc"
+                    fi
+                fi
+            fi
         else
             fail=$((fail+1))
             echo "  ★ $page:$ln — documented as valid, compiler REJECTS it"
@@ -234,5 +269,21 @@ echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a 
       echo "  ★ the split above sums to $split_sum but the total is $unchecked — a page is uncounted"
 echo "  FLAGS named but not accepted : $flag_bad   ← a claim about the binary, now tested"
 echo "  fragments drawing a PROOF diagnostic : $falseclaim   ← a false SAFETY claim, must stay 0"
+# A documented VALUE, run rather than compiled. The count is small on purpose: every block that
+# earns one is a sentence about what the language computes that used to rest on trust alone.
+echo "  blocks claiming an exit value : $verify_n, wrong : $verify_bad   ← run under --interpret"
+# EVERY EXTRACTED BLOCK MUST LAND IN EXACTLY ONE BUCKET. This total used to be printed as a bare
+# number above the report, by a stray `print()` in the extractor, where it looked like debug noise —
+# and it is the one line that can catch a block falling through every branch of the judgement. The
+# loop has several `continue` paths, so a block silently counted nowhere would show up as a smaller
+# "compile as documented" and nothing else: a claim that stopped being checked, reported as calm.
+extracted=$(cat "$TMP/EXTRACTED" 2>/dev/null || echo 0)
+bucket_sum=$((ok + fail + expfail_ok + expfail_bad + unchecked + synopsis))
+if [ "$bucket_sum" -ne "$extracted" ]; then
+    echo "  ★ $extracted blocks extracted but $bucket_sum judged — $((extracted - bucket_sum)) fell through"
+    accounting_bad=1
+fi
+echo "  blocks extracted, all accounted for : $extracted"
 echo "=================================================================="
-[ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] && exit 0 || exit 1
+[ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] \
+    && [ $verify_bad -eq 0 ] && [ $accounting_bad -eq 0 ] && exit 0 || exit 1

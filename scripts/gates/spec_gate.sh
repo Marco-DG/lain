@@ -137,8 +137,12 @@ PY
   nok=$(grep -o 'compile as documented *: *[0-9]*' "$ETMP/ex.out" | grep -o '[0-9]*$')
   nfail=$(grep -o 'illustrate an error, and do fail *: *[0-9]*' "$ETMP/ex.out" | grep -o '[0-9]*$')
   nun=$(grep -o 'UNVERIFIABLE fragments *: *[0-9]*' "$ETMP/ex.out" | grep -o '[0-9]*$')
+  # An example carrying `// VERIFY: exit N` is RUN, not merely compiled, so a normative sentence
+  # about what a program computes gets the same treatment as one about what it accepts. Surfaced
+  # here because a count this gate has and does not print is a check nobody knows exists.
+  nver=$(grep -o 'claiming an exit value *: *[0-9]*' "$ETMP/ex.out" | grep -o '[0-9]*$')
   if [ $exrc -eq 0 ]; then
-    ex="hold ($nok compile, $nfail illustrate an error and fail, $nun unverifiable fragments)"
+    ex="hold ($nok compile, $nfail illustrate an error and fail, ${nver:-0} run for their value, $nun unverifiable fragments)"
   else
     exfail=1; ex="FAIL — an example does not do what the spec says:"
     grep '★' "$ETMP/ex.out" | sed 's/^/  /'
