@@ -348,10 +348,11 @@ suffices when that type is owned.
 \index{defer statement}
 
 \pnum
-\lain{defer \{ body \}} schedules \textit{body} for execution immediately
+\lain{defer} \textit{statement} schedules \textit{statement} for execution immediately
 before the enclosing scope exits, on all exit paths (\lain{return},
 \lain{break}, \lain{continue}, or fall-through).  Multiple \lain{defer}
-statements execute in LIFO order.
+statements execute in LIFO order.  The deferred construct is a single statement, not a braced
+block: a block is not a statement here, so \lain{defer \{ ... \}} is \illformed{}.
 
 \pnum
 \textbf{Interaction with linear types}: if a linear variable is consumed
