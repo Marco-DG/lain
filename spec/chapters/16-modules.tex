@@ -73,8 +73,16 @@ semantics are implementation-defined in this revision}; the standard library
 uses top-level \lain{import} rather than \lain{use}.
 
 \begin{note}
-  \textbf{What this implementation does.}  It refuses the statement~(\diagcode{E100}),
-  reporting that the construct is not modelled and that there is nothing faithful to emit.
+  \textbf{What this implementation does.}  It refuses the statement, and \emph{which} refusal
+  depends on the target.  Only one of the two mentions \lain{use} at all:
+  \begin{itemize}
+    \item aliasing a \emph{local} reaches the intended path and says so~(\diagcode{E100}):
+          ``this construct is not supported by the code generator yet (a \lain{use} statement in a
+          function body)'';
+    \item aliasing a \emph{module} --- the form this section is about --- is refused earlier, while
+          the target is resolved, by \diagcode{E106} complaining that \lain{std} is not a value.
+          A reader is told the module path is wrong rather than that \lain{use} is not modelled.
+  \end{itemize}
   \lain{use} is accepted by the parser only inside a function body; at top level it is not a
   declaration form.
 
