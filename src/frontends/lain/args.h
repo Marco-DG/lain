@@ -46,21 +46,53 @@ typedef struct
     const char* target_triple;      // --target=<triple>, NULL = host
 } Args;
 
+// ★ ONE TABLE OF FLAGS (I.90). The usage screen and the unknown-option message were two lists
+// kept by hand, and they had drifted from the parser and from each other: the usage screen named
+// 6 of the 15 flags accepted, the unknown-option message 13, and `--interpret`, the flag that runs
+// a program on the IR's own semantics, was in neither (Documentation). Both now print this table.
+// A flag the parser below accepts must have a row here; readme_gate checks that every flag in this
+// file is documented, and the row is where the text it documents comes from.
+typedef struct { const char *flag, *arg, *help; } LainFlag;
+static const LainFlag lain_flags[] = {
+    { "-o",                      "<file>",   "write the C to <file> (default: out.c)" },
+    { "--target=",               "<triple>", "cross-compile target: x86_64-linux-gnu, aarch64-linux-gnu, "
+                                             "x86_64-windows-msvc, cortex-m4-bare, host (default: host)" },
+    { "--interpret",             NULL,       "run the program on the IR's own semantics instead of emitting C;"
+                                             " every discharged proof is checked as it is used" },
+    { "--check-invariants",      NULL,       "with --interpret: also check that the range analysis's state at"
+                                             " each block contains the running program's" },
+    { "--dump-ast",              NULL,       "print the AST after parsing" },
+    { "--dump-niche",            NULL,       "print the niche layout decision for every enum" },
+    { "--dump-effects",          NULL,       "print each function's inferred effect row" },
+    { "--dump-octagon",          NULL,       "print the converged octagon state per block" },
+    { "--dump-measures",         NULL,       "print each loop's and recursion's termination measure" },
+    { "--emit-certificate",      "<file>",   "write each function's proof certificate to <file>" },
+    { "--certificate-roundtrip", "<file>",   "parse a certificate and print it back" },
+    { "--no-line-directives",    NULL,       "omit #line directives from the emitted C" },
+    { "--emit-llvm",             NULL,       "refused: the C backend is the complete one" },
+    { "--help",                  NULL,       "print this text and exit" },
+    { "--no-w130",               NULL,       "accepted and ignored: the warning it suppressed was removed" },
+    { "--engine=",               "...",      "accepted and ignored: there is one engine" },
+    { "--backend=",              "...",      "accepted and ignored: there is one backend" },
+};
+
+static void _args_print_flags(FILE *o)
+{
+    for (size_t k = 0; k < sizeof lain_flags / sizeof lain_flags[0]; k++) {
+        char head[64];
+        snprintf(head, sizeof head, "%s%s%s", lain_flags[k].flag,
+                 lain_flags[k].arg && lain_flags[k].flag[strlen(lain_flags[k].flag) - 1] != '=' ? " " : "",
+                 lain_flags[k].arg ? lain_flags[k].arg : "");
+        fprintf(o, "  %-30s %s\n", head, lain_flags[k].help);
+    }
+}
+
 static void _args_help(void)
 {
-    printf("### Lain Compiler ###\n");
-    printf("Usage: <path_to_file_to_compile> [options]\n");
+    printf("Lain compiler: lain <file.ln> [options]\n");
+    printf("Writes C (out.c unless -o says otherwise), or with --interpret runs the program.\n");
     printf("Options:\n");
-    printf("  --dump-ast            Print the AST after parsing\n");
-    printf("  --no-line-directives  Suppress #line directives in emitted C\n");
-    printf("  --dump-niche          Print niche layout decision for every enum\n");
-    printf("  --dump-effects        Print each function's inferred effect row (F3.3)\n");
-    printf("  --dump-octagon        Print the converged octagon state per block\n");
-    printf("  -o <file>             Set output C file (default: out.c)\n");
-    printf("  --target=<triple>     Cross-compile target. Supported:\n");
-    printf("                          x86_64-linux-gnu, aarch64-linux-gnu,\n");
-    printf("                          x86_64-windows-msvc, cortex-m4-bare, host\n");
-    printf("                        Default: host auto-detect.\n");
+    _args_print_flags(stdout);
 }
 
 static Args args_parse(int argc, char** argv)
@@ -116,7 +148,10 @@ static Args args_parse(int argc, char** argv)
     args.output_file = "out.c";  // default
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--dump-ast") == 0) {
+        if (strcmp(argv[i], "--help") == 0) {
+            _args_help();
+            exit(EXIT_SUCCESS);
+        } else if (strcmp(argv[i], "--dump-ast") == 0) {
             args.dump_ast = true;
         } else if (strcmp(argv[i], "--no-w130") == 0) {
             args.no_w130 = true;
@@ -162,14 +197,8 @@ static Args args_parse(int argc, char** argv)
             // the filename produced "Cannot open module file '--dump-effcts.ln'", which is
             // confusing rather than wrong. readme_gate tests the opposite direction (a flag the
             // docs name that the binary rejects) and cannot see this one.
-            fprintf(stderr, "lain: unknown option '%s'.\n", argv[i]);
-            fprintf(stderr, "       accepted: -o <file> --target=<triple> --dump-ast --dump-niche "
-                            "--dump-effects --dump-octagon --dump-measures\n"
-                            "                 --emit-certificate <file> --certificate-roundtrip <file>\n"
-                            "                 --no-w130 --no-line-directives --emit-llvm "
-                            "(refuses; the C backend is the complete one)\n"
-                            "       accepted and ignored (one engine, one backend): --engine=... "
-                            "--backend=...\n");
+            fprintf(stderr, "lain: unknown option '%s'. The options are:\n", argv[i]);
+            _args_print_flags(stderr);
             exit(1);
         } else {
             args.filename = argv[i];

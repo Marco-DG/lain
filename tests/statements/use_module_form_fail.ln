@@ -1,0 +1,11 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: (a `use` statement in a function body)
+// I.91: `use` is unmodelled, and the module form must say so too. `use x as y` reached lowering and
+// was refused there with this E100; `use std.c as c` was resolved first and refused as E106
+// "'std' is neither a value nor an imported module", at Ln 0, Col 0, so the reader learned the path
+// was wrong rather than that the construct is unavailable (Documentation, spec chapter 16). Both
+// forms are now refused at the `use`, before the target is resolved.
+func main() i32 {
+    use std.c as c
+    return 0
+}

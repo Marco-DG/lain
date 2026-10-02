@@ -73,16 +73,17 @@ semantics are implementation-defined in this revision}; the standard library
 uses top-level \lain{import} rather than \lain{use}.
 
 \begin{note}
-  \textbf{What this implementation does.}  It refuses the statement, and \emph{which} refusal
-  depends on the target.  Only one of the two mentions \lain{use} at all:
-  \begin{itemize}
-    \item aliasing a \emph{local} reaches the intended path and says so~(\diagcode{E100}):
-          ``this construct is not supported by the code generator yet (a \lain{use} statement in a
-          function body)'';
-    \item aliasing a \emph{module} --- the form this section is about --- is refused earlier, while
-          the target is resolved, by \diagcode{E106} complaining that \lain{std} is not a value.
-          A reader is told the module path is wrong rather than that \lain{use} is not modelled.
-  \end{itemize}
+  \textbf{What this implementation does.}  It refuses the statement at the \lain{use} keyword,
+  before resolving the target, so the reader learns that the construct is unavailable rather than
+  that their module path is wrong~(\diagcode{E100}): ``this construct is not supported by the code
+  generator yet (a \lain{use} statement in a function body)''.  Both the local-alias and the
+  module-alias form give that same refusal.
+
+  Refusing before resolution is deliberate.  Until I.91 the module form was refused \emph{during}
+  resolution, by \diagcode{E106} complaining that \lain{std} was not a value, which told a reader to
+  fix a path that was not the problem.  An unmodelled construct should be reported as unmodelled,
+  wherever it appears.
+
   \lain{use} is accepted by the parser only inside a function body; at top level it is not a
   declaration form.
 

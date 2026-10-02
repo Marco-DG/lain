@@ -307,6 +307,24 @@ for flag in $([ $DEFAULT_PAGES -eq 1 ] && grep -ohE '"--[a-z][a-z0-9-]*' src/fro
     echo "  ★ args.h accepts $flag — no document names it, and it is not on the exempt list"
 done
 
+# ── FLAGS, THE THIRD DIRECTION ───────────────────────────────────────────────────────────
+# A flag must be in args.h, in a document, AND in the compiler's own usage text. The third is
+# the one nobody was watching: before I.90 the no-arg screen listed 6 of 15 flags and the
+# unknown-option message 13, with `--interpret` in NEITHER — so the only way a user could learn
+# about the flag that runs their program was to read args.h. Two lists that must agree and
+# nothing making them agree.
+#
+# I.90 made all three outputs come from one table, which is the real fix; this guards against the
+# next flag being added to the parser and not to that table.
+usage_bad=0
+if [ $DEFAULT_PAGES -eq 1 ] && usage_text=$("$LAIN" --help 2>&1); then
+    for flag in $(grep -ohE '"--[a-z][a-z0-9-]*' src/frontends/lain/args.h | tr -d '"' | sort -u); do
+        printf '%s' "$usage_text" | grep -qF -- "$flag" && continue
+        usage_bad=$((usage_bad+1))
+        echo "  ★ args.h accepts $flag — the compiler's own --help does not list it"
+    done
+fi
+
 # ── DIAGNOSTIC CODES ─────────────────────────────────────────────────────────────────────
 # A code named in a document is a claim about the compiler, exactly as a flag name is, and it
 # rots the same way: silently, because prose is not compiled.
@@ -404,6 +422,7 @@ echo "      USAGE.md    : $unchecked_usage   <- must stay 0"
 echo "  FLAGS named but not accepted : $flag_bad   ← a claim about the binary, now tested"
 echo "  CODES named but not emitted  : $code_bad   ← a retired or misspelt code"
 echo "  FLAGS accepted but undocumented : $undoc_bad   ← a flag landed, the manual did not"
+echo "  FLAGS absent from --help        : $usage_bad   ← the compiler's own help, now tested"
 echo "  fragments drawing a PROOF diagnostic : $falseclaim   ← a false SAFETY claim, must stay 0"
 # A documented VALUE, run rather than compiled. The count is small on purpose: every block that
 # earns one is a sentence about what the language computes that used to rest on trust alone.
@@ -423,4 +442,4 @@ echo "  blocks extracted, all accounted for : $extracted"
 echo "=================================================================="
 [ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] \
     && [ $verify_bad -eq 0 ] && [ $accounting_bad -eq 0 ] && [ $code_bad -eq 0 ] \
-    && [ $undoc_bad -eq 0 ] && exit 0 || exit 1
+    && [ $undoc_bad -eq 0 ] && [ $usage_bad -eq 0 ] && exit 0 || exit 1

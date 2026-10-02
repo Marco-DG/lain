@@ -776,28 +776,16 @@ void sema_resolve_stmt(Stmt *s) {
     return;
   switch (s->kind) {
   case STMT_USE: {
-    Expr *target = s->as.use_stmt.target;
-    sema_resolve_expr(target);
-    sema_infer_expr(target);
-
-    // alias:
-    Id *alias = s->as.use_stmt.alias_name;
-    char raw[256];
-    memcpy(raw, alias->name, alias->length);
-    raw[alias->length] = '\0';
-
-    // fully qualified C name:
-    char cname[256];
-    sema_build_path(target, cname, sizeof(cname));
-    for (char *p = cname; *p; p++) if (*p == '.') *p = '_';
-
-    if (!target->type) {
-      fprintf(stderr, "[E100] Error Ln %li, Col %li: use-target `%s` has no type\n", (long)s->line, (long)s->col, cname);
-      exit(1);
-    }
-
-    sema_insert_local(raw, cname, target->type, NULL, false);
-    break;
+    // ★ `use` IS UNMODELLED, AND SAYS SO BEFORE ITS TARGET IS RESOLVED (I.91). Lowering refuses it
+    // (E100, "not supported by the code generator yet"), but only `use x as y` got that far: the
+    // module form `use std.c as c` was resolved first and refused as E106 "'std' is neither a value
+    // nor an imported module", at Ln 0, Col 0, so the reader learned their path was wrong rather
+    // than that the construct is unavailable (Documentation, spec chapter 16). Same code and text as
+    // lowering's refusal, at the `use`, for both forms.
+    fprintf(stderr, "[E100] Error Ln %li, Col %li: this construct is not supported by the code "
+            "generator yet (a `use` statement in a function body).\n", (long)s->line, (long)s->col);
+    diagnostic_show_line(s->line, s->col);
+    exit(1);
   }
 
   case STMT_VAR: {

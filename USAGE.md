@@ -93,6 +93,7 @@ alone — check stderr, which is empty on success.
 
 | Flag | Effect |
 |:-----|:-------|
+| `--help` | Print the option table and exit 0. |
 | `-o <file>` | Write the emitted C to `<file>` (default `out.c`). A relative path resolves against the working directory. |
 | `--target=<triple>` | Set the target triple used for layout and emission. |
 | `--interpret` | Run the accepted program on the IR's own semantics (`src/ir/interp.h`) instead of emitting C. Every discharged proof is checked as it is used, and the process exits with the value `main` returns. |
@@ -119,12 +120,10 @@ because a no-op documented as a feature is worse than an absent one:
 An unrecognised flag is an error rather than a filename, so a mistyped flag fails the build instead
 of being read as a source path.
 
-> [!WARNING]
-> **The compiler's own usage summary is incomplete today.** `./lain` with no arguments lists 6 of the
-> 15 flags it accepts, and the message printed for an unrecognised flag lists 13 — `--interpret` and
-> `--check-invariants` appear in neither. There is also no `--help`: it is reported as an unknown
-> option, which then prints the flag list, so it works by accident. This table is the complete list,
-> and it is the one under test. Both are being fixed in the compiler.
+`--help` prints the same table and exits 0, and so does running `lain` with no arguments. An
+unrecognised option prints it to stderr and exits 1. All three come from one table in the compiler,
+so they cannot disagree with each other — and this page is checked against the flags the compiler
+accepts, in both directions, so it cannot disagree with them either.
 
 ## 6. Reading a diagnostic
 
