@@ -396,7 +396,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E063} & a possibly-marker union value used without testing it first \\[2pt]
 \diagcode{E064} & a \lain{|}-union cannot be niche-optimized (no spare bit pattern) \\[2pt]
 \diagcode{E084} & access to a \lain{[private]} declaration from another module \\[2pt]
-\diagcode{E101} & calling a \lain{proc} from a \lain{comptime} context (only \lain{func} is allowed) \\[2pt]
+\diagcode{E101} & a \lain{comptime} context calling a function whose \lain{effects} row is non-empty: compile-time evaluation has no machine to perform an effect on \\[2pt]
 \diagcode{E102} & expected an attribute name after the opening bracket \\[2pt]
 \diagcode{E103} & unknown attribute, or an attribute on a declaration it does not apply to (\tok{[ordered]} off a struct or a payload-carrying sum, \tok{[allocator]} on a function with a body) \\[2pt]
 \diagcode{E104} & a type contains itself by value (infinite size) \\[2pt]

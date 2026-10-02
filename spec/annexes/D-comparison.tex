@@ -30,7 +30,7 @@ Null safety         & Option type  & Option type  & None   & Optional   & Nil \\
 Exceptions          & None (Result)& None (Result)& errno  & Error union& panic/recover \\
 Generics            & Comptime     & Trait-based  & Macros & Comptime   & Type params \\
 Lifetime annots.    & None (NLL)   & Required     & N/A    & None       & N/A \\
-Purity tracking     & \lain{func}/\lain{proc} & None & None & None & None \\
+Purity tracking     & \lain{effects} row      & None & None & None & None \\
 Pattern matching    & Exhaustive   & Exhaustive   & switch & switch     & switch \\
 UFCS                & Yes          & No           & No     & No         & No \\
 Backend             & C99          & LLVM         & Native & LLVM       & Go compiler \\
@@ -70,7 +70,7 @@ Lifetime annotations  & Implicit (NLL only) & Explicit (\texttt{'a}, \texttt{'st
 Mutable borrow syntax & \lain{var x} at call site & \texttt{\&mut x} \\
 Move syntax           & Explicit \lain{mov x} & Implicit (default) \\
 Generics              & Comptime functions & Trait-based + monomorphization \\
-Purity                & \lain{func}/\lain{proc} enforced & Convention only \\
+Purity                & \lain{effects} row, enforced     & Convention only \\
 Async                 & Not supported & \texttt{async}/\texttt{await} \\
 Traits / Interfaces   & Not supported & Full trait system \\
 Macros                & Not supported & \texttt{macro\_rules!} + proc macros \\
@@ -231,7 +231,7 @@ comparison:
 \endhead
 \bottomrule
 \endlastfoot
-\lain{func}/\lain{proc} split
+The \lain{effects} row
   & Compiler-enforced purity with termination guarantees.
     No other listed language enforces purity at the declaration level.
     \\[4pt]

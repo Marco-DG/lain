@@ -10,38 +10,52 @@ interpret edge cases in the normative text and guides implementors when
 the specification is ambiguous.
 
 % =========================================================================
-\section{The \texttt{func}/\texttt{proc} distinction}
+\section{Declaring effects: the \texttt{effects} row}
 \label{sec:rationale.func-proc}
-\index{func/proc distinction!rationale}
+\index{effects row!rationale}
 % =========================================================================
 
 \pnum
-\textbf{Decision.}  Separate pure functions (\lain{func}) from
-side-effecting procedures (\lain{proc}) at the declaration level.
+\textbf{Decision.}  State what a function may do at the declaration level, in an
+\lain{effects} row on the one introducer \lain{func}, where silence means the
+empty row --- pure and total.
 
 \pnum
-\textbf{Rationale.}
+\textbf{Rationale.}  Every reason below was a reason to declare effects at all,
+and each still holds; only the spelling changed.
 \begin{itemize}
-  \item \textit{Termination guarantees}: a \lain{func} is guaranteed to
-        terminate (no unbounded \lain{while}, no unchecked recursion).
-        This enables the compiler to reason statically about function
-        completion and to use \lain{func} bodies inside \lain{comptime}
+  \item \textit{Termination guarantees}: a function whose row does not name
+        \lain{diverge} is guaranteed to terminate (no unbounded \lain{while}, no
+        unchecked recursion).  This lets the implementation reason statically
+        about completion, and lets such a body be used inside \lain{comptime}
         expressions.
-  \item \textit{Purity propagation}: the type system propagates purity
-        constraints — a \lain{func} cannot call a \lain{proc}, so pure
-        code stays pure by construction.
-  \item \textit{Optimisation}: the compiler may freely reorder, memoize,
-        or eliminate calls to \lain{func} because they have no observable
-        side effects.
-  \item \textit{Readability}: the declaration keyword tells the reader
-        whether a callable has side effects without inspecting its body.
+  \item \textit{Effect propagation}: the constraints propagate --- a function may
+        not call one whose row names an effect its own row does
+        not~(\diagcode{E011}) --- so pure code stays pure by construction.
+  \item \textit{Optimisation}: the implementation may freely reorder, memoize or
+        eliminate calls to a function with the empty row, because it has no
+        observable side effects.
+  \item \textit{Readability}: the row tells the reader what a callable may do
+        without inspecting its body, and because it is a complete upper bound
+        rather than a hint, the \emph{absence} of a row is itself a statement.
 \end{itemize}
 
 \pnum
+\textbf{The original spelling, and why it was replaced.}  The decision was first
+realised as two introducers: \lain{func} for the pure and total case and
+\lain{proc} for anything else.  That form was removed on 2026-09-25.  Two
+introducers can express one bit, so the four effects had to be spelled a second
+way regardless --- by keyword, by attribute (\lain{@diverges}) and by clause at
+once --- and one concern with three spellings is what the language's own law of a
+single mechanism refuses.  A row states all four in one place, has an empty value
+that means something, and extends to a function-pointer type, where
+\lain{*func} against \lain{*proc} could carry only the same single bit.
+
+\pnum
 \textbf{Alternatives considered.}
-Single keyword with a purity annotation (\lain{func(pure)}) was rejected
-as less visible.  A Haskell-style IO monad was rejected as too complex
-for a systems language.
+A single keyword with a purity annotation (\lain{func(pure)}) was rejected as less
+visible than a row that must name every effect.  A Haskell-style IO monad was
+rejected as too complex for a systems language.
 
 % =========================================================================
 \section{Explicit \texttt{mov} at call sites}
@@ -279,4 +293,4 @@ sufficient to verify termination without an external solver.
 
 \pnum
 This allows algorithms such as binary search and GCD computation to be
-expressed as \lain{func} without resorting to \lain{proc}.
+expressed with the empty effect row, rather than having to admit an effect they do not have.
