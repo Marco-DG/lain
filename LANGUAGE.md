@@ -2363,6 +2363,8 @@ var q = Point(10, undefined)
 integers are checked: if the compiler cannot prove the result stays in range, the program is
 rejected with `[E086]`. There is no wrapping to fall back on unless you ask for it.
 
+### 17.1 The policies, and where the obligation falls
+
 | Operator | Behaviour on overflow |
 |:---------|:----------------------|
 | `+` `-` `*` | **Rejected at compile time** unless provably in range |
@@ -2387,6 +2389,61 @@ func narrowed(a i32, b i32) i32 {
     return s
 }
 ```
+
+### 17.2 A policy operator computes in one type
+
+An operator carrying a policy cannot widen, because wrapping and saturation are only defined
+relative to a width. It computes in **one** integer type, chosen from its operands. An integer
+literal takes the other operand's type on either side, so **the order of the operands cannot
+change the answer**:
+
+```lain
+// VERIFY: exit 0
+func wadd(x i64) i64 { return 100 +% x }
+func wadd_mirror(x i64) i64 { return x +% 100 }
+
+func main() i32 {
+    x i64 = 9223372036854775787
+    if wadd(x) != wadd_mirror(x) { return 1 }
+    if wadd(x) != -9223372036854775729 { return 2 }
+    return 0
+}
+```
+
+The policy applies to the operand's **exact value**, never to a truncated copy of it. On a `u8`
+with `x` = 10, `x +| 300` saturates the exact 310 and gives **255**, where truncating the literal
+to a `u8` first would give 54. For `+%` the two readings happen to coincide — both give 54 — which
+is why the wrong one survives being tested:
+
+```lain
+// VERIFY: exit 255
+func sat(x u8) u8 { return x +| 300 }
+
+func main() i32 {
+    return sat(10) as i32
+}
+```
+
+Where both operands state a type and neither type holds every value of the other, no such type
+exists and the program has to say which one it means:
+
+```lain
+func clamp_add(a u32, b i32) u32 {
+    return a +| b          // ERROR [E012]
+}
+```
+
+```
+[E012] Error Ln 2, Col 12: `+|` takes its operands in one integer type, and of `u32` and `i32` neither holds every value of the other: convert one, e.g. `(a as i32) +| b`.
+   |
+ 2 |     return a +| b
+   |            ^
+```
+
+The full selection rule — including what happens when an operand is itself plain arithmetic the
+compiler has already widened — is stated once, in the specification's chapter 7 on types.
+
+### 17.3 What the compiler can prove without help
 
 The compiler proves what it can from guards, refinements and loop structure, so ordinary
 bounded arithmetic needs no annotation:
