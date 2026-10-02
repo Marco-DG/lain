@@ -27,11 +27,11 @@ func m() MaybeSmall { return MaybeSmall.Nothing }
 func main() i32 { return 0 }
 LN
 out=$( "$LAIN" "$D/a.ln" -o "$D/a.c" 2>&1 ) || { echo "lain refused a.ln"; echo "$out"; exit 1; }
-w=$(echo "$out" | grep -c '^\[W120\]'); tags=$(grep -c 'int32_t tag' "$D/a.c")
+w=$(echo "$out" | grep -c '^\[W120\]'); tags=$(grep -cE 'int[0-9]+_t tag;' "$D/a.c")
 [ "$w" -eq "$tags" ] || { echo "W120 x$w but $tags tagged structs"; exit 1; }
 [ "$tags" -eq 3 ] || { echo "expected R, MaybeS and Two tagged, got $tags"; exit 1; }
 for s in R MaybeS Two; do echo "$out" | grep -q "^\[W120\] Warning: enum '$s'" || { echo "no W120 for $s"; exit 1; }; done
 dump=$( "$LAIN" --dump-niche "$D/a.ln" -o "$D/a.c" 2>&1 )
-echo "$dump" | grep -q "enum 'R': .*int32_t tag" || { echo "--dump-niche: R is not reported tagged"; exit 1; }
+echo "$dump" | grep -q "enum 'R': .*uint8_t tag" || { echo "--dump-niche: R is not reported tagged"; exit 1; }
 echo "$dump" | grep -q "enum 'MaybeP': .*packed into \*i32" || { echo "--dump-niche: MaybeP is not reported packed"; exit 1; }
 exit 0

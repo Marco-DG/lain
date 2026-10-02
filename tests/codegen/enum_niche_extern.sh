@@ -28,7 +28,7 @@ func main() i32 {
 }
 LN
 "$LAIN" "$D/m.ln" -o "$D/m.c" > "$D/out" 2>&1 || { echo "lain refused the program"; cat "$D/out"; exit 1; }
-grep -q 'struct Opt { int32_t tag;' "$D/m.c" || { echo "Opt donated K's niche although C can hand back any K"; grep -n 'Opt' "$D/m.c" | head -3; exit 1; }
+grep -qE 'struct Opt \{ u?int[0-9]+_t tag;' "$D/m.c" || { echo "Opt donated K's niche although C can hand back any K"; grep -n 'Opt' "$D/m.c" | head -3; exit 1; }
 grep -q "an extern's signature reaches" "$D/out" || { echo "W120 does not say why Opt keeps its tag"; cat "$D/out"; exit 1; }
 printf '\nK getk(void) { return (K)3; }\n' >> "$D/m.c"
 gcc -w -o "$D/m" "$D/m.c" -Dlibc_printf=printf -Dlibc_puts=puts || { echo "gcc failed"; exit 1; }

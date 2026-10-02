@@ -810,7 +810,7 @@ func f() R {
 ```
 
 ```
-[W120] Warning: enum 'R' is not zero-cost: it carries an int32_t tag (4 bytes) beside its payloads.
+[W120] Warning: enum 'R' is not zero-cost: it carries a uint8_t tag (1 byte) beside its payloads.
        It does because 2 of its variants carry a payload, and only a sum with ONE payload-carrying variant can store the others in the payload's spare values.
 ```
 
@@ -862,7 +862,7 @@ func main() i32 {
 ```
 
 ```
-[W120] Warning: enum 'Opt2' is not zero-cost: it carries an int32_t tag (4 bytes) beside its payloads.
+[W120] Warning: enum 'Opt2' is not zero-cost: it carries a uint8_t tag (1 byte) beside its payloads.
        It does because the payload of 'Some' has 0 spare values, and 1 payload-less variant needs one.
        To drop the tag, declare the width of 'P' (`type P u8 { ... }`): its values above the last variant are then spare.
 ```
@@ -892,7 +892,7 @@ func main() i32 {
 ```
 
 ```
-[W120] Warning: enum 'Opt3' is not zero-cost: it carries an int32_t tag (4 bytes) beside its payloads.
+[W120] Warning: enum 'Opt3' is not zero-cost: it carries a uint8_t tag (1 byte) beside its payloads.
        It does because its payload is the enumeration 'K', which an extern's signature reaches, so C may hand it any value of its width and none is spare.
 ```
 

@@ -2034,6 +2034,21 @@ out=
 at=const 6
 ty=Count scalar
 ty=Flag scalar
+### tests/trust/sum_tag_width_pass.ln
+rc=0
+out=
+at=const 8
+ty=Big struct
+ty=FE struct
+ty=H struct
+ty=Holder struct
+ty=KE struct
+ty=Outer struct
+ty=S struct
+ty=SE struct
+ty=T struct
+ty=Two_u8 struct
+ty=W struct
 ### tests/trust/termination_call_progress_pass.ln
 rc=0
 out=

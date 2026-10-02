@@ -1166,7 +1166,8 @@ static void ir_emit_one_slice(IrType *sl, FILE *o) {
     fputs("typedef struct { ", o); ir_ctype(sl->elem, o);
     fprintf(o, "* data; size_t len; } Slice_%s;\n", tag);
 }
-// A sum's C layout: `struct S { int32_t tag; union { …per-variant payload… } data; }`.
+// A sum's C layout: `struct S { uint8_t tag; union { …per-variant payload… } data; }`, the tag
+// the smallest integer that holds the variants (an extern's sum keeps `int32_t`; layout.h).
 // This is a BACKEND decision — the IR records only which variants exist and what they
 // carry (local/internal/design/ir_sum_types.md §3) — so swapping in a niche packing later
 // touches only this file. A payload-less variant contributes nothing to the union; if no
@@ -1195,7 +1196,7 @@ static void ir_emit_one_sum_body(IrType *st, FILE *o) {
         }
         return;
     }
-    fprintf(o, "struct %.*s { int32_t tag; ", (int)nm->length, nm->name);
+    fprintf(o, "struct %.*s { %s tag; ", (int)nm->length, nm->name, ir_sum_tag_ctype(st));
     int carrying = 0;
     for (int k=0;k<st->n_fields;k++) if (st->fields[k]) carrying++;
     if (carrying) {
@@ -1531,7 +1532,7 @@ int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump, const char *file) 
                     if (L.has_sentinel[k] && t->field_names[k])
                         fprintf(stderr, "[niche]   %.*s = %lld\n", (int)t->field_names[k]->length,
                                 t->field_names[k]->name, L.sentinel[k]);
-            } else fprintf(stderr, "-> int32_t tag + payload union (%s)\n", why);
+            } else fprintf(stderr, "-> %s tag + payload union (%s)\n", ir_sum_tag_ctype(t), why);
         }
         if (!tagged) continue;
         // A plain enumeration payload has spare values once its width is DECLARED (layout.h's
@@ -1563,8 +1564,11 @@ int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump, const char *file) 
             char vt[128]; ir_lain_type(ir_layout_single_field(t, 0), vt, sizeof vt);
             snprintf(what, sizeof what, "the union `%s | ...`", vt);
         } else snprintf(what, sizeof what, "enum '%.*s'", (int)nm->length, nm->name);
-        fprintf(stderr, "[W120] Warning: %s is not zero-cost: it carries an int32_t tag (4 bytes) "
-                "beside its payloads.\n       It does because %s.\n", what, why);
+        int tb = ir_sum_tag_bits(t) / 8;
+        const char *tc = ir_sum_tag_ctype(t);
+        fprintf(stderr, "[W120] Warning: %s is not zero-cost: it carries %s %s tag (%d byte%s) "
+                "beside its payloads.\n       It does because %s.\n", what, tc[0] == 'i' ? "an" : "a",
+                tc, tb, tb == 1 ? "" : "s", why);
         if (short_pool && enum_hint[0])
             fprintf(stderr, "       To drop the tag, %s.\n", enum_hint);
         else if (short_pool)

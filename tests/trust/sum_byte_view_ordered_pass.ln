@@ -1,8 +1,9 @@
 // A sum's bytes may be viewed when no payload's order is the compiler's (sum_byte_view_fail.ln):
 // declared [ordered], reached by an extern's signature (C reads it in declaration order), or every
 // payload of at most one field. The [ordered] sum is read back through a struct spelling its C
-// layout, `int32_t tag` and the payload at offset 8 in declaration order, checked at run time:
-// reordered, `a` would be at 16 and `b` at 8.
+// layout, a `uint8_t` tag (the smallest that holds its two variants; [ordered] fixes the payload's
+// order, and the tag's width follows the declaration's variant count) and the payload at offset 8
+// in declaration order, checked at run time: reordered, `a` would be at 16 and `b` at 8.
 [ordered]
 type Wire {
     Rec { a u8, b i64, c u8 }
@@ -10,8 +11,10 @@ type Wire {
 }
 [ordered]
 type WireC {
-    tag i32
-    pad u32
+    tag  u8
+    pad1 u8
+    pad2 u16
+    pad4 u32
     a   u8
     b   i64
     c   u8

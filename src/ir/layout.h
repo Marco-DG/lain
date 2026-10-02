@@ -316,6 +316,21 @@ static int ir_plain_enum_bits(const IrType *sum) {
     return n <= 256 ? 8 : n <= 65536 ? 16 : 32;
 }
 
+// A tagged sum's tag (I.11) is the variant's number, sized as a plain enumeration is: the
+// smallest unsigned integer that holds 0..n-1. It was always an `int32_t`, so a sum of byte
+// payloads, `{ A { x u8 }, B { y u8 } }`, was 8 bytes where 2 hold it, and its 4-byte alignment
+// padded every struct and array around it. A sum an extern's signature reaches keeps the
+// `int32_t` C was written against. Every reader of the width asks here: the emitter's struct,
+// the ordering alignment below, the interpreter's size model, W120.
+static int ir_sum_tag_bits(const IrType *sum) {
+    return ir_layout_iface(sum) ? 32 : ir_plain_enum_bits(sum);
+}
+static const char *ir_sum_tag_ctype(const IrType *sum) {
+    if (ir_layout_iface(sum)) return "int32_t";
+    switch (ir_plain_enum_bits(sum)) { case 8: return "uint8_t"; case 16: return "uint16_t";
+                                       case 64: return "uint64_t"; default: return "uint32_t"; }
+}
+
 // A vector lane's bytes. ★ A float lane's width is in `float_bits`, not `bits`: the vector
 // typedef read `bits`, found 0 and fell back to 4 bytes, so `Vec(4, f64)` was emitted as
 // `vector_size(16)` — TWO doubles — and its lanes 2 and 3 read past the vector, silently.
@@ -388,7 +403,7 @@ static int ir_order_align(const IrType *t) {
             if (L.packed && L.all_empty) return ir_plain_enum_bits(t) / 8;
             if (L.packed && L.backing)
                 return L.backing->kind == IRT_BOOL ? 1 : ir_order_align(L.backing);
-            int a = 4;                                   // the int32_t tag
+            int a = ir_sum_tag_bits(t) / 8;              // the tag
             for (int k = 0; k < t->n_fields; k++) { int f = ir_order_align(t->fields[k]); if (f > a) a = f; }
             return a;
         }

@@ -566,7 +566,7 @@ static int64_t ii_c_size(IrType *t) {
         case IRT_SUM: {
             IrLayout L = ir_layout_of(t);
             if (L.packed && L.backing) return L.backing->kind == IRT_BOOL ? 1 : ii_c_size(L.backing);
-            int64_t al = 4, pay = 0;
+            int64_t tb = ir_sum_tag_bits(t) / 8, al = tb, pay = 0;
             for (int k = 0; k < t->n_fields; k++) if (t->fields[k]) {
                 // the payload in the SUM's order: its own name is its variant's
                 int ord[IR_REORDER_MAX_FIELDS + 1];
@@ -576,7 +576,7 @@ static int64_t ii_c_size(IrType *t) {
                 if (a > al) al = a;
                 if (z > pay) pay = z;
             }
-            int64_t off = (4 + al - 1) / al * al + pay;
+            int64_t off = (tb + al - 1) / al * al + pay;
             return (off + al - 1) / al * al;
         }
         default: return 0;
@@ -710,6 +710,15 @@ static void ii_exec(IrInstr *ins) {
                           (unsigned long long)r.i, rt->n_fields);
                 int32_t ord = (int32_t)r.i;
                 memset(&r, 0, sizeof r); r.k = IV_SUM; r.n = ord;
+            }
+            // A tagged sum's storage written as raw bytes, which reach its tag first: a tag that
+            // is none of the variants is undefined, as an enumeration's is (the C's `case` takes
+            // no arm). A valid one over payload bytes the model does not hold is not modelled.
+            if (rt && rt->kind == IRT_SUM && r.k == IV_INT && !ir_layout_of(rt).packed) {
+                if (r.i >= (uint64_t)rt->n_fields)
+                    II_UB(ins, "a tagged sum's tag holds %llu, which is none of its %d variants (written as raw bytes)",
+                          (unsigned long long)r.i, rt->n_fields);
+                II_UNSUP(ins, "a tagged sum written as raw bytes");
             }
             break;
         }
@@ -850,6 +859,10 @@ static void ii_exec(IrInstr *ins) {
         case IR_SUM_TAG: {
             IVal *s = ii_val(ins->operands[0], ins);
             if (s->k == IV_UNINIT) II_PROOF(ins, "the tag of an uninitialised sum");
+            IrType *st = ii_ty(ins->operands[0]);    // raw bytes, however they reached the tag (IR_LOAD)
+            if (s->k == IV_INT && st && st->kind == IRT_SUM && s->i >= (uint64_t)st->n_fields)
+                II_UB(ins, "a tagged sum's tag holds %llu, which is none of its %d variants (written as raw bytes)",
+                      (unsigned long long)s->i, st->n_fields);
             if (s->k != IV_SUM) II_UNSUP(ins, "the tag of a non-sum value");
             iv_int(&r, s->n);
             break;

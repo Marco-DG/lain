@@ -1,0 +1,128 @@
+// A tagged sum's tag is the smallest unsigned integer that holds its variants, as a plain
+// enumeration is (spec 19): one byte up to 256 variants, two up to 65,536. It was always an
+// `int32_t`, so `S` below was 8 bytes where 2 hold it, and its 4-byte alignment padded the struct
+// and the array around it. A sum an extern's signature reaches (by pointer, by value inside a
+// struct, through a function pointer) keeps the `int32_t` C was written against
+// (tests/codegen/sum_tag_extern.sh links real C against it). The sizes are checked in main, so
+// they hold in the C and under `lain --interpret` (interp_gate), whose size model is the other
+// reader of the width; every value is read back after construction, an array store, a field read
+// and a nested payload.
+type S {
+    A { x u8 }
+    B { y u8 }
+    C
+}
+type H {
+    A { x u16 }
+    B { y u8 }
+}
+type W {
+    A { x i64 }
+    B { y u8 }
+}
+type T {
+    s S
+    n u16
+    m u8
+}
+type Outer {
+    P { s S }
+    Q { h H }
+}
+type Two(V type) {
+    Pair { flag u8, v V }
+    Zero
+}
+type Big {
+    P { x u8 },
+    B000, B001, B002, B003, B004, B005, B006, B007, B008, B009, B010, B011,
+    B012, B013, B014, B015, B016, B017, B018, B019, B020, B021, B022, B023,
+    B024, B025, B026, B027, B028, B029, B030, B031, B032, B033, B034, B035,
+    B036, B037, B038, B039, B040, B041, B042, B043, B044, B045, B046, B047,
+    B048, B049, B050, B051, B052, B053, B054, B055, B056, B057, B058, B059,
+    B060, B061, B062, B063, B064, B065, B066, B067, B068, B069, B070, B071,
+    B072, B073, B074, B075, B076, B077, B078, B079, B080, B081, B082, B083,
+    B084, B085, B086, B087, B088, B089, B090, B091, B092, B093, B094, B095,
+    B096, B097, B098, B099, B100, B101, B102, B103, B104, B105, B106, B107,
+    B108, B109, B110, B111, B112, B113, B114, B115, B116, B117, B118, B119,
+    B120, B121, B122, B123, B124, B125, B126, B127, B128, B129, B130, B131,
+    B132, B133, B134, B135, B136, B137, B138, B139, B140, B141, B142, B143,
+    B144, B145, B146, B147, B148, B149, B150, B151, B152, B153, B154, B155,
+    B156, B157, B158, B159, B160, B161, B162, B163, B164, B165, B166, B167,
+    B168, B169, B170, B171, B172, B173, B174, B175, B176, B177, B178, B179,
+    B180, B181, B182, B183, B184, B185, B186, B187, B188, B189, B190, B191,
+    B192, B193, B194, B195, B196, B197, B198, B199, B200, B201, B202, B203,
+    B204, B205, B206, B207, B208, B209, B210, B211, B212, B213, B214, B215,
+    B216, B217, B218, B219, B220, B221, B222, B223, B224, B225, B226, B227,
+    B228, B229, B230, B231, B232, B233, B234, B235, B236, B237, B238, B239,
+    B240, B241, B242, B243, B244, B245, B246, B247, B248, B249, B250, B251,
+    B252, B253, B254, B255
+}
+type SE {
+    A { x u8 }
+    B { y u8 }
+}
+type KE {
+    A { x u8 }
+    B { y u8 }
+}
+type Holder {
+    k KE
+}
+type FE {
+    A { x u8 }
+    B { y u8 }
+}
+extern func takes(p *SE) i32 effects
+extern func holds(h *Holder) i32 effects
+extern func reg(cb *func(FE) i32) i32 effects
+func sv(s S) i32 {
+    case s {
+        A(x): return x as i32
+        B(y): return 100 + y as i32
+        C: return 1000
+    }
+}
+func hv(h H) i32 {
+    case h {
+        A(x): return x as i32
+        B(y): return 100 + y as i32
+    }
+}
+func ov(o Outer) i32 {
+    case o {
+        P(s): return sv(s)
+        Q(h): return hv(h)
+    }
+}
+func bv(b Big) i32 {
+    case b {
+        P(x): return x as i32
+        B255: return 255
+        else: return 0
+    }
+}
+func main() i32 {
+    if @sizeof(S) != 2 or @alignof(S) != 1 { return 1 }
+    if @sizeof(H) != 4 { return 2 }
+    if @sizeof(W) != 16 { return 3 }
+    if @sizeof(T) != 6 { return 4 }
+    if @sizeof(S[4]) != 8 { return 5 }
+    if @sizeof(Outer) != 6 { return 6 }
+    if @sizeof(Two(u8)) != 3 { return 7 }
+    if @sizeof(Big) != 4 or @alignof(Big) != 2 { return 8 }
+    if @sizeof(SE) != 8 or @sizeof(KE) != 8 or @sizeof(FE) != 8 { return 9 }
+    var arr = [S.A(1), S.B(2), S.C, S.A(4)]
+    arr[2] = S.B(7)
+    if sv(arr[0]) != 1 or sv(arr[1]) != 102 or sv(arr[2]) != 107 or sv(arr[3]) != 4 { return 10 }
+    t = T(S.B(9), 600, 3)
+    if sv(t.s) != 109 or t.n != 600 or t.m != 3 { return 11 }
+    if ov(Outer.Q(H.A(700))) != 700 or ov(Outer.P(S.C)) != 1000 { return 12 }
+    p = Two(u8).Pair(5, 6)
+    case p {
+        Pair(f, v): if f != 5 or v != 6 { return 13 }
+        Zero: return 14
+    }
+    if bv(Big.P(77)) != 77 or bv(Big.B255) != 255 or bv(Big.B000) != 0 { return 15 }
+    return 0
+}

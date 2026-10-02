@@ -114,6 +114,8 @@ incorrect}:
         variants (\lain{*(\&k as *var u8) = 3} over \lain{type K u8 \{ A, B, C \}}): a sum
         that stores its payload-less variants in the enumeration's spare values reads it as
         one of those (\S\,\ref{sec:mem.adt-layout}).
+  \item Writing into a tagged sum's tag a value that is none of its variants: no
+        \lain{case} arm matches it.
 \end{itemize}
 
 \pnum
