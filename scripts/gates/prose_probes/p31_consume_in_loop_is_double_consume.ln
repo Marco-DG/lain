@@ -1,0 +1,18 @@
+// CLAIM: spec 11 constraint — consuming a linear value declared outside a loop, from inside a body
+// CLAIM: that may run more than once, is [E002]: it IS consuming it twice. The chapter cited the
+// CLAIM: RETIRED E006 until 2026-10-02.
+// EXPECT: [E002]
+type H { mov raw *u8 }
+
+func close_it(mov {raw} H) {
+}
+
+func inloop(mov h H, n i32) {
+    var i = 0
+    while i < n {
+        close_it(mov h)
+        i = i + 1
+    }
+}
+
+func main() i32 { return 0 }

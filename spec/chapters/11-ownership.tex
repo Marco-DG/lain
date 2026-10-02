@@ -119,8 +119,10 @@ Uninit      & read or \lain{mov}            & \illformed{} \\
 \end{constraint}
 
 \begin{constraint}
-  Consuming a linear variable or field inside a loop body that may execute
-  more than once is \illformed{}~(\diagcode{E006}).
+  Consuming a linear variable or field declared outside a loop, from inside a body that may
+  execute more than once, is \illformed{}~(\diagcode{E002}): it \emph{is} consuming the value
+  twice, and \diagcode{E002} names the violation where the retired \texttt{E006} named only the
+  syntactic setting it occurred in.
 \end{constraint}
 
 \begin{constraint}
