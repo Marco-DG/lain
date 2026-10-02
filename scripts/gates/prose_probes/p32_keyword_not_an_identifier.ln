@@ -1,0 +1,8 @@
+// CLAIM: spec 05 constraint — an identifier identical to a keyword shall not be used where an
+// CLAIM: identifier is required. This is the enforcement side of LANGUAGE §1.1's reserved-word list:
+// CLAIM: `use` is refused, and the eight words that list calls unreserved are not.
+// EXPECT: [E100]
+func main() i32 {
+    var while = 1
+    return 0
+}

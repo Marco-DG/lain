@@ -1,0 +1,6 @@
+// CLAIM: spec 07 constraint — a variable, parameter or field of type `void` is ill-formed.
+// EXPECT: [E012]
+func main() i32 {
+    var v void
+    return 0
+}

@@ -1,0 +1,7 @@
+// CLAIM: spec 06 constraint — a module-scope name is defined once; two functions of one name are
+// CLAIM: [E013]. Note which code: E013 is redeclaration/shadowing, NOT "undeclared identifier",
+// CLAIM: which LANGUAGE §12.1 claimed until 5b69be2.
+// EXPECT: [E013]
+func dup() i32 { return 1 }
+func dup() i32 { return 2 }
+func main() i32 { return 0 }

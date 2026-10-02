@@ -78,6 +78,9 @@ rows.sort(key=lambda r: r[0])
 print("=" * 70)
 print("Codes cited inside spec constraints, weakest word-overlap with Annex B first")
 print("  A LIST TO READ, NOT A VERDICT. Low overlap is a reason to look, not a defect.")
+print("  KNOWN NOISE FLOOR: E100 (\"Miscellaneous\") and E012 (\"type or constraint violation\")")
+print("  have generic annex wording, so zero overlap for them is EXPECTED, not suspicious.")
+print("  The signal is a code with SPECIFIC wording cited by a rule that does not echo it.")
 print("=" * 70)
 shown = rows if limit <= 0 else rows[:limit]
 for score, f, line, code, shared, body in shown:
