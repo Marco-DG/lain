@@ -197,5 +197,7 @@ extern func fopen(path *u8, mode *u8) mov *FILE effects io, alloc
 
 \begin{constraint}
   An opaque type shall not be used as a value type (only as a pointer
-  target).  \lain{var f FILE} is \illformed{}.
+  target): a variable, a parameter, a field, a module constant or a return
+  value of an opaque type is \illformed{}~(\diagcode{E012}), as is
+  \lain{var f FILE}.
 \end{constraint}

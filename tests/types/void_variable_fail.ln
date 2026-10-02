@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: cannot have type `void`
+// spec: §7 — a variable of type `void` is ill-formed: `void` has no values. It was accepted.
+func f() i32 {
+    var x void
+    return 0
+}
+
+func main() i32 { return f() }

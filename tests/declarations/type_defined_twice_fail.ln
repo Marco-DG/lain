@@ -1,0 +1,8 @@
+// EXPECT: [E013]
+// EXPECT-TEXT: 'P' is defined twice
+// spec: §6 — a module-scope name is defined once. Two `type P` were accepted and the C compiled ONE
+// of them, so which `P` a constructor meant was decided by the order of a list.
+type P { x i32 }
+type P { y i32, z i32 }
+
+func main() i32 { return 0 }

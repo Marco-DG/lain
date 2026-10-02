@@ -1,0 +1,8 @@
+// EXPECT: [E013]
+// EXPECT-TEXT: 'f' is defined twice
+// spec: §6 — a module-scope name is defined once. This was accepted, and the C it emitted had two
+// definitions of the function, which gcc rejects ("redefinition of ...").
+func f() i32 { return 1 }
+func f() i32 { return 2 }
+
+func main() i32 { return f() }

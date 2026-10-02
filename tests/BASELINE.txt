@@ -76,6 +76,10 @@ out=
 rc=0
 out=MASK=3 FLAGS[2]=3
 ty=Slice_u8 scalar
+### tests/declarations/extern_declared_twice_pass.ln
+rc=0
+out=ok
+ty=Slice_u8 scalar
 ### tests/declarations/immutable_decl_pass.ln
 rc=0
 out=a=42 b=10 c=100 d=1 px=1 py=2

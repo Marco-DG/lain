@@ -1,0 +1,8 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: a field has the opaque type 'FILE'
+// spec: §17 — an opaque type has no size, so a struct cannot hold one by value; a pointer field
+// (`f *FILE`) is how a struct refers to one. This was accepted, declared below the struct too.
+type Handle { f FILE }
+extern type FILE
+
+func main() i32 { return 0 }

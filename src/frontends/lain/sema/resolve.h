@@ -5,6 +5,7 @@
 static bool sa_is_const(Expr *e, bool *layout);   // typecheck.h: the constant evaluator
 static bool sa_eval(Expr *e, __int128 *v);
 static Type *resolve_type_alias(Type *t);         // typecheck.h: peels a type alias
+static bool types_equal_exact(Type *a, Type *b);  // typecheck.h: structural, invariant
 static void sema_check_case_scrutinee(Expr *val, isize line, isize col);   // typecheck.h
 static void sema_check_case_pattern_kinds(Expr *val, ExprList *patterns);  // typecheck.h
 
@@ -161,10 +162,112 @@ static bool sema_field_relation_ok(Decl *sd, Decl *fdecl, Expr *con) {
     return false;
 }
 
+// The name a module-scope declaration defines, or NULL for one that defines none.
+static Id *sema_decl_defined_name(Decl *d) {
+    switch (d->kind) {
+        case DECL_VARIABLE:        return d->as.variable_decl.name;
+        case DECL_FUNCTION:
+        case DECL_EXTERN_FUNCTION: return d->as.function_decl.name;
+        case DECL_STRUCT:          return d->as.struct_decl.name;
+        case DECL_ENUM:            return d->as.enum_decl.type_name;
+        case DECL_EXTERN_TYPE:     return d->as.extern_type_decl.name;
+        case DECL_TYPE_ALIAS:      return d->as.type_alias_decl.name;
+        default:                   return NULL;
+    }
+}
+
+// Two declarations of one extern function agree when C would take them as one: the same
+// parameter types (a pointer's mutability included: `*u8` is `const uint8_t*`), return type,
+// variadicity and effect row (C cannot see the row, so only Lain can notice two that differ).
+static bool sema_sig_type_same(Type *a, Type *b) {
+    if (!types_equal_exact(a, b)) return false;
+    Type *x = resolve_type_alias(a), *y = resolve_type_alias(b);
+    if (x && y && x->kind == TYPE_POINTER && y->kind == TYPE_POINTER &&
+        x->pointee_mutable != y->pointee_mutable) return false;
+    return true;
+}
+static bool sema_extern_signatures_agree(Decl *a, Decl *b) {
+    DeclFunction *x = &a->as.function_decl, *y = &b->as.function_decl;
+    if (x->is_variadic != y->is_variadic) return false;
+    if (!sema_sig_type_same(x->return_type, y->return_type)) return false;
+    if (x->effects_declared != y->effects_declared || x->effects_bound != y->effects_bound) return false;
+    DeclList *p = x->params, *q = y->params;
+    for (; p && q; p = p->next, q = q->next) {
+        Type *pt = (p->decl && p->decl->kind == DECL_VARIABLE) ? p->decl->as.variable_decl.type : NULL;
+        Type *qt = (q->decl && q->decl->kind == DECL_VARIABLE) ? q->decl->as.variable_decl.type : NULL;
+        if (!sema_sig_type_same(pt, qt)) return false;
+    }
+    return !p && !q;
+}
+
+// ★ A NAME IS DEFINED ONCE (spec 6). Two `func f`, two `type P`, a constant and a function of
+// one name: all were accepted. Imports are one flat namespace, so the C had two `f`s and gcc
+// refused it ("redefinition of 'f'", "conflicting types"), and two `type P` compiled to ONE of
+// them, leaving which `P` a constructor meant up to the order of a list. Across two imported
+// modules it was worse: both definitions reached the C under their module names, the call bound
+// to the one imported LAST, and swapping two import lines changed the answer (Handwriting, M12),
+// with no renaming or qualification to escape it. Two EXTERN declarations of one function stay
+// legal when they agree, as in C; two that disagree were caught only by gcc, or, for an effect
+// row, by nothing.
+static void sema_check_redefinitions(DeclList *decls, const char *main_module) {
+    for (DeclList *a = decls; a; a = a->next) {
+        Id *an = a->decl ? sema_decl_defined_name(a->decl) : NULL;
+        if (!an) continue;
+        for (DeclList *b = a->next; b; b = b->next) {
+            Id *bn = b->decl ? sema_decl_defined_name(b->decl) : NULL;
+            if (!bn || bn->length != an->length || memcmp(bn->name, an->name, (size_t)an->length) != 0)
+                continue;
+            bool both_extern = a->decl->kind == DECL_EXTERN_FUNCTION && b->decl->kind == DECL_EXTERN_FUNCTION;
+            if (both_extern && sema_extern_signatures_agree(a->decl, b->decl)) continue;
+            const char *am = a->decl->defining_module, *bm = b->decl->defining_module;
+            if (am && main_module && strcmp(am, main_module) == 0) am = NULL;   // name a module only
+            if (bm && main_module && strcmp(bm, main_module) == 0) bm = NULL;   // when it is not this file
+            fprintf(stderr, "[E013] Error Ln %li, Col %li: '%.*s' is %s", (long)b->decl->line,
+                    (long)b->decl->col, (int)bn->length, bn->name,
+                    both_extern ? "declared twice with different signatures" : "defined twice");
+            if (bm) fprintf(stderr, " (here in module %s)", bm);
+            fprintf(stderr, ": already at Ln %li%s%s.%s\n", (long)a->decl->line,
+                    am ? " in module " : "", am ? am : "",
+                    (am && bm && strcmp(am, bm) != 0) ? " Imports share one namespace, so a "
+                    "program cannot use both." : "");
+            // the excerpt reads the file being compiled: show it only for a duplicate in that file
+            if (!bm) diagnostic_show_line(b->decl->line, b->decl->col);
+            exit(1);
+        }
+    }
+}
+
+// ★ A VALUE HAS A SIZE (spec 7, spec 17). An opaque type (`extern type FILE`) has none, and
+// neither has `void`: `var fh FILE` and `var x void` were accepted, a parameter or a field of an
+// opaque type too, and the C declared them or dropped them. An opaque type is reached through a
+// pointer (`*FILE`). `void` stays legal as a return type (`allow_void`), meaning no value.
+static void sema_check_value_type(Type *t, isize line, isize col, const char *what, bool allow_void) {
+    if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return;
+    Id *n = t->base_type;
+    if (n->length == 4 && memcmp(n->name, "void", 4) == 0) {
+        if (allow_void) return;
+        fprintf(stderr, "[E012] Error Ln %li, Col %li: %s cannot have type `void`, which has no "
+                "values.\n", (long)line, (long)col, what);
+        diagnostic_show_line(line, col);
+        exit(1);
+    }
+    char buf[128];
+    if (n->length <= 0 || (size_t)n->length >= sizeof buf) return;
+    memcpy(buf, n->name, (size_t)n->length); buf[n->length] = '\0';
+    extern Symbol *sema_lookup(const char *name);
+    Symbol *sym = sema_lookup(buf);
+    if (!sym || !sym->decl || sym->decl->kind != DECL_EXTERN_TYPE) return;
+    fprintf(stderr, "[E012] Error Ln %li, Col %li: %s has the opaque type '%s' (declared `extern "
+            "type`), which has no size; use a pointer, `*%s`.\n", (long)line, (long)col, what, buf, buf);
+    diagnostic_show_line(line, col);
+    exit(1);
+}
+
 void sema_build_scope(DeclList *decls, const char *module_path) {
     // ––––––– Instead of “sema_clear_table()”, use:
     sema_clear_globals();
-  
+    sema_check_redefinitions(decls, module_path);
+
     sema_decls = decls; // for struct lookups later
   
     // Sanitize module path for C names
@@ -635,9 +738,28 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
       }
       }
     }
+    // After every name is in scope, so an `extern type` declared below a struct still counts.
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+      Decl *d = dl->decl;
+      if (!d || decl_is_generic_template(d)) continue;
+      if (d->kind == DECL_STRUCT) {
+        for (DeclList *f = d->as.struct_decl.fields; f; f = f->next)
+          if (f->decl && f->decl->kind == DECL_VARIABLE)
+            sema_check_value_type(f->decl->as.variable_decl.type, f->decl->line, f->decl->col,
+                                  "a field", false);
+      } else if (d->kind == DECL_FUNCTION || d->kind == DECL_EXTERN_FUNCTION) {
+        sema_check_value_type(d->as.function_decl.return_type, d->line, d->col, "a return value", true);
+        for (DeclList *p = d->as.function_decl.params; p; p = p->next)
+          if (p->decl && p->decl->kind == DECL_VARIABLE)
+            sema_check_value_type(p->decl->as.variable_decl.type, p->decl->line, p->decl->col,
+                                  "a parameter", false);
+      } else if (d->kind == DECL_VARIABLE) {
+        sema_check_value_type(d->as.variable_decl.type, d->line, d->col, "a module constant", false);
+      }
+    }
     free(safe_module_path);
   }
-  
+
 
 /*
     name-resolution logic
@@ -835,6 +957,7 @@ void sema_resolve_stmt(Stmt *s) {
         exit(1);
     }
 
+    sema_check_value_type(ty, s->line, s->col, "a variable", false);   // declared or inferred
     const char *cname = raw;
     sema_insert_local(raw, cname, ty, NULL, s->as.var_stmt.is_mutable);
     break;

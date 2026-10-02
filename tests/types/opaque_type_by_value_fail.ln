@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: has the opaque type 'FILE'
+// spec: §17 — an opaque type (`extern type`) has no size and is used through a pointer. A local of
+// type FILE was accepted.
+extern type FILE
+
+func f() i32 {
+    var fh FILE
+    return 0
+}
+
+func main() i32 { return f() }

@@ -1,0 +1,10 @@
+// EXPECT: [E013]
+// EXPECT-TEXT: declared twice with different signatures
+// spec: §6 — two `extern` declarations of one function are allowed only when they agree. These
+// disagree in their parameters: lain accepted them and gcc refused the C ("conflicting types").
+// A difference in the effect row alone (`exit` declared with and without `diverge`, as two std
+// modules once did) is one C cannot see at all.
+extern func ext_thing(a i32) i32 effects io
+extern func ext_thing(a i64, b i64) i64 effects io
+
+func main() i32 { return 0 }

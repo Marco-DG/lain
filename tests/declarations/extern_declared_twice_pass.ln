@@ -1,0 +1,9 @@
+// Two EXTERN declarations of one function stay legal, as in C: modules may each declare the libc
+// call they use, and imports share one namespace. (A second DEFINITION is E013.)
+extern func libc_puts(s *u8) i32 effects io
+extern func libc_puts(s *u8) i32 effects io
+
+func main() i32 effects io {
+    libc_puts("ok")
+    return 0
+}

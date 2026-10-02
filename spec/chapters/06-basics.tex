@@ -27,6 +27,15 @@ every declaration at the local level is also a definition.
 \end{constraint}
 
 \begin{constraint}
+  A module-scope name is defined once: two functions, two types, or a
+  constant and a function of one name are \illformed{}~(\diagcode{E013}),
+  in one module or across the modules a program imports, which share one
+  namespace.  Two \lain{extern} declarations of one function are allowed
+  when they agree: the same parameter and return types, variadicity and
+  effect row; two that disagree are \illformed{}~(\diagcode{E013}).
+\end{constraint}
+
+\begin{constraint}
   Use of an undeclared identifier is \illformed{}~(\diagcode{E106}).  The
   reference implementation issues this diagnostic when the translation output is
   generated --- after name resolution, monomorphization, and UFCS desugaring are
