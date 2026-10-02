@@ -1514,12 +1514,20 @@ Conditions do not require parentheses. The body must be enclosed in `{ }`. The c
 
 For loops iterate over finite ranges, so they are always allowed: the bound is the range.
 
-> [!WARNING]
-> A range's bounds must be integers, and that is **not yet enforced**: `for i in 0..a` with a
-> floating-point `a` is accepted rather than refused at the bound. What you get instead depends on the
-> body — sometimes nothing, sometimes `[E086]` reported at the `for` line, with a message about an
-> overflowing total that never mentions the float. Until it is enforced, read an unexplained `[E086]`
-> on a `for` as a possible non-integer bound.
+A range's bounds are integers, and the diagnostic names the type that was not:
+
+```lain
+func f(a f64) i32 {
+    for i in 0..a {         // ERROR [E012]
+        return 1
+    }
+    return 0
+}
+```
+
+```
+[E012] Error Ln 2, Col 17: a `for` range counts in integers, so its bounds are integers; this one is 'f64'.
+```
 
 **Single variable form:**
 ```lain

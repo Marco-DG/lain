@@ -1,7 +1,5 @@
 // CLAIM: spec 05 constraint — a character literal shall contain exactly one character or escape.
-// CLAIM: The EMPTY case is enforced. The multi-character case is NOT, as of 2026-10-02: `'ab'` is
-// CLAIM: accepted and silently takes 'a'. Reported as a compiler gap; no probe asserts the half
-// CLAIM: that does not hold, because a probe must state what the compiler does.
+// CLAIM: The EMPTY case. The multi-character case was unenforced until 013c513 and is p36's.
 // EXPECT: [E100]
 func main() i32 {
     var c = ''

@@ -1,0 +1,8 @@
+// CLAIM: spec 05 constraint — a MULTI-CHARACTER literal is ill-formed. Unenforced until 013c513:
+// CLAIM: `'ab'` compiled and silently became 'a', so a typo inside a literal changed the program's
+// CLAIM: meaning with no diagnostic. The message now says what it would have done instead.
+// EXPECT: [E100]
+func main() i32 {
+    var c = 'ab'
+    return 0
+}
