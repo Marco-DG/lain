@@ -1,0 +1,27 @@
+// EXPECT: [E121]
+// EXPECT-TEXT: Error Ln 17, Col 9: a struct field invariant is not proven here
+// `unsafe` does not suspend a struct's invariant. Every read of `len` ASSUMES `len <= cap` (that
+// is what proves `b.cap - b.len` free of underflow), and the C gives that assumption to gcc as
+// `__builtin_unreachable`. The field store's assert was skipped inside `unsafe`, so this
+// compiled, and with cap = 2, len = 4 the subtraction printed the usize underflow at -O0 and
+// SEGFAULTED at -O2 (Handwriting, M15). It is asserted like any other store now.
+type Buf { cap usize, len usize <= cap }
+
+func room(b Buf) usize {
+    return b.cap - b.len
+}
+
+func go() usize {
+    var b = Buf(2, 1)
+    unsafe {
+        b.len = 4
+    }
+    return room(b)
+}
+
+func main() i32 {
+    if go() == 0 {
+        return 1
+    }
+    return 0
+}

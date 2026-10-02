@@ -3551,7 +3551,14 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
               // `w.s = buf` stored the array's base pointer into a slice.
               if (addr && addr->type && addr->type->kind==IRT_PTR && addr->type->elem)
                   rv0 = ir_coerce_repr(c, rv0, addr->type->elem, s->as.assign_stmt.expr);
-              if (!c->unsafe) ir_lower_field_invariant_asserts(c, tdef, rv0);
+              // ★ NOT WAIVED BY `unsafe`. Every read of the field ASSUMES the invariant (that is
+              // what proves `b.cap - b.len` and `text[pos]`), and the C hands each assume to gcc
+              // as `__builtin_unreachable`. Skipping the assert inside `unsafe` let
+              // `unsafe { b.len = 4 }` over `cap = 2` compile, and a later `b.cap - b.len`
+              // segfaulted at -O2 while -O0 printed the underflow (Handwriting, M15). Spec 18
+              // waives bounds, dereference, casts and field access in `unsafe`; an invariant is
+              // part of the struct's type, which `unsafe` does not suspend.
+              ir_lower_field_invariant_asserts(c, tdef, rv0);
               ir_store(c->f, c->cur, addr, rv0); }
             if (c->cur->instrs_tail) c->cur->instrs_tail->unchecked = c->unsafe;
             break;

@@ -2643,7 +2643,11 @@ static bool vra_type_may_lose(const IrType *from, const IrType *to) {
 
 static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
                              IrInstr *at, int64_t line, int64_t col) {
-    if (at && at->unchecked) return;                        // inside `unsafe`
+    // Inside `unsafe` the narrowing is waived and wraps (vra_land_range), EXCEPT into a REFINED
+    // type: `v i32 >= 0 and <= 3` is a predicate every reader of the value assumes, as it does a
+    // struct's invariant, and a wrap to the bits cannot honour it. `unsafe { d.v = p }` with
+    // p = 100 compiled, and the safe `t[d.v]` after it, proven from the refinement, read t[100].
+    if (at && at->unchecked && !(target && (target->has_refine || target->has_ne))) return;
     if (!val || !val->type || !target) return;
     if (val->type->kind != IRT_INT || target->kind != IRT_INT) return;
     if (!vra_type_may_lose(val->type, target)) return;      // the target holds every value

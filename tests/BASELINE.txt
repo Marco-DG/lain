@@ -2094,6 +2094,13 @@ out=got Err
 at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_Err scalar
+### tests/trust/unsafe_field_invariant_kept_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
+ty=Buf struct
+ty=D struct
 ### tests/trust/unsafe_wrap_then_safe_pass.ln
 rc=0
 out=

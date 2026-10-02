@@ -1,0 +1,19 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 16, Col 9: arithmetic is not provably free of overflow
+// `unsafe` waives a narrowing, and C wraps it to the bits; a REFINED type is a predicate no wrap
+// can honour, and every reader of `d.v` assumes it (that is what proves `t[d.v]`). The narrowing
+// into `i32 >= 0 and <= 3` was waived here, so this compiled and the SAFE `t[d.v]` read t[100]
+// (--interpret: PROOF FAILED at the index). It is checked as outside `unsafe` now.
+type D {
+    v i32 >= 0 and <= 3
+}
+
+func main() i32 {
+    var t i32[4] = [1, 2, 3, 4]
+    var d = D(1)
+    var p i32 = 100
+    unsafe {
+        d.v = p
+    }
+    return t[d.v]
+}

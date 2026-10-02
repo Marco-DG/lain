@@ -1,0 +1,33 @@
+// The allowed side of unsafe_field_invariant_fail and unsafe_refined_field_fail: a store inside
+// `unsafe` that KEEPS the invariant, or the refinement, is proven like any other (the first through
+// a waived narrowing that wraps 258 to 2). Run under the sanitizers and the interpreter.
+type Buf { cap usize, len usize <= cap }
+
+type D {
+    v i32 >= 0 and <= 3
+}
+
+func room(b Buf) usize {
+    return b.cap - b.len
+}
+
+func main() i32 {
+    var b = Buf(5, 1)
+    var y u16 = 258
+    unsafe {
+        b.len = (y as u8) as usize
+    }
+    if room(b) != 3 {
+        return 1
+    }
+    var t i32[4] = [1, 2, 3, 4]
+    var d = D(1)
+    var p i32 = 2
+    unsafe {
+        d.v = p
+    }
+    if t[d.v] != 3 {
+        return 1
+    }
+    return 0
+}
