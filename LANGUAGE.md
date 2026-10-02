@@ -1597,6 +1597,7 @@ func f() i32 {
 ### 7.1 Arithmetic
 
 ```lain
+// SYNOPSIS
 a + b      // Addition
 a - b      // Subtraction
 a * b      // Multiplication
@@ -1604,9 +1605,33 @@ a / b      // Integer division
 a % b      // Modulo (remainder)
 ```
 
+Each carries a proof obligation, so an operand bound is usually what makes the arithmetic
+acceptable — here a refinement alias supplies it, and `/` and `%` need the divisor's range to
+exclude 0 (§17, and §12 for `[E015]`):
+
+```lain
+// VERIFY: exit 0
+type Small = i32 >= 1 and <= 100
+
+func arith(a Small, b Small) i32 {
+    var sum  = a + b
+    var diff = a - b
+    var prod = a * b
+    var quot = a / b
+    var rem  = a % b
+    return sum + diff + prod + quot + rem
+}
+
+func main() i32 {
+    if arith(10, 3) != 54 { return 1 }    // 13 + 7 + 30 + 3 + 1
+    return 0
+}
+```
+
 ### 7.2 Comparison
 
 ```lain
+// SYNOPSIS
 a == b     // Equal
 a != b     // Not equal
 a < b      // Less than
@@ -1626,6 +1651,7 @@ is still accepted as an `if` / `while` condition, where non-zero is true.
 Lain uses keyword-based logical operators:
 
 ```lain
+// SYNOPSIS
 x > 0 and x < 100    // Logical AND
 x == 0 or x == 1     // Logical OR
 !condition            // Logical NOT
@@ -1637,6 +1663,7 @@ Their operands are `bool` (spec 08): `x and n` with an integer `n`, or `!n`, is 
 ### 7.4 Bitwise Operators
 
 ```lain
+// SYNOPSIS
 a & b      // Bitwise AND
 a | b      // Bitwise OR
 a ^ b      // Bitwise XOR
@@ -1647,11 +1674,39 @@ a >> n     // Right shift
 
 The bitwise operators take integers. On two booleans, write `and` / `or` / `!=` (spec 08).
 
+**A left shift must be proven not to lose bits.** `a << n` is refused unless the result fits the
+left operand's type — `[E086]`, *"unsigned left shift may lose bits … prove it fits, or say you
+mean to discard them: `<<%` wraps"*. Bounding both operands discharges it:
+
+```lain
+// VERIFY: exit 0
+func bits(a u8, b u8) u8 {
+    var v = a & b
+    v = v | (a ^ b)
+    v = v & ~a
+    return v
+}
+
+func shifts(a u8, n u8) u8 {
+    if a < 16 and n < 4 {
+        return (a << n) >> n      // proven: a << n is at most 120, which fits a u8
+    }
+    return a
+}
+
+func main() i32 {
+    if bits(12, 10) != 2 { return 1 }
+    if shifts(12, 2) != 12 { return 2 }
+    return 0
+}
+```
+
 ### 7.5 Compound Assignment
 
 All compound assignment operators are syntactic sugar:
 
 ```lain
+// SYNOPSIS
 x += 5     // Equivalent to: x = x + 5
 x -= 3     // Equivalent to: x = x - 3
 x *= 2     // Equivalent to: x = x * 2
@@ -1660,6 +1715,42 @@ x %= 3     // Equivalent to: x = x % 3
 x &= mask  // Equivalent to: x = x & mask
 x |= flag  // Equivalent to: x = x | flag
 x ^= bits  // Equivalent to: x = x ^ bits
+```
+
+Being sugar, a compound form carries exactly the obligation its expansion does — and the
+comparison and logical operators from §7.2 and §7.3 are checked here too:
+
+```lain
+// VERIFY: exit 0
+func compare(a i32, b i32) i32 {
+    var n = 0
+    if a == b { n = n + 1 }
+    if a != b { n = n + 2 }
+    if a <  b { n = n + 4 }
+    if a >  b { n = n + 8 }
+    if a <= b { n = n + 16 }
+    if a >= b { n = n + 32 }
+    return n
+}
+
+func logic(x i32) bool {
+    return (x > 0 and x < 100) or x == -1
+}
+
+func compound(x0 u8) u8 {
+    var x = x0
+    x &= 15
+    x |= 3
+    x ^= 1
+    return x
+}
+
+func main() i32 {
+    if compare(2, 5) != 22 { return 1 }    // != , < and <= hold: 2 + 4 + 16
+    if logic(50) != true { return 2 }
+    if compound(255) != 14 { return 3 }
+    return 0
+}
 ```
 
 ### 7.6 Type Cast (`as`)
