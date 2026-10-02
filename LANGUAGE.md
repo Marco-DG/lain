@@ -999,14 +999,22 @@ hands a binding back as `return var r` (`E017` without the `var`). A struct fiel
 When calling a function, the caller must explicitly annotate `var` and `mov` to signal the intended ownership:
 
 ```lain
-func read_data(d Data) int { return d.value }            // Shared borrow
-func modify_data(var d Data) { d.value = d.value + 1 }   // Mutable borrow
-func consume_data(mov d Data) { /* ... */ }               // Ownership transfer
+// VERIFY: exit 0
+type Data { value int }
 
-// Call sites:
-read_data(data)           // Implicit shared borrow
-modify_data(var data)     // Explicit mutable borrow
-consume_data(mov data)    // Explicit ownership transfer
+func read_data(d Data) int { return d.value }    // Shared borrow
+func modify_data(var d Data) { d.value = 1 }     // Mutable borrow
+func consume_data(mov d Data) { }                // Ownership transfer
+
+func main() i32 {
+    var data Data
+    data.value = 3
+    if read_data(data) != 3 { return 1 }    // Implicit shared borrow
+    modify_data(var data)                   // Explicit mutable borrow
+    if read_data(data) != 1 { return 2 }
+    consume_data(mov data)                  // Explicit ownership transfer
+    return 0
+}
 ```
 
 ### 4.7 Destructuring in Parameters
@@ -1155,14 +1163,37 @@ nothing else. `*proc` could only have said "may do anything".
 Every function supports three parameter modes:
 
 ```lain
-func process(
-    id int,             // Shared borrow (read-only)
-    var ctx Context,    // Mutable borrow (read-write)
-    mov res Resource    // Owned (consumed by function)
-) { /* ... */ }
+// VERIFY: exit 9
+type Context { value int }
+type Resource { id int }
+
+func process(tag int, var ctx Context, mov res Resource) {
+    if res.id > tag {
+        ctx.value = res.id
+    } else {
+        ctx.value = tag
+    }
+}
+
+func main() i32 {
+    var c Context
+    c.value = 0
+    var r Resource
+    r.id = 9
+    process(4, var c, mov r)      // the call site repeats the modes
+    return c.value as i32
+}
 ```
 
-See §4.1 for full semantics.
+`tag` is a shared borrow (read-only), `var ctx` a mutable borrow, `mov res` owned and consumed by
+the function — and the call site states the last two again, which is §4.6. See §4.1 for full
+semantics.
+
+> [!WARNING]
+> **A parameter list must be on one line.** Breaking it across lines is `[E100] Expected parameter
+> name`, because statements and declarations are newline-terminated. The same applies to the
+> arguments at a call site. It is a real constraint on how wide a signature can get, not a style
+> preference.
 
 ### 5.4 Return Types & Void Functions
 
@@ -2796,15 +2827,25 @@ rather than a believed one.
 
 Currently, **all** top-level declarations (functions, procedures, types, global variables) are public and visible to any module that imports them. There is no `private` or module-scoped visibility.
 
-### 18.2 Future: `export` Keyword
+### 18.2 A visibility system is not designed yet
 
-The `export` keyword is reserved for a future visibility system:
+There is no `export`, and **`export` is not a reserved word** — it appears nowhere in the compiler
+and is usable today as an ordinary identifier:
 
 ```lain
-// Future vision
-export func public_api() int { return 42 }
-func internal_helper() int { return 0 }  // Not exported
+// VERIFY: exit 3
+func main() i32 {
+    var export = 3
+    return export
+}
 ```
+
+It is equally usable as a function name — though not both at once in one program, since §3.6's
+rule against shadowing covers a local that would hide a function.
+
+So a future visibility system has no syntax waiting for it, and naming it here would only commit
+the design in advance. §1.1's reserved-word note is the authority on what is actually reserved:
+today that is `use` alone.
 
 ---
 
