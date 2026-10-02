@@ -16,11 +16,18 @@
 #include "vra.h"
 #include <stdio.h>
 
+// The front end's source-line printer, set by the driver for a function in the file whose text it
+// holds: it prints the `-->` line, the source line and a caret. Front-end errors always showed the
+// line and the analyses' never did, so E130 had an excerpt and E085 beside it did not. NULL (a
+// function from an imported module, or a tool without a front end) keeps the bare `-->` line.
+static void (*ir_diag_excerpt)(isize line, isize col) = NULL;
+
 static void ir_diag(const char *file, isize line, isize col, const char *code, const char *msg) {
     fprintf(stderr, "[%s] Error", code);
     if (line) fprintf(stderr, " Ln %lld, Col %lld", (long long)line, (long long)col);
     fprintf(stderr, ": %s\n", msg);
-    if (file && line) fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)line, (long long)col);
+    if (line && ir_diag_excerpt) ir_diag_excerpt(line, col);
+    else if (file && line) fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)line, (long long)col);
 }
 
 // Run every sovereign analysis over one function and print what it finds.

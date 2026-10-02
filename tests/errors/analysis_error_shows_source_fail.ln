@@ -1,0 +1,10 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: return a[i]
+// An error from the analyses shows the source line and a caret, as a front-end error always did:
+// E130 printed an excerpt and E085 beside it printed only `--> file:line:col`. The message itself
+// never contains the source text, so finding it in the output is finding the excerpt.
+func f(a u8[], i usize) u8 {
+    return a[i]
+}
+
+func main() i32 { return 0 }

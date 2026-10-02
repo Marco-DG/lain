@@ -222,8 +222,14 @@ int main(int argc, char **argv) {
         int found = 0;
         for (IrFunc *f = mod; f; f = f->next) {
             if (f->is_extern) continue;
+            // The source excerpt reads the main file's text, so only a function defined there
+            // gets one; an imported module's finding keeps the bare `-->` line, not a wrong line.
+            Decl *sd = (Decl *)f->src_decl;
+            ir_diag_excerpt = (sd && (!sd->defining_module || strcmp(sd->defining_module, modname) == 0))
+                              ? diagnostic_show_line : NULL;
             found += ir_report_findings(f, mod, args.filename, args.engine_ir_numeric);
         }
+        ir_diag_excerpt = NULL;
         if (found) { sema_destroy(); return 1; }
         if (ir_require_verdicts(mod)) { sema_destroy(); return 70; }
         if (args.interpret) {             // run it instead of emitting it; the status is the program's
