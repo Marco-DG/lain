@@ -1,0 +1,7 @@
+// CLAIM: spec 08 constraint — `==` shall not be applied to enum types; use `case`.
+// EXPECT: [E012]
+type K { A, B }
+func f(a K, b K) bool {
+    return a == b
+}
+func main() i32 { return 0 }

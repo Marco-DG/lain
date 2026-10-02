@@ -1,0 +1,7 @@
+// CLAIM: spec 08 constraint — writing to a field requires the expression to be a mutable lvalue.
+// EXPECT: [E009]
+type P { x i32 }
+func f(p P) {
+    p.x = 1
+}
+func main() i32 { return 0 }

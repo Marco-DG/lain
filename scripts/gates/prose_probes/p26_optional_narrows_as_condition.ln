@@ -1,0 +1,9 @@
+// CLAIM: spec 08 constraint — a condition may be `bool`, an integer type, OR an optional that
+// CLAIM: narrows. The third is the one no other document mentions, so this is its only check.
+// EXPECT: COMPILES
+import std.option.{Option}
+func f(o Option(i32)) i32 {
+    if o { return 1 }
+    return 0
+}
+func main() i32 { return 0 }

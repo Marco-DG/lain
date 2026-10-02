@@ -1,0 +1,10 @@
+// CLAIM: spec 08 constraint — the number of arguments shall equal the number of parameters,
+// CLAIM: unless the callee is a variadic C function declared with `...`.
+// EXPECT: [E012]
+func g(a i32, b i32) i32 {
+    return a
+}
+func f() i32 {
+    return g(1)
+}
+func main() i32 { return 0 }

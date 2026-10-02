@@ -1,0 +1,13 @@
+// CLAIM: spec 08 constraint — the mode annotation at the call site shall match the declared
+// CLAIM: parameter mode, so an ownership or mutability transfer is never silent.
+// EXPECT: [E017]
+type P { x i32 }
+func g(var p P) {
+    p.x = 1
+}
+func f() {
+    var q P
+    q.x = 0
+    g(q)
+}
+func main() i32 { return 0 }

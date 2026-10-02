@@ -1,0 +1,11 @@
+// CLAIM: spec 08 constraint — `idx in arr` covers `arr[idx]` EXACTLY; `arr[idx + k]` for k != 0 is
+// CLAIM: not covered and needs its own verification. This is the probe that would catch the guard
+// CLAIM: being widened by accident, which would be unsound rather than merely imprecise.
+// EXPECT: [E085]
+func f(a i32[8], i usize) i32 {
+    if i in a {
+        return a[i + 1]
+    }
+    return 0
+}
+func main() i32 { return 0 }

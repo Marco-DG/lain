@@ -1,0 +1,6 @@
+// CLAIM: spec 08 constraint — `==` shall not be applied to array types.
+// EXPECT: [E012]
+func f(a i32[4], b i32[4]) bool {
+    return a == b
+}
+func main() i32 { return 0 }

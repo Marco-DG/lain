@@ -1,0 +1,8 @@
+// CLAIM: spec 08 constraint — when both bounds are integer literals the compiler also verifies
+// CLAIM: a <= b, so a reversed sub-slice is refused rather than producing an empty or wild slice.
+// EXPECT: [E087]
+func f(a i32[8]) i32 {
+    var s = a[3 .. 1]
+    return 0
+}
+func main() i32 { return 0 }

@@ -1,0 +1,7 @@
+// CLAIM: spec 08 constraint — `==` shall not be applied to struct types.
+// EXPECT: [E012]
+type P { x i32 }
+func f(a P, b P) bool {
+    return a == b
+}
+func main() i32 { return 0 }

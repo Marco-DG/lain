@@ -43,6 +43,35 @@ probe — the failure mode that makes a green suite worthless.
 
 It needs a compiler no older than `src/`, like the gates, and refuses otherwise.
 
+## Probing the SPECIFICATION's constraints (p16–p26)
+
+The probes above came from false claims. These came from the opposite direction, and the difference
+is worth recording because it changes what a green suite means.
+
+The spec's chapters were measured for `\begin{constraint}` blocks against `laincode` examples, to
+find where normative rules sit with nothing to check them. **Chapter 8, expressions, was the
+outlier: 23 constraints and 3 examples.** So each of the 23 was probed.
+
+**All 23 held.** The ratio predicted where examples were missing, not where the compiler was wrong —
+which is the honest result and the reason to record it: an unexampled rule is *unchecked*, not
+presumed false, and a measurement that looks like a risk ranking is only a ranking of visibility.
+
+Eleven became permanent probes, chosen for what a future change could plausibly break rather than
+for being hard to verify once:
+
+- `%` on floats, `==` on a struct / array / enum, a struct-to-integer cast (the type rules that a
+  new coercion path would quietly widen);
+- **`idx in arr` covering `arr[idx]` EXACTLY** — p20 is the one to keep if only one survives, because
+  a guard accidentally widened to `arr[idx + k]` is *unsound*, not merely imprecise;
+- a field write needing a mutable lvalue; a reversed literal sub-slice; the call-site mode matching
+  the parameter; the argument count;
+- **an optional as a condition** — the third arm of "bool, or an integer, or an optional that
+  narrows", which no other document mentions anywhere, so p26 is its only check in the project.
+
+Each was confirmed to be refused at the intended line with a message naming the intended check, not
+merely refused: a probe that fails for an unrelated reason is a probe that tests nothing, and the
+code alone does not distinguish the two.
+
 ## The limit, stated
 
 A probe can only test a claim that a program can falsify. "The IR is the sole analysis authority"
