@@ -41,7 +41,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 LAIN=./lain
-VERBOSE=0; PAGES=(README.md LANGUAGE.md); DEFAULT_PAGES=1
+VERBOSE=0; PAGES=(README.md LANGUAGE.md USAGE.md); DEFAULT_PAGES=1
 while [ $# -gt 0 ]; do
     case "$1" in
         -v) VERBOSE=1 ;;
@@ -119,7 +119,7 @@ fi
 
 ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
 unchecked_readme=0 unchecked_lang=0 unchecked_other=0 falseclaim=0 synopsis=0
-verify_n=0 verify_bad=0 accounting_bad=0
+verify_n=0 verify_bad=0 accounting_bad=0 unchecked_usage=0
 for f in "$TMP"/b*.txt; do
     # ★ With no blocks extracted the glob does not match and bash passes the PATTERN through,
     # so the body came back empty and was counted as one unverifiable fragment. A page with
@@ -197,6 +197,7 @@ for f in "$TMP"/b*.txt; do
         unchecked=$((unchecked+1))
         case "$page" in README.md)   unchecked_readme=$((unchecked_readme+1)) ;;
                         LANGUAGE.md) unchecked_lang=$((unchecked_lang+1))     ;;
+                        USAGE.md)    unchecked_usage=$((unchecked_usage+1))   ;;
                         *)           unchecked_other=$((unchecked_other+1))   ;; esac
         continue
     fi
@@ -231,6 +232,7 @@ for f in "$TMP"/b*.txt; do
         unchecked=$((unchecked+1))
         case "$page" in README.md)   unchecked_readme=$((unchecked_readme+1)) ;;
                         LANGUAGE.md) unchecked_lang=$((unchecked_lang+1))     ;;
+                        USAGE.md)    unchecked_usage=$((unchecked_usage+1))   ;;
                         *)           unchecked_other=$((unchecked_other+1))   ;; esac
         [ $VERBOSE -eq 1 ] && { echo "  UNVERIFIABLE $page:$ln"
                                 echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'; }
@@ -388,6 +390,7 @@ echo "  UNVERIFIABLE fragments   : $unchecked   ← not noise: a claim nobody te
 [ $synopsis -gt 0 ] && echo "  SYNOPSIS blocks (a form, not a program): $synopsis"
 echo "      README.md   : $unchecked_readme   <- must stay 0"
 echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a regression"
+echo "      USAGE.md    : $unchecked_usage   <- must stay 0"
   # ★ PRINT IT WHENEVER IT IS NON-ZERO, not only under --pages. The split below the total must
   # ACCOUNT FOR the total: a count this gate computes and then hides is a backlog nobody sees, and
   # on a default run the "other" line was printed by nothing. It is 0 today because the default
@@ -395,7 +398,7 @@ echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a 
   # silently, and the two numbers would stop adding up with no line saying so.
   { [ $DEFAULT_PAGES -eq 0 ] || [ $unchecked_other -gt 0 ]; } && \
       echo "      other pages : $unchecked_other   <- a backlog, not a regression"
-  split_sum=$((unchecked_readme + unchecked_lang + unchecked_other))
+  split_sum=$((unchecked_readme + unchecked_lang + unchecked_usage + unchecked_other))
   [ $split_sum -ne $unchecked ] && \
       echo "  ★ the split above sums to $split_sum but the total is $unchecked — a page is uncounted"
 echo "  FLAGS named but not accepted : $flag_bad   ← a claim about the binary, now tested"

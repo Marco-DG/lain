@@ -40,7 +40,7 @@ if stale=$(find src -type f -newer "$LAIN" -print -quit 2>/dev/null); [ -n "$sta
     echo "REFUSING TO RUN: ./lain is older than $stale"; echo "  Run: make"; exit 2
 fi
 
-python3 - "$LAIN" README.md LANGUAGE.md <<'PY'
+python3 - "$LAIN" README.md LANGUAGE.md USAGE.md <<'PY'
 import re, subprocess, sys, tempfile, os
 
 lain, pages = sys.argv[1], sys.argv[2:]
