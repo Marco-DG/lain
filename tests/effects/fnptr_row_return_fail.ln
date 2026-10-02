@@ -1,0 +1,15 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 12,
+// A function RETURNED as a pure `*func` while it declares `effects io` (the row was checked only at a `var` initialiser).
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("side effect")
+    return x
+}
+
+func get() *func(i32) i32 {
+    return noisy
+}
+
+func main() i32 { return 0 }

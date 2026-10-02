@@ -56,10 +56,14 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
             // function-pointer parameter, so gcc had nothing to elide. That is an unrelated
             // conservatism, not a defence.
             //
-            // The answer is the arrow's effect bound, which the type now carries: a `*func`
-            // target is verified against the arrow's ROW at assignment, so a call through it
-            // contributes exactly that row — nothing for a bare `*func(...)`, whatever the
-            // `effects` clause names otherwise. This is the same rule as IR_OPAQUE above, and it
+            // The answer is the arrow's effect bound, which the type now carries: a function is
+            // verified against the arrow's ROW wherever it becomes a `*func` value (check_conversion
+            // in sema/typecheck.h), so a call through it contributes exactly that row — nothing
+            // for a bare `*func(...)`, whatever the `effects` clause names otherwise. ★ That
+            // premise held only at a `var` initialiser until 2026-10-02 (I.53): an io function
+            // stored by a struct constructor made `func run(s S) i32 { return s.cb(0) }` come out
+            // `{}`, it was emitted `__attribute__((pure))`, and gcc -O1 deleted a call to it whose
+            // result was unused, side effect and all. This is the same rule as IR_OPAQUE above, and it
             // is Nielson & Nielson's latent effect read off the type.
             if (!cn) {
                 IrValue *tgt = ins->n_operands >= 1 ? ins->operands[0] : NULL;

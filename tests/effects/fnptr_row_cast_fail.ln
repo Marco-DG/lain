@@ -1,0 +1,16 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: cannot cast '*func(i32) i32 effects io' to '*func(i32) i32'
+// `as` does not convert function pointers, so a cast cannot drop a row either. The message
+// described both types as '*func(i32) i32': the row was left out of the description.
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("side effect")
+    return x
+}
+
+func main() i32 {
+    var g *func(i32) i32 effects io = noisy
+    var h = g as *func(i32) i32
+    return h(0)
+}

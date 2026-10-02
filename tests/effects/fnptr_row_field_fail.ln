@@ -1,0 +1,19 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 17,
+// An `effects io` function stored by a struct constructor in a pure `*func` field: `s.cb(0)` printed
+// from a `main` declared pure. Worse, a function calling `s.cb` came out with the empty row the arrow
+// promised and was emitted `__attribute__((pure))`, and gcc -O1 deleted a call to it whose result
+// was unused: the side effect vanished (a miscompile, I.53).
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("side effect")
+    return x
+}
+
+type S { cb *func(i32) i32 }
+
+func main() i32 {
+    var s = S(noisy)
+    return s.cb(0)
+}

@@ -1,0 +1,17 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 16,
+// An `effects io` function passed where a pure `*func` is expected: the row check (fnptr_assign_check) ran only at a `var` initialiser, so this compiled and the pure `apply` printed.
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("side effect")
+    return x
+}
+
+func apply(f *func(i32) i32, x i32) i32 {
+    return f(x)
+}
+
+func main() i32 {
+    return apply(noisy, 0)
+}

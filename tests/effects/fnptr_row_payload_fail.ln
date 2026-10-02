@@ -1,0 +1,16 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 14,
+// An `effects io` function as the payload of a sum variant whose field is a pure `*func`.
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("side effect")
+    return x
+}
+
+type Cb { Some { f *func(i32) i32 }, None }
+
+func main() i32 {
+    var c = Cb.Some(noisy)
+    return 0
+}

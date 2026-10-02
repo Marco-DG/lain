@@ -1,0 +1,17 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 15,
+// Reassigning a pure `*func` variable to an `effects io` function: the initialiser was checked and every later assignment was not.
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("side effect")
+    return x
+}
+
+func quiet(x i32) i32 { return x }
+
+func main() i32 {
+    var g *func(i32) i32 = quiet
+    g = noisy
+    return g(0)
+}

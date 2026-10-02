@@ -1,0 +1,16 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 15,
+// A function that may not terminate (`effects diverge`) handed to a TOTAL function's callback: `apply`
+// is total by its row, and `main` hung. The row was checked only at a `var` initialiser.
+func spin(x i32) i32 effects diverge {
+    while true { }
+    return x
+}
+
+func apply(f *func(i32) i32, x i32) i32 {
+    return f(x)
+}
+
+func main() i32 {
+    return apply(spin, 0)
+}

@@ -595,8 +595,15 @@ static void type_describe(Type *t, char *buf, size_t cap) {
             }
             if (o < cap) {
                 if (t->element_type) type_describe(t->element_type, inner, sizeof inner);
-                snprintf(buf + o, cap - o, t->element_type ? ") %s" : ")", inner);
+                o += (size_t)snprintf(buf + o, cap - o, t->element_type ? ") %s" : ")", inner);
             }
+            // The row is part of the type: two arrows that differ only in it were both described
+            // as '*func(i32) i32', in a message refusing to convert one into the other.
+            const char *sep = " effects ";
+            if (t->func_effects & EFFECT_IO)      { if (o < cap) o += (size_t)snprintf(buf + o, cap - o, "%sio", sep); sep = ", "; }
+            if (t->func_effects & EFFECT_DIVERGE) { if (o < cap) o += (size_t)snprintf(buf + o, cap - o, "%sdiverge", sep); sep = ", "; }
+            if (t->func_effects & EFFECT_RAISES)  { if (o < cap) o += (size_t)snprintf(buf + o, cap - o, "%sraises", sep); sep = ", "; }
+            if (t->func_effects & EFFECT_ALLOC)   { if (o < cap) o += (size_t)snprintf(buf + o, cap - o, "%salloc", sep); sep = ", "; }
             break;
         }
         default:
@@ -1363,9 +1370,19 @@ static void sema_check_place_writable(Expr *place, isize line, isize col, const 
     diagnostic_show_line(line, col);
     exit(1);
 }
+static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col);
 static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
                              isize line, isize col,
                              const char *ctx, const char *label) {
+    // ★ A FUNCTION BECOMES A FUNCTION-POINTER VALUE AT EVERY BOUNDARY, not only at a variable's
+    // initialiser. fnptr_assign_check (row containment: the function may do no more than the arrow
+    // admits) had ONE caller, the `var` initialiser, so an `effects io` function passed as an
+    // argument, returned, stored in a struct field or a sum payload, or assigned later into a pure
+    // `*func` slot was accepted: a `func` declared pure performed io through it, and a function
+    // with `effects diverge` handed to a total function's callback made that function hang. Every
+    // boundary already comes through here.
+    { Type *tt = to; while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
+      if (tt && tt->kind == TYPE_FUNC && src_expr) fnptr_assign_check(tt, src_expr, line, col); }
     if (sema_is_readonly_ptr(from)) {
         Type *tt = to; while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
         if (tt && tt->kind == TYPE_POINTER && tt->pointee_mutable) {

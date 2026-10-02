@@ -1,0 +1,30 @@
+// The allowed side of checking a function's row wherever it becomes a function pointer: the
+// function may do no MORE than the arrow admits, and less is fine. A pure function goes into a
+// pure arrow and into an `effects io` arrow; an io function into an io arrow; a pure pointer
+// variable into an io parameter; a field of an io arrow takes a pure function by assignment.
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("io ok")
+    return x
+}
+
+func quiet(x i32) i32 { return x }
+
+func apply_pure(f *func(i32) i32, x i32) i32 { return f(x) }
+
+func apply_io(f *func(i32) i32 effects io, x i32) i32 effects io { return f(x) }
+
+type S { cb *func(i32) i32 effects io }
+
+func main() i32 effects io {
+    if apply_pure(quiet, 1) != 1 { return 1 }
+    if apply_io(quiet, 2) != 2 { return 2 }
+    if apply_io(noisy, 3) != 3 { return 3 }
+    var g *func(i32) i32 = quiet
+    if apply_io(g, 4) != 4 { return 4 }
+    var s = S(noisy)
+    s.cb = quiet
+    if s.cb(6) != 6 { return 6 }
+    return 0
+}
