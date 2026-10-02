@@ -91,6 +91,14 @@ int main(int argc, char **argv) {
         cert_print(c, stdout); cert_free(c);
         return 0;
     }
+    // C.3a: the analysis checks these certificates instead of searching (vra.h, vra_check_rebuild).
+    if (args.check_certificate) {
+        FILE *in = fopen(args.check_certificate, "r");
+        if (!in) { fprintf(stderr, "lain: cannot open '%s'\n", args.check_certificate); return 1; }
+        char err[256]; vra_check_certs = cert_parse(in, err, sizeof err); fclose(in);
+        if (!vra_check_certs && err[0]) { fprintf(stderr, "lain: %s: %s\n", args.check_certificate, err); return 1; }
+        vra_check_mode = true;
+    }
     // Opened before anything changes directory, so a relative path is the caller's.
     if (args.emit_certificate) {
         vra_cert_out = fopen(args.emit_certificate, "w");

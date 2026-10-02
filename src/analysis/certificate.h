@@ -249,8 +249,10 @@ static bool cert_copy_name(char *dst, const char *t, size_t cap) {
     size_t n = strlen(t); if (n == 0 || n >= cap) return false;
     memcpy(dst, t, n + 1); return true;
 }
-// Returns the certificates of the file in order, or NULL with *err set ("line N: ...").
+// Returns the certificates of the file in order, or NULL with *err set ("line N: ..."). A file
+// with no certificate (a program refused before any analysis ran) is NULL with *err empty.
 static CertFunc *cert_parse(FILE *in, char *err, size_t errn) {
+    if (errn) err[0] = 0;
     CertFunc *head = NULL, **tail = &head;
     CertFunc *stack[8]; int sp = 0;            // the certificate being filled, and its parents
     CertCall *pending = NULL;                  // a callsite whose nested certificate comes next

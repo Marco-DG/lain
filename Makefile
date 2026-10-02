@@ -43,6 +43,7 @@ gates: $(BIN)
 	bash scripts/gates/baseline_gate.sh
 	bash scripts/gates/interp_gate.sh
 	bash scripts/gates/census_gate.sh
+	bash scripts/gates/certificate_gate.sh
 	bash scripts/gates/bench_gate.sh
 	bash scripts/gates/interp_gate.sh
 

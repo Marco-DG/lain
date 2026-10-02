@@ -76,7 +76,7 @@ than believed.
 |:-----|:--------|
 | `0` | success — the program was accepted and the C written |
 | `1` | the program was refused, or the input could not be read, or a flag was not recognised |
-| `70` | **internal error**: a proof obligation reached code generation undischarged. This is a compiler bug, not a program error — please report it with the source |
+| `70` | **internal error**: a proof obligation reached code generation undischarged. This is a compiler bug, not a program error — please report it with the source. With `--check-certificate`, also a certificate that does not check, which prints `internal error: the certificate for '<function>' does not check:` and the reason. If this compiler wrote that certificate for this same program, it is a compiler bug as well (the search and the check disagree); if the certificate was edited, or came from another build or program, the certificate is wrong |
 | *other* | with `--interpret` only: the value `main` returned |
 
 Two things worth knowing about the last row. An exit status is **8 bits**, so a returned value is
@@ -105,6 +105,7 @@ alone — check stderr, which is empty on success.
 | `--dump-measures` | Print the measure behind each termination proof, in the program's own names, one line per loop or recursion — and `no measure found` for a loop that is about to be refused. |
 | `--emit-certificate <file>` | Write what the range analysis found, per function, to `<file>`: the loop-header octagon states, each loop's and recursion's termination measure, element and return ranges, call-site ranges with the callee's certificate nested, and accumulator bounds. It is text meant to be read by a person. |
 | `--certificate-roundtrip <file>` | Parse a certificate and print it back. This is the format's own test — emitting, parsing and re-emitting must give the same text — rather than a tool for everyday use. |
+| `--check-certificate <file>` | Compile while CHECKING the certificates in `<file>` instead of searching for the proofs: each function's loop-header states and side facts are read from the file, every other state is rebuilt from them in one pass, and every stated fact is checked. A certificate that does not check is an internal error (exit 70), not a diagnostic. It attests the derivation, not the transfer functions the check shares with the analysis. |
 | `--no-line-directives` | Omit `#line` directives from the emitted C. |
 | `--emit-llvm` | Lower to proof-carrying LLVM-IR. A demonstration seam, not a backend: outside the subset it models it **refuses** rather than emitting a placeholder. C is the backend that works. |
 
