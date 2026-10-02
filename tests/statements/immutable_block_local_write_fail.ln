@@ -1,0 +1,17 @@
+// EXPECT: [E009]
+// EXPECT-TEXT: an immutable binding
+// A binding declared inside a block without `var` is immutable there too: its fields may not be
+// written (tests/trust/block_local_var_write_pass.ln is the `var` side).
+type P {
+    x i32
+}
+func g(c bool) i32 {
+    if c {
+        q = P(3)
+        q.x = 9
+    }
+    return 0
+}
+func main() i32 {
+    return 0
+}

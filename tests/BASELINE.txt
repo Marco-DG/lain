@@ -1422,6 +1422,12 @@ out=18446744073709551614
 out=-13
 at=const 8
 ty=Slice_u8 scalar
+### tests/trust/block_local_var_write_pass.ln
+rc=0
+out=
+at=const 2
+at=nonnull 4
+ty=P struct
 ### tests/trust/bool_typing_pass.ln
 rc=0
 out=

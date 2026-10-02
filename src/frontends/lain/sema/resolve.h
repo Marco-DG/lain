@@ -1256,6 +1256,15 @@ void sema_resolve_expr(Expr *e) {
 
     // 2) lookup in the two‐table (locals first, then globals)
     Symbol *sym = sema_lookup(raw);
+    // ★ WHETHER A LOCAL MAY BE WRITTEN IS DECIDED HERE, where the name meets its binding. The
+    // writability check runs in the later walk, which re-looked the name up: a block's locals
+    // are gone by then, so `if c { var a i32[2] = [1, 2]  a[0] = 5 }` read `a` as unknown, hence
+    // immutable (E009), and a shadowed name could resolve to the outer binding instead.
+    if (sym && !sym->is_global)
+      e->local_writable = (sym->is_mutable ||
+                           (sym->decl && sym->decl->kind == DECL_VARIABLE &&
+                            sym->decl->as.variable_decl.is_parameter && sym->decl->as.variable_decl.type &&
+                            sym->decl->as.variable_decl.type->mode == MODE_MUTABLE)) ? 1 : 2;
     if (sym) {
       // Q-018: enforce [private] cross-module visibility using defining_module
       // tag set by load_module().

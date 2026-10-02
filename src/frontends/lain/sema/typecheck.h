@@ -1209,6 +1209,7 @@ static bool sema_place_writable(Expr *e) {
     if (!e) return false;
     switch (e->kind) {
         case EXPR_IDENTIFIER: {
+            if (e->local_writable) return e->local_writable == 1;   // resolve's answer (resolve.h)
             Id *id = e->as.identifier_expr.id;
             if (!id || id->length >= 256) return false;
             char buf[256]; memcpy(buf, id->name, (size_t)id->length); buf[id->length] = 0;

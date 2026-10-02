@@ -775,6 +775,8 @@ typedef struct Expr {
     bool  is_global; // True if this refers to a global symbol
     bool  ro_root;    // a call argument whose storage is an IMMUTABLE binding's (an immutable
                       // local array, a module constant): the callee must not write it
+    int8_t local_writable; // resolve: an identifier naming a LOCAL binding, 1 writable (a `var`
+                      // binding or a `var` parameter), 2 not; 0 = not a local (or not resolved)
     bool  checked_ok; // Q1: a checked op (`+?`/`as?`) that IS handled by an
                       // enclosing `else` — set top-down before inference; a bare
                       // checked op leaves it false and is rejected (must handle).
