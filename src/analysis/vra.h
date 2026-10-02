@@ -351,6 +351,17 @@ static int vra_field_cell_base(Vra *V, int v) {
     if (!rt || rt->kind != IRT_PTR || !rt->elem ||
         (rt->elem->kind != IRT_INT && rt->elem->kind != IRT_BOOL && rt->elem->kind != IRT_SLICE)) return -1;
     int base = d->operands[0]->id;
+    // A NESTED field (`b.i.s`): its base is a field of a struct held BY VALUE, so the storage is
+    // the root's. Walk to the root, every step a struct-typed field; the root is then judged
+    // like a one-level base. Its whole-struct writers are the root and every struct on the path
+    // (vra_field_descends), and the root is what escapes.
+    for (int guard = 0; guard < 16; guard++) {
+        IrInstr *bd0 = (base>=0 && base<V->nvar) ? V->def[base] : NULL;
+        if (!bd0 || bd0->op != IR_FIELD_PTR || bd0->n_operands < 1) break;
+        IrType *bt = bd0->result ? bd0->result->type : NULL;
+        if (!bt || bt->kind != IRT_PTR || !bt->elem || bt->elem->kind != IRT_STRUCT) return -1;
+        base = bd0->operands[0]->id;
+    }
     IrInstr *bd = (base>=0 && base<V->nvar) ? V->def[base] : NULL;
     if (bd) {
         if (bd->op != IR_ALLOCA || !bd->aux.alloca_ty ||
@@ -405,11 +416,24 @@ static int vra_ref_target(Vra *V, int addr) {
 
 // Every field cell of `base` becomes unknown. Used wherever the whole struct is written with
 // no per-field IR_STORE to see: a call that may write through an escaped address, an opaque.
+// Is the field_ptr `q` a field of `anc`, at any depth: does its chain of bases reach the cell
+// `anc`? `b.i.s` lies beneath `b` and beneath `b.i`, so a write of either writes it.
+static bool vra_field_descends(Vra *V, int q, int anc) {
+    if (q < 0 || q >= V->nvar || anc < 0 || anc >= V->nvar) return false;
+    IrInstr *d = V->def[q];
+    for (int guard = 0; d && d->op == IR_FIELD_PTR && d->n_operands >= 1 && guard < 16; guard++) {
+        int x = d->operands[0]->id;
+        if (x == anc || vra_canon_cell(V, x) == vra_canon_cell(V, anc)) return true;
+        d = (x >= 0 && x < V->nvar) ? V->def[x] : NULL;
+    }
+    return false;
+}
 static void vra_forget_fields_of(Vra *V, Octagon *W, int base) {
     for (IrBlock *b=V->f->blocks; b; b=b->next)
         for (IrInstr *q=b->instrs; q; q=q->next)
             if (q->op==IR_FIELD_PTR && q->result && q->n_operands>=1 &&
-                q->operands[0]->id == base) oct_forget(W, vra_canon_cell(V, q->result->id));
+                (q->operands[0]->id == base || vra_field_descends(V, q->result->id, base)))
+                oct_forget(W, vra_canon_cell(V, q->result->id));
 }
 // pre-pass: def sites, constants, and canonical slice-length vars. A slice's length
 // var is its make_slice length operand or its first slice_len read; it is propagated
@@ -753,8 +777,12 @@ static void vra_prepass(Vra *V) {
             for (IrBlock *b2=V->f->blocks; b2; b2=b2->next)
                 for (IrInstr *o=b2->instrs; o; o=o->next) {
                     if (o==ins) goto done;
+                    // ★ ...whose BASES are one cell, not one value: `b.i.s` builds a fresh
+                    // field_ptr for `b.i` at each mention, so comparing base ids unified only a
+                    // single level, and a guard on `b.i.s.len` never reached the access (I.38).
                     if (o->op==IR_FIELD_PTR && o->result && o->n_operands>=1
-                        && o->operands[0]->id==base && o->aux.field_idx==ins->aux.field_idx) {
+                        && V->cellcanon[o->operands[0]->id]==V->cellcanon[base]
+                        && o->aux.field_idx==ins->aux.field_idx) {
                         V->cellcanon[me] = V->cellcanon[o->result->id]; goto done;
                     }
                 }
@@ -1239,6 +1267,13 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             // PROOF — `l.k = 5; l = m; l.k - 5` kept k = 5 — the moment a store through the
             // parameter stopped being an unattributable (havoc-everything) write.
             IrValue *cv0 = V->val[cell];
+            // A whole SUB-struct (`b.i = A(e)`, a field of struct type): every field beneath it
+            // is written, at any depth, with no per-field store to see.
+            if (d && d->op==IR_FIELD_PTR && cv0 && cv0->type && cv0->type->kind==IRT_PTR &&
+                cv0->type->elem && cv0->type->elem->kind==IRT_STRUCT) {
+                vra_forget_fields_of(V, W, cell);
+                break;
+            }
             bool sparam_base = !d && cv0 && cv0->type && cv0->type->kind==IRT_PTR &&
                                cv0->type->elem && cv0->type->elem->kind==IRT_STRUCT;
             if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind==IRT_STRUCT)
@@ -1247,8 +1282,11 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 if (sn && sn->op != IR_STRUCT_NEW) sn = NULL;
                 for (int q=0; q<V->nvar; q++) {
                     IrInstr *qd = V->def[q];
-                    if (!qd || qd->op!=IR_FIELD_PTR || qd->n_operands<1 ||
-                        qd->operands[0]->id != cell) continue;
+                    if (!qd || qd->op!=IR_FIELD_PTR || qd->n_operands<1) continue;
+                    if (qd->operands[0]->id != cell) {        // a NESTED field: written too
+                        if (vra_field_descends(V, q, cell)) oct_forget(W, vra_canon_cell(V, q));
+                        continue;
+                    }
                     int fi = qd->aux.field_idx;
                     if (sn && fi >= 0 && fi < sn->n_operands)
                         vra_assign_copy(V, W, vra_canon_cell(V, q), sn->operands[fi]->id);
@@ -3030,7 +3068,8 @@ static bool vra_loop_invariant_d(Vra *V, IrValue *val, IrBlock *H, int depth) {
                 for (IrInstr *st=b->instrs; st; st=st->next)
                     if (st->op==IR_STORE && st->n_operands>=2 &&
                         (st->operands[0]->id == fbase ||
-                         vra_canon_cell(V, st->operands[0]->id) == ccell)) { written = true; break; }
+                         vra_canon_cell(V, st->operands[0]->id) == ccell ||
+                         vra_field_descends(V, cell, st->operands[0]->id))) { written = true; break; }
             }
             if (!written) written = vra_cell_opaque_write(V, fbase, nbb, body);
             free(body);
@@ -3528,7 +3567,8 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
                 // calls anything then nothing can exercise the escape while the loop runs.
                 if (st->op==IR_CALL) has_call = true;
                 if (st->op==IR_STORE && st->n_operands>=2 && fbase >= 0 &&
-                    st->operands[0]->id == fbase) { bad = true; break; }   // whole-struct write
+                    (st->operands[0]->id == fbase ||
+                     vra_field_descends(V, cell, st->operands[0]->id))) { bad = true; break; }   // a struct holding it
                 if (st->op!=IR_STORE || st->n_operands<2 || !VRA_SAME_CELL(st->operands[0]->id)) continue;
                 bool ok_step = false;
                 IrInstr *vd=V->def[st->operands[1]->id];

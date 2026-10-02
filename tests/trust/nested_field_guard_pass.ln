@@ -1,0 +1,57 @@
+// A guard on a field path more than one level deep narrows the access through the same path, as
+// one level always did: `if b.i.s.len > 0 { b.i.s[0] }` was E085 at two and three levels, in
+// every spelling (`if`/`while`, `.len > 0`/`k < .len`, a parameter or a local), while
+// `a.s.len > 0 { a.s[0] }` proved. Two mentions of `b.i.s` are one cell: the field cells were
+// unified only when their BASE values were equal, and `b.i` is a fresh field_ptr at each mention.
+// A nested field may be a loop counter too (`while b.i.pos < n`). Each check has its own code.
+type A {
+    s i32[]
+    pos u32
+}
+type B {
+    i A
+}
+type C {
+    j B
+}
+func two_if(b B) i32 {
+    if b.i.s.len > 0 { return b.i.s[0] }
+    return 0
+}
+func two_while(b B) i32 {
+    var t i32 = 0
+    var k usize = 0
+    while k < b.i.s.len {
+        t = t +% b.i.s[k]
+        k = k + 1
+    }
+    return t
+}
+func three_local(xs i32[3]) i32 {
+    c = C(B(A(xs[0..3], 0)))
+    if c.j.i.s.len > 2 { return c.j.i.s[2] }
+    return 0
+}
+func three_param(c var C, k usize) i32 {
+    if k < c.j.i.s.len { return c.j.i.s[k] }
+    return 0
+}
+func count(n u32 <= 100) u32 {
+    xs i32[1] = [0]
+    var b = B(A(xs[0..1], 0))
+    while b.i.pos < n {
+        b.i.pos = b.i.pos + 1
+    }
+    return b.i.pos
+}
+func main() i32 {
+    xs i32[3] = [7, 8, 9]
+    b = B(A(xs[0..3], 0))
+    if two_if(b) != 7 { return 1 }
+    if two_while(b) != 24 { return 2 }
+    if three_local(xs) != 9 { return 3 }
+    var c = C(B(A(xs[0..3], 0)))
+    if three_param(var c, 1) != 8 or three_param(var c, 5) != 0 { return 4 }
+    if count(6) != 6 { return 5 }
+    return 0
+}

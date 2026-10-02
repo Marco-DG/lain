@@ -1,0 +1,25 @@
+// EXPECT: [E011]
+// A nested field may be a loop counter (`while b.i.pos < n`), and a store to a struct that HOLDS
+// it writes it with no store to the counter's own cell: `b.i = A(..)` resets `pos` to 0 after the
+// increment, every iteration, so the loop never ends. The termination rule counts that store
+// as a write to the counter; without it the increment looked like progress on every path.
+type A {
+    s i32[]
+    pos u32
+}
+type B {
+    i A
+}
+func spin(n u32 >= 2 and <= 100) u32 {
+    xs i32[1] = [0]
+    var b = B(A(xs[0..1], 0))
+    while b.i.pos < n {
+        b.i.pos = b.i.pos + 1
+        b.i = A(xs[0..1], 0)
+    }
+    return b.i.pos
+}
+func main() i32 {
+    if spin(5) != 5 { return 1 }
+    return 0
+}
