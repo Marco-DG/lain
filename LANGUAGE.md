@@ -916,6 +916,13 @@ value must be consumed **exactly once**:
 | Consumed on some paths but not others | `[E016]` |
 | Moved without writing `mov` | `[E007]` |
 
+> [!WARNING]
+> **Not yet enforced for a non-pointer `mov` field.** With `type H { mov tag i32 }`, never consuming
+> an `H` is accepted today, although consuming it on *one* path of a branch is `[E016]` — so trying
+> and failing is refused while not trying passes. The rule above is the language's rule and this is a
+> gap being closed, not an exception: an `i32` can perfectly well be a resource, a POSIX file
+> descriptor being the obvious one. Do not rely on the omission.
+
 **What consumes a linear value is destructuring it.** A function that takes `mov` and does nothing
 with it has not consumed it — it has moved the leak one level up, and is itself `[E003]`. So the
 consumer is the one that takes the value apart:
@@ -1487,6 +1494,13 @@ Conditions do not require parentheses. The body must be enclosed in `{ }`. The c
 ### 6.2 For Loops (Range-Based)
 
 For loops iterate over finite ranges, so they are always allowed: the bound is the range.
+
+> [!WARNING]
+> A range's bounds must be integers, and that is **not yet enforced**: `for i in 0..a` with a
+> floating-point `a` is accepted rather than refused at the bound. What you get instead depends on the
+> body — sometimes nothing, sometimes `[E086]` reported at the `for` line, with a message about an
+> overflowing total that never mentions the float. Until it is enforced, read an unexplained `[E086]`
+> on a `for` as a possible non-integer bound.
 
 **Single variable form:**
 ```lain
