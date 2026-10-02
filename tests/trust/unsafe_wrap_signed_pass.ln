@@ -1,0 +1,36 @@
+// A waived narrowing into a SIGNED type wraps too, and the analysis reads the exact wrapped value
+// (I.60, 532870a): 200 into an i8 is -56, by a cast, by a store of a wide sum, and by a return; a
+// u64 4294967298 into a u32 is 2. Each index below is proven only from that exact value (-56 + 60
+// is 4 in an i32[5]). C17 leaves a signed conversion that does not fit implementation-defined; the
+// emitted C, gcc and the interpreter all wrap. Run under the sanitizers and the interpreter.
+func g(p i8, q i8) i8 {
+    unsafe {
+        return p + q
+    }
+}
+
+func main() i32 {
+    var a i32[5] = [1, 2, 3, 4, 5]
+    var y i16 = 200
+    var x i8 = 0
+    unsafe {
+        x = y as i8
+    }
+    var p i8 = 100
+    var q i8 = 100
+    var z i8 = 0
+    unsafe {
+        z = p + q
+    }
+    v = g(100, 100)
+    var w u64 = 4294967298
+    var u u32 = 0
+    unsafe {
+        u = w as u32
+    }
+    t = a[(x as i32 + 60) as usize] + a[(z as i32 + 60) as usize] + a[(v as i32 + 60) as usize] + a[u]
+    if t != 18 {
+        return 1
+    }
+    return 0
+}

@@ -1086,6 +1086,10 @@ Run from the repository root if a program imports from `std/`, since module path
 relative to the **working directory**, not to the source file. `lain sub/prog.ln` looks for
 `std/math.ln` under the directory you are standing in, not under `sub/`.
 
+**[USAGE.md](USAGE.md) is the compiler's manual**: every flag, the exit codes, why `-Dlibc_printf=printf`
+and `-w` are needed, how to run a program on the IR's own semantics instead of emitting C, and how to
+read a diagnostic.
+
 ```bash
 make test                # the corpus
 make gates               # the corpus, the examples on this page, the spec, the IR units

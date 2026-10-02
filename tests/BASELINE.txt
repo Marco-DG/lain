@@ -2105,6 +2105,10 @@ at=nonnull 2
 at=pure 2
 ty=Buf struct
 ty=D struct
+### tests/trust/unsafe_wrap_signed_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/trust/unsafe_wrap_then_safe_pass.ln
 rc=0
 out=
