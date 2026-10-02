@@ -904,6 +904,12 @@ out=
 ### tests/memory/uninit_pass.ln
 rc=0
 out=
+### tests/modules/import_through_loaded_module_pass.ln
+rc=0
+out=ok
+at=access 4
+at=nonnull 4
+ty=Slice_u8 scalar
 ### tests/modules/module_alias_pass.ln
 rc=0
 out=via alias

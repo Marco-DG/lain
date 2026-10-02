@@ -40,6 +40,13 @@ the form used throughout the standard library, e.g.\
 \lain{import std.mem.\{mem\_alloc, mem\_free\}} or
 \lain{import std.fs.\{File, open\_file, close\_file\}}.
 
+\begin{constraint}
+  Each name in an import list shall be defined by the imported module or by
+  a module it imports, directly or through further imports; any other name is
+  \illformed{}~(\diagcode{E106}).  Neither the order of the import declarations
+  nor an import cycle changes which names a module reaches.
+\end{constraint}
+
 \pnum
 The \lain{use} statement (\S\,\ref{sec:lex.keywords}) provides a
 \emph{local-scope} import/alias inside a function body.  \idbehav{Its precise

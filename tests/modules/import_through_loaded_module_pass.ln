@@ -1,0 +1,11 @@
+// spec: §16 — a name in an import list may be defined by a module the imported module imports:
+// std.io imports std.c, so std.io's list may name printf. The first version of the check read
+// std.io's declaration list, which holds std.c's names only if std.io loaded std.c itself; with
+// std.c imported first, the second line was refused, and the order of two imports decided.
+import std.c.{fopen}
+import std.io.{printf}
+
+func main() i32 effects io {
+    printf("ok\n")
+    return 0
+}

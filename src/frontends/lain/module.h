@@ -132,6 +132,92 @@ static ModuleNode *find_module(const char *name) {
     return NULL;
 }
 
+// The import graph, kept so that each selective import can be checked once every module is
+// loaded. Checked at the import itself, the verdict depended on load order: a module that is
+// already loaded is not spliced again, so after `import std.c.{fopen}` std.io's list no longer
+// held std.c's names, and `import std.io.{printf}` was refused where the same import alone
+// was accepted.
+typedef struct ImportEdge {
+    char *from, *to;          // importing and imported module paths
+    Decl *import;             // the import declaration (its selected names and position)
+    char *file;               // the importing module's file
+    struct ImportEdge *next;
+} ImportEdge;
+static ImportEdge *import_edges = NULL, **import_edges_tail = &import_edges;
+
+static char *module_arena_copy(Arena *arena, const char *s) {
+    size_t n = strlen(s) + 1;
+    char *c = arena_push_many(arena, char, (isize)n);
+    memcpy(c, s, n);
+    return c;
+}
+
+static void record_import_edge(Arena *arena, const char *from, const char *to, Decl *import,
+                               const char *file) {
+    ImportEdge *e = arena_push_aligned(arena, ImportEdge);
+    e->from = module_arena_copy(arena, from);
+    e->to = module_arena_copy(arena, to);
+    e->file = module_arena_copy(arena, file);
+    e->import = import;
+    e->next = NULL;
+    *import_edges_tail = e; import_edges_tail = &e->next;
+}
+
+// Whether `d` defines `name` at module scope (a function, a type, a constant).
+static bool decl_defines_name(Decl *d, Id *name) {
+    Id *n = NULL;
+    switch (d->kind) {
+        case DECL_VARIABLE:        n = d->as.variable_decl.name; break;
+        case DECL_FUNCTION:
+        case DECL_EXTERN_FUNCTION: n = d->as.function_decl.name; break;
+        case DECL_STRUCT:          n = d->as.struct_decl.name; break;
+        case DECL_ENUM:            n = d->as.enum_decl.type_name; break;
+        case DECL_EXTERN_TYPE:     n = d->as.extern_type_decl.name; break;
+        case DECL_TYPE_ALIAS:      n = d->as.type_alias_decl.name; break;
+        default: break;
+    }
+    return n && n->length == name->length && memcmp(n->name, name->name, (size_t)n->length) == 0;
+}
+
+// Whether `name` is defined by module `mod` or by a module it imports, directly or not.
+// `seen` holds the modules already searched (an import cycle is legal).
+static bool module_reaches_name(DeclList *program, const char *mod, Id *name,
+                                const char **seen, size_t *nseen, size_t cap) {
+    for (size_t k = 0; k < *nseen; k++) if (strcmp(seen[k], mod) == 0) return false;
+    if (*nseen == cap) return false;
+    seen[(*nseen)++] = mod;
+    for (DeclList *dl = program; dl; dl = dl->next)
+        if (dl->decl && dl->decl->defining_module && strcmp(dl->decl->defining_module, mod) == 0 &&
+            decl_defines_name(dl->decl, name))
+            return true;
+    for (ImportEdge *e = import_edges; e; e = e->next)
+        if (strcmp(e->from, mod) == 0 && module_reaches_name(program, e->to, name, seen, nseen, cap))
+            return true;
+    return false;
+}
+
+// ★ A SELECTED NAME MUST EXIST where it is imported from (Handwriting, M12): `import
+// std.math.{mxa}` was accepted, so a typo surfaced later, at the use, as an unrelated error, or
+// never if the name went unused. Imports share one namespace, so a name the module reaches
+// through its own imports counts; a name defined nowhere in reach is refused at the import.
+static void module_check_selected_imports(DeclList *program) {
+    size_t cap = 0;
+    for (ModuleNode *n = loaded_modules; n; n = n->next) cap++;
+    const char **seen = malloc((cap ? cap : 1) * sizeof *seen);
+    for (ImportEdge *e = import_edges; e; e = e->next) {
+        for (IdList *sn = e->import->as.import_decl.selected; sn; sn = sn->next) {
+            size_t nseen = 0;
+            if (module_reaches_name(program, e->to, sn->id, seen, &nseen, cap)) continue;
+            fprintf(stderr, "[E106] Error Ln %li, Col %li: module '%s' defines no '%.*s' to "
+                    "import.\n", (long)e->import->line, (long)e->import->col, e->to,
+                    (int)sn->id->length, sn->id->name);
+            fprintf(stderr, "  --> %s:%li:%li\n", e->file, (long)e->import->line, (long)e->import->col);
+            exit(1);
+        }
+    }
+    free(seen);
+}
+
 /// “foo.bar.baz” → “foo/bar/baz.ln”
 static void module_name_to_path(const char *mod, char *out, size_t cap) {
     size_t i = 0;
@@ -155,6 +241,7 @@ static DeclList* load_module(Arena *file_arena,
     if (module_already_loaded(modname)) {
         return NULL;
     }
+    bool root = loaded_modules == NULL;   // the program's own module: the last to finish loading
 
     // 1) build the filesystem path
     char path[256];
@@ -225,6 +312,8 @@ static DeclList* load_module(Arena *file_arena,
             for (IdList *sn = cur->decl->as.import_decl.selected; sn; sn = sn->next)
                 register_sel_import(ast_arena, modname, sn->id);
 
+            record_import_edge(ast_arena, modname, buf, cur->decl, path);
+
             // recurse
             DeclList *child = load_module(file_arena, ast_arena, buf);
             if (child) {
@@ -248,6 +337,7 @@ static DeclList* load_module(Arena *file_arena,
     // 5) refresh the record's decls head (splicing above may have changed it)
     //    and return. The module was already registered before the import loop.
     self->decls = decls;
+    if (root) module_check_selected_imports(decls);
     return decls;
 }
 

@@ -1394,6 +1394,7 @@ Decl *parse_extern_type_decl(Arena *arena, Parser *parser) {
 Decl *parse_import_decl(Arena* arena, Parser* parser) {
     // Start with first identifier
     parser_expect(TOKEN_IDENTIFIER, "Expected module name after import");
+    isize imp_line = parser->line, imp_col = parser->column;   // diagnostics about the import
     Token start = parser->token;
     parser_advance();
 
@@ -1431,6 +1432,7 @@ Decl *parse_import_decl(Arena* arena, Parser* parser) {
     Id* mod = id(arena, len, start.start);
 
     Decl *d = decl_import(arena, mod);
+    d->line = imp_line; d->col = imp_col;   // it had none: an error about an import said Ln 0
     if (has_selective) d->as.import_decl.selected = selected;
     // Optional alias: `import foo.bar as baz` → qualified access via `baz.`
     if (parser_match(TOKEN_KEYWORD_AS)) {

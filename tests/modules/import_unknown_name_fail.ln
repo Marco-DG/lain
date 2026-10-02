@@ -1,0 +1,8 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: module 'std.math' defines no 'mxa' to import
+// spec: §16 — each name in an import list is defined by the module it is imported from, or by a
+// module that one imports. A typo here was accepted: unused, it was never reported; used, the
+// error named the call and not the import (Handwriting, M12).
+import std.math.{max, mxa}
+
+func main() i32 { return max(1, 2) - 2 }
