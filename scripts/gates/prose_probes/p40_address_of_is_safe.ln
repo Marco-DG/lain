@@ -1,0 +1,10 @@
+// CLAIM: spec 07 constraint / LANGUAGE §11.4 — taking an address is PERMITTED in safe code; only
+// CLAIM: reading or writing through the pointer needs `unsafe`. Both documents said the opposite until
+// CLAIM: 2026-10-02; the compiler session ruled the permission deliberate (Rust's split). This probe is
+// CLAIM: the ALLOWED side, which is the half a restriction-only test never exercises.
+// EXPECT: COMPILES
+func main() i32 {
+    var x = 42
+    var p = &x
+    return 0
+}

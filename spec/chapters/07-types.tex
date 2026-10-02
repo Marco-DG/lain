@@ -1140,9 +1140,10 @@ The ownership modes for pointer types are:
 \end{longtable}
 
 \begin{constraint}
-  Dereferencing a pointer or taking the address of a variable shall occur
-  only inside an \lain{unsafe} block.  Pointer dereference in safe code is
-  \illformed{}~(\diagcode{E060}).
+  Dereferencing a pointer shall occur only inside an \lain{unsafe} block;
+  pointer dereference in safe code is \illformed{}~(\diagcode{E060}).  Taking
+  the address of a variable is permitted in safe code: making a pointer is
+  harmless, and only reading or writing through it is the danger.
 \end{constraint}
 
 \section{Constrained types}

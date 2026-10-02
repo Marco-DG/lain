@@ -34,7 +34,7 @@ precedence.  All operators listed on the same row have equal precedence.
 \bottomrule
 \endlastfoot
 1 (high) & \lain{()} \lain{[]} \lain{.}              & left  & (context-dependent) \\
-2        & unary \lain{-} \lain{!} \lain{mov}        & right & (operand type) \\
+2        & unary \lain{-} \lain{!} \lain{mov} \lain{*} \lain{\&} & right & operand type; \lain{*} yields the pointee, \lain{\&} a pointer to its operand \\
 3        & \lain{as}                                  & left  & target type \\
 4        & \lain{*} \lain{/} \lain{\%} and their \lain{\%}/\lain{|}/\lain{?} forms & left  & \S\,\ref{sec:types.rank} \\
 5        & \lain{+} \lain{-} and their \lain{\%}/\lain{|}/\lain{?} forms & left  & \S\,\ref{sec:types.rank} \\

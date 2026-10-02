@@ -3054,19 +3054,24 @@ func main() i32 {
 
 ### 11.4 The Address-Of Operator (`&`)
 
-The unary address-of operator `&` creates a raw pointer to a local variable. Taking the address of a local variable is **only allowed inside an `unsafe` block**.
+The unary address-of operator `&` creates a raw pointer to a local variable, and taking an address is
+**permitted in safe code**: making a pointer is harmless. What needs `unsafe` is reading or writing
+*through* it, which is the danger — the same split as Rust's.
 
 ```lain
-func main() int {
+// VERIFY: exit 0
+func main() i32 {
     var x = 42
-
+    var p = &x          // safe: p is of type *int
     unsafe {
-        var p = &x      // OK: p is of type *int
-        *p = 100        // Mutates x
+        *p = 100        // writing through it needs unsafe
     }
-    return x            // Returns 100
+    if x != 100 { return 1 }
+    return 0
 }
 ```
+
+`&` binds more loosely than a postfix operator, so `&s.v` is `&(s.v)`: a pointer to the field.
 
 ### 11.5 Nesting Rules
 
