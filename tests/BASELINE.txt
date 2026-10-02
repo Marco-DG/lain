@@ -1510,6 +1510,9 @@ at=const 38
 ### tests/trust/char_escape_forms_pass.ln
 rc=0
 out=
+### tests/trust/char_literal_values_pass.ln
+rc=0
+out=
 ### tests/trust/comprehension_pass.ln
 rc=0
 out=0 7

@@ -587,10 +587,7 @@ for name, lit, want in [
         ("unknown escape",    r"'\q'",   "__ILLFORMED__")]:
     add("char-literal", name,
         'func main() i32 effects io {\n    c u8 = %s\n    libc_printf("%%d\\n", c as i32)\n'
-        '    return 0\n}\n' % lit, want,
-        plan=("I.83 — extra characters are silently dropped; the fix must count characters AFTER escape "
-              "processing, or the five escape cells break"
-              if name in ("two characters", "three characters") else None))
+        '    return 0\n}\n' % lit, want)
 
 
 # ── axis: a loop's GUARD crossed with the counter's DIRECTION and the function's effect row ─────

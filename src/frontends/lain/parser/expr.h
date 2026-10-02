@@ -382,6 +382,21 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
                     parser_error("unknown escape sequence in char literal");
             }
         }
+        // ★ EXACTLY ONE character or one escape (spec 05; I.83, Documentation). Only the empty
+        // literal was refused: `'ab'` compiled and was 97, the first character, and a
+        // multi-byte UTF-8 character (`'é'`) was its first BYTE. The compiler changed what the
+        // source said and printed nothing. The literal's length is fixed by its first character:
+        // 3 for a plain one, 4 for `\n`, 6 for `\xHH`.
+        {
+            isize want = (s[1] != '\\') ? 3 : (s[2] == 'x' ? 6 : 4);
+            if (len != want) {
+                fprintf(stderr, "[E100] Error Ln %li, Col %li: a character literal holds exactly one "
+                        "character or one escape; %.*s holds more, and would have been read as its "
+                        "first. For several characters write a string, \"...\".\n",
+                        (long)parser->line, (long)parser->column, (int)len, s);
+                exit(1);
+            }
+        }
 
         parser_advance();
         return expr_char_literal(arena, c);

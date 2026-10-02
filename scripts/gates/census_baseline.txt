@@ -229,8 +229,8 @@ char-literal	escape tab	OK
 char-literal	escape backslash	OK
 char-literal	escape quote	OK
 char-literal	escape hex	OK
-char-literal	two characters	ACCEPTED-ILLFORMED  # I.83 — extra characters are silently dropped; the fix must count characters AFTER escape processing, or the five escape cells break
-char-literal	three characters	ACCEPTED-ILLFORMED  # I.83 — extra characters are silently dropped; the fix must count characters AFTER escape processing, or the five escape cells break
+char-literal	two characters	ok-REFUSED [E100]
+char-literal	three characters	ok-REFUSED [E100]
 char-literal	empty	ok-REFUSED [E100]
 char-literal	unknown escape	ok-REFUSED [E100]
 loop-guard	single, up, total	OK

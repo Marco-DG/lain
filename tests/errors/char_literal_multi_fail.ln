@@ -1,0 +1,9 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 7, Col 13: a character literal holds exactly one character or one escape
+// A character literal holds exactly one character or one escape (spec 05). Only the EMPTY literal
+// was refused: `'ab'` compiled and was 97, its first character, so a typo inside a literal changed
+// what the source said and nothing was printed (Documentation, I.83).
+func main() i32 {
+    var c = 'ab'
+    return c as i32
+}

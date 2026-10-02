@@ -1,0 +1,8 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 6, Col 13: a character literal holds exactly one character or one escape
+// A character literal is one byte, and `'é'` is two in UTF-8: it compiled as its FIRST byte, 0xC3,
+// silently (I.83). Refused like any other literal holding more than one character.
+func main() i32 {
+    var c = 'é'
+    return c as i32
+}
