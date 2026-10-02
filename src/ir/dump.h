@@ -12,6 +12,14 @@ static void ir_dump_type(const IrType *t, FILE *o) {
         case IRT_INT:   fprintf(o, "%c%d", t->is_signed ? 'i' : 'u', t->bits); break;
         case IRT_BOOL:  fputs("bool", o); break;
         case IRT_FLOAT: fprintf(o, "f%d", t->float_bits); break;
+        // A function pointer and a vector printed NOTHING: the switch had no case for either, so
+        // `%3 = func_ref @f : ` ended at the colon (the Debugger agent's reading).
+        case IRT_FUNC:  fputs("*func(", o);
+                        for (int i = 0; i < t->n_fields; i++) { if (i) fputs(", ", o); ir_dump_type(t->fields[i], o); }
+                        fputc(')', o);
+                        if (t->elem) { fputc(' ', o); ir_dump_type(t->elem, o); }
+                        break;
+        case IRT_VECTOR: fprintf(o, "Vec(%lld, ", (long long)t->array_len); ir_dump_type(t->elem, o); fputc(')', o); break;
         case IRT_PTR:   fputc('*', o); if (t->ptr_mut) fputs("var ", o); ir_dump_type(t->elem, o); break;
         case IRT_SLICE: fputs("[]", o); ir_dump_type(t->elem, o); break;
         case IRT_SUM:   fputs("sum", o); if (t->sname) fprintf(o, " %.*s", (int)t->sname->length, t->sname->name); break;
@@ -42,7 +50,7 @@ static const char *ir_op_name(IrOp op) {
         case IR_SUM_NEW: return "sum_new"; case IR_SUM_TAG: return "sum_tag";
         case IR_SUM_PAYLOAD: return "sum_payload";
         case IR_STR_CONST: return "str_const";
-        case IR_ASSUME: return "assume"; case IR_ASSERT: return "assert";
+        case IR_ASSUME: return "assume"; case IR_ASSERT: return "assert"; case IR_CONSUME: return "consume";
         case IR_CALL: return "call"; case IR_PHI: return "phi";
     }
     return "??";
