@@ -1,0 +1,18 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 17, Col 12: index is not provably within bounds
+// The sum is computed wide (a u9: it cannot overflow), and its narrowing is the STORE into the
+// u8 cell, which `unsafe` waives. The cell kept 260 where the machine holds 4, and the SAFE
+// `a[x]` after the block was accepted as dead code.
+func main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var p u8 = 200
+    var q u8 = 60
+    var x u8 = 0
+    unsafe {
+        x = p + q
+    }
+    if x >= 200 {
+        return 0
+    }
+    return a[x]
+}

@@ -401,9 +401,13 @@ static void ii_binop_scalar(IrInstr *ins, IVal *a, IVal *b, IrType *ta, IrType *
             if (ovf && ins->wrap == IR_WRAP_MODULAR) { z = (__int128)((unsigned __int128)x * (unsigned __int128)y); ovf = false; }
             break;
         case IR_SDIV: case IR_UDIV:
+            // Inside `unsafe` the obligation was waived, so no proof was claimed: a zero divisor
+            // there is the program's undefined behaviour, as an out-of-range index is (above).
+            if (y == 0 && ins->unchecked) II_UB(ins, "division by zero");
             if (y == 0) II_PROOF(ins, "division by zero (proven nonzero)");
             z = x / y; break;
         case IR_SREM: case IR_UREM:
+            if (y == 0 && ins->unchecked) II_UB(ins, "remainder by zero");
             if (y == 0) II_PROOF(ins, "remainder by zero (proven nonzero)");
             z = x % y; break;
         case IR_AND: z = (__int128)((int64_t)x & (int64_t)y); if (!it_signed(rt)) z = it_wrap(z, rt); break;
@@ -417,6 +421,7 @@ static void ii_binop_scalar(IrInstr *ins, IVal *a, IVal *b, IrType *ta, IrType *
             bool lane = ins->result && ins->result->type && ins->result->type->kind == IRT_VECTOR;
             if (y < 0 || y >= w) {
                 if (lane) { z = 0; break; }
+                if (ins->unchecked) II_UB(ins, "shift by %lld, outside [0, %d)", (long long)y, w);
                 II_PROOF(ins, "shift by %lld, outside [0, %d) (proven in range)", (long long)y, w);
             }
             if (ins->op == IR_SHL) {
@@ -997,6 +1002,7 @@ static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
             if (t->cond) {
                 iv_copy(ret, ii_val(t->cond, NULL), false);
                 IrInstr where; memset(&where, 0, sizeof where); where.line = t->line; where.col = t->col;
+                where.unchecked = t->unchecked;                     // a `return` inside `unsafe`: it wraps
                 ii_land(ret, t->cond->type, f->ret_type, &where);   // the result lands in the return type
             } else ret->k = IV_UNIT;
             break;

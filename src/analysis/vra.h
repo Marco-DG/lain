@@ -222,10 +222,59 @@ typedef struct {
 // `spin(255)` on a u8 was PROVEN TERMINATING (and emitted `const`) while it looped forever.
 // A modular operation qualifies only once the check pass has shown, at the converged state,
 // that it cannot wrap; until then (and during the fixpoint) `modwrap` says it may.
+static bool vra_wraps(const IrInstr *ins);    // below: modular, or an obligation `unsafe` waived
 static bool vra_zexact(const Vra *V, const IrInstr *d) {
-    if (!d || d->wrap != IR_WRAP_MODULAR) return true;
+    if (!d || !vra_wraps(d)) return true;
     if (!d->result || d->result->id < 0 || d->result->id >= V->nvar || !V->modwrap) return false;
     return !V->modwrap[d->result->id];
+}
+
+// ★ A WAIVED OBLIGATION WRAPS. Inside `unsafe` lowering marks every instruction `unchecked`, and
+// the narrowing and overflow obligations are waived there. The C then does what C does with the
+// value (spec 18: an `unsafe` block inherits C17's rules): a conversion to an N-bit integer keeps
+// it modulo 2^N, and the interpreter does the same. This analysis went on reading the operation
+// over the integers, as though the waived obligation had been discharged: `unsafe { x = y as u8 }`
+// with y = 260 left x = 260 where the machine holds 4, `if x >= 200 { return 0 }` looked always
+// taken, and `a[x]` after it, in SAFE code, was dead to the analysis and accepted (ASan: a
+// stack-buffer-overflow). An arithmetic operation or a cast whose obligation is waived is read
+// exactly as its modular spelling is; a narrowing at a store, see vra_assign_landing.
+static bool vra_wraps(const IrInstr *ins) {
+    if (!ins) return false;
+    if (ins->wrap == IR_WRAP_MODULAR) return true;
+    return ins->wrap == IR_WRAP_CHECK && ins->unchecked &&
+           (ins->op == IR_ADD || ins->op == IR_SUB || ins->op == IR_MUL || ins->op == IR_CAST);
+}
+
+// What an N-bit integer slot holds after C's conversion of a value in [lo, hi] (`src` is the
+// value's type, NULL when it is a constant): the same range when it fits; the value modulo 2^N
+// when it is exact; otherwise every value of the slot. False when the slot is not an integer.
+// A u64 read as INT64_MAX is unbounded, not exact (see vra_cast_policy). The range is the
+// REPRESENTATION's, never a refinement's: a conversion wraps to the bits, and a value that fits
+// them but not `i32 >= 0 and <= 3` is held as it is (a narrowing into a refined type is never
+// waived, vra_check_narrow).
+static bool vra_land_range(const IrType *slot, const IrType *src, int64_t *lo, int64_t *hi) {
+    int64_t tlo, thi;
+    if (!slot || slot->kind != IRT_INT || slot->bits < 1) return false;
+    if (slot->is_signed) {
+        tlo = slot->bits >= 64 ? INT64_MIN : -(1LL << (slot->bits - 1));
+        thi = slot->bits >= 64 ? INT64_MAX : (1LL << (slot->bits - 1)) - 1;
+    } else {
+        tlo = 0;
+        thi = slot->bits >= 64 ? INT64_MAX : (int64_t)((1ULL << slot->bits) - 1);
+    }
+    bool above = src && src->kind == IRT_INT && !src->is_signed && src->bits >= 64 && *hi == INT64_MAX;
+    bool u64dst = !slot->is_signed && slot->bits >= 64;
+    if (*lo >= tlo && *hi <= thi && (!above || u64dst)) return true;
+    if (*lo == *hi && !above) {
+        uint64_t m = slot->bits >= 64 ? ~0ull : ((1ull << slot->bits) - 1), u = (uint64_t)*lo & m;
+        int64_t v; bool rep = true;
+        if (slot->is_signed) v = (slot->bits < 64 && ((u >> (slot->bits - 1)) & 1)) ? (int64_t)(u | ~m) : (int64_t)u;
+        else if (u > (uint64_t)INT64_MAX) { rep = false; v = 0; }
+        else v = (int64_t)u;
+        if (rep) { *lo = *hi = v; return true; }
+    }
+    *lo = tlo; *hi = thi;
+    return true;
 }
 
 // ── small helpers ────────────────────────────────────────────────────────────
@@ -738,7 +787,7 @@ static void vra_prepass(Vra *V) {
                 V->cval[ins->result->id] = -V->cval[ins->operands[0]->id];
             }
             if ((ins->op==IR_ADD || ins->op==IR_SUB || ins->op==IR_MUL) &&
-                ins->wrap==IR_WRAP_MODULAR && ins->result && ins->result->id>=0 && ins->result->id<V->nvar)
+                vra_wraps(ins) && ins->result && ins->result->id>=0 && ins->result->id<V->nvar)
                 V->modwrap[ins->result->id] = true;
             // ...and so is `+ − ×` of two constants, which is how i64::MIN has to be written
             // (`-9223372036854775807 - 1`: there is no literal for it). Its value is outside the
@@ -758,7 +807,7 @@ static void vra_prepass(Vra *V) {
                 __int128 tlo = t->is_signed ? -((__int128)1 << (nb-1)) : 0;
                 __int128 thi = t->is_signed ? ((__int128)1 << (nb-1)) - 1 : ((__int128)1 << nb) - 1;
                 bool ok = (z >= tlo && z <= thi);
-                if (!ok && ins->wrap == IR_WRAP_MODULAR) {
+                if (!ok && vra_wraps(ins)) {
                     unsigned __int128 m = ((unsigned __int128)1 << nb) - 1, u = (unsigned __int128)z & m;
                     z = (t->is_signed && (u >> (nb-1)) & 1) ? (__int128)u - ((__int128)1 << nb) : (__int128)u;
                     ok = true;
@@ -916,6 +965,44 @@ static void vra_assign_copy(Vra *V, Octagon *o, int dst, int src) {
     if (shh) oct_add_ub(o, dst, shi);
 }
 
+// The slot a STORE writes: the pointee of its address, or an alloca's own type.
+static IrType *vra_store_slot(Vra *V, IrInstr *st) {
+    if (!st || st->n_operands < 1) return NULL;
+    IrType *pt = st->operands[0]->type;
+    IrInstr *ad = V->def[st->operands[0]->id];
+    return (pt && pt->kind==IRT_PTR) ? pt->elem
+         : (ad && ad->op==IR_ALLOCA) ? ad->aux.alloca_ty : NULL;
+}
+
+static bool vra_type_may_lose(const IrType *from, const IrType *to);   // fwd
+static bool vra_bound_fits(int64_t c);                                   // fwd
+
+// ★ A WAIVED NARROWING AT A STORE (see vra_wraps). Path-F computes the arithmetic wide, so the
+// narrowing's obligation sits where the value LANDS in a narrower slot: a store into a cell, a
+// field, a constructor's field. Where `unsafe` waived it, the slot holds what C's conversion
+// leaves, and the copy is right only where the value provably fits. `unsafe { x = p + q }` with
+// 200 + 60 into a u8 kept 260 in the cell, and safe code after it reasoned from 260 (the machine
+// holds 4). A value that may not fit lands as vra_land_range says: modulo 2^N when exact, any
+// value of the slot when not.
+static void vra_assign_landing(Vra *V, Octagon *o, int dst, IrValue *val, IrType *slot, bool waived) {
+    if (!val) { oct_forget(o, dst); return; }
+    if (waived && val->type && slot && vra_type_may_lose(val->type, slot)) {
+        int64_t lo, hi;
+        oct_close(o);
+        vra_range(V, o, val, &lo, &hi);
+        int64_t l2 = lo, h2 = hi;
+        if (vra_land_range(slot, val->type, &l2, &h2) && !(l2 == lo && h2 == hi)) {
+            oct_forget(o, dst);
+            bool u64dst = !slot->is_signed && slot->bits >= 64;
+            if (vra_bound_fits(l2)) oct_add_lb(o, dst, l2);
+            else if (!slot->is_signed) oct_add_lb(o, dst, 0);
+            if (vra_bound_fits(h2) && !(u64dst && h2 == INT64_MAX)) oct_add_ub(o, dst, h2);
+            return;
+        }
+    }
+    vra_assign_copy(V, o, dst, val->id);
+}
+
 // A constant has no octagon dimension (see the packing note), so every interval read must
 // consult the constant table first. This is not a workaround: the exact value is strictly
 // better information than any interval the domain could hold.
@@ -1019,7 +1106,7 @@ static bool vra_cast_policy(Vra *V, Octagon *W, IrInstr *ins, int r) {
     bool u64dst = !t->is_signed && t->bits >= 64;
     bool above  = !x->type->is_signed && x->type->bits >= 64 && hi == INT64_MAX;  // may exceed i64
     if (lo >= tlo && hi <= thi && (!above || u64dst)) return false;
-    if (ins->wrap == IR_WRAP_MODULAR && lo == hi && !above) {
+    if (vra_wraps(ins) && lo == hi && !above) {
         uint64_t m = t->bits >= 64 ? ~0ull : ((1ull << t->bits) - 1), u = (uint64_t)lo & m;
         bool rep = true; int64_t v;
         if (t->is_signed) v = (t->bits < 64 && ((u >> (t->bits - 1)) & 1)) ? (int64_t)(u | ~m) : (int64_t)u;
@@ -1263,7 +1350,8 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 break;
             }
             if (vra_field_cell_base(V, cell) >= 0) {        // a field of a local struct
-                vra_assign_copy(V, W, vra_canon_cell(V, cell), ins->operands[1]->id);
+                vra_assign_landing(V, W, vra_canon_cell(V, cell), ins->operands[1],
+                                   vra_store_slot(V, ins), ins->unchecked);
                 break;
             }
             IrInstr *d = V->def[cell];
@@ -1298,6 +1386,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 || sparam_base) {
                 IrInstr *sn = V->def[ins->operands[1]->id];
                 if (sn && sn->op != IR_STRUCT_NEW) sn = NULL;
+                IrType *snt = (sn && sn->result) ? sn->result->type : NULL;
                 for (int q=0; q<V->nvar; q++) {
                     IrInstr *qd = V->def[q];
                     if (!qd || qd->op!=IR_FIELD_PTR || qd->n_operands<1) continue;
@@ -1307,14 +1396,18 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                     }
                     int fi = qd->aux.field_idx;
                     if (sn && fi >= 0 && fi < sn->n_operands)
-                        vra_assign_copy(V, W, vra_canon_cell(V, q), sn->operands[fi]->id);
+                        vra_assign_landing(V, W, vra_canon_cell(V, q), sn->operands[fi],
+                                           (snt && snt->kind==IRT_STRUCT && fi < snt->n_fields)
+                                               ? snt->fields[fi] : NULL,
+                                           sn->unchecked);
                     else
                         oct_forget(W, vra_canon_cell(V, q));
                 }
             }
             if ((d && d->op==IR_ALLOCA && d->aux.alloca_ty && d->aux.alloca_ty->kind!=IRT_ARRAY)
                 || vra_is_param_cell(V, cell))
-                vra_assign_copy(V, W, cell, ins->operands[1]->id);  // value → cell
+                vra_assign_landing(V, W, cell, ins->operands[1],    // value → cell
+                                   vra_store_slot(V, ins), ins->unchecked);
             break;
         }
         case IR_ADD: case IR_SUB: {
@@ -1322,7 +1415,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             int a=ins->operands[0]->id, b=ins->operands[1]->id;
             bool ac=V->cknown[a], bc=V->cknown[b], isadd=(ins->op==IR_ADD);
             oct_forget(W, r);
-            if (ins->wrap == IR_WRAP_MODULAR && vra_modular_wraps(V, W, ins, r)) break;
+            if (vra_wraps(ins) && vra_modular_wraps(V, W, ins, r)) break;
             // ★ AN UNSIGNED SUBTRACTION THAT MAY UNDERFLOW HAS NO ℤ RELATION TO STATE.
             // The transfers below record `r = a − b` exactly, which is true over ℤ and FALSE
             // in u64 the moment `a < b`: `hi = mid − 1` with mid = 0 is SIZE_MAX, not −1. The
@@ -1409,7 +1502,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             int a=ins->operands[0]->id, b=ins->operands[1]->id;   // a[i*W + j], W constant
             bool ac=V->cknown[a], bc=V->cknown[b];
             oct_forget(W, r);
-            if (ins->wrap == IR_WRAP_MODULAR && vra_modular_wraps(V, W, ins, r)) break;
+            if (vra_wraps(ins) && vra_modular_wraps(V, W, ins, r)) break;
             if (ac && bc) { int64_t v; if (vra_safe_scale(V->cval[a],V->cval[b],&v)) oct_add_const(W,r,v); break; }
             // S2: `i * e1` where e1 is a region's innermost EXTENT — the row-major stride.
             // Given 0 ≤ i < e0 and e1 ≥ 0 and len == e0*e1 (true by construction, the shape
@@ -1818,7 +1911,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (r>=0){ // treat as a copy (widenings preserve value; a narrowing that
                        // changes it would be a separate proven-safe obligation)
                 if (vra_is_int(ins->result) && ins->n_operands) {
-                    if (ins->wrap != IR_WRAP_CHECK && vra_cast_policy(V, W, ins, r)) break;
+                    if ((ins->wrap != IR_WRAP_CHECK || ins->unchecked) && vra_cast_policy(V, W, ins, r)) break;
                     vra_assign_copy(V, W, r, ins->operands[0]->id);
                 }
                 else oct_forget(W, r);
@@ -3987,7 +4080,7 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
 // nothing, because the value that left it came back in somewhere else.
 static bool vra_accum_fits_step(Vra *V, IrValue *val, int64_t lo, int64_t hi) {
     IrInstr *d = (val && val->id >= 0 && val->id < V->nvar) ? V->def[val->id] : NULL;
-    if (!d || d->wrap != IR_WRAP_MODULAR) return true;
+    if (!d || !vra_wraps(d)) return true;
     int64_t tlo, thi;
     if (!d->result || !irtype_int_range(d->result->type, &tlo, &thi)) return false;
     return lo >= tlo && hi <= thi;
@@ -4446,7 +4539,7 @@ static Vra *vra_analyze(IrFunc *f) {
             // An operation that never runs cannot wrap — the same reachability every other
             // obligation in this pass is discharged by.
             for (IrInstr *ins=b->instrs; ins; ins=ins->next)
-                if (ins->wrap == IR_WRAP_MODULAR && ins->result && ins->result->id >= 0 &&
+                if (vra_wraps(ins) && ins->result && ins->result->id >= 0 &&
                     ins->result->id < V->nvar) V->modwrap[ins->result->id] = false;
             continue;
         }
@@ -4470,7 +4563,7 @@ static Vra *vra_analyze(IrFunc *f) {
                 case IR_ASSERT: oct_close(&W); vra_check_assert(V,&W,ins,b); break;
                 case IR_ADD: case IR_SUB: case IR_MUL:
                     oct_close(&W); vra_check_overflow(V,&W,ins);
-                    if (ins->wrap == IR_WRAP_MODULAR && ins->result && ins->result->id >= 0 &&
+                    if (vra_wraps(ins) && ins->result && ins->result->id >= 0 &&
                         ins->result->id < V->nvar)
                         V->modwrap[ins->result->id] = vra_modular_may_wrap(V, &W, ins);
                     break;
@@ -4479,10 +4572,7 @@ static Vra *vra_analyze(IrFunc *f) {
                 // Path-F's other half: the widened result meets a narrower slot HERE.
                 case IR_STORE: {
                     if (ins->n_operands < 2) break;
-                    IrType *pt = ins->operands[0]->type;
-                    IrInstr *ad = V->def[ins->operands[0]->id];
-                    IrType *slot = (pt && pt->kind==IRT_PTR) ? pt->elem
-                                 : (ad && ad->op==IR_ALLOCA) ? ad->aux.alloca_ty : NULL;
+                    IrType *slot = vra_store_slot(V, ins);
                     if (slot && vra_type_may_lose(ins->operands[1]->type, slot)) {
                         oct_close(&W);
                         vra_check_narrow(V,&W, ins->operands[1], slot, ins, ins->line, ins->col);
@@ -4584,7 +4674,7 @@ static Vra *vra_analyze(IrFunc *f) {
         // declared type — so it was a new-engine-only hole and a switchover blocker.
         //
         // The check is the same one STORE and CAST already use; only the site was missing.
-        if (b->term.kind == IR_TERM_RET && b->term.cond && V->f->ret_type) {
+        if (b->term.kind == IR_TERM_RET && b->term.cond && V->f->ret_type && !b->term.unchecked) {
             IrValue *rv = b->term.cond;
             if (vra_type_may_lose(rv->type, V->f->ret_type)) {
                 oct_close(&W);
@@ -4696,6 +4786,18 @@ static Vra *vra_analyze(IrFunc *f) {
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
             int64_t lo,hi; vra_range(V,&W,b->term.cond,&lo,&hi);
+            // The returned value LANDS in the return type, and where that narrowing is WAIVED
+            // (`unsafe { return p + q }` on u8) the caller receives it modulo 2^N: the range of
+            // the wide sum, [260, 260] for 200 + 60, made the caller's `v >= 200` always true and
+            // a safe `a[v]` after it dead. Only there: a CHECKED narrowing that may not fit is
+            // refused, and its callers go on reading the value as if the check passed (vra_range
+            // meets it with the result's type). Read as a wrap, a refused function's callers saw
+            // the whole type and reported a second, cascading E086 of their own. The waiver is
+            // the final pass's: the terminator's, or the returned value's own instruction's.
+            { IrValue *rv2 = b->term.cond;
+              IrInstr *rsite = (rv2->id >= 0 && rv2->id < V->nvar) ? V->def[rv2->id] : NULL;
+              if (b->term.unchecked || (rsite && rsite->unchecked))
+                  vra_land_range(V->f->ret_type, rv2->type, &lo, &hi); }
             if (lo<rlo) rlo=lo;
             if (hi>rhi) rhi=hi;
             any=true;
@@ -4768,6 +4870,9 @@ static bool vra_ret_range_at(Vra *V, Octagon *W, IrFunc *g, IrInstr *call,
         if (!irtype_int_range(p->value->type, &tlo, &thi)) continue;
         int64_t c = V->cval[a->id];
         if (c <= tlo && c >= thi) continue;               // no news
+        // A constant the parameter cannot hold lands in it wrapped, where `unsafe` waived the
+        // narrowing: binding it would have analysed the callee at the clamp. Bind nothing.
+        if (c < tlo || c > thi) continue;
         bhas[k] = true; blo[k] = c; bhi[k] = c; tighter = true;
     }
     if (!tighter) { if (rid>=0) V->cret_state[rid]=1; return false; }

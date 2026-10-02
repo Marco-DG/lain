@@ -1,0 +1,19 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 18, Col 12: index is not provably within bounds
+// `unsafe` waives the narrowing of `y as u8`, and the C wraps 260 to 4 (spec 18: an `unsafe`
+// block inherits C17's conversion). The analysis read the cast as a copy, so x was 260, the
+// `x >= 200` test looked always taken, and the SAFE `a[x]` below it was dead to the analysis:
+// accepted, and a read of a[4] (ASan: stack-buffer-overflow; --interpret: PROOF FAILED).
+// Found writing the probes of M5c.
+func main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var y u16 = 260
+    var x u8 = 0
+    unsafe {
+        x = y as u8
+    }
+    if x >= 200 {
+        return 0
+    }
+    return a[x]
+}

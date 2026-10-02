@@ -425,6 +425,9 @@ typedef struct IrTerm {
     struct IrBlock *b;      // BR_COND else
     IrSwitchCase   *cases;  // SWITCH
     isize           line, col;  // RET: the return's position (an obligation on it is reported there)
+    // Set inside `unsafe` (lower.h, STMT_UNSAFE), as IrInstr.unchecked is: a RET's narrowing of
+    // its value into the return type is waived there, and C's conversion wraps it.
+    bool            unchecked;
 } IrTerm;
 
 // ─────────────────────────────────────────────────────────────────────────────

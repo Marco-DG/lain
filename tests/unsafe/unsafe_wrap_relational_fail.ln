@@ -1,0 +1,23 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 16, Col 16: index is not provably within bounds
+// No constant is needed: the analysis kept the RELATION x == y across the waived cast, so under
+// `260 <= y <= 263` it believed x >= 260 and the SAFE `a[x]` was dead. The machine holds
+// x = y modulo 256, 4 to 7 (f(261) reads a[5]).
+func f(y u16) i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var x u8 = 0
+    unsafe {
+        x = y as u8
+    }
+    if y >= 260 and y <= 263 {
+        if x >= 200 {
+            return 0
+        }
+        return a[x]
+    }
+    return 0
+}
+
+func main() i32 {
+    return f(261)
+}

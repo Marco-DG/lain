@@ -1,0 +1,19 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 18, Col 12: index is not provably within bounds
+// Across a call: `return p + q` narrows the wide sum into the u8 result, waived inside `unsafe`.
+// The callee's return range was the sum's, [260, 260] at this call, so the caller's
+// `v >= 200` looked always taken and its SAFE `a[v]` was dead (the machine returns 4).
+func add(p u8, q u8) u8 {
+    unsafe {
+        return p + q
+    }
+}
+
+func main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    v = add(200, 60)
+    if v >= 200 {
+        return 0
+    }
+    return a[v]
+}

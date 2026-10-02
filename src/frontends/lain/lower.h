@@ -3964,11 +3964,18 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
             // the obligation, and the corpus's own `unsafe { var c u8 = a + b }` still fired.
             bool o=c->unsafe; c->unsafe=true;
             IrBlock *b0 = c->cur; IrInstr *t0 = b0 ? b0->instrs_tail : NULL;
+            bool b0_set = b0 && ir_is_set_term(b0);
             int32_t nb0 = c->f->next_block_id;
             ir_lower_stmts(c, s->as.unsafe_stmt.body);
             for (IrInstr *i = (t0 ? t0->next : (b0 ? b0->instrs : NULL)); i; i = i->next) i->unchecked = true;
             for (IrBlock *b = c->f->blocks; b; b = b->next)
                 if (b->id >= nb0) for (IrInstr *i = b->instrs; i; i = i->next) i->unchecked = true;
+            // ...and every TERMINATOR the body set: a `return` inside the block narrows its value
+            // into the return type there, and that narrowing is waived like the others. A
+            // terminator still unset belongs to code after the block.
+            if (b0 && !b0_set && ir_is_set_term(b0)) b0->term.unchecked = true;
+            for (IrBlock *b = c->f->blocks; b; b = b->next)
+                if (b->id >= nb0 && ir_is_set_term(b)) b->term.unchecked = true;
             c->unsafe=o; break;
         }
         // ── comptime `if`: the FRONT END already chose, and lowering must honour the choice ──

@@ -1,0 +1,17 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 16, Col 12: index is not provably within bounds
+// The same waived narrowing landing in a struct FIELD: the field cell kept 260.
+type S { v u8, w u8 }
+
+func main() i32 {
+    var a i32[4] = [1, 2, 3, 4]
+    var y u16 = 260
+    var s = S(0, 0)
+    unsafe {
+        s.v = y as u8
+    }
+    if s.v >= 200 {
+        return 0
+    }
+    return a[s.v]
+}
