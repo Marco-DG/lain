@@ -2299,15 +2299,20 @@ extern func libc_puts(s *u8) int effects io
 
 **`std/io.ln`** — Basic I/O:
 ```lain
-import std.c
+import std.c.{libc_printf, libc_puts}
 
-func print(s u8[:0]) {
-    libc_printf(s.data)
+func print(s u8[:0]) effects io {
+    // An explicit "%s", so a '%' in the caller's bytes is never read as a
+    // conversion specifier — passing `s.data` as the format is the classic
+    // format-string vulnerability.
+    libc_printf("%s", s.data)
 }
 
-func println(s u8[:0]) {
+func println(s u8[:0]) effects io {
     libc_puts(s.data)
 }
+
+func main() i32 { return 0 }
 ```
 
 **`std/fs.ln`** — File system with ownership:
