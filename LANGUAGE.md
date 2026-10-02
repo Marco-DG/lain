@@ -1970,17 +1970,27 @@ var b = n as u8      // Explicit: int -> u8
 // cast tiers.
 ```
 
-**Float/int (explicit, requires `as`):**
+**Float/int (explicit, requires `as`).** Note the literal: `var f f64 = 3` is itself `[E012]`,
+because an integer literal does not implicitly become a float either.
+
 ```lain
-var f f64 = 3
-var i = f as int     // Explicit: float -> int
-var g = i as f64     // Explicit: int -> float
+func main() i32 {
+    var f f64 = 3.0
+    var i = f as int     // Explicit: float -> int
+    var g = i as f64     // Explicit: int -> float
+    return 0
+}
 ```
 
 **Pointer casts (requires `unsafe`):**
 ```lain
-unsafe {
-    var vp = ptr as *void    // pointer cast inside unsafe
+func main() i32 {
+    var n int = 42
+    var p = &n
+    unsafe {
+        var vp = p as *void    // pointer cast inside unsafe
+    }
+    return 0
 }
 ```
 
@@ -2164,11 +2174,47 @@ The compiler uses **Value Range Analysis (VRA)**, a decidable, polynomial-time s
 
 4. **Assignment tracking**: Ranges are updated through assignments.
 
-5. **Linear constraint propagation**:
-   ```lain
-   var x = y + 1   // x = y + 1 implies x > y
-   require_gt(x, y) // OK: compiler knows x > y
-   ```
+5. **Linear constraint propagation**: `var x = y + 1` implies `x > y`, as a *relation* and not
+   merely as two separate ranges.
+
+That last one is worth seeing, because a relation between two variables is invisible in any single
+variable's range. The way to observe it is reachability: if the compiler knows `x > y`, then the
+branch `x <= y` is dead, and code inside it is never required to prove anything — so a division by
+zero there is accepted:
+
+```lain
+type Small = i32 >= 0 and <= 1000
+
+func rel(y Small) i32 {
+    var x = y + 1
+    if x <= y {
+        return 5 /% 0      // unreachable: the compiler has x > y
+    }
+    return x
+}
+
+func main() i32 {
+    return rel(3)
+}
+```
+
+Take the relation away — two independent parameters with the same ranges — and the identical branch
+is refused, which is what makes the example evidence rather than illustration:
+
+```lain
+type Small = i32 >= 0 and <= 1000
+
+func rel(y Small, x Small) i32 {
+    if x <= y {
+        return 5 /% 0      // ERROR [E015]: reachable, and the divisor is 0
+    }
+    return x
+}
+```
+
+```
+[E015] Error Ln 5, Col 16: divisor is not provably non-zero
+```
 
 ### 8.7 Loop Widening
 
