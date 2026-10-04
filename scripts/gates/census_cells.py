@@ -1174,6 +1174,100 @@ add("extern-call-spelling", "an extern's var parameter given its argument withou
     '    bump(n)\n    return 0\n}\n', "__ILLFORMED__")
 
 
+# ── axis: a RUNTIME array length (I.118) ──────────────────────────────────────────────────────────
+# A local `var a u8[n]` with a runtime length allocates n elements in the frame and gives the array
+# len n. Nothing required n >= 0. A signed n of -1 allocated (size_t)-1 bytes, the array's len became
+# (size_t)-1, and the guarded `if 5 < a.len { a[5] = 7 }` below was proven in bounds and wrote past the
+# frame (ASan: dynamic-stack-buffer-overflow WRITE; -O2 printed 7). Only the interpreter objected ("a
+# slice of -1 elements"), so C against the interpreter is the instrument for this shape. An unsigned
+# length needs no test. A signed one needs `n >= 0` proven first, and the test must be the right one:
+# `n < -1` lets -1 through. Elements are u8 throughout, so the allocation's size is the length itself.
+def _len_prog(param, body, args):
+    return ('func f(n %s) i32 {\n%s}\n'
+            'func main() i32 effects io {\n    libc_printf("%s\\n", %s)\n    return 0\n}\n'
+            % (param, body, " ".join(["%d"] * len(args)), ", ".join("f(%d)" % a for a in args)))
+def _arr(name, ind="    "):
+    return (ind + 'var a u8[%s]\n' % name + ind + 'if 5 < a.len {\n' + ind + '    a[5] = 7\n'
+            + ind + '    return a[5] as i32\n' + ind + '}\n' + ind + 'return 1\n')
+def _f(n, least=None):
+    # DERIVED: a length below `least` takes the early return (0); otherwise the array has n
+    # elements, and index 5 exists exactly when 5 < n (7), else 1.
+    if least is not None and n < least:
+        return 0
+    return 7 if 5 < n else 1
+def _out(args, least=None):
+    return " ".join(str(_f(a, least)) for a in args) + "\n"
+_I118 = ("I.118: a signed runtime length is never required to be >= 0, so -1 allocates (size_t)-1 "
+         "elements, the array's len is (size_t)-1 and a guarded index is proven in bounds")
+_EARLY = '    if n < 0 {\n        return 0\n    }\n'
+for t in ("i8", "i32", "i64"):
+    add("array-runtime-length", "an %s length with no test" % t, _len_prog(t, _arr("n"), [8]),
+        "__ILLFORMED__", plan=_I118)
+add("array-runtime-length", "an i32 length after `if n < -1 { return 0 }`: one short",
+    _len_prog("i32", '    if n < -1 {\n        return 0\n    }\n' + _arr("n"), [8]),
+    "__ILLFORMED__", plan=_I118)
+add("array-runtime-length", "an i32 length copied into an immutable local with no test",
+    _len_prog("i32", '    m = n\n' + _arr("m"), [8]), "__ILLFORMED__", plan=_I118)
+add("array-runtime-length", "a constant -1 bound to an immutable local",
+    'func main() i32 effects io {\n    m i32 = -1\n    var a u8[m]\n    libc_printf("done\\n")\n'
+    '    return 0\n}\n', "__ILLFORMED__", plan=_I118)
+add("array-runtime-length", "an i32 length after `if n < 0 { return 0 }`",
+    _len_prog("i32", _EARLY + _arr("n"), [-1, 3, 8]), _out([-1, 3, 8], least=0))
+add("array-runtime-length", "an i32 length inside `if 0 <= n`",
+    _len_prog("i32", '    if 0 <= n {\n' + _arr("n", "        ") + '    }\n    return 0\n', [-1, 3, 8]),
+    _out([-1, 3, 8], least=0))
+add("array-runtime-length", "an i32 parameter refined `>= 0`",
+    _len_prog("i32 >= 0", _arr("n"), [3, 8]), _out([3, 8]))
+for t in ("usize", "u8"):
+    add("array-runtime-length", "a %s length with no test" % t, _len_prog(t, _arr("n"), [3, 8]),
+        _out([3, 8]))
+
+
+# ── axis: a CONSTANT array length, in every position a type is written (I.84) ─────────────────────
+# Spec 07: "N shall be a compile-time constant integer greater than zero". `var a i32[0]` was
+# accepted, and a constant of zero or less in any other spelling (`-1`, `K - 5` with K = 5, a module
+# constant 0) fell through to the runtime-length path. So a -1 here is the I.118 hole above, refused
+# on that path first (E085), and a 0 is I.84's.
+# The position matters as much as the spelling: a struct field, a parameter, a type alias and an inner
+# dimension each read the length on a different path. A parameter whose length is zero or less can
+# never be called (every call is E087), so that hole is a declaration the spec forbids, not a run.
+_I84 = "I.84: spec 07 says an array's constant length is greater than zero, and a length of 0 is accepted"
+_I84P = ("I.84: spec 07 says an array's constant length is greater than zero, and a parameter's length "
+         "of -1 is accepted (every call to it is E087)")
+_CONSTS = 'K i32 = 5\nZ i32 = 0\n'
+_DONE = 'func main() i32 effects io {\n    libc_printf("done\\n")\n    return 0\n}\n'
+def _local(n):
+    return (_CONSTS + 'func main() i32 effects io {\n    var a i32[%s]\n    libc_printf("done\\n")\n'
+            '    return 0\n}\n' % n)
+# DERIVED: each program only declares the array and prints "done"; K - 2 is 3, K - 5 is 0,
+# K - 6 is -1 and Z is 0.
+for label, n, exp, plan in (
+        ("a local of length 3", "3", "done\n", None),
+        ("a local of length 0", "0", "__ILLFORMED__", _I84),
+        ("a local of length 0x0", "0x0", "__ILLFORMED__", _I84),
+        ("a local of length -1", "-1", "__ILLFORMED__", _I118),
+        ("a local of length K - 2, which is 3", "K - 2", "done\n", None),
+        ("a local of length K - 5, which is 0", "K - 5", "__ILLFORMED__", _I84),
+        ("a local of length K - 6, which is -1", "K - 6", "__ILLFORMED__", _I118),
+        ("a local of length Z, a module constant 0", "Z", "__ILLFORMED__", _I84),
+        ("a local whose inner length is 0", "2][0", "__ILLFORMED__", _I84)):
+    add("array-constant-length", label, _local(n), exp, plan=plan)
+for label, n, exp, plan in (
+        ("a struct field of length 3", "3", "done\n", None),
+        ("a struct field of length 0", "0", "__ILLFORMED__", _I84),
+        ("a struct field of length -1", "-1", "__ILLFORMED__", None)):
+    add("array-constant-length", label,
+        _CONSTS + 'type S {\n    a i32[%s]\n    n i32\n}\n' % n + _DONE, exp, plan=plan)
+for label, n, exp, plan in (
+        ("a parameter of length 3", "3", "done\n", None),
+        ("a parameter of length 0", "0", "__ILLFORMED__", _I84),
+        ("a parameter of length -1", "-1", "__ILLFORMED__", _I84P)):
+    add("array-constant-length", label,
+        _CONSTS + 'func g(a i32[%s]) i32 {\n    return 1\n}\n' % n + _DONE, exp, plan=plan)
+add("array-constant-length", "a type alias of length 0",
+    _CONSTS + 'type A = i32[0]\n' + _DONE, "__ILLFORMED__")
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
