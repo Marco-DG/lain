@@ -104,6 +104,25 @@ follows IEEE~754.
 The unary \lain{-} operator negates its operand.  For unsigned integer
 types the result wraps modulo $2^N$.
 
+\pnum
+The unary \lain{*} operator reads through a pointer: \lain{*p} is the value \lain{p} points to, and
+\lain{*p = v} writes it.  The unary \lain{\&} operator yields a pointer to its operand.
+
+\begin{constraint}
+  The operand of unary \lain{*} shall have a pointer type; otherwise the program is
+  \illformed{}~(\diagcode{E012}).  This holds inside \lain{unsafe} as it does outside: \lain{unsafe}
+  permits reading through a pointer, not reading through a value that is not one.
+\end{constraint}
+
+\begin{laincode}
+func main() i32 {
+    unsafe {
+        var x = *true      // ERROR [E012]: the operand is 'bool'
+    }
+    return 0
+}
+\end{laincode}
+
 \section{Comparison operators}
 \label{sec:expr.compare}
 \index{comparison operator}

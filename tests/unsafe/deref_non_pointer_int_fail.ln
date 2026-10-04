@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: `*` dereferences a pointer, and its operand is 'i32'
+// I.123 (Secondary Compiler Worker): a dereference of a non-pointer typed its result as nothing, so
+// inside `unsafe` this compiled to a `void` C variable that gcc refused. `unsafe` licenses memory
+// operations, not a dereference of something that is not an address.
+func main() i32 {
+    var r i32 = 0
+    unsafe {
+        x = **5
+    }
+    return r
+}

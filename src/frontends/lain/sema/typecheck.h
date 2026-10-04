@@ -1615,7 +1615,7 @@ static Type *lookup_struct_field_type(Id *struct_name, Id *field) {
   if (!struct_name) {
     fprintf(stderr, "internal error: lookup_struct_field_type called "
                     "with NULL struct_name\n");
-    exit(1);
+    exit(70);                                   // an internal error, not a refused program
   }
 
   DeclStruct *sd = find_struct_decl(struct_name);
@@ -3328,7 +3328,7 @@ void sema_infer_expr(Expr *e) {
              // return;
              // Actually let's exit to be consistent with previous panic
              fprintf(stderr, "internal error: deref operand untyped\n");
-             exit(1);
+             exit(70);                          // an internal error, not a refused program
         }
         
         Type *t = e->as.unary_expr.right->type;
@@ -3344,11 +3344,16 @@ void sema_infer_expr(Expr *e) {
                 exit(1);
             }
         } else {
-             // Non-pointer deref??
-             // Likely a parsing error or a reference deref if supported.
-             // For now, assume it results in element type if we can determine it, 
-             // or just int if unknown.
-             e->type = get_builtin_i32_type();
+            // ★ ONLY A POINTER IS DEREFERENCED (I.123). This typed any other operand `i32` and went
+            // on: inside `unsafe`, `x = *true` compiled to a `void` C variable that gcc refused,
+            // and so did `*[1, 2]`, `*main`, `**5` and `*"ab"` (Secondary Compiler Worker).
+            // `unsafe` licenses memory operations, not a dereference of something that is not an
+            // address.
+            char tb[128]; type_describe(e->as.unary_expr.right->type, tb, sizeof tb);
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: `*` dereferences a pointer, and its operand "
+                    "is '%s'.\n", (long)e->line, (long)e->col, tb);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
         }
     } else {
         e->type = get_builtin_i32_type();
@@ -3794,6 +3799,22 @@ void sema_infer_expr(Expr *e) {
     Type *ptr_ty = e->as.deref_expr.expr ? e->as.deref_expr.expr->type : NULL;
     if (ptr_ty && ptr_ty->kind == TYPE_POINTER && ptr_ty->element_type) {
         e->type = ptr_ty->element_type;
+    }
+    // ★ ONLY A POINTER IS DEREFERENCED (I.123). Any other operand left the result untyped and
+    // went on: inside `unsafe`, `x = *true` compiled to a `void` C variable that gcc refused, and
+    // so did `*[1, 2]`, `*main`, `**5` and `*"ab"` (Secondary Compiler Worker). Outside `unsafe`
+    // E060 came first and hid it. `unsafe` licenses memory operations, not a dereference of
+    // something that is not an address.
+    {   Type *pt = ptr_ty;
+        while (pt && pt->kind == TYPE_COMPTIME && pt->element_type) pt = pt->element_type;
+        if (pt) pt = resolve_type_alias(pt);
+        if (pt && pt->kind != TYPE_POINTER) {
+            char tb[128]; type_describe(ptr_ty, tb, sizeof tb);
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: `*` dereferences a pointer, and its operand "
+                    "is '%s'.\n", (long)e->line, (long)e->col, tb);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        }
     }
     // Safety check only during walk phase (when in-guards are active).
     // During resolve phase, in-guards aren't pushed yet — skip the check.
