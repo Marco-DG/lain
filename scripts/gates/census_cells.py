@@ -986,6 +986,143 @@ add("imported-constant", "the same constant read in the main file",
     'K u8 = 7\nfunc get() u8 {\n    return K\n}\n' + _GET7, "7\n")
 
 
+# ── axis: a variant whose name is another's with a prefix and `_` (I.105) ────────────────────────
+# MCW's I.105, a MISCOMPILE on HEAD: variants were recovered from their mangled names by SUFFIX, first
+# match wins, so with `Red` and `Dark_Red` in one type, `Dark_Red` can become `Red`. C and the
+# interpreter agree on the wrong answer, so only a derived expectation sees it. Crossed as MCW laid it
+# out: plain enum, union marker and payload variant; both declaration orders; qualified and bare
+# patterns; construction and matching, and exhaustiveness.
+#
+# Construction and matching depend on ORDER: with the short name first, `Shade.Dark_Red` constructs Red
+# and `return Not_Found` returns Found; with the long name first it works by luck, and those cells are
+# the allowed side. Exhaustiveness does NOT depend on order: an arm for the LONGER name is credited as
+# covering the shorter one too, so a `case` holding only `Dark_Red:` passes as complete in both orders,
+# and a call with the uncovered variant falls off the end and returns 0 (C at -O0 and -O2 agree, UBSan
+# is silent because C does not trap a missing return, the interpreter says NOT MODELLED). An arm for
+# the SHORTER name is never over-credited; the `Shade.Red:` cell is that control.
+_I105 = ("I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and "
+         "`Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm "
+         "for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is "
+         "accepted and the uncovered variant returns 0")
+def _shade_match(order, q):
+    return ('type Shade { %s }\nfunc name(s Shade) u8 {\n    case s {\n        %sRed: return 82\n'
+            '        %sDark_Red: return 68\n    }\n}\n'
+            'func main() i32 effects io {\n    libc_printf("%%c%%c\\n", name(Shade.Red), name(Shade.Dark_Red))\n'
+            '    return 0\n}\n' % (order, q, q))
+def _shade_one(order, arm):
+    return ('type Shade { %s }\nfunc name(s Shade) u8 {\n    case s {\n        %s: return 1\n    }\n}\n'
+            'func main() i32 {\n    return 0\n}\n' % (order, arm))
+# DERIVED: Red names itself R and Dark_Red names itself D, so "RD" whatever the order or spelling.
+add("variant-suffix", "enum, Red declared first, qualified patterns",
+    _shade_match("Red, Dark_Red", "Shade."), "RD\n", plan=_I105)
+add("variant-suffix", "enum, Red declared first, bare patterns",
+    _shade_match("Red, Dark_Red", ""), "RD\n", plan=_I105)
+add("variant-suffix", "enum, Dark_Red declared first, qualified patterns",
+    _shade_match("Dark_Red, Red", "Shade."), "RD\n")
+add("variant-suffix", "enum, Dark_Red declared first, bare patterns",
+    _shade_match("Dark_Red, Red", ""), "RD\n")
+# DERIVED: each case below names one variant of two and has no `else:`, so it must be refused (E014).
+add("variant-suffix", "only a qualified Dark_Red arm, Red declared first",
+    _shade_one("Red, Dark_Red", "Shade.Dark_Red"), "__ILLFORMED__", plan=_I105)
+add("variant-suffix", "only a bare Dark_Red arm, Red declared first",
+    _shade_one("Red, Dark_Red", "Dark_Red"), "__ILLFORMED__", plan=_I105)
+add("variant-suffix", "only a qualified Dark_Red arm, Dark_Red declared first",
+    _shade_one("Dark_Red, Red", "Shade.Dark_Red"), "__ILLFORMED__", plan=_I105)
+add("variant-suffix", "only a bare Dark_Red arm, Dark_Red declared first",
+    _shade_one("Dark_Red, Red", "Dark_Red"), "__ILLFORMED__", plan=_I105)
+add("variant-suffix", "only a qualified Red arm: the shorter name is never over-credited",
+    _shade_one("Red, Dark_Red", "Shade.Red"), "__ILLFORMED__")
+def _markers(order):
+    return ('func find(k u8, s *u8) *u8 | %s {\n    if k == 1 {\n        return Found\n    }\n'
+            '    if k == 2 {\n        return Not_Found\n    }\n    return s\n}\n'
+            'func show(k u8) effects io {\n    var r *u8 | %s = find(k, "v")\n    case r {\n'
+            '        Found: libc_printf("F")\n        Not_Found: libc_printf("N")\n'
+            '        else: libc_printf("%%s", r)\n    }\n}\n'
+            'func main() i32 effects io {\n    show(1)\n    show(2)\n    show(0)\n    libc_printf("\\n")\n'
+            '    return 0\n}\n' % (order, order))
+# DERIVED: k=1 returns Found "F", k=2 returns Not_Found "N", anything else returns the payload "v".
+add("variant-suffix", "union markers, Found declared first", _markers("Found | Not_Found"), "FNv\n", plan=_I105)
+add("variant-suffix", "union markers, Not_Found declared first", _markers("Not_Found | Found"), "FNv\n")
+def _payload(order):
+    return ('type Res { %s }\nfunc show(r Res) effects io {\n    case r {\n        Res.Found: libc_printf("F")\n'
+            '        Res.Not_Found(c): libc_printf("%%d", c as i32)\n    }\n}\n'
+            'func main() i32 effects io {\n    show(Res.Found)\n    show(Res.Not_Found(7))\n'
+            '    libc_printf("\\n")\n    return 0\n}\n' % order)
+# DERIVED: Found prints F, Not_Found(7) prints its payload 7. With the short name first the pattern
+# `Res.Not_Found(c)` resolves to the payload-less Found, `c` is never bound, and codegen refuses it.
+add("variant-suffix", "payload variant, Found declared first",
+    _payload("Found, Not_Found { code u8 }"), "F7\n", plan=_I105)
+add("variant-suffix", "payload variant, Not_Found declared first",
+    _payload("Not_Found { code u8 }, Found"), "F7\n")
+
+
+# ── axis: what TYPE a bare variant has (I.103) ───────────────────────────────────────────────────
+# MCW's I.103: a bare variant was typed i32. So `x i32 = Green` read the tag, `x i32 = NotFound` read
+# the niche, `NotFound == 0` compiled, and the interpreter said NOT MODELLED for all of them. In the fix
+# a variant is typed as its own enum or union: a plain enum's bare variant outside a pattern is E012
+# naming `Color.Green`, and a union marker is a value of its union. Union markers stay bare by design.
+#
+# The last two cells are the allowed side. Binding a marker by inference and then using it as the union
+# is REFUSED on the base this lands on, because the marker is an i32 there, and runs once it is typed as
+# the union: that cell is an over-rejection I.103 closes. Arithmetic on a marker is refused both before
+# and after; only its code moves, E086 (tag arithmetic) to E012, so it carries no citation.
+_I103 = ("I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the "
+         "niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its "
+         "union. A variant is typed as its own enum or union")
+_U103 = ('type Small = u8 < 200\ntype Color { Red, Green }\n'
+         'func pick(f bool, v Small) Small | NotFound {\n    if f {\n        return NotFound\n    }\n'
+         '    return v\n}\n')
+def _go103(body):
+    return _U103 + 'func go() i32 {\n%s\n}\nfunc main() i32 {\n    return go()\n}\n' % body
+add("bare-variant-type", "a plain enum's bare variant stored in an i32",
+    _go103('    x i32 = Green\n    return 0'), "__ILLFORMED__", plan=_I103)
+add("bare-variant-type", "a union marker stored in an i32",
+    _go103('    x i32 = NotFound\n    return 0'), "__ILLFORMED__", plan=_I103)
+add("bare-variant-type", "a union marker compared with ==",
+    _go103('    if NotFound == 0 {\n        return 1\n    }\n    return 0'), "__ILLFORMED__", plan=_I103)
+add("bare-variant-type", "a union marker stored in a u8 inside unsafe",
+    _go103('    unsafe {\n        z u8 = NotFound\n    }\n    return 0'), "__ILLFORMED__", plan=_I103)
+add("bare-variant-type", "arithmetic on a union marker",
+    _go103('    y = NotFound + 1\n    return 0'), "__ILLFORMED__")
+# DERIVED: `w` holds the marker, so matching it as the union takes the NotFound arm: "N".
+add("bare-variant-type", "a marker bound by inference, then used as its union",
+    _U103 + 'func main() i32 effects io {\n    w = NotFound\n    var r Small | NotFound = w\n    case r {\n'
+            '        NotFound: libc_printf("N")\n        else: libc_printf("%d", r)\n    }\n'
+            '    libc_printf("\\n")\n    return 0\n}\n', "N\n", plan=_I103)
+# DERIVED: Color.Green matches its own arm: "G".
+add("bare-variant-type", "a plain enum's qualified variant",
+    _U103 + 'func main() i32 effects io {\n    c Color = Color.Green\n    case c {\n'
+            '        Color.Red: libc_printf("R")\n        Color.Green: libc_printf("G")\n    }\n'
+            '    libc_printf("\\n")\n    return 0\n}\n', "G\n")
+
+
+# ── axis: two ENUM names where one is a suffix of the other (I.105, its third matcher) ───────────
+# Found by MCW while closing the qualified-arm hole above: exhaustiveness also looked up the
+# SCRUTINEE's enum by suffix. With `type Shade { A, B }` declared before `type Dark_Shade { A, B, C }`,
+# a `case` on a Dark_Shade with bare arms A and B was checked against Shade, which those two arms do
+# cover, and was accepted; a call with Dark_Shade.C fell off the end and returned 0. With qualified
+# arms it is refused, but for a false reason: E106 "`Dark_Shade.A` is not a variant of 'Shade'". With
+# Dark_Shade declared first it works by luck. The last cell is the allowed side: the same two arms ARE
+# complete for Shade.
+def _two_enums(first, second, scrut, arms):
+    return ('type %s\ntype %s\nfunc f(s %s) u8 {\n    case s {\n%s    }\n}\nfunc main() i32 {\n    return 0\n}\n'
+            % (first, second, scrut, arms))
+_SH, _DSH = "Shade { A, B }", "Dark_Shade { A, B, C }"
+# DERIVED: Dark_Shade has three variants and these arms name two, with no `else:`: refused, E014.
+add("enum-name-suffix", "bare arms on Dark_Shade, Shade declared first",
+    _two_enums(_SH, _DSH, "Dark_Shade", "        A: return 1\n        B: return 2\n"), "__ILLFORMED__", plan=_I105)
+add("enum-name-suffix", "bare arms on Dark_Shade, Dark_Shade declared first",
+    _two_enums(_DSH, _SH, "Dark_Shade", "        A: return 1\n        B: return 2\n"), "__ILLFORMED__")
+add("enum-name-suffix", "qualified arms on Dark_Shade, Shade declared first",
+    _two_enums(_SH, _DSH, "Dark_Shade", "        Dark_Shade.A: return 1\n        Dark_Shade.B: return 2\n"),
+    "__ILLFORMED__")
+# DERIVED: Shade has exactly A and B, so the case is complete: A prints '1', B prints '2'.
+add("enum-name-suffix", "the same two arms on Shade, which they do complete",
+    'type %s\ntype %s\nfunc f(s Shade) u8 {\n    case s {\n        Shade.A: return 49\n        Shade.B: return 50\n    }\n}\n'
+    'func main() i32 effects io {\n    libc_printf("%%c%%c\\n", f(Shade.A), f(Shade.B))\n    return 0\n}\n' % (_SH, _DSH),
+    "12\n")
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
