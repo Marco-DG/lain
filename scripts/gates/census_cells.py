@@ -1182,6 +1182,7 @@ add("extern-call-spelling", "an extern's var parameter given its argument withou
 # slice of -1 elements"), so C against the interpreter is the instrument for this shape. An unsigned
 # length needs no test. A signed one needs `n >= 0` proven first, and the test must be the right one:
 # `n < -1` lets -1 through. Elements are u8 throughout, so the allocation's size is the length itself.
+# Closed by I.118: a signed runtime length is an E085 obligation, `n >= 0`, at the declaration.
 def _len_prog(param, body, args):
     return ('func f(n %s) i32 {\n%s}\n'
             'func main() i32 effects io {\n    libc_printf("%s\\n", %s)\n    return 0\n}\n'
@@ -1197,20 +1198,18 @@ def _f(n, least=None):
     return 7 if 5 < n else 1
 def _out(args, least=None):
     return " ".join(str(_f(a, least)) for a in args) + "\n"
-_I118 = ("I.118: a signed runtime length is never required to be >= 0, so -1 allocates (size_t)-1 "
-         "elements, the array's len is (size_t)-1 and a guarded index is proven in bounds")
 _EARLY = '    if n < 0 {\n        return 0\n    }\n'
 for t in ("i8", "i32", "i64"):
     add("array-runtime-length", "an %s length with no test" % t, _len_prog(t, _arr("n"), [8]),
-        "__ILLFORMED__", plan=_I118)
+        "__ILLFORMED__")
 add("array-runtime-length", "an i32 length after `if n < -1 { return 0 }`: one short",
     _len_prog("i32", '    if n < -1 {\n        return 0\n    }\n' + _arr("n"), [8]),
-    "__ILLFORMED__", plan=_I118)
+    "__ILLFORMED__")
 add("array-runtime-length", "an i32 length copied into an immutable local with no test",
-    _len_prog("i32", '    m = n\n' + _arr("m"), [8]), "__ILLFORMED__", plan=_I118)
+    _len_prog("i32", '    m = n\n' + _arr("m"), [8]), "__ILLFORMED__")
 add("array-runtime-length", "a constant -1 bound to an immutable local",
     'func main() i32 effects io {\n    m i32 = -1\n    var a u8[m]\n    libc_printf("done\\n")\n'
-    '    return 0\n}\n', "__ILLFORMED__", plan=_I118)
+    '    return 0\n}\n', "__ILLFORMED__")
 add("array-runtime-length", "an i32 length after `if n < 0 { return 0 }`",
     _len_prog("i32", _EARLY + _arr("n"), [-1, 3, 8]), _out([-1, 3, 8], least=0))
 add("array-runtime-length", "an i32 length inside `if 0 <= n`",
@@ -1245,10 +1244,10 @@ for label, n, exp, plan in (
         ("a local of length 3", "3", "done\n", None),
         ("a local of length 0", "0", "__ILLFORMED__", _I84),
         ("a local of length 0x0", "0x0", "__ILLFORMED__", _I84),
-        ("a local of length -1", "-1", "__ILLFORMED__", _I118),
+        ("a local of length -1", "-1", "__ILLFORMED__", None),
         ("a local of length K - 2, which is 3", "K - 2", "done\n", None),
         ("a local of length K - 5, which is 0", "K - 5", "__ILLFORMED__", _I84),
-        ("a local of length K - 6, which is -1", "K - 6", "__ILLFORMED__", _I118),
+        ("a local of length K - 6, which is -1", "K - 6", "__ILLFORMED__", None),
         ("a local of length Z, a module constant 0", "Z", "__ILLFORMED__", _I84),
         ("a local whose inner length is 0", "2][0", "__ILLFORMED__", _I84)):
     add("array-constant-length", label, _local(n), exp, plan=plan)

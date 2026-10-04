@@ -202,6 +202,9 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 else if (c->diag == 121)
                     ir_diag(file, c->line, c->col, "E121",
                             "a struct field invariant is not proven here — an index field (`pos usize in 0..src.len`) must stay below its container's length, and a relation between fields (`pos <= src.len`, `len <= cap`) must hold; both at construction and after every write to either field. A cursor that may rest at the END of its container, or start on an empty one, is `pos usize in 0..=src.len` (or `pos usize <= src.len`); `in 0..src.len` is an index, always below the length");
+                else if (c->diag == 85)
+                    ir_diag(file, c->line, c->col, "E085",
+                            "the length of this runtime-sized array is not provably non-negative: `var a T[n]` allocates n elements on the stack, so test `n >= 0` (or use an unsigned length) first");
                 else if (c->diag == 87)
                     ir_diag(file, c->line, c->col, "E087",
                             "argument does not satisfy the parameter's sized-slice constraint");

@@ -2279,6 +2279,11 @@ ty=Shade scalar
 ty=Slice_u8 scalar
 ty=Tone scalar
 ty=__U_ptr_u8_Found_Not_Found scalar
+### tests/trust/vla_signed_length_guarded_pass.ln
+rc=0
+out=0 1 7
+at=const 2
+ty=Slice_u8 scalar
 ### tests/trust/widening_arith_promotion_pass.ln
 rc=0
 out=3600000000

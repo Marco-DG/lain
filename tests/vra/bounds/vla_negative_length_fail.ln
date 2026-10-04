@@ -1,0 +1,20 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: the length of this runtime-sized array is not provably non-negative
+// I.118: a negative runtime length was allocated as (size_t)n and the slice given len (size_t)n, so
+// the guarded write below was proven in bounds and wrote past the frame (ASan:
+// dynamic-stack-buffer-overflow; -O2 printed 7). The length is now an obligation.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func f(n i32) i32 {
+    var a u8[n]
+    if 5 < a.len {
+        a[5] = 7
+        return a[5] as i32
+    }
+    return 0
+}
+
+func main() i32 effects io {
+    libc_printf("%d\n", f(-1))
+    return 0
+}

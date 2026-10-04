@@ -1,0 +1,20 @@
+// I.118, the allowed side: a signed runtime length tested `>= 0` before the array is declared. Called
+// with -1 (no array) and 8 (an array of 8), under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func f(n i32) i32 {
+    if n < 0 {
+        return 0
+    }
+    var a u8[n]
+    if 5 < a.len {
+        a[5] = 7
+        return a[5] as i32
+    }
+    return 1
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d %d\n", f(-1), f(3), f(8))
+    return 0
+}

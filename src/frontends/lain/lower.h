@@ -3570,6 +3570,15 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
                     && slot_ty->kind==IRT_SLICE && !s->as.var_stmt.expr) {
                     IrValue *nv = ir_lower_expr(c, dt->size_expr);
                     if (nv && nv->type && nv->type->kind==IRT_INT) {
+                        // ★ THE LENGTH IS AN OBLIGATION, NOT AN ASSUMPTION (I.118). A negative n
+                        // was allocated as (size_t)n bytes and the slice given len (size_t)n:
+                        // `var a u8[n]` with n = -1, then `if 5 < a.len { a[5] = 7 }`, was
+                        // proven in bounds and wrote past the frame (ASan:
+                        // dynamic-stack-buffer-overflow; -O2 silently). A signed length must be
+                        // proven >= 0 here, where the storage is made; an unsigned one is.
+                        if (nv->type->is_signed)
+                            ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_SGE, nv,
+                                            ir_const_int(c->f, c->cur, 0, nv->type)), 85);
                         IrType *el = slot_ty->elem ? slot_ty->elem : ir_type_int(c->a,8,false);
                         IrValue *base = ir_alloca_dyn(c->f, c->cur, el, nv);
                         ir_store(c->f, c->cur, slot, ir_make_slice(c->f, c->cur, base, nv, el));
