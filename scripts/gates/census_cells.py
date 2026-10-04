@@ -1428,6 +1428,38 @@ add("try-widening", "a payload marker into a function returning no union",
     'func main() i32 effects io {\n    libc_printf("%d\\n", lift(5, 0))\n    return 0\n}\n', "__ILLFORMED__")
 
 
+# ── axis: a character literal's HIGH byte, `\x80` to `\xff` (I.110) ──────────────────────────────
+# Fixed in I.110, which this row follows. Every hex escape from `\x80` up had been decoded through a
+# signed char, so the IR held `'\xff'` as -1 and
+# `'\x80'` as -128. Compiled C printed the right value anyway, because the variable is a uint8_t and the
+# store truncates -1 back to 255; so no output-comparing test saw it. The interpreter runs the IR's value
+# and disagrees ("PROOF FAILED ... conversion of -1 to a type that cannot hold it"), and the census
+# compares it, so these cells see what the corpus did not.
+#
+# The cell that matters is the index. The analysis also reasons from the IR's -1, so for `c u8 = '\xff'`
+# it computed c + 1 = 0 and proved `b[c + 1]` in bounds on a u8[10]; at run time c + 1 is computed wide
+# as 256 and the read is b[256]. AddressSanitizer is silent on it, because the read jumps 246 bytes past
+# the array over the redzone into other live stack memory; UBSan's object-size check reports it. The
+# same program with the plain number 255 is refused E085, and that is the control. `\x7f`, the last byte
+# that a signed char holds, is the boundary that always worked.
+def _byte(esc):
+    return ("func main() i32 effects io {\n    c u8 = '%s'\n    libc_printf(\"%%d\\n\", c as i32)\n"
+            "    return 0\n}\n" % esc)
+# DERIVED: a hex escape denotes the byte with that value: 0x7f = 127, 0x80 = 128, 0xff = 255.
+add("char-high-byte", "\\x7f printed: the last value a signed char holds", _byte("\\x7f"), "127\n")
+add("char-high-byte", "\\x80 printed", _byte("\\x80"), "128\n")
+add("char-high-byte", "\\xff printed", _byte("\\xff"), "255\n")
+# DERIVED: c is 255 and the pattern denotes 255, so the arm matches.
+add("char-high-byte", "\\xff as a case pattern against 255",
+    "func main() i32 effects io {\n    c u8 = 255\n    case c {\n        '\\xff': libc_printf(\"hit\\n\")\n"
+    "        else: libc_printf(\"miss\\n\")\n    }\n    return 0\n}\n", "hit\n")
+_IDX = ("func main() i32 effects io {\n    var b u8[10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n    c u8 = %s\n"
+        "    libc_printf(\"%%d\\n\", b[c + 1] as i32)\n    return 0\n}\n")
+# DERIVED: c + 1 is 256 and b has 10 elements, so the index cannot be proven in bounds: refused.
+add("char-high-byte", "\\xff plus one as an index into a u8[10]", _IDX % "'\\xff'", "__ILLFORMED__")
+add("char-high-byte", "255 plus one as an index into a u8[10]: the control", _IDX % "255", "__ILLFORMED__")
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,

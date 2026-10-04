@@ -379,3 +379,9 @@ try-widening	a payload field made unsigned, from -5	ok-REFUSED [E086]
 try-widening	a payload marker the return union lacks	ok-REFUSED [E065]
 try-widening	a payload-less marker the return union lacks: the control	ok-REFUSED [E065]
 try-widening	a payload marker into a function returning no union	ok-REFUSED [E065]
+char-high-byte	\x7f printed: the last value a signed char holds	OK
+char-high-byte	\x80 printed	OK
+char-high-byte	\xff printed	OK
+char-high-byte	\xff as a case pattern against 255	OK
+char-high-byte	\xff plus one as an index into a u8[10]	ok-REFUSED [E085]
+char-high-byte	255 plus one as an index into a u8[10]: the control	ok-REFUSED [E085]
