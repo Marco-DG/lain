@@ -352,3 +352,12 @@ array-constant-length	a parameter of length 3	OK
 array-constant-length	a parameter of length 0	ok-REFUSED [E100]
 array-constant-length	a parameter of length -1	ok-REFUSED [E100]
 array-constant-length	a type alias of length 0	ok-REFUSED [E100]
+array-runtime-size	i32 elements, a usize length with no test	ACCEPTED-ILLFORMED  # I.121: a runtime-length array allocates n * sizeof(T) bytes and the product may wrap, so a 64-bit length of i32 asks for 4 bytes while the array's len stays 2^62 + 1
+array-runtime-size	i32 elements, an i64 length after `if n < 0 { return 0 }`	ACCEPTED-ILLFORMED  # I.121: a runtime-length array allocates n * sizeof(T) bytes and the product may wrap, so a 64-bit length of i32 asks for 4 bytes while the array's len stays 2^62 + 1
+array-runtime-size	u16 elements, a usize length with no test	ACCEPTED-ILLFORMED  # I.121: a runtime-length array allocates n * sizeof(T) bytes and the product may wrap, so a 64-bit length of i32 asks for 4 bytes while the array's len stays 2^62 + 1
+array-runtime-size	struct elements, a usize length with no test	ACCEPTED-ILLFORMED  # I.121: a runtime-length array allocates n * sizeof(T) bytes and the product may wrap, so a 64-bit length of i32 asks for 4 bytes while the array's len stays 2^62 + 1
+array-runtime-size	32-byte struct elements, after `if n > 2^59`: one past the bound	ACCEPTED-ILLFORMED  # I.121: a runtime-length array allocates n * sizeof(T) bytes and the product may wrap, so a 64-bit length of i32 asks for 4 bytes while the array's len stays 2^62 + 1
+array-runtime-size	i32 elements, a usize length after `if n > 1024`	OK
+array-runtime-size	i32 elements, a u32 length with no test	OK
+array-runtime-size	u8 elements, a u64 length with no test	OK
+array-runtime-size	u8 elements, 3 MiB: deeper than a page, within the stack	OK

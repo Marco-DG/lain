@@ -1266,6 +1266,55 @@ add("array-constant-length", "a type alias of length 0",
     _CONSTS + 'type A = i32[0]\n' + _DONE, "__ILLFORMED__")
 
 
+# ── axis: the SIZE of a runtime-length stack array (I.121) ─────────────────────────────────────────
+# A runtime-length array is allocated as n * sizeof(T) bytes, and nothing checked that product. With a
+# 64-bit length and an element wider than a byte it wraps: n = 2^62 + 1 i32 elements asked for 4 bytes,
+# the array's len stayed 2^62 + 1, and the guarded write a[5] was proven in bounds and landed past the
+# frame (ASan: dynamic-stack-buffer-overflow WRITE), with or without I.118's `n >= 0` test in front. The
+# bound is n <= SIZE_MAX / sizeof(T). A test in front that stops one short of it must be refused: for a
+# 32-byte struct, `n > 2^59` lets 2^59 through, whose size 2^64 wraps to 0. The bound's other side is not
+# pinned, because the compiler bounds a struct's size from above (every field rounded up to 8 bytes,
+# plus 8) and the octagon holds bounds only up to about 2^60, so a test AT the exact bound may be
+# refused; nothing promises it. A u8 element or a 32-bit length cannot wrap. Separately, an
+# allocation larger than the stack's guard gap jumped it and wrote into another mapping. The probing
+# that stops it ends in a fault, which a cell expecting output cannot state, so only its allowed side
+# is here: a 3 MiB array that must still run.
+def _arr_t(elem, store, read):
+    return ('    var a %s[n]\n    if 5 < a.len {\n        a[5] = %s\n        return %s\n    }\n    return 1\n'
+            % (elem, store, read))
+_I121 = ("I.121: a runtime-length array allocates n * sizeof(T) bytes and the product may wrap, so a 64-bit "
+         "length of i32 asks for 4 bytes while the array's len stays 2^62 + 1")
+_A_I32 = _arr_t("i32", "7", "a[5]")
+_POS = 'type Pos {\n    line i32\n    col i32\n}\n'
+_BIG = 'type Big {\n' + ''.join('    %s i32\n' % f for f in "abcdefgh") + '}\n'
+_A_BIG = _arr_t("Big", "Big(7, 0, 0, 0, 0, 0, 0, 0)", "a[5].a")
+_BOUND32 = (2**64 - 1) // 32       # DERIVED: SIZE_MAX / sizeof(Big), eight i32 fields = 32 bytes
+def _test(cond):
+    return '    if %s {\n        return 0\n    }\n' % cond
+# DERIVED: as in the runtime-length axis, f(n) is 7 when index 5 exists (5 < n) and 1 otherwise; no
+# argument below reaches an early return.
+for label, prog, exp, plan in (
+        ("i32 elements, a usize length with no test",
+         _len_prog("usize", _A_I32, [8]), "__ILLFORMED__", _I121),
+        ("i32 elements, an i64 length after `if n < 0 { return 0 }`",
+         _len_prog("i64", _test("n < 0") + _A_I32, [8]), "__ILLFORMED__", _I121),
+        ("u16 elements, a usize length with no test",
+         _len_prog("usize", _arr_t("u16", "7", "a[5] as i32"), [8]), "__ILLFORMED__", _I121),
+        ("struct elements, a usize length with no test",
+         _POS + _len_prog("usize", _arr_t("Pos", "Pos(7, 0)", "a[5].line"), [8]), "__ILLFORMED__", _I121),
+        ("32-byte struct elements, after `if n > 2^59`: one past the bound",
+         _BIG + _len_prog("usize", _test("n > %d" % (_BOUND32 + 1)) + _A_BIG, [8]), "__ILLFORMED__", _I121),
+        ("i32 elements, a usize length after `if n > 1024`",
+         _len_prog("usize", _test("n > 1024") + _A_I32, [3, 8]), _out([3, 8]), None),
+        ("i32 elements, a u32 length with no test",
+         _len_prog("u32", _A_I32, [3, 8]), _out([3, 8]), None),
+        ("u8 elements, a u64 length with no test",
+         _len_prog("u64", _arr("n"), [3, 8]), _out([3, 8]), None),
+        ("u8 elements, 3 MiB: deeper than a page, within the stack",
+         _len_prog("usize", _arr("n"), [3145728]), _out([3145728]), None)):
+    add("array-runtime-size", label, prog, exp, plan=plan)
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
