@@ -23,6 +23,16 @@ int main(void) {
     Arena a = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE * 256);
     IrType *i32 = ir_type_int(&a, 32, true);
 
+    // I.113: an integer constant lies in its type's range; a 64-bit type holds every pattern.
+    {
+        IrType *u8 = ir_type_int(&a, 8, false), *i8 = ir_type_int(&a, 8, true), *u64 = ir_type_int(&a, 64, false);
+        int bad = 0;
+        bad += !ir_int_const_fits(255, u8);   bad += ir_int_const_fits(-1, u8);   bad += ir_int_const_fits(256, u8);
+        bad += !ir_int_const_fits(-128, i8);  bad += ir_int_const_fits(128, i8);  bad += !ir_int_const_fits(-1, u64);
+        if (bad) { printf("ir_int_const_fits: %d of 6 wrong\n", bad); return 1; }
+        printf("ir_int_const_fits: 6 of 6\n\n");
+    }
+
     // func maxi(a i32, b i32) i32 { if a > b { return a } return b }
     {
         IrFunc *f = ir_func_new(&a, ir_intern(&a, "maxi", (isize)strlen("maxi")), i32, IR_FUNC_PURE);

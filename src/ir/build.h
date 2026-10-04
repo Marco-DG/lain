@@ -100,7 +100,27 @@ static IrInstr *ir_instr(IrFunc *f, IrOp op, IrType *rt, int nops) {
 }
 
 // ── convenience emitters (build value-producing instrs into block b) ─────────
+// ★ AN INTEGER CONSTANT LIES IN ITS TYPE'S RANGE (I.113). A character literal at or above 0x80
+// reached here as -1 typed u8 (I.110), the analysis reasoned about -1, and a wrapping `c + 1` was
+// discharged as safe; the C ran right only because the slot was uint8_t. The value a constant
+// states is a FACT every analysis consumes, so one that its own type cannot hold stops the build
+// here, at its source. A 64-bit type is exempt: every int64 pattern is one of its values (a u64
+// above INT64_MAX is stored negative). Measured before it was made fatal: 0 constants out of range
+// across tests/, std/ and bench/, and the I.110 program caught.
+static bool ir_int_const_fits(int64_t v, const IrType *t) {
+    if (!t || t->kind != IRT_INT || t->bits < 1 || t->bits >= 64) return true;
+    __int128 lo = t->is_signed ? -((__int128)1 << (t->bits - 1)) : 0;
+    __int128 hi = t->is_signed ? ((__int128)1 << (t->bits - 1)) - 1 : ((__int128)1 << t->bits) - 1;
+    return (__int128)v >= lo && (__int128)v <= hi;
+}
 IrValue *ir_const_int(IrFunc *f, IrBlock *b, int64_t v, IrType *t) {
+    if (!ir_int_const_fits(v, t)) {
+        fprintf(stderr, "internal error: the integer constant %lld does not fit its type %s%d (in '%.*s'); "
+                "the analysis would reason about a value the program cannot hold. Please report it.\n",
+                (long long)v, t->is_signed ? "i" : "u", t->bits,
+                f && f->name ? (int)f->name->length : 1, f && f->name ? f->name->name : "?");
+        exit(1);
+    }
     IrInstr *ins = ir_instr(f, IR_CONST, t, 0);
     ins->aux.imm = v;
     ir_emit(b, ins);
