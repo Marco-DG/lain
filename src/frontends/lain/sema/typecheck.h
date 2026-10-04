@@ -1126,9 +1126,12 @@ static void sema_check_static_assert(Decl *d) {
     Expr *c = d->as.static_assert_decl.cond;
     bool layout = false;
     if (!c || !c->type || !is_bool_type(c->type) || !sa_is_const(c, &layout)) {
+        // The reason names what IS evaluated, and what is not (I.107): it said a table element "exists
+        // only at run time", which is false for a module constant table, and omitted named constants.
         fprintf(stderr, "[E133] Error Ln %li, Col %li: a module-scope `assert` takes a `bool` CONSTANT "
-                "expression — literals, operators, `as`, `@sizeof(T)` and `@alignof(T)`. A value that "
-                "exists only at run time is an `assert(...)` inside a function.\n",
+                "expression: literals, named integer constants, operators, `as`, `@sizeof(T)` and "
+                "`@alignof(T)`. An element of a constant table and a function call are not evaluated "
+                "here. A fact about a run-time value is an `assert(...)` inside a function.\n",
                 (long)d->line, (long)d->col);
         diagnostic_show_line(d->line, d->col);
         exit(1);

@@ -1,0 +1,10 @@
+// EXPECT: [E133]
+// EXPECT-TEXT: An element of a constant table and a function call are not evaluated here.
+// I.107: the reason said a table element "exists only at run time", which is false for a module
+// constant table (its contents are known when the program is compiled); the evaluator does not read
+// them. Named integer constants ARE evaluated (`N % 16 == 0`), and the message now says so.
+T u8[2] = [1, 2]
+assert T[1] == 2
+func main() i32 {
+    return 0
+}
