@@ -1002,15 +1002,12 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
             case IR_TERM_RET:     if (b->term.cond) fprintf(o, "  return v%d;\n", b->term.cond->id);
                                   else fputs(is_main ? "  return 0;\n" : "  return;\n", o); break;
             case IR_TERM_UNREACHABLE:
-                // Unreachable, but C still needs a well-typed exit: `return 0` is a type error
-                // the moment the function returns a struct or a union. A zero compound literal
-                // is valid for any type and never executes.
-                if (is_main || !f->ret_type || f->ret_type->kind==IRT_UNIT || f->ret_type->kind==IRT_NEVER)
-                    fputs(is_main ? "  return 0;\n" : "  return;\n", o);
-                else if (f->ret_type->kind==IRT_INT || f->ret_type->kind==IRT_BOOL
-                      || f->ret_type->kind==IRT_PTR || f->ret_type->kind==IRT_FUNC)
-                    fputs("  return 0;\n", o);
-                else { fputs("  return (", o); ir_ctype(f->ret_type, o); fputs("){0};\n", o); }
+                // A point the compiler proved unreachable (a `panic`, a [noreturn] call, a `case`
+                // that covers its scrutinee, a function's end past its returns) is STATED as such
+                // (I.117), the form a field invariant already takes. It was a typed zero, so a
+                // wrong proof returned 0 in silence; now UBSan reports the line, and gcc needs no
+                // exit value (well formed under -Werror=return-type).
+                fputs("  __builtin_unreachable();\n", o);
                 break;
             default: break;
         }

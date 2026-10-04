@@ -4301,7 +4301,19 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     ir_lower_stmts(&cc, fn->as.function_decl.body);
     if (!ir_is_set_term(cc.cur)) {
         ir_lower_flush_defers(&cc);   // falling off the end is an exit too
-        if (!ir_is_set_term(cc.cur)) ir_set_ret(cc.cur, NULL);   // unless a defer ended it
+        // ★ FALLING OFF A FUNCTION THAT RETURNS A VALUE IS A PATH THE FRONT END PROVED ABSENT
+        // (I.117): every path returns, and a `case` without `else:` covers its scrutinee. It was
+        // closed with a valueless `return` (a C constraint violation in a non-void function), so a
+        // WRONG proof returned garbage in silence: I.105's `case` missing an arm returned 0 past C
+        // at -O0 and -O2, UBSan and the interpreter. Unreachable says what was proved; the
+        // interpreter checks it (PROOF FAILED) and the C states it as __builtin_unreachable(),
+        // which UBSan reports. `main` keeps C's implicit `return 0`.
+        bool is_main = f->name && f->name->length == 4 && strncmp(f->name->name, "main", 4) == 0;
+        bool valued  = f->ret_type && f->ret_type->kind != IRT_UNIT && f->ret_type->kind != IRT_NEVER;
+        if (!ir_is_set_term(cc.cur)) {   // unless a defer ended it
+            if (valued && !is_main) ir_set_unreachable(cc.cur);
+            else ir_set_ret(cc.cur, NULL);
+        }
     }
     // ★ `[noreturn]` IS AN OBLIGATION. It becomes `__attribute__((noreturn))`, and returning from
     // such a function is undefined behaviour: `[noreturn] func f(x i32) i32 { return x }` was

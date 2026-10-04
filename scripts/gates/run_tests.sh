@@ -96,7 +96,7 @@ gcc_check_ok() {
     gerr="$("$GCC_BIN" -std=c99 -c -o "$out_o" "$out_c" \
         -Wno-discarded-qualifiers -Wno-format-security \
         -Werror=int-conversion -Werror=implicit-int \
-        -Werror=incompatible-pointer-types \
+        -Werror=incompatible-pointer-types -Werror=return-type \
         -Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_putchar=putchar \
         -Dlibc_malloc=malloc -Dlibc_free=free -Dlibc_realloc=realloc 2>&1)"
     local grc=$?
