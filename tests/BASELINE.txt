@@ -186,12 +186,6 @@ out=ok=7
 at=const 2
 ty=Slice_u8 scalar
 ty=__U_i32_ParseErr_i32 struct
-### tests/errors/payload_marker_try_pass.ln
-rc=0
-out=line=99
-at=const 4
-ty=Slice_u8 scalar
-ty=__U_i32_NotFound_ParseErr_i32 struct
 ### tests/errors/try_bool_union_pass.ln
 rc=0
 out=nope
@@ -1887,6 +1881,12 @@ out=1234
 at=const 2
 ty=Slice_u8 scalar
 ty=__U_i32_ParseErr_i32 struct
+### tests/trust/payload_marker_try_pass.ln
+rc=0
+out=line=99
+at=const 4
+ty=Slice_u8 scalar
+ty=__U_i32_NotFound_ParseErr_i32 struct
 ### tests/trust/payload_pattern_not_a_call_pass.ln
 rc=0
 out=5
@@ -2207,6 +2207,13 @@ out=got Err
 at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_Err scalar
+### tests/trust/try_widening_keeps_payload_pass.ln
+rc=0
+out=val=5 nf line=99 at=7:12 val=6 line=99 at=7:12 
+at=const 6
+ty=Slice_u8 scalar
+ty=__U_i32_NotFound_ParseErr_i32_At_i32_i32 struct
+ty=__U_i64_NotFound_ParseErr_i32_At_i32_i32 struct
 ### tests/trust/type_range_at_every_source_pass.ln
 rc=0
 out=

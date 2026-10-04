@@ -1,0 +1,53 @@
+// I.120: `try` into a function returning a WIDER union re-encodes the marker by name, and it built the
+// wide marker with no payload: `ParseErr(99)` arrived as ParseErr(0) (C printed line=0; the interpreter
+// could not read the field). Each payload field now goes with its marker. One-field and two-field
+// payloads, a payload-less marker and the value, through a widening `try` (i32 to i64 value) and a
+// same-union `try`, under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func step(x i32, mode i32) i32 | NotFound | ParseErr(line i32) | At(line i32, col i32) {
+    if mode == 1 { return NotFound }
+    if mode == 2 { return ParseErr(99) }
+    if mode == 3 { return At(7, 12) }
+    return x
+}
+
+func wide(x i32, mode i32) i64 | NotFound | ParseErr(line i32) | At(line i32, col i32) {
+    v = try step(x, mode)
+    return v as i64
+}
+
+func same(x i32, mode i32) i32 | NotFound | ParseErr(line i32) | At(line i32, col i32) {
+    v = try step(x, mode)
+    return v
+}
+
+func show_wide(r i64 | NotFound | ParseErr(line i32) | At(line i32, col i32)) effects io {
+    case r {
+        NotFound:       libc_printf("nf ")
+        ParseErr(line): libc_printf("line=%d ", line)
+        At(line, col):  libc_printf("at=%d:%d ", line, col)
+        else:           libc_printf("val=%lld ", r)
+    }
+}
+
+func show_same(r i32 | NotFound | ParseErr(line i32) | At(line i32, col i32)) effects io {
+    case r {
+        NotFound:       libc_printf("nf ")
+        ParseErr(line): libc_printf("line=%d ", line)
+        At(line, col):  libc_printf("at=%d:%d ", line, col)
+        else:           libc_printf("val=%d ", r)
+    }
+}
+
+func main() i32 effects io {
+    show_wide(wide(5, 0))
+    show_wide(wide(5, 1))
+    show_wide(wide(5, 2))
+    show_wide(wide(5, 3))
+    show_same(same(6, 0))
+    show_same(same(6, 2))
+    show_same(same(6, 3))
+    libc_printf("\n")
+    return 0
+}

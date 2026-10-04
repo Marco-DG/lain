@@ -2093,7 +2093,10 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 IrType *rt = c->f->ret_type;
                 if (ir_is_set_term(c->cur)) {
                     // a deferred panic or [noreturn] call ended the path: nothing is returned
-                } else if (rt && rt->kind==IRT_SUM && rt != uv->type) {
+                } else if (rt && rt->kind==IRT_SUM && !(uv->type && uv->type->sname && rt->sname &&
+                           uv->type->sname->length == rt->sname->length &&
+                           memcmp(uv->type->sname->name, rt->sname->name, (size_t)rt->sname->length) == 0)) {
+                    // (Same union by NAME, not by pointer: a type may be a per-use copy, I.93.)
                     // WIDENING. `try` inside a function returning a wider union must RE-ENCODE
                     // the marker: `*u8 | NotFound` propagating into `*u8 | NotFound | ParseErr`
                     // is the same marker at a different variant index. Returning the narrow sum
@@ -2114,7 +2117,24 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                         IrValue *kc = ir_const_int(c->f, c->cur, k, tg->type);
                         ir_set_br_cond(c->cur, ir_icmp(c->f,c->cur,IR_CMP_EQ,tg,kc), hit, nxt);
                         c->cur = hit;
-                        ir_set_ret(c->cur, ir_sum_new(c->f, c->cur, rt, w, NULL, 0));
+                        // ★ THE MARKER'S PAYLOAD GOES WITH IT (I.120). The wide marker was built
+                        // with no payload, so `try` of a `ParseErr(99)` into a wider union
+                        // returned ParseErr(0): C printed line=0, the interpreter could not read
+                        // the field. Each field is projected from the narrow union and converted
+                        // to the wide union's field type; two markers of one name with payloads
+                        // of different shapes are refused rather than half-copied.
+                        IrType *np = uv->type->fields[k], *wp = rt->fields[w];
+                        int nn = !np ? 0 : (np->kind == IRT_STRUCT ? np->n_fields : 1);
+                        int wn = !wp ? 0 : (wp->kind == IRT_STRUCT ? wp->n_fields : 1);
+                        if (nn != wn)
+                            return ir_opaque_expr(c, ty, false, "try-marker-payload-shape", NULL, NULL);
+                        IrValue **pf = arena_push_many_aligned(c->a, IrValue*, nn > 0 ? nn : 1);
+                        for (int fi = 0; fi < nn; fi++) {
+                            IrType *nft = np->kind == IRT_STRUCT ? np->fields[fi] : np;
+                            IrType *wft = wp->kind == IRT_STRUCT ? wp->fields[fi] : wp;
+                            pf[fi] = ir_coerce_repr(c, ir_sum_payload(c->f, c->cur, uv, k, fi, nft), wft, e);
+                        }
+                        ir_set_ret(c->cur, ir_sum_new(c->f, c->cur, rt, w, pf, nn));
                         c->cur = nxt;
                     }
                     ir_set_unreachable(c->cur);     // the tag was a marker: one arm always hits
