@@ -287,3 +287,10 @@ membership	a comprehension	ok-REFUSED [E012]
 membership	an empty list	ok-REFUSED [E100]
 union-call-arg	bound to an annotated name, then passed	OK
 union-call-arg	passed straight to the union parameter	OK
+shared-marker	two different unions, one marker name	REFUSED [E012]  # I.97 — two different error unions in one module that share a marker name: the second function's `return NotFound` is refused E012, as though the marker were bound to the first union. The same union twice, or a renamed marker, compiles
+shared-marker	the same union in two functions	OK
+shared-marker	two different unions, two marker names	OK
+imported-constant	a scalar constant, read through an imported function	REFUSED [E100]  # I.98 — a function of an imported module cannot read that module's own top-level constant: E100 unresolved-global. The same read in the main file compiles, and so does an imported function that reads no constant
+imported-constant	an array constant, read through an imported function	REFUSED [E100]  # I.98 — a function of an imported module cannot read that module's own top-level constant: E100 unresolved-global. The same read in the main file compiles, and so does an imported function that reads no constant
+imported-constant	an imported function that reads no constant	OK
+imported-constant	the same constant read in the main file	OK

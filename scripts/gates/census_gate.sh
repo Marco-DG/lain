@@ -61,7 +61,7 @@ mkdir -p "$CELLDIR"
 trap 'rm -rf "$SC" "$CELLDIR"' EXIT
 
 LAIN="$LAIN" CELLS="$CELLS" SC="$SC" CELLDIR="$CELLDIR" python3 - > "$SC/now.txt" <<'PY'
-import json, os, re, subprocess, sys, tempfile
+import json, os, re, shutil, subprocess, sys, tempfile
 LAIN, CELLS = os.environ["LAIN"], os.environ["CELLS"]
 DEFS = ["-Dlibc_printf=printf", "-Dlibc_puts=puts"]
 RUN_T, INT_T, STEPS = 6, 30, "20000000"
@@ -82,10 +82,26 @@ def code_of(t):
     m = re.search(r'\[E\d+\]', t)
     return m.group(0) if m else "uncoded"
 for x in cells:
-    f, cf = os.path.join(d, "c.ln"), os.path.join(d, "c.c")
+    # A MULTI-FILE cell is a small project, compiled from its own directory exactly as a user runs
+    # `./lain lexer.ln` beside `ctype.ln`, so `import lib` resolves the sibling. From the tree root a
+    # sibling resolves only by its full path, and CELLDIR's name carries a PID, so no cell could spell
+    # it. Consequence: such a cell cannot import std/, which lives at the root. The directory is made
+    # fresh for every multi-file cell, so one cell's library can never be seen by the next. A
+    # single-file cell takes exactly the path it always took.
+    files = x.get("files") or {}
+    if files:
+        cwd = os.path.join(d, "m")
+        shutil.rmtree(cwd, ignore_errors=True); os.makedirs(cwd)
+        for name, text in files.items():
+            open(os.path.join(cwd, name), "w").write(text)
+        f, cf, f_arg, cf_arg = os.path.join(cwd, "c.ln"), os.path.join(cwd, "c.c"), "c.ln", "c.c"
+    else:
+        cwd = None
+        f, cf = os.path.join(d, "c.ln"), os.path.join(d, "c.c")
+        f_arg, cf_arg = f, cf
     open(f, "w").write(x["prog"])
     if os.path.exists(cf): os.remove(cf)
-    r = subprocess.run([LAIN, f, "-o", cf], capture_output=True, text=True, timeout=120)
+    r = subprocess.run([LAIN, f_arg, "-o", cf_arg], capture_output=True, text=True, timeout=120, cwd=cwd)
     ill = x["want"] == "__ILLFORMED__"
     key = "%s\t%s" % (x["axis"], x["cell"])
     # A cell the compiler could not LOAD is not a verdict. The cell file lives in a temp
@@ -99,7 +115,7 @@ for x in cells:
     _unjudged = ("Cannot open module file" in _blob) or ("lain: cannot open" in _blob)
     if not _unjudged:
         _m = re.search(r"\(no file '([^']*)'\)", _blob)
-        _unjudged = bool(_m) and os.path.isfile(_m.group(1))
+        _unjudged = bool(_m) and os.path.isfile(os.path.join(cwd or "", _m.group(1)))
     if _unjudged:
         print("%s\tUNJUDGED-could-not-load" % key); continue
     if r.returncode != 0 or not os.path.exists(cf):
@@ -115,8 +131,8 @@ for x in cells:
         try: outs[opt] = subprocess.run([b], capture_output=True, text=True, timeout=RUN_T).stdout
         except subprocess.TimeoutExpired: outs[opt] = "<HUNG>"
     try:
-        outs["interp"] = subprocess.run([LAIN, f, "--interpret"], capture_output=True, text=True,
-            env={**os.environ, "LAIN_INTERP_STEPS": STEPS}, timeout=INT_T).stdout
+        outs["interp"] = subprocess.run([LAIN, f_arg, "--interpret"], capture_output=True, text=True,
+            env={**os.environ, "LAIN_INTERP_STEPS": STEPS}, timeout=INT_T, cwd=cwd).stdout
     except subprocess.TimeoutExpired: outs["interp"] = "<HUNG>"
     print("%s\t%s%s" % (key, "OK" if all(v == x["want"] for v in outs.values()) else "MISMATCH",
                          _plan(x)))

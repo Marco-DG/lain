@@ -16,8 +16,9 @@ import sys
 PRE = 'extern func libc_printf(fmt *u8, ...) i32 effects io\n'
 CELLS = []   # (axis, cell, program, expected_stdout)
 PLAN = {}    # (axis, cell) -> the plan row that explains a KNOWN hole
+FILES = {}   # (axis, cell) -> {file name: text}, the OTHER modules of a multi-file cell
 
-def add(axis, cell, prog, expected, plan=None):
+def add(axis, cell, prog, expected, plan=None, files=None):
     """`plan` names the open item for a cell that is expected to be wrong TODAY.
 
     The census gate refuses a baseline hole with no plan row. That citation used to be hand-written
@@ -28,6 +29,8 @@ def add(axis, cell, prog, expected, plan=None):
     CELLS.append((axis, cell, PRE + prog, expected))
     if plan:
         PLAN[(axis, cell)] = plan
+    if files:
+        FILES[(axis, cell)] = files     # compiled from its own directory: see census_gate.sh
 
 # ── axis 1: `case` scrutinee type ─────────────────────────────────────────────────────────────
 SCRUT = [
@@ -922,7 +925,71 @@ add("union-call-arg", "passed straight to the union parameter",
            '    return 0\n}\n', "ok\n")
 
 
+# ── axis: two DIFFERENT error unions sharing a marker name in one module (I.97) ─────────────────
+# `NotFound` is the obvious marker for every lookup API, so the second function in a file to use it
+# is ordinary code. On the base this commit lands on it is refused: in `b`, `return NotFound` is E012
+# "cannot implicitly convert 'i32'", as though the marker belonged to `a`'s union. Measured with three
+# payload pairings for the second union (a refined alias, a bool, `*u16`): refused in all three, so it
+# is the shared NAME, not the payload. The two controls say which part matters: the SAME union in two
+# functions is fine, and two different unions with different marker names are fine.
+_I97 = ("I.97 — two different error unions in one module that share a marker name: the second "
+        "function's `return NotFound` is refused E012, as though the marker were bound to the first "
+        "union. The same union twice, or a renamed marker, compiles")
+_U97 = ('type Small = u8 < 200\n'
+        'func a(f bool, s *u8) *u8 | NotFound {\n    if f {\n        return NotFound\n    }\n    return s\n}\n')
+def _u97_b(ty, marker):
+    return ('func b(f bool, v %s) %s | %s {\n    if f {\n        return %s\n    }\n    return v\n}\n'
+            % (ty, ty, marker, marker))
+def _u97_main(ty, marker, arg, fmt):
+    return ('func main() i32 effects io {\n'
+            '    var x *u8 | NotFound = a(false, "ok")\n    case x {\n        NotFound: libc_printf("E")\n'
+            '        else: libc_printf("%%s", x)\n    }\n'
+            '    var y %s | %s = b(true, %s)\n    case y {\n        %s: libc_printf("E")\n'
+            '        else: libc_printf("%%%s", y)\n    }\n'
+            '    libc_printf("\\n")\n    return 0\n}\n' % (ty, marker, arg, marker, fmt))
+# DERIVED: `a` succeeds and prints its payload "ok"; `b` fails and prints the marker's letter "E".
+add("shared-marker", "two different unions, one marker name",
+    _U97 + _u97_b("Small", "NotFound") + _u97_main("Small", "NotFound", "9", "d"), "okE\n", plan=_I97)
+add("shared-marker", "the same union in two functions",
+    _U97 + _u97_b("*u8", "NotFound") + _u97_main("*u8", "NotFound", '"ok"', "s"), "okE\n")
+add("shared-marker", "two different unions, two marker names",
+    _U97 + _u97_b("Small", "Missing") + _u97_main("Small", "Missing", "9", "d"), "okE\n")
+
+
+# ── axis: a function of an IMPORTED module reading that module's top-level constant (I.98) ──────
+# The first multi-file cells: each is a small project compiled from its own directory (see
+# census_gate.sh), so `import lib` resolves the sibling `lib.ln` the way `import ctype` resolves
+# Marco's handwritten/src/ctype.ln. That import is what found this: ctype's four classifiers read its
+# CTYPE table, and on the base this lands on any function of an imported module that reads its
+# module's own constant is E100 "not supported by the code generator yet (unresolved-global)".
+# Nothing in std/ has a top-level constant, so the corpus had never imported one.
+#
+# The two controls separate the halves: the same constant read in the MAIN file is fine, and an
+# imported function that reads no constant is fine. So it is the pair, not either part.
+#
+# I.98's other half has no cell, because the census records a refusal's code and not its location:
+# a diagnostic inside an imported function named the MAIN file (`use.ln:2:12` for a line of lib.ln).
+# That belongs to a corpus test with EXPECT-TEXT naming the imported file.
+_I98 = ("I.98 — a function of an imported module cannot read that module's own top-level constant: "
+        "E100 unresolved-global. The same read in the main file compiles, and so does an imported "
+        "function that reads no constant")
+_GET7 = 'func main() i32 effects io {\n    libc_printf("%d\\n", get() as i32)\n    return 0\n}\n'
+# DERIVED: the constant is 7, so `get()` prints 7; the table's element 1 is 6.
+add("imported-constant", "a scalar constant, read through an imported function",
+    'import lib.{get}\n' + _GET7, "7\n", plan=_I98,
+    files={"lib.ln": 'K u8 = 7\nfunc get() u8 {\n    return K\n}\n'})
+add("imported-constant", "an array constant, read through an imported function",
+    'import lib.{at}\n'
+    'func main() i32 effects io {\n    libc_printf("%d\\n", at(1) as i32)\n    return 0\n}\n', "6\n",
+    plan=_I98, files={"lib.ln": 'T u8[4] = [5, 6, 7, 8]\nfunc at(i u8) u8 {\n    return T[i & 3]\n}\n'})
+add("imported-constant", "an imported function that reads no constant",
+    'import lib.{get}\n' + _GET7, "7\n",
+    files={"lib.ln": 'func get() u8 {\n    return 7\n}\n'})
+add("imported-constant", "the same constant read in the main file",
+    'K u8 = 7\nfunc get() u8 {\n    return K\n}\n' + _GET7, "7\n")
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
-                       "plan": PLAN.get((a, c))} for a, c, p, w in CELLS]))
+                       "plan": PLAN.get((a, c)), "files": FILES.get((a, c))} for a, c, p, w in CELLS]))
