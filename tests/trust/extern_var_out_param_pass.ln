@@ -1,0 +1,17 @@
+// I.115 (Handwriting): a C out-parameter, declared as a `var` parameter of an extern. The call passed
+// the address of the caller's slot, while the extern was declared by value (`double frexp(double,
+// int32_t)`), so frexp wrote through the low 32 bits of a pointer: a segmentation fault at -O0 and
+// -O2. The extern now takes the address, as a bodied function does. Under the sanitizers; the
+// interpreter does not model externs.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+extern func frexp(x f64, e var i32) f64 effects io
+extern func modf(x f64, ip var f64) f64 effects io
+
+func main() i32 effects io {
+    var e i32 = 0
+    m = frexp(8.0, var e)
+    var whole f64 = 0.0
+    frac = modf(3.25, var whole)
+    libc_printf("%d %.2f %.0f %.2f\n", e, m, whole, frac)
+    return 0
+}

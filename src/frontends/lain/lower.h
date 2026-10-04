@@ -4465,8 +4465,20 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
                   if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
                   Type *pty = p->decl->as.variable_decl.type;
                   Id   *pnm = p->decl->as.variable_decl.name;
-                  IrValue *pv = ir_add_param(f, ir_lower_type(&ec, pty),
-                                             pnm ? ir_intern(a, pnm->name, pnm->length) : NULL);
+                  IrType *pt = ir_lower_type(&ec, pty);
+                  // ★ A `var` PARAMETER OF A COPIED TYPE IS AN ADDRESS, BODY OR NOT (I.115). The
+                  // call passes the caller's slot, as it does to a bodied function, but the
+                  // extern was declared by value: `frexp(8.0, var e)` handed `double frexp(double,
+                  // int32_t)` the address of e, and frexp wrote through its low 32 bits. Every C
+                  // out-parameter (frexp, modf, strtol's end) crashed, and only the wrong spelling,
+                  // `bump(n)`, gave well-typed C. A shared borrow stays by value: that is how C
+                  // takes a struct.
+                  if (ir_mut_by_address(pt) && pty && pty->mode == MODE_MUTABLE) {
+                      IrType *ptr = ir_type_new(a, IRT_PTR); ptr->elem = pt;
+                      ptr->ptr_mut = true; ptr->borrowed = true;
+                      pt = ptr;
+                  }
+                  IrValue *pv = ir_add_param(f, pt, pnm ? ir_intern(a, pnm->name, pnm->length) : NULL);
                   pv->owns = pty && pty->mode == MODE_OWNED;
               } }
         }

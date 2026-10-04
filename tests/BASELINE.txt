@@ -1605,6 +1605,10 @@ ty=A struct
 ty=Sh struct
 ty=Slice_u32 scalar
 ty=St struct
+### tests/trust/extern_var_out_param_pass.ln
+rc=0
+out=4 0.50 3 0.25
+ty=Slice_u8 scalar
 ### tests/trust/fixed_array_len_refinement_pass.ln
 rc=0
 out=
