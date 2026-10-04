@@ -1,0 +1,20 @@
+// EXPECT: [E002]
+// I.93, the side that must not move: the `mov` parameter itself is still linear, so moving it twice
+// is refused (E002, consumed twice). Only the OTHER values of its type stopped being linear.
+type Counter {
+    n i32
+}
+
+func take(mov k Counter) i32 {
+    return k.n
+}
+
+func f(mov k Counter) i32 {
+    a = take(mov k)
+    return take(mov k)
+}
+
+func main() i32 {
+    mov c Counter = Counter(2)
+    return f(mov c)
+}

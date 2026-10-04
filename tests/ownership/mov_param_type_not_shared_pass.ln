@@ -1,0 +1,19 @@
+// I.93: a `mov` parameter made EVERY value of its struct type in the function linear, because the
+// qualifier was set on the type lowering caches per function. So `d = a` below, a copy of an
+// unrelated plain Counter, was E001 "use of a value that was already moved". The same body without
+// the `mov` parameter compiled.
+type Counter {
+    n i32
+}
+
+func f(mov k Counter) i32 {
+    a = Counter(1)
+    b = a
+    d = a
+    return b.n
+}
+
+func main() i32 {
+    mov c Counter = Counter(2)
+    return f(mov c)
+}

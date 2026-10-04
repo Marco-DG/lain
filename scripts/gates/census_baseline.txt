@@ -266,7 +266,7 @@ mov-outside-aggregate	integer binding, never consumed	ok-REFUSED [E003]
 mov-outside-aggregate	pointer binding, never consumed	ok-REFUSED [E003]
 mov-outside-aggregate	integer binding, consumed twice	ok-REFUSED [E002]
 mov-outside-aggregate	integer binding, read after the consume	ok-REFUSED [E001]
-mov-shared-irtype	mov parameter of the local's own type	REFUSED [E001]  # I.93 — lowering caches one IrType per struct per function and `mov` sets `linear` on that shared object, so a `mov` parameter makes plain locals of the same type linear: `d = a` is refused E001. Over-rejection only; it also blocks measuring the struct half of I.92
+mov-shared-irtype	mov parameter of the local's own type	OK
 mov-shared-irtype	plain parameter of the local's own type	OK
 mov-shared-irtype	mov parameter of a DIFFERENT type	OK
 error-union	try, pointer payload, both paths	OK

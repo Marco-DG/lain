@@ -1085,6 +1085,11 @@ rc=0
 out=
 at=const 2
 ty=Resource struct
+### tests/ownership/mov_param_type_not_shared_pass.ln
+rc=1
+out=
+at=const 2
+ty=Counter struct
 ### tests/ownership/mov_syntax_pass.ln
 rc=0
 out=

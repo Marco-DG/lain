@@ -735,7 +735,23 @@ static __int128 ir_size_upper(const IrType *t, int depth) {
 }
 static IrType *ir_lower_type(LowerCtx *c, Type *t) {
     IrType *r = ir_lower_type_impl(c, t);
-    if (r && t && sema_type_is_linear(t)) r->linear = true;
+    if (r && t && sema_type_is_linear(t)) {
+        // ★ `mov` ON A USE IS NOT A PROPERTY OF THE TYPE (I.93). Lowering caches one IrType per
+        // struct/enum per function, and setting `linear` on it because ONE use was written
+        // `mov` made every value of that type in the function linear: `func f(mov k Counter)
+        // { a = Counter(1); b = a; d = a }` refused `d = a` (E001). When it is the `mov` that
+        // makes the type linear, the use gets its own linear copy; a type linear by its
+        // declaration (a `mov` field inside) stays marked on the shared type, since every value
+        // of it is linear.
+        if (t->mode == MODE_OWNED) {
+            Type plain = *t; plain.mode = MODE_SHARED;
+            if (!sema_type_is_linear(&plain)) {
+                IrType *cp = ir_type_new(c->a, r->kind); *cp = *r; cp->linear = true;
+                return cp;
+            }
+        }
+        r->linear = true;
+    }
     return r;
 }
 static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {

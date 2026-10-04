@@ -723,9 +723,7 @@ add("mov-outside-aggregate", "integer binding, read after the consume",
 # the sharing is per TYPE and not per function. A fix keyed on the function would leave that cell
 # alone and the first cell broken; a fix that cleared linearity too widely would stop charging the
 # parameter itself, which the mov-field-leak row above would then catch.
-_I93 = ("I.93 — lowering caches one IrType per struct per function and `mov` sets `linear` on that "
-        "shared object, so a `mov` parameter makes plain locals of the same type linear: `d = a` is "
-        "refused E001. Over-rejection only; it also blocks measuring the struct half of I.92")
+# Closed by I.93: a `mov` use gets its own linear copy of the type, so the cached type stays plain.
 _I93_BODY = ('type Counter { n i32 }\n%s'
              'func f(%s) i32 {\n    a = Counter(1)\n    b = a\n    d = a\n'
              '    if b.n == d.n {\n        return 7\n    }\n    return 9\n}\n'
@@ -733,7 +731,7 @@ _I93_BODY = ('type Counter { n i32 }\n%s'
 # DERIVED: a and its two copies all hold n == 1, so the comparison holds and f returns 7. Counter owns
 # nothing, so no copy of it can be a move in the first place.
 add("mov-shared-irtype", "mov parameter of the local's own type",
-    _I93_BODY % ("", "mov k Counter", "Counter(0)"), "7\n", plan=_I93)
+    _I93_BODY % ("", "mov k Counter", "Counter(0)"), "7\n")
 add("mov-shared-irtype", "plain parameter of the local's own type",
     _I93_BODY % ("", "k Counter", "Counter(0)"), "7\n")
 add("mov-shared-irtype", "mov parameter of a DIFFERENT type",
