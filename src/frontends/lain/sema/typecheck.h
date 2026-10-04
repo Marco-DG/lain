@@ -3855,13 +3855,46 @@ void sema_infer_expr(Expr *e) {
         Decl *retU = find_union_enum(current_return_type);
         e->as.try_expr.operand_enum = opU;
         e->as.try_expr.return_enum  = retU;
+        // ★ EVERY MARKER, PAYLOAD OR NOT (I.122). The loops skipped any variant with fields, meant
+        // for the `__payload` variant, so every PAYLOAD marker was skipped: `try` of a
+        // `ParseErr(99)` into `i32 | Other(code i32)` was accepted, and the marker had nowhere to
+        // go. Its block returned the zero value, so the error became the success value 0 in
+        // silence. The payload variant is skipped by its name, and a payload marker must be in
+        // the return union with a payload of the same shape.
+        #define TC_IS_PAYLOAD_VARIANT(x) ((x)->name && (x)->name->length == 9 && memcmp((x)->name->name, "__payload", 9) == 0)
         if (opU) for (Variant *v = opU->as.enum_decl.variants; v; v = v->next) {
-            if (v->fields) continue;                 // skip the `__payload` variant
-            bool in_ret = false;
+            if (TC_IS_PAYLOAD_VARIANT(v)) continue;
+            bool in_ret = false; Variant *match = NULL;
             if (retU) for (Variant *w = retU->as.enum_decl.variants; w; w = w->next) {
-                if (w->fields) continue;
+                if (TC_IS_PAYLOAD_VARIANT(w)) continue;
                 if (w->name->length == v->name->length &&
-                    memcmp(w->name->name, v->name->name, (size_t)v->name->length) == 0) { in_ret = true; break; }
+                    memcmp(w->name->name, v->name->name, (size_t)v->name->length) == 0) { in_ret = true; match = w; break; }
+            }
+            if (in_ret) {
+                int nv = 0, nw = 0;
+                for (DeclList *f = v->fields; f; f = f->next) nv++;
+                for (DeclList *f = match->fields; f; f = f->next) nw++;
+                if (nv != nw) {
+                    fprintf(stderr, "[E065] Error Ln %li, Col %li: `try` may propagate marker `%.*s` with a "
+                            "payload of %d field%s, and the enclosing function's return union declares `%.*s` "
+                            "with %d. A marker keeps its payload; give both the same fields, or handle it "
+                            "with `case`.\n", (long)e->line, (long)e->col,
+                            (int)v->name->length, v->name->name, nv, nv == 1 ? "" : "s",
+                            (int)v->name->length, v->name->name, nw);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+            }
+            if (!in_ret && !retU) {
+                // A function that returns no union has nowhere to send a marker (Handwriting: it read
+                // "not in the enclosing function's return union" of a function returning i32).
+                char rb[128]; type_describe(current_return_type, rb, sizeof rb);
+                fprintf(stderr, "[E065] Error Ln %li, Col %li: `try` may propagate marker `%.*s`, but the "
+                        "enclosing function returns '%s', not a union. Return a union that has `%.*s`, or "
+                        "handle it with `case`.\n", (long)e->line, (long)e->col,
+                        (int)v->name->length, v->name->name, rb, (int)v->name->length, v->name->name);
+                diagnostic_show_line(e->line, e->col);
+                exit(1);
             }
             if (!in_ret) {
                 fprintf(stderr, "[E065] Error Ln %li, Col %li: `try` may propagate marker `%.*s`, "
@@ -3873,6 +3906,7 @@ void sema_infer_expr(Expr *e) {
                 exit(1);
             }
         }
+        #undef TC_IS_PAYLOAD_VARIANT
     }
     break;
   }

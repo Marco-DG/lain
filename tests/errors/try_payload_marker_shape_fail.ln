@@ -1,0 +1,17 @@
+// EXPECT: [E065]
+// EXPECT-TEXT: with a payload of 1 field, and the enclosing function's return union declares `ParseErr` with 2
+// I.122: a marker keeps its payload, so the return union's marker of the same name must have the same
+// fields. It was accepted here and refused only by the code generator.
+func step(x i32, mode i32) i32 | ParseErr(line i32) {
+    if mode == 2 { return ParseErr(99) }
+    return x
+}
+
+func lift(x i32, mode i32) i32 | ParseErr(line i32, col i32) {
+    v = try step(x, mode)
+    return v
+}
+
+func main() i32 {
+    return 0
+}

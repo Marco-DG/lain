@@ -1,0 +1,16 @@
+// EXPECT: [E065]
+// EXPECT-TEXT: `try` may propagate marker `ParseErr`, but the enclosing function returns 'i32', not a union
+// I.122: a function that returns no union at all cannot propagate a payload marker either.
+func step(x i32, mode i32) i32 | ParseErr(line i32) {
+    if mode == 2 { return ParseErr(99) }
+    return x
+}
+
+func lift(x i32, mode i32) i32 {
+    v = try step(x, mode)
+    return v
+}
+
+func main() i32 {
+    return 0
+}

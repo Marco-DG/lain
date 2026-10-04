@@ -1,0 +1,18 @@
+// EXPECT: [E065]
+// EXPECT-TEXT: `try` may propagate marker `ParseErr`, but it is not in the enclosing function's return union
+// I.122 (Handwriting): the propagation check skipped every marker with a payload, so this was
+// accepted and the ParseErr became the SUCCESS value 0 (and, with the missing-marker block
+// unreachable, undefined behaviour). A payload marker is checked like any other.
+func step(x i32, mode i32) i32 | ParseErr(line i32) {
+    if mode == 2 { return ParseErr(99) }
+    return x
+}
+
+func lift(x i32, mode i32) i32 | Other(code i32) {
+    v = try step(x, mode)
+    return v
+}
+
+func main() i32 {
+    return 0
+}
