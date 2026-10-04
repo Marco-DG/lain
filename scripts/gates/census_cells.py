@@ -932,9 +932,8 @@ add("union-call-arg", "passed straight to the union parameter",
 # payload pairings for the second union (a refined alias, a bool, `*u16`): refused in all three, so it
 # is the shared NAME, not the payload. The two controls say which part matters: the SAME union in two
 # functions is fine, and two different unions with different marker names are fine.
-_I97 = ("I.97 — two different error unions in one module that share a marker name: the second "
-        "function's `return NotFound` is refused E012, as though the marker were bound to the first "
-        "union. The same union twice, or a renamed marker, compiles")
+# Closed by I.97: a marker means the variant of the union it flows into, so two unions that share
+# a marker name both compile.
 _U97 = ('type Small = u8 < 200\n'
         'func a(f bool, s *u8) *u8 | NotFound {\n    if f {\n        return NotFound\n    }\n    return s\n}\n')
 def _u97_b(ty, marker):
@@ -949,7 +948,7 @@ def _u97_main(ty, marker, arg, fmt):
             '    libc_printf("\\n")\n    return 0\n}\n' % (ty, marker, arg, marker, fmt))
 # DERIVED: `a` succeeds and prints its payload "ok"; `b` fails and prints the marker's letter "E".
 add("shared-marker", "two different unions, one marker name",
-    _U97 + _u97_b("Small", "NotFound") + _u97_main("Small", "NotFound", "9", "d"), "okE\n", plan=_I97)
+    _U97 + _u97_b("Small", "NotFound") + _u97_main("Small", "NotFound", "9", "d"), "okE\n")
 add("shared-marker", "the same union in two functions",
     _U97 + _u97_b("*u8", "NotFound") + _u97_main("*u8", "NotFound", '"ok"', "s"), "okE\n")
 add("shared-marker", "two different unions, two marker names",

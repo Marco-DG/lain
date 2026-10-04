@@ -1,0 +1,45 @@
+// I.97: two unions in one module declare the same marker name. The resolver bound a bare `NotFound`
+// to the first union that declares it, so the second function's `return NotFound` was refused as
+// a conversion from the other union. A marker now means the variant of the union it is coerced
+// into. Both unions, both paths, the marker matched by `case` in each, under the sanitizers and the
+// interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Small = u8 < 200
+
+func find(fail bool, v *u8) *u8 | NotFound {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+
+func pick(fail bool, v Small) Small | NotFound {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+
+func show(r *u8 | NotFound) effects io {
+    case r {
+        NotFound: libc_printf("nf ")
+        else:     libc_printf("ok ")
+    }
+}
+
+func show_small(r Small | NotFound) effects io {
+    case r {
+        NotFound: libc_printf("nf ")
+        else:     libc_printf("ok ")
+    }
+}
+
+func main() i32 effects io {
+    show(find(true, "x"))
+    show(find(false, "x"))
+    show_small(pick(true, 7))
+    show_small(pick(false, 7))
+    libc_printf("\n")
+    return 0
+}

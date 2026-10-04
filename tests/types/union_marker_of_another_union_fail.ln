@@ -1,0 +1,23 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: 'NotFound' is a marker of '*u8 | NotFound', and 'Small | Missing' declares no marker
+// I.97, the refused side: a marker is matched by name in the union it is coerced into, so a marker
+// that union does not declare is still refused, although another union in the module declares it.
+type Small = u8 < 200
+
+func find(fail bool, v *u8) *u8 | NotFound {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+
+func pick(fail bool, v Small) Small | Missing {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+
+func main() i32 {
+    return 0
+}

@@ -889,6 +889,26 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
     }
     if (ok) return;
     char fb[128], tb[128];
+    // A bare marker the target union does not declare (I.97). Its type is the tag of a union that
+    // does declare it, which printed as 'i32'; name the marker and the union it belongs to.
+    Decl *O = (src_expr && src_expr->kind == EXPR_IDENTIFIER) ? src_expr->decl : NULL;
+    if (O && O->kind == DECL_ENUM && O->as.enum_decl.is_union) {
+        const char *nm = src_expr->as.identifier_expr.id->name;
+        isize nl = src_expr->as.identifier_expr.id->length;
+        for (Variant *v = O->as.enum_decl.variants; v; v = v->next) {
+            isize vl = v->name->length;
+            if (v->fields || nl < vl || memcmp(nm + nl - vl, v->name->name, (size_t)vl) != 0 ||
+                (nl > vl && nm[nl - vl - 1] != '_')) continue;
+            type_describe(type_simple(sema_arena, O->as.enum_decl.type_name), fb, sizeof fb);
+            type_describe(t, tb, sizeof tb);
+            fprintf(stderr,
+                "[E012] Error Ln %li, Col %li: %s '%s' has incompatible type: '%.*s' is a marker of "
+                "'%s', and '%s' declares no marker by that name.\n",
+                (long)line, (long)col, ctx, label ? label : "", (int)vl, v->name->name, fb, tb);
+            diagnostic_show_line(line, col);
+            exit(1);
+        }
+    }
     type_describe(f, fb, sizeof fb);
     type_describe(t, tb, sizeof tb);
     fprintf(stderr,

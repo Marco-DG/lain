@@ -159,8 +159,28 @@ static Type *union_payload_type(Type *t) {
 // variant's name (matched by the mangled-name suffix `..._<marker>`).
 static Id *union_match_marker(Decl *U, Expr *e) {
     if (!U || !e || e->kind != EXPR_IDENTIFIER) return NULL;
-    if (e->decl != U) return NULL;                 // resolve bound it to this enum's variant
     const char *nm = e->as.identifier_expr.id->name; isize nl = e->as.identifier_expr.id->length;
+    // ★ A MARKER NAME MAY BELONG TO SEVERAL UNIONS (I.97). The resolver binds a bare `NotFound` to
+    // the first union that declares it, so in a module with `*u8 | NotFound` and `Small | NotFound`
+    // the second function's `return NotFound` was bound to the first union and refused. What the
+    // marker means is decided by the union it is coerced INTO: find the marker's own name in the
+    // union it was bound to, then that name in U.
+    if (e->decl != U) {
+        Decl *O = e->decl;
+        if (!O || O->kind != DECL_ENUM || !O->as.enum_decl.is_union) return NULL;
+        Id *own = NULL;
+        for (Variant *v = O->as.enum_decl.variants; v && !own; v = v->next) {
+            if (v->fields) continue;
+            isize vl = v->name->length;
+            if (nl > vl && nm[nl - vl - 1] == '_' && memcmp(nm + nl - vl, v->name->name, (size_t)vl) == 0)
+                own = v->name;
+        }
+        if (!own) return NULL;
+        for (Variant *v = U->as.enum_decl.variants; v; v = v->next)
+            if (!v->fields && v->name->length == own->length &&
+                memcmp(v->name->name, own->name, (size_t)own->length) == 0) return v->name;
+        return NULL;
+    }
     for (Variant *v = U->as.enum_decl.variants; v; v = v->next) {
         if (v->fields) continue;                   // skip the `some` payload variant
         isize vl = v->name->length;
@@ -236,7 +256,9 @@ static void sema_union_coerce(Expr **slot, Type *target) {
         }
     }
     if (e->type && core_identical(e->type, target)) return;   // already exactly this union
-    if (e->type && find_union_enum(e->type)) return;          // already SOME union value — don't re-wrap
+    // A bare marker is matched against the union it is coerced into before the guard below, which
+    // would otherwise keep a marker the resolver bound to ANOTHER union that declares the same name
+    // (I.97).
     Id *marker = union_match_marker(U, e);
     if (marker) {                                             // bare marker → U.marker
         Expr *tgt = expr_type(sema_arena, uty); tgt->decl = U;   // member handler keys on target->decl
@@ -245,6 +267,7 @@ static void sema_union_coerce(Expr **slot, Type *target) {
         *slot = m;
         return;
     }
+    if (e->type && find_union_enum(e->type)) return;          // already SOME union value — don't re-wrap
     // payload value → U.__payload(value) — ONLY when e is exactly the payload
     // type. Anything else (a union value, a type mismatch, or untyped) is left to
     // check_conversion so it can pass a same-union assignment or report the error.

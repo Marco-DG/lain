@@ -2,8 +2,8 @@
 // the raw `T | M` when the argument is checked, while the parameter's was lowered to its synthesized
 // enum, so `show(find(...))` was refused as converting the union into itself; binding the result
 // first compiled. Both value types (a pointer and a refined alias), both paths, under the sanitizers
-// and the interpreter. (The second union's marker is `Missing`, not a second `NotFound`: two unions
-// sharing a marker name is plan I.97.)
+// and the interpreter. (The second union's marker is `Missing`; two unions sharing one marker name
+// are tests/trust/union_shared_marker_pass.ln.)
 extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type Small = u8 < 200
