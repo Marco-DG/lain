@@ -2330,7 +2330,15 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             }
             // not a local/param: a module-level constant folds to its initializer
             if (c->const_depth < 32) {
-                Decl *g = ir_find_global_const(c, e->as.identifier_expr.id);
+                // ★ THE DECLARATION THE RESOLVER BOUND, before any name match (I.98). A top-level
+                // constant is registered under `<compiling module>_<name>`, so inside an IMPORTED
+                // module's function `K` arrives here as `use_K` while K's declaration belongs to
+                // `lib`, no name matched, and every module-level constant was unreadable from the
+                // module that defines it once that module was imported (Handwriting: Marco's
+                // ctype.ln table, read by is_space, could not be imported into lexer.ln).
+                Decl *g = (e->is_global && e->decl && e->decl->kind == DECL_VARIABLE &&
+                           e->decl->as.variable_decl.init && !e->decl->as.variable_decl.is_mutable)
+                          ? e->decl : ir_find_global_const(c, e->as.identifier_expr.id);
                 // A global ARRAY cannot fold to a scalar, and leaving it OPAQUE meant every
                 // read of one dereferenced null: four programs SEGFAULTED. Materialise it —
                 // an immutable global with a literal initializer is exactly a local array

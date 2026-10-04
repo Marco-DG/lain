@@ -1661,6 +1661,11 @@ at=pure 4
 ty=Lx struct
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/imported_module_constant_pass.ln
+rc=0
+out=7 20 30
+at=const 4
+ty=Slice_u8 scalar
 ### tests/trust/in_index_test_pass.ln
 rc=0
 out=

@@ -252,6 +252,19 @@ int main(int argc, char **argv) {
         // line. Nothing can be emitted for such a program anyway: name the cause and stop. The
         // same holds for a function lowering marked `incomplete` (unmodelled control flow); it
         // used to be skipped here with a note and then EMITTED, its checks never run.
+        // A function written in an IMPORTED module reports against that module's file (I.98): its
+        // module path `a.b` is the file `a/b.ln`, relative to where the compile runs, which is
+        // where the module was loaded from.
+        for (IrFunc *f = mod; f; f = f->next) {
+            Decl *sd = (Decl *)f->src_decl;
+            if (!sd || !sd->defining_module || strcmp(sd->defining_module, modname) == 0) continue;
+            size_t ml = strlen(sd->defining_module);
+            char *pf = malloc(ml + 4);
+            if (!pf) continue;
+            for (size_t k = 0; k < ml; k++) pf[k] = sd->defining_module[k] == '.' ? '/' : sd->defining_module[k];
+            memcpy(pf + ml, ".ln", 4);
+            f->src_file = pf;
+        }
         if (ir_emit_refuse_opaque(mod, args.filename)) { sema_destroy(); return 1; }
         int found = 0;
         for (IrFunc *f = mod; f; f = f->next) {

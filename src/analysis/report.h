@@ -29,6 +29,7 @@ static void (*ir_diag_excerpt)(isize line, isize col) = NULL;
 // does for the emitter's errors.
 static const IrFunc *ir_diag_fn = NULL;
 static void ir_diag(const char *file, isize line, isize col, const char *code, const char *msg) {
+    if (ir_diag_fn && ir_diag_fn->src_file) file = ir_diag_fn->src_file;   // an imported module (I.98)
     fprintf(stderr, "[%s] Error", code);
     ir_diag_locus(line, col, ir_diag_fn);
     fprintf(stderr, ": %s\n", msg);

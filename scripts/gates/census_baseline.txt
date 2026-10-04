@@ -290,7 +290,7 @@ union-call-arg	passed straight to the union parameter	OK
 shared-marker	two different unions, one marker name	OK
 shared-marker	the same union in two functions	OK
 shared-marker	two different unions, two marker names	OK
-imported-constant	a scalar constant, read through an imported function	REFUSED [E100]  # I.98 — a function of an imported module cannot read that module's own top-level constant: E100 unresolved-global. The same read in the main file compiles, and so does an imported function that reads no constant
-imported-constant	an array constant, read through an imported function	REFUSED [E100]  # I.98 — a function of an imported module cannot read that module's own top-level constant: E100 unresolved-global. The same read in the main file compiles, and so does an imported function that reads no constant
+imported-constant	a scalar constant, read through an imported function	OK
+imported-constant	an array constant, read through an imported function	OK
 imported-constant	an imported function that reads no constant	OK
 imported-constant	the same constant read in the main file	OK

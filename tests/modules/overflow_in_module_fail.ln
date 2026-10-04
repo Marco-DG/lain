@@ -1,0 +1,6 @@
+// EXPECT: [E086]
+// A test on its own, and the module tests/modules/imported_error_names_its_file_fail.ln imports
+// (I.98): a function whose addition is not provably free of overflow.
+func bump(x i32) i32 {
+    return x + 1
+}

@@ -532,6 +532,10 @@ typedef struct IrFunc {
     // The function's name as the program wrote it, for a diagnostic that has no line to give
     // (ir_diag_locus): `name` is qualified by its module (`tests_x_f`), which read as noise.
     IrName    *src_name;
+    // The file the function was WRITTEN in, when that is not the file being compiled (an imported
+    // module's function); NULL means the main file. A diagnostic's `-->` line named the main file
+    // with the imported file's line and column, so a user looked at the wrong file (I.98).
+    const char *src_file;
     bool       incomplete;
     // WHY this function could not be lowered faithfully — a static string, first reason wins —
     // and WHERE: the position of that first construct. The IR is missing code the program

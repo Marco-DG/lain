@@ -1,0 +1,13 @@
+// I.98: a function of an IMPORTED module reads that module's own top-level constants. A constant is
+// registered under `<compiling module>_<name>`, so inside the imported function `K` was looked up
+// as the importing module's and was refused, E100 "unresolved-global" (Handwriting: Marco's
+// ctype.ln table could not be imported into his lexer). Lowering now uses the declaration the
+// resolver bound. A scalar and a table (read through an index, so it is static data), under the
+// sanitizers and the interpreter.
+import tests.modules.const_table_mod.{get, tab}
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func main() i32 effects io {
+    libc_printf("%d %d %d\n", get() as i32, tab(1) as i32, tab(6) as i32)
+    return 0
+}

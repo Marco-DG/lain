@@ -1588,6 +1588,7 @@ static void ir_emit_refuse_at(const char *file, isize line, isize col, const IrF
     fprintf(stderr, "[E100] Error");
     ir_diag_locus(line, col, f);
     fprintf(stderr, ": this construct is not supported by the code generator yet (%s).\n", why);
+    if (f && f->src_file) file = f->src_file;            // written in an imported module (I.98)
     if (file && line) fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)line, (long long)col);
     fprintf(stderr, "       the compiler did not model it, so there is nothing faithful to emit — "
                     "refusing rather than %s\n", instead);

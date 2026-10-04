@@ -969,18 +969,16 @@ add("shared-marker", "two different unions, two marker names",
 # I.98's other half has no cell, because the census records a refusal's code and not its location:
 # a diagnostic inside an imported function named the MAIN file (`use.ln:2:12` for a line of lib.ln).
 # That belongs to a corpus test with EXPECT-TEXT naming the imported file.
-_I98 = ("I.98 — a function of an imported module cannot read that module's own top-level constant: "
-        "E100 unresolved-global. The same read in the main file compiles, and so does an imported "
-        "function that reads no constant")
+# Closed by I.98: lowering reads the declaration the resolver bound, so an imported function reads its
+# own module's constants.
 _GET7 = 'func main() i32 effects io {\n    libc_printf("%d\\n", get() as i32)\n    return 0\n}\n'
 # DERIVED: the constant is 7, so `get()` prints 7; the table's element 1 is 6.
 add("imported-constant", "a scalar constant, read through an imported function",
-    'import lib.{get}\n' + _GET7, "7\n", plan=_I98,
-    files={"lib.ln": 'K u8 = 7\nfunc get() u8 {\n    return K\n}\n'})
+    'import lib.{get}\n' + _GET7, "7\n", files={"lib.ln": 'K u8 = 7\nfunc get() u8 {\n    return K\n}\n'})
 add("imported-constant", "an array constant, read through an imported function",
     'import lib.{at}\n'
     'func main() i32 effects io {\n    libc_printf("%d\\n", at(1) as i32)\n    return 0\n}\n', "6\n",
-    plan=_I98, files={"lib.ln": 'T u8[4] = [5, 6, 7, 8]\nfunc at(i u8) u8 {\n    return T[i & 3]\n}\n'})
+    files={"lib.ln": 'T u8[4] = [5, 6, 7, 8]\nfunc at(i u8) u8 {\n    return T[i & 3]\n}\n'})
 add("imported-constant", "an imported function that reads no constant",
     'import lib.{get}\n' + _GET7, "7\n",
     files={"lib.ln": 'func get() u8 {\n    return 7\n}\n'})

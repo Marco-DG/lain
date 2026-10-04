@@ -1,0 +1,13 @@
+// Helper module for tests/trust/imported_module_constant_pass.ln (I.98): a scalar constant and a
+// constant table, each read by a function of this module, the shape of a ctype-style
+// classification table.
+K u8 = 7
+T u8[4] = [10, 20, 30, 40]
+
+func get() u8 {
+    return K
+}
+
+func tab(i usize) u8 {
+    return T[i & 3]
+}

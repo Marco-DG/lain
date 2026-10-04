@@ -37,7 +37,10 @@ fi
 PASS=0; FAIL=0; VIOL=(); TDIR="$(mktemp -d)"
 trap 'rm -rf "$TDIR"' EXIT
 
-for f in "$ROOT"/tests/trust/*_pass.ln; do
+# By RELATIVE path, from the root (cd above): an absolute path moves the module root, so a trust
+# program importing a sibling module (`import tests.modules.const_table_mod`, I.98) was refused
+# here while run_tests, which passes relative paths, accepted it.
+for f in tests/trust/*_pass.ln; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f" .ln)"
     c="$TDIR/$base.c"; bin="$TDIR/$base"

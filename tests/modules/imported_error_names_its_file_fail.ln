@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: --> tests/modules/overflow_in_module_fail.ln:5:12
+// I.98: a finding inside an IMPORTED module's function names that module's file. It named the file
+// being compiled with the imported file's line and column, so a user looked at the wrong file.
+import tests.modules.overflow_in_module_fail.{bump}
+func main() i32 {
+    return bump(1)
+}
