@@ -1315,6 +1315,23 @@ for label, prog, exp, plan in (
     add("array-runtime-size", label, prog, exp, plan=plan)
 
 
+# ── axis: the size bound for an element larger than 2^40 bytes (I.121) ───────────────────────────
+# The size obligation n <= SIZE_MAX / sizeof(T) uses an UPPER bound on sizeof(T), and that bound was
+# capped at 2^40 bytes. For a larger struct it fell BELOW the real size, so the obligation was too weak:
+# with 65 fields of u64[2147483647], `if n > 16777215 { return 0 }` met the capped bound SIZE_MAX / 2^40,
+# though every n from 16,519,105 up takes the byte size past 2^64. Fixed in I.121, which this row
+# follows: the bound saturates at 2^64 and is never below the real size.
+# DERIVED: sizeof(Huge) >= 65 * 2147483647 * 8 = 1,116,691,496,440 > 2^40, and 16777215 is
+# (2^64 - 1) // 2^40, so 16777215 * sizeof(Huge) exceeds 2^64.
+_HUGE = 'type Huge {\n' + ''.join('    f%d u64[2147483647]\n' % k for k in range(65)) + '}\n'
+assert 65 * 2147483647 * 8 > 2**40 and ((2**64 - 1) // 2**40) * 65 * 2147483647 * 8 >= 2**64
+add("array-runtime-size", "a struct over 2^40 bytes, after a test met only by a capped size bound",
+    _HUGE + 'func f(n usize) i32 {\n    if n > %d {\n        return 0\n    }\n    var a Huge[n]\n'
+    '    if 5 < a.len {\n        return 7\n    }\n    return 1\n}\n'
+    'func main() i32 effects io {\n    libc_printf("%%d\\n", f(8))\n    return 0\n}\n' % ((2**64 - 1) // 2**40),
+    "__ILLFORMED__")
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,

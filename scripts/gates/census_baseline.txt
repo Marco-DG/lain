@@ -361,3 +361,4 @@ array-runtime-size	i32 elements, a usize length after `if n > 1024`	OK
 array-runtime-size	i32 elements, a u32 length with no test	OK
 array-runtime-size	u8 elements, a u64 length with no test	OK
 array-runtime-size	u8 elements, 3 MiB: deeper than a page, within the stack	OK
+array-runtime-size	a struct over 2^40 bytes, after a test met only by a capped size bound	ok-REFUSED [E085]
