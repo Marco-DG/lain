@@ -1887,6 +1887,12 @@ out=1234
 at=const 2
 ty=Slice_u8 scalar
 ty=__U_i32_ParseErr_i32 struct
+### tests/trust/payload_pattern_not_a_call_pass.ln
+rc=0
+out=5
+at=const 2
+ty=Box struct
+ty=Slice_u8 scalar
 ### tests/trust/policy_op_literal_left_pass.ln
 rc=0
 out=

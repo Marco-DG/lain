@@ -1,0 +1,14 @@
+// I.112, the allowed side: an extern's `mov` and `var` parameters take their arguments spelled with
+// `mov` and `var`, exactly as a function's do.
+extern func sink(v mov *i32) effects io
+extern func bump(v var i32) effects io
+
+func main() i32 effects io {
+    var x i32 = 1
+    bump(var x)
+    p = &x
+    unsafe {
+        sink(mov p)
+    }
+    return 0
+}

@@ -1,0 +1,10 @@
+// EXPECT: [E017]
+// EXPECT-TEXT: passing 'x' to a mutable ('var') parameter requires explicit 'var' at the call site
+// I.112: `var` was skipped for an extern the same way as `mov`.
+extern func bump(v var i32) effects io
+
+func main() i32 effects io {
+    var x i32 = 1
+    bump(x)
+    return x
+}

@@ -160,8 +160,10 @@ static Decl *find_function_decl_by_mangled_or_raw(const char *mangled) {
         if (strncmp(mangled, fid->name, fid->length) == 0 && mangled[fid->length] == '\0') return d;
     }
 
-    // Otherwise, try to match "<module>_<raw>" by suffix:
+    // Otherwise, try to match "<module>_<raw>" by suffix, and only a UNIQUE match (I.111): the
+    // first one won, so a constructor `<mod>_Box_Full` found an unrelated function `Full`.
     size_t mlen = strlen(mangled);
+    Decl *hit = NULL; int hits = 0;
     for (ModuleNode *mn = loaded_modules; mn; mn = mn->next) {
         for (DeclList *dl = mn->decls; dl; dl = dl->next) {
             Decl *d = dl->decl;
@@ -174,13 +176,13 @@ static Decl *find_function_decl_by_mangled_or_raw(const char *mangled) {
             size_t rlen = (size_t)fid->length;
             if (rlen + 1 <= mlen && mangled[mlen - rlen - 1] == '_') {
                 // compare suffix
-                if (strncmp(mangled + (mlen - rlen), fid->name, rlen) == 0) {
-                    return d;
+                if (strncmp(mangled + (mlen - rlen), fid->name, rlen) == 0 && d != hit) {
+                    hit = d; hits++;
                 }
             }
         }
     }
-    return NULL;
+    return hits == 1 ? hit : NULL;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
@@ -224,9 +226,14 @@ static Id *spell_owner_of(Expr *arg) {
 static void spell_check_call(Expr *e) {
     Expr *callee = e->as.call_expr.callee;
     Decl *fn = NULL;
+    // ★ AN EXTERN TAKES `mov` AND `var` LIKE A FUNCTION (I.112). Only DECL_FUNCTION was taken, and
+    // the check then returned for anything else, so `sink(p)` to `extern func sink(v mov *i32)`
+    // compiled with no `mov` written, against the lookup's own comment.
     if (callee && callee->decl &&
-        (callee->decl->kind == DECL_FUNCTION))
+        (callee->decl->kind == DECL_FUNCTION || callee->decl->kind == DECL_EXTERN_FUNCTION))
         fn = callee->decl;
+    // A callee bound to an enum is a variant's constructor: no function to look up (I.111).
+    if (callee && callee->decl && callee->decl->kind == DECL_ENUM) return;
     if (!fn && callee && callee->kind == EXPR_IDENTIFIER && callee->as.identifier_expr.id) {
         Id *cid = callee->as.identifier_expr.id;
         char buf[256];
@@ -234,7 +241,7 @@ static void spell_check_call(Expr *e) {
         memcpy(buf, cid->name, (size_t)n); buf[n] = '\0';
         fn = find_function_decl_by_mangled_or_raw(buf);
     }
-    if (!fn || (fn->kind != DECL_FUNCTION)) return;
+    if (!fn || (fn->kind != DECL_FUNCTION && fn->kind != DECL_EXTERN_FUNCTION)) return;
 
     DeclList *params = fn->as.function_decl.params;
     ExprList *args   = e->as.call_expr.args;
@@ -287,8 +294,8 @@ static void spell_walk_expr(Expr *e) {
                       spell_walk_expr(e->as.else_expr.arm); break;
     case EXPR_MATCH:
         spell_walk_expr(e->as.match_expr.value);
+        // A pattern is a destructuring, not a call site: `Full(v):` is not a call (I.111).
         for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
-            for (ExprList *pl = c->patterns; pl; pl = pl->next) spell_walk_expr(pl->expr);
             spell_walk_expr(c->body);
         }
         break;
@@ -353,8 +360,7 @@ static void spell_walk_stmt(Stmt *s) {
                       spell_walk_stmt_list(s->as.while_stmt.body); break;
     case STMT_MATCH:
         spell_walk_expr(s->as.match_stmt.value);
-        for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {
-            for (ExprList *pl = c->patterns; pl; pl = pl->next) spell_walk_expr(pl->expr);
+        for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next) {   // patterns: not calls
             spell_walk_stmt_list(c->body);
         }
         break;

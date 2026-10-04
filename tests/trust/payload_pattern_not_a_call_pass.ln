@@ -1,0 +1,21 @@
+// I.111 (Handwriting): a bare payload pattern is a destructuring, not a call. With a function that
+// happens to share the variant's name and takes `mov`, the pattern `Full(v):` was E007 "requires
+// explicit 'mov' at the call site": the spelling walk visited it as a call to <mod>_Box_Full, and the
+// lookup's suffix pass returned the unrelated `Full`. Under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Box { Empty, Full { v i32 } }
+
+func Full(mov x i32) i32 {
+    return x
+}
+
+func main() i32 effects io {
+    n = 5
+    b = Box.Full(n)
+    case b {
+        Full(v): libc_printf("%d\n", v)
+        Empty:   libc_printf("e\n")
+    }
+    return 0
+}

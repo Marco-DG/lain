@@ -1,0 +1,15 @@
+// EXPECT: [E007]
+// EXPECT-TEXT: moving linear variable 'p' requires explicit 'mov' at the call site
+// I.112 (Handwriting): the call-site spelling rule skipped every extern, so this compiled with no
+// `mov` written. Ownership was still tracked (a second `sink(p)` is E001); the transfer was simply not
+// written where it happens.
+extern func sink(v mov *i32) effects io
+
+func main() i32 effects io {
+    var x i32 = 1
+    p = &x
+    unsafe {
+        sink(p)
+    }
+    return 0
+}

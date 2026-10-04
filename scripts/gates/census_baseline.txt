@@ -318,10 +318,10 @@ enum-name-suffix	bare arms on Dark_Shade, Shade declared first	ok-REFUSED [E014]
 enum-name-suffix	bare arms on Dark_Shade, Dark_Shade declared first	ok-REFUSED [E014]
 enum-name-suffix	qualified arms on Dark_Shade, Shade declared first	ok-REFUSED [E014]
 enum-name-suffix	the same two arms on Shade, which they do complete	OK
-pattern-as-call	a bare payload pattern beside an unrelated func Full(mov ...)	REFUSED [E007]  # I.111 — a bare `case` payload pattern was walked as a call to the mangled constructor, and the fallback lookup matched an unrelated function of the variant's name by suffix: its `mov` or `var` parameter was demanded of the pattern binding, E007 or E017 on a correct program
-pattern-as-call	a bare payload pattern beside an unrelated func Full(var ...)	REFUSED [E017]  # I.111 — a bare `case` payload pattern was walked as a call to the mangled constructor, and the fallback lookup matched an unrelated function of the variant's name by suffix: its `mov` or `var` parameter was demanded of the pattern binding, E007 or E017 on a correct program
+pattern-as-call	a bare payload pattern beside an unrelated func Full(mov ...)	OK
+pattern-as-call	a bare payload pattern beside an unrelated func Full(var ...)	OK
 pattern-as-call	a qualified payload pattern beside the same function	OK
 pattern-as-call	a bare payload pattern with no function of that name	OK
-extern-call-spelling	an extern's mov parameter given its argument without mov	ACCEPTED-ILLFORMED  # I.112 — the call-site spelling rules E007 (`mov`) and E017 (`var`) were skipped for every extern callee: `sink(x)` to an extern's `mov` or `var` parameter compiled without the keyword
+extern-call-spelling	an extern's mov parameter given its argument without mov	ok-REFUSED [E007]
 extern-call-spelling	an extern's mov parameter given its argument with mov	OK
-extern-call-spelling	an extern's var parameter given its argument without var	ACCEPTED-ILLFORMED  # I.112 — the call-site spelling rules E007 (`mov`) and E017 (`var`) were skipped for every extern callee: `sink(x)` to an extern's `mov` or `var` parameter compiled without the keyword
+extern-call-spelling	an extern's var parameter given its argument without var	ok-REFUSED [E017]
