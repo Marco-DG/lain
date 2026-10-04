@@ -883,6 +883,49 @@ add("membership", "an empty list",
     "__ILLFORMED__")
 
 
+# ── axis: a call returning an error union, BOUND versus passed STRAIGHT to a union parameter (I.96) ─
+# Found by MCW while writing I.94's trust test, confirmed here. The same value, the same parameter type,
+# and the only difference is whether the call is bound to a name first:
+#
+#   var r *u8 | NotFound = find(false, "ok")
+#   show(r)                                          runs, prints ok
+#   show(find(false, "ok"))                          E012: cannot implicitly convert '?' to the union
+#
+# Measured with three payload types (a pointer, a bool, a refined alias) on HEAD and at the top of
+# chain9: identical in all six, so the cells use the pointer alone.
+#
+# What the '?' hid. On HEAD the message reads "cannot implicitly convert '?' to '__U_ptr_u8_NotFound'".
+# With I.94's type printer, which learned to name unions, the same refusal reads:
+#
+#   cannot implicitly convert '*u8 | NotFound' to '__U_ptr_u8_NotFound'
+#
+# So the call DOES have a type: the union as written. The parameter holds the compiler's synthesized
+# form of the same union, and the two are not recognised as one type. The '?' was only the old printer
+# failing to name the written form. An annotated binding works because `var r *u8 | NotFound` gives `r`
+# the synthesized form, which then matches the parameter; an argument has no such step.
+#
+# A related refusal, with no cell here: binding the call WITHOUT an annotation, `r = find(false, "ok")`,
+# is E012 "whose type cannot be inferred. Annotate it explicitly". That one has its own message and may
+# be deliberate, so the row holds only the two forms whose meaning is not in question. Separately, the
+# right-hand type in the message is an internal mangled name; after a fix both sides would print
+# `*u8 | NotFound`, which is itself the clearest statement of the bug.
+_I96 = ("I.96 — a call returning an error union, passed straight to a parameter of that union type, is "
+        "refused E012: the call carries the union as written (`*u8 | NotFound`), the parameter its "
+        "synthesized form (`__U_ptr_u8_NotFound`), and the two are not unified. Bound to an annotated name "
+        "first, the same call runs. The message also prints the internal name")
+_U96 = ('func find(fail bool, v *u8) *u8 | NotFound {\n    if fail {\n        return NotFound\n    }\n'
+        '    return v\n}\n'
+        'func show(r *u8 | NotFound) effects io {\n    case r {\n        NotFound: libc_printf("E")\n'
+        '        else: libc_printf("%s", r)\n    }\n}\n')
+# DERIVED: find succeeds and returns "ok", show prints the payload.
+add("union-call-arg", "bound to an annotated name, then passed",
+    _U96 + 'func main() i32 effects io {\n    var r *u8 | NotFound = find(false, "ok")\n    show(r)\n'
+           '    libc_printf("\\n")\n    return 0\n}\n', "ok\n")
+add("union-call-arg", "passed straight to the union parameter",
+    _U96 + 'func main() i32 effects io {\n    show(find(false, "ok"))\n    libc_printf("\\n")\n'
+           '    return 0\n}\n', "ok\n", plan=_I96)
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,

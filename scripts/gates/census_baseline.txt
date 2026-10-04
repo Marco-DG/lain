@@ -285,3 +285,5 @@ membership	a runtime container	ok-REFUSED [E100]
 membership	a non-constant element	ok-REFUSED [E012]
 membership	a comprehension	ok-REFUSED [E012]
 membership	an empty list	ok-REFUSED [E100]
+union-call-arg	bound to an annotated name, then passed	OK
+union-call-arg	passed straight to the union parameter	REFUSED [E012]  # I.96 — a call returning an error union, passed straight to a parameter of that union type, is refused E012: the call carries the union as written (`*u8 | NotFound`), the parameter its synthesized form (`__U_ptr_u8_NotFound`), and the two are not unified. Bound to an annotated name first, the same call runs. The message also prints the internal name
