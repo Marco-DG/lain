@@ -337,18 +337,18 @@ array-runtime-length	an i32 parameter refined `>= 0`	OK
 array-runtime-length	a usize length with no test	OK
 array-runtime-length	a u8 length with no test	OK
 array-constant-length	a local of length 3	OK
-array-constant-length	a local of length 0	ACCEPTED-ILLFORMED  # I.84: spec 07 says an array's constant length is greater than zero, and a length of 0 is accepted
-array-constant-length	a local of length 0x0	ACCEPTED-ILLFORMED  # I.84: spec 07 says an array's constant length is greater than zero, and a length of 0 is accepted
-array-constant-length	a local of length -1	ok-REFUSED [E085]
+array-constant-length	a local of length 0	ok-REFUSED [E100]
+array-constant-length	a local of length 0x0	ok-REFUSED [E100]
+array-constant-length	a local of length -1	ok-REFUSED [E100]
 array-constant-length	a local of length K - 2, which is 3	OK
-array-constant-length	a local of length K - 5, which is 0	ACCEPTED-ILLFORMED  # I.84: spec 07 says an array's constant length is greater than zero, and a length of 0 is accepted
-array-constant-length	a local of length K - 6, which is -1	ok-REFUSED [E085]
-array-constant-length	a local of length Z, a module constant 0	ACCEPTED-ILLFORMED  # I.84: spec 07 says an array's constant length is greater than zero, and a length of 0 is accepted
-array-constant-length	a local whose inner length is 0	ACCEPTED-ILLFORMED  # I.84: spec 07 says an array's constant length is greater than zero, and a length of 0 is accepted
+array-constant-length	a local of length K - 5, which is 0	ok-REFUSED [E100]
+array-constant-length	a local of length K - 6, which is -1	ok-REFUSED [E100]
+array-constant-length	a local of length Z, a module constant 0	ok-REFUSED [E100]
+array-constant-length	a local whose inner length is 0	ok-REFUSED [E100]
 array-constant-length	a struct field of length 3	OK
-array-constant-length	a struct field of length 0	ACCEPTED-ILLFORMED  # I.84: spec 07 says an array's constant length is greater than zero, and a length of 0 is accepted
-array-constant-length	a struct field of length -1	ok-REFUSED [E132]
+array-constant-length	a struct field of length 0	ok-REFUSED [E100]
+array-constant-length	a struct field of length -1	ok-REFUSED [E100]
 array-constant-length	a parameter of length 3	OK
-array-constant-length	a parameter of length 0	ACCEPTED-ILLFORMED  # I.84: spec 07 says an array's constant length is greater than zero, and a length of 0 is accepted
-array-constant-length	a parameter of length -1	ACCEPTED-ILLFORMED  # I.84: spec 07 says an array's constant length is greater than zero, and a parameter's length of -1 is accepted (every call to it is E087)
-array-constant-length	a type alias of length 0	ok-REFUSED [E012]
+array-constant-length	a parameter of length 0	ok-REFUSED [E100]
+array-constant-length	a parameter of length -1	ok-REFUSED [E100]
+array-constant-length	a type alias of length 0	ok-REFUSED [E100]

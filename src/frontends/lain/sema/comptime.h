@@ -140,6 +140,14 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr) {
             Expr *t = comptime_evaluate_expr(arena, expr->as.index_expr.target);
             Expr *ix = expr->as.index_expr.index;
             bool lay = false; __int128 n = 0;
+            // A constant length of zero or less is no array (spec 07, I.84); it read "the right-hand
+            // side must be a type", which it is.
+            if (t && t->kind == EXPR_TYPE && t->as.type_expr.type_value && ix
+                && sa_is_const(ix, &lay) && !lay && sa_eval(ix, &n) && n <= 0) {
+                fprintf(stderr, "[E100] Error Ln %li, Col %li: an array's length is a constant greater than zero, and this one is %lld. For no elements, use an empty slice.\n", (long)expr->line, (long)expr->col, (long long)n);
+                diagnostic_show_line(expr->line, expr->col);
+                exit(1);
+            }
             if (t && t->kind == EXPR_TYPE && t->as.type_expr.type_value && ix
                 && sa_is_const(ix, &lay) && !lay && sa_eval(ix, &n) && n > 0 && n <= INT32_MAX) {
                 Expr *texpr = clone_expr(arena, expr);

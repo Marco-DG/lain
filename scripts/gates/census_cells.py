@@ -1230,9 +1230,8 @@ for t in ("usize", "u8"):
 # The position matters as much as the spelling: a struct field, a parameter, a type alias and an inner
 # dimension each read the length on a different path. A parameter whose length is zero or less can
 # never be called (every call is E087), so that hole is a declaration the spec forbids, not a run.
-_I84 = "I.84: spec 07 says an array's constant length is greater than zero, and a length of 0 is accepted"
-_I84P = ("I.84: spec 07 says an array's constant length is greater than zero, and a parameter's length "
-         "of -1 is accepted (every call to it is E087)")
+# Closed by I.84: a constant length of zero or less is E100 in every position, with the true reason
+# (a struct field was E132 and a type alias E012, both refused for something else).
 _CONSTS = 'K i32 = 5\nZ i32 = 0\n'
 _DONE = 'func main() i32 effects io {\n    libc_printf("done\\n")\n    return 0\n}\n'
 def _local(n):
@@ -1242,25 +1241,25 @@ def _local(n):
 # K - 6 is -1 and Z is 0.
 for label, n, exp, plan in (
         ("a local of length 3", "3", "done\n", None),
-        ("a local of length 0", "0", "__ILLFORMED__", _I84),
-        ("a local of length 0x0", "0x0", "__ILLFORMED__", _I84),
+        ("a local of length 0", "0", "__ILLFORMED__", None),
+        ("a local of length 0x0", "0x0", "__ILLFORMED__", None),
         ("a local of length -1", "-1", "__ILLFORMED__", None),
         ("a local of length K - 2, which is 3", "K - 2", "done\n", None),
-        ("a local of length K - 5, which is 0", "K - 5", "__ILLFORMED__", _I84),
+        ("a local of length K - 5, which is 0", "K - 5", "__ILLFORMED__", None),
         ("a local of length K - 6, which is -1", "K - 6", "__ILLFORMED__", None),
-        ("a local of length Z, a module constant 0", "Z", "__ILLFORMED__", _I84),
-        ("a local whose inner length is 0", "2][0", "__ILLFORMED__", _I84)):
+        ("a local of length Z, a module constant 0", "Z", "__ILLFORMED__", None),
+        ("a local whose inner length is 0", "2][0", "__ILLFORMED__", None)):
     add("array-constant-length", label, _local(n), exp, plan=plan)
 for label, n, exp, plan in (
         ("a struct field of length 3", "3", "done\n", None),
-        ("a struct field of length 0", "0", "__ILLFORMED__", _I84),
+        ("a struct field of length 0", "0", "__ILLFORMED__", None),
         ("a struct field of length -1", "-1", "__ILLFORMED__", None)):
     add("array-constant-length", label,
         _CONSTS + 'type S {\n    a i32[%s]\n    n i32\n}\n' % n + _DONE, exp, plan=plan)
 for label, n, exp, plan in (
         ("a parameter of length 3", "3", "done\n", None),
-        ("a parameter of length 0", "0", "__ILLFORMED__", _I84),
-        ("a parameter of length -1", "-1", "__ILLFORMED__", _I84P)):
+        ("a parameter of length 0", "0", "__ILLFORMED__", None),
+        ("a parameter of length -1", "-1", "__ILLFORMED__", None)):
     add("array-constant-length", label,
         _CONSTS + 'func g(a i32[%s]) i32 {\n    return 1\n}\n' % n + _DONE, exp, plan=plan)
 add("array-constant-length", "a type alias of length 0",

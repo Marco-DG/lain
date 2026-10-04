@@ -1,0 +1,7 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: an array's length is a constant greater than zero, and this one is 0
+// I.84: spec 07 says N is a constant greater than zero; `i32[0]` was accepted (Documentation).
+func main() i32 {
+    var a i32[0]
+    return 0
+}

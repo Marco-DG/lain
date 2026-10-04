@@ -1,0 +1,8 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: an array's length is a constant greater than zero, and this one is -1
+// I.84: a constant length of zero or less fell through to the runtime-length path, so this was a
+// stack array of (size_t)-1 elements.
+func main() i32 {
+    var a i32[-1]
+    return 0
+}

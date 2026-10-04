@@ -1,0 +1,9 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: an array's length is a constant greater than zero, and this one is 0
+// I.84 (Handwriting): `type A = i32[0]` was E012, "must be a type (... an array of one with a
+// constant length ...)", which it is. The true reason is the length.
+type A = i32[0]
+
+func main() i32 {
+    return 0
+}

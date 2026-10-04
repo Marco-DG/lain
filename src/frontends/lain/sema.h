@@ -3719,9 +3719,15 @@ static void sema_fold_field_lengths(DeclList *decls) {
             sema_bind_const_names(se, 0);
             bool layout = false; __int128 v = 0;
             bool is_bound = ft->size_relop != TOKEN_EQUAL_EQUAL;
-            bool ok = sa_is_const(se, &layout) && !layout && sa_eval(se, &v) &&
-                      v >= (is_bound ? 0 : 1) && v <= (__int128)INT64_MAX;
+            bool is_c = sa_is_const(se, &layout) && !layout && sa_eval(se, &v);
+            bool ok = is_c && v >= (is_bound ? 0 : 1) && v <= (__int128)INT64_MAX;
             Id *fnm = f->decl->as.variable_decl.name;
+            // A constant LENGTH of zero or less (I.84): E132 said it was not a constant.
+            if (is_c && !is_bound && v <= 0) {
+                fprintf(stderr, "[E100] Error Ln %li, Col %li: an array's length is a constant greater than zero, and this one is %lld. For no elements, use an empty slice.\n", (long)f->decl->line, (long)f->decl->col, (long long)v);
+                diagnostic_show_line(f->decl->line, f->decl->col);
+                exit(1);
+            }
             if (!ok) {
                 fprintf(stderr,
                     "[E132] Error Ln %li, Col %li: field '%.*s' of struct '%.*s' %s its length by "

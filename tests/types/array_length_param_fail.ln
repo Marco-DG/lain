@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: an array's length is a constant greater than zero, and this one is -1
+// I.84: a parameter's constant length of zero or less was accepted (every call was E087).
+func g(a i32[-1]) i32 {
+    return 0
+}
+
+func main() i32 {
+    return 0
+}

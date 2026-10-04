@@ -347,6 +347,13 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
         // F-004: use numeric-literal parser to support hex/bin/oct/underscore
         array_len = (isize)parse_numeric_literal(parser->token.start,
                                                   parser->token.length);
+        // Spec 07: N is a compile-time constant GREATER THAN ZERO (I.84). `i32[0]` was accepted.
+        if (array_len <= 0) {
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: an array's length is a constant greater "
+                    "than zero, and this one is %lld. For no elements, use an empty slice.\n",
+                    (long)parser->line, (long)parser->column, (long long)array_len);
+            exit(1);
+        }
         parser_advance(); // consume the number
       } else if (!parser_match(TOKEN_R_BRACKET)) {
         // Anything before ']' that is not a number is a size constraint.

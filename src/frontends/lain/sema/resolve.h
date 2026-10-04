@@ -86,6 +86,42 @@ static Type *mono_alias_target(Id *n);
 static Type *mono_arg_to_type(Expr *e);
 static void  mono_resolve_signature(Decl *d);
 void sema_resolve_expr(Expr *e); // forward
+static void sema_bind_const_names(Expr *e, int depth);   // sema.h
+// Does `e` name one of `params`? Then a length written with it is a run-time constraint (a
+// sized-slice parameter `a T[n]`), not a constant.
+static bool sema_expr_names_param(Expr *e, DeclList *params, int depth) {
+    if (!e || depth > 16) return false;
+    switch (e->kind) {
+        case EXPR_IDENTIFIER: {
+            Id *n = e->as.identifier_expr.id;
+            for (DeclList *p = params; p && n; p = p->next) {
+                Id *pn = (p->decl && p->decl->kind == DECL_VARIABLE) ? p->decl->as.variable_decl.name : NULL;
+                if (pn && pn->length == n->length && memcmp(pn->name, n->name, (size_t)n->length) == 0) return true;
+            }
+            return false;
+        }
+        case EXPR_UNARY:  return sema_expr_names_param(e->as.unary_expr.right, params, depth + 1);
+        case EXPR_BINARY: return sema_expr_names_param(e->as.binary_expr.left, params, depth + 1) ||
+                                 sema_expr_names_param(e->as.binary_expr.right, params, depth + 1);
+        case EXPR_CAST:   return sema_expr_names_param(e->as.cast_expr.expr, params, depth + 1);
+        case EXPR_MEMBER: return sema_expr_names_param(e->as.member_expr.target, params, depth + 1);
+        default: return false;
+    }
+}
+// A parameter `a T[N]` with a CONSTANT N of zero or less (spec 07, I.84): every call was E087, and
+// the declaration itself was accepted.
+static void sema_check_param_len_positive(Type *t, DeclList *params, isize line, isize col) {
+    if (!t || t->kind != TYPE_ARRAY || !t->size_expr) return;
+    if (t->size_relop != 0 && t->size_relop != TOKEN_EQUAL_EQUAL) return;     // a bound, not a length
+    if (sema_expr_names_param(t->size_expr, params, 0)) return;
+    sema_bind_const_names(t->size_expr, 0);
+    bool lay = false; __int128 v = 0;
+    if (sa_is_const(t->size_expr, &lay) && !lay && sa_eval(t->size_expr, &v) && v <= 0) {
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: an array's length is a constant greater than zero, and this one is %lld. For no elements, use an empty slice.\n", (long)line, (long)col, (long long)v);
+        diagnostic_show_line(line, col);
+        exit(1);
+    }
+}
 // Nonzero while a `case` arm's patterns are resolved: the one place a bare variant name of a plain
 // enum is allowed (I.103).
 static int sema_resolving_pattern = 0;
@@ -777,9 +813,12 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
             }
         }
         for (DeclList *p = d->as.function_decl.params; p; p = p->next)
-          if (p->decl && p->decl->kind == DECL_VARIABLE)
+          if (p->decl && p->decl->kind == DECL_VARIABLE) {
             sema_check_value_type(p->decl->as.variable_decl.type, p->decl->line, p->decl->col,
                                   "a parameter", false);
+            sema_check_param_len_positive(p->decl->as.variable_decl.type, d->as.function_decl.params,
+                                          p->decl->line, p->decl->col);
+          }
       } else if (d->kind == DECL_VARIABLE) {
         sema_check_value_type(d->as.variable_decl.type, d->line, d->col, "a module constant", false);
       }
@@ -830,7 +869,17 @@ void sema_resolve_stmt(Stmt *s) {
         sema_resolve_expr(ty->size_expr);
         sema_infer_expr(ty->size_expr);
         bool lay = false; __int128 nv = 0;
-        if (sa_is_const(ty->size_expr, &lay) && !lay && sa_eval(ty->size_expr, &nv) && nv > 0 && nv <= INT32_MAX) {
+        bool is_const = sa_is_const(ty->size_expr, &lay) && !lay && sa_eval(ty->size_expr, &nv);
+        // A CONSTANT length of zero or less is no array (spec 07, I.84). It fell through to the
+        // runtime-length path, so `var a i32[-1]` was a stack array of (size_t)-1 elements.
+        if (is_const && nv <= 0) {
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: an array's length is a constant greater "
+                    "than zero, and this one is %lld. For no elements, use an empty slice.\n",
+                    (long)s->line, (long)s->col, (long long)nv);
+            diagnostic_show_line(s->line, s->col);
+            exit(1);
+        }
+        if (is_const && nv > 0 && nv <= INT32_MAX) {
             Type *ft = arena_push_aligned(sema_arena, Type);
             *ft = *ty; ft->array_len = (isize)nv; ft->size_expr = NULL; ft->size_relop = 0;
             s->as.var_stmt.type = ty = ft;
