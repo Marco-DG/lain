@@ -205,6 +205,9 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                 else if (c->diag == 85)
                     ir_diag(file, c->line, c->col, "E085",
                             "the length of this runtime-sized array is not provably non-negative: `var a T[n]` allocates n elements on the stack, so test `n >= 0` (or use an unsigned length) first");
+                else if (c->diag == 1085)
+                    ir_diag(file, c->line, c->col, "E085",
+                            "the length of this runtime-sized array is not provably small enough: its size in bytes, n * sizeof(element), would wrap around. Bound n first (`if n > LIMIT { ... }`)");
                 else if (c->diag == 87)
                     ir_diag(file, c->line, c->col, "E087",
                             "argument does not satisfy the parameter's sized-slice constraint");

@@ -175,9 +175,16 @@ static IFrame *ii_frame = NULL;
 // The seal whose initialisation is running a CALL: its callee may write that binding's storage.
 static int32_t ii_open_seal = 0;
 static IObj *ii_new_obj(IrType *elem, int64_t count, const char *what) {
+    // A count the interpreter's cells cannot hold is answered, not crashed on (I.121): the count
+    // was truncated to int for the cells while the shaping loop ran to the full 64-bit count,
+    // and a failed calloc was never checked.
+    if (count < 0 || count > ((int64_t)1 << 24))
+        ii_fail(98, "NOT MODELLED", NULL, "an object of %lld elements (%s)", (long long)count, what ? what : "?");
     IObj *o = calloc(1, sizeof *o);
+    if (!o) ii_fail(98, "NOT MODELLED", NULL, "out of memory for an object (%s)", what ? what : "?");
     o->live = true; o->what = what;
     o->root.k = IV_AGG; o->root.n = (int32_t)count; o->root.e = iv_elems((int)count, true);
+    if (!o->root.e) ii_fail(98, "NOT MODELLED", NULL, "out of memory for %lld elements (%s)", (long long)count, what ? what : "?");
     for (int64_t k = 0; k < count; k++) iv_shape(&o->root.e[k], elem, true);
     if (ii_frame) { o->frame_next = ii_frame->objs; ii_frame->objs = o; }
     return o;

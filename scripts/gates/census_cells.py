@@ -1279,11 +1279,11 @@ add("array-constant-length", "a type alias of length 0",
 # allocation larger than the stack's guard gap jumped it and wrote into another mapping. The probing
 # that stops it ends in a fault, which a cell expecting output cannot state, so only its allowed side
 # is here: a 3 MiB array that must still run.
+# Closed by I.121: n <= SIZE_MAX / sizeof(T) is an E085 obligation at the declaration, and the
+# emitted allocation touches its pages from the top down, so an oversized one faults at the guard.
 def _arr_t(elem, store, read):
     return ('    var a %s[n]\n    if 5 < a.len {\n        a[5] = %s\n        return %s\n    }\n    return 1\n'
             % (elem, store, read))
-_I121 = ("I.121: a runtime-length array allocates n * sizeof(T) bytes and the product may wrap, so a 64-bit "
-         "length of i32 asks for 4 bytes while the array's len stays 2^62 + 1")
 _A_I32 = _arr_t("i32", "7", "a[5]")
 _POS = 'type Pos {\n    line i32\n    col i32\n}\n'
 _BIG = 'type Big {\n' + ''.join('    %s i32\n' % f for f in "abcdefgh") + '}\n'
@@ -1295,15 +1295,15 @@ def _test(cond):
 # argument below reaches an early return.
 for label, prog, exp, plan in (
         ("i32 elements, a usize length with no test",
-         _len_prog("usize", _A_I32, [8]), "__ILLFORMED__", _I121),
+         _len_prog("usize", _A_I32, [8]), "__ILLFORMED__", None),
         ("i32 elements, an i64 length after `if n < 0 { return 0 }`",
-         _len_prog("i64", _test("n < 0") + _A_I32, [8]), "__ILLFORMED__", _I121),
+         _len_prog("i64", _test("n < 0") + _A_I32, [8]), "__ILLFORMED__", None),
         ("u16 elements, a usize length with no test",
-         _len_prog("usize", _arr_t("u16", "7", "a[5] as i32"), [8]), "__ILLFORMED__", _I121),
+         _len_prog("usize", _arr_t("u16", "7", "a[5] as i32"), [8]), "__ILLFORMED__", None),
         ("struct elements, a usize length with no test",
-         _POS + _len_prog("usize", _arr_t("Pos", "Pos(7, 0)", "a[5].line"), [8]), "__ILLFORMED__", _I121),
+         _POS + _len_prog("usize", _arr_t("Pos", "Pos(7, 0)", "a[5].line"), [8]), "__ILLFORMED__", None),
         ("32-byte struct elements, after `if n > 2^59`: one past the bound",
-         _BIG + _len_prog("usize", _test("n > %d" % (_BOUND32 + 1)) + _A_BIG, [8]), "__ILLFORMED__", _I121),
+         _BIG + _len_prog("usize", _test("n > %d" % (_BOUND32 + 1)) + _A_BIG, [8]), "__ILLFORMED__", None),
         ("i32 elements, a usize length after `if n > 1024`",
          _len_prog("usize", _test("n > 1024") + _A_I32, [3, 8]), _out([3, 8]), None),
         ("i32 elements, a u32 length with no test",

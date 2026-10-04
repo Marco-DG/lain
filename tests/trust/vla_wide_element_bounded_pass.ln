@@ -1,0 +1,20 @@
+extern func libc_printf(fmt *u8, ...) i32 effects io
+// I.121, the allowed side: a 64-bit length of i32 elements, bounded before the array is declared.
+// Called with 2^62 + 1 (refused by the bound), 3 and 100, under the sanitizers and the interpreter.
+
+func f(n usize) i32 {
+    if n > 1024 {
+        return 0
+    }
+    var a i32[n]
+    if 5 < a.len {
+        a[5] = 7
+        return a[5]
+    }
+    return 1
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d %d\n", f(4611686018427387905), f(3), f(100))
+    return 0
+}

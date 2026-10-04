@@ -363,6 +363,16 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                 ir_ctype(i->aux.alloca_ty, o);
                 fprintf(o, "*)__builtin_alloca(v%d * sizeof(", i->operands[0]->id);
                 ir_ctype(i->aux.alloca_ty, o); fputs("));\n", o);
+                // ★ STACK-CLASH PROBING (I.121). An allocation larger than the stack's guard gap
+                // could skip it, and the first write land in whatever lies below. Touch the new
+                // region page by page from its top (next to the old stack pointer) down, as gcc's
+                // -fstack-clash-protection does: an oversized array faults AT the guard, like any
+                // stack overflow, before anything beyond it is written.
+                fprintf(o, "  { size_t _n%d = (size_t)v%d * sizeof(", i->result->id, i->operands[0]->id);
+                ir_ctype(i->aux.alloca_ty, o);
+                fprintf(o, "); volatile char *_p%d = (volatile char *)v%d;\n", i->result->id, i->result->id);
+                fprintf(o, "    while (_n%d > 0) { _p%d[_n%d - 1] = 0; _n%d = _n%d > 4096 ? _n%d - 4096 : 0; } }\n",
+                        i->result->id, i->result->id, i->result->id, i->result->id, i->result->id, i->result->id);
                 break;
             }
             if (i->aux.alloca_ty && i->aux.alloca_ty->kind==IRT_ARRAY)

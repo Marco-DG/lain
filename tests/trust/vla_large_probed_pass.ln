@@ -1,0 +1,18 @@
+// I.121: a large but legitimate stack array (3 MiB of bytes) still works with stack-clash probing:
+// every page is touched from the top down, and the write at index 5 reads back. Under the sanitizers
+// and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func f(n usize) i32 {
+    var a u8[n]
+    if 5 < a.len {
+        a[5] = 7
+        return a[5] as i32
+    }
+    return 1
+}
+
+func main() i32 effects io {
+    libc_printf("%d\n", f(3145728))
+    return 0
+}

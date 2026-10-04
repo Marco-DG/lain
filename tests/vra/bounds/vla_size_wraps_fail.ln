@@ -1,0 +1,20 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: its size in bytes, n * sizeof(element), would wrap around
+// I.121 (Handwriting): 2^62 + 1 i32 elements is 4 bytes once n * sizeof(T) wraps, while the slice
+// keeps len 2^62 + 1, so the guarded write was proven in bounds (ASan dynamic-stack-buffer-overflow;
+// -O0 and -O2 print 7). A 64-bit length of elements wider than a byte must be bounded first.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func f(n usize) i32 {
+    var a i32[n]
+    if 5 < a.len {
+        a[5] = 7
+        return a[5]
+    }
+    return 1
+}
+
+func main() i32 effects io {
+    libc_printf("%d\n", f(4611686018427387905))
+    return 0
+}

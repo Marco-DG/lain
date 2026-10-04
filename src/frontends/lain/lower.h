@@ -702,6 +702,37 @@ static bool ir_name_int(const char *nm, int len, int *bits, bool *sgn) {
 // B5: tag the lowered type with the linearity qualifier (sema_type_is_linear is the
 // front-end's linearity oracle; the fact is carried on the IR type so the linearity pass
 // reads it WITHOUT the AST). Wrapper over the real lowering so every return path is tagged.
+// An UPPER bound on sizeof(T) in the emitted C (I.121): exact for a primitive; for a struct or a sum,
+// every field rounded up to 8 bytes plus 8 of padding. Lain leaves C layout to the C compiler, and
+// the bound only has to keep `n * sizeof(T)` from wrapping, so it is never BELOW the real size: it
+// saturates at 2^64, past SIZE_MAX, where the only length left is 0. (It capped at 2^40, so a
+// struct of 1.1e12 bytes got a bound 65 times too weak, Handwriting.)
+static __int128 ir_size_upper(const IrType *t, int depth) {
+    __int128 cap = (__int128)1 << 64;
+    if (!t || depth > 16) return cap;
+    switch (t->kind) {
+        case IRT_INT:   return t->bits <= 8 ? 1 : t->bits <= 16 ? 2 : t->bits <= 32 ? 4 : 8;
+        case IRT_FLOAT: return t->float_bits <= 32 ? 4 : 8;
+        case IRT_BOOL:  return 1;
+        case IRT_PTR: case IRT_FUNC: return 8;
+        case IRT_SLICE: return 16;
+        case IRT_ARRAY: case IRT_VECTOR: {
+            __int128 e = ir_size_upper(t->elem, depth + 1), n = t->array_len > 0 ? t->array_len : 1;
+            return (e > 0 && n > cap / e) ? cap : e * n;          // saturating: e, n <= 2^64
+        }
+        case IRT_STRUCT: case IRT_SUM: {
+            __int128 s = 8;
+            for (int k = 0; k < t->n_fields; k++) {
+                __int128 f = t->fields[k] ? ir_size_upper(t->fields[k], depth + 1) : 0;
+                s += (f + 7) / 8 * 8;
+                if (s > cap) return cap;
+            }
+            return s;
+        }
+        case IRT_UNIT: case IRT_NEVER: return 1;              // no value: C gives it no bytes
+        default: return cap;                                  // unknown: assume the worst
+    }
+}
 static IrType *ir_lower_type(LowerCtx *c, Type *t) {
     IrType *r = ir_lower_type_impl(c, t);
     if (r && t && sema_type_is_linear(t)) r->linear = true;
@@ -3580,6 +3611,23 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
                             ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur, IR_CMP_SGE, nv,
                                             ir_const_int(c->f, c->cur, 0, nv->type)), 85);
                         IrType *el = slot_ty->elem ? slot_ty->elem : ir_type_int(c->a,8,false);
+                        // ★ THE BYTE SIZE MUST NOT WRAP (I.121). The storage is n * sizeof(T)
+                        // bytes, computed in size_t: 2^62 + 1 i32 elements wrapped to 4 bytes
+                        // while the slice kept len 2^62 + 1, so a guarded write was proven in
+                        // bounds (Handwriting; ASan dynamic-stack-buffer-overflow). Lain does not
+                        // compute C layouts, so the element's size is an UPPER bound (exact for
+                        // a primitive); the obligation n <= SIZE_MAX / bound is emitted only
+                        // where n's own width times that bound could exceed 64 bits.
+                        {   __int128 esz = ir_size_upper(el, 0);
+                            int nb = nv->type->bits - (nv->type->is_signed ? 1 : 0);
+                            __int128 nmax = ((__int128)1 << nb) - 1;
+                            if (esz > 1 && nmax > (__int128)UINT64_MAX / esz) {   // by division: no product overflows
+                                __int128 lim = (__int128)UINT64_MAX / esz;
+                                if (nv->type->is_signed && lim > (__int128)INT64_MAX) lim = INT64_MAX;
+                                ir_assert_coded(c->f, c->cur, ir_icmp(c->f, c->cur,
+                                                nv->type->is_signed ? IR_CMP_SLE : IR_CMP_ULE, nv,
+                                                ir_const_int(c->f, c->cur, (int64_t)(uint64_t)lim, nv->type)), 1085);
+                            } }
                         IrValue *base = ir_alloca_dyn(c->f, c->cur, el, nv);
                         ir_store(c->f, c->cur, slot, ir_make_slice(c->f, c->cur, base, nv, el));
                     }
