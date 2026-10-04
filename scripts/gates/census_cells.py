@@ -1000,10 +1000,8 @@ add("imported-constant", "the same constant read in the main file",
 # and a call with the uncovered variant falls off the end and returns 0 (C at -O0 and -O2 agree, UBSan
 # is silent because C does not trap a missing return, the interpreter says NOT MODELLED). An arm for
 # the SHORTER name is never over-credited; the `Shade.Red:` cell is that control.
-_I105 = ("I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and "
-         "`Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm "
-         "for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is "
-         "accepted and the uncovered variant returns 0")
+# Closed by I.105: an identifier records the variant it names, and every reader uses it, so a name
+# that ends in another variant's is itself, in construction, in matching and in exhaustiveness.
 def _shade_match(order, q):
     return ('type Shade { %s }\nfunc name(s Shade) u8 {\n    case s {\n        %sRed: return 82\n'
             '        %sDark_Red: return 68\n    }\n}\n'
@@ -1014,22 +1012,22 @@ def _shade_one(order, arm):
             'func main() i32 {\n    return 0\n}\n' % (order, arm))
 # DERIVED: Red names itself R and Dark_Red names itself D, so "RD" whatever the order or spelling.
 add("variant-suffix", "enum, Red declared first, qualified patterns",
-    _shade_match("Red, Dark_Red", "Shade."), "RD\n", plan=_I105)
+    _shade_match("Red, Dark_Red", "Shade."), "RD\n")
 add("variant-suffix", "enum, Red declared first, bare patterns",
-    _shade_match("Red, Dark_Red", ""), "RD\n", plan=_I105)
+    _shade_match("Red, Dark_Red", ""), "RD\n")
 add("variant-suffix", "enum, Dark_Red declared first, qualified patterns",
     _shade_match("Dark_Red, Red", "Shade."), "RD\n")
 add("variant-suffix", "enum, Dark_Red declared first, bare patterns",
     _shade_match("Dark_Red, Red", ""), "RD\n")
 # DERIVED: each case below names one variant of two and has no `else:`, so it must be refused (E014).
 add("variant-suffix", "only a qualified Dark_Red arm, Red declared first",
-    _shade_one("Red, Dark_Red", "Shade.Dark_Red"), "__ILLFORMED__", plan=_I105)
+    _shade_one("Red, Dark_Red", "Shade.Dark_Red"), "__ILLFORMED__")
 add("variant-suffix", "only a bare Dark_Red arm, Red declared first",
-    _shade_one("Red, Dark_Red", "Dark_Red"), "__ILLFORMED__", plan=_I105)
+    _shade_one("Red, Dark_Red", "Dark_Red"), "__ILLFORMED__")
 add("variant-suffix", "only a qualified Dark_Red arm, Dark_Red declared first",
-    _shade_one("Dark_Red, Red", "Shade.Dark_Red"), "__ILLFORMED__", plan=_I105)
+    _shade_one("Dark_Red, Red", "Shade.Dark_Red"), "__ILLFORMED__")
 add("variant-suffix", "only a bare Dark_Red arm, Dark_Red declared first",
-    _shade_one("Dark_Red, Red", "Dark_Red"), "__ILLFORMED__", plan=_I105)
+    _shade_one("Dark_Red, Red", "Dark_Red"), "__ILLFORMED__")
 add("variant-suffix", "only a qualified Red arm: the shorter name is never over-credited",
     _shade_one("Red, Dark_Red", "Shade.Red"), "__ILLFORMED__")
 def _markers(order):
@@ -1041,7 +1039,7 @@ def _markers(order):
             'func main() i32 effects io {\n    show(1)\n    show(2)\n    show(0)\n    libc_printf("\\n")\n'
             '    return 0\n}\n' % (order, order))
 # DERIVED: k=1 returns Found "F", k=2 returns Not_Found "N", anything else returns the payload "v".
-add("variant-suffix", "union markers, Found declared first", _markers("Found | Not_Found"), "FNv\n", plan=_I105)
+add("variant-suffix", "union markers, Found declared first", _markers("Found | Not_Found"), "FNv\n")
 add("variant-suffix", "union markers, Not_Found declared first", _markers("Not_Found | Found"), "FNv\n")
 def _payload(order):
     return ('type Res { %s }\nfunc show(r Res) effects io {\n    case r {\n        Res.Found: libc_printf("F")\n'
@@ -1051,7 +1049,7 @@ def _payload(order):
 # DERIVED: Found prints F, Not_Found(7) prints its payload 7. With the short name first the pattern
 # `Res.Not_Found(c)` resolves to the payload-less Found, `c` is never bound, and codegen refuses it.
 add("variant-suffix", "payload variant, Found declared first",
-    _payload("Found, Not_Found { code u8 }"), "F7\n", plan=_I105)
+    _payload("Found, Not_Found { code u8 }"), "F7\n")
 add("variant-suffix", "payload variant, Not_Found declared first",
     _payload("Not_Found { code u8 }, Found"), "F7\n")
 
@@ -1110,7 +1108,7 @@ def _two_enums(first, second, scrut, arms):
 _SH, _DSH = "Shade { A, B }", "Dark_Shade { A, B, C }"
 # DERIVED: Dark_Shade has three variants and these arms name two, with no `else:`: refused, E014.
 add("enum-name-suffix", "bare arms on Dark_Shade, Shade declared first",
-    _two_enums(_SH, _DSH, "Dark_Shade", "        A: return 1\n        B: return 2\n"), "__ILLFORMED__", plan=_I105)
+    _two_enums(_SH, _DSH, "Dark_Shade", "        A: return 1\n        B: return 2\n"), "__ILLFORMED__")
 add("enum-name-suffix", "bare arms on Dark_Shade, Dark_Shade declared first",
     _two_enums(_DSH, _SH, "Dark_Shade", "        A: return 1\n        B: return 2\n"), "__ILLFORMED__")
 add("enum-name-suffix", "qualified arms on Dark_Shade, Shade declared first",

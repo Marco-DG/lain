@@ -294,18 +294,18 @@ imported-constant	a scalar constant, read through an imported function	OK
 imported-constant	an array constant, read through an imported function	OK
 imported-constant	an imported function that reads no constant	OK
 imported-constant	the same constant read in the main file	OK
-variant-suffix	enum, Red declared first, qualified patterns	MISMATCH  # I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and `Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is accepted and the uncovered variant returns 0
-variant-suffix	enum, Red declared first, bare patterns	MISMATCH  # I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and `Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is accepted and the uncovered variant returns 0
+variant-suffix	enum, Red declared first, qualified patterns	OK
+variant-suffix	enum, Red declared first, bare patterns	OK
 variant-suffix	enum, Dark_Red declared first, qualified patterns	OK
 variant-suffix	enum, Dark_Red declared first, bare patterns	OK
-variant-suffix	only a qualified Dark_Red arm, Red declared first	ACCEPTED-ILLFORMED  # I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and `Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is accepted and the uncovered variant returns 0
-variant-suffix	only a bare Dark_Red arm, Red declared first	ACCEPTED-ILLFORMED  # I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and `Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is accepted and the uncovered variant returns 0
-variant-suffix	only a qualified Dark_Red arm, Dark_Red declared first	ACCEPTED-ILLFORMED  # I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and `Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is accepted and the uncovered variant returns 0
-variant-suffix	only a bare Dark_Red arm, Dark_Red declared first	ACCEPTED-ILLFORMED  # I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and `Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is accepted and the uncovered variant returns 0
+variant-suffix	only a qualified Dark_Red arm, Red declared first	ok-REFUSED [E014]
+variant-suffix	only a bare Dark_Red arm, Red declared first	ok-REFUSED [E014]
+variant-suffix	only a qualified Dark_Red arm, Dark_Red declared first	ok-REFUSED [E014]
+variant-suffix	only a bare Dark_Red arm, Dark_Red declared first	ok-REFUSED [E014]
 variant-suffix	only a qualified Red arm: the shorter name is never over-credited	ok-REFUSED [E014]
-variant-suffix	union markers, Found declared first	MISMATCH  # I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and `Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is accepted and the uncovered variant returns 0
+variant-suffix	union markers, Found declared first	OK
 variant-suffix	union markers, Not_Found declared first	OK
-variant-suffix	payload variant, Found declared first	REFUSED [E100]  # I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and `Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is accepted and the uncovered variant returns 0
+variant-suffix	payload variant, Found declared first	OK
 variant-suffix	payload variant, Not_Found declared first	OK
 bare-variant-type	a plain enum's bare variant stored in an i32	ACCEPTED-ILLFORMED  # I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its union. A variant is typed as its own enum or union
 bare-variant-type	a union marker stored in an i32	ACCEPTED-ILLFORMED  # I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its union. A variant is typed as its own enum or union
@@ -314,7 +314,7 @@ bare-variant-type	a union marker stored in a u8 inside unsafe	ACCEPTED-ILLFORMED
 bare-variant-type	arithmetic on a union marker	ok-REFUSED [E086]
 bare-variant-type	a marker bound by inference, then used as its union	REFUSED [E012]  # I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its union. A variant is typed as its own enum or union
 bare-variant-type	a plain enum's qualified variant	OK
-enum-name-suffix	bare arms on Dark_Shade, Shade declared first	ACCEPTED-ILLFORMED  # I.105 — variants were recovered by mangled-name SUFFIX, first match wins: with `Red` and `Dark_Red`, `Dark_Red` constructs and matches as `Red` when `Red` is declared first, and an arm for `Dark_Red` is credited as covering `Red` in either order, so a non-exhaustive `case` is accepted and the uncovered variant returns 0
+enum-name-suffix	bare arms on Dark_Shade, Shade declared first	ok-REFUSED [E014]
 enum-name-suffix	bare arms on Dark_Shade, Dark_Shade declared first	ok-REFUSED [E014]
-enum-name-suffix	qualified arms on Dark_Shade, Shade declared first	ok-REFUSED [E106]
+enum-name-suffix	qualified arms on Dark_Shade, Shade declared first	ok-REFUSED [E014]
 enum-name-suffix	the same two arms on Shade, which they do complete	OK

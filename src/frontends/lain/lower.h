@@ -370,20 +370,32 @@ static Decl *ir_find_enum_decl(LowerCtx *c, Id *name) {
 }
 // Index of the variant named `vn` in `ed`, or -1. `suffix` also accepts a MANGLED
 // reference (`<mod>_<Enum>_<Variant>`), which is how resolve.h rewrites a bare variant.
+// ★ EXACT NAMES FIRST, AND A SUFFIX ONLY IF IT IS UNIQUE (I.105). One loop tried both, so in
+// `{ Red, Dark_Red }` the name `Dark_Red` (and `<mod>_Shade_Dark_Red`) ended in `_Red` and took
+// Red's arm: `case s { Dark_Red: … Red: … }` dispatched Red to the Dark_Red arm, in C and in the
+// interpreter alike. A bare reference carries its variant (ir_variant_name_of), so the suffix is a
+// fallback; two candidates there is a front-end defect, and it stops the build rather than guess.
+static Id *ir_variant_name_of(Expr *e);
 static int ir_variant_index(Decl *ed, Id *vn, bool suffix) {
     if (!ed || !vn) return -1;
     int k = 0;
-    for (Variant *v = ed->as.enum_decl.variants; v; v = v->next, k++) {
-        if (!v->name) continue;
-        if (v->name->length == vn->length &&
+    for (Variant *v = ed->as.enum_decl.variants; v; v = v->next, k++)
+        if (v->name && v->name->length == vn->length &&
             strncmp(v->name->name, vn->name, (size_t)vn->length) == 0) return k;
-        if (suffix && vn->length > v->name->length) {
-            const char *tail = vn->name + (vn->length - v->name->length);
-            if (tail[-1] == '_' && strncmp(tail, v->name->name, (size_t)v->name->length) == 0)
-                return k;
-        }
+    if (!suffix) return -1;
+    int hit = -1, hits = 0; k = 0;
+    for (Variant *v = ed->as.enum_decl.variants; v; v = v->next, k++) {
+        if (!v->name || vn->length <= v->name->length) continue;
+        const char *tail = vn->name + (vn->length - v->name->length);
+        if (tail[-1] == '_' && strncmp(tail, v->name->name, (size_t)v->name->length) == 0) { hit = k; hits++; }
     }
-    return -1;
+    if (hits > 1) {
+        fprintf(stderr, "internal error: the variant reference '%.*s' matches %d variants of "
+                "'%.*s' by name; please report it.\n", (int)vn->length, vn->name, hits,
+                (int)ed->as.enum_decl.type_name->length, ed->as.enum_decl.type_name->name);
+        exit(1);
+    }
+    return hit;
 }
 
 // ── NESTED VARIANT PATTERNS ──────────────────────────────────────────────────────────────
@@ -398,7 +410,7 @@ static int ir_nested_variant_index(LowerCtx *c, IrType *fty, Expr *sub) {
     Id tn; tn.name = fty->sname->name; tn.length = fty->sname->length;
     Decl *ed = ir_find_enum_decl(c, &tn);
     if (!ed) return -1;
-    return ir_variant_index(ed, sub->as.identifier_expr.id, true);
+    return ir_variant_index(ed, ir_variant_name_of(sub), true);
 }
 // The payload type of variant `k`'s field `j` (payloads are wrapped in a struct).
 static IrType *ir_variant_field_type(IrType *plk, int j) {
@@ -482,7 +494,8 @@ static void ir_match_branch(LowerCtx *c, IrType *sumty, int k, Expr *pe, IrValue
 static Id *ir_variant_name_of(Expr *e) {
     if (!e) return NULL;
     if (e->kind == EXPR_MEMBER)     return e->as.member_expr.member;
-    if (e->kind == EXPR_IDENTIFIER) return e->as.identifier_expr.id;
+    if (e->kind == EXPR_IDENTIFIER) return e->as.identifier_expr.variant ? e->as.identifier_expr.variant->name
+                                                                         : e->as.identifier_expr.id;
     return NULL;
 }
 
@@ -2260,10 +2273,9 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             if (l && l->slot)  return ir_load(c->f, c->cur, l->slot,
                                               l->slot->type->elem ? l->slot->type->elem : ty);
             // A bare variant (`return NotFound`). resolve.h rewrites the identifier to
-            // `<mod>_<Enum>_<Variant>` and points e->decl at the ENUM, so recover the variant
-            // from the name's suffix.
+            // `<mod>_<Enum>_<Variant>`, points e->decl at the ENUM, and records the variant.
             if (e->decl && e->decl->kind == DECL_ENUM) {
-                int k = ir_variant_index(e->decl, e->as.identifier_expr.id, true);
+                int k = ir_variant_index(e->decl, ir_variant_name_of(e), true);
                 if (k >= 0) {
                     Id *en = e->decl->as.enum_decl.type_name;
                     IrType *st = (ty && ty->kind==IRT_SUM) ? ty : NULL;

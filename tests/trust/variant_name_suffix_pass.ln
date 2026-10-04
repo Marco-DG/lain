@@ -1,0 +1,67 @@
+// I.105: a variant whose name ends in `_` and another variant's name. The front end recovered a
+// variant from its mangled reference by name SUFFIX, first match wins, so in `{ Red, Dark_Red }`
+// both `Dark_Red` and `Shade.Dark_Red` were Red: the qualified constructor built Red, the bare and
+// the qualified pattern took Red's value, and a union's `return Not_Found` returned Found. C and
+// the interpreter agreed, both wrong. Every spelling is exercised in both orders of declaration.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Shade { Red, Dark_Red, Blue }
+
+type Tone { Light_Grey, Grey }
+
+func bare(s Shade) effects io {
+    case s {
+        Dark_Red: libc_printf("dark_red ")
+        Red:      libc_printf("red ")
+        Blue:     libc_printf("blue ")
+    }
+}
+
+func qualified(s Shade) effects io {
+    case s {
+        Shade.Red:      libc_printf("red ")
+        Shade.Dark_Red: libc_printf("dark_red ")
+        Shade.Blue:     libc_printf("blue ")
+    }
+}
+
+func tone(t Tone) effects io {
+    case t {
+        Grey:       libc_printf("grey ")
+        Light_Grey: libc_printf("light_grey ")
+    }
+}
+
+func find(k i32, v *u8) *u8 | Found | Not_Found {
+    if k == 1 {
+        return Not_Found
+    }
+    if k == 2 {
+        return Found
+    }
+    return v
+}
+
+func show(r *u8 | Found | Not_Found) effects io {
+    case r {
+        Found:     libc_printf("found ")
+        Not_Found: libc_printf("not_found ")
+        else:      libc_printf("value ")
+    }
+}
+
+func main() i32 effects io {
+    bare(Shade.Red)
+    bare(Shade.Dark_Red)
+    bare(Shade.Blue)
+    qualified(Shade.Red)
+    qualified(Shade.Dark_Red)
+    qualified(Shade.Blue)
+    tone(Tone.Light_Grey)
+    tone(Tone.Grey)
+    show(find(1, "x"))
+    show(find(2, "x"))
+    show(find(3, "x"))
+    libc_printf("\n")
+    return 0
+}

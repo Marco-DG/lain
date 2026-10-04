@@ -155,39 +155,23 @@ static Type *union_payload_type(Type *t) {
     return NULL;
 }
 
-// If `e` (post-resolve) refers to one of union U's markers, return that marker
-// variant's name (matched by the mangled-name suffix `..._<marker>`).
+// If `e` (post-resolve) refers to one of union U's markers, return that marker variant's name.
+// ★ A MARKER NAME MAY BELONG TO SEVERAL UNIONS (I.97). The resolver binds a bare `NotFound` to the
+// first union that declares it, so in a module with `*u8 | NotFound` and `Small | NotFound` the
+// second function's `return NotFound` was bound to the first union and refused. What the marker
+// means is decided by the union it is coerced INTO: the marker's own name, looked up in U.
+// The own name is the variant the resolver recorded (I.105), not a suffix of the mangled name:
+// in `*u8 | Found | Not_Found`, `<mod>_<U>_Not_Found` also ends in `_Found`, and `return Not_Found`
+// returned Found.
 static Id *union_match_marker(Decl *U, Expr *e) {
-    if (!U || !e || e->kind != EXPR_IDENTIFIER) return NULL;
-    const char *nm = e->as.identifier_expr.id->name; isize nl = e->as.identifier_expr.id->length;
-    // ★ A MARKER NAME MAY BELONG TO SEVERAL UNIONS (I.97). The resolver binds a bare `NotFound` to
-    // the first union that declares it, so in a module with `*u8 | NotFound` and `Small | NotFound`
-    // the second function's `return NotFound` was bound to the first union and refused. What the
-    // marker means is decided by the union it is coerced INTO: find the marker's own name in the
-    // union it was bound to, then that name in U.
-    if (e->decl != U) {
-        Decl *O = e->decl;
-        if (!O || O->kind != DECL_ENUM || !O->as.enum_decl.is_union) return NULL;
-        Id *own = NULL;
-        for (Variant *v = O->as.enum_decl.variants; v && !own; v = v->next) {
-            if (v->fields) continue;
-            isize vl = v->name->length;
-            if (nl > vl && nm[nl - vl - 1] == '_' && memcmp(nm + nl - vl, v->name->name, (size_t)vl) == 0)
-                own = v->name;
-        }
-        if (!own) return NULL;
-        for (Variant *v = U->as.enum_decl.variants; v; v = v->next)
-            if (!v->fields && v->name->length == own->length &&
-                memcmp(v->name->name, own->name, (size_t)own->length) == 0) return v->name;
-        return NULL;
-    }
-    for (Variant *v = U->as.enum_decl.variants; v; v = v->next) {
-        if (v->fields) continue;                   // skip the `some` payload variant
-        isize vl = v->name->length;
-        if (nl > vl && nm[nl - vl - 1] == '_' &&
-            memcmp(nm + nl - vl, v->name->name, (size_t)vl) == 0)
-            return v->name;
-    }
+    if (!U || !e || e->kind != EXPR_IDENTIFIER || !e->as.identifier_expr.variant) return NULL;
+    Decl *O = e->decl;
+    if (!O || O->kind != DECL_ENUM || !O->as.enum_decl.is_union) return NULL;
+    Id *own = e->as.identifier_expr.variant->name;
+    if (!own || e->as.identifier_expr.variant->fields) return NULL;
+    for (Variant *v = U->as.enum_decl.variants; v; v = v->next)
+        if (!v->fields && v->name->length == own->length &&
+            memcmp(v->name->name, own->name, (size_t)own->length) == 0) return v->name;
     return NULL;
 }
 
@@ -239,13 +223,14 @@ static void sema_union_coerce(Expr **slot, Type *target) {
         // constructor def. Match a fielded marker by the `_<Marker>` suffix and
         // re-build the call as U.Marker(args) — the same expr_member path the
         // nullary markers use, which emits the unprefixed, def-consistent name.
-        Id *cn = e->as.call_expr.callee->as.identifier_expr.id;
-        for (Variant *v = U->as.enum_decl.variants; v; v = v->next) {
+        // The marker is the variant the resolver recorded on the callee (I.105), by its own name.
+        Variant *cv = e->as.call_expr.callee->as.identifier_expr.variant;
+        Id *cn = cv ? cv->name : NULL;
+        for (Variant *v = U->as.enum_decl.variants; v && cn; v = v->next) {
             if (!v->fields) continue;
             if (v->name->length == 9 && memcmp(v->name->name, "__payload", 9) == 0) continue;
             isize vl = v->name->length;
-            if (cn->length > vl && cn->name[cn->length - vl - 1] == '_' &&
-                memcmp(cn->name + cn->length - vl, v->name->name, (size_t)vl) == 0) {
+            if (cn->length == vl && memcmp(cn->name, v->name->name, (size_t)vl) == 0) {
                 Expr *tgt = expr_type(sema_arena, uty); tgt->decl = U;
                 Expr *pw = expr_member(sema_arena, tgt, v->name);
                 Expr *call = expr_call(sema_arena, pw, e->as.call_expr.args);

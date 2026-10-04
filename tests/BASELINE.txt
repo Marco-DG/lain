@@ -2254,6 +2254,14 @@ out=
 at=const 2
 ty=Opt scalar
 ty=Shape scalar
+### tests/trust/variant_name_suffix_pass.ln
+rc=0
+out=red dark_red blue red dark_red blue light_grey grey not_found found value 
+at=pure 2
+ty=Shade scalar
+ty=Slice_u8 scalar
+ty=Tone scalar
+ty=__U_ptr_u8_Found_Not_Found scalar
 ### tests/trust/widening_arith_promotion_pass.ln
 rc=0
 out=3600000000

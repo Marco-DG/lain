@@ -54,28 +54,32 @@ static Decl *find_enum_decl(Type *vtype) {
     const char *type_name = vtype->base_type->name;
     int type_len = vtype->base_type->length;
     
+    // ★ EXACT NAMES FIRST, A SUFFIX ONLY IF UNIQUE (I.105). One loop tried both, so with
+    // `type Shade` declared before `type Dark_Shade`, a `Dark_Shade` scrutinee ("…_Shade") was
+    // checked against Shade: a `case` covering Shade's variants was accepted as exhaustive, and
+    // Dark_Shade's other variant fell off its end.
     for (DeclList *dl = sema_decls; dl; dl = dl->next) {
         if (!dl->decl || dl->decl->kind != DECL_ENUM) continue;
-        
         Id *enum_name = dl->decl->as.enum_decl.type_name;
-        if (!enum_name) continue;
-
-        // 1. Exact match
-        if (enum_name->length == type_len &&
-            strncmp(enum_name->name, type_name, type_len) == 0) {
-            return dl->decl;
-        }
-
-        // 2. Suffix match (handle mangled names like module_Enum)
-        if (type_len > enum_name->length + 1) {
-            const char *suffix_start = type_name + (type_len - enum_name->length);
-            if (*(suffix_start - 1) == '_' &&
-                strncmp(suffix_start, enum_name->name, enum_name->length) == 0) {
-                return dl->decl;
-            }
-        }
+        if (enum_name && enum_name->length == type_len &&
+            strncmp(enum_name->name, type_name, type_len) == 0) return dl->decl;
     }
-    return NULL;
+    // A suffix match handles mangled names like module_Enum.
+    Decl *hit = NULL; int hits = 0;
+    for (DeclList *dl = sema_decls; dl; dl = dl->next) {
+        if (!dl->decl || dl->decl->kind != DECL_ENUM) continue;
+        Id *enum_name = dl->decl->as.enum_decl.type_name;
+        if (!enum_name || type_len <= enum_name->length + 1) continue;
+        const char *suffix_start = type_name + (type_len - enum_name->length);
+        if (*(suffix_start - 1) == '_' &&
+            strncmp(suffix_start, enum_name->name, enum_name->length) == 0) { hit = dl->decl; hits++; }
+    }
+    if (hits > 1) {
+        fprintf(stderr, "internal error: the type name '%.*s' matches %d enums by name; please "
+                "report it.\n", type_len, type_name, hits);
+        exit(1);
+    }
+    return hit;
 }
 
 // ★ A VARIANT PATTERN NAMES A VARIANT OF THE SCRUTINEE'S OWN ENUM. Nothing checked it, and
@@ -93,9 +97,13 @@ static void sema_check_variant_patterns(Type *vtype, ExprList *patterns) {
         Expr *pe = p->expr;
         Expr *pv = (pe && pe->kind == EXPR_CALL) ? pe->as.call_expr.callee : pe;
         if (!pv) continue;
-        Id *vn = NULL; Decl *qd = NULL;
-        if (pv->kind == EXPR_IDENTIFIER) vn = pv->as.identifier_expr.id;
-        else if (pv->kind == EXPR_MEMBER) {
+        Id *vn = NULL; Decl *qd = NULL; bool mangled = false;
+        // A bare name carries its variant (I.105); a qualified one is the variant's own name. Only
+        // an identifier with neither, a constructor's C name, is matched by suffix.
+        if (pv->kind == EXPR_IDENTIFIER) {
+            vn = pv->as.identifier_expr.variant ? pv->as.identifier_expr.variant->name : pv->as.identifier_expr.id;
+            mangled = !pv->as.identifier_expr.variant;
+        } else if (pv->kind == EXPR_MEMBER) {
             vn = pv->as.member_expr.member;
             Expr *t = pv->as.member_expr.target;
             if (t && (t->kind == EXPR_IDENTIFIER || t->kind == EXPR_TYPE) && t->decl &&
@@ -108,7 +116,7 @@ static void sema_check_variant_patterns(Type *vtype, ExprList *patterns) {
                 if (!v->name) continue;
                 Id *w = v->name;
                 found = (w->length == vn->length && strncmp(w->name, vn->name, (size_t)vn->length) == 0)
-                     || (vn->length > w->length && vn->name[vn->length - w->length - 1] == '_' &&
+                     || (mangled && vn->length > w->length && vn->name[vn->length - w->length - 1] == '_' &&
                          strncmp(vn->name + (vn->length - w->length), w->name, (size_t)w->length) == 0);
             }
         if (found) continue;
@@ -129,8 +137,18 @@ static bool pattern_matches_variant(Expr *pattern, Id *variant) {
     // Pattern should be an identifier or a call (constructor)
     Id *pat_id = NULL;
     
+    // A bare variant carries the variant the resolver bound it to (I.105): compare THAT name, not
+    // the mangled one, whose suffix `_Red` also ends `Dark_Red`.
+    Expr *bare = pattern->kind == EXPR_IDENTIFIER ? pattern
+               : (pattern->kind == EXPR_CALL && pattern->as.call_expr.callee &&
+                  pattern->as.call_expr.callee->kind == EXPR_IDENTIFIER) ? pattern->as.call_expr.callee : NULL;
+    if (bare && bare->as.identifier_expr.variant) {
+        Id *vn = bare->as.identifier_expr.variant->name;
+        return vn && vn->length == variant->length && strncmp(vn->name, variant->name, (size_t)variant->length) == 0;
+    }
+    bool mangled = false;   // only an identifier with no recorded variant is a C name to suffix-match
     if (pattern->kind == EXPR_IDENTIFIER) {
-        pat_id = pattern->as.identifier_expr.id;
+        pat_id = pattern->as.identifier_expr.id; mangled = true;
     } else if (pattern->kind == EXPR_MEMBER) {
         // ★ A QUALIFIED variant, `Color.Red`: spec 15 allows it beside the bare `Red`, and it was
         // never counted, so a `case` covering every variant by the qualified spelling was refused
@@ -142,7 +160,7 @@ static bool pattern_matches_variant(Expr *pattern, Id *variant) {
         // The callee should be the variant name
         Expr *callee = pattern->as.call_expr.callee;
         if (callee->kind == EXPR_IDENTIFIER) {
-            pat_id = callee->as.identifier_expr.id;
+            pat_id = callee->as.identifier_expr.id; mangled = true;
         } else if (callee->kind == EXPR_MEMBER) {
              // Handle Shape.Circle(...)
              pat_id = callee->as.member_expr.member;
@@ -158,8 +176,9 @@ static bool pattern_matches_variant(Expr *pattern, Id *variant) {
     }
     
     // Try suffix match: pattern ends with "_Variant"
-    // e.g., "tests_enums_Color_Red" ends with "_Red"
-    if (pat_id->length > variant->length + 1) {
+    // e.g., "tests_enums_Color_Red" ends with "_Red". Never for a QUALIFIED pattern, whose member
+    // is the variant's own name (I.105: `Shade.Dark_Red:` was counted as covering Red).
+    if (mangled && pat_id->length > variant->length + 1) {
         const char *suffix_start = pat_id->name + (pat_id->length - variant->length);
         // Check if character before suffix is '_'
         if (*(suffix_start - 1) == '_' &&

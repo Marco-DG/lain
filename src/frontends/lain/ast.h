@@ -624,6 +624,9 @@ typedef struct {
 typedef struct {
     Id*         id;   // Identifier name
     bool        via_qualifier; // true if rewritten from `Module.name` (exempt from glob-retirement)
+    // The variant a bare name denotes, set by the resolver when it rewrites `Red` to
+    // `<mod>_<Enum>_Red` (I.105). Read it, never the mangled name's suffix: `Dark_Red` ends in `_Red`.
+    Variant*    variant;
 } ExprIdentifier;
 
 typedef struct {
@@ -1369,6 +1372,7 @@ Expr *expr_identifier(Arena *arena, Id *id) {
     e->kind = EXPR_IDENTIFIER;
     e->as.identifier_expr.id = id;
     e->as.identifier_expr.via_qualifier = false;
+    e->as.identifier_expr.variant = NULL;
     return e;
 }
 

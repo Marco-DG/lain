@@ -1,0 +1,16 @@
+// EXPECT: [E014]
+// EXPECT-TEXT: has no arm for Shade.Red
+// I.105 (Handwriting): the QUALIFIED arm `Shade.Dark_Red` was counted as covering Red too, in either
+// declaration order, so this `case` was accepted as exhaustive and f(Shade.Red) fell off its end and
+// returned 0. C, UBSan and the interpreter could not see it.
+type Shade { Dark_Red, Red }
+
+func f(s Shade) i32 {
+    case s {
+        Shade.Dark_Red: return 68
+    }
+}
+
+func main() i32 {
+    return f(Shade.Red)
+}

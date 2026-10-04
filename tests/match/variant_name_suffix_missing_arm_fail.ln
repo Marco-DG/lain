@@ -1,0 +1,16 @@
+// EXPECT: [E014]
+// EXPECT-TEXT: has no arm for Shade.Red
+// I.105: the arm `Dark_Red` was counted as covering Red too (its mangled name ends in `_Red`), so
+// this `case` was accepted as exhaustive and Red ran the Dark_Red arm.
+type Shade { Red, Dark_Red, Blue }
+
+func name(s Shade) i32 {
+    case s {
+        Dark_Red: return 1
+        Blue:     return 2
+    }
+}
+
+func main() i32 {
+    return name(Shade.Red)
+}

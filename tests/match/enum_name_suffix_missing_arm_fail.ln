@@ -1,0 +1,19 @@
+// EXPECT: [E014]
+// EXPECT-TEXT: has no arm for Dark_Shade.C
+// I.105: a scrutinee of type `Dark_Shade` was checked against `Shade`, declared first, whose name
+// its own ends with, so arms for A and B were accepted as exhaustive and f(Dark_Shade.C) fell off the
+// end and returned 0.
+type Shade { A, B }
+
+type Dark_Shade { A, B, C }
+
+func f(d Dark_Shade) i32 {
+    case d {
+        A: return 1
+        B: return 2
+    }
+}
+
+func main() i32 {
+    return f(Dark_Shade.C)
+}

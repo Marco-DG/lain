@@ -1612,6 +1612,7 @@ void sema_resolve_expr(Expr *e) {
             e->as.identifier_expr.id->length = (isize)strlen(copy);
             e->type = get_builtin_i32_type();
             e->decl = D; // Enum variant belongs to Enum Decl
+            e->as.identifier_expr.variant = vl;
             e->is_global = true;
             return;
           }
