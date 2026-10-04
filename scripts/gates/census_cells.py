@@ -1120,6 +1120,62 @@ add("enum-name-suffix", "the same two arms on Shade, which they do complete",
     "12\n")
 
 
+# ── axis: a `case` payload pattern walked as a CALL (I.111) ───────────────────────────────────────
+# The call-site spelling rules (E007 `mov`, E017 `var`) visited a bare payload pattern `Full(v):` as a
+# call to the mangled constructor `<module>_Box_Full`. That name resolves to no function, so a fallback
+# looked it up by SUFFIX, first match wins, and an UNRELATED function that happens to be named `Full`
+# matched: its `mov` or `var` parameter was then demanded of the pattern binding `v`. So renaming an
+# unrelated function changes whether a correct program compiles. Found by instrumenting the fallback and
+# running the whole corpus through it: it ran 665 times and the suffix pass never once matched, because
+# no test names a function after a variant. The qualified pattern and the no-clash program are the
+# allowed side.
+_I111 = ("I.111 — a bare `case` payload pattern was walked as a call to the mangled constructor, and the "
+         "fallback lookup matched an unrelated function of the variant's name by suffix: its `mov` or "
+         "`var` parameter was demanded of the pattern binding, E007 or E017 on a correct program")
+def _box(fn, pat):
+    return ('type Box { Empty, Full { v i32 } }\n%s'
+            'func main() i32 effects io {\n    var n i32 = 5\n    b = Box.Full(n)\n    case b {\n'
+            '        %s: libc_printf("%%d\\n", v)\n        else: libc_printf("E\\n")\n    }\n    return 0\n}\n'
+            % (fn, pat))
+_FULL_MOV = 'func Full(mov x i32) i32 {\n    return x\n}\n'
+_FULL_VAR = 'func Full(var x i32) {\n    x = 1\n}\n'
+# DERIVED: the box holds 5, so the Full arm binds v = 5 and prints it.
+add("pattern-as-call", "a bare payload pattern beside an unrelated func Full(mov ...)",
+    _box(_FULL_MOV, "Full(v)"), "5\n", plan=_I111)
+add("pattern-as-call", "a bare payload pattern beside an unrelated func Full(var ...)",
+    _box(_FULL_VAR, "Full(v)"), "5\n", plan=_I111)
+add("pattern-as-call", "a qualified payload pattern beside the same function",
+    _box(_FULL_MOV, "Box.Full(v)"), "5\n")
+add("pattern-as-call", "a bare payload pattern with no function of that name",
+    _box("", "Full(v)"), "5\n")
+
+
+# ── axis: the call-site spelling rules at an EXTERN call (I.112) ─────────────────────────────────
+# A `mov` parameter must be handed its argument with `mov` written, and a `var` parameter with `var`,
+# so that a transfer or a mutation is visible where it happens. A bodied function enforces both. An
+# extern enforced neither: the check took the callee's declaration only when it was a bodied function,
+# and an extern fell through to a lookup that found it and then returned without checking. Ownership is
+# still tracked (after `sink(p)` a second `sink(p)` is E001), so for `mov` the gap is the spelling only.
+# The allowed side runs through a real C function: `libc_puts` declared with a `mov` parameter, which
+# the census maps to puts and the interpreter also runs.
+#
+# Not here: an extern `var` parameter is emitted BY VALUE in the C prototype while a `var` call passes
+# the address, so `frexp(8.0, var e)` segfaults. The interpreter does not model frexp, so a census cell
+# expecting "4" could never pass; it belongs to a corpus test that runs the compiled binary.
+_I112 = ("I.112 — the call-site spelling rules E007 (`mov`) and E017 (`var`) were skipped for every "
+         "extern callee: `sink(x)` to an extern's `mov` or `var` parameter compiled without the keyword")
+add("extern-call-spelling", "an extern's mov parameter given its argument without mov",
+    'extern func sink(v mov *u8) effects io\nfunc main() i32 effects io {\n    mov s *u8 = "hi"\n'
+    '    sink(s)\n    return 0\n}\n', "__ILLFORMED__", plan=_I112)
+# DERIVED: libc_puts prints its argument and a newline.
+add("extern-call-spelling", "an extern's mov parameter given its argument with mov",
+    'extern func libc_puts(s mov *u8) i32 effects io\nfunc main() i32 effects io {\n    mov s *u8 = "hi"\n'
+    '    libc_puts(mov s)\n    return 0\n}\n', "hi\n")
+add("extern-call-spelling", "an extern's var parameter given its argument without var",
+    'extern func bump(x var i32) effects io\nfunc main() i32 effects io {\n    var n i32 = 1\n'
+    '    bump(n)\n    return 0\n}\n', "__ILLFORMED__", plan=_I112)
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
