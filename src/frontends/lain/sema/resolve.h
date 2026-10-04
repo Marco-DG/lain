@@ -86,6 +86,9 @@ static Type *mono_alias_target(Id *n);
 static Type *mono_arg_to_type(Expr *e);
 static void  mono_resolve_signature(Decl *d);
 void sema_resolve_expr(Expr *e); // forward
+// Nonzero while a `case` arm's patterns are resolved: the one place a bare variant name of a plain
+// enum is allowed (I.103).
+static int sema_resolving_pattern = 0;
 
 /*
     helpers
@@ -1308,9 +1311,11 @@ void sema_resolve_stmt(Stmt *s) {
           break;
         }
       }
+      sema_resolving_pattern++;
       for (ExprList *p = c->patterns; p; p = p->next) {
         sema_resolve_expr(p->expr);
       }
+      sema_resolving_pattern--;
       sema_check_variant_patterns(s->as.match_stmt.value ? s->as.match_stmt.value->type : NULL,
                                   c->patterns);
       sema_check_case_pattern_kinds(s->as.match_stmt.value, c->patterns);
@@ -1610,9 +1615,24 @@ void sema_resolve_expr(Expr *e) {
 
             e->as.identifier_expr.id->name = copy;
             e->as.identifier_expr.id->length = (isize)strlen(copy);
-            e->type = get_builtin_i32_type();
+            // ★ A BARE VARIANT IS A VALUE OF ITS ENUM, NOT AN INTEGER (I.103). It was typed i32, so
+            // `x i32 = Green` read the tag that `Color.Green` hides (no implicit conversion, no `as`,
+            // no `==`: the tag is implementation-defined), and a union marker read its niche.
+            e->type = type_simple(sema_arena, enum_id);
             e->decl = D; // Enum variant belongs to Enum Decl
             e->as.identifier_expr.variant = vl;
+            // Spec 07: an enum value is written `Color.Green`. The bare name is a `case` pattern,
+            // or a union's marker, which is bare by design and takes its meaning from the union
+            // it flows into (I.97).
+            if (!sema_resolving_pattern && !D->as.enum_decl.is_union) {
+              fprintf(stderr, "[E012] Error Ln %li, Col %li: '%.*s' is a variant of '%.*s'; an enum "
+                      "value is written with its type, `%.*s.%.*s` (a bare variant name is a `case` "
+                      "pattern).\n", (long)e->line, (long)e->col, (int)vid->length, vid->name,
+                      (int)enum_id->length, enum_id->name, (int)enum_id->length, enum_id->name,
+                      (int)vid->length, vid->name);
+              diagnostic_show_line(e->line, e->col);
+              exit(1);
+            }
             e->is_global = true;
             return;
           }
@@ -1749,9 +1769,11 @@ void sema_resolve_expr(Expr *e) {
   case EXPR_MATCH:
     sema_resolve_expr(e->as.match_expr.value);
     for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
+        sema_resolving_pattern++;
         for (ExprList *p = c->patterns; p; p = p->next) {
             sema_resolve_expr(p->expr);
         }
+        sema_resolving_pattern--;
         sema_resolve_expr(c->body);
     }
     break;

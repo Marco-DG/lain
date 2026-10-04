@@ -1064,29 +1064,28 @@ add("variant-suffix", "payload variant, Not_Found declared first",
 # is REFUSED on the base this lands on, because the marker is an i32 there, and runs once it is typed as
 # the union: that cell is an over-rejection I.103 closes. Arithmetic on a marker is refused both before
 # and after; only its code moves, E086 (tag arithmetic) to E012, so it carries no citation.
-_I103 = ("I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the "
-         "niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its "
-         "union. A variant is typed as its own enum or union")
+# Closed by I.103: a bare variant is typed as its own enum or union, so it is never an integer, and a
+# marker bound by inference is a value of its union.
 _U103 = ('type Small = u8 < 200\ntype Color { Red, Green }\n'
          'func pick(f bool, v Small) Small | NotFound {\n    if f {\n        return NotFound\n    }\n'
          '    return v\n}\n')
 def _go103(body):
     return _U103 + 'func go() i32 {\n%s\n}\nfunc main() i32 {\n    return go()\n}\n' % body
 add("bare-variant-type", "a plain enum's bare variant stored in an i32",
-    _go103('    x i32 = Green\n    return 0'), "__ILLFORMED__", plan=_I103)
+    _go103('    x i32 = Green\n    return 0'), "__ILLFORMED__")
 add("bare-variant-type", "a union marker stored in an i32",
-    _go103('    x i32 = NotFound\n    return 0'), "__ILLFORMED__", plan=_I103)
+    _go103('    x i32 = NotFound\n    return 0'), "__ILLFORMED__")
 add("bare-variant-type", "a union marker compared with ==",
-    _go103('    if NotFound == 0 {\n        return 1\n    }\n    return 0'), "__ILLFORMED__", plan=_I103)
+    _go103('    if NotFound == 0 {\n        return 1\n    }\n    return 0'), "__ILLFORMED__")
 add("bare-variant-type", "a union marker stored in a u8 inside unsafe",
-    _go103('    unsafe {\n        z u8 = NotFound\n    }\n    return 0'), "__ILLFORMED__", plan=_I103)
+    _go103('    unsafe {\n        z u8 = NotFound\n    }\n    return 0'), "__ILLFORMED__")
 add("bare-variant-type", "arithmetic on a union marker",
     _go103('    y = NotFound + 1\n    return 0'), "__ILLFORMED__")
 # DERIVED: `w` holds the marker, so matching it as the union takes the NotFound arm: "N".
 add("bare-variant-type", "a marker bound by inference, then used as its union",
     _U103 + 'func main() i32 effects io {\n    w = NotFound\n    var r Small | NotFound = w\n    case r {\n'
             '        NotFound: libc_printf("N")\n        else: libc_printf("%d", r)\n    }\n'
-            '    libc_printf("\\n")\n    return 0\n}\n', "N\n", plan=_I103)
+            '    libc_printf("\\n")\n    return 0\n}\n', "N\n")
 # DERIVED: Color.Green matches its own arm: "G".
 add("bare-variant-type", "a plain enum's qualified variant",
     _U103 + 'func main() i32 effects io {\n    c Color = Color.Green\n    case c {\n'

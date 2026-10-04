@@ -1,0 +1,17 @@
+// EXPECT: [E063]
+// EXPECT-TEXT: 'NotFound' is a marker of 'Small | NotFound', not a value of 'i32'
+// I.103: a bare marker was typed i32, so this compiled and read the union's niche (200); the
+// interpreter could not model it.
+type Small = u8 < 200
+
+func find(fail bool, v Small) Small | NotFound {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+
+func main() i32 {
+    x i32 = NotFound
+    return x
+}

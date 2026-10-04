@@ -307,12 +307,12 @@ variant-suffix	union markers, Found declared first	OK
 variant-suffix	union markers, Not_Found declared first	OK
 variant-suffix	payload variant, Found declared first	OK
 variant-suffix	payload variant, Not_Found declared first	OK
-bare-variant-type	a plain enum's bare variant stored in an i32	ACCEPTED-ILLFORMED  # I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its union. A variant is typed as its own enum or union
-bare-variant-type	a union marker stored in an i32	ACCEPTED-ILLFORMED  # I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its union. A variant is typed as its own enum or union
-bare-variant-type	a union marker compared with ==	ACCEPTED-ILLFORMED  # I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its union. A variant is typed as its own enum or union
-bare-variant-type	a union marker stored in a u8 inside unsafe	ACCEPTED-ILLFORMED  # I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its union. A variant is typed as its own enum or union
-bare-variant-type	arithmetic on a union marker	ok-REFUSED [E086]
-bare-variant-type	a marker bound by inference, then used as its union	REFUSED [E012]  # I.103 — a bare variant was typed i32: `x i32 = Green` read the tag, `x i32 = NotFound` the niche, `NotFound == 0` compiled; and a marker bound by inference could not then be used as its union. A variant is typed as its own enum or union
+bare-variant-type	a plain enum's bare variant stored in an i32	ok-REFUSED [E012]
+bare-variant-type	a union marker stored in an i32	ok-REFUSED [E063]
+bare-variant-type	a union marker compared with ==	ok-REFUSED [E012]
+bare-variant-type	a union marker stored in a u8 inside unsafe	ok-REFUSED [E063]
+bare-variant-type	arithmetic on a union marker	ok-REFUSED [E012]
+bare-variant-type	a marker bound by inference, then used as its union	OK
 bare-variant-type	a plain enum's qualified variant	OK
 enum-name-suffix	bare arms on Dark_Shade, Shade declared first	ok-REFUSED [E014]
 enum-name-suffix	bare arms on Dark_Shade, Dark_Shade declared first	ok-REFUSED [E014]

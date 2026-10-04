@@ -1,0 +1,50 @@
+// I.103, the allowed side: a bare variant name is a `case` pattern (in a statement and in an
+// expression), and a union's marker is bare wherever it flows into its union, an inferred binding
+// included. Values of a plain enum are written with their type.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Color { Red, Green, Blue }
+
+type Small = u8 < 200
+
+func code(c Color) i32 {
+    w = case c {
+        Red:         10
+        Green, Blue: 20
+    }
+    return w
+}
+
+func name(c Color) effects io {
+    case c {
+        Red:   libc_printf("red ")
+        Green: libc_printf("green ")
+        Blue:  libc_printf("blue ")
+    }
+}
+
+func find(fail bool, v Small) Small | NotFound {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+
+func show(r Small | NotFound) effects io {
+    case r {
+        NotFound: libc_printf("nf ")
+        else:     libc_printf("%d ", r)
+    }
+}
+
+func main() i32 effects io {
+    name(Color.Red)
+    name(Color.Blue)
+    libc_printf("%d %d ", code(Color.Red), code(Color.Green))
+    w = NotFound
+    var u Small | NotFound = w
+    show(u)
+    show(find(false, 9))
+    libc_printf("\n")
+    return 0
+}

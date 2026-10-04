@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: an enum value is written with its type, `Color.Green`
+// I.103: a bare variant was typed i32, so this read Green's tag (1), although `Color.Green` converts
+// to no integer. Outside a `case` pattern a plain enum's variant is written with its type.
+type Color { Red, Green }
+
+func main() i32 {
+    x i32 = Green
+    return x
+}

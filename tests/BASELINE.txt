@@ -1410,6 +1410,13 @@ at=access 4
 at=nonnull 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/bare_variant_allowed_pass.ln
+rc=0
+out=red blue 10 20 nf 9 
+at=const 4
+ty=Color scalar
+ty=Slice_u8 scalar
+ty=__U_Small_NotFound scalar
 ### tests/trust/binary_search_slice_pass.ln
 rc=0
 out=0 0

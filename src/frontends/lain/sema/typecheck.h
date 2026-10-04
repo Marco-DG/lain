@@ -1459,6 +1459,16 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
         Type *fu = from; while (fu && fu->kind == TYPE_COMPTIME) fu = fu->element_type;
         Type *fpay = union_payload_type(fu);
         if (fpay && !union_payload_type(tu)) {
+            // A bare marker IS a marker (I.103): there is no payload to test for or to read, under
+            // `unsafe` or not, so name it rather than ask for a test.
+            Variant *mv = (src_expr && src_expr->kind == EXPR_IDENTIFIER) ? src_expr->as.identifier_expr.variant : NULL;
+            if (mv) {
+                char fb[128], tb[128]; type_describe(fu, fb, sizeof fb); type_describe(to, tb, sizeof tb);
+                fprintf(stderr, "[E063] Error Ln %li, Col %li: %s '%s': '%.*s' is a marker of '%s', not "
+                        "a value of '%s'.\n", (long)line, (long)col, ctx ? ctx : "this", label ? label : "",
+                        (int)mv->name->length, mv->name->name, fb, tb);
+                diagnostic_show_line(line, col); exit(1);
+            }
             if (sema_in_unsafe_block || sema_is_narrowed(src_expr)) {
                 check_conversion(fpay, to, r, src_expr, line, col, ctx, label);
                 return;
@@ -2976,6 +2986,16 @@ void sema_infer_expr(Expr *e) {
                 memcpy(lbuf, lt->base_type->name, ll);
                 lbuf[ll] = '\0';
                 Symbol *lsym = sema_lookup(lbuf);
+                if (lsym && lsym->decl && lsym->decl->kind == DECL_ENUM && lsym->decl->as.enum_decl.is_union) {
+                    // A union, as written (its synthesized name is the compiler's), and the test that
+                    // applies to it (I.103: `NotFound == 0` compared the niche).
+                    char ub[256]; type_describe(lt, ub, sizeof ub);
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot use '%s' on the union '%s'. "
+                            "Match it with `case` instead.\n", (long)e->line, (long)e->col,
+                            op == TOKEN_EQUAL_EQUAL ? "==" : "!=", ub);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
                 if (lsym && lsym->decl && (lsym->decl->kind == DECL_STRUCT || lsym->decl->kind == DECL_ENUM)) {
                     fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot use '%s' on struct/enum type '%s'. "
                             "Implement an 'equals' method and use it instead.\n",

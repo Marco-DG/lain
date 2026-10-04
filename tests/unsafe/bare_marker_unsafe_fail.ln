@@ -1,0 +1,19 @@
+// EXPECT: [E063]
+// EXPECT-TEXT: 'NotFound' is a marker of 'Small | NotFound', not a value of 'u8'
+// I.103: `unsafe` lets a union value be used as its payload untested; a bare marker has no payload,
+// and this read the niche (200) as a u8. `unsafe` licenses memory operations, not this.
+type Small = u8 < 200
+
+func find(fail bool, v Small) Small | NotFound {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+
+func main() i32 {
+    unsafe {
+        z u8 = NotFound
+    }
+    return 0
+}
