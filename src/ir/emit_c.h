@@ -1538,7 +1538,7 @@ int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump, const char *file) 
                         "zero-cost, %s.\n", vt, why, enum_hint);
             else
             fprintf(stderr, "[E064] Error: the union `%s | ...` cannot be zero-cost: %s. Give the "
-                    "value type spare values (a pointer, a bool, or a refinement like `u8 < 200`), "
+                    "value type spare values (a pointer, a bool, or a refined alias like `type Small = u8 < 200`), "
                     "or use fewer markers.\n", vt, why);
             refused++;
             continue;
@@ -1557,7 +1557,7 @@ int ir_emit_layout_report(IrFunc *funcs, Arena *a, bool dump, const char *file) 
             fprintf(stderr, "       To drop the tag, %s.\n", enum_hint);
         else if (short_pool)
             fprintf(stderr, "       To drop the tag, give the payload spare values (a pointer, a "
-                    "bool, or a refinement like `u8 < 200`), or use fewer payload-less variants.\n");
+                    "bool, or a refined alias like `type Small = u8 < 200`), or use fewer payload-less variants.\n");
     }
     return refused;
 }

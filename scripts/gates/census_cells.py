@@ -765,10 +765,8 @@ add("mov-shared-irtype", "mov parameter of a DIFFERENT type",
 # E086; on the union it is accepted. My first version of that cell used `u8 | NotFound < 200` instead,
 # which is refused E064 for the bare u8's lack of spare values, so it never reached the clause at all.
 #
-_I94 = ("I.94 — (a) E064's message says `a refinement like u8 < 200`, which cannot be written where a "
-        "union's payload goes; it should show `type Small = u8 < 200`. (b) a refinement clause after a "
-        "union return type, `T | M < N`, parses and is silently ignored: a payload that can exceed N is "
-        "accepted, where the same clause on a plain return is E086")
+# Closed by I.94: E064 now shows the refined alias, and the clause on a union return is refused
+# where it is written (E012), so the cell below is a deliberate refusal.
 _EU_INNER = ('func inner(fail bool, v %s) %s | NotFound {\n    if fail {\n        return NotFound\n'
              '    }\n    return v\n}\n')
 _EU_MAIN = ('func main() i32 effects io {\n'
@@ -822,7 +820,7 @@ add("error-union", "a refinement clause on a union return is ignored",
     'func inner(fail bool, v Small) Small | NotFound < 100 {\n    if fail {\n        return NotFound\n'
     '    }\n    return v\n}\n'
     'func main() i32 {\n    return 0\n}\n',
-    "__ILLFORMED__", plan=_I94)
+    "__ILLFORMED__")
 
 
 # ── axis: `in` as ELEMENT MEMBERSHIP over a list of constants (DECIDE-X: I.78 + I.79) ─────────────

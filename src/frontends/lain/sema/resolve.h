@@ -755,6 +755,24 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                                   "a field", false);
       } else if (d->kind == DECL_FUNCTION || d->kind == DECL_EXTERN_FUNCTION) {
         sema_check_value_type(d->as.function_decl.return_type, d->line, d->col, "a return value", true);
+        // ★ A REFINEMENT CLAUSE CONSTRAINS AN INTEGER (I.94). `func f() u8 | NotFound < 200` parsed
+        // the clause onto the UNION, and lowering asserts a return refinement only on an integer
+        // value, so it was silently ignored: parsed, not enforced. E064 had pointed users at it.
+        if (d->as.function_decl.return_constraints) {
+            Type *rt = d->as.function_decl.return_type;
+            Type *ra = (rt && rt->kind == TYPE_SIMPLE) ? resolve_type_alias(rt) : NULL;
+            Type *chk = ra ? ra : rt;
+            if (chk && !is_integer_type(chk)) {
+                Expr *c0 = d->as.function_decl.return_constraints->expr;
+                long l = (long)(c0 && c0->line ? c0->line : d->line), cc = (long)(c0 && c0->line ? c0->col : d->col);
+                char tb[128]; type_describe(chk, tb, sizeof tb);
+                fprintf(stderr, "[E012] Error Ln %li, Col %li: a refinement clause constrains an integer, and this "
+                        "function returns '%s'. To refine the value inside a union, name a refined alias "
+                        "(`type Small = u8 < 200`) and use it as the value type.\n", l, cc, tb);
+                diagnostic_show_line(l, cc);
+                exit(1);
+            }
+        }
         for (DeclList *p = d->as.function_decl.params; p; p = p->next)
           if (p->decl && p->decl->kind == DECL_VARIABLE)
             sema_check_value_type(p->decl->as.variable_decl.type, p->decl->line, p->decl->col,

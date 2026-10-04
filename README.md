@@ -848,8 +848,34 @@ func get(flag bool) i32 | NotFound | Denied {
 ```
 [E064] Error: the union `i32 | ...` cannot be zero-cost: the value type has 0 spare
        values, and 2 payload-less variants need one each. Give the value type spare
-       values (a pointer, a bool, or a refinement like `u8 < 200`), or use fewer markers.
+       values (a pointer, a bool, or a refined alias like `type Small = u8 < 200`), or
+       use fewer markers.
 ```
+
+The remedy it names works, and it costs nothing: give the value type spare values by naming a
+refined alias, and the same three-way union is one byte, with both error cases stored in values the
+alias rules out:
+
+```lain
+// VERIFY: exit 0
+type Small = u8 < 200
+
+func get(flag bool) Small | NotFound | Denied {
+    if flag {
+        var v Small = 1
+        return v
+    }
+    return NotFound
+}
+
+func main() i32 {
+    if @sizeof(Small | NotFound | Denied) != 1 { return 1 }
+    return 0
+}
+```
+
+The alias is what makes it work. A refinement cannot be written inline where a union's value type
+goes, so `u8 < 200 | NotFound` is not a type; `Small | NotFound` is.
 
 That is a deliberate trade, and it cuts both ways: a program that would have compiled elsewhere
 does not compile here. Where a tag is genuinely unavoidable, because an error case carries a

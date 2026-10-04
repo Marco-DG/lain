@@ -1,0 +1,30 @@
+// I.94, the allowed side: a refined alias gives an error union's value type spare values, as E064's
+// message says, so `Small | NotFound` packs NotFound into Small's spare values (200..255) and is one
+// byte. Both paths run under the sanitizers and the interpreter. (Each result is bound before it is
+// passed: passing the call straight to `show` is refused, plan I.96.)
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Small = u8 < 200
+
+func find(x u8) Small | NotFound {
+    if x < 200 {
+        return x
+    }
+    return NotFound
+}
+
+func show(r Small | NotFound) effects io {
+    case r {
+        NotFound: libc_printf("nf ")
+        else:     libc_printf("ok ")
+    }
+}
+
+func main() i32 effects io {
+    var a Small | NotFound = find(7)
+    var b Small | NotFound = find(250)
+    show(a)
+    show(b)
+    libc_printf("size=%d\n", @sizeof(Small | NotFound) as i32)
+    return 0
+}

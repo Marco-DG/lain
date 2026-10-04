@@ -2193,6 +2193,12 @@ at=nonnull 2
 at=pure 2
 ty=Opt struct
 ty=P struct
+### tests/trust/union_refined_alias_pass.ln
+rc=0
+out=ok nf size=1
+at=const 2
+ty=Slice_u8 scalar
+ty=__U_Small_NotFound scalar
 ### tests/trust/unsafe_field_invariant_kept_pass.ln
 rc=0
 out=

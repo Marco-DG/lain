@@ -571,6 +571,13 @@ static void type_describe(Type *t, char *buf, size_t cap) {
             if (t->array_len >= 0) snprintf(buf, cap, "%s[%lld]", inner, (long long)t->array_len);
             else snprintf(buf, cap, "%s[]", inner);
             break;
+        case TYPE_UNION: {  // `T | m1 | m2`: a message about a union said '?' (I.94)
+            type_describe(t->element_type, inner, sizeof inner);
+            size_t o = (size_t)snprintf(buf, cap, "%s", inner);
+            for (IdList *m = t->union_markers; m && o < cap; m = m->next)
+                o += (size_t)snprintf(buf + o, cap - o, " | %.*s", (int)m->id->length, m->id->name);
+            break;
+        }
         case TYPE_VECTOR:   // a message about a vector said '?' (a SIMD receiver's E128)
             type_describe(t->element_type, inner, sizeof inner);
             snprintf(buf, cap, "Vec(%lld, %s)", (long long)t->array_len, inner);
