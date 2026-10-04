@@ -4,14 +4,15 @@
 // `while i < l.src.len and P(l.src[i])` scan on a stateful struct (a lexer!) reads
 // with zero bounds checks. Sound by construction: the length key is created ONLY
 // inside the `&&` right operand and dropped immediately, so it can never persist
-// past the read and go stale. Verified at runtime under ASan.
+// past the read and go stale. Verified at runtime under ASan. (The struct is a borrow: reading its
+// fields through a raw pointer would need `unsafe`, I.125.)
 type Buf {
     src u8[]
     pos u32
 }
 func is_sp(c u8) bool { return c == 32 }
 func is_az(c u8) bool { return c >= 97 and c <= 122 }
-func count_words(l *Buf) u32 effects diverge {
+func count_words(l Buf) u32 effects diverge {
     var i u32 = 0
     var words u32 = 0
     while i < l.src.len {
@@ -35,7 +36,7 @@ func main() i32 effects diverge {
     b[5] = 32
     b[11] = 32
     var lx Buf = Buf(b[0..16], 0)
-    var w u32 = count_words(&lx)
+    var w u32 = count_words(lx)
     if w == 3 { return 0 }
     return 1
 }

@@ -3004,7 +3004,9 @@ static void walk_stmt(Stmt *s) {
         }
         case STMT_ASSIGN:
             sema_infer_expr(s->as.assign_stmt.expr);
-            sema_infer_expr(s->as.assign_stmt.target);
+            { Expr *keep = sema_store_target; sema_store_target = s->as.assign_stmt.target;
+              sema_infer_expr(s->as.assign_stmt.target);
+              sema_store_target = keep; }
             sema_check_write_through_readonly(s->as.assign_stmt.target, s->line, s->col);
             if (s->as.assign_stmt.target->kind == EXPR_INDEX || s->as.assign_stmt.target->kind == EXPR_MEMBER)
                 sema_check_place_writable(s->as.assign_stmt.target, s->line, s->col, "write to an element or field of");

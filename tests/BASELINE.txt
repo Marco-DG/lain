@@ -288,6 +288,7 @@ at=pure 2
 rc=0
 out=
 at=const 4
+at=nonnull 2
 ty=Buf struct
 ty=Slice_u8 scalar
 ### tests/examples/vra_while_lt_scalar_pass.ln
@@ -1915,6 +1916,14 @@ at=const 12
 rc=0
 out=
 at=const 34
+### tests/trust/ptr_field_access_allowed_pass.ln
+rc=0
+out=3 8
+at=nonnull 4
+at=pure 2
+ty=In struct
+ty=S struct
+ty=Slice_u8 scalar
 ### tests/trust/ptr_to_var_element_pass.ln
 rc=0
 out=

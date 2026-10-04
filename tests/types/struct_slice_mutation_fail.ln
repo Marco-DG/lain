@@ -8,7 +8,7 @@ type Buf {
     src u8[]
     pos u32
 }
-func t(l *Buf) u8 effects diverge {
+func t(l Buf) u8 effects diverge {
     var i u32 = 0
     var r u8 = 0
     while i < l.src.len {

@@ -3052,6 +3052,69 @@ func main() i32 {
 }
 ```
 
+**A field through a pointer.** Which form to write depends on how you hold the struct.
+
+Held by **borrow** — a parameter `s S`, or `var s S` to modify it — `s.v` is the form. It is safe and
+checked, and needs no `unsafe`:
+
+```lain
+// VERIFY: exit 0
+type S { v i32 }
+
+func get(s S) i32 {
+    return s.v
+}
+
+func main() i32 {
+    var x S
+    x.v = 7
+    if get(x) != 7 { return 1 }
+    return 0
+}
+```
+
+Through a **raw pointer**, a field access is a dereference — `p.v` reads through `p` even though no `*`
+is written — so it needs `unsafe`. `(*p).v` is the same access spelled out:
+
+```lain
+// VERIFY: exit 0
+type S { v i32 }
+
+func main() i32 {
+    var s S
+    s.v = 7
+    var p = &s
+    var a = 0
+    var b = 0
+    unsafe {
+        a = p.v           // a dereference: reads through p
+        b = (*p).v        // the same thing, spelled out
+    }
+    if a != 7 { return 1 }
+    if b != 7 { return 2 }
+    return 0
+}
+```
+
+Outside `unsafe`, the field read is refused. It used not to be — a read through a null raw pointer
+compiled in safe code and crashed at run time — which is why the message names both ways out:
+
+```lain
+type S { v i32 }
+
+func main() i32 {
+    var p *S = 0
+    return p.v            // ERROR [E060]
+}
+```
+
+```
+[E060] Error Ln 5, Col 12: reading a field through a raw pointer outside 'unsafe': `.` dereferences it. Read it inside 'unsafe { }', or take the struct as a borrow (`func f(s S)` or `func f(var s S)`), which the compiler checks.
+```
+
+Note that `*p.v` is **not** `(*p).v`: unary `*` binds more loosely than `.`, so it means `*(p.v)` — a
+dereference of the field — and is refused unless `v` is itself a pointer.
+
 ### 11.4 The Address-Of Operator (`&`)
 
 The unary address-of operator `&` creates a raw pointer to a local variable, and taking an address is

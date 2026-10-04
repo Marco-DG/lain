@@ -1,0 +1,17 @@
+// EXPECT: [E060]
+// EXPECT-TEXT: reading a field through a raw pointer outside 'unsafe'
+// I.125: two levels, `p.inner.v`, read through the raw pointer p in safe code.
+type In {
+    v i32
+}
+
+type S {
+    v i32
+    inner In
+}
+
+func main() i32 {
+    var s S = S(1, In(2))
+    p = &s
+    return p.inner.v
+}

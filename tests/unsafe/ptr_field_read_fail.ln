@@ -1,0 +1,17 @@
+// EXPECT: [E060]
+// EXPECT-TEXT: reading a field through a raw pointer outside 'unsafe'
+// I.125 (Documentation): `p.v` dereferences `p`, so it is a read through a raw pointer. It compiled in
+// safe code, and with p null the program segfaulted, while `*p` was E060 and `p.v = 5` E009.
+type In {
+    v i32
+}
+
+type S {
+    v i32
+    inner In
+}
+
+func main() i32 {
+    var p *S = 0
+    return p.v
+}

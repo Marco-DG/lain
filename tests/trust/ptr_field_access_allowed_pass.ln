@@ -1,0 +1,32 @@
+// I.125, the allowed side: a field read through a raw pointer inside `unsafe`, and the same fields
+// through borrows, which the compiler checks. Under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type In {
+    v i32
+}
+
+type S {
+    v i32
+    inner In
+}
+
+func get(s S) i32 {
+    return s.v +% s.inner.v
+}
+
+func set(var s S) {
+    s.inner.v = 7
+}
+
+func main() i32 effects io {
+    var s S = S(1, In(2))
+    p = &s
+    var r i32 = 0
+    unsafe {
+        r = p.v +% p.inner.v
+    }
+    set(var s)
+    libc_printf("%d %d\n", r, get(s))
+    return 0
+}

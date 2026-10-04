@@ -1141,9 +1141,14 @@ The ownership modes for pointer types are:
 
 \begin{constraint}
   Dereferencing a pointer shall occur only inside an \lain{unsafe} block;
-  pointer dereference in safe code is \illformed{}~(\diagcode{E060}).  Taking
-  the address of a variable is permitted in safe code: making a pointer is
-  harmless, and only reading or writing through it is the danger.
+  pointer dereference in safe code is \illformed{}~(\diagcode{E060}).  A field
+  access whose base is a raw pointer --- \lain{p.v}, \lain{p.inner.v} --- is a
+  dereference too, though it is not spelled with \lain{*}: outside \lain{unsafe}
+  a read through it is \diagcode{E060}, and an assignment to such a field is
+  \diagcode{E009}.  A field of a struct held by borrow is not a dereference and
+  needs no \lain{unsafe}.  Taking the address of a variable is permitted in safe
+  code: making a pointer is harmless, and only reading or writing through it is
+  the danger.
 \end{constraint}
 
 \section{Constrained types}

@@ -394,7 +394,7 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E017} & a mutable borrow is spelled \lain{var}: passing to a \lain{var} parameter requires it at the call site, and a function returning \lain{var T} must \lain{return var} a place (or a call returning one) \\[2pt]
 \diagcode{E018} & a function can reach its end without returning a value \\[2pt]
 \diagcode{E019} & use of a partially-initialized value \\[2pt]
-\diagcode{E060} & pointer dereference outside an \lain{unsafe} block \\[2pt]
+\diagcode{E060} & pointer dereference outside an \lain{unsafe} block, including a field access whose base is a raw pointer (\lain{p.v}) \\[2pt]
 \diagcode{E063} & a possibly-marker union value used without testing it first \\[2pt]
 \diagcode{E064} & a \lain{|}-union cannot be niche-optimized (no spare bit pattern) \\[2pt]
 \diagcode{E084} & access to a \lain{[private]} declaration from another module \\[2pt]

@@ -2,11 +2,12 @@
 // COHERENCE (§2.9): a raw `*T` pointer is the unsafe/interop tool, not borrow-
 // checked. Mutating a struct field through it in SAFE code silently emitted
 // `const T*` C that gcc rejects. It is now rejected, pointing at the idiomatic
-// in-place mutation: a `var` (mutable borrow) parameter.
+// in-place mutation: a `var` (mutable borrow) parameter. (The write alone: reading `p.x` on the
+// right would be E060 first, since a field read through a raw pointer is a dereference, I.125.)
 type P {
     x u32
 }
 func bump(p *P) {
-    p.x = p.x +% 1
+    p.x = 1
 }
 func main() i32 { return 0 }

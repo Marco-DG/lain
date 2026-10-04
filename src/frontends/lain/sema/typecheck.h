@@ -534,6 +534,9 @@ static bool types_compatible(Type *from, Type *to) {
 // field to read. It reached lowering as an unresolved member and was refused as E100 "not
 // supported by the code generator yet", which reads like a missing feature.
 static bool sema_member_is_callee = false;
+// The member expression an assignment STORES to (STMT_ASSIGN sets it while typing its target): its
+// write through a raw pointer is E009's to report, with E009's text, not a read (I.125).
+static Expr *sema_store_target = NULL;
 static void type_describe(Type *t, char *buf, size_t cap);
 static void sema_report_function_as_member(Expr *e, Type *t) {
     char tb[128]; type_describe(t, tb, sizeof tb);
@@ -2136,6 +2139,21 @@ void sema_infer_expr(Expr *e) {
     sema_member_is_callee = false;
     sema_infer_expr(e->as.member_expr.target);
     Type *t = e->as.member_expr.target->type;
+    // ★ A FIELD READ THROUGH A RAW POINTER IS A DEREFERENCE (I.125). `p.v` dereferences `p`
+    // automatically, so it did not look like one: with `var p *S = 0`, `return p.v` compiled in
+    // safe code and segfaulted, while `*p` was E060 and the write `p.v = 5` E009 (Documentation).
+    // A borrow (`var s S`) is not a raw pointer, and stays safe.
+    {   Type *bt = t; while (bt && bt->kind == TYPE_COMPTIME && bt->element_type) bt = bt->element_type;
+        if (bt) bt = resolve_type_alias(bt);
+        if (sema_walk_phase && !sema_in_unsafe_block && !is_callee && e != sema_store_target &&
+            bt && bt->kind == TYPE_POINTER) {
+            fprintf(stderr, "[E060] Error Ln %li, Col %li: reading a field through a raw pointer outside "
+                    "'unsafe': `.` dereferences it. Read it inside 'unsafe { }', or take the struct as a "
+                    "borrow (`func f(s S)` or `func f(var s S)`), which the compiler checks.\n",
+                    (long)e->line, (long)e->col);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        } }
     
     // Case 1: Accessing ADT Variant Constructor (e.g. Shape.Circle)
     // ONLY valid if the target resolves to the Enum declaration itself!

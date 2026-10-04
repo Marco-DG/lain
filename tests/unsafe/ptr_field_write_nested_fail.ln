@@ -1,0 +1,19 @@
+// EXPECT: [E060]
+// EXPECT-TEXT: reading a field through a raw pointer outside 'unsafe'
+// I.125: a write two levels down, `p.inner.v = 5`, went through the raw pointer in safe code: E009
+// checks only a field whose base IS the pointer, and here the base is `p.inner`.
+type In {
+    v i32
+}
+
+type S {
+    v i32
+    inner In
+}
+
+func main() i32 {
+    var s S = S(1, In(2))
+    var p *var S = &s
+    p.inner.v = 5
+    return s.inner.v
+}
