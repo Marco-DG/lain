@@ -186,6 +186,82 @@ static bool expr_is_panic_call(Expr *e) {
 }
 
 // literals, identifiers, and parenthesized expressions
+// The postfix chain: `.field`, `(call)` and `[index]` in any order, after a primary. It ran only
+// after an identifier, so a parenthesized expression took none: `(s).v`, `(a).len`, `(a)[1]` and
+// `(*p).v` were E100 "Expected ';'" (I.124, Documentation and Secondary Compiler Worker).
+static Expr *parse_postfix_chain(Arena *arena, Parser *parser, Expr *expr, isize line, isize col) {
+    // Single postfix loop: handles .field, (call), [index] in any order.
+    // Supports chained expressions like p.data[i].val or f(x)[0].name.
+    while (true) {
+        if (parser_match(TOKEN_DOT)) {
+            parser_advance();  // consume '.'
+            parser_expect(TOKEN_IDENTIFIER, "Expected identifier after '.'");
+            Id *field_id = id(arena, parser->token.length, parser->token.start);
+            parser_advance();
+            expr = expr_member(arena, expr, field_id);
+            // Each link of a postfix chain takes the chain's first token, as a unary node does.
+            // Only the outermost link got one (parse_unary_expr), so an error about an inner
+            // one, `std.math` in `std.math.max(1, 2)`, said Ln 0.
+            expr->line = line; expr->col = col;
+
+        } else if (parser_match(TOKEN_L_PAREN)) {
+            parser_advance(); // consume '('
+            ExprList* args = NULL;
+            ExprList** args_tail = &args;
+            if (!parser_match(TOKEN_R_PAREN)) {
+                do {
+                    Expr *arg = parse_expr(arena, parser);
+                    *args_tail = expr_list(arena, arg);
+                    args_tail = &(*args_tail)->next;
+                    if (parser_match(TOKEN_COMMA)) parser_advance();
+                    else break;
+                } while (true);
+            }
+            parser_expect(TOKEN_R_PAREN, "Expected ')' after function call arguments");
+            parser_advance(); // consume ')'
+            Expr *callee = expr;
+            expr = expr_call(arena, expr, args);
+            // A call inside a chain (`G(Quad).Has(x)`) had no position: its diagnostics
+            // said "Ln 0, Col 0". It is where its callee is.
+            if (callee) { expr->line = callee->line; expr->col = callee->col; }
+
+        } else if (parser_match(TOKEN_L_BRACKET)) {
+            parser_advance();  // consume '['
+            Expr *idx_expr = NULL;
+            Expr *start = NULL;
+            Expr *end   = NULL;
+            if (parser_match(TOKEN_DOT_DOT)) {
+                // "[..end]" – empty start
+                parser_advance();  // consume '..'
+                end = parse_expr(arena, parser);
+            } else {
+                start = parse_expr(arena, parser);
+                if (parser_match(TOKEN_DOT_DOT)) {
+                    // slice: start .. [maybe end]
+                    parser_advance();  // consume '..'
+                    if (!parser_match(TOKEN_R_BRACKET)) {
+                        end = parse_expr(arena, parser);
+                    }
+                } else {
+                    // plain index
+                    idx_expr = start;
+                }
+            }
+            parser_expect(TOKEN_R_BRACKET, "Expected ']' after index or slice");
+            parser_advance();  // consume ']'
+            if (!idx_expr && (start || end)) {
+                idx_expr = expr_range(arena, start, end, /*inclusive=*/false);
+            }
+            expr = expr_index(arena, expr, idx_expr);
+            expr->line = line; expr->col = col;
+
+        } else {
+            break;
+        }
+    }
+    return expr;
+}
+
 Expr *parse_primary_expr(Arena* arena, Parser* parser)
 {
     // EXPR_MATCH (case expression)
@@ -494,84 +570,19 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         expr->line = id_line;
         expr->col  = id_col;
     
-        // Single postfix loop: handles .field, (call), [index] in any order.
-        // Supports chained expressions like p.data[i].val or f(x)[0].name.
-        while (true) {
-            if (parser_match(TOKEN_DOT)) {
-                parser_advance();  // consume '.'
-                parser_expect(TOKEN_IDENTIFIER, "Expected identifier after '.'");
-                Id *field_id = id(arena, parser->token.length, parser->token.start);
-                parser_advance();
-                expr = expr_member(arena, expr, field_id);
-                // Each link of a postfix chain takes the chain's first token, as a unary node does.
-                // Only the outermost link got one (parse_unary_expr), so an error about an inner
-                // one, `std.math` in `std.math.max(1, 2)`, said Ln 0.
-                expr->line = id_line; expr->col = id_col;
-
-            } else if (parser_match(TOKEN_L_PAREN)) {
-                parser_advance(); // consume '('
-                ExprList* args = NULL;
-                ExprList** args_tail = &args;
-                if (!parser_match(TOKEN_R_PAREN)) {
-                    do {
-                        Expr *arg = parse_expr(arena, parser);
-                        *args_tail = expr_list(arena, arg);
-                        args_tail = &(*args_tail)->next;
-                        if (parser_match(TOKEN_COMMA)) parser_advance();
-                        else break;
-                    } while (true);
-                }
-                parser_expect(TOKEN_R_PAREN, "Expected ')' after function call arguments");
-                parser_advance(); // consume ')'
-                Expr *callee = expr;
-                expr = expr_call(arena, expr, args);
-                // A call inside a chain (`G(Quad).Has(x)`) had no position: its diagnostics
-                // said "Ln 0, Col 0". It is where its callee is.
-                if (callee) { expr->line = callee->line; expr->col = callee->col; }
-
-            } else if (parser_match(TOKEN_L_BRACKET)) {
-                parser_advance();  // consume '['
-                Expr *idx_expr = NULL;
-                Expr *start = NULL;
-                Expr *end   = NULL;
-                if (parser_match(TOKEN_DOT_DOT)) {
-                    // "[..end]" – empty start
-                    parser_advance();  // consume '..'
-                    end = parse_expr(arena, parser);
-                } else {
-                    start = parse_expr(arena, parser);
-                    if (parser_match(TOKEN_DOT_DOT)) {
-                        // slice: start .. [maybe end]
-                        parser_advance();  // consume '..'
-                        if (!parser_match(TOKEN_R_BRACKET)) {
-                            end = parse_expr(arena, parser);
-                        }
-                    } else {
-                        // plain index
-                        idx_expr = start;
-                    }
-                }
-                parser_expect(TOKEN_R_BRACKET, "Expected ']' after index or slice");
-                parser_advance();  // consume ']'
-                if (!idx_expr && (start || end)) {
-                    idx_expr = expr_range(arena, start, end, /*inclusive=*/false);
-                }
-                expr = expr_index(arena, expr, idx_expr);
-                expr->line = id_line; expr->col = id_col;
-
-            } else {
-                break;
-            }
-        }
-
+        expr = parse_postfix_chain(arena, parser, expr, id_line, id_col);
         return expr;
     }
     
     else if (parser_match(TOKEN_L_PAREN)) {
+        isize p_line = parser->line, p_col = parser->column;
         parser_advance();
         Expr *expr = parse_expr(arena, parser);
         parser_expect(TOKEN_R_PAREN, "Expected closing ')'");
         parser_advance();
+        // A parenthesized expression is a primary like any other: postfix operators apply.
+        if (parser_match(TOKEN_DOT) || parser_match(TOKEN_L_BRACKET) || parser_match(TOKEN_L_PAREN))
+            expr = parse_postfix_chain(arena, parser, expr, p_line, p_col);
         return expr;
     }
     else if (parser_match(TOKEN_AT)) {

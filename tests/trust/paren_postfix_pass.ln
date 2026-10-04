@@ -1,0 +1,20 @@
+// I.124: a parenthesized expression is a primary, and postfix operators apply to it. `(s).v`,
+// `(a).len`, `(a)[1]` and `(*p).v` were all E100 "Expected ';'": the postfix chain ran only after an
+// identifier. Under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type P {
+    v i32
+}
+
+func main() i32 effects io {
+    var s P = P(5)
+    a = [1, 2, 3]
+    p = &s
+    var d i32 = 0
+    unsafe {
+        d = (*p).v
+    }
+    libc_printf("%d %d %d %d\n", (s).v, (a).len as i32, (a)[1], d)
+    return 0
+}

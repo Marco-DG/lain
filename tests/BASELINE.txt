@@ -1880,6 +1880,11 @@ out=
 at=access 2
 at=nonnull 2
 ty=Slice_u8 scalar
+### tests/trust/paren_postfix_pass.ln
+rc=0
+out=5 3 2 5
+ty=P struct
+ty=Slice_u8 scalar
 ### tests/trust/payload_marker_pass.ln
 rc=0
 out=1234
