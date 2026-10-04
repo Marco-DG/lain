@@ -10,6 +10,7 @@
 extern Arena *sema_arena;
 extern DeclList *sema_decls;
 extern Type *current_return_type;
+static Type *union_lower(Type *u);   // sema/monomorph.h: `T | M` as its synthesized enum
 extern Decl *current_function_decl; // Defined in sema.h
 extern RangeTable *sema_ranges;     // Defined in sema.h
 extern bool sema_in_unsafe_block;   // Defined in sema.h
@@ -554,6 +555,24 @@ static void type_describe(Type *t, char *buf, size_t cap) {
     char inner[96];
     switch (t->kind) {
         case TYPE_SIMPLE:
+            // A union's synthesized enum (`__U_i32_NotFound`) is shown as the user wrote it,
+            // `i32 | NotFound`: the mangled name is the compiler's, and a message comparing two
+            // unions printed both mangled (I.96).
+            if (t->base_type && t->base_type->length > 4 && strncmp(t->base_type->name, "__U_", 4) == 0) {
+                char nm[256];
+                int nl = (int)t->base_type->length < 255 ? (int)t->base_type->length : 255;
+                memcpy(nm, t->base_type->name, (size_t)nl); nm[nl] = '\0';
+                Symbol *us = sema_lookup(nm);
+                Decl *ud = us ? us->decl : NULL;
+                if (ud && ud->kind == DECL_ENUM && ud->as.enum_decl.is_union && ud->as.enum_decl.variants &&
+                    ud->as.enum_decl.variants->fields && ud->as.enum_decl.variants->fields->decl) {
+                    type_describe(ud->as.enum_decl.variants->fields->decl->as.variable_decl.type, inner, sizeof inner);
+                    size_t o = (size_t)snprintf(buf, cap, "%s", inner);
+                    for (Variant *m = ud->as.enum_decl.variants->next; m && o < cap; m = m->next)
+                        o += (size_t)snprintf(buf + o, cap - o, " | %.*s", (int)m->name->length, m->name->name);
+                    break;
+                }
+            }
             if (t->base_type)
                 snprintf(buf, cap, "%.*s", (int)t->base_type->length, t->base_type->name);
             else snprintf(buf, cap, "?");
@@ -812,6 +831,13 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
     if (!f || !t) return;
     f = resolve_type_alias(f);
     t = resolve_type_alias(t);
+    // ★ ONE UNION, TWO REPRESENTATIONS (I.96). A union-returning CALL still has the raw `T | M` type
+    // here, while a written-out union (a parameter's, a binding's) was already lowered to its
+    // synthesized niche-optimized enum, so `show(find())` was refused as converting a union into
+    // itself. Lower the raw side the same way: union_lower deduplicates by the mangled name, so it
+    // yields the very type the other side has, and two different unions still differ.
+    if (f->kind == TYPE_UNION && t->kind != TYPE_UNION) f = union_lower(f);
+    if (t->kind == TYPE_UNION && f->kind != TYPE_UNION) t = union_lower(t);
     if (f == t) return;
     bool f_ptr = (f->kind == TYPE_POINTER);
     bool t_ptr = (t->kind == TYPE_POINTER);

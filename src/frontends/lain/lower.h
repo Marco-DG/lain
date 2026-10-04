@@ -727,23 +727,17 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
         //
         // Find sema's enum rather than synthesising a second type for the same union: two
         // structurally-identical-but-distinct IrTypes is worse than none, because the call's
-        // result then does not match the callee's declared return. Matched on the MARKER
-        // NAMES in order, which identifies the union without duplicating sema's mangling.
-        int nm = 0; for (IdList *m = t->union_markers; m; m = m->next) nm++;
+        // result then does not match the callee's declared return.
+        // ★ BY SEMA'S OWN NAME, WHICH INCLUDES THE VALUE TYPE (I.106). This matched the MARKER
+        // NAMES alone, so `*u8 | NotFound` and `Small | NotFound` were one union here: a call to
+        // the second stored its byte in the first's pointer, and gcc refused the C.
+        char un[256]; union_mangled_name(t, un, sizeof un);
+        size_t ul = strlen(un);
         for (DeclList *d = c->globals; d; d = d->next) {
             Decl *ed = d->decl;
-            if (!ed || ed->kind != DECL_ENUM) continue;
-            int nv = 0; for (Variant *v = ed->as.enum_decl.variants; v; v=v->next) nv++;
-            if (nv != nm + 1) continue;
-            Variant *v = ed->as.enum_decl.variants ? ed->as.enum_decl.variants->next : NULL;
-            IdList  *m = t->union_markers;
-            bool same = true;
-            for (; v && m && same; v = v->next, m = m->next)
-                same = v->name && m->id && v->name->length == m->id->length
-                    && strncmp(v->name->name, m->id->name, (size_t)m->id->length) == 0;
-            if (!same || v || m) continue;
+            if (!ed || ed->kind != DECL_ENUM || !ed->as.enum_decl.is_union) continue;
             Id *en = ed->as.enum_decl.type_name;
-            if (!en) continue;
+            if (!en || (size_t)en->length != ul || strncmp(en->name, un, ul) != 0) continue;
             Type tt; memset(&tt, 0, sizeof tt); tt.kind = TYPE_SIMPLE; tt.base_type = en;
             return ir_lower_type(c, &tt);              // the ENUM path: cached, named, shared
         }

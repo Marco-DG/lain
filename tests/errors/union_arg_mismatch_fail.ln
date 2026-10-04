@@ -1,0 +1,16 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: cannot implicitly convert '*u8 | NotFound' to '*u8 | Denied'
+// I.96, the refused side: lowering a union-returning call's type before the argument check makes
+// the SAME union match; a union with different markers is still a different type.
+func find(fail bool, v *u8) *u8 | NotFound {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+func show(r *u8 | Denied) i32 {
+    return 0
+}
+func main() i32 {
+    return show(find(true, "x"))
+}

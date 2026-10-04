@@ -907,10 +907,8 @@ add("membership", "an empty list",
 # be deliberate, so the row holds only the two forms whose meaning is not in question. Separately, the
 # right-hand type in the message is an internal mangled name; after a fix both sides would print
 # `*u8 | NotFound`, which is itself the clearest statement of the bug.
-_I96 = ("I.96 — a call returning an error union, passed straight to a parameter of that union type, is "
-        "refused E012: the call carries the union as written (`*u8 | NotFound`), the parameter its "
-        "synthesized form (`__U_ptr_u8_NotFound`), and the two are not unified. Bound to an annotated name "
-        "first, the same call runs. The message also prints the internal name")
+# Closed by I.96: the call's union is lowered as the parameter's was, so the direct form runs, and a
+# mismatch prints both unions as written.
 _U96 = ('func find(fail bool, v *u8) *u8 | NotFound {\n    if fail {\n        return NotFound\n    }\n'
         '    return v\n}\n'
         'func show(r *u8 | NotFound) effects io {\n    case r {\n        NotFound: libc_printf("E")\n'
@@ -921,7 +919,7 @@ add("union-call-arg", "bound to an annotated name, then passed",
            '    libc_printf("\\n")\n    return 0\n}\n', "ok\n")
 add("union-call-arg", "passed straight to the union parameter",
     _U96 + 'func main() i32 effects io {\n    show(find(false, "ok"))\n    libc_printf("\\n")\n'
-           '    return 0\n}\n', "ok\n", plan=_I96)
+           '    return 0\n}\n', "ok\n")
 
 
 if __name__ == "__main__":

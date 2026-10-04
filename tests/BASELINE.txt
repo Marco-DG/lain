@@ -2193,6 +2193,22 @@ at=nonnull 2
 at=pure 2
 ty=Opt struct
 ty=P struct
+### tests/trust/union_arg_pass.ln
+rc=0
+out=nf ok nf ok 
+at=const 2
+at=pure 2
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound scalar
+ty=__U_Small_Missing scalar
+### tests/trust/union_arg_same_markers_pass.ln
+rc=0
+out=nf ok 7 199 
+at=const 2
+at=pure 2
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_NotFound scalar
+ty=__U_Small_NotFound scalar
 ### tests/trust/union_refined_alias_pass.ln
 rc=0
 out=ok nf size=1

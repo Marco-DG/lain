@@ -1,0 +1,42 @@
+// I.96, the second half: two unions with the SAME markers and different value types, each call
+// passed straight to its parameter. Lowering identified a union that reached it raw by its marker
+// names alone, so `pick(7)`'s `Small | NotFound` was given `*u8 | NotFound`'s C type, its byte stored
+// in a pointer, and gcc refused the C. Neither function returns the marker bare, so this compiled
+// before the direct form was allowed; under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Small = u8 < 200
+
+func find(fail bool, v *u8) *u8 | NotFound {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+
+func pick(v Small) Small | NotFound {
+    return v
+}
+
+func show(r *u8 | NotFound) effects io {
+    case r {
+        NotFound: libc_printf("nf ")
+        else:     libc_printf("ok ")
+    }
+}
+
+func show_small(r Small | NotFound) effects io {
+    case r {
+        NotFound: libc_printf("nf ")
+        else:     libc_printf("%d ", r)
+    }
+}
+
+func main() i32 effects io {
+    show(find(true, "x"))
+    show(find(false, "x"))
+    show_small(pick(7))
+    show_small(pick(199))
+    libc_printf("\n")
+    return 0
+}

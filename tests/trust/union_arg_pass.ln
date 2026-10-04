@@ -1,0 +1,46 @@
+// I.96: a union-returning call passed straight to a parameter of the same union. The call's type is
+// the raw `T | M` when the argument is checked, while the parameter's was lowered to its synthesized
+// enum, so `show(find(...))` was refused as converting the union into itself; binding the result
+// first compiled. Both value types (a pointer and a refined alias), both paths, under the sanitizers
+// and the interpreter. (The second union's marker is `Missing`, not a second `NotFound`: two unions
+// sharing a marker name is plan I.97.)
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Small = u8 < 200
+
+func find(fail bool, v *u8) *u8 | NotFound {
+    if fail {
+        return NotFound
+    }
+    return v
+}
+
+func pick(fail bool, v Small) Small | Missing {
+    if fail {
+        return Missing
+    }
+    return v
+}
+
+func show(r *u8 | NotFound) effects io {
+    case r {
+        NotFound: libc_printf("nf ")
+        else:     libc_printf("ok ")
+    }
+}
+
+func show_small(r Small | Missing) effects io {
+    case r {
+        Missing:  libc_printf("nf ")
+        else:     libc_printf("ok ")
+    }
+}
+
+func main() i32 effects io {
+    show(find(true, "x"))
+    show(find(false, "x"))
+    show_small(pick(true, 7))
+    show_small(pick(false, 7))
+    libc_printf("\n")
+    return 0
+}

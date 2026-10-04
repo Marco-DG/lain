@@ -454,21 +454,29 @@ static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
 // payload variant `some { __v: T }` + one empty variant per marker. Deduped by a
 // deterministic mangled name so the same union in two signatures shares one enum.
 // ZERO-COST MANDATORY: the IR refuses (E064) a layout that needs a tag (ir_emit_layout_report).
-static Type *union_lower(Type *u) {
+// The synthesized enum's name: the value type and every marker (with a payload marker's field
+// types). It IS the union's identity, so lowering finds the enum by this name too (I.106).
+static void union_mangled_name(Type *u, char *nb, size_t cap) {
     Type *value = u->element_type;
-    char nb[256]; int off = 0;
+    int off = 0;
     char vb[128]; mono_mangle_type(value, vb, sizeof vb);
-    off += snprintf(nb + off, sizeof nb - (size_t)off, "__U_%s", vb);
+    off += snprintf(nb + off, cap - (size_t)off, "__U_%s", vb);
     for (IdList *m = u->union_markers; m; m = m->next) {
-        off += snprintf(nb + off, sizeof nb - (size_t)off, "_%.*s", (int)m->id->length, m->id->name);
+        off += snprintf(nb + off, cap - (size_t)off, "_%.*s", (int)m->id->length, m->id->name);
         // Payload markers mangle their field types too, so `E{line u32}` and
         // `E{col u16}` are distinct unions (no dedup collision).
         for (DeclList *f = m->fields; f; f = f->next) {
             if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
             char fb[128]; mono_mangle_type(f->decl->as.variable_decl.type, fb, sizeof fb);
-            off += snprintf(nb + off, sizeof nb - (size_t)off, "_%s", fb);
+            off += snprintf(nb + off, cap - (size_t)off, "_%s", fb);
         }
     }
+}
+
+static Type *union_lower(Type *u) {
+    Type *value = u->element_type;
+    char nb[256];
+    union_mangled_name(u, nb, sizeof nb);
     Symbol *ex = sema_lookup(nb);
     if (ex && ex->decl && ex->decl->kind == DECL_ENUM)
         return type_simple(sema_arena, ex->decl->as.enum_decl.type_name);
