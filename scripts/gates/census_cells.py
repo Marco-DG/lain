@@ -1332,6 +1332,104 @@ add("array-runtime-size", "a struct over 2^40 bytes, after a test met only by a 
     "__ILLFORMED__")
 
 
+# ── axis: `try` into a function returning a DIFFERENT union (I.120, I.122) ────────────────────────
+# `v = try step(...)` hands step's marker back from the enclosing function. When that function returns
+# another union (a wider value type, a marker added, the markers in another order), the marker is
+# re-encoded by name, and that path built it with NO payload: ParseErr(99) came back as ParseErr(0),
+# At(7, 12) as At(0, 0). The interpreter could not read the field (NOT MODELLED), so no oracle judged
+# it; the expectations here are derived. A marker the return union cannot hold must be refused (E065),
+# and a payload of another shape or a narrower field type cannot be carried across.
+# The subset check behind E065 skipped every payload-carrying marker (it meant to skip only the value
+# variant), so `try` of a payload marker into a union without it, or into a function returning no union
+# at all, compiled, and the error came back as the SUCCESS value 0. Fixed in I.122, which this row
+# follows; a payload of another shape is refused there too. Each `show` matches every marker of its
+# union, so `else` is the value alone.
+_NOTF = ("NotFound", '        NotFound: libc_printf("nf ")\n')
+_PERR = ("ParseErr", '        ParseErr(line): libc_printf("line=%d ", line)\n')
+_PERR64 = ("ParseErr", '        ParseErr(line): libc_printf("line=%lld ", line)\n')
+_AT = ("At", '        At(line, col): libc_printf("at=%d:%d ", line, col)\n')
+_EOF = ("Eof", '        Eof: libc_printf("eof ")\n')
+_OTHER = ("Other", '        Other(code): libc_printf("other=%d ", code)\n')
+_RET = {1: ("NotFound", "NotFound"), 2: ("ParseErr", "ParseErr(%s)"), 3: ("At", "At(7, 12)")}
+def _step(narrow, perr_arg="99"):
+    body = ""
+    for mode, (marker, ctor) in sorted(_RET.items()):
+        present = ("NotFound" in narrow) if marker == "NotFound" else (marker + "(" in narrow)
+        if present:
+            body += '    if mode == %d {\n        return %s\n    }\n' % (mode, ctor.replace("%s", perr_arg))
+    return 'func step(x i32, mode i32) %s {\n%s    return x\n}\n' % (narrow, body)
+def _lift(wide, callee="step", cast=""):
+    return ('func lift(x i32, mode i32) %s {\n    v = try %s(x, mode)\n    return v%s\n}\n'
+            % (wide, callee, cast))
+def _show(wide, arms, valfmt):
+    return ('func show(r %s) effects io {\n    case r {\n%s        else: libc_printf("val=%s ", r)\n    }\n}\n'
+            % (wide, "".join(a for _, a in arms), valfmt))
+def _main(modes):
+    return ('func main() i32 effects io {\n' + "".join('    show(lift(5, %d))\n' % m for m in modes)
+            + '    libc_printf("\\n")\n    return 0\n}\n')
+# DERIVED: step(5, mode) is the value 5, NotFound, ParseErr(99) or At(7, 12) for mode 0..3; `try`
+# hands a marker back unchanged and the value through `v`, so show prints exactly that.
+_SAYS = {0: "val=5 ", 1: "nf ", 2: "line=99 ", 3: "at=7:12 "}
+def _says(modes):
+    return "".join(_SAYS[m] for m in modes) + "\n"
+_I120 = ("I.120: `try` into a function returning a wider union re-encodes the marker by name and drops "
+         "its payload (ParseErr(99) arrives as ParseErr(0))")
+_N3 = "i32 | NotFound | ParseErr(line i32) | At(line i32, col i32)"
+_W3 = "i64 | NotFound | ParseErr(line i32) | At(line i32, col i32)"
+for label, modes, plan in (("the value", [0], None), ("a payload-less marker", [1], None),
+                           ("a one-field payload", [2], _I120), ("a two-field payload", [3], _I120)):
+    add("try-widening", "i32 to i64: " + label,
+        _step(_N3) + _lift(_W3, cast=" as i64") + _show(_W3, [_NOTF, _PERR, _AT], "%lld") + _main(modes),
+        _says(modes), plan=plan)
+add("try-widening", "the same union: the control",
+    _step(_N3) + _lift(_N3) + _show(_N3, [_NOTF, _PERR, _AT], "%d") + _main([0, 1, 2, 3]), _says([0, 1, 2, 3]))
+_N2 = "i32 | NotFound | ParseErr(line i32)"
+for label, wide, arms in (
+        ("the same value type, a payload-less marker added in front", "i32 | Eof | NotFound | ParseErr(line i32)",
+         [_EOF, _NOTF, _PERR]),
+        ("the same value type, a payload marker added in front", "i32 | Other(code i32) | NotFound | ParseErr(line i32)",
+         [_OTHER, _NOTF, _PERR]),
+        ("the same markers in another order", "i32 | ParseErr(line i32) | NotFound", [_NOTF, _PERR])):
+    add("try-widening", label, _step(_N2) + _lift(wide) + _show(wide, arms, "%d") + _main([0, 1, 2]),
+        _says([0, 1, 2]), plan=_I120)
+add("try-widening", "a payload field widened, i32 to i64",
+    _step("i32 | ParseErr(line i32)") + _lift("i32 | ParseErr(line i64)")
+    + _show("i32 | ParseErr(line i64)", [_PERR64], "%d") + _main([0, 2]), _says([0, 2]), plan=_I120)
+_W4 = "i64 | Eof | NotFound | ParseErr(line i32) | At(line i32, col i32)"
+add("try-widening", "two widening trys in a row",
+    _step(_N3) + 'func mid(x i32, mode i32) %s {\n    v = try step(x, mode)\n    return v as i64\n}\n' % _W3
+    + _lift(_W4, callee="mid") + _show(_W4, [_EOF, _NOTF, _PERR, _AT], "%lld") + _main([0, 1, 2, 3]),
+    _says([0, 1, 2, 3]), plan=_I120)
+# DERIVED: the struct payload is Pos(7, 12), so its fields print 7:12.
+add("try-widening", "a struct payload",
+    'type Pos {\n    line i32\n    col i32\n}\n'
+    'func step(x i32, mode i32) i32 | ParseErr(p Pos) {\n    if mode == 2 {\n        return ParseErr(Pos(7, 12))\n'
+    '    }\n    return x\n}\n' + _lift("i64 | ParseErr(p Pos)", cast=" as i64")
+    + 'func show(r i64 | ParseErr(p Pos)) effects io {\n    case r {\n'
+      '        ParseErr(p): libc_printf("at=%d:%d ", p.line, p.col)\n        else: libc_printf("val=%lld ", r)\n'
+      '    }\n}\n' + _main([0, 2]), "val=5 at=7:12 \n", plan=_I120)
+# Refused by design: what a marker carries cannot change shape or lose range on the way out.
+for label, narrow, wide, arms, arg, plan in (
+        ("a payload of another shape, one field into two", "i32 | ParseErr(line i32)",
+         "i32 | ParseErr(line i32, col i32)", [("ParseErr", '        ParseErr(line, col): libc_printf("line=%d ", line)\n')],
+         "99", None),
+        ("a payload field narrowed, i64 to i32", "i32 | ParseErr(line i64)", "i32 | ParseErr(line i32)", [_PERR], "99",
+         _I120),
+        ("a payload field made unsigned, from -5", "i32 | ParseErr(line i32)", "i32 | ParseErr(line u32)",
+         [("ParseErr", '        ParseErr(line): libc_printf("line=%u ", line)\n')], "-5", _I120)):
+    add("try-widening", label, _step(narrow, perr_arg=arg) + _lift(wide) + _show(wide, arms, "%d") + _main([0]),
+        "__ILLFORMED__", plan=plan)
+add("try-widening", "a payload marker the return union lacks",
+    _step(_N2) + _lift("i32 | NotFound | Other(code i32)") + _show("i32 | NotFound | Other(code i32)", [_NOTF, _OTHER], "%d")
+    + _main([0]), "__ILLFORMED__")
+add("try-widening", "a payload-less marker the return union lacks: the control",
+    _step(_N2) + _lift("i32 | ParseErr(line i32) | Other(code i32)")
+    + _show("i32 | ParseErr(line i32) | Other(code i32)", [_PERR, _OTHER], "%d") + _main([0]), "__ILLFORMED__")
+add("try-widening", "a payload marker into a function returning no union",
+    _step("i32 | ParseErr(line i32)") + 'func lift(x i32, mode i32) i32 {\n    v = try step(x, mode)\n    return v\n}\n'
+    'func main() i32 effects io {\n    libc_printf("%d\\n", lift(5, 0))\n    return 0\n}\n', "__ILLFORMED__")
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
