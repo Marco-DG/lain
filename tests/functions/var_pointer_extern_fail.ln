@@ -1,0 +1,12 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 9, Col 23: a `var` parameter of pointer type would pass the pointer variable itself by reference
+// `var` on a pointer parameter or return was silently dropped (I.135). `var x i32` passes the
+// caller's variable by reference, but `var p *u8` passed the pointer BY VALUE, so a reassignment of
+// p in the callee never reached the caller; the C and --interpret agreed. A pointer passed by
+// reference is not in the language yet; the writable pointee is `*var T`.
+// On an extern, `s var *u8` emitted `uint8_t*`, though an extern's `var` parameter is passed by
+// address: std's fgets used it to mean `*var u8`, a buffer fgets writes.
+extern func gets_into(s var *u8, n i32) i32 effects io
+func main() i32 {
+    return 0
+}

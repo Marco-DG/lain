@@ -1,0 +1,17 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 8, Col 6: a `var` return of pointer type would return the pointer variable itself by reference
+// `var` on a pointer parameter or return was silently dropped (I.135). `var x i32` passes the
+// caller's variable by reference, but `var p *u8` passed the pointer BY VALUE, so a reassignment of
+// p in the callee never reached the caller; the C and --interpret agreed. A pointer passed by
+// reference is not in the language yet; the writable pointee is `*var T`.
+// A return type `var *u8` was a plain pointer.
+func get(p *u8) var *u8 {
+    return p
+}
+func main() i32 {
+    var a u8 = 5
+    q = get(&a)
+    var r i32 = 0
+    unsafe { r = *q as i32 }
+    return r
+}

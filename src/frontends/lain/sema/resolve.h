@@ -282,6 +282,31 @@ static void sema_check_redefinitions(DeclList *decls, const char *main_module) {
     }
 }
 
+// ★ `var` ON A POINTER PARAMETER OR RETURN (I.135). `var x i32` is a borrow of the caller's
+// variable (`int32_t*`), but on a pointer the `var` was silently DROPPED: `func set(var p *u8, q *u8)
+// { p = q }` emitted `p_set(uint8_t*, uint8_t*)`, and the caller's p never changed (main returned 1,
+// not 2; the C and --interpret agreed). An extern's `s var *u8` emitted `uint8_t*` too, though since
+// I.115 an extern's `var` parameter is passed by ADDRESS, so its consistent meaning is `uint8_t**`;
+// making it so would silently change what fgets receives. A return `var *T` was a plain pointer.
+// The writable POINTEE is `*var T` (a flag on the pointer, not this mode), which is what std's fgets
+// meant. A pointer passed by reference (`T**`) is not in the language yet.
+static void sema_check_var_pointer(Type *t, isize line, isize col, bool is_return) {
+    if (!t || t->mode != MODE_MUTABLE) return;
+    Type *u = t;
+    while (u && u->kind == TYPE_COMPTIME) u = u->element_type;
+    if (!u || u->kind != TYPE_POINTER) return;
+    if (is_return)
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: a `var` return of pointer type would return the "
+                "pointer variable itself by reference, which Lain does not do yet: write `*var T` for a "
+                "pointer whose target the caller may write.\n", (long)line, (long)col);
+    else
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: a `var` parameter of pointer type would pass the "
+                "pointer variable itself by reference, which Lain does not do yet: write `*var T` for a "
+                "pointer whose target the callee may write.\n", (long)line, (long)col);
+    diagnostic_show_line(line, col);
+    exit(1);
+}
+
 // ★ A VALUE HAS A SIZE (spec 7, spec 17). An opaque type (`extern type FILE`) has none, and
 // neither has `void`: `var fh FILE` and `var x void` were accepted, a parameter or a field of an
 // opaque type too, and the C declared them or dropped them. An opaque type is reached through a
@@ -794,6 +819,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                                   "a field", false);
       } else if (d->kind == DECL_FUNCTION || d->kind == DECL_EXTERN_FUNCTION) {
         sema_check_value_type(d->as.function_decl.return_type, d->line, d->col, "a return value", true);
+        sema_check_var_pointer(d->as.function_decl.return_type, d->line, d->col, true);
         // ★ A REFINEMENT CLAUSE CONSTRAINS AN INTEGER (I.94). `func f() u8 | NotFound < 200` parsed
         // the clause onto the UNION, and lowering asserts a return refinement only on an integer
         // value, so it was silently ignored: parsed, not enforced. E064 had pointed users at it.
@@ -818,6 +844,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                                   "a parameter", false);
             sema_check_param_len_positive(p->decl->as.variable_decl.type, d->as.function_decl.params,
                                           p->decl->line, p->decl->col);
+            sema_check_var_pointer(p->decl->as.variable_decl.type, p->decl->line, p->decl->col, false);
           }
       } else if (d->kind == DECL_VARIABLE) {
         sema_check_value_type(d->as.variable_decl.type, d->line, d->col, "a module constant", false);

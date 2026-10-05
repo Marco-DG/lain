@@ -2817,7 +2817,7 @@ extern func printf(fmt *u8, ...) int effects io
 extern func fopen(filename *u8, mode *u8) mov *FILE effects io, alloc
 extern func fclose(stream mov *FILE) int effects io
 extern func fputs(s *u8, stream *FILE) int effects io
-extern func fgets(s var *u8, n int, stream *FILE) var *u8 effects io
+extern func fgets(s *var u8, n int, stream *FILE) *var u8 effects io
 extern func libc_printf(fmt *u8, ...) int effects io
 extern func libc_puts(s *u8) int effects io
 ```

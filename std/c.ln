@@ -9,7 +9,7 @@ extern func printf(fmt *u8, ...) i32 effects io
 extern func fopen(filename *u8, mode *u8) mov *FILE effects io, alloc
 extern func fclose(stream mov *FILE) i32 effects io
 extern func fputs(s *u8, stream *FILE) i32 effects io
-extern func fgets(s var *u8, n i32, stream *FILE) var *u8 effects io
+extern func fgets(s *var u8, n i32, stream *FILE) *var u8 effects io
 
 extern func libc_printf(fmt *u8, ...) i32 effects io
 extern func libc_puts(s *u8) i32 effects io
