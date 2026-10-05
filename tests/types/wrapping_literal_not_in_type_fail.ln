@@ -1,0 +1,9 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 7, Col 5
+// I.141's limit: a wrapping operation on literals takes the destination's type only when every
+// literal is a value of that type. 300 is no u8, so `300 +% 10` in a u8 stays refused rather than
+// wrapping 300 first.
+func main() i32 {
+    x u8 = 300 +% 10
+    return x as i32
+}

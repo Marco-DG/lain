@@ -1,0 +1,21 @@
+// I.141: a wrapping operation whose every operand is a literal wraps at the type it is given. There is
+// no operand type to wrap at, so the destination's is the one the program means. Each line was E086
+// "arithmetic is not provably free of overflow" before, a contradictory message for a wrapping
+// operator: the literals were i32, the operation an i32 260, and the narrowing failed. The module
+// constant K was accepted at its declaration and E086 at every use.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+K u8 = 250 +% 10
+
+func id(v u8) u8 {
+    return v
+}
+
+func main() i32 effects io {
+    x u8 = 250 +% 10
+    y i8 = 127 +% 1
+    z u8 = 0 -% 1
+    w u8 = 16 *% 16 +% 3
+    libc_printf("%d %d %d %d %d %d\n", x as i32, y as i32, z as i32, w as i32, K as i32, id(200 +% 100) as i32)
+    return 0
+}

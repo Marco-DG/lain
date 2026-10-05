@@ -1391,6 +1391,46 @@ static void sema_check_place_writable(Expr *place, isize line, isize col, const 
     exit(1);
 }
 static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col);
+// ── I.141: A WRAPPING OPERATION ON LITERALS WRAPS AT THE TYPE IT IS GIVEN ──────────────────────
+// `x u8 = 250 +% 10` was E086 "arithmetic is not provably free of overflow", a contradictory
+// message for a wrapping operator: the two literals are i32, so the operation was an i32 260, and
+// the narrowing to u8 failed. A module constant `K u8 = 250 +% 10` was accepted at its declaration
+// and E086 at every use, the use's materialization typing it the same way. With every leaf a
+// literal there is no operand type to wrap at, and the type the program means is the destination's:
+// the boundary retypes such a tree (the literals and every wrapping node) to it, so it wraps there
+// and evaluates to 4 in the declaration and at every use alike. Only when every literal is itself a
+// value of the destination type: `300 +% 10` in a u8 keeps its refusal, 300 being no u8.
+static bool sema_is_wrap_op(TokenKind op) {
+    return op == TOKEN_PLUS_PERCENT || op == TOKEN_MINUS_PERCENT || op == TOKEN_ASTERISK_PERCENT ||
+           op == TOKEN_SLASH_PERCENT || op == TOKEN_SHIFT_LEFT_PERCENT;
+}
+static bool sema_wrap_literal_leaf(Expr *e, int bits, bool sgn, int depth) {
+    if (!e || depth > 32) return false;
+    if (e->kind == EXPR_LITERAL && !e->as.literal_expr.is_bool) {
+        int64_t v = (int64_t)e->as.literal_expr.value;
+        __int128 lo = sgn ? -((__int128)1 << (bits - 1)) : 0;
+        __int128 hi = sgn ? ((__int128)1 << (bits - 1)) - 1 : (((__int128)1) << bits) - 1;
+        return (__int128)v >= lo && (__int128)v <= hi;
+    }
+    return e->kind == EXPR_BINARY && sema_is_wrap_op(e->as.binary_expr.op) &&
+           sema_wrap_literal_leaf(e->as.binary_expr.left, bits, sgn, depth + 1) &&
+           (e->as.binary_expr.op == TOKEN_SHIFT_LEFT_PERCENT ||   // a shift's amount only counts
+            sema_wrap_literal_leaf(e->as.binary_expr.right, bits, sgn, depth + 1));
+}
+static void sema_retype_wrap_tree(Expr *e, Type *t) {
+    if (!e) return;
+    if (e->kind == EXPR_LITERAL) {
+        Type *lt = arena_push_aligned(sema_arena, Type); *lt = *t;
+        lt->refine.known = true; lt->refine.lo = lt->refine.hi = (int64_t)e->as.literal_expr.value;
+        e->type = lt;
+        return;
+    }
+    Type *bt = arena_push_aligned(sema_arena, Type); *bt = *t; bt->refine.known = false;
+    sema_retype_wrap_tree(e->as.binary_expr.left, t);
+    if (e->as.binary_expr.op != TOKEN_SHIFT_LEFT_PERCENT) sema_retype_wrap_tree(e->as.binary_expr.right, t);
+    e->type = bt;
+}
+
 static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
                              isize line, isize col,
                              const char *ctx, const char *label) {
@@ -1403,6 +1443,18 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     // boundary already comes through here.
     { Type *tt = to; while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
       if (tt && tt->kind == TYPE_FUNC && src_expr) fnptr_assign_check(tt, src_expr, line, col); }
+    // I.141: a wrapping operation whose every leaf is a literal takes the destination's type
+    if (src_expr && src_expr->kind == EXPR_BINARY && sema_is_wrap_op(src_expr->as.binary_expr.op) && to) {
+        Type *tt = to; while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
+        Type *ta = tt ? resolve_type_alias(tt) : NULL;
+        int bits = 0; bool sgn = false;
+        if (ta && is_integer_type(ta) && parse_iN_uN(ta, &bits, &sgn) && bits >= 1 && bits <= 64 &&
+            sema_wrap_literal_leaf(src_expr, bits, sgn, 0)) {
+            sema_retype_wrap_tree(src_expr, ta);
+            from = src_expr->type;
+            r = range_unknown();
+        }
+    }
     if (sema_is_readonly_ptr(from)) {
         Type *tt = to; while (tt && tt->kind == TYPE_COMPTIME) tt = tt->element_type;
         if (tt && tt->kind == TYPE_POINTER && tt->pointee_mutable) {

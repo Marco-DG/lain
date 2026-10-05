@@ -2369,6 +2369,11 @@ ty=Slice_u8 scalar
 ### tests/trust/wrapping_arithmetic_widths_pass.ln
 rc=0
 out=
+### tests/trust/wrapping_literals_destination_type_pass.ln
+rc=0
+out=4 -128 255 3 4 44
+at=const 2
+ty=Slice_u8 scalar
 ### tests/trust/wrapping_pass.ln
 rc=0
 out=4

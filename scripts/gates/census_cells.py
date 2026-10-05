@@ -1556,19 +1556,20 @@ for label, decls, body, exp, plan in (
 # declared, and every use, even `K == 4`, was refused. One typed operand is enough to wrap at the
 # right type, so those two cells are the allowed side. (A table entry written this way is I.140,
 # under the constant-table axis.)
-_I141 = ("I.141: the literal operands of a wrapping operator do not take the type the context gives, "
-         "so `x u8 = 250 +% 10` adds at i32 (260) and then narrows")
+# Closed by I.141: a wrapping operation whose every leaf is a literal of the destination type takes
+# that type at the boundary (a declaration, an assignment, an argument, a return, a field, an array
+# element) and wraps there.
 def _wl(decls, body):
     return decls + 'func main() i32 effects io {\n' + body + '    return 0\n}\n'
 _PX = '    libc_printf("%d\\n", x as i32)\n'
 # DERIVED: (250 + 10) mod 256 = 4; (5 - 10) mod 256 = 251.
 assert (250 + 10) % 256 == 4 and (5 - 10) % 256 == 251
 for label, decls, body, exp, plan in (
-        ("a local, two literals with +%", '', '    x u8 = 250 +% 10\n' + _PX, "4\n", _I141),
-        ("a local, two literals with -%", '', '    x u8 = 5 -% 10\n' + _PX, "251\n", _I141),
+        ("a local, two literals with +%", '', '    x u8 = 250 +% 10\n' + _PX, "4\n", None),
+        ("a local, two literals with -%", '', '    x u8 = 5 -% 10\n' + _PX, "251\n", None),
         ("a module constant, two literals with +%, then compared", 'K u8 = 250 +% 10\n',
          '    if K == 4 {\n        libc_printf("four\\n")\n    } else {\n        libc_printf("other\\n")\n    }\n',
-         "four\n", _I141),
+         "four\n", None),
         ("a local, one operand typed", '', '    a u8 = 250\n    x u8 = a +% 10\n' + _PX, "4\n", None),
         ("a local, one operand cast", '', '    x u8 = 250 as u8 +% 10\n' + _PX, "4\n", None)):
     add("wrapping-literal-operands", label, _wl(decls, body), exp, plan=plan)

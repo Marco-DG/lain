@@ -416,9 +416,9 @@ constant-table-element	one table's element as the index into another	OK
 constant-table-element	an addition the hull would overflow	OK
 constant-table-element	an addition that does overflow	ok-REFUSED [E086]
 constant-table-element	an entry written with as%	REFUSED [E012]  # I.140: spec 10's constant expressions have no wrapping operator, so a table with `as%` or `+%` in it is not static data and its elements are unknown
-constant-table-element	an entry written with +%	REFUSED [E086]  # I.140: spec 10's constant expressions have no wrapping operator, so a table with `as%` or `+%` in it is not static data and its elements are unknown
-wrapping-literal-operands	a local, two literals with +%	REFUSED [E086]  # I.141: the literal operands of a wrapping operator do not take the type the context gives, so `x u8 = 250 +% 10` adds at i32 (260) and then narrows
-wrapping-literal-operands	a local, two literals with -%	REFUSED [E086]  # I.141: the literal operands of a wrapping operator do not take the type the context gives, so `x u8 = 250 +% 10` adds at i32 (260) and then narrows
-wrapping-literal-operands	a module constant, two literals with +%, then compared	REFUSED [E086]  # I.141: the literal operands of a wrapping operator do not take the type the context gives, so `x u8 = 250 +% 10` adds at i32 (260) and then narrows
+constant-table-element	an entry written with +%	REFUSED [E012]  # I.140: spec 10's constant expressions have no wrapping operator, so a table with `as%` or `+%` in it is not static data and its elements are unknown
+wrapping-literal-operands	a local, two literals with +%	OK
+wrapping-literal-operands	a local, two literals with -%	OK
+wrapping-literal-operands	a module constant, two literals with +%, then compared	OK
 wrapping-literal-operands	a local, one operand typed	OK
 wrapping-literal-operands	a local, one operand cast	OK
