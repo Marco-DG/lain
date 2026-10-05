@@ -52,6 +52,20 @@ the program still builds. `-w` silences it.
 **Where the output goes.** `-o` is relative to the **working directory**, not to the source file.
 Without `-o` the C is written to `out.c`.
 
+**Where imports are found.** `import std.math` reads `std/math.ln`, and where that path starts
+depends on how you name the source file:
+
+- **A relative path** (`./lain demo/app.ln`): imports resolve from the **working directory**.
+  Run the compiler from the directory that contains `std/` (the repository root), wherever the
+  source file lives. Run it from `demo/` and the same import is
+  `[E106] ... there is no module 'std.math' (no file 'std/math.ln')`.
+- **An absolute path** (`./lain /home/me/demo/app.ln`): the compiler first changes to the
+  **source file's directory**, and imports resolve from there. So `std/` must sit beside the file.
+  `-o` still resolves against the directory you ran the compiler from.
+
+The same file can therefore build when named one way and not the other. When in doubt, compile
+from the repository root with a relative path.
+
 ## 3. Run a program without emitting C
 
 `--interpret` runs an accepted program on the IR's own semantics instead of emitting anything, and
