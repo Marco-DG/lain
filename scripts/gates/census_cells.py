@@ -1460,6 +1460,49 @@ add("char-high-byte", "\\xff plus one as an index into a u8[10]", _IDX % "'\\xff
 add("char-high-byte", "255 plus one as an index into a u8[10]: the control", _IDX % "255", "__ILLFORMED__")
 
 
+# ── axis: a module constant written WITHOUT a type, used in each place a value goes (I.138) ──────────
+# `N = 7` at module level had no type at all. Its uses failed in different ways depending on where the
+# value went: `k = N` never declared k (E106 at k's next use), `T[2] + 0` on an unannotated table emitted
+# C with a `void` variable, and `BIG = 5000000000` then `BIG - 1` was refused as an overflow. A constant
+# written WITH a type was never affected, so each use below has an annotated twin as its control. The
+# census compiles the emitted C with gcc, so a `void` variable is seen there and not only by the
+# interpreter: below the fix `T[2] + 0` compiled, the interpreter printed 3, and gcc refused the C
+# (`void v20;`). Measured below the fix, the hole is a value that takes its type FROM the constant, an
+# inferred binding or arithmetic on it. A use whose context supplies the type (a range end, a u8
+# argument, a comparison) already worked, and those cells carry no citation.
+_I138 = ("I.138: a module constant written without a type has no type at its uses, so a binding from it is "
+         "never declared, a table read from it is emitted as a `void` C variable, and a large one overflows")
+def _uc(consts, body):
+    return consts + 'func main() i32 effects io {\n' + body + '    return 0\n}\n'
+_TAKE_U8 = 'func take(x u8) u8 {\n    return x\n}\n'
+# DERIVED: N is 7, M is -3, H is 1.5, BIG is 5000000000, T is [1, 2, 3, 4]. 0..N runs i = 0 to 6, so
+# the last i is 6; 5 < 7; 5000000000 > 4000000000; H prints as 1.500000; BIG - 1 is 4999999999;
+# T[2] + 0 is 3.
+for label, untyped, typed, body, exp, hole in (
+        ("bound to a local, then printed", 'N = 7\n', 'N i32 = 7\n',
+         '    k = N\n    libc_printf("%d\\n", k)\n', "7\n", True),
+        ("as the end of a range", 'N = 7\n', 'N i32 = 7\n',
+         '    var last = 0\n    for i in 0..N {\n        last = i\n    }\n    libc_printf("%d\\n", last)\n', "6\n", False),
+        ("as a u8 argument", _TAKE_U8 + 'N = 7\n', _TAKE_U8 + 'N u8 = 7\n',
+         '    libc_printf("%d\\n", take(N) as i32)\n', "7\n", False),
+        ("in a comparison", 'N = 7\n', 'N i32 = 7\n',
+         '    if 5 < N {\n        libc_printf("more\\n")\n    }\n', "more\n", False),
+        ("negative, bound to a local", 'M = -3\n', 'M i32 = -3\n',
+         '    k = M\n    libc_printf("%d\\n", k)\n', "-3\n", True),
+        ("above 2^32, in a comparison", 'BIG = 5000000000\n', 'BIG i64 = 5000000000\n',
+         '    if BIG > 4000000000 {\n        libc_printf("more\\n")\n    }\n', "more\n", False),
+        ("above 2^32, minus one, printed directly", 'BIG = 5000000000\n', 'BIG i64 = 5000000000\n',
+         '    libc_printf("%lld\\n", BIG - 1)\n', "4999999999\n", True),
+        ("a table element, bound to a local", 'T = [1, 2, 3, 4]\n', 'T i32[4] = [1, 2, 3, 4]\n',
+         '    v = T[3]\n    libc_printf("%d\\n", v)\n', "4\n", True),
+        ("a table element plus zero, printed directly", 'T = [1, 2, 3, 4]\n', 'T i32[4] = [1, 2, 3, 4]\n',
+         '    libc_printf("%d\\n", T[2] + 0)\n', "3\n", True),
+        ("a float, bound to a local", 'H = 1.5\n', 'H f64 = 1.5\n',
+         '    y = H\n    libc_printf("%f\\n", y)\n', "1.500000\n", True)):
+    add("untyped-module-constant", "untyped: " + label, _uc(untyped, body), exp, plan=_I138 if hole else None)
+    add("untyped-module-constant", "typed: " + label + ": the control", _uc(typed, body), exp)
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,

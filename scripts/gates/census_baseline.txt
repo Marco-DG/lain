@@ -385,3 +385,23 @@ char-high-byte	\xff printed	OK
 char-high-byte	\xff as a case pattern against 255	OK
 char-high-byte	\xff plus one as an index into a u8[10]	ok-REFUSED [E085]
 char-high-byte	255 plus one as an index into a u8[10]: the control	ok-REFUSED [E085]
+untyped-module-constant	untyped: bound to a local, then printed	REFUSED [E106]  # I.138: a module constant written without a type has no type at its uses, so a binding from it is never declared, a table read from it is emitted as a `void` C variable, and a large one overflows
+untyped-module-constant	typed: bound to a local, then printed: the control	OK
+untyped-module-constant	untyped: as the end of a range	OK
+untyped-module-constant	typed: as the end of a range: the control	OK
+untyped-module-constant	untyped: as a u8 argument	OK
+untyped-module-constant	typed: as a u8 argument: the control	OK
+untyped-module-constant	untyped: in a comparison	OK
+untyped-module-constant	typed: in a comparison: the control	OK
+untyped-module-constant	untyped: negative, bound to a local	REFUSED [E106]  # I.138: a module constant written without a type has no type at its uses, so a binding from it is never declared, a table read from it is emitted as a `void` C variable, and a large one overflows
+untyped-module-constant	typed: negative, bound to a local: the control	OK
+untyped-module-constant	untyped: above 2^32, in a comparison	OK
+untyped-module-constant	typed: above 2^32, in a comparison: the control	OK
+untyped-module-constant	untyped: above 2^32, minus one, printed directly	REFUSED [E086]  # I.138: a module constant written without a type has no type at its uses, so a binding from it is never declared, a table read from it is emitted as a `void` C variable, and a large one overflows
+untyped-module-constant	typed: above 2^32, minus one, printed directly: the control	OK
+untyped-module-constant	untyped: a table element, bound to a local	REFUSED [E106]  # I.138: a module constant written without a type has no type at its uses, so a binding from it is never declared, a table read from it is emitted as a `void` C variable, and a large one overflows
+untyped-module-constant	typed: a table element, bound to a local: the control	OK
+untyped-module-constant	untyped: a table element plus zero, printed directly	MISMATCH  # I.138: a module constant written without a type has no type at its uses, so a binding from it is never declared, a table read from it is emitted as a `void` C variable, and a large one overflows
+untyped-module-constant	typed: a table element plus zero, printed directly: the control	OK
+untyped-module-constant	untyped: a float, bound to a local	REFUSED [E106]  # I.138: a module constant written without a type has no type at its uses, so a binding from it is never declared, a table read from it is emitted as a `void` C variable, and a large one overflows
+untyped-module-constant	typed: a float, bound to a local: the control	OK
