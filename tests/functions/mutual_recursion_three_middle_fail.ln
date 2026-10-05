@@ -1,0 +1,35 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: Error Ln 14, Col 12: this call closes a mutual-recursion cycle
+// I.130. A cycle of three was ranked as if it were a 2-cycle: on a's call into it and on c's call that
+// closes it, with the measure's position in b and in c taken to be one, and b's call never examined.
+// Here x and y swap at every call, so a's x is c's y; a's call and c's call both look ranked, and b's
+// call raises what a's lowered. From a(5, 7) the values cycle (5,7) (6,4) (3,6) (7,3) (4,7) (8,4)
+// ... and never reach a guard: it was ACCEPTED and ran out of stack (found by an exhaustive search of
+// 5832 such programs: 18 accepted that never end). The rule now ranks every call of the cycle.
+func a(x u8, y u8) u8 {
+    if x == 0 { return 0 }
+    if y == 0 { return 0 }
+    if x > 100 { return 0 }
+    if y > 100 { return 0 }
+    return b(y - 1, x + 1)
+}
+
+func b(x u8, y u8) u8 {
+    if x == 0 { return 0 }
+    if y == 0 { return 0 }
+    if x > 100 { return 0 }
+    if y > 100 { return 0 }
+    return c(y - 1, x)
+}
+
+func c(x u8, y u8) u8 {
+    if x == 0 { return 0 }
+    if y == 0 { return 0 }
+    if x > 100 { return 0 }
+    if y > 100 { return 0 }
+    return a(y + 1, x)
+}
+
+func main() i32 {
+    return a(5, 7) as i32
+}

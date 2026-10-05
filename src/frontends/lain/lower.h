@@ -4398,7 +4398,7 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     // B5: record only the SIGNATURE fact — this function returns a reference, so its result
     // borrows something of the caller's. WHICH parameter is a body fact, inferred later by
     // analysis/borrow.h (see IrFunc.ret_borrow_mask). Lowering does not analyse.
-    f->has_decreasing = (fn->as.function_decl.decreasing_measure != NULL);
+    f->has_decreasing = fn->as.function_decl.decreasing_written;   // WRITTEN, not inferred (I.130)
     { // WHETHER the return is a reference is now on the TYPE (`ret_type->borrowed`, set by
       // ir_lower_borrow_binding_type), so there is nothing to record here but the annotation.
       int bi = ir_param_index_by_name(fn, fn->as.function_decl.ret_borrow_of);

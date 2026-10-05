@@ -239,10 +239,10 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                               : "this recursion is not provably terminating");
                     if (c->mutual)
                         fprintf(stderr,
-                            "       the engine ranks a 2-cycle when a parameter does not grow on "
-                            "either edge and falls on one\n"
-                            "       give the cycle a measure that shrinks per lap and is bounded "
-                            "below, or write `effects diverge`\n");
+                            "       the engine ranks a cycle by one parameter per function: no call "
+                            "in the cycle may make it grow,\n"
+                            "       and every way round the cycle must make it fall; give the cycle "
+                            "such a measure, at least 0, or write `effects diverge`\n");
                     else
                     fprintf(stderr, "       a function is total by default, so some parameter has "
                                     "to shrink toward a base case on every self-call\n"

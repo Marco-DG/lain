@@ -1,0 +1,23 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: Error Ln 12, Col 12: this call closes a mutual-recursion cycle
+// I.130. Both functions also call THEMSELVES, and a function with a self-call was given only the
+// self-call rule: each self-call lowers its parameter, so both passed, and the cycle between them was
+// never asked about. a(1) -> b(1) -> a(1) never ends; it was ACCEPTED and ran out of stack. A
+// function on a cycle with another is ranked by the cycle rule, self-calls included. And it is E011,
+// not E082: the measure a self-call suggested was the front end's inference, not a written
+// `decreasing`, and Annex B gives E082 only to a measure the program states.
+func a(x u8) u8 {
+    if x == 0 { return 0 }
+    r = a(x - 1)
+    return b(x) +% r
+}
+
+func b(y u8) u8 {
+    if y == 0 { return 0 }
+    r = b(y - 1)
+    return a(y) +% r
+}
+
+func main() i32 {
+    return a(1) as i32
+}

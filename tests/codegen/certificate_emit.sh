@@ -3,8 +3,8 @@
 # per function, for a checker that does not search. Each section is checked on a program that
 # needs it, by pattern (value ids move with lowering; the facts must not):
 #   the constant table; a loop header's closed state; the loop measure (counter rises toward n);
-#   the self-recursion measure (a parameter); the mutual-recursion pair, from both ends (the
-#   rule SEARCHES the parameter pairs, so the pair is a found fact); element ranges per array;
+#   the self-recursion measure (a parameter); the mutual-recursion cycle's positions, from both
+#   ends (the rule SEARCHES the positions, so they are a found fact); element ranges per array;
 #   return ranges; an accumulator bound (1000 trips of +7); and a call-site return range with the
 #   callee's certificate under the constant argument NESTED (count(5): n in [5, 5], ret [5, 5]).
 # Then the round trip: parse and re-print must reproduce the file byte for byte, because the
@@ -73,8 +73,8 @@ has "^  header bb[0-9]+$"                                     "a loop header's s
 has "^    $R - %[0-9]+:n <= "                                 "a relational entry of the header state"
 has "^  measure loop bb[0-9]+ rises $R %[0-9]+:n$"            "the counter measure"
 has "^  measure recursion param %[0-9]+:n$"                   "the self-recursion measure"
-has "^  measure mutual with t_pong params 0 0 strict f$"      "the mutual pair, from ping"
-has "^  measure mutual with t_ping params 0 0 strict g$"      "the mutual pair, from pong"
+has "^  measure mutual t_ping 0 t_pong 0$"      "the mutual cycle, from ping"
+[ "$(grep -c "^  measure mutual t_ping 0 t_pong 0$" "$D/t.cert")" -ge 2 ] || { echo "missing: the mutual cycle, from pong"; fail=1; }
 has "^  elem %[0-9]+:a in \[10, 40\]$"                       "an element range"
 has "^  ret in \[0, 15\]$"                                    "a return range"
 has "^  accum $R header bb[0-9]+ trips 1000 delta \[7, 7\] init \[0, 0\]$" "an accumulator bound"
@@ -96,6 +96,8 @@ bad "a bad block"                   'certificate f\n  header bbx\nend\n' 2
 bad "a callsite without its callee" 'certificate f\n  callsite %%1 callee g bind 0=[1, 1] ret in [1, 1]\nend\n' 3
 bad "an unclosed certificate"       'certificate f\n  ret in [0, 1]\n' 2
 bad "a bad range"                   'certificate f\n  ret in [0 1]\nend\n' 2
+bad "a mutual cycle of one function" 'certificate f\n  measure mutual f 0\nend\n' 2
+bad "a mutual position not a number" 'certificate f\n  measure mutual f 0 g x\nend\n' 2
 # Every certificate the trust corpus produces round-trips: the parser must keep up with whatever
 # the emitter writes, not only with this file's shapes.
 cd "$ROOT"

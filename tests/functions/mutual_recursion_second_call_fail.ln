@@ -1,0 +1,19 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: Error Ln 9, Col 9: this call closes a mutual-recursion cycle
+// I.130. `a` calls `b` twice. Only the first call was ranked (it lowers x), and the second passes x
+// unchanged, so a(1) -> b(1) -> a(1) never ends: it was ACCEPTED and ran out of stack. Every call
+// between the functions of a cycle is ranked now, and the second one does not fall, so nothing
+// around the cycle a -> b -> a is sure to.
+func a(x u8) u8 {
+    if x == 0 { return 0 }
+    r = b(x - 1)
+    return b(x) +% r
+}
+
+func b(y u8) u8 {
+    return a(y)
+}
+
+func main() i32 {
+    return a(1) as i32
+}

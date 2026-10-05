@@ -7,7 +7,7 @@
 // check. A certificate is the search's output, per function:
 //   - the constant table, the values held outside the octagon (`V->cknown`);
 //   - one CLOSED octagon state per loop header, its finite entries only;
-//   - the termination measures: per loop, per self-recursion, per mutual 2-cycle;
+//   - the termination measures: per loop, per self-recursion, per mutual-recursion cycle;
 //   - the side facts a proof consulted that no block state holds (M5c): element ranges per array
 //     cell, the function's return range, call-site return ranges with the callee's certificate
 //     under the call's constant arguments NESTED, and the accumulator bounds (B1).
@@ -49,14 +49,16 @@ typedef struct {
 } CertHeader;
 typedef struct { CertRef v; int64_t c; } CertConst;
 typedef enum { CERT_M_LOOP, CERT_M_REC, CERT_M_MUTUAL } CertMKind;
+#define CERT_SCC_MAX 16          // the most functions a ranked mutual-recursion cycle may hold
 typedef struct {
     CertMKind k;
     int block;                   // LOOP: the header
     char rule[16];               // rises falls pair none | param param_diff none | mutual
     bool has_a, has_b; CertRef a, b;
-    char *other;                 // MUTUAL: the other function of the 2-cycle
-    int kf, kg;                  // MUTUAL: the parameter positions in this function and the other
-    char strict;                 // MUTUAL: the edge that strictly falls, 'f' (this one's call) or 'g'
+    // MUTUAL: every function of the recursion cycle, in module order, and the parameter position
+    // its measure is threaded through (I.130). Which calls strictly fall is not stated: the checker
+    // reads it off the positions, so a certificate cannot name a strict call that is not one.
+    int nmem; char *mem[CERT_SCC_MAX]; int pos[CERT_SCC_MAX];
 } CertMeasure;
 typedef struct { CertRef v; CertBound lo, hi; } CertElem;
 typedef struct {
@@ -113,7 +115,7 @@ static void cert_free(CertFunc *c) {
         CertFunc *nx = c->next;
         for (int i = 0; i < c->nhdr; i++) { free(c->hdr[i].iv); free(c->hdr[i].bin); }
         for (int i = 0; i < c->ncall; i++) { cert_free(c->call[i].sub); free(c->call[i].callee); }
-        for (int i = 0; i < c->nmeas; i++) free(c->meas[i].other);
+        for (int i = 0; i < c->nmeas; i++) for (int j = 0; j < c->meas[i].nmem; j++) free(c->meas[i].mem[j]);
         free(c->name);
         free(c->consts); free(c->hdr); free(c->meas); free(c->elem); free(c->acc); free(c->call);
         free(c); c = nx;
@@ -159,7 +161,7 @@ static void cert_print_at(const CertFunc *c, FILE *o, int ind) {
         fprintf(o, "%*smeasure ", in, "");
         if (M->k == CERT_M_LOOP) fprintf(o, "loop bb%d %s", M->block, M->rule);
         else if (M->k == CERT_M_REC) fprintf(o, "recursion %s", M->rule);
-        else fprintf(o, "mutual with %s params %d %d strict %c", M->other, M->kf, M->kg, M->strict);
+        else { fputs("mutual", o); for (int j = 0; j < M->nmem; j++) fprintf(o, " %s %d", M->mem[j], M->pos[j]); }
         if (M->k != CERT_M_MUTUAL && M->has_a) { fputc(' ', o); cert_ref(&M->a, o); }
         if (M->k != CERT_M_MUTUAL && M->has_b) { fputc(' ', o); cert_ref(&M->b, o); }
         fputc('\n', o);
@@ -322,14 +324,15 @@ static CertFunc *cert_parse(FILE *in, char *err, size_t errn) {
             } else if (L.n >= 3 && !strcmp(L.t[1], "recursion")) {
                 M->k = CERT_M_REC; if (!cert_copy_name(M->rule, L.t[2], sizeof M->rule)) CERT_BAD("bad recursion measure");
                 i = 3;
-            } else if (L.n == 9 && !strcmp(L.t[1], "mutual") && !strcmp(L.t[2], "with") &&
-                       !strcmp(L.t[4], "params") && !strcmp(L.t[7], "strict")) {
-                int64_t a, b;
+            } else if (L.n >= 2 && !strcmp(L.t[1], "mutual")) {
+                // `mutual NAME POS NAME POS ...`: at least two functions, each with its position
                 M->k = CERT_M_MUTUAL; strcpy(M->rule, "mutual");
-                M->other = cert_strdup(L.t[3], -1);
-                if (!cert_int(L.t[5], &a) || !cert_int(L.t[6], &b) ||
-                    strlen(L.t[8]) != 1 || (L.t[8][0] != 'f' && L.t[8][0] != 'g')) CERT_BAD("bad mutual measure");
-                M->kf = (int)a; M->kg = (int)b; M->strict = L.t[8][0];
+                if (L.n < 6 || (L.n - 2) % 2 || (L.n - 2) / 2 > CERT_SCC_MAX) CERT_BAD("bad mutual measure");
+                for (int j = 2; j < L.n; j += 2) {
+                    int64_t k;
+                    if (!cert_int(L.t[j+1], &k) || k < 0 || k > 63) CERT_BAD("bad mutual measure");
+                    M->mem[M->nmem] = cert_strdup(L.t[j], -1); M->pos[M->nmem] = (int)k; M->nmem++;
+                }
                 continue;
             } else CERT_BAD("bad measure");
             if (i < L.n) { if (!cert_parse_ref(L.t[i], &M->a)) CERT_BAD("bad measure value"); M->has_a = true; i++; }

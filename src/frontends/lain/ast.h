@@ -328,6 +328,11 @@ typedef struct {
     struct Expr* decreasing_measure; // `func f(...) R decreasing <measure>`: permits
                                      // recursion — each self-call must strictly decrease
                                      // this well-founded (>=0) measure. NULL = no recursion.
+    // Did the PROGRAMMER write it? Sema's inference installs its candidate in the same field, so by
+    // lowering the two are indistinguishable, and Annex B makes the code depend on the difference
+    // (E011 when no measure is given, E082 when a given one fails), as for a loop (`measure_written`).
+    // Set at PARSE time (I.130: an inferred self-call measure turned a cycle's E011 into E082).
+    bool        decreasing_written;
     bool        is_extern;      // true for “extern func”
     bool        is_variadic;    // true for “...”
     bool        is_cold;        // @cold:     GCC moves to .text.cold, pessimizes branch

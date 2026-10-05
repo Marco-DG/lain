@@ -1367,6 +1367,7 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
     d->as.function_decl.effects_declared = eff_declared;
     d->as.function_decl.effects_bound    = eff_bound;
     d->as.function_decl.decreasing_measure = decreasing_measure;
+    d->as.function_decl.decreasing_written = (decreasing_measure != NULL);   // set at PARSE time
     return d;
 }
 

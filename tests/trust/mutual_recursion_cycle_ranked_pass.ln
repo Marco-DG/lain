@@ -1,0 +1,44 @@
+// I.130: what the cycle rule ACCEPTS, run. The rule chooses one parameter position per function of a
+// recursion cycle; every call between them must not raise it, and every way round the cycle must
+// lower it at least once. Each shape below ends, and each is one the narrower rules could not state:
+//
+//   a -> b -> c -> a   a 3-cycle that lowers its measure on ONE call of the three and threads it
+//                      through swapped positions on the other two (a.x, b.q, c.r);
+//   p -> q -> p        p calls q TWICE, each call lowering n, and q calls p unchanged;
+//   s -> s, s -> t -> s  s also calls itself: its self-call and its call into t both lower n, and
+//                      t passes n back unchanged, so the one call that does not fall is not a cycle.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func a(x u8, y u8) u8 {
+    if x == 0 { return y }
+    return b(y, x - 1)
+}
+func b(p u8, q u8) u8 {
+    return c(q, p)
+}
+func c(r u8, s u8) u8 {
+    return a(r, s)
+}
+
+func p(n u32) u32 {
+    if n == 0 { return 1 }
+    return q(n - 1) +% q(n / 2)
+}
+func q(m u32) u32 {
+    return p(m)
+}
+
+func s(n u32) u32 {
+    if n == 0 { return 0 }
+    return s(n - 1) +% t(n - 1) +% 1
+}
+func t(m u32) u32 {
+    return s(m)
+}
+
+func main() i32 effects io {
+    libc_printf("%d\n", a(3, 7) as i32)
+    libc_printf("%u\n", p(5))
+    libc_printf("%u\n", s(4))
+    return 0
+}

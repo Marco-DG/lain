@@ -1797,6 +1797,13 @@ at=const 2
 rc=0
 out=
 at=const 2
+### tests/trust/mutual_recursion_cycle_ranked_pass.ln
+rc=0
+out=7
+out=14
+out=15
+at=const 4
+ty=Slice_u8 scalar
 ### tests/trust/neg_width_pass.ln
 rc=0
 out=-5000000000

@@ -31,10 +31,10 @@ func fact(n u32) u32 {
 }
 func ping(n u32) u32 {
     if n == 0 { return 0 }
-    return pong(n - 1)
+    return pong(n - 1, 1)
 }
-func pong(m u32) u32 {
-    if m == 0 { return 1 }
+func pong(m u32, k u32) u32 {
+    if m == 0 { return k }
     return ping(m)
 }
 func spin(n i32) i32 effects diverge {
@@ -79,7 +79,8 @@ mut "a call-site range"           's/\(callee t_count bind 0=\[5, 5\] ret in \)\
 mut "a call-site binding"         's/callee t_nib bind 0=\[200, 200\]/callee t_nib bind 0=[201, 201]/'             "which the call site does not state" 70
 mut "a loop measure"              '/^certificate t_total$/,/^end$/ s/^\(  measure loop bb[0-9]* \)rises /\1falls /' "for the loop at" 70
 mut "a recursion measure"         '/^certificate t_fact$/,/^end$/ s/^  measure recursion param %0:n$/  measure recursion param %1/' "for the recursion does not decrease" 70
-mut "a mutual pair's strict edge" '/^certificate t_ping$/,/^end$/ s/strict f$/strict g/'                            "the mutual measure it states with t_pong" 70
+mut "a mutual cycle's position"   '/^certificate t_ping$/,/^end$/ s/^  measure mutual t_ping 0 t_pong 0$/  measure mutual t_ping 0 t_pong 1/' "the mutual measure it states does not rank the cycle" 70
+mut "a mutual cycle's functions"  '/^certificate t_ping$/,/^end$/ s/^  measure mutual t_ping 0 t_pong 0$/  measure mutual t_ping 0 t_spin 0/' "the mutual measure it states does not rank the cycle" 70
 mut "a missing certificate"       '/^certificate t_nib$/,/^end$/d'                                                  "there is no certificate for it" 70
 mut "a header at no loop"         '/^certificate t_nib$/a\  header bb0'                                              "which is not a loop header" 70
 mut "an accumulator delta"        '/^certificate t_total$/,/^end$/ s/delta \[7, 7\]/delta [6, 7]/'                 "it states returns in [1000, 7000]" 70
