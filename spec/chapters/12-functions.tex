@@ -2,7 +2,6 @@
 \chapter{Functions and effects}
 \label{sec:12-functions}
 \index{function}
-\index{procedure}
 
 \section{The effect row}
 \label{sec:fn.distinction}
@@ -169,8 +168,10 @@ desugared call is determined by the declared mode of the first parameter of
 \begin{itemize}
   \item If the first parameter is \lain{var}, the receiver is automatically
         mutably borrowed: \lain{x.f()} desugars to \lain{f(var x)}.
-  \item If the first parameter is \lain{mov}, the receiver is automatically
-        moved: \lain{x.f()} desugars to \lain{f(mov x)}.
+  \item If the first parameter is \lain{mov}, the receiver is moved:
+        \lain{x.f()} desugars to \lain{f(mov x)}.  A \emph{linear} receiver's move shall
+        be written, as every transfer of a linear value is (\diagcode{E007}): call
+        \lain{f(mov x)}.
   \item If the first parameter is shared (default), the receiver is shared:
         \lain{x.f()} desugars to \lain{f(x)}.
 \end{itemize}
@@ -211,7 +212,7 @@ The calling convention for Lain functions corresponds to the C99 calling
 convention of the target platform, as determined by the C compiler used for
 the translation output.  The parameter passing rules are:
 
-\begin{longtable}{@{}lll@{}}
+\begin{longtable}{@{}p{3.6cm}p{3.6cm}p{6.8cm}@{}}
 \toprule
 \textbf{Lain parameter} & \textbf{C type} & \textbf{Semantics} \\
 \midrule
@@ -222,10 +223,12 @@ the translation output.  The parameter passing rules are:
 \endhead
 \bottomrule
 \endlastfoot
-shared struct \lain{T} & \texttt{const T*} & pointer to read-only copy \\
-\lain{var} struct \lain{T} & \texttt{T*}       & pointer, caller's copy \\
+shared struct \lain{T} & \texttt{T * restrict} & pointer to the caller's value, read only \\
+\lain{var} struct \lain{T} & \texttt{T * restrict} & pointer to the caller's value \\
 \lain{mov} struct \lain{T} & \texttt{T}        & by value (bitwise copy) \\
-primitive any mode      & \texttt{T}        & by value \\
+shared or \lain{mov} primitive & \texttt{T}   & by value \\
+\lain{var} primitive    & \texttt{T*}       & pointer to the caller's value \\
+slice \lain{T[]}        & \texttt{size\_t}, \texttt{T*} & two parameters, the length first \\
 \end{longtable}
 
 \section{Return values}
@@ -265,10 +268,9 @@ may appear in any expression position---including as the body of a
 match arm whose declared type is otherwise unrelated.
 
 \pnum
-\lain{panic} may be called from any function whose row names \lain{raises}
-contexts.  The call is deterministic (same input yields the same
-termination), so it does not violate the purity of an enclosing
-\lain{func}.
+A call to \lain{panic} is the \lain{raises} effect: it is permitted in a function whose
+row names \lain{raises}, and elsewhere \illformed{}~(\diagcode{E011}).  Like every effect,
+it enters the row of each caller in turn.
 
 \begin{constraint}
   \textbf{Q-014, S16.}
@@ -312,7 +314,12 @@ functions in version~1.0 are:
         bit-deterministic within their target platform.
   \item \tok{[private]} --- module-private visibility
         (\S\,\ref{sec:mod.visibility}).
+  \item \tok{[cold]}, \tok{[hot]} --- a hint to the C compiler that the function runs
+        rarely, or often.
+  \item \tok{[noreturn]} --- the function never returns, which is checked on a body
+        (\diagcode{E135}) and believed on an \lain{extern}.
 \end{itemize}
+Table~\ref{tab:attributes} lists every attribute and where it applies.
 
 \begin{note}
   The reference implementation translates \tok{[fast\_math]} on a

@@ -223,15 +223,15 @@
 % -------------------------------------------------------------------------
 \lstdefinelanguage{Lain}{
   morekeywords = {
-    func, proc, var, mov, type, return, if, elif, else, while, for, in,
+    func, proc, var, mov, type, return, if, else, while, for, in,
     case, import, use, extern, c_include, unsafe, comptime, defer,
-    true, false, and, or, as, decreasing, undefined, continue, break,
-    panic
+    true, false, and, or, as, decreasing, continue, break, effects,
+    assert, assume, try, nil, panic
   },
   morekeywords = [2]{
     int, float,
     u8, u16, u32, u64, usize, i8, i16, i32, i64, isize,
-    f32, f64, bool, str, void
+    f32, f64, bool, void
   },
   sensitive     = true,
   morecomment   = [l]{//},
@@ -299,7 +299,7 @@
   \par\noindent\rule{\linewidth}{0.4pt}
   \vspace{0.5em}
 }
-\newcommand{\synopsis}[1]{\noindent\textit{Synopsis:}\quad\lain{#1}\par}
+\newcommand{\synopsis}[1]{\noindent\textit{Synopsis:}\quad\texttt{#1}\par}
 \newcommand{\preconditions}[1]{\noindent\textit{Requires:}\quad#1\par}
 \newcommand{\postconditions}[1]{\noindent\textit{Ensures:}\quad#1\par}
 \newcommand{\errorcond}[1]{\noindent\textit{Errors:}\quad#1\par}

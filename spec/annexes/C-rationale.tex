@@ -175,7 +175,8 @@ uses return values.
   \item \textit{Embedded compatibility}: stack unwinding is unavailable
         or unreliable on many embedded platforms.
   \item \textit{Explicit error paths}: every error is visible in the
-        function signature (via \lain{Result} return types).
+        function signature, as a marker of its union return type
+        (\lain{T | NotFound}, \S\,\ref{sec:types.union}).
   \item \textit{Compatibility with \lain{defer}}: the \lain{defer}
         mechanism provides deterministic cleanup without exceptions.
 \end{itemize}
@@ -213,8 +214,8 @@ require an explicit \lain{unsafe} block.
 % =========================================================================
 
 \pnum
-\textbf{Decision.}  Use interval-based VRA for static verification
-instead of an SMT solver.
+\textbf{Decision.}  Use a value range analysis --- intervals, and the relations between
+pairs of variables an octagon keeps --- for static verification instead of an SMT solver.
 
 \pnum
 \textbf{Rationale.}
@@ -224,9 +225,8 @@ instead of an SMT solver.
   \item \textit{Predictability}: programmers can reason about what the
         compiler will accept by thinking about integer ranges.  SMT
         solver reasoning is opaque.
-  \item \textit{Simplicity}: the VRA implementation is approximately 600 lines.
-        An SMT integration would be orders of magnitude more complex and
-        would introduce an external dependency.
+  \item \textit{Self-containment}: the analysis is part of the compiler, with no
+        external dependency, and its every verdict can be replayed from a certificate.
 \end{itemize}
 
 \pnum
@@ -235,27 +235,26 @@ that an SMT solver could prove correct.  Non-linear constraints produce
 conservatively wide ranges.
 
 % =========================================================================
-\section{Comptime generics instead of \texttt{<T>} syntax}
+\section{Type parameters instead of \texttt{<T>} syntax}
 \label{sec:rationale.comptime}
 \index{generics!rationale}
 % =========================================================================
 
 \pnum
-\textbf{Decision.}  Use compile-time function evaluation with
-\lain{comptime} parameters instead of traditional generic syntax.
+\textbf{Decision.}  A type parameter is an ordinary parameter whose type is \lain{type},
+\lain{func max(T type, a T, b T) T}, and every instance is monomorphized
+(\S\,\ref{sec:14-generics}).
 
 \pnum
 \textbf{Rationale.}
 \begin{itemize}
-  \item \textit{Unification}: generics, type aliases, and compile-time
-        assertions all use the same mechanism.
-  \item \textit{Expressiveness}: comptime functions can contain arbitrary
-        logic, enabling type-level programming that traditional generics
-        cannot express.
-  \item \textit{Simplicity}: no angle brackets, no trait bounds, no
-        where clauses.  Just functions that take types and return types.
-  \item \textit{Precedent}: inspired by Zig's comptime approach, which
-        has proven ergonomic in practice.
+  \item \textit{Unification}: types and compile-time values are passed the same way;
+        \lain{type Buf(N usize)} takes a length as \lain{type Box(T type)} takes a type.
+  \item \textit{Simplicity}: no angle brackets, no trait bounds, no where clauses.  The
+        body is checked at each instance with the types it is given.
+  \item \textit{Zero cost}: an instance is an ordinary function or type, with no
+        dictionary passing and no boxing.
+  \item \textit{Precedent}: inspired by Zig, whose types are compile-time values.
 \end{itemize}
 
 % =========================================================================
@@ -287,19 +286,18 @@ conservatively wide ranges.
 % =========================================================================
 
 \pnum
-\textbf{Decision.}  Allow \lain{while} loops in \lain{func} bodies when
-a \lain{decreasing} termination measure is supplied.
+\textbf{Decision.}  Allow \lain{while} loops in a function with the empty row when
+their termination can be shown: by a measure the compiler infers from the loop, or by one
+the programmer writes with \lain{decreasing}.
 
 \pnum
 \textbf{Rationale.}
-Without \lain{decreasing}, any \lain{while} loop in a \lain{func} would
-require a proof of termination that goes beyond what the compiler can
-verify automatically.  Requiring the programmer to supply a
-\textit{measure} — a non-negative integer expression that strictly
-decreases on every iteration — is a well-established technique from
-program verification (\textit{ranking functions}).  The compiler's three
-checks (non-negativity, variable dependency, strict decrease) are
-sufficient to verify termination without an external solver.
+A \textit{measure} --- a non-negative integer expression that strictly decreases on every
+iteration --- is a well-established technique from program verification
+(\textit{ranking functions}).  For the common loop, \lain{while i < n} with \lain{i}
+rising, the compiler finds it itself (\S\,\ref{sec:stmt.while.infer}); where it cannot, the
+programmer states one, and the compiler checks it rather than believing it.  Neither needs
+an external solver.
 
 \pnum
 This allows algorithms such as binary search and GCD computation to be

@@ -131,6 +131,8 @@ used as user-defined identifiers.  The grammar production is
 \endlastfoot
 \tok{and}         & Logical AND operator           & \S\,\ref{sec:08-expressions} \\
 \tok{as}          & Type cast                      & \S\,\ref{sec:08-expressions} \\
+\tok{assert}      & Proof obligation; module-scope assertion & \S\,\ref{sec:stmt.assert} \\
+\tok{assume}      & A fact taken without proof (\lain{unsafe} only) & \S\,\ref{sec:stmt.assert} \\
 \tok{break}       & Loop break                     & \S\,\ref{sec:09-statements} \\
 \tok{c\_include}  & Foreign header include         & \S\,\ref{sec:17-interop} \\
 \tok{case}        & Pattern matching               & \S\,\ref{sec:15-match} \\
@@ -142,16 +144,18 @@ used as user-defined identifiers.  The grammar production is
 \tok{extern}      & Foreign function declaration   & \S\,\ref{sec:17-interop} \\
 \tok{false}       & Boolean literal                & \S\,\ref{sec:lex.literals} \\
 \tok{for}         & Range-based iteration          & \S\,\ref{sec:09-statements} \\
-\tok{func}        & Pure function declaration      & \S\,\ref{sec:12-functions} \\
+\tok{func}        & Function declaration           & \S\,\ref{sec:12-functions} \\
 \tok{if}          & Conditional                    & \S\,\ref{sec:09-statements} \\
 \tok{import}      & Module import                  & \S\,\ref{sec:16-modules} \\
 \tok{in}          & Range iteration / bounds guard & \S\,\ref{sec:08-expressions} \\
 \tok{mov}         & Ownership transfer             & \S\,\ref{sec:11-ownership} \\
+\tok{nil}         & \emph{reserved}; removed: absence is the marker \lain{none} & --- \\
 \tok{or}          & Logical OR operator            & \S\,\ref{sec:08-expressions} \\
 \tok{proc}        & \emph{reserved}; removed, see \diagcode{E100} & \S\,\ref{sec:decl.proc} \\
 \tok{effects}     & Effect row                     & \S\,\ref{sec:fn.distinction} \\
 \tok{return}      & Return statement               & \S\,\ref{sec:09-statements} \\
 \tok{true}        & Boolean literal                & \S\,\ref{sec:lex.literals} \\
+\tok{try}         & Propagate a union's marker to the caller & \S\,\ref{sec:08-expressions} \\
 \tok{type}        & Type / struct / enum declaration & \S\,\ref{sec:10-declarations} \\
 \tok{unsafe}      & Unsafe block                   & \S\,\ref{sec:18-unsafe} \\
 \tok{use}         & Local-scope import / alias     & \S\,\ref{sec:16-modules} \\
@@ -243,8 +247,8 @@ value, which shall fit in \lain{i64}.
 
 \pnum
 The type of an integer literal is inferred from context (see
-\S\,\ref{sec:07-types}).  In the absence of type context, the default type
-is \lain{int}.
+\S\,\ref{sec:07-types}).  In the absence of type context, its type is \lain{i32} (whose alias
+is \lain{int}) when the value fits, and \lain{i64} otherwise.
 
 \begin{constraint}
   An integer literal whose value does not fit in the type determined by
@@ -254,12 +258,13 @@ is \lain{int}.
 
 \begin{example}
 \begin{laincode}
-var a = 255         // int, value 255
+var a = 255         // i32, value 255
 var b u8 = 255      // u8, value 255 -- OK
 var c u8 = 256      // [E086]: 256 does not fit in u8
-var d = 0xFF        // int, value 255
-var e = 0b1111_0000 // int, value 240
-var f = 1_000_000   // int, value 1000000
+var d = 0xFF        // i32, value 255
+var e = 0b1111_0000 // i32, value 240
+var f = 1_000_000   // i32, value 1000000
+var g = 5000000000  // i64: too large for an i32
 \end{laincode}
 \end{example}
 
@@ -428,14 +433,14 @@ Annex~A.
 \endhead
 \bottomrule
 \endlastfoot
-\tok{+}  & Addition; unary identity \\
+\tok{+}  & Addition (there is no unary \tok{+}) \\
 \tok{-}  & Subtraction; unary negation \\
 \tok{*}  & Multiplication \\
 \tok{/}  & Division \\
 \tok{\%} & Modulo (remainder) \\
 \tok{+?} \tok{-?} \tok{*?} & Checked add/sub/mul (\lain{panic} on overflow) \\
-\tok{+\%} \tok{-\%} \tok{*\%} & Wrapping add/sub/mul (modular) \\
-\tok{+|} \tok{-|} \tok{*|} & Saturating add/sub/mul (clamp) \\
+\tok{+\%} \tok{-\%} \tok{*\%} \tok{/\%} & Wrapping add/sub/mul/divide (modular) \\
+\tok{+|} \tok{-|} \tok{*|} \tok{/|} & Saturating add/sub/mul/divide (clamp) \\
 \end{longtable}
 
 \pnum
@@ -501,6 +506,8 @@ the operand type and select an explicit overflow policy
 \tok{\^{}} & Bitwise XOR \\
 \tok{<<}   & Left shift \\
 \tok{>>}   & Right shift \\
+\tok{<<\%}  & Left shift that discards the bits shifted out \\
+\tok{\textasciitilde} & Bitwise complement (prefix) \\
 \end{longtable}
 
 \subsection{Assignment operators}
@@ -544,7 +551,8 @@ the operand type and select an explicit overflow policy
 \endlastfoot
 \tok{.}    & Member access; module path separator \\
 \tok{..}   & Exclusive range (half-open interval) \\
-\tok{->}   & Function return type separator \\
+\tok{..=}  & Inclusive range \\
+\tok{...}  & Variadic parameters (\lain{extern} only) \\
 \tok{(}    & Open parenthesis \\
 \tok{)}    & Close parenthesis \\
 \tok{\{}   & Open brace \\
@@ -552,7 +560,10 @@ the operand type and select an explicit overflow policy
 \tok{[}    & Open bracket \\
 \tok{]}    & Close bracket \\
 \tok{,}    & List separator \\
-\tok{:}    & Type annotation; match arm separator \\
+\tok{:}    & Case-arm separator; the sentinel of a slice type (\lain{u8[:0]}) \\
+\tok{;}    & Statement separator, equivalent to a newline \\
+\tok{@}    & Prefix of a builtin (\lain{@sizeof}, \lain{@load}) \\
+\tok{?}    & After \lain{as}, a checked cast (\lain{as?}) \\
 \end{longtable}
 
 \pnum
@@ -571,7 +582,7 @@ Several token sequences have context-dependent meaning that is resolved by
 the parser, not the lexer.  The lexer produces the same token regardless of
 context:
 
-\begin{longtable}{@{}lll@{}}
+\begin{longtable}{@{}lp{4.6cm}p{7.6cm}@{}}
 \toprule
 \textbf{Symbol} & \textbf{Context 1} & \textbf{Context 2} \\
 \midrule
@@ -585,7 +596,9 @@ context:
 \tok{*} & Multiplication (binary)            & Pointer dereference (unary prefix, only in \tok{unsafe}) \\
 \tok{-} & Subtraction (binary)               & Negation (unary prefix) \\
 \tok{.} & Member access                      & Module path separator \\
-\tok{\&}& Borrowed match prefix              & Bitwise AND \\
+\tok{\&}& Bitwise AND (binary)               & Address-of (unary prefix); after \lain{case}, a borrowed match \\
+\tok{|} & Bitwise OR (binary)                & In a type, the union separator (\lain{T | none}); after \lain{as}, a saturating cast \\
+\tok{\%}& Remainder (binary)                 & After \lain{as}, a wrapping cast \\
 \end{longtable}
 
 \section{Integer arithmetic and overflow}
@@ -632,11 +645,14 @@ lexically inside it, including the narrowing.  Responsibility passes to the
 program.
 
 \pnum
-A conforming implementation that emits C99 shall compile the translation
-output with \texttt{-fwrapv} or equivalent.  This is a requirement on the
-\emph{translation output}, not a licence for the source language: it ensures
-that the wrapping operators have their defined meaning and that no operation
-the implementation has accepted becomes undefined behaviour downstream.
+A conforming implementation that emits C99 shall emit translation output in
+which no operation it has accepted is undefined behaviour.  This is a requirement on
+the \emph{translation output}, not a licence for the source language.  The reference
+implementation meets it without any compiler flag: a wrapping operation is computed in
+the unsigned type of its width and converted back,
+\texttt{(int32\_t)((uint32\_t)a + (uint32\_t)b)}.  The unsigned operation is defined by
+ISO~C; the conversion back is implementation-defined there, and modular on every C
+compiler the reference implementation targets.
 
 \begin{note}
   Unsigned arithmetic in ISO C is modular and signed overflow is undefined.

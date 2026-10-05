@@ -18,8 +18,8 @@ A declaration may be preceded by zero or more attributes.  An attribute
 has the form \tok{[name]} or \tok{[name(args)]}, where \textit{name} is
 a recognized attribute identifier from the closed set in
 Table~\ref{tab:attributes}, and \textit{args} (if present) is a
-comma-separated list of expressions.  Multiple attributes on a single
-declaration are written one per line.
+comma-separated list of expressions.  Several attributes on one declaration may share
+a line or take one each.
 
 \begin{laincode}
 [fast_math]
@@ -302,7 +302,7 @@ extern func strlen(s *u8) usize effects
 
 \begin{constraint}
   Variadic parameters (\lain{...}) shall only appear in \lain{extern}
-  declarations.  User-defined variadic functions are \illformed{}.
+  declarations.  A variadic function with a body is \illformed{}~(\diagcode{E100}).
 \end{constraint}
 
 \section{Module-scope constants}

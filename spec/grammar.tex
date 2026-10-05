@@ -8,6 +8,21 @@
 % Usage in chapter files:
 %   \gramref{expression}   → hyperlinked italic "expression"
 %   To typeset a rule inline, use the grammar environment from lain-spec.sty.
+%
+% ★ Every production here was checked against the parser (src/frontends/lain/parser/) with a
+% program for each form, 2026-10. The previous version had never been checked: it listed a
+% block statement, `if` and block EXPRESSIONS, an `S { a: 1 }` constructor, a `->` token,
+% `defer { }`, `proc`, `str`, and pointer types `*T[N]` and `*T[:S]`, none of which parse. It
+% had no union type, no function-pointer type, no `for`, `break`, `continue`, `assert` or `case`
+% statement, and no bitwise operators. Where the parser and the specification disagree, this
+% file states the specification's rule, and the disagreement is a compiler defect: the
+% precedence of `&` `^` `|` against the comparisons (chapter 8), a chained `as`, a `|` after a
+% cast, a negative pattern after the first arm of a `case` statement, a negative bound in an
+% alias refinement, and a leading zero in a decimal literal.
+%
+% ★ A listing does not wrap: keep every line inside a grammar environment within 88 columns,
+% or the PDF clips it at the margin. Non-ASCII characters (§, —) and backquotes do not belong
+% inside one either; a backquote prints as a curly quote.
 
 % =========================================================================
 % §5 — Lexical conventions
@@ -15,7 +30,7 @@
 
 \section*{§5 Lexical grammar}
 
-\subsection*{§5.5 Tokens}
+\subsection*{§5.3 Tokens}
 \label{gram:token}
 \begin{grammar}
 token ::=
@@ -23,35 +38,46 @@ token ::=
   | identifier
   | integer-literal
   | float-literal
-  | string-literal
   | char-literal
+  | string-literal
   | bool-literal
   | operator
   | punctuator
+
+end ::= newline | ";"           % ends a statement or a declaration (chapter 5)
+
+comment ::=
+    "//" { any character but a line feed }
+  | "/*" { any character | comment } "*/"           % block comments nest
 \end{grammar}
 
-\subsection*{§5.6 Keywords}
+\subsection*{§5.5 Keywords}
 \label{gram:keyword}
 \begin{grammar}
 keyword ::=
-    "func"   | "effects"| "var"    | "mov"    | "type"
-  | "return" | "if"     | "else"   | "while"
-  | "for"    | "in"     | "case"   | "import" | "use"
-  | "extern" | "c_include" | "unsafe" | "comptime" | "defer"
-  | "true"   | "false"  | "and"    | "or"     | "as"
-  | "decreasing" | "continue" | "break"
+    "and"       | "as"       | "assert"   | "assume"   | "break"
+  | "c_include" | "case"     | "comptime" | "continue" | "decreasing"
+  | "defer"     | "effects"  | "else"     | "extern"   | "false"
+  | "for"       | "func"     | "if"       | "import"   | "in"
+  | "mov"       | "nil"      | "or"       | "proc"     | "return"
+  | "true"      | "try"      | "type"     | "unsafe"   | "use"
+  | "var"       | "while"
+
+% nil and proc are reserved and appear in no production: they were removed, and stay
+% keywords so that using one is diagnosed with its replacement.
 \end{grammar}
 
-\subsection*{§5.7 Identifiers}
+\subsection*{§5.6 Identifiers}
 \label{gram:identifier}
 \begin{grammar}
-identifier       ::= identifier-start { identifier-continue }
-identifier-start ::= letter | "_"
-identifier-continue ::= letter | decimal-digit | "_"
-letter           ::= "A" .. "Z" | "a" .. "z"
+identifier           ::= identifier-start { identifier-continue }    % not a keyword
+identifier-start     ::= letter | "_"
+identifier-continue  ::= letter | decimal-digit | "_"
+letter               ::= "A" .. "Z" | "a" .. "z"
+qualified-identifier ::= identifier { "." identifier }
 \end{grammar}
 
-\subsection*{§5.8 Literals}
+\subsection*{§5.7 Literals}
 \label{gram:integer-literal}
 \begin{grammar}
 integer-literal  ::=
@@ -61,10 +87,10 @@ integer-literal  ::=
   | octal-literal
 
 decimal-literal  ::= nonzero-digit { decimal-digit | "_" }
-                   | "0"
-hex-literal      ::= "0x" hex-digit { hex-digit | "_" }
-binary-literal   ::= "0b" binary-digit { binary-digit | "_" }
-octal-literal    ::= "0o" octal-digit { octal-digit | "_" }
+                   | "0"                          % no leading zero: 010 is ill-formed
+hex-literal      ::= ( "0x" | "0X" ) hex-digit { hex-digit | "_" }
+binary-literal   ::= ( "0b" | "0B" ) binary-digit { binary-digit | "_" }
+octal-literal    ::= ( "0o" | "0O" ) octal-digit { octal-digit | "_" }
 
 decimal-digit    ::= "0" .. "9"
 nonzero-digit    ::= "1" .. "9"
@@ -75,63 +101,81 @@ octal-digit      ::= "0" .. "7"
 
 \label{gram:float-literal}
 \begin{grammar}
-float-literal    ::= decimal-literal "." decimal-digit { decimal-digit | "_" } [ float-exponent ]
-float-exponent   ::= ( "e" | "E" ) [ "+" | "-" ] decimal-digit { decimal-digit | "_" }
+float-literal    ::= digit-sequence "." digit-sequence [ float-exponent ]
+digit-sequence   ::= decimal-digit { decimal-digit | "_" }
+float-exponent   ::= ( "e" | "E" ) [ "+" | "-" ] digit-sequence
 \end{grammar}
 
 \label{gram:string-literal}
 \begin{grammar}
-string-literal   ::= '"' { string-char } '"'
-string-char      ::= any-source-char-except-'"'-or-'\' | escape-sequence
-char-literal     ::= "'" ( any-source-char-except-"'"-or-'\' | escape-sequence ) "'"
-escape-sequence  ::= '\' ( '"' | "'" | '\' | "n" | "t" | "r" | "0" | "x" hex-digit hex-digit )
+char-literal     ::= "'" ( char-element | escape-sequence ) "'"
+char-element     ::= any character but "'", "\" or a line feed
+string-literal   ::= '"' { string-element | escape-sequence } '"'
+string-element   ::= any character but '"' or "\"
+escape-sequence  ::= "\" ( "n" | "t" | "r" | "0" | "\" | "'" | '"' )
+                   | "\" "x" hex-digit hex-digit
 \end{grammar}
 
 \label{gram:bool-literal}
 \begin{grammar}
 bool-literal     ::= "true" | "false"
+
+literal          ::= integer-literal | float-literal | char-literal
+                   | string-literal | bool-literal
 \end{grammar}
 
-\subsection*{§5.9 Operators and punctuators}
+\subsection*{§5.8 Operators and punctuators}
 \label{gram:operator}\label{gram:punctuator}
 \begin{grammar}
 operator         ::=
-    "+"  | "-"  | "*"  | "/"  | "%"
-  | "==" | "!=" | "<"  | ">"  | "<=" | ">="
-  | "and"| "or" | "!" | "in"
-  | "&"  | "|"  | "^"  | "<<" | ">>"
-  | "="  | "+=" | "-=" | "*=" | "/=" | "%="
-  | "&=" | "|=" | "^=" | "<<="| ">>="
-  | "->" | "."  | ".."
+    "+"   | "-"   | "*"   | "/"   | "%"
+  | "+%"  | "-%"  | "*%"  | "/%"                   % wrapping
+  | "+|"  | "-|"  | "*|"  | "/|"                   % saturating
+  | "+?"  | "-?"  | "*?"                           % checked
+  | "<<"  | "<<%" | ">>"
+  | "&"   | "|"   | "^"   | "~"   | "!"
+  | "=="  | "!="  | "<"   | ">"   | "<="  | ">="
+  | "="   | "+="  | "-="  | "*="  | "/="  | "%="
+  | "&="  | "|="  | "^="  | "<<=" | ">>="
+  | "."   | ".."  | "..="
+  | "and" | "or"  | "in"  | "as"
 
 punctuator       ::=
-    "("  | ")"  | "{"  | "}"  | "["  | "]"
-  | ":"  | ","  | "@"
+    "("   | ")"   | "{"   | "}"   | "["   | "]"
+  | ","   | ":"   | ";"   | "@"   | "?"   | "..."
+
+% && and || are not operators; each is diagnosed with its spelling, and / or.
 \end{grammar}
 
 % =========================================================================
-% §6 — Basic concepts
+% §6 — Program structure and top-level declarations
 % =========================================================================
 
 \section*{§6 Program structure grammar}
 \label{gram:program}\label{gram:import-declaration}
 \begin{grammar}
-program              ::= { top-level-declaration }
+program               ::= { top-level-declaration | end }
+
 top-level-declaration ::=
     import-declaration
-  | type-declaration
-  | function-declaration
-  | procedure-declaration
-  | extern-declaration
   | c-include-declaration
+  | { attribute } type-declaration
+  | { attribute } function-declaration
+  | { attribute } extern-declaration
+  | { attribute } constant-declaration
+  | module-assertion
 
-import-declaration   ::= "import" qualified-identifier [ "." "{" identifier { "," identifier } "}" ] newline
-type-declaration     ::= "type" identifier [ "(" type-param-list ")" ]
-                         ( "=" type | struct-body | [ backing-width ] enum-body )
-backing-width        ::= "u8" | "u16" | "u32" | "u64"   % a plain enum only (chapter 7)
-type-param-list      ::= type-param { "," type-param }
-type-param           ::= identifier "type"
-qualified-identifier ::= identifier { "." identifier }
+import-declaration    ::= "import" qualified-identifier
+                          [ "." "{" identifier { "," identifier } "}" ]
+                          [ "as" identifier ]
+c-include-declaration ::= "c_include" string-literal
+constant-declaration  ::= identifier [ type ] "=" expression     % compile-time constant
+module-assertion      ::= "assert" expression             % checked at compile time
+
+attribute             ::= "[" attribute-name [ "(" [ argument-list ] ")" ] "]" { end }
+attribute-name        ::= "private" | "packed" | "ordered" | "fast_math"
+                        | "cold" | "hot" | "allocator" | "noreturn"
+                          % identifiers; any other name is E103
 \end{grammar}
 
 % =========================================================================
@@ -140,35 +184,57 @@ qualified-identifier ::= identifier { "." identifier }
 
 \section*{§7 Type grammar}
 \label{gram:type}
+\begin{grammar}
+type             ::= core-type { "|" marker }       % a union: T | none, T | A | B
+marker           ::= identifier
+                     [ "(" marker-field { ( "," | newline ) marker-field } ")" ]
+marker-field     ::= identifier type
+
+core-type        ::=
+    named-type { array-suffix }
+  | "Vec" "(" integer-literal "," core-type ")"     % a SIMD vector of N lanes
+  | "*" [ "var" ] core-type                         % raw pointer; *var T is writable
+  | "*" "func" "(" [ core-type { "," core-type } ] ")" [ core-type ]
+    [ effects-clause ]                              % function pointer
+  | "mov" core-type                                 % owned
+  | "var" core-type                                 % mutable borrow
+  | "type"                                          % the type of a type parameter
+
+% The pointee of * is not an array or slice type (E100): an array or a slice is
+% already passed by reference.
+
+named-type       ::= qualified-identifier
+                     [ "(" type-argument { "," type-argument } ")" ]
+type-argument    ::= core-type | integer-literal
+
+% The primitive types are identifiers (chapter 7): int, i1 to i64, u1 to u64, isize,
+% usize, float, f32, f64, bool, and void. A vector type may also be written as one
+% identifier, element and lane count joined by x: u8x16 is Vec(16, u8).
+\end{grammar}
+
 \label{gram:array-type}
 \begin{grammar}
-type             ::=
-    primitive-type
-  | array-type
-  | slice-type
-  | pointer-type
-  | qualified-type
-  | constrained-type
-  | user-defined-type
+array-suffix     ::=
+    "[" integer-literal "]"                         % fixed-length array
+  | "[" "]"                                         % slice
+  | "[" [ refinement-op ] expression "]"            % slice, its length constrained
+  | "[" ":" sentinel "]"                            % sentinel-terminated slice
+sentinel         ::= integer-literal | char-literal | string-literal
+\end{grammar}
 
-primitive-type   ::=
-    "int"   | "u8"    | "u16"   | "u32"   | "u64"   | "usize"
-  | "i8"    | "i16"   | "i32"   | "i64"   | "isize"
-  | "f32"   | "f64"
-  | "bool"  | "str"   | "void"
+\begin{grammar}
+refinement       ::= range-refinement [ "and" comparison-list ]
+                   | comparison-list
+range-refinement ::= "in" bound-term ( ".." | "..=" ) bound-term
+comparison-list  ::= refinement-op bound { "and" refinement-op bound }
+refinement-op    ::= "<" | "<=" | ">" | ">=" | "==" | "!="
+bound            ::= bound-term { ( "+" | "-" ) bound-term }
+bound-term       ::= [ "-" ] integer-literal | identifier [ "." identifier ]
 
-array-type       ::= type "[" integer-literal "]"
-slice-type       ::= [ "*" ] type "[]"                    % fat slice; "*" optional
-                   | [ "*" ] type "[" size-constraint "]" % sized fat slice
-pointer-type     ::= "*" type                             % raw pointer
-                   | "*" type "[" integer-literal "]"     % thin ptr + static length
-                   | "*" type "[" ":" sentinel-literal "]" % sentinel-terminated
-qualified-type   ::= ownership-qualifier type
-ownership-qualifier ::= "var" | "mov"
-user-defined-type ::= qualified-identifier
-constrained-type ::= type relational-op integer-literal
-                   { ( "and" | "or" ) type relational-op integer-literal }
-relational-op    ::= ">=" | "<=" | ">" | "<" | "=="
+% Where each form is allowed (chapters 7, 10 and 12): a parameter takes all of them.
+% A struct field's bound is one bound-term; a variant field's bound is a number. A
+% return type's comparison-list has no negative number and no range. An alias's bound
+% is a number or a name.
 \end{grammar}
 
 % =========================================================================
@@ -176,114 +242,93 @@ relational-op    ::= ">=" | "<=" | ">" | "<" | "=="
 % =========================================================================
 
 \section*{§8 Expression grammar}
-\label{gram:expression}\label{gram:match-expression}
+\label{gram:expression}
 \begin{grammar}
-expression           ::= assignment-expression
+expression            ::= or-expression { "else" [ "return" ] or-expression }
+                          % the error handler; it binds most loosely of all
 
-assignment-expression ::=
-    logical-or-expression
-  | lvalue-expression assignment-operator assignment-expression
-
-assignment-operator  ::=
-    "="  | "+=" | "-=" | "*=" | "/=" | "%="
-  | "&=" | "|=" | "^=" | "<<="| ">>="
-
-logical-or-expression ::= logical-and-expression { "or" logical-and-expression }
-
-logical-and-expression ::= in-expression { "and" in-expression }
-
-in-expression        ::= equality-expression { "in" equality-expression }
-
-equality-expression  ::= relational-expression
-                        { ( "==" | "!=" ) relational-expression }
-
-relational-expression ::= shift-expression
-                         { ( "<" | ">" | "<=" | ">=" ) shift-expression }
-
-shift-expression     ::= additive-expression
-                        { ( "<<" | ">>" ) additive-expression }
-
-additive-expression  ::= multiplicative-expression
-                        { ( "+" | "-" ) multiplicative-expression }
-
+or-expression         ::= and-expression { "or" and-expression }
+and-expression        ::= equality-expression { "and" equality-expression }
+equality-expression   ::= relational-expression
+                          { ( "==" | "!=" ) relational-expression }
+relational-expression ::= bitor-expression
+                          { ( "<" | ">" | "<=" | ">=" ) bitor-expression
+                          | "in" membership-set }
+membership-set        ::= shift-expression ( ".." | "..=" ) shift-expression
+                        | "[" expression { "," expression } "]"
+bitor-expression      ::= bitxor-expression { "|" bitxor-expression }
+bitxor-expression     ::= bitand-expression { "^" bitand-expression }
+bitand-expression     ::= shift-expression { "&" shift-expression }
+shift-expression      ::= additive-expression
+                          { ( "<<" | "<<%" | ">>" ) additive-expression }
+additive-expression   ::= multiplicative-expression
+                          { additive-operator multiplicative-expression }
+additive-operator     ::= "+" | "-" | "+%" | "-%" | "+|" | "-|" | "+?" | "-?"
 multiplicative-expression ::= cast-expression
-                             { ( "*" | "/" | "%" ) cast-expression }
+                          { multiplicative-operator cast-expression }
+multiplicative-operator   ::= "*" | "/" | "%" | "*%" | "/%" | "*|" | "/|" | "*?"
+cast-expression       ::= unary-expression { "as" [ "?" | "%" | "|" ] core-type }
+unary-expression      ::= unary-operator unary-expression
+                        | postfix-expression
+unary-operator        ::= "-" | "!" | "~" | "&" | "*" | "mov" | "var" | "try"
 
-cast-expression      ::= unary-expression { "as" type }
+postfix-expression    ::= ( identifier | "(" expression ")" ) { selector }
+                        | primary-expression
+selector              ::= "." identifier
+                        | "(" [ argument-list ] ")"
+                        | "[" index "]"
+index                 ::= expression
+                        | expression ".." [ expression ]
+                        | ".." expression
+argument-list         ::= expression { "," expression }
 
-unary-expression     ::=
-    postfix-expression
-  | unary-operator unary-expression
+% A call, the construction of a struct (Point(1, 2)), of a variant (Shape.Circle(3))
+% or of a marker with fields (Bad(3)), and an explicit generic argument
+% (max(i32, a, b)) are one form: a name followed by "(" argument-list ")".
 
-unary-operator       ::= "-" | "!" | "mov" | "var"
-
-postfix-expression   ::=
-    primary-expression
-  | postfix-expression "." identifier
-  | postfix-expression "[" expression "]"
-  | postfix-expression "(" [ argument-list ] ")"
-
-argument-list        ::= expression { "," expression }
-
-primary-expression   ::=
-    identifier
-  | literal
-  | "(" expression ")"
-  | block-expression
-  | if-expression
-  | match-expression
-  | constructor-expression
-  | comptime-expression
+primary-expression    ::=
+    literal
   | array-literal
   | array-comprehension
+  | match-expression
+  | builtin-expression
 
-array-literal        ::= "[" [ expression { "," expression } ] "]"
-array-comprehension  ::= "[" expression "for" identifier "in" expression ( ".." | "..=" ) expression "]"
+array-literal         ::= "[" [ expression { "," expression } [ "," ] ] "]"
+array-comprehension   ::= "[" expression "for" identifier "in"
+                          expression ( ".." | "..=" ) expression "]"
 
-literal              ::=
-    integer-literal
-  | float-literal
-  | string-literal
-  | bool-literal
+builtin-expression    ::=
+    "@" ( "os" | "arch" )
+  | "@" ( "likely" | "unlikely" ) "(" expression ")"
+  | "@" ( "ctz" | "clz" | "popcount" | "movemask" ) "(" expression ")"
+  | "@" ( "sizeof" | "alignof" ) "(" type ")"
+  | "@" "splat" "(" type "," expression ")"
+  | "@" "load" "(" type "," expression "," expression ")"
+  | "@" "store" "(" expression "," expression "," expression ")"
+  | "@" "shuffle" "(" expression "," expression ")"
+  | "@" "assume_aligned" "(" expression "," integer-literal ")"
+\end{grammar}
 
-block-expression     ::= "{" { statement } expression "}"
+\label{gram:match-expression}
+\begin{grammar}
+match-expression      ::= "case" [ "&" ] expression "{" { expression-arm } "}"
+expression-arm        ::= arm-head expression [ "," ]
+arm-head              ::= ( pattern-list | "else" ) ":"
+pattern-list          ::= pattern { "," pattern }
+pattern               ::=
+    pattern-value [ ( ".." | "..=" ) pattern-value ]   % a value, or a range of them
+  | variant-name "(" [ identifier { "," identifier } ] ")"
+                                                       % a variant, binding its fields
+pattern-value         ::= [ "-" ] integer-literal | char-literal
+                        | string-literal | bool-literal
+                        | variant-name                 % a unit variant, or a constant
+variant-name          ::= qualified-identifier
+                        | identifier "(" type-argument { "," type-argument } ")"
+                          "." identifier
 
-if-expression        ::=
-    "if" expression block-expression
-  [ "else" ( if-expression | block-expression ) ]
-
-match-expression     ::=
-    "case" [ "&" ] expression "{"
-    { match-arm }
-    "}"
-
-match-arm            ::= ( pattern-list | "else" ) ":" arm-body
-
-arm-body             ::= expression newline | block-expression
-
-pattern-list         ::= pattern { "," pattern }
-
-pattern              ::=
-    literal
-  | literal ".." literal                        % inclusive range pattern
-  | string-literal
-  | qualified-identifier                         % unit variant
-  | qualified-identifier "(" [ binding-list ] ")" % variant with bound fields
-
-binding-list         ::= identifier { "," identifier }
-
-constructor-expression ::=
-    qualified-identifier "{" [ field-init-list ] "}"
-  | qualified-identifier "(" [ argument-list ] ")"
-
-field-init-list      ::= identifier ":" expression { "," identifier ":" expression }
-
-comptime-expression  ::= "comptime" block-expression
-
-lvalue-expression    ::=
-    identifier
-  | postfix-expression "." identifier
-  | postfix-expression "[" expression "]"
+% Arms are separated by newlines, or by ",". The body of an expression-arm is ONE
+% expression; a "{" after the ":" is not a block. The statement form, whose arms hold
+% statements, is match-statement (chapter 9).
 \end{grammar}
 
 % =========================================================================
@@ -294,48 +339,60 @@ lvalue-expression    ::=
 \label{gram:statement}
 \begin{grammar}
 statement            ::=
-    block-statement
-  | immutable-declaration
-  | var-declaration
+    binding-declaration
+  | variable-declaration
   | assignment-statement
   | expression-statement
   | if-statement
+  | for-statement
   | while-statement
-  | bounded-while-statement
+  | match-statement
+  | "break"
+  | "continue"
   | return-statement
   | defer-statement
-  | unsafe-block
-  | comptime-if-statement
+  | unsafe-statement
+  | assertion-statement
+  | comptime-statement
+  | use-statement
 
-block-statement      ::= "{" { statement } "}"
+block                ::= "{" { end } [ statement { end { end } statement } ] { end } "}"
 
-immutable-declaration ::= identifier [ type ] "=" expression newline
+% There is no block STATEMENT: "{" never begins a statement. A block is the body of
+% a function, an if or else, a loop, unsafe, or comptime if.
 
-var-declaration      ::= "var" identifier [ type ] "=" expression newline
+binding-declaration  ::= identifier [ type ] "=" expression             % immutable
+variable-declaration ::= ( "var" | "mov" ) identifier [ type ]
+                         [ "in" expression ] [ "=" expression ]
+                         % var: mutable; mov: owned. Without "=", the type is required.
 
-assignment-statement ::= lvalue-expression assignment-operator expression newline
+assignment-statement ::= assignable assignment-operator expression
+assignable           ::= postfix-expression | "*" unary-expression
+assignment-operator  ::= "=" | "+=" | "-=" | "*=" | "/=" | "%="
+                       | "&=" | "|=" | "^=" | "<<=" | ">>="
 
-expression-statement ::= expression newline
+expression-statement ::= expression
 
-if-statement         ::=
-    "if" expression block-statement
-  { "else" "if" expression block-statement }
-  [ "else" block-statement ]
+if-statement         ::= "if" expression block [ "else" ( if-statement | block ) ]
+                         % else may begin the line after the "}"
+for-statement        ::= "for" identifier [ "," identifier ] "in"
+                         expression [ ( ".." | "..=" ) expression ] block
+                         % for x in a, for i, x in a (index first), for i in lo..hi
+while-statement      ::= "while" expression [ "decreasing" expression ] block
 
-while-statement      ::= "while" expression block-statement
+match-statement      ::= "case" [ "&" ] expression "{" { arm-head arm-body } "}"
+arm-body             ::= { end } statement end { { end } statement end }
+                         % statements, each ending at a newline, up to the next
+                         % arm-head or the "}"
 
-bounded-while-statement ::=
-    "while" expression "decreasing" expression block-statement
-
-return-statement     ::= "return" [ expression ] newline
-
-defer-statement      ::= "defer" block-statement
-
-unsafe-block         ::= "unsafe" block-statement
-
-comptime-if-statement ::=
-    "comptime" "if" expression block-statement
-  [ "else" block-statement ]
+return-statement     ::= "return" [ expression ]
+defer-statement      ::= "defer" statement               % one statement, not a block
+unsafe-statement     ::= "unsafe" block
+assertion-statement  ::= ( "assert" | "assume" ) expression
+comptime-statement   ::= "comptime" "if" expression block [ "else" block ]
+                       | "comptime" identifier [ type ] "=" expression
+use-statement        ::= "use" qualified-identifier "as" identifier
+                         % semantics implementation-defined (chapter 16); refused, E100
 \end{grammar}
 
 % =========================================================================
@@ -344,44 +401,53 @@ comptime-if-statement ::=
 
 \section*{§10 Declaration grammar}
 \label{gram:function-declaration}
-\label{gram:struct-declaration}
-\label{gram:enum-declaration}
 \begin{grammar}
-function-declaration  ::=
-    { attribute } "func" identifier
-    "(" [ param-list ] ")" return-annotation
-    [ effects-clause ] [ "decreasing" expression ]
-    block-statement
+function-declaration ::= "func" identifier "(" [ parameter { "," parameter } ] ")"
+                         [ return-type ] [ effects-clause ]
+                         [ "decreasing" expression ] block
 
-effects-clause        ::= "effects" [ effect-name { "," effect-name } ]
+parameter            ::= [ "var" | "mov" ] identifier type [ refinement ]
+                       | [ "var" | "mov" ] "{" identifier { "," identifier } "}" type
+                         % the second form destructures the argument into its fields
 
-effect-name           ::= "io" | "diverge" | "raises" | "alloc"
+return-type          ::= type [ "in" identifier ] [ comparison-list ]
+                         % in p: the returned reference borrows parameter p
 
-(* REMOVED: `proc` granted the effects that the row now states. The keyword remains
-   reserved and diagnoses the replacement. *)
+effects-clause       ::= "effects" [ effect-name { "," effect-name } ]
+effect-name          ::= "io" | "diverge" | "raises" | "alloc"           % identifiers
 
-attribute            ::= "[" identifier [ "(" argument-list ")" ] "]" newline
+extern-declaration   ::= "extern" "func" identifier "(" [ extern-parameters ] ")"
+                         [ type [ "in" identifier ] ] [ effects-clause ]
+                       | "extern" "type" identifier               % an opaque C type
+extern-parameters    ::= identifier type { "," identifier type } [ "," "..." ]
+                       | "..."
+\end{grammar}
 
-return-annotation    ::= type [ return-constraint { "and" return-constraint } ]
-                       | ( empty )
-return-constraint    ::= relational-op constraint-term { ( "+" | "-" ) constraint-term }
-constraint-term      ::= integer-literal | identifier | identifier "." "len"
-                                                         % identifier: a parameter
+\label{gram:struct-declaration}\label{gram:enum-declaration}
+\begin{grammar}
+type-declaration     ::= alias-declaration | struct-declaration | enum-declaration
 
-param-list           ::= param { "," param }
-param                ::=
-    [ ownership-qualifier ] identifier type              % value parameter
-  | identifier "type"                                    % type parameter (generics)
-  | [ ownership-qualifier ] "{" identifier { "," identifier } "}" type
-                                                         % field-destructuring parameter
+alias-declaration    ::= "type" identifier "=" alias-target
+alias-target         ::=
+    identifier comparison-list           % a refined alias: type Small = u8 < 200
+  | named-type { "[" expression "]" }    % a constant length: type Grid = u8[3][3]
+  | "type" "{" ( field-list | variant-list ) "}"   % an anonymous struct or enum
 
-struct-body          ::= "{" { field-declaration } "}"
-field-declaration    ::= [ "mov" ] identifier type newline
+struct-declaration   ::= "type" identifier [ type-parameters ] "{" [ field-list ] "}"
+field-list           ::= { end } field { ( "," | end ) { end } field }
+                         [ "," ] { end }
+field                ::= [ "mov" ] identifier type [ refinement ]
 
-enum-body            ::= "{" { variant-declaration } "}"
-variant-declaration  ::=
-    identifier newline
-  | identifier "{" field-declaration-list "}" newline
+enum-declaration     ::= "type" identifier [ type-parameters ] [ backing-width ]
+                         "{" [ variant-list ] "}"
+variant-list         ::= { end } variant { ( "," | end ) { end } variant }
+                         [ "," ] { end }
+variant              ::= identifier
+                         [ "{" variant-field { ( "," | end ) variant-field } "}" ]
+variant-field        ::= identifier type [ comparison-list ]
+                         % a linear field is h mov H: here mov belongs to the type
+backing-width        ::= "u8" | "u16" | "u32" | "u64"          % a plain enum only
 
-field-declaration-list ::= field-declaration { field-declaration }
+type-parameters      ::= "(" identifier type { "," identifier type } ")"
+                         % T type is a type parameter; N usize a compile-time value
 \end{grammar}

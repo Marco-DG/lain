@@ -111,8 +111,8 @@ without diagnostic.
 
 \subsection*{algebraic data type (ADT)}
 \index{algebraic data type}
-A composite type that is either a product type (\textit{struct}) or a sum
-type (\textit{enum}).
+A sum type in which at least one variant carries fields (see
+\S\,\ref{sec:types.adt}); a sum whose variants carry none is an enumeration.
 
 \subsection*{constrained type}
 \index{constrained type}
@@ -134,26 +134,25 @@ higher rank, permitted in arithmetic and assignment contexts
 
 \subsection*{linear type}
 \index{linear type}
-A type whose values must be used exactly once.  Struct types and resource
-types are linear.  Primitive types (\lain{int}, \lain{bool}, etc.) are
-unrestricted (see \S\,\ref{sec:11-ownership}).
+A type whose values must be consumed exactly once: a struct with a \lain{mov} field, or
+one that holds a value of a linear type.  Every other type, the primitive types included,
+is unrestricted (see \S\,\ref{sec:11-ownership}).
 
 \subsection*{nominal type}
 A type identified by its declared name rather than its structure.
 
 \subsection*{ownership mode}
 \index{ownership mode}
-An annotation on a variable or parameter that specifies the kind of
-access the holder has: \lain{shared} (read-only), \lain{var}
-(read-write), or owned (no annotation on a linear type, transferred with
-\lain{mov}) (see \S\,\ref{sec:11-ownership}).
+The kind of access a parameter or binding has: shared (the default, read-only),
+\lain{var} (read-write), or owned (\lain{mov}: the holder shall consume it)
+(see \S\,\ref{sec:11-ownership}).
 
 \subsection*{primitive type}
 \index{primitive type}
-One of the built-in types: \lain{int}, \lain{u8}, \lain{u16}, \lain{u32},
-\lain{u64}, \lain{usize}, \lain{i8}, \lain{i16}, \lain{i32}, \lain{i64},
-\lain{isize}, \lain{f32}, \lain{f64}, \lain{bool}.  Primitive types are
-unrestricted (non-linear).
+One of the built-in types: the integers \lain{u}$N$ and \lain{i}$N$ for $N$ from 1 to 64,
+\lain{usize}, \lain{isize} and \lain{int} (an alias of \lain{i32}); \lain{f32}, \lain{f64} and
+\lain{float} (an alias of \lain{f32}); and \lain{bool}.  Primitive types are unrestricted
+(non-linear).
 
 \subsection*{structural type equivalence}
 Two types are structurally equivalent if they have the same structure.
@@ -242,9 +241,10 @@ is promoted to ACTIVE after the call expression is complete
 
 \subsection*{decreasing measure}
 \index{decreasing measure}
-An expression in a \lain{while decreasing} statement that the implementation
-shall verify is non-negative when the loop condition holds and strictly
-decreases on every iteration (see \S\,\ref{sec:09-statements}).
+An expression that the implementation shall verify is non-negative and strictly
+decreases on every iteration of a loop, or at every recursive call.  It is written with
+\lain{decreasing}, or inferred (see \S\,\ref{sec:stmt.while.infer} and
+\S\,\ref{sec:fn.termination}).
 
 \subsection*{\texttt{func}}
 \index{func}
@@ -272,8 +272,8 @@ replacement (see \S\,\ref{sec:decl.proc}).
 
 \subsection*{termination}
 \index{termination}
-The property that a function always reaches a \lain{return} statement in
-a finite number of steps.  All \lain{func}s shall be verified to terminate
+The property that a function always returns, in a finite number of steps.  Every
+function whose effect row does not name \lain{diverge} shall be verified to terminate
 by the implementation (see \S\,\ref{sec:12-functions}).
 
 % -------------------------------------------------------------------------
@@ -283,15 +283,15 @@ by the implementation (see \S\,\ref{sec:12-functions}).
 
 \subsection*{bounds check}
 \index{bounds check}
-A runtime test that verifies an array index is within the valid range
-\texttt{[0, N-1]}.  A conforming implementation shall eliminate bounds
-checks when VRA can statically prove the index is in range.
+The obligation that an index lies within \texttt{[0, N-1]}.  Lain discharges it at
+compile time and emits no run-time test: an index the analysis cannot prove in range is
+\illformed{}~(\diagcode{E085}), except inside \lain{unsafe}, which waives it.
 
 \subsection*{comptime}
 \index{comptime}
-Compile-time evaluation.  A \lain{comptime} expression or function is
-evaluated by the compiler at compile time rather than at runtime
-(see \S\,\ref{sec:14-generics}).
+Compile-time evaluation.  The value of a module-scope constant is computed by the
+compiler (\S\,\ref{sec:decl.module-const}), and \lain{comptime if} selects code at compile
+time; a \lain{comptime \{ ... \}} expression is planned (see \S\,\ref{sec:14-generics}).
 
 \subsection*{exhaustiveness}
 \index{exhaustiveness}

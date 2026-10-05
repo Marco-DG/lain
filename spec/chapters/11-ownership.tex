@@ -133,9 +133,11 @@ Uninit      & read or \lain{mov}            & \illformed{} \\
 \end{constraint}
 
 \begin{constraint}
-  Moving a value that is currently borrowed (\lain{var} or shared), or
-  moving a struct after some of its fields have already been consumed,
-  is \illformed{}~(\diagcode{E008}).
+  Moving a value that is currently borrowed (\lain{var} or shared) is \illformed{}: when the
+  borrow and the move are arguments of one call, \lain{f(p, mov p)}, the diagnostic is
+  \diagcode{E008}; when a borrow held by a binding is still in use, it is \diagcode{E004}.
+  Moving a struct after one of its fields has been moved is moving that field twice
+  (\diagcode{E002}).
 \end{constraint}
 
 \begin{constraint}
@@ -276,16 +278,21 @@ function owns is refused while the place may still hold a resource [E021].
 
 \begin{example}
 \begin{laincode}
-var p = P(1, 2)
-var x = var p.x
-var y = var p.y          // OK: p.x and p.y are disjoint
-x = 7
-y = 8
-var t = p.x              // OK: x and y are dead here (NLL)
+type P { x i32, y i32 }
 
-var q = var p
-p.y = 5                  // error [E004]: q is used below
-q.x = 3
+func main() i32 {
+    var p = P(1, 2)
+    var x = var p.x
+    var y = var p.y          // OK: p.x and p.y are disjoint
+    x = 7
+    y = 8
+    var t = p.x              // OK: x and y are dead here (NLL)
+
+    var q = var p
+    p.y = 5                  // error [E004]: q is used below
+    q.x = 3
+    return 0
+}
 \end{laincode}
 \end{example}
 

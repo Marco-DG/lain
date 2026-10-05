@@ -32,13 +32,14 @@ A conforming implementation may:
   \item accept programs through implementation-defined extensions, provided
         those extensions are documented and do not alter the semantics of
         any conforming program;
-  \item omit runtime bounds checks when value range analysis
-        (\S\,\ref{sec:13-vra}) proves the access is within bounds.
+  \item emit no run-time check for an obligation it has discharged at compile time
+        (\S\,\ref{sec:13-vra}); the reference implementation emits none.
 \end{enumerate}
 
 \begin{note}
   The reference implementation of Lain (\textit{lain} compiler, version
-  corresponding to this specification) is a conforming implementation.
+  corresponding to this specification) is intended to be a conforming implementation.  Where it
+  is known not to conform, the clause concerned says so in a note.
   Where this specification marks a behavior as implementation-defined, the
   reference implementation's documented behavior takes precedence for
   programs compiled by that implementation.

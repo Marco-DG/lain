@@ -98,9 +98,10 @@ uses top-level \lain{import} rather than \lain{use}.
 \pnum
 \textbf{Path resolution}: a module path is converted to a file system path
 by replacing dots with directory separators and appending \texttt{.ln}.
-The search is relative to the compiler's working directory.
 \idbehav{The exact search algorithm, including support for search paths,
-is implementation-defined}.
+is implementation-defined}: the reference implementation searches from the working
+directory when the source file is named by a relative path, and from the source file's
+own directory when it is named by an absolute one.
 
 \begin{longtable}{@{}ll@{}}
 \toprule
@@ -178,10 +179,9 @@ func internal_helper() int { return 0 }   // only foo.bar may reference this
 \end{constraint}
 
 \begin{note}
-  Compilation under the reference implementation translates each
-  \tok{[private]} declaration to a C declaration with internal linkage
-  (\texttt{static} storage class), and each public declaration to one
-  with external linkage.
+  The reference implementation emits a whole program as one C translation unit, so
+  \tok{[private]} has no C counterpart: the compiler enforces it~(\diagcode{E084}), and
+  private and public declarations alike are emitted with external linkage.
 \end{note}
 
 \section{Standard library module paths}

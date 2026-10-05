@@ -112,7 +112,9 @@ func main() i32 {
 A type declared with type parameters is a type constructor: \lain{Option(int)} names the
 instance for \lain{int}, which is generated once (monomorphized) and may be used in type
 annotations and variable declarations. A variant of an instance is constructed as
-\lain{Option(int).Some(42)} where the declaration states the instance.
+\lain{Option(int).Some(42)} where the declaration states the instance.  A generic struct
+takes its type argument first, as a value parameter does: \lain{Box(i32, 7)} for
+\lain{type Box(T type) \{ v T \}}, or \lain{Box(x)}, which infers \lain{T} from the field.
 
 \begin{laincode}
 type Option(T type) {

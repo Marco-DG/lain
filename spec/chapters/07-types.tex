@@ -458,9 +458,11 @@ ergonomic only and does not extend to other contexts.
 
 \begin{example}
 \begin{laincode}
-var n int = read_count()
-if n { ... }        // OK: integer in condition, non-zero is true
-var b bool = n      // [E012]: not a value conversion; write n != 0
+func f(n i32) i32 {
+    if n { return 1 }       // OK: integer in condition, non-zero is true
+    var b bool = n          // ERROR [E012]: not a value conversion; write n != 0
+    return 0
+}
 \end{laincode}
 \end{example}
 
@@ -1112,13 +1114,151 @@ variants with fields, or \lain{TypeName.VariantName} for unit variants.
 ADT values are destructured via \lain{case} pattern matching
 (\S\,\ref{sec:15-match}).
 
+\section{Union types}
+\label{sec:types.union}
+\index{union type}\index{marker}\index{none@\lain{none}}
+
+\pnum
+A \emph{union type} \lain{T | M1 | ... | Mn} holds either a value of its \emph{value type}
+\lain{T} or one of its \emph{markers} \lain{M1} to \lain{Mn} (grammar: \gramref{type}).  It is
+the one construct for a value that may be absent and for an operation that may fail:
+\lain{*u8 | none} is a pointer or nothing, and \lain{*u8 | NotFound | Denied} is a pointer or
+one of two errors.  A marker is a name, and naming it in a union type declares it; it needs no
+other declaration.  The marker \lain{none} is the conventional name for absence, and is otherwise
+an ordinary marker.
+
+\pnum
+A marker may carry fields: \lain{i32 | ParseErr(line i32)} declares a marker \lain{ParseErr}
+that carries an \lain{i32}.  It is written \lain{ParseErr(42)}, and a \lain{case} pattern
+\lain{ParseErr(line)} binds its fields (\S\,\ref{sec:15-match}).
+
+\pnum
+A value of the value type converts implicitly to the union, wherever a value of the union is
+expected: returned from a function whose return type is the union, assigned to a variable of
+the union type, or passed to a parameter of it.  A marker is written by its name, with its
+fields' values if it carries any.
+
+\begin{constraint}
+  A marker written where a union is expected shall be one of that union's markers;
+  any other is \illformed{}~(\diagcode{E012}).
+\end{constraint}
+
+\begin{laincode}
+// VERIFY: exit 0
+func find(p *u8, ok bool) *u8 | NotFound {
+    if ok { return p }            // a value converts
+    return NotFound               // a marker
+}
+
+func main() i32 {
+    var r *u8 | NotFound = find("x", false)
+    var got = 9
+    case r {
+        NotFound: got = 0
+        else: got = 1
+    }
+    if got != 0 { return 1 }
+    return 0
+}
+\end{laincode}
+
+\pnum
+\textbf{Representation.}  A union whose markers carry no fields costs nothing: it occupies
+exactly the storage of its value type, and each marker is stored as a bit pattern that no value
+of that type can have.  The sources of such patterns are the ones a sum type uses
+(\S\,\ref{sec:types.adt}): the zero page of a pointer, the values a refinement excludes, the
+byte patterns of a \lain{bool} other than 0 and 1, and the values above the last variant of a
+plain enum that declares its width.  The full rules are in \S\,\ref{sec:mem.adt-layout}.
+
+\begin{constraint}
+  A union whose markers carry no fields, and whose value type has fewer spare bit patterns than
+  the union has markers, is \illformed{}~(\diagcode{E064}).  A full-range integer has none:
+  \lain{i32 | none} is \illformed{}, and a refined alias makes room.
+\end{constraint}
+
+\begin{laincode}
+// VERIFY: exit 0
+type Small = u8 < 200
+
+func main() i32 {
+    if @sizeof(Small | NotFound | Denied) != 1 { return 1 }   // markers in values >= 200
+    return 0
+}
+\end{laincode}
+
+\pnum
+A union with a marker that carries fields cannot always be stored in its value type alone; it
+is then a tagged union, a tag beside the value or the marker's fields, and the compiler emits
+\diagcode{W120} with the reason, as for any sum given a tag (\S\,\ref{sec:types.adt}).
+
+\pnum
+\textbf{Testing a union.}  A union value is not a value of its value type: it may hold a marker.
+A use of it as the value type, which reads it as a value, is permitted only where a test has
+excluded every marker.  Two tests do so:
+\begin{itemize}
+  \item \lain{if u} in condition position is \lain{true} exactly when \lain{u} holds a value.
+        Inside its true branch, \lain{u} has the value type.
+  \item A \lain{case} on \lain{u} (\S\,\ref{sec:15-match}) has an arm for each marker, whose
+        pattern is the marker's name (with a binding for each of its fields), and an
+        \lain{else:} arm, which matches the value.  Inside the \lain{else:} arm, \lain{u} has
+        the value type.
+\end{itemize}
+The operators of \S\,\ref{sec:expr.handle} (\lain{else} and \lain{try}) are the third way to
+reach the value: each says what happens on a marker, and yields the value.
+
+\begin{constraint}
+  A union value used as its value type where no test has excluded every marker is
+  \illformed{}~(\diagcode{E063}).
+\end{constraint}
+
+\begin{laincode}
+func first(x *u8 | none) *u8 {
+    return x                      // ERROR [E063]: x may be none
+}
+
+func present(x *u8 | none, d *u8) *u8 {
+    if x { return x }             // OK: here x holds a value
+    return d
+}
+\end{laincode}
+
+\begin{constraint}
+  The value of a union is matched only by \lain{else:}.  A \lain{case} on a union without an
+  \lain{else:} arm is non-exhaustive, and \illformed{}~(\diagcode{E014}).
+\end{constraint}
+
+\begin{laincode}
+// VERIFY: exit 0
+func parse(x i32, bad bool) i32 | ParseErr(line i32) {
+    if bad { return ParseErr(42) }
+    return x
+}
+
+func main() i32 {
+    var r i32 | ParseErr(line i32) = parse(7, true)
+    case r {
+        ParseErr(line):
+            if line != 42 { return 1 }
+            return 0
+        else: return 2
+    }
+}
+\end{laincode}
+
+\begin{note}
+  \textbf{What this implementation does.}  A local of a union type shall be declared with its
+  type written out, as in the examples above: \lain{var r = find("x", false)} is refused with
+  \diagcode{E012}.
+\end{note}
+
 \section{Pointer types}
 \label{sec:types.pointer}
 \index{pointer type}
 
 \pnum
-A pointer type \lain{*T} or \lain{const *T} is a raw memory address.
-Pointer operations require an \lain{unsafe} block (\S\,\ref{sec:18-unsafe}).
+A pointer type \lain{*T} is a raw memory address the program may read through, and
+\lain{*var T} one it may also write through.  Reading or writing through a pointer requires an
+\lain{unsafe} block (\S\,\ref{sec:18-unsafe}); making one does not.
 
 \pnum
 The ownership modes for pointer types are:
@@ -1134,8 +1274,8 @@ The ownership modes for pointer types are:
 \endhead
 \bottomrule
 \endlastfoot
-\lain{*T}     & shared (read-only) & \texttt{const T*}  & no \\
-\lain{var *T} & mutable            & \texttt{T*}        & no \\
+\lain{*T}     & read-only: a write through it is \diagcode{E009} & \texttt{T*} & no \\
+\lain{*var T} & writable           & \texttt{T*}        & no \\
 \lain{mov *T} & owned              & \texttt{T*}        & yes \\
 \end{longtable}
 

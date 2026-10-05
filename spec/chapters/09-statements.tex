@@ -9,14 +9,33 @@ or a semicolon (\S\,\ref{sec:lex.whitespace}); the semicolon is used to place
 several statements on one line.  The grammar production for
 \gramref{statement} is in Annex~A.
 
-\section{Block statement}
+\section{Blocks}
 \label{sec:stmt.block}
-\index{block statement}
+\index{block}
 
 \pnum
-A block statement \lain{\{ stmts... \}} creates a new scope
-(\S\,\ref{sec:basics.scopes}) and executes each contained statement in
-order.  Names declared inside a block are not accessible outside it.
+A block \lain{\{ stmts... \}} is the body of a function, of an \lain{if} or \lain{else},
+of a loop, of \lain{unsafe}, or of \lain{comptime if}.  It creates a new scope
+(\S\,\ref{sec:basics.scopes}) and executes its statements in order.  Names declared
+inside a block are not accessible outside it.
+
+\pnum
+A block is not itself a statement: \lain{\{} never begins one.  So a braced block cannot
+stand alone in a body, nor be the statement a \lain{defer} takes, nor be the body of a
+\lain{case} arm (\S\,\ref{sec:match.syntax}).
+
+\begin{constraint}
+  A \lain{\{} where a statement begins is \illformed{}~(\diagcode{E100}).
+\end{constraint}
+
+\begin{laincode}
+func main() i32 {
+    {                        // ERROR [E100]: a block is not a statement
+        x = 1
+    }
+    return 0
+}
+\end{laincode}
 
 \section{Immutable declaration}
 \label{sec:stmt.decl}
@@ -158,8 +177,8 @@ tests the \lain{else if} clauses in order; if none matches, executes the
 \lain{else} body (if present).
 
 \begin{constraint}
-  \textit{cond} shall have type \lain{bool}, or an integer type, or an optional that
-  narrows (\S\,\ref{sec:types.bool}).  An integer in condition position is false when
+  \textit{cond} shall have type \lain{bool}, or an integer type, or be a union, which is
+  true when it holds a value (\S\,\ref{sec:types.union}).  An integer in condition position is false when
   zero and true otherwise.
 \end{constraint}
 
@@ -177,7 +196,7 @@ then-branch only.
 \textbf{Branch consistency}: if one branch consumes a linear variable,
 all branches shall consume it.  If branches disagree on the linear state
 of a variable from the enclosing scope, the program is
-\illformed{}~(\diagcode{E003}).
+\illformed{}~(\diagcode{E016}, \S\,\ref{sec:own.branches}).
 
 \section{While statement}
 \label{sec:stmt.while}
@@ -188,16 +207,17 @@ of a variable from the enclosing scope, the program is
 true, executes \textit{body}.
 
 \begin{constraint}
-  A \lain{while} loop inside a \lain{func} shall be bounded: it shall carry a
+  A \lain{while} loop shall be bounded: it shall carry a
   \lain{decreasing} measure, or the implementation shall be able to infer one
   from its condition (\S\,\ref{sec:stmt.while.infer}).  A loop for which no
   measure is present and none can be inferred is
-  \illformed{}~(\diagcode{E011}).
+  \illformed{}~(\diagcode{E011}), unless the enclosing function's row names
+  \lain{diverge} (\S\,\ref{sec:fn.purity}).
 \end{constraint}
 
 \begin{constraint}
-  \textit{cond} shall have type \lain{bool}, or an integer type, or an optional that
-  narrows (\S\,\ref{sec:types.bool}).  An integer in condition position is false when
+  \textit{cond} shall have type \lain{bool}, or an integer type, or be a union, which is
+  true when it holds a value (\S\,\ref{sec:types.union}).  An integer in condition position is false when
   zero and true otherwise.
 \end{constraint}
 
@@ -316,8 +336,8 @@ func count(n int) int {
 \index{return statement}
 
 \pnum
-\lain{return [expr]} terminates execution of the current function or
-procedure and transfers the value of \textit{expr} (if present) to the
+\lain{return [expr]} terminates execution of the current function
+and transfers the value of \textit{expr} (if present) to the
 caller.
 
 \begin{constraint}
@@ -455,14 +475,40 @@ compile-time constant expression (\S\,\ref{sec:14-generics}).
 
 \pnum
 \lain{for i in start..end \{ body \}} iterates with \textit{i} ranging
-from \textit{start} (inclusive) to \textit{end} (exclusive).  The loop
-variable \textit{i} is immutable; its value range is statically known to
-be $[\textit{start}, \textit{end}-1]$ throughout the body, enabling safe
-array indexing without runtime bounds checks.
+from \textit{start} (inclusive) to \textit{end} (exclusive), and
+\lain{for i in start..=end} includes \textit{end}.  The loop variable \textit{i} is
+immutable; its value range is statically known throughout the body ---
+$[\textit{start}, \textit{end}-1]$, or $[\textit{start}, \textit{end}]$ --- so an index it
+proves in bounds needs no further check.
+
+\pnum
+\lain{for x in a \{ body \}} iterates over the elements of an array or slice \lain{a},
+binding each in turn to \lain{x}; \lain{for i, x in a} also binds the element's index,
+which comes first.
 
 \pnum
 \lain{for} loops are permitted whatever a function's row says: the range is the bound.
 
 \begin{constraint}
-  \textit{start} and \textit{end} shall have integer types.
+  \textit{start} and \textit{end} shall have integer types~(\diagcode{E012}).  The loop
+  variable shall not be assigned~(\diagcode{E009}).
 \end{constraint}
+
+\begin{laincode}
+// VERIFY: exit 0
+func main() i32 {
+    var t u8[3] = [7, 8, 9]
+    var n = 0
+    for i in 0..=3 { n = n + 1 }        // 0, 1, 2 and 3
+    var s u32 = 0
+    for x in t { s = s + x }            // 7 + 8 + 9
+    var at usize = 9
+    for i, x in t {
+        if x == 8 { at = i }
+    }
+    if n != 4 { return 1 }
+    if s != 24 { return 2 }
+    if at != 1 { return 3 }
+    return 0
+}
+\end{laincode}

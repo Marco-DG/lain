@@ -86,7 +86,7 @@ The following table defines the normative mapping between Lain types and
 their C99 equivalents.  The mapping is the ABI used by the translation
 output.
 
-\begin{longtable}{@{}lll@{}}
+\begin{longtable}{@{}p{3.4cm}p{4.2cm}p{6.6cm}@{}}
 \toprule
 \textbf{Lain type} & \textbf{C99 type} & \textbf{Notes} \\
 \midrule
@@ -101,22 +101,23 @@ output.
 \lain{u16}         & \texttt{uint16\_t}  & \\
 \lain{u32}         & \texttt{uint32\_t}  & \\
 \lain{u64}         & \texttt{uint64\_t}  & \\
-\lain{usize}       & \texttt{size\_t}    & pointer-sized \\
+\lain{usize}       & \texttt{uint64\_t}  & the pointer width in this specification (\S\,\ref{sec:types.integer}); 64 bits in the reference implementation \\
 \lain{i8}          & \texttt{int8\_t}    & \\
 \lain{i16}         & \texttt{int16\_t}   & \\
 \lain{i32}         & \texttt{int32\_t}   & \\
 \lain{i64}         & \texttt{int64\_t}   & \\
-\lain{isize}       & \texttt{ptrdiff\_t} & pointer-sized \\
-\lain{int}         & \texttt{int}        & at least 32-bit \\
+\lain{isize}       & \texttt{int64\_t}   & as \lain{usize} \\
+\lain{int}         & \texttt{int32\_t}   & the alias of \lain{i32} \\
+\lain{u}$N$, \lain{i}$N$ (other $N$) & the narrowest of the above that holds it & e.g.\ \lain{u3} is \texttt{uint8\_t} \\
 \lain{f32}         & \texttt{float}      & IEEE 754 \\
 \lain{f64}         & \texttt{double}     & IEEE 754 \\
 \lain{bool}        & \texttt{\_Bool}     & C99 bool (1 byte); \idbehav{0 or 1} \\
-shared struct \lain{T} & \texttt{const T*} & \\
-\lain{var} struct \lain{T} & \texttt{T*}  & \\
+shared struct \lain{T} & \texttt{T * restrict} & a parameter \\
+\lain{var} struct \lain{T} & \texttt{T * restrict} & a parameter \\
 \lain{mov} struct \lain{T} & \texttt{T}   & by value \\
-\lain{T[]}         & \texttt{struct \{ size\_t len; T* data; \}} & fat slice \\
-\lain{*T}          & \texttt{const T*}  & unsafe only \\
-\lain{var *T}      & \texttt{T*}        & unsafe only \\
+\lain{T[]}         & \texttt{struct \{ T* data; size\_t len; \}} & passed as two parameters, the length first; not in an \lain{extern}~(\diagcode{E131}) \\
+\lain{*T}          & \texttt{T*}        & read-only: the compiler refuses a write~(\diagcode{E009}) \\
+\lain{*var T}      & \texttt{T*}        & writable \\
 \end{longtable}
 
 \section{ABI for function parameters}
@@ -138,10 +139,12 @@ those to \lain{extern} functions.
 \endhead
 \bottomrule
 \endlastfoot
-\lain{name T}     & struct & \texttt{const T*}  & in \\
-\lain{var name T} & struct & \texttt{T*}        & in/out \\
+\lain{name T}     & struct & \texttt{T * restrict} & in \\
+\lain{var name T} & struct & \texttt{T * restrict} & in/out \\
 \lain{mov name T} & struct & \texttt{T}         & in (by value) \\
-any mode          & primitive & \texttt{T}      & in \\
+\lain{name T}, \lain{mov name T} & primitive & \texttt{T} & in \\
+\lain{var name T} & primitive & \texttt{T*}     & in/out \\
+\lain{name T[]}   & slice  & \texttt{size\_t}, \texttt{T*} & in (length, then data) \\
 \end{longtable}
 
 \section{Pointer operations}
@@ -149,12 +152,13 @@ any mode          & primitive & \texttt{T}      & in \\
 \index{pointer operations}
 
 \pnum
-Raw pointer operations (\lain{*ptr} dereference, \lain{\&x} address-of)
-require an \lain{unsafe} block (see \S\,\ref{sec:18-unsafe}).
+Reading or writing through a raw pointer (\lain{*p}, and a field access through one)
+requires an \lain{unsafe} block (see \S\,\ref{sec:18-unsafe}).  Taking an address,
+\lain{\&x}, does not (\S\,\ref{sec:types.pointer}).
 
 \begin{constraint}
-  Pointer-to-pointer or integer-to-pointer casts shall occur only inside
-  an \lain{unsafe} block~(\diagcode{E012}).
+  A cast to or from a raw pointer type --- pointer to pointer, integer to pointer, or
+  pointer to integer --- shall occur only inside an \lain{unsafe} block~(\diagcode{E012}).
 \end{constraint}
 
 \section{String interop}

@@ -35,10 +35,6 @@ Inside an \lain{unsafe} block, the following operations are permitted:
         \lain{*var T}~(\diagcode{E012}). A \lain{*T} becomes writable only by an explicit
         cast inside \lain{unsafe}, \lain{p as *var T}, which asserts that writing through it
         is valid.
-  \item \textbf{Address-of}: \lain{\&x} creates a raw pointer to the
-        storage of \lain{x}: a \lain{*var T} when the program may write \lain{x} (a
-        \lain{var} binding or parameter, an element or field of one, or what a \lain{*var}
-        pointer points to), and a \lain{*T} otherwise.
   \item \textbf{Indexing}: a raw pointer has no length and cannot be indexed
         (\diagcode{E012}); read through it with \lain{*p}, or \lain{@load} a vector.
   \item \textbf{Pointer and integer casts}: \lain{p as *T},
@@ -79,6 +75,13 @@ func main() i32 {
     return 0
 }
 \end{laincode}
+
+\pnum
+Taking an address is not among them: \lain{\&x} is permitted in safe code
+(\S\,\ref{sec:types.pointer}), since making a pointer is harmless and only reading or
+writing through it is the danger.  It yields a \lain{*var T} when the program may write
+\lain{x} (a \lain{var} binding or parameter, an element or field of one, or what a
+\lain{*var} pointer points to), and a \lain{*T} otherwise.
 
 \section{What unsafe does NOT disable}
 \label{sec:unsafe.not-disabled}

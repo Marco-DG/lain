@@ -34,7 +34,7 @@ precedence.  All operators listed on the same row have equal precedence.
 \bottomrule
 \endlastfoot
 1 (high) & \lain{()} \lain{[]} \lain{.}              & left  & (context-dependent) \\
-2        & unary \lain{-} \lain{!} \lain{mov} \lain{*} \lain{\&} & right & operand type; \lain{*} yields the pointee, \lain{\&} a pointer to its operand \\
+2        & unary \lain{-} \lain{!} \texttt{\textasciitilde} \lain{mov} \lain{var} \lain{*} \lain{\&} \lain{try} & right & operand type; \lain{*} yields the pointee, \lain{\&} a pointer to its operand, \lain{try} the union's value \\
 3        & \lain{as}                                  & left  & target type \\
 4        & \lain{*} \lain{/} \lain{\%} and their \lain{\%}/\lain{|}/\lain{?} forms & left  & \S\,\ref{sec:types.rank} \\
 5        & \lain{+} \lain{-} and their \lain{\%}/\lain{|}/\lain{?} forms & left  & \S\,\ref{sec:types.rank} \\
@@ -45,7 +45,8 @@ precedence.  All operators listed on the same row have equal precedence.
 10       & \lain{<} \lain{>} \lain{<=} \lain{>=} \lain{in} & left & \lain{bool} \\
 11       & \lain{==} \lain{!=}                        & left  & \lain{bool} \\
 12       & \lain{and}                                 & left  & \lain{bool} \\
-13 (low) & \lain{or}                                  & left  & \lain{bool} \\
+13       & \lain{or}                                  & left  & \lain{bool} \\
+14 (low) & \lain{else} (the handler, \S\,\ref{sec:expr.handle}) & left & the union's value type \\
 \end{longtable}
 
 \pnum
@@ -57,8 +58,11 @@ Parentheses override precedence.
 
 \pnum
 A primary expression is one of: an identifier, a literal, a parenthesized
-expression, a block expression, an \lain{if} expression, a \lain{case}
-expression, a constructor expression, or a \lain{comptime} expression.
+expression, an array literal or comprehension, a \lain{case} expression, or a builtin
+(\lain{@sizeof}, \lain{@load}; \gramref{expression}).  Constructing a struct or a variant is a
+call (\S\,\ref{sec:expr.call}).  A block expression, an \lain{if} expression and a
+\lain{comptime} expression are planned, and not yet accepted (\diagcode{E100}): their sections
+below say so.
 
 \pnum
 \textbf{Identifier expression}: evaluates to the current value of the named
@@ -137,8 +141,9 @@ The comparison operators \lain{==}, \lain{!=}, \lain{<}, \lain{>},
 \end{constraint}
 
 \begin{constraint}
-  \lain{==} and \lain{!=} shall not be applied to struct types, array types,
-  or enum types (\S\,\ref{sec:types.enum}).
+  \lain{==} and \lain{!=} shall not be applied to a struct, an array, an enum
+  (\S\,\ref{sec:types.enum}), an ADT or a union, nor to a slice except against a string literal,
+  which compares bytes and lengths~(\diagcode{E012}).
 \end{constraint}
 
 \section{Logical operators}
@@ -340,6 +345,159 @@ pointer & integer & Reinterpretation (\lain{unsafe} required) \\
   is \illformed{}.
 \end{constraint}
 
+\section{Handling a union: \texttt{else} and \texttt{try}}
+\label{sec:expr.handle}
+\index{else@\lain{else} (handler)}\index{try@\lain{try}}
+
+\pnum
+Two operators reach the value of a union (\S\,\ref{sec:types.union}) by saying what happens on a
+marker.  Each yields the value when the operand holds one, so its result has the union's value
+type.
+
+\pnum
+\textbf{The handler \lain{else}.}  \lain{u else h} evaluates \lain{u}; on a value, the result is
+that value, and on any marker it is decided by \lain{h}, in one of three forms:
+\begin{itemize}
+  \item \lain{u else f}: the result is \lain{f}, which shall have the value type
+        (\diagcode{E012}).
+  \item \lain{u else return v}: the enclosing function returns \lain{v}, converted to its
+        return type, running its pending \lain{defer}s as any \lain{return} does.  This is how
+        one union's markers become another's.
+  \item \lain{u else panic(m)}: the program aborts with the message \lain{m}.  The \lain{panic}
+        gives the enclosing function the \lain{raises} effect (\S\,\ref{sec:12-functions}).
+\end{itemize}
+\lain{else} binds more loosely than every other operator: \lain{a + b else c} is
+\lain{(a + b) else c}.
+
+\begin{laincode}
+// VERIFY: exit 0
+type Small = u8 < 200
+
+func get(ok bool) Small | NotFound {
+    if ok {
+        var v Small = 7
+        return v
+    }
+    return NotFound
+}
+
+func or_zero(ok bool) Small {
+    return get(ok) else 0                  // a fallback
+}
+
+func or_leave(ok bool) Small | Failed {
+    v = get(ok) else return Failed         // NotFound leaves as Failed
+    return v
+}
+
+func main() i32 {
+    if or_zero(true) != 7 { return 1 }
+    if or_zero(false) != 0 { return 2 }
+    var a Small | Failed = or_leave(false)
+    var got = 9
+    case a {
+        Failed: got = 0
+        else: got = 3
+    }
+    if got != 0 { return 3 }
+    return 0
+}
+\end{laincode}
+
+\pnum
+\textbf{Propagation, \lain{try}.}  \lain{try u} evaluates \lain{u}; on a value, the result is that
+value, and on a marker the enclosing function returns that marker, with its fields, running its
+pending \lain{defer}s.  The enclosing function's return type shall therefore be a union that
+lists every marker of \lain{u}; it may list more.  \lain{try} binds as tightly as the other
+prefix operators: \lain{try f() + 1} is \lain{(try f()) + 1}.
+
+\begin{laincode}
+// VERIFY: exit 0
+func open_it(p *u8, ok bool) *u8 | NotFound {
+    if ok { return p }
+    return NotFound
+}
+
+func check(p *u8, ok bool) *u8 | Denied {
+    if ok { return p }
+    return Denied
+}
+
+func load(p *u8, a bool, b bool) *u8 | NotFound | Denied {
+    f = try open_it(p, a)      // on NotFound, load returns NotFound
+    g = try check(f, b)        // on Denied, load returns Denied
+    return g
+}
+
+func main() i32 {
+    var r *u8 | NotFound | Denied = load("x", true, false)
+    var got = 9
+    case r {
+        NotFound: got = 1
+        Denied: got = 0
+        else: got = 2
+    }
+    if got != 0 { return 1 }
+    return 0
+}
+\end{laincode}
+
+\begin{constraint}
+  The operand of \lain{else} or \lain{try} shall be a union value~(\diagcode{E066}).
+\end{constraint}
+
+\begin{constraint}
+  A \lain{try} whose operand has a marker that the enclosing function's return type does not
+  list is \illformed{}~(\diagcode{E065}).  So is a \lain{try}, or an \lain{else return}, inside a
+  deferred statement~(\diagcode{E138}, \S\,\ref{sec:stmt.defer}).
+\end{constraint}
+
+\begin{laincode}
+func open_it(p *u8, ok bool) *u8 | NotFound | Denied {
+    if ok { return p }
+    return Denied
+}
+
+func read_cfg(p *u8) *u8 | NotFound {
+    f = try open_it(p, true)      // ERROR [E065]: Denied is not a marker of *u8 | NotFound
+    return f
+}
+\end{laincode}
+
+\pnum
+\textbf{Checked operators.}  The checked arithmetic operators \lain{+?}, \lain{-?} and \lain{*?}
+and the checked cast \lain{as?} (\S\,\ref{sec:expr.cast}) compute what their plain forms
+compute, and on overflow, or on a value the target type cannot hold, they yield a marker
+instead.  That marker exists only to be handled: a checked operator is the left operand of an
+\lain{else}, in any of its three forms, and no union is ever stored.
+
+\begin{constraint}
+  A checked operator that is not the left operand of an \lain{else} is
+  \illformed{}~(\diagcode{E067}).
+\end{constraint}
+
+\begin{laincode}
+func next(a i32) i32 {
+    return a +? 1                 // ERROR [E067]: what happens on overflow?
+}
+\end{laincode}
+
+\begin{laincode}
+// VERIFY: exit 0
+func main() i32 effects raises {
+    var a i32 = 2000000000
+    s = a +? a else 0                  // overflows: the fallback
+    if s != 0 { return 1 }
+    var big i32 = 300
+    n = big as? u8 else 255            // 300 does not fit a u8
+    if n != 255 { return 2 }
+    var k i32 = 7
+    p = k *? k else panic("overflow")  // fits: 49
+    if p != 49 { return 3 }
+    return 0
+}
+\end{laincode}
+
 \section{Move expression (\texttt{mov})}
 \label{sec:expr.mov}
 \index{move expression}
@@ -488,6 +646,12 @@ A block expression \texttt{\{ stmts... expr \}} evaluates each statement
 in order, then evaluates the final expression, whose value is the value of
 the block.  If the final expression is absent, the block has no value.
 
+\begin{note}
+  \textbf{Not yet in force.}  This implementation does not parse a block in expression
+  position: \lain{\{} cannot begin an expression or a statement~(\diagcode{E100},
+  \S\,\ref{sec:stmt.block}).  The form is intended, and is described for that reason.
+\end{note}
+
 \section{If expression}
 \label{sec:expr.if}
 \index{if expression}
@@ -513,8 +677,8 @@ evaluates $e_1$; otherwise, evaluates $e_2$.
 \end{constraint}
 
 \begin{constraint}
-  \textit{cond} shall have type \lain{bool}, or an integer type, or an optional that
-  narrows (\S\,\ref{sec:types.bool}).
+  \textit{cond} shall have type \lain{bool}, or an integer type, or be a union, which is
+  true when it holds a value (\S\,\ref{sec:types.union}).
 \end{constraint}
 
 \section{Match expression (\texttt{case})}

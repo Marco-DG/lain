@@ -62,11 +62,9 @@ Three storage durations are defined:
 
   \item[Static duration]
     Objects declared at module scope have static storage duration.  Their
-    storage persists for the entire program execution.
-    \idbehav{The value of a static-duration object whose declaration
-    lacks an initializer is implementation-defined; the reference
-    implementation zero-initializes such objects via C99 static
-    initialization rules}.
+    storage persists for the entire program execution.  Every such object is a
+    constant whose value is computed at compile time
+    (\S\,\ref{sec:decl.module-const}); there are no module-scope variables.
 
   \item[Heap (explicit) duration]
     Objects allocated through C interop (\lain{malloc} or equivalent)
@@ -105,7 +103,7 @@ Each function call produces a \textit{stack frame} containing:
 \begin{itemize}
   \item all local variables declared in the function;
   \item all function parameters (by value or by pointer, per the calling
-        convention of \S\,\ref{sec:fn.distinction});
+        convention of \S\,\ref{sec:fn.abi});
   \item compiler-generated temporaries required for expression evaluation.
 \end{itemize}
 
@@ -168,7 +166,7 @@ Non-linear struct                             & Field-by-field copy & Allowed \\
 Linear struct (has \lain{mov} field)          & Forbidden & Requires \lain{mov} \\
 Non-linear array                              & Element-wise copy & Allowed \\
 Linear array                                  & Forbidden & Requires \lain{mov} \\
-Slice (\lain{T[]})                            & Copy \texttt{\{len, data\}} pair & Always allowed \\
+Slice (\lain{T[]})                            & Copy \texttt{\{data, len\}} pair & Always allowed \\
 Raw pointer (\lain{*T})                       & Copy address & Always allowed \\
 \end{longtable}
 
@@ -189,15 +187,11 @@ as defined in \S\,\ref{sec:interop.types}.  Every object is a sequence of
 corresponding C type.
 
 \pnum
-\textit{Value equality} is defined per type:
-\begin{itemize}
-  \item Primitives: bitwise equality of the value representation.
-  \item Structs: field-by-field value equality.
-  \item Slices: equality of both the data pointer and the length.
-  \item Raw pointers: address equality.
-  \item ADTs: tag equality and, when tags match, field-by-field equality
-        of the active variant.
-\end{itemize}
+\textit{Equality.}  \lain{==} and \lain{!=} compare integers and \lain{bool}s by value,
+raw pointers by address, and a slice against a string literal byte by byte, lengths
+included (\S\,\ref{sec:expr.compare}).  No other type has them --- a struct, an array,
+another slice, an enum, an ADT or a union is \diagcode{E012}: compare its fields, or match
+it with \lain{case}.
 
 \section{Alignment and layout}
 \label{sec:mem.alignment}

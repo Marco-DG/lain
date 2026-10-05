@@ -25,10 +25,10 @@ language features evolve and readers should verify current status.
 \endhead
 \bottomrule
 \endlastfoot
-Memory safety       & Compile-time & Compile-time & Manual & Runtime+CT & GC \\
-Null safety         & Option type  & Option type  & None   & Optional   & Nil \\
-Exceptions          & None (Result)& None (Result)& errno  & Error union& panic/recover \\
-Generics            & Comptime     & Trait-based  & Macros & Comptime   & Type params \\
+Memory safety       & Compile-time & Compile-time & Manual & Runtime + CT & GC \\
+Null safety         & \lain{T | none} & Option type  & None   & Optional   & Nil \\
+Exceptions          & None (unions)& None (Result)& errno  & Error union& panic/recover \\
+Generics            & Type params  & Trait-based  & Macros & Comptime   & Type params \\
 Lifetime annots.    & None (NLL)   & Required     & N/A    & None       & N/A \\
 Purity tracking     & \lain{effects} row      & None & None & None & None \\
 Pattern matching    & Exhaustive   & Exhaustive   & switch & switch     & switch \\
@@ -47,9 +47,11 @@ GC / runtime        & None         & Minimal      & None   & Minimal    & GC \\
 \begin{itemize}
   \item Ownership-based memory safety with no GC.
   \item Move semantics with explicit transfer.
-  \item No null pointers (Option type for optional values).
+  \item No null pointers: an absent value is a union marker (\lain{T | none}, where Rust
+        has \lain{Option}), tested before use.
   \item Pattern matching with exhaustiveness checking.
-  \item No exceptions; Result type for error propagation.
+  \item No exceptions: an error is a union marker passed on with \lain{try}, as Rust passes
+        a \lain{Result} with \texttt{?}.
   \item Zero-cost abstractions.
 \end{itemize}
 
@@ -69,7 +71,7 @@ GC / runtime        & None         & Minimal      & None   & Minimal    & GC \\
 Lifetime annotations  & Implicit (NLL only) & Explicit (\texttt{'a}, \texttt{'static}) \\
 Mutable borrow syntax & \lain{var x} at call site & \texttt{\&mut x} \\
 Move syntax           & Explicit \lain{mov x} & Implicit (default) \\
-Generics              & Comptime functions & Trait-based + monomorphization \\
+Generics              & Type parameters, monomorphized & Trait-based + monomorphization \\
 Purity                & \lain{effects} row, enforced     & Convention only \\
 Async                 & Not supported & \texttt{async}/\texttt{await} \\
 Traits / Interfaces   & Not supported & Full trait system \\
@@ -117,9 +119,9 @@ Ownership             & Tracked by compiler     & Programmer discipline \\
 Bounds checking       & Static (VRA)            & None \\
 Division by zero      & Static detection (E015) & Undefined behavior \\
 Pattern matching      & Exhaustive \lain{case}  & \texttt{switch} (fall-through) \\
-Null safety           & Option type             & Null everywhere \\
+Null safety           & \lain{T | none}, tested before use & Null everywhere \\
 Strings               & Slices with length      & Null-terminated arrays \\
-Generics              & Comptime functions      & Macros / \texttt{void*} \\
+Generics              & Type parameters         & Macros / \texttt{void*} \\
 Header files          & Module system           & \texttt{\#include} \\
 \end{longtable}
 
@@ -159,8 +161,8 @@ behavior from the safe fragment.
 Memory safety         & Compile-time ownership  & Runtime (debug) \\
 Ownership system      & Borrow checker          & Manual \\
 Backend               & C99                     & LLVM + self-hosted \\
-Comptime scope        & Type-parameter functions & Full expression evaluation \\
-Error handling        & Result type + \lain{case} & Error unions + \texttt{try} \\
+Comptime scope        & Constants, \lain{comptime if}, type and value parameters & Full expression evaluation \\
+Error handling        & Error unions (\lain{T | M}) + \lain{try}, \lain{else} & Error unions + \texttt{try} \\
 Allocator model       & C interop (malloc/free) & Custom allocators everywhere \\
 \end{longtable}
 
@@ -198,9 +200,9 @@ guarantees than Zig's debug-mode runtime checks.
 \endlastfoot
 Memory management     & Ownership (no GC)       & Garbage collected \\
 Runtime               & None                    & GC + goroutine scheduler \\
-Generics              & Comptime functions      & Type parameters \\
-Error handling        & Result type             & Multiple return values \\
-Null safety           & Option type             & Nil (null) \\
+Generics              & Type parameters         & Type parameters \\
+Error handling        & Error unions (\lain{T | M}) & Multiple return values \\
+Null safety           & \lain{T | none}         & Nil (null) \\
 Concurrency           & Not supported           & Goroutines + channels \\
 Determinism           & Yes (no GC pauses)      & GC pauses possible \\
 \end{longtable}
@@ -239,17 +241,17 @@ Caller-site ownership annotations
   & \lain{mov} and \lain{var} are visible at every call site, making
     ownership transfer explicit and auditable.
     \\[4pt]
-Interval-based VRA
-  & Polynomial-time static verification of array bounds and arithmetic
-    constraints, without an SMT solver.
+Relational range analysis
+  & Static verification of array bounds and arithmetic, carrying relations
+    such as \lain{i < n} between variables (an octagon), without an SMT solver.
     \\[4pt]
 \lain{in} operator for range membership
-  & \lain{idx in 0..arr.len} establishes the bounds guard
-    $0 \leq \mathtt{idx} < \mathtt{arr.len}$ in the containing scope.
+  & \lain{if idx in 0..arr.len} proves $0 \leq \mathtt{idx} < \mathtt{arr.len}$ inside its
+    branch; on a parameter or a field it is a refinement the writer establishes.
     \\[4pt]
 Bounded \lain{while} with \lain{decreasing}
-  & Allows terminating loops in pure functions via programmer-supplied
-    ranking functions, verified by the compiler.
+  & Loops in functions with the empty row, by a ranking function the compiler
+    infers or the programmer states, verified either way.
     \\[4pt]
 Non-consuming match (\lain{case \&expr})
   & Pattern matching that does not consume the scrutinee; the scrutinee

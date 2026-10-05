@@ -133,11 +133,11 @@ The following C functions are declared in \lain{std.c}:
 \index{print}
 
 \begin{functionspec}{print}{std.io}
-\synopsis{proc print(s *u8[:0])}
-\noindent\textit{Effect:} Writes the null-terminated byte string \texttt{s}
-to standard output.  No trailing newline is appended.\\
-\noindent\textit{Parameter \texttt{s}:} Shared, null-terminated C string
-(\lain{*u8[:0]}).
+\synopsis{func print(s u8[:0]) effects io}
+\noindent\textit{Effect:} Writes the bytes of \texttt{s} to standard output.  No
+trailing newline is appended, and \texttt{s} is never read as a format string.\\
+\noindent\textit{Parameter \texttt{s}:} A string, \lain{u8[:0]} (a string literal
+has this type).
 \end{functionspec}
 
 \subsection{\texttt{println}}
@@ -145,11 +145,11 @@ to standard output.  No trailing newline is appended.\\
 \index{println}
 
 \begin{functionspec}{println}{std.io}
-\synopsis{proc println(s *u8[:0])}
-\noindent\textit{Effect:} Writes the null-terminated byte string \texttt{s}
-to standard output, followed by a newline character (\texttt{0x0A}).\\
-\noindent\textit{Parameter \texttt{s}:} Shared, null-terminated C string
-(\lain{*u8[:0]}).
+\synopsis{func println(s u8[:0]) effects io}
+\noindent\textit{Effect:} Writes the bytes of \texttt{s} to standard output,
+followed by a newline character (\texttt{0x0A}).\\
+\noindent\textit{Parameter \texttt{s}:} A string, \lain{u8[:0]} (a string literal
+has this type).
 \end{functionspec}
 
 \section{\texttt{std.fs} — File system}
@@ -185,7 +185,7 @@ type.  It must be consumed exactly once, typically by calling
 \index{open\_file}
 
 \begin{functionspec}{open\_file}{std.fs}
-\synopsis{proc open\_file(path *u8[:0], mode *u8[:0]) mov File}
+\synopsis{func open\_file(path u8[:0], mode u8[:0]) mov File effects io, raises, alloc}
 \noindent\textit{Effect:} Opens the file at \texttt{path} with the access
 mode \texttt{mode} (C \texttt{fopen} semantics).  Returns an owned
 \lain{File} value.  The caller is responsible for closing the file by
@@ -197,9 +197,9 @@ null-terminated path string.\\
 \end{functionspec}
 
 \begin{note}
-  If \texttt{fopen} returns null, the \lain{handle} field is a null
-  pointer.  Subsequent operations on such a file produce C-level undefined
-  behavior.  A future version may return \lain{Result(File, int)} instead.
+  If \texttt{fopen} fails, \lain{open\_file} panics: hence \lain{raises} in its row.  A
+  \lain{File} therefore never holds a null handle, and no later \lain{write\_file} or
+  \lain{close\_file} can reach one.
 \end{note}
 
 \subsection{\texttt{close\_file}}
@@ -207,7 +207,7 @@ null-terminated path string.\\
 \index{close\_file}
 
 \begin{functionspec}{close\_file}{std.fs}
-\synopsis{proc close\_file(mov \{handle\} File)}
+\synopsis{func close\_file(mov \{handle\} File) effects io}
 \noindent\textit{Effect:} Closes the file by calling C \texttt{fclose} on
 the extracted \texttt{handle} pointer.  Consumes the \lain{File} value.\\
 \noindent\textit{Parameter:} The \lain{File} value is consumed by the call;
@@ -219,7 +219,7 @@ it shall not be used after this point.
 \index{write\_file}
 
 \begin{functionspec}{write\_file}{std.fs}
-\synopsis{proc write\_file(f File, s *u8[:0])}
+\synopsis{func write\_file(f File, s u8[:0]) effects io}
 \noindent\textit{Effect:} Writes the byte sequence \texttt{s} to the file
 \texttt{f} using C \texttt{fputs}.\\
 \noindent\textit{Parameter \texttt{f}:} Shared borrow of the file handle.\\
@@ -256,7 +256,7 @@ terminating).  They may be called from any context, including other
 \index{min}
 
 \begin{functionspec}{min}{std.math}
-\synopsis{func min(a int, b int) int}
+\synopsis{func min(a i32, b i32) i32}
 \noindent\textit{Returns:} The smaller of \texttt{a} and \texttt{b}.
 If \texttt{a == b}, either may be returned (they are equal).
 \end{functionspec}
@@ -266,7 +266,7 @@ If \texttt{a == b}, either may be returned (they are equal).
 \index{max}
 
 \begin{functionspec}{max}{std.math}
-\synopsis{func max(a int, b int) int}
+\synopsis{func max(a i32, b i32) i32}
 \noindent\textit{Returns:} The larger of \texttt{a} and \texttt{b}.
 \end{functionspec}
 
@@ -275,15 +275,15 @@ If \texttt{a == b}, either may be returned (they are equal).
 \index{abs}
 
 \begin{functionspec}{abs}{std.math}
-\synopsis{func abs(x int) int}
+\synopsis{func abs(x i32) i32 >= 0}
 \noindent\textit{Returns:} The absolute value of \texttt{x},
 i.e., \texttt{x} if \texttt{x >= 0}, \texttt{-x} otherwise.
 \end{functionspec}
 
 \begin{note}
-  \lain{abs(INT\_MIN)} produces implementation-defined behaviour because
-  \texttt{|INT\_MIN|} is not representable as \lain{int} on two's
-  complement platforms.
+  $|{-2^{31}}|$ is not representable as an \lain{i32}, so \lain{abs} negates with the
+  saturating \lain{-|}: \lain{abs} of the smallest \lain{i32} is the largest, and the
+  return refinement \lain{>= 0} holds for every input.
 \end{note}
 
 \subsection{\texttt{clamp}}
@@ -291,7 +291,7 @@ i.e., \texttt{x} if \texttt{x >= 0}, \texttt{-x} otherwise.
 \index{clamp}
 
 \begin{functionspec}{clamp}{std.math}
-\synopsis{func clamp(x int, lo int, hi int) int}
+\synopsis{func clamp(x i32, lo i32, hi i32) i32}
 \noindent\textit{Returns:} \texttt{x} clamped to the inclusive range
 \texttt{[lo, hi]}, i.e.,
 \texttt{max(lo, min(x, hi))}.

@@ -10,13 +10,13 @@
 
 \pnum
 A \textit{declaration} introduces a name into a scope and associates it with
-an entity: a variable, function, procedure, type, or module.  Every name
-shall be declared before it is used, with the exception of names that are
-resolved by Universal Function Call Syntax (\S\,\ref{sec:12-functions}).
+an entity: a variable, a function, a type, a constant, or a module.  A name declared at
+module scope may be used anywhere in its module, above its declaration as well as below
+it; a local name only after its declaration (\diagcode{E106}, \S\,\ref{sec:basics.resolution}).
 
 \pnum
 A \textit{definition} is a declaration that also allocates storage (for
-variables) or provides a body (for functions and procedures).  In Lain,
+variables) or provides a body (for functions).  In Lain,
 every declaration at the local level is also a definition.
 
 \begin{constraint}
@@ -130,13 +130,13 @@ of its storage.
     allocated on entry to the block and deallocated on exit.
 
   \item[Static storage duration]
-    Variables declared at module scope.  Storage persists for the lifetime
-    of the program.  \idbehav{whether module-scope variables are zero-
-    initialized before \lain{main} is called}.
+    Module-scope constants (\S\,\ref{sec:decl.module-const}).  Each is computed at
+    compile time and is immutable, and its storage persists for the lifetime of the
+    program.  There are no module-scope variables.
 
-  \item[Arena storage duration]
-    Objects allocated from an explicit \lain{Arena}.  Storage persists
-    until the arena is freed as a whole.
+  \item[Heap duration]
+    Objects allocated through C interoperability; their lifetime is the program's
+    to manage, and the ownership rules track it (\S\,\ref{sec:mem.storage}).
 \end{description}
 
 \section{Objects and values}
