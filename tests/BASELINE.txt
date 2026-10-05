@@ -2257,6 +2257,16 @@ at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
 ty=__U_Small_NotFound scalar
+### tests/trust/union_presence_test_pass.ln
+rc=0
+out=100 100 1100 110
+at=const 12
+at=pure 4
+ty=Slice_u8 scalar
+ty=__U_ptr_u8_none_Denied scalar
+ty=__U_ptr_u8_NotFound_Denied scalar
+ty=__U_Small_NotFound scalar
+ty=__U_Small_NotFound_Denied scalar
 ### tests/trust/union_refined_alias_pass.ln
 rc=0
 out=ok nf size=1

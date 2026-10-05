@@ -1,0 +1,82 @@
+// I.128 (Documentation): `if x` on a union is a PRESENCE test, true exactly when x holds a value. Only
+// the one-marker shape was compiled that way; with two or more markers the raw value became the C
+// condition, so `*u8 | NotFound | Denied` holding Denied (a non-null sentinel) read as present, and
+// `Small | NotFound | Denied` holding the value 0 read as absent while both markers read as present.
+// The interpreter could not run either (NOT MODELLED). Each union below is built by a function
+// returning each case; under the sanitizers and the interpreter.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Small = u8 < 200
+
+func gp(k i32, s *u8) *u8 | NotFound | Denied {
+    if k == 1 {
+        return NotFound
+    }
+    if k == 2 {
+        return Denied
+    }
+    return s
+}
+
+func tp(x *u8 | NotFound | Denied) i32 {
+    if x {
+        return 1
+    }
+    return 0
+}
+
+func gn(k i32, s *u8) *u8 | none | Denied {
+    if k == 1 {
+        return none
+    }
+    if k == 2 {
+        return Denied
+    }
+    return s
+}
+
+func tn(x *u8 | none | Denied) i32 {
+    if x {
+        return 1
+    }
+    return 0
+}
+
+func gi(k i32, v Small) Small | NotFound | Denied {
+    if k == 1 {
+        return NotFound
+    }
+    if k == 2 {
+        return Denied
+    }
+    return v
+}
+
+func ti(x Small | NotFound | Denied) i32 {
+    if x {
+        return 1
+    }
+    return 0
+}
+
+func g1(k i32, v Small) Small | NotFound {
+    if k == 1 {
+        return NotFound
+    }
+    return v
+}
+
+func t1(x Small | NotFound) i32 {
+    if x {
+        return 1
+    }
+    return 0
+}
+
+func main() i32 effects io {
+    libc_printf("%d%d%d ", tp(gp(0, "a")), tp(gp(1, "a")), tp(gp(2, "a")))
+    libc_printf("%d%d%d ", tn(gn(0, "a")), tn(gn(1, "a")), tn(gn(2, "a")))
+    libc_printf("%d%d%d%d ", ti(gi(0, 0)), ti(gi(0, 5)), ti(gi(1, 0)), ti(gi(2, 0)))
+    libc_printf("%d%d%d\n", t1(g1(0, 0)), t1(g1(0, 5)), t1(g1(1, 0)))
+    return 0
+}

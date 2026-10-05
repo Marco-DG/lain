@@ -3242,6 +3242,18 @@ static IrValue *ir_lower_truth(LowerCtx *c, Expr *cond) {
         IrValue *nc  = ir_const_int(c->f, c->cur, nk, tag->type);
         return ir_icmp(c->f, c->cur, IR_CMP_NE, tag, nc);
     }
+    // ★ `if x` ON ANY UNION IS A PRESENCE TEST (I.128). Only the one-marker shape above was
+    // recognised; a union of TWO or more markers fell through, and its raw value became the C
+    // condition: in `*u8 | NotFound | Denied` the Denied sentinel is non-null, so it read as
+    // present, and a `Small | NotFound | Denied` holding the VALUE 0 read as absent while both
+    // markers read as present (Documentation). The interpreter could not run it (NOT MODELLED), so
+    // nothing judged it. A union's value is its payload variant, `__payload`, variant 0.
+    if (v && v->type && v->type->kind == IRT_SUM && v->type->n_fields >= 2 && v->type->field_names &&
+        v->type->field_names[0] && v->type->field_names[0]->length == 9 &&
+        memcmp(v->type->field_names[0]->name, "__payload", 9) == 0) {
+        IrValue *tag = ir_sum_tag(c->f, c->cur, v);
+        return ir_icmp(c->f, c->cur, IR_CMP_EQ, tag, ir_const_int(c->f, c->cur, 0, tag->type));
+    }
     return v;
 }
 
