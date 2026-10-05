@@ -96,7 +96,7 @@ bad "a bad block"                   'certificate f\n  header bbx\nend\n' 2
 bad "a callsite without its callee" 'certificate f\n  callsite %%1 callee g bind 0=[1, 1] ret in [1, 1]\nend\n' 3
 bad "an unclosed certificate"       'certificate f\n  ret in [0, 1]\n' 2
 bad "a bad range"                   'certificate f\n  ret in [0 1]\nend\n' 2
-bad "a mutual cycle of one function" 'certificate f\n  measure mutual f 0\nend\n' 2
+bad "a mutual measure naming nothing" 'certificate f\n  measure mutual\nend\n' 2
 bad "a mutual position not a number" 'certificate f\n  measure mutual f 0 g x\nend\n' 2
 # Every certificate the trust corpus produces round-trips: the parser must keep up with whatever
 # the emitter writes, not only with this file's shapes.

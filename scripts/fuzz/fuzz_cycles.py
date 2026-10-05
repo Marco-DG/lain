@@ -9,6 +9,11 @@ ever, from SOME input, iff that graph has a cycle. That is decided here exactly,
 every input at once. The compiler accepting a program (exit 0: every obligation discharged) that
 can run for ever is UNSOUND.
 
+A quarter of the calls go through a FUNCTION POINTER (`var p1 *func(u8, u8) u8 = f1`, then `p1(..)`):
+the ground truth is the same, the callee being the same function, but the engine sees an indirect
+call, which may reach any function whose address is taken (I.136: a cycle through a pointer drew no
+obligation at all).
+
 This is stronger than fuzz_termination's oracle, which executes one input: the 3-cycle hole that
 made this file (18 of 5832 exhaustive programs accepted that never end) needed the right input to
 show, and a second call or a self-call on a cycle (8 of 1000 two-function programs here) needed the
@@ -27,7 +32,7 @@ def gen(rng):
     fs = []
     for _ in range(m):
         fs.append([(rng.randrange(m), rng.choice([("x", "y"), ("y", "x")]),
-                    rng.choice([-1, 0, 0, 1]), rng.choice([-1, 0, 0, 1]))
+                    rng.choice([-1, 0, 0, 1]), rng.choice([-1, 0, 0, 1]), rng.random() < 0.25)
                    for _ in range(rng.choice([1, 1, 2, 2, 3]))])
     return m, ty, fs
 
@@ -39,8 +44,10 @@ def src(m, ty, fs):
         body = ["    if x %s { return 0 }" % low, "    if y %s { return 0 }" % low,
                 "    if x > 100 { return 0 }", "    if y > 100 { return 0 }",
                 "    var r %s = 0" % ty]
-        for (j, perm, dx, dy) in calls:
-            body.append("    r = r %s f%d(%s, %s)" % (wrap, j, arg(perm[0], dx), arg(perm[1], dy)))
+        for j in sorted({c[0] for c in calls if c[4]}):
+            body.append("    var p%d *func(%s, %s) %s = f%d" % (j, ty, ty, ty, j))
+        for (j, perm, dx, dy, ptr) in calls:
+            body.append("    r = r %s %s%d(%s, %s)" % (wrap, "p" if ptr else "f", j, arg(perm[0], dx), arg(perm[1], dy)))
         body.append("    return r")
         out.append("func f%d(x %s, y %s) %s {\n%s\n}\n" % (i, ty, ty, ty, "\n".join(body)))
     return "\n".join(out) + "\nfunc main() i32 {\n    return f0(5, 7) as i32\n}\n"
@@ -49,7 +56,7 @@ def can_run_forever(m, fs):
     stop = lambda x, y: x < 1 or y < 1 or x > 100 or y > 100
     def succ(i, x, y):
         v = {"x": x, "y": y}
-        for (j, perm, dx, dy) in fs[i]:
+        for (j, perm, dx, dy, _ptr) in fs[i]:
             yield (j, v[perm[0]] + dx, v[perm[1]] + dy)
     color = {}
     for i in range(m):

@@ -231,7 +231,10 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                     // carries the source fact (`IrFunc.has_decreasing`) so it can tell them
                     // apart rather than picking one and being wrong about half the programs.
                     ir_diag(file, c->line, c->col, c->had_measure ? "E082" : "E011",
-                            c->mutual
+                            c->via_pointer
+                              ? "this call through a function pointer can reach its own function "
+                                "again, and no ranking over the cycle can be inferred"
+                              : c->mutual
                               ? "this call closes a mutual-recursion cycle, and no ranking over the "
                                 "cycle can be inferred"
                               : c->had_measure

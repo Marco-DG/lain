@@ -1966,6 +1966,16 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
+### tests/trust/recursion_through_own_pointer_ranked_pass.ln
+rc=0
+out=2
+at=const 2
+ty=Slice_u8 scalar
+### tests/trust/recursion_through_pointer_ranked_pass.ln
+rc=0
+out=40
+at=const 2
+ty=Slice_u8 scalar
 ### tests/trust/ref_binding_read_through_pass.ln
 rc=0
 out=10 5

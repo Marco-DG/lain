@@ -325,9 +325,10 @@ static CertFunc *cert_parse(FILE *in, char *err, size_t errn) {
                 M->k = CERT_M_REC; if (!cert_copy_name(M->rule, L.t[2], sizeof M->rule)) CERT_BAD("bad recursion measure");
                 i = 3;
             } else if (L.n >= 2 && !strcmp(L.t[1], "mutual")) {
-                // `mutual NAME POS NAME POS ...`: at least two functions, each with its position
+                // `mutual NAME POS NAME POS ...`: each function of the cycle with its position (one
+                // function alone when its cycle runs through a function pointer, I.136)
                 M->k = CERT_M_MUTUAL; strcpy(M->rule, "mutual");
-                if (L.n < 6 || (L.n - 2) % 2 || (L.n - 2) / 2 > CERT_SCC_MAX) CERT_BAD("bad mutual measure");
+                if (L.n < 4 || (L.n - 2) % 2 || (L.n - 2) / 2 > CERT_SCC_MAX) CERT_BAD("bad mutual measure");
                 for (int j = 2; j < L.n; j += 2) {
                     int64_t k;
                     if (!cert_int(L.t[j+1], &k) || k < 0 || k > 63) CERT_BAD("bad mutual measure");

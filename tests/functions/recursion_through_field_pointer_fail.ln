@@ -1,0 +1,18 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: Error Ln 8, Col 12: this call closes a mutual-recursion cycle
+// I.136. The same cycle, closed through a function pointer held in a struct FIELD: spin stores
+// itself in `h.cb` and run calls it. Accepted before, and it ran out of stack.
+type H { cb *func(u8) u8 }
+
+func run(h H, x u8) u8 {
+    return h.cb(x)
+}
+
+func spin(x u8) u8 {
+    var h = H(spin)
+    return run(h, x)
+}
+
+func main() i32 {
+    return spin(1) as i32
+}

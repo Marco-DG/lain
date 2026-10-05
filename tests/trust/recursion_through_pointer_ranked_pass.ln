@@ -1,0 +1,19 @@
+// I.136, the allowed side, run. A recursion cycle that closes through a function pointer is ranked
+// like any other cycle: spin passes itself to apply with x - 1, and apply calls it through `f` with
+// x unchanged, so x falls once per lap. It was accepted before for no reason (no obligation was
+// raised at all); it is accepted now because the cycle is ranked.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func apply(f *func(u8) u8, x u8) u8 {
+    return f(x)
+}
+
+func spin(x u8) u8 {
+    if x == 0 { return 40 }
+    return apply(spin, x - 1)
+}
+
+func main() i32 effects io {
+    libc_printf("%d\n", spin(3) as i32)
+    return 0
+}

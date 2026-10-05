@@ -1,0 +1,14 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: Error Ln 9, Col 12: this call through a function pointer can reach its own function again
+// I.136. A function that calls ITSELF through a pointer is a cycle of one function, which the
+// self-call rule (direct self-calls only) never saw: f(1) was ACCEPTED and ran out of stack. Its
+// indirect call is an edge back to f, and the edge does not lower x.
+func f(x u8) u8 {
+    if x == 0 { return 0 }
+    var g *func(u8) u8 = f
+    return g(x)
+}
+
+func main() i32 {
+    return f(1) as i32
+}

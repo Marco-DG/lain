@@ -125,6 +125,7 @@ typedef struct {
     // told which one failed: the loop answer is E082 and the recursive one is E011.
     bool     recursion;
     bool     mutual;         // the recursion is a CYCLE through another function, not a self-call
+    bool     via_pointer;    // ... or back to its own function through a function pointer (I.136)
     // Did the source write a `decreasing` clause? Annex B makes the CODE depend on it — E011
     // for a recursion with no inferable measure, E082 for one whose measure is present and
     // fails — so the engine has to carry the distinction to be normatively right.
@@ -4424,8 +4425,8 @@ static IrInstr *vra_self_call_site(IrFunc *f) {
     return NULL;
 }
 static bool vra_recursion_terminates(Vra *V, IrFunc *f);   // fwd — defined after the domain helpers
-static int  vra_cycle_members(IrFunc *f, IrFunc *mod, IrFunc **mem, int cap, IrInstr **site);  // fwd
-static bool vra_cycle_terminates(IrFunc **mem, int m, const CertMeasure *want);                  // fwd
+static int  vra_cycle_members(IrFunc *f, IrFunc *mod, IrFunc **mem, int cap, IrInstr **site, bool *via_pointer);  // fwd
+static bool vra_cycle_terminates(IrFunc *mod, IrFunc **mem, int m, const CertMeasure *want);                       // fwd
 
 // The function's entry state: each integer parameter's type interval, intersected with any
 // call-site binding. Factored out because the fixpoint now runs TWICE (see vpass) and pass 1
@@ -5263,10 +5264,10 @@ static Vra *vra_analyze(IrFunc *f) {
         // ranking a self-call alone says nothing about the cycle, and `a -> a, a -> b, b -> b,
         // b -> a` passed both self-call checks and never ended. The inner analyses the cycle rule
         // runs (vra_in_mutual_check) keep the self-call rule; their checks are not reported.
-        IrFunc *mem[CERT_SCC_MAX]; IrInstr *msite = NULL; int m = 1;
-        if (vra_mod && !vra_in_mutual_check) m = vra_cycle_members(f, vra_mod, mem, CERT_SCC_MAX, &msite);
+        IrFunc *mem[CERT_SCC_MAX]; IrInstr *msite = NULL; int m = 1; bool via_ptr = false;
+        if (vra_mod && !vra_in_mutual_check) m = vra_cycle_members(f, vra_mod, mem, CERT_SCC_MAX, &msite, &via_ptr);
         IrInstr *site = vra_self_call_site(f);
-        if (m == 1 && site) {
+        if (m == 1 && !via_ptr && site) {
             VraCheck c; memset(&c,0,sizeof c);
             c.kind = VRA_TERMINATION; c.recursion = true; c.at = site;
             c.had_measure = f->has_decreasing;
@@ -5275,7 +5276,7 @@ static Vra *vra_analyze(IrFunc *f) {
             if (V->certifying) vra_cert_measure(V, CERT_M_REC, -1, c.ok);
             if (vra_dump_measures_enabled) vra_print_measure(V, f, c.line, true, c.ok);
             vra_add_check(V, c);
-        } else if (m > 1 && msite) {
+        } else if ((m > 1 || via_ptr) && msite) {
             // ★ MUTUAL RECURSION IS AN ORDINARY OBLIGATION, raised here beside the self-call one
             // rather than as a bespoke diagnostic in report.h. That placement was not cosmetic: a
             // finding invented in the reporter is invisible to every other client, and
@@ -5285,6 +5286,7 @@ static Vra *vra_analyze(IrFunc *f) {
             // not being fuzzed at all.
             VraCheck c; memset(&c,0,sizeof c);
             c.kind = VRA_TERMINATION; c.recursion = true; c.mutual = true; c.at = msite;
+            c.via_pointer = (m == 1);
             c.had_measure = f->has_decreasing;
             c.line = msite->line; c.col = msite->col;
             if (V->checking) {                    // C.3a: only the positions the certificate states
@@ -5293,12 +5295,12 @@ static Vra *vra_analyze(IrFunc *f) {
                     if (V->checking->meas[q].k == CERT_M_MUTUAL) M = &V->checking->meas[q];
                 c.ok = false;
                 if (M) {
-                    c.ok = vra_cycle_terminates(mem, m, M);
+                    c.ok = vra_cycle_terminates(vra_mod, mem, m, M);
                     if (!c.ok) vra_check_fail(V, "the mutual measure it states does not rank the cycle through %.*s",
                                               (int)f->name->length, f->name->name);
                 }
             } else
-            c.ok = m <= CERT_SCC_MAX && vra_cycle_terminates(mem, m, NULL);   // a larger cycle fails closed
+            c.ok = m <= CERT_SCC_MAX && vra_cycle_terminates(vra_mod, mem, m, NULL);   // a larger cycle fails closed
             if (V->certifying && c.ok) {
                 CertMeasure *M = CERT_PUSH(V->cert->meas, V->cert->nmeas, V->cert->cmeas);
                 M->k = CERT_M_MUTUAL; strcpy(M->rule, "mutual");
@@ -5860,8 +5862,18 @@ static void vra_print_measure(Vra *V, IrFunc *f, isize line, bool rec, bool ok) 
 //   - `a` calling `b` twice was ranked on the first call, and the second one went the wrong way;
 //   - a function that also called ITSELF was given only the self-call rule, so `a -> a, a -> b,
 //     b -> b, b -> a` passed both self-call checks and looped through the pair for ever.
-// So the unit is f's strongly connected component of the direct-call graph: every function that f
-// reaches and that reaches f.
+// So the unit is f's strongly connected component of the call graph: every function that f reaches
+// and that reaches f.
+//
+// ★ AN INDIRECT CALL IS AN EDGE TOO (I.136). The graph was the DIRECT calls only, so a cycle that
+// closes through a function pointer drew no obligation at all: `func spin(x u8) u8 { return
+// apply(spin, x) }` with `apply` calling `f(x)` was accepted and ran out of stack. An indirect call
+// can reach any function whose address the program takes (an IR_FUNC_REF: lowering makes a
+// function value no other way) and whose parameter count matches the call's arguments, so it is an
+// edge to each of them. `*via_pointer` says that f reaches ITSELF through such an edge, which makes
+// f a cycle on its own: a component of one function that the self-call rule cannot see.
+// An extern that is handed a function and calls it back (qsort's comparator) is outside this graph:
+// an extern is a trusted boundary, and its row is believed, here as everywhere else.
 //
 // The call graph is built ONCE per module and its components with it (Tarjan's algorithm, run
 // iteratively: a deep call chain must not overflow the compiler's own stack). Every function's
@@ -5875,11 +5887,12 @@ typedef struct {
     int *hash, hcap;               // name -> index, open addressing
     int *off, *to; IrInstr **ecall;   // the calls of function k are edges off[k] .. off[k+1]
     int *comp;                     // the component of each function
+    bool *at;                      // its address is taken (I.136)
 } VraCallGraph;
 static VraCallGraph vra_cg;
 static void vra_cg_free(void) {
     free(vra_cg.idx); free(vra_cg.hash); free(vra_cg.off); free(vra_cg.to); free(vra_cg.ecall);
-    free(vra_cg.comp);
+    free(vra_cg.comp); free(vra_cg.at);
     memset(&vra_cg, 0, sizeof vra_cg);
 }
 static uint32_t vra_name_hash(const IrName *nm) {
@@ -5896,6 +5909,7 @@ static int vra_cg_lookup(const IrName *nm) {
         if (g && g->length == nm->length && !memcmp(g->name, nm->name, (size_t)nm->length)) return k;
     }
 }
+static int vra_param_count(IrFunc *g) { int n = 0; for (IrParam *p = g ? g->params : NULL; p; p = p->next) n++; return n; }
 static bool vra_cg_build(IrFunc *mod) {
     // The signature costs one step per FUNCTION, not per instruction: the analysis runs many times
     // per function (effects, nested call-site analyses), and a walk of every instruction at each
@@ -5914,34 +5928,47 @@ static bool vra_cg_build(IrFunc *mod) {
     G->hcap = 1; while (G->hcap < 2 * n) G->hcap <<= 1;
     G->idx = calloc((size_t)n, sizeof *G->idx); G->hash = malloc((size_t)G->hcap * sizeof *G->hash);
     G->off = calloc((size_t)n + 1, sizeof *G->off); G->comp = calloc((size_t)n, sizeof *G->comp);
-    if (!G->idx || !G->hash || !G->off || !G->comp) { vra_cg_free(); return false; }
+    G->at = calloc((size_t)n, sizeof *G->at);
+    int *np = calloc((size_t)n, sizeof *np);
+    if (!G->idx || !G->hash || !G->off || !G->comp || !G->at || !np) { free(np); vra_cg_free(); return false; }
     for (int h = 0; h < G->hcap; h++) G->hash[h] = -1;
     { int k = 0;
       for (IrFunc *g = mod; g; g = g->next, k++) {
-          G->idx[k] = g;
+          G->idx[k] = g; np[k] = vra_param_count(g);
           if (!g->name || vra_cg_lookup(g->name) >= 0) continue;   // a duplicate name resolves to the first
           uint32_t h = vra_name_hash(g->name) & (uint32_t)(G->hcap - 1);
           while (G->hash[h] >= 0) h = (h + 1) & (uint32_t)(G->hcap - 1);
           G->hash[h] = k;
       } }
+    // the functions whose address is taken: the targets an indirect call may reach (I.136)
+    int nat = 0;
+    for (int k = 0; k < n; k++)
+        for (IrBlock *b = G->idx[k]->blocks; b; b = b->next)
+            for (IrInstr *i = b->instrs; i; i = i->next)
+                if (i->op == IR_FUNC_REF && i->aux.callee) { int c = vra_cg_lookup(i->aux.callee); if (c >= 0 && !G->at[c]) { G->at[c] = true; nat++; } }
     long E = 0;
     for (int k = 0; k < n; k++)
         for (IrBlock *b = G->idx[k]->blocks; b; b = b->next)
             for (IrInstr *i = b->instrs; i; i = i->next)
-                if (i->op == IR_CALL && i->aux.callee) E++;
+                if (i->op == IR_CALL) E += i->aux.callee ? 1 : nat;
     G->to = calloc((size_t)E + 1, sizeof *G->to); G->ecall = calloc((size_t)E + 1, sizeof *G->ecall);
-    if (!G->to || !G->ecall) { vra_cg_free(); return false; }
+    if (!G->to || !G->ecall) { free(np); vra_cg_free(); return false; }
     { int e = 0;
       for (int k = 0; k < n; k++) {
           G->off[k] = e;
           for (IrBlock *b = G->idx[k]->blocks; b; b = b->next)
               for (IrInstr *i = b->instrs; i; i = i->next) {
-                  if (i->op != IR_CALL || !i->aux.callee) continue;
-                  int c = vra_cg_lookup(i->aux.callee);
-                  if (c >= 0) { G->to[e] = c; G->ecall[e] = i; e++; }
+                  if (i->op != IR_CALL) continue;
+                  if (i->aux.callee) {
+                      int c = vra_cg_lookup(i->aux.callee);
+                      if (c >= 0) { G->to[e] = c; G->ecall[e] = i; e++; }
+                  } else
+                      for (int c = 0; c < n; c++)
+                          if (G->at[c] && np[c] == i->n_operands - 1) { G->to[e] = c; G->ecall[e] = i; e++; }
               }
       }
       G->off[n] = e; }
+    free(np);
     // Tarjan, iteratively: index/low per function, an explicit DFS stack of (function, next edge)
     int *ix = malloc((size_t)n * sizeof *ix), *low = malloc((size_t)n * sizeof *low);
     int *st = malloc((size_t)n * sizeof *st), *cs = malloc((size_t)n * sizeof *cs), *ce = malloc((size_t)n * sizeof *ce);
@@ -5976,10 +6003,12 @@ static bool vra_cg_build(IrFunc *mod) {
     return true;
 }
 // f's component: its size (f included), written in module order to `mem` (at most `cap`; the size
-// is returned even when larger, and the caller fails closed). `*site` is f's first call to another
-// function of the component, where a diagnostic points.
-static int vra_cycle_members(IrFunc *f, IrFunc *mod, IrFunc **mem, int cap, IrInstr **site) {
+// is returned even when larger, and the caller fails closed). `*site` is f's first call that can
+// reach another function of the component, where a diagnostic points; `*via_pointer` says f
+// reaches ITSELF through an indirect call, a cycle of one function the self-call rule cannot see.
+static int vra_cycle_members(IrFunc *f, IrFunc *mod, IrFunc **mem, int cap, IrInstr **site, bool *via_pointer) {
     if (site) *site = NULL;
+    if (via_pointer) *via_pointer = false;
     if (!f || !mod || !vra_cg_build(mod)) return 1;
     int fi = -1;
     for (int k = 0; k < vra_cg.n && fi < 0; k++) if (vra_cg.idx[k] == f) fi = k;   // by identity, not name
@@ -5987,9 +6016,13 @@ static int vra_cycle_members(IrFunc *f, IrFunc *mod, IrFunc **mem, int cap, IrIn
     int count = 0, cf = vra_cg.comp[fi];
     for (int k = 0; k < vra_cg.n; k++)
         if (vra_cg.comp[k] == cf) { if (count < cap && mem) mem[count] = vra_cg.idx[k]; count++; }
-    for (int e = vra_cg.off[fi]; e < vra_cg.off[fi+1] && site && !*site; e++) {
+    for (int e = vra_cg.off[fi]; e < vra_cg.off[fi+1]; e++) {
         int c = vra_cg.to[e];
-        if (c != fi && vra_cg.comp[c] == cf) *site = vra_cg.ecall[e];
+        if (site && !*site && c != fi && vra_cg.comp[c] == cf) *site = vra_cg.ecall[e];
+        if (c == fi && !vra_cg.ecall[e]->aux.callee) {
+            if (via_pointer) *via_pointer = true;
+            if (count == 1 && site && !*site) *site = vra_cg.ecall[e];
+        }
     }
     return count;
 }
@@ -6074,7 +6107,7 @@ static bool vra_edge_shrinks(Vra *V, IrFunc *caller, IrInstr *call,
 typedef struct {
     IrFunc **mem; int m; int np[CERT_SCC_MAX];
     Vra *V[CERT_SCC_MAX];
-    int ne; int efrom[VRA_CYC_CALLS], eto[VRA_CYC_CALLS]; IrInstr *ecall[VRA_CYC_CALLS];
+    int ne; int efrom[VRA_CYC_CALLS], eto[VRA_CYC_CALLS], eshift[VRA_CYC_CALLS]; IrInstr *ecall[VRA_CYC_CALLS];
     unsigned char *memo; int moff[VRA_CYC_CALLS + 1];   // 0 unasked, 1 may grow, 2 does not grow, 3 falls
     int pos[CERT_SCC_MAX];
     long budget;
@@ -6082,8 +6115,9 @@ typedef struct {
 static int vra_cyc_edge(VraCyc *C, int e) {
     int a = C->efrom[e], b = C->eto[e], ka = C->pos[a], kb = C->pos[b];
     unsigned char *s = &C->memo[C->moff[e] + ka * C->np[b] + kb];
-    if (!*s) *s = !vra_edge_shrinks(C->V[a], C->mem[a], C->ecall[e], ka, kb, false) ? 1
-                : vra_edge_shrinks(C->V[a], C->mem[a], C->ecall[e], ka, kb, true) ? 3 : 2;
+    int j = kb + C->eshift[e];                  // an indirect call's operand 0 is the callee value
+    if (!*s) *s = !vra_edge_shrinks(C->V[a], C->mem[a], C->ecall[e], ka, j, false) ? 1
+                : vra_edge_shrinks(C->V[a], C->mem[a], C->ecall[e], ka, j, true) ? 3 : 2;
     return *s;
 }
 // (2): with every call non-increasing, do the calls that do not strictly fall form a cycle? Peel
@@ -6118,9 +6152,10 @@ static bool vra_cyc_search(VraCyc *C, int i) {
 
 // Can the component `mem[0..m)` be ranked? With `want` (C.3a), only the positions a certificate
 // states are judged, and the functions it names must be exactly the component, in module order.
-// On success the positions are left in vra_last_scc_pos for the certificate.
-static bool vra_cycle_terminates(IrFunc **mem, int m, const CertMeasure *want) {
-    if (!mem || m < 2 || m > CERT_SCC_MAX) return false;
+// On success the positions are left in vra_last_scc_pos for the certificate. A component of one
+// function reaches here only through a function pointer (I.136); its direct self-calls are edges too.
+static bool vra_cycle_terminates(IrFunc *mod, IrFunc **mem, int m, const CertMeasure *want) {
+    if (!mem || m < 1 || m > CERT_SCC_MAX) return false;
     if (want && want->nmem != m) return false;
     VraCyc *C = calloc(1, sizeof *C);
     if (!C) return false;
@@ -6133,17 +6168,25 @@ static bool vra_cycle_terminates(IrFunc **mem, int m, const CertMeasure *want) {
                      memcmp(want->mem[i], mem[i]->name->name, (size_t)mem[i]->name->length) ||
                      want->pos[i] >= C->np[i])) goto out;
     }
+    // which functions of the component have their address taken: an indirect call may reach those
+    bool at[CERT_SCC_MAX] = {false};
+    if (!vra_cg_build(mod)) goto out;
+    for (int q = 0; q < m; q++)
+        for (int k = 0; k < vra_cg.n; k++) if (vra_cg.idx[k] == mem[q]) { at[q] = vra_cg.at[k]; break; }
     for (int i = 0; i < m; i++)
         for (IrBlock *b = mem[i]->blocks; b; b = b->next)
             for (IrInstr *ins = b->instrs; ins; ins = ins->next) {
-                if (ins->op != IR_CALL || !ins->aux.callee) continue;
-                int j = -1;
-                for (int q = 0; q < m && j < 0; q++)
-                    if (mem[q]->name && mem[q]->name->length == ins->aux.callee->length &&
-                        !memcmp(mem[q]->name->name, ins->aux.callee->name, (size_t)ins->aux.callee->length)) j = q;
-                if (j < 0) continue;
-                if (C->ne >= VRA_CYC_CALLS) goto out;
-                C->efrom[C->ne] = i; C->eto[C->ne] = j; C->ecall[C->ne] = ins; C->ne++;
+                if (ins->op != IR_CALL) continue;
+                for (int j = 0; j < m; j++) {
+                    bool hit = ins->aux.callee
+                        ? (mem[j]->name && mem[j]->name->length == ins->aux.callee->length &&
+                           !memcmp(mem[j]->name->name, ins->aux.callee->name, (size_t)ins->aux.callee->length))
+                        : (at[j] && C->np[j] == ins->n_operands - 1);
+                    if (!hit) continue;
+                    if (C->ne >= VRA_CYC_CALLS) goto out;
+                    C->efrom[C->ne] = i; C->eto[C->ne] = j; C->ecall[C->ne] = ins;
+                    C->eshift[C->ne] = ins->aux.callee ? 0 : 1; C->ne++;
+                }
             }
     { size_t cells = 0;
       for (int e = 0; e < C->ne; e++) { C->moff[e] = (int)cells; cells += (size_t)C->np[C->efrom[e]] * (size_t)C->np[C->eto[e]]; }

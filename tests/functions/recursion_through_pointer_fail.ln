@@ -1,0 +1,18 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: Error Ln 9, Col 12: this call closes a mutual-recursion cycle
+// I.136. The recursion cycle closes through a FUNCTION POINTER: spin -> apply directly, apply -> spin
+// through `f`. The cycle walk followed direct calls only, so no obligation was raised and spin(1) was
+// ACCEPTED and ran out of stack. An indirect call is now an edge to every function whose address the
+// program takes with a matching parameter count, and the cycle is ranked like any other: x passes
+// through both calls unchanged, so nothing falls.
+func apply(f *func(u8) u8, x u8) u8 {
+    return f(x)
+}
+
+func spin(x u8) u8 {
+    return apply(spin, x)
+}
+
+func main() i32 {
+    return spin(1) as i32
+}

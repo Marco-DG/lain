@@ -1,0 +1,15 @@
+// I.136, the allowed side, run: a function that calls ITSELF through a pointer is a recursion cycle of
+// one function, ranked by the cycle rule (the self-call rule sees direct self-calls only). x falls
+// on the indirect call, so f ends. Its certificate states the one function and its position.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func f(x u8) u8 {
+    if x == 0 { return 2 }
+    var g *func(u8) u8 = f
+    return g(x - 1)
+}
+
+func main() i32 effects io {
+    libc_printf("%d\n", f(5) as i32)
+    return 0
+}
