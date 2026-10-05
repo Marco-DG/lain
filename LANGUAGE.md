@@ -106,6 +106,9 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `c_include` | Include a C header file |
 | `defer` | Defer execution until end of scope |
 | `comptime` | Compile-time branch — only `comptime if` is implemented (§20) |
+| `assert` | A fact the compiler must prove where it is written (§6.8) |
+| `assume` | A fact the compiler takes without proof, inside `unsafe` only (§6.8) |
+| `try` | Pass a union's marker on to the caller (§14.4) |
 
 > [!NOTE]
 > **Reserved**: `use` is recognised by the lexer and refused as an identifier or a field name; the
@@ -124,6 +127,8 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `*` | Multiplication / Pointer dereference |
 | `/` | Division |
 | `%` | Modulo |
+
+Each of `+ - * /` also has a wrapping (`+%`), a saturating (`+|`) and, except `/`, a checked (`+?`) form; §17 says when you need one.
 
 **Comparison operators:**
 | Operator | Description |
@@ -151,6 +156,7 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `~` | Bitwise NOT (complement) |
 | `<<` | Left shift |
 | `>>` | Right shift |
+| `<<%` | Left shift that discards the bits shifted out |
 
 **Assignment operators:**
 | Operator | Description |
@@ -164,6 +170,8 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `&=` | Bitwise AND and assign |
 | `\|=` | Bitwise OR and assign |
 | `^=` | Bitwise XOR and assign |
+| `<<=` | Left shift and assign |
+| `>>=` | Right shift and assign |
 
 > [!NOTE]
 > Compound assignments (`+=`, `-=`, etc.) are desugared by the parser into `x = x + expr` form.
@@ -171,12 +179,12 @@ The following identifiers are reserved keywords and cannot be used as variable o
 **Other punctuation:**
 | Symbol | Description |
 |:-------|:------------|
-| `(` `)` | Grouping, function calls, tuple construction |
+| `(` `)` | Grouping, function calls, construction (`Point(1, 2)`) |
 | `[` `]` | Array indexing, array/slice type syntax |
 | `{` `}` | Blocks, struct/ADT bodies |
 | `.` | Field access, module path separator |
 | `..` | Range (exclusive end) |
-| `..=` | Range (inclusive end, *reserved*) |
+| `..=` | Range (inclusive end) |
 | `...` | Variadic parameters (in `extern` declarations) |
 | `,` | Separator in lists |
 | `:` | Match arm separator, sentinel in slice types |
@@ -189,9 +197,11 @@ The following identifiers are reserved keywords and cannot be used as variable o
 42          // Decimal integer
 0           // Zero
 -1          // Negative (unary minus + literal)
+0xFF        // Hexadecimal: 255
+0b1010      // Binary: 10
+0o17        // Octal: 15
+1_000_000   // An underscore between digits is a separator, nothing more
 ```
-> [!WARNING]
-> Only decimal integer literals are currently supported. Hex, octal, and binary literals are not yet implemented.
 
 **Character literals:**
 ```lain
@@ -200,7 +210,7 @@ The following identifiers are reserved keywords and cannot be used as variable o
 '\0'        // Null character
 ```
 
-Recognized escape sequences: `\n` (0x0A), `\t` (0x09), `\r` (0x0D), `\0` (0x00), `\\` (0x5C), `\"` (0x22), `\'` (0x27).
+Recognized escape sequences: `\n` (0x0A), `\t` (0x09), `\r` (0x0D), `\0` (0x00), `\\` (0x5C), `\"` (0x22), `\'` (0x27), and `\xHH`, a byte given as exactly two hex digits (`\x41` is `A`).
 
 **String literals:**
 ```lain
@@ -248,7 +258,7 @@ var y = 20     // Without semicolon
 
 | Type | Description | C Equivalent |
 |:-----|:------------|:-------------|
-| `int` | Signed integer (platform-dependent, typically 32-bit) | `int` |
+| `int` | Alias of `i32` | `int32_t` |
 | `i8` | Signed 8-bit integer | `int8_t` |
 | `i16` | Signed 16-bit integer | `int16_t` |
 | `i32` | Signed 32-bit integer | `int32_t` |
@@ -257,13 +267,14 @@ var y = 20     // Without semicolon
 | `u16` | Unsigned 16-bit integer | `uint16_t` |
 | `u32` | Unsigned 32-bit integer | `uint32_t` |
 | `u64` | Unsigned 64-bit integer | `uint64_t` |
-| `isize` | Signed pointer-sized integer | `ptrdiff_t` |
-| `usize` | Unsigned pointer-sized integer | `size_t` |
+| `isize` | Signed pointer-sized integer | `int64_t` (64 bits in this implementation) |
+| `usize` | Unsigned pointer-sized integer | `uint64_t` (64 bits in this implementation) |
+| `i1` … `i64`, `u1` … `u64` | Any width from 1 to 64 bits (`u3`, `i12`) | the narrowest `intN_t` that holds it |
 
 > [!NOTE]
 > Fixed-width integer types require `<stdint.h>` in the generated C code (included automatically).
-> The type `int` is platform-dependent (typically 32-bit). Prefer `i32` for portable fixed-width semantics.
-> **Overflow Behavior**: Signed integer overflows result in two's complement wrap-around. The compiler injects `-fwrapv` automatically. Unsigned integers use modular arithmetic.
+> `int` is an alias of `i32`, identical in every respect.
+> **Overflow** is a compile-time error, not a wrap: an operation that may overflow is `[E086]` unless the compiler proves it cannot, and wrapping is written when it is meant (`+%`, §17).
 
 **Floating-point:**
 
@@ -342,7 +353,7 @@ Pointer types use the prefix `*` syntax:
 
 ```
 *int       // Pointer to int (shared, read-only)
-var *int   // Mutable pointer to int
+*var int   // Writable pointer to int
 mov *int   // Owned pointer (linear)
 *u8        // Pointer to u8 (C string compatible)
 *void      // Opaque pointer (like C's void*)
@@ -350,11 +361,11 @@ mov *int   // Owned pointer (linear)
 
 | Syntax | Mode | C Equivalent |
 |:-------|:-----|:-------------|
-| `*T` | Shared (read-only) | `const T*` |
-| `var *T` | Mutable | `T*` |
+| `*T` | Read-only: a write through it is `[E009]` | `T*` |
+| `*var T` | Writable | `T*` |
 | `mov *T` | Owned (linear) | `T*` |
 
-Raw pointer dereference and address-of (`&x`) are only allowed inside `unsafe` blocks (see §11).
+Reading or writing through a raw pointer is only allowed inside `unsafe` blocks (see §11). Taking an address, `&x`, is not: making a pointer is safe (§11.4).
 
 ### 2.4 Array Types
 
@@ -666,7 +677,6 @@ extern type FILE      // C's FILE struct
 **Rules:**
 - Can only be used as `*FILE`, never by value.
 - Instantiating by value (`var f FILE`) is a compile error.
-- Emitted as `typedef struct FILE FILE;` in the generated C code.
 
 ```lain
 extern type FILE
@@ -679,24 +689,11 @@ extern func fclose(stream mov *FILE) int
 The `void` keyword represents the absence of a value. It is exclusively used for declaring opaque pointers (`*void`, analogous to C's `void*`).
 Variables cannot be declared of type `void` (`var x void` is a compile error).
 
-### 2.11 Nested Types (Namespaces)
+### 2.11 Nested Types
 
-Types can be nested within other types to create logical namespaces.
-
-```lain
-type Token {
-    // ...
-}
-
-// Nested type definition using dot notation
-type Token.Kind {
-    Identifier,
-    Number,
-    String
-}
-```
-
-Nested types are accessed using the same dot notation: `var kind Token.Kind = Token.Kind.Identifier`.
+Not supported. `type Token.Kind { Identifier, Number }` is parsed, but nothing can name its
+variants (`Token.Kind.Identifier` is `[E128]`), so no value of the type can be made. Give the type a
+name of its own: `type TokenKind { Identifier, Number }`.
 
 ---
 
@@ -1060,8 +1057,17 @@ Lain enforces a "Read-Write Lock" model at compile time:
 
 **Conflict example (compile error):**
 ```lain
-// ERROR: Same variable borrowed as shared AND mutable in the same call
-modify_both(data, var data)
+type Data { v i32 }
+
+func modify_both(a Data, var b Data) {
+    b.v = a.v
+}
+
+func main() i32 {
+    var data = Data(1)
+    modify_both(data, var data)     // ERROR [E004]: shared AND mutable in one call
+    return 0
+}
 ```
 
 #### Two-Phase Borrows
@@ -1252,19 +1258,19 @@ func compute(a int >= 0 and <= 1000, b int >= 0 and <= 1000) int {
 
 ---
 
-## 5. Functions & Procedures
+## 5. Functions
 
 Lain enforces a strict boundary between pure computation and side effects.
 
-### 5.1 Pure Functions (`func`)
+### 5.1 Functions with the Empty Row
 
-Functions declared with `func` are **pure, deterministic, and guaranteed to terminate**.
-
-**Restrictions:**
-- Cannot modify global state.
-- Cannot call a function whose row names an effect this one's row does not.
-- Cannot recurse (direct recursion is a compile error).
-- Can only use `for` loops (over finite ranges) and bounded `while` loops with a termination measure. Unbounded `while` loops are banned.
+A function with no `effects` clause has the empty row, and is **pure, deterministic, and
+guaranteed to terminate**:
+- It modifies no global state; Lain has none.
+- It calls no function whose row names an effect its own row does not.
+- Its loops are `for` loops, or `while` loops whose termination the compiler can show (§6.3); an
+  unbounded `while` needs `effects diverge`.
+- It may recurse, when the compiler can see the recursion end (below).
 
 ```lain
 func add(a int >= 0 and <= 1000, b int >= 0 and <= 1000) int {
@@ -1360,8 +1366,9 @@ func p(s u8[:0]) {            // ERROR [E100]
 ```
 
 So all three spellings now lead to the row, and "one concern with three spellings" is a statement
-about the past rather than an aspiration. `@cold`, `@hot`, `@allocator` and `@noreturn` remain: they
-are not effects.
+about the past rather than an aspiration. The attributes `[cold]`, `[hot]`, `[allocator]` and
+`[noreturn]` remain, because they are not effects; their older spelling `@cold` is still accepted
+and is scheduled for removal.
 
 A **function-pointer type** carries a row in the same position, which is what replaced the two
 points `*func` (total and pure) and `*proc` (anything):
@@ -1455,7 +1462,7 @@ says. The left column is the default (no clause written):
 |:--------|:----------------|:----------------------|
 | `for` loops | allowed | allowed |
 | Bounded `while` (`decreasing`) | allowed | allowed |
-| Unbounded `while` | rejected (`E082`) | allowed under `effects diverge` |
+| Unbounded `while` | rejected (`E011`) | allowed under `effects diverge` |
 | Recursion | allowed **if a measure is inferred or given** | allowed under `effects diverge` |
 | Calling a function whose row has `io` | rejected (`E011`) | allowed under `effects io` |
 | Calling one that may `panic` | rejected (`E011`) | allowed under `effects raises` |
@@ -1754,7 +1761,7 @@ func main() i32 effects io {
 
 ### 6.5 Case (Pattern Matching)
 
-`case` is used for pattern matching on enums, ADTs, characters, and integer values. It can act as either a **statement** or an **expression**.
+`case` is used for pattern matching on enums, ADTs, characters, integers, `bool`s, strings (`"red":`) and unions (§14.2). It can act as either a **statement** or an **expression**.
 
 **Matching on an enum, and on an ADT with destructuring.** A variant's payload is bound
 positionally in the pattern; an enum match needs no `else`, because its patterns can name every
@@ -1799,36 +1806,41 @@ func main() i32 effects io {
 ```
 
 **Multiple patterns, ranges, and `case` as an expression.** Arms take comma-separated pattern
-lists and ranges (`start..end`, inclusive at both ends). As an expression every arm must yield the
+lists and ranges (`start..end` excludes `end`, `start..=end` includes it). As an expression every arm must yield the
 same type. An integer or character match **does** need `else`: no finite set of patterns can name
 every value of an integer type, and leaving it out is `[E014]`.
 
 ```lain
-import std.c.{libc_printf}
-
-func classify(character u8) effects io {
-    case character {
-        'a'..'z', 'A'..'Z': libc_printf("Alphabetical\n")
-        '0'..'9':           libc_printf("Digit\n")
-        '_', '-':           libc_printf("Symbol\n")
-        else:               libc_printf("Other\n")
+// VERIFY: exit 0
+func kind(c u8) i32 {
+    return case c {
+        'a'..='z', 'A'..='Z': 1        // ..= includes its end: 'z' is a letter
+        '0'..='9':            2
+        '_', '-':             3
+        else:                 0
     }
 }
 
 func label(width i32) u8[:0] {
     var size = case width {
-        1..10:  "Small"
-        11..50: "Medium"
-        else:   "Large"
+        1..=10:  "Small"
+        11..=50: "Medium"
+        else:    "Large"
     }
     return size
 }
 
-func main() i32 effects io {
-    classify('q')
+func main() i32 {
+    if kind('z') != 1 { return 1 }
+    if kind('9') != 2 { return 2 }
+    if kind('-') != 3 { return 3 }
+    if label(10) != "Small" { return 4 }
+    if label(11) != "Medium" { return 5 }
     return 0
 }
 ```
+
+Written with `..`, the same ranges would exclude `'z'`, `'9'` and `10`: `kind('z')` would be 0.
 
 Drop the `else` from an integer match and the program is refused:
 
@@ -1850,9 +1862,12 @@ func rank(x i32) i32 {
 ```
 
 **Case arms** can be:
-- A single expression: `Red: return 1`
-- A block: `Red: { libc_printf("red\n"); return 1 }`
-- Multiple patterns/ranges: `1, 2, 5..10: return 2`
+- One statement on the same line: `Red: return 1`
+- Several statements, one per line, starting on the line after the `:`. There are no braces: a `{`
+  after the `:` is `[E100]`.
+- Several patterns or ranges: `1, 2, 5..10: return 2`
+
+In a `case` *expression* an arm is one expression.
 
 #### Non-Consuming Match (`case &expr`)
 
@@ -1995,6 +2010,7 @@ func process_file() effects io, raises, alloc {
 2. They execute on all exit paths: fall-through, `return`, `break`, or `continue`.
 3. If control flow exits multiple scopes, the deferred statements of all exited scopes run, innermost scope first.
 4. Control may not leave a deferred statement: a `return`, or a `break`/`continue` aimed at a loop outside it, is `[E138]`.
+5. A `panic` runs no `defer`: it aborts the program at once, unlike Go's.
 
 Rule 1 is observable, so it is checked rather than asserted. Each iteration of the loop is a scope,
 and the `defer` registered *last* runs *first* — which is why the one that reads `b_done` sees it
@@ -2033,6 +2049,42 @@ func f() i32 {
 
 ```
 [E138] Error Ln 3, Col 11: `return` inside a deferred statement would leave it. A `defer` runs while its scope is being left, so it cannot start another exit.
+```
+
+### 6.8 `assert` and `assume`
+
+`assert P` states a fact the compiler must **prove** where it is written. It costs nothing at run
+time, and a predicate the analysis cannot discharge is `[E012]`. Its practical use is to say where
+a lost fact should be reported, instead of at whatever later line first needs it:
+
+```lain
+// VERIFY: exit 0
+func last(a u8[]) u8 {
+    if a.len > 0 {
+        n = a.len - 1
+        assert n < a.len
+        return a[n]
+    }
+    return 0
+}
+
+func main() i32 {
+    var t u8[3] = [7, 8, 9]
+    if last(t) != 9 { return 1 }
+    return 0
+}
+```
+
+`assume P` is the opposite: a fact the compiler **takes without proof**. Every proof after it
+depends on it being true, so it is allowed only inside `unsafe` (`[E129]` outside):
+
+```lain
+func ratio(x i32) i32 {
+    unsafe {
+        assume x > 0              // believed, not checked
+    }
+    return 10 / x                 // the divisor is proven non-zero from the assumption
+}
 ```
 
 ---
@@ -2246,8 +2298,10 @@ var n = 'A' as int        // char to int: 65
 The equality operators (`==` and `!=`) are only supported for:
 - Primitive numeric types (integers, `bool`)
 - Pointers
+- A slice against a **string literal**: `s == "red"` compares the bytes and the lengths
 
-Using `==` or `!=` directly on `struct`, `array`, or `ADT` instances is a **compile error**. Structural equality must be performed manually by comparing individual fields.
+Using `==` or `!=` on a `struct`, an array, any other slice, an enum, an ADT or a union is
+`[E012]`. Compare the fields, or match the value with `case`.
 
 ### 7.9 Numeric Conversions
 
@@ -2323,8 +2377,15 @@ because one signed quotient does not fit its operands' type — `TYPE_MIN / -1`.
 instead needs a fact that rules it out, such as `b int > 0`, or an explicit policy: `a /% b`
 wraps, `a /| b` saturates.)
 ```lain
-safe_div(10, 2)     // OK: 2 != 0
-safe_div(10, 0)     // ERROR: 0 violates b != 0
+func safe_div(a int, b int != 0) i64 {
+    return a / b
+}
+
+func main() i32 {
+    var ok = safe_div(10, 2)      // OK: 2 != 0
+    var bad = safe_div(10, 0)     // ERROR [E012]: 0 violates b != 0
+    return 0
+}
 ```
 
 **Supported constraint operators:**
@@ -2353,7 +2414,7 @@ func abs(x int >= -2147483647) int >= 0 {
 
 The compiler verifies that **all** return paths satisfy `result >= 0`:
 ```lain
-// ERROR: -1 does not satisfy >= 0
+// ERROR [E086]: -1 does not satisfy >= 0
 func bad_abs(x int) int >= 0 {
     return -1
 }
@@ -2675,21 +2736,31 @@ func rel(y Small, x Small) i32 {
 [E015] Error Ln 5, Col 16: divisor is not provably non-zero
 ```
 
-### 8.7 Loop Widening
+### 8.7 Facts After a Loop
 
-Variables modified within loops are **conservatively widened** to their type's full range after the loop:
+The analysis carries facts across a loop. A counter's final value is known after it, and so is a
+total accumulated at a fixed step:
 
 ```lain
-var x = 0
-for i in 0..10 {
-    x = x + 1
+// VERIFY: exit 0
+func main() i32 {
+    var x = 0
+    for i in 0..10 {
+        x = x + 1
+    }
+    assert x == 10                  // proven: the loop ran exactly 10 times
+    var t u8[10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    var j usize = 0
+    while j < 10 {
+        j = j + 1
+    }
+    if t[j - 1] != 9 { return 1 }   // j is 10 after the loop, so this is t[9]
+    return 0
 }
-// x is widened to [INT_MIN, INT_MAX] after the loop
-// Cannot prove x == 10 statically
 ```
 
-> [!WARNING]
-> This is a known limitation. Loop variables lose precision, making some post-loop constraints unverifiable. Future versions may support loop invariant annotations.
+What the analysis cannot bound across a loop, such as a total of values it knows nothing about,
+needs a bound from elsewhere: §17.3 shows the three places one can come from.
 
 ---
 
@@ -2707,7 +2778,7 @@ import tests.stdlib.dummy   // Loads tests/stdlib/dummy.ln
 import std.fs as fs         // Namespace aliasing
 ```
 
-If imported without `as`, all public declarations from the imported module are injected into the current global scope. If imported with `as`, they are accessed via the namespace prefix (e.g., `fs.open_file()`).
+An `import` makes the module's declarations available through the last segment of its path: after `import std.math`, write `math.max`. A bare `max` is `[E105]`, and the message names both remedies. `import std.math.{max, min}` brings the listed names in unqualified, and `import std.fs as fs` chooses the qualifier: `fs.open_file()`.
 
 ### 9.2 Flat Namespace & C Name Mangling
 
@@ -2865,7 +2936,7 @@ func main() int {
 
 ### 9.4 Name Resolution & Forward Declarations
 
-Lain uses a multi-pass compiler. Functions, procedures, and types can be referenced before they are declared in the source file. There is no need for forward declarations or header files.
+Lain uses a multi-pass compiler. Functions, types and module constants can be referenced before they are declared in the source file; a local cannot. There is no need for forward declarations or header files.
 
 ```lain
 func main() int { return helper() }
@@ -2926,14 +2997,13 @@ The `...` is only valid in `extern` function declarations.
 
 | Lain Type | C Type | Context |
 |:----------|:-------|:--------|
-| `int` | `int` | |
-| `u8` | `unsigned char` | |
-| `usize` | `size_t` | |
-| `*u8` (shared) | `const char *` | In extern parameters |
-| `var *u8` (mutable) | `char *` | In extern parameters |
-| `*T` (shared) | `const T*` | Default for shared references |
-| `var *T` | `T*` | Mutable references |
+| `int` | `int32_t` | The alias of `i32` |
+| `u8` | `uint8_t` | |
+| `usize` | `uint64_t` | 64 bits in this implementation |
+| `*u8`, `*T` | `uint8_t*`, `T*` | Read-only: the compiler refuses a write (`[E009]`) |
+| `*var u8`, `*var T` | `uint8_t*`, `T*` | Writable |
 | `mov *T` | `T*` | Owned pointer |
+| `T[]` | `struct { T* data; size_t len; }` | Passed as two parameters, the length first; not allowed in an `extern` (`[E131]`) |
 
 ---
 
@@ -2989,7 +3059,7 @@ it without proof, so suspending its check would make deductions false in safe co
 
 | check | code |
 |:------|:-----|
-| Pointer dereference and address-of | `[E060]` |
+| Pointer dereference, including a field read through a raw pointer | `[E060]` |
 | Pointer/integer casts | `[E012]` |
 | Direct ADT field access | `[E125]` |
 | Bounds verification | `[E085]` |
@@ -3175,8 +3245,8 @@ Lain eliminates entire classes of bugs at compile time without runtime overhead.
 | **Data Races** | Structurally impossible | Lain programs are single-threaded pre-1.0 — no concurrency model exists, so data races are not applicable. The Borrow Checker's exclusive-mutability rule still rules out aliasing-driven bugs intra-thread. Interrupt-aware concurrency (M2) is roadmapped. |
 | **Null Dereference** | Prevented | References are valid by construction. Raw pointer dereference requires `unsafe`. |
 | **Memory Leaks** | Prevented | Linear variables (`mov`) must be consumed. Forgetting to use or destroy a resource is a compile error. |
-| **Division by Zero** | Prevented | Type constraints (`b int != 0`) can enforce non-zero divisors at compile time. |
-| **Integer Overflow** | Documented | Signed overflow wraps (two's complement, `-fwrapv`). Unsigned overflow wraps (modular arithmetic). |
+| **Division by Zero** | Prevented | Every divisor must be proven non-zero (`[E015]`); a refinement such as `b int != 0` is how a caller supplies the proof. |
+| **Integer Overflow** | Prevented | An operation that may overflow is `[E086]` unless proven not to; wrapping and saturation are written when meant (`+%`, `+|`, §17). |
 
 ---
 
@@ -3195,7 +3265,7 @@ and it is reconciled against the compiler's own strings by a gate.
 | `[E004]` | Borrow conflict | A mutable borrow conflicts with an existing borrow |
 | `[E005]` | Use of an uninitialised value | A read on a path that did not write it (definite initialisation) |
 | `[E007]` | Implicit move | A linear value transferred to a `mov` parameter without writing `mov` |
-| `[E008]` | Move of a borrowed value | Moving a value that is currently borrowed |
+| `[E008]` | Move of a borrowed value | Borrowing and moving the same value in one call, `f(x, mov x)`; a move while a held borrow is live is `[E004]` |
 | `[E009]` | Illegal mutation | Assigning to an immutable binding, or mutating through a raw pointer in safe code |
 | `[E010]` | Dangling reference | A reference that would outlive the value it borrows (`return var` of a local) |
 | `[E011]` | Unacknowledged effect | the body has an effect the row does not name, and no row was written; also an unbounded `while` or a recursion with no measure |
@@ -3235,7 +3305,7 @@ line you then had to go and look up.
  .ln source -> [Lain Compiler] -> out.c -> [C Compiler] -> executable
 ```
 
-All safety checks occur during compilation. The generated C99 code contains no runtime checks.
+All safety checks occur during compilation. The generated C99 code contains no check the program did not write: the only run-time tests are the ones it asks for (`+?`, `as?` with `else`, `panic`).
 
 ### 13.2 Building the Compiler
 
@@ -3305,22 +3375,246 @@ Tests are organized under `tests/` and run via `run_tests.sh`:
 
 ## 14. Error Model
 
-Lain does **not** have exceptions, `try`/`catch`, or stack unwinding. All error paths are explicit through return values and ADTs.
+Lain has no exceptions, no stack unwinding and no `catch`. A function that can fail says so in its
+return type, and the caller cannot reach the result without deciding what happens on failure. The
+one construct for this is the **union type**, `T | markers`, and three operators work on it:
+`case` and `if` to test it, `else` to handle it, and `try` to pass it on.
 
-### 14.1 Error Handling Strategies
+### 14.1 Union Types: a Value or a Marker
 
-| Strategy | When to use | Overhead |
-|:---------|:------------|:---------|
-| **Return codes** (`int`) | Simple pass/fail, low-level code | Zero |
-| **`Option(T)`** | Value may be absent; forces caller to handle both cases | Zero |
-| **`Result(T, E)`** | Success or failure with error info | Zero |
-| **`defer`** | Deterministic cleanup regardless of exit path | Zero |
-| **Linear types** | Prevent resource leaks at compile time | Zero |
+`T | M1 | M2` holds either a value of `T` or one of the **markers** `M1`, `M2`. A marker is just a
+name. Writing it in a union type declares it, and nothing else is needed:
 
-### 14.2 The `Option` and `Result` Pattern
+```lain
+// VERIFY: exit 0
+func find(p *u8, ok bool) *u8 | NotFound {
+    if ok { return p }            // a *u8 converts to the union
+    return NotFound               // the marker
+}
 
-`Option(T)` and `Result(T, E)` are ordinary generic ADTs from the standard library — `Some`/`None`
-and `Ok`/`Err` — so a `case` on one is exhaustive by the rules of §6.6, with no special syntax:
+func main() i32 {
+    var r *u8 | NotFound = find("x", false)
+    var got = 9
+    case r {
+        NotFound: got = 0
+        else: got = 1
+    }
+    if got != 0 { return 1 }
+    return 0
+}
+```
+
+Absence is the same construct: `*u8 | none` is a pointer or nothing, and `none` is an ordinary
+marker. A marker can also carry data, `T | ParseErr(line i32)`, written `ParseErr(42)` and taken
+apart in a `case` arm as `ParseErr(line)`.
+
+A local that holds a union must have its type written out: `var r = find("x", false)` is
+`[E012]`.
+
+### 14.2 Testing a Union
+
+A union is not a value of its value type, since it may hold a marker. Using it as one before a
+test has ruled the markers out is `[E063]`:
+
+```lain
+func first(x *u8 | none) *u8 {
+    return x                      // ERROR [E063]: x may be none
+}
+```
+
+Two tests rule the markers out. `if x` is true exactly when `x` holds a value, and inside that
+branch `x` *is* the value:
+
+```lain
+// VERIFY: exit 0
+func pick(x *u8 | none, d *u8) *u8 {
+    if x { return x }             // here x holds a value
+    return d
+}
+
+func main() i32 {
+    var d u8[:0] = "d"
+    var a *u8 | none = none
+    if pick(a, d.data) != d.data { return 1 }   // none: the default
+    return 0
+}
+```
+
+A `case` lists the markers. The value is matched by `else:`, which is therefore required, and
+a payload marker's fields are bound by name:
+
+```lain
+// VERIFY: exit 0
+func parse(x i32, bad bool) i32 | ParseErr(line i32) {
+    if bad { return ParseErr(42) }
+    return x
+}
+
+func main() i32 {
+    var r i32 | ParseErr(line i32) = parse(7, true)
+    var line_seen i32 = 0
+    case r {
+        ParseErr(line): line_seen = line
+        else: line_seen = -1
+    }
+    if line_seen != 42 { return 1 }
+    return 0
+}
+```
+
+### 14.3 Handling a Failure: `else`
+
+`u else h` is the value of `u` when it holds one, and otherwise decided by `h`:
+
+| Form | On a marker |
+|:-----|:------------|
+| `u else f` | the result is `f`, which must have the value type |
+| `u else return v` | the function returns `v` (its `defer`s run, as for any `return`) |
+| `u else panic("why")` | the program aborts; the function's row must include `raises` |
+
+```lain
+// VERIFY: exit 0
+type Small = u8 < 200
+
+func get(ok bool) Small | NotFound {
+    if ok {
+        var v Small = 7
+        return v
+    }
+    return NotFound
+}
+
+func or_zero(ok bool) Small {
+    return get(ok) else 0                  // a fallback
+}
+
+func or_leave(ok bool) Small | Failed {
+    v = get(ok) else return Failed         // NotFound leaves as Failed
+    return v
+}
+
+func main() i32 {
+    if or_zero(true) != 7 { return 1 }
+    if or_zero(false) != 0 { return 2 }
+    var a Small | Failed = or_leave(false)
+    var got = 9
+    case a {
+        Failed: got = 0
+        else: got = 3
+    }
+    if got != 0 { return 3 }
+    return 0
+}
+```
+
+`else` binds more loosely than any other operator: `a + b else c` is `(a + b) else c`. On a value
+that is not a union it is `[E066]`.
+
+### 14.4 Passing a Failure On: `try`
+
+`try u` is the value of `u`, and on a marker the enclosing function returns that marker, with its
+data and after running its `defer`s. The function's return type must list every marker `u` can
+hold, and may list more:
+
+```lain
+// VERIFY: exit 0
+func open_it(p *u8, ok bool) *u8 | NotFound {
+    if ok { return p }
+    return NotFound
+}
+
+func check(p *u8, ok bool) *u8 | Denied {
+    if ok { return p }
+    return Denied
+}
+
+func load(p *u8, a bool, b bool) *u8 | NotFound | Denied {
+    f = try open_it(p, a)      // on NotFound, load returns NotFound
+    g = try check(f, b)        // on Denied, load returns Denied
+    return g
+}
+
+func main() i32 {
+    var r *u8 | NotFound | Denied = load("x", true, false)
+    var got = 9
+    case r {
+        NotFound: got = 1
+        Denied: got = 0
+        else: got = 2
+    }
+    if got != 0 { return 1 }
+    return 0
+}
+```
+
+A marker the return type does not list is `[E065]`, and the message names it:
+
+```lain
+func open_it(p *u8, ok bool) *u8 | NotFound | Denied {
+    if ok { return p }
+    return Denied
+}
+
+func read_cfg(p *u8) *u8 | NotFound {
+    f = try open_it(p, true)      // ERROR [E065]: Denied is not a marker of *u8 | NotFound
+    return f
+}
+```
+
+A `try` or an `else return` inside a `defer` is `[E138]`: it would leave the deferred statement
+the way a `return` does.
+
+### 14.5 Checked Operators
+
+`a +? b`, `a -? b`, `a *? b` and `x as? T` compute what `+`, `-`, `*` and `as` compute, but on
+overflow, or on a value `T` cannot hold, they fail instead. The failure must be handled on the
+spot with `else`, and no union is ever stored (§17):
+
+```lain
+// VERIFY: exit 0
+func main() i32 effects raises {
+    var a i32 = 2000000000
+    s = a +? a else 0                  // overflows: the fallback
+    if s != 0 { return 1 }
+    var big i32 = 300
+    n = big as? u8 else 255            // 300 does not fit a u8
+    if n != 255 { return 2 }
+    var k i32 = 7
+    p = k *? k else panic("overflow")  // fits: 49
+    if p != 49 { return 3 }
+    return 0
+}
+```
+
+A checked operator with no `else` is `[E067]`.
+
+### 14.6 What a Union Costs
+
+Nothing, when its markers carry no data. The union occupies exactly its value type's storage,
+and each marker sits in a bit pattern the value type cannot hold: the zero page of a pointer, the
+values a refinement excludes, the patterns of a `bool` other than 0 and 1. `*u8 | NotFound |
+Denied` is one pointer, and with `type Small = u8 < 200`, `Small | NotFound | Denied` is one byte:
+
+```lain
+// VERIFY: exit 0
+type Small = u8 < 200
+
+func main() i32 {
+    if @sizeof(Small | NotFound | Denied) != 1 { return 1 }
+    if @sizeof(*u8 | NotFound | Denied) != 8 { return 2 }
+    return 0
+}
+```
+
+A value type with no spare patterns cannot hold a marker for free. Lain then refuses the union
+rather than add a hidden tag: `i32 | none` is `[E064]`, and a refined alias makes the room. A
+union whose markers carry data may need a tag, and the compiler says so with `[W120]`.
+
+### 14.7 `Option` and `Result`
+
+`Option(T)` and `Result(T, E)` are ordinary generic ADTs from the standard library (`Some`/`None`
+and `Ok`/`Err`), for code that wants a named sum. A `case` on one is exhaustive by the rules of
+§6.6, with no special syntax:
 
 ```lain
 // VERIFY: exit 0
@@ -3341,8 +3635,6 @@ func main() i32 {
     return 0
 }
 ```
-
-Combined with `case` pattern matching, this provides type-safe error handling and forces the caller to acknowledge the failure path.
 
 ---
 
@@ -3581,11 +3873,23 @@ rather than a believed one.
 
 ## 18. Visibility & Modules
 
-### 18.1 All-Public by Default
+### 18.1 Public by Default, `[private]` When Marked
 
-Currently, **all** top-level declarations (functions, procedures, types, global variables) are public and visible to any module that imports them. There is no `private` or module-scoped visibility.
+A top-level declaration is visible to every module that imports its own. Marked `[private]`, it is
+visible only inside its module, and a use from another module is `[E084]`:
 
-### 18.2 A visibility system is not designed yet
+```lain
+[private]
+func helper() i32 {
+    return 1
+}
+
+func api() i32 {
+    return helper() + 1           // the same module: allowed
+}
+```
+
+### 18.2 `export` is not a keyword
 
 There is no `export`, and **`export` is not a reserved word** — it appears nowhere in the compiler
 and is usable today as an ordinary identifier:
@@ -3602,9 +3906,8 @@ func main() i32 {
 It is equally usable as a function name — though not both at once in one program, since §3.6's
 rule against shadowing covers a local that would hide a function.
 
-So a future visibility system has no syntax waiting for it, and naming it here would only commit
-the design in advance. §1.1's reserved-word note is the authority on what is actually reserved:
-today that is `use` alone.
+So `[private]` is the whole visibility system, and no other syntax is waiting for one. §1.1 lists
+every keyword; of the names a future design might want, only `use` is one.
 
 ---
 
@@ -3627,6 +3930,35 @@ Lain does not enforce any particular text encoding. String literals are stored a
 
 ```lain
 var s = "café"       // .len = 5 (4 ASCII bytes + 1 two-byte UTF-8 char)
+```
+
+### 19.3 Comparing Strings
+
+A string compares against a **string literal** with `==` and `!=`, byte by byte and length
+included, and a `case` matches string literals the same way. Two slices that are not literals
+have no `==` (`[E012]`); compare them in a loop.
+
+```lain
+// VERIFY: exit 0
+func is_red(s u8[]) bool {
+    return s == "red"
+}
+
+func kind(s u8[]) i32 {
+    return case s {
+        "red": 1
+        "blue": 2
+        else: 0
+    }
+}
+
+func main() i32 {
+    if !is_red("red") { return 1 }
+    if is_red("reds") { return 2 }            // a longer string is not equal
+    if kind("blue") != 2 { return 3 }
+    if kind("blu") != 0 { return 4 }          // nor is a prefix
+    return 0
+}
 ```
 
 ---
@@ -3726,8 +4058,8 @@ func main() i32 {
 > [!NOTE]
 > Whether an instantiation is tag-free depends on its payload. `Option(*u8)` packs into a single
 > pointer using the null niche; `Option(i32)` has no spare bit pattern, so it falls back to a tag
-> byte and says so with `[W120]`. The `G(u8[4])` above warns for the same reason. See §7 for
-> layout and the niche rules.
+> byte and says so with `[W120]`. The `G(u8[4])` above warns for the same reason. §14.6 states
+> the rule for unions, which is the same one.
 
 ---
 
@@ -3892,17 +4224,22 @@ func scan_until(src u8[:0], delim u8) usize {
 | Syntax | Description | Example |
 |:-------|:------------|:--------|
 | `T` | Named/primitive type | `int`, `Point` |
-| `*T` | Shared pointer to T (read-only) | `*u8`, `*FILE` |
-| `var *T` | Mutable pointer to T | `var *int` |
+| `*T` | Raw pointer, read-only | `*u8`, `*FILE` |
+| `*var T` | Raw pointer, writable | `*var int` |
 | `mov *T` | Owned pointer (linear) | `mov *FILE` |
+| `*func(P) R effects ..` | Function pointer, with its row | `*func(i32) i32 effects io` |
 | `T[N]` | Fixed-size array | `int[10]`, `u8[256]` |
-| `T[]` | Slice (fat pointer) | `int[]`, `u8[]` |
+| `T[]` | Slice (pointer and length) | `int[]`, `u8[]` |
+| `T[n]`, `T[>= n]` | Slice whose length is constrained | `i32[n]`, `u8[>= 2]` |
 | `T[:S]` | Sentinel-terminated slice | `u8[:0]` (string) |
+| `T \| M1 \| M2` | A value or a marker (§14) | `*u8 \| none`, `i32 \| ParseErr(line i32)` |
+| `type N = T < k` | Refined alias | `type Small = u8 < 200` |
 | `T type` | Type parameter (§20) | `func id(T type, x T) T` |
 | `var T` | Mutable borrow / mutable param | `var int`, `var Point` |
 | `mov T` | Owned type (in params/returns) | `mov File` |
 | `type` | Meta-type (a type as a value) | `T type` in a parameter list |
 | `*void` | Opaque pointer (like C's `void*`) | `malloc` return |
+| `u8x16`, `Vec(N, T)` | SIMD vector | `f32x8` |
 
 ---
 
@@ -3918,14 +4255,16 @@ func scan_until(src u8[:0], delim u8) usize {
 | `case` | Pattern matching (§6.5) |
 | `comptime` | Compile-time branch, `comptime if` (§20) |
 | `continue` | Loop iteration skip |
-| `decreasing` | Termination measure for bounded `while` in `func` (§6.3) |
+| `decreasing` | Termination measure, on a `while` loop (§6.3) or a recursive function (§5.1) |
+| `assert` | A fact the compiler must prove (§6.8) |
+| `assume` | A fact taken without proof, inside `unsafe` only (§6.8) |
+| `try` | Pass a union's marker on to the caller (§14.4) |
 | `defer` | Deferred cleanup (§6.7) |
 | `else` | Default branch |
 | `extern` | C interop declarations |
 | `false` | Boolean false literal |
 | `for` | Range-based loop |
-| `func` | Pure function |
-| `fun` | Alias for `func` |
+| `func` | Function (pure unless its effect row says otherwise) |
 | `if` | Conditional |
 | `import` | Module import |
 | `in` | Range iteration / membership in a range or a list of constants (§8.3): a constraint, or a bounds-proving condition |
@@ -3948,12 +4287,13 @@ authority; this list exists only because an appendix that contradicts it is wors
 **Primitive types:**
 | Type | Description |
 |:-----|:------------|
-| `int` | Platform-dependent signed integer |
+| `int` | Alias of `i32` |
 | `i8`, `i16`, `i32`, `i64` | Signed fixed-width integers |
 | `u8`, `u16`, `u32`, `u64` | Unsigned fixed-width integers |
+| `i1` … `i64`, `u1` … `u64` | Any width from 1 to 64 bits |
 | `isize` | Signed pointer-sized integer |
 | `usize` | Unsigned pointer-sized integer |
-| `f32` | 32-bit floating-point |
+| `f32`, `float` | 32-bit floating-point (`float` is an alias) |
 | `f64` | 64-bit floating-point |
 | `bool` | Boolean type |
 
@@ -3968,108 +4308,13 @@ as an ordinary identifier and as a struct field name; only `use` is actually ref
 
 Planned for explicit precondition and postcondition blocks. Constraints are expressed inline on parameter and return types today (§8).
 
-### `..=` — Inclusive Range
-
-Planned for inclusive ranges. Only `..` (exclusive end) exists today.
-
-### `export` — Visibility System
-
-Planned for a module visibility system enabling `private` declarations.
-
 ---
 
-## Appendix D: Grammar Summary (Pseudo-BNF)
+## Appendix D: Grammar
 
-```
-program         = { top_level_decl } ;
-
-top_level_decl  = import_decl | c_include_decl | extern_decl
-                | type_decl | var_decl | func_decl ;
-
-import_decl     = "import" module_path ;
-module_path     = IDENT { "." IDENT } ;
-
-c_include_decl  = "c_include" STRING_LITERAL ;
-
-extern_decl     = "extern" ( "type" IDENT
-                           | "func" IDENT "(" param_list ")" [type_expr]
-                             [ "in" IDENT ] [ effects_clause ] ) ;
-
-type_decl       = "type" IDENT "{" type_body "}" ;
-type_body       = { field_decl | variant_decl } ;
-field_decl      = ["mov"] IDENT type_expr ;
-variant_decl    = IDENT [ "{" field_list "}" ] ;
-
-func_decl       = "func" IDENT "(" param_list ")" [type_expr [constraints]]
-                  [ effects_clause ] [ "decreasing" expr ] block ;
-
-(* The clause order is fixed: return type, then its refinement, then the effect row, then the
-   termination measure. Each clause qualifies the one before it. *)
-effects_clause  = "effects" [ effect_name { "," effect_name } ] ;
-effect_name     = "io" | "diverge" | "raises" | "alloc" ;
-
-param_list      = [ param { "," param } ] ;
-param           = ["var" | "mov"] IDENT type_expr [constraints] ;
-
-constraints     = constraint { "and" constraint } ;
-constraint      = ("!=" | "==" | "<" | ">" | "<=" | ">=") expr
-                | "in" IDENT ;
-
-type_expr       = IDENT                      (* named type *)
-                | "*" type_expr              (* pointer *)
-                | type_expr "[" NUMBER "]"   (* array *)
-                | type_expr "[" "]"          (* slice *)
-                | type_expr "[" ":" expr "]" (* sentinel slice *) ;
-
-block           = "{" { statement } "}" ;
-
-statement       = var_decl | assignment | return_stmt | if_stmt
-                | for_stmt | while_stmt | case_stmt | break_stmt
-                | continue_stmt | defer_stmt | unsafe_block | expr_stmt ;
-
-defer_stmt      = "defer" block ;
-
-var_decl        = ["var"] IDENT [type_expr] "=" expr ;
-assignment      = lvalue assign_op expr ;
-assign_op       = "=" | "+=" | "-=" | "*=" | "/=" | "%="
-                | "&=" | "|=" | "^=" ;
-
-return_stmt     = "return" ["mov" | "var"] [expr] ;
-break_stmt      = "break" ;
-continue_stmt   = "continue" ;
-
-if_stmt         = "if" expr block { "else" "if" expr block } [ "else" block ] ;
-for_stmt        = "for" IDENT ["," IDENT] "in" expr ".." expr block ;
-while_stmt      = "while" expr [ "decreasing" expr ] block ;
-
-case_stmt       = "case" ["&"] expr "{" { case_arm } "}" ;
-case_arm        = pattern ":" (expr | block) ;
-pattern         = IDENT [ "(" pattern_list ")" ]
-                | NUMBER | CHAR_LITERAL
-                | NUMBER ".." NUMBER
-                | "else" ;
-
-unsafe_block    = "unsafe" block ;
-
-expr            = literal | IDENT | expr binop expr | unop expr
-                | expr "." IDENT | expr "[" expr "]"
-                | expr "(" arg_list ")"
-                | IDENT "." IDENT [ "(" arg_list ")" ]
-                | "mov" expr | "(" expr ")" ;
-
-binop           = "+" | "-" | "*" | "/" | "%" | "==" | "!="
-                | "<" | ">" | "<=" | ">=" | "in" | "and" | "or"
-                | "&" | "|" | "^" | "<<" | ">>" ;
-
-unop            = "-" | "!" | "~" | "*" ;
-
-literal         = NUMBER | CHAR_LITERAL | STRING_LITERAL ;
-```
-
-> [!WARNING]
-> This grammar is a simplified approximation. The actual parser may accept or reject certain constructs not captured here. The grammar is intended as a reference, not a formal specification.
-
----
+The grammar is specified once, in the specification's Annex A (`spec/grammar.tex`), which is
+checked against the parser production by production. A second copy here would drift, as the one
+that stood here did.
 
 ## Appendix E: Compiler Flags
 

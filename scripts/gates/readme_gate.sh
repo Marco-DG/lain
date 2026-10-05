@@ -117,7 +117,7 @@ if [ "$blockquoted" -ne 0 ]; then
     exit 1
 fi
 
-ok=0 fail=0 expfail_ok=0 expfail_bad=0 unchecked=0
+ok=0 fail=0 expfail_ok=0 expfail_bad=0 expfail_code=0 unchecked=0
 unchecked_readme=0 unchecked_lang=0 unchecked_other=0 falseclaim=0 synopsis=0
 verify_n=0 verify_bad=0 accounting_bad=0 unchecked_usage=0
 for f in "$TMP"/b*.txt; do
@@ -239,7 +239,23 @@ for f in "$TMP"/b*.txt; do
         continue
     fi
     if [ $expect_fail -eq 1 ]; then
-        if [ $rc -ne 0 ]; then expfail_ok=$((expfail_ok+1))
+        if [ $rc -ne 0 ]; then
+            # ★ FAILING IS NOT ENOUGH: THE BLOCK MUST FAIL FOR THE REASON IT NAMES. A block marked
+            # `// ERROR [E012]` passed on any non-zero exit, and five did on an unrelated one: a
+            # parse error, or a name the fragment never declared (2026-10-03). So a block names its
+            # code, and the compiler's output must carry that code.
+            named=$(echo "$body" | grep -oE '//.*' | grep -oE 'E[0-9]{3}' | sort -u)
+            hit=0
+            for c in $named; do echo "$out" | grep -q "\[$c\]" && hit=1; done
+            if [ -z "$named" ]; then
+                expfail_code=$((expfail_code+1))
+                echo "  ★ $page:$ln — an ERROR block that names no code; it fails with $(echo "$out" | grep -m1 -oE '^\[E[0-9]{3}\]'): name it"
+            elif [ $hit -eq 0 ]; then
+                expfail_code=$((expfail_code+1))
+                echo "  ★ $page:$ln — names $(echo $named) but fails with: $(echo "$out" | grep -m1 -E '^\[E' | cut -c1-110)"
+            else
+                expfail_ok=$((expfail_ok+1))
+            fi
         else
             expfail_bad=$((expfail_bad+1))
             echo "  ★ $page:$ln — block says it is an ERROR, compiler ACCEPTS it"
@@ -400,6 +416,7 @@ echo "  compile as documented   : $ok"
 echo "  REJECTED but documented : $fail      ← the README is wrong here"
 echo "  illustrate an error, and do fail : $expfail_ok"
 echo "  illustrate an error, but COMPILE : $expfail_bad   ← the README is wrong here too"
+echo "  fail, but not with the code named : $expfail_code   ← verified by accident"
 # Split by PAGE, because the two are held to different standards and the combined number reads
 # as a regression on the one that is clean. README.md is the showcase and its count is 0 by
 # policy; LANGUAGE.md is the old manual and its count is a backlog. Reading "66" against a
@@ -433,13 +450,13 @@ echo "  blocks claiming an exit value : $verify_n, wrong : $verify_bad   ← run
 # loop has several `continue` paths, so a block silently counted nowhere would show up as a smaller
 # "compile as documented" and nothing else: a claim that stopped being checked, reported as calm.
 extracted=$(cat "$TMP/EXTRACTED" 2>/dev/null || echo 0)
-bucket_sum=$((ok + fail + expfail_ok + expfail_bad + unchecked + synopsis))
+bucket_sum=$((ok + fail + expfail_ok + expfail_bad + expfail_code + unchecked + synopsis))
 if [ "$bucket_sum" -ne "$extracted" ]; then
     echo "  ★ $extracted blocks extracted but $bucket_sum judged — $((extracted - bucket_sum)) fell through"
     accounting_bad=1
 fi
 echo "  blocks extracted, all accounted for : $extracted"
 echo "=================================================================="
-[ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] \
+[ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $expfail_code -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] \
     && [ $verify_bad -eq 0 ] && [ $accounting_bad -eq 0 ] && [ $code_bad -eq 0 ] \
     && [ $undoc_bad -eq 0 ] && [ $usage_bad -eq 0 ] && exit 0 || exit 1
