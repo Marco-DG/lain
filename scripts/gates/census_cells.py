@@ -1575,6 +1575,31 @@ for label, decls, body, exp, plan in (
     add("wrapping-literal-operands", label, _wl(decls, body), exp, plan=plan)
 
 
+# ── axis: each boundary where a wrapping operation on literals takes the destination's type (I.141) ───
+# Since I.141, a wrapping operation (`+% -% *% /% <<%`, nested) whose every leaf is an integer literal
+# that is a value of the destination type takes that type at the boundary and wraps there. The rule
+# names six boundaries, and each is reached by its own path, so each has a cell: a declaration (the row
+# above), an assignment, an argument, a return, a struct field and an array element. A signed type and a
+# nested expression cross them, and the limit is the last cell: 300 is no u8, so `300 +% 10` in a u8
+# is not a wrap at u8 and stays refused.
+_PXW = '    libc_printf("%d\\n", x as i32)\n'
+def _wb(decls, body):
+    return decls + 'func main() i32 effects io {\n' + body + '    return 0\n}\n'
+# DERIVED: 260 mod 256 = 4; 300 mod 256 = 44; 127 + 1 wraps to -128 in i8; 16 * 16 = 256 wraps to 0,
+# and 0 + 3 = 3.
+assert (250 + 10) % 256 == 4 and (200 + 100) % 256 == 44 and (16 * 16 + 3) % 256 == 3
+for label, decls, body, exp in (
+        ("an assignment", '', '    var x u8 = 0\n    x = 250 +% 10\n' + _PXW, "4\n"),
+        ("an argument", 'func id(v u8) u8 {\n    return v\n}\n', '    x = id(200 +% 100)\n' + _PXW, "44\n"),
+        ("a return", 'func four() u8 {\n    return 250 +% 10\n}\n', '    x = four()\n' + _PXW, "4\n"),
+        ("a struct field", 'type B {\n    v u8\n}\n', '    b = B(250 +% 10)\n    x = b.v\n' + _PXW, "4\n"),
+        ("an array element", '', '    var a u8[2] = [250 +% 10, 1]\n    x = a[0]\n' + _PXW, "4\n"),
+        ("a signed type, i8", '', '    x i8 = 127 +% 1\n' + _PXW, "-128\n"),
+        ("a nested expression", '', '    x u8 = 16 *% 16 +% 3\n' + _PXW, "3\n"),
+        ("a leaf that is no u8: 300 +% 10", '', '    x u8 = 300 +% 10\n' + _PXW, "__ILLFORMED__")):
+    add("wrapping-literal-boundary", label, _wb(decls, body), exp)
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,

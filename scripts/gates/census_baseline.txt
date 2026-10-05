@@ -422,3 +422,11 @@ wrapping-literal-operands	a local, two literals with -%	OK
 wrapping-literal-operands	a module constant, two literals with +%, then compared	OK
 wrapping-literal-operands	a local, one operand typed	OK
 wrapping-literal-operands	a local, one operand cast	OK
+wrapping-literal-boundary	an assignment	OK
+wrapping-literal-boundary	an argument	OK
+wrapping-literal-boundary	a return	OK
+wrapping-literal-boundary	a struct field	OK
+wrapping-literal-boundary	an array element	OK
+wrapping-literal-boundary	a signed type, i8	OK
+wrapping-literal-boundary	a nested expression	OK
+wrapping-literal-boundary	a leaf that is no u8: 300 +% 10	ok-REFUSED [E086]
