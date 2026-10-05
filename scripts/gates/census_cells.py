@@ -1470,8 +1470,8 @@ add("char-high-byte", "255 plus one as an index into a u8[10]: the control", _ID
 # (`void v20;`). Measured below the fix, the hole is a value that takes its type FROM the constant, an
 # inferred binding or arithmetic on it. A use whose context supplies the type (a range end, a u8
 # argument, a comparison) already worked, and those cells carry no citation.
-_I138 = ("I.138: a module constant written without a type has no type at its uses, so a binding from it is "
-         "never declared, a table read from it is emitted as a `void` C variable, and a large one overflows")
+# Closed by I.138: an unannotated module constant takes its type from its value, as an inferred local
+# does, so every use below runs. The last field of each row records which uses were holes before it.
 def _uc(consts, body):
     return consts + 'func main() i32 effects io {\n' + body + '    return 0\n}\n'
 _TAKE_U8 = 'func take(x u8) u8 {\n    return x\n}\n'
@@ -1499,7 +1499,7 @@ for label, untyped, typed, body, exp, hole in (
          '    libc_printf("%d\\n", T[2] + 0)\n', "3\n", True),
         ("a float, bound to a local", 'H = 1.5\n', 'H f64 = 1.5\n',
          '    y = H\n    libc_printf("%f\\n", y)\n', "1.500000\n", True)):
-    add("untyped-module-constant", "untyped: " + label, _uc(untyped, body), exp, plan=_I138 if hole else None)
+    add("untyped-module-constant", "untyped: " + label, _uc(untyped, body), exp, plan=None)
     add("untyped-module-constant", "typed: " + label + ": the control", _uc(typed, body), exp)
 
 

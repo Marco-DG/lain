@@ -1613,18 +1613,13 @@ void sema_resolve_expr(Expr *e) {
       e->type = sym->type;
       e->decl = sym->decl;       // Populate decl
       e->is_global = sym->is_global; // Populate is_global
-      // A module constant written without a type (`F = inc`, `MAX = 100`) is registered before its
+      // A module constant written without a type (`F = inc`, `N = 7`) is registered before its
       // initialiser is inferred, so its symbol has no type; sema.h writes the inferred type back to
-      // the DECLARATION only. A use of a FUNCTION value reads it from there (I.137: a NULL-typed
-      // `F` made `F(4)` a direct call with no result). Only a function value, or an array of them:
-      // an integer constant's uses stay untyped as before, since typing them moves their
-      // arithmetic from i32 to the literal's i64 (two corpus programs), which is its own question.
-      if (!e->type && sym->decl && sym->decl->kind == DECL_VARIABLE && sym->is_global) {
-          Type *dt = sym->decl->as.variable_decl.type;
-          Type *el = dt;
-          while (el && el->kind == TYPE_ARRAY) el = el->element_type;
-          if (el && el->kind == TYPE_FUNC) e->type = dt;
-      }
+      // the DECLARATION only (module constants are typed before any function, I.137). A use reads
+      // it from there. Every such use had NO type: `F(4)` was a direct call with no result (I.137),
+      // and `k = N` never declared k, `T[2] + 0` emitted a `void` variable (I.138).
+      if (!e->type && sym->decl && sym->decl->kind == DECL_VARIABLE && sym->is_global)
+          e->type = sym->decl->as.variable_decl.type;
       // ★ A FUNCTION'S NAME AS A VALUE IS A FUNCTION POINTER (I.137). Its symbol type is its
       // return type, which only a call should read. I.55 special-cased one place, a local `var`
       // initialiser; everywhere else the name kept the return type, so `F = inc` at module level

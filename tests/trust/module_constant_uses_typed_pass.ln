@@ -1,0 +1,27 @@
+// I.138: a use of a module constant written without a type has the constant's type. The symbol was
+// registered before its initialiser was inferred and never updated, so every such use had NO type,
+// and each line below failed before:
+//   k = N           E106 "use of undeclared identifier 'k'" at the NEXT use of k: a local
+//                   initialised from an untyped value was never declared;
+//   var j = T[1]    the same;
+//   s = T[2] + 0    accepted, and the C declared a `void` variable, which does not compile;
+//   arr[T[3]]       the same E106 when bound to a local;
+//   BIG - 1         E086 "not provably free of overflow": the subtraction was typed i32.
+// The constant's type is its initialiser's without the literal's exact-value refinement, so
+// arithmetic on constants is typed as it is on literals and immutable locals.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+N = 7
+T = [1, 2, 3, 4]
+BIG = 5000000000
+
+func main() i32 effects io {
+    k = N
+    var j = T[1]
+    s = T[2] + 0
+    var arr = [10, 20, 30, 40, 50]
+    x = arr[T[3]]
+    big = BIG - 1
+    libc_printf("%d %d %d %d %lld\n", k, j, s, x, big)
+    return 0
+}

@@ -1763,6 +1763,10 @@ at=const 4
 at=nonnull 2
 ty=Lexer struct
 ty=Slice_u8 scalar
+### tests/trust/module_constant_uses_typed_pass.ln
+rc=0
+out=7 2 3 50 4999999999
+ty=Slice_u8 scalar
 ### tests/trust/module_const_from_call_pass.ln
 rc=0
 out=

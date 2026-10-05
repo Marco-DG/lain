@@ -3863,8 +3863,18 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
                 //
                 // The initialiser has just been inferred, so its type is the declaration's.
                 bool declared = d->as.variable_decl.type != NULL;
-                if (!d->as.variable_decl.type && d->as.variable_decl.init->type)
-                    d->as.variable_decl.type = d->as.variable_decl.init->type;
+                if (!d->as.variable_decl.type && d->as.variable_decl.init->type) {
+                    Type *it = d->as.variable_decl.init->type;
+                    // The constant's TYPE is the initialiser's without the literal's exact-value
+                    // refinement (`i32{=100}`): its value is known by other means, and a use typed
+                    // with the singleton made `MAX - MIN` a constant sum typed by its value (I.138).
+                    if (it->refine.known && it->kind == TYPE_SIMPLE) {
+                        Type *pt = arena_push_aligned(sema_arena, Type);
+                        *pt = *it; pt->refine.known = false;
+                        it = pt;
+                    }
+                    d->as.variable_decl.type = it;
+                }
                 // ★ A MODULE CONSTANT'S INITIALISER IS CHECKED AGAINST ITS DECLARED TYPE, as a
                 // local's is. It was only resolved and inferred, so `X u8 = 300` compiled with
                 // X == 44, `X u8 = -1` with 255, `X i32 = 3.5` with 3, `X bool = 1` at all, and
