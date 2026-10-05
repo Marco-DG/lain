@@ -405,3 +405,15 @@ untyped-module-constant	untyped: a table element plus zero, printed directly	OK
 untyped-module-constant	typed: a table element plus zero, printed directly: the control	OK
 untyped-module-constant	untyped: a float, bound to a local	OK
 untyped-module-constant	typed: a float, bound to a local: the control	OK
+constant-table-element	a u8 table, a true assert	REFUSED [E012]  # I.109: the analysis knows a module table's hull but not the element at a known index, so `assert T[1] == 2` is not proven
+constant-table-element	a u8 table, a false assert	ok-REFUSED [E012]
+constant-table-element	an i32 table, negative and extreme entries	REFUSED [E012]  # I.109: the analysis knows a module table's hull but not the element at a known index, so `assert T[1] == 2` is not proven
+constant-table-element	an i32 table, a false assert on a negative entry	ok-REFUSED [E012]
+constant-table-element	entries that OR other module constants	REFUSED [E012]  # I.109: the analysis knows a module table's hull but not the element at a known index, so `assert T[1] == 2` is not proven
+constant-table-element	entries that OR other module constants, a false assert	ok-REFUSED [E012]
+constant-table-element	the index named by a module constant	REFUSED [E012]  # I.109: the analysis knows a module table's hull but not the element at a known index, so `assert T[1] == 2` is not proven
+constant-table-element	one table's element as the index into another	REFUSED [E012]  # I.109: the analysis knows a module table's hull but not the element at a known index, so `assert T[1] == 2` is not proven
+constant-table-element	an addition the hull would overflow	REFUSED [E086]  # I.109: the analysis knows a module table's hull but not the element at a known index, so `assert T[1] == 2` is not proven
+constant-table-element	an addition that does overflow	ok-REFUSED [E086]
+constant-table-element	an entry written with as%	REFUSED [E012]  # I.140: spec 10's constant expressions have no wrapping operator, so a table with `as%` or `+%` in it is not static data and its elements are unknown
+constant-table-element	an entry written with +%	REFUSED [E086]  # I.140: spec 10's constant expressions have no wrapping operator, so a table with `as%` or `+%` in it is not static data and its elements are unknown
