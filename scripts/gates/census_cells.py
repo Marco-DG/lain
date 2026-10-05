@@ -1514,8 +1514,8 @@ for label, untyped, typed, body, exp, hole in (
 # Closed by I.109: a read of a module table at a known index is the element itself.
 # Separately (I.140): spec 10's list of constant expressions has `as` but no wrapping operator, so a table
 # with `300 as% u8` or `250 +% 10` in it is not static data at all, and loses the hull and exact values.
-_I140 = ("I.140: spec 10's constant expressions have no wrapping operator, so a table with `as%` or `+%` "
-         "in it is not static data and its elements are unknown")
+# Closed by I.140: the list gains `+% -% *%` and `as%`, each evaluated over the integers and wrapped to
+# the expression's type, so such a table is static data with exact elements.
 def _tab(decls, body):
     return decls + 'func main() i32 effects io {\n' + body + '    return 0\n}\n'
 _OK = '    libc_printf("ok\\n")\n'
@@ -1543,8 +1543,8 @@ for label, decls, body, exp, plan in (
          '    x u8 = T[1] + 250\n    libc_printf("%d\\n", x as i32)\n', "255\n", None),
         ("an addition that does overflow", 'T u8[3] = [200, 5, 100]\n',
          '    x u8 = T[0] + 250\n    libc_printf("%d\\n", x as i32)\n', "__ILLFORMED__", None),
-        ("an entry written with as%", 'T u8[2] = [300 as% u8, 1]\n', '    assert T[0] == 44\n' + _OK, "ok\n", _I140),
-        ("an entry written with +%", 'T u8[2] = [250 +% 10, 1]\n', '    assert T[0] == 4\n' + _OK, "ok\n", _I140)):
+        ("an entry written with as%", 'T u8[2] = [300 as% u8, 1]\n', '    assert T[0] == 44\n' + _OK, "ok\n", None),
+        ("an entry written with +%", 'T u8[2] = [250 +% 10, 1]\n', '    assert T[0] == 4\n' + _OK, "ok\n", None)):
     add("constant-table-element", label, _tab(decls, body), exp, plan=plan)
 
 

@@ -1,0 +1,23 @@
+// I.140: a wrapping operation is a constant expression, evaluated wrapped at its type. Spec 10's list
+// had `as` and no wrapping operator, so a table with a wrapped element was not static data: it lost
+// its hull and exact values (`assert T[0] == 44` was E012), and a module assert could not use one
+// (E133). The value of `+%`, `-%`, `*%` and `as%` is fixed by the type sema gives the expression,
+// the element type here (I.141), so it is computed over the integers and wrapped to that width.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+T u8[3] = [300 as% u8, 250 +% 10, 0 -% 1]
+S i8[3] = [127 +% 1, 0 -% 1, 64 *% 4]
+K i8 = 127 +% 1
+
+assert (300 as% u8) == 44
+assert K == -128
+
+func main() i32 effects io {
+    assert T[0] == 44
+    assert T[1] == 4
+    assert S[0] == -128
+    var buf = [0, 1, 2, 3, 4, 5]
+    x = buf[T[1]]
+    libc_printf("%d %d %d %d %d %d %d\n", T[0] as i32, T[1] as i32, T[2] as i32, S[0] as i32, S[1] as i32, S[2] as i32, x)
+    return 0
+}

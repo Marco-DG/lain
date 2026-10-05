@@ -1,0 +1,9 @@
+// EXPECT: [E134]
+// EXPECT-TEXT: module-scope assertion is false
+// I.140's other side: a wrapping operation is now evaluated at compile time, wrapped at its type, so
+// a FALSE claim about one is refused as false rather than as not constant (E133). 300 as% u8 is 44.
+assert (300 as% u8) == 45
+
+func main() i32 {
+    return 0
+}

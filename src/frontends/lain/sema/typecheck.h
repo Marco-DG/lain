@@ -940,6 +940,25 @@ static bool sa_is_bound(Expr *e) {
     return sa_bound_idx && n && n->length == sa_bound_idx->length &&
            strncmp(n->name, sa_bound_idx->name, (size_t)n->length) == 0;
 }
+// ── I.140: A WRAPPING OPERATION IS A CONSTANT EXPRESSION, wrapped at its type ──────────────────
+// Spec 10's closed list had `as` and no wrapping operator, so a table written `[300 as% u8, 1]` or
+// `[250 +% 10, 1]` was not static data: it lost its hull and its exact values (`assert T[0] == 44`
+// was E012), and a module assert could not use one. A wrapping operation's value is fixed by its
+// TYPE, which sema decided (a literal-only operation takes the destination's since I.141), so it is
+// evaluated over the integers and wrapped to that type's width: two's complement for a signed one.
+// Computed unsigned on 128 bits, whose wrap agrees with any narrower one. No type, no constant.
+static bool sa_wrap_to(Type *t, __int128 *v) {
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    Type *ta = t ? resolve_type_alias(t) : NULL;
+    int bits = 0; bool sgn = false;
+    if (!ta || !parse_iN_uN(ta, &bits, &sgn) || bits < 1 || bits > 64) return false;
+    unsigned __int128 m = (((unsigned __int128)1) << bits) - 1, u = ((unsigned __int128)*v) & m;
+    *v = (sgn && ((u >> (bits - 1)) & 1)) ? (__int128)u - ((__int128)1 << bits) : (__int128)u;
+    return true;
+}
+static bool sa_is_wrap_binop(TokenKind op) {
+    return op == TOKEN_PLUS_PERCENT || op == TOKEN_MINUS_PERCENT || op == TOKEN_ASTERISK_PERCENT;
+}
 static bool sa_is_const(Expr *e, bool *layout) {
     if (!e) return false;
     switch (e->kind) {
@@ -971,10 +990,22 @@ static bool sa_is_const(Expr *e, bool *layout) {
                 case TOKEN_SHIFT_LEFT: case TOKEN_SHIFT_RIGHT:
                     return sa_is_const(e->as.binary_expr.left, layout) &&
                            sa_is_const(e->as.binary_expr.right, layout);
+                case TOKEN_PLUS_PERCENT: case TOKEN_MINUS_PERCENT: case TOKEN_ASTERISK_PERCENT: {
+                    __int128 probe = 0;                       // wrapped at a type it must have
+                    return sa_wrap_to(e->type, &probe) &&
+                           sa_is_const(e->as.binary_expr.left, layout) &&
+                           sa_is_const(e->as.binary_expr.right, layout);
+                }
                 default: return false;
             }
         }
-        case EXPR_CAST: return e->as.cast_expr.kind == CAST_PROVEN && sa_is_const(e->as.cast_expr.expr, layout);
+        case EXPR_CAST: {
+            if (e->as.cast_expr.kind == CAST_WRAPPING) {          // `as%` (I.140): wrapped at its target
+                __int128 probe = 0;
+                return sa_wrap_to(e->type, &probe) && sa_is_const(e->as.cast_expr.expr, layout);
+            }
+            return e->as.cast_expr.kind == CAST_PROVEN && sa_is_const(e->as.cast_expr.expr, layout);
+        }
         default: return false;
     }
 }
@@ -985,7 +1016,9 @@ static bool sa_eval(Expr *e, __int128 *v) {
     switch (e->kind) {
         case EXPR_LITERAL: *v = e->as.literal_expr.value; return true;
         case EXPR_CHAR:    *v = (unsigned char)e->as.char_expr.value; return true;
-        case EXPR_CAST:    return sa_eval(e->as.cast_expr.expr, v);
+        case EXPR_CAST:
+            if (!sa_eval(e->as.cast_expr.expr, v)) return false;
+            return e->as.cast_expr.kind == CAST_WRAPPING ? sa_wrap_to(e->type, v) : true;
         case EXPR_IDENTIFIER: {
             if (sa_is_bound(e)) { *v = sa_bound_val; return true; }
             Expr *init = sa_named_constant(e);
@@ -1022,6 +1055,12 @@ static bool sa_eval(Expr *e, __int128 *v) {
             if (op == TOKEN_KEYWORD_AND && !a) { *v = 0; return true; }
             if (op == TOKEN_KEYWORD_OR  &&  a) { *v = 1; return true; }
             if (!sa_eval(e->as.binary_expr.right, &b)) return false;
+            if (sa_is_wrap_binop(op)) {                   // I.140: over 128 bits, then wrapped
+                unsigned __int128 ua = (unsigned __int128)a, ub = (unsigned __int128)b;
+                unsigned __int128 r = op == TOKEN_PLUS_PERCENT ? ua + ub : op == TOKEN_MINUS_PERCENT ? ua - ub : ua * ub;
+                *v = (__int128)r;
+                return sa_wrap_to(e->type, v);
+            }
             switch (op) {
                 case TOKEN_PLUS: *v = a + b; return true;
                 case TOKEN_MINUS: *v = a - b; return true;
@@ -1132,7 +1171,7 @@ static void sema_check_static_assert(Decl *d) {
         // The reason names what IS evaluated, and what is not (I.107): it said a table element "exists
         // only at run time", which is false for a module constant table, and omitted named constants.
         fprintf(stderr, "[E133] Error Ln %li, Col %li: a module-scope `assert` takes a `bool` CONSTANT "
-                "expression: literals, named integer constants, operators, `as`, `@sizeof(T)` and "
+                "expression: literals, named integer constants, operators, `as` and `as%`, `@sizeof(T)` and "
                 "`@alignof(T)`. An element of a constant table and a function call are not evaluated "
                 "here. A fact about a run-time value is an `assert(...)` inside a function.\n",
                 (long)d->line, (long)d->col);
