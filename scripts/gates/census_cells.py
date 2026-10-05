@@ -1511,10 +1511,9 @@ for label, untyped, typed, body, exp, hole in (
 # character-class table), how the index is written (a literal, a module constant, another table's
 # element), and what the exact value proves (an assert, an addition that the hull would overflow).
 # Each true claim has a false twin, which must stay refused.
+# Closed by I.109: a read of a module table at a known index is the element itself.
 # Separately (I.140): spec 10's list of constant expressions has `as` but no wrapping operator, so a table
 # with `300 as% u8` or `250 +% 10` in it is not static data at all, and loses the hull and exact values.
-_I109 = ("I.109: the analysis knows a module table's hull but not the element at a known index, so "
-         "`assert T[1] == 2` is not proven")
 _I140 = ("I.140: spec 10's constant expressions have no wrapping operator, so a table with `as%` or `+%` "
          "in it is not static data and its elements are unknown")
 def _tab(decls, body):
@@ -1526,22 +1525,22 @@ _CLS = 'A u8 = 0x01\nS u8 = 0x20\nSP u8 = 0x80\nT u8[4] = [A, A|S, S|SP, 0]\n'
 # not; 300 as% u8 is 300 mod 256 = 44, and 250 +% 10 in u8 is 260 mod 256 = 4.
 assert (0x20 | 0x80) == 160 and 300 % 256 == 44 and (250 + 10) % 256 == 4
 for label, decls, body, exp, plan in (
-        ("a u8 table, a true assert", 'T u8[5] = [9, 0, 7, 255, 3]\n', '    assert T[3] == 255\n' + _OK, "ok\n", _I109),
+        ("a u8 table, a true assert", 'T u8[5] = [9, 0, 7, 255, 3]\n', '    assert T[3] == 255\n' + _OK, "ok\n", None),
         ("a u8 table, a false assert", 'T u8[5] = [9, 0, 7, 255, 3]\n', '    assert T[3] == 254\n' + _OK,
          "__ILLFORMED__", None),
         ("an i32 table, negative and extreme entries", 'T i32[3] = [-5, 0, 2147483647]\n',
-         '    assert T[0] == -5\n    assert T[2] == 2147483647\n' + _OK, "ok\n", _I109),
+         '    assert T[0] == -5\n    assert T[2] == 2147483647\n' + _OK, "ok\n", None),
         ("an i32 table, a false assert on a negative entry", 'T i32[3] = [-5, 0, 2147483647]\n',
          '    assert T[0] == 5\n' + _OK, "__ILLFORMED__", None),
-        ("entries that OR other module constants", _CLS, '    assert T[2] == 0xa0\n' + _OK, "ok\n", _I109),
+        ("entries that OR other module constants", _CLS, '    assert T[2] == 0xa0\n' + _OK, "ok\n", None),
         ("entries that OR other module constants, a false assert", _CLS, '    assert T[2] == 0x20\n' + _OK,
          "__ILLFORMED__", None),
         ("the index named by a module constant", 'I usize = 2\nT u8[5] = [9, 0, 7, 255, 3]\n',
-         '    assert T[I] == 7\n' + _OK, "ok\n", _I109),
+         '    assert T[I] == 7\n' + _OK, "ok\n", None),
         ("one table's element as the index into another", 'IDX u8[3] = [2, 0, 1]\nV u8[3] = [10, 20, 30]\n',
-         '    assert V[IDX[0]] == 30\n' + _OK, "ok\n", _I109),
+         '    assert V[IDX[0]] == 30\n' + _OK, "ok\n", None),
         ("an addition the hull would overflow", 'T u8[3] = [200, 5, 100]\n',
-         '    x u8 = T[1] + 250\n    libc_printf("%d\\n", x as i32)\n', "255\n", _I109),
+         '    x u8 = T[1] + 250\n    libc_printf("%d\\n", x as i32)\n', "255\n", None),
         ("an addition that does overflow", 'T u8[3] = [200, 5, 100]\n',
          '    x u8 = T[0] + 250\n    libc_printf("%d\\n", x as i32)\n', "__ILLFORMED__", None),
         ("an entry written with as%", 'T u8[2] = [300 as% u8, 1]\n', '    assert T[0] == 44\n' + _OK, "ok\n", _I140),

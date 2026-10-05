@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 9, Col 5: a required precondition is not established here
+// I.109's other side: the analysis now knows T[1] EXACTLY, so an assertion of a different value is
+// not established. Before I.109 it was refused for a weaker reason (only the hull [1, 4] was known);
+// it must stay refused now that the value is known.
+T u8[4] = [1, 2, 3, 4]
+
+func main() i32 {
+    assert T[1] == 3
+    return 0
+}

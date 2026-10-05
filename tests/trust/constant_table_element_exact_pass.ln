@@ -1,0 +1,21 @@
+// I.109: an element of a module constant TABLE read at a KNOWN index is that element, exactly. The
+// analysis knew only the hull of the table (every element is in [lo, hi]), so `assert T[1] == 2`
+// was E012 "a required precondition is not established here", and a lookup indexed by one table
+// entry into another could only use the hull. A table is read-only static data whose values the
+// constant evaluator computes exactly (checked casts and operators only), so the element at index
+// k is the same at every program point.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+T u8[4] = [1, 2, 3, 4]
+WIDTH u8[3] = [2, 4, 8]
+
+func main() i32 effects io {
+    assert T[1] == 2
+    var buf = [0, 10, 20]
+    x = buf[T[1]]
+    var cells u8[8]
+    for i in 0..8 { cells[i] = i as u8 }
+    y = cells[WIDTH[2] - 1]
+    libc_printf("%d %d\n", x, y as i32)
+    return 0
+}

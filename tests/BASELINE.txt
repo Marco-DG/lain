@@ -1530,6 +1530,10 @@ ty=Slice_u8 scalar
 ### tests/trust/constant_shift_typed_by_value_pass.ln
 rc=0
 out=
+### tests/trust/constant_table_element_exact_pass.ln
+rc=0
+out=20 7
+ty=Slice_u8 scalar
 ### tests/trust/const_generic_struct_pass.ln
 rc=0
 out=

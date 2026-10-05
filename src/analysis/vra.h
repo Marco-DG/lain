@@ -1420,6 +1420,26 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                     oct_add_lb(W, r, V->elem_lo[arr]);
                     oct_add_ub(W, r, V->elem_hi[arr]);
                 }
+                // ...and an element of a module constant TABLE at a KNOWN index is that element,
+                // exactly (I.109). The table is read-only static data (IrData), so the value at
+                // index k is data->vals[k] at every program point: `assert T[1] == 2` was E012,
+                // the analysis knowing only the hull of all four elements.
+                {
+                    int aid = ins->n_operands ? ins->operands[0]->id : -1;
+                    IrInstr *ep = (aid >= 0 && aid < V->nvar) ? V->def[aid] : NULL;
+                    IrInstr *tb = (ep && ep->op == IR_ELEM_PTR && ep->n_operands == 2 &&
+                                   ep->operands[0]->id >= 0 && ep->operands[0]->id < V->nvar)
+                                  ? V->def[ep->operands[0]->id] : NULL;
+                    if (tb && tb->op == IR_ALLOCA && tb->data && ep->operands[1]->id >= 0 &&
+                        ep->operands[1]->id < V->nvar) {
+                        int64_t klo, khi; bool kl, kh;
+                        vra_interval(V, W, ep->operands[1]->id, &klo, &kl, &khi, &kh);
+                        if (kl && kh && klo == khi && klo >= 0 && klo < tb->data->n) {
+                            oct_add_lb(W, r, tb->data->vals[klo]);
+                            oct_add_ub(W, r, tb->data->vals[klo]);
+                        }
+                    }
+                }
                 // ...and ANY integer read from memory is bounded by its TYPE, the values its bits
                 // can represent: a `u8` element is in [0, 255]. That bound lived only in vra_range,
                 // for the same reason as above, so it was lost once the value went through a
