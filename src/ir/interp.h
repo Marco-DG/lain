@@ -31,6 +31,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <setjmp.h>
+#include <sys/resource.h>   // getrlimit: the stack the interpreter may use
 #include "ir.h"
 #include "layout.h"
 
@@ -73,6 +74,30 @@ static IState *ist = NULL;
 
 // ── stopping ─────────────────────────────────────────────────────────────────────────────
 static IrFunc *ii_cur_f = NULL;
+
+// ★ THE INTERPRETER RECURSES ON lain's OWN STACK: each interpreted call is an ii_call and an
+// ii_exec. With nothing to bound it, a program recursing a few hundred calls deep crashed lain
+// itself (SIGSEGV, exit 139): `K = f(300)` while COMPILING (a module constant is computed here),
+// and `lain --interpret` at run time, where the native binary went 10000 deep (Documentation).
+// The calls are now measured against the stack itself, from where this run of the interpreter
+// was ENTERED (each module run and each compile-time thunk enters afresh, at its own native
+// depth), and a run that would overflow stops with status 97, a resource like the step budget.
+// The budget is 3/4 of RLIMIT_STACK, leaving lain's own frames below the entry their quarter;
+// an unlimited stack gets a fixed 64 MB, since 3/4 of RLIM_INFINITY is no bound at all. It is a
+// measure of bytes, not a count of calls: an ASan or -O0 build of lain has larger frames.
+static uintptr_t ii_stack_base = 0;      // the address of a local of the entry
+static size_t    ii_stack_budget = 0;    // bytes the interpreted calls may use beyond it
+static int       ii_depth = 0;           // interpreted calls in progress (for the message)
+static bool      ii_depth_exhausted = false;   // why a 97 happened, for compile-time evaluation
+static void ii_stack_enter(uintptr_t here) {
+    ii_stack_base = here; ii_depth = 0; ii_depth_exhausted = false;
+    if (!ii_stack_budget) {
+        struct rlimit rl; size_t lim = (size_t)8 << 20;
+        if (getrlimit(RLIMIT_STACK, &rl) == 0)
+            lim = rl.rlim_cur == RLIM_INFINITY ? ((size_t)64 << 20) / 3 * 4 : (size_t)rl.rlim_cur;
+        ii_stack_budget = lim / 4 * 3;
+    }
+}
 static void ii_stop(int status) __attribute__((noreturn));
 static void ii_stop(int status) { ist->status = status; longjmp(ist->stop, 1); }
 static void ii_fail(int status, const char *kind, IrInstr *at, const char *fmt, ...) __attribute__((noreturn));
@@ -293,6 +318,9 @@ static void ii_cstring(const IVal *v, char *buf, size_t cap, IrInstr *at) {
     }
     buf[n] = 0;
 }
+// Out of line, and so is ii_extern: their buffers (~28 KB here, ~4 KB there) were inlined into
+// ii_exec and so paid by EVERY interpreted call, which is what made 300 calls overflow 8 MB.
+__attribute__((noinline))
 static void ii_printf(IVal *args, int nargs, IrValue **avals, IrInstr *at, IVal *ret) {
     char fmt[4096]; ii_cstring(&args[0], fmt, sizeof fmt, at);
     char out[16384]; size_t on = 0; int ai = 1;
@@ -349,6 +377,7 @@ static void ii_free(IVal *a, IrInstr *at) {
 }
 
 // An EXTERN: the few the corpus calls are modelled; anything else is not a verdict.
+__attribute__((noinline))
 static void ii_extern(IrFunc *f, IVal *args, int nargs, IrValue **avals, IVal *ret, IrInstr *at) {
     const IrName *n = f->name;
     if (ii_name_is(n, "libc_printf") || ii_name_is(n, "printf")) { ii_printf(args, nargs, avals, at, ret); return; }
@@ -993,6 +1022,14 @@ static void (*ii_on_block)(IrFunc *f, IrBlock *b, IVal *v, int nv) = NULL;
 // one test per instruction.
 static void (*ii_on_instr)(IrFunc *f, IrBlock *b, IrInstr *i, IVal *v, int nv) = NULL;
 static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
+    { char here; uintptr_t h = (uintptr_t)&here;
+      size_t used = ii_stack_base > h ? ii_stack_base - h : h - ii_stack_base;
+      if (ii_stack_base && used > ii_stack_budget) {
+          ii_depth_exhausted = true;
+          ii_fail(97, "RECURSION TOO DEEP", at, "%d interpreted calls in progress; one more would "
+                  "overflow lain's own stack", ii_depth);
+      } }
+    ii_depth++;
     IFrame fr; memset(&fr, 0, sizeof fr);
     fr.f = f; fr.nv = f->next_value_id > 0 ? f->next_value_id : 1; fr.up = ii_frame;
     IAlloc *saved_allocs = ii_frame_allocs; ii_frame_allocs = NULL;
@@ -1050,6 +1087,7 @@ static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
     }                                                                // pointer is caught, not followed
     while (mine) { IAlloc *n = mine->next; free(mine->p); free(mine); mine = n; }
     ii_frame = caller; ii_cur_f = caller_f;
+    ii_depth--;
 }
 
 // Run `main`. Returns the process status the emitted C program should also have.
@@ -1072,6 +1110,7 @@ static int ir_interpret_module(IrFunc *mod, const char *file) {
     s.mod = mod; s.file = file; s.budget = 200000000LL;
     const char *b = getenv("LAIN_INTERP_STEPS"); if (b) s.budget = atoll(b);
     ist = &s;
+    { char base; ii_stack_enter((uintptr_t)&base); }
     IrFunc *volatile m = ii_prepare(mod);
     if (!m) { fprintf(stderr, "lain --interpret: no `main`\n"); return 98; }
     if (setjmp(s.stop)) { fflush(stdout); ist = NULL; return s.status; }
@@ -1096,6 +1135,7 @@ static int ir_interpret_call(IrFunc *f, IrFunc *mod, const char *file, IVal *arg
     s.mod = mod; s.file = file; s.budget = budget;
     s.who = "compile-time evaluation"; s.budget_is_callers = true;
     ist = &s;
+    { char base; ii_stack_enter((uintptr_t)&base); }
     (void)ii_prepare(mod);
     // A failure leaves by longjmp from inside a call, past every ii_call epilogue, so the frame
     // globals still name a frame on a stack that is gone. The next call (compile-time evaluation

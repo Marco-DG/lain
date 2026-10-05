@@ -231,7 +231,11 @@ static Expr *se_run(SeCtx *x, Decl *d, IrFunc *thunk, IVal *arg, Type *ty, Expr 
     if (st == 98) return NULL;                                     // not modelled: runs at each use
     if (st != 0) {
         se_err_at(d, at);
-        if (st == 97) fprintf(stderr, "constant '%.*s' took more than %lld steps to compute "
+        if (st == 97 && ii_depth_exhausted)
+            fprintf(stderr, "constant '%.*s' recursed %d calls deep to compute, and one more would "
+                    "overflow the compile-time evaluator's stack.\n", nm ? (int)nm->length : 1,
+                    nm ? nm->name : "?", ii_depth);
+        else if (st == 97) fprintf(stderr, "constant '%.*s' took more than %lld steps to compute "
                               "(LAIN_STATIC_STEPS raises the limit).\n", nm ? (int)nm->length : 1, nm ? nm->name : "?", x->budget);
         else fprintf(stderr, "constant '%.*s' could not be computed at compile time (see above).\n",
                      nm ? (int)nm->length : 1, nm ? nm->name : "?");
