@@ -3817,9 +3817,25 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     }
 
     // 2) For each function: resolve → infer → linearity → clear locals
+    //
+    // ★ MODULE CONSTANTS FIRST, then everything else (I.137). This walked the declarations in
+    // order, so a constant declared BELOW the function using it had no type yet when that
+    // function was checked: harmless for an integer (lowering reads the declaration's type
+    // later), wrong for a FUNCTION value, whose call takes its result type from the callee's
+    // type at sema time. `func spin(x u8) u8 { return OPS[0](x) }` above `OPS = [spin, spin]`
+    // was lowered with no result. Pass 0 types every constant; pass 1 does the rest in order, and
+    // a constant APPENDED to the list after pass 0 (none is today) is still processed there.
+    DeclList *sema_consts_end = NULL;
+    for (int sema_pass = 0; sema_pass < 2; sema_pass++) {
+    bool sema_past_consts = false;
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
+        bool sema_late = sema_past_consts;
+        if (sema_pass == 0) sema_consts_end = dl;
+        else if (dl == sema_consts_end) sema_past_consts = true;
         if (!d) continue;
+        if (sema_pass == 0 && d->kind != DECL_VARIABLE) continue;
+        if (sema_pass == 1 && d->kind == DECL_VARIABLE && !sema_late) continue;
         // Top-level constant: resolve + type its initializer (all globals were
         // registered in the first pass, so cross-references between constants and
         // arrays like CTYPE resolve here).
@@ -4361,6 +4377,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
 
         // 2.e) Clear locals after all passes
         sema_clear_locals();
+    }
     }
 
     // 2b) D-15: a struct field may not be a MUTABLE BORROW. The construct parsed, typed as

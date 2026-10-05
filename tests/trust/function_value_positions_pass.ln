@@ -1,0 +1,47 @@
+// I.137: a function's NAME used as a value is a function pointer in every position, not only in a
+// local `var` initialiser (I.55). Its symbol type is its RETURN type, which only a call should read;
+// elsewhere the name kept it, and each line below was wrong before:
+//   F(4)            F = inc at module level: lowered with no result, a `const 0` in its place,
+//                   so this printed 0, and the interpreter agreed (the IR itself was wrong);
+//   use_table(4)    OPS = [inc, dbl], declared BELOW its use: emitted `v0();`, C that does not
+//                   compile (OPS had no type yet when use_table was checked: module constants are
+//                   now typed before any function);
+//   local(4)        a local `[inc, dbl]`: an array of u8, the same C;
+//   chosen(1, 4)    an expression `case` choosing a function: E127 "call to undeclared function".
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func inc(x u8) u8 {
+    if x > 200 { return 0 }
+    return x + 1
+}
+
+func dbl(x u8) u8 {
+    if x > 100 { return 0 }
+    return x * 2
+}
+
+F = inc
+
+func use_table(x u8) u8 {
+    return OPS[1](OPS[0](x))
+}
+
+OPS = [inc, dbl]
+
+func local(x u8) u8 {
+    var ops = [dbl, inc]
+    return ops[1](ops[0](x))
+}
+
+func chosen(k i32, x u8) u8 {
+    g = case k {
+        0: inc
+        else: dbl
+    }
+    return g(x)
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d %d %d\n", F(4) as i32, use_table(4) as i32, local(4) as i32, chosen(1, 4) as i32)
+    return 0
+}

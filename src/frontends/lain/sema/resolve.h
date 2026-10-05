@@ -77,6 +77,10 @@ void sema_infer_expr(Expr *e);
 // Defined in typecheck.h (included after this file); checks a fn-ptr initialiser.
 static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col);
 static Type *fnptr_type_of_decl(Decl *d);
+// I.137: set while a call's CALLEE identifier is resolved. A function's symbol type is its RETURN
+// type, which is what a direct call reads as the call's type; anywhere else a function's name is a
+// VALUE, a function pointer, and is typed as one (see the identifier case below).
+static bool sema_resolving_callee = false;
 // Defined in monomorph.h; rewrites a generic call to its concrete instance.
 static bool sema_monomorphize_call(Expr *call);
 // Defined in monomorph.h; resolves generic type-applications `Vec(i32)` in a type.
@@ -1609,6 +1613,30 @@ void sema_resolve_expr(Expr *e) {
       e->type = sym->type;
       e->decl = sym->decl;       // Populate decl
       e->is_global = sym->is_global; // Populate is_global
+      // A module constant written without a type (`F = inc`, `MAX = 100`) is registered before its
+      // initialiser is inferred, so its symbol has no type; sema.h writes the inferred type back to
+      // the DECLARATION only. A use of a FUNCTION value reads it from there (I.137: a NULL-typed
+      // `F` made `F(4)` a direct call with no result). Only a function value, or an array of them:
+      // an integer constant's uses stay untyped as before, since typing them moves their
+      // arithmetic from i32 to the literal's i64 (two corpus programs), which is its own question.
+      if (!e->type && sym->decl && sym->decl->kind == DECL_VARIABLE && sym->is_global) {
+          Type *dt = sym->decl->as.variable_decl.type;
+          Type *el = dt;
+          while (el && el->kind == TYPE_ARRAY) el = el->element_type;
+          if (el && el->kind == TYPE_FUNC) e->type = dt;
+      }
+      // ★ A FUNCTION'S NAME AS A VALUE IS A FUNCTION POINTER (I.137). Its symbol type is its
+      // return type, which only a call should read. I.55 special-cased one place, a local `var`
+      // initialiser; everywhere else the name kept the return type, so `F = inc` at module level
+      // made F a u8, `F(4)` was lowered with no result and a `const 0` stood in for it (exit 0
+      // for 5, the interpreter agreeing), and `[inc, dbl]` was an array of u8 whose calls emitted
+      // C that does not compile. The type is decided here, once, for every value position.
+      if (!sema_resolving_callee && sym->decl &&
+          (sym->decl->kind == DECL_FUNCTION || sym->decl->kind == DECL_EXTERN_FUNCTION) &&
+          !decl_is_generic_template(sym->decl)) {
+          Type *ft = fnptr_type_of_decl(sym->decl);
+          if (ft) e->type = ft;
+      }
       break;
     }
 
@@ -1760,8 +1788,11 @@ void sema_resolve_expr(Expr *e) {
   case EXPR_UNARY:
     sema_resolve_expr(e->as.unary_expr.right);
     break;
-  case EXPR_CALL:
+  case EXPR_CALL: {
+    bool callee_saved = sema_resolving_callee;
+    sema_resolving_callee = true;               // only the identifier itself reads the flag
     sema_resolve_expr(e->as.call_expr.callee);
+    sema_resolving_callee = callee_saved;
 
     // Resolve arguments first (so a type argument like `i32` becomes EXPR_TYPE),
     // then rewrite a generic call to its concrete monomorphized instance.
@@ -1805,6 +1836,7 @@ void sema_resolve_expr(Expr *e) {
     // What it had that the row did not is the CALL SITE. That is now carried by the row check
     // instead (`eff_site_*`), so the position is kept and the precision is gained.
     break;
+  }
   case EXPR_RANGE:
     sema_resolve_expr(e->as.range_expr.start);
     sema_resolve_expr(e->as.range_expr.end);

@@ -1,0 +1,23 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: `func` 'quiet' has an unacknowledged effect (io)
+// I.137. A function value taken from a MODULE CONSTANT carried no type (a function name's type was
+// its return type outside a local `var` initializer), so a call through it was charged no effect:
+// `quiet`, a `func` with no row, did IO through `F` and was ACCEPTED, and its C made the call. The
+// same held for a module table (`OPS[0](x)`) and a local one. The value is a function pointer now,
+// typed with `noisy`'s row, and the call is charged it.
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("io")
+    return x
+}
+
+F = noisy
+
+func quiet(x i32) i32 {
+    return F(x)
+}
+
+func main() i32 effects io {
+    return quiet(1)
+}

@@ -2545,7 +2545,10 @@ void sema_infer_expr(Expr *e) {
     }
     
     // Normal function call logic...
-    sema_resolve_expr(e->as.call_expr.callee);
+    { bool callee_saved = sema_resolving_callee;   // I.137: the callee keeps its return type
+      sema_resolving_callee = true;
+      sema_resolve_expr(e->as.call_expr.callee);
+      sema_resolving_callee = callee_saved; }
     
     // Purity check: func cannot call proc
     if (current_function_decl && current_function_decl->kind == DECL_FUNCTION) {

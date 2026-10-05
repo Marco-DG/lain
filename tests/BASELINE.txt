@@ -1640,6 +1640,11 @@ out=io ok
 at=const 2
 ty=S struct
 ty=Slice_u8 scalar
+### tests/trust/function_value_positions_pass.ln
+rc=0
+out=5 10 9 8
+at=const 4
+ty=Slice_u8 scalar
 ### tests/trust/generic_array_type_arg_pass.ln
 rc=0
 out=

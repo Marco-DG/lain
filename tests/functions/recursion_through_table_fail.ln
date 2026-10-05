@@ -1,0 +1,15 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: Error Ln 8, Col 12: this call through a function pointer can reach its own function again
+// I.136 and I.137 together: spin calls itself through a module TABLE declared below it. Before I.137
+// the call lowered to C that does not compile (the table had no type when spin was checked); with the
+// table typed, the call is an indirect call that can reach spin, whose address the table takes, and x
+// does not fall on it.
+func spin(x u8) u8 {
+    return OPS[0](x)
+}
+
+OPS = [spin, spin]
+
+func main() i32 {
+    return spin(1) as i32
+}
