@@ -3331,7 +3331,18 @@ static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) 
             IrType *lt = ir_lower_type(c, L->type), *rt = ir_lower_type(c, R->type);
             if (lt && rt && lt->kind==IRT_INT && rt->kind==IRT_INT && lt->is_signed != rt->is_signed) {
                 IrValue *x = ir_lower_expr(c, L), *y = ir_lower_expr(c, R);
+                // The comparison's instructions carry the COMPARISON's position, as they do when
+                // ir_lower_expr lowers one; the branches keep the statement's, as every other
+                // condition's do. ir_lower_expr restores the caller's position on the way out, so
+                // these icmps were placed at the `if` (found by the Lain Debugger, which could
+                // not link `r == 2` to its instruction).
+                isize sv_line = ir_cur_line, sv_col = ir_cur_col;
+                IrBlock *b0 = c->cur;
+                if (cond->line) { ir_cur_line = cond->line; ir_cur_col = cond->col; }
                 ir_cmp_br(c, op, x, y, ir_nonneg_lit(L), ir_nonneg_lit(R), true, tb, fb);
+                ir_cur_line = sv_line; ir_cur_col = sv_col;
+                b0->term.line = sv_line; b0->term.col = sv_col;            // the sign test's branch
+                c->cur->term.line = sv_line; c->cur->term.col = sv_col;    // and the compare's
                 return;
             }
         }
