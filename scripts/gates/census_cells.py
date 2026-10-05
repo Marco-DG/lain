@@ -1548,6 +1548,32 @@ for label, decls, body, exp, plan in (
     add("constant-table-element", label, _tab(decls, body), exp, plan=plan)
 
 
+# ── axis: the LITERAL operands of a wrapping operator, and the type the context gives (I.141) ─────────
+# `x u8 = 250 +% 10` means 250 + 10 wrapped at u8, which is 4. The literal operands did not take the
+# type the declaration gives: the sum was computed as a constant at i32, 260, and then narrowed to u8,
+# so a WRAPPING operator was refused as "arithmetic is not provably free of overflow". At module level
+# the declaration and its uses typed it differently: `K u8 = 250 +% 10` was accepted where it is
+# declared, and every use, even `K == 4`, was refused. One typed operand is enough to wrap at the
+# right type, so those two cells are the allowed side. (A table entry written this way is I.140,
+# under the constant-table axis.)
+_I141 = ("I.141: the literal operands of a wrapping operator do not take the type the context gives, "
+         "so `x u8 = 250 +% 10` adds at i32 (260) and then narrows")
+def _wl(decls, body):
+    return decls + 'func main() i32 effects io {\n' + body + '    return 0\n}\n'
+_PX = '    libc_printf("%d\\n", x as i32)\n'
+# DERIVED: (250 + 10) mod 256 = 4; (5 - 10) mod 256 = 251.
+assert (250 + 10) % 256 == 4 and (5 - 10) % 256 == 251
+for label, decls, body, exp, plan in (
+        ("a local, two literals with +%", '', '    x u8 = 250 +% 10\n' + _PX, "4\n", _I141),
+        ("a local, two literals with -%", '', '    x u8 = 5 -% 10\n' + _PX, "251\n", _I141),
+        ("a module constant, two literals with +%, then compared", 'K u8 = 250 +% 10\n',
+         '    if K == 4 {\n        libc_printf("four\\n")\n    } else {\n        libc_printf("other\\n")\n    }\n',
+         "four\n", _I141),
+        ("a local, one operand typed", '', '    a u8 = 250\n    x u8 = a +% 10\n' + _PX, "4\n", None),
+        ("a local, one operand cast", '', '    x u8 = 250 as u8 +% 10\n' + _PX, "4\n", None)):
+    add("wrapping-literal-operands", label, _wl(decls, body), exp, plan=plan)
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
