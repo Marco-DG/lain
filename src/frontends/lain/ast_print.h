@@ -35,24 +35,9 @@ void print_type(Type *type) {
             break;
 
         case TYPE_SLICE:
-            // e.g. u8[:"XYZ"] or u8[:0]
+            // e.g. u8[:0]
             print_type(type->element_type);
-            if (type->sentinel_len > 0) {
-                if (type->sentinel_is_string) {
-                    // string sentinel
-                    printf("[:\"%.*s\"]",
-                           (int)type->sentinel_len,
-                           type->sentinel_str);
-                } else {
-                    // numeric sentinel
-                    printf("[:%.*s]",
-                           (int)type->sentinel_len,
-                           type->sentinel_str);
-                }
-            } else {
-                // no sentinel at all
-                printf("[:]");
-            }
+            printf(type->has_sentinel ? "[:0]" : "[:]");
             break;
 
         default:

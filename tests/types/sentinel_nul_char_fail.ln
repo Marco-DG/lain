@@ -1,0 +1,17 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 11, Col 14: a slice's sentinel is 0, written `u8[:0]`: it is the terminator the emitted C writes and a C API scans for; `u8[:'\0']` is that value spelled another way.
+// 0 is the only sentinel, spelled `0` (spec 07). A sentinel's text was kept in the type and compared,
+// so `u8[:'\0']` was a different type from `u8[:0]`: g's argument was refused as "a non-terminated
+// value" (E089), with the same terminator. One spelling keeps the type rule trivial.
+
+func f(s u8[:0]) usize {
+    return s.len
+}
+
+func g(s u8[:'\0']) usize {
+    return f(s)
+}
+
+func main() i32 {
+    return 0
+}

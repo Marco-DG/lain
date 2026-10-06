@@ -549,14 +549,15 @@ var x = arr[2]         // OK: 2 is statically in [0, 4]
 \pnum
 A slice type \lain{T[]} is a reference to a contiguous sequence of values
 of type~\lain{T} whose length is determined at runtime.  Its runtime
-representation is a \textit{fat} pair \texttt{(len: usize, data: *T)} --- a
-length followed by a data pointer.
+representation is a \textit{fat} pair, a data pointer and a length
+(\texttt{struct \{ T* data; size\_t len; \}}); as a parameter it is passed as two
+arguments, the length first (\S\,\ref{sec:interop.abi}).
 
 \begin{constraint}
   \textbf{The \lain{*} rule.}  A \lain{*} prefix denotes a \emph{raw pointer},
   and only that.  Arrays and slices are always passed by reference, so they
   never carry a \lain{*}: a slice is \lain{T[]}, a sized slice \lain{T[n]}, a
-  fixed array \lain{T[N]}, a sentinel string \lain{T[:S]}.  A \lain{*} is
+  fixed array \lain{T[N]}, a sentinel slice \lain{T[:0]}.  A \lain{*} is
   permitted only before a non-array, non-slice type --- \lain{*T}, \lain{**T},
   \lain{*void}, and function-pointer types (\S\,\ref{sec:17-interop}).  A
   \lain{*} before any bracket form is \illformed{}~(\diagcode{E100}).
@@ -571,12 +572,12 @@ The reference/pointer type family and its C mapping (parameter position):
 \textbf{Lain} & \textbf{What it is} & \textbf{C parameter} & \textbf{Cost} \\
 \midrule
 \lain{u8}     & scalar             & \texttt{uint8\_t} (by value)       & 1 word \\
-\lain{T[N]}   & inline fixed array & \texttt{const Fixed\_T\_N*}        & N$\times$sizeof(T) \\
-\lain{T[]}    & fat slice          & \texttt{size\_t \_\_len, const T*} & 2 words \\
-\lain{T[n]}   & sized slice        & \texttt{size\_t, const T*}         & 2 words \\
-\lain{T[:S]}  & sentinel string    & \texttt{struct \{ T* data; \}}     & 1 word \\
-\lain{*T}     & raw pointer        & \texttt{const T*}                  & 1 word \\
-\lain{*void}  & opaque C pointer   & \texttt{const void*}               & 1 word \\
+\lain{T[N]}   & inline fixed array & \texttt{T*}, its first element      & 1 word \\
+\lain{T[]}    & fat slice          & \texttt{size\_t, T*}                & 2 words \\
+\lain{T[n]}   & sized slice        & \texttt{size\_t, T*}                & 2 words \\
+\lain{T[:0]}  & slice followed by a 0 & \texttt{size\_t, T*}, as \lain{T[]} & 2 words \\
+\lain{*T}     & raw pointer        & \texttt{T*}                         & 1 word \\
+\lain{*void}  & opaque C pointer   & \texttt{void*}                      & 1 word \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -585,9 +586,11 @@ The reference/pointer type family and its C mapping (parameter position):
   A \lain{*} in the emitted C has \emph{two} independent sources: (1) a \lain{*}
   written in the Lain type, which is a raw pointer; and (2) the implicit
   by-reference passing of an \emph{aggregate} (array, slice, struct) parameter
-  --- a hidden \texttt{const T*} that is part of the calling convention, not the
+  --- a hidden \texttt{T*} that is part of the calling convention, not the
   type.  The same aggregate is a plain value as a local (\lain{var p Point}
-  emits \texttt{Point p}) but a pointer as a parameter (\texttt{const Point*}).
+  emits \texttt{Point p}) but a pointer as a parameter (\texttt{Point*}).  The
+  sentinel of \lain{T[:0]} is not in its representation either: it is a promise
+  that a 0 follows the last element, which a string literal's C string keeps.
   This is why an aggregate type carries no \lain{*} even though it is passed as a
   pointer: the \lain{*} names raw pointers, not the borrow.
 \end{note}

@@ -129,7 +129,6 @@ typedef struct IrType {
     // carries a data pointer — so there is no wrapper to recognise. One bit answers both, and
     // answers it for every kind of type, which is what the side flag was really saying.
     bool  borrowed;
-    bool  slice_sentinel;   // u8[:0]
     // IRT_FUNC. The declared EFFECT BOUND on the arrow: true for `*func`, false for `*proc`.
     // Nielson & Nielson write this as the latent effect of a function type, tau ->^phi tau',
     // and it is the reason a function type has to exist at all for effects: a declaration's

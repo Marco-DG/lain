@@ -449,8 +449,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                 if (!pp->decl || pp->decl->kind != DECL_VARIABLE) continue;
                 Type *pt = pp->decl->as.variable_decl.type;
                 bool dyn_slice = pt &&
-                    ((pt->kind == TYPE_SLICE && !pt->sentinel_is_string && !pt->sentinel_str &&
-                      pt->sentinel_len == 0) ||
+                    ((pt->kind == TYPE_SLICE && !pt->has_sentinel) ||
                      (pt->kind == TYPE_ARRAY && pt->array_len == -1));
                 if (!dyn_slice) continue;
                 Id *pn = pp->decl->as.variable_decl.name;

@@ -216,8 +216,8 @@ array-suffix     ::=
     "[" integer-literal "]"                         % fixed-length array
   | "[" "]"                                         % slice
   | "[" [ refinement-op ] expression "]"            % slice, its length constrained
-  | "[" ":" sentinel "]"                            % sentinel-terminated slice
-sentinel         ::= integer-literal | char-literal | string-literal
+  | "[" ":" "0" "]"                                % a slice followed by a 0; any
+                                                    % other sentinel is E100
 \end{grammar}
 
 \begin{grammar}

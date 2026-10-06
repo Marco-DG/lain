@@ -1,0 +1,17 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 7, Col 14: a slice's sentinel is 0, written `u8[:0]`: it is the terminator the emitted C writes and a C API scans for; `u8[:"ab"]` would be a terminator nothing writes.
+// 0 is the only sentinel, spelled `0` (spec 07). A sentinel's text was kept in the type and compared,
+// and a string sentinel lost its quotes twice: `u8[:"ab"]` and `u8[:"cd"]` were both the empty
+// sentinel, one type, so g passed its "cd"-terminated slice as an "ab"-terminated one.
+
+func f(s u8[:"ab"]) usize {
+    return s.len
+}
+
+func g(s u8[:"cd"]) usize {
+    return f(s)
+}
+
+func main() i32 {
+    return 0
+}

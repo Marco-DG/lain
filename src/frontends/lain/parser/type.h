@@ -301,41 +301,51 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
     parser_advance(); // consume '['
 
     if (parser_match(TOKEN_COLON)) {
-      // slice with a compile-time sentinel (string, char, or number)
       parser_advance(); // consume ':'
-
-      if (parser_match(TOKEN_STRING_LITERAL) ||
-          parser_match(TOKEN_CHAR_LITERAL) || parser_match(TOKEN_NUMBER)) {
-        const char *full = parser->token.start;
-        isize full_len = parser->token.length;
-        bool is_str = parser->token.kind == TOKEN_STRING_LITERAL;
-        bool is_char = parser->token.kind == TOKEN_CHAR_LITERAL;
-
-        // determine sentinel content + length
-        const char *sentinel_str;
-        isize sentinel_len;
-        if (is_str || is_char) {
-          // skip opening quote, exclude closing quote
-          sentinel_str = full + 1;
-          sentinel_len = full_len - 2;
-        } else {
-          sentinel_str = full;
-          sentinel_len = full_len;
+      // ★ A SENTINEL IS 0, SPELLED `0`. The type kept the sentinel's TEXT and compared it, and
+      // nothing else read it: the IR has no sentinel, and a string literal is terminated by the
+      // NUL C writes. So `u8[:'a']` accepted "hello" and promised an 'a' nothing wrote, and
+      // `u8[:'\0']` was refused where `u8[:0]` was expected. A string sentinel lost its quotes
+      // twice, so `u8[:"ab"]` and `u8[:"cd"]` were one type. One spelling keeps the rule trivial.
+      if (!(parser_match(TOKEN_NUMBER) && parser->token.length == 1 && parser->token.start[0] == '0')) {
+        const char *tx = parser->token.start;
+        int tl = (int)parser->token.length;
+        bool lit = parser_match(TOKEN_NUMBER) || parser_match(TOKEN_CHAR_LITERAL) ||
+                   parser_match(TOKEN_STRING_LITERAL);
+        bool is_str = parser_match(TOKEN_STRING_LITERAL);
+        // the same value spelled another way: '\0', '\x00', "\0", 0x0, 0b00
+        const char *v = tx; int vl = tl;
+        if (parser_match(TOKEN_CHAR_LITERAL) && vl >= 2) { v++; vl -= 2; }
+        bool zero = false;
+        if (!parser_match(TOKEN_NUMBER))
+          zero = (vl == 2 && v[0] == '\\' && v[1] == '0') ||
+                 (vl == 4 && v[0] == '\\' && v[1] == 'x' && v[2] == '0' && v[3] == '0');
+        else {
+          int i = (vl > 2 && v[0] == '0' && strchr("xXbBoO", v[1])) ? 2 : 0;
+          zero = i < vl;
+          for (; i < vl; i++) if (v[i] != '0' && v[i] != '_') zero = false;
         }
-
-        parser_advance(); // consume the literal
-
-        parser_expect(TOKEN_R_BRACKET, "Expected ']' after slice sentinel");
-        parser_advance(); // consume ']'
-
-        // build a slice type
-        base_type = type_slice(arena, base_type, sentinel_str, sentinel_len,
-                               /*is_string_or_char=*/is_str || is_char);
-      } else {
-        parser_expect(
-            TOKEN_STRING_LITERAL,
-            "Expected string, char, or number literal after ':' in slice type");
+        char et[64] = "T";
+        if (base_type && base_type->kind == TYPE_SIMPLE && base_type->base_type)
+          snprintf(et, sizeof et, "%.*s", (int)base_type->base_type->length, base_type->base_type->name);
+        char m[384];
+        int o = snprintf(m, sizeof m, "a slice's sentinel is 0, written `%s[:0]`: it is the terminator "
+                         "the emitted C writes and a C API scans for", et);
+        const char *q = is_str ? "\"" : "";
+        if (lit && zero)
+          snprintf(m + o, sizeof m - (size_t)o, "; `%s[:%s%.*s%s]` is that value spelled another way.",
+                   et, q, tl, tx, q);
+        else if (lit)
+          snprintf(m + o, sizeof m - (size_t)o, "; `%s[:%s%.*s%s]` would be a terminator nothing writes.",
+                   et, q, tl, tx, q);
+        else
+          snprintf(m + o, sizeof m - (size_t)o, ".");
+        parser_error(m);
       }
+      parser_advance(); // consume the 0
+      parser_expect(TOKEN_R_BRACKET, "Expected ']' after slice sentinel");
+      parser_advance(); // consume ']'
+      base_type = type_slice(arena, base_type);
 
     } else {
       // [N] fixed, [] plain dynamic, or [expr]/[relop expr] sized slice

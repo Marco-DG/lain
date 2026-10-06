@@ -2077,6 +2077,13 @@ ty=Slice_u8 scalar
 ### tests/trust/saturating_u64_pass.ln
 rc=0
 out=
+### tests/trust/sentinel_zero_pass.ln
+rc=0
+out=
+at=access 4
+at=nonnull 4
+at=pure 4
+ty=Slice_u8 scalar
 ### tests/trust/shift_constant_range_pass.ln
 rc=0
 out=

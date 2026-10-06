@@ -1,0 +1,17 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 7, Col 14: a slice's sentinel is 0, written `u8[:0]`: it is the terminator the emitted C writes and a C API scans for; `u8[:'a']` would be a terminator nothing writes.
+// 0 is the only sentinel, spelled `0` (spec 07). A sentinel's text was kept in the type and compared,
+// and nothing else read it: `f("hello")` was accepted, and the C ends "hello" with the NUL it writes,
+// not with an 'a'.
+
+func f(s u8[:'a']) usize {
+    return s.len
+}
+
+func main() i32 {
+    n = f("hello")
+    if n == 5 {
+        return 0
+    }
+    return 1
+}

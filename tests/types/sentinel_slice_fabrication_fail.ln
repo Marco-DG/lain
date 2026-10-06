@@ -1,4 +1,5 @@
 // EXPECT: [E089]
+// EXPECT-TEXT: cannot use a non-terminated value as the sentinel-terminated type 'u8[:0]' for argument to parameter
 // A plain (non-terminated) slice cannot be coerced to a sentinel-terminated
 // `u8[:0]` — the trailing NUL isn't guaranteed, so a C scanner would overread.
 extern func libc_printf(fmt *u8, ...) i32 effects io

@@ -1,0 +1,12 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 6, Col 19: a slice's sentinel is 0, written `i32[:0]`: it is the terminator the emitted C writes and a C API scans for; `i32[:1]` would be a terminator nothing writes.
+// 0 is the only sentinel, spelled `0` (spec 07). `i32[:1]` declared a slice followed by a 1, and
+// nothing wrote one: the IR has no sentinel, and the type kept only the text, to compare.
+
+func total(s i32[:1]) usize {
+    return s.len
+}
+
+func main() i32 {
+    return 0
+}

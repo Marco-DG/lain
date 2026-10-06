@@ -408,7 +408,10 @@ All slice types (`T[]`) expose two fields:
 - `.data`: pointer to the underlying data (`*T`)
 - `.len`: number of elements in the slice
 
-**Sentinel-terminated slices** end with a known sentinel value (typically `0`):
+**Sentinel-terminated slices** promise that a `0` follows the last element, the terminator a C
+string ends with and a C API scans for. The sentinel is always `0`, written `u8[:0]`; any other
+spelling, `'\0'` included, is `[E100]`. The representation is the same as `u8[]`'s, a pointer and
+a length:
 
 ```
 u8[:0]     // Null-terminated byte slice (C string compatible)
@@ -4239,7 +4242,7 @@ func scan_until(src u8[:0], delim u8) usize {
 | `T[N]` | Fixed-size array | `int[10]`, `u8[256]` |
 | `T[]` | Slice (pointer and length) | `int[]`, `u8[]` |
 | `T[n]`, `T[>= n]` | Slice whose length is constrained | `i32[n]`, `u8[>= 2]` |
-| `T[:S]` | Sentinel-terminated slice | `u8[:0]` (string) |
+| `T[:0]` | Slice followed by a `0` (a C string) | `u8[:0]` (a string literal) |
 | `T \| M1 \| M2` | A value or a marker (§14) | `*u8 \| none`, `i32 \| ParseErr(line i32)` |
 | `type N = T < k` | Refined alias | `type Small = u8 < 200` |
 | `T type` | Type parameter (§20) | `func id(T type, x T) T` |

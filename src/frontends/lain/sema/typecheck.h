@@ -445,11 +445,7 @@ static bool core_identical_depth(Type *a, Type *b, int depth) {
             if (a->array_len != b->array_len) return false;  // lane count
             return core_identical_depth(a->element_type, b->element_type, depth + 1);
         case TYPE_SLICE:
-            if (a->sentinel_is_string != b->sentinel_is_string) return false;
-            if (a->sentinel_len != b->sentinel_len) return false;
-            if ((a->sentinel_str == NULL) != (b->sentinel_str == NULL)) return false;
-            if (a->sentinel_str && b->sentinel_str &&
-                memcmp(a->sentinel_str, b->sentinel_str, (size_t)a->sentinel_len) != 0) return false;
+            if (a->has_sentinel != b->has_sentinel) return false;
             return core_identical_depth(a->element_type, b->element_type, depth + 1);
         case TYPE_UNION: {
             if (!core_identical_depth(a->element_type, b->element_type, depth + 1)) return false;
@@ -586,7 +582,7 @@ static void type_describe(Type *t, char *buf, size_t cap) {
             break;
         case TYPE_SLICE:
             type_describe(t->element_type, inner, sizeof inner);
-            snprintf(buf, cap, "%s[]", inner);
+            snprintf(buf, cap, t->has_sentinel ? "%s[:0]" : "%s[]", inner);
             break;
         case TYPE_ARRAY:
             type_describe(t->element_type, inner, sizeof inner);
@@ -1238,14 +1234,12 @@ static void reject_sentinel_fabrication(Type *from, Type *to, Expr *src_expr,
     Type *f = resolve_type_alias(from);
     Type *t = resolve_type_alias(to);
     if (!f || !t) return;
-    bool to_sentinel = (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) && t->sentinel_str != NULL;
+    bool to_sentinel = (t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) && t->has_sentinel;
     if (!to_sentinel) return;
     // Source already carries the SAME sentinel → safe (sentinel → sentinel). String
     // literals and string-literal-derived values are sentinel-terminated, so they
     // pass here; a plain `u8[]` slice or a general fixed `u8[N]` does not.
-    if ((f->kind == TYPE_ARRAY || f->kind == TYPE_SLICE) && f->sentinel_str &&
-        f->sentinel_len == t->sentinel_len &&
-        memcmp(f->sentinel_str, t->sentinel_str, (size_t)t->sentinel_len) == 0)
+    if ((f->kind == TYPE_ARRAY || f->kind == TYPE_SLICE) && f->has_sentinel)
         return;
     // A string/char literal is terminated into a fresh buffer by the emitter.
     if (src_expr && src_expr->kind == EXPR_STRING) return;
@@ -3541,12 +3535,8 @@ void sema_infer_expr(Expr *e) {
     // A string literal is a SENTINEL-TERMINATED slice of KNOWN length (Zig's
     // `[N:0]u8`): its backing buffer carries a trailing NUL, so `.data` is safe to
     // hand to a C API that scans for it. The compile-time length L lives in
-    // array_len (sentinel_len is the sentinel's own length, "0" → 1); this is what
-    // untangles the old overload where sentinel_len meant BOTH the string length
-    // and the sentinel length.
-    slice_ty->sentinel_str       = "0";
-    slice_ty->sentinel_len       = 1;
-    slice_ty->sentinel_is_string = false;
+    // array_len.
+    slice_ty->has_sentinel       = true;
     slice_ty->array_len          = (isize)L;
 
     e->type = slice_ty;
@@ -3776,23 +3766,6 @@ void sema_infer_expr(Expr *e) {
         exit(1);
     }
     
-    // If inferred type is a fixed-length string literal type (TYPE_SLICE with
-    // sentinel_str==NULL, sentinel_len>0), unify to u8[:0] so case expressions
-    // with string arms of different lengths share a common result type.
-    if (inferred_type && inferred_type->kind == TYPE_SLICE &&
-        !inferred_type->sentinel_is_string &&
-        inferred_type->sentinel_str == NULL &&
-        inferred_type->sentinel_len > 0) {
-        Type *slice_ty = arena_push_aligned(sema_arena, Type);
-        slice_ty->kind       = TYPE_SLICE;
-        slice_ty->mode       = MODE_SHARED;
-        slice_ty->element_type = inferred_type->element_type;
-        slice_ty->sentinel_str       = "0";
-        slice_ty->sentinel_len       = 1;
-        slice_ty->sentinel_is_string = false;
-        inferred_type = slice_ty;
-    }
-
     e->type = inferred_type ? inferred_type : get_builtin_i32_type();
     break;
   }

@@ -113,9 +113,8 @@ typedef struct Type {
        by the var-declaration parser. */
     bool         is_vla;
 
-    const char* sentinel_str;
-    isize       sentinel_len;
-    bool        sentinel_is_string;
+    /* `T[:0]`: the slice is followed by a 0 element. 0 is the only sentinel (parser/type.h). */
+    bool        has_sentinel;
 
     /* TYPE_POINTER only: `*var T` sets this — the POINTEE is mutable, so the C type
        is `T*` (not `const T*`). Purely a const-ness flag on the raw pointer; it does
@@ -910,16 +909,13 @@ Type *type_vector(Arena *arena, isize lanes, Type *element_type) {
     return t;
 }
 
-// Slices with a compile-time sentinel
-Type *type_slice(Arena *arena, Type *element_type, const char *sentinel_str,
-                 isize sentinel_len, bool sentinel_is_string) {
+// A slice terminated by 0, `T[:0]`
+Type *type_slice(Arena *arena, Type *element_type) {
     Type *t = arena_push_aligned(arena, Type);
     t->kind              = TYPE_SLICE;
     t->mode              = MODE_SHARED;  // default ownership
     t->element_type      = element_type;
-    t->sentinel_str      = sentinel_str;
-    t->sentinel_len      = sentinel_len;
-    t->sentinel_is_string = sentinel_is_string;
+    t->has_sentinel      = true;
     t->canon = t;
     return t;
 }

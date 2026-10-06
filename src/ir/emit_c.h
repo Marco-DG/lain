@@ -1404,7 +1404,7 @@ static void ir_lain_type(const IrType *t, char *b, size_t n) {
         case IRT_BOOL:  snprintf(b, n, "bool"); return;
         case IRT_FLOAT: snprintf(b, n, "f%d", t->float_bits); return;
         case IRT_PTR:   ir_lain_type(t->elem, e, sizeof e); snprintf(b, n, "*%s%s", t->ptr_mut ? "var " : "", e); return;
-        case IRT_SLICE: ir_lain_type(t->elem, e, sizeof e); snprintf(b, n, "%s[%s]", e, t->slice_sentinel ? ":0" : ""); return;
+        case IRT_SLICE: ir_lain_type(t->elem, e, sizeof e); snprintf(b, n, "%s[]", e); return;
         case IRT_ARRAY: ir_lain_type(t->elem, e, sizeof e); snprintf(b, n, "%s[%lld]", e, (long long)t->array_len); return;
         default:
             if (t->sname) snprintf(b, n, "%.*s", (int)t->sname->length, t->sname->name);
