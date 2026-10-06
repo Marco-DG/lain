@@ -1447,6 +1447,11 @@ at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/bit_iteration_loop_pass.ln
+rc=0
+out=8 8 0 37
+at=const 6
+ty=Slice_u8 scalar
 ### tests/trust/bitnot_unsigned_pass.ln
 rc=0
 out=250

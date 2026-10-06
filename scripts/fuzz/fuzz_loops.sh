@@ -4,9 +4,10 @@
 # input is UNSOUND.
 #
 # TEETH, verified before this was trusted: with vra_progress_on_every_path made to return true (the
-# state before the multi-path fix, fuzz_termination's own teeth check), 35 of the 300 loops of
-# RANDOM_SEED=1 are accepted and can run for ever; with the engine as it is, 0, and it accepts 97 of
-# the 208 that end from every input.
+# state before the multi-path fix, fuzz_termination's own teeth check), 40 of the 300 loops of
+# RANDOM_SEED=1 are accepted and can run for ever; with the engine as it is, 0, and it accepts 84 of
+# the 174 that end from every input. (The generator gained `!= 0` guards and the `x & (x - 1)`
+# step with H4, which an unsigned `x != 0` guard now reaches: the engine before H4 accepts 72.)
 #
 #   bash fuzz_loops.sh [N]        (RANDOM_SEED fixes the programs; it is printed either way)
 set -u

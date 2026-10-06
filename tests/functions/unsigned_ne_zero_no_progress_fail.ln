@@ -1,0 +1,17 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: Error Ln 8, Col 11: this loop is not provably terminating
+// H4's other side: an unsigned `x != 0` is read as `x > 0`, and every store must still FALL. `m | 1`
+// never does, and from any m other than 0 this never ends.
+func f(x u32) u32 {
+    var m u32 = x
+    var c u32 = 0
+    while m != 0 {
+        c = c +% 1
+        m = m | 1
+    }
+    return c
+}
+
+func main() i32 {
+    return f(0) as i32
+}

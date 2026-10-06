@@ -1,0 +1,41 @@
+// H4 (Documentation's substring study): an unsigned `x != 0` guard is `x > 0`, so the falling-step
+// rule applies to it. `while mask != 0 { mask = mask & (mask - 1) }`, the bit-iteration idiom of
+// every SIMD scan, was E011, and E082 with `decreasing mask`: the rule read only <, <=, >, >=, and
+// the matcher that knows `x & (x - 1)` clears the lowest set bit was never reached. A countdown
+// `while n != 0 { n = n - 1 }` over a u32 was refused for the same reason.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func popcount(x u32) u32 {
+    var mask u32 = x
+    var c u32 = 0
+    while mask != 0 {
+        c = c + 1
+        mask = mask & (mask - 1)
+    }
+    return c
+}
+
+func popcount_measured(x u32) u32 {
+    var mask u32 = x
+    var c u32 = 0
+    while mask != 0 decreasing mask {
+        c = c + 1
+        mask = mask & (mask - 1)
+    }
+    return c
+}
+
+func countdown(n0 u32) u32 {
+    var n u32 = n0
+    var steps u32 = 0
+    while n != 0 {
+        if steps < 1000 { steps = steps + 1 }
+        n = n - 1
+    }
+    return steps
+}
+
+func main() i32 effects io {
+    libc_printf("%u %u %u %u\n", popcount(0xF0F0), popcount_measured(255), popcount(0), countdown(37))
+    return 0
+}

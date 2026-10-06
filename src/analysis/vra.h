@@ -3846,6 +3846,18 @@ static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
         int ccell = vra_canon_cell(V, cell);
         #define VRA_SAME_CELL(x) (fbase < 0 ? (x) == cell : vra_canon_cell(V, (x)) == ccell)
         if (!vra_loop_invariant(V,bnd,H)) continue;
+        // ★ `x != 0` ON AN UNSIGNED COUNTER IS `x > 0` (H4, Documentation's substring study).
+        // `while mask != 0 { mask = mask & (mask - 1) }`, the bit-iteration idiom, was refused
+        // (E011, and E082 with `decreasing mask`): the rule read only <, <=, >, >= and skipped an
+        // inequality, so the falling-step matcher below, which knows `x & (x - 1)`, was never
+        // reached. For an unsigned value, being different from 0 IS being above it, so the guard
+        // is read as `x > 0`, with everything that follows unchanged: every store must fall, and
+        // a store of 0 ends the loop. Only for the counter itself against the constant 0; a
+        // signed `x != 0` stays refused, since x may start below the bound.
+        if (p == IR_CMP_NE && ivv == ivd->result && ivd->result && ivd->result->type &&
+            ivd->result->type->kind == IRT_INT && !ivd->result->type->is_signed &&
+            bnd && bnd->id >= 0 && bnd->id < V->nvar && V->cknown[bnd->id] && V->cval[bnd->id] == 0)
+            p = IR_CMP_UGT;
         bool lt=(p==IR_CMP_SLT||p==IR_CMP_ULT||p==IR_CMP_SLE||p==IR_CMP_ULE);
         bool gt=(p==IR_CMP_SGT||p==IR_CMP_UGT||p==IR_CMP_SGE||p==IR_CMP_UGE);
         if (!lt && !gt) continue;

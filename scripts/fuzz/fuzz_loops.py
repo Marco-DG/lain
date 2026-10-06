@@ -19,14 +19,16 @@ the recursion rule which no execution-based fuzzer had reached.
 """
 import random, subprocess, sys, os, tempfile
 
-GUARDS = ["x > 0", "y > 0", "x < 100", "y < 100", "x < y", "y < x", "x != y", "x > 5", "y > 5"]
+GUARDS = ["x != 0", "y != 0", "x > 0", "y > 0", "x < 100", "y < 100", "x < y", "y < x", "x != y", "x > 5", "y > 5"]
 CONDS = ["x < y", "x > y", "x == y", "x < 50", "y > 50", "x % 2 == 0", "y % 3 == 0", "true"]
-UPD = ["x = x - 1", "x = x + 1", "y = y - 1", "y = y + 1", "x = y", "y = x", "x = x - 2", "y = y + 2", "x = y - 1"]
+UPD = ["x = x & (x - 1)", "y = y & (y - 1)", "x = x - 1", "x = x + 1", "y = y - 1", "y = y + 1", "x = y", "y = x", "x = x - 2", "y = y + 2", "x = y - 1"]
 
 def gen(rng):
     gs = rng.sample(GUARDS, rng.choice([2, 3, 4]))
-    if "x > 0" not in gs and rng.random() < 0.7: gs.append("x > 0")
-    if "y > 0" not in gs and rng.random() < 0.7: gs.append("y > 0")
+    # A lower guard on each variable, often enough for most loops to have a chance of a measure:
+    # `> 0` or, read the same way on an unsigned value since H4, `!= 0`.
+    if "x != 0" not in gs and "x > 0" not in gs and rng.random() < 0.7: gs.append(rng.choice(["x > 0", "x != 0"]))
+    if "y != 0" not in gs and "y > 0" not in gs and rng.random() < 0.7: gs.append(rng.choice(["y > 0", "y != 0"]))
     gs += ["x < 200", "y < 200"]
     body = [(rng.choice(CONDS), rng.choice(UPD), rng.choice(UPD + [None])) for _ in range(rng.choice([1, 2, 2, 3]))]
     return gs, body
