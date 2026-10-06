@@ -3280,6 +3280,18 @@ static void eff_visit_expr(Expr *e) {
                              && callee->decl->as.function_decl.eff_opaque_diverge)
                         g_eff_opaque_div = true;
                 }
+                // ★ A CALLEE'S WRITTEN `diverge` IS BELIEVED DIVERGENCE TOO (H1, Documentation's
+                // substring study). A function whose row names `diverge` owes no termination
+                // obligation: the engine checks nothing about whether it ends, exactly as for an
+                // extern's row. So the termination seam must not stand its divergence down in the
+                // caller: nothing downstream would mention it. It did, and a `func` with no row
+                // calling `d(x) effects diverge` was accepted and looped for ever, against spec 12
+                // ("diverge enters this function's row and every caller must acknowledge it").
+                // Only the WRITTEN row is charged, not the inferred one: a total callee's own loops
+                // are proven by the engine, whatever the effect inference says about them.
+                if (callee->decl->kind == DECL_FUNCTION && callee->decl->as.function_decl.effects_declared &&
+                    (callee->decl->as.function_decl.effects_bound & EFFECT_DIVERGE))
+                    g_eff_opaque_div = true;
             }
             eff_visit_expr(callee);
             for (ExprList *a = e->as.call_expr.args; a; a = a->next) eff_visit_expr(a->expr);

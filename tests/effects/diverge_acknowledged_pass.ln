@@ -1,0 +1,29 @@
+// H1's allowed side: a caller that names `diverge` in its row may call a function that declares it,
+// and so may `main`. A total function whose own loop the engine proves (an `and` condition, which
+// the effect inference marks Diverge, H2) is still callable from a silent function: only a
+// WRITTEN `diverge` is charged to the caller, never the inference.
+func d(x i32) i32 effects diverge {
+    var y i32 = x
+    while y > 0 { y = y - 1 }
+    return y
+}
+
+func relay(x i32) i32 effects diverge {
+    return d(x)
+}
+
+func scan(s u8[], lim usize) usize {
+    var j usize = 0
+    while j < s.len and j < lim { j = j + 1 }
+    return j
+}
+
+func total(s u8[]) usize {
+    return scan(s, 3)
+}
+
+func main() i32 effects diverge {
+    var buf u8[5] = [1, 2, 3, 4, 5]
+    if total(buf) != 3 { return 1 }
+    return relay(3)
+}

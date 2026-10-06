@@ -122,6 +122,14 @@ at=hot 2
 at=malloc 1
 at=noreturn 3
 ty=Slice_u8 scalar
+### tests/effects/diverge_acknowledged_pass.ln
+rc=0
+out=
+at=access 4
+at=const 4
+at=nonnull 4
+at=pure 4
+ty=Slice_u8 scalar
 ### tests/effects/diverge_row_pass.ln
 rc=0
 out=

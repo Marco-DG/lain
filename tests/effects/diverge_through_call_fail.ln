@@ -1,0 +1,21 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: `func` 'g' has an unacknowledged effect (diverge)
+// H1 (Documentation's substring study). `d` declares `effects diverge`, so the engine owes no proof
+// that it ends, and `g`, a `func` with no row (pure and total), calls it. The termination seam stood
+// the callee's divergence down in `g` as if the engine would report on it, and nothing did: `g` was
+// accepted, and this program loops for ever. A written `diverge` is believed divergence, as an
+// extern's row is, and every caller must acknowledge it (spec 12).
+func d(x i32) i32 effects diverge {
+    var y i32 = x
+    while y != 0 { y = y }
+    return y
+}
+
+func g(x i32) i32 {
+    return d(x)
+}
+
+func main() i32 {
+    var r i32 = g(1)
+    return 0
+}

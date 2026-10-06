@@ -1,0 +1,20 @@
+// EXPECT: [E130]
+// EXPECT-TEXT: declares `effects` that do not cover what its body does
+// H1, the declared-row side: `h` writes a row (`effects io`) that omits the `diverge` its callee
+// declares. A written row is a complete upper bound, so this is E130, as an omitted `io` would be.
+extern func libc_puts(s *u8) i32 effects io
+
+func d(x i32) i32 effects diverge {
+    var y i32 = x
+    while y != 0 { y = y }
+    return y
+}
+
+func h(x i32) i32 effects io {
+    libc_puts("h")
+    return d(x)
+}
+
+func main() i32 effects io, diverge {
+    return h(0)
+}
