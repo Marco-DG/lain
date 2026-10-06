@@ -2,6 +2,8 @@
 // License:         MIT
 // Date:            2026/10/02
 
+import ctype
+
 type TokenKind {
     Eof
     Ident
@@ -34,4 +36,8 @@ assert @sizeof(Lexer) == 24
 
 func lexer_new(text u8[]) Lexer {
     return Lexer(text, 0)
+}
+
+func lexer_next(l var Lexer) Token {
+
 }
