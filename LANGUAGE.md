@@ -943,7 +943,7 @@ type Outer { inner Inner, n i32 }     // ERROR [E083]
 ```
 
 ```
-[E083] Error Ln 2, Col 14: field 'inner' in struct 'Outer' has linear type but is missing `mov` annotation. Add `mov` to the field declaration.
+[E083] Error Ln 2, Col 14: field 'inner' in struct 'Outer' has linear type but is missing `mov` annotation. Write it `mov inner Inner`.
 ```
 
 **What consumes a linear value is destructuring it.** A function that takes `mov` and does nothing

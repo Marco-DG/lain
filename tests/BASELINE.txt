@@ -1247,6 +1247,9 @@ rc=20
 out=
 at=nonnull 2
 at=pure 2
+### tests/ownership/variant_field_mov_prefix_pass.ln
+rc=0
+out=
 ### tests/ownership/var_prim_forward_pass.ln
 rc=42
 out=

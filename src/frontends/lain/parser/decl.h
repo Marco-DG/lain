@@ -624,12 +624,18 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                     parser_skip_eol();
                     if (parser_match(TOKEN_R_BRACE)) break;
                     
+                    // `mov h H`, the prefix spelling a struct field takes (`h mov H` is the type's
+                    // own `mov`). A variant refused it ("Expected variant field name") while E083
+                    // told the user to add `mov` to the field, so the advice did not compile.
+                    bool vmov = false;
+                    if (parser_match(TOKEN_KEYWORD_MOV)) { vmov = true; parser_advance(); }
                     parser_expect(TOKEN_IDENTIFIER, "Expected variant field name");
                     Id *fname = id(arena, parser->token.length, parser->token.start);
                     long fname_line = parser->line, fname_col = parser->column;
                     parser_advance();
                     
                     Type *ftype = parse_type(arena, parser);
+                    if (vmov) ftype = type_move(arena, ftype);
                     Decl *fdecl = decl_variable(arena, fname, ftype);
                     fdecl->line = fname_line;
                     fdecl->col = fname_col;

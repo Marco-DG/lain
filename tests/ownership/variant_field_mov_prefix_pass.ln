@@ -1,0 +1,17 @@
+// A variant's field takes the prefix `mov`, as a struct's field does: `Open { mov h H }`. It was
+// refused ("Expected variant field name"); only the type's own `mov`, `h mov H`, was accepted.
+// Both spellings now give the same type, the same C and the same linearity diagnostics.
+type H {
+    mov p *u8
+}
+type Res {
+    Open { mov h H }
+    Closed
+}
+type Res2 {
+    Open2 { h mov H }
+    Closed2
+}
+func main() i32 {
+    return 0
+}

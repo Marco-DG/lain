@@ -1,0 +1,15 @@
+// EXPECT: [E083]
+// EXPECT-TEXT: Error Ln 10, Col 12: field 'h' in variant 'Open' has linear type but is missing `mov` annotation. Write it `mov h H`.
+// A variant's linear field needs `mov`, as a struct's does (E083), and the message now names the
+// spelling. It named none, and the struct's message ("add `mov` to the field") pointed at the
+// prefix form `mov h H`, which a variant then refused ("Expected variant field name").
+type H {
+    mov p *u8
+}
+type Res {
+    Open { h H }
+    Closed
+}
+func main() i32 {
+    return 0
+}

@@ -27,6 +27,8 @@ static bool sema_type_is_linear(Type *t);
 // Use the robust recursive check
 #define is_type_move(t) sema_type_is_linear(t)
 
+static void type_describe(Type *t, char *buf, size_t cap);   // sema/typecheck.h
+
 // Q-008: enforce that every field of a struct/variant whose type is linear
 // must be annotated `mov`. Returns true if any error was emitted.
 static bool sema_check_struct_field_mov(Decl *d) {
@@ -41,11 +43,13 @@ static bool sema_check_struct_field_mov(Decl *d) {
             if (ft->mode != MODE_OWNED && sema_type_is_linear(ft)) {
                 Id *fname = f->decl->as.variable_decl.name;
                 Id *sname = d->as.struct_decl.name;
+                char tb[128]; type_describe(ft, tb, sizeof tb);
                 fprintf(stderr,
-                    "[E083] Error Ln %li, Col %li: field '%.*s' in struct '%.*s' has linear type but is missing `mov` annotation. Add `mov` to the field declaration.\n",
+                    "[E083] Error Ln %li, Col %li: field '%.*s' in struct '%.*s' has linear type but is missing `mov` annotation. Write it `mov %.*s %s`.\n",
                     f->decl->line, f->decl->col,
                     (int)(fname ? fname->length : 0), fname ? fname->name : "?",
-                    (int)(sname ? sname->length : 0), sname ? sname->name : "?");
+                    (int)(sname ? sname->length : 0), sname ? sname->name : "?",
+                    (int)(fname ? fname->length : 0), fname ? fname->name : "?", tb);
                 had_error = true;
             }
         }
@@ -58,11 +62,15 @@ static bool sema_check_struct_field_mov(Decl *d) {
                 if (ft->mode != MODE_OWNED && sema_type_is_linear(ft)) {
                     Id *fname = f->decl->as.variable_decl.name;
                     Id *vname = v->name;
+                    char tb[128]; type_describe(ft, tb, sizeof tb);
+                    // It gave no remedy; the struct's ("add `mov` to the field") named a spelling a
+                    // variant then refused. Both spellings are accepted in a variant now.
                     fprintf(stderr,
-                        "[E083] Error Ln %li, Col %li: field '%.*s' in variant '%.*s' has linear type but is missing `mov` annotation.\n",
+                        "[E083] Error Ln %li, Col %li: field '%.*s' in variant '%.*s' has linear type but is missing `mov` annotation. Write it `mov %.*s %s`.\n",
                         f->decl->line, f->decl->col,
                         (int)(fname ? fname->length : 0), fname ? fname->name : "?",
-                        (int)(vname ? vname->length : 0), vname ? vname->name : "?");
+                        (int)(vname ? vname->length : 0), vname ? vname->name : "?",
+                        (int)(fname ? fname->length : 0), fname ? fname->name : "?", tb);
                     had_error = true;
                 }
             }
