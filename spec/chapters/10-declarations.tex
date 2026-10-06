@@ -378,8 +378,9 @@ it.
 \begin{constraint}
   Every function that such an initialiser can reach shall have the empty effect row
   \secref{sec:fn.distinction}: it is pure and total. Each shall be free of every diagnostic of
-  this standard, the evaluation shall not exceed the step limit, and the computation of a
-  constant shall not read that constant. Otherwise the program is \illformed{}~(\diagcode{E136}).
+  this standard, the evaluation shall not exceed the step limit nor recurse deeper than the
+  evaluator can hold (at least 256 calls, \S\,\ref{sec:conformance.limits}), and the computation
+  of a constant shall not read that constant. Otherwise the program is \illformed{}~(\diagcode{E136}).
   The value shall be representable in \lain{T}, and for an array each element in the element
   type~(\diagcode{E086}).
 \end{constraint}
