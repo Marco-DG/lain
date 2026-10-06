@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 5, Col 11: `Token.Pos` is not a type name: Lain has no nested types. Write `type TokenPos`.
+// Every `type` form takes the same rule, a struct as an enum: one parser entry reads the name of
+// each.
+type Token.Pos {
+    line u32
+}
+func main() i32 {
+    return 0
+}

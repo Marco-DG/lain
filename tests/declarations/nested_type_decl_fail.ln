@@ -1,0 +1,15 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 9, Col 11: `Token.Kind` is not a type name: Lain has no nested types. Write `type TokenKind`.
+// Lain has no nested types. A dotted type declaration was parsed and accepted, and no value of it
+// could be made: `Token.Kind.Identifier` was E128 and `Kind.Identifier` E106 (Documentation, from
+// LANGUAGE §2.11, which taught it).
+type Token {
+    len u32
+}
+type Token.Kind {
+    Identifier
+    Number
+}
+func main() i32 {
+    return 0
+}

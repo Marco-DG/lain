@@ -746,12 +746,29 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
     parser_advance();
 
     Token end = start;
-    while (parser_match(TOKEN_DOT)) {
-        parser_advance(); // .
-        parser_expect(TOKEN_IDENTIFIER, "Expected identifier after dot");
-        end = parser->token;
-        parser_advance();
+    // Lain has no nested types: a dot in a type name is module qualification, at a USE
+    // (parser/type.h). A dotted DECLARATION, `type Token.Kind { A, B }`, was parsed and accepted,
+    // and no value of it could be made (`Token.Kind.A` was E128, `Kind.A` E106), while two such
+    // declarations under one prefix never clashed (Documentation). Every `type` form comes here.
+    if (parser_match(TOKEN_DOT)) {
+        char joined[128]; int jn = 0;
+        for (isize i = 0; i < start.length && jn < 100; i++) joined[jn++] = start.start[i];
+        Lexer fork = *parser->lexer; Token t = lexer_next(&fork);
+        Token dotted_end = start;
+        while (t.kind == TOKEN_IDENTIFIER) {
+            for (isize i = 0; i < t.length && jn < 120; i++) joined[jn++] = t.start[i];
+            dotted_end = t;
+            t = lexer_next(&fork);
+            if (t.kind != TOKEN_DOT) break;
+            t = lexer_next(&fork);
+        }
+        joined[jn] = '\0';
+        char m[320];
+        snprintf(m, sizeof m, "`%.*s` is not a type name: Lain has no nested types. Write `type %s`.",
+                 (int)((dotted_end.start + dotted_end.length) - start.start), start.start, joined);
+        parser_error(m);
     }
+    (void)end;
 
     isize len = (end.start + end.length) - start.start;
     Id* name = id(arena, len, start.start);
