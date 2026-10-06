@@ -1,0 +1,22 @@
+// H5 (Documentation's substring study): @ctz of x in [1, hi] is at most the index of hi's highest
+// bit, and @popcount of a non-zero x is at least 1. @clz had its operand's range and these did not:
+// `@ctz(m)` over a 16-bit mask was bounded by the type's 31 and needed a guard before indexing a
+// 16-entry table, and `100 / @popcount(m)` was E015 though m != 0.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func lane(m u32) u8 {
+    if m == 0 { return 255 }
+    if m > 65535 { return 255 }
+    var names u8[16] = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+    return names[@ctz(m)]
+}
+
+func share(m u32) u32 {
+    if m == 0 { return 0 }
+    return 100 / @popcount(m)
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d %d %u %u\n", lane(1) as i32, lane(0x8000) as i32, lane(0x0300) as i32, share(7), share(0xFF))
+    return 0
+}

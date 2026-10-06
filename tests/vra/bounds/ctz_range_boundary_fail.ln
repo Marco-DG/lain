@@ -1,0 +1,14 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 9, Col 12: index is not provably within bounds
+// H5's other side: @ctz of a mask up to 65536 can be 16 (`@ctz(65536)`), one past a 16-entry table.
+// The bound follows the operand's range exactly; it does not assume a 16-lane mask.
+func f(m u32) u8 {
+    if m == 0 { return 0 }
+    if m > 65536 { return 0 }
+    var a u8[16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    return a[@ctz(m)]
+}
+
+func main() i32 {
+    return f(65536) as i32
+}

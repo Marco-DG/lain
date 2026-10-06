@@ -1714,6 +1714,13 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 lo = width - VRA_BITLEN(xhi); hi = width - VRA_BITLEN(xlo);
             }
             if (ins->op == IR_POPCOUNT && xlo >= 0 && xhi >= 0) { int64_t b = xhi ? VRA_BITLEN(xhi) : 0; if (b < hi) hi = b; }
+            // ...and (H5, Documentation's substring study) @ctz of x in [1, xhi] is at most the
+            // index of xhi's highest bit: the lowest set bit of x lies at or below x's highest,
+            // which lies at or below xhi's. `k = i + @ctz(mask)` over a 16-lane mask was bounded
+            // only by the type's 31 and needed a guard; it is now at most 15. A non-zero operand
+            // has at least one bit set, so its @popcount is at least 1.
+            if (ins->op == IR_CTZ && xlo >= 1 && xhi >= 1) { int64_t b = VRA_BITLEN(xhi) - 1; if (b < hi) hi = b; }
+            if (ins->op == IR_POPCOUNT && xlo >= 1) lo = 1;
             #undef VRA_BITLEN
             oct_add_lb(W, r, lo); oct_add_ub(W, r, hi);
             break;
